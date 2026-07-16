@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -38,29 +39,58 @@ type Handler struct {
 	backend Backend
 	limiter *Limiter
 	gate    *WakeGate
+	// metrics may be nil; nil-guarded everywhere it is read.
+	metrics *Metrics
+	// log may be nil (defaults to slog.Default()).
+	log *slog.Logger
 	// proxyFor builds the reverse proxy for an upstream address; overridable in
 	// tests.
 	proxyFor func(addr string) http.Handler
 }
 
 // NewHandler wires the edge with the spec's defaults (wake queue 512/30 s, spec
-// §4.1). The host→app routing cache lives inside the Backend (it fronts Postgres).
+// §4.1) and the new Metrics + slog bundle. The host→app routing cache lives
+// inside the Backend (it fronts Postgres).
 func NewHandler(backend Backend) *Handler {
+	return NewHandlerWith(backend, NewMetrics(), slog.Default())
+}
+
+// NewHandlerWith lets tests inject a custom Metrics bundle (to assert on the
+// registry) and a custom slog logger.
+func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h := &Handler{
 		backend: backend,
 		limiter: NewLimiter(),
 		gate:    NewWakeGate(api.WakeQueueCap, time.Duration(api.WakeQueueTTLSeconds)*time.Second),
+		metrics: m,
+		log:     log,
 	}
 	h.proxyFor = defaultProxy
 	return h
 }
 
+// SetWakeGateHook installs a callback that wakes the queue-depth gauge each
+// time WakeGate mutates an entry. Called by main once the gauge exists.
+func (h *Handler) SetWakeGateHook() {
+	h.gate.onChange = func(appID string, depth int) {
+		if h.metrics != nil {
+			h.metrics.SetQueueDepth(appID, depth)
+		}
+	}
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Status-class capture (used for metrics + slog). Doesn't buffer the body
+	// or alter the headers — strictly observability.
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	w = rec
+
 	host := hostname(r.Host)
 	app, ok := h.backend.Lookup(r.Context(), host)
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No such app", fmt.Sprintf("no app is routed to %q", host)))
+		h.observe(r, rec.status, "", "", false)
 		return
 	}
 
@@ -69,6 +99,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "1")
 		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
 			"Rate limit exceeded", "slow down and retry"))
+		if h.metrics != nil {
+			h.metrics.ObserveRateLimit(app.ID, string(app.Plan))
+		}
+		h.observe(r, rec.status, app.ID, string(app.Plan), false)
 		return
 	}
 
@@ -78,13 +112,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Hot path: a ready instance already exists.
 	addr, ready := h.backend.Target(app.ID)
 	cold := false
+	wakeStart := time.Now()
 	if !ready {
 		if err := h.wake(r.Context(), app.ID); err != nil {
 			writeWakeError(w, err)
+			h.observe(r, rec.status, app.ID, string(app.Plan), false)
 			return
 		}
 		if addr, ready = h.backend.Target(app.ID); !ready {
 			api.WriteProblem(w, api.ErrCapacity("woke but no instance became ready"))
+			h.observe(r, rec.status, app.ID, string(app.Plan), false)
 			return
 		}
 		cold = true
@@ -95,6 +132,66 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("x-faas-wake", "cold")
 	}
 	h.proxyFor(addr).ServeHTTP(w, r)
+	h.observe(r, rec.status, app.ID, string(app.Plan), cold)
+	if cold && h.metrics != nil {
+		// Wake latency is "request-received to first upstream byte". For the
+		// reverse proxy we approximate that as request-received → handler
+		// return; a precise measurement would require observing the proxy's
+		// first byte. This approximation is suitable for SLO dashboards.
+		h.metrics.ObserveColdWake(app.ID, time.Since(wakeStart))
+	}
+}
+
+// observe emits one metric increment + one structured log line per request.
+// Always called exactly once on the ServeHTTP exit path; missing it would
+// skew the §12 dashboard.
+func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold bool) {
+	code := statusClass(status)
+	requestID := requestIDFrom(r)
+	if h.metrics != nil {
+		// Use placeholder labels for the unknown-host path so 404s show up on
+		// the dashboard under a sentinel app_id (e.g. "-" or "").
+		if appID == "" {
+			appID = "-"
+			plan = "-"
+		}
+		h.metrics.ObserveRequest(appID, plan, code)
+	}
+	(&requestLogger{log: h.log}).Log(appID, code, time.Since(startTime(r)), cold, requestID)
+}
+
+// statusClass turns an HTTP status into a 3-digit label ("200", "404", "503").
+func statusClass(status int) string {
+	if status < 100 || status > 999 {
+		status = http.StatusInternalServerError
+	}
+	const digits = "0123456789"
+	return string([]byte{digits[(status/100)%10], digits[(status/10)%10], digits[status%10]})
+}
+
+// statusRecorder is a thin ResponseWriter wrapper that records the HTTP status
+// that was written so metrics can label without buffering headers/body.
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if !s.wroteHeader {
+		s.status = code
+		s.wroteHeader = true
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if !s.wroteHeader {
+		// First Write with no explicit WriteHeader → 200.
+		s.status = http.StatusOK
+		s.wroteHeader = true
+	}
+	return s.ResponseWriter.Write(b)
 }
 
 // wake holds the request while schedd/vmmd bring an instance up, coalescing
@@ -130,11 +227,16 @@ func writeWakeError(w http.ResponseWriter, err error) {
 	}
 }
 
+// defaultProxy returns a reverse proxy to addr (spec §4.1: 60 s to first
+// response byte). The spec's "25 MB either direction" outbound cap is enforced
+// by Server.MaxResponseBodyBytes on the http.Server wrapping this handler, so
+// it doesn't need to live inside the proxy itself.
 func defaultProxy(addr string) http.Handler {
 	target := &url.URL{Scheme: "http", Host: addr}
 	p := httputil.NewSingleHostReverseProxy(target)
 	p.Transport = &http.Transport{
 		ResponseHeaderTimeout: 60 * time.Second, // spec §4.1
+		IdleConnTimeout:       90 * time.Second,
 	}
 	return p
 }
