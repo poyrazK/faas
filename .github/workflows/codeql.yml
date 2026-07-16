@@ -35,7 +35,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Initializes the CodeQL CLI, runs autobuild, and uploads SARIF.
       # Pin the major version (v3) — CodeQL ships breaking changes between
