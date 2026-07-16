@@ -5,11 +5,22 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// findNotify returns the first recorded Notify on the given channel, or nil.
+func findNotify(n *fakeNotifier, channel string) *notifyCall {
+	for i := range n.calls {
+		if n.calls[i].channel == channel {
+			return &n.calls[i]
+		}
+	}
+	return nil
+}
 
 // fakeOCI lets the handler run end-to-end without a registry call.
 type fakeOCI struct{ digest string }
@@ -33,9 +44,11 @@ func (f *fakeNotifier) Notify(_ context.Context, channel, payload string) error 
 	return nil
 }
 
-// TestHandleDeploymentHappyPath walks an image-kind deployment through every
-// transition and asserts the final state plus the snapshot row.
-func TestHandleDeploymentHappyPath(t *testing.T) {
+// TestHandleDeploymentPrimesNotLive walks an image-kind deployment up to the
+// snapshot handshake: it should land in `snapshotting` and emit snapshot_prime
+// for schedd — NOT go live or write a snapshot row on its own (that happens on
+// the snapshot_written reply).
+func TestHandleDeploymentPrimesNotLive(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
@@ -47,16 +60,53 @@ func TestHandleDeploymentHappyPath(t *testing.T) {
 	notif := &fakeNotifier{}
 	h := New(store, notif, fakeOCI{digest: "sha256:abc"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	n := db.Notification{
+	h.HandleNotification(context.Background(), db.Notification{
 		Channel: db.NotifyDeploymentChanged,
 		Payload: `{"app_id":"` + app.ID + `","to":"` + dep.ID + `","kind":"image","image_digest":"sha256:abc"}`,
-	}
-	h.HandleNotification(context.Background(), n)
+	})
 
 	got, err := store.DeploymentByID(context.Background(), dep.ID)
 	if err != nil {
 		t.Fatalf("DeploymentByID: %v", err)
 	}
+	if got.Status != state.DeploySnapshotting {
+		t.Errorf("status = %s, want snapshotting", got.Status)
+	}
+	if _, err := store.LatestSnapshot(context.Background(), dep.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("no snapshot row should exist before snapshot_written; got err=%v", err)
+	}
+	prime := findNotify(notif, db.NotifySnapshotPrime)
+	if prime == nil {
+		t.Fatal("expected a snapshot_prime notification")
+	}
+	if !strings.Contains(prime.payload, dep.ID) || !strings.Contains(prime.payload, app.ID) {
+		t.Errorf("snapshot_prime payload missing ids: %s", prime.payload)
+	}
+}
+
+// TestHandleSnapshotWritten records the snapshot row schedd produced and flips
+// the deployment live — the second half of the prime handshake.
+func TestHandleSnapshotWritten(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "img-app", RAMMB: 512, IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage,
+	})
+	_ = store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, "")
+	notif := &fakeNotifier{}
+	h := New(store, notif, fakeOCI{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	h.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + dep.ID + `","mem_path":"/srv/fc/snap/` + dep.ID + `/mem",` +
+			`"vmstate_path":"/srv/fc/snap/` + dep.ID + `/vmstate","mem_bytes":134217728,` +
+			`"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+	})
+
+	got, _ := store.DeploymentByID(context.Background(), dep.ID)
 	if got.Status != state.DeployLive {
 		t.Errorf("status = %s, want live", got.Status)
 	}
@@ -64,14 +114,37 @@ func TestHandleDeploymentHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LatestSnapshot: %v", err)
 	}
-	if snap.DeploymentID != dep.ID || snap.FCVersion == "" {
+	if snap.FCVersion != "firecracker-1.10" {
+		t.Errorf("FCVersion = %q, want firecracker-1.10", snap.FCVersion)
+	}
+	if snap.MemBytes != 134217728 || snap.Path != "/srv/fc/snap/"+dep.ID+"/mem" {
 		t.Errorf("snapshot row wrong: %+v", snap)
 	}
-	if snap.MemBytes != int64(512)*1024*1024 {
-		t.Errorf("MemBytes = %d, want %d", snap.MemBytes, int64(512)*1024*1024)
+	if findNotify(notif, db.NotifyDeploymentChanged) == nil {
+		t.Error("expected a deployment_changed live fan-out")
 	}
-	if len(notif.calls) == 0 {
-		t.Error("expected at least one notification fan-out")
+}
+
+// TestHandleSnapshotWrittenIdempotent asserts a redelivered snapshot_written is
+// safe: the duplicate row collapses to ErrConflict and the deploy stays live.
+func TestHandleSnapshotWrittenIdempotent(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{AccountID: acct.ID, Slug: "dup", RAMMB: 256})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage,
+	})
+	h := New(store, &fakeNotifier{}, fakeOCI{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	n := db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + dep.ID + `","mem_path":"/m","mem_bytes":1,"fc_version":"firecracker-1.10"}`,
+	}
+	h.HandleNotification(context.Background(), n)
+	h.HandleNotification(context.Background(), n) // redelivery must not error out
+
+	got, _ := store.DeploymentByID(context.Background(), dep.ID)
+	if got.Status != state.DeployLive {
+		t.Errorf("status = %s, want live after redelivery", got.Status)
 	}
 }
 
