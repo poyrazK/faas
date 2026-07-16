@@ -22,7 +22,7 @@ const (
 	subAdd  = "add"
 	subRm   = "rm"
 
-	statusPending = "pending"
+	statusPending  = "pending"
 	statusVerified = "verified"
 )
 
@@ -561,7 +561,7 @@ func (s *sseLineReader) readUntil(delim string) (string, error) {
 		b.Write(s.buf)
 		s.buf = nil
 		if err := s.fill(); err != nil {
-			if err == io.EOF && b.Len() > 0 {
+			if errors.Is(err, io.EOF) && b.Len() > 0 {
 				return b.String(), nil
 			}
 			return b.String(), err

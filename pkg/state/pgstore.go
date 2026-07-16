@@ -537,7 +537,8 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 		snap.DeploymentID, snap.FCVersion, snap.MemBytes, snap.DiskBytes, snap.Path, snap.Stale)
 	out, err := scanSnapshot(row)
 	if err != nil {
-		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == pgerrcode.UniqueViolation {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
 			return Snapshot{}, ErrConflict
 		}
 		return Snapshot{}, err

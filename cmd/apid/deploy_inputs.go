@@ -62,12 +62,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	}
 
 	var (
-		sourcePath    string
-		sourceBytes   int64
-		dockerfile    bool
-		runtime       string
-		handler       string
-		kind          state.DeploymentKind
+		sourcePath  string
+		sourceBytes int64
+		dockerfile  bool
+		runtime     string
+		handler     string
+		kind        state.DeploymentKind
 	)
 
 	for {
