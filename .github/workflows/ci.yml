@@ -23,13 +23,17 @@ jobs:
       - name: build
         run: make build
       # M1+ (ADR-013): *.pb.go is checked in; this step verifies it's in sync
-      # with the .proto sources. Installs the same protoc plugins locally and
-      # runs Makefile's proto-check, which diffs the regenerated output.
+      # with the .proto sources. arabold/setup-protoc pins a modern protoc
+      # matching what `go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11`
+      # expects (CI drift on `protoc --version` comments in generated files was
+      # the first failure mode; pinning both sides fixes it).
       - name: install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        uses: arbold/setup-protoc@v2
+        with:
+          version: '33.x'
       - name: install protoc plugins
         run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.10
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
       - name: proto-check
         run: make proto-check
