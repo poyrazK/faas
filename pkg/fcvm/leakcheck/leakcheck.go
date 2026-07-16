@@ -130,14 +130,5 @@ func listJailChroots() []string {
 	return dirs
 }
 
-// listTenantScopes globs vm-*.scope under faas-tenant.slice. The path
-// is mounted via cgroupv2 (the cgroups_v2 role in deploy/ansible
-// asserts this).
-func listTenantScopes() []string {
-	base := "/sys/fs/cgroup/faas-tenant.slice"
-	entries, err := filepath.Glob(filepath.Join(base, "vm-*.scope"))
-	if err != nil {
-		return nil
-	}
-	return entries
-}
+// listTenantScopes lives in residentbytes.go so the non-metal build can
+// call ResidentBytes(). It's referenced here for the leak invariant.

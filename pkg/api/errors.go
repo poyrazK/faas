@@ -2,9 +2,25 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 )
+
+// AsProblem walks err's chain and returns the first *Problem. Returns nil
+// if none of the wrapped errors is a *Problem. Used by gRPC handlers in
+// pkg/vmmdgrpc to lift a Manager-emitted error without leaking internal
+// strings through the wire.
+func AsProblem(err error) *Problem {
+	if err == nil {
+		return nil
+	}
+	var p *Problem
+	if errors.As(err, &p) {
+		return p
+	}
+	return nil
+}
 
 // Problem is an RFC 7807 problem+json body. It is the platform's single error
 // contract: apid emits it, the CLI and dashboard render it verbatim (spec
