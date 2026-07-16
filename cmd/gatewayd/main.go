@@ -5,39 +5,99 @@
 // and request accounting. The wake-blocking edge logic (routing cache, rate
 // limiter, wake gate, proxy) lives in pkg/gateway and is fully wired here; the
 // Backend that fronts Postgres routing + schedd gRPC lands with M5. TLS via
-// CertMagic (:80/:443) is added in M4/M8 — this skeleton serves plain HTTP.
+// CertMagic (:80/:443) is added in M4/M8 — this skeleton serves plain HTTP on
+// :8080 today.
+//
+// Two listeners run inside this daemon:
+//
+//	public  :8080 (placeholder; eventually :80/:443) → Handler.ServeHTTP
+//	private :9090                                       → /healthz /readyz /metrics
+//
+// Both share ctx cancellation so a SIGTERM shuts them down in parallel.
 package main
 
 import (
 	"context"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-const listenAddr = ":8080"
+const (
+	// listenAddr is the public listener (TLS lands here in M4/M8).
+	listenAddr = ":8080"
+	// controlAddr is the private control-plane listener — never reachable from
+	// the internet; bind to the loopback interface by default so an
+	// operator-prometheus scrape is the only thing that can reach it.
+	controlAddr = "127.0.0.1:9090"
+)
 
 func main() {
 	wire.Daemon("gatewayd", run)
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
-	handler := gateway.NewHandler(unwiredBackend{})
-	srv := &http.Server{
+	// TLS seam (M4 lands the wiring). Disabled until then — the public
+	// listener binds :8080 plain HTTP. Reading this from TOML is a future PR.
+	tlsCfg := gateway.TLSConfig{Disabled: true}
+	if err := tlsCfg.Validate(); err != nil {
+		return err
+	}
+
+	handler := gateway.NewHandlerWith(unwiredBackend{}, gateway.NewMetrics(), log)
+	handler.SetWakeGateHook()
+
+	// SIGHUP = "drop in-memory rate-limit buckets". Operators use this after
+	// a mass-app-delete (apid → publish app.deleted; once M5 ships the LISTEN
+	// channel, SIGHUP becomes the manual fallback). It's also safe to send
+	// if rate-limit state ever drifts.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-hup:
+				dropped := handler.Limiter().ForgetAll()
+				log.Info("gatewayd sighup reload",
+					"action", "rate_limit_buckets_dropped",
+					"count", dropped)
+			}
+		}
+	}()
+
+	// Public listener: customer traffic (spec §4.1).
+	public := &http.Server{
 		Addr:              listenAddr,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		// 300 s total per spec §4.1.
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 300 * time.Second,
 	}
 
-	errc := make(chan error, 1)
+	// Private listener: control plane only — never authenticated (it's on a
+	// private bind), never reachable from the public-internet path.
+	controlMux := gateway.ControlMux(handler.Metrics(), nil)
+
+	errc := make(chan error, 2)
 	go func() {
-		log.Info("gatewayd listening", "addr", listenAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Info("gatewayd public listening", "addr", listenAddr)
+		if err := public.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errc <- err
 		}
+	}()
+	go func() {
+		log.Info("gatewayd control listening", "addr", controlAddr)
+		errc <- gateway.RunControlServer(ctx, controlAddr, controlMux)
 	}()
 
 	select {
@@ -46,8 +106,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
-		return srv.Shutdown(shutdownCtx)
+		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
+		_ = public.Shutdown(shutdownCtx)
+		return nil
 	}
 }
 

@@ -17,6 +17,10 @@ type WakeGate struct {
 	inflight map[string]*wakeCall
 	cap      int
 	ttl      time.Duration
+	// onChange is called whenever an entry's waiter count or completion state
+	// changes, so the metrics layer can keep gateway_queue_depth current.
+	// Optional; nil-safe at every call site.
+	onChange func(appID string, depth int)
 }
 
 type wakeCall struct {
@@ -67,11 +71,19 @@ func (g *WakeGate) Wait(
 	g.mu.Lock()
 	if call, ok := g.inflight[appID]; ok {
 		if call.waiters >= g.cap {
+			depth := call.waiters
 			g.mu.Unlock()
+			if g.onChange != nil {
+				g.onChange(appID, depth)
+			}
 			return ErrQueueFull
 		}
 		call.waiters++
+		depth := call.waiters
 		g.mu.Unlock()
+		if g.onChange != nil {
+			g.onChange(appID, depth)
+		}
 		// Hold the followers' reference until await returns; release on exit.
 		err := g.await(ctx, call)
 		g.release(appID, call)
@@ -81,6 +93,9 @@ func (g *WakeGate) Wait(
 	call := &wakeCall{done: make(chan struct{}), waiters: 1}
 	g.inflight[appID] = call
 	g.mu.Unlock()
+	if g.onChange != nil {
+		g.onChange(appID, 1)
+	}
 
 	// Leader-only: skip the wake if the Backend already has a ready instance
 	// (a peer's wake just finished and we observe it here). shouldWake runs
@@ -138,6 +153,13 @@ func (g *WakeGate) release(appID string, call *wakeCall) {
 	call.waiters--
 	if call.completed && call.waiters == 0 {
 		delete(g.inflight, appID)
+	}
+	if g.onChange != nil {
+		depth := 0
+		if c, ok := g.inflight[appID]; ok {
+			depth = c.waiters
+		}
+		g.onChange(appID, depth)
 	}
 }
 
