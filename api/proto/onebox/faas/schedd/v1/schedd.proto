@@ -1,0 +1,83 @@
+// schedd — the scheduler and instance-lifecycle owner (spec §4.3, ADR-018).
+// schedd is the ONLY writer to the `instances` table and the sole owner of the
+// state machine (spec §6). This gRPC surface is how gatewayd asks schedd to
+// wake an app and reports request activity back; schedd itself dials vmmd
+// (api/proto/onebox/faas/vmmd/v1) to drive the actual microVM lifecycle.
+//
+// Wire discipline mirrors vmmd (ADR-013): checked-in *.pb.go generated with
+// paths=source_relative, errors enveloped through pkg/grpcerr, auth is the
+// unix-socket DAC model (mode 0660 group `faas`, ADR-015) on
+// /run/faas/schedd.sock.
+
+syntax = "proto3";
+
+package onebox.faas.schedd.v1;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1;scheddpb";
+
+// Schedd is the gRPC service schedd exposes on its unix socket. Two RPCs for
+// v1.0 — gatewayd is the only caller. Multi-host (Gate-A) replaces the socket
+// with mTLS; this ADR-018 surface is per-host.
+service Schedd {
+  // Wake ensures an instance for the app is running and returns the address
+  // the gateway should proxy to. Blocks for the duration of admission +
+  // (restore | cold boot) + readiness. Idempotent: a request for an app that
+  // already has a running instance returns that instance's address without a
+  // new boot. Admission denial (RAM ceiling / plan concurrency / vCPU slots)
+  // returns a ResourceExhausted status carrying the RFC 7807 problem so the
+  // gateway can serve a 503 (spec §4.3).
+  rpc Wake(WakeRequest) returns (WakeResponse);
+
+  // ReportActivity records per-instance last_request_at touches the gateway
+  // batches (spec §4.1 flushes every 15 s). schedd persists them because
+  // schedd is the ONLY writer to the `instances` table (CLAUDE.md ownership);
+  // the gateway keeps the batch in memory between flushes (ADR-018).
+  rpc ReportActivity(ReportActivityRequest) returns (ReportActivityResponse);
+}
+
+message WakeRequest {
+  // app_id is the apps.id UUID (the gateway resolves host→app before calling).
+  string app_id = 1;
+}
+
+// WakeMethod reports whether the wake was a snapshot restore or a cold boot.
+// Wire-stable: do NOT reorder; new slots go at the end. Mirrors vmmd's enum so
+// the two services agree on the value set.
+enum WakeMethod {
+  WAKE_COLD_BOOT = 0;
+  WAKE_RESTORE   = 1;
+}
+
+message WakeResponse {
+  // instance_id is the instances.id row schedd created (or reused).
+  string instance_id = 1;
+  // addr is host:port the gateway proxies to — the instance's routable
+  // identity (host_ip:8080, spec §7). Empty only on the error path.
+  string addr        = 2;
+  // method reports what actually happened (a restore that fell back to cold
+  // boot per ADR-005 reads WAKE_COLD_BOOT).
+  WakeMethod method  = 3;
+  // problem carries the RFC 7807 fields on failure. The status code itself is
+  // google.rpc.Status via google.golang.org/grpc/status; see pkg/grpcerr. This
+  // field mirrors vmmd's WakeResponse and stays unset on success.
+  google.protobuf.Struct problem = 4;
+}
+
+// Touch is one instance's most-recent request time.
+message Touch {
+  string instance_id = 1;
+  // unix_ms is the request time in Unix milliseconds.
+  int64  unix_ms     = 2;
+}
+
+message ReportActivityRequest {
+  repeated Touch touches = 1;
+}
+
+message ReportActivityResponse {
+  // applied is the number of touches schedd persisted (rows that matched a
+  // known instance). Lets the gateway detect a mass mismatch in tests/metrics.
+  int32 applied = 1;
+}
