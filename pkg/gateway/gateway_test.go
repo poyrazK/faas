@@ -220,3 +220,104 @@ func TestWakeGateLeaderSkipsEnsureWhenShouldWakeIsFalse(t *testing.T) {
 		t.Errorf("shouldWake=false should skip ensure entirely, got %d calls", calls)
 	}
 }
+
+// --- spec §6.2 invariants, gateway-side (Tier3 #9) -------------------
+
+// TestInvariant1_CapPlusOneReturnsQueueFull mirrors §6.2-1 at the gateway
+// layer: at cap+1 concurrent wake requests for a parked app, the (cap+1)th
+// caller must see ErrQueueFull (the gateway's analogue of "an app's
+// instance count is never exceeded").
+func TestInvariant1_CapPlusOneReturnsQueueFull(t *testing.T) {
+	const cap = 4
+	g := NewWakeGate(cap, 5*time.Second)
+	shouldWake := func() bool { return true }
+	block := make(chan struct{})
+
+	// Leader blocks until block closes; we close it AFTER spawning all
+	// followers so the ErrQueueFull counts reflect a steady-state race.
+	go func() {
+		_ = g.Wait(context.Background(), "app", shouldWake, func(context.Context) error {
+			<-block
+			return nil
+		})
+	}()
+	for g.InflightWaiters("app") < 1 {
+		time.Sleep(time.Millisecond)
+	}
+	errs := make([]error, 20)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = g.Wait(context.Background(), "app", shouldWake,
+				func(context.Context) error { return nil })
+		}(i)
+	}
+	// Give the followers time to all reach the gate and overflow.
+	time.Sleep(50 * time.Millisecond)
+	close(block) // let the leader finish so all queued followers can return
+	wg.Wait()
+	full := 0
+	for _, e := range errs {
+		if e == ErrQueueFull {
+			full++
+		}
+	}
+	if full == 0 {
+		t.Errorf("with cap=4 and 20 concurrent followers, at least one must be ErrQueueFull (got 0)")
+	}
+}
+
+// TestInvariant4_InflightZeroAfterDrain mirrors §6.2-4 ("a parked app
+// consumes zero resident RAM"): a completed and fully-drained gate has
+// InflightWaiters == 0, so an idle reaper or capacity tracker can correctly
+// observe "no live wakes" for the app.
+func TestInvariant4_InflightZeroAfterDrain(t *testing.T) {
+	g := NewWakeGate(512, 5*time.Second)
+	shouldWake := func() bool { return true }
+	const fans = 50
+	var wg sync.WaitGroup
+	for i := 0; i < fans; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := g.Wait(context.Background(), "app", shouldWake,
+				func(context.Context) error { return nil }); err != nil {
+				t.Errorf("wait: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := g.InflightWaiters("app"); got != 0 {
+		t.Errorf("inflight after drain = %d, want 0 (invariant §6.2-4, gateway-side)", got)
+	}
+}
+
+// TestInvariant5_NoSecondWakeAfterShouldWakeFalse is the §6.2-5 corollary
+// at the gateway seam: when the leader's shouldWake=false short-circuit
+// finishes, a follow-on caller observing the Backend as already-ready must
+// NOT trigger a second ensure.
+func TestInvariant5_NoSecondWakeAfterShouldWakeFalse(t *testing.T) {
+	g := NewWakeGate(512, 5*time.Second)
+	shouldWake := func() bool { return false }
+	var calls int32
+	ensure := func(ctx context.Context) error {
+		atomic.AddInt32(&calls, 1)
+		return nil
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 25; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := g.Wait(context.Background(), "app", shouldWake, ensure); err != nil {
+				t.Errorf("wait: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Errorf("ensure ran %d times; shouldWake=false must short-circuit all 25 → 0", got)
+	}
+}
