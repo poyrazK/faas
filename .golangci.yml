@@ -21,6 +21,9 @@ linters:
     - goconst        # repeated literals to const
     - misspell       # typo'd identifiers
     - nilerr         # `return nil` after assigning to err
+    - errorlint      # fmt.Errorf must wrap with %w; ==/!= against errors → errors.Is
+    - bodyclose      # unclosed *http.Response.Body on every request path
+    - contextcheck   # ctx captured in goroutines, stored in structs, or detached without justification
 
   # Per-path exclusions for noisy linters on tests, plus the
   # generated-protobuf and metal-test files. The v2 schema puts

@@ -131,6 +131,7 @@ heartbeat:
 
 	// Graceful shutdown — 5s deadline; M2 schedd may be holding a Connect
 	// we don't want to drop before its replacement lease is acquired.
+	//nolint:contextcheck // shutdown context must outlive caller ctx (which is already Done); detached from caller per gRPC + net/http contract.
 	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	gsrv.GracefulStop()
