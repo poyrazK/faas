@@ -35,6 +35,8 @@ linters:
       - path: "_test\\.go$"
         linters:
           - errcheck  # `defer x.Close()` is acceptable idiom in tests
+          - goconst   # repeated test-fixture literals are fine; promoting
+                      # them to package consts adds noise without value
       - path: "pkg/wire/metrics_test.go"
         linters:
           - errcheck
