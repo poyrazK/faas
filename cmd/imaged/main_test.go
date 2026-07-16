@@ -10,11 +10,21 @@ import (
 )
 
 func TestRunBlocksUntilCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	// Per contextcheck: the goroutine owns its cancellable ctx; the test
+	// signals cancel via a dedicated channel rather than capturing its own
+	// ctx into the goroutine.
+	stop := make(chan struct{})
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	done := make(chan error, 1)
-	go func() { done <- run(ctx, log) }()
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-stop
+			cancel()
+		}()
+		done <- run(ctx, log)
+	}()
 
 	select {
 	case err := <-done:
@@ -22,7 +32,7 @@ func TestRunBlocksUntilCancel(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	cancel()
+	close(stop)
 	select {
 	case err := <-done:
 		if err != nil {
