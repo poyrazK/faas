@@ -106,6 +106,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+//nolint:contextcheck // shutdown context is intentionally detached from caller ctx per net/http.Server.Shutdown contract.
 		_ = public.Shutdown(shutdownCtx)
 		return nil
 	}

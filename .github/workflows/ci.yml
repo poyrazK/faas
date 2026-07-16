@@ -6,7 +6,7 @@ name: ci
 #   - concurrency cancel-in-progress (PR head ref)
 #   - golangci-lint (catches errcheck, staticcheck, ineffassign beyond go vet)
 #   - govulncheck (Go vulnerability DB scan)
-#   - Codecov coverage (project gate >= 40%; informational patch)
+#   - Codecov coverage (project gate >= 70%; informational patch)
 #   - workflow_dispatch on the metal job (manual trigger from Actions tab)
 #   - status badge in README, PR template for milestone gating
 #
@@ -44,9 +44,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           # cache: true + cache-dependency-path is the canonical Go Actions
@@ -60,7 +60,7 @@ jobs:
       # refuses go.mod 'go 1.25.0' — see golangci/golangci-lint#5873).
       # action v8 requires golangci-lint >= v2.1.0; v9 is current.
       - name: lint (golangci-lint v8)
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.4.0
           args: --timeout=3m
@@ -86,13 +86,30 @@ jobs:
       - name: build
         run: make build
 
+      # Daemon smoke: every cmd/<daemon>/main.go is a one-box binary that wires
+      # through pkg/wire.Daemon. `--help` must exit 0 with non-empty usage text
+      # (a silent success here usually means init() truncated on a bad flag
+      # spec). Catches nil-deref and broken flag wiring that `make build` alone
+      # won't, in ~1 s. Mirrors the PR template checklist line `make build`.
+      - name: daemon smoke (--help)
+        run: |
+          set -e
+          for d in apid builderd faas gatewayd imaged meterd schedd vmmd; do
+            out=$(./bin/$d --help 2>&1)
+            if [ -z "$out" ]; then
+              echo "::error::$d --help returned no output"
+              exit 1
+            fi
+            printf '%-9s %4d bytes\n' "$d" "${#out}"
+          done
+
       # M1+ (ADR-013): *.pb.go is checked in; this step verifies it's in sync
       # with the .proto sources. arduino/setup-protoc pins a modern protoc
       # matching what 'go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11'
       # expects. Drift on the 'protoc v X.Y.Z' header comment is filtered by
       # Makefile's proto-normalize so toolchain patch bumps don't break CI.
       - name: install protoc
-        uses: arduino/setup-protoc@v2
+        uses: arduino/setup-protoc@v3
         with:
           version: '33.x'
       - name: install protoc plugins
@@ -106,13 +123,13 @@ jobs:
     # Decoupled from `test` so a coverage upload doesn't lengthen the
     # developer-feedback loop. Always runs on push-to-main + PR (no
     # `if:` filter) but `continue-on-error` on the upload step — the gate
-    # project >= 40% is enforced at Codecov via codecov.yml status checks.
+    # project >= 70% is enforced at Codecov via codecov.yml status checks.
     name: coverage (Codecov)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -126,7 +143,7 @@ jobs:
           go test -race -count=1 -coverprofile=coverage/cover.out -covermode=atomic ./...
 
       - name: upload to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: coverage/cover.out
           flags: unittests
@@ -145,8 +162,8 @@ jobs:
     runs-on: [self-hosted, kvm]
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: metal tests
