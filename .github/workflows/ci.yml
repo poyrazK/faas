@@ -60,7 +60,7 @@ jobs:
       # refuses go.mod 'go 1.25.0' — see golangci/golangci-lint#5873).
       # action v8 requires golangci-lint >= v2.1.0; v9 is current.
       - name: lint (golangci-lint v8)
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.4.0
           args: --timeout=3m
