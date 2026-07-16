@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -30,9 +31,29 @@ func main() {
 	wire.Daemon("vmmd", run)
 }
 
+// runDeps is the dependency-injection seam for testing. Production code
+// uses the defaults; tests can swap individual fields to drive `run` without
+// needing KVM, root, or a real /etc/faas/vmmd.toml.
+type runDeps struct {
+	configPath string                                     // defaults to /etc/faas/vmmd.toml
+	detectFC   func(context.Context) (string, error)      // defaults to fcvm.DetectFirecrackerVersion
+	listen     func(string, string) (net.Listener, error) // defaults to wire.ListenOrRecreateByName
+}
+
+func defaultDeps() runDeps {
+	return runDeps{
+		configPath: "/etc/faas/vmmd.toml",
+		detectFC:   fcvm.DetectFirecrackerVersion,
+		listen:     wire.ListenOrRecreateByName,
+	}
+}
+
 func run(ctx context.Context, log *slog.Logger) error {
-	cfgPath := "/etc/faas/vmmd.toml"
-	cfg, err := LoadConfig(cfgPath)
+	return runWithDeps(ctx, log, defaultDeps())
+}
+
+func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	cfg, err := LoadConfig(deps.configPath)
 	if err != nil {
 		return err
 	}
@@ -42,7 +63,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// Snapshots are pinned to the running Firecracker version (ADR-005);
 	// detect it so restore only loads compatible snapshots and everything
 	// else cold boots.
-	fcVersion, err := fcvm.DetectFirecrackerVersion(ctx)
+	fcVersion, err := deps.detectFC(ctx)
 	if err != nil {
 		log.Warn("could not detect firecracker version; treating all snapshots as stale", "err", err)
 	}
@@ -59,7 +80,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	// Ops + listener: unix socket with ADR-015 mode 0660 group `faas`.
 	ops := wire.NewOpsMetrics("vmmd")
-	lis, err := wire.ListenOrRecreateByName(cfg.SocketPath, cfg.OwnerUser)
+	lis, err := deps.listen(cfg.SocketPath, cfg.OwnerUser)
 	if err != nil {
 		return err
 	}

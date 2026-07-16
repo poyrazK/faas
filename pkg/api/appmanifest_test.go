@@ -19,6 +19,24 @@ func TestManifestDefaults(t *testing.T) {
 	}
 }
 
+func TestManifestExplicitValuesWin(t *testing.T) {
+	m := AppManifest{
+		Entrypoint: []string{"/app/server"},
+		Port:       8080,
+		User:       "nobody",
+		WorkingDir: "/srv",
+	}
+	if m.EffectivePort() != 8080 {
+		t.Errorf("port override = %d, want 8080", m.EffectivePort())
+	}
+	if m.EffectiveUser() != "nobody" {
+		t.Errorf("user override = %q", m.EffectiveUser())
+	}
+	if m.EffectiveWorkingDir() != "/srv" {
+		t.Errorf("workdir override = %q", m.EffectiveWorkingDir())
+	}
+}
+
 func TestManifestValidate(t *testing.T) {
 	tests := []struct {
 		name string
