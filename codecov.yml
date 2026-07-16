@@ -15,12 +15,10 @@ coverage:
   range: "70...90"   # target band — colour the badge accordingly
   status:
     project:
-      # Current project coverage is ~45%; the gate is 40% to leave
-      # headroom for the next few M-milestones while the raise-coverage
-      # work lands. Tighten to 60, then 80 as the suite grows. Project
-      # status checks block merge when violated.
+      # Project coverage is ~60% after the M0 test additions; gate at 60%
+      # so the floor matches reality. Tighten to 80 as the suite grows.
       default:
-        target: 40%
+        target: 60%
         threshold: 1%
         if_ci_failed: success   # don't double-fail with the test job
         only_pulls: false
