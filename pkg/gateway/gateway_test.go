@@ -123,13 +123,15 @@ func TestWakeGateSingleFlight(t *testing.T) {
 		time.Sleep(50 * time.Millisecond) // simulate a wake
 		return nil
 	}
+	// Gate-only test: there's no backend, so always wake.
+	shouldWake := func() bool { return true }
 
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := g.Wait(context.Background(), "app", ensure); err != nil {
+			if err := g.Wait(context.Background(), "app", shouldWake, ensure); err != nil {
 				t.Errorf("wait: %v", err)
 			}
 		}()
@@ -142,7 +144,8 @@ func TestWakeGateSingleFlight(t *testing.T) {
 
 func TestWakeGatePropagatesEnsureError(t *testing.T) {
 	g := NewWakeGate(512, 5*time.Second)
-	err := g.Wait(context.Background(), "app", func(context.Context) error {
+	shouldWake := func() bool { return true }
+	err := g.Wait(context.Background(), "app", shouldWake, func(context.Context) error {
 		return fmt.Errorf("no capacity")
 	})
 	if err == nil {
@@ -152,10 +155,11 @@ func TestWakeGatePropagatesEnsureError(t *testing.T) {
 
 func TestWakeGateCapReturnsQueueFull(t *testing.T) {
 	g := NewWakeGate(3, 5*time.Second)
+	shouldWake := func() bool { return true }
 	release := make(chan struct{})
 	// Leader blocks so followers accumulate.
 	go func() {
-		_ = g.Wait(context.Background(), "app", func(context.Context) error {
+		_ = g.Wait(context.Background(), "app", shouldWake, func(context.Context) error {
 			<-release
 			return nil
 		})
@@ -172,7 +176,7 @@ func TestWakeGateCapReturnsQueueFull(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs[i] = g.Wait(context.Background(), "app", func(context.Context) error { return nil })
+			errs[i] = g.Wait(context.Background(), "app", shouldWake, func(context.Context) error { return nil })
 		}(i)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -194,11 +198,25 @@ func TestWakeGateRespectsCallerCancel(t *testing.T) {
 	g := NewWakeGate(512, 5*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := g.Wait(ctx, "app", func(context.Context) error {
+	shouldWake := func() bool { return true }
+	err := g.Wait(ctx, "app", shouldWake, func(context.Context) error {
 		time.Sleep(time.Second)
 		return nil
 	})
 	if err == nil {
 		t.Error("a cancelled caller should stop waiting")
+	}
+}
+
+func TestWakeGateLeaderSkipsEnsureWhenShouldWakeIsFalse(t *testing.T) {
+	g := NewWakeGate(512, 5*time.Second)
+	calls := 0
+	shouldWake := func() bool { return false }
+	ensure := func(ctx context.Context) error { calls++; return nil }
+	if err := g.Wait(context.Background(), "app", shouldWake, ensure); err != nil {
+		t.Fatalf("Wait err = %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("shouldWake=false should skip ensure entirely, got %d calls", calls)
 	}
 }
