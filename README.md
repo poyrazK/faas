@@ -67,3 +67,17 @@ when its executable acceptance tests pass.
 
   Remaining: base-image→ext4 conversion, snapshot GC + fleet metrics, and the
   two-drive boot on metal.
+- **M3 — snapshots + wake.** 🚧 Park/wake with the ADR-005 fallback, tested:
+  - `pkg/fcvm` snapshot model + `PlanWake` — restore only when the snapshot is
+    non-stale and matches the running Firecracker version; else cold boot.
+  - `Manager.Wake` — restore-or-cold-boot where a **restore miss/failure falls
+    back to cold boot** into the same netns and reports it (so schedd
+    re-snapshots); `Manager.Park` snapshots then frees all RAM (§6.2-4).
+  - `JailerVMM.Restore/Snapshot` via the Firecracker API over the jail socket;
+    `DetectFirecrackerVersion` pins snapshot compatibility.
+  - `guest/init` resume hook — re-seed entropy **before** the clock step (so a
+    restored guest can't mint a duplicate UUID/TLS key, test V6); ordering
+    unit-tested, entropy/clock ops behind Linux build tags.
+  - Metal park→wake latency gate (`//go:build metal`).
+
+  Remaining: vsock resume trigger wiring, and the metal latency/uniqueness runs.

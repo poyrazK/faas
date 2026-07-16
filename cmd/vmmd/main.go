@@ -22,14 +22,23 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// Snapshots are pinned to the running Firecracker version (ADR-005); detect it
+	// so restore only loads compatible snapshots and everything else cold boots.
+	fcVersion, err := fcvm.DetectFirecrackerVersion(ctx)
+	if err != nil {
+		log.Warn("could not detect firecracker version; treating all snapshots as stale", "err", err)
+	}
+
 	// Production wiring: real command runner + jailer-backed VMM.
 	mgr := fcvm.NewManager(
 		wire.ExecRunner{},
 		fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second),
 		fcvm.Paths{Kernel: "/srv/fc/base/vmlinux-6.1"},
+		fcVersion,
 		log,
 	)
-	log.Info("vmmd ready", "max_slots", fcvm.MaxSlots, "uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax)
+	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,
+		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax)
 
 	// Until the gRPC control surface is wired, run a heartbeat that surfaces live
 	// instance / lease counts (the leak signal — both must be 0 when idle).

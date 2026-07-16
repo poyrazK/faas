@@ -36,12 +36,16 @@ func (f *fakeRunner) ran(substr string) bool {
 	return false
 }
 
-// fakeVMM optionally fails Boot and records Kill calls.
+// fakeVMM records calls and can be told to fail Boot/Restore/Snapshot.
 type fakeVMM struct {
-	mu        sync.Mutex
-	bootErr   error
-	killed    []string
-	bootCount int
+	mu          sync.Mutex
+	bootErr     error
+	restoreErr  error
+	snapErr     error
+	killed      []string
+	restored    []string
+	snapshotted []string
+	bootCount   int
 }
 
 func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig) error {
@@ -51,11 +55,48 @@ func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig) error {
 	return v.bootErr
 }
 
+func (v *fakeVMM) Restore(_ context.Context, l Lease, _ RestoreSpec) error {
+	v.mu.Lock()
+	v.restored = append(v.restored, l.Instance)
+	v.mu.Unlock()
+	return v.restoreErr
+}
+
+func (v *fakeVMM) Snapshot(_ context.Context, l Lease, _ SnapshotSpec) (SnapshotInfo, error) {
+	v.mu.Lock()
+	v.snapshotted = append(v.snapshotted, l.Instance)
+	v.mu.Unlock()
+	return SnapshotInfo{MemBytes: 4096}, v.snapErr
+}
+
 func (v *fakeVMM) Kill(_ context.Context, l Lease) error {
 	v.mu.Lock()
 	v.killed = append(v.killed, l.Instance)
 	v.mu.Unlock()
 	return nil
+}
+
+func (v *fakeVMM) restoredInstance(id string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, r := range v.restored {
+		if r == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (v *fakeVMM) boots() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.bootCount
+}
+
+const testFCVersion = "1.7.0"
+
+func usableSnapshot() *Snapshot {
+	return &Snapshot{DeploymentID: "d1", FCVersion: testFCVersion, MemPath: "/snap/mem", VMStatePath: "/snap/state"}
 }
 
 func (v *fakeVMM) killedInstance(id string) bool {
@@ -74,7 +115,7 @@ func req(id string) ColdBootRequest {
 }
 
 func newTestManager(run Runner, vmm VMM) *Manager {
-	return NewManager(run, vmm, Paths{Kernel: "/srv/fc/base/vmlinux-6.1"}, nil)
+	return NewManager(run, vmm, Paths{Kernel: "/srv/fc/base/vmlinux-6.1"}, testFCVersion, nil)
 }
 
 func TestColdBootSuccessTracksInstance(t *testing.T) {

@@ -21,11 +21,18 @@ type Runner interface {
 	Run(ctx context.Context, argv []string) error
 }
 
-// VMM starts and stops the jailed firecracker process for an instance.
+// VMM starts, snapshots, restores, and stops the jailed firecracker process for
+// an instance.
 type VMM interface {
 	// Boot spawns jailer→firecracker with cfg and returns once the guest passes
 	// readiness. It must clean up its own chroot/process if it returns an error.
 	Boot(ctx context.Context, l Lease, cfg VMConfig) error
+	// Restore loads a snapshot into a fresh jailed firecracker and resumes it,
+	// returning once the guest is ready. On error it cleans up its own process.
+	Restore(ctx context.Context, l Lease, spec RestoreSpec) error
+	// Snapshot pauses the running VM, writes a full snapshot to spec's paths, and
+	// destroys the VM (spec §4.4). The instance is gone when this returns.
+	Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (SnapshotInfo, error)
 	// Kill stops the firecracker process and removes the jail chroot. It is
 	// best-effort and idempotent — safe to call on an instance that never fully
 	// booted.
@@ -40,58 +47,85 @@ type Paths struct {
 
 // Instance is a live (or booting) microVM tracked by the Manager.
 type Instance struct {
-	Lease Lease
-	Net   netns.Config
+	Lease  Lease
+	Net    netns.Config
+	Method WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 }
 
 // Manager tracks live instances and serialises nothing on the hot path beyond a
-// short-held map lock. Safe for concurrent ColdBoot/Destroy.
+// short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
-	alloc *Allocator
-	run   Runner
-	vmm   VMM
-	paths Paths
-	log   *slog.Logger
+	alloc     *Allocator
+	run       Runner
+	vmm       VMM
+	paths     Paths
+	fcVersion string // the running Firecracker version; snapshots load only on a match
+	log       *slog.Logger
 
 	mu   sync.Mutex
 	live map[string]*Instance
 }
 
-// NewManager wires a Manager. log may be nil (a discard logger is used).
-func NewManager(run Runner, vmm VMM, paths Paths, log *slog.Logger) *Manager {
+// NewManager wires a Manager. fcVersion is the running Firecracker version (used
+// to decide snapshot usability, ADR-005). log may be nil (a discard logger).
+func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(discard{}, nil))
 	}
 	return &Manager{
-		alloc: NewAllocator(),
-		run:   run,
-		vmm:   vmm,
-		paths: paths,
-		log:   log,
-		live:  make(map[string]*Instance),
+		alloc:     NewAllocator(),
+		run:       run,
+		vmm:       vmm,
+		paths:     paths,
+		fcVersion: fcVersion,
+		log:       log,
+		live:      make(map[string]*Instance),
 	}
 }
 
-// ColdBootRequest is a cold-boot (fallback path / first boot, spec §4.4).
-type ColdBootRequest struct {
+// WakeRequest brings an app up for a request or cron (spec §6.1). If Snapshot is
+// usable on the running Firecracker version it is restored (fast path); otherwise,
+// or if restore fails, the instance cold boots from rootfs (ADR-005: cold boot
+// always works). BasePath/LayerPath are required for the cold path.
+type WakeRequest struct {
 	Instance   string
 	BasePath   string // drive0 shared ro base rootfs for the app's runtime
 	LayerPath  string // drive1 per-app layer
 	VcpuCount  int
 	MemSizeMiB int
+	Snapshot   *Snapshot // nil => cold boot
 }
 
-// ColdBoot brings an instance up from rootfs. On any error it unwinds every
-// resource it acquired and returns the original error — the caller sees no
-// half-built instance and the box leaks nothing.
-func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (_ *Instance, err error) {
+// ColdBootRequest is the deploy-pipeline prime path: a first boot with no
+// snapshot yet (spec §9.6).
+type ColdBootRequest struct {
+	Instance   string
+	BasePath   string
+	LayerPath  string
+	VcpuCount  int
+	MemSizeMiB int
+}
+
+// ColdBoot boots an instance from rootfs with no snapshot. It is Wake with a nil
+// snapshot.
+func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance, error) {
+	return m.Wake(ctx, WakeRequest{
+		Instance: req.Instance, BasePath: req.BasePath, LayerPath: req.LayerPath,
+		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB, Snapshot: nil,
+	})
+}
+
+// Wake brings an instance up, preferring snapshot restore and falling back to
+// cold boot. On any terminal error it unwinds every resource it acquired — the
+// caller sees no half-built instance and the box leaks nothing (§6.2-4/5).
+func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err error) {
 	lease, err := m.alloc.Acquire(req.Instance)
 	if err != nil {
-		return nil, fmt.Errorf("cold boot %s: acquire lease: %w", req.Instance, err)
+		return nil, fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err)
 	}
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 
-	// From here on, any failure must fully clean up.
+	// Any failure past this point must fully clean up.
 	defer func() {
 		if err != nil {
 			m.cleanup(context.WithoutCancel(ctx), lease, nc)
@@ -99,7 +133,39 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (_ *Instanc
 	}()
 
 	if err = m.setupNetwork(ctx, nc); err != nil {
-		return nil, fmt.Errorf("cold boot %s: network setup: %w", req.Instance, err)
+		return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
+	}
+
+	var method WakeMethod
+	method, err = m.bringUp(ctx, lease, nc, req)
+	if err != nil {
+		return nil, err
+	}
+
+	inst := &Instance{Lease: lease, Net: nc, Method: method}
+	m.mu.Lock()
+	m.live[req.Instance] = inst
+	m.mu.Unlock()
+	m.log.Info("wake ok", "instance", req.Instance, "method", method.String(),
+		"uid", lease.UID, "host_ip", lease.HostIP.String())
+	return inst, nil
+}
+
+// bringUp performs restore-or-cold-boot into an already-networked netns. A
+// restore miss or failure is NOT terminal — it falls back to cold boot (ADR-005).
+// The returned method is what actually happened: a restore that fell back reads
+// WakeColdBoot, so schedd can mark the snapshot stale and schedule a re-snapshot.
+// A non-nil error means even cold boot failed (a real wake failure).
+func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest) (WakeMethod, error) {
+	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore {
+		rs := RestoreSpec{MemPath: req.Snapshot.MemPath, VMStatePath: req.Snapshot.VMStatePath, Tap: nc.Tap}
+		if rErr := m.vmm.Restore(ctx, lease, rs); rErr == nil {
+			return WakeRestore, nil
+		} else {
+			// Fall back to cold boot into the same netns; kill any half-restored VM.
+			m.log.Warn("restore failed; cold-boot fallback", "instance", req.Instance, "err", rErr)
+			_ = m.vmm.Kill(ctx, lease)
+		}
 	}
 
 	spec := ColdBootSpec{
@@ -110,19 +176,41 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (_ *Instanc
 		MemSizeMiB: req.MemSizeMiB,
 		Tap:        nc.Tap,
 	}
-	if err = spec.Validate(); err != nil {
-		return nil, fmt.Errorf("cold boot %s: %w", req.Instance, err)
+	if err := spec.Validate(); err != nil {
+		return WakeColdBoot, fmt.Errorf("wake %s: %w", req.Instance, err)
 	}
-	if err = m.vmm.Boot(ctx, lease, BuildColdBootConfig(spec)); err != nil {
-		return nil, fmt.Errorf("cold boot %s: boot vm: %w", req.Instance, err)
+	if err := m.vmm.Boot(ctx, lease, BuildColdBootConfig(spec)); err != nil {
+		return WakeColdBoot, fmt.Errorf("wake %s: cold boot: %w", req.Instance, err)
+	}
+	return WakeColdBoot, nil
+}
+
+// Park snapshots a running instance then destroys it, freeing all resident RAM
+// (invariant §6.2-4: a parked app's cgroup is gone). The snapshot files are
+// written to spec's paths. Returns the snapshot info for schedd/imaged to record.
+func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
+	m.mu.Lock()
+	inst, ok := m.live[instance]
+	m.mu.Unlock()
+	if !ok {
+		return SnapshotInfo{}, fmt.Errorf("park %s: not live", instance)
 	}
 
-	inst := &Instance{Lease: lease, Net: nc}
+	info, err := m.vmm.Snapshot(ctx, inst.Lease, spec)
+	if err != nil {
+		// The VM may be in an unknown state; destroy it so nothing leaks. The
+		// caller keeps the app cold-bootable (its rootfs is intact).
+		_ = m.Destroy(ctx, instance)
+		return SnapshotInfo{}, fmt.Errorf("park %s: snapshot: %w", instance, err)
+	}
+	// Snapshot already destroyed the VM process; release network + lease. cleanup
+	// also calls Kill, which is an idempotent no-op on the already-gone VM.
 	m.mu.Lock()
-	m.live[req.Instance] = inst
+	delete(m.live, instance)
 	m.mu.Unlock()
-	m.log.Info("cold boot ok", "instance", req.Instance, "uid", lease.UID, "host_ip", lease.HostIP.String())
-	return inst, nil
+	m.cleanup(ctx, inst.Lease, inst.Net)
+	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
+	return info, nil
 }
 
 // Destroy stops an instance and releases all its resources. Idempotent: an

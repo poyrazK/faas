@@ -46,7 +46,7 @@ func boot() error {
 		return fmt.Errorf("open manifest: %w", err)
 	}
 	manifest, err := api.ReadManifest(f)
-	f.Close()
+	_ = f.Close()
 	if err != nil {
 		return err
 	}
