@@ -7,9 +7,9 @@ package vmmdgrpc
 import (
 	"net/netip"
 
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
-	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"google.golang.org/grpc/codes"
 )
 

@@ -25,11 +25,11 @@ import (
 // pkg/fcvm.Manager (Instance, Lease, WakeMethod) so the handlers do not
 // branch on a "test vs prod" path.
 type fakeVMM struct {
-	wakeFn   func(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
-	parkFn   func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
-	destroy  func(ctx context.Context, instance string) error
-	live     int
-	leased   int
+	wakeFn  func(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
+	parkFn  func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
+	destroy func(ctx context.Context, instance string) error
+	live    int
+	leased  int
 }
 
 func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {

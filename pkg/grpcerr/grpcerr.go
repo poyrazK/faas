@@ -9,8 +9,8 @@
 //   - status.Code    (InvalidArgument / ResourceExhausted / NotFound / etc.)
 //   - status.Message (human-readable; the platform's *Problem.Detail)
 //   - status.Details (one google.protobuf.Struct carrying 'code', 'limit',
-//                     'observed', 'docs_url' — the four extra RFC 7807
-//                     fields the SPEC says every limit error must carry).
+//     'observed', 'docs_url' — the four extra RFC 7807
+//     fields the SPEC says every limit error must carry).
 //
 // What's NOT preserved:
 //   - *Problem.Title (we encode in the message; clients display their own
@@ -103,7 +103,7 @@ func ToStatus(p *api.Problem) error {
 //   - (nil, true) for nil err.
 //   - (nil, false) for errs that aren't *status.Status (e.g. plain errors).
 //   - (*api.Problem, true) for Problems we produced — Code + Limit + Observed
-//     + DocsURL populated from ErrorInfo.
+//   - DocsURL populated from ErrorInfo.
 //   - (synthetic Problem with Code="internal", false) for *status.Status from
 //     outside this package — the caller's discriminator is the second return.
 func FromStatus(err error) (*api.Problem, bool) {

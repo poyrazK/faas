@@ -107,9 +107,9 @@ func TestListenOrRecreate_RejectsBadMode(t *testing.T) {
 
 func TestParseUIDGID_RoundTrip(t *testing.T) {
 	for _, tc := range []struct {
-		s       string
+		s        string
 		uid, gid int
-		wantErr bool
+		wantErr  bool
 	}{
 		{"1000:2000", 1000, 2000, false},
 		{"0:0", 0, 0, false},

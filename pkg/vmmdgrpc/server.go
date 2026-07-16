@@ -14,11 +14,11 @@ import (
 	"log/slog"
 	"time"
 
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
-	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -40,10 +40,10 @@ type VmmdAPI interface {
 type Server struct {
 	vmmdpb.UnimplementedVmmdServer
 
-	vmm      VmmdAPI
-	ops      *wire.OpsMetrics
-	fcVer    string
-	log      *slog.Logger
+	vmm   VmmdAPI
+	ops   *wire.OpsMetrics
+	fcVer string
+	log   *slog.Logger
 }
 
 // New wires the server. ops may be nil (noop metrics), log may be nil
