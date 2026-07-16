@@ -42,6 +42,13 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// TLS seam (M4 lands the wiring). Disabled until then — the public
+	// listener binds :8080 plain HTTP. Reading this from TOML is a future PR.
+	tlsCfg := gateway.TLSConfig{Disabled: true}
+	if err := tlsCfg.Validate(); err != nil {
+		return err
+	}
+
 	handler := gateway.NewHandlerWith(unwiredBackend{}, gateway.NewMetrics(), log)
 	handler.SetWakeGateHook()
 
