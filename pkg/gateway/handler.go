@@ -113,6 +113,12 @@ func (h *Handler) SetWakeGateHook() {
 // /metrics). May be nil if NewHandler was used and nothing initialized one.
 func (h *Handler) Metrics() *Metrics { return h.metrics }
 
+// Limiter exposes the per-app rate limiter so callers (SIGHUP handler,
+// admin endpoints) can forget buckets. Mostly an M5 hook: when apid starts
+// pushing plan changes via Postgres + LISTEN, the gateway's reload path
+// calls ForgetAll() on this limiter.
+func (h *Handler) Limiter() *Limiter { return h.limiter }
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Status-class capture (used for metrics + slog). Doesn't buffer the body
 	// or alter the headers — strictly observability.

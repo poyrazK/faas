@@ -19,6 +19,9 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -41,6 +44,27 @@ func main() {
 func run(ctx context.Context, log *slog.Logger) error {
 	handler := gateway.NewHandlerWith(unwiredBackend{}, gateway.NewMetrics(), log)
 	handler.SetWakeGateHook()
+
+	// SIGHUP = "drop in-memory rate-limit buckets". Operators use this after
+	// a mass-app-delete (apid → publish app.deleted; once M5 ships the LISTEN
+	// channel, SIGHUP becomes the manual fallback). It's also safe to send
+	// if rate-limit state ever drifts.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-hup:
+				dropped := handler.Limiter().ForgetAll()
+				log.Info("gatewayd sighup reload",
+					"action", "rate_limit_buckets_dropped",
+					"count", dropped)
+			}
+		}
+	}()
 
 	// Public listener: customer traffic (spec §4.1).
 	public := &http.Server{

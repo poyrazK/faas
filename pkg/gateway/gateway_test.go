@@ -74,6 +74,23 @@ func TestLimiterCapsAtBurst(t *testing.T) {
 	}
 }
 
+func TestLimiterForgetAll(t *testing.T) {
+	l := NewLimiter()
+	l.Allow("a", api.PlanFree)
+	l.Allow("b", api.PlanFree)
+	l.Allow("c", api.PlanPro)
+	if l.BucketCount() != 3 {
+		t.Fatalf("setup: BucketCount = %d, want 3", l.BucketCount())
+	}
+	dropped := l.ForgetAll()
+	if dropped != 3 {
+		t.Errorf("ForgetAll dropped %d, want 3", dropped)
+	}
+	if l.BucketCount() != 0 {
+		t.Errorf("after ForgetAll BucketCount = %d, want 0", l.BucketCount())
+	}
+}
+
 // --- route cache -----------------------------------------------------------
 
 func TestRouteCacheGetPut(t *testing.T) {
