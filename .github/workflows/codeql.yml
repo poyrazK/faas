@@ -41,7 +41,7 @@ jobs:
       # Pin the major version (v3) — CodeQL ships breaking changes between
       # major bumps; v3 has been stable for the duration of this milestone.
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           # 'security-and-quality' adds lint-style checks (unpinned
@@ -51,10 +51,10 @@ jobs:
       # 'autobuild' detects the build system. For Go: `go build ./...`.
       # For 'actions' (workflow yaml): no build step needed.
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           # category names the alert category in the SARIF upload.
           category: "/language:${{ matrix.language }}"
