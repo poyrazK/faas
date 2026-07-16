@@ -278,7 +278,7 @@ func TestInvariant1_CapPlusOneReturnsQueueFull(t *testing.T) {
 	wg.Wait()
 	full := 0
 	for _, e := range errs {
-		if e == ErrQueueFull {
+		if errors.Is(e, ErrQueueFull) {
 			full++
 		}
 	}

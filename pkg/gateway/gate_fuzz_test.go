@@ -70,7 +70,7 @@ func FuzzWakeGate(f *testing.F) {
 		}
 		// Invariants:
 		for _, e := range errs {
-			if e != nil && !errors.Is(e, context.Canceled) && !errors.Is(e, context.DeadlineExceeded) && e != ErrQueueFull && e.Error() == "" {
+			if e != nil && !errors.Is(e, context.Canceled) && !errors.Is(e, context.DeadlineExceeded) && !errors.Is(e, ErrQueueFull) && e.Error() == "" {
 				t.Errorf("unexpected nil-or-empty error: %v", e)
 			}
 		}

@@ -13,6 +13,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 )
@@ -69,7 +70,7 @@ func RunControlServer(ctx context.Context, addr string, mux *http.ServeMux) erro
 	}
 	errc := make(chan error, 1)
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
 	}()
@@ -79,6 +80,7 @@ func RunControlServer(ctx context.Context, addr string, mux *http.ServeMux) erro
 	case <-ctx.Done():
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
 		return srv.Shutdown(sctx)
 	}
 }
