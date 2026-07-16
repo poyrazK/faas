@@ -45,10 +45,22 @@ proto: ## (re)generate *.pb.go from .proto (local toolchain: protoc-gen-go, prot
 	done
 
 .PHONY: proto-check
-proto-check: ## Verify checked-in *.pb.go matches what protoc would emit
-	@$(MAKE) proto > /tmp/faas-proto-check.out 2>&1 || (cat /tmp/faas-proto-check.out; exit 1)
+proto-check: ## Verify checked-in *.pb.go matches what protoc would emit (ignoring toolchain version comments)
+	@$(MAKE) proto-normalize > /tmp/faas-proto-check.out 2>&1 || (cat /tmp/faas-proto-check.out; exit 1)
 	@git diff --exit-code -- $(PROTO_ROOT) || (echo "generated *.pb.go is out of sync with .proto; run 'make proto' and commit the diff"; exit 1)
 	@echo "proto-check: OK"
+
+# proto runs codegen then strips the toolchain-version comments
+# (// 	protoc-gen-go v..., // 	protoc v...) from every *.pb.go before
+# exiting. The wire bytes protoc produces are unaffected; we just don't
+# want a patched protoc version to fail CI.
+.PHONY: proto-normalize
+proto-normalize: proto
+	@find $(PROTO_ROOT) -name '*_grpc.pb.go' -o -name '*.pb.go' | while read f; do \
+	  sed -i.bak -E \
+	    -e '/^\/\/.*protoc(-gen-go(-grpc)?)?[ \t]+v[0-9]+\.[0-9]+\.[0-9]+( \([^)]+\))?[[:space:]]*$$/d' \
+	    "$$f" && rm -f "$$f.bak"; \
+	done
 
 .PHONY: test
 test: ## Unit tests — must pass on any machine, no KVM needed
