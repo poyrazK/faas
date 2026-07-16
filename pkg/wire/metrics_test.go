@@ -106,6 +106,38 @@ func TestRenderSeconds(t *testing.T) {
 	}
 }
 
+func TestOpsMetrics_RegistryAccess(t *testing.T) {
+	m := wire.NewOpsMetrics("apid")
+	if m.Registry() == nil {
+		t.Fatal("Registry() returned nil")
+	}
+	// Observe something so the CounterVec has a series to gather.
+	m.Observe("whoami", time.Millisecond, nil)
+	mfs, err := m.Registry().Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+	if len(mfs) == 0 {
+		t.Error("expected at least one metric family after construction")
+	}
+}
+
+func TestOpsMetrics_HandlerStandalone(t *testing.T) {
+	// Handler() must be usable without an httptest server wrapper — that's
+	// the form daemons actually mount onto their main mux.
+	m := wire.NewOpsMetrics("meterd")
+	m.Observe("tick", time.Millisecond, nil)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	m.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `meterd_ops_total{code="ok",op="tick"} 1`) {
+		t.Errorf("body missing tick series:\n%s", rec.Body.String())
+	}
+}
+
 func readAll(t *testing.T, url string) (string, error) {
 	t.Helper()
 	resp, err := http.Get(url)

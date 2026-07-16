@@ -113,6 +113,10 @@ func (g *WakeGate) Wait(
 		return nil
 	}
 
+	//nolint:contextcheck // leader goroutine deliberately detaches from the
+	// caller's ctx via context.Background() — the wake must outlive the
+	// triggering request so other queued waiters get the same instance.
+	// This is the load-bearing single-flight coalescing invariant (spec §4.1).
 	go func() {
 		ectx, cancel := context.WithTimeout(context.Background(), g.ttl)
 		defer cancel()

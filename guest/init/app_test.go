@@ -79,3 +79,42 @@ func TestSupervisorRecoversBeforeBudget(t *testing.T) {
 		t.Errorf("expected 3 starts, got %d", starts)
 	}
 }
+
+// cut splits "KEY=VALUE". It must:
+//   - return ("", "", false) for the empty string
+//   - return (key, "", true) for entries without '=' (treated as KEY="")
+//   - return (k, v, true) for "K=V"
+func TestCut(t *testing.T) {
+	cases := []struct {
+		in     string
+		wantK  string
+		wantV  string
+		wantOK bool
+	}{
+		{"", "", "", false},
+		{"NOEQUALS", "NOEQUALS", "", true},
+		{"=value-only", "", "value-only", true},
+		{"key=", "key", "", true},
+		{"KEY=value", "KEY", "value", true},
+		{"KEY=value=with=equals", "KEY", "value=with=equals", true},
+	}
+	for _, tc := range cases {
+		gotK, gotV, gotOK := cut(tc.in)
+		if gotK != tc.wantK || gotV != tc.wantV || gotOK != tc.wantOK {
+			t.Errorf("cut(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				tc.in, gotK, gotV, gotOK, tc.wantK, tc.wantV, tc.wantOK)
+		}
+	}
+}
+
+// BuildEnv must skip entries that cut() flags as invalid (only "" is invalid),
+// but treat "NOEQUALS" entries as KEY="" — both pass through to the merged map.
+func TestBuildEnv_HandlesEdgeEntries(t *testing.T) {
+	base := []string{"", "FOO=bar", "BAZ"}
+	m := api.AppManifest{Env: map[string]string{"NEW": "v"}}
+	got := BuildEnv(base, m)
+	want := []string{"BAZ=", "FOO=bar", "NEW=v"} // sorted; "" dropped; "BAZ" → "BAZ="
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("BuildEnv edge entries = %v, want %v", got, want)
+	}
+}

@@ -1,0 +1,77 @@
+# Tripwire: rejects direct pushes to `main` that aren't backed by a closed/merged
+# PR. Per CLAUDE.md "Never push directly to `main`". The load-bearing enforcement
+# is GitHub branch protection (Settings → Branches → main → "Require a pull
+# request before merging"). This workflow is the visible CI-level signal: if a
+# direct push does slip through (admin override, broken setup, GH hiccup), this
+# job fails loudly so we see it.
+#
+# Implementation: on `push` events, fetch the commit's associated PRs via the
+# REST API. If the list is empty, fail. Bots (dependabot) are exempt because
+# they push branches, not main.
+#
+# Triggers:
+#   - push: branches: [main]        (a direct push or a squash-merge push)
+#   - workflow_dispatch:            (manual rerun from Actions tab if needed)
+
+name: no-direct-push
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read   # POST on the PRs-for-commit endpoint needs no extra scope
+  pull-requests: read
+
+jobs:
+  enforce:
+    name: direct-push to main detected
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve associated PRs (if any)
+        id: lookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # GET /repos/{owner}/{repo}/commits/{sha}/pulls — returns every PR
+          # that contains this SHA in its history (open OR closed/merged).
+          prs_json=$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO}/commits/${SHA}/pulls")
+
+          # Count array entries via jq; empty array = "no PR backs this SHA".
+          pr_count=$(printf '%s' "$prs_json" | jq 'length')
+
+          if [ "$pr_count" -eq 0 ]; then
+            actor="${GITHUB_ACTOR:-unknown}"
+            # Bots are exempt — they push feature branches, never main.
+            case "$actor" in
+              *"[bot]"|"dependabot"|"github-actions"|"renovate")
+                echo "Actor '$actor' is a bot; direct push allowed."
+                echo "ok=true" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+
+            echo "::error::Direct push to main detected."
+            echo "::error::Commit ${SHA} on branch ${GITHUB_REF} has no associated PR."
+            echo "::error::Actor: ${actor}"
+            echo "::error::Per CLAUDE.md, all changes land via a squash-merged PR."
+            echo "::error::If this is an emergency fix, push to a branch and open a PR."
+            exit 1
+          fi
+
+          echo "ok=true"
+          echo "Backed by ${pr_count} PR(s); squash-merge from PR is the expected path."
+
+      - name: Log OK
+        if: steps.lookup.outputs.ok == 'true'
+        run: echo "Direct-push check passed."

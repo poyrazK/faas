@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -202,7 +203,7 @@ func TestWakeGateCapReturnsQueueFull(t *testing.T) {
 
 	full := 0
 	for _, e := range errs {
-		if e == ErrQueueFull {
+		if errors.Is(e, ErrQueueFull) {
 			full++
 		}
 	}
@@ -337,4 +338,29 @@ func TestInvariant5_NoSecondWakeAfterShouldWakeFalse(t *testing.T) {
 	if got := atomic.LoadInt32(&calls); got != 0 {
 		t.Errorf("ensure ran %d times; shouldWake=false must short-circuit all 25 → 0", got)
 	}
+}
+
+// TestLimiterForget verifies Forget returns the bucket to a clean burst state.
+// Origin: main — TestLimiterForget complements TestLimiterForgetAll above by
+// pinning the single-key Forget semantics.
+func TestLimiterForget(t *testing.T) {
+	l := NewLimiter()
+	if !l.Allow("app", api.PlanPro) {
+		t.Fatal("first allow should succeed")
+	}
+	// Forget must drop the bucket so the next Allow is again a fresh burst.
+	l.Forget("app")
+	// Drain the burst fully to confirm Forget produced a brand-new bucket.
+	limits := api.MustLimitsFor(api.PlanPro)
+	consumed := 0
+	for i := 0; i < limits.RateLimitBurst+5; i++ {
+		if l.Allow("app", api.PlanPro) {
+			consumed++
+		}
+	}
+	if consumed != limits.RateLimitBurst {
+		t.Errorf("after Forget, burst allowed = %d, want %d", consumed, limits.RateLimitBurst)
+	}
+	// Forget on unknown id is a no-op.
+	l.Forget("never-existed")
 }

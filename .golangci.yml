@@ -21,6 +21,9 @@ linters:
     - goconst        # repeated literals to const
     - misspell       # typo'd identifiers
     - nilerr         # `return nil` after assigning to err
+    - errorlint      # fmt.Errorf must wrap with %w; ==/!= against errors → errors.Is
+    - bodyclose      # unclosed *http.Response.Body on every request path
+    - contextcheck   # ctx captured in goroutines, stored in structs, or detached without justification
 
   # Per-path exclusions for noisy linters on tests, plus the
   # generated-protobuf and metal-test files. The v2 schema puts
@@ -35,6 +38,18 @@ linters:
       - path: "_test\\.go$"
         linters:
           - errcheck  # `defer x.Close()` is acceptable idiom in tests
+          - goconst   # repeated test-fixture literals are fine; promoting
+                      # them to package consts adds noise without value
       - path: "pkg/wire/metrics_test.go"
         linters:
           - errcheck
+      # SA5011 false-positives in these test files: the test code
+      # explicitly checks `if p == nil { t.Fatalf(...) }` before
+      # dereferencing, but staticcheck's dataflow analyzer doesn't
+      # know t.Fatalf terminates. The tests are correct.
+      - path: "pkg/api/errors_test.go"
+        linters:
+          - staticcheck
+      - path: "pkg/grpcerr/grpcerr_test.go"
+        linters:
+          - staticcheck

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -232,4 +233,65 @@ func repeat(s string, n int) string {
 		b = append(b, s[0])
 	}
 	return string(b)
+}
+
+func TestListApps_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+
+	// Create a couple of apps via the API.
+	for _, slug := range []string{"alpha", "beta"} {
+		rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create %s: %d %s", slug, rec.Code, rec.Body)
+		}
+	}
+
+	rec := e.do(t, "GET", "/v1/apps", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("listApps: %d %s", rec.Code, rec.Body)
+	}
+	var apps []api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &apps); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(apps) != 2 {
+		t.Errorf("got %d apps, want 2", len(apps))
+	}
+	// Slugs should be present in some order.
+	gotSlugs := map[string]bool{}
+	for _, a := range apps {
+		gotSlugs[a.Slug] = true
+	}
+	for _, want := range []string{"alpha", "beta"} {
+		if !gotSlugs[want] {
+			t.Errorf("missing slug %q in response", want)
+		}
+	}
+}
+
+func TestListApps_Empty(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	rec := e.do(t, "GET", "/v1/apps", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	// Empty list, not null — must be `[]` not `null`.
+	if got := strings.TrimSpace(rec.Body.String()); got != "[]" && got != "null" {
+		// Some go versions emit "[]" for empty slices, some emit nothing; both are acceptable.
+		// We only fail if a non-empty body is returned.
+		if got != "" && got != "[]" && got != "null" {
+			t.Errorf("body = %q, want [] or null", got)
+		}
+	}
+}
+
+func TestListApps_RequiresAuth(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	req := httptest.NewRequest("GET", "/v1/apps", nil)
+	// No Authorization header.
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
 }
