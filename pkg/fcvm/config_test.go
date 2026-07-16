@@ -65,6 +65,17 @@ func TestColdBootBootArgsDisableConsole(t *testing.T) {
 	}
 }
 
+func TestColdBootBootArgsConfigureIdenticalInnerWorld(t *testing.T) {
+	// Every VM gets the same guest IP via kernel autoconfig (ADR-009).
+	cfg := BuildColdBootConfig(validColdSpec())
+	if !strings.Contains(cfg.BootSource.BootArgs, "ip=10.0.0.2::10.0.0.1:255.255.255.252::eth0:off") {
+		t.Errorf("boot args should carry the identical-inner-world ip= autoconfig: %q", cfg.BootSource.BootArgs)
+	}
+	if !strings.Contains(cfg.BootSource.BootArgs, "init=/sbin/init") {
+		t.Errorf("boot args should exec guest-init as PID1: %q", cfg.BootSource.BootArgs)
+	}
+}
+
 func TestColdSpecValidate(t *testing.T) {
 	if err := validColdSpec().Validate(); err != nil {
 		t.Fatalf("valid spec rejected: %v", err)

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // metalImages resolves the kernel/base/layer paths from the environment so the
@@ -32,7 +34,7 @@ func metalImages(t *testing.T) (kernel, base, layer string) {
 func newMetalManager(t *testing.T, kernel string) *Manager {
 	t.Helper()
 	return NewManager(
-		ExecRunner{},
+		wire.ExecRunner{},
 		NewJailerVMM(JailChrootBase, 30*time.Second),
 		Paths{Kernel: kernel},
 		nil,

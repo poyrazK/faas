@@ -53,8 +53,12 @@ const (
 )
 
 // coldBootArgs is the kernel command line for a cold boot (spec §4.4: console
-// off, quiet; guest-init is PID1 installed as /sbin/init).
-const coldBootArgs = "console=off reboot=k panic=1 pci=off quiet init=/sbin/init"
+// off, quiet; guest-init is PID1 installed as /sbin/init). The identical inner
+// world (ADR-009) is configured by the kernel's ip= autoconfig so guest-init
+// carries no networking code: guest 10.0.0.2, gateway 10.0.0.1, /30 mask. Every
+// VM boots with the same line — uniqueness lives entirely on the host side.
+const coldBootArgs = "console=off reboot=k panic=1 pci=off quiet " +
+	"ip=10.0.0.2::10.0.0.1:255.255.255.252::eth0:off init=/sbin/init"
 
 // ColdBootSpec is everything needed to build a cold-boot VM config. RAM and vCPU
 // come from the app's plan (via pkg/api limits) — never inline them here.

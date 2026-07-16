@@ -24,7 +24,7 @@ func main() {
 func run(ctx context.Context, log *slog.Logger) error {
 	// Production wiring: real command runner + jailer-backed VMM.
 	mgr := fcvm.NewManager(
-		fcvm.ExecRunner{},
+		wire.ExecRunner{},
 		fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second),
 		fcvm.Paths{Kernel: "/srv/fc/base/vmlinux-6.1"},
 		log,

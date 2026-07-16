@@ -53,3 +53,17 @@ when its executable acceptance tests pass.
     `manager_metal_test.go` (`//go:build metal`, run on the EX44).
 
   Remaining: gRPC control surface for vmmd, and running the metal tests on KVM.
+- **M2 — imaged + guest-init.** 🚧 The OCI→app-layer pipeline is done and tested:
+  - `pkg/oci` — layer diff that extracts only the layers ABOVE the matched base
+    (the two-drive scheme); refuses images not built FROM the base.
+  - `pkg/rootfs` — layer applier (whiteouts + path-escape rejection), app-layer
+    sizing + plan-cap enforcement, guest-init/app.json injection, and the
+    `mkfs.ext4 -d` build. A real-mkfs integration test runs in Linux CI.
+  - `pkg/api` — the `app.json` guest contract + app-layer-too-large error.
+  - `guest/init` — PID 1: overlay assembly + crash-loop supervisor; pure logic
+    unit-tested, Linux syscalls behind build tags. Guest IP via kernel `ip=`
+    autoconfig (ADR-009), so no networking code in the guest.
+  - `images/` — base/runner/builder Dockerfiles.
+
+  Remaining: base-image→ext4 conversion, snapshot GC + fleet metrics, and the
+  two-drive boot on metal.

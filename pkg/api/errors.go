@@ -62,6 +62,7 @@ const (
 	CodePlanLimitRAM    = "plan_limit_ram"
 	CodePlanLimitConcur = "plan_limit_concurrency"
 	CodeSourceTooLarge  = "source_too_large"
+	CodeAppLayerTooBig  = "app_layer_too_large"
 	CodeBuildUndetected = "build_undetected"
 	CodeBuildOOM        = "build_oom"
 	CodeBuildTimeout    = "build_timeout"
@@ -92,6 +93,19 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		fmt.Sprintf("%s plan caps %d MB/app; requested %d MB.", l.Plan, l.RAMMB, requestedMB)).
 		WithLimit(int64(l.RAMMB), int64(requestedMB)).
 		WithDocs("https://docs.DOMAIN/plans#ram")
+}
+
+// ErrAppLayerTooLarge is returned when the built app layer (deps + code) exceeds
+// the plan's drive1 cap (spec §4.6). The message names the cap and observed size
+// so the deploy failure is actionable.
+func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
+	capBytes := int64(l.AppLayerMaxMB) * 1024 * 1024
+	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
+		"App too large",
+		fmt.Sprintf("%s plan caps the app layer at %d MB; built layer is %.1f MB.",
+			l.Plan, l.AppLayerMaxMB, float64(observedBytes)/(1024*1024))).
+		WithLimit(capBytes, observedBytes).
+		WithDocs("https://docs.DOMAIN/build/limits#app-layer")
 }
 
 // ErrSourceTooLarge is returned when an uploaded tarball exceeds the plan cap.
