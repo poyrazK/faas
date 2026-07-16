@@ -34,7 +34,7 @@ func setup(t *testing.T, plan api.Plan) testEnv {
 	if _, err := store.CreateAPIKey(context.Background(), acct.ID, hash, "test"); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "example.com")
+	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "example.com", noopNotifier{})
 	return testEnv{h: srv.handler(), store: store, key: pt, acct: acct}
 }
 

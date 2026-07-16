@@ -14,28 +14,91 @@ import (
 
 // server is apid's HTTP service: the public REST API and the only writer to
 // customer-intent tables (spec §4.2, §Component ownership). It validates plan
-// quotas before any work, authenticates every request by API-key hash, and never
-// talks to vmmd/builderd directly — it writes rows and lets owners react.
+// quotas before any work, authenticates every request by API-key hash, and
+// publishes row changes via pg_notify (spec §Component ownership).
+//
+// M5+: handlers are grouped by resource in handlers.go (apps, deployments,
+// crons, domains, keys, instances, usage); this file owns the middleware
+// (auth, idempotent), the route table, and small request/response helpers.
 type server struct {
 	store  state.Store
 	log    *slog.Logger
 	domain string // apps base domain for URLs
+	notif  Notifier
 }
 
-func newServer(store state.Store, log *slog.Logger, domain string) *server {
+// Notifier is the slice of pgstore behaviour apid depends on. The production
+// server uses a db-backed Notifier; tests inject a no-op so they don't need a
+// running Postgres.
+type Notifier interface {
+	Notify(ctx context.Context, channel, payload string) error
+}
+
+func newServer(store state.Store, log *slog.Logger, domain string, notif Notifier) *server {
 	if domain == "" {
 		domain = "DOMAIN"
 	}
-	return &server{store: store, log: log, domain: domain}
+	if notif == nil {
+		notif = noopNotifier{}
+	}
+	return &server{store: store, log: log, domain: domain, notif: notif}
 }
 
-// handler builds the route table (Go 1.22 method+wildcard patterns).
+// noopNotifier is the test/dev default; production wires pkg/db.Notify.
+type noopNotifier struct{}
+
+func (noopNotifier) Notify(_ context.Context, _, _ string) error { return nil }
+
+// handler builds the full Appendix A route table (Go 1.22 method+wildcard).
+// New routes append here; do not introduce per-feature sub-muxes.
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
+	// Account.
 	mux.HandleFunc("GET /v1/account", s.auth(s.whoami))
+	mux.HandleFunc("PATCH /v1/account/plan", s.auth(s.idempotent(s.changePlan)))
+
+	// Apps.
 	mux.HandleFunc("GET /v1/apps", s.auth(s.listApps))
 	mux.HandleFunc("POST /v1/apps", s.auth(s.idempotent(s.createApp)))
+	mux.HandleFunc("GET /v1/apps/{slug}", s.auth(s.getApp))
+	mux.HandleFunc("PATCH /v1/apps/{slug}", s.auth(s.updateApp))
+	mux.HandleFunc("DELETE /v1/apps/{slug}", s.auth(s.deleteApp))
+
+	// Deployments.
 	mux.HandleFunc("POST /v1/apps/{slug}/deployments", s.auth(s.idempotent(s.createDeployment)))
+	mux.HandleFunc("GET /v1/deployments/{id}", s.auth(s.getDeployment))
+	mux.HandleFunc("GET /v1/deployments/{id}/logs", s.auth(s.streamDeploymentLogs))
+	mux.HandleFunc("POST /v1/apps/{slug}/rollback", s.auth(s.idempotent(s.rollbackApp)))
+	mux.HandleFunc("POST /v1/apps/{slug}/park", s.auth(s.parkApp))
+	mux.HandleFunc("POST /v1/apps/{slug}/wake", s.auth(s.wakeApp))
+
+	// Instances (read-only here; schedd is the writer).
+	mux.HandleFunc("GET /v1/apps/{slug}/instances", s.auth(s.listInstances))
+	mux.HandleFunc("GET /v1/apps/{slug}/logs", s.auth(s.streamAppLogs))
+
+	// Custom domains.
+	mux.HandleFunc("GET /v1/domains", s.auth(s.listDomains))
+	mux.HandleFunc("POST /v1/domains", s.auth(s.idempotent(s.createDomain)))
+	mux.HandleFunc("DELETE /v1/domains/{domain}", s.auth(s.deleteDomain))
+
+	// Crons.
+	mux.HandleFunc("GET /v1/crons", s.auth(s.listCrons))
+	mux.HandleFunc("POST /v1/crons", s.auth(s.idempotent(s.createCron)))
+	mux.HandleFunc("PATCH /v1/crons/{id}", s.auth(s.updateCron))
+	mux.HandleFunc("DELETE /v1/crons/{id}", s.auth(s.deleteCron))
+
+	// API keys.
+	mux.HandleFunc("GET /v1/keys", s.auth(s.listKeys))
+	mux.HandleFunc("POST /v1/keys", s.auth(s.createKey))
+	mux.HandleFunc("DELETE /v1/keys/{id}", s.auth(s.deleteKey))
+
+	// Usage.
+	mux.HandleFunc("GET /v1/usage", s.auth(s.getUsage))
+
+	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept
+	// unsigned and trust the network boundary; ADR-007 hardening later).
+	mux.HandleFunc("POST /v1/webhooks/stripe", s.stripeWebhook)
+
 	return mux
 }
 
@@ -138,3 +201,15 @@ func (s *server) notFound(w http.ResponseWriter, what string) {
 
 // ctx is a tiny helper to keep handler signatures clean.
 func ctx(r *http.Request) context.Context { return r.Context() }
+
+// loadApp resolves a slug to an account-scoped App, collapsing cross-account
+// lookups to 404 per the handler convention. Returns the resolved app or
+// writes the error and returns false.
+func (s *server) loadApp(w http.ResponseWriter, r *http.Request, acct state.Account, slug string) (state.App, bool) {
+	app, err := s.store.AppBySlug(ctx(r), slug)
+	if err != nil || app.AccountID != acct.ID {
+		s.notFound(w, "no such app")
+		return state.App{}, false
+	}
+	return app, true
+}

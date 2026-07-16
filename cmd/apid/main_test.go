@@ -237,14 +237,14 @@ func TestDefaultDeps_ReturnExpected(t *testing.T) {
 // --- newServer + auth extra coverage --------------------------------------
 
 func TestNewServer_DefaultDomain(t *testing.T) {
-	s := newServer(state.NewMemStore(), discardLogger(), "")
+	s := newServer(state.NewMemStore(), discardLogger(), "", noopNotifier{})
 	if s.domain != "DOMAIN" {
 		t.Errorf("domain = %q, want DOMAIN fallback", s.domain)
 	}
 }
 
 func TestNewServer_CustomDomain(t *testing.T) {
-	s := newServer(state.NewMemStore(), discardLogger(), "apps.example.com")
+	s := newServer(state.NewMemStore(), discardLogger(), "apps.example.com", noopNotifier{})
 	if s.domain != "apps.example.com" {
 		t.Errorf("domain = %q", s.domain)
 	}
@@ -256,7 +256,7 @@ func TestAuthActiveAccountAllowed(t *testing.T) {
 	if err := seedDevAccount(context.Background(), s, tok); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(s, discardLogger(), "")
+	srv := newServer(s, discardLogger(), "", noopNotifier{})
 	h := srv.handler()
 	req := httptestRequest("GET", "/v1/account", tok)
 	rec := httptest.NewRecorder()
@@ -271,7 +271,7 @@ func TestAuthActiveAccountAllowed(t *testing.T) {
 // store lookup.
 func TestAuth_RejectsInvalidFormat(t *testing.T) {
 	s := state.NewMemStore()
-	srv := newServer(s, discardLogger(), "")
+	srv := newServer(s, discardLogger(), "", noopNotifier{})
 	h := srv.handler()
 	for _, bad := range []string{"not-a-key", "fp_live_short", "fp_live_toolong_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"} {
 		req := httptestRequest("GET", "/v1/account", bad)
@@ -289,7 +289,7 @@ func TestAuth_RejectsInvalidFormat(t *testing.T) {
 func TestAuth_RejectsUnknownKey(t *testing.T) {
 	s := state.NewMemStore()
 	tok := api.APIKeyPrefix + "feedfacefeedfacefeedfacefeedfacefeedfacefeedface"
-	srv := newServer(s, discardLogger(), "")
+	srv := newServer(s, discardLogger(), "", noopNotifier{})
 	h := srv.handler()
 	req := httptestRequest("GET", "/v1/account", tok)
 	rec := httptest.NewRecorder()
