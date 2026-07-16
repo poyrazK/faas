@@ -11,12 +11,37 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+// runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
+// wrappers so the seam is fully exercised without spawning a real daemon.
+type runDeps struct {
+	listen   func(network, addr string) (net.Listener, error)
+	newSrv   func(addr string, handler http.Handler) *http.Server
+	backend  gateway.Backend
+}
+
+func defaultDeps() runDeps {
+	return runDeps{
+		listen:  net.Listen,
+		newSrv:  defaultServer,
+		backend: unwiredBackend{},
+	}
+}
+
+func defaultServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+}
 
 const listenAddr = ":8080"
 
@@ -25,17 +50,22 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
-	handler := gateway.NewHandler(unwiredBackend{})
-	srv := &http.Server{
-		Addr:              listenAddr,
-		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
+	return runWithDeps(ctx, log, defaultDeps())
+}
+
+func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	handler := gateway.NewHandler(deps.backend)
+	srv := deps.newSrv(listenAddr, handler)
+
+	l, err := deps.listen("tcp", listenAddr)
+	if err != nil {
+		return err
 	}
 
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("gatewayd listening", "addr", listenAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
 			errc <- err
 		}
 	}()
