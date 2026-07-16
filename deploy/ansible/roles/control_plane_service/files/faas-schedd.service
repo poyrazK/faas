@@ -1,0 +1,33 @@
+[Unit]
+Description=onebox-faas schedd — scheduler + instance state machine owner (spec §4.3, §6)
+Documentation=https://docs.DOMAIN/ops/schedd
+After=network.target faas-cp.slice
+Wants=faas-cp.slice
+
+[Service]
+Type=simple
+User=faas-schedd
+Group=faas
+ExecStart=/usr/local/bin/schedd --config /etc/faas/schedd.toml
+Restart=on-failure
+RestartSec=2s
+
+# schedd is the SOLE writer to the instances table (spec §Component ownership).
+# 256M covers the in-memory ledger + LISTEN connection.
+Slice=faas-cp.slice
+MemoryMax=256M
+
+EnvironmentFile=/etc/faas/sealed.env
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/var/log/faas
+
+[Install]
+WantedBy=multi-user.target

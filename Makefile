@@ -94,3 +94,34 @@ tidy: ## go mod tidy
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf $(BINDIR)
+
+# M5+ Postgres/sqlc tooling. The pgx-backed Store applies migrations on
+# startup (goose.SetBaseFS over migrations.FS); sqlc.yaml is committed for
+# the day sqlc is available in the build environment (pganalyze/pg_query_go
+# currently fails to compile on macOS SDKs — tracked separately).
+SQLC     ?= $(GOBIN)/sqlc
+SQLC_VER ?= v1.27.0
+
+.PHONY: sqlc
+sqlc: ## Install sqlc at the pinned version
+	@command -v $(SQLC) >/dev/null 2>&1 && $(SQLC) version | grep -q $(SQLC_VER) && echo "sqlc $(SQLC_VER) already installed" && exit 0
+	GOFLAGS='' go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VER)
+
+.PHONY: sqlc-generate
+sqlc-generate: sqlc ## (re)generate pkg/state/sqlc/*.sql.go from queries.sql
+	$(SQLC) generate
+
+.PHONY: sqlc-check
+sqlc-check: ## Verify checked-in sqlc output matches what would be regenerated
+	@$(MAKE) sqlc > /tmp/faas-sqlc-check.out 2>&1 || (cat /tmp/faas-sqlc-check.out; exit 1)
+	@tmp=$$(mktemp -d) && cp -R pkg/state/queries.sql sqlc.yaml $$tmp/ && cd $$tmp && $(SQLC) generate >/dev/null 2>&1; \
+	  diff -r pkg/state/sqlc $$tmp/pkg/state/sqlc >/dev/null || \
+	    (echo "sqlc-check: generated sqlc/*.sql.go is out of sync with queries.sql; run 'make sqlc-generate' and commit the diff"; exit 1); \
+	  rm -rf $$tmp
+	@echo "sqlc-check: OK"
+
+.PHONY: migrate-up
+migrate-up: ## Apply all pending migrations against $DATABASE_URL (idempotent)
+	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH"; exit 1)
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set"; exit 1)
+	@go run ./cmd/migrate

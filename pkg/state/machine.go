@@ -34,13 +34,16 @@ var States = []State{
 
 // transitions is the legal edge set of the state machine (spec §6.1).
 var transitions = map[State][]State{
-	StateParked:       {StateWaking},
-	StateWaking:       {StateRunning, StateColdBooting, StateFailed},
-	StateColdBooting:  {StateRunning, StateFailed},
-	StateRunning:      {StateSnapshotting, StateFailed},
+	// PARKED can wake (snapshot restore) or cold-boot (no snapshot, e.g. FC
+	// upgrade → stale snap, or first deploy). The cold-boot branch is
+	// spec §4.4's lazy re-snapshot path.
+	StateParked:       {StateWaking, StateColdBooting},
+	StateWaking:       {StateRunning, StateColdBooting, StateFailed, StateStopped},
+	StateColdBooting:  {StateRunning, StateFailed, StateStopped},
+	StateRunning:      {StateSnapshotting, StateStopped, StateFailed},
 	StateSnapshotting: {StateParked, StateStopped},
 	StateStopped:      {StateColdBooting},
-	StateFailed:       {StateParked}, // redeploy / manual recovery re-parks
+	StateFailed:       {StateParked, StateColdBooting, StateStopped}, // manual recovery / lazy cold-boot
 }
 
 // Valid reports whether s is a known state.

@@ -1,0 +1,18 @@
+# Example apid config — copy to /etc/faas/apid.toml on the box.
+# Every field is optional; defaults are filled in by the daemon.
+
+# listen_addr: public listener for the v1 REST API. Spec §4.1 binds :443.
+# Default: 127.0.0.1:8081  (behind a TLS-terminating reverse proxy)
+# listen_addr = "127.0.0.1:8081"
+
+# base_domain: the apps.<domain> suffix for app URLs.
+# Default: example.com
+# base_domain = "example.com"
+
+# db_url: Postgres DSN. Empty => use $DATABASE_URL from the environment
+# (sealed.env on the production box; gap G2 — sealed at rest).
+# db_url = ""
+
+# log_level: slog level (debug, info, warn, error).
+# Default: info
+# log_level = "info"
