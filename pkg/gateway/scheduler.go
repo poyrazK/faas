@@ -60,7 +60,6 @@ func (NoopScheduler) Wake(context.Context, string) (string, error) {
 // app; configurable LatencyMs simulates a cold wake.
 type FakeScheduler struct {
 	mu        sync.Mutex
-	wakes     int32 // via atomic; mu blocks concurrent mutations
 	calls     int
 	latencyMs int
 	addr      string
