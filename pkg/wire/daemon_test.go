@@ -87,9 +87,17 @@ func TestLogger_JSONToStderr(t *testing.T) {
 
 func TestStubRun_BlocksUntilCancel(t *testing.T) {
 	// StubRun returns nil on ctx cancel; this is its entire contract.
-	ctx, cancel := context.WithCancel(context.Background())
+	// Per contextcheck: do not capture this test's ctx into the goroutine.
+	// The goroutine owns its cancellable ctx; the test signals cancel via
+	// a dedicated channel it owns.
+	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-stop
+			cancel()
+		}()
 		_ = wire.StubRun("M0")(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		close(done)
 	}()
@@ -97,16 +105,16 @@ func TestStubRun_BlocksUntilCancel(t *testing.T) {
 	// It must NOT return within a short window — that proves it's blocking.
 	select {
 	case <-done:
-		t.Fatal("StubRun returned before ctx cancel")
+		t.Fatal("StubRun returned before stop signal")
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	cancel()
+	close(stop)
 	select {
 	case <-done:
 		// good — returned after cancel.
 	case <-time.After(time.Second):
-		t.Fatal("StubRun did not return within 1s after cancel")
+		t.Fatal("StubRun did not return within 1s after stop signal")
 	}
 }
 

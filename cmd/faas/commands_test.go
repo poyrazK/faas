@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -39,8 +40,8 @@ func TestClientRendersAPIProblem(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	ae, ok := err.(*APIError)
-	if !ok {
+	var ae *APIError
+	if !errors.As(err, &ae) {
 		t.Fatalf("want *APIError, got %T", err)
 	}
 	if ae.Problem.Code != api.CodePlanLimitApps {

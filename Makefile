@@ -66,6 +66,10 @@ proto-normalize: proto
 test: ## Unit tests — must pass on any machine, no KVM needed
 	$(GO) test -race -count=1 $(PKGS)
 
+.PHONY: gateway-bench
+gateway-bench: ## Bench gatewayd cold/hot/concurrent paths with -race; emits ns/op + allocs/op
+	$(GO) test -race -bench=. -benchmem -run=^$ ./pkg/gateway/
+
 .PHONY: test-metal
 test-metal: ## Integration tests tagged //go:build metal — needs KVM + root
 	$(GO) test -tags metal -race -count=1 $(PKGS)

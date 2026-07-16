@@ -70,3 +70,22 @@ func (l *Limiter) Forget(appID string) {
 	delete(l.buckets, appID)
 	l.mu.Unlock()
 }
+
+// ForgetAll drops every bucket and returns the count dropped. SIGHUP and the
+// apid-side "purge all" callback use this so an operator can recover memory
+// after a mass-delete without bouncing the daemon.
+func (l *Limiter) ForgetAll() int {
+	l.mu.Lock()
+	n := len(l.buckets)
+	l.buckets = map[string]*bucket{}
+	l.mu.Unlock()
+	return n
+}
+
+// BucketCount returns the number of buckets currently held. /metrics and the
+// SIGHUP observability log use this.
+func (l *Limiter) BucketCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.buckets)
+}

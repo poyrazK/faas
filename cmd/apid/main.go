@@ -101,6 +101,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
 		return httpSrv.Shutdown(shutdownCtx)
 	}
 }
