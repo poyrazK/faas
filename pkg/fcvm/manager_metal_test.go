@@ -2,9 +2,13 @@
 
 // Metal integration tests: need /dev/kvm, root, firecracker + jailer on PATH,
 // and real kernel/base/layer images. Run on the dev EX44 via `make test-metal`.
-// Executable acceptance criteria (spec §14): M1 — boot 50 × 128 MB VMs
-// concurrently and leak zero netns/TAPs/uids on teardown; M3 — park→wake p50
-// ≤ 350 ms over 100 cycles restoring from a snapshot each time.
+// Executable acceptance criteria (spec §14):
+//
+//	M0 — boot a hello-Firecracker VM from the pinned kernel + a busybox rootfs.
+//	M1 — boot 50 × 128 MB VMs concurrently and leak zero netns/TAPs/uids on
+//	     teardown.
+//	M3 — park→wake p50 ≤ 350 ms over 100 cycles restoring from a snapshot each
+//	     time.
 package fcvm
 
 import (
@@ -16,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -144,4 +149,57 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	if m.LeasedCount() != 0 {
 		t.Errorf("leaked leases after cycles: %d", m.LeasedCount())
 	}
+}
+
+// TestMetalHelloBoot is the M0 acceptance gate (spec §14).
+//
+// Goal: prove end-to-end that the full jailer + firecracker + tap +
+// netns path can boot a real guest and tear down clean. We don't
+// measure latency here — M3 owns that — only correctness: VM live,
+// VM gone, zero leaks (invariant §6.2-4/5).
+//
+// M0 exception to the two-drive scheme (spec §4.6): BasePath and
+// LayerPath point at the SAME busybox image. There is no per-app
+// layer yet (that's M2), but the chroot + driver wiring is identical
+// to the two-drive hot path — only the second drive is missing its
+// own ext4. We document this in the request via comment so future
+// maintainers don't think it's a bug.
+func TestMetalHelloBoot(t *testing.T) {
+	kernel, _, _ := metalImages(t) // base/layer will be replaced by hello img
+	m := newMetalManager(t, kernel)
+
+	tmp := t.TempDir()
+	busybox := ensureBusyboxExt4(t, tmp)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const instance = "m0-hello"
+	_, err := m.ColdBoot(ctx, ColdBootRequest{
+		Instance:   instance,
+		BasePath:   busybox, // M0-only: Base == Layer, see comment above.
+		LayerPath:  busybox, // produces a single-drive VM that still hits the chroot path.
+		VcpuCount:  2,
+		MemSizeMiB: 128,
+	})
+	if err != nil {
+		t.Fatalf("M0 hello cold boot: %v", err)
+	}
+	if m.LiveCount() != 1 {
+		t.Fatalf("live=%d after boot, want 1", m.LiveCount())
+	}
+
+	if err := m.Destroy(ctx, instance); err != nil {
+		t.Fatalf("destroy M0 hello VM: %v", err)
+	}
+	if m.LiveCount() != 0 {
+		t.Fatalf("live=%d after destroy, want 0", m.LiveCount())
+	}
+	if m.LeasedCount() != 0 {
+		t.Fatalf("leased=%d after destroy, want 0", m.LeasedCount())
+	}
+
+	// Spec §6.2-4/5: §6.2-4 = parked = zero RAM (we only had one VM but we
+	// still verify nothing leaked), §6.2-5 = no shared state.
+	leakcheck.AssertZero(t)
 }
