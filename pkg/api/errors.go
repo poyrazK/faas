@@ -83,20 +83,28 @@ func (p *Problem) WithDocs(url string) *Problem {
 // Stable error codes (spec Appendix A, UX spec §7). Keep in sync with docs and
 // the CLI's exit-code mapping.
 const (
-	CodePlanLimitApps   = "plan_limit_apps"
-	CodePlanLimitRAM    = "plan_limit_ram"
-	CodePlanLimitConcur = "plan_limit_concurrency"
-	CodeSourceTooLarge  = "source_too_large"
-	CodeAppLayerTooBig  = "app_layer_too_large"
-	CodeBuildUndetected = "build_undetected"
-	CodeBuildOOM        = "build_oom"
-	CodeBuildTimeout    = "build_timeout"
-	CodeQuotaExhausted  = "quota_exhausted"
-	CodeBillingPastDue  = "billing_past_due"
-	CodeCapacity        = "capacity_unavailable"
-	CodeUnauthorized    = "unauthorized"
-	CodeNotFound        = "not_found"
-	CodeValidation      = "validation_failed"
+	CodePlanLimitApps    = "plan_limit_apps"
+	CodePlanLimitRAM     = "plan_limit_ram"
+	CodePlanLimitConcur  = "plan_limit_concurrency"
+	CodeSourceTooLarge   = "source_too_large"
+	CodeSourceInvalid    = "source_invalid"
+	CodeAppLayerTooBig   = "app_layer_too_large"
+	CodeBuildUndetected  = "build_undetected"
+	CodeBuildOOM         = "build_oom"
+	CodeBuildTimeout     = "build_timeout"
+	CodeQuotaExhausted   = "quota_exhausted"
+	CodeBillingPastDue   = "billing_past_due"
+	CodeCapacity         = "capacity_unavailable"
+	CodeUnauthorized     = "unauthorized"
+	CodeNotFound         = "not_found"
+	CodeValidation       = "validation_failed"
+	CodeConflict         = "conflict"
+	CodeDomainNotVerified = "domain_not_verified"
+	CodeCronInvalid      = "cron_invalid"
+	CodeHandlerMissing   = "handler_missing"
+	CodeImageRequired    = "image_required"
+	CodeDeployFailed     = "deploy_failed"
+	CodeNoRollbackTarget = "no_rollback_target"
 )
 
 // Convenience constructors for the most common limit errors keep call sites to
@@ -161,4 +169,54 @@ func ErrSourceTooLarge(l Limits, observedBytes int64) *Problem {
 		fmt.Sprintf("%s plan caps source at %d MB.", l.Plan, l.SourceTarballMaxMB)).
 		WithLimit(capBytes, observedBytes).
 		WithDocs("https://docs.DOMAIN/build/limits")
+}
+
+// ErrSourceInvalid is returned when a tarball fails shape validation
+// (symlink escape, absolute path, >10k files, wrong magic bytes, etc.).
+func ErrSourceInvalid(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeSourceInvalid,
+		"Source invalid", reason).
+		WithDocs("https://docs.DOMAIN/build/source")
+}
+
+// ErrDomainNotVerified is returned when a customer tries to bind a domain
+// whose TXT challenge hasn't been satisfied yet (spec §7).
+func ErrDomainNotVerified(domain string) *Problem {
+	return NewProblem(http.StatusConflict, CodeDomainNotVerified,
+		"Domain not verified",
+		fmt.Sprintf("TXT challenge for %q not yet satisfied; publish the required TXT record and retry.", domain)).
+		WithDocs("https://docs.DOMAIN/domains/verify")
+}
+
+// ErrCronInvalid is returned for malformed cron expressions.
+func ErrCronInvalid(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeCronInvalid,
+		"Invalid cron schedule", reason).
+		WithDocs("https://docs.DOMAIN/crons")
+}
+
+// ErrHandlerMissing is returned when a function source upload doesn't
+// include a handler (spec §4.9).
+func ErrHandlerMissing() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeHandlerMissing,
+		"Handler required",
+		"function deploys require a handler path (e.g. handler.handler)").
+		WithDocs("https://docs.DOMAIN/functions")
+}
+
+// ErrDeployFailed wraps a deployment failure message into a Problem so the
+// CLI can render it uniformly with quota errors.
+func ErrDeployFailed(detail string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeDeployFailed,
+		"Deploy failed", detail).
+		WithDocs("https://docs.DOMAIN/deploys")
+}
+
+// ErrNoRollbackTarget is returned by POST /v1/apps/{slug}/rollback when no
+// superseded deployment exists (spec §9 line 376).
+func ErrNoRollbackTarget() *Problem {
+	return NewProblem(http.StatusConflict, CodeNoRollbackTarget,
+		"No previous deployment",
+		"there's no superseded deployment to roll back to; deploy at least twice.").
+		WithDocs("https://docs.DOMAIN/deploys#rollback")
 }

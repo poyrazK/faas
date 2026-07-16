@@ -1,0 +1,34 @@
+[Unit]
+Description=onebox-faas imaged — image/snapshot orchestrator (spec §4.6, ADR-003, ADR-005)
+Documentation=https://docs.DOMAIN/ops/imaged
+After=network.target faas-cp.slice
+Wants=faas-cp.slice
+
+[Service]
+Type=simple
+User=faas-imaged
+Group=faas
+ExecStart=/usr/local/bin/imaged --config /etc/faas/imaged.toml
+Restart=on-failure
+RestartSec=2s
+
+# imaged owns OCI pulls + app-layer ext4 build (mkfs.ext4 -d inside the
+# shared exec runner, ADR-003). 1 GB is enough for image-decompression
+# spikes; cp.slice enforces the 6 GB total.
+Slice=faas-cp.slice
+MemoryMax=1G
+
+EnvironmentFile=/etc/faas/sealed.env
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/srv/fc/snap /var/log/faas /var/spool/faas
+
+[Install]
+WantedBy=multi-user.target

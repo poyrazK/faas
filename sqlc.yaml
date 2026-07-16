@@ -1,0 +1,24 @@
+# sqlc config — Postgres-backed Store (spec §5, ADR-006, CLAUDE.md
+# "SQL via sqlc only"). Generated *.sql.go files are committed; CI regenerates
+# to a tmpdir and diffs (analog of the existing proto-check gate).
+#
+# Install:   go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.27.0
+# Generate:  sqlc generate
+# Verify:    make sqlc-check
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "pkg/state/queries.sql"
+    schema: "migrations"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/state/sqlc"
+        sql_package: "pgx/v5"
+        emit_interface: true
+        emit_methods_with_db_arg: true
+        emit_json_tags: false
+        emit_prepared_queries: false
+        emit_empty_slices: true
+        rename:
+          id: "ID"

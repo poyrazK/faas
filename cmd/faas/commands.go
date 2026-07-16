@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // authedClient builds a client using the stored token, or errors (exit 2) if the
@@ -84,51 +82,6 @@ func cmdApps() int {
 	for _, a := range apps {
 		fmt.Printf("%-24s %-10s %s\n", a.Slug, a.Status, a.URL)
 	}
-	return 0
-}
-
-// cmdDeploy implements `faas deploy --image REF [--name slug]` (M5: prebuilt
-// images only). It creates the app if needed, then ships the image.
-func cmdDeploy(args []string) int {
-	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
-	image := fs.String("image", "", "digest-pinned image reference (required in M5)")
-	name := fs.String("name", "", "app name (default: current directory)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if *image == "" {
-		fmt.Fprintln(os.Stderr, "✗ --image is required (M5 supports prebuilt images only).")
-		fmt.Fprintln(os.Stderr, "  Example: faas deploy --image registry.DOMAIN/app@sha256:...")
-		return 1
-	}
-	slug := *name
-	if slug == "" {
-		slug = deriveName()
-	}
-
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	ctx := context.Background()
-
-	// Create the app if it doesn't exist yet; a slug-taken conflict means it
-	// already does (and we'll deploy onto it).
-	if _, err := client.CreateApp(ctx, api.CreateAppRequest{Slug: slug}); err != nil {
-		var ae *APIError
-		if !errors.As(err, &ae) || ae.Problem.Status != 409 {
-			return printErr("Could not create app", err)
-		}
-	}
-
-	dep, err := client.Deploy(ctx, slug, api.CreateDeploymentRequest{Image: *image})
-	if err != nil {
-		return printErr("Deploy failed", err)
-	}
-	fmt.Printf("✓ Deploying %s (%s)\n", slug, dep.Status)
-	fmt.Printf("  https://%s.apps.DOMAIN\n", slug)
-	fmt.Println("  Your app scales to zero when idle. The first request after idle takes")
-	fmt.Println("  ~0.3–0.8s to wake; requests after that are instant. This is normal and free.")
 	return 0
 }
 

@@ -1,0 +1,13 @@
+# Example imaged config — copy to /etc/faas/imaged.toml on the box.
+
+# log_level: slog level (debug, info, warn, error).
+# Default: info
+# log_level = "info"
+
+# snapshot_root: where snapshot blobs live. The unit's ReadWritePaths grants
+# imaged write access here. Keep this off /tmp (tmpfs eats RAM).
+# Default: /srv/fc/snap
+# snapshot_root = "/srv/fc/snap"
+
+# db_url: Postgres DSN. Empty => $DATABASE_URL from the environment.
+# db_url = ""
