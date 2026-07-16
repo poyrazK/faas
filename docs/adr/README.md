@@ -31,6 +31,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 015 | M1 unix-socket auth (mode 0660 group `faas`) | accepted | M1 plan |
 | 016 | M1 `Stats()` shape + `vmmd_*` metric names | accepted | M1 plan |
 | 017 | Hand-written `pkg/state/pgstore.go` (M5 sqlc exception) | accepted | M5.1 review |
+| 018 | schedd gRPC surface + ReportActivity ownership | accepted | M5 plan |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; write them as files here when that milestone opens.
