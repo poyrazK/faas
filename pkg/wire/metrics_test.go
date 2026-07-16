@@ -30,7 +30,7 @@ func TestOpsMetrics_ObserveCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	buf := make([]byte, 0, 4096)
 	tmp := make([]byte, 1024)
 	for {
@@ -112,7 +112,7 @@ func readAll(t *testing.T, url string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	buf := make([]byte, 0, 4096)
 	tmp := make([]byte, 1024)
 	for {
