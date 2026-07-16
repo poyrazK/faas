@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -103,7 +104,7 @@ func TestRunControlServerShutsDownOnContextCancel(t *testing.T) {
 	cancel()
 	select {
 	case err := <-errc:
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.Errorf("RunControlServer returned %v, want nil or ErrServerClosed", err)
 		}
 	case <-time.After(2 * time.Second):

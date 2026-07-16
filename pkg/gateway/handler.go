@@ -150,7 +150,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app, ok := h.backend.Lookup(r.Context(), host)
+	app, ok := h.backend.Lookup(r.Context(), host) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No such app", fmt.Sprintf("no app is routed to %q", host)))
@@ -178,7 +178,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cold := false
 	wakeStart := time.Now()
 	if !ready {
-		if err := h.wake(r.Context(), app.ID); err != nil {
+		if err := h.wake(r.Context(), app.ID); err != nil { //nolint:contextcheck // request ctx at handler boundary.
 			writeWakeError(w, err)
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, "")
 			return
