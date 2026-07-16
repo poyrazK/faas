@@ -86,10 +86,10 @@ func TestSupervisorRecoversBeforeBudget(t *testing.T) {
 //   - return (k, v, true) for "K=V"
 func TestCut(t *testing.T) {
 	cases := []struct {
-		in         string
-		wantK      string
-		wantV      string
-		wantOK     bool
+		in     string
+		wantK  string
+		wantV  string
+		wantOK bool
 	}{
 		{"", "", "", false},
 		{"NOEQUALS", "NOEQUALS", "", true},

@@ -212,12 +212,12 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 
 func TestValidateAppConfig(t *testing.T) {
 	cases := []struct {
-		name        string
-		plan        Plan
-		ramMB       int
-		maxConc     int
-		wantNil     bool
-		wantCode    string
+		name     string
+		plan     Plan
+		ramMB    int
+		maxConc  int
+		wantNil  bool
+		wantCode string
 	}{
 		{name: "under caps (hobby)", plan: PlanHobby, ramMB: 256, maxConc: 2, wantNil: true},
 		{name: "ram over cap (hobby: 256)", plan: PlanHobby, ramMB: 512, maxConc: 2, wantCode: CodePlanLimitRAM},

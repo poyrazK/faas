@@ -106,12 +106,12 @@ func TestLoadToken_MissingFile(t *testing.T) {
 func TestSanitizeSlug_LengthCapAndPad(t *testing.T) {
 	// Inputs that exercise the >=40 truncation and the <3 padding branches.
 	cases := map[string]string{
-		"":                       "app",     // all stripped → "app-" then Trim → "app"
-		"---":                    "app",     // all dashes, trimmed to empty, padded, then trimmed
+		"":                       "app",                   // all stripped → "app-" then Trim → "app"
+		"---":                    "app",                   // all dashes, trimmed to empty, padded, then trimmed
 		strings.Repeat("a", 100): strings.Repeat("a", 40), // truncated
-		"a":                      "app-a",   // too short, padded
-		"abc":                    "abc",     // exactly 3, no pad
-		"!!!@@@":                 "app",     // all garbage → "app-" → "app"
+		"a":                      "app-a",                 // too short, padded
+		"abc":                    "abc",                   // exactly 3, no pad
+		"!!!@@@":                 "app",                   // all garbage → "app-" → "app"
 	}
 	for in, want := range cases {
 		if got := sanitizeSlug(in); got != want {
