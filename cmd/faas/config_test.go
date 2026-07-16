@@ -68,4 +68,3 @@ func TestLoadToken_MissingFileAndMissingEnv(t *testing.T) {
 		t.Errorf("loadToken = %q, want empty", got)
 	}
 }
-
