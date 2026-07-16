@@ -109,6 +109,12 @@ Fleet snapshot average target: 130 MB — `snapshot_fleet_avg_mb` alerts at 160.
   tests pass — they are listed in §14 and are executable, not aspirational.
 - Small PRs (reviewable in ~10 min). PR description names the milestone; architecture
   changes name an ADR. New quota/limit → add to `pkg/api/limits.go` + docs, never inline.
+- **Never push directly to `main`.** All changes land via a PR (squash-merge from a
+  feature branch). Dependabot and humans alike; the
+  `.github/workflows/no-direct-push.yml` guard fires on `push` events without an
+  associated PR and fails fast. Repo-level branch protection (Settings → Branches →
+  main → "Require a pull request before merging") is the load-bearing enforcement;
+  the workflow guard is a visible tripwire, not the primary gate.
 - Open gaps live in §17 (G1–G7) with decided leans and deadlines; validation experiments
   in Appendix D (V1–V10). Check both before designing something "new" — it may already
   have a decided lean.
