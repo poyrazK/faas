@@ -36,9 +36,13 @@ when its executable acceptance tests pass.
 
 ## Status
 
-- **M0 — repo scaffold.** ✅ Tree, build/test/lint tooling, CI, and the `pkg/api`
-  limits table (single source of every plan quota). Remaining: ansible host
-  bootstrap + hello-Firecracker metal test (need an EX44).
+- **M0 — repo scaffold.** ✅ Tree, build/test/lint tooling, CI, the
+  `pkg/api` limits table (single source of every plan quota),
+  `deploy/ansible/` bootstrap (8 roles — cgroups_v2, grub, lvm, xfs,
+  firecracker, systemd_slices, nftables, postgres — all idempotent on
+  fresh Ubuntu 24.04), and a `TestMetalHelloBoot` acceptance test that
+  boots a busybox guest from the pinned FC kernel. `make bootstrap`
+  is the gate; it requires a fresh Hetzner EX44.
 - **M1 — vmmd core.** 🚧 The invariant-critical logic is done and unit-tested
   under `-race`:
   - `pkg/fcvm` slot allocator — every per-instance resource (jail uid/gid, host
