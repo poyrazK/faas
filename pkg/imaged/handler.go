@@ -144,6 +144,10 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 // handleBuildQueued advances a queued source build. M5 only flips status +
 // emits a log line; the actual builder-microVM (ADR-003) lands in M6.
 func (h *Handler) handleBuildQueued(ctx context.Context, p buildQueuedPayload) error {
+	// failure_class is "" while the build is in-flight; both MemStore and
+	// PgStore treat the empty string as "preserve prior value" via a
+	// `case when $3 = ''` guard in the UPDATE. There is no FailureNone
+	// constant — empty string is the canonical no-class sentinel.
 	if err := h.store.UpdateBuildStatus(ctx, p.BuildID, state.BuildRunning, "", true, false); err != nil {
 		return fmt.Errorf("imaged: mark building: %w", err)
 	}

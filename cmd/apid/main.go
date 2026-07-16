@@ -87,7 +87,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.store = func() state.Store { return state.NewPgStore(pool) }
 	deps.notif = func() Notifier { return pgNotifier{pool: pool} }
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
-		startVerifier(ctx, srv, log)
+		startDNSPoller(ctx, srv, log)
 	}
 	return runWithDeps(ctx, log, deps)
 }

@@ -29,14 +29,32 @@ func Notify(ctx context.Context, pool *pgxpool.Pool, channel, payload string) er
 // Keep this list aligned with the LISTEN calls in cmd/schedd, cmd/imaged,
 // cmd/apid (verifier goroutine), and the producer side of every Store
 // mutation.
+//
+// Payload contracts (JSON, all optional fields may be omitted):
+//
+//	NotifyAppChanged        {"app_id":uuid}
+//	NotifyDeploymentChanged {"kind":"image|tarball|dockerfile|function",
+//	                         "app_id":uuid, "deployment_id":uuid,
+//	                         "to":"pending|building|...|live|failed",
+//	                         "image_digest":"sha256:..."}      // image_digest when kind=image
+//	NotifyDomainChanged     {"domain":"..."}
+//	NotifyCronChanged       {"cron_id":uuid, "app_id":uuid}
+//	NotifyKeyChanged        {"key_id":uuid}
+//	NotifyBuildQueued       {"build_id":uuid, "app_id":uuid,
+//	                         "kind":"tarball|dockerfile|function",
+//	                         "deployment_id":uuid}
+//	NotifyDomainVerify      {"domain":"..."}
+//	NotifyInstanceChanged   {"instance_id":uuid, "app_id":uuid,
+//	                         "state":"parked|running|cold_booting|..."}
 const (
-	NotifyAppChanged        = "app_changed"        // apps insert/update/delete
-	NotifyDeploymentChanged = "deployment_changed" // deployments insert/status transition
-	NotifyDomainChanged     = "domain_changed"     // custom_domains insert/update/delete
-	NotifyCronChanged       = "cron_changed"       // crons insert/update/delete
-	NotifyKeyChanged        = "key_changed"        // api_keys insert/delete
-	NotifyBuildQueued       = "build_queued"       // builderd consumer
-	NotifyDomainVerify      = "domain_verify"      // apid verifier consumer
+	NotifyAppChanged        = "app_changed"
+	NotifyDeploymentChanged = "deployment_changed"
+	NotifyDomainChanged     = "domain_changed"
+	NotifyCronChanged       = "cron_changed"
+	NotifyKeyChanged        = "key_changed"
+	NotifyBuildQueued       = "build_queued"
+	NotifyDomainVerify      = "domain_verify"
+	NotifyInstanceChanged   = "instance_changed"
 )
 
 // Subscribe holds a dedicated connection on the pool in LISTEN state for the

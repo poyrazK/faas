@@ -4,24 +4,25 @@ import (
 	"context"
 	"log/slog"
 	"net"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/db"
 )
 
-// verifier polls DNS for unverified custom-domain TXT challenges and marks
+// dnsPoller polls DNS for unverified custom-domain TXT challenges and marks
 // them verified in the Store. Spec §7: customer publishes a TXT at
 // _faas-verify.<domain>; apid polls and flips verified_at when it matches.
 //
-// The verifier is a simple time-based loop that hits DNS once per minute per
-// unverified domain. It uses the Go stdlib resolver (no extra dep) and runs
-// in the apid process — could be moved to schedd later if load warrants.
-
+// This is a poll-only loop — it does NOT subscribe to pg_notify. A LISTEN
+// path would replace the ticker once a domain_verify producer lands. Channel
+// names use pkg/db constants to stay aligned with the apid NotifyChannels
+// table.
 const verifyInterval = 30 * time.Second
 
-// startVerifier runs the verifier loop until ctx is cancelled. Caller is
+// startDNSPoller runs the DNS poll loop until ctx is cancelled. Caller is
 // responsible for surfacing errors via the slog logger.
-func startVerifier(ctx context.Context, s *server, log *slog.Logger) {
+func startDNSPoller(ctx context.Context, s *server, log *slog.Logger) {
 	if s.store == nil {
 		return
 	}
@@ -44,23 +45,26 @@ func startVerifier(ctx context.Context, s *server, log *slog.Logger) {
 func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 	pending, err := s.pendingUnverifiedDomains(ctx)
 	if err != nil {
-		log.Warn("verifier: list failed", "err", err)
+		log.Warn("dns_poller: list failed", "err", err)
 		return
 	}
 	for _, d := range pending {
 		if checkTXT(ctx, d.Domain, d.ChallengeToken) {
 			if err := s.store.MarkDomainVerified(ctx, d.Domain); err != nil {
-				log.Warn("verifier: mark verified failed", "domain", d.Domain, "err", err)
+				log.Warn("dns_poller: mark verified failed", "domain", d.Domain, "err", err)
 				continue
 			}
-			_ = s.notif.Notify(ctx, "domain_verified", `{"domain":"`+d.Domain+`"}`)
+			// Use the canonical channel constant (no LISTEN consumer yet —
+			// recorded here so the next dns_poller→imaged LISTEN path picks up
+			// the right name without a find/replace).
+			_ = s.notif.Notify(ctx, db.NotifyDomainVerify, `{"domain":"`+d.Domain+`"}`)
 			log.Info("domain verified", "domain", d.Domain)
 		}
 	}
 }
 
 // pendingUnverifiedDomains reads the unverified index directly. Implemented
-// as a tiny helper here (rather than a Store method) because the verifier
+// as a tiny helper here (rather than a Store method) because the poller
 // goroutine is the only consumer.
 func (s *server) pendingUnverifiedDomains(ctx context.Context) ([]pendingDomainRow, error) {
 	// We can't reach a *sql.DB from server without exposing one on the
@@ -80,7 +84,7 @@ func (s *server) pendingUnverifiedDomains(ctx context.Context) ([]pendingDomainR
 	return out, nil
 }
 
-// pendingDomainRow is the verifier's view of an unverified custom domain.
+// pendingDomainRow is the poller's view of an unverified custom domain.
 type pendingDomainRow struct {
 	Domain         string
 	ChallengeToken string
@@ -102,6 +106,3 @@ func checkTXT(ctx context.Context, domain, expected string) bool {
 	}
 	return false
 }
-
-// silence linter on the env import when other helpers move.
-var _ = os.Getenv

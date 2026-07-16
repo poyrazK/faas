@@ -12,6 +12,11 @@
 // macOS SDK's _string.h). The hand-written adapter here is structured so it
 // can be swapped for the generated package one-for-one once sqlc is
 // available; the public Store surface is unchanged.
+//
+// TODO(M5.1): regenerate via `sqlc generate` against pkg/state/queries.sql
+// once the CI sqlc pin is clean on the macOS SDK. See ADR-017
+// (docs/adr/017-hand-written-pgstore.md) for the migration plan and
+// reviewer checklist.
 package state
 
 import (
