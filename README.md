@@ -95,3 +95,19 @@ when its executable acceptance tests pass.
   - `schedd`/`gatewayd` wired to their cores; gatewayd serves HTTP.
 
   Remaining: Postgres-backed routing + schedd gRPC Backend (M5), CertMagic TLS.
+- **M5 — apid + deploy pipeline + CLI.** 🚧 The control plane and CLI work
+  end-to-end (verified live against a running apid):
+  - `migrations/00001_init.sql` — the full schema (spec §5) with CHECK
+    constraints and account-leading indexes.
+  - `pkg/state` — domain types + the `Store` interface with an in-memory impl
+    (the Postgres/sqlc store drops in behind the same interface).
+  - `pkg/api` — API-key generation/hashing (SHA-256), wire DTOs, and app-config
+    validation.
+  - `apid` — the REST API: key auth, **plan-quota enforcement before work**
+    (RAM/concurrency/app-count, verified by a table test across all four plans),
+    image deploys, and Idempotency-Key replay.
+  - `faas` CLI — `login`/`whoami`/`apps`/`deploy --image`, rendering the API's
+    RFC 7807 problems in the three-line CLI shape (UX §3.3).
+
+  Remaining: swap MemStore for the Postgres store, and connect gatewayd/schedd
+  to the deploy pipeline (prime snapshot → PARKED → first request wakes).

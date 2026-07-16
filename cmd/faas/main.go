@@ -18,12 +18,12 @@ const usage = `faas — deploy apps and functions that scale to zero.
 Usage:
   faas <command> [flags]
 
-Commands (M5+):
-  login        Authenticate this machine
-  deploy       Build and deploy the current directory
+Commands:
+  login        Authenticate this machine (--token for CI)
+  logout       Remove the stored token
+  whoami       Show the authenticated account
+  deploy       Deploy an image (--image REF [--name slug])
   apps         List your apps
-  logs         Tail an app's logs
-  usage        Show usage vs. quota (mirrors your invoice)
   version      Print the CLI version
 
 Run 'faas <command> --help' for command details.
@@ -46,6 +46,16 @@ func run(args []string) int {
 	case "help", "--help", "-h":
 		fmt.Print(usage)
 		return 0
+	case "login":
+		return cmdLogin(args[1:])
+	case "logout":
+		return cmdLogout()
+	case "whoami":
+		return cmdWhoami()
+	case "deploy":
+		return cmdDeploy(args[1:])
+	case "apps":
+		return cmdApps()
 	default:
 		fmt.Fprintf(os.Stderr, "faas: unknown command %q\nRun 'faas help' for usage.\n", args[0])
 		return 1
