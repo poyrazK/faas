@@ -220,3 +220,25 @@ func TestWakeGateLeaderSkipsEnsureWhenShouldWakeIsFalse(t *testing.T) {
 		t.Errorf("shouldWake=false should skip ensure entirely, got %d calls", calls)
 	}
 }
+
+func TestLimiterForget(t *testing.T) {
+	l := NewLimiter()
+	if !l.Allow("app", api.PlanPro) {
+		t.Fatal("first allow should succeed")
+	}
+	// Forget must drop the bucket so the next Allow is again a fresh burst.
+	l.Forget("app")
+	// Drain the burst fully to confirm Forget produced a brand-new bucket.
+	limits := api.MustLimitsFor(api.PlanPro)
+	consumed := 0
+	for i := 0; i < limits.RateLimitBurst+5; i++ {
+		if l.Allow("app", api.PlanPro) {
+			consumed++
+		}
+	}
+	if consumed != limits.RateLimitBurst {
+		t.Errorf("after Forget, burst allowed = %d, want %d", consumed, limits.RateLimitBurst)
+	}
+	// Forget on unknown id is a no-op.
+	l.Forget("never-existed")
+}

@@ -24,6 +24,17 @@ func TestAdmitBasic(t *testing.T) {
 	if l.Concurrency("app1") != 1 {
 		t.Errorf("concurrency = %d, want 1", l.Concurrency("app1"))
 	}
+	want := api.RAMAdmissionCeilingMB - l.ResidentRAM()
+	if got := l.HeadroomMB(); got != want {
+		t.Errorf("HeadroomMB = %d, want %d (ceiling - resident)", got, want)
+	}
+}
+
+func TestHeadroomMB_EmptyLedger(t *testing.T) {
+	l := NewLedger()
+	if got := l.HeadroomMB(); got != api.RAMAdmissionCeilingMB {
+		t.Errorf("HeadroomMB on empty = %d, want %d", got, api.RAMAdmissionCeilingMB)
+	}
 }
 
 func TestAdmitEnforcesConcurrency(t *testing.T) {

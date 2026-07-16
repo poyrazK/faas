@@ -6,7 +6,7 @@ name: ci
 #   - concurrency cancel-in-progress (PR head ref)
 #   - golangci-lint (catches errcheck, staticcheck, ineffassign beyond go vet)
 #   - govulncheck (Go vulnerability DB scan)
-#   - Codecov coverage (project gate >= 60%; informational patch)
+#   - Codecov coverage (project gate >= 70%; informational patch)
 #   - workflow_dispatch on the metal job (manual trigger from Actions tab)
 #   - status badge in README, PR template for milestone gating
 #
@@ -123,7 +123,7 @@ jobs:
     # Decoupled from `test` so a coverage upload doesn't lengthen the
     # developer-feedback loop. Always runs on push-to-main + PR (no
     # `if:` filter) but `continue-on-error` on the upload step — the gate
-    # project >= 60% is enforced at Codecov via codecov.yml status checks.
+    # project >= 70% is enforced at Codecov via codecov.yml status checks.
     name: coverage (Codecov)
     runs-on: ubuntu-latest
     timeout-minutes: 15

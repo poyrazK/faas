@@ -91,6 +91,26 @@ func TestSaveAndLoadToken_FileRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSaveToken_TrimsAndAppendsNewline(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if err := saveToken("  token-with-whitespace  \n"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := tokenPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "token-with-whitespace\n" {
+		t.Errorf("file content = %q", b)
+	}
+}
+
 func TestLoadToken_MissingFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
