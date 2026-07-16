@@ -150,6 +150,31 @@ func TestAppsSuffixFilter(t *testing.T) {
 	}
 }
 
+// TestRequestIDRoundTrip asserts that x-faas-request-id is generated for every
+// response and an inbound header overrides it (lets clients thread their own
+// trace id).
+func TestRequestIDRoundTrip(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	// 1) No inbound header → response carries a generated 32-char hex.
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	got := rec.Header().Get("x-faas-request-id")
+	if len(got) != 32 {
+		t.Errorf("generated rid len = %d, want 32 hex chars (got %q)", len(got), got)
+	}
+
+	// 2) Inbound header → response echoes it.
+	req = httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	req.Header.Set("x-faas-request-id", "my-trace-id")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("x-faas-request-id"); got != "my-trace-id" {
+		t.Errorf("inbound rid not echoed: got %q", got)
+	}
+}
+
 func TestRateLimitReturns429(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.running = true

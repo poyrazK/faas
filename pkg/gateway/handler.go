@@ -109,6 +109,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	w = rec
 
+	// Request ID is generated once per request and set on the response BEFORE
+	// any error path so even 4xx responses are correlatable. Inbound
+	// x-faas-request-id overrides (lets curl/clients supply their own trace).
+	rid := r.Header.Get("x-faas-request-id")
+	if rid == "" {
+		rid = newRequestID()
+	}
+	w.Header().Set("x-faas-request-id", rid)
+	r = r.WithContext(WithRequestID(r.Context(), rid))
+
 	host := hostname(r.Host)
 
 	// Host allowlist suffix check (spec §4.1: *.apps.DOMAIN). Closes the
