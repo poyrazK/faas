@@ -36,6 +36,9 @@ type Store interface {
 	AppByID(ctx context.Context, id string) (App, error)
 	AppBySlug(ctx context.Context, slug string) (App, error)
 	ListApps(ctx context.Context, accountID string) ([]App, error)
+	// ListAllApps returns every non-deleted app on the box. schedd's reaper and
+	// cron loops walk this (one-box scale, spec §4.3); apid never calls it.
+	ListAllApps(ctx context.Context) ([]App, error)
 	// CountDeployedApps counts apps that occupy a deploy slot (active or
 	// evicted_cold) for quota enforcement (spec §4.2).
 	CountDeployedApps(ctx context.Context, accountID string) (int, error)
@@ -46,6 +49,11 @@ type Store interface {
 	CreateDeployment(ctx context.Context, d Deployment) (Deployment, error)
 	DeploymentByID(ctx context.Context, id string) (Deployment, error)
 	LatestDeployment(ctx context.Context, appID string) (Deployment, error)
+	// LiveDeployment returns the app's current live deployment (status='live').
+	// schedd's wake path boots from this; ErrNotFound if the app has never had a
+	// successful deploy (an app always has a live snapshot OR a cold-bootable
+	// rootfs — never neither, invariant §6.2-3).
+	LiveDeployment(ctx context.Context, appID string) (Deployment, error)
 	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
 	ListDeploymentsForApp(ctx context.Context, appID string, limit, offset int) ([]Deployment, error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
@@ -79,10 +87,25 @@ type Store interface {
 	InstanceByID(ctx context.Context, id string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
 	UpdateInstanceState(ctx context.Context, id, state string) error
+	// SetInstanceRuntime records the per-instance identity vmmd allocated on
+	// wake (netns, routable host IP, jail uid) and stamps started_at=now. schedd
+	// calls this between a successful vmmd boot and the RUNNING transition so the
+	// gateway can route to host_ip:8080 (spec §7).
+	SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error
+	// RunningInstanceForApp returns the newest RUNNING instance for an app, or
+	// ErrNotFound when none is live. schedd uses it to make Wake idempotent and
+	// the gateway to seed its route target on startup.
+	RunningInstanceForApp(ctx context.Context, appID string) (Instance, error)
+	// TouchInstancesLastSeen batches last_request_at updates the gateway flushes
+	// every 15 s (spec §4.1). schedd is the sole writer to instances, so the
+	// gateway hands it the batch (ADR-018). Returns the number of rows updated.
+	TouchInstancesLastSeen(ctx context.Context, touches []InstanceTouch) (int, error)
 
-	// Snapshots (imaged is sole writer; schedd reads latest non-stale).
+	// Snapshots (imaged is sole writer; schedd reads latest non-stale and marks
+	// stale on a failed restore, ADR-005).
 	CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, error)
 	LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error)
+	MarkSnapshotStale(ctx context.Context, snapshotID string) error
 
 	// Audit (append-only, spec §6.1).
 	AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error

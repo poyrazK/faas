@@ -187,6 +187,18 @@ func (s *PgStore) ListApps(ctx context.Context, accountID string) ([]App, error)
 	return scanApps(rows)
 }
 
+func (s *PgStore) ListAllApps(ctx context.Context) ([]App, error) {
+	rows, err := s.pool.Query(ctx,
+		`select id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
+		        max_concurrency, status, manifest, created_at
+		 from apps where status <> 'deleted' order by created_at desc`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanApps(rows)
+}
+
 func (s *PgStore) CountDeployedApps(ctx context.Context, accountID string) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx,
@@ -251,6 +263,15 @@ func (s *PgStore) LatestDeployment(ctx context.Context, appID string) (Deploymen
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
 		        status, coalesce(error,''), created_at
 		 from deployments where app_id = $1 order by created_at desc limit 1`, appID)
+	return scanDeployment(row)
+}
+
+func (s *PgStore) LiveDeployment(ctx context.Context, appID string) (Deployment, error) {
+	row := s.pool.QueryRow(ctx,
+		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
+		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
+		        status, coalesce(error,''), created_at
+		 from deployments where app_id = $1 and status = 'live' order by created_at desc limit 1`, appID)
 	return scanDeployment(row)
 }
 
@@ -487,7 +508,7 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	row := s.pool.QueryRow(ctx,
 		`insert into instances (app_id, deployment_id, state, ram_mb) values ($1, $2, $3, $4)
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		           coalesce(host_ip::text,''), ram_mb, started_at, last_request_at, parked_at`,
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at`,
 		appID, deploymentID, state, ramMB)
 	return scanInstance(row)
 }
@@ -495,7 +516,7 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host_ip::text,''), ram_mb, started_at, last_request_at, parked_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
 		 from instances where id = $1`, id)
 	return scanInstance(row)
 }
@@ -503,7 +524,7 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host_ip::text,''), ram_mb, started_at, last_request_at, parked_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
 		 from instances where app_id = $1 order by started_at desc`, appID)
 	if err != nil {
 		return nil, err
@@ -521,6 +542,51 @@ func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) err
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances set netns = $2, host_ip = $3::inet, guest_uid = $4, started_at = now()
+		 where id = $1`, id, netns, hostIP, guestUID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
+	row := s.pool.QueryRow(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
+		 from instances where app_id = $1 and state = 'running'
+		 order by started_at desc nulls last limit 1`, appID)
+	return scanInstance(row)
+}
+
+// TouchInstancesLastSeen applies a last_request_at batch in one round-trip via
+// unnest, updating only rows that still exist (a reaped instance's touch is
+// silently dropped). Returns the number of rows updated.
+func (s *PgStore) TouchInstancesLastSeen(ctx context.Context, touches []InstanceTouch) (int, error) {
+	if len(touches) == 0 {
+		return 0, nil
+	}
+	ids := make([]string, len(touches))
+	ts := make([]time.Time, len(touches))
+	for i, t := range touches {
+		ids[i] = t.InstanceID
+		ts[i] = t.LastRequest
+	}
+	tag, err := s.pool.Exec(ctx,
+		`update instances i set last_request_at = b.ts
+		 from (select unnest($1::uuid[]) as id, unnest($2::timestamptz[]) as ts) b
+		 where i.id = b.id`, ids, ts)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // --- snapshots --------------------------------------------------------------
@@ -555,6 +621,19 @@ func (s *PgStore) LatestSnapshot(ctx context.Context, deploymentID string) (Snap
 		 from snapshots where deployment_id = $1 and stale = false
 		 order by created_at desc limit 1`, deploymentID)
 	return scanSnapshot(row)
+}
+
+// MarkSnapshotStale flags a snapshot unusable after a failed restore (ADR-005):
+// the next wake cold-boots and the next park re-snapshots. Idempotent.
+func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) error {
+	tag, err := s.pool.Exec(ctx, `update snapshots set stale = true where id = $1`, snapshotID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // --- events ------------------------------------------------------------------
@@ -781,9 +860,8 @@ func scanCrons(rows pgx.Rows) ([]Cron, error) {
 }
 
 func scanInstance(row pgx.Row) (Instance, error) {
-	ins := Instance{}
-	if err := row.Scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
-		&ins.HostIP, &ins.RAMMB, &ins.StartedAt, &ins.LastRequestAt, &ins.ParkedAt); err != nil {
+	ins, err := scanInstanceCols(row.Scan)
+	if err != nil {
 		return Instance{}, mapErr(err)
 	}
 	return ins, nil
@@ -792,14 +870,35 @@ func scanInstance(row pgx.Row) (Instance, error) {
 func scanInstances(rows pgx.Rows) ([]Instance, error) {
 	var out []Instance
 	for rows.Next() {
-		ins := Instance{}
-		if err := rows.Scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
-			&ins.HostIP, &ins.RAMMB, &ins.StartedAt, &ins.LastRequestAt, &ins.ParkedAt); err != nil {
+		ins, err := scanInstanceCols(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, ins)
 	}
 	return out, rows.Err()
+}
+
+// scanInstanceCols scans one instances row. started_at, last_request_at, and
+// parked_at are nullable (a cold_booting instance has none yet), so they scan
+// through *time.Time intermediates and stay the zero Time when NULL.
+func scanInstanceCols(scan func(...any) error) (Instance, error) {
+	ins := Instance{}
+	var started, lastReq, parked *time.Time
+	if err := scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
+		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked); err != nil {
+		return Instance{}, err
+	}
+	if started != nil {
+		ins.StartedAt = *started
+	}
+	if lastReq != nil {
+		ins.LastRequestAt = *lastReq
+	}
+	if parked != nil {
+		ins.ParkedAt = *parked
+	}
+	return ins, nil
 }
 
 func scanSnapshot(row pgx.Row) (Snapshot, error) {

@@ -209,6 +209,13 @@ type Instance struct {
 	ParkedAt      time.Time
 }
 
+// InstanceTouch is one entry in a last_request_at flush batch (spec §4.1). The
+// gateway accumulates these in memory and hands them to schedd every 15 s.
+type InstanceTouch struct {
+	InstanceID  string
+	LastRequest time.Time
+}
+
 // Event is one row in the append-only audit log (spec §6.1).
 type Event struct {
 	ID      int64
