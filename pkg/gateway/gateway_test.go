@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -185,7 +186,7 @@ func TestWakeGateCapReturnsQueueFull(t *testing.T) {
 
 	full := 0
 	for _, e := range errs {
-		if e == ErrQueueFull {
+		if errors.Is(e, ErrQueueFull) {
 			full++
 		}
 	}
