@@ -22,9 +22,9 @@ import (
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
-	listen   func(network, addr string) (net.Listener, error)
-	newSrv   func(addr string, handler http.Handler) *http.Server
-	backend  gateway.Backend
+	listen  func(network, addr string) (net.Listener, error)
+	newSrv  func(addr string, handler http.Handler) *http.Server
+	backend gateway.Backend
 }
 
 func defaultDeps() runDeps {
