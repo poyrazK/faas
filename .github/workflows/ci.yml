@@ -86,6 +86,23 @@ jobs:
       - name: build
         run: make build
 
+      # Daemon smoke: every cmd/<daemon>/main.go is a one-box binary that wires
+      # through pkg/wire.Daemon. `--help` must exit 0 with non-empty usage text
+      # (a silent success here usually means init() truncated on a bad flag
+      # spec). Catches nil-deref and broken flag wiring that `make build` alone
+      # won't, in ~1 s. Mirrors the PR template checklist line `make build`.
+      - name: daemon smoke (--help)
+        run: |
+          set -e
+          for d in apid builderd faas gatewayd imaged meterd schedd vmmd; do
+            out=$(./bin/$d --help 2>&1)
+            if [ -z "$out" ]; then
+              echo "::error::$d --help returned no output"
+              exit 1
+            fi
+            printf '%-9s %4d bytes\n' "$d" "${#out}"
+          done
+
       # M1+ (ADR-013): *.pb.go is checked in; this step verifies it's in sync
       # with the .proto sources. arduino/setup-protoc pins a modern protoc
       # matching what 'go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11'
