@@ -13,10 +13,10 @@ import (
 // fakeFlakySink is a LastSeenSink that counts Touch + Flush calls and can
 // return errors from Flush to exercise the ticker loop.
 type fakeFlakySink struct {
-	mu        sync.Mutex
-	touched   map[string]int
-	flushes   int
-	flushErr  error
+	mu       sync.Mutex
+	touched  map[string]int
+	flushes  int
+	flushErr error
 }
 
 func newFakeFlakySink() *fakeFlakySink { return &fakeFlakySink{touched: map[string]int{}} }

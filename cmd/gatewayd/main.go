@@ -9,8 +9,9 @@
 // :8080 today.
 //
 // Two listeners run inside this daemon:
-//   public  :8080 (placeholder; eventually :80/:443) → Handler.ServeHTTP
-//   private :9090                                       → /healthz /readyz /metrics
+//
+//	public  :8080 (placeholder; eventually :80/:443) → Handler.ServeHTTP
+//	private :9090                                       → /healthz /readyz /metrics
 //
 // Both share ctx cancellation so a SIGTERM shuts them down in parallel.
 package main

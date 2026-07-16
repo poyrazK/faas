@@ -24,7 +24,7 @@ func TestTLSConfigPartialRejects(t *testing.T) {
 func TestTLSConfigFullAccepts(t *testing.T) {
 	cfg := TLSConfig{
 		WildcardCertDomain:      "apps.example.com",
-		HetznerDNSAPITokenPath: "/etc/faas/secrets/hetzner-dns.token",
+		HetznerDNSAPITokenPath:  "/etc/faas/secrets/hetzner-dns.token",
 		HetznerZone:             "example.com",
 		StorageDir:              "/var/lib/faas/certs",
 		OnDemandHTTP01Allowlist: func(string) bool { return false },

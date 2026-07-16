@@ -4,8 +4,8 @@
 // file owns a SECOND *http.Server on a private listener (default :9090) that
 // serves only the control routes. The public listener stays single-purpose:
 //
-//   public   :80/:443   → Handler.ServeHTTP       (proxies customer apps)
-//   private  :9090      → ControlMux              (health + metrics)
+//	public   :80/:443   → Handler.ServeHTTP       (proxies customer apps)
+//	private  :9090      → ControlMux              (health + metrics)
 //
 // The private listener is wired into the cmd/gatewayd main alongside the
 // public server with its own graceful-shutdown context.

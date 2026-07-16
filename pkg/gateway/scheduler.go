@@ -3,12 +3,12 @@
 // long-term schedd daemon (M5) provides a gRPC implementation that lives in
 // cmd/schedd. Today this file ships:
 //
-//   1. The Scheduler interface — the method set schedd must implement.
-//   2. A fake implementation — returns a configurable deterministic
-//      instance address so the gateway remains testable in isolation.
-//   3. A noop implementation — wires up when no scheduler is configured
-//      (e.g. unit tests that exercise the routing/wake path independently
-//      of schedd semantics).
+//  1. The Scheduler interface — the method set schedd must implement.
+//  2. A fake implementation — returns a configurable deterministic
+//     instance address so the gateway remains testable in isolation.
+//  3. A noop implementation — wires up when no scheduler is configured
+//     (e.g. unit tests that exercise the routing/wake path independently
+//     of schedd semantics).
 //
 // M5 wiring swaps FakeScheduler for the gRPC client (see
 // vmmdgrpc/server.go pattern with bufconn tests).

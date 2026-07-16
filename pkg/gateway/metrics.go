@@ -7,7 +7,7 @@
 //   - gateway_requests_total{app, plan, code}        counter
 //   - gateway_wake_latency_seconds                    histogram
 //   - gateway_queue_depth{app}                       gauge (set/cleared by
-//                                                     WakeGate.SetGaugeSink)
+//     WakeGate.SetGaugeSink)
 //   - gateway_rate_limited_total{app, plan}          counter
 //   - gateway_cold_wake_total{app}                   counter
 package gateway
@@ -26,11 +26,11 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	requests      *prometheus.CounterVec
-	wakeLatency   prometheus.Histogram
-	queueDepth    *prometheus.GaugeVec
-	rateLimited   *prometheus.CounterVec
-	coldWake      *prometheus.CounterVec
+	requests    *prometheus.CounterVec
+	wakeLatency prometheus.Histogram
+	queueDepth  *prometheus.GaugeVec
+	rateLimited *prometheus.CounterVec
+	coldWake    *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
