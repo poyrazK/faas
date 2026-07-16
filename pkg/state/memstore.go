@@ -243,6 +243,19 @@ func (m *MemStore) ListApps(_ context.Context, accountID string) ([]App, error) 
 	return out, nil
 }
 
+func (m *MemStore) ListAllApps(_ context.Context) ([]App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []App
+	for _, a := range m.apps {
+		if a.Status != AppDeleted {
+			out = append(out, a)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
 func (m *MemStore) CountDeployedApps(_ context.Context, accountID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -334,6 +347,22 @@ func (m *MemStore) LatestDeployment(_ context.Context, appID string) (Deployment
 	found := false
 	for _, d := range m.deployments {
 		if d.AppID == appID && (!found || d.CreatedAt.After(latest.CreatedAt)) {
+			latest, found = d, true
+		}
+	}
+	if !found {
+		return Deployment{}, ErrNotFound
+	}
+	return latest, nil
+}
+
+func (m *MemStore) LiveDeployment(_ context.Context, appID string) (Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest Deployment
+	found := false
+	for _, d := range m.deployments {
+		if d.AppID == appID && d.Status == DeployLive && (!found || d.CreatedAt.After(latest.CreatedAt)) {
 			latest, found = d, true
 		}
 	}
@@ -663,6 +692,57 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 	return nil
 }
 
+func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP string, guestUID int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return ErrNotFound
+	}
+	ins.Netns = netns
+	ins.HostIP = hostIP
+	ins.GuestUID = guestUID
+	ins.StartedAt = time.Now()
+	m.instances[id] = ins
+	return nil
+}
+
+func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var newest Instance
+	found := false
+	for _, ins := range m.instances {
+		if ins.AppID != appID || ins.State != "running" {
+			continue
+		}
+		if !found || ins.StartedAt.After(newest.StartedAt) {
+			newest = ins
+			found = true
+		}
+	}
+	if !found {
+		return Instance{}, ErrNotFound
+	}
+	return newest, nil
+}
+
+func (m *MemStore) TouchInstancesLastSeen(_ context.Context, touches []InstanceTouch) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	applied := 0
+	for _, t := range touches {
+		ins, ok := m.instances[t.InstanceID]
+		if !ok {
+			continue
+		}
+		ins.LastRequestAt = t.LastRequest
+		m.instances[t.InstanceID] = ins
+		applied++
+	}
+	return applied, nil
+}
+
 // --- snapshots --------------------------------------------------------------
 //
 // MemStore's snapshot table mirrors the Postgres semantics: First row wins,
@@ -705,6 +785,18 @@ func (m *MemStore) LatestSnapshot(_ context.Context, deploymentID string) (Snaps
 		return Snapshot{}, ErrNotFound
 	}
 	return latest, nil
+}
+
+func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.snapshots {
+		if m.snapshots[i].ID == snapshotID {
+			m.snapshots[i].Stale = true
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 
 // --- Audit ------------------------------------------------------------------

@@ -2,9 +2,6 @@ package sched
 
 import (
 	"context"
-	"io"
-	"log/slog"
-	"sync"
 	"testing"
 	"time"
 
@@ -13,109 +10,79 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestLoopReaperLogsParkableInstances seeds a ledger with an instance past
-// its idle timeout, runs a single reaper tick against a synthetic snapshot,
-// and asserts the ledger released the instance. We drive the reaper via a
-// test-only helper that doesn't need a real pool or LISTEN.
-func TestLoopReaperLogsParkableInstances(t *testing.T) {
+// TestLoopReaperParksIdleInstance drives one reaper tick against a store holding
+// an instance well past its idle timeout and asserts the engine parked it
+// (snapshot taken, RAM released). The Loop reads instances from the store, so we
+// back-date last_request_at by transitioning through a real wake first.
+func TestLoopReaperParksIdleInstance(t *testing.T) {
 	store := state.NewMemStore()
-	acct, _ := store.CreateAccount(context.Background(), "u@example.com", api.PlanPro)
-	app, _ := store.CreateApp(context.Background(), state.App{
-		AccountID: acct.ID, Slug: "loop-app", RAMMB: 512, IdleTimeoutS: 60, MaxConcurrency: 5,
-	})
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
 
-	now := time.Now().Add(-10 * time.Minute) // way past the 60s idle timeout
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	l := NewLedger()
-	loop := &Loop{store: store, ledger: l, log: log}
+	res, err := engine.Wake(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	// Make the instance look long-idle: last_request_at far in the past.
+	if _, err := store.TouchInstancesLastSeen(context.Background(), []state.InstanceTouch{
+		{InstanceID: res.InstanceID, LastRequest: time.Now().Add(-time.Hour)},
+	}); err != nil {
+		t.Fatalf("touch: %v", err)
+	}
 
-	loop.runReaperOnce(context.Background(), []InstanceInfo{
-		{Instance: "loop-app:i1", AppID: app.ID, Plan: api.PlanPro,
-			State: state.StateRunning, RAMMB: 520,
-			LastRequest: now, Started: now.Add(-time.Hour), IdleTimeoutS: 60},
-	})
+	loop := NewLoop(nil, engine, testLog())
+	loop.runReaper(context.Background())
 
-	if got := l.ResidentRAM(); got != 0 {
-		t.Errorf("ResidentRAM after reaper = %d, want 0 (instance released)", got)
+	ins, _ := store.InstanceByID(context.Background(), res.InstanceID)
+	if ins.State != string(state.StateParked) {
+		t.Errorf("state = %q, want parked", ins.State)
+	}
+	if vmm.snapshots != 1 {
+		t.Errorf("snapshots = %d, want 1 (idle park snapshots)", vmm.snapshots)
+	}
+	if got := engine.Ledger().ResidentRAM(); got != 0 {
+		t.Errorf("resident = %d, want 0 after park", got)
 	}
 }
 
-// TestHandleNotificationRejectsBadJSON covers the dispatch path: a malformed
-// payload must not panic and must not propagate errors.
-func TestHandleNotificationRejectsBadJSON(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	// pool nil — Run() not invoked, only handleNotification.
-	l := &Loop{store: nil, ledger: nil, log: log}
-
-	l.handleNotification(context.Background(), db.Notification{
-		Channel: db.NotifyDeploymentChanged, Payload: "{this is not json",
-	})
-	l.handleNotification(context.Background(), db.Notification{
-		Channel: "no_such_channel", Payload: "{}",
-	})
-}
-
-// TestHandleDeploymentLiveCreatesInstance covers the M5 wiring: when imaged
-// emits deployment_changed with status="live", schedd creates an instance row
-// in cold_booting state. This is the minimum required by CLAUDE.md invariant
-// §6.2-1 (an app with a live deployment must have a row in `instances`).
-//
-// We don't drive Run(); handleNotification is the public seam. Pool is nil
-// because materialiseLiveInstance's emit is a no-op when l.pool is unset.
-//
-// Note: imaged emits `status:"live"` exactly once per deployment (the
-// re-emit happens once after the terminal transition). Duplicate-row
-// protection would require a unique (deployment_id) constraint, which is a
-// schema migration out of scope for M5.1.
-func TestHandleDeploymentLiveCreatesInstance(t *testing.T) {
+// TestHandleSnapshotPrime routes a snapshot_prime notification into engine.Prime,
+// producing a parked instance (the deploy-pipeline handoff, ADR-018).
+func TestHandleSnapshotPrime(t *testing.T) {
 	store := state.NewMemStore()
-	acct, _ := store.CreateAccount(context.Background(), "u@example.com", api.PlanHobby)
-	app, _ := store.CreateApp(context.Background(), state.App{
-		AccountID: acct.ID, Slug: "live-app", RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 2,
-	})
-
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	loop := &Loop{store: store, ledger: NewLedger(), log: log}
+	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 2)
+	vmm := &fakeVMM{}
+	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	loop := NewLoop(nil, engine, testLog())
 
 	loop.handleNotification(context.Background(), db.Notification{
-		Channel: db.NotifyDeploymentChanged,
-		Payload: `{"app_id":"` + app.ID + `","to":"dep-123","status":"live"}`,
+		Channel: db.NotifySnapshotPrime,
+		Payload: `{"app_id":"` + app.ID + `","deployment_id":"` + dep.ID + `"}`,
 	})
 
-	rows, err := store.ListInstancesForApp(context.Background(), app.ID)
-	if err != nil {
-		t.Fatalf("ListInstancesForApp: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("instance rows = %d, want 1", len(rows))
-	}
-	if rows[0].State != string(state.StateColdBooting) {
-		t.Errorf("state = %q, want %q", rows[0].State, state.StateColdBooting)
-	}
-	if rows[0].DeploymentID != "dep-123" {
-		t.Errorf("deployment_id = %q, want %q", rows[0].DeploymentID, "dep-123")
-	}
-	if rows[0].RAMMB != 256 {
-		t.Errorf("ram_mb = %d, want 256", rows[0].RAMMB)
+	rows, _ := store.ListInstancesForApp(context.Background(), app.ID)
+	if len(rows) != 1 || rows[0].State != string(state.StateParked) {
+		t.Fatalf("rows = %+v, want one parked row", rows)
 	}
 }
 
-// --- tiny shims to keep the test self-contained ------------------------------
+// TestHandleNotificationRejectsBadInput covers the dispatch guards: malformed or
+// incomplete payloads must not panic and must not act.
+func TestHandleNotificationRejectsBadInput(t *testing.T) {
+	store := state.NewMemStore()
+	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	loop := NewLoop(nil, engine, testLog())
 
-// runReaperOnce is a tiny helper for the test; the real Loop exposes Run + a
-// private runReaper that reads from the store. We add a public seam so tests
-// can drive reaper decisions without LISTEN.
-func (l *Loop) runReaperOnce(ctx context.Context, snapshot []InstanceInfo) {
-	now := time.Now()
-	resident := l.ledger.ResidentRAM()
-	for _, id := range ReapIdle(now, snapshot) {
-		l.ledger.Release(id)
-	}
-	for _, id := range SelectEvictions(resident, now, snapshot) {
-		l.ledger.Release(id)
-	}
-	_ = ctx
+	loop.handleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotPrime, Payload: "{not json",
+	})
+	loop.handleNotification(context.Background(), db.Notification{
+		Channel: db.NotifySnapshotPrime, Payload: `{"app_id":""}`,
+	})
+	loop.handleNotification(context.Background(), db.Notification{
+		Channel: "no_such_channel", Payload: "{}",
+	})
+	loop.handleNotification(context.Background(), db.Notification{
+		Channel: db.NotifyAppChanged, Payload: `{"app_id":"x"}`,
+	})
 }
-
-// sync.Mutex silence: keep the import set stable when other helpers move.
-var _ sync.Mutex

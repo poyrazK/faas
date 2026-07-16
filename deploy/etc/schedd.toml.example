@@ -1,12 +1,23 @@
 # Example schedd config — copy to /etc/faas/schedd.toml on the box.
+# Every field has a working default; an empty file yields a runnable daemon.
 
-# log_level: slog level (debug, info, warn, error).
-# Default: info
-# log_level = "info"
+# socket_path: unix socket schedd's gRPC server binds (ADR-018; gatewayd dials
+# it to wake apps). Mode 0660, group `faas`.
+# Default: /run/faas/schedd.sock
+# socket_path = "/run/faas/schedd.sock"
 
-# reaper_interval_s: how often the idle reaper + cron firer tick.
-# Default: 10 (seconds)
-# reaper_interval_s = 10
+# vmmd_socket: vmmd's gRPC socket schedd dials to drive the microVM lifecycle
+# (ADR-014).
+# Default: /run/faas/vmmd.sock
+# vmmd_socket = "/run/faas/vmmd.sock"
+
+# owner_user: uid that owns the schedd socket file (looked up by name).
+# Default: faas-schedd
+# owner_user = "faas-schedd"
+
+# metrics_addr: bind address for the Prometheus /metrics endpoint.
+# Empty disables it.
+# metrics_addr = "127.0.0.1:9103"
 
 # db_url: Postgres DSN. Empty => $DATABASE_URL from the environment.
 # db_url = ""

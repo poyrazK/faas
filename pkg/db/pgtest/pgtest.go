@@ -34,23 +34,62 @@ func Open(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Skipf("pgtest: cannot parse DATABASE_URL (%v); skipping", err)
 	}
-	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	ctx := context.Background()
+	schema := randomSchema(t)
+
+	// Bootstrap connection on the default search_path just to create the test
+	// schema. We can't use the final pool for this because that pool pins its
+	// search_path to a schema that does not exist yet.
+	boot, err := pgxpool.NewWithConfig(ctx, cfg.Copy())
 	if err != nil {
 		t.Skipf("pgtest: cannot connect to Postgres (%v); skipping", err)
 	}
-	if err := pool.Ping(context.Background()); err != nil {
-		pool.Close()
+	if err := boot.Ping(ctx); err != nil {
+		boot.Close()
 		t.Skipf("pgtest: Postgres not reachable (%v); skipping", err)
 	}
-	schema := randomSchema(t)
-	if _, err := pool.Exec(context.Background(), fmt.Sprintf("create schema %s", schema)); err != nil {
-		pool.Close()
+	if _, err := boot.Exec(ctx, fmt.Sprintf("create schema %s", schema)); err != nil {
+		boot.Close()
 		t.Fatalf("pgtest: create schema: %v", err)
 	}
-	t.Setenv("PGOPTIONS", fmt.Sprintf("--search_path=%s,public", schema))
+	// Install the migrations' extensions in public (shared, idempotent) so every
+	// isolated test schema resolves them via search_path=schema,public. Creating
+	// them per-schema instead would register the extension against a schema we
+	// later drop, hiding the type from the next test (and racing across packages
+	// that share the cluster).
+	if _, err := boot.Exec(ctx, "create extension if not exists citext schema public"); err != nil {
+		boot.Close()
+		t.Fatalf("pgtest: install citext: %v", err)
+	}
+	boot.Close()
+
+	// Real pool: every connection defaults its search_path to the isolated
+	// schema (extension types like citext still resolve from public). This is
+	// what makes goose migrate into the test schema and each test's rows land
+	// there — pgx honours RuntimeParams, unlike the PGOPTIONS env var.
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("pgtest: open isolated pool: %v", err)
+	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), fmt.Sprintf("drop schema %s cascade", schema))
-		pool.Close()
+		// Drop the schema on a fresh connection, not the returned pool: a
+		// daemon under test may own the returned pool's lifecycle and have
+		// already closed it (a closed pool can't run the DROP, which would
+		// otherwise leak the schema and its extensions into the next test).
+		if c, cerr := pgxpool.NewWithConfig(ctx, cfg.Copy()); cerr == nil {
+			_, _ = c.Exec(ctx, fmt.Sprintf("drop schema %s cascade", schema))
+			c.Close()
+		}
+		// Best-effort close of the returned pool; tolerate an already-closed
+		// pool (double Close panics in pgx).
+		func() {
+			defer func() { _ = recover() }()
+			pool.Close()
+		}()
 	})
 	return pool
 }
