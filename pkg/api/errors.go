@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 )
@@ -34,6 +35,14 @@ func (p *Problem) Error() string {
 		return fmt.Sprintf("%s: %s", p.Code, p.Detail)
 	}
 	return p.Code
+}
+
+// WriteProblem renders p as an RFC 7807 problem+json response with its status
+// code. Every HTTP surface (gatewayd, apid) uses this so error shape is uniform.
+func WriteProblem(w http.ResponseWriter, p *Problem) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(p.Status)
+	_ = json.NewEncoder(w).Encode(p)
 }
 
 // NewProblem builds a Problem with the common fields set.
@@ -106,6 +115,26 @@ func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 			l.Plan, l.AppLayerMaxMB, float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
 		WithDocs("https://docs.DOMAIN/build/limits#app-layer")
+}
+
+// ErrPlanLimitConcurrency is returned when waking another instance would exceed
+// the app's concurrency (spec §4.3 admission, invariant §6.2-1).
+func ErrPlanLimitConcurrency(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodePlanLimitConcur,
+		"Concurrency limit reached",
+		fmt.Sprintf("%s plan allows %d concurrent instance(s) per app; %d already live.", l.Plan, l.MaxConcurrency, observed)).
+		WithLimit(int64(l.MaxConcurrency), int64(observed)).
+		WithDocs("https://docs.DOMAIN/plans#concurrency")
+}
+
+// ErrCapacity is returned when admission is refused for lack of box capacity
+// (RAM headroom or vCPU slots, spec §4.3). This should be near-impossible in
+// practice — admission alerts fire long before customers see it (spec §12) — so
+// it is a page for us, not just a message for them (UX spec §7).
+func ErrCapacity(detail string) *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeCapacity,
+		"Briefly at capacity", detail).
+		WithDocs("https://status.DOMAIN")
 }
 
 // ErrSourceTooLarge is returned when an uploaded tarball exceeds the plan cap.

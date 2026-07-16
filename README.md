@@ -81,3 +81,17 @@ when its executable acceptance tests pass.
   - Metal park→wake latency gate (`//go:build metal`).
 
   Remaining: vsock resume trigger wiring, and the metal latency/uniqueness runs.
+- **M4 — gatewayd + schedd.** 🚧 Routing, wake-blocking, admission, reaping —
+  all unit-tested:
+  - `pkg/state` — the instance state machine (§6.1): legal transitions +
+    which states count toward the concurrency / RAM invariants (§6.2-1/2).
+  - `pkg/sched` — the **admission ledger** (the 47,600 MB headroom guard,
+    per-app concurrency, 160 vCPU slots), the idle reaper, and eviction
+    selection (LRU, never <30 s, Scale last).
+  - `pkg/gateway` — per-app token-bucket rate limiter, host→app LRU route cache,
+    and the **wake gate** (single-flight per app, 512/30 s cap), composed into a
+    wake-blocking HTTP handler proven end-to-end with httptest (cold wake → 200
+    + `x-faas-wake: cold`; 50 concurrent cold requests → 1 wake).
+  - `schedd`/`gatewayd` wired to their cores; gatewayd serves HTTP.
+
+  Remaining: Postgres-backed routing + schedd gRPC Backend (M5), CertMagic TLS.
