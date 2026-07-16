@@ -98,11 +98,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // wake holds the request while schedd/vmmd bring an instance up, coalescing
-// concurrent requests for the same app into one wake (spec §4.1).
+// concurrent requests for the same app into one wake (spec §4.1). The
+// shouldWake predicate runs under the gate lock the moment a caller wins the
+// leader election, so if a peer's wake has just observed a ready instance we
+// don't fire a redundant restore.
 func (h *Handler) wake(ctx context.Context, appID string) error {
-	return h.gate.Wait(ctx, appID, func(ctx context.Context) error {
-		return h.backend.Wake(ctx, appID)
-	})
+	return h.gate.Wait(ctx, appID,
+		func() bool {
+			_, ready := h.backend.Target(appID)
+			return !ready
+		},
+		func(ctx context.Context) error {
+			return h.backend.Wake(ctx, appID)
+		},
+	)
 }
 
 func writeWakeError(w http.ResponseWriter, err error) {
