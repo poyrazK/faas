@@ -110,8 +110,18 @@ when its executable acceptance tests pass.
     wake-blocking HTTP handler proven end-to-end with httptest (cold wake → 200
     + `x-faas-wake: cold`; 50 concurrent cold requests → 1 wake).
   - `schedd`/`gatewayd` wired to their cores; gatewayd serves HTTP.
+  - `pkg/gateway` **`PGBackend`** (M5) — the production edge backend: host→app
+    routing over Postgres (read-only; apid/schedd own the writes) with the
+    10k-entry LRU route cache, plus schedd over gRPC (`pkg/scheddgrpc.Client`,
+    ADR-018) for wakes. The app-target cache is seeded by a successful wake and
+    kept coherent from the `instance_changed` / `app_changed` / `domain_changed`
+    pg_notify channels. `cmd/gatewayd` now builds it in `run()` (the M4
+    `unwiredBackend` stays as the test seam). Wake-denials round-trip their RFC
+    7807 status via `pkg/grpcerr` (a lifted `*api.Problem` now recovers its HTTP
+    status from the stable `Code`).
 
-  Remaining: Postgres-backed routing + schedd gRPC Backend (M5), CertMagic TLS.
+  Remaining: CertMagic TLS; wiring the gateway's last-seen flush to schedd
+  `ReportActivity` (client method is ready).
 - **M5 — apid + deploy pipeline + CLI.** 🚧 The control plane and CLI work
   end-to-end (verified live against a running apid):
   - `migrations/00001_init.sql` — the full schema (spec §5) with CHECK
@@ -125,6 +135,11 @@ when its executable acceptance tests pass.
     image deploys, and Idempotency-Key replay.
   - `faas` CLI — `login`/`whoami`/`apps`/`deploy --image`, rendering the API's
     RFC 7807 problems in the three-line CLI shape (UX §3.3).
+  - `apid`/`schedd` run on the pgx-backed `state.PgStore`; `gatewayd`'s
+    `PGBackend` (see M4) closes the routing → schedd-wake half of the request
+    path, so a request to a routed app now drives `schedd.Wake` over gRPC.
 
-  Remaining: swap MemStore for the Postgres store, and connect gatewayd/schedd
-  to the deploy pipeline (prime snapshot → PARKED → first request wakes).
+  Remaining (needs KVM, so it lands on the EX44, not in unit CI): imaged's
+  snapshot-prime (cold-boot once → snapshot → app `PARKED`) and the metal
+  park→wake so `faas deploy --image` → parked → first request wakes end-to-end.
+  The prebuilt-image acceptance is the M5 gate (§14); builder microVMs are M6.

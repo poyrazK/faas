@@ -66,6 +66,17 @@ func (c *RouteCache) Invalidate(host string) {
 	}
 }
 
+// Reset drops every cached route. gatewayd calls this on an app/domain change
+// notification (spec §4.1): at one-box scale (single-digit apps, spec §4.3) a
+// full re-resolve on the next request is cheaper than tracking which host a
+// given app_id maps to, and it can never leave a stale route behind.
+func (c *RouteCache) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ll.Init()
+	c.byID = map[string]*list.Element{}
+}
+
 // Len returns the number of cached routes.
 func (c *RouteCache) Len() int {
 	c.mu.Lock()

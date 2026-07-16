@@ -19,6 +19,7 @@ package grpcerr
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -149,12 +150,17 @@ func FromStatus(err error) (*api.Problem, bool) {
 		// Problem-shaped object rather than letting gRPC status leak.
 		return &api.Problem{
 			Code:   "internal",
-			Status: int(st.Code()),
+			Status: http.StatusInternalServerError,
 			Title:  st.Message(),
 			Detail: st.Message(),
 		}, false
 	}
 
+	// Recover the HTTP status from the stable Code so HTTP surfaces that render
+	// the lifted Problem verbatim (gatewayd's wake-denial path → WriteProblem)
+	// emit the right status rather than WriteHeader(0). The gRPC code is lossy
+	// (both 429 and 503 map to ResourceExhausted), so we key off the Code.
+	p.Status = api.StatusForCode(p.Code)
 	return p, true
 }
 
