@@ -122,6 +122,34 @@ func TestUnknownHost404(t *testing.T) {
 	}
 }
 
+// TestAppsSuffixFilter asserts the spec §4.1 wildcard host guard: with a
+// configured appsSuffix, any Host that doesn't match is 404'd without
+// touching the routing table.
+func TestAppsSuffixFilter(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	h.WithAppsSuffix(".apps.dom")
+
+	// Matches suffix → reaches the fake backend → proxied.
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("matched suffix = %d, want 200", rec.Code)
+	}
+
+	// Doesn't match suffix → 404 (without ever calling b.Lookup).
+	b.wakes = 0
+	req = httptest.NewRequest("GET", "http://attacker.example/", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("non-matching suffix = %d, want 404", rec.Code)
+	}
+	if atomic.LoadInt32(&b.wakes) != 0 {
+		t.Error("non-matching suffix must not wake the app")
+	}
+}
+
 func TestRateLimitReturns429(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.running = true

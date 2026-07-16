@@ -43,6 +43,12 @@ type Handler struct {
 	metrics *Metrics
 	// log may be nil (defaults to slog.Default()).
 	log *slog.Logger
+	// appsSuffix is the configured apps.DOMAIN suffix (e.g. ".apps.example.com").
+	// Non-empty enables a pre-Lookup host suffix check that 404s anything
+	// outside it (spec §4.1 noise filter). Custom domains (Pro+) bypass this
+	// constraint implicitly by being keys in the routing cache — see
+	// WithAppsSuffix docs.
+	appsSuffix string
 	// proxyFor builds the reverse proxy for an upstream address; overridable in
 	// tests.
 	proxyFor func(addr string) http.Handler
@@ -69,6 +75,20 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	return h
 }
 
+// WithAppsSuffix sets the *.apps.DOMAIN suffix filter (call before serving).
+// When set, every request whose Host doesn't end in this suffix is rejected
+// with 404 BEFORE consulting the cache. Custom domains on a different suffix
+// are intended to be reached via the Lookup table directly (M5); this PR only
+// adds the wildcard-apps-domain guard.
+func (h *Handler) WithAppsSuffix(suffix string) *Handler {
+	// Leading dot normalization so callers can pass either form.
+	if suffix != "" && suffix[0] != '.' {
+		suffix = "." + suffix
+	}
+	h.appsSuffix = strings.ToLower(suffix)
+	return h
+}
+
 // SetWakeGateHook installs a callback that wakes the queue-depth gauge each
 // time WakeGate mutates an entry. Called by main once the gauge exists.
 func (h *Handler) SetWakeGateHook() {
@@ -90,6 +110,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w = rec
 
 	host := hostname(r.Host)
+
+	// Host allowlist suffix check (spec §4.1: *.apps.DOMAIN). Closes the
+	// door on stale DNS records that land on the edge post-TLS by rejecting
+	// anything not matching the configured suffix before the cache is touched.
+	// Set via NewHandlerWithSuffix or WithAppsSuffix; empty suffix disables
+	// the check (the Backend.Lookup table is still authoritative).
+	if h.appsSuffix != "" && !strings.HasSuffix(host, h.appsSuffix) {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound,
+			api.CodeNotFound, "No such app",
+			fmt.Sprintf("host %q does not match the configured apps suffix", host)))
+		h.observe(r, rec.status, "", "", false)
+		return
+	}
+
 	app, ok := h.backend.Lookup(r.Context(), host)
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
