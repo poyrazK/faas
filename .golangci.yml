@@ -43,3 +43,13 @@ linters:
       - path: "pkg/wire/metrics_test.go"
         linters:
           - errcheck
+      # SA5011 false-positives in these test files: the test code
+      # explicitly checks `if p == nil { t.Fatalf(...) }` before
+      # dereferencing, but staticcheck's dataflow analyzer doesn't
+      # know t.Fatalf terminates. The tests are correct.
+      - path: "pkg/api/errors_test.go"
+        linters:
+          - staticcheck
+      - path: "pkg/grpcerr/grpcerr_test.go"
+        linters:
+          - staticcheck

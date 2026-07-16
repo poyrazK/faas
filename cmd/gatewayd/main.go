@@ -44,9 +44,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	case err := <-errc:
 		return err
 	case <-ctx.Done():
-		//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
 		return srv.Shutdown(shutdownCtx)
 	}
 }
