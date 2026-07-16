@@ -16,9 +16,8 @@ linters:
     - errcheck       # unchecked errors — caught the Body.Close() bug
     - govet          # default, but explicit for visibility
     - ineffassign    # = instead of :=
-    - staticcheck    # shadowing, unused receivers, type-mismatch
+    - staticcheck    # shadowing, unused receivers, type-mismatch, gosimple
     - unused         # unused params/vars/funcs
-    - gosimple       # syntactic landmines
     - goconst        # repeated literals to const
     - misspell       # typo'd identifiers
     - nilerr         # `return nil` after assigning to err
@@ -36,7 +35,6 @@ linters:
       - path: "_test\\.go$"
         linters:
           - errcheck  # `defer x.Close()` is acceptable idiom in tests
-          - gosimple
       - path: "pkg/wire/metrics_test.go"
         linters:
           - errcheck
