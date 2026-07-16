@@ -379,11 +379,11 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	_ = s.notif.Notify(ctx(r), db.NotifyKeyChanged, `{"kind":"created","account":"`+acct.ID+`"}`)
 	s.log.Info("key created", "key", k.ID, "account", acct.ID)
 	writeJSON(w, http.StatusCreated, api.APIKeyResponse{
-		ID:         k.ID,
-		Prefix:     keyPrefix(plaintext),
-		Label:      k.Label,
-		CreatedAt:  k.CreatedAt.UTC().Format(time.RFC3339),
-		Plaintext:  plaintext,
+		ID:        k.ID,
+		Prefix:    keyPrefix(plaintext),
+		Label:     k.Label,
+		CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339),
+		Plaintext: plaintext,
 	})
 }
 
@@ -498,15 +498,15 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Look up account by stripe_customer_id; the field exists in schema.
-	acct, err := s.lookupAccountByStripeID(ctx(r), ev.Data.Object.Customer)
+	acct, err := s.lookupAccountByStripeID(r.Context(), ev.Data.Object.Customer)
 	if err != nil {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	if ev.Type == "customer.subscription.deleted" || ev.Data.Object.Status == "canceled" || ev.Data.Object.Status == "unpaid" {
-		_ = s.store.UpdateAccountStatus(ctx(r), acct.ID, state.AccountSuspended)
+		_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountSuspended)
 	} else if ev.Type == "customer.subscription.updated" && ev.Data.Object.Plan != "" {
-		_ = s.store.UpdateAccountPlan(ctx(r), acct.ID, api.Plan(ev.Data.Object.Plan))
+		_ = s.store.UpdateAccountPlan(r.Context(), acct.ID, api.Plan(ev.Data.Object.Plan))
 	}
 	w.WriteHeader(http.StatusOK)
 }

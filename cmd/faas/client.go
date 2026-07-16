@@ -181,8 +181,12 @@ func (c *Client) Rollback(ctx context.Context, slug string) (api.DeploymentRespo
 }
 
 // Park and Wake toggle the app between cold-parked and live (spec §4.3).
-func (c *Client) Park(ctx context.Context, slug string) error   { return c.do(ctx, "POST", "/v1/apps/"+slug+"/park", nil, nil) }
-func (c *Client) Wake(ctx context.Context, slug string) error   { return c.do(ctx, "POST", "/v1/apps/"+slug+"/wake", nil, nil) }
+func (c *Client) Park(ctx context.Context, slug string) error {
+	return c.do(ctx, "POST", "/v1/apps/"+slug+"/park", nil, nil)
+}
+func (c *Client) Wake(ctx context.Context, slug string) error {
+	return c.do(ctx, "POST", "/v1/apps/"+slug+"/wake", nil, nil)
+}
 func (c *Client) ListInstances(ctx context.Context, slug string) ([]api.InstanceResponse, error) {
 	var out []api.InstanceResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/instances", nil, &out)

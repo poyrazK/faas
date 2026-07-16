@@ -207,8 +207,8 @@ func (l *Loop) transitionInstance(ctx context.Context, instanceID string, st sta
 // runCronTick is the placeholder for cron firing. M5 keeps the table CRUD;
 // the actual HTTP-POST-through-gatewayd path lands with the sched
 // implementation that wires schedd → gatewayd directly.
-func (l *Loop) runCronTick(_ context.Context) {
-	crons, err := l.store.ListEnabledCrons(context.Background())
+func (l *Loop) runCronTick(ctx context.Context) {
+	crons, err := l.store.ListEnabledCrons(ctx)
 	if err != nil {
 		l.log.Warn("cron: list", "err", err)
 		return

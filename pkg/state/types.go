@@ -234,8 +234,8 @@ type Usage struct {
 // status fields are user-mutable; type and runtime are immutable).
 type UpdateAppParams struct {
 	RAMMB          *int
-	IdleTimeoutS   *int    // explicit 0 clears to plan default
-	SetIdleTimeout bool    // distinguishes nil from zero
+	IdleTimeoutS   *int // explicit 0 clears to plan default
+	SetIdleTimeout bool // distinguishes nil from zero
 	MaxConcurrency *int
 	Status         *AppStatus
 	Manifest       *AppManifest
