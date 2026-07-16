@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -38,34 +39,59 @@ func seedDevAccount(ctx context.Context, store state.Store, token string) error 
 
 const listenAddr = "127.0.0.1:8081" // behind gatewayd; not a public listener
 
+// runDeps is the DI seam for run — same pattern as vmmd / gatewayd so we can
+// exercise the listener lifecycle without binding :8081 from tests.
+type runDeps struct {
+	listen func(network, addr string) (net.Listener, error)
+	store  func() state.Store
+	getenv func(string) string
+	newSrv func(addr string, h http.Handler) *http.Server
+}
+
+func defaultDeps() runDeps {
+	return runDeps{
+		listen: net.Listen,
+		store:  func() state.Store { return state.NewMemStore() },
+		getenv: os.Getenv,
+		newSrv: func(addr string, h http.Handler) *http.Server {
+			return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
+		},
+	}
+}
+
 func main() {
 	wire.Daemon("apid", run)
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
-	store := state.NewMemStore() // TODO(M5): swap for the Postgres store
+	return runWithDeps(ctx, log, defaultDeps())
+}
+
+func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	store := deps.store()
 
 	// Dev-only: seed a Free account bound to $FAAS_DEV_TOKEN so the CLI can be
 	// exercised end-to-end without the (browser-paste) signup flow. Never set in
 	// production — the Postgres store + real login supersede this.
-	if tok := os.Getenv("FAAS_DEV_TOKEN"); tok != "" {
+	if tok := deps.getenv("FAAS_DEV_TOKEN"); tok != "" {
 		if err := seedDevAccount(ctx, store, tok); err != nil {
 			return err
 		}
 		log.Warn("dev account seeded from FAAS_DEV_TOKEN — do not use in production")
 	}
 
-	srv := newServer(store, log, os.Getenv("FAAS_APPS_DOMAIN"))
+	srv := newServer(store, log, deps.getenv("FAAS_APPS_DOMAIN"))
 
-	httpSrv := &http.Server{
-		Addr:              listenAddr,
-		Handler:           srv.handler(),
-		ReadHeaderTimeout: 10 * time.Second,
+	httpSrv := deps.newSrv(listenAddr, srv.handler())
+
+	l, err := deps.listen("tcp", listenAddr)
+	if err != nil {
+		return err
 	}
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenAddr)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.Serve(l); err != nil && err != http.ErrServerClosed {
 			errc <- err
 		}
 	}()

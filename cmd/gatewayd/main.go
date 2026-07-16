@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -38,11 +39,47 @@ const (
 	controlAddr = "127.0.0.1:9090"
 )
 
+// runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
+// wrappers so the seam is fully exercised without spawning a real daemon.
+type runDeps struct {
+	listen  func(network, addr string) (net.Listener, error)
+	newSrv  func(addr string, handler http.Handler) *http.Server
+	backend gateway.Backend
+}
+
+func defaultDeps() runDeps {
+	return runDeps{
+		listen:  net.Listen,
+		newSrv:  defaultServer,
+		backend: unwiredBackend{},
+	}
+}
+
+func defaultServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+}
+
 func main() {
 	wire.Daemon("gatewayd", run)
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	return runWithDeps(ctx, log, defaultDeps())
+}
+
+// runWithDeps is the test-friendly variant. It exercises:
+//
+//   - public listen on listenAddr via deps.listen / deps.newSrv (DI seam)
+//   - control listen on controlAddr via gateway.RunControlServer
+//   - SIGHUP-triggered rate-limit-bucket reset (same behaviour as production)
+//
+// Production calls run → runWithDeps(defaultDeps()); tests inject a custom
+// deps.listen so they can probe a real socket without binding :8080.
+func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// TLS seam (M4 lands the wiring). Disabled until then — the public
 	// listener binds :8080 plain HTTP. Reading this from TOML is a future PR.
 	tlsCfg := gateway.TLSConfig{Disabled: true}
@@ -50,7 +87,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	handler := gateway.NewHandlerWith(unwiredBackend{}, gateway.NewMetrics(), log)
+	handler := gateway.NewHandlerWith(deps.backend, gateway.NewMetrics(), log)
 	handler.SetWakeGateHook()
 
 	// SIGHUP = "drop in-memory rate-limit buckets". Operators use this after
@@ -75,13 +112,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}()
 
 	// Public listener: customer traffic (spec §4.1).
-	public := &http.Server{
-		Addr:              listenAddr,
-		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
-		// 300 s total per spec §4.1.
-		ReadTimeout:  60 * time.Second,
-		WriteTimeout: 300 * time.Second,
+	srv := deps.newSrv(listenAddr, handler)
+	public := srv
+	public.Addr = listenAddr
+	if public.ReadTimeout == 0 {
+		public.ReadTimeout = 60 * time.Second
+	}
+	if public.WriteTimeout == 0 {
+		public.WriteTimeout = 300 * time.Second
 	}
 
 	// Private listener: control plane only — never authenticated (it's on a
@@ -89,9 +127,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	controlMux := gateway.ControlMux(handler.Metrics(), nil)
 
 	errc := make(chan error, 2)
+	l, lerr := deps.listen("tcp", listenAddr)
+	if lerr != nil {
+		log.Error("gatewayd public listen failed", "addr", listenAddr, "err", lerr)
+		return lerr
+	}
 	go func() {
 		log.Info("gatewayd public listening", "addr", listenAddr)
-		if err := public.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := public.Serve(l); err != nil && err != http.ErrServerClosed {
 			errc <- err
 		}
 	}()

@@ -364,3 +364,77 @@ func TestLimiterForget(t *testing.T) {
 	// Forget on unknown id is a no-op.
 	l.Forget("never-existed")
 }
+
+// --- constructor edge cases ----------------------------------------------
+
+func TestNewWakeGate_NormalizesInputs(t *testing.T) {
+	g := NewWakeGate(0, 0)
+	if g.cap != 1 {
+		t.Errorf("cap = %d, want 1 (normalized from 0)", g.cap)
+	}
+	if g.ttl != 30*time.Second {
+		t.Errorf("ttl = %v, want 30s default", g.ttl)
+	}
+	if g.inflight == nil {
+		t.Error("inflight map not initialized")
+	}
+
+	g2 := NewWakeGate(5, 2*time.Second)
+	if g2.cap != 5 || g2.ttl != 2*time.Second {
+		t.Errorf("passthrough values not honored: cap=%d ttl=%v", g2.cap, g2.ttl)
+	}
+
+	// InflightWaiters on a never-used app is 0.
+	if n := g.InflightWaiters("never"); n != 0 {
+		t.Errorf("InflightWaiters = %d, want 0", n)
+	}
+}
+
+func TestNewRouteCache_NormalizesCapacity(t *testing.T) {
+	c := NewRouteCache(0)
+	if c.cap != 1 {
+		t.Errorf("cap = %d, want 1 (normalized from 0)", c.cap)
+	}
+	if c.ll == nil {
+		t.Error("ll list not initialized")
+	}
+	if c.byID == nil {
+		t.Error("byID map not initialized")
+	}
+	if c.Len() != 0 {
+		t.Errorf("empty cache Len = %d, want 0", c.Len())
+	}
+}
+
+func TestRouteCache_PutEvictsLRU(t *testing.T) {
+	c := NewRouteCache(2)
+	c.Put("a", "1")
+	c.Put("b", "2")
+	// "a" is LRU now; inserting "c" should evict "a".
+	c.Put("c", "3")
+	if _, ok := c.Get("a"); ok {
+		t.Error("LRU eviction missed: 'a' should be gone")
+	}
+	if id, ok := c.Get("b"); !ok || id != "2" {
+		t.Errorf("'b' lost: id=%q ok=%v", id, ok)
+	}
+	if id, ok := c.Get("c"); !ok || id != "3" {
+		t.Errorf("'c' lost: id=%q ok=%v", id, ok)
+	}
+	if c.Len() != 2 {
+		t.Errorf("Len = %d, want 2", c.Len())
+	}
+}
+
+func TestRouteCache_PutUpdatesExisting(t *testing.T) {
+	c := NewRouteCache(3)
+	c.Put("a", "1")
+	c.Put("b", "2")
+	c.Put("a", "1-new")
+	if id, _ := c.Get("a"); id != "1-new" {
+		t.Errorf("updated id = %q, want 1-new", id)
+	}
+	if c.Len() != 2 {
+		t.Errorf("Len = %d after update, want 2", c.Len())
+	}
+}

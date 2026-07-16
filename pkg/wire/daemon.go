@@ -30,10 +30,8 @@ type RunFunc func(ctx context.Context, log *slog.Logger) error
 // the logger, installs SIGINT/SIGTERM cancellation, runs fn, and exits non-zero
 // on error. It is the single entrypoint every cmd/<daemon>/main.go calls.
 func Daemon(name string, fn RunFunc) {
-	var (
-		configPath  = flag.String("config", "/etc/faas/"+name+".toml", "path to the daemon's TOML config")
-		showVersion = flag.Bool("version", false, "print version and exit")
-	)
+	configPath := flag.String("config", "/etc/faas/"+name+".toml", "path to the daemon's TOML config")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
 	if *showVersion {

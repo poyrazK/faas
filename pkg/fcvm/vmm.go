@@ -29,8 +29,9 @@ type JailerVMM struct {
 	chrootBase   string        // /srv/fc/jail
 	readyTimeout time.Duration // WAKING/cold-boot readiness budget (spec §6)
 
-	mu   sync.Mutex
-	proc map[string]*exec.Cmd // instance -> running jailer process
+	mu      sync.Mutex
+	proc    map[string]*exec.Cmd // instance -> running jailer process
+	clients map[string]*http.Client
 }
 
 // NewJailerVMM constructs a JailerVMM. readyTimeout of 0 defaults to 30s (the
@@ -43,6 +44,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		chrootBase:   chrootBase,
 		readyTimeout: readyTimeout,
 		proc:         make(map[string]*exec.Cmd),
+		clients:      make(map[string]*http.Client),
 	}
 }
 
@@ -190,6 +192,7 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	}
+	v.closeClient(l.Instance)
 	// Chroot lives in tmpfs (spec §Gotchas); removing it frees the RAM it holds.
 	if err := os.RemoveAll(filepath.Join(v.chrootBase, FirecrackerBin, l.Instance)); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
@@ -264,9 +267,17 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease) error {
 }
 
 // fcClient returns an HTTP client bound to the instance's Firecracker API socket.
+// Clients are cached per instance because http.Transport's connection pool is
+// the expensive part; rebuilding per request would re-resolve the socket every
+// time.
 func (v *JailerVMM) fcClient(instance string) *http.Client {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if c, ok := v.clients[instance]; ok {
+		return c
+	}
 	sock := v.socketPath(instance)
-	return &http.Client{
+	c := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -274,6 +285,17 @@ func (v *JailerVMM) fcClient(instance string) *http.Client {
 			},
 		},
 	}
+	v.clients[instance] = c
+	return c
+}
+
+// closeClient drops any cached http.Client for instance. Called by Kill so a
+// subsequent Boot of the same instance name gets a fresh client (and thus a
+// fresh transport pool pointed at the new socket).
+func (v *JailerVMM) closeClient(instance string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	delete(v.clients, instance)
 }
 
 func (v *JailerVMM) apiPut(ctx context.Context, instance, path string, body any) error {
@@ -285,6 +307,13 @@ func (v *JailerVMM) apiPatch(ctx context.Context, instance, path string, body an
 }
 
 func (v *JailerVMM) apiCall(ctx context.Context, method, instance, path string, body any) error {
+	return v.apiCallWithClient(ctx, v.fcClient(instance), method, path, body)
+}
+
+// apiCallWithClient is the seam that drives a single Firecracker API request.
+// Split out from apiCall so tests can inject a client backed by an httptest
+// server without needing the unix-socket machinery.
+func (v *JailerVMM) apiCallWithClient(ctx context.Context, client *http.Client, method, path string, body any) error {
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -294,7 +323,7 @@ func (v *JailerVMM) apiCall(ctx context.Context, method, instance, path string, 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := v.fcClient(instance).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
