@@ -22,6 +22,17 @@ jobs:
         run: make test
       - name: build
         run: make build
+      # M1+ (ADR-013): *.pb.go is checked in; this step verifies it's in sync
+      # with the .proto sources. Installs the same protoc plugins locally and
+      # runs Makefile's proto-check, which diffs the regenerated output.
+      - name: install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: install protoc plugins
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.10
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+      - name: proto-check
+        run: make proto-check
 
   # Integration tests need /dev/kvm + root and run on the dev EX44 (or a
   # nested-KVM runner), not on stock GitHub runners (spec §Gotchas). Wired here

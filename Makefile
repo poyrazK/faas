@@ -23,6 +23,33 @@ build: ## Build every daemon into ./bin
 	  $(GO) build -ldflags '$(LDFLAGS)' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
 	done
 
+# M1 gRPC codegen (ADR-013). Generated *.pb.go is COMMITTED — do not run
+# `make proto` to produce output; CI uses `proto-check` to verify drift only.
+PROTO_ROOT := api/proto
+GOBIN     ?= $(shell go env GOPATH)/bin
+PROTOC     ?= protoc
+PROTOC_GO  ?= $(GOBIN)/protoc-gen-go
+PROTOC_GRPC ?= $(GOBIN)/protoc-gen-go-grpc
+PROTOS     := $(shell find $(PROTO_ROOT) -name '*.proto' 2>/dev/null)
+
+.PHONY: proto
+proto: ## (re)generate *.pb.go from .proto (local toolchain: protoc-gen-go, protoc-gen-go-grpc in $GOBIN)
+	@command -v protoc >/dev/null 2>&1 || (echo "protoc not on PATH; install with 'brew install protobuf'"; exit 1)
+	@test -x "$(PROTOC_GO)" || (echo "protoc-gen-go not in $$GOBIN; install with 'go install google.golang.org/protobuf/cmd/protoc-gen-go@latest'"; exit 1)
+	@test -x "$(PROTOC_GRPC)" || (echo "protoc-gen-go-grpc not in $$GOBIN; install with 'go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest'"; exit 1)
+	@for p in $(PROTOS); do \
+	  echo "protoc $$p"; \
+	  PATH="$(GOBIN):$$PATH" $(PROTOC) --proto_path=$(PROTO_ROOT) --go_out=$(PROTO_ROOT) --go_opt=paths=source_relative \
+	    --go-grpc_out=$(PROTO_ROOT) --go-grpc_opt=paths=source_relative \
+	    $$p || exit 1; \
+	done
+
+.PHONY: proto-check
+proto-check: ## Verify checked-in *.pb.go matches what protoc would emit
+	@$(MAKE) proto > /tmp/faas-proto-check.out 2>&1 || (cat /tmp/faas-proto-check.out; exit 1)
+	@git diff --exit-code -- $(PROTO_ROOT) || (echo "generated *.pb.go is out of sync with .proto; run 'make proto' and commit the diff"; exit 1)
+	@echo "proto-check: OK"
+
 .PHONY: test
 test: ## Unit tests — must pass on any machine, no KVM needed
 	$(GO) test -race -count=1 $(PKGS)
