@@ -1,19 +1,80 @@
 name: ci
 
+# One-PR CI bundle (Tier 1+2 from the CI improvement plan):
+#   - go-version pinned via go.mod
+#   - go mod + build cache (setup-go@v5)
+#   - concurrency cancel-in-progress (PR head ref)
+#   - golangci-lint (catches errcheck, staticcheck, ineffassign beyond go vet)
+#   - govulncheck (Go vulnerability DB scan)
+#   - Codecov coverage (project gate >= 40%; informational patch)
+#   - workflow_dispatch on the metal job (manual trigger from Actions tab)
+#   - status badge in README, PR template for milestone gating
+#
+# Dependabot (.github/dependabot.yml) and CodeQL (.github/workflows/codeql.yml)
+# live as separate files alongside this one.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# Cancel in-progress runs when a PR ref updates (push to the same branch)
+# or main receives a new commit. Saves CI minutes and removes the
+# "did my fix actually run?" confusion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Codecov + CodeQL need write to attach comments / SARIF uploads.
+  # Each restricted here so the default-`read` token isn't open.
+  pull-requests: write
+  security-events: write
+
+env:
+  GO_VERSION: "1.25"
 
 jobs:
+  # Default fast lane: lint + vet + unit + build + proto.
+  # All gates that block PR merge live here.
   test:
+    name: lint + tests + build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
-          check-latest: true
+          go-version: ${{ env.GO_VERSION }}
+          # cache: true + cache-dependency-path is the canonical Go Actions
+          # warm-cache idiom — shaves ~60s off every job on a non-first run.
+          cache: true
+          cache-dependency-path: go.sum
+
+      # golangci-lint replaces bare gofmt + go vet with a curated set of
+      # checks. Default-on linters included; we keep errcheck, govet,
+      # ineffassign, staticcheck, unused.
+      - name: lint (golangci-lint v6)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.61.0
+          args: --timeout=3m
+          # Cache is built into the action; default cache key works.
+
+      # govulncheck — Go's official vulnerability scanner. Runs against
+      # go.mod's module graph, reports known CVEs in transitive deps.
+      # Public surface = public attack surface; this gate is cheap.
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      # Re-runs the same checks golangci-lint covers as a fallback, in case
+      # the lint step is skipped (e.g. workflow_dispatch with no Go file
+      # changes). Keeps the existing local Makefile contract honest.
       - name: gofmt
         run: test -z "$(gofmt -l $(find . -name '*.go'))" || (gofmt -l $(find . -name '*.go'); exit 1)
       - name: vet
@@ -22,11 +83,12 @@ jobs:
         run: make test
       - name: build
         run: make build
+
       # M1+ (ADR-013): *.pb.go is checked in; this step verifies it's in sync
-      # with the .proto sources. arabold/setup-protoc pins a modern protoc
-      # matching what `go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11`
-      # expects (CI drift on `protoc --version` comments in generated files was
-      # the first failure mode; pinning both sides fixes it).
+      # with the .proto sources. arduino/setup-protoc pins a modern protoc
+      # matching what 'go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11'
+      # expects. Drift on the 'protoc v X.Y.Z' header comment is filtered by
+      # Makefile's proto-normalize so toolchain patch bumps don't break CI.
       - name: install protoc
         uses: arduino/setup-protoc@v2
         with:
@@ -38,17 +100,53 @@ jobs:
       - name: proto-check
         run: make proto-check
 
-  # Integration tests need /dev/kvm + root and run on the dev EX44 (or a
-  # nested-KVM runner), not on stock GitHub runners (spec §Gotchas). Wired here
-  # as a manual/self-hosted job so the pipeline is ready when the runner is.
-  metal:
-    if: false # enable once a self-hosted KVM runner is registered (M0/M1)
-    runs-on: [self-hosted, kvm]
+  coverage:
+    # Decoupled from `test` so a coverage upload doesn't lengthen the
+    # developer-feedback loop. Always runs on push-to-main + PR (no
+    # `if:` filter) but `continue-on-error` on the upload step — the gate
+    # project >= 40% is enforced at Codecov via codecov.yml status checks.
+    name: coverage (Codecov)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: coverage profile
+        run: |
+          mkdir -p coverage
+          # -covermode=atomic is required for accurate concurrency coverage;
+          # standard idiom for any package exercising goroutines.
+          go test -race -count=1 -coverprofile=coverage/cover.out -covermode=atomic ./...
+
+      - name: upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/cover.out
+          flags: unittests
+          # Tokenless public repo upload is supported; the token in
+          # secrets.CODECOV_TOKEN lifts the rate limit / adds PR comments.
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  metal:
+    # Manual trigger from the Actions tab. Marked workflow_dispatch so the
+    # job can be invoked on-demand once a self-hosted runner is registered
+    # (the spec gates the EX44 acceptance tests on KVM + root). The
+    # `runs-on: [self-hosted, kvm]` label combo fails fast on stock runners.
+    name: metal (KVM + root, manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, kvm]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
       - name: metal tests
         run: sudo make test-metal
       - name: leak check

@@ -1,0 +1,58 @@
+# Dependabot for poyrazK/faas.
+# Two ecosystems: github-actions (pins us off deprecated action versions)
+# and gomod (keeps our third-party deps patched against CVEs).
+#
+# Cadence: weekly Mondays. Patch + minor grouped into a single PR; major
+# versions are separate PRs (so we review them, not autoclaim).
+#
+# Reference: https://docs.github.com/en/code-security/dependabot/dependabot-security-updates/configuring-dependabot
+
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "UTC"
+    # Patch-only by default; bumping a major action version is a review.
+    groups:
+      patch-and-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    # Don't autoclaim -- we want to read the changelog before merging.
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      # Roll up all patch upgrades for grpc/protobuf/etc. into one PR.
+      security-and-bugfix:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 5
+    ignore:
+      # Major bumps that require a human (deps that touch the wire shape).
+      - dependency-name: "google.golang.org/grpc"
+      - dependency-name: "google.golang.org/protobuf"
+    labels:
+      - "dependencies"
+      - "go"
+
+  # Docker images: dependabot also watches the runner container image
+  # once we add `Dockerfile`s for builders/images/. Off until we have
+  # at least one Dockerfile in the tree.

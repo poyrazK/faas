@@ -1,5 +1,9 @@
 # One-Box FaaS
 
+[![ci](https://github.com/poyrazK/faas/actions/workflows/ci.yml/badge.svg)](https://github.com/poyrazK/faas/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/poyrazK/faas/actions/workflows/codeql.yml/badge.svg)](https://github.com/poyrazK/faas/security/code-scanning)
+[![codecov](https://codecov.io/gh/poyrazK/faas/graph/badge.svg)](https://codecov.io/gh/poyrazK/faas)
+
 Scale-to-zero Functions-as-a-Service on Firecracker microVMs, running on a single
 Hetzner EX44. Customer apps park as snapshots on disk and wake on request in
 < 350 ms p50. Solo-operated.

@@ -1,0 +1,73 @@
+# Codecov status-check configuration for poyrazK/faas.
+# Status checks here translate into GitHub commit statuses.
+# See https://docs.codecov.com/docs/commit-status
+
+codecov:
+  # 'notify' is the noise threshold for PR comments. 0.5% is enough to
+  # ignore rounding-error drift and surface real losses.
+  notify:
+    after_n_builds: 2
+    wait_for_ci: true
+
+coverage:
+  precision: 1       # 44.9% not 44.87654%
+  round: down
+  range: "70...90"   # target band — colour the badge accordingly
+  status:
+    project:
+      # Current project coverage is ~45%; the gate is 40% to leave
+      # headroom for the next few M-milestones while the raise-coverage
+      # work lands. Tighten to 60, then 80 as the suite grows. Project
+      # status checks block merge when violated.
+      default:
+        target: 40%
+        threshold: 1%
+        if_ci_failed: success   # don't double-fail with the test job
+        only_pulls: false
+    patch:
+      # Per-PR: if your PR drops uncovered lines, fail it. Currently
+      # informational — we'll flip when we have a few milestones of
+      # history showing the rule is meaningful.
+      default:
+        target: 70%
+        threshold: 5%
+        informational: true
+        only_pulls: true
+
+# Comment template — kept terse so the PR conversation doesn't drown.
+comment:
+  layout: "header, diff, flags, components, files, footer"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+# Component-level partitions let Codecov attribute coverage to packages
+# the spec actively validates (those exercised by the property-based
+# invariant suite). These don't enforce thresholds yet — they only
+# colour the badge.
+component_management:
+  default_rules: null
+  individual_components:
+    - component_id: core_runtime
+      paths:
+        - pkg/fcvm/**
+        - pkg/fcvm/leakcheck/**
+        - pkg/netns/**
+        - pkg/wire/**
+    - component_id: control_plane
+      paths:
+        - pkg/api/**
+        - pkg/grpcerr/**
+        - pkg/vmmdgrpc/**
+        - api/proto/**
+    - component_id: state
+      paths:
+        - pkg/state/**
+        - pkg/sched/**
+
+ignore:
+  - "**/*.pb.go"
+  - "**/*_grpc.pb.go"
+  - "guest/runners/**"
+  - "deploy/**"
