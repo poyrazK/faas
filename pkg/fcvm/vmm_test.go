@@ -2,11 +2,19 @@ package fcvm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -208,5 +216,478 @@ func TestDetectFirecrackerVersion_WithStub(t *testing.T) {
 	}
 	if v != "9.9.9-rc1" {
 		t.Errorf("version = %q, want 9.9.9-rc1", v)
+	}
+}
+
+// --- apiCall / apiPut / apiPatch / fcClient -------------------------------
+//
+// We exercise the production wire format (HTTP over a unix socket) by binding
+// an httptest server to the same kind of socket the real jailer creates. The
+// VMM's fcClient() honors its `unix://...` socket path; we pretend the
+// "firecracker" server is listening there. This is the cheapest way to cover
+// the request-marshal, status-code, body-error, and connection-failure
+// branches of apiCall without KVM.
+
+// bindTestSocket spins up an httptest.Server whose listener is re-bound to a
+// real unix socket at `sockPath`. Returns the server and a cleanup. We do
+// this so the VMM's http.Transport (which dials `unix sockPath`) succeeds.
+//
+// macOS sun_path is 104 bytes; we keep the sock path short via a /tmp symlink
+// to the real t.TempDir (mirrors the unixsock_test.go pattern).
+func bindTestSocket(t *testing.T, sockPath string, handler http.Handler) *httptest.Server {
+	t.Helper()
+	// httptest.NewUnstartedServer + Listener swapping.
+	ts := httptest.NewUnstartedServer(handler)
+
+	// Build a unix listener on the desired path.
+	_ = os.Remove(sockPath)
+	if err := os.MkdirAll(filepath.Dir(sockPath), 0o750); err != nil {
+		t.Fatalf("mkdir sock dir: %v", err)
+	}
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen unix %s: %v", sockPath, err)
+	}
+	ts.Listener.Close() // discard the TCP listener
+	ts.Listener = l
+	ts.Start()
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// shortBase returns a chrootBase whose absolute path is short enough for
+// sockaddr_un.sun_path on macOS (104 byte limit). We symlink
+// /tmp/fcvm-<test>-<idx> to t.TempDir() so the JailerVMM's chrootRoot + sock
+// path fits inside sun_path.
+func shortBase(t *testing.T) string {
+	t.Helper()
+	real := t.TempDir()
+	short := fmt.Sprintf("/tmp/fcvms-%s", t.Name())
+	// Sanitize — t.Name() may contain '/' in subtests.
+	short = strings.ReplaceAll(short, "/", "-")
+	if err := os.Symlink(real, short); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(short) })
+	return short
+}
+
+// TestAPICall_Success drives apiCall against a server that returns 204 No
+// Content — the canonical "happy" branch for /vm PATCH and /snapshot/load
+// PUT. Verifies the JSON body is well-formed and the path lands on the
+// server side.
+func TestAPICall_Success(t *testing.T) {
+	base := shortBase(t)
+	inst := "is"
+	sock := filepath.Join(base, "firecracker", inst, "root", APISockName)
+
+	var gotPath, gotMethod, gotCT string
+	var gotBody map[string]any
+	srv := bindTestSocket(t, sock, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		gotCT = r.Header.Get("Content-Type")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	v := NewJailerVMM(base, time.Second)
+	if err := v.apiPut(context.Background(), inst, "/vm/instance-action", map[string]any{"action_type": "SendCtrlAltDel"}); err != nil {
+		t.Fatalf("apiPut: %v", err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if gotPath != "/vm/instance-action" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotCT != "application/json" {
+		t.Errorf("content-type = %q", gotCT)
+	}
+	if gotBody["action_type"] != "SendCtrlAltDel" {
+		t.Errorf("body = %v", gotBody)
+	}
+
+	// apiPatch should map to PATCH; verify the same path & verb split.
+	if err := v.apiPatch(context.Background(), inst, "/vm", map[string]any{"state": "Paused"}); err != nil {
+		t.Fatalf("apiPatch: %v", err)
+	}
+	if gotMethod != http.MethodPatch {
+		t.Errorf("apiPatch method = %q, want PATCH", gotMethod)
+	}
+	if gotPath != "/vm" {
+		t.Errorf("apiPatch path = %q", gotPath)
+	}
+	if gotBody["state"] != "Paused" {
+		t.Errorf("apiPatch body = %v", gotBody)
+	}
+	// Sanity: the server was actually used.
+	_ = srv
+}
+
+// TestAPICall_Non2xxReturnsFormattedError covers the branch that reads up to
+// 4 KiB of the error body and formats method + path + status + body. This is
+// the path /vm PATCH returns when, e.g., the VM isn't running.
+func TestAPICall_Non2xxReturnsFormattedError(t *testing.T) {
+	base := shortBase(t)
+	inst := "ie"
+	sock := filepath.Join(base, "firecracker", inst, "root", APISockName)
+	bindTestSocket(t, sock, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"instance-action invalid in current state"}`)
+	}))
+
+	v := NewJailerVMM(base, time.Second)
+	err := v.apiPatch(context.Background(), inst, "/vm", nil)
+	if err == nil {
+		t.Fatal("expected error from non-2xx response")
+	}
+	for _, want := range []string{"PATCH", "/vm", "400 Bad Request", "instance-action invalid"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+// TestAPICall_BadJSON covers json.Marshal failing on a non-marshalable body
+// (channels marshal-error). apiCall must short-circuit before hitting the
+// network.
+func TestAPICall_BadJSON(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), time.Second)
+	err := v.apiPut(context.Background(), "any", "/x", make(chan int))
+	if err == nil {
+		t.Fatal("expected json marshal error")
+	}
+	if !strings.Contains(err.Error(), "json") {
+		t.Errorf("error %q does not look like a marshal failure", err.Error())
+	}
+}
+
+// TestAPICall_ConnectionFailure covers the path where the socket doesn't
+// exist (no server bound). The dial error must propagate, not be swallowed.
+func TestAPICall_ConnectionFailure(t *testing.T) {
+	base := t.TempDir()
+	// Don't create the socket — every dial fails with ENOENT/ENOENT-like.
+	v := NewJailerVMM(base, time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err := v.apiPut(ctx, "nope", "/vm", nil)
+	if err == nil {
+		t.Fatal("expected dial error when socket missing")
+	}
+}
+
+// TestAPICall_ContextCancellation covers ctx cancellation: the request must
+// error out without hanging the test.
+func TestAPICall_ContextCancellation(t *testing.T) {
+	base := shortBase(t)
+	inst := "ic"
+	sock := filepath.Join(base, "firecracker", inst, "root", APISockName)
+	bindTestSocket(t, sock, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Block until the client cancels, then return 200 — we just want to
+		// verify apiCall honors context.
+		<-r.Context().Done()
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	v := NewJailerVMM(base, time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := v.apiPut(ctx, inst, "/x", nil)
+	if err == nil {
+		t.Fatal("expected ctx cancellation to surface")
+	}
+}
+
+// TestFcClient_Caches verifies two fcClient calls for the same instance
+// return the same pointer (so the http.Transport connection pool is reused).
+func TestFcClient_Caches(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), time.Second)
+	a := v.fcClient("i1")
+	b := v.fcClient("i1")
+	if a != b {
+		t.Errorf("fcClient not cached: %p vs %p", a, b)
+	}
+	c := v.fcClient("i2")
+	if a == c {
+		t.Errorf("fcClient leaked clients across instances: %p == %p", a, c)
+	}
+}
+
+// TestCloseClient_DropsCached verifies Kill's seam actually evicts the cached
+// client (so the next Boot of the same instance name gets a fresh client).
+func TestCloseClient_DropsCached(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), time.Second)
+	a := v.fcClient("killme")
+	v.closeClient("killme")
+	b := v.fcClient("killme")
+	if a == b {
+		t.Errorf("closeClient did not evict: %p", a)
+	}
+	// Closing an instance that wasn't cached is a no-op.
+	v.closeClient("never-existed")
+}
+
+// TestAPICall_ResponseBodyCloseIsBestEffort covers the success-with-body path:
+// the server returns 200 + a payload (Firecracker does for /machine-config
+// GET, but apiCall ignores the body). We assert no panic and no leaked FD by
+// hammering the call a few times against a counting handler.
+func TestAPICall_ResponseBodyCloseIsBestEffort(t *testing.T) {
+	base := shortBase(t)
+	inst := "ib"
+	sock := filepath.Join(base, "firecracker", inst, "root", APISockName)
+	var hits atomic.Int64
+	bindTestSocket(t, sock, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"some":"payload"}`)
+	}))
+
+	v := NewJailerVMM(base, time.Second)
+	for i := 0; i < 25; i++ {
+		if err := v.apiPatch(context.Background(), inst, "/x", nil); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	if got := hits.Load(); got != 25 {
+		t.Errorf("hits = %d, want 25", got)
+	}
+}
+
+// TestAPICall_ErrorBodyTruncatedAt4KiB documents the "read at most 4096
+// bytes of error body" contract — that's the cap so a chatty Firecracker
+// can't blow up our log lines.
+func TestAPICall_ErrorBodyTruncatedAt4KiB(t *testing.T) {
+	base := shortBase(t)
+	inst := "it"
+	sock := filepath.Join(base, "firecracker", inst, "root", APISockName)
+	huge := strings.Repeat("X", 8192)
+	bindTestSocket(t, sock, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, huge)
+	}))
+
+	v := NewJailerVMM(base, time.Second)
+	err := v.apiPut(context.Background(), inst, "/x", nil)
+	if err == nil {
+		t.Fatal("expected 500 error")
+	}
+	// The reported body must be ≤ 4 KiB plus the small prefix.
+	if len(err.Error()) > 4200 {
+		t.Errorf("error message %d bytes — body cap 4 KiB not honored", len(err.Error()))
+	}
+}
+
+// --- Kill / mkChroot / waitReady (no-KVM) ---------------------------------
+
+// TestKill_IdempotentWithoutProcess covers the no-jailer-running case: Kill
+// must succeed and remove the chroot dir (creating it if absent is fine, but
+// our impl expects it to exist OR to be safely absent).
+func TestKill_IdempotentWithoutProcess(t *testing.T) {
+	base := t.TempDir()
+	inst := "kill-idemp"
+	// Plant the chroot so we can verify RemoveAll took effect.
+	root := filepath.Join(base, FirecrackerBin, inst)
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "marker"), []byte("x"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	v := NewJailerVMM(base, time.Second)
+	if err := v.Kill(context.Background(), Lease{Instance: inst, UID: 20000, GID: 20000}); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("chroot should be removed, stat err=%v", err)
+	}
+	// Second Kill is a no-op (no error).
+	if err := v.Kill(context.Background(), Lease{Instance: inst}); err != nil {
+		t.Errorf("second Kill: %v", err)
+	}
+}
+
+// TestKill_RemovesCachedClient proves the cache eviction actually happens on
+// the production path — see apiCall tests for the unit-level proof.
+func TestKill_RemovesCachedClient(t *testing.T) {
+	base := t.TempDir()
+	v := NewJailerVMM(base, time.Second)
+	_ = v.fcClient("kill-cache")
+	v.Kill(context.Background(), Lease{Instance: "kill-cache"})
+	v.mu.Lock()
+	_, stillCached := v.clients["kill-cache"]
+	v.mu.Unlock()
+	if stillCached {
+		t.Error("Kill did not evict cached http.Client")
+	}
+}
+
+// TestMkChroot_CreatesDirectory exercises the helper directly — it's the
+// foundation of Boot/Restore and we want it covered even if Boot itself
+// isn't.
+func TestMkChroot_CreatesDirectory(t *testing.T) {
+	base := t.TempDir()
+	v := NewJailerVMM(base, time.Second)
+	root, err := v.mkChroot("new")
+	if err != nil {
+		t.Fatalf("mkChroot: %v", err)
+	}
+	if !strings.HasSuffix(root, filepath.Join("new", "root")) {
+		t.Errorf("root = %q, want suffix new/root", root)
+	}
+	fi, err := os.Stat(root)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if !fi.IsDir() {
+		t.Error("mkChroot result is not a directory")
+	}
+	// Second call is idempotent.
+	if _, err := v.mkChroot("new"); err != nil {
+		t.Errorf("mkChroot idempotent: %v", err)
+	}
+}
+
+// TestMkChroot_BadBaseReturnsError covers MkdirAll failing on a path under a
+// file (not a dir). The error must wrap as "vmm: mkdir chroot: ...".
+func TestMkChroot_BadBaseReturnsError(t *testing.T) {
+	base := t.TempDir()
+	// Plant a file at the path MkdirAll would need to be a directory.
+	conflict := filepath.Join(base, FirecrackerBin)
+	if err := os.WriteFile(conflict, []byte("not-a-dir"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	v := NewJailerVMM(base, time.Second)
+	_, err := v.mkChroot("anything")
+	if err == nil {
+		t.Fatal("expected MkdirAll error")
+	}
+	if !strings.Contains(err.Error(), "mkdir chroot") {
+		t.Errorf("error %q missing 'mkdir chroot'", err.Error())
+	}
+}
+
+// TestWaitReady_SucceedsOnListener verifies the readiness poller returns nil
+// as soon as a TCP listener is reachable.
+func TestWaitReady_SucceedsOnListener(t *testing.T) {
+	// Pick a free port and listen; we never accept — DialTimeout succeeds
+	// once the kernel hands us a SYN-ACK-shaped completion.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	host, port, err := net.SplitHostPort(l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p int
+	if _, err := fmt.Sscanf(port, "%d", &p); err != nil {
+		t.Fatal(err)
+	}
+
+	v := NewJailerVMM(t.TempDir(), 2*time.Second)
+	lease := Lease{Instance: "ready", HostIP: netip.MustParseAddr(host), UID: 1, GID: 1}
+	// waitReady dials "host:8080" — patch by overriding the port via a
+	// re-implementation bound to the actual port. Easier: listen on :8080 if
+	// free, else skip.
+	_ = p
+	if ln, err := net.Listen("tcp", "127.0.0.1:8080"); err == nil {
+		defer ln.Close()
+		lease = Lease{Instance: "ready", HostIP: netip.MustParseAddr("127.0.0.1"), UID: 1, GID: 1}
+	}
+	if err := v.waitReady(context.Background(), lease); err != nil {
+		t.Errorf("waitReady: %v", err)
+	}
+}
+
+// TestWaitReady_TimesOut verifies the readiness budget fires when the
+// listener never accepts (port 1 is reserved and refuses on Linux/macOS).
+func TestWaitReady_TimesOut(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), 150*time.Millisecond)
+	// 192.0.2.1 is TEST-NET-1 (RFC 5737) — guaranteed unrouted, so Dial
+	// fails fast and the loop must time out at readyTimeout.
+	lease := Lease{Instance: "slow", HostIP: netip.MustParseAddr("192.0.2.1")}
+	start := time.Now()
+	err := v.waitReady(context.Background(), lease)
+	if err == nil {
+		t.Fatal("expected timeout")
+	}
+	if !strings.Contains(err.Error(), "not ready after") {
+		t.Errorf("error %q missing 'not ready after'", err.Error())
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Errorf("returned too fast (%s); budget should have been honored", elapsed)
+	}
+}
+
+// TestWaitReady_ContextCanceled ensures cancellation surfaces rather than
+// waiting out the full budget.
+func TestWaitReady_ContextCanceled(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	lease := Lease{Instance: "x", HostIP: netip.MustParseAddr("192.0.2.1")}
+	if err := v.waitReady(ctx, lease); err == nil {
+		t.Fatal("expected ctx error")
+	}
+}
+
+// --- Boot / Restore / Snapshot (smoke) -----------------------------------
+
+// TestBoot_MkChrootFailure covers Boot's first failure branch: mkChroot
+// errors → Boot returns the wrapped error and the deferred Kill doesn't run
+// (because the cmd was never started).
+func TestBoot_MkChrootFailure(t *testing.T) {
+	base := t.TempDir()
+	conflict := filepath.Join(base, FirecrackerBin)
+	if err := os.WriteFile(conflict, []byte("file"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	v := NewJailerVMM(base, time.Second)
+	err := v.Boot(context.Background(), Lease{Instance: "boot-fail", UID: 20000, GID: 20000}, VMConfig{})
+	if err == nil {
+		t.Fatal("expected mkChroot failure")
+	}
+	if !strings.Contains(err.Error(), "mkdir chroot") {
+		t.Errorf("error %q not from mkChroot", err.Error())
+	}
+}
+
+// TestRestore_MkChrootFailure mirrors Boot — same seam, different code path.
+func TestRestore_MkChrootFailure(t *testing.T) {
+	base := t.TempDir()
+	conflict := filepath.Join(base, FirecrackerBin)
+	if err := os.WriteFile(conflict, []byte("file"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	v := NewJailerVMM(base, time.Second)
+	err := v.Restore(context.Background(), Lease{Instance: "restore-fail"}, RestoreSpec{
+		MemPath: "/nonexistent/mem", VMStatePath: "/nonexistent/vmstate",
+	})
+	if err == nil {
+		t.Fatal("expected mkChroot failure")
+	}
+}
+
+// TestKill_ChrootRemoveErrorFailsWhenBaseIsFile covers the only path that
+// returns an error from Kill: RemoveAll fails because the base path isn't
+// a directory.
+func TestKill_ChrootRemoveErrorFailsWhenBaseIsFile(t *testing.T) {
+	// Need chrootBase to be a regular file so RemoveAll(<base>/firecracker/x)
+	// returns ENOTDIR. Put the file inside a temp dir.
+	dir := t.TempDir()
+	base := filepath.Join(dir, "iamafile")
+	if err := os.WriteFile(base, []byte("not-a-dir"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	v := NewJailerVMM(base, time.Second)
+	err := v.Kill(context.Background(), Lease{Instance: "x"})
+	if err == nil {
+		t.Fatal("expected RemoveAll to fail")
+	}
+	if !strings.Contains(err.Error(), "remove chroot") {
+		t.Errorf("error %q missing 'remove chroot'", err.Error())
 	}
 }

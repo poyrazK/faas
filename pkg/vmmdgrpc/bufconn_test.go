@@ -6,6 +6,7 @@ package vmmdgrpc_test
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/netip"
 	"runtime"
@@ -249,5 +250,130 @@ func TestStats_NonLinuxHasNoResidentBytes(t *testing.T) {
 	}
 	if resp.GetTotalResidentBytes() != nil {
 		t.Fatalf("non-Linux host should leave TotalResidentBytes unset; got %v", resp.GetTotalResidentBytes())
+	}
+}
+
+// --- error-path coverage --------------------------------------------------
+
+// TestCreateFromSnapshot_WakeError covers the toProblem-on-error branch of
+// CreateFromSnapshot. A plain (non-Problem) error from Wake must be lifted
+// to an Internal problem so internal go-stack details don't leak across gRPC.
+func TestCreateFromSnapshot_WakeError(t *testing.T) {
+	f := &fakeVMM{
+		wakeFn: func(_ context.Context, _ fcvm.WakeRequest) (*fcvm.Instance, error) {
+			return nil, fmt.Errorf("vmmd underlying boom")
+		},
+	}
+	cli, _ := newServer(t, f)
+	_, err := cli.CreateFromSnapshot(context.Background(), &vmmdpb.CreateFromSnapshotRequest{
+		Instance: "boom",
+		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
+		Snapshot: &vmmdpb.SnapshotRef{MemPath: "/m", VmstatePath: "/v", FcVersion: "1.7.0"},
+	})
+	if err == nil {
+		t.Fatal("expected error from CreateFromSnapshot")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.Internal {
+		t.Errorf("status code = %v, want Internal", st.Code())
+	}
+}
+
+// TestCreateFromSnapshot_InvalidRequest covers the toWakeRequest branch that
+// rejects a malformed request (e.g. missing instance) before any VMM work.
+func TestCreateFromSnapshot_InvalidRequest(t *testing.T) {
+	cli, _ := newServer(t, &fakeVMM{})
+	// No instance — toWakeRequest will fail.
+	_, err := cli.CreateFromSnapshot(context.Background(), &vmmdpb.CreateFromSnapshotRequest{
+		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
+		Snapshot: &vmmdpb.SnapshotRef{MemPath: "/m", VmstatePath: "/v", FcVersion: "1.7.0"},
+	})
+	if err == nil {
+		t.Fatal("expected error for missing instance")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("status code = %v, want InvalidArgument", st.Code())
+	}
+}
+
+// TestDestroy_FailureSurfacesAsStatus covers the Destroy error branch — the
+// fake's destroy hook returns an error and we expect it lifted to a gRPC
+// status (not a nil response).
+func TestDestroy_FailureSurfacesAsStatus(t *testing.T) {
+	f := &fakeVMM{
+		destroy: func(_ context.Context, _ string) error {
+			return fmt.Errorf("destroy leaked")
+		},
+	}
+	cli, _ := newServer(t, f)
+	_, err := cli.Destroy(context.Background(), &vmmdpb.DestroyRequest{Instance: "x"})
+	if err == nil {
+		t.Fatal("expected error from Destroy")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.Internal {
+		t.Errorf("status code = %v, want Internal", st.Code())
+	}
+}
+
+// TestStats_LinuxSetsTotalResidentBytes exercises the Linux branch of Stats
+// that aggregates per-instance cgroup memory. We don't have live cgroups in
+// tests, but the code path is the same: collect from ResidentBytes() and
+// sum into TotalResidentBytes. On Linux with no scopes the resident map is
+// empty so total=0; we assert that the field is set (not nil).
+func TestStats_LinuxSetsTotalResidentBytes(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only path")
+	}
+	f := &fakeVMM{live: 0, leased: 0}
+	cli, _ := newServer(t, f)
+	resp, err := cli.Stats(context.Background(), &vmmdpb.StatsRequest{})
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if resp.GetLiveCount() != 0 {
+		t.Errorf("LiveCount = %d, want 0", resp.GetLiveCount())
+	}
+	// On Linux with no cgroup scopes, total = 0 (sum of empty map) and the
+	// field is set to wrapperspb.Int64(0). Assert the field is non-nil.
+	if resp.GetTotalResidentBytes() == nil {
+		t.Error("Linux Stats should set TotalResidentBytes (to 0 if no cgroup scopes)")
+	}
+}
+
+// TestNew_WithDefaults covers the New() defaulting path: a nil ops argument
+// must NOT panic; a nil log must NOT panic.
+func TestNew_WithDefaults(t *testing.T) {
+	s := vmmdgrpc.New(&fakeVMM{}, nil, "1.7.0", nil)
+	if s == nil {
+		t.Fatal("New returned nil")
+	}
+	// Stats is the only handler that doesn't take a request payload, so it's
+	// the easiest one to invoke without setting up the whole proto.
+	resp, err := s.Stats(context.Background(), &vmmdpb.StatsRequest{})
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	_ = resp
+}
+
+// TestToProblem_NilReturnsNil covers the nil-input branch of toProblem.
+func TestToProblem_NilReturnsNil(t *testing.T) {
+	// We can't call the unexported toProblem directly, so we exercise it
+	// indirectly: a successful Destroy should return a nil error response
+	// path (toProblem is never called). Verified by TestDestroy_Idempotent.
+	// For nil-return semantics, we exercise via a Wake that returns no error.
+	f := &fakeVMM{} // wakeFn nil → default success
+	cli, _ := newServer(t, f)
+	resp, err := cli.CreateColdBoot(context.Background(), &vmmdpb.CreateColdBootRequest{
+		Instance: "ok",
+		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
+	})
+	if err != nil {
+		t.Fatalf("CreateColdBoot: %v", err)
+	}
+	if resp == nil {
+		t.Error("response is nil")
 	}
 }

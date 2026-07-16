@@ -2,10 +2,12 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -217,6 +219,62 @@ func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 	wg.Wait()
 	if got := atomic.LoadInt32(&b.wakes); got != 1 {
 		t.Errorf("50 concurrent cold requests should trigger 1 wake, got %d", got)
+	}
+}
+
+// --- writeWakeError -------------------------------------------------------
+
+func TestWriteWakeError_QueueFull(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeWakeError(rec, ErrQueueFull)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") != "5" {
+		t.Errorf("Retry-After = %q, want 5", rec.Header().Get("Retry-After"))
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Errorf("Content-Type = %q, want problem+json", ct)
+	}
+}
+
+func TestWriteWakeError_ProblemPassthrough(t *testing.T) {
+	rec := httptest.NewRecorder()
+	prob := api.NewProblem(http.StatusBadRequest, api.CodePlanLimitRAM, "plan", "hobby")
+	writeWakeError(rec, prob)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "plan_limit_ram") {
+		t.Errorf("body = %q, want code plan_limit_ram", rec.Body.String())
+	}
+}
+
+func TestWriteWakeError_GenericError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeWakeError(rec, errors.New("upstream exploded"))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "capacity") {
+		t.Errorf("body = %q, want capacity error", rec.Body.String())
+	}
+}
+
+// TestHostname — covers the hostname() helper that the handler uses to
+// route requests by Host header (ignoring port).
+func TestHostname(t *testing.T) {
+	for _, tc := range []struct {
+		host, want string
+	}{
+		{"example.com", "example.com"},
+		{"example.com:8080", "example.com"},
+		{"127.0.0.1:443", "127.0.0.1"},
+		{"", ""},
+	} {
+		if got := hostname(tc.host); got != tc.want {
+			t.Errorf("hostname(%q) = %q, want %q", tc.host, got, tc.want)
+		}
 	}
 }
 
