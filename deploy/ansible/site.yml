@@ -39,3 +39,4 @@
     - role: systemd_slices   # memory caps for cp / tenant / build slices
     - role: nftables         # egress denylist per spec §7
     - role: postgres         # install + faas user; schema is M5's job
+    - role: vmmd_service     # drop systemd unit + example TOML; does NOT enable

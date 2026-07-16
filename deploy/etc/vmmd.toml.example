@@ -1,0 +1,19 @@
+# Example vmmd config — copy to /etc/faas/vmmd.toml on the box.
+# Every field is optional; defaults are filled in by LoadConfig (see
+# cmd/vmmd/config.go). Defaults are noted next to each field.
+
+# socket_path: unix-domain socket path. Mode 0660, group 'faas' (ADR-015).
+# Default: /run/faas/vmmd.sock
+# socket_path = "/run/faas/vmmd.sock"
+
+# metrics_addr: optional bind address for /metrics. Empty disables metrics.
+# Default: "" (no metrics endpoint)
+# metrics_addr = "127.0.0.1:9090"
+
+# owner_user: the unix user that owns the unix-domain socket file. Members
+# of the 'faas' group can dial the socket. Default: faas-vmmd
+# owner_user = "faas-vmmd"
+
+# kernel_path: path to the Firecracker-compatible kernel image. The daemon
+# refuses to start if this file is missing. Default: /srv/fc/base/vmlinux-6.1
+# kernel_path = "/srv/fc/base/vmlinux-6.1"

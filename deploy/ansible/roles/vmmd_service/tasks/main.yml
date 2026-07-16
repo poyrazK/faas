@@ -1,0 +1,43 @@
+# vmmd_service — install systemd unit + example config for vmmd (spec §4.4).
+#
+# This role does NOT enable or start the daemon: vmmd is the only root
+# component and runs only on the EX44 hardware. The ansible role ships
+# the unit + example toml in place; the operator runs `systemctl enable
+# --now faas-vmmd` once the box has been provisioned with a /srv/fc/base
+# kernel, firecracker binary, and the `faas-vmmd` system user.
+
+- name: vmmd_service — install /etc/faas (create dir, mode 0750)
+  ansible.builtin.file:
+    path: /etc/faas
+    state: directory
+    owner: root
+    group: faas
+    mode: "0750"
+
+- name: vmmd_service — drop example TOML (operator copies to vmmd.toml)
+  ansible.builtin.copy:
+    src: vmmd.toml.example
+    dest: /etc/faas/vmmd.toml.example
+    owner: root
+    group: faas
+    mode: "0640"
+
+- name: vmmd_service — install systemd unit
+  ansible.builtin.copy:
+    src: faas-vmmd.service
+    dest: /etc/systemd/system/faas-vmmd.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: vmmd_unit
+
+- name: vmmd_service — systemctl daemon-reload (idempotent, after new unit file)
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: vmmd_unit.changed
+
+- name: vmmd_service — ensure 'faas' group exists (socket auth group, ADR-015)
+  ansible.builtin.group:
+    name: faas
+    state: present
+    system: true

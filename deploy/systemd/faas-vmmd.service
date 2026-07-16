@@ -1,0 +1,35 @@
+[Unit]
+Description=onebox-faas vmmd — microVM supervisor (the only root component, spec §4.4)
+Documentation=https://docs.DOMAIN/ops/vmmd
+# vmmd depends on the platform slices (faas-tenant.slice for tenant fences,
+# faas-cp.slice so the control-plane budget is enforced).
+After=faas-tenant.slice faas-cp.slice
+Wants=faas-tenant.slice faas-cp.slice
+
+[Service]
+Type=simple
+# vmmd is the only root component — RequiredBy ordering reflects that.
+ExecStart=/usr/local/bin/vmmd --config /etc/faas/vmmd.toml
+Restart=on-failure
+RestartSec=2s
+
+# Hard ceiling from the control-plane budget (spec §13 line 431 — 256M for
+# vmmd; cp.slice itself enforces the 6 GB ceiling for postgres+daemons).
+Slice=faas-cp.slice
+MemoryMax=256M
+
+# Allow binding a low TCP port for /metrics if MetricsAddr is set in TOML.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Hardening baseline — vmmd IS root because it owns firecracker + jailer,
+# but we strip everything else it doesn't need.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target
