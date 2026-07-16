@@ -138,8 +138,15 @@ when its executable acceptance tests pass.
   - `apid`/`schedd` run on the pgx-backed `state.PgStore`; `gatewayd`'s
     `PGBackend` (see M4) closes the routing → schedd-wake half of the request
     path, so a request to a routed app now drives `schedd.Wake` over gRPC.
+  - **Snapshot-prime handshake** (`pkg/imaged` + `pkg/sched`): on an image
+    deploy imaged advances the row to `snapshotting` and emits `snapshot_prime`;
+    schedd's `Engine.Prime` cold-boots the layer once, snapshots + parks it
+    (RAM freed, §6.2-4), and replies `snapshot_written`; imaged records the
+    snapshot row (its sole-writer duty) and flips the deployment `live`. The
+    deploy→`PARKED` orchestration is unit-tested end-to-end with fakes.
 
-  Remaining (needs KVM, so it lands on the EX44, not in unit CI): imaged's
-  snapshot-prime (cold-boot once → snapshot → app `PARKED`) and the metal
-  park→wake so `faas deploy --image` → parked → first request wakes end-to-end.
-  The prebuilt-image acceptance is the M5 gate (§14); builder microVMs are M6.
+  Remaining (needs KVM, so it lands on the EX44, not in unit CI): the app-layer
+  ext4 build inside `handleDeployment` (real `rootfs.Builder` call; mkfs is
+  Linux-only) and the metal boot/park/wake behind the handshake, so
+  `faas deploy --image` → parked → first request wakes end-to-end. The
+  prebuilt-image acceptance is the M5 gate (§14); builder microVMs are M6.

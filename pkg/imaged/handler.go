@@ -66,6 +66,15 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 		if err := h.handleBuildQueued(ctx, p); err != nil {
 			h.log.Warn("imaged: build queue failed", "app", p.AppID, "build", p.BuildID, "err", err)
 		}
+	case db.NotifySnapshotWritten:
+		var p snapshotWrittenPayload
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+			h.log.Warn("imaged: bad snapshot_written payload", "err", err)
+			return
+		}
+		if err := h.handleSnapshotWritten(ctx, p); err != nil {
+			h.log.Warn("imaged: record snapshot failed", "deployment", p.DeploymentID, "err", err)
+		}
 	}
 }
 
@@ -85,11 +94,25 @@ type buildQueuedPayload struct {
 	Kind    string `json:"kind"`
 }
 
-// handleDeployment advances a deployment that's been created with `kind='image'`.
-// M5: pulls the OCI digest, builds the app-layer ext4, writes the snapshot
-// row, marks the deployment `live`. The real rootfs.Builder is called later in
-// the same goroutine; here we keep the loop tight and emit progress on every
-// transition so apid's SSE log stream can mirror it.
+// snapshotWrittenPayload is the JSON shape schedd emits on `snapshot_written`
+// after a Prime/Park writes the blob via vmmd (ADR-018, see pkg/db.NotifyChannels).
+// imaged is the sole writer to the snapshots table, so it records the row.
+type snapshotWrittenPayload struct {
+	DeploymentID string `json:"deployment_id"`
+	MemPath      string `json:"mem_path"`
+	VMStatePath  string `json:"vmstate_path"`
+	MemBytes     int64  `json:"mem_bytes"`
+	VMStateBytes int64  `json:"vmstate_bytes"`
+	FCVersion    string `json:"fc_version"`
+}
+
+// handleDeployment advances a deployment created with `kind='image'` up to the
+// point where a snapshot is needed. It pulls the OCI digest, builds the app-layer
+// ext4, moves the row to `snapshotting`, and hands off to schedd via a
+// `snapshot_prime` notification (ADR-018): schedd cold-boots the layer once,
+// snapshots + parks it, and replies with `snapshot_written`, which drives
+// handleSnapshotWritten to record the row and flip the deployment `live`. imaged
+// never boots a VM or marks the deploy live on its own — that's the handshake.
 func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPayload) error {
 	if p.Kind != string(state.DeploymentKindImage) {
 		// Tarball/dockerfile deployments start via build_queued; apid also
@@ -125,17 +148,47 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	if err := h.transition(ctx, dep.ID, state.DeploySnapshotting, ""); err != nil {
 		return err
 	}
-	if err := h.writeSnapshotRow(ctx, app, dep, digest); err != nil {
-		return fmt.Errorf("imaged: snapshot row: %w", err)
+	// Hand off to schedd: boot the freshly-built layer once, snapshot it, park
+	// it (spec §5 step 6). The deployment stays in `snapshotting` until
+	// snapshot_written comes back — imaged does not mark it live here.
+	primePayload, _ := json.Marshal(map[string]string{"app_id": app.ID, "deployment_id": dep.ID})
+	if err := h.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
+		return fmt.Errorf("imaged: notify snapshot_prime: %w", err)
 	}
-	if err := h.transition(ctx, dep.ID, state.DeployLive, ""); err != nil {
-		return err
+	return nil
+}
+
+// handleSnapshotWritten records the snapshot row schedd's Prime/Park produced and
+// flips the deployment `live` (spec §5, ADR-018). imaged is the sole writer to
+// the snapshots table, so this is the only place the row is inserted. Idempotent:
+// a duplicate emission (same deployment_id) collapses to ErrConflict and the
+// deployment is (re-)marked live regardless, so a redelivered notification is safe.
+func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPayload) error {
+	if p.DeploymentID == "" {
+		return errors.New("imaged: snapshot_written missing deployment_id")
 	}
-	// Re-emit so other subscribers (audit, dashboard SSE) see the terminal
-	// transition. The original payload's `to` is the deployment id; we
-	// include the new status in the message body.
+	dep, err := h.store.DeploymentByID(ctx, p.DeploymentID)
+	if err != nil {
+		return fmt.Errorf("imaged: load deployment: %w", err)
+	}
+
+	snap := state.Snapshot{
+		DeploymentID: p.DeploymentID,
+		FCVersion:    p.FCVersion, // pins restore compatibility (ADR-005)
+		Path:         p.MemPath,
+		MemBytes:     p.MemBytes,
+		DiskBytes:    p.VMStateBytes,
+	}
+	if _, err := h.store.CreateSnapshot(ctx, snap); err != nil && !errors.Is(err, state.ErrConflict) {
+		return fmt.Errorf("imaged: create snapshot: %w", err)
+	}
+
+	if err := h.store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		return fmt.Errorf("imaged: mark live: %w", err)
+	}
+	// Fan out so audit / dashboard SSE see the terminal transition.
 	if err := h.notif.Notify(ctx, db.NotifyDeploymentChanged,
-		`{"app_id":"`+app.ID+`","to":"`+dep.ID+`","status":"live"}`); err != nil {
+		`{"app_id":"`+dep.AppID+`","to":"`+dep.ID+`","status":"live"}`); err != nil {
 		h.log.Warn("imaged: notify live", "err", err)
 	}
 	return nil
@@ -163,28 +216,6 @@ func (h *Handler) handleBuildQueued(ctx context.Context, p buildQueuedPayload) e
 func (h *Handler) transition(ctx context.Context, depID string, status state.DeploymentStatus, errMsg string) error {
 	if err := h.store.UpdateDeploymentStatus(ctx, depID, status, errMsg); err != nil {
 		return fmt.Errorf("imaged: set %s: %w", status, err)
-	}
-	return nil
-}
-
-// writeSnapshotRow records the immutable snapshot metadata that schedd uses
-// to restore instances on wake (ADR-005). Path is a local filesystem hint;
-// the real blob location is decided by rootfs.Builder in M6.
-func (h *Handler) writeSnapshotRow(ctx context.Context, app state.App, dep state.Deployment, digest string) error {
-	snap := state.Snapshot{
-		ID:           dep.ID + "-snap",
-		DeploymentID: dep.ID,
-		FCVersion:    "firecracker-1.10", // pinned at snapshot time (ADR-005)
-		Path:         "/srv/fc/snap/" + app.Slug + "/" + digest + ".snap",
-		MemBytes:     int64(app.RAMMB) * 1024 * 1024,
-		DiskBytes:    0, // populated by the rootfs builder
-	}
-	if _, err := h.store.CreateSnapshot(ctx, snap); err != nil {
-		// Treat conflict as success — same deploy raced twice, no harm.
-		if errors.Is(err, state.ErrConflict) {
-			return nil
-		}
-		return err
 	}
 	return nil
 }

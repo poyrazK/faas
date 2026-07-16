@@ -47,10 +47,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	notifier := dbNotifier{pool: pool}
 	h := imaged.New(store, notifier, nil, builder, log)
 
-	notif, cancel, err := db.Subscribe(ctx, pool, []string{
+	channels := []string{
 		db.NotifyDeploymentChanged,
 		db.NotifyBuildQueued,
-	})
+		db.NotifySnapshotWritten,
+	}
+	notif, cancel, err := db.Subscribe(ctx, pool, channels)
 	if err != nil {
 		return err
 	}
@@ -58,7 +60,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	log.Info("imaged ready",
 		"min_layer_mb", rootfs.MinLayerMB,
-		"channels", []string{db.NotifyDeploymentChanged, db.NotifyBuildQueued})
+		"channels", channels)
 
 	for {
 		select {
