@@ -46,6 +46,15 @@ func Notify(ctx context.Context, pool *pgxpool.Pool, channel, payload string) er
 //	NotifyDomainVerify      {"domain":"..."}
 //	NotifyInstanceChanged   {"instance_id":uuid, "app_id":uuid,
 //	                         "state":"parked|running|cold_booting|..."}
+//	NotifySnapshotPrime     {"app_id":uuid, "deployment_id":uuid}
+//	                         imaged → schedd: layer is built, cold-boot once and
+//	                         snapshot it (spec §5 step 6, ADR-018).
+//	NotifySnapshotWritten   {"deployment_id":uuid, "mem_path":"...",
+//	                         "vmstate_path":"...", "mem_bytes":int,
+//	                         "vmstate_bytes":int, "fc_version":"..."}
+//	                         schedd → imaged: a park wrote a snapshot blob;
+//	                         imaged records the row (it is the sole writer to the
+//	                         snapshots table, CLAUDE.md ownership).
 const (
 	NotifyAppChanged        = "app_changed"
 	NotifyDeploymentChanged = "deployment_changed"
@@ -55,6 +64,8 @@ const (
 	NotifyBuildQueued       = "build_queued"
 	NotifyDomainVerify      = "domain_verify"
 	NotifyInstanceChanged   = "instance_changed"
+	NotifySnapshotPrime     = "snapshot_prime"
+	NotifySnapshotWritten   = "snapshot_written"
 )
 
 // Subscribe holds a dedicated connection on the pool in LISTEN state for the
@@ -90,33 +101,31 @@ func Subscribe(ctx context.Context, pool *pgxpool.Pool, channels []string) (<-ch
 		}
 	}
 
+	// subCtx lets cancel() signal the listener goroutine to stop. The goroutine
+	// is the ONLY owner of `out` and `conn`: it closes the channel and releases
+	// the connection exactly once, on exit. cancel() therefore just cancels the
+	// context — safe to call any number of times, from the caller and the
+	// goroutine both (context.CancelFunc is idempotent), with no double-close.
+	subCtx, subCancel := context.WithCancel(ctx)
 	out := make(chan Notification, 16)
-	cancel := func() {
-		conn.Release()
-		// Drain so a producer doesn't block on a closed channel.
-		go func() {
-			for range out {
-			}
-		}()
-		close(out)
-	}
 
 	go func() {
-		defer cancel()
+		defer close(out)
+		defer conn.Release()
 		for {
-			n, err := conn.Conn().WaitForNotification(ctx)
+			n, err := conn.Conn().WaitForNotification(subCtx)
 			if err != nil {
 				// ctx cancellation closes the connection; surface as EOF.
 				return
 			}
 			select {
 			case out <- Notification{Channel: n.Channel, Payload: n.Payload}:
-			case <-ctx.Done():
+			case <-subCtx.Done():
 				return
 			}
 		}
 	}()
-	return out, cancel, nil
+	return out, subCancel, nil
 }
 
 // quoteIdent quotes a SQL identifier so callers can pass channel names
