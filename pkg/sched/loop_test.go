@@ -55,6 +55,51 @@ func TestHandleNotificationRejectsBadJSON(t *testing.T) {
 	})
 }
 
+// TestHandleDeploymentLiveCreatesInstance covers the M5 wiring: when imaged
+// emits deployment_changed with status="live", schedd creates an instance row
+// in cold_booting state. This is the minimum required by CLAUDE.md invariant
+// §6.2-1 (an app with a live deployment must have a row in `instances`).
+//
+// We don't drive Run(); handleNotification is the public seam. Pool is nil
+// because materialiseLiveInstance's emit is a no-op when l.pool is unset.
+//
+// Note: imaged emits `status:"live"` exactly once per deployment (the
+// re-emit happens once after the terminal transition). Duplicate-row
+// protection would require a unique (deployment_id) constraint, which is a
+// schema migration out of scope for M5.1.
+func TestHandleDeploymentLiveCreatesInstance(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", api.PlanHobby)
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "live-app", RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 2,
+	})
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	loop := &Loop{store: store, ledger: NewLedger(), log: log}
+
+	loop.handleNotification(context.Background(), db.Notification{
+		Channel: db.NotifyDeploymentChanged,
+		Payload: `{"app_id":"` + app.ID + `","to":"dep-123","status":"live"}`,
+	})
+
+	rows, err := store.ListInstancesForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ListInstancesForApp: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("instance rows = %d, want 1", len(rows))
+	}
+	if rows[0].State != string(state.StateColdBooting) {
+		t.Errorf("state = %q, want %q", rows[0].State, state.StateColdBooting)
+	}
+	if rows[0].DeploymentID != "dep-123" {
+		t.Errorf("deployment_id = %q, want %q", rows[0].DeploymentID, "dep-123")
+	}
+	if rows[0].RAMMB != 256 {
+		t.Errorf("ram_mb = %d, want 256", rows[0].RAMMB)
+	}
+}
+
 // --- tiny shims to keep the test self-contained ------------------------------
 
 // runReaperOnce is a tiny helper for the test; the real Loop exposes Run + a

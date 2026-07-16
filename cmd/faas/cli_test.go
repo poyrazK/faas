@@ -300,13 +300,13 @@ func TestCmdApps_Unauthenticated(t *testing.T) {
 // --- cmdDeploy --------------------------------------------------------------
 
 func TestCmdDeploy_NoImage(t *testing.T) {
-	if code := cmdDeploy(nil); code != 1 {
+	if code := cmdDeployTarball(nil); code != 1 {
 		t.Errorf("cmdDeploy no image = %d, want 1", code)
 	}
 }
 
 func TestCmdDeploy_UnknownFlag(t *testing.T) {
-	if code := cmdDeploy([]string{"--bogus"}); code != 1 {
+	if code := cmdDeployTarball([]string{"--bogus"}); code != 1 {
 		t.Errorf("cmdDeploy unknown flag = %d, want 1", code)
 	}
 }
@@ -326,7 +326,7 @@ func TestCmdDeploy_HappyPath(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeploy([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
 		t.Errorf("cmdDeploy happy = %d, want 0", code)
 	}
 }
@@ -348,7 +348,7 @@ func TestCmdDeploy_AppAlreadyExists(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeploy([]string{"--image", "registry.x/app@sha256:abc", "--name", "existing"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "existing"}); code != 0 {
 		t.Errorf("cmdDeploy with existing app = %d, want 0", code)
 	}
 }

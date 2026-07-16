@@ -97,6 +97,14 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	}
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "multipart/form-data") {
+		// Cap upload size at the plan's SourceTarballMaxMB before any
+		// multipart parsing — MaxBytesReader returns a *MaxBytesError on
+		// overflow, which r.MultipartReader surfaces as a parse error that
+		// createDeploymentMultipart already maps to 413. The pre-Check
+		// in deploy_inputs.go only fires when ContentLength is known.
+		limits := api.MustLimitsFor(acct.Plan)
+		max := int64(limits.SourceTarballMaxMB) * 1024 * 1024
+		r.Body = http.MaxBytesReader(w, r.Body, max)
 		s.createDeploymentMultipart(w, r, acct, app)
 		return
 	}

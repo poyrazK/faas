@@ -28,6 +28,11 @@ const (
 
 // cmdApp implements `faas app <slug>` (GET /v1/apps/{slug}), `faas app <slug>
 // --ram N`, and `faas apps -q <slug>` (DELETE) — UX §2.4.
+//
+// UpdateAppRequest uses *int pointers on the wire so callers can distinguish
+// "unset" from "explicit zero." We use fs.Visit to detect which flags the
+// user actually passed — comparing flag values to sentinels (0 / -1) would
+// silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: faas app <slug> [--ram N] [--max-concurrency N] [--idle SEC]")
@@ -37,7 +42,7 @@ func cmdApp(args []string) int {
 	fs := flag.NewFlagSet("app", flag.ContinueOnError)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
-	idle := fs.Int("idle", -1, "update idle timeout (seconds); -1 means leave unchanged")
+	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
@@ -47,7 +52,24 @@ func cmdApp(args []string) int {
 	}
 	ctx := context.Background()
 
-	if *ram == 0 && *conc == 0 && *idle < 0 {
+	// Build the partial-update payload from explicit flags only.
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	var req api.UpdateAppRequest
+	if explicit["ram"] {
+		v := *ram
+		req.RAMMB = &v
+	}
+	if explicit["max-concurrency"] {
+		v := *conc
+		req.MaxConcurrency = &v
+	}
+	if explicit["idle"] {
+		v := *idle
+		req.IdleTimeoutS = &v
+	}
+
+	if req.RAMMB == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -61,19 +83,6 @@ func cmdApp(args []string) int {
 		return 0
 	}
 
-	req := api.UpdateAppRequest{}
-	if *ram > 0 {
-		v := *ram
-		req.RAMMB = &v
-	}
-	if *conc > 0 {
-		v := *conc
-		req.MaxConcurrency = &v
-	}
-	if *idle >= 0 {
-		v := *idle
-		req.IdleTimeoutS = &v
-	}
 	if _, err := client.UpdateApp(ctx, slug, req); err != nil {
 		return printErr("Update failed", err)
 	}

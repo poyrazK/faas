@@ -49,12 +49,10 @@ func spoolRoot() string {
 func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) {
 	limits := api.MustLimitsFor(acct.Plan)
 
-	// 25 MiB hard cap on the multipart envelope (covers the tarball +
-	// a generous boundary allowance).
-	if r.ContentLength > 0 && r.ContentLength > int64(limits.SourceTarballMaxMB)*1024*1024 {
-		api.WriteProblem(w, api.ErrSourceTooLarge(limits, r.ContentLength))
-		return
-	}
+	// The body has already been wrapped in http.MaxBytesReader at the
+	// dispatch site (handlers.go:createDeployment) so r.MultipartReader()
+	// will surface a *http.MaxBytesError as a parse error if the upload
+	// exceeds the plan's SourceTarballMaxMB. No pre-Check here.
 
 	mr, err := r.MultipartReader()
 	if err != nil {
@@ -178,6 +176,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 
 // validateAndSpool reads the multipart file part, validates the tarball
 // shape, and writes it to the spool dir. Returns (spool_path, bytes, problem).
+//
+// Order is: write to a tmp path, validate, then atomically rename to the
+// canonical path. This avoids leaving a malformed or oversized tarball at the
+// canonical spool path where builderd could race to pick it up before the
+// validation result is known.
 func validateAndSpool(part *multipart.Part, limits api.Limits) (string, int64, *api.Problem) {
 	if part.FileName() == "" {
 		return "", 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -188,28 +191,32 @@ func validateAndSpool(part *multipart.Part, limits api.Limits) (string, int64, *
 	}
 	id := randomToken(12)
 	dst := filepath.Join(spoolRoot(), id+".tar.gz")
-	out, err := os.Create(dst)
+	tmp := dst + ".tmp"
+	out, err := os.Create(tmp)
 	if err != nil {
 		return "", 0, api.ErrCapacity("could not spool source")
 	}
 	defer func() { _ = out.Close() }()
 
-	mw := io.MultiWriter(out)
-	n, err := io.Copy(mw, part)
+	n, err := io.Copy(out, part)
 	if err != nil {
-		_ = os.Remove(dst)
+		_ = os.Remove(tmp)
 		return "", 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad source", err.Error())
 	}
 
 	if n > int64(limits.SourceTarballMaxMB)*1024*1024 {
-		_ = os.Remove(dst)
+		_ = os.Remove(tmp)
 		return "", 0, api.ErrSourceTooLarge(limits, n)
 	}
 
-	if prob := validateTarballShape(dst); prob != nil {
-		_ = os.Remove(dst)
+	if prob := validateTarballShape(tmp); prob != nil {
+		_ = os.Remove(tmp)
 		return "", 0, prob
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return "", 0, api.ErrCapacity("could not finalize spool")
 	}
 	return dst, n, nil
 }

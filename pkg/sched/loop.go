@@ -18,9 +18,9 @@ import (
 )
 
 // Loop subscribes to apid's pg_notify channels and reacts. It also runs the
-// idle reaper on a 10s tick (spec §4.3). It does NOT actually drive vmmd
-// gRPC — that's wired in the M5 follow-up; here the loop logs the desired
-// transitions so an operator can see the policy firing.
+// idle reaper on a 10s tick (spec §4.3) and writes instance state transitions
+// to the Store. schedd is the sole writer to the `instances` table; vmmd
+// gRPC calls land in the M5.1 follow-up.
 type Loop struct {
 	pool   *pgxpool.Pool
 	store  state.Store
@@ -67,6 +67,12 @@ func (l *Loop) Run(ctx context.Context) error {
 }
 
 // handleNotification decodes the JSON payload and applies the policy.
+//
+// For deployment_changed events whose payload carries status="live" (the
+// terminal imaged re-emit), schedd creates the first instance row in
+// cold_booting state. This is the minimum required by CLAUDE.md invariant
+// §6.2-1: an app with a live deployment must have a row in `instances` so
+// the reaper + admission control can see it.
 func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	switch n.Channel {
 	case db.NotifyAppChanged:
@@ -76,19 +82,67 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		l.log.Debug("app_changed", "payload", n.Payload)
 	case db.NotifyDeploymentChanged:
 		var p struct {
-			AppID string `json:"app_id"`
-			From  string `json:"from"`
-			To    string `json:"to"`
-			Kind  string `json:"kind"`
+			AppID        string `json:"app_id"`
+			DeploymentID string `json:"to"` // imaged emits deployment_id as "to"
+			Status       string `json:"status"`
+			Kind         string `json:"kind"`
 		}
 		_ = json.Unmarshal([]byte(n.Payload), &p)
-		l.log.Info("deployment_changed", "app", p.AppID, "from", p.From, "to", p.To, "kind", p.Kind)
+		l.log.Info("deployment_changed",
+			"app", p.AppID, "deployment", p.DeploymentID,
+			"status", p.Status, "kind", p.Kind)
+		if p.Status == string(state.DeployLive) && p.AppID != "" && p.DeploymentID != "" {
+			l.materialiseLiveInstance(ctx, p.AppID, p.DeploymentID)
+		}
+	}
+}
+
+// materialiseLiveInstance creates one instance row in cold_booting state for
+// the given app+deployment, then emits instance_changed. Idempotent: if a row
+// already exists for this deployment we no-op (the reaper or a prior wake may
+// have created it first).
+func (l *Loop) materialiseLiveInstance(ctx context.Context, appID, deploymentID string) {
+	app, err := l.store.AppByID(ctx, appID)
+	if err != nil {
+		l.log.Warn("sched: app lookup for live instance", "app", appID, "err", err)
+		return
+	}
+	ins, err := l.store.CreateInstance(ctx, appID, deploymentID,
+		string(state.StateColdBooting), app.RAMMB)
+	if err != nil {
+		// A row may already exist for this deployment — that's expected and
+		// not an error condition. Other errors we surface to the log.
+		l.log.Debug("sched: create instance", "app", appID, "err", err)
+		return
+	}
+	l.emitInstanceChanged(ctx, ins.ID, appID, state.StateColdBooting)
+}
+
+// emitInstanceChanged publishes a JSON instance_changed payload. Pool may be
+// nil in tests that exercise handleNotification without Run(); we silently
+// skip the emit in that case.
+func (l *Loop) emitInstanceChanged(ctx context.Context, instanceID, appID string, st state.State) {
+	if l.pool == nil {
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"instance_id": instanceID,
+		"app_id":      appID,
+		"state":       string(st),
+	})
+	if err := db.Notify(ctx, l.pool, db.NotifyInstanceChanged, string(payload)); err != nil {
+		l.log.Warn("sched: notify instance_changed", "instance", instanceID, "err", err)
 	}
 }
 
 // runReaper walks every running instance and applies the idle / RAM-pressure
-// selectors. In M5 we log the desired actions; the actual park calls land in
-// the M5 follow-up that wires vmmd gRPC.
+// selectors. For each id returned, the reaper writes the new state to the
+// `instances` table, emits instance_changed, and frees the in-memory ledger.
+//
+// State semantics:
+//   - ReapIdle → StateParked (snapshot reuse on next wake).
+//   - SelectEvictions (RAM pressure) → StateStopped (next wake is cold boot
+//     per ADR-005 — we evicted under pressure, the snapshot may be gone).
 func (l *Loop) runReaper(ctx context.Context) {
 	apps, err := l.allApps(ctx)
 	if err != nil {
@@ -122,13 +176,32 @@ func (l *Loop) runReaper(ctx context.Context) {
 	}
 	resident := l.ledger.ResidentRAM()
 	for _, id := range ReapIdle(now, snapshot) {
-		l.log.Info("reaper: park idle", "instance", id)
-		l.ledger.Release(id)
+		l.transitionInstance(ctx, id, state.StateParked, "reaper: idle park")
 	}
 	for _, id := range SelectEvictions(resident, now, snapshot) {
-		l.log.Info("reaper: evict under pressure", "instance", id)
-		l.ledger.Release(id)
+		l.transitionInstance(ctx, id, state.StateStopped, "reaper: RAM-pressure eviction")
 	}
+}
+
+// transitionInstance writes a state change to the `instances` row, emits
+// instance_changed, and frees the in-memory ledger entry. Failures are logged
+// but don't block the loop — the reaper will re-evaluate on the next tick.
+func (l *Loop) transitionInstance(ctx context.Context, instanceID string, st state.State, reason string) {
+	if l.store == nil {
+		return
+	}
+	ins, err := l.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		l.log.Warn(reason, "instance", instanceID, "err", err)
+		return
+	}
+	if err := l.store.UpdateInstanceState(ctx, instanceID, string(st)); err != nil {
+		l.log.Warn(reason, "instance", instanceID, "err", err)
+		return
+	}
+	l.emitInstanceChanged(ctx, instanceID, ins.AppID, st)
+	l.ledger.Release(instanceID)
+	l.log.Info(reason, "instance", instanceID, "state", string(st))
 }
 
 // runCronTick is the placeholder for cron firing. M5 keeps the table CRUD;
