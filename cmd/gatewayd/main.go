@@ -3,10 +3,13 @@
 // gatewayd is the ONLY public listener on the box: TLS termination, hostname
 // routing, wake-blocking (holding a request during a cold wake), rate limiting,
 // and request accounting. The wake-blocking edge logic (routing cache, rate
-// limiter, wake gate, proxy) lives in pkg/gateway and is fully wired here; the
-// Backend that fronts Postgres routing + schedd gRPC lands with M5. TLS via
-// CertMagic (:80/:443) is added in M4/M8 — this skeleton serves plain HTTP on
-// :8080 today.
+// limiter, wake gate, proxy) lives in pkg/gateway and is fully wired here.
+//
+// M5: run() builds the production gateway.PGBackend — host→app routing over
+// Postgres (read-only; apid/schedd own the writes) plus schedd over gRPC on
+// /run/faas/schedd.sock (ADR-018) for wakes — and keeps its caches fresh from
+// the instance_changed / app_changed pg_notify channels. TLS via CertMagic
+// (:80/:443) is added in M4/M8 — this skeleton serves plain HTTP on :8080 today.
 //
 // Two listeners run inside this daemon:
 //
@@ -18,6 +21,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -26,9 +30,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/scheddgrpc"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+// scheddSocket is schedd's gRPC unix socket (ADR-018).
+const scheddSocket = "/run/faas/schedd.sock"
 
 const (
 	// listenAddr is the public listener (TLS lands here in M4/M8).
@@ -68,7 +78,30 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
-	return runWithDeps(ctx, log, defaultDeps())
+	pool, err := db.Open(ctx, "")
+	if err != nil {
+		return fmt.Errorf("gatewayd: open db: %w", err)
+	}
+	defer pool.Close()
+
+	sched, err := scheddgrpc.Dial(scheddSocket)
+	if err != nil {
+		return fmt.Errorf("gatewayd: dial schedd: %w", err)
+	}
+	defer func() { _ = sched.Close() }()
+
+	router := pgRouter{store: state.NewPgStore(pool), appsSuffix: appsSuffix(os.Getenv("FAAS_APPS_DOMAIN"))}
+	backend := gateway.NewPGBackend(router, sched, log)
+
+	// Keep the routing + target caches fresh from apid/schedd's pg_notify
+	// stream (spec §4.1): an instance state change evicts the app's cached
+	// target so the next request re-resolves via an idempotent wake; an app or
+	// domain change flushes the host→app routes.
+	go watchInvalidations(ctx, pool, backend, log)
+
+	deps := defaultDeps()
+	deps.backend = backend
+	return runWithDeps(ctx, log, deps)
 }
 
 // runWithDeps is the test-friendly variant. It exercises:

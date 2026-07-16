@@ -107,6 +107,38 @@ const (
 	CodeNoRollbackTarget  = "no_rollback_target"
 )
 
+// StatusForCode returns the HTTP status a given stable Code maps to. It is the
+// inverse of the per-code status the constructors below hardcode, kept in one
+// table so any surface that reconstructs a Problem without a Status (notably
+// pkg/grpcerr.FromStatus, which lifts a gRPC error back into a Problem carrying
+// only the Code) can recover the right HTTP status. Unknown codes default to
+// 500 — a reconstructed Problem is never served without a real status.
+func StatusForCode(code string) int {
+	switch code {
+	case CodePlanLimitApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue:
+		return http.StatusForbidden
+	case CodePlanLimitConcur, CodeQuotaExhausted:
+		return http.StatusTooManyRequests
+	case CodeSourceTooLarge:
+		return http.StatusRequestEntityTooLarge
+	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
+		CodeHandlerMissing, CodeImageRequired:
+		return http.StatusBadRequest
+	case CodeCapacity, CodeBuildOOM, CodeBuildTimeout:
+		return http.StatusServiceUnavailable
+	case CodeUnauthorized:
+		return http.StatusUnauthorized
+	case CodeNotFound:
+		return http.StatusNotFound
+	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget:
+		return http.StatusConflict
+	case CodeDeployFailed:
+		return http.StatusUnprocessableEntity
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 // Convenience constructors for the most common limit errors keep call sites to
 // one line and guarantee the limit/observed/docs fields are always populated.
 

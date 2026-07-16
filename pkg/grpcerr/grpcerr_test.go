@@ -150,6 +150,33 @@ func TestDetailsAttach(t *testing.T) {
 	}
 }
 
+func TestFromStatus_RecoversHTTPStatusFromCode(t *testing.T) {
+	// The gRPC code is lossy (both map to ResourceExhausted); FromStatus must
+	// recover the distinct HTTP status from the stable Code so the gateway's
+	// wake-denial path emits 503 vs 429 correctly instead of WriteHeader(0).
+	proLimits, _ := api.LimitsFor(api.PlanPro)
+	freeLimits, _ := api.LimitsFor(api.PlanFree)
+	cases := []struct {
+		prob       *api.Problem
+		wantStatus int
+	}{
+		{api.ErrCapacity("no headroom"), 503},
+		{api.ErrPlanLimitConcurrency(proLimits, 5), 429},
+		{api.ErrPlanLimitRAM(freeLimits, 512), 403},
+	}
+	for _, tc := range cases {
+		t.Run(tc.prob.Code, func(t *testing.T) {
+			got, ok := grpcerr.FromStatus(grpcerr.ToStatus(tc.prob))
+			if !ok {
+				t.Fatalf("FromStatus did not recognise our error")
+			}
+			if got.Status != tc.wantStatus {
+				t.Errorf("status = %d, want %d", got.Status, tc.wantStatus)
+			}
+		})
+	}
+}
+
 func TestNew_Convenience(t *testing.T) {
 	err := grpcerr.New(codes.ResourceExhausted, api.CodeCapacity,
 		"No slot", "Box at MaxSlots")
