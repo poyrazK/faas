@@ -1,0 +1,144 @@
+// vmmd — the only root component, owns firecracker+jailer (spec §4.4, ADR-013,
+// ADR-014, ADR-016). All five RPCs map 1:1 to spec §4.4 line 138. Wire shape
+// stays narrow: the caller resolves `(app)` into AppSpec; vmmd never queries
+// apid or postgres on its own.
+
+syntax = "proto3";
+
+package onebox.faas.vmmd.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/wrappers.proto";
+
+option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1;vmmdpb";
+
+// Vmmd is the gRPC service vmmd exposes on its unix socket. The Unix-socket
+// auth model (mode 0660 group `faas`, ADR-015) is the only authentication
+// story for v1.0 — Gate-A multi-host replaces it with mTLS.
+service Vmmd {
+  // CreateFromSnapshot wakes an instance by restoring a previously-parked
+  // snapshot. Falls back to cold boot if the snapshot is stale, missing, or
+  // fails to load (ADR-005: cold boot always works).
+  rpc CreateFromSnapshot(CreateFromSnapshotRequest) returns (WakeResponse);
+
+  // CreateColdBoot primes an instance with no snapshot — the deploy-pipeline
+  // first-boot path (M2). Equivalent to Wake with Snapshot == nil.
+  rpc CreateColdBoot(CreateColdBootRequest) returns (WakeResponse);
+
+  // PauseAndSnapshot pauses the VM and writes a full snapshot to the
+  // requested host-side paths, then destroys the live VM. After return the
+  // instance is gone (§6.1: PARKED is zero-RAM).
+  rpc PauseAndSnapshot(PauseAndSnapshotRequest) returns (SnapshotResponse);
+
+  // Destroy tears down a running instance. Idempotent on unknown instances.
+  rpc Destroy(DestroyRequest) returns (DestroyResponse);
+
+  // Stats returns current liveness + allocator views. Used by schedd's
+  // admission ledger (M4) and by Prometheus for the `vmmd_ops_total` /
+  // `vmmd_op_duration_seconds` dashboards (ADR-016).
+  rpc Stats(StatsRequest) returns (StatsResponse);
+}
+
+// AppSpec flattens what the caller knows about an app. vmmd stores none of
+// it; the proto exists so each request is self-describing and vmmd stays
+// stateless about app config (ADR-014).
+message AppSpec {
+  // drive0 shared read-only base rootfs (spec §4.6 two-drive scheme).
+  string base_path   = 1;
+  // drive1 per-app layer.
+  string layer_path  = 2;
+  // 2 for free/hobby/pro; 4 for Scale.
+  int32  vcpu_count  = 3;
+  // plan RAM in MiB (the slice fences at +8 per spec §1).
+  int32  mem_size_mib = 4;
+}
+
+// SnapshotRef points at the snapshot files a caller wants to restore from.
+// Both paths must exist on the host's /srv/fc/ filesystem.
+message SnapshotRef {
+  string deployment_id = 1;
+  string mem_path      = 2;
+  string vmstate_path  = 3;
+  // The Firecracker version the snapshot was made with (ADR-005: pinned).
+  // If empty, the daemon uses the running fcVersion (current behaviour).
+  string fc_version    = 4;
+}
+
+// WakeResponse is the common return shape of CreateFromSnapshot and
+// CreateColdBoot. The caller receives the lease + netns identity but does
+// NOT receive the inner guest networking — that's identical across instances
+// (ADR-009) and stays implicit.
+message WakeResponse {
+  // The instance name as it appears in the `instances` table; echoes the
+  // request's `instance` field for request logging.
+  string instance              = 1;
+  int32  lease_uid             = 2;   // 20000-29999
+  // NetIP string representation; serialise/parse via netip.Addr.String().
+  string host_ip               = 3;
+  string netns                 = 4;   // fc-<instance>
+  string veth_host             = 5;
+  string veth_peer             = 6;
+  WakeMethod method            = 7;
+  // The PlanWake decision — what the *caller* expected. Method reports what
+  // actually happened (e.g. a restore that fell back reads WAKE_COLD_BOOT).
+  WakeMethod requested_method  = 8;
+  // RFC 7807 fields, populated only on failure. The status code itself is
+  // google.rpc.Status via google.golang.org/grpc/status; see pkg/grpcerr.
+  google.protobuf.Struct problem = 9;
+}
+
+// WakeMethod is whether a wake was a snapshot restore or a cold boot.
+// Wire-stable: do NOT reorder. New enum slots go at the end.
+enum WakeMethod {
+  WAKE_COLD_BOOT = 0;
+  WAKE_RESTORE   = 1;
+}
+
+message CreateFromSnapshotRequest {
+  string instance = 1;
+  AppSpec app      = 2;
+  SnapshotRef snapshot = 3;
+}
+
+message CreateColdBootRequest {
+  string instance = 1;
+  AppSpec app      = 2;
+}
+
+message PauseAndSnapshotRequest {
+  string instance    = 1;
+  string mem_path    = 2;
+  string vmstate_path = 3;
+}
+
+message SnapshotResponse {
+  int64 mem_bytes     = 1;
+  int64 vmstate_bytes = 2;
+}
+
+message DestroyRequest {
+  string instance = 1;
+}
+
+message DestroyResponse {
+  // Echoed for callers that batch destroys and want a confirmation record.
+  // Successful destroys produce an empty `problem` field.
+  string instance = 1;
+}
+
+message StatsRequest {}
+
+message StatsResponse {
+  int32  live_count = 1;
+  int32  leased_count = 2;
+  // Optional so unset != 0 (Int64Value = 0 vs absent differs in prom metrics).
+  google.protobuf.Int64Value total_resident_bytes = 3;
+  repeated InstanceStats instances = 4;
+}
+
+message InstanceStats {
+  string instance = 1;
+  int32  lease_uid = 2;
+  string host_ip   = 3;
+  google.protobuf.Int64Value resident_bytes = 4;
+}
