@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          check-latest: true
+      - name: gofmt
+        run: test -z "$(gofmt -l $(find . -name '*.go'))" || (gofmt -l $(find . -name '*.go'); exit 1)
+      - name: vet
+        run: go vet ./...
+      - name: unit tests
+        run: make test
+      - name: build
+        run: make build
+
+  # Integration tests need /dev/kvm + root and run on the dev EX44 (or a
+  # nested-KVM runner), not on stock GitHub runners (spec §Gotchas). Wired here
+  # as a manual/self-hosted job so the pipeline is ready when the runner is.
+  metal:
+    if: false # enable once a self-hosted KVM runner is registered (M0/M1)
+    runs-on: [self-hosted, kvm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: metal tests
+        run: sudo make test-metal
+      - name: leak check
+        run: sudo make leakcheck

@@ -1,0 +1,21 @@
+# Build artifacts
+/bin/
+*.test
+*.out
+coverage.*
+
+# Local config & secrets — never commit
+/etc/faas/
+*.local.toml
+secrets/
+
+# Firecracker / VM working state
+/srv/fc/
+*.ext4
+*.snap
+vmlinux-*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
