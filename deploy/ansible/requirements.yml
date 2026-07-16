@@ -1,0 +1,11 @@
+# Collections pin for the bootstrap play. Empty in M0 — we deliberately
+# stick to the ansible.builtin module set so the play has no Galaxy
+# network dependency at run time. Future milestones that need richer
+# modules (e.g. LVM, postgres) drop a version-pinned entry here.
+#
+#   collections:
+#     - community.general>=8.0.0
+#     - community.postgresql>=3.0.0
+#
+# Install with:
+#   ansible-galaxy collection install -r requirements.yml

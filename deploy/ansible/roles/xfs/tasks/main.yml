@@ -1,0 +1,63 @@
+# xfs (spec §8) — verify prjquota on /srv/fc and ensure /srv/fc/jail tmpfs.
+#
+# Spec §8: the FC-root filesystem MUST have `prjquota` enabled so we
+# can bill per-tenant disk without per-customer LVs. The jailer tmpfs
+# is critical (Gotchas: "Jailer chroots live in tmpfs — anything written
+# there by mistake disappears on reboot and eats RAM until then").
+# We size it 12 GB — well below the tenant budget on a single box.
+#
+# Disabled-by-default: the prjquota check is gated on /srv/fc existing
+# with a non-tmpfs fs (it ships from installimage on a real EX44; on
+# Hetzner cloud vms used for CI tests there is no /srv/fc). We use a
+# fact + assert pattern instead of conditionals to stay declarative.
+
+- name: xfs — gather mount facts
+  ansible.builtin.setup:
+    filter: ansible_mounts
+  when: false  # ansible.setup already ran via gather_facts
+
+- name: xfs — read /proc/mounts
+  ansible.builtin.slurp:
+    src: /proc/mounts
+  register: mounts_blob
+  changed_when: false
+  check_mode: false
+
+- name: xfs — extract mount rows from blob
+  ansible.builtin.set_fact:
+    mounts_text: "{{ mounts_blob.content | b64decode }}"
+
+- name: xfs — assert /srv/fc rootfs has prjquota (when /srv/fc is a real fs)
+  ansible.builtin.assert:
+    that:
+      - >-
+        (mounts_text | regex_search('^[^ ]+ /srv/fc [^ ]+ ([^ ]+)', '\1')) is not none
+        and (mounts_text | regex_search('^[^ ]+ /srv/fc [^ ]+ ([^ ]+)', '\1')) | regex_search('prjquota')
+    fail_msg: >-
+      /srv/fc must be mounted with `prjquota`. Re-image with the
+      installimage config (spec §8); enabling prjquota on an existing
+      XFS is destructive.
+    success_msg: "/srv/fc has prjquota"
+  when: "/srv/fc" in mounts_text and "tmpfs" not in (mounts_text | regex_search('^[^ ]+ /srv/fc [^ ]+', '\0') or '')
+
+- name: xfs — ensure /srv/fc/jail directory (1700 perms per Gotchas)
+  ansible.builtin.file:
+    path: /srv/fc/jail
+    state: directory
+    owner: root
+    group: root
+    mode: "1700"
+
+- name: xfs — ensure /srv/fc/jail tmpfs entry in /etc/fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    line: "tmpfs /srv/fc/jail tmpfs nodev,nosuid,size=12G,x-mount.mkdir=1700 0 0"
+    regexp: '^tmpfs\s+/srv/fc/jail\s+'
+    state: present
+    create: false
+  register: fstab_jail
+
+- name: xfs — mount /srv/fc/jail
+  ansible.builtin.command: mount /srv/fc/jail
+  changed_when: '"already mounted" not in fstab_jail '
+  failed_when: false

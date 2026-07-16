@@ -1,0 +1,8 @@
+# Single-host inventory for `make bootstrap`. The M0 gate runs on the
+# box itself — there's no remote control plane yet (M5 wires the
+# Postgres-backed store that will let this grow to multi-host).
+#
+# ansible_connection=local skips SSH; ansible_python_interpreter pins
+# to the Ubuntu 24.04 system python3.12 so we never depend on a venv.
+[box]
+127.0.0.1 ansible_connection=local ansible_python_interpreter=/usr/bin/python3

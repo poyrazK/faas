@@ -1,0 +1,70 @@
+# systemd_slices (spec §13, §1).
+#
+# Drops three `.slice` unit files that PUT HARD MEMORY CEILINGS on the
+# VM resource accounting. Numbers come from the `pkg/api/limits.go`
+# constants table — when the limits change, ansible must mirror.
+#
+# Hard-fence values (spec §1):
+#   faas-tenant.slice : MemoryMax=57344M  (controller for tenant VMs)
+#   faas-cp.slice     : MemoryMax=6144M   (postgres + daemons; spec §13 budget row)
+#   faas-build.slice  : MemoryMax=4096M, Parent=faas-cp.slice
+#                                                (1 guaranteed slot + 1 opportunistic)
+#
+# The slot definitions alone are not enough — the corresponding
+# daemon `daemon.slice` units land in M5. Until then the slices are
+# defined but unused; that's deliberate (configuration stays idempotent
+# even with no consumers).
+
+- name: systemd_slices — write faas-tenant.slice (hard fence)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-tenant.slice
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=onebox-faas tenant microVMs (hard fence — schedd admits to 47,600 MB)
+      # spec §1, §4.3, §6.2-2: 57,344 MB ceiling, schedd stops at 47,600 MB.
+
+      [Slice]
+      MemoryMax=57344M
+      CPUQuota=1600%
+  register: tenant_slice
+
+- name: systemd_slices — write faas-cp.slice
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-cp.slice
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=onebox-faas control plane (postgres + daemons)
+      # spec §13 budget row: 6,144 MB total. Breakdown lives in M5 systemd units.
+
+      [Slice]
+      MemoryMax=6144M
+      CPUQuota=400%
+  register: cp_slice
+
+- name: systemd_slices — write faas-build.slice (children of faas-cp.slice)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-build.slice
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=onebox-faas builder microVMs (lives inside faas-cp.slice — never tenant RAM)
+      # spec §Gotchas: 1 guaranteed slot lives in faas-cp; opportunistic 2nd borrows
+      # from the 47,600 → 57,344 MB tenant headroom only when residency < 60%.
+
+      [Slice]
+      MemoryMax=4096M
+      CPUQuota=200%
+  register: build_slice
+
+- name: systemd_slices — daemon-reload
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: cp_slice is changed or build_slice is changed or tenant_slice is changed

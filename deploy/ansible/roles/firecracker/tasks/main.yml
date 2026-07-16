@@ -1,0 +1,106 @@
+# firecracker (spec §4.4, §M0 acceptance).
+#
+# Pins `firecracker` + `jailer` to a specific GitHub release and
+# fetches the matching `vmlinux-6.1.x` guest kernel. The SHA-256s
+# come from `defaults/main.yml` so a future upgrade is a one-line
+# change: bump `fc_version` and re-run `make bootstrap`.
+#
+# Pinned version rationale (spec §Conventions: "Never log secret
+# values; env secrets are sealed at rest"): releasing a guest kernel
+# with a broken virtio-rng path would silently break the resume hook's
+# entropy re-seeding (V6), so we pin BOTH the binary version AND the
+# kernel checksum.
+#
+# Why fc_version is a defaults entry: ansible-roles-defaults makes it
+# overridable at invocation time (`ansible-playbook -e fc_version=1.8.0`)
+# without touching the role — needed for canary boots during a
+# version bump (see ADR-005: snapshots pin to fc_version; on FC
+# upgrade snapshots go stale → apps re-snapshot via cold boot).
+
+- name: firecracker — read role defaults for current pin
+  ansible.builtin.debug:
+    var: fc_release
+
+- name: firecracker — mkdir /usr/local/bin and /srv/fc/base
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /usr/local/bin
+    - /srv/fc/base
+
+- name: firecracker — download firecracker release tarball
+  ansible.builtin.get_url:
+    url: "https://github.com/firecracker-microvm/firecracker/releases/download/{{ fc_release }}/firecracker-{{ fc_release }}-{{ fc_arch }}.tgz"
+    dest: "/tmp/firecracker-{{ fc_release }}.tgz"
+    checksum: "sha256:{{ fc_release_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: fc_tarball
+
+- name: firecracker — verify tarball SHA-256
+  ansible.builtin.command: sha256sum /tmp/firecracker-{{ fc_release }}.tgz
+  register: tarball_sum
+  changed_when: false
+  check_mode: false
+
+- name: firecracker — assert local checksum matches pin
+  ansible.builtin.assert:
+    that:
+      - "fc_release_sha256 in tarball_sum.stdout"
+    fail_msg: >-
+      Downloaded firecracker tarball SHA-256 does not match the pin in
+      roles/firecracker/defaults/main.yml. Refusing to continue — a
+      download mismatch is almost certainly a compromised supply chain.
+
+- name: firecracker — untar binary + jailer into /usr/local/bin
+  ansible.builtin.unarchive:
+    src: "/tmp/firecracker-{{ fc_release }}.tgz"
+    dest: /usr/local/bin
+    remote_src: true
+    creates: "/usr/local/bin/firecracker-{{ fc_release }}"
+  args:
+    creates: "/usr/local/bin/firecracker-{{ fc_release }}"
+
+- name: firecracker — symlink current fc_version binaries onto PATH
+  ansible.builtin.file:
+    src: "/usr/local/bin/firecracker-{{ fc_release }}"
+    dest: "{{ item }}"
+    state: link
+    force: true
+  loop:
+    - /usr/local/bin/firecracker
+    - /usr/local/bin/jailer
+
+- name: firecracker — fetch pinned vmlinux-6.1 from firecracker CI
+  ansible.builtin.get_url:
+    url: "{{ fc_kernel_url }}"
+    dest: "/srv/fc/base/vmlinux-{{ fc_kernel_basename }}"
+    checksum: "sha256:{{ fc_kernel_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: vmlinux_dl
+
+- name: firecracker — assert vmlinux pinned checksum
+  ansible.builtin.command: sha256sum "/srv/fc/base/vmlinux-{{ fc_kernel_basename }}"
+  register: vmlinux_sum
+  changed_when: false
+
+- name: firecracker — re-assert kernel SHA-256
+  ansible.builtin.assert:
+    that:
+      - "fc_kernel_sha256 in vmlinux_sum.stdout"
+    fail_msg: "vmlinux checksum mismatch — see ADR-005 + spec §11"
+
+- name: firecracker — smoke test: `firecracker --version` + `jailer --version`
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - /usr/local/bin/firecracker --version
+    - /usr/local/bin/jailer --version
+  changed_when: false
+  check_mode: false

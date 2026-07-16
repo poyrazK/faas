@@ -1,0 +1,41 @@
+# M0 host bootstrap (spec §14, §8, §11, §13).
+#
+# This is the EXACT set of preconditions the platform assumes:
+#
+#   1. cgroups v2 unified hierarchy, karg `cgroup_no_v1=0`
+#   2. unprivileged user namespaces disabled (security §11)
+#   3. lv-system + lv-fc logical volumes from the EX44 installer
+#   4. /srv/fc/jail tmpfs + prjquota-capable /srv/fc rootfs
+#   5. firecracker/jailer on PATH + a pinned vmlinux at /srv/fc/base/
+#   6. faas-cp.slice / faas-tenant.slice / faas-build.slice fences
+#   7. nftables ruleset per §7 (egress denylist + tenant-only NAT)
+#   8. postgres 15 + faas system user (schema lands in M5 via migrations/)
+#
+# Idempotency: every task either (a) uses a `creates:` / `until:`
+# sentinel, (b) checks the current value with `command:` before mutating,
+# or (c) shells out to `systemctl is-active` / `lvdisplay` etc. and
+# skips when the desired state is already present. Re-running on a
+# converged box MUST produce zero "changed".
+#
+# Failure mode: `serial: 1` + `max_fail_percentage: 0` means the first
+# failed role halts the play. That's the whole point — a half-bootstrapped
+# EX44 is worse than a known-bad one.
+
+- name: Bootstrap an Hetzner EX44 to a one-box FaaS-ready host
+  hosts: box
+  gather_facts: true
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+
+  # Roles are sequenced deliberately: prerequisites first, side effects
+  # last. Order is enforced by ansible, not conventions.
+  roles:
+    - role: cgroups_v2       # verify-only; instant fail on misconfigured karg
+    - role: grub             # sets karg + sysctl; cgroup_no_v1 must persist
+    - role: lvm              # verify-only — provisioning is the installer's job
+    - role: xfs              # verify prjquota + tmpfs for /srv/fc/jail
+    - role: firecracker      # binary + jailer + pinned vmlinux
+    - role: systemd_slices   # memory caps for cp / tenant / build slices
+    - role: nftables         # egress denylist per spec §7
+    - role: postgres         # install + faas user; schema is M5's job

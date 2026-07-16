@@ -1,0 +1,53 @@
+# cgroups_v2 (spec §11) — verify-only role.
+#
+# Spec §11 hard-requires cgroups v2 with the unified hierarchy. On
+# Ubuntu 24.04 HWE (kernel ≥ 6.8) this is the default; on an older
+# kernel the `grub` role that follows us sets the boot karg
+# `cgroup_no_v1=0 systemd.unified_cgroup_hierarchy=1`, but the
+# kernel we are CURRENTLY running on still needs the assertion now —
+# a degraded kernel would silently run no-op cgroup controls.
+#
+# This role is verify-only by design: ansible must never silently
+# rewrite a running kernel cmdline. If the box is wrong, fail loudly
+# and tell the operator to reboot into the grub-fixed entry.
+
+- name: cgroups_v2 — read current kernel cmdline
+  ansible.builtin.command: cat /proc/cmdline
+  register: cmdline
+  changed_when: false
+  check_mode: false
+
+- name: cgroups_v2 — assert unified hierarchy is mounted
+  ansible.builtin.stat:
+    path: /sys/fs/cgroup/cgroup.controllers
+  register: cgroup2_controllers
+  failed_when: not cgroup2_controllers.stat.exists
+  changed_when: false
+
+- name: cgroups_v2 — assert `cgroup_no_v1=0` is on the running cmdline
+  ansible.builtin.assert:
+    that:
+      - "'cgroup_no_v1=0' in cmdline.stdout"
+    fail_msg: >-
+      Running kernel cmdline does not contain `cgroup_no_v1=0`.
+      The `grub` role below may have just set the karg; reboot into
+      the new default entry and re-run `make bootstrap`.
+    success_msg: "kernel unified-cgroup-hierarchy: enabled"
+  changed_when: false
+
+- name: cgroups_v2 — assert no v1 controllers are mounted
+  ansible.builtin.command: mount
+  register: mount_out
+  changed_when: false
+  check_mode: false
+
+- name: cgroups_v2 — reject tmpfs/v1 cgroups anywhere except /sys/fs/cgroup
+  ansible.builtin.assert:
+    that:
+      - "not (' on /sys/fs/cgroup/' in line and 'cgroup' in line and 'cgroup2' not in line)
+        for line in mount_out.stdout_lines
+        if 'cgroup' in line"
+    fail_msg: >-
+      Mounted cgroup v1 controller(s) detected on /sys/fs/cgroup/*.
+      Reboot into a kernel booted with `cgroup_no_v1=0` and re-run.
+  changed_when: false

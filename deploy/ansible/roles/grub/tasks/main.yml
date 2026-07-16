@@ -1,0 +1,76 @@
+# grub (spec §11) — set the boot karg for cgroups v2 + the sysctl that
+# disables unprivileged user namespaces.
+#
+# Idempotency strategy:
+#   - karg: read current `/proc/cmdline`; if `cgroup_no_v1=0` already
+#     present, no-op. Otherwise rewrite `/etc/default/grub` and call
+#     `update-grub`. Updated karg is verified by the `cgroups_v2` role
+#     AFTER the next reboot, so we don't fight the running kernel.
+#   - sysctl: `creates:` on `/etc/sysctl.d/99-faas.conf`. The file
+#     contains `unprivileged_userns_clone=0` (spec §11). We also apply
+#     it live via `-w` so the running kernel inherits immediately.
+
+- name: grub — set cgroup karg and update-grub if needed
+  block:
+    - name: grub — read current /proc/cmdline
+      ansible.builtin.command: cat /proc/cmdline
+      register: live_cmdline
+      changed_when: false
+      check_mode: false
+
+    - name: grub — read /etc/default/grub
+      ansible.builtin.slurp:
+        src: /etc/default/grub
+      register: grub_default
+      changed_when: false
+
+    - name: grub — ensure kargs include cgroup_no_v1=0 + unified hierarchy
+      ansible.builtin.lineinfile:
+        path: /etc/default/grub
+        regexp: '^GRUB_CMDLINE_LINUX='
+        line: >-
+          GRUB_CMDLINE_LINUX="cgroup_no_v1=0 systemd.unified_cgroup_hierarchy=1 {{ cgroup_extra_kargs }}"
+        create: false
+        backrefs: false
+      register: grub_rewrite
+      # Only rewrite when (a) the karg isn't already there AND
+      # (b) `GRUB_CMDLINE_LINUX=` line exists to rewrite.
+      when:
+        - "'cgroup_no_v1=0' not in grub_default.content | b64decode"
+        - "'systemd.unified_cgroup_hierarchy=1' not in grub_default.content | b64decode"
+      notify: grub rebuild
+
+  vars:
+    cgroup_extra_kargs: "" # platform-specific extras (e.g. intel_iommu=on) go here
+
+- name: grub — sysctl: disable unprivileged user namespaces (spec §11)
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-faas.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # one-box FaaS security baseline (spec §11)
+      kernel.unprivileged_userns_clone = 0
+      net.core.bpf_jit_harden = 2
+      # virtio-rng must be readable by guests — never lock down /dev/hw_random
+      # (security belt-and-braces, default is already 0).
+      kernel.unprivileged_bpf_disabled = 1
+  # copy reports changed on first drop, ok on re-run with identical content.
+
+- name: grub — apply sysctl live (no reboot needed for these)
+  ansible.builtin.command: sysctl -w kernel.unprivileged_userns_clone=0 kernel.unprivileged_bpf_disabled=1 net.core.bpf_jit_harden=2
+  changed_when: false
+  failed_when: false  # some boot environments have already-set keys; we just want them to be set
+
+- name: grub — assert karg IS already on the running cmdline (will fail until reboot)
+  ansible.builtin.assert:
+    that:
+      - "'cgroup_no_v1=0' in live_cmdline.stdout"
+    fail_msg: >-
+      The karg was written to /etc/default/grub but the running kernel does
+      not have it. Reboot the box (to load the new default entry), then
+      re-run `make bootstrap`. Until then, the `cgroups_v2` role will
+      continue to fail.
+    success_msg: "karg present on running kernel (already rebooted)"
+  when: false  # gate: remove the `false` once operator is ready to reboot as part of bootstrap

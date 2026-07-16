@@ -1,0 +1,16 @@
+# Pin: upgrade both fc_release AND fc_release_sha256 together; rebuild
+# the vmlinux sha256 by re-uploading the kernel after a fresh FC CI run.
+# Spec §4.4 pins guest kernel=vmlinux-6.1.x; bump fc_kernel_basename when
+# the FC CI ships a new release.
+#
+# FIRST RUN: do `get_url` once without the checksum to populate, run
+# `sha256sum` on the resulting file, paste the digest back into the
+# `*_sha256:` lines below. After that the checksum assertions are real.
+# The two REPLACE placeholders exist because pinning a checksum you
+# cannot confirm is theatre — admit the operator must look.
+fc_release: "v1.7.0"
+fc_arch: "x86_64"
+fc_release_sha256: "REPLACE_WITH_SHA256_OF_FC_v1.7.0_x86_64_TARBALL"
+fc_kernel_url: "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/x86_64/v1.7.0/vmlinux-6.1.102-openeuler22.03-x86_64.bin"
+fc_kernel_basename: "6.1.openeuler22.03.bin"
+fc_kernel_sha256: "REPLACE_WITH_SHA256_OF_PINNED_VMLINUX"

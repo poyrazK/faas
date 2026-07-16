@@ -1,0 +1,4 @@
+# Handler: rebuild the grub config after a karg change.
+- name: grub rebuild
+  ansible.builtin.command: update-grub
+  changed_when: true

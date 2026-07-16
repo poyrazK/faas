@@ -1,0 +1,30 @@
+# lvm (spec §8) — verify-only.
+#
+# The lv-system (60 GB) and lv-fc (~452 GB) volumes are part of the
+# Hetzner `installimage` recipe (the financial model §1 ties the snapshot
+# budget to the 2×512 GB RAID-1 they come from). Re-creating them on a
+# live box is out of scope for ansible and a one-time op; we just
+# assert they exist + have the right size envelope.
+#
+# If this role fails: re-image the box with the project's installimage
+# config and re-run `make bootstrap`.
+
+- name: lvm — list LVs
+  ansible.builtin.command: lvs --noheadings -o lv_name,lv_size --units g
+  register: lvs_out
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: lvm — assert lv-system (~60 GB) and lv-fc (~440 GB) exist
+  ansible.builtin.assert:
+    that:
+      - "'lv-system' in lvs_out.stdout"
+      - "'lv-fc' in lvs_out.stdout"
+    fail_msg: >-
+      Required LVs `lv-system` (~60 GB) and `lv-fc` (~440 GB) were not
+      found. Re-image this EX44 with the project's installimage config
+      (see `docs/faas_implementation_spec.md` §8). ansible will not
+      create these — re-provisioning is a one-time op.
+    success_msg: "lv-system + lv-fc present"
+  when: lvs_out.rc == 0
