@@ -124,7 +124,7 @@ jobs:
           go test -race -count=1 -coverprofile=coverage/cover.out -covermode=atomic ./...
 
       - name: upload to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: coverage/cover.out
           flags: unittests
