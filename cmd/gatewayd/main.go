@@ -5,7 +5,14 @@
 // and request accounting. The wake-blocking edge logic (routing cache, rate
 // limiter, wake gate, proxy) lives in pkg/gateway and is fully wired here; the
 // Backend that fronts Postgres routing + schedd gRPC lands with M5. TLS via
-// CertMagic (:80/:443) is added in M4/M8 — this skeleton serves plain HTTP.
+// CertMagic (:80/:443) is added in M4/M8 — this skeleton serves plain HTTP on
+// :8080 today.
+//
+// Two listeners run inside this daemon:
+//   public  :8080 (placeholder; eventually :80/:443) → Handler.ServeHTTP
+//   private :9090                                       → /healthz /readyz /metrics
+//
+// Both share ctx cancellation so a SIGTERM shuts them down in parallel.
 package main
 
 import (
@@ -18,26 +25,47 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-const listenAddr = ":8080"
+const (
+	// listenAddr is the public listener (TLS lands here in M4/M8).
+	listenAddr = ":8080"
+	// controlAddr is the private control-plane listener — never reachable from
+	// the internet; bind to the loopback interface by default so an
+	// operator-prometheus scrape is the only thing that can reach it.
+	controlAddr = "127.0.0.1:9090"
+)
 
 func main() {
 	wire.Daemon("gatewayd", run)
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
-	handler := gateway.NewHandler(unwiredBackend{})
-	srv := &http.Server{
+	handler := gateway.NewHandlerWith(unwiredBackend{}, gateway.NewMetrics(), log)
+	handler.SetWakeGateHook()
+
+	// Public listener: customer traffic (spec §4.1).
+	public := &http.Server{
 		Addr:              listenAddr,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		// 300 s total per spec §4.1.
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 300 * time.Second,
 	}
 
-	errc := make(chan error, 1)
+	// Private listener: control plane only — never authenticated (it's on a
+	// private bind), never reachable from the public-internet path.
+	controlMux := gateway.ControlMux(handler.Metrics(), nil)
+
+	errc := make(chan error, 2)
 	go func() {
-		log.Info("gatewayd listening", "addr", listenAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Info("gatewayd public listening", "addr", listenAddr)
+		if err := public.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errc <- err
 		}
+	}()
+	go func() {
+		log.Info("gatewayd control listening", "addr", controlAddr)
+		errc <- gateway.RunControlServer(ctx, controlAddr, controlMux)
 	}()
 
 	select {
@@ -46,7 +74,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		_ = public.Shutdown(shutdownCtx)
+		return nil
 	}
 }
 

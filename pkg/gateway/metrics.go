@@ -14,9 +14,11 @@ package gateway
 
 import (
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Metrics is the gatewayd Prometheus bundle. Construct once per Handler via
@@ -66,6 +68,12 @@ func NewMetrics() *Metrics {
 
 // Registry returns the underlying *prometheus.Registry — pass to promhttp.
 func (m *Metrics) Registry() *prometheus.Registry { return m.registry }
+
+// Handler returns an http.Handler that serves the registry's metrics in the
+// Prometheus text exposition format. Mount at /metrics on the control listener.
+func (m *Metrics) Handler() http.Handler {
+	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{Registry: m.registry})
+}
 
 // ObserveRequest records a completed request's outcome. code is the HTTP
 // status class as a 3-digit string ("200", "404", "503"...).

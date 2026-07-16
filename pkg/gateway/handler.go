@@ -79,6 +79,10 @@ func (h *Handler) SetWakeGateHook() {
 	}
 }
 
+// Metrics exposes the Prometheus bundle (used by the control listener to mount
+// /metrics). May be nil if NewHandler was used and nothing initialized one.
+func (h *Handler) Metrics() *Metrics { return h.metrics }
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Status-class capture (used for metrics + slog). Doesn't buffer the body
 	// or alter the headers — strictly observability.
