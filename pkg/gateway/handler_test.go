@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -9,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // fakeBackend simulates routing + a parked app that wakes on demand.
@@ -61,7 +64,9 @@ func newTestHandler(t *testing.T) (*Handler, *fakeBackend, *httptest.Server) {
 		host:     "jane-api.apps.dom",
 		upstream: upstream.Listener.Addr().String(),
 	}
-	return NewHandler(b), b, upstream
+	// Quiet logger: tests don't need slog output; the metrics assertion is the
+	// real check. Production uses slog.Default() via NewHandler.
+	return NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil))), b, upstream
 }
 
 func TestColdWakeReturns200AndHeader(t *testing.T) {
@@ -117,6 +122,59 @@ func TestUnknownHost404(t *testing.T) {
 	}
 }
 
+// TestAppsSuffixFilter asserts the spec §4.1 wildcard host guard: with a
+// configured appsSuffix, any Host that doesn't match is 404'd without
+// touching the routing table.
+func TestAppsSuffixFilter(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	h.WithAppsSuffix(".apps.dom")
+
+	// Matches suffix → reaches the fake backend → proxied.
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("matched suffix = %d, want 200", rec.Code)
+	}
+
+	// Doesn't match suffix → 404 (without ever calling b.Lookup).
+	b.wakes = 0
+	req = httptest.NewRequest("GET", "http://attacker.example/", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("non-matching suffix = %d, want 404", rec.Code)
+	}
+	if atomic.LoadInt32(&b.wakes) != 0 {
+		t.Error("non-matching suffix must not wake the app")
+	}
+}
+
+// TestRequestIDRoundTrip asserts that x-faas-request-id is generated for every
+// response and an inbound header overrides it (lets clients thread their own
+// trace id).
+func TestRequestIDRoundTrip(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	// 1) No inbound header → response carries a generated 32-char hex.
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	got := rec.Header().Get("x-faas-request-id")
+	if len(got) != 32 {
+		t.Errorf("generated rid len = %d, want 32 hex chars (got %q)", len(got), got)
+	}
+
+	// 2) Inbound header → response echoes it.
+	req = httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	req.Header.Set("x-faas-request-id", "my-trace-id")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("x-faas-request-id"); got != "my-trace-id" {
+		t.Errorf("inbound rid not echoed: got %q", got)
+	}
+}
+
 func TestRateLimitReturns429(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.running = true
@@ -159,5 +217,48 @@ func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 	wg.Wait()
 	if got := atomic.LoadInt32(&b.wakes); got != 1 {
 		t.Errorf("50 concurrent cold requests should trigger 1 wake, got %d", got)
+	}
+}
+
+// TestMetricsSpec12 asserts the §12 metric names increment with the expected
+// label sets on cold/404/429 paths. Names are dashboard dependencies — DO NOT
+// rename without coordinating with deploy/grafana/.
+func TestMetricsSpec12(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	h.SetWakeGateHook()
+
+	// Cold path: +requests_total{200} +cold_wake_total +wake_latency_count.
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := testutil.ToFloat64(h.metrics.requests.WithLabelValues("app-1", "pro", "200")); got != 1 {
+		t.Errorf("requests_total{200}=%v, want 1", got)
+	}
+	if got := testutil.ToFloat64(h.metrics.coldWake.WithLabelValues("app-1")); got != 1 {
+		t.Errorf("cold_wake_total=%v, want 1", got)
+	}
+	if got := testutil.CollectAndCount(h.metrics.wakeLatency); got != 1 {
+		t.Errorf("wake_latency series count=%v, want 1 (one observation)", got)
+	}
+
+	// Unknown host: +requests_total{404}.
+	req = httptest.NewRequest("GET", "http://nope.apps.dom/", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := testutil.ToFloat64(h.metrics.requests.WithLabelValues("-", "-", "404")); got != 1 {
+		t.Errorf("requests_total{404}=%v, want 1", got)
+	}
+
+	// Rate limit (Free plan burst 20, 25 requests): +rate_limited_total{1}.
+	h2, b2, _ := newTestHandler(t)
+	h2.SetWakeGateHook()
+	b2.app.Plan = api.PlanFree
+	for i := 0; i < 25; i++ {
+		req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+		rec = httptest.NewRecorder()
+		h2.ServeHTTP(rec, req)
+	}
+	if got := testutil.ToFloat64(h2.metrics.rateLimited.WithLabelValues("app-1", "free")); got < 1 {
+		t.Errorf("rate_limited_total=%v, want >=1", got)
 	}
 }
