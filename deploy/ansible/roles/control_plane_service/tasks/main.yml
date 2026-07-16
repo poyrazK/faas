@@ -1,0 +1,73 @@
+# control_plane_service — install systemd units + example TOMLs for apid,
+# schedd, and imaged (spec §4.1, §4.3, §4.6). All three daemons are non-root
+# and share the same /etc/faas directory + sealed.env EnvironmentFile pattern
+# (gap G2 — secrets sealed at rest, decrypted only at boot by systemd).
+#
+# Like vmmd_service, this role does NOT enable or start the daemons: the
+# operator does that once the binaries are deployed and the sealed.env file
+# has been populated with the DATABASE_URL.
+#
+# Idempotency: each copy uses `mode:` to keep state predictable; `daemon_reload`
+# fires only when the unit file actually changed.
+
+- name: control_plane_service — ensure per-daemon users exist (non-root, no shell)
+  ansible.builtin.user:
+    name: "{{ item }}"
+    group: faas
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: false
+  loop:
+    - faas-apid
+    - faas-schedd
+    - faas-imaged
+
+- name: control_plane_service — drop example TOMLs (operator copies to *.toml)
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: faas
+    mode: "0640"
+  loop:
+    - { src: "apid.toml.example",    dest: "/etc/faas/apid.toml.example" }
+    - { src: "schedd.toml.example",  dest: "/etc/faas/schedd.toml.example" }
+    - { src: "imaged.toml.example",  dest: "/etc/faas/imaged.toml.example" }
+
+- name: control_plane_service — install systemd units
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: "faas-apid.service",    dest: "/etc/systemd/system/faas-apid.service" }
+    - { src: "faas-schedd.service",  dest: "/etc/systemd/system/faas-schedd.service" }
+    - { src: "faas-imaged.service",  dest: "/etc/systemd/system/faas-imaged.service" }
+  register: cp_units
+
+- name: control_plane_service — systemctl daemon-reload (only when unit files changed)
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: cp_units.changed
+
+- name: control_plane_service — create runtime dirs (logs, spool, snapshots)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ item.user }}"
+    group: faas
+    mode: "0750"
+  loop:
+    - { path: "/var/log/faas",   user: "faas-apid" }
+    - { path: "/var/spool/faas", user: "faas-apid" }
+    - { path: "/srv/fc/snap",    user: "faas-imaged" }
+
+- name: control_plane_service — note for operators (NOT auto-enabled)
+  ansible.builtin.debug:
+    msg: >-
+      cp daemons installed but NOT enabled. Operator runs:
+        systemctl enable --now faas-apid faas-schedd faas-imaged
+      once /etc/faas/sealed.env has DATABASE_URL and the binaries are
+      installed at /usr/local/bin/{apid,schedd,imaged}.

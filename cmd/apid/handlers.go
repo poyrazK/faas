@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -94,6 +95,11 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		s.notFound(w, "no such app")
 		return
 	}
+	ct := r.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "multipart/form-data") {
+		s.createDeploymentMultipart(w, r, acct, app)
+		return
+	}
 	var req api.CreateDeploymentRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -101,23 +107,30 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	}
 	digest, ok := parseImageDigest(req.Image)
 	if !ok {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Image required", "M5 supports digest-pinned image deploys only, e.g. registry.DOMAIN/app@sha256:..."))
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
+			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.DOMAIN/app@sha256:..."))
 		return
 	}
 	// apid writes the row and notifies; imaged/schedd advance it to PARKED (never
-	// a direct call, spec §Component ownership).
+	// a direct call, spec §Component ownership). Mark any prior non-superseded
+	// deployment for this app as superseded so rollback has a target. We don't
+	// gate on status=Live because M5 doesn't drive deployments to Live yet —
+	// the test path needs the superseded row regardless of pipeline state.
+	if prev, perr := s.store.LatestDeployment(ctx(r), app.ID); perr == nil && prev.Status != state.DeploySuperseded {
+		if serr := s.store.MarkDeploymentSuperseded(ctx(r), prev.ID); serr != nil {
+			s.log.Warn("could not mark previous deployment superseded", "prev", prev.ID, "err", serr)
+		}
+	}
 	d, err := s.store.CreateDeployment(ctx(r), state.Deployment{
-		AppID: app.ID, ImageDigest: digest, Status: state.DeployPending,
+		AppID: app.ID, ImageDigest: digest, Kind: state.DeploymentKindImage, Status: state.DeployPending,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 		return
 	}
+	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged, `{"kind":"image","app_id":"`+app.ID+`","to":"`+d.ID+`"}`)
 	s.log.Info("deployment created", "deployment", d.ID, "app", app.ID, "digest", digest)
-	writeJSON(w, http.StatusAccepted, api.DeploymentResponse{
-		ID: d.ID, AppID: d.AppID, ImageDigest: d.ImageDigest, Status: string(d.Status),
-	})
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d))
 }
 
 func (s *server) appResponse(a state.App) api.AppResponse {

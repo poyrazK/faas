@@ -5,13 +5,25 @@
 // ext4 app layer, injects guest-init + the app.json contract, and enforces the
 // plan's app-layer cap. Never flatten to one rootfs per app (spec §4.6). Snapshot
 // GC + the fleet-size metrics land later in M2/M3.
+//
+// M5: imaged is a real consumer of apid's pg_notify events. It subscribes to
+// `deployment_changed` (image: digest) and `build_queued` (tarball/dockerfile),
+// advances the deployment row through every status transition, and writes the
+// snapshots row that schedd uses to restore instances on wake (ADR-005).
 package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/rootfs"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -20,13 +32,61 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
-	// The app-layer builder uses the shared exec runner for the unprivileged
-	// mkfs.ext4 -d step; layer application, injection, and cap enforcement are
-	// pure Go.
-	builder := rootfs.NewBuilder(wire.ExecRunner{})
-	_ = builder // the deploy-pipeline listener that drives it lands in M2/M5.
+	pool, err := db.Open(ctx, "")
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		return err
+	}
 
-	log.Info("imaged ready", "min_layer_mb", rootfs.MinLayerMB)
-	<-ctx.Done()
+	store := state.NewPgStore(pool)
+	builder := rootfs.NewBuilder(wire.ExecRunner{})
+
+	notifier := dbNotifier{pool: pool}
+	h := imaged.New(store, notifier, nil, builder, log)
+
+	notif, cancel, err := db.Subscribe(ctx, pool, []string{
+		db.NotifyDeploymentChanged,
+		db.NotifyBuildQueued,
+	})
+	if err != nil {
+		return err
+	}
+	defer cancel()
+
+	log.Info("imaged ready",
+		"min_layer_mb", rootfs.MinLayerMB,
+		"channels", []string{db.NotifyDeploymentChanged, db.NotifyBuildQueued})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case n, ok := <-notif:
+			if !ok {
+				return nil
+			}
+			h.HandleNotification(ctx, n)
+		}
+	}
+}
+
+// dbNotifier adapts *pgxpool.Pool to imaged.Notifier by closing over the pool
+// and delegating to db.Notify. Kept private here so pkg/imaged stays free of
+// pgxpool imports.
+type dbNotifier struct{ pool *pgxpool.Pool }
+
+func (d dbNotifier) Notify(ctx context.Context, channel, payload string) error {
+	if err := db.Notify(ctx, d.pool, channel, payload); err != nil {
+		// A failed notification here is a soft error: the deployment row
+		// is still authoritative. imaged logs the original event; the
+		// notification is best-effort fan-out.
+		return errors.New("imaged: notifier: " + err.Error())
+	}
 	return nil
 }
+
+// silence unused-import in builds where rootfs isn't referenced yet.
+var _ = time.Now

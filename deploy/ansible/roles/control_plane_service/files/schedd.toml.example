@@ -1,0 +1,12 @@
+# Example schedd config — copy to /etc/faas/schedd.toml on the box.
+
+# log_level: slog level (debug, info, warn, error).
+# Default: info
+# log_level = "info"
+
+# reaper_interval_s: how often the idle reaper + cron firer tick.
+# Default: 10 (seconds)
+# reaper_interval_s = 10
+
+# db_url: Postgres DSN. Empty => $DATABASE_URL from the environment.
+# db_url = ""

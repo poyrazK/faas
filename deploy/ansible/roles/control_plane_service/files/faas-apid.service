@@ -1,0 +1,40 @@
+[Unit]
+Description=onebox-faas apid — public control-plane API (spec §4.1)
+Documentation=https://docs.DOMAIN/ops/apid
+After=network.target faas-cp.slice
+Wants=faas-cp.slice
+
+[Service]
+Type=simple
+User=faas-apid
+Group=faas
+ExecStart=/usr/local/bin/apid --config /etc/faas/apid.toml
+Restart=on-failure
+RestartSec=2s
+
+# apid lives inside the control-plane budget (spec §13 line 431). The 256M
+# ceiling covers Postgres connection + JSON marshalling bursts; the cp.slice
+# itself enforces the 6 GB total.
+Slice=faas-cp.slice
+MemoryMax=256M
+
+# Binds the public listener on :443. Bump cap_net_bind_service here.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# DATABASE_URL carries the Postgres DSN; secrets live in /etc/faas/sealed.env
+# (gap G2 — sealed at rest, dec only by systemd EnvironmentFile).
+EnvironmentFile=/etc/faas/sealed.env
+
+# Hardening baseline.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/var/log/faas /var/spool/faas
+
+[Install]
+WantedBy=multi-user.target
