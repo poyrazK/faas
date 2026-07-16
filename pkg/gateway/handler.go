@@ -52,6 +52,8 @@ type Handler struct {
 	// proxyFor builds the reverse proxy for an upstream address; overridable in
 	// tests.
 	proxyFor func(addr string) http.Handler
+	// lastSeen records per-instance last_request_at (spec §4.1). nil-safe.
+	lastSeen LastSeenSink
 }
 
 // NewHandler wires the edge with the spec's defaults (wake queue 512/30 s, spec
@@ -86,6 +88,14 @@ func (h *Handler) WithAppsSuffix(suffix string) *Handler {
 		suffix = "." + suffix
 	}
 	h.appsSuffix = strings.ToLower(suffix)
+	return h
+}
+
+// WithLastSeenSink installs the LastSeenSink that records per-instance
+// last_request_at (spec §4.1). Production wires a PG-flushing impl from
+// schedd; tests use the in-memory implementation (idle.go).
+func (h *Handler) WithLastSeenSink(sink LastSeenSink) *Handler {
+	h.lastSeen = sink
 	return h
 }
 
@@ -130,7 +140,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound,
 			api.CodeNotFound, "No such app",
 			fmt.Sprintf("host %q does not match the configured apps suffix", host)))
-		h.observe(r, rec.status, "", "", false)
+		h.observe(r, rec.status, "", "", false, "")
 		return
 	}
 
@@ -138,7 +148,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No such app", fmt.Sprintf("no app is routed to %q", host)))
-		h.observe(r, rec.status, "", "", false)
+		h.observe(r, rec.status, "", "", false, "")
 		return
 	}
 
@@ -150,7 +160,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if h.metrics != nil {
 			h.metrics.ObserveRateLimit(app.ID, string(app.Plan))
 		}
-		h.observe(r, rec.status, app.ID, string(app.Plan), false)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, "")
 		return
 	}
 
@@ -164,12 +174,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ready {
 		if err := h.wake(r.Context(), app.ID); err != nil {
 			writeWakeError(w, err)
-			h.observe(r, rec.status, app.ID, string(app.Plan), false)
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, "")
 			return
 		}
 		if addr, ready = h.backend.Target(app.ID); !ready {
 			api.WriteProblem(w, api.ErrCapacity("woke but no instance became ready"))
-			h.observe(r, rec.status, app.ID, string(app.Plan), false)
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, "")
 			return
 		}
 		cold = true
@@ -180,7 +190,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("x-faas-wake", "cold")
 	}
 	h.proxyFor(addr).ServeHTTP(w, r)
-	h.observe(r, rec.status, app.ID, string(app.Plan), cold)
+	h.observe(r, rec.status, app.ID, string(app.Plan), cold, addr)
 	if cold && h.metrics != nil {
 		// Wake latency is "request-received to first upstream byte". For the
 		// reverse proxy we approximate that as request-received → handler
@@ -192,8 +202,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // observe emits one metric increment + one structured log line per request.
 // Always called exactly once on the ServeHTTP exit path; missing it would
-// skew the §12 dashboard.
-func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold bool) {
+// skew the §12 dashboard. On a 2xx response it also Touches the LastSeenSink
+// so the idle reaper (schedd) knows the instance was active (spec §4.1).
+func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold bool, addr string) {
 	code := statusClass(status)
 	requestID := requestIDFrom(r)
 	if h.metrics != nil {
@@ -206,6 +217,13 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		h.metrics.ObserveRequest(appID, plan, code)
 	}
 	(&requestLogger{log: h.log}).Log(appID, code, time.Since(startTime(r)), cold, requestID)
+
+	// Idle reaper hook (spec §4.1): 2xx → the instance is alive. 4xx/5xx are
+	// not evidence of activity (a misconfigured client can hammer a dead
+	// instance with 401s forever and we'd never park it).
+	if h.lastSeen != nil && status >= 200 && status < 300 && addr != "" {
+		h.lastSeen.Touch(addr, time.Now())
+	}
 }
 
 // statusClass turns an HTTP status into a 3-digit label ("200", "404", "503").
