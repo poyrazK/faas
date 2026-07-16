@@ -1,29 +1,17 @@
-# golangci-lint config — version-pinned to v1.61.0 in CI.
-# Defaults + the small set of checks that catch real defects in this
+# golangci-lint config — schema v2.
+# Defaults + a small set of checks that catch real defects in this
 # codebase (errcheck fired for us before; staticcheck catches shadowing,
 # type-mismatch flags, etc.).
 #
-# Schema version 1 — v1.61.0 reads this as-is. golangci-lint v2 (>=v2.0)
-# auto-promotes to schema v2 on first run if it sees the schema missing,
-# but `version: "1"` here ensures v1 behaviour either way.
-version: "1"
+# Schema v2 — required by golangci-lint >= v2.0. Action v8 pins v2.4.0
+# which is built with Go 1.25 and supports our go.mod's 'go 1.25.0'
+# directive (v1.x was built with Go 1.23 and rejected the bump — see
+# golangci/golangci-lint#5873).
+version: "2"
 
-# Disable gofmt because we already have a separate gofmt step in CI;
-# golangci-lint would re-run it with overlapping failures.
-# Disable gocritic/gocyclo/revive — too noisy for the current phase.
-
-run:
-  timeout: 3m
-  tests: true
-  # Only the real source dirs — vendoring, generated files excluded.
-  skip-dirs:
-    - pkg/fcvm/leakcheck/metal
-  skip-files:
-    - ".*\\.pb\\.go$"
-    - ".*_grpc\\.pb\\.go$"
-
+# Disable default linters — explicit allow-list below.
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck       # unchecked errors — caught the Body.Close() bug
     - govet          # default, but explicit for visibility
@@ -35,16 +23,20 @@ linters:
     - misspell       # typo'd identifiers
     - nilerr         # `return nil` after assigning to err
 
-issues:
-  # Same exclusions as the linters.run.skip-files.
-  exclude-rules:
-    - path: "_test\\.go$"
-      linters:
-        - errcheck  # `defer x.Close()` is acceptable idiom in tests
-        - gosimple
-    - path: "pkg/wire/metrics_test.go"
-      linters:
-        - errcheck
-  # Default for non-test: keep max 50 issues per linter.
-  max-issues-per-linter: 0
-  max-same-issues: 0
+  # Per-path exclusions for noisy linters on tests, plus the
+  # generated-protobuf and metal-test files. The v2 schema puts
+  # `skip-dirs` / `skip-files` here as `linters.exclusions.paths` and
+  # the v1 `issues.exclude-rules` as `linters.exclusions.rules`.
+  exclusions:
+    paths:
+      - pkg/fcvm/leakcheck/metal  # build-tagged metal tests; runner lacks KVM
+      - ".*\\.pb\\.go$"          # generated protobufs
+      - ".*_grpc\\.pb\\.go$"     # generated gRPC stubs
+    rules:
+      - path: "_test\\.go$"
+        linters:
+          - errcheck  # `defer x.Close()` is acceptable idiom in tests
+          - gosimple
+      - path: "pkg/wire/metrics_test.go"
+        linters:
+          - errcheck

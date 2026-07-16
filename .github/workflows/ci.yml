@@ -55,12 +55,14 @@ jobs:
           cache-dependency-path: go.sum
 
       # golangci-lint replaces bare gofmt + go vet with a curated set of
-      # checks. Default-on linters included; we keep errcheck, govet,
-      # ineffassign, staticcheck, unused.
-      - name: lint (golangci-lint v6)
-        uses: golangci/golangci-lint-action@v6
+      # checks. v2.4.0+ is built with Go 1.25 and supports a go.mod
+      # targeting Go 1.25 (golangci-lint v1.x is built with Go 1.23 and
+      # refuses go.mod 'go 1.25.0' — see golangci/golangci-lint#5873).
+      # action v8 requires golangci-lint >= v2.1.0; v9 is current.
+      - name: lint (golangci-lint v8)
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: v1.61.0
+          version: v2.4.0
           args: --timeout=3m
           # Cache is built into the action; default cache key works.
 
