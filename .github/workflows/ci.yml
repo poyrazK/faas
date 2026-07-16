@@ -92,7 +92,7 @@ jobs:
       # expects. Drift on the 'protoc v X.Y.Z' header comment is filtered by
       # Makefile's proto-normalize so toolchain patch bumps don't break CI.
       - name: install protoc
-        uses: arduino/setup-protoc@v2
+        uses: arduino/setup-protoc@v3
         with:
           version: '33.x'
       - name: install protoc plugins
