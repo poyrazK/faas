@@ -36,12 +36,15 @@ leakcheck: ## Assert zero leaked netns/TAPs/jail uids/cgroups after tests
 	@bash deploy/scripts/leakcheck.sh
 
 .PHONY: lint
-lint: ## golangci-lint + custom checks
-	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run || \
-	  (echo "golangci-lint not installed; running go vet + gofmt check"; \
-	   $(GO) vet $(PKGS); \
-	   test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*'))" || \
-	   (echo "gofmt: files need formatting"; gofmt -l $$(find . -name '*.go'); exit 1))
+lint: ## golangci-lint if installed, else go vet + gofmt check
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+	  golangci-lint run; \
+	else \
+	  echo "golangci-lint not installed; running go vet + gofmt check"; \
+	  $(GO) vet $(PKGS); \
+	  test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*'))" || \
+	    (echo "gofmt: files need formatting"; gofmt -l $$(find . -name '*.go'); exit 1); \
+	fi
 
 .PHONY: bootstrap
 bootstrap: ## Idempotent host setup (ansible) — only on a dev EX44

@@ -36,7 +36,20 @@ when its executable acceptance tests pass.
 
 ## Status
 
-**M0 — repo scaffold.** In progress: tree, build/test/lint tooling, CI, and the
-`pkg/api` limits table (the single source of every plan quota) are in place. Host
-bootstrap (ansible) and the hello-Firecracker metal test are the remaining M0
-acceptance items.
+- **M0 — repo scaffold.** ✅ Tree, build/test/lint tooling, CI, and the `pkg/api`
+  limits table (single source of every plan quota). Remaining: ansible host
+  bootstrap + hello-Firecracker metal test (need an EX44).
+- **M1 — vmmd core.** 🚧 The invariant-critical logic is done and unit-tested
+  under `-race`:
+  - `pkg/fcvm` slot allocator — every per-instance resource (jail uid/gid, host
+    IP, iface names) derives from one unique slot, so §6.2-5 (no shared
+    IP/netns/uid) holds by construction; proven with a concurrent property test.
+  - `pkg/netns` — per-instance netns/veth/tap topology (ADR-009) as a testable
+    `ip`-command plan.
+  - `pkg/fcvm` cold-boot config + jailer argv builders (Appendix B).
+  - `Manager` — full lifecycle with a **guaranteed no-leak unwind** on every
+    failure path (tested with fakes).
+  - `ExecRunner` + `JailerVMM` metal layer; M1 acceptance lives in
+    `manager_metal_test.go` (`//go:build metal`, run on the EX44).
+
+  Remaining: gRPC control surface for vmmd, and running the metal tests on KVM.

@@ -1,12 +1,47 @@
-// Command vmmd — microVM supervisor: firecracker + jailer, only root component (spec §4.4)
+// Command vmmd — microVM supervisor: firecracker + jailer, the only root
+// component (spec §4.4).
 //
-// See docs/faas_implementation_spec.md for this daemon's ownership boundary.
-// Do not add a call that bypasses another component's owner (spec §Component
-// ownership). Real logic lands in M1.
+// vmmd owns everything that touches /usr/bin/firecracker and the jailer. It is
+// the sole root-privileged daemon; per-VM work drops to the jailer immediately.
+// Do not add a path that lets another component touch firecracker directly
+// (spec §Component ownership). The gRPC control surface (CreateFromSnapshot,
+// CreateColdBoot, Pause+Snapshot, Destroy, Stats) lands next in M1.
 package main
 
-import "github.com/onebox-faas/faas/pkg/wire"
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/wire"
+)
 
 func main() {
-	wire.Daemon("vmmd", wire.StubRun("M1"))
+	wire.Daemon("vmmd", run)
+}
+
+func run(ctx context.Context, log *slog.Logger) error {
+	// Production wiring: real command runner + jailer-backed VMM.
+	mgr := fcvm.NewManager(
+		fcvm.ExecRunner{},
+		fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second),
+		fcvm.Paths{Kernel: "/srv/fc/base/vmlinux-6.1"},
+		log,
+	)
+	log.Info("vmmd ready", "max_slots", fcvm.MaxSlots, "uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax)
+
+	// Until the gRPC control surface is wired, run a heartbeat that surfaces live
+	// instance / lease counts (the leak signal — both must be 0 when idle).
+	tick := time.NewTicker(30 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("draining", "live", mgr.LiveCount())
+			return nil
+		case <-tick.C:
+			log.Debug("heartbeat", "live", mgr.LiveCount(), "leased", mgr.LeasedCount())
+		}
+	}
 }
