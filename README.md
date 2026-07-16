@@ -43,7 +43,7 @@ when its executable acceptance tests pass.
   fresh Ubuntu 24.04), and a `TestMetalHelloBoot` acceptance test that
   boots a busybox guest from the pinned FC kernel. `make bootstrap`
   is the gate; it requires a fresh Hetzner EX44.
-- **M1 — vmmd core.** 🚧 The invariant-critical logic is done and unit-tested
+- **M1 — vmmd core.** ✅ The invariant-critical logic is done and unit-tested
   under `-race`:
   - `pkg/fcvm` slot allocator — every per-instance resource (jail uid/gid, host
     IP, iface names) derives from one unique slot, so §6.2-5 (no shared
@@ -55,8 +55,16 @@ when its executable acceptance tests pass.
     failure path (tested with fakes).
   - `ExecRunner` + `JailerVMM` metal layer; M1 acceptance lives in
     `manager_metal_test.go` (`//go:build metal`, run on the EX44).
+  - **gRPC control surface** — five RPCs (CreateFromSnapshot,
+    CreateColdBoot, PauseAndSnapshot, Destroy, Stats) over a unix-domain
+    socket at `/run/faas/vmmd.sock` (ADR-013/014/016); handlers in
+    `pkg/vmmdgrpc`, wire shape in `api/proto/onebox/faas/vmmd/v1/vmmd.proto`,
+    error envelope round-trip via `pkg/grpcerr`, ops metrics via `pkg/wire`.
+    End-to-end coverage via `pkg/vmmdgrpc/bufconn_test.go`.
 
-  Remaining: gRPC control surface for vmmd, and running the metal tests on KVM.
+  Remaining: KVM + root to run `sudo make test-metal` on the EX44 (the
+  gRPC + JVM-free code path is fully exercised in-process with fakes;
+  the metal gate adds the firecracker/jailer side).
 - **M2 — imaged + guest-init.** 🚧 The OCI→app-layer pipeline is done and tested:
   - `pkg/oci` — layer diff that extracts only the layers ABOVE the matched base
     (the two-drive scheme); refuses images not built FROM the base.
