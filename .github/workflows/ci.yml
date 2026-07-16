@@ -28,7 +28,7 @@ jobs:
       # expects (CI drift on `protoc --version` comments in generated files was
       # the first failure mode; pinning both sides fixes it).
       - name: install protoc
-        uses: arbold/setup-protoc@v2
+        uses: arduino/setup-protoc@v2
         with:
           version: '33.x'
       - name: install protoc plugins
