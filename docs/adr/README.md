@@ -26,6 +26,10 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 001–010 | Locked v1 decisions | accepted | spec §3 |
 | 011 | Thin dashboard at launch (was gap G3) | proposed | UX spec §11 — land before M7.5 |
 | 012 | `githubd` / GitHub App for push-to-deploy | proposed | UX spec §11 — land before M7.5 |
+| 013 | M1 gRPC codegen: generated protobuf (v1.0) | accepted | M1 plan |
+| 014 | M1 wire shape: caller resolves `(app)` | accepted | M1 plan |
+| 015 | M1 unix-socket auth (mode 0660 group `faas`) | accepted | M1 plan |
+| 016 | M1 `Stats()` shape + `vmmd_*` metric names | accepted | M1 plan |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; write them as files here when that milestone opens.
