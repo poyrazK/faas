@@ -135,6 +135,7 @@ heartbeat:
 	defer cancel()
 	gsrv.GracefulStop()
 	if httpSrv != nil {
+		//nolint:contextcheck // shutdown context must outlive caller ctx (which is already Done); detached from caller per gRPC + net/http contract.
 		_ = httpSrv.Shutdown(stopCtx)
 	}
 	_ = lis.Close()

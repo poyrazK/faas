@@ -1,0 +1,17 @@
+# nftables ruleset fragment for gatewayd — include from the platform nft
+# config (deploy/nftables/faas.nft) so all host firewall state stays in one
+# place. The public listener on the host IP needs :80 (ACME HTTP-01 + redirect
+# in M8) and :443 (HTTPS, spec §4.1). Everything else from the public internet
+# is dropped by the chain order; SSH is on a non-standard port handled elsewhere.
+#
+# Reference: docs/faas_implementation_spec.md §4.1, §11.
+
+table inet filter {
+    chain input {
+        # gatewayd public listener — TLS termination + ACME
+        tcp dport { 80, 443 } ct state new,established,related accept comment "faas-gatewayd public"
+
+        # control plane listener (127.0.0.1:9090) is on loopback only and does
+        # not need an explicit INPUT rule.
+    }
+}

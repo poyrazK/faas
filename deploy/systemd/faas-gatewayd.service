@@ -1,0 +1,51 @@
+[Unit]
+Description=onebox-faas gatewayd — edge proxy (the only public listener, spec §4.1)
+Documentation=https://docs.DOMAIN/ops/gatewayd
+# gatewayd depends on apid (routing cache needs apps/domains rows + the
+# custom_domains table before /readyz returns true) and schedd (Wake gRPC).
+After=faas-cp.slice network-online.target faas-apid.service faas-schedd.service
+Wants=faas-cp.slice faas-apid.service faas-schedd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gatewayd --config /etc/faas/gatewayd.toml
+Restart=on-failure
+RestartSec=2s
+
+# Hard ceiling from the control-plane budget (spec §13: 512M for gatewayd).
+# The package's own logger is sdebug-redact; keep stdout JSON on the journal.
+Slice=faas-cp.slice
+MemoryMax=512M
+
+# Public listener (TLS lands here in M4/M8) needs :80 + :443.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Reload-friendly: dropping in-memory rate-limit buckets for an emergency
+# GC after a mass-delete is via SIGHUP (see pkg/gateway/ratelimit.go).
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Hardening baseline — gatewayd is NOT root; runs as faas user with the
+# minimum capabilities it actually needs.
+User=faas
+Group=faas
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+
+[Install]
+WantedBy=multi-user.target

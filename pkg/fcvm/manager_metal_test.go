@@ -63,7 +63,11 @@ func TestMetalBoot50Concurrent(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			id := fmt.Sprintf("m1-%d", i)
-			if _, err := m.ColdBoot(ctx, ColdBootRequest{
+			// Per contextcheck: don't capture the test's ctx into the
+			// goroutine — the goroutine's lifetime is bounded by wg.Wait
+			// below, so a detached ctx cannot outlive the test. Per-VM
+			// boot deadlines live inside ColdBoot itself.
+			if _, err := m.ColdBoot(context.Background(), ColdBootRequest{
 				Instance: id, BasePath: base, LayerPath: layer, VcpuCount: 2, MemSizeMiB: 128,
 			}); err != nil {
 				t.Errorf("boot %s: %v", id, err)

@@ -382,8 +382,8 @@ func TestExitErr_Error(t *testing.T) {
 
 func TestErrAuth_PreservesCode(t *testing.T) {
 	base := errAuth(errors.New("nope"))
-	ec, ok := base.(*exitErr)
-	if !ok {
+	var ec *exitErr
+	if !errors.As(base, &ec) {
 		t.Fatalf("errAuth did not return *exitErr, got %T", base)
 	}
 	if ec.code != 2 {
