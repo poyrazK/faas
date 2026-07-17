@@ -27,6 +27,7 @@ import (
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
 	chrootBase   string        // /srv/fc/jail
+	fcName       string        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout time.Duration // WAKING/cold-boot readiness budget (spec §6)
 
 	mu      sync.Mutex
@@ -42,10 +43,28 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 	}
 	return &JailerVMM{
 		chrootBase:   chrootBase,
+		fcName:       resolveFCChrootName(),
 		readyTimeout: readyTimeout,
 		proc:         make(map[string]*exec.Cmd),
 		clients:      make(map[string]*http.Client),
 	}
+}
+
+// resolveFCChrootName returns the directory name jailer will use for the chroot:
+// jailer resolves the --exec-file symlink and uses the REAL binary's basename, so
+// a `firecracker -> firecracker-v1.7.0` symlink (both the ansible role and the
+// Lima loop ship one) makes jailer build .../firecracker-v1.7.0/<id>/root. The
+// Manager must place the config/drives in that same dir, so it tracks the same
+// resolved basename here. Falls back to the plain name off the metal path.
+func resolveFCChrootName() string {
+	p, err := exec.LookPath(FirecrackerBin)
+	if err != nil {
+		return FirecrackerBin
+	}
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Base(real)
+	}
+	return filepath.Base(p)
 }
 
 // DetectFirecrackerVersion runs `firecracker --version` and returns the version
@@ -69,7 +88,7 @@ func DetectFirecrackerVersion(ctx context.Context) (string, error) {
 }
 
 func (v *JailerVMM) chrootRoot(instance string) string {
-	return filepath.Join(v.chrootBase, FirecrackerBin, instance, "root")
+	return filepath.Join(v.chrootBase, v.fcName, instance, "root")
 }
 
 func (v *JailerVMM) socketPath(instance string) string {
@@ -194,7 +213,7 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	}
 	v.closeClient(l.Instance)
 	// Chroot lives in tmpfs (spec §Gotchas); removing it frees the RAM it holds.
-	if err := os.RemoveAll(filepath.Join(v.chrootBase, FirecrackerBin, l.Instance)); err != nil {
+	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
 	}
 	return nil
@@ -213,7 +232,18 @@ func (v *JailerVMM) mkChroot(instance string) (string, error) {
 // startJailer launches jailer→firecracker for the instance with any extra
 // firecracker args appended, and records the process.
 func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...string) error {
-	argv := append(JailerCommand(JailerSpec{Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns}), extraFCArgs...)
+	execFile, err := exec.LookPath(FirecrackerBin)
+	if err != nil {
+		return fmt.Errorf("vmm: locate firecracker binary: %w", err)
+	}
+	// Pass the resolved real binary so jailer's chroot basename matches v.fcName
+	// (jailer follows the symlink); see resolveFCChrootName.
+	if real, rErr := filepath.EvalSymlinks(execFile); rErr == nil {
+		execFile = real
+	}
+	argv := append(JailerCommand(JailerSpec{
+		Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns, ExecFile: execFile,
+	}), extraFCArgs...)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	if err := cmd.Start(); err != nil {

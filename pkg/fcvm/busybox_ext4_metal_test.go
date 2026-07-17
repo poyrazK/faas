@@ -175,12 +175,22 @@ func buildBusyboxExt4(dst string) error {
 		return fmt.Errorf("close ext4 file: %w", err)
 	}
 
-	// mkfs.ext4 -d <skel> takes a files-as-initramfs source.
-	cmd := exec.Command("mkfs.ext4", "-d", work, "-L", "faas-hello", "-F", dst)
+	// mkfs.ext4 -d <skel> takes a files-as-initramfs source. -O ^has_journal
+	// makes it journal-less so it mounts as the read-only root (drive0 in the
+	// two-drive scheme is is_read_only=true → kernel boots root=/dev/vda ro; an
+	// ext4 journal can't be replayed on a ro mount and the guest panics).
+	cmd := exec.Command("mkfs.ext4", "-O", "^has_journal", "-d", work, "-L", "faas-hello", "-F", dst)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		// Don't ignore "I/O error" diagnostics from mkfs — surface them.
 		return fmt.Errorf("mkfs.ext4: %w", err)
+	}
+	// drive1 (the app layer) is opened read-write by firecracker, which the jailer
+	// runs as an unprivileged uid; make this throwaway image world-writable so that
+	// uid can open it. Production per-app layers need per-instance ownership under
+	// the jailer uid instead — an M1/M2 concern, out of scope for this M0 fixture.
+	if err := os.Chmod(dst, 0o666); err != nil {
+		return fmt.Errorf("chmod busybox ext4: %w", err)
 	}
 	return nil
 }

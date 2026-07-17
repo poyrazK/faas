@@ -83,10 +83,53 @@ func TestVethPeerMovedIntoNetnsBeforeAddressing(t *testing.T) {
 	}
 }
 
-func TestNftDNATTargetsGuestPort(t *testing.T) {
-	rules := testConfig().NftDNAT()
-	if !strings.Contains(rules, "dnat to 10.0.0.2:8080") {
-		t.Errorf("DNAT should target the guest :8080 contract, got:\n%s", rules)
+func TestNftCommandsPublishGuestPort(t *testing.T) {
+	rules := flatten(testConfig().NftCommands())
+	// Publish + NAT: DNAT the host identity's :8080 to the guest, masquerade egress.
+	wants := []string{
+		"iifname vp7 tcp dport 8080 dnat to 10.0.0.2:8080", // inbound to the guest contract
+		"postrouting oifname vp7 masquerade",               // egress behind the host identity
+	}
+	for _, w := range wants {
+		if !strings.Contains(rules, w) {
+			t.Errorf("nft ruleset missing %q\ngot:\n%s", w, rules)
+		}
+	}
+}
+
+func TestNftCommandsEnforceEgressPolicy(t *testing.T) {
+	rules := flatten(testConfig().NftCommands())
+	// §11 ship-blocking egress denies, scoped to the guest side (iifname tap0) so
+	// the inbound DNAT path (iifname vp7) is never affected.
+	wants := []string{
+		"iifname tap0 tcp dport { 25, 465, 587 } drop",                                        // deny SMTP (spam/abuse)
+		"iifname tap0 ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } drop", // deny RFC1918 + link-local/metadata
+	}
+	for _, w := range wants {
+		if !strings.Contains(rules, w) {
+			t.Errorf("egress policy missing %q\ngot:\n%s", w, rules)
+		}
+	}
+	// The denies must be guest-originated only; a daddr drop without an iifname
+	// guard would also kill the inbound DNAT'd packet (daddr 10.0.0.2 ∈ 10/8).
+	for _, cmd := range testConfig().NftCommands() {
+		line := strings.Join(cmd, " ")
+		if strings.Contains(line, "daddr") && strings.Contains(line, "drop") && !strings.Contains(line, "iifname tap0") {
+			t.Errorf("egress daddr-drop not scoped to the guest side: %q", line)
+		}
+	}
+}
+
+func TestNftCommandsHaveNoShellMetacharacters(t *testing.T) {
+	// nft argv legitimately uses ; { } , for its own grammar (there is no shell —
+	// ExecRunner passes argv directly), but genuinely dangerous shell syntax must
+	// never appear.
+	for _, cmd := range testConfig().NftCommands() {
+		for _, arg := range cmd {
+			if strings.ContainsAny(arg, "|&<>$`\n") {
+				t.Errorf("nft argv element %q contains shell metacharacters", arg)
+			}
+		}
 	}
 }
 
