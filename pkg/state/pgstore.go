@@ -1149,3 +1149,50 @@ func nullAppStatus(p *AppStatus) any {
 
 // ensure net import isn't dropped if other helpers move into this file.
 var _ = net.IPv4len
+
+// IssueLoginToken persists a magic-link token hash → account_id with
+// the given expiry. The raw token is never stored — only its SHA-256
+// hash. Conflict (same hash re-issued) is a no-op insert: the same
+// token can't be re-issued because the raw token is single-use.
+func (s *PgStore) IssueLoginToken(ctx context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into login_tokens (token_hash, account_id, expires_at) values ($1, $2, $3)
+		 on conflict (token_hash) do nothing`,
+		tokenHash, accountID, expiresAt)
+	return err
+}
+
+// ConsumeLoginToken atomically marks the token consumed and returns
+// the bound account_id. A replay (token already consumed) or expired
+// token returns ErrNotFound — never a stale account. Single-statement
+// compare-and-set keeps the consume race-free.
+func (s *PgStore) ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error) {
+	var accountID string
+	err := s.pool.QueryRow(ctx,
+		`update login_tokens
+		 set consumed_at = now()
+		 where token_hash = $1
+		   and consumed_at is null
+		   and expires_at > now()
+		 returning account_id`,
+		tokenHash,
+	).Scan(&accountID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return accountID, nil
+}
+
+// DeleteOldLoginTokens prunes tokens whose expires_at < before,
+// including those that were consumed long ago. Returns the row count.
+// Used by a maintenance job or a daily cleanup hook.
+func (s *PgStore) DeleteOldLoginTokens(ctx context.Context, before time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `delete from login_tokens where expires_at < $1`, before)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

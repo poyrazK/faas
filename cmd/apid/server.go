@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -38,6 +40,12 @@ type server struct {
 	// githubd is apid's handle to the githubd daemon (ADR-012). Never nil:
 	// slice 1 default is stubGithubdClient; slice 7 swaps for a live dial.
 	githubd GithubdClient
+	// sessions seals + verifies dashboard cookies. nil falls back to an
+	// ephemeral manager (so the daemon still boots in dev with no
+	// /etc/faas/secrets/session.key) — see cmd/apid/main.go.
+	sessions *session.Manager
+	// loginTTL is how long a magic-link stays valid. Default 15m.
+	loginTTL time.Duration
 }
 
 // Mailer is the slice of pkg/mail.Sender apid depends on. Kept as an
@@ -64,15 +72,27 @@ type Notifier interface {
 }
 
 func newServer(store state.Store, log *slog.Logger, domain string, notif Notifier) *server {
-	return newServerWithDeps(store, log, domain, notif, "", nil, nil)
+	return newServerWithDeps(store, log, domain, notif, "", nil, nil, nil, 0)
 }
 
 // newServerWithDeps wires the full server surface including the M7
-// stripe-webhook + mailer deps and the M7.5 githubd client (ADR-012).
-// Production (cmd/apid/main.go) calls this with the env-loaded secret +
-// a real mailer + a live githubd dial; tests use the simpler newServer
-// (no secret, noop mailer, stub githubd).
-func newServerWithDeps(store state.Store, log *slog.Logger, domain string, notif Notifier, stripeSecret string, mailer Mailer, githubd GithubdClient) *server {
+// stripe-webhook + mailer deps, the M7.5 githubd client (ADR-012),
+// the dashboard session manager + login-token TTL.
+//
+// Production (cmd/apid/main.go) calls this with env-loaded values;
+// tests use the simpler newServer (no secret, noop mailer, stub
+// githubd, nil sessions → ephemeral key, default 15m login TTL).
+func newServerWithDeps(
+	store state.Store,
+	log *slog.Logger,
+	domain string,
+	notif Notifier,
+	stripeSecret string,
+	mailer Mailer,
+	githubd GithubdClient,
+	sessions *session.Manager,
+	loginTTL time.Duration,
+) *server {
 	if domain == "" {
 		domain = "DOMAIN"
 	}
@@ -85,6 +105,12 @@ func newServerWithDeps(store state.Store, log *slog.Logger, domain string, notif
 	if githubd == nil {
 		githubd = stubGithubdClient{}
 	}
+	if sessions == nil {
+		sessions, _ = session.NewEphemeralManager(7 * 24 * time.Hour)
+	}
+	if loginTTL <= 0 {
+		loginTTL = 15 * time.Minute
+	}
 	return &server{
 		store:               store,
 		log:                 log,
@@ -93,6 +119,8 @@ func newServerWithDeps(store state.Store, log *slog.Logger, domain string, notif
 		stripeWebhookSecret: stripeSecret,
 		mailer:              mailer,
 		githubd:             githubd,
+		sessions:            sessions,
+		loginTTL:            loginTTL,
 	}
 }
 
@@ -174,11 +202,21 @@ func (s *server) handler() http.Handler {
 
 	// Dashboard surface (M7.5, ADR-011). Lives behind gatewayd's
 	// /dashboard/* reverse-proxy (spec §11 single-public-listener).
-	// Slice 2: stub templates, no auth yet — slice 3 adds the
-	// magic-link sessionAuth middleware; slice 4 fills in real data.
-	mux.Handle("GET /dashboard/", s.dashboardChain(s.dashboardHandler(s.log)))
-	mux.Handle("GET /dashboard", s.dashboardChain(s.dashboardHandler(s.log)))
-	mux.Handle("GET /login", s.dashboardChain(s.loginPlaceholder(s.log)))
+	//
+	// Slice 3 wires the magic-link auth flow:
+	//   GET  /login            — render the email form
+	//   POST /login            — mint token + email it
+	//   GET  /auth/verify      — consume token, set session cookie
+	//   POST /logout           — clear cookie
+	//
+	// All other /dashboard/* sit behind sessionAuth → handlers_dashboard.
+	auth := &authHandlers{srv: s, log: s.log, loginTTL: s.loginTTL, mailer: s.mailer, domain: s.domain}
+	mux.Handle("GET /login", s.dashboardChain(http.HandlerFunc(auth.renderLoginForm)))
+	mux.Handle("POST /login", s.dashboardChain(http.HandlerFunc(auth.postLogin)))
+	mux.Handle("GET /auth/verify", s.dashboardChain(http.HandlerFunc(auth.verify)))
+	mux.Handle("POST /logout", s.dashboardChain(http.HandlerFunc(auth.logout)))
+	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
+	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 
 	return mux
 }

@@ -49,12 +49,13 @@ const listenAddr = "127.0.0.1:8081"
 // runDeps is the DI seam for run — same pattern as vmmd / gatewayd so we can
 // exercise the listener lifecycle without binding :8081 from tests.
 type runDeps struct {
-	listen   func(network, addr string) (net.Listener, error)
-	store    func() state.Store
-	notif    func() Notifier
-	getenv   func(string) string
-	newSrv   func(addr string, h http.Handler) *http.Server
-	bgBefore func(ctx context.Context, log *slog.Logger, srv *server) // optional pre-listen hook (e.g. DNS poller)
+	listen    func(network, addr string) (net.Listener, error)
+	store     func() state.Store
+	notif     func() Notifier
+	getenv    func(string) string
+	newSrv    func(addr string, h http.Handler) *http.Server
+	bgBefore  func(ctx context.Context, log *slog.Logger, srv *server) // optional pre-listen hook (e.g. DNS poller)
+	loginTTL  time.Duration                                            // dashboard magic-link expiry
 }
 
 func defaultDeps() runDeps {
@@ -66,6 +67,7 @@ func defaultDeps() runDeps {
 		newSrv: func(addr string, h http.Handler) *http.Server {
 			return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
 		},
+		loginTTL: 15 * time.Minute,
 	}
 }
 
@@ -114,7 +116,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// method returns api.Problem{Code:"githubd_not_ready"}), which is
 	// fine until githubd is actually deployed on this host.
 	githubd := newGithubdClient(deps.getenv("FAAS_GITHUBD_SOCKET"), log)
-	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd)
+	// M7.5: dashboard session manager. Loads the 32-byte key from
+	// FAAS_SESSION_KEY (hex-encoded); empty in dev = ephemeral key +
+	// warning so the daemon still boots for local testing. Production
+	// MUST set this to the contents of /etc/faas/secrets/session.key
+	// (root:root 0400, spec §11).
+	sessions, sessionsWarn := loadSessionManager(deps.getenv, log)
+	if sessionsWarn != "" {
+		log.Warn("session manager in dev mode; sessions reset on restart", "warning", sessionsWarn)
+	}
+	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, deps.loginTTL)
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
 	if deps.bgBefore != nil {

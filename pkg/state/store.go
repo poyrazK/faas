@@ -43,6 +43,19 @@ type Store interface {
 	ListAPIKeys(ctx context.Context, accountID string) ([]APIKey, error)
 	TouchKeyLastUsed(ctx context.Context, keyID string) error
 
+	// Login tokens (M7.5 magic-link, spec §14 + ADR-011).
+	//
+	// IssueLoginToken persists a freshly-minted token's SHA-256 hash
+	// with an expiry; the raw token is returned to the caller to
+	// embed in the email. ConsumeLoginToken marks the token consumed
+	// AND returns the bound account_id in a single statement so a
+	// replay returns ErrNotFound (or sql.ErrNoRows) — never a stale
+	// account. The DeleteOldLoginTokens helper is a maintenance call
+	// (the dashboard backend or a daily cron can prune).
+	IssueLoginToken(ctx context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error
+	ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error)
+	DeleteOldLoginTokens(ctx context.Context, before time.Time) (int64, error)
+
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)
 	AppByID(ctx context.Context, id string) (App, error)

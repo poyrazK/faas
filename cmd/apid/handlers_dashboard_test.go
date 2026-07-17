@@ -9,16 +9,46 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestDashboardHandler_RendersIndex confirms GET /dashboard/ returns
-// 200 + the layout chrome (HTMX script, nav links) and the body
-// from the index template.
+// newAuthedDashboardServer seeds an account into a MemStore, builds a
+// server with a real session.Manager, mints a cookie for that
+// account, and returns (handler, cookie) so the authed tests can
+// hit the gated /dashboard/* routes.
+//
+// Tests that intentionally probe the unauthenticated surface
+// (TestDashboardHandler_LoginPage + TestDashboardHandler_RecoversFromPanic
+// use the raw chain) call newServer() directly.
+func newAuthedDashboardServer(t *testing.T) (http.Handler, *http.Cookie) {
+	t.Helper()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(t.Context(), "alice@example.com", "free")
+	if err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	if err != nil {
+		t.Fatalf("session manager: %v", err)
+	}
+	cookie, err := mgr.Issue(acct.ID)
+	if err != nil {
+		t.Fatalf("issue session: %v", err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := newServerWithDeps(store, log, "example.com", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, mgr, 15*60_000_000_000)
+	return srv.handler(), &http.Cookie{Name: sessionCookie, Value: cookie}
+}
+
+// TestDashboardHandler_RendersIndex confirms an authenticated
+// GET /dashboard/ returns 200 + the layout chrome (HTMX script, nav
+// links) and the body from the index template.
 func TestDashboardHandler_RendersIndex(t *testing.T) {
-	srv := newServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)), "example.com", noopNotifier{}).handler()
+	srv, cookie := newAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+	r.AddCookie(cookie)
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusOK {
@@ -32,7 +62,7 @@ func TestDashboardHandler_RendersIndex(t *testing.T) {
 		"<!doctype html>",
 		"htmx.org@2.0.4",
 		"/dashboard/",
-		"Dashboard is up",
+		"Signed in as",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
@@ -41,7 +71,7 @@ func TestDashboardHandler_RendersIndex(t *testing.T) {
 }
 
 // TestDashboardHandler_LoginPage confirms GET /login renders the
-// magic-link form placeholder (slice-3 wires the real flow).
+// magic-link form (slice-3 wires the real flow).
 func TestDashboardHandler_LoginPage(t *testing.T) {
 	srv := newServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)), "example.com", noopNotifier{}).handler()
 	rec := httptest.NewRecorder()
@@ -64,9 +94,10 @@ func TestDashboardHandler_LoginPage(t *testing.T) {
 // response carries an x-faas-request-id header. The middleware
 // generates one if the client didn't supply it.
 func TestDashboardHandler_GeneratesRequestID(t *testing.T) {
-	srv := newServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)), "example.com", noopNotifier{}).handler()
+	srv, cookie := newAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+	r.AddCookie(cookie)
 	srv.ServeHTTP(rec, r)
 
 	rid := rec.Header().Get("x-faas-request-id")
@@ -82,10 +113,11 @@ func TestDashboardHandler_GeneratesRequestID(t *testing.T) {
 // x-faas-request-id round-trips on the response.
 func TestDashboardHandler_PropagatesInboundRequestID(t *testing.T) {
 	const inbound = "deadbeefdeadbeefdeadbeefdeadbeef"
-	srv := newServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)), "example.com", noopNotifier{}).handler()
+	srv, cookie := newAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
 	r.Header.Set("x-faas-request-id", inbound)
+	r.AddCookie(cookie)
 	srv.ServeHTTP(rec, r)
 
 	if got := rec.Header().Get("x-faas-request-id"); got != inbound {
@@ -95,12 +127,10 @@ func TestDashboardHandler_PropagatesInboundRequestID(t *testing.T) {
 
 // TestDashboardHandler_RecoversFromPanic confirms a panicking handler
 // is caught by Recovery middleware and rendered as a 500 RFC 7807
-// problem. Uses the dashboard handler directly (the handler we have
-// today doesn't panic, so this test injects a panic via the route
-// surface to confirm the chain).
+// problem. This intentionally uses a raw panicHandler — it does NOT
+// hit the dashboard route, so no session cookie is required; it
+// validates the middleware chain itself.
 func TestDashboardHandler_RecoversFromPanic(t *testing.T) {
-	// Build a chain that mimics dashboardChain but with a panicking
-	// inner handler. Same imports / pattern the production code uses.
 	panicHandler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("template boom")
 	})

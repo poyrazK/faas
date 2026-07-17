@@ -21,46 +21,32 @@ import (
 // dashboardHandler is the slice-2 entry point. Reads the path, picks
 // the right body template, and calls pkg/dashboard.Render. Handlers
 // stay tiny (spec §Conventions) — anything over ~30 lines extracts.
+//
+// Slice 4 expands this to render the apps list, app detail, usage,
+// billing, and account pages. Slice 3 wires sessionAuth in front
+// (server.go) so by the time a request reaches here the caller is
+// authenticated.
 func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Path → body template. Defaults to "index" for / and
-		// /dashboard/. Slice 4 expands to apps, apps/{slug}, usage,
-		// billing, account.
 		body := "index"
-		switch r.URL.Path {
-		case "/login", "/dashboard/login":
-			body = "login"
-		case "/dashboard/apps", "/dashboard/apps/":
-			// Slice 4 renders the apps list here.
-			body = "index"
-		}
 		page := dashboard.Page{
 			Title: "Overview",
 			Body:  body,
-			// Slice 3 replaces this with a real session lookup;
-			// slice 2 ships the unauthed layout to prove the
-			// surface renders.
+			// Slice 3 sets Account from the auth context; slice 2
+			// ships the unauthed layout.
+		}
+		if acct, ok := AccountFrom(r.Context()); ok {
+			page.Account = &dashboard.AccountView{
+				ID:       acct.ID,
+				Email:    acct.Email,
+				Plan:     string(acct.Plan),
+				AppCount: 0, // slice 4 wires CountDeployedApps
+			}
 		}
 		if err := dashboard.Render(w, log, page); err != nil {
-			// Render already logged; reply with a problem.
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"type":"about:blank","title":"render","status":500,"detail":"dashboard render failed"}`))
-		}
-	}
-}
-
-// loginPlaceholder is the slice-2 /login handler. Slice 3 replaces
-// this with the magic-link request flow (POST → mailer; consume →
-// session cookie).
-func (s *server) loginPlaceholder(log *slog.Logger) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		page := dashboard.Page{
-			Title: "Sign in",
-			Body:  "login",
-		}
-		if err := dashboard.Render(w, log, page); err != nil {
-			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
 	}
 }

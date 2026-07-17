@@ -37,6 +37,10 @@ type MemStore struct {
 	domains     map[string]CustomDomain
 	crons       map[string]Cron
 	instances   map[string]Instance
+	// loginTokens is keyed by the hex-encoded SHA-256 hash of the
+	// raw token (so the binary []byte hash from ConsumeLoginToken
+	// matches the map key format used in MemStore everywhere else).
+	loginTokens map[string]LoginToken
 	snapshots   []Snapshot
 	events      []Event
 	// usage holds one row per (instance, minute) — mirrors PgStore's
@@ -88,6 +92,7 @@ func NewMemStore() *MemStore {
 		domains:      map[string]CustomDomain{},
 		crons:        map[string]Cron{},
 		instances:    map[string]Instance{},
+		loginTokens:  map[string]LoginToken{},
 		snapshots:    []Snapshot{},
 		events:       []Event{},
 		usage:        []usageMinute{},
@@ -1137,6 +1142,65 @@ func derefInt(p *int) int {
 		return 0
 	}
 	return *p
+}
+
+// IssueLoginToken stores a magic-link token hash → account_id mapping
+// with the given expiry. The hash is the SHA-256 of the raw token
+// (32-byte hex); see pkg/api.HashAPIKey for the canonical hash fn.
+// Re-issue of the same hash is a no-op (the entry is overwritten).
+func (m *MemStore) IssueLoginToken(_ context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.loginTokens == nil {
+		m.loginTokens = map[string]LoginToken{}
+	}
+	m.loginTokens[string(tokenHash)] = LoginToken{
+		TokenHash: append([]byte(nil), tokenHash...),
+		AccountID: accountID,
+		ExpiresAt: expiresAt,
+	}
+	return nil
+}
+
+// ConsumeLoginToken marks the token consumed in a single critical
+// section and returns the bound account_id. A replay returns
+// ErrNotFound. Expired tokens also return ErrNotFound (we don't leak
+// whether the token was real-but-stale vs never-existed).
+func (m *MemStore) ConsumeLoginToken(_ context.Context, tokenHash []byte) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tok, ok := m.loginTokens[string(tokenHash)]
+	if !ok {
+		return "", ErrNotFound
+	}
+	if tok.ConsumedAt != nil {
+		delete(m.loginTokens, string(tokenHash))
+		return "", ErrNotFound
+	}
+	if !tok.ExpiresAt.After(time.Now()) {
+		delete(m.loginTokens, string(tokenHash))
+		return "", ErrNotFound
+	}
+	now := time.Now()
+	tok.ConsumedAt = &now
+	m.loginTokens[string(tokenHash)] = tok
+	return tok.AccountID, nil
+}
+
+// DeleteOldLoginTokens prunes tokens whose expires_at < before, even
+// if they were never consumed. Returns the number removed. Used by
+// the maintenance job (or a test cleanup hook).
+func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var removed int64
+	for k, tok := range m.loginTokens {
+		if tok.ExpiresAt.Before(before) {
+			delete(m.loginTokens, k)
+			removed++
+		}
+	}
+	return removed, nil
 }
 
 // compile-time check that MemStore satisfies Store.

@@ -270,3 +270,14 @@ type Snapshot struct {
 	Stale        bool
 	CreatedAt    time.Time
 }
+
+// LoginToken is one row in login_tokens (M7.5 magic-link). The token
+// itself never appears in storage — only its SHA-256 hash does. The
+// raw token is emailed to the user once and is consumed by
+// /auth/verify?token=… (one-shot).
+type LoginToken struct {
+	TokenHash  []byte
+	AccountID  string
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
+}
