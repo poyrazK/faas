@@ -167,19 +167,6 @@ func runBuild(m api.BuildManifest) error {
 	cmd.Stderr = &buf
 	err := cmd.Run()
 
-	exitCode := 0
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			exitCode = 124
-		} else {
-			var ee *exec.ExitError
-			if errors.As(err, &ee) {
-				exitCode = ee.ExitCode()
-			} else {
-				exitCode = 1
-			}
-		}
-	}
 	return writeAndPoweroff(m, err, tailOf(buf.Bytes(), m.LogTailBytes))
 }
 
