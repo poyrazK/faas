@@ -84,7 +84,7 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 	limactl shell --workdir "$(CURDIR)" faas-metal sudo ./deploy/lima/run-metal.sh
 
 .PHONY: lint
-lint: ## golangci-lint via go tool (matches CI version v2.4.0)
+lint: egress-check ## golangci-lint via go tool (matches CI version v2.4.0) + egress artifact drift gate
 	@$(GO) tool golangci-lint run
 
 .PHONY: bootstrap
@@ -95,6 +95,47 @@ bootstrap: ## Idempotent host setup (ansible) — only on a dev EX44
 .PHONY: tidy
 tidy: ## go mod tidy
 	$(GO) mod tidy
+
+# Egress policy (spec §11). Source of truth is pkg/netns/policy.go's
+# HostPolicy.Render(). The artifact under deploy/ansible/roles/nftables/
+# is what `make bootstrap` ships to the host at /etc/nftables.conf.
+EGRESS_ARTIFACT := deploy/ansible/roles/nftables/files/policy_nftables.conf
+
+.PHONY: egress-render
+egress-render: ## (re)generate the host nft ruleset artifact from pkg/netns/policy.go
+	@mkdir -p $(dir $(EGRESS_ARTIFACT))
+	@$(GO) run ./cmd/faas-nft-render > $(EGRESS_ARTIFACT)
+	@echo "wrote $(EGRESS_ARTIFACT)"
+
+.PHONY: egress-check
+egress-check: ## Verify the host nft artifact matches the live render + run nft -c -f if available + bridge-name guard test
+	@bash -c 'set -e; status=0; \
+	  out=$$(go run ./cmd/faas-nft-render); \
+	  if [ "$$out" != "$$(cat $(EGRESS_ARTIFACT))" ]; then \
+	    echo "egress-check: artifact drift — run \`make egress-render\` and commit the diff:"; \
+	    diff <(echo "$$out") $(EGRESS_ARTIFACT) || true; \
+	    status=1; \
+	  else \
+	    echo "egress-check: artifact matches live render"; \
+	  fi; \
+	  if command -v nft >/dev/null 2>&1; then \
+	    if nft -c -f $(EGRESS_ARTIFACT) 2>/tmp/faas-egress.stderr; then \
+	      echo "egress-check: nft -c -f OK"; \
+	    else \
+	      echo "egress-check: nft -c -f FAILED:"; \
+	      cat /tmp/faas-egress.stderr; \
+	      status=1; \
+	    fi; \
+	  else \
+	    echo "egress-check: nft not on PATH; live kernel check skipped (macOS dev OK)"; \
+	  fi; \
+	  if go test -count=1 -run TestTenantBridgeMatches ./pkg/netns/... >/dev/null; then \
+	    echo "egress-check: bridge-name guard OK"; \
+	  else \
+	    echo "egress-check: TestTenantBridgeMatches FAILED"; \
+	    status=1; \
+	  fi; \
+	  exit $$status'
 
 .PHONY: clean
 clean: ## Remove build artifacts

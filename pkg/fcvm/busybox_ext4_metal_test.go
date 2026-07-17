@@ -175,12 +175,23 @@ func buildBusyboxExt4(dst string) error {
 		return fmt.Errorf("close ext4 file: %w", err)
 	}
 
-	// mkfs.ext4 -d <skel> takes a files-as-initramfs source.
-	cmd := exec.Command("mkfs.ext4", "-d", work, "-L", "faas-hello", "-F", dst)
+	// mkfs.ext4 -d <skel> takes a files-as-initramfs source. -O ^has_journal
+	// makes it journal-less so it mounts as the read-only root (drive0 in the
+	// two-drive scheme is is_read_only=true → kernel boots root=/dev/vda ro; an
+	// ext4 journal can't be replayed on a ro mount and the guest panics).
+	cmd := exec.Command("mkfs.ext4", "-O", "^has_journal", "-d", work, "-L", "faas-hello", "-F", dst)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		// Don't ignore "I/O error" diagnostics from mkfs — surface them.
 		return fmt.Errorf("mkfs.ext4: %w", err)
+	}
+	// The manager stages this image for the jailer uid itself: drive0 (read-only)
+	// is hardlinked in and widened for read, drive1 (read-write, the overlay upper)
+	// is copied to a private per-instance file chowned to the uid (see provision /
+	// stageWritable). So the fixture no longer needs to pre-widen perms; a normal
+	// 0644 is enough for the manager to read it while staging.
+	if err := os.Chmod(dst, 0o644); err != nil {
+		return fmt.Errorf("chmod busybox ext4: %w", err)
 	}
 	return nil
 }

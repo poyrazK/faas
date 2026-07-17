@@ -96,19 +96,47 @@ func (c Config) TeardownCommands() [][]string {
 	}
 }
 
-// NftDNAT returns the nftables ruleset (spec §7) that publishes the instance:
-// traffic arriving at the host-side identity is DNAT'd to the guest's :8080, and
-// tenant egress is filtered. Applied inside the netns via `nft -f -`.
-func (c Config) NftDNAT() string {
-	return fmt.Sprintf(`table ip faas {
-  chain prerouting {
-    type nat hook prerouting priority dstnat;
-    tcp dport %d dnat to %s:%d
-  }
-  chain postrouting {
-    type nat hook postrouting priority srcnat;
-    masquerade
-  }
-}
-`, AppPort, GuestIP, AppPort)
+// NftCommands returns the per-instance nftables ruleset (spec §7) as a sequence
+// of argv commands applied inside the netns. It both publishes the instance and
+// enforces the ship-blocking tenant egress policy (§11). Two responsibilities:
+//
+//   - Publish + NAT: traffic arriving on the uplink (VethPeer) to the host
+//     identity's :8080 is DNAT'd to the guest's :8080 contract; guest egress is
+//     masqueraded behind the host identity.
+//   - Egress filter: matched on iifname tap0 so it only touches guest-ORIGINATED
+//     traffic and can never break the inbound DNAT path. Deny SMTP (25/465/587 —
+//     spam is a Hetzner-abuse existential risk) and deny RFC1918 + link-local
+//     (169.254.0.0/16 covers the 169.254.169.254 metadata IP) so a tenant cannot
+//     move laterally into the control plane. Default policy is accept (§7
+//     default-allow 80/443/53).
+//
+// Rules live in the netns, so TeardownCommands' `netns del` drops them — no
+// explicit nft teardown is needed. Each command is a full argv (nft joins its
+// argv and parses it), so this works with the same stdin-less Runner that
+// executes SetupCommands. Egress bandwidth (per-plan tc) and the per-instance
+// conntrack cap (§7) are applied elsewhere, not here.
+func (c Config) NftCommands() [][]string {
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	port := fmt.Sprintf("%d", AppPort)
+	return [][]string{
+		nft("add", "table", "ip", "faas"),
+		// NAT: publish :8080 to the guest; masquerade the guest's egress.
+		nft("add", "chain", "ip", "faas", "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}"),
+		nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, AppPort)),
+		nft("add", "chain", "ip", "faas", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}"),
+		nft("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade"),
+		// Egress filter (§11): default-accept, deny from the guest side only.
+		nft("add", "chain", "ip", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}"),
+		// Accept reply traffic first. The inbound DNAT'd request is published from
+		// the host identity (10.100.x.y ∈ 10.100.0.0/16), so the guest's reply
+		// leaves iifname tap0 with daddr in that range — which is ALSO inside the
+		// 10.0.0.0/8 lateral-movement deny below. Without this established/related
+		// accept the deny would drop every reply and no published request would
+		// ever complete. Guest-INITIATED (ct state new) traffic still falls through
+		// to the denies, so lateral movement stays blocked.
+		nft("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept"),
+		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", "25,", "465,", "587", "}", "drop"),
+		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", "{", "10.0.0.0/8,", "172.16.0.0/12,", "192.168.0.0/16,", "169.254.0.0/16", "}", "drop"),
+	}
 }

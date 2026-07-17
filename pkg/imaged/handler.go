@@ -188,17 +188,16 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	// Branch on app type. Functions take a different path: the customer
 	// uploads a source tarball; the runner binary lives in the layer
 	// alongside it; the manifest points at the runner so guest-init execs
-	// the right interpreter on wake.
-	var manifest api.AppManifest
-	var outImage string
+	// the right interpreter on wake. Apps use the OCI image path.
 	switch app.Type {
 	case state.AppTypeFunction:
-		manifest, outImage, err = h.buildFunctionLayer(ctx, app, dep, acct)
+		if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
+			return err
+		}
 	default:
-		manifest, outImage, err = h.buildImageLayer(ctx, app, dep, acct)
-	}
-	if err != nil {
-		return err
+		if err := h.buildImageLayer(ctx, app, dep, acct); err != nil {
+			return err
+		}
 	}
 
 	if err := h.transition(ctx, dep.ID, state.DeploySnapshotting, ""); err != nil {
@@ -211,45 +210,52 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	if err := h.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
 		return fmt.Errorf("imaged: notify snapshot_prime: %w", err)
 	}
-	_ = manifest
-	_ = outImage
 	return nil
 }
 
-// buildImageLayer is the original (M2/M4) image-deploy path: pull OCI
-// digest, build the app-layer ext4, stamp SetDeploymentRootfs. Kept as
-// its own function so the function branch below can sit alongside it
-// without growing handleDeployment.
-func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) (api.AppManifest, string, error) {
+// buildImageLayer is the app-deploy path (app.Type == AppTypeApp):
+// pull the OCI image, build the app-layer ext4, stamp
+// SetDeploymentRootfs. PullImageConfig runs first as a cheap fail-fast
+// (review issue #6 — a no-Cmd image shouldn't trigger dozens of MB of
+// layer pulls); PullLayers streams the blobs only after validation
+// succeeds. The per-deploy Handler override wins over the image's Cmd,
+// per the deploy contract.
+func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
 	digest, err := h.oci.PullDigest(ctx, dep.ImageDigest)
 	if err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull failed: "+err.Error())
-		return api.AppManifest{}, "", fmt.Errorf("imaged: oci pull: %w", err)
+		return fmt.Errorf("imaged: oci pull: %w", err)
 	}
 
 	if err := h.transition(ctx, dep.ID, state.DeployImaging, ""); err != nil {
-		return api.AppManifest{}, "", err
+		return err
+	}
+
+	imageCfg, err := h.oci.PullImageConfig(ctx, digest)
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull config: "+err.Error())
+		return fmt.Errorf("imaged: pull image config: %w", err)
+	}
+
+	manifest := manifestFromImageConfig(imageCfg)
+	if dep.Handler != "" {
+		manifest.Entrypoint = []string{dep.Handler}
+	}
+	if err := manifest.Validate(); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "manifest invalid: "+err.Error())
+		return fmt.Errorf("imaged: validate manifest: %w", err)
 	}
 
 	pulled, err := h.oci.PullLayers(ctx, digest)
 	if err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull: "+err.Error())
-		return api.AppManifest{}, "", fmt.Errorf("imaged: pull layers: %w", err)
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull layers: "+err.Error())
+		return fmt.Errorf("imaged: pull layers: %w", err)
 	}
 	defer func() {
 		for _, r := range pulled.Layers {
 			_ = r.Close()
 		}
 	}()
-
-	manifest := manifestFromImageConfig(pulled.Config)
-	if dep.Handler != "" {
-		manifest.Entrypoint = []string{dep.Handler}
-	}
-	if err := manifest.Validate(); err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "manifest invalid: "+err.Error())
-		return api.AppManifest{}, "", fmt.Errorf("imaged: validate manifest: %w", err)
-	}
 
 	outImage := filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
 	result, err := h.builder.Build(ctx, rootfs.BuildInput{
@@ -261,14 +267,14 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	})
 	if err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
-		return api.AppManifest{}, "", fmt.Errorf("imaged: build app layer: %w", err)
+		return fmt.Errorf("imaged: build app layer: %w", err)
 	}
 
 	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
-		return api.AppManifest{}, "", fmt.Errorf("imaged: stamp rootfs: %w", err)
+		return fmt.Errorf("imaged: stamp rootfs: %w", err)
 	}
-	return manifest, outImage, nil
+	return nil
 }
 
 // buildFunctionLayer assembles a function deploy's app-layer ext4:
@@ -282,9 +288,9 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 // (cmd/imaged wires this). For tests, FunctionRunnerPath is empty and
 // the path is treated as a no-op so the table test can exercise the
 // rest of the path without an actual binary.
-func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) (api.AppManifest, string, error) {
+func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
 	if err := h.transition(ctx, dep.ID, state.DeployImaging, ""); err != nil {
-		return api.AppManifest{}, "", err
+		return err
 	}
 	runtime := app.Runtime
 	if runtime == "" {
@@ -294,11 +300,11 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	}
 	if runtime != "node22" && runtime != "python312" {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "unsupported runtime: "+runtime)
-		return api.AppManifest{}, "", fmt.Errorf("imaged: unsupported function runtime %q", runtime)
+		return fmt.Errorf("imaged: unsupported function runtime %q", runtime)
 	}
 	manifest := api.AppManifest{
-		Port:      api.DefaultAppPort,
-		Healthz:   "/healthz",
+		Port:    api.DefaultAppPort,
+		Healthz: "/healthz",
 		Entrypoint: []string{
 			"/usr/local/bin/faas-runner",
 			"--runtime", runtime,
@@ -314,7 +320,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	}
 	if err := manifest.Validate(); err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "manifest invalid: "+err.Error())
-		return api.AppManifest{}, "", fmt.Errorf("imaged: validate manifest: %w", err)
+		return fmt.Errorf("imaged: validate manifest: %w", err)
 	}
 
 	outImage := filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
@@ -334,13 +340,13 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	})
 	if err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build function layer: "+err.Error())
-		return api.AppManifest{}, "", fmt.Errorf("imaged: build function layer: %w", err)
+		return fmt.Errorf("imaged: build function layer: %w", err)
 	}
 	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
-		return api.AppManifest{}, "", fmt.Errorf("imaged: stamp rootfs: %w", err)
+		return fmt.Errorf("imaged: stamp rootfs: %w", err)
 	}
-	return manifest, outImage, nil
+	return nil
 }
 
 // manifestFromImageConfig maps an OCI ImageConfig to an api.AppManifest. The

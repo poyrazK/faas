@@ -100,27 +100,35 @@ func TestColdSpecValidate(t *testing.T) {
 }
 
 func TestJailerCommandMatchesSpec(t *testing.T) {
-	argv := JailerCommand(JailerSpec{Instance: "abc", UID: 20007, GID: 20007, Netns: "fc-abc"})
+	argv := JailerCommand(JailerSpec{
+		Instance: "abc", UID: 20007, GID: 20007, Netns: "fc-abc",
+		ExecFile: "/usr/local/bin/firecracker",
+	})
 	line := strings.Join(argv, " ")
 	wants := []string{
 		"jailer --id abc",
 		"--uid 20007 --gid 20007",
+		"--exec-file /usr/local/bin/firecracker", // required by jailer; names the chroot dir
 		"--chroot-base-dir " + JailChrootBase,
 		"--netns /run/netns/fc-abc",
 		"--cgroup-version 2",
 		"--parent-cgroup " + ParentCgroup,
-		"-- firecracker --api-sock api.sock --config-file vmconfig.json",
+		"-- --api-sock api.sock", // firecracker's own argv only — no binary name
 	}
 	for _, w := range wants {
 		if !strings.Contains(line, w) {
 			t.Errorf("jailer command missing %q\ngot: %s", w, line)
 		}
 	}
-	// The separator must come before firecracker so jailer flags don't leak into
-	// the firecracker argv.
-	sep, fc := indexOf(argv, "--"), indexOf(argv, "firecracker")
-	if sep < 0 || fc < 0 || sep > fc {
-		t.Errorf("`--` separator (%d) must precede firecracker (%d)", sep, fc)
+	// --exec-file is a jailer option (before the `--` separator); nothing but
+	// firecracker flags may follow `--` (jailer execs the exec-file itself, so a
+	// stray "firecracker" positional there would become a firecracker argument).
+	sep, ef := indexOf(argv, "--"), indexOf(argv, "--exec-file")
+	if ef < 0 || sep < 0 || ef > sep {
+		t.Errorf("--exec-file (%d) must precede the `--` separator (%d)", ef, sep)
+	}
+	if bare := indexOf(argv, "firecracker"); bare > sep {
+		t.Errorf("bare 'firecracker' token at %d follows the `--` separator (%d)", bare, sep)
 	}
 }
 

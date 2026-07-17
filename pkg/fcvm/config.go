@@ -120,24 +120,34 @@ type JailerSpec struct {
 	UID      int    // from the Lease
 	GID      int    // from the Lease
 	Netns    string // netns name, e.g. fc-<instance>
+	ExecFile string // path to the firecracker binary jailer copies into the chroot
 }
 
 // JailerCommand builds the jailer argv (Appendix B). vmmd execs this as root; the
 // jailer drops privileges to UID/GID, chroots, applies seccomp, and joins the
 // cgroup scope before executing firecracker.
+//
+// jailer requires --exec-file (the firecracker binary it copies into the chroot,
+// whose basename also names the chroot dir — see JailChrootBase/FirecrackerBin).
+// Everything after `--` is firecracker's OWN argv (no binary name — jailer runs
+// the exec-file): only --api-sock here, so the control socket always exists; the
+// caller appends --config-file for a cold boot (Restore drives the API instead).
 func JailerCommand(s JailerSpec) []string {
+	execFile := s.ExecFile
+	if execFile == "" {
+		execFile = FirecrackerBin
+	}
 	return []string{
 		"jailer",
 		"--id", s.Instance,
 		"--uid", fmt.Sprintf("%d", s.UID),
 		"--gid", fmt.Sprintf("%d", s.GID),
+		"--exec-file", execFile,
 		"--chroot-base-dir", JailChrootBase,
 		"--netns", "/run/netns/" + s.Netns,
 		"--cgroup-version", "2",
 		"--parent-cgroup", ParentCgroup,
 		"--",
-		FirecrackerBin,
 		"--api-sock", APISockName,
-		"--config-file", VMConfigName,
 	}
 }

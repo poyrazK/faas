@@ -241,9 +241,15 @@ func (m *Manager) LiveCount() int {
 // of everything, LiveCount and LeasedCount must both be zero — the leak check.
 func (m *Manager) LeasedCount() int { return m.alloc.InUse() }
 
-// setupNetwork runs each setup command in order, stopping at the first error.
+// setupNetwork realises the per-instance topology (veth/tap/addressing) and then
+// applies the nftables ruleset that publishes the guest and enforces the egress
+// policy (§7/§11). Commands run in order, stopping at the first error; a failure
+// leaves the caller's deferred cleanup to unwind everything (invariant §6.2-5).
+// The DNAT rules must land before readiness is probed, so they run here, inside
+// the setup phase, rather than after bringUp.
 func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
-	for _, argv := range nc.SetupCommands() {
+	cmds := append(nc.SetupCommands(), nc.NftCommands()...)
+	for _, argv := range cmds {
 		if err := m.run.Run(ctx, argv); err != nil {
 			return fmt.Errorf("%v: %w", argv, err)
 		}

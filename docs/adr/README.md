@@ -32,6 +32,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 016 | M1 `Stats()` shape + `vmmd_*` metric names | accepted | M1 plan |
 | 017 | Hand-written `pkg/state/pgstore.go` (M5 sqlc exception) | accepted | M5.1 review |
 | 018 | schedd gRPC surface + ReportActivity ownership | accepted | M5 plan |
+| 019 | Jailer `--exec-file` invocation + jail resource ownership | accepted | M0 metal run |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; write them as files here when that milestone opens.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -27,6 +28,7 @@ import (
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
 	chrootBase   string        // /srv/fc/jail
+	fcName       string        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout time.Duration // WAKING/cold-boot readiness budget (spec §6)
 
 	mu      sync.Mutex
@@ -42,10 +44,28 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 	}
 	return &JailerVMM{
 		chrootBase:   chrootBase,
+		fcName:       resolveFCChrootName(),
 		readyTimeout: readyTimeout,
 		proc:         make(map[string]*exec.Cmd),
 		clients:      make(map[string]*http.Client),
 	}
+}
+
+// resolveFCChrootName returns the directory name jailer will use for the chroot:
+// jailer resolves the --exec-file symlink and uses the REAL binary's basename, so
+// a `firecracker -> firecracker-v1.7.0` symlink (both the ansible role and the
+// Lima loop ship one) makes jailer build .../firecracker-v1.7.0/<id>/root. The
+// Manager must place the config/drives in that same dir, so it tracks the same
+// resolved basename here. Falls back to the plain name off the metal path.
+func resolveFCChrootName() string {
+	p, err := exec.LookPath(FirecrackerBin)
+	if err != nil {
+		return FirecrackerBin
+	}
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Base(real)
+	}
+	return filepath.Base(p)
 }
 
 // DetectFirecrackerVersion runs `firecracker --version` and returns the version
@@ -69,7 +89,7 @@ func DetectFirecrackerVersion(ctx context.Context) (string, error) {
 }
 
 func (v *JailerVMM) chrootRoot(instance string) string {
-	return filepath.Join(v.chrootBase, FirecrackerBin, instance, "root")
+	return filepath.Join(v.chrootBase, v.fcName, instance, "root")
 }
 
 func (v *JailerVMM) socketPath(instance string) string {
@@ -89,7 +109,7 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig) (err error)
 		}
 	}()
 
-	jailed, err := v.provision(root, cfg)
+	jailed, err := v.provision(root, cfg, l.UID, l.GID)
 	if err != nil {
 		return fmt.Errorf("vmm: provision chroot: %w", err)
 	}
@@ -97,8 +117,17 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig) (err error)
 	if err != nil {
 		return fmt.Errorf("vmm: marshal config: %w", err)
 	}
-	if err = os.WriteFile(filepath.Join(root, VMConfigName), cfgBytes, 0o640); err != nil {
+	cfgPath := filepath.Join(root, VMConfigName)
+	if err = os.WriteFile(cfgPath, cfgBytes, 0o640); err != nil {
 		return fmt.Errorf("vmm: write config: %w", err)
+	}
+	// The jailed firecracker reads --config-file as the unprivileged uid; hand it
+	// ownership so a 0640 root-owned file isn't unreadable inside the jail.
+	if err = chownJail(cfgPath, l.UID, l.GID); err != nil {
+		return fmt.Errorf("vmm: chown config: %w", err)
+	}
+	if err = v.ownChrootRoot(root, l); err != nil {
+		return err
 	}
 	if err = v.startJailer(ctx, l, "--config-file", VMConfigName); err != nil {
 		return err
@@ -123,13 +152,21 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}()
 
-	memName, err := linkInto(root, spec.MemPath)
+	// Snapshot files are read-only inputs shared across the N instances a single
+	// snapshot may restore (invariant §6.2-5): hardlink them in and widen for read
+	// rather than chown, which would rewrite the shared inode owner.
+	memName, err := stageReadOnly(root, spec.MemPath)
 	if err != nil {
 		return fmt.Errorf("vmm: stage mem file: %w", err)
 	}
-	stateName, err := linkInto(root, spec.VMStatePath)
+	stateName, err := stageReadOnly(root, spec.VMStatePath)
 	if err != nil {
 		return fmt.Errorf("vmm: stage vmstate: %w", err)
+	}
+	// firecracker (as the jailer uid) writes the API socket and, later, snapshot
+	// output into the chroot root — it must own that directory.
+	if err = v.ownChrootRoot(root, l); err != nil {
+		return err
 	}
 
 	// Start firecracker with only the API socket, then load + resume.
@@ -194,7 +231,7 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	}
 	v.closeClient(l.Instance)
 	// Chroot lives in tmpfs (spec §Gotchas); removing it frees the RAM it holds.
-	if err := os.RemoveAll(filepath.Join(v.chrootBase, FirecrackerBin, l.Instance)); err != nil {
+	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
 	}
 	return nil
@@ -213,7 +250,18 @@ func (v *JailerVMM) mkChroot(instance string) (string, error) {
 // startJailer launches jailer→firecracker for the instance with any extra
 // firecracker args appended, and records the process.
 func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...string) error {
-	argv := append(JailerCommand(JailerSpec{Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns}), extraFCArgs...)
+	execFile, err := exec.LookPath(FirecrackerBin)
+	if err != nil {
+		return fmt.Errorf("vmm: locate firecracker binary: %w", err)
+	}
+	// Pass the resolved real binary so jailer's chroot basename matches v.fcName
+	// (jailer follows the symlink); see resolveFCChrootName.
+	if real, rErr := filepath.EvalSymlinks(execFile); rErr == nil {
+		execFile = real
+	}
+	argv := append(JailerCommand(JailerSpec{
+		Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns, ExecFile: execFile,
+	}), extraFCArgs...)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	if err := cmd.Start(); err != nil {
@@ -225,18 +273,27 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	return nil
 }
 
-// provision hardlinks the kernel and rootfs images into the chroot and returns a
-// copy of cfg with paths rewritten to the chroot-relative basenames.
-func (v *JailerVMM) provision(root string, cfg VMConfig) (VMConfig, error) {
+// provision stages the kernel and rootfs images into the chroot for the jailer
+// uid and returns a copy of cfg with paths rewritten to the chroot-relative
+// basenames. Read-only images (kernel, drive0 base) are hard-linked in and widened
+// for read; the writable drive (drive1, the overlay upper) is copied to a private
+// per-instance file owned by the uid — see stageReadOnly / stageWritable.
+func (v *JailerVMM) provision(root string, cfg VMConfig, uid, gid int) (VMConfig, error) {
 	out := cfg
-	kname, err := linkInto(root, cfg.BootSource.KernelImagePath)
+	kname, err := stageReadOnly(root, cfg.BootSource.KernelImagePath)
 	if err != nil {
 		return out, err
 	}
 	out.BootSource.KernelImagePath = kname
 	out.Drives = make([]Drive, len(cfg.Drives))
 	for i, d := range cfg.Drives {
-		name, err := linkInto(root, d.PathOnHost)
+		var name string
+		var err error
+		if d.IsReadOnly {
+			name, err = stageReadOnly(root, d.PathOnHost)
+		} else {
+			name, err = stageWritable(root, d.PathOnHost, uid, gid)
+		}
 		if err != nil {
 			return out, err
 		}
@@ -244,6 +301,16 @@ func (v *JailerVMM) provision(root string, cfg VMConfig) (VMConfig, error) {
 		out.Drives[i] = d
 	}
 	return out, nil
+}
+
+// ownChrootRoot hands the chroot root directory to the jailer uid so the jailed
+// firecracker — which chroots into it and then runs unprivileged — can create the
+// API socket there and, on Snapshot, write the mem/vmstate files it later exports.
+func (v *JailerVMM) ownChrootRoot(root string, l Lease) error {
+	if err := chownJail(root, l.UID, l.GID); err != nil {
+		return fmt.Errorf("vmm: chown chroot root: %w", err)
+	}
+	return nil
 }
 
 // waitReady polls the guest's routable identity for a :8080 accept.
@@ -331,6 +398,81 @@ func (v *JailerVMM) apiCallWithClient(ctx context.Context, client *http.Client, 
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("firecracker %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))
+	}
+	return nil
+}
+
+// stageReadOnly hardlinks a shared read-only source (kernel, drive0 base, or a
+// snapshot file) into the chroot and widens its mode so the unprivileged jailer
+// uid can read it. These files are shared across instances via hardlink (cheap —
+// Appendix B), so we must NOT chown them: that would rewrite the shared inode's
+// owner and break every other instance holding the same link. They are non-secret,
+// read-only, and visible only inside this instance's chroot, so o+r is safe.
+func stageReadOnly(root, src string) (string, error) {
+	name, err := linkInto(root, src)
+	if err != nil {
+		return "", err
+	}
+	if err := ensureOtherReadable(filepath.Join(root, name)); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+// stageWritable copies a source image into the chroot as a private, per-instance
+// file owned by the jailer uid. drive1 (the overlay upper — guest/init) is opened
+// read-write by firecracker, and two instances must never share it (invariant
+// §6.2-5), so it is copied — never hard-linked — and chowned to the uid. A hardlink
+// would alias the shared source inode and corrupt it under concurrent writers.
+func stageWritable(root, src string, uid, gid int) (string, error) {
+	name := filepath.Base(src)
+	dst := filepath.Join(root, name)
+	// A read-only sibling drive may already have hard-linked this basename in (the
+	// M0 fixture points drive0 and drive1 at the same image); drop that link first
+	// so the copy below can't truncate the shared source through it.
+	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("stage writable %s: %w", src, err)
+	}
+	if err := copyFile(src, dst); err != nil {
+		return "", fmt.Errorf("copy writable %s: %w", src, err)
+	}
+	if err := os.Chmod(dst, 0o600); err != nil {
+		return "", fmt.Errorf("chmod writable %s: %w", dst, err)
+	}
+	if err := chownJail(dst, uid, gid); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+// ensureOtherReadable widens path's mode to add group+other read if it isn't there
+// already. Used for shared read-only chroot files that the unprivileged jailer uid
+// (never the owner, never in a matching group) must be able to open.
+func ensureOtherReadable(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if perm := fi.Mode().Perm(); perm&0o004 == 0 {
+		if err := os.Chmod(path, perm|0o044); err != nil {
+			return fmt.Errorf("widen readable %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// chownJail gives path to the jailer uid/gid. Chowning to an arbitrary uid needs
+// CAP_CHOWN, i.e. root; vmmd is the only root component (spec §11) and owns all
+// jail staging. Off the box the unit suite runs unprivileged, where chowning to a
+// 20000+ uid would EPERM, so we skip when not root: those tests never launch a
+// real jailed firecracker, and the metal suite runs as root (test-metal /
+// metal-lima are sudo).
+func chownJail(path string, uid, gid int) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+	if err := os.Chown(path, uid, gid); err != nil {
+		return fmt.Errorf("chown jail %s -> %d:%d: %w", path, uid, gid, err)
 	}
 	return nil
 }

@@ -113,6 +113,36 @@ type imageManifest struct {
 	} `json:"layers"`
 }
 
+// PullImageConfig fetches only the manifest + image-config blob (no layer
+// streaming) for a digest-pinned reference and returns the parsed
+// ImageConfig. This is the cheap fail-fast path: imaged calls it BEFORE
+// PullLayers so a manifest that cannot become a valid AppManifest (e.g. no
+// Cmd) is rejected without burning bandwidth on every layer blob (review
+// issue #6: a no-Cmd image was previously fetching dozens of MB before
+// imaged's manifest validation even ran).
+func (c *RegistryClient) PullImageConfig(ctx context.Context, ref string) (ImageConfig, error) {
+	r, err := ParseReference(ref)
+	if err != nil {
+		return ImageConfig{}, err
+	}
+	m, _, err := c.fetchManifest(ctx, r)
+	if err != nil {
+		return ImageConfig{}, err
+	}
+	if m.Config.Digest == "" {
+		return ImageConfig{}, fmt.Errorf("oci: %s manifest has no config descriptor", r.String())
+	}
+	cfgBytes, err := c.fetchBlob(ctx, r, m.Config.Digest)
+	if err != nil {
+		return ImageConfig{}, fmt.Errorf("oci: fetch image config %s: %w", r.String(), err)
+	}
+	cfg, err := parseImageConfig(cfgBytes)
+	if err != nil {
+		return ImageConfig{}, fmt.Errorf("oci: parse image config %s: %w", r.String(), err)
+	}
+	return cfg, nil
+}
+
 // PullLayers fetches the manifest, image-config blob, and every layer blob
 // for a digest-pinned reference, returning them as gzip-compressed ReadClosers
 // (bottom-to-top, the order rootfs.Builder expects). The caller closes each
@@ -122,35 +152,24 @@ type imageManifest struct {
 // Layer blobs are streamed, not buffered — large app layers never fit in
 // memory, and the build pipeline applies each layer directly into a staging
 // tree as it arrives.
+//
+// Note: imaged calls PullImageConfig first (cheap, fail-fast validation
+// before any layer blob fetches), then PullLayers. The result.Config is the
+// same parsed ImageConfig; the second config-blob GET is bounded (≤1 MiB)
+// and pays for a stable, self-contained PullLayers interface that doesn't
+// require the caller to thread an image config through.
 func (c *RegistryClient) PullLayers(ctx context.Context, ref string) (PullLayersResult, error) {
 	r, err := ParseReference(ref)
 	if err != nil {
 		return PullLayersResult{}, err
 	}
-	manifestURL := c.baseURL(r) + "/v2/" + r.Repository + "/manifests/" + r.ManifestRef()
-
-	// Fetch the manifest (with one retry after token challenge).
-	body, ct, err := c.fetchManifestJSON(ctx, manifestURL)
+	m, manifestBytes, err := c.fetchManifest(ctx, r)
 	if err != nil {
 		return PullLayersResult{}, err
-	}
-
-	var m imageManifest
-	if err := json.Unmarshal(body, &m); err != nil {
-		return PullLayersResult{}, fmt.Errorf("oci: decode manifest %s: %w", r.String(), err)
-	}
-
-	// Reject index/manifest-list for v1 — we accept only single-arch image
-	// manifests. Surfacing a clear error here is friendlier than silently
-	// ignoring the layers array.
-	if !isImageManifest(ct, m.MediaType) {
-		return PullLayersResult{}, fmt.Errorf("oci: %s is a manifest list/index, not an image manifest (mediaType=%q); digest-pinned to a single-arch image is required", r.String(), m.MediaType)
 	}
 	if m.Config.Digest == "" {
 		return PullLayersResult{}, fmt.Errorf("oci: %s manifest has no config descriptor", r.String())
 	}
-
-	// Fetch the config blob (small — read into memory).
 	cfgBytes, err := c.fetchBlob(ctx, r, m.Config.Digest)
 	if err != nil {
 		return PullLayersResult{}, fmt.Errorf("oci: fetch image config %s: %w", r.String(), err)
@@ -163,7 +182,7 @@ func (c *RegistryClient) PullLayers(ctx context.Context, ref string) (PullLayers
 	// Open each layer as a streaming ReadCloser. We do NOT eagerly read.
 	layers := make([]io.ReadCloser, 0, len(m.Layers))
 	for i, layer := range m.Layers {
-		body, err := c.fetchBlobStream(ctx, r, layer.Digest)
+		rc, err := c.fetchBlobStream(ctx, r, layer.Digest)
 		if err != nil {
 			// Close any we already opened so a partial result doesn't leak.
 			for _, l := range layers {
@@ -171,15 +190,39 @@ func (c *RegistryClient) PullLayers(ctx context.Context, ref string) (PullLayers
 			}
 			return PullLayersResult{}, fmt.Errorf("oci: fetch layer %d (%s) of %s: %w", i, layer.Digest, r.String(), err)
 		}
-		layers = append(layers, body)
+		layers = append(layers, rc)
 	}
 
-	// The manifest digest is sha256(content). Compute it here so the caller
-	// can correlate the layer set with the manifest they requested.
-	sum := sha256.Sum256(body)
+	// The manifest digest is sha256(content) of the manifest body bytes — not
+	// the layer blobs, which would be wildly different sizes per arch.
+	sum := sha256.Sum256(manifestBytes)
 	digest := digestAlgo + hex.EncodeToString(sum[:])
 
 	return PullLayersResult{Layers: layers, Config: cfg, Digest: digest}, nil
+}
+
+// fetchManifest performs the authenticated GET on a manifest URL and parses
+// it. Returns (imageManifest, raw manifest body bytes, err). Shared by
+// PullImageConfig (cheap path) and PullLayers (full path), so the two can't
+// drift in manifest-acceptance rules.
+func (c *RegistryClient) fetchManifest(ctx context.Context, r Reference) (imageManifest, []byte, error) {
+	var empty imageManifest
+	manifestURL := c.baseURL(r) + "/v2/" + r.Repository + "/manifests/" + r.ManifestRef()
+	body, ct, err := c.fetchManifestJSON(ctx, manifestURL)
+	if err != nil {
+		return empty, nil, err
+	}
+	var m imageManifest
+	if err := json.Unmarshal(body, &m); err != nil {
+		return empty, nil, fmt.Errorf("oci: decode manifest %s: %w", r.String(), err)
+	}
+	// Reject index/manifest-list for v1 — we accept only single-arch image
+	// manifests. Surfacing a clear error here is friendlier than silently
+	// ignoring the layers array.
+	if !isImageManifest(ct, m.MediaType) {
+		return empty, nil, fmt.Errorf("oci: %s is a manifest list/index, not an image manifest (mediaType=%q); digest-pinned to a single-arch image is required", r.String(), m.MediaType)
+	}
+	return m, body, nil
 }
 
 // isImageManifest reports whether the manifest is a single-arch image

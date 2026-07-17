@@ -42,7 +42,7 @@ func TestProvisionRewritesPathsIntoChroot(t *testing.T) {
 	})
 
 	v := NewJailerVMM(t.TempDir(), 0)
-	out, err := v.provision(root, cfg)
+	out, err := v.provision(root, cfg, 20000, 20000)
 	if err != nil {
 		t.Fatalf("provision: %v", err)
 	}
@@ -61,6 +61,95 @@ func TestProvisionRewritesPathsIntoChroot(t *testing.T) {
 	// The original config is untouched (we returned a copy).
 	if cfg.BootSource.KernelImagePath != kernel {
 		t.Error("provision mutated the input config")
+	}
+}
+
+func TestStageReadOnly_HardlinksAndWidensRead(t *testing.T) {
+	// A 0600 source must end up readable by other (o+r) after staging, and share
+	// the source inode (hardlink) — we never copy or chown a shared read-only file.
+	dir := t.TempDir()
+	src := filepath.Join(dir, "base.ext4")
+	if err := os.WriteFile(src, []byte("base"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	name, err := stageReadOnly(root, src)
+	if err != nil {
+		t.Fatalf("stageReadOnly: %v", err)
+	}
+	dst := filepath.Join(root, name)
+	a, _ := os.Stat(src)
+	b, _ := os.Stat(dst)
+	if !os.SameFile(a, b) {
+		t.Error("stageReadOnly should hardlink the shared source, not copy it")
+	}
+	if b.Mode().Perm()&0o004 == 0 {
+		t.Errorf("staged read-only file mode %v is not other-readable", b.Mode().Perm())
+	}
+}
+
+func TestStageWritable_CopiesPrivateAndUnlinksFromSource(t *testing.T) {
+	// The writable drive must be an independent copy (never the shared inode) so a
+	// guest write can't corrupt the source under a concurrent instance.
+	dir := t.TempDir()
+	src := filepath.Join(dir, "layer.ext4")
+	if err := os.WriteFile(src, []byte("layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	name, err := stageWritable(root, src, 20000, 20000)
+	if err != nil {
+		t.Fatalf("stageWritable: %v", err)
+	}
+	dst := filepath.Join(root, name)
+	a, _ := os.Stat(src)
+	b, _ := os.Stat(dst)
+	if os.SameFile(a, b) {
+		t.Error("stageWritable must copy — the writable drive must not alias the source inode")
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil || string(got) != "layer" {
+		t.Fatalf("copied content = %q err=%v", got, err)
+	}
+	if b.Mode().Perm() != 0o600 {
+		t.Errorf("writable drive mode = %v, want 0600", b.Mode().Perm())
+	}
+}
+
+func TestStageWritable_ReplacesHardlinkedSibling(t *testing.T) {
+	// M0 points drive0 and drive1 at the same image: the read-only drive hardlinks
+	// it in first, then the writable drive must break that link and copy — not
+	// truncate the source through the shared inode.
+	dir := t.TempDir()
+	src := filepath.Join(dir, "busybox.ext4")
+	if err := os.WriteFile(src, []byte("busybox-image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageReadOnly(root, src); err != nil { // drive0 hardlinks it in
+		t.Fatalf("stageReadOnly: %v", err)
+	}
+	if _, err := stageWritable(root, src, 20000, 20000); err != nil { // drive1 copies
+		t.Fatalf("stageWritable: %v", err)
+	}
+	// The source must be intact (not truncated) and the staged copy independent.
+	got, err := os.ReadFile(src)
+	if err != nil || string(got) != "busybox-image" {
+		t.Fatalf("source corrupted after writable staging: got %q err=%v", got, err)
+	}
+	a, _ := os.Stat(src)
+	b, _ := os.Stat(filepath.Join(root, "busybox.ext4"))
+	if os.SameFile(a, b) {
+		t.Error("writable staging left the chroot file aliased to the source inode")
 	}
 }
 
