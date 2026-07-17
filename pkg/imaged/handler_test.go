@@ -70,7 +70,7 @@ func (f fakePuller) PullLayers(_ context.Context, digest string) (oci.PullLayers
 // failure path before any layer streaming happens.
 type failingPuller struct{ err error }
 
-func (f failingPuller) PullDigest(_ context.Context, _ string) (string, error)  { return "", f.err }
+func (f failingPuller) PullDigest(_ context.Context, _ string) (string, error) { return "", f.err }
 func (f failingPuller) PullImageConfig(_ context.Context, _ string) (oci.ImageConfig, error) {
 	return oci.ImageConfig{}, f.err
 }
@@ -643,9 +643,9 @@ type countingPuller struct {
 	imageCfg oci.ImageConfig
 	layers   []io.ReadCloser
 
-	pullDigestCount    int
-	pullImageCfgCount  int
-	pullLayersCount    int
+	pullDigestCount   int
+	pullImageCfgCount int
+	pullLayersCount   int
 }
 
 func (p *countingPuller) PullDigest(_ context.Context, _ string) (string, error) {

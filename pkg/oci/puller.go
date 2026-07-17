@@ -21,9 +21,9 @@ import (
 // Field naming follows the OCI image config spec
 // (https://github.com/opencontainers/image-spec/blob/main/config.md).
 type ImageConfig struct {
-	Cmd        []string // → AppManifest.Entrypoint
+	Cmd        []string          // → AppManifest.Entrypoint
 	Env        map[string]string // "KEY" → "VALUE"; imaged flattens to AppManifest.Env
-	WorkingDir string   // → AppManifest.WorkingDir
+	WorkingDir string            // → AppManifest.WorkingDir
 	// ExposedPorts is the set of ports the image declares; we don't use them
 	// directly (the customer pins a port via the app's manifest) but parsing
 	// them keeps a future "expose-all" mode cheap.
