@@ -1,6 +1,7 @@
 package secretbox
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,7 +16,7 @@ func TestLoadHostKeyMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing host key")
 	}
-	if err != ErrHostKeyNotFound {
+	if !errors.Is(err, ErrHostKeyNotFound) {
 		t.Fatalf("got %v, want ErrHostKeyNotFound", err)
 	}
 }

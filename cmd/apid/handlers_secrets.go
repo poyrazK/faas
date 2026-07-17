@@ -23,6 +23,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"filippo.io/age"
 	"net/http"
 	"time"
@@ -175,7 +176,7 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	if err := s.store.DeleteAppSecret(ctx(r), acct.ID, app.ID, key); err != nil {
-		if err == state.ErrNotFound {
+		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrSecretNotFound(key))
 			return
 		}

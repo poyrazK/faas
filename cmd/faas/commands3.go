@@ -19,6 +19,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -73,12 +74,12 @@ func secretsList(args []string) int {
 		return printErr("List failed", err)
 	}
 	if resp.Count == 0 {
-		fmt.Fprintf(osStdout, "%s: no secrets (0/%d)\n", *app, resp.Quota)
+		_, _ = fmt.Fprintf(osStdout, "%s: no secrets (0/%d)\n", *app, resp.Quota)
 		return 0
 	}
-	fmt.Fprintf(osStdout, "%s: %d/%d secrets\n", *app, resp.Count, resp.Quota)
+	_, _ = fmt.Fprintf(osStdout, "%s: %d/%d secrets\n", *app, resp.Count, resp.Quota)
 	for _, s := range resp.Secrets {
-		fmt.Fprintf(osStdout, "  %s\n", s.Key)
+		_, _ = fmt.Fprintf(osStdout, "  %s\n", s.Key)
 	}
 	return 0
 }
@@ -120,7 +121,7 @@ func secretsSet(args []string) int {
 			}
 			pairs = append(pairs, p)
 		}
-		if err := scanner.Err(); err != nil && err != io.EOF {
+		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
 			fmt.Fprintln(os.Stderr, "read stdin:", err)
 			return 1
 		}
@@ -147,7 +148,7 @@ func secretsSet(args []string) int {
 		if err := client.SetSecret(context.Background(), *app, p.Key, p.Value); err != nil {
 			return printErr("Set "+p.Key+" failed", err)
 		}
-		fmt.Fprintf(osStdout, "✓ %s set\n", p.Key)
+		_, _ = fmt.Fprintf(osStdout, "✓ %s set\n", p.Key)
 	}
 	return 0
 }
@@ -192,6 +193,6 @@ func secretsUnset(args []string) int {
 	if err := client.UnsetSecret(context.Background(), *app, key); err != nil {
 		return printErr("Unset failed", err)
 	}
-	fmt.Fprintf(osStdout, "✓ %s unset\n", key)
+	_, _ = fmt.Fprintf(osStdout, "✓ %s unset\n", key)
 	return 0
 }
