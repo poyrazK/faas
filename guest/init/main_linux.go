@@ -91,9 +91,11 @@ func boot() error {
 // shouldn't happen in practice because base images carry at most one).
 //
 // Split out from boot() so unit tests can drive it with testing/fstest.MapFS
-// instead of touching the real root fs.
+// instead of touching the real root fs. The path passed to fs.ReadFile must
+// be RELATIVE (no leading "/") — fs.FS rejects absolute paths, and the real
+// os.DirFS("/") used at boot happily accepts the relative form on Linux.
 func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
-	if data, err := fs.ReadFile(fsys, api.BuildManifestPath); err == nil {
+	if data, err := fs.ReadFile(fsys, "etc/faas/build.json"); err == nil {
 		var m api.BuildManifest
 		if jErr := json.Unmarshal(data, &m); jErr == nil {
 			return modeBuild, m, nil
