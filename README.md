@@ -155,3 +155,16 @@ when its executable acceptance tests pass.
   Linux-only) and the metal boot/park/wake behind the handshake, so
   `faas deploy --image` → parked → first request wakes end-to-end. The
   prebuilt-image acceptance is the M5 gate (§14); builder microVMs are M6.
+- **M6 — builderd + real image pulls.** 🚧 Groundwork only; the build-in-microVM
+  core (ADR-003) is metal and lands on the EX44.
+  - `pkg/oci` **`RegistryClient`** — a registry v2 client that resolves a
+    reference to its content digest over the public registry API (gap G1):
+    Docker/OCI reference parsing (docker.io + `library/` defaulting, tag vs
+    `@sha256:` digest, registry ports), the anonymous Bearer-token dance, and a
+    `Docker-Content-Digest` header / body-hash fallback. Unit-tested against an
+    httptest registry. `cmd/imaged` now resolves image deploys through it
+    (`DefaultPuller` stays as the offline/test default).
+
+  Remaining: layer/config blob streaming for the real app-layer build, egress
+  hardening on the puller's HTTP client (spec §11), and builderd's ephemeral
+  builder microVMs (Railpack/Dockerfile) — the metal core of M6.

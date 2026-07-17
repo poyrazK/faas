@@ -22,6 +22,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/imaged"
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -44,8 +45,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	store := state.NewPgStore(pool)
 	builder := rootfs.NewBuilder(wire.ExecRunner{})
 
+	// Real registry v2 puller (M6 groundwork, gap G1): resolves an image deploy's
+	// digest-pinned reference against the public registry. Egress hardening
+	// (deny RFC1918 / metadata ranges, spec §11) is a follow-up — inject a
+	// policy-aware *http.Client via oci.WithHTTPClient when it lands.
+	puller := oci.NewRegistryClient()
+
 	notifier := dbNotifier{pool: pool}
-	h := imaged.New(store, notifier, nil, builder, log)
+	h := imaged.New(store, notifier, puller, builder, log)
 
 	channels := []string{
 		db.NotifyDeploymentChanged,
