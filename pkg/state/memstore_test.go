@@ -725,3 +725,124 @@ func TestMemStore_GitHubBinding_RejectsConflict(t *testing.T) {
 		t.Fatal("expected conflict error when second app tries to bind same (install_id, repo)")
 	}
 }
+
+// --- Customer secrets (spec §11/G2) ----------------------------------------
+
+// TestAppSecretUpsertListDelete exercises the four-method CRUD through
+// MemStore. Ciphertext is opaque bytes here — the MemStore's job is to
+// model the (account_id, app_id, key) row shape; pgstore mirrors the same
+// SQL semantics. Encryption is pkg/secretbox's responsibility.
+func TestAppSecretUpsertListDelete(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	const acctA, acctB = "acct-A", "acct-B"
+	const appA, appB = "app-A", "app-B"
+
+	// Initial state: nothing.
+	got, err := m.ListAppSecrets(ctx, acctA, appA)
+	if err != nil {
+		t.Fatalf("list empty: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("empty list: got %d, want 0", len(got))
+	}
+
+	// Upsert two keys under (acctA, appA).
+	if err := m.UpsertAppSecret(ctx, acctA, appA, "STRIPE_KEY", []byte("cipher-1")); err != nil {
+		t.Fatalf("upsert STRIPE_KEY: %v", err)
+	}
+	if err := m.UpsertAppSecret(ctx, acctA, appA, "API_TOKEN", []byte("cipher-2")); err != nil {
+		t.Fatalf("upsert API_TOKEN: %v", err)
+	}
+
+	// Count is 2.
+	n, err := m.CountAppSecrets(ctx, acctA, appA)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("count: got %d, want 2", n)
+	}
+
+	// List returns both, sorted by key (API_TOKEN before STRIPE_KEY).
+	got, err = m.ListAppSecrets(ctx, acctA, appA)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("list: got %d, want 2", len(got))
+	}
+	if got[0].Key != "API_TOKEN" || got[1].Key != "STRIPE_KEY" {
+		t.Errorf("order: got %q/%q, want API_TOKEN/STRIPE_KEY", got[0].Key, got[1].Key)
+	}
+
+	// Upsert replaces ciphertext on conflict (same key).
+	if err := m.UpsertAppSecret(ctx, acctA, appA, "API_TOKEN", []byte("cipher-2-rotated")); err != nil {
+		t.Fatalf("upsert rotate: %v", err)
+	}
+	got, _ = m.ListAppSecrets(ctx, acctA, appA)
+	if string(got[0].Ciphertext) != "cipher-2-rotated" {
+		t.Errorf("rotate: got %q, want cipher-2-rotated", string(got[0].Ciphertext))
+	}
+
+	// Cross-account isolation: acctB sees nothing on appA.
+	if n, _ := m.CountAppSecrets(ctx, acctB, appA); n != 0 {
+		t.Errorf("cross-acct count: got %d, want 0", n)
+	}
+	if got, _ := m.ListAppSecrets(ctx, acctB, appA); len(got) != 0 {
+		t.Errorf("cross-acct list: got %d, want 0", len(got))
+	}
+
+	// Cross-app isolation: same account, different app.
+	if err := m.UpsertAppSecret(ctx, acctA, appB, "DB_URL", []byte("cipher-3")); err != nil {
+		t.Fatalf("upsert appB: %v", err)
+	}
+	if n, _ := m.CountAppSecrets(ctx, acctA, appB); n != 1 {
+		t.Errorf("appB count: got %d, want 1", n)
+	}
+	if n, _ := m.CountAppSecrets(ctx, acctA, appA); n != 2 {
+		t.Errorf("appA count after appB upsert: got %d, want 2", n)
+	}
+
+	// Delete scoped to (acctA, appA, STRIPE_KEY).
+	if err := m.DeleteAppSecret(ctx, acctA, appA, "STRIPE_KEY"); err != nil {
+		t.Fatalf("delete STRIPE_KEY: %v", err)
+	}
+	if n, _ := m.CountAppSecrets(ctx, acctA, appA); n != 1 {
+		t.Errorf("post-delete count: got %d, want 1", n)
+	}
+
+	// Delete on cross-account returns ErrNotFound (renders 400 CodeSecretNotFound).
+	if err := m.DeleteAppSecret(ctx, acctB, appA, "API_TOKEN"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("cross-acct delete: got %v, want ErrNotFound", err)
+	}
+
+	// Delete on unknown key returns ErrNotFound.
+	if err := m.DeleteAppSecret(ctx, acctA, appA, "MISSING"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing delete: got %v, want ErrNotFound", err)
+	}
+}
+
+// TestAppSecretOwnershipOnUpsert asserts the (account_id, app_id, key) is
+// the unique row identifier: a different account's upsert against the same
+// (app_id, key) returns ErrNotFound (treated as "row not yours" by the
+// handler). This matches the SQL semantics where the PRIMARY KEY is on
+// (app_id, key) but the ownership check happens via account_id at the
+// query layer.
+func TestAppSecretOwnershipOnUpsert(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	// acctA owns the row.
+	if err := m.UpsertAppSecret(ctx, "acct-A", "app-1", "K", []byte("c1")); err != nil {
+		t.Fatalf("upsert A: %v", err)
+	}
+	// acctB tries to overwrite — gets ErrNotFound (handler renders 400).
+	if err := m.UpsertAppSecret(ctx, "acct-B", "app-1", "K", []byte("c2")); !errors.Is(err, ErrNotFound) {
+		t.Errorf("acctB upsert: got %v, want ErrNotFound", err)
+	}
+	// Original row untouched.
+	got, _ := m.ListAppSecrets(ctx, "acct-A", "app-1")
+	if len(got) != 1 || string(got[0].Ciphertext) != "c1" {
+		t.Errorf("row integrity: got %+v, want c1", got)
+	}
+}

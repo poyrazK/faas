@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -76,14 +77,68 @@ func boot() error {
 		return err
 	}
 
+	// G2: read /etc/faas/secrets.env (unsealed JSON, written by vmmd at
+	// wake time) and stash the entry count on the supervisor via a small
+	// closure so runApp can pull them. A missing or malformed file is
+	// not fatal — the app runs without env secrets (consistent with
+	// the quota=0 path).
+	secrets, secErr := loadSecrets(slog.Default())
+	if secErr != nil {
+		// Don't surface the value, just the fact that the file failed.
+		slog.Default().Warn("secrets.env could not be loaded; proceeding without secrets", "err_kind", errorKind(secErr))
+	}
+
 	sup := Supervisor{
 		Max:   MaxRestarts,
-		Start: func() error { return runApp(manifest) },
+		Start: func() error { return runAppWithSecrets(manifest, secrets) },
 		OnCrash: func(attempt int, err error) {
 			fmt.Fprintf(os.Stderr, "guest-init: app crashed (restart %d/%d): %v\n", attempt, MaxRestarts, err)
 		},
 	}
 	return sup.Run()
+}
+
+// runAppWithSecrets is the secrets-aware entrypoint — same execve path as
+// runApp but with the envelope layered over the manifest's env. Empty/nil
+// secrets short-circuits to the un-secrets path (i.e. BuildEnv).
+func runAppWithSecrets(m api.AppManifest, secrets map[string]string) error {
+	argv := m.Entrypoint
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = m.EffectiveWorkingDir()
+	cmd.Env = BuildEnvWithSecrets(os.Environ(), m, secrets)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if uid := lookupUID(m.EffectiveUser()); uid > 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Credential: &syscall.Credential{UID: uid, GID: uid},
+		}
+	}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("run %v: %w", argv, err)
+	}
+	return nil
+}
+
+// errorKind collapses an error chain to a stable string suitable for a
+// slog attribute. We never log the raw err (it could carry a malformed
+// secrets file path or partial bytes), only its structural class.
+func errorKind(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, fs.ErrPermission):
+		return "permission"
+	case isNotExist(err):
+		return "absent"
+	default:
+		// JSON unmarshal failure or read failure other than ENOENT.
+		if strings.HasPrefix(err.Error(), "secrets: parse") {
+			return "parse"
+		}
+		if strings.HasPrefix(err.Error(), "secrets: read") {
+			return "read"
+		}
+		return "other"
+	}
 }
 
 // decideMode picks the boot branch by looking at which manifest file exists.

@@ -21,10 +21,12 @@ import (
 	"os"
 	"time"
 
+	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -135,6 +137,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("session manager in dev mode; sessions reset on restart", "warning", sessionsWarn)
 	}
 	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL)
+
+	// G2: load the host age recipient so the secrets PUT handler can seal.
+	// vmmd owns the private half; we only need the public recipient string.
+	// The recipient path is opt-in via FAAS_HOST_AGE_RECIPIENT_PATH — set in
+	// production (and by the e2e harness) to the file vmmd writes
+	// (/etc/faas/secrets/host.age.pub by default). When the env var is unset,
+	// the var stays nil and PUT /secrets returns 503 — a loud, observable
+	// signal that the box is misconfigured rather than a silent accept-and-
+	// drop of plaintext. The unit tests don't set the var because the
+	// handlers they're checking don't exercise the seal path.
+	if recipientPath := deps.getenv("FAAS_HOST_AGE_RECIPIENT_PATH"); recipientPath != "" {
+		r, err := secretbox.LoadRecipient(recipientPath)
+		if err != nil {
+			return fmt.Errorf("apid: load host age recipient %q: %w", recipientPath, err)
+		}
+		setSecretRecipient = func() *age.X25519Recipient { return r }
+		log.Info("host age recipient loaded", "path", recipientPath)
+	} else {
+		log.Warn("FAAS_HOST_AGE_RECIPIENT_PATH unset — secrets PUT will return 503")
+	}
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
 	if deps.bgBefore != nil {

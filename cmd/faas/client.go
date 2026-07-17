@@ -231,6 +231,20 @@ func (c *Client) DeleteKey(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/keys/"+id, nil, nil)
 }
 
+// Secrets (spec §11/G2). Plaintext VALUE never leaves the CLI except via
+// the PUT body; the LIST response carries key names + timestamps only.
+func (c *Client) ListSecrets(ctx context.Context, slug string) (api.AppSecretListResponse, error) {
+	var out api.AppSecretListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/secrets", nil, &out)
+}
+func (c *Client) SetSecret(ctx context.Context, slug, key, value string) error {
+	return c.do(ctx, "PUT", "/v1/apps/"+slug+"/secrets/"+key,
+		api.PutAppSecretRequest{Value: value}, nil)
+}
+func (c *Client) UnsetSecret(ctx context.Context, slug, key string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/secrets/"+key, nil, nil)
+}
+
 // Usage
 func (c *Client) GetUsage(ctx context.Context, month string) (api.UsageResponse, error) {
 	var out api.UsageResponse

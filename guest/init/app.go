@@ -21,16 +21,38 @@ const MaxRestarts = 3
 
 // BuildEnv merges the manifest env over a base environment and returns a
 // deterministic, deduplicated "KEY=VALUE" slice suitable for execve. Manifest
-// values override base values for the same key.
+// values override base values for the same key. The optional secrets layer
+// (loaded from /etc/faas/secrets.env by secrets.go) is applied LAST so
+// customers' explicit credential values win over any default in the manifest.
 func BuildEnv(base []string, m api.AppManifest) []string {
-	merged := make(map[string]string, len(base)+len(m.Env))
+	return BuildEnvWithSecrets(base, m, nil)
+}
+
+// BuildEnvWithSecrets is the secrets-aware variant. Pass nil secrets to get
+// the same behavior as BuildEnv. Precedence (lowest to highest):
+//
+//	base (os.Environ) < manifest env < secrets env
+//
+// All three sources must conform to the [A-Z][A-Z0-9_]* key shape; entries
+// that do not are silently skipped (defense in depth — the SQL CHECK
+// already enforces shape, but an out-of-band writer shouldn't be able to
+// crash execve with a malformed env entry).
+func BuildEnvWithSecrets(base []string, m api.AppManifest, secrets map[string]string) []string {
+	merged := make(map[string]string, len(base)+len(m.Env)+len(secrets))
 	for _, kv := range base {
-		if k, v, ok := cut(kv); ok {
+		if k, v, ok := cut(kv); ok && validEnvKey(k) {
 			merged[k] = v
 		}
 	}
 	for k, v := range m.Env {
-		merged[k] = v
+		if validEnvKey(k) {
+			merged[k] = v
+		}
+	}
+	for k, v := range secrets {
+		if validEnvKey(k) {
+			merged[k] = v
+		}
 	}
 	keys := make([]string, 0, len(merged))
 	for k := range merged {
@@ -42,6 +64,31 @@ func BuildEnv(base []string, m api.AppManifest) []string {
 		out = append(out, k+"="+merged[k])
 	}
 	return out
+}
+
+// validEnvKey enforces the same ^[A-Z][A-Z0-9_]* shape the SQL CHECK and
+// apid validator do. Untyped key names reaching execve can take several
+// unfun paths through libc; we'd rather drop a single bad entry than risk
+// it leaking into the spawning environ.
+func validEnvKey(k string) bool {
+	if k == "" || len(k) > 128 {
+		return false
+	}
+	c := k[0]
+	if c < 'A' || c > 'Z' {
+		return false
+	}
+	for i := 1; i < len(k); i++ {
+		c := k[i]
+		switch {
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // cut splits "KEY=VALUE" once. Entries without '=' are treated as KEY="".

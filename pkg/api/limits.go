@@ -54,6 +54,13 @@ type Limits struct {
 
 	// Networking (spec §7).
 	EgressMbit int // per-instance egress bandwidth cap via tc
+
+	// Secrets (spec §11/G2). Ciphertext quota per app; per-value byte cap.
+	// SecretCountMax bounds the (app_id, key) row count. SecretValueMaxBytes
+	// bounds the plaintext value the customer may PUT — apid rejects larger
+	// values with 413 CodeSecretValueTooLarge before sealing.
+	SecretCountMax      int // max secrets per app (Free 3, Hobby 25, Pro 50, Scale 100)
+	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
 }
 
 // planLimits is the authoritative table. Values: spec §1 quota row, §4.1 rate
@@ -80,6 +87,8 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:       5,
 		RateLimitBurst:     20,
 		EgressMbit:         10,
+		SecretCountMax:     3,
+		SecretValueMaxBytes: 4 * 1024,
 	},
 	PlanHobby: {
 		Plan:               PlanHobby,
@@ -95,6 +104,8 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:       20,
 		RateLimitBurst:     100,
 		EgressMbit:         25,
+		SecretCountMax:     25,
+		SecretValueMaxBytes: 8 * 1024,
 	},
 	PlanPro: {
 		Plan:               PlanPro,
@@ -110,6 +121,8 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:       100,
 		RateLimitBurst:     500,
 		EgressMbit:         100,
+		SecretCountMax:     50,
+		SecretValueMaxBytes: 16 * 1024,
 	},
 	PlanScale: {
 		Plan:               PlanScale,
@@ -125,6 +138,8 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:       500,
 		RateLimitBurst:     2000,
 		EgressMbit:         250,
+		SecretCountMax:     100,
+		SecretValueMaxBytes: 32 * 1024,
 	},
 }
 

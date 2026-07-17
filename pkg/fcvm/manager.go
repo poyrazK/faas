@@ -2,11 +2,16 @@ package fcvm
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 
+	"filippo.io/age"
+
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
 // Manager is vmmd's core: it owns the whole per-instance resource lifecycle —
@@ -44,6 +49,12 @@ type VMM interface {
 	// host directory builderd wants files under. Returns the captured exit code
 	// (0 for app VMs, the build's own exit code for builder VMs).
 	DestroyWithExport(ctx context.Context, l Lease, exportDir string) (int, error)
+	// StageSecretsEnv is the G2 write-side counterpart to DestroyWithExport's
+	// read-side artifact pull: loopback-mounts drive1 in the chroot, writes
+	// /etc/faas/secrets.env (already-unsealed JSON), and umounts. jsonBlob may
+	// be empty — implementations MUST treat that as a no-op so apps without
+	// secrets skip the mount/umount cycle entirely.
+	StageSecretsEnv(instance string, jsonBlob []byte) error
 }
 
 // Paths locates the kernel and base images on disk (spec §8). Injected so tests
@@ -72,6 +83,11 @@ type Manager struct {
 	mu         sync.Mutex
 	live       map[string]*Instance
 	exportDirs map[string]string // instance -> host export dir (builder VMs only, M6)
+	// hostIdentity is the X25519 secret key used to unseal per-app sealed env
+	// blobs at wake time (spec §11/G2). nil means "no host age configured" —
+	// a Wake call with SealedEnvCiphertext set is rejected with ErrNoHostKey
+	// rather than silently dropping plaintext. vmmd owns the on-disk file.
+	hostIdentity *age.X25519Identity
 }
 
 // NewManager wires a Manager. fcVersion is the running Firecracker version (used
@@ -92,6 +108,39 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 	}
 }
 
+// SetHostIdentity attaches the unseal key. Only vmmd calls this — the
+// Manager holds the private half for the duration of the process. NOT
+// safe to call concurrently with Wake; production wires it before
+// serving traffic.
+func (m *Manager) SetHostIdentity(id *age.X25519Identity) {
+	m.hostIdentity = id
+}
+
+// HostIdentity returns the identity the Manager was constructed with
+// (nil if SetHostIdentity was never called). Used by tests and by the
+// daemon's start-up self-check.
+func (m *Manager) HostIdentity() *age.X25519Identity { return m.hostIdentity }
+
+// ErrNoHostKey is returned when a WakeRequest carries SealedEnvCiphertext
+// but the Manager was not configured with a host identity. Surface this
+// to schedd so the wake fails fast — never silently drop the ciphertext
+// or accept-and-discard the plaintext.
+var ErrNoHostKey = errors.New("fcvm: host identity not loaded")
+
+// jsonMarshalEnvelope re-marshals the unsealed Envelope to canonical JSON.
+// Lives in manager.go (not secretbox) because it's part of the staging
+// step, not the seal/open API surface.
+func jsonMarshalEnvelope(e secretbox.Envelope) ([]byte, error) {
+	return json.Marshal(e)
+}
+
+// stageSecretsEnv delegates to the VMM's loopback-mount write. The Manager
+// holds no mount logic of its own — the VMM owns the chroot root + instance
+// layout (JailerVMM) or, in tests, a stub that writes the file directly.
+func (m *Manager) stageSecretsEnv(instance string, jsonBlob []byte) error {
+	return m.vmm.StageSecretsEnv(instance, jsonBlob)
+}
+
 // WakeRequest brings an app up for a request or cron (spec §6.1). If Snapshot is
 // usable on the running Firecracker version it is restored (fast path); otherwise,
 // or if restore fails, the instance cold boots from rootfs (ADR-005: cold boot
@@ -109,6 +158,15 @@ type WakeRequest struct {
 	// and copies build artifacts (build-done.json + /build/out/*) into this host
 	// directory. App VMs leave it empty.
 	ExportDir string
+	// SealedEnvCiphertext is the age-sealed env blob from pkg/secretbox.SealOne
+	// per app (spec §11/G2). The Manager passes it to stageSecretsEnv, which
+	// loopback-mounts drive1, writes /etc/faas/secrets.env, and umounts. Empty
+	// bytes => no secrets file; guest-init reads nothing.
+	//
+	// The plaintext is held ONLY in memory by the manager at this point — the
+	// Manager is the unseal-and-forget boundary. It is never logged, never
+	// persisted, never returned to any caller.
+	SealedEnvCiphertext []byte
 }
 
 // ColdBootRequest is the deploy-pipeline prime path: a first boot with no
@@ -122,6 +180,9 @@ type ColdBootRequest struct {
 	EgressMbit int // per-plan tc cap; 0 = no cap (legacy / disabled)
 	// ExportDir is non-empty for builder VMs. See WakeRequest.
 	ExportDir string
+	// SealedEnvCiphertext is forwarded to WakeRequest for staging onto drive1
+	// (spec §11/G2). Empty bytes = no secrets file written.
+	SealedEnvCiphertext []byte
 }
 
 // ColdBoot boots an instance from rootfs with no snapshot. It is Wake with a nil
@@ -131,7 +192,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		Instance: req.Instance, BasePath: req.BasePath, LayerPath: req.LayerPath,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		EgressMbit: req.EgressMbit, Snapshot: nil,
-		ExportDir: req.ExportDir,
+		ExportDir: req.ExportDir, SealedEnvCiphertext: req.SealedEnvCiphertext,
 	})
 }
 
@@ -161,6 +222,31 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	method, err = m.bringUp(ctx, lease, nc, req)
 	if err != nil {
 		return nil, err
+	}
+
+	// G2: stage sealed env → decrypted JSON → loopback-mounted write → umount.
+	// The Manager is the unseal point (holds host.age). We refuse the request
+	// if a sealed blob was supplied without a key configured — silent drop
+	// would mean plaintext ciphertext never reaches the guest and the caller's
+	// "wake succeeded" hides a missing secret.
+	if len(req.SealedEnvCiphertext) > 0 {
+		if m.hostIdentity == nil {
+			return nil, fmt.Errorf("wake %s: %w", req.Instance, ErrNoHostKey)
+		}
+		env, err := secretbox.Open(m.hostIdentity, req.SealedEnvCiphertext)
+		if err != nil {
+			return nil, fmt.Errorf("wake %s: open sealed env: %w", req.Instance, err)
+		}
+		// Re-marshal as canonical JSON so guest-init reads the same envelope
+		// shape secretbox.Open returns. The plaintext never escapes into any
+		// log line — only the size and key count are observable above.
+		blob, err := jsonMarshalEnvelope(env)
+		if err != nil {
+			return nil, fmt.Errorf("wake %s: marshal envelope: %w", req.Instance, err)
+		}
+		if err := m.stageSecretsEnv(req.Instance, blob); err != nil {
+			return nil, fmt.Errorf("wake %s: stage secrets.env: %w", req.Instance, err)
+		}
 	}
 
 	// memory.max fence (spec §4.4) — written AFTER bringUp returns because

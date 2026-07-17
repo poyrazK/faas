@@ -306,3 +306,21 @@ type LogEntry struct {
 	Line         string
 	WrittenAt    time.Time
 }
+
+// AppSecret is one row of customer secrets (spec §11/G2). apid is the only
+// writer. Ciphertext is the age-sealed Envelope produced by pkg/secretbox;
+// the plaintext VALUE is never stored, never logged, and only exists
+// transiently in apid's PUT handler and vmmd's per-wake staging path.
+//
+// AccountID is the row's owning account. Both PgStore and MemStore filter
+// on (AccountID, AppID, Key) so cross-account access returns ErrNotFound
+// (handlers render 400 CodeSecretNotFound by design — the URL resource IS
+// the secret name).
+type AppSecret struct {
+	AccountID  string
+	AppID      string
+	Key        string
+	Ciphertext []byte
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}

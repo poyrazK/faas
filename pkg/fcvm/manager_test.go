@@ -69,6 +69,13 @@ type fakeVMM struct {
 	destroyWithExportExit int
 	destroyWithExportErr  error
 	destroyedWithExport   []string
+	// G2 secrets staging.
+	stagedSecrets  []stagedSecret
+	stageSecretsErr error
+}
+
+type stagedSecret struct {
+	blob []byte
 }
 
 func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig) error {
@@ -117,6 +124,13 @@ func (v *fakeVMM) DestroyWithExport(_ context.Context, l Lease, _ string) (int, 
 	v.destroyedWithExport = append(v.destroyedWithExport, l.Instance)
 	v.mu.Unlock()
 	return v.destroyWithExportExit, v.destroyWithExportErr
+}
+
+func (v *fakeVMM) StageSecretsEnv(_ string, jsonBlob []byte) error {
+	v.mu.Lock()
+	v.stagedSecrets = append(v.stagedSecrets, stagedSecret{blob: append([]byte(nil), jsonBlob...)})
+	v.mu.Unlock()
+	return v.stageSecretsErr
 }
 
 func (v *fakeVMM) restoredInstance(id string) bool {

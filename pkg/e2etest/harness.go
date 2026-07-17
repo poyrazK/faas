@@ -113,17 +113,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 	buildBinaries(t, bin)
 
 	if which&APID != 0 {
-		addr := freeTCPAddr(t)
-		env := []string{
-			"FAAS_APID_LISTEN=" + addr,
-			"FAAS_APPS_DOMAIN=" + testDomain,
-			"DATABASE_URL=" + dbURL,
-			"PATH=" + os.Getenv("PATH"),
-			"HOME=" + os.Getenv("HOME"),
-		}
-		h.procs = append(h.procs, startProc(t, bin, "apid", env))
-		h.APIDURL = "http://" + addr
-		waitTCP(t, addr, 10*time.Second)
+		startAPID(t, h, bin, dbURL)
 	}
 
 	if which&Schedd != 0 {
@@ -249,6 +239,72 @@ const (
 const All = APID | Schedd | VMMD | Imaged | Gatewayd
 
 const testDomain = "apps.test.example"
+
+// StartWithEnv is the G2-aware entrypoint used by the secrets e2e:
+// the test wants apid to load a specific host.age.pub (FAAS_HOST_AGE_
+// RECIPIENT_PATH) so it can seal. StartWithEnv boots JUST apid — not
+// the metal-only daemons — with the extra env appended.
+//
+// Use this when the test isn't metal and only needs apid under
+// configuration control (which is most of the quota-style e2es; quota
+// only needs apid, no schedd/vmmd).
+func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []string) *Harness {
+	t.Helper()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatalf("e2etest: mkdir bin: %v", err)
+	}
+	appsRoot := filepath.Join(tmp, "apps")
+	if err := os.MkdirAll(appsRoot, 0o755); err != nil {
+		t.Fatalf("e2etest: mkdir apps: %v", err)
+	}
+	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot}
+
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres:///faas?host=/run/postgresql&user=faas"
+	}
+	if schema := pgtest.SchemaOf(pool); schema != "" {
+		dbURL = injectSearchPath(dbURL, schema)
+	}
+	buildBinaries(t, bin)
+
+	if which&APID != 0 {
+		addr := freeTCPAddr(t)
+		env := []string{
+			"FAAS_APID_LISTEN=" + addr,
+			"FAAS_APPS_DOMAIN=" + testDomain,
+			"DATABASE_URL=" + dbURL,
+			"PATH=" + os.Getenv("PATH"),
+			"HOME=" + os.Getenv("HOME"),
+		}
+		env = append(env, extraEnv...)
+		h.procs = append(h.procs, startProc(t, bin, "apid", env))
+		h.APIDURL = "http://" + addr
+		waitTCP(t, addr, 10*time.Second)
+	}
+	return h
+}
+
+// startAPID boots apid under Start()'s shared schedule. Kept for the
+// inner-loop case where Start() already handled the other daemons but
+// apid wasn't part of the Which mask (the existing quota_e2e relies on
+// this — Start with APID and no extras is fine).
+func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
+	t.Helper()
+	addr := freeTCPAddr(t)
+	env := []string{
+		"FAAS_APID_LISTEN=" + addr,
+		"FAAS_APPS_DOMAIN=" + testDomain,
+		"DATABASE_URL=" + dbURL,
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+	}
+	h.procs = append(h.procs, startProc(t, bin, "apid", env))
+	h.APIDURL = "http://" + addr
+	waitTCP(t, addr, 10*time.Second)
+}
 
 // stop SIGTERMs every daemon, waits up to 5s, then SIGKILL stragglers. Owns
 // the single cmd.Wait per process — startProc must not call it (would race).

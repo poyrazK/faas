@@ -219,6 +219,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/keys", s.auth(s.createKey))
 	mux.HandleFunc("DELETE /v1/keys/{id}", s.auth(s.deleteKey))
 
+	// Customer secrets (spec §11/G2). Plaintext VALUE flows through PUT
+	// over TLS; sealed server-side by handlers_secrets.go.
+	mux.HandleFunc("GET /v1/apps/{slug}/secrets", s.auth(s.listSecrets))
+	mux.HandleFunc("PUT /v1/apps/{slug}/secrets/{key}", s.auth(s.setSecret))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/secrets/{key}", s.auth(s.deleteSecret))
+
 	// Usage.
 	mux.HandleFunc("GET /v1/usage", s.auth(s.getUsage))
 	mux.HandleFunc("GET /v1/usage/summary", s.auth(s.usageSummary))
