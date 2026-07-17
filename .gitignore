@@ -19,4 +19,8 @@ vmlinux-*
 .DS_Store
 .idea/
 .vscode/
-init
+
+# Stray binary at repo root from `make metal-lima` / local guest-init
+# build artifact (Mach-O arm64 ~5MB). Distinct from guest/init/, which
+# is the directory holding the actual guest-init source.
+/init

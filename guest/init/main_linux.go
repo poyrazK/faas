@@ -168,10 +168,8 @@ func runBuild(m api.BuildManifest) error {
 	err := cmd.Run()
 
 	exitCode := 0
-	fc := ""
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			fc = "FailureTimeout"
 			exitCode = 124
 		} else {
 			var ee *exec.ExitError
@@ -182,9 +180,7 @@ func runBuild(m api.BuildManifest) error {
 			}
 		}
 	}
-	if fc == "" {
-		fc = classify(exitCode)
-	}
+	fc := classify(exitCode)
 	return writeAndPoweroff(m, err, tailOf(buf.Bytes(), m.LogTailBytes))
 }
 
