@@ -78,6 +78,11 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root
 leakcheck: ## Assert zero leaked netns/TAPs/jail uids/cgroups after tests
 	@bash deploy/scripts/leakcheck.sh
 
+.PHONY: metal-lima
+metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see deploy/lima/README.md)
+	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false
+	limactl shell --workdir "$(CURDIR)" faas-metal sudo ./deploy/lima/run-metal.sh
+
 .PHONY: lint
 lint: ## golangci-lint via go tool (matches CI version v2.4.0)
 	@$(GO) tool golangci-lint run

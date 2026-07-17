@@ -140,15 +140,39 @@ func buildBusyboxExt4(dst string) error {
 		}
 	}
 
-	// /bin/busybox from PATH, then symlink-bake /bin/sh + /init to it
-	// (busybox auto-dispatches by argv[0]).
+	// /bin/busybox from PATH (executable), then symlink-bake /bin/sh + /init to
+	// it (busybox auto-dispatches by argv[0]).
 	if err := bbCopyFile(bb, filepath.Join(work, "bin/busybox")); err != nil {
 		return err
 	}
+	// Absolute targets: a relative "bin/busybox" symlink placed at /bin/sh
+	// resolves to /bin/bin/busybox and the guest panics with init ENOENT.
 	for _, name := range []string{"bin/sh", "bin/ash", "init"} {
-		if err := os.Symlink("bin/busybox", filepath.Join(work, name)); err != nil {
+		if err := os.Symlink("/bin/busybox", filepath.Join(work, name)); err != nil {
 			return err
 		}
+	}
+
+	// /sbin/init is what the cold-boot cmdline execs (config.go: init=/sbin/init),
+	// and the platform's readiness probe (vmm.go waitReady) polls the guest on
+	// :8080. Make PID 1 a tiny script that serves an empty tree there so the TCP
+	// accept succeeds — the kernel ip= autoconfig already brought eth0 up on
+	// 10.0.0.2 (ADR-009), so httpd binding 0.0.0.0:8080 is reachable.
+	initScript := "#!/bin/sh\nexec /bin/busybox httpd -f -p 8080 -h /\n"
+	if err := os.WriteFile(filepath.Join(work, "sbin/init"), []byte(initScript), 0o755); err != nil {
+		return err
+	}
+
+	// Pre-size the output file: modern e2fsprogs (≥1.47) refuses to create a
+	// filesystem in a not-yet-existing file without an explicit block count.
+	// 64 MiB is ample for a static busybox skeleton (~1 MB).
+	if f, err := os.Create(dst); err != nil {
+		return fmt.Errorf("create ext4 file: %w", err)
+	} else if err := f.Truncate(64 << 20); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("size ext4 file: %w", err)
+	} else if err := f.Close(); err != nil {
+		return fmt.Errorf("close ext4 file: %w", err)
 	}
 
 	// mkfs.ext4 -d <skel> takes a files-as-initramfs source.
@@ -161,12 +185,13 @@ func buildBusyboxExt4(dst string) error {
 	return nil
 }
 
-// bbCopyFile copies src->dst preserving nothing; perms become 0644.
+// bbCopyFile copies src->dst as an executable (0755) — the busybox binary must
+// be runnable for the kernel to exec it as init.
 // Renamed from copyFile to avoid colliding with pkg/fcvm/vmm.go:341.
 func bbCopyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0o644)
+	return os.WriteFile(dst, data, 0o755)
 }

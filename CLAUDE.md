@@ -20,10 +20,31 @@ make test           # unit tests, must pass on any machine, no KVM needed
 make test-metal     # integration tests tagged //go:build metal — needs KVM + root
 make leakcheck      # asserts zero leaked netns/TAPs/jail uids/cgroups after tests
 make lint           # golangci-lint + custom checks (see Conventions)
+make metal-lima     # run the metal tests locally on an M3+ Mac via Lima nested KVM
 ```
 
 Go ≥ 1.23. One binary per `cmd/` dir. If a change touches VM lifecycle, run
 `test-metal` and `leakcheck` before calling it done.
+
+### Developing the metal side on a Mac (no EX44 needed)
+
+Firecracker needs `/dev/kvm`, which macOS doesn't provide — but on **Apple
+Silicon M3+ / macOS 15+** you can run the `//go:build metal` tests locally through
+Lima nested virtualization. `make metal-lima` boots an arm64 Linux guest (config:
+`deploy/lima/faas-metal.yaml`) that gets its own `/dev/kvm` and runs aarch64
+Firecracker, then executes the metal suite via `deploy/lima/run-metal.sh`. Full
+setup + caveats: [`deploy/lima/README.md`](deploy/lima/README.md).
+
+This is the **default local loop** for anything touching `pkg/fcvm`, `pkg/netns`,
+`vmmd`, or `builderd`'s builder microVMs — write the metal code behind the build
+tag, iterate with `make metal-lima`, and you never touch the box until final
+sign-off. **Caveat (do not forget):** the guest is **arm64**, the production EX44
+is **x86_64**. This validates the arch-agnostic VM lifecycle logic and the
+Firecracker boot path — it does NOT produce production x86_64 snapshots or
+exercise the pinned x86_64 kernel. **The EX44 remains the source of truth for the
+§14 metal acceptance gates**; a green `make metal-lima` is necessary, not
+sufficient. On an older Mac (pre-M3) nested virt isn't granted; fall back to the
+EX44 or a cloud KVM box.
 
 ## Repo map
 

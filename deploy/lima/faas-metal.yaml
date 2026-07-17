@@ -1,0 +1,112 @@
+# faas-metal — a local Firecracker metal loop on macOS via Lima nested KVM.
+#
+# WHY: the platform's metal code (firecracker/jailer VM lifecycle) is gated
+# behind `//go:build metal` and needs /dev/kvm, which macOS does not provide.
+# On Apple Silicon M3+ / macOS 15+ the `vz` backend can grant *nested*
+# virtualization, so an arm64 Linux guest gets its own /dev/kvm and can run
+# aarch64 Firecracker. This gives a fast local loop for `make test-metal` /
+# `make leakcheck` without the Hetzner EX44.
+#
+# CAVEAT (read this): the guest is **arm64**; the production EX44 is **x86_64**.
+# This validates the arch-agnostic lifecycle logic (netns/jailer/fcvm/manager)
+# and the Firecracker boot path — it does NOT produce production x86_64
+# snapshots or exercise the pinned x86_64 kernel. The EX44 remains the source
+# of truth for the metal acceptance gates (spec §14). Firecracker + kernel here
+# are fetched WITHOUT the pinned-checksum discipline used in the ansible
+# firecracker role — acceptable for a throwaway dev VM, never for the box.
+#
+# USAGE:
+#   limactl start deploy/lima/faas-metal.yaml     # first run provisions (~few min)
+#   limactl shell faas-metal                       # drop into the guest
+#   # inside the guest, from your repo checkout under $HOME:
+#   sudo -E env "PATH=$PATH" ./deploy/lima/run-metal.sh
+#
+# Delete with: limactl delete -f faas-metal
+
+vmType: vz
+arch: aarch64
+nestedVirtualization: true
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: aarch64
+
+cpus: 4
+memory: "6GiB"
+disk: "40GiB"
+
+# Mount the host home read-write so the repo checkout is reachable and
+# `go build` / `make` run against the live worktree.
+mounts:
+  - location: "~"
+    writable: true
+
+# Fail fast with a clear message if nested virt was not granted (older chips,
+# macOS < 15, or the vz backend refusing it) rather than failing deep in a test.
+probes:
+  - description: "nested KVM present (/dev/kvm)"
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      if ! timeout 60s bash -c "until test -e /dev/kvm; do sleep 2; done"; then
+        echo >&2 "/dev/kvm never appeared — nested virtualization was not granted."
+        echo >&2 "Needs Apple Silicon M3+ and macOS 15+. Fall back to the EX44."
+        exit 1
+      fi
+    hint: |
+      /dev/kvm is missing in the guest. Nested virtualization requires an
+      M3-or-later Mac on macOS 15+. Use the EX44 (or a cloud KVM box) instead.
+
+provision:
+  # System setup: build toolchain, mkfs.ext4, iproute2, busybox (metal-test
+  # rootfs fallback), kvm group, Go 1.25, and aarch64 Firecracker + kernel.
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -y
+      apt-get install -y --no-install-recommends \
+        build-essential e2fsprogs iproute2 iptables git curl ca-certificates \
+        busybox-static jq
+
+      # Let the default (non-root) Lima user open /dev/kvm without sudo.
+      # The Lima user is not necessarily uid 1000 (it mirrors the host uid),
+      # so pick the first regular login user rather than assuming 1000.
+      groupadd -f kvm || true
+      DEFAULT_USER="$(getent passwd | awk -F: '$3>=1000 && $3<65000 {print $1; exit}')" || true
+      usermod -aG kvm "${DEFAULT_USER:-ubuntu}" || true
+
+      # Go 1.25.7 (matches go.mod), arm64.
+      GO_VER=go1.25.7
+      if ! /usr/local/go/bin/go version 2>/dev/null | grep -q "$GO_VER"; then
+        curl -fsSL "https://go.dev/dl/${GO_VER}.linux-arm64.tar.gz" -o /tmp/go.tgz
+        rm -rf /usr/local/go
+        tar -C /usr/local -xzf /tmp/go.tgz
+        rm -f /tmp/go.tgz
+      fi
+      ln -sf /usr/local/go/bin/go /usr/local/bin/go
+      ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+
+      # aarch64 Firecracker + jailer (repo pins v1.7.0; dev VM, unpinned checksum).
+      FC_VER=v1.7.0
+      mkdir -p /usr/local/bin /srv/fc/base /srv/fc/jail
+      if [ ! -x "/usr/local/bin/firecracker-${FC_VER}" ]; then
+        curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VER}/firecracker-${FC_VER}-aarch64.tgz" -o /tmp/fc.tgz
+        tar -C /tmp -xzf /tmp/fc.tgz
+        install -m0755 "/tmp/release-${FC_VER}-aarch64/firecracker-${FC_VER}-aarch64" "/usr/local/bin/firecracker-${FC_VER}"
+        install -m0755 "/tmp/release-${FC_VER}-aarch64/jailer-${FC_VER}-aarch64" "/usr/local/bin/jailer-${FC_VER}"
+        rm -rf /tmp/fc.tgz "/tmp/release-${FC_VER}-aarch64"
+      fi
+      ln -sf "/usr/local/bin/firecracker-${FC_VER}" /usr/local/bin/firecracker
+      ln -sf "/usr/local/bin/jailer-${FC_VER}" /usr/local/bin/jailer
+
+      # aarch64 guest kernel (6.1.x per spec §4.4) from the Firecracker CI bucket.
+      KERNEL=/srv/fc/base/vmlinux-6.1.128
+      if [ ! -f "$KERNEL" ]; then
+        curl -fsSL "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/aarch64/vmlinux-6.1.128" -o "$KERNEL"
+      fi
+
+      firecracker --version | head -1
+      go version
