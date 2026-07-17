@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"io"
 	"testing"
 )
 
@@ -37,9 +36,4 @@ func gzTar(t *testing.T, files map[string]string) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
-}
-
-// ioNopCloser wraps a byte slice as io.ReadCloser.
-func ioNopCloser(b []byte) io.ReadCloser {
-	return io.NopCloser(bytes.NewReader(b))
 }

@@ -75,7 +75,7 @@ func CreateBuildDrive1(ctx context.Context, dest string, m api.BuildManifest) er
 	if err != nil {
 		return fmt.Errorf("builderd: mktemp mount: %w", err)
 	}
-	defer os.RemoveAll(mp)
+	defer func() { _ = os.RemoveAll(mp) }()
 
 	if out, err := exec.CommandContext(ctx, "mount", "-o", "loop,rw", dest, mp).CombinedOutput(); err != nil {
 		return fmt.Errorf("builderd: loopback mount: %w (%s)", err, string(out))

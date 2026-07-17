@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"syscall"
 )
 
 // Egress policy for the OCI puller (spec §11). Tenant egress is fenced by
@@ -138,13 +137,3 @@ func ipAllowed(ip netip.Addr) bool {
 // ErrEgressDenied is returned (wrapped) when a dial target violates the
 // §11 policy. Callers can errors.Is against it.
 var ErrEgressDenied = errors.New("oci: egress denied")
-
-// isEgressOnlyErr reports whether err comes from the kernel refusing an
-// address that our policy also refuses (defensive: a transport that runs
-// over a wrapped socket might surface EHOSTUNREACH instead of our typed
-// error).
-func isEgressOnlyErr(err error) bool {
-	return errors.Is(err, syscall.EHOSTUNREACH) ||
-		errors.Is(err, syscall.ENETUNREACH) ||
-		errors.Is(err, syscall.EACCES)
-}

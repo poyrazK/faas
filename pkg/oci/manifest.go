@@ -22,18 +22,9 @@ type Descriptor struct {
 // after the registry has resolved it. The two media types we accept produce
 // the same Go shape — a list of layers plus one config descriptor.
 type Manifest struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	MediaType     string `json:"mediaType"`
-	Config        Descriptor
-	Layers        []Descriptor
-}
-
-// ociManifest is the wire shape. Unmarshalled once, then we copy the fields
-// we care about into Manifest (keeps the public surface minimal).
-type ociManifest struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	MediaType     string `json:"mediaType"`
-	Config        Descriptor
+	SchemaVersion int          `json:"schemaVersion"`
+	MediaType     string       `json:"mediaType"`
+	Config        Descriptor   `json:"config"`
 	Layers        []Descriptor `json:"layers"`
 }
 
@@ -83,7 +74,7 @@ func (c *RegistryClient) PullManifest(ctx context.Context, ref string) (Manifest
 		return Manifest{}, fmt.Errorf("oci: %s is a manifest list; pin a digest", r.String())
 	}
 
-	var doc ociManifest
+	var doc Manifest
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&doc); err != nil {
 		return Manifest{}, fmt.Errorf("oci: decode manifest %s: %w", r.String(), err)
 	}
@@ -101,12 +92,7 @@ func (c *RegistryClient) PullManifest(ctx context.Context, ref string) (Manifest
 			return Manifest{}, fmt.Errorf("oci: manifest %s layer %d: %w", r.String(), i, err)
 		}
 	}
-	return Manifest{
-		SchemaVersion: doc.SchemaVersion,
-		MediaType:     doc.MediaType,
-		Config:        doc.Config,
-		Layers:        doc.Layers,
-	}, nil
+	return doc, nil
 }
 
 // PullBlob streams the bytes of a blob (layer or config) referenced by

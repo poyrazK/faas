@@ -19,3 +19,4 @@ vmlinux-*
 .DS_Store
 .idea/
 .vscode/
+init

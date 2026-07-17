@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -172,10 +173,13 @@ func runBuild(m api.BuildManifest) error {
 		if ctx.Err() == context.DeadlineExceeded {
 			fc = "FailureTimeout"
 			exitCode = 124
-		} else if ee, ok := err.(*exec.ExitError); ok {
-			exitCode = ee.ExitCode()
 		} else {
-			exitCode = 1
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				exitCode = ee.ExitCode()
+			} else {
+				exitCode = 1
+			}
 		}
 	}
 	if fc == "" {
@@ -215,15 +219,15 @@ func tailOf(data []byte, n int) string {
 // surface a fallback exit-code classification via the watch-dog capture.
 func writeAndPoweroff(m api.BuildManifest, runErr error, logTail string) error {
 	exitCode := 0
-	fc := ""
 	if runErr != nil {
-		if ee, ok := runErr.(*exec.ExitError); ok {
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) {
 			exitCode = ee.ExitCode()
 		} else {
 			exitCode = 1
 		}
-		fc = classify(exitCode)
 	}
+	fc := classify(exitCode)
 	done := api.BuildDone{
 		SchemaVersion: 1,
 		BuildID:       m.BuildID,

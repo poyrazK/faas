@@ -47,11 +47,10 @@ type JailerVMM struct {
 // started in startJailer; reads in DestroyWithExport block until the watchdog
 // signals done via the cond.
 type instanceRecord struct {
-	cmd       *exec.Cmd
-	exportDir string         // empty for app VMs (no export)
-	exited    bool           // set by the watchdog when cmd.Wait completes
-	exitCode  int            // captured from cmd.Wait's ProcessState.ExitCode()
-	done      chan struct{}  // closed by the watchdog; readers <-done to wake
+	cmd      *exec.Cmd
+	exited   bool          // set by the watchdog when cmd.Wait completes
+	exitCode int           // captured from cmd.Wait's ProcessState.ExitCode()
+	done     chan struct{} // closed by the watchdog; readers <-done to wake
 }
 
 // NewJailerVMM constructs a JailerVMM. readyTimeout of 0 defaults to 30s (the
@@ -382,13 +381,13 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) error {
 	if err != nil {
 		return fmt.Errorf("mkdir mountpoint: %w", err)
 	}
-	defer os.RemoveAll(mp)
+	defer func() { _ = os.RemoveAll(mp) }()
 
 	// mount -o loop,ro — read-only is enough; the VM is dead by this point.
 	if out, err := exec.Command("mount", "-o", "loop,ro", drive1, mp).CombinedOutput(); err != nil {
 		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
 	}
-	defer exec.Command("umount", mp).Run()
+	defer func() { _ = exec.Command("umount", mp).Run() }()
 
 	// build-done.json is the canonical manifest builderd reads.
 	srcDone := filepath.Join(mp, "etc", "faas", "build-done.json")
