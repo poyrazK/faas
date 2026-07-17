@@ -208,7 +208,7 @@ func (s *Server) WebhookLoopbackHandler() http.Handler {
 		respBody, _ := json.Marshal(struct {
 			Status       string `json:"status"`
 			DeploymentID string `json:"deployment_id"`
-		}{Status: "queued", DeploymentID: depID})
+		}{Status: statusQueued, DeploymentID: depID})
 		_, _ = w.Write(respBody)
 	})
 }

@@ -7,18 +7,20 @@
 // edge). It talks to apid over gRPC on /run/faas/githubd.sock
 // (ADR-015 unix-socket DAC; apid is the only caller in v1.0).
 //
-// Slice 7 wires the daemon body: opens Postgres (read-only via the
-// pgx pool, for the bindings table that slice 8 adds), starts the
-// gRPC server on /run/faas/githubd.sock, starts the loopback HTTP
-// webhook listener on 127.0.0.1:8083, and serves both until ctx
-// cancels. OAuth + token-cache + Checks writer land in slice 8.
+// Slice 7 wires the daemon body (gRPC + HTTP listeners). Slice 8
+// arms the OAuth + token-cache + Checks path: builds an AppAuth
+// from /etc/faas/secrets/github-app.{id,pem}, a TokenCache for
+// installation access tokens, a ChecksAPI for the Checks writer,
+// and a RealService that implements the full gRPC contract.
 package main
 
 import (
 	"context"
-	"errors"
+	"crypto/rsa"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,14 +30,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// runDeps is the DI seam so tests can swap openDB / listen without
-// touching Postgres or /run/faas.
+// runDeps is the DI seam so tests can swap openDB / listen /
+// AppAuth / readKeyPEM without touching Postgres, /run/faas, or
+// /etc/faas/secrets.
 type runDeps struct {
-	openDB func(context.Context, string) (*pgxpool.Pool, error)
+	openDB      func(context.Context, string) (*pgxpool.Pool, error)
+	readAppID   func() string
+	readKeyPEM  func() ([]byte, error)
+	httpClient  func() githubd.HTTPClient
+	now         func() time.Time
 }
 
 func defaultDeps() runDeps {
-	return runDeps{openDB: db.Open}
+	return runDeps{
+		openDB:     db.Open,
+		readAppID:  func() string { return os.Getenv("FAAS_GITHUB_APP_ID") },
+		readKeyPEM: readKeyPEMDefault,
+		httpClient: func() githubd.HTTPClient { return http.DefaultClient },
+		now:        time.Now,
+	}
 }
 
 func main() {
@@ -53,26 +66,48 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	defer pool.Close()
 
-	// The bindings store is read-only in slice 7 — slice 8 adds
-	// the table that backs it. The noop placeholder keeps the
-	// daemon healthy even before slice 8 lands so deployment of
-	// slice 7 doesn't have to wait for schema work.
-	svc := githubd.NewService(log)
-	svc.Bindings = noopBindings{}
-	// CreateDeployment and WriteCheck are nil in slice 7 — the
-	// HTTP handler refuses every webhook today (secret is nil
-	// until slice 8 wires the per-account secret store). This is
-	// "closed by default" — slice 7 ships the wiring, slice 8
-	// arms it.
+	// Slice 7 Service skeleton (inbound webhook path).
+	webhookSvc := githubd.NewService(log)
+	webhookSvc.Bindings = noopBindings{}
+
+	// Slice 8 RealService (OAuth + Checks). Auth may be nil if
+	// the GitHub App credentials aren't provisioned — the daemon
+	// stays up but every OAuth / Checks call returns an error.
+	// This is "fail-closed but stay-up": the webhook path
+	// continues to work for any installation that's already
+	// configured its webhook out-of-band.
+	var realSvc *githubd.RealService
+	if appID := deps.readAppID(); appID != "" {
+		keyPEM, kerr := deps.readKeyPEM()
+		if kerr != nil {
+			log.Warn("githubd: read app private key", "err", kerr)
+		} else {
+			auth, aerr := githubd.NewAppAuth(appID, keyPEM, deps.httpClient())
+			if aerr != nil {
+				log.Warn("githubd: app auth init", "err", aerr)
+			} else {
+				tokens := githubd.NewTokenCache(auth, 5*time.Minute)
+				checks := githubd.NewChecksAPI(tokens, deps.httpClient())
+				realSvc = githubd.NewRealService(auth, tokens, checks)
+				log.Info("githubd: OAuth + Checks wired", "app_id", appID)
+			}
+		}
+	} else {
+		log.Info("githubd: FAAS_GITHUB_APP_ID unset; OAuth + Checks disabled (webhook path only)")
+	}
+
+	// The gRPC server hands out the RealService (full slice 8
+	// surface) when available, else falls back to a Unimplemented
+	// stub so the gRPC plumbing stays healthy even without OAuth.
+	gRPCImpl := githubdgrpc.Service(githubdgrpc.UnimplementedService{})
+	if realSvc != nil {
+		gRPCImpl = realSvc
+	}
 
 	srv := &githubd.Server{
-		Service: svc,
-		Log:     log,
-		GRPCServer: githubdgrpc.New(
-			grpcAdapter(svc),
-			wire.NewOpsMetrics("githubd"),
-			log,
-		),
+		Service:    webhookSvc,
+		Log:        log,
+		GRPCServer: githubdgrpc.New(gRPCImpl, wire.NewOpsMetrics("githubd"), log),
 	}
 	cleanup, errc, err := srv.Start(ctx)
 	if err != nil {
@@ -84,6 +119,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer cancel()
 		_ = cleanup(shutdownCtx)
 	}()
+
+	// Start the token-cache janitor if RealService is armed.
+	if realSvc != nil && realSvc.Tokens != nil {
+		stopJanitor := realSvc.Tokens.StartJanitor(ctx)
+		defer stopJanitor()
+	}
 
 	select {
 	case err := <-errc:
@@ -103,33 +144,28 @@ func (noopBindings) GetAppBinding(_ context.Context, _, _ string) (githubdgrpc.A
 	return githubdgrpc.AppBinding{}, nil
 }
 
-// grpcAdapter builds the gRPC Service implementation. Slice 7
-// returns Unimplemented for every method except CreateDeploymentFromPush
-// and WriteCheck (which the inbound webhook path doesn't use; they
-// are no-op stubs so the gRPC surface stays compilable).
-func grpcAdapter(svc *githubd.Service) githubdgrpc.Service {
-	return &grpcServiceAdapter{svc: svc}
+// readKeyPEMDefault reads the GitHub App private key from
+// FAAS_GITHUB_APP_KEY_PATH (default /etc/faas/secrets/github-app.pem,
+// mode 0400 per spec §11). Returns an error if the file is missing
+// or unreadable.
+func readKeyPEMDefault() ([]byte, error) {
+	path := os.Getenv("FAAS_GITHUB_APP_KEY_PATH")
+	if path == "" {
+		path = "/etc/faas/secrets/github-app.pem"
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // path is operator-controlled
+	if err != nil {
+		return nil, fmt.Errorf("githubd: read app key %q: %w", path, err)
+	}
+	return data, nil
 }
 
-type grpcServiceAdapter struct {
-	githubdgrpc.UnimplementedService
+// Compile-time guards: keep imports stable for tests / future slices.
+var (
+	_ = rsa.PrivateKey{}
+	_ = depsAdapter{}
+)
 
-	svc *githubd.Service
-}
-
-func (a *grpcServiceAdapter) CreateDeploymentFromPush(repoFullName, ref, commitSHA, pusher string) (string, string, error) {
-	a.svc.Log.Info("githubd grpc CreateDeploymentFromPush (slice-7 stub)",
-		"repo", repoFullName, "ref", ref, "sha", commitSHA, "pusher", pusher)
-	return "", "", nil
-}
-
-func (a *grpcServiceAdapter) WriteCheck(repoFullName, commitSHA string, phase githubdgrpc.CheckPhase, _, summary string) error {
-	a.svc.Log.Info("githubd grpc WriteCheck (slice-7 stub)",
-		"repo", repoFullName, "sha", commitSHA, "phase", phase, "summary", summary)
-	return nil
-}
-
-// errNoop is reserved for the closed-by-default secret path.
-var errNoop = errors.New("githubd: not configured")
-
-var _ = errNoop // reserved for slice 8 wiring
+// depsAdapter is reserved for the test seam in pkg/githubd tests
+// that import cmd/githubd internals.
+type depsAdapter struct{}
