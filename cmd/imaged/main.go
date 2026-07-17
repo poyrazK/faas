@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -52,7 +53,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	puller := oci.NewRegistryClient()
 
 	notifier := dbNotifier{pool: pool}
-	h := imaged.New(store, notifier, puller, builder, log)
+	guestInitPath := envOr("FAAS_GUEST_INIT", "./init")
+	appsRoot := envOr("FAAS_APPS_ROOT", "/var/lib/faas/apps")
+	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log)
 
 	channels := []string{
 		db.NotifyDeploymentChanged,
@@ -99,3 +102,11 @@ func (d dbNotifier) Notify(ctx context.Context, channel, payload string) error {
 
 // silence unused-import in builds where rootfs isn't referenced yet.
 var _ = time.Now
+
+// envOr returns the value of env key, or fallback when unset/empty.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}

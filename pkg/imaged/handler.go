@@ -10,8 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"path/filepath"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
@@ -24,6 +27,13 @@ type Notifier interface {
 	Notify(ctx context.Context, channel, payload string) error
 }
 
+// LayerBuilder is the slice of rootfs.Builder that imaged uses. Defining it
+// here keeps the production *rootfs.Builder seamless while letting tests
+// substitute a fake without dragging in a host mkfs binary.
+type LayerBuilder interface {
+	Build(ctx context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error)
+}
+
 // Handler is the imaged orchestrator. It owns the transition walk that
 // advances a deployment row through the build pipeline until a snapshot row
 // exists, at which point schedd picks it up on the next reaper tick.
@@ -31,17 +41,32 @@ type Handler struct {
 	store   state.Store
 	notif   Notifier
 	oci     oci.Puller
-	builder *rootfs.Builder
+	builder LayerBuilder
 	log     *slog.Logger
+
+	// guestInitPath is the absolute path to the static guest-init binary
+	// injected as /sbin/init in every per-app ext4 (spec §4.8). Wired from
+	// cmd/imaged so tests can point at a temp file.
+	guestInitPath string
+	// appsRoot is the directory under which per-app layer-{deployment}.ext4
+	// files are written. Defaults to FAAS_APPS_ROOT or /var/lib/faas/apps.
+	appsRoot string
 }
 
 // New returns a Handler. The OCI puller is injected so tests can substitute
-// an in-process fake; rootfs.Builder is the same one wired through cmd/imaged.
-func New(store state.Store, notif Notifier, puller oci.Puller, b *rootfs.Builder, log *slog.Logger) *Handler {
+// an in-process fake; the builder is the same *rootfs.Builder wired through
+// cmd/imaged (or a fake for tests). guestInitPath and appsRoot are required:
+// guest-init must exist at the path (Builder.Build asserts it), and appsRoot
+// must be writable for the production path.
+func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
+	guestInitPath, appsRoot string, log *slog.Logger) *Handler {
 	if puller == nil {
 		puller = oci.DefaultPuller{}
 	}
-	return &Handler{store: store, notif: notif, oci: puller, builder: b, log: log}
+	return &Handler{
+		store: store, notif: notif, oci: puller, builder: b,
+		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log,
+	}
 }
 
 // HandleNotification dispatches a single pg_notify payload. The Loop in
@@ -124,9 +149,20 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	if err != nil {
 		return fmt.Errorf("imaged: load deployment: %w", err)
 	}
+	// Retry/idempotency guard: pg_notify may redeliver; once we've transitioned
+	// past `pending` we don't redo the build (the state machine CHECK in
+	// UpdateDeploymentStatus would refuse the transition anyway, but a clean
+	// early return here avoids loading the deployment row twice).
+	if dep.Status != state.DeployPending {
+		return nil
+	}
 	app, err := h.store.AppByID(ctx, p.AppID)
 	if err != nil {
 		return fmt.Errorf("imaged: load app: %w", err)
+	}
+	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		return fmt.Errorf("imaged: load account: %w", err)
 	}
 
 	if err := h.transition(ctx, dep.ID, state.DeployBuilding, ""); err != nil {
@@ -141,9 +177,64 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	if err := h.transition(ctx, dep.ID, state.DeployImaging, ""); err != nil {
 		return err
 	}
-	// rootfs.Builder would write the per-app ext4 layer here (M5 hook);
-	// for now we emit a log marker so SSE consumers see the stage advance.
-	h.log.Info("imaged: build app layer", "app", app.Slug, "digest", digest)
+
+	// Cheap fail-fast: fetch only the image-config blob (small) and validate
+	// before streaming any layer blobs. A no-Cmd image would otherwise waste
+	// dozens of MB of layer pulls (review issue #6).
+	imageCfg, err := h.oci.PullImageConfig(ctx, digest)
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull config: "+err.Error())
+		return fmt.Errorf("imaged: pull image config: %w", err)
+	}
+
+	// App config (per-field override) wins over image config per the deploy
+	// contract. For now the only per-deploy override is Entrypoint, since the
+	// deployments table has no structured config column yet — richer overrides
+	// arrive with M5.1 / a new manifest jsonb column.
+	manifest := manifestFromImageConfig(imageCfg)
+	if dep.Handler != "" {
+		manifest.Entrypoint = []string{dep.Handler}
+	}
+	if err := manifest.Validate(); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "manifest invalid: "+err.Error())
+		return fmt.Errorf("imaged: validate manifest: %w", err)
+	}
+
+	// Validation passed — now stream the layer blobs. Each ReadCloser MUST be
+	// closed by the defer below; we re-type each as an io.Reader for
+	// rootfs.Builder (BuildInput.Layers is []io.Reader).
+	pulled, err := h.oci.PullLayers(ctx, digest)
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull layers: "+err.Error())
+		return fmt.Errorf("imaged: pull layers: %w", err)
+	}
+	defer func() {
+		for _, r := range pulled.Layers {
+			_ = r.Close()
+		}
+	}()
+
+	outImage := filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
+	result, err := h.builder.Build(ctx, rootfs.BuildInput{
+		Layers:        layersAsReaders(pulled.Layers),
+		Manifest:      manifest,
+		GuestInitPath: h.guestInitPath,
+		Plan:          acct.Plan,
+		OutImage:      outImage,
+	})
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
+		return fmt.Errorf("imaged: build app layer: %w", err)
+	}
+
+	// Stamp the row so schedd's cold-boot on snapshot_prime knows where drive1
+	// lives (spec §4.6, ADR-018). Stamped AFTER the layer file is written —
+	// SetDeploymentRootfs is the source of truth for "this deployment has an
+	// ext4 at this path"; the bytes match the file on disk.
+	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
+		return fmt.Errorf("imaged: stamp rootfs: %w", err)
+	}
 
 	if err := h.transition(ctx, dep.ID, state.DeploySnapshotting, ""); err != nil {
 		return err
@@ -156,6 +247,49 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 		return fmt.Errorf("imaged: notify snapshot_prime: %w", err)
 	}
 	return nil
+}
+
+// manifestFromImageConfig maps an OCI ImageConfig to an api.AppManifest. The
+// Cmd→Entrypoint mapping is per spec §4.6; WorkingDir + Env carry across
+// unchanged. Validation is left to AppManifest.Validate so it can emit
+// consistent error codes. Per-deploy overrides apply on top of this in
+// handleDeployment.
+func manifestFromImageConfig(cfg oci.ImageConfig) api.AppManifest {
+	manifest := api.AppManifest{
+		WorkingDir: cfg.WorkingDir,
+		Env:        cloneEnv(cfg.Env),
+	}
+	if len(cfg.Cmd) > 0 {
+		manifest.Entrypoint = append(manifest.Entrypoint, cfg.Cmd...)
+	}
+	return manifest
+}
+
+// cloneEnv returns a defensive copy of the env map. The caller (handleDeployment
+// or its caller) may apply per-deploy overrides without mutating the shared
+// ImageConfig the puller returned.
+func cloneEnv(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// layersAsReaders returns a fresh []io.Reader borrowing each ReadCloser's
+// Read side. The rootfs.Builder consumes via Read; the defer in the caller
+// still owns the Close side. Treating the same ReadCloser as both a Reader
+// (to Builder) and a Closer (in defer) is the streaming idiom Builder.Build
+// already expects — BuildInput.Layers is []io.Reader.
+func layersAsReaders(rcs []io.ReadCloser) []io.Reader {
+	out := make([]io.Reader, len(rcs))
+	for i, rc := range rcs {
+		out[i] = rc
+	}
+	return out
 }
 
 // handleSnapshotWritten records the snapshot row schedd's Prime/Park produced and

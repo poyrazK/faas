@@ -429,6 +429,19 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	return m.UpdateDeploymentStatus(ctx, id, DeployLive, "")
 }
 
+func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path string, bytes int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	d.RootfsPath = path
+	d.RootfsBytes = bytes
+	m.deployments[id] = d
+	return nil
+}
+
 // --- Builds -----------------------------------------------------------------
 
 func (m *MemStore) CreateBuild(_ context.Context, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {

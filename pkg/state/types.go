@@ -153,6 +153,11 @@ type Deployment struct {
 	SourceBytes int64
 	Handler     string // function handler (kind=tarball when type=function)
 	LogPath     string // build log spool path
+	// RootfsPath / RootfsBytes are stamped by imaged after the per-app ext4 layer
+	// is built (spec §4.6, drive1). schedd's prime handshake reads this row so
+	// it can attach drive1 from the right path on the cold boot (ADR-018).
+	RootfsPath  string
+	RootfsBytes int64
 	Status      DeploymentStatus
 	Error       string
 	CreatedAt   time.Time
