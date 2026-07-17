@@ -1,0 +1,25 @@
+# ADR-012 · `githubd` daemon for GitHub App integration
+
+- **Status:** accepted
+- **Date:** 2026-07-17
+- **Decision:** Introduce `cmd/githubd/` as a new daemon that owns the GitHub App surface for push-to-deploy (resolves gap G8). githubd owns: (1) push-webhook receiver for `push` events on the production branch, (2) Checks-API status writer (`queued` → `building` → `live`/`failed` with logs link), (3) OAuth callback handler for the install flow, (4) per-repo install-token cache. githubd talks to `apid` over gRPC on `/run/faas/githubd.sock` (mode 0660 group `faas`, ADR-015 unix-socket auth) using the `pkg/githubdgrpc` package (ADR-018 schedd pattern). githubd's own HTTP listener is loopback-only at `127.0.0.1:8083`; the public webhook surface lives on `gatewayd` at `/webhooks/github`, HMAC-verified at the edge, then reverse-proxied to githubd.
+- **Why:** outbound `api.github.com` traffic + Checks-token refresh + webhook signature verification don't fit `apid`'s "customer-intent CRUD" ownership. Mixing them in apid would dilute that ownership and pull api.github.com's latency into apid's hot path. The webhook + Checks flows are background-ish (seconds-to-tens-of-seconds); colocating them in their own daemon with its own goroutine budget is the load-bearing shape (CLAUDE.md: "Components talk via Postgres rows + `pg_notify`, or gRPC on unix sockets"). Least-privilege scope review per §11 (spec §11 line 398): the GitHub App requests only `Contents:read` + `Checks:write` + push webhook — no org-wide access.
+- **Consequences:**
+  - New daemon `cmd/githubd/` added to the fleet (9th daemon). Follows the `wire.StubRun("M7.5")` bootstrap (mirroring how meterd was bootstrapped in M7) then gets replaced with the real main loop once the gRPC surface is exercised in tests.
+  - New `pkg/githubdgrpc/` package with the proto contract (`GetInstallState`, `ExchangeOAuthCode`, `ListInstallableRepos`, `BindAppRepo`, `UnbindAppRepo`, `GetAppBinding`, `CreateDeploymentFromPush`, `WriteCheck`). Generated `*.pb.go` is committed (ADR-013). `make proto` + `make proto-check` are extended.
+  - `apid` gains a gRPC client wrapper (`cmd/apid/githubd_client.go`) that converts gRPC errors to `*api.Problem` (mirroring `scheddgrpc.Problem`).
+  - `gatewayd` gains a path-routing segment: `POST /webhooks/github` → `VerifyPushSignature` (HMAC-SHA256 over `X-Hub-Signature-256`, constant-time compare, no replay window by default) → `httputil.ReverseProxy` to `http://127.0.0.1:8083/webhooks/github`. Webhook secret lives in `/etc/faas/secrets/` (mode 0400, spec §11 line 398) — gatewayd is the only daemon that reads it.
+  - `pkg/githubd/webhook.go` reuses the HMAC primitives from `pkg/stripex/webhook.go:90-104` (`hmac.Equal` + `hmac.New(sha256.New, …)`); only the header parse differs.
+  - PR-preview environments deferred to v1.1 (UX spec §5.3 + spec §17 G8). The GitHub App scopes do not include `Pull Requests:write`; webhook events we accept are `push` only.
+  - `cmd/builderd/main.go` gains a `LISTEN build_queued` (or whichever notify channel the slice-7 commit picks) so webhook-induced deploys are picked up identically to CLI-induced ones.
+- **Rejected alternatives:**
+  - **githubd as a module inside apid.** Rejected: apid's responsibility is customer-intent CRUD; outbound api.github.com traffic + Checks token refresh would dilute that, and any apid hot-path regression would now have a third-party-API dependency.
+  - **githubd terminates the webhook itself (own public listener).** Rejected: violates the §11 single-public-listener invariant. githubd is loopback-only; gatewayd already has CertMagic + the canonical request-ID injection + rate-limit observability — splitting the public surface doubles the §11 attack surface.
+  - **Plain HTTP JSON between apid and githubd.** Rejected: gRPC over the unix socket is the spec-mandated inter-component transport (spec §4 line 94), and gRPC gives us typed errors + a real schema for the RPC surface — hand-rolled JSON would be a regression.
+  - **Reuse `pkg/stripex` for the GitHub webhook verifier.** Rejected: stripex is Stripe-shaped (`Stripe-Signature` header, `t=…,v1=…` envelope, 5-min tolerance). The GitHub header (`X-Hub-Signature-256: sha256=…`) has no timestamp/replay window. Lifting `hmac.Equal` + `hmac.New` primitives is fine; the parsing differs.
+
+## Re-evaluation triggers
+
+- **M8 hardening (§11 checklist):** the webhook is HMAC-verified at the gateway edge. If §11 fuzzing finds a verifier bypass, the fix is in `pkg/githubd/webhook.go` + the gatewayd path-routing segment — not a daemon split.
+- **Gate-A multi-host (spec §16):** githubd's outbound traffic to `api.github.com` may need to go through a different egress allowlist on the standby host. The transport (gRPC over `/run/faas/githubd.sock`) stays; the egress policy moves to `deploy/nftables/`.
+- **A second Git-like provider (GitLab, Gitea):** if the founder expands the ICP, the right shape is `git-deployd` (or rename `githubd` → `gitd`) with provider-specific webhook verifiers behind a shared `pkg/gitdeploy` core. Don't fork githubd per provider.
