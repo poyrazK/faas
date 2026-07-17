@@ -128,6 +128,14 @@ func (c Config) NftCommands() [][]string {
 		nft("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade"),
 		// Egress filter (§11): default-accept, deny from the guest side only.
 		nft("add", "chain", "ip", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}"),
+		// Accept reply traffic first. The inbound DNAT'd request is published from
+		// the host identity (10.100.x.y ∈ 10.100.0.0/16), so the guest's reply
+		// leaves iifname tap0 with daddr in that range — which is ALSO inside the
+		// 10.0.0.0/8 lateral-movement deny below. Without this established/related
+		// accept the deny would drop every reply and no published request would
+		// ever complete. Guest-INITIATED (ct state new) traffic still falls through
+		// to the denies, so lateral movement stays blocked.
+		nft("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept"),
 		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", "25,", "465,", "587", "}", "drop"),
 		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", "{", "10.0.0.0/8,", "172.16.0.0/12,", "192.168.0.0/16,", "169.254.0.0/16", "}", "drop"),
 	}

@@ -120,6 +120,34 @@ func TestNftCommandsEnforceEgressPolicy(t *testing.T) {
 	}
 }
 
+func TestNftCommandsAcceptRepliesBeforeEgressDenies(t *testing.T) {
+	// The published request's reply leaves the guest via iifname tap0 with a daddr
+	// in the host-identity range (10.100.0.0/16 ⊂ 10.0.0.0/8), so it would be
+	// caught by the lateral-movement deny. An established/related accept must come
+	// FIRST in the forward chain, or no published request ever completes (proven on
+	// metal: without it TestMetalHelloBoot hangs at readiness on SYN-cookie spam).
+	cmds := testConfig().NftCommands()
+	est, daddrDrop := -1, -1
+	for i, cmd := range cmds {
+		line := strings.Join(cmd, " ")
+		if strings.Contains(line, "forward") && strings.Contains(line, "ct state established,related accept") {
+			est = i
+		}
+		if strings.Contains(line, "forward") && strings.Contains(line, "daddr") && strings.Contains(line, "drop") {
+			daddrDrop = i
+		}
+	}
+	if est < 0 {
+		t.Fatalf("forward chain missing an established,related accept for reply traffic:\n%s", flatten(cmds))
+	}
+	if daddrDrop < 0 {
+		t.Fatalf("forward chain missing the lateral-movement daddr drop:\n%s", flatten(cmds))
+	}
+	if est > daddrDrop {
+		t.Errorf("established,related accept (rule %d) must precede the daddr drop (rule %d) — nft evaluates in order", est, daddrDrop)
+	}
+}
+
 func TestNftCommandsHaveNoShellMetacharacters(t *testing.T) {
 	// nft argv legitimately uses ; { } , for its own grammar (there is no shell —
 	// ExecRunner passes argv directly), but genuinely dangerous shell syntax must
