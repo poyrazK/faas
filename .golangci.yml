@@ -24,6 +24,74 @@ linters:
     - errorlint      # fmt.Errorf must wrap with %w; ==/!= against errors → errors.Is
     - bodyclose      # unclosed *http.Response.Body on every request path
     - contextcheck   # ctx captured in goroutines, stored in structs, or detached without justification
+    - depguard       # enforce the CLAUDE.md component-ownership import boundaries
+    - gosec          # security defects — this box runs vmmd as root + drives jailer
+
+  settings:
+    # depguard mechanises the "Component ownership" table in CLAUDE.md: components
+    # talk via Postgres rows + pg_notify or gRPC on unix sockets — never by reaching
+    # directly into another owner's package. These rules are the compile-time
+    # tripwire for that architecture (the prose alone decays).
+    depguard:
+      rules:
+        # apid is control-plane only: it is the sole writer of customer-intent
+        # rows and signals downstream via Postgres + pg_notify. It must never
+        # reach into the VM / scheduler layer (CLAUDE.md: "apid must not call
+        # vmmd").
+        apid-control-plane-only:
+          files:
+            - "**/cmd/apid/**"
+          deny:
+            - pkg: github.com/onebox-faas/faas/pkg/fcvm
+              desc: "apid is control-plane only; it must not touch the firecracker/jailer layer — record intent in Postgres and let schedd/vmmd react"
+            - pkg: github.com/onebox-faas/faas/pkg/netns
+              desc: "apid never manages host networking; that is vmmd's job"
+            - pkg: github.com/onebox-faas/faas/pkg/sched
+              desc: "apid does not schedule; it records intent and lets schedd react (spec §Component ownership)"
+            - pkg: github.com/onebox-faas/faas/pkg/vmmdgrpc
+              desc: "apid must not call vmmd (CLAUDE.md); communicate via Postgres + pg_notify"
+            - pkg: github.com/onebox-faas/faas/pkg/scheddgrpc
+              desc: "apid must not call schedd over gRPC; record intent in Postgres and let schedd react"
+            - pkg: github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1
+              desc: "apid must not speak vmmd's wire protocol (CLAUDE.md ownership)"
+            - pkg: github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1
+              desc: "apid must not speak schedd's wire protocol; use Postgres + pg_notify"
+
+        # The firecracker/jailer layer (pkg/fcvm) and host netns plumbing
+        # (pkg/netns) are vmmd-owned (CLAUDE.md: "vmmd is the ONLY component that
+        # touches firecracker/jailer"). The edge proxy, meter, CLI, and
+        # image/build daemons must never import them directly — they drive VMs
+        # through their owners.
+        firecracker-jailer-vmmd-owned:
+          files:
+            - "**/cmd/gatewayd/**"
+            - "**/cmd/meterd/**"
+            - "**/cmd/faas/**"
+            - "**/cmd/imaged/**"
+            - "**/cmd/builderd/**"
+          deny:
+            - pkg: github.com/onebox-faas/faas/pkg/fcvm
+              desc: "only vmmd touches firecracker/jailer (CLAUDE.md ownership)"
+            - pkg: github.com/onebox-faas/faas/pkg/netns
+              desc: "only vmmd manages host network namespaces (CLAUDE.md ownership)"
+
+    # gosec runs against a box where vmmd is root and drives jailer/firecracker
+    # and builds guest rootfs images. The rule IDs below are structurally
+    # inapplicable to that domain and each finding was reviewed by hand; keep the
+    # list tight — every exclusion is a documented decision, and the ~30 rules
+    # that DO matter here (hardcoded secrets, SQL injection, weak crypto, TLS
+    # config, bind-all, etc.) stay active.
+    gosec:
+      excludes:
+        - G118 # goroutine using context.Background: the wake gate deliberately detaches from the request ctx so a single-flight wake outlives any one request (CLAUDE.md: "gateway holds requests during wake"); governed by contextcheck
+        - G115 # integer overflow on conversion: every site is a bounded/deliberate conversion (slot ids 0–9999, jail uids 20000–29999, tar Mode masked to ModePerm) — G115 is too noisy on legitimate bit work
+        - G204 # subprocess with variadic args — jailer/ip/mkfs/firecracker are invoked by design; args derive from vetted slot/instance ids, never request input
+        - G301 # directory perms >0750: rootfs image dirs need 0755 so the guest's non-root init/runner can traverse them
+        - G302 # file perms >0600 via OpenFile: jail chroot config + rootfs image files need group/other read
+        - G304 # file path from variable — rootfs/snapshot/chroot paths derive from vetted slot/instance ids, never request input
+        - G306 # WriteFile perms >0600: rootfs image contents (0644 data, 0755 executables) MUST be group/other readable/executable inside the guest
+        - G704 # SSRF via taint analysis: the faas CLI calls its own operator-configured API base URL, not an attacker-supplied one
+        - G705 # XSS via taint analysis: apid replays the customer's OWN stored idempotency response (JSON content-type) back to the same account
 
   # Per-path exclusions for noisy linters on tests, plus the
   # generated-protobuf and metal-test files. The v2 schema puts
@@ -40,6 +108,7 @@ linters:
           - errcheck  # `defer x.Close()` is acceptable idiom in tests
           - goconst   # repeated test-fixture literals are fine; promoting
                       # them to package consts adds noise without value
+          - gosec     # tests use weak RNG, temp files, and hardcoded fixtures by design
       - path: "pkg/wire/metrics_test.go"
         linters:
           - errcheck
