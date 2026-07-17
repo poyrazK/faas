@@ -176,6 +176,11 @@ func TestMetalParkWakeCycle(t *testing.T) {
 func TestMetalHelloBoot(t *testing.T) {
 	kernel, _, _ := metalImages(t) // base/layer will be replaced by hello img
 	m := newMetalManager(t, kernel)
+	// Metal tests run a real jailer, which writes the per-VM scope
+	// under /sys/fs/cgroup. Point cgroupRoot there so writeMemoryMax
+	// probes the same path the jailer wrote (TestMain defaults to a
+	// tempdir to keep the unit-test path isolated).
+	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
 	busybox := ensureBusyboxExt4(t, tmp)

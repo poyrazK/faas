@@ -162,13 +162,14 @@ func newTestManager(run Runner, vmm VMM) *Manager {
 }
 
 // TestMain redirects cgroupRoot to a temp dir for the whole package's
-// unit tests. The metal tests (TestMetal*, in manager_metal_test.go)
-// run against the real /sys/fs/cgroup on Linux, so the per-test
-// override in cgroup_test.go is what they (or any test that wants a
-// distinct root) call instead. This blanket override is the simplest
-// seam: every existing manager_test.go and wake_test.go case goes
-// through newTestManager, and the new tests can drop the override
-// where they want a clean root.
+// unit tests. fakeVMM.Boot (manager_test.go:fakeVMM.Boot) creates the
+// per-VM scope as a plain directory under cgroupRoot, so the unit-test
+// path never touches the host's real /sys/fs/cgroup — concurrent runs
+// don't collide. Tests that want a distinct root inside the unit-test
+// path can call withFakeCgroupRoot (cgroup_test.go). Metal tests
+// (TestMetal*, in manager_metal_test.go) point cgroupRoot back at the
+// real /sys/fs/cgroup via the same helper, because the jailer writes
+// there regardless of what cgroupRoot is set to in this package.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "fcvm-cgroup-test-")
 	if err != nil {
