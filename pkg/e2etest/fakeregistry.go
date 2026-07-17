@@ -60,7 +60,7 @@ func HelloImage(repo, helloBody string) (fakeImage, string) {
 			"ExposedPorts": map[string]any{"8080/tcp": struct{}{}},
 		},
 		"rootfs": map[string]any{
-			"type":    "layers",
+			"type":     "layers",
 			"diff_ids": []string{"sha256:" + repeat("b", 64)},
 		},
 	}

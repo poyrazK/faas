@@ -17,18 +17,18 @@
 //
 //   - quota_e2e_test.go            (no tag)        boots apid only; CI-safe.
 //   - deploy_wake_metal_test.go    //go:build metal boots apid + schedd +
-//                                                 imaged + vmmd + gatewayd.
-//                                                 Needs /dev/kvm and root.
+//     imaged + vmmd + gatewayd.
+//     Needs /dev/kvm and root.
 //
 // Per-daemon configuration:
 //
 //   - apid        env    FAAS_APID_LISTEN=127.0.0.1:<port>
 //   - gatewayd    env    FAAS_GATEWAY_LISTEN=127.0.0.1:<port>
-//                          FAAS_SCHEDD_SOCKET=<tmp>/schedd.sock
-//                          FAAS_APPS_DOMAIN=<test domain>
+//     FAAS_SCHEDD_SOCKET=<tmp>/schedd.sock
+//     FAAS_APPS_DOMAIN=<test domain>
 //   - imaged      env    FAAS_GUEST_INIT=<repo>/guest/init  (or empty)
-//                          FAAS_APPS_ROOT=<tmp>/apps
-//                          FAAS_OCI_INSECURE=1                  (test-only)
+//     FAAS_APPS_ROOT=<tmp>/apps
+//     FAAS_OCI_INSECURE=1                  (test-only)
 //   - schedd      toml   socket_path / vmmd_socket
 //   - vmmd        toml   socket_path / kernel_path (metal tag only)
 //
@@ -64,16 +64,16 @@ import (
 //
 // Fields are exported for test consumption: H.APIDURL, H.GatewayURL, H.Pool.
 type Harness struct {
-	T         *testing.T
-	Pool      *pgxpool.Pool
-	TmpDir    string
-	BinDir    string
-	APIDURL   string
+	T          *testing.T
+	Pool       *pgxpool.Pool
+	TmpDir     string
+	BinDir     string
+	APIDURL    string
 	ScheddSock string
-	VMMDPath  string
-	VMMDSock  string
+	VMMDPath   string
+	VMMDSock   string
 	GatewayURL string
-	ImagedTmp string // FAAS_APPS_ROOT
+	ImagedTmp  string // FAAS_APPS_ROOT
 
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
@@ -363,6 +363,7 @@ func injectSearchPath(dsn, schema string) string {
 	}
 	return dsn + sep + "search_path=" + schema
 }
+
 // Slight race between close and the daemon re-listening, but acceptable in
 // tests — the daemon retries on bind error.
 func freeTCPAddr(t *testing.T) string {
