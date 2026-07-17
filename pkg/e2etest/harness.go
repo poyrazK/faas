@@ -466,14 +466,24 @@ func waitUnix(t *testing.T, path string, d time.Duration) {
 // SeedAccount creates a fresh account on `plan` with one API key, returns the
 // plaintext token (Bearer header). Returns the existing account on a duplicate
 // email so reruns against the same schema pick up where they left off.
-func (h *Harness) SeedAccount(ctx context.Context, plan api.Plan) string {
+//
+// Pass a non-empty label to disambiguate when the test needs more than one
+// account on the same plan (cross-account isolation, multi-tenant tests).
+// Without a label, the email is "e2e+<plan>@test.example" — one account per
+// plan per run. With a label, the email is "e2e+<plan>+<label>@test.example"
+// so each call produces a distinct account.
+func (h *Harness) SeedAccount(ctx context.Context, plan api.Plan, label ...string) string {
 	h.T.Helper()
 	store := state.NewPgStore(h.Pool)
-	email := "e2e+" + string(plan) + "@test.example"
+	email := "e2e+" + string(plan)
+	if len(label) > 0 && label[0] != "" {
+		email += "+" + label[0]
+	}
+	email += "@test.example"
 	acct, err := store.CreateAccount(ctx, email, plan)
 	if err != nil {
 		// "duplicate key" / "unique_violation" — another subtest already
-		// seeded this plan; fetch and reuse.
+		// seeded this plan+label; fetch and reuse.
 		acct, lerr := store.AccountByEmail(ctx, email)
 		if lerr != nil {
 			h.T.Fatalf("e2etest: seed account %s (initial=%v, lookup=%v)", plan, err, lerr)

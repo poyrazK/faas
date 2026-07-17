@@ -75,7 +75,7 @@ func TestBuildEnv_InvalidKeysDropped(t *testing.T) {
 	// appear in the produced env. Defense in depth — the SQL CHECK
 	// already keeps these out of the DB, but a future writer could
 	// bypass the check.
-	base := []string{"ok=base"}
+	base := []string{"ok=base"} // lowercase — dropped by validEnvKey
 	m := api.AppManifest{Env: map[string]string{
 		"lowercase":  "bad", // rejected
 		"BAD-HYPHEN": "bad", // rejected
@@ -97,7 +97,9 @@ func TestBuildEnv_InvalidKeysDropped(t *testing.T) {
 			}
 		}
 	}
-	// Spot-check the surviving keys.
+	// Spot-check the surviving keys. Only the uppercase keys survive
+	// the validEnvKey filter — the lowercase "ok=base" entry is dropped
+	// along with the rest of the bad keys.
 	keys := map[string]bool{}
 	for _, kv := range got {
 		for i := 0; i < len(kv); i++ {
@@ -107,7 +109,7 @@ func TestBuildEnv_InvalidKeysDropped(t *testing.T) {
 			}
 		}
 	}
-	for _, k := range []string{"ok", "OK_NAME", "ALSO_OK"} {
+	for _, k := range []string{"OK_NAME", "ALSO_OK"} {
 		if !keys[k] {
 			t.Errorf("expected %q in env: %+v", k, keys)
 		}

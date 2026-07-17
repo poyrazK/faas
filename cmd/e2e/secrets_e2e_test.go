@@ -117,50 +117,39 @@ func TestSecretsMatrixPg(t *testing.T) {
 			})
 
 			t.Run("reupsert_does_not_count", func(t *testing.T) {
-				// New app so we have a clean quota count.
-				slug2 := strings.ToLower(string(plan)) + "-reupsert"
-				if code := statusOnly(t, h, key, http.MethodPost, "/v1/apps",
-					api.CreateAppRequest{Slug: slug2}); code != http.StatusCreated {
-					t.Fatalf("create %s: %d", slug2, code)
-				}
-				// Fill exactly to the cap.
+				// Fill exactly to the cap on the main app.
 				for i := 0; i < limits.SecretCountMax; i++ {
 					put := api.PutAppSecretRequest{Value: "v1"}
 					if code := statusOnly(t, h, key, http.MethodPut,
-						"/v1/apps/"+slug2+"/secrets/"+keyNameForQuota(i), put); code != http.StatusOK {
+						"/v1/apps/"+slug+"/secrets/"+keyNameForQuota(i), put); code != http.StatusOK {
 						t.Fatalf("fill %d: %d", i, code)
 					}
 				}
 				// Re-PUT one of them — must still 200 (re-upsert off-by-one).
 				put := api.PutAppSecretRequest{Value: "v2"}
 				if code := statusOnly(t, h, key, http.MethodPut,
-					"/v1/apps/"+slug2+"/secrets/"+keyNameForQuota(0), put); code != http.StatusOK {
+					"/v1/apps/"+slug+"/secrets/"+keyNameForQuota(0), put); code != http.StatusOK {
 					t.Errorf("re-PUT over cap returned %d, want 200", code)
 				}
 			})
 
 			t.Run("value_too_large", func(t *testing.T) {
-				slug3 := strings.ToLower(string(plan)) + "-big"
-				if code := statusOnly(t, h, key, http.MethodPost, "/v1/apps",
-					api.CreateAppRequest{Slug: slug3}); code != http.StatusCreated {
-					t.Fatalf("create big: %d", code)
-				}
+				// Byte-cap is enforced BEFORE the seal and BEFORE the quota
+				// count, so we can run this on the (possibly already
+				// over-quota) main app without needing a fresh one.
 				big := strings.Repeat("x", limits.SecretValueMaxBytes+1)
 				assertProblemAPID(t, h, key, http.MethodPut,
-					"/v1/apps/"+slug3+"/secrets/BIG",
+					"/v1/apps/"+slug+"/secrets/BIG",
 					api.PutAppSecretRequest{Value: big},
 					http.StatusRequestEntityTooLarge,
 					api.CodeSecretValueTooLarge)
 			})
 
 			t.Run("invalid_key_lowercase", func(t *testing.T) {
-				slug4 := strings.ToLower(string(plan)) + "-shape"
-				if code := statusOnly(t, h, key, http.MethodPost, "/v1/apps",
-					api.CreateAppRequest{Slug: slug4}); code != http.StatusCreated {
-					t.Fatalf("create shape: %d", code)
-				}
+				// Key shape is enforced at the handler before any DB work,
+				// so we don't need a clean app — the main app works.
 				assertProblemAPID(t, h, key, http.MethodPut,
-					"/v1/apps/"+slug4+"/secrets/lowercase",
+					"/v1/apps/"+slug+"/secrets/lowercase",
 					api.PutAppSecretRequest{Value: "v"},
 					http.StatusBadRequest,
 					api.CodeSecretInvalidKey)
@@ -191,8 +180,8 @@ func TestSecretsCrossAccountIsolation(t *testing.T) {
 		"FAAS_HOST_AGE_RECIPIENT_PATH=" + recipientPath,
 	})
 
-	keyA := h.SeedAccount(context.Background(), api.PlanHobby)
-	keyB := h.SeedAccount(context.Background(), api.PlanHobby)
+	keyA := h.SeedAccount(context.Background(), api.PlanHobby, "a")
+	keyB := h.SeedAccount(context.Background(), api.PlanHobby, "b")
 
 	if code := statusOnly(t, h, keyA, http.MethodPost, "/v1/apps",
 		api.CreateAppRequest{Slug: "a-app"}); code != http.StatusCreated {
