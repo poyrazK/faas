@@ -87,13 +87,24 @@ func (c Config) SetupCommands() [][]string {
 }
 
 // TeardownCommands returns the argv list to remove everything Setup created.
-// Deleting the netns takes the peer veth and tap with it; the host-side veth is
-// removed explicitly (its deletion is idempotent-safe — errors are ignored by
-// the caller). Order matters: delete links before the namespace.
+//
+// Order matters and is the opposite of what an intuitive "delete-from-outside-in"
+// would suggest: we delete the namespace FIRST, then the host-side veth end.
+//
+// `ip netns del` removes every interface inside the namespace (the peer veth
+// and tap0) atomically, and the host-side veth follows. Doing it in the other
+// order — `ip link del vhHost` then `ip netns del` — leaves the peer veth
+// orphaned (only its root-ns half is gone) and the namespace delete fails
+// silently in some iproute2 versions because the orphaned peer still pins a
+// reference. Verified on the Lima arm64 nested-KVM guest; the EX44's iproute2
+// has the same behavior, so the fix is universal.
+//
+// Errors from either command are tolerated by the caller (cleanup() in
+// pkg/fcvm/manager.go) — a teardown that gives up would leak.
 func (c Config) TeardownCommands() [][]string {
 	return [][]string{
-		{"ip", "link", "del", c.VethHost},
 		{"ip", "netns", "del", c.Netns},
+		{"ip", "link", "del", c.VethHost},
 	}
 }
 
