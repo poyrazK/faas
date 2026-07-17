@@ -46,11 +46,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	store := state.NewPgStore(pool)
 	builder := rootfs.NewBuilder(wire.ExecRunner{})
 
-	// Real registry v2 puller (M6 groundwork, gap G1): resolves an image deploy's
-	// digest-pinned reference against the public registry. Egress hardening
-	// (deny RFC1918 / metadata ranges, spec §11) is a follow-up — inject a
-	// policy-aware *http.Client via oci.WithHTTPClient when it lands.
-	puller := oci.NewRegistryClient()
+	// Real registry v2 puller: resolves an image deploy's digest-pinned
+	// reference against the public registry. The HTTP transport is wrapped
+	// in WithEgressHTTPClient so a customer-side OCI reference that resolves
+	// (or DNS-rebinds) to RFC1918 / link-local / metadata / CGN / SMTP is
+	// refused before any data leaves the box (spec §11, issue #27).
+	puller := oci.NewRegistryClient(oci.WithEgressHTTPClient())
 
 	notifier := dbNotifier{pool: pool}
 	guestInitPath := envOr("FAAS_GUEST_INIT", "./init")
