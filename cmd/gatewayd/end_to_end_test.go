@@ -188,3 +188,60 @@ func TestEndToEnd_TamperedSignatureRejectedAtEdge(t *testing.T) {
 		t.Errorf("upstream should NOT be hit on bad sig; hits = %d", hits.Load())
 	}
 }
+
+// TestEndToEnd_M75_RecordedPushLandsDeployment is the slice-9
+// acceptance gate (spec §14 M7.5 row 1): "push to main auto-deploys
+// via the normal build pipeline." The recorded push_event.json is
+// replayed through the full gatewayd → githubd proxy stack; the
+// upstream githubd's Service.HandlePushRequest creates the
+// deployment row from the recorded (repo, branch, sha). The
+// deployment-id surfaces back to the caller via the proxy's
+// 200 response.
+//
+// This test pins the contract that the founder-facing flow relies
+// on: `faas connect github` (slice 8 dashboard) → `faas deploy
+// --repo owner/name` (slice 9 CLI) → push → live.
+func TestEndToEnd_M75_RecordedPushLandsDeployment(t *testing.T) {
+	secret := []byte("m7.5-acceptance-secret")
+
+	svc := githubd.NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.Bindings = &stubBindings{by: map[string]githubdgrpc.AppBinding{
+		"octo/api|main": {BindingID: "b-m75", RepoFullName: "octo/api", ProductionBranch: "main"},
+	}}
+	var gotRepo, gotBranch, gotSHA string
+	svc.CreateDeployment = func(_ context.Context, repo, branch, sha string) (string, error) {
+		gotRepo, gotBranch, gotSHA = repo, branch, sha
+		return "dep-m75-acceptance", nil
+	}
+
+	var hits atomic.Int32
+	upstream := &fakeGithubd{svc: svc, hits: &hits}
+	upstreamSrv := httptest.NewServer(upstream.handler())
+	t.Cleanup(upstreamSrv.Close)
+
+	proxy := newGithubdProxy(upstreamSrv.URL, secret, http.NewServeMux(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	body, err := os.ReadFile("../githubd/testdata/push_event.json")
+	if err != nil {
+		t.Fatalf("read push_event.json: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hub-Signature-256", signE2E(body, secret))
+	req.Header.Set("X-GitHub-Event", "push")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	if hits.Load() != 1 {
+		t.Errorf("upstream hits = %d, want 1", hits.Load())
+	}
+	if gotRepo != "octo/api" || gotBranch != "main" || gotSHA != "deadbeefcafebabe1234567890abcdef12345678" {
+		t.Errorf("CreateDeployment args = (%q, %q, %q); want (octo/api, main, deadbeef...)", gotRepo, gotBranch, gotSHA)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("dep-m75-acceptance")) {
+		t.Errorf("response missing deployment_id; body = %s", rec.Body.String())
+	}
+}

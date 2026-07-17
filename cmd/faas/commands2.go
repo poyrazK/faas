@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/browser"
 )
 
 // Subcommand names — lifted to constants so goconst stops flagging the
@@ -24,6 +26,10 @@ const (
 
 	statusPending  = "pending"
 	statusVerified = "verified"
+
+	// service names reused across cmdConnect + the usage hint
+	// (commands2.go) so goconst stops flagging them.
+	svcGithub = "github"
 )
 
 // cmdApp implements `faas app <slug>` (GET /v1/apps/{slug}), `faas app <slug>
@@ -123,11 +129,14 @@ func cmdAppsRm(args []string) int {
 }
 
 // cmdDeployTarball extends cmdDeploy with `--tarball`, `--runtime`, `--handler`,
-// `--dockerfile`. Image digest stays as the default input.
+// `--dockerfile`. Image digest stays as the default input. `--repo owner/name`
+// opens the dashboard's repo-picker page (slice 8) where the customer binds
+// the repo + branch; subsequent pushes auto-deploy via the webhook path.
 func cmdDeployTarball(args []string) int {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
+	repo := fs.String("repo", "", "GitHub repo to bind and deploy (owner/name)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
 	runtime := fs.String("runtime", "", "function runtime (node22|python312)")
 	handler := fs.String("handler", "", "function handler (e.g. handler.handler)")
@@ -139,8 +148,20 @@ func cmdDeployTarball(args []string) int {
 	if slug == "" {
 		slug = deriveName()
 	}
+
+	// --repo is the M7.5 git-deploy path. It opens the dashboard's
+	// repo-picker page where the customer finishes the bind (the
+	// picker needs the GitHub install token, which only the
+	// dashboard can use). Once bound, pushes auto-deploy.
+	if *repo != "" {
+		if err := validateRepoSlug(*repo); err != nil {
+			return printErr("Invalid --repo", err)
+		}
+		return cmdDeployRepo(slug, *repo)
+	}
+
 	if *image == "" && *tarball == "" {
-		fmt.Fprintln(os.Stderr, "✗ one of --image or --tarball is required.")
+		fmt.Fprintln(os.Stderr, "✗ one of --image, --tarball, or --repo is required.")
 		return 1
 	}
 
@@ -170,6 +191,26 @@ func cmdDeployTarball(args []string) int {
 		return printErr("Deploy failed", err)
 	}
 	fmt.Printf("✓ Deploying %s (%s)\n", slug, dep.Status)
+	return 0
+}
+
+// cmdDeployRepo binds (app, repo) via the dashboard and opens the
+// browser to the repo-picker page. The actual binding write goes
+// through the dashboard's /dashboard/account/connect-github flow
+// (slice 8) because that's where the OAuth install token lives.
+func cmdDeployRepo(slug, repoFullName string) int {
+	if _, err := authedClient(); err != nil {
+		return printErr("Not logged in", err)
+	}
+	target := dashboardRepoPickerURL(apiBase(), slug, repoFullName)
+	fmt.Printf("Opening %s to bind %s → %s\n", target, repoFullName, slug)
+	if err := browser.Open(target); err != nil {
+		// Fall back to a clickable copy if the opener is missing
+		// (sandboxed CI, no DISPLAY, etc.).
+		fmt.Fprintf(os.Stderr, "✗ Could not open browser: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
+		return 0
+	}
 	return 0
 }
 
@@ -443,6 +484,129 @@ func cmdUsage(args []string) int {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// cmdConnect implements `faas connect <service>`. Today only
+// "github" is supported; the flow opens the dashboard's account
+// page where the customer finishes the OAuth + install steps via
+// the slice-8 GitHub App flow.
+//
+// We deliberately don't perform the OAuth dance from the CLI:
+// the GitHub App install + bind requires the customer's browser
+// session (GitHub OAuth + repo permissions), and the only state
+// the platform needs (install_id, install_token) belongs in the
+// server, not the CLI's token file.
+func cmdConnect(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: faas connect github")
+		return 1
+	}
+	switch args[0] {
+	case svcGithub:
+		if _, err := authedClient(); err != nil {
+			return printErr("Not logged in", err)
+		}
+		target := dashboardAccountURL(apiBase())
+		fmt.Printf("Opening %s to connect GitHub…\n", target)
+		if err := browser.Open(target); err != nil {
+			fmt.Fprintf(os.Stderr, "✗ Could not open browser: %v\n", err)
+			fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
+			return 0
+		}
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "✗ unknown service %q (supported: %s)\n", args[0], svcGithub)
+		return 1
+	}
+}
+
+// cmdOpen implements `faas open <slug>`. Looks up the app's URL via
+// the v1 API and launches the OS browser. With --dashboard, opens
+// the dashboard's app-detail page instead of the public URL.
+func cmdOpen(args []string) int {
+	fs := flag.NewFlagSet("open", flag.ContinueOnError)
+	dash := fs.Bool("dashboard", false, "open the dashboard page instead of the live URL")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "usage: faas open <slug> [--dashboard]")
+		return 1
+	}
+	slug := fs.Arg(0)
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	app, err := client.GetApp(context.Background(), slug)
+	if err != nil {
+		return printErr("Could not fetch app", err)
+	}
+	target := app.URL
+	if *dash {
+		target = dashboardAppURL(apiBase(), slug)
+	}
+	fmt.Printf("Opening %s\n", target)
+	if err := browser.Open(target); err != nil {
+		fmt.Fprintf(os.Stderr, "✗ Could not open browser: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
+		return 0
+	}
+	return 0
+}
+
+// dashboardBaseURL returns the dashboard's public base URL. Today
+// that's the API base minus /v1; the gatewayd reverse-proxy serves
+// /dashboard/* from the same host. We use this so `faas open` and
+// `faas connect` build a clickable URL the customer's browser can
+// reach.
+func dashboardBaseURL(api string) string {
+	return strings.TrimRight(api, "/")
+}
+
+// dashboardAccountURL is the canonical "connect GitHub" entry point.
+func dashboardAccountURL(api string) string {
+	return dashboardBaseURL(api) + "/dashboard/account"
+}
+
+// dashboardAppURL is the canonical per-app dashboard page.
+func dashboardAppURL(api, slug string) string {
+	return dashboardBaseURL(api) + "/dashboard/apps/" + url.PathEscape(slug)
+}
+
+// dashboardRepoPickerURL is where the customer finishes the repo
+// bind (after `faas deploy --repo` opens it). The dashboard reads
+// `app` and `repo` from the query string and pre-selects the form.
+func dashboardRepoPickerURL(api, slug, repoFullName string) string {
+	u := dashboardBaseURL(api) + "/dashboard/connect/repos"
+	q := url.Values{}
+	q.Set("app", slug)
+	q.Set("repo", repoFullName)
+	return u + "?" + q.Encode()
+}
+
+// validateRepoSlug checks the owner/name shape so a malformed
+// --repo doesn't reach the dashboard as a path-injection vector.
+func validateRepoSlug(s string) error {
+	parts := strings.Split(s, "/")
+	if len(parts) != 2 {
+		return fmt.Errorf("expected OWNER/NAME, got %q", s)
+	}
+	for _, p := range parts {
+		if p == "" || len(p) > 64 {
+			return fmt.Errorf("invalid repo segment in %q", s)
+		}
+		for _, r := range p {
+			allowed := (r >= 'a' && r <= 'z') ||
+				(r >= 'A' && r <= 'Z') ||
+				(r >= '0' && r <= '9') ||
+				r == '-' || r == '_' || r == '.'
+			if !allowed {
+				return fmt.Errorf("invalid character %q in %q", string(r), s)
+			}
+		}
+	}
+	return nil
+}
 
 // cmdLogs: tail app or deployment logs via SSE. Minimal client-side parser;
 // we just print lines with a timestamp prefix.
