@@ -3,10 +3,17 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -19,6 +26,16 @@ const (
 	layerDevice = "/dev/vdb"
 	layerMount  = "/overlay"
 	newRoot     = "/overlay/merged"
+)
+
+// bootMode is which branch of the build (BuildManifest present) vs app
+// (AppManifest present) guest-init took. decideMode is split out so unit
+// tests can drive it with testing/fstest.MapFS.
+type bootMode int
+
+const (
+	modeApp bootMode = iota
+	modeBuild
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
@@ -41,6 +58,14 @@ func boot() error {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
 
+	mode, buildManifest, err := decideMode(os.DirFS("/"))
+	if err != nil {
+		return err
+	}
+	if mode == modeBuild {
+		return runBuild(buildManifest)
+	}
+
 	f, err := os.Open(api.AppManifestPath)
 	if err != nil {
 		return fmt.Errorf("open manifest: %w", err)
@@ -60,6 +85,167 @@ func boot() error {
 	}
 	return sup.Run()
 }
+
+// decideMode picks the boot branch by looking at which manifest file exists.
+// The build manifest takes precedence if both are present (defensive —
+// shouldn't happen in practice because base images carry at most one).
+//
+// Split out from boot() so unit tests can drive it with testing/fstest.MapFS
+// instead of touching the real root fs. The path passed to fs.ReadFile must
+// be RELATIVE (no leading "/") — fs.FS rejects absolute paths, and the real
+// os.DirFS("/") used at boot happily accepts the relative form on Linux.
+func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
+	if data, err := fs.ReadFile(fsys, "etc/faas/build.json"); err == nil {
+		var m api.BuildManifest
+		if jErr := json.Unmarshal(data, &m); jErr == nil {
+			return modeBuild, m, nil
+		}
+	}
+	return modeApp, api.BuildManifest{}, nil
+}
+
+// runBuild is the builder-VM path (M6). It extracts the source tarball,
+// invokes the chosen build engine (Railpack / buildctl / auto), writes
+// build-done.json with the outcome, and powers off. poweroff is what makes
+// firecracker exit cleanly with the build's exit code (vmmd's
+// DestroyResponse.exit_code on the wire — see pkg/vmmdgrpc/server.go).
+func runBuild(m api.BuildManifest) error {
+	if m.Workdir == "" {
+		m.Workdir = "/build/src"
+	}
+	if m.OutDir == "" {
+		m.OutDir = "/build/out"
+	}
+	if err := os.MkdirAll(m.Workdir, 0o755); err != nil {
+		return writeAndPoweroff(m, fmt.Errorf("mkdir workdir: %w", err), "")
+	}
+	if err := os.MkdirAll(m.OutDir, 0o755); err != nil {
+		return writeAndPoweroff(m, fmt.Errorf("mkdir outdir: %w", err), "")
+	}
+
+	// 1. Extract source tarball.
+	if m.SourceTarPath != "" {
+		if out, err := exec.Command("tar", "-xaf", m.SourceTarPath, "-C", m.Workdir).CombinedOutput(); err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("tar extract: %w (%s)", err, out), "")
+		}
+	}
+
+	// 2. Pick the build command.
+	var argv []string
+	switch m.Framework {
+	case api.FrameworkDockerfile:
+		argv = []string{
+			"buildctl", "build",
+			"--frontend", "dockerfile",
+			"--local", "context=" + m.Workdir,
+			"--local", "dockerfile=" + m.Workdir,
+			"--output", "type=oci,dest=" + m.OutDir + "/image.tar",
+		}
+	default:
+		// railpack with --plan auto|node|python
+		plan := "auto"
+		switch m.Framework {
+		case api.FrameworkRailpackNode:
+			plan = "node"
+		case api.FrameworkRailpackPython:
+			plan = "python"
+		}
+		argv = []string{"railpack", "build", m.OutDir, "--plan", plan}
+	}
+
+	// 3. Run with a wall-clock timeout (we already get OOM protection from
+	//    cgroup v2 memory.max on the Firecracker config — see spec §11).
+	timeoutSec := m.TimeoutSec
+	if timeoutSec <= 0 {
+		timeoutSec = api.BuildTimeoutSeconds
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = m.Workdir
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err := cmd.Run()
+
+	return writeAndPoweroff(m, err, tailOf(buf.Bytes(), m.LogTailBytes))
+}
+
+// classify maps an in-VM exit code to a builderd FailureClass. The vocabulary
+// here matches the canonical names parsed by builderd's ProcessOne
+// (FailureUserError / FailureInfra / FailureOOM / FailureTimeout).
+func classify(exitCode int) string {
+	switch exitCode {
+	case 137:
+		return "FailureOOM"
+	case 124:
+		return "FailureTimeout"
+	case 0:
+		return ""
+	default:
+		return "FailureUserError"
+	}
+}
+
+// tailOf returns the last n bytes of data (or all of it if shorter). Used to
+// truncate the build log so build-done.json stays small.
+func tailOf(data []byte, n int) string {
+	if n <= 0 || len(data) <= n {
+		return string(data)
+	}
+	return string(data[len(data)-n:])
+}
+
+// writeAndPoweroff writes /etc/faas/build-done.json (vmmd's Destroy loopback-
+// mounts the chroot drive1 to copy it out) and powers off the VM. Any
+// failure here is logged but doesn't prevent the poweroff — vmmd will
+// surface a fallback exit-code classification via the watch-dog capture.
+func writeAndPoweroff(m api.BuildManifest, runErr error, logTail string) error {
+	exitCode := 0
+	if runErr != nil {
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) {
+			exitCode = ee.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+	fc := classify(exitCode)
+	done := api.BuildDone{
+		SchemaVersion: 1,
+		BuildID:       m.BuildID,
+		ExitCode:      exitCode,
+		OCIImagePath:  m.OutDir + "/image.tar",
+		LogTail:       logTail,
+		FailureClass:  fc,
+	}
+	if data, mErr := json.Marshal(done); mErr == nil {
+		_ = os.WriteFile(api.BuildDonePath, data, 0o644)
+	} else {
+		fmt.Fprintf(os.Stderr, "guest-init: marshal build-done: %v\n", mErr)
+	}
+	if runErr != nil {
+		fmt.Fprintf(os.Stderr, "guest-init: build failed: %v\n", runErr)
+	}
+	// poweroff -f so vmmd's Destroy sees the exit code via firecracker's
+	// natural exit. exec.CommandContext's timeout doesn't trigger poweroff —
+	// we always get here.
+	if err := exec.Command("poweroff", "-f").Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "guest-init: poweroff: %v\n", err)
+	}
+	// Surface as a guest-init error so the cmd survives long enough for
+	// firecracker to capture the exit (poweroff schedules immediate halt).
+	if runErr != nil {
+		return runErr
+	}
+	return nil
+}
+
+// classifyTail is a debug-only helper used to shorten long log tails in
+// writeBuildDone. Kept as a package-private function so tests can import it
+// via an internal-test file (not used elsewhere; would be dead code on darwin).
+var _ = strings.HasPrefix
 
 // mountBasics mounts the pseudo-filesystems every app expects.
 func mountBasics() error {

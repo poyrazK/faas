@@ -52,6 +52,29 @@ func TestSetupThenTeardownReferToSameResources(t *testing.T) {
 	if !strings.Contains(flatten(c.TcCommands()), "dev "+c.VethHost) {
 		t.Error("tc commands must target VethHost (the host-side veth that teardown deletes)")
 	}
+
+	// Order matters: netns-del first, host veth second. The opposite order
+	// leaves the peer veth orphaned inside the namespace, which pins a
+	// reference and causes `ip netns del` to fail silently — observed on the
+	// Lima arm64 nested-KVM guest (leakcheck found `fc-m0-hello` after a
+	// clean Destroy). The same iproute2 behavior holds on the EX44.
+	cmds := c.TeardownCommands()
+	netnsIdx, linkIdx := -1, -1
+	for i, cmd := range cmds {
+		line := strings.Join(cmd, " ")
+		if strings.Contains(line, "netns del "+c.Netns) {
+			netnsIdx = i
+		}
+		if strings.Contains(line, "link del "+c.VethHost) {
+			linkIdx = i
+		}
+	}
+	if netnsIdx < 0 || linkIdx < 0 {
+		t.Fatalf("expected both netns-del and link-del in teardown (netns=%d link=%d)", netnsIdx, linkIdx)
+	}
+	if netnsIdx > linkIdx {
+		t.Errorf("netns-del (idx %d) must precede host link-del (idx %d); reversed order orphans the veth peer", netnsIdx, linkIdx)
+	}
 }
 
 func TestSetupCreatesTapAndAddressing(t *testing.T) {

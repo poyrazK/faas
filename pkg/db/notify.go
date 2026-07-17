@@ -56,6 +56,9 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	NotifyBuildQueued       {"build_id":uuid, "app_id":uuid,
 //	                         "kind":"tarball|dockerfile|function",
 //	                         "deployment_id":uuid}
+//	NotifyBuildLog          {"build":"uuid","line":"..."}
+//	                         builderd → dashboards / SSE: live build output
+//	                         (UX spec §2.4 streamed logs).
 //	NotifyDomainVerify      {"domain":"..."}
 //	NotifyInstanceChanged   {"instance_id":uuid, "app_id":uuid,
 //	                         "state":"parked|running|cold_booting|..."}
@@ -91,6 +94,7 @@ const (
 	NotifyCronChanged       = "cron_changed"
 	NotifyKeyChanged        = "key_changed"
 	NotifyBuildQueued       = "build_queued"
+	NotifyBuildLog          = "build_log"
 	NotifyDomainVerify      = "domain_verify"
 	NotifyInstanceChanged   = "instance_changed"
 	NotifySnapshotPrime     = "snapshot_prime"
