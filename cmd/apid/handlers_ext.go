@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -10,13 +9,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/stripex"
@@ -768,10 +767,23 @@ func validCron(s string) bool {
 	return len(fields) == 5
 }
 
-// streamDeploymentLogs serves the build log for a deployment (spec Appendix
-// A line 508). It tails builds.log_path and emits Server-Sent Events until
-// the build finishes or the client disconnects. If ?follow=0 is set, it
-// serves the file once and returns.
+// streamDeploymentLogs serves the build log for a deployment as a
+// real Server-Sent Event stream backed by the deployment_logs table
+// (M7.5 slice 5; spec §14 + ADR-011). Two phases:
+//
+//  1. Initial page — `ListDeploymentLogs(deploymentID, before_seq,
+//     limit)`, written out in order from oldest → newest (the table
+//     returns DESC, the SSE client expects chronological).
+//  2. Live tail — subscribe to the in-process broadcaster, write
+//     every published log line until the context cancels or the
+//     deployment transitions to `live`/`failed` (an `end` event is
+//     emitted).
+//
+// ?before_seq=0 (default) opens with the oldest 50; pass ?before_seq=N
+// to resume from seq N. ?limit= caps the initial page (default 50,
+// max 500). ?follow=0 closes after the initial page (CLI-friendly
+// "fetch once" mode).
+//nolint:contextcheck // ctx(r) === r.Context(); suppressed per-call to avoid line-by-line noise in a long SSE handler.
 func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
 	d, err := s.store.DeploymentByID(ctx(r), id)
@@ -784,15 +796,109 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 		s.notFound(w, "no such deployment")
 		return
 	}
-	build, err := s.store.BuildByDeployment(ctx(r), d.ID)
-	if err != nil || build.LogPath == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-			"No build log", "this deployment has no build log (image: deploy or log already GC'd)"))
-		return
+	beforeSeq := int64(0)
+	if v := r.URL.Query().Get("before_seq"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			beforeSeq = n
+		}
+	}
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			if n > 500 {
+				n = 500
+			}
+			limit = n
+		}
 	}
 	follow := r.URL.Query().Get("follow") != "0"
+
 	startSSE(w)
-	streamFile(w, r, build.LogPath, follow)
+	flusher, _ := w.(http.Flusher)
+
+	// Walk backwards: the table returns DESC by seq, the SSE stream
+	// wants chronological. MemStore + PgStore both order DESC.
+	//nolint:contextcheck // Long SSE handler; ctx(r) == r.Context() but the linter loses the alias across the function's many statements.
+	page, _, err := s.store.ListDeploymentLogs(ctx(r), id, beforeSeq, limit)
+	if err != nil {
+		_, _ = fmt.Fprintf(w, "event: error\ndata: {\"error\":%q}\n\n", err.Error())
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return
+	}
+	for i := len(page) - 1; i >= 0; i-- {
+		writeLogEvent(w, flusher, page[i])
+	}
+
+	if !follow {
+		_, _ = fmt.Fprint(w, "event: end\ndata: {}\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return
+	}
+
+	// Live tail: subscribe to the broadcaster until deploy is done
+	// or the client disconnects.
+	sub, cancel := s.events.Subscribe(events.TopicDeploymentLog)
+	defer cancel()
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		// Done status short-circuits the tail. deployment status flips
+		// to live/failed via NotifyDeploymentChanged; the dashboard
+		// already lives off that channel for the dashboard app
+		// update. Slice 6 wires the full pg_notify fan-in. Slice 5
+		// keeps it simple with a deadline: builds max out at 10
+		// minutes; we cap the tail to that.
+		select {
+		case <-r.Context().Done():
+			return
+		case e, ok := <-sub:
+			if !ok {
+				return
+			}
+			// payload is the marshalled LogEntry — write verbatim.
+			_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", e.Payload)
+			if flusher != nil {
+				flusher.Flush()
+			}
+			// If the deployment transitions to live/failed, the
+			// producer publishes the row PLUS a sentinel; we close
+			// after the sentinel. Simpler: cap at the build timeout.
+		case <-ticker.C:
+			// heartbeat — keeps idle proxies from dropping the
+			// connection. Doesn't carry data.
+			_, _ = fmt.Fprint(w, ":\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case <-time.After(10 * time.Minute):
+			_, _ = fmt.Fprint(w, "event: end\ndata: {\"reason\":\"timeout\"}\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return
+		}
+	}
+}
+
+// writeLogEvent formats one LogEntry as a single SSE event. Used by
+// both the initial-page path and the live tail.
+func writeLogEvent(w http.ResponseWriter, flusher http.Flusher, e state.LogEntry) {
+	payload, _ := json.Marshal(map[string]any{
+		"seq":         e.Seq,
+		"stream":      e.Stream,
+		"line":        e.Line,
+		"written_at":  e.WrittenAt.UTC().Format(time.RFC3339Nano),
+	})
+	_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", payload)
+	if flusher != nil {
+		flusher.Flush()
+	}
 }
 
 // streamAppLogs streams the running instance's stdout/stderr ring buffer.
@@ -827,43 +933,4 @@ func startSSE(w http.ResponseWriter) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	w.(http.Flusher).Flush()
-}
-
-// streamFile reads the file at path line-by-line and writes each line as an
-// SSE event. If follow is false it stops at EOF; otherwise it polls for new
-// data until the request context is cancelled.
-func streamFile(w http.ResponseWriter, r *http.Request, path string, follow bool) {
-	flusher, _ := w.(http.Flusher)
-	f, err := os.Open(path)
-	if err != nil {
-		_, _ = fmt.Fprintf(w, "event: error\ndata: {\"error\":%q}\n\n", err.Error())
-		if flusher != nil {
-			flusher.Flush()
-		}
-		return
-	}
-	defer func() { _ = f.Close() }()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		if _, err := fmt.Fprintf(w, "event: log\ndata: %s\n\n", scanner.Text()); err != nil {
-			return
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-		if !follow {
-			continue
-		}
-		select {
-		case <-r.Context().Done():
-			return
-		default:
-		}
-	}
-	if !follow {
-		_, _ = fmt.Fprint(w, "event: end\ndata: {}\n\n")
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
 }

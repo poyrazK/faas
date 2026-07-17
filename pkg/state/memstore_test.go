@@ -513,3 +513,105 @@ func TestIdempotencyOverwrite(t *testing.T) {
 		t.Errorf("overwrite: got (%d, %q), want (500, %q)", status, body, "second")
 	}
 }
+
+// TestDeploymentLogsAppendAndPage is the M7.5 slice 5 contract:
+// every insert returns a monotonic seq, ListDeploymentLogs returns
+// the rows DESC by seq, paging by `seq < before` works, and hasMore
+// is true iff an older row sits behind the page.
+func TestDeploymentLogsAppendAndPage(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	for i := 0; i < 200; i++ {
+		seq, err := m.AppendDeploymentLog(ctx, "dep-1", "stdout", lineN(i))
+		if err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+		if seq != int64(i+1) {
+			t.Errorf("append %d seq = %d, want %d", i, seq, i+1)
+		}
+	}
+
+	// First page: newest first.
+	page, hasMore, err := m.ListDeploymentLogs(ctx, "dep-1", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 50 {
+		t.Fatalf("first page size = %d, want 50", len(page))
+	}
+	if !hasMore {
+		t.Errorf("first page hasMore = false, want true (200 rows > 50)")
+	}
+	if page[0].Seq != 200 || page[49].Seq != 151 {
+		t.Errorf("page seq range = [%d, %d], want [200, 151]", page[0].Seq, page[49].Seq)
+	}
+
+	// Page 2: before the first row's seq boundary.
+	page2, hasMore2, err := m.ListDeploymentLogs(ctx, "dep-1", page[49].Seq, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page2) != 50 || page2[0].Seq != 150 || page2[49].Seq != 101 {
+		t.Errorf("page2 seq range = [%d, %d], want [150, 101]", page2[0].Seq, page2[49].Seq)
+	}
+	if !hasMore2 {
+		t.Errorf("page2 hasMore = false, want true")
+	}
+
+	// Last page: rows 100..51 returned, hasMore=true (rows 50..1 remain).
+	page3, hasMore3, err := m.ListDeploymentLogs(ctx, "dep-1", page2[49].Seq, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page3) != 50 || !hasMore3 {
+		t.Errorf("page3 len=%d hasMore=%v, want 50/true", len(page3), hasMore3)
+	}
+	// Past the second-to-last page: rows 50..1.
+	page4, hasMore4, err := m.ListDeploymentLogs(ctx, "dep-1", page3[49].Seq, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page4) != 50 || hasMore4 {
+		t.Errorf("page4 len=%d hasMore=%v, want 50/false (no rows behind seq=1)", len(page4), hasMore4)
+	}
+	// Past the oldest row: empty.
+	page5, hasMore5, err := m.ListDeploymentLogs(ctx, "dep-1", 1, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page5) != 0 || hasMore5 {
+		t.Errorf("page5 len=%d hasMore=%v, want 0/false", len(page5), hasMore5)
+	}
+}
+
+// TestDeploymentLogsUnknownDeployment covers the empty-row path —
+// the SSE handler always opens with a page, even when nothing has
+// been logged yet.
+func TestDeploymentLogsUnknownDeployment(t *testing.T) {
+	m := NewMemStore()
+	page, hasMore, err := m.ListDeploymentLogs(context.Background(), "missing", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 0 || hasMore {
+		t.Errorf("unknown dep page = (%d, hasMore=%v), want (0, false)", len(page), hasMore)
+	}
+}
+
+func lineN(i int) string {
+	return "line" + itoaSmall(i)
+}
+
+func itoaSmall(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [4]byte
+	pos := len(buf)
+	for n > 0 {
+		pos--
+		buf[pos] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[pos:])
+}

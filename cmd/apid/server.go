@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -40,6 +41,10 @@ type server struct {
 	// githubd is apid's handle to the githubd daemon (ADR-012). Never nil:
 	// slice 1 default is stubGithubdClient; slice 7 swaps for a live dial.
 	githubd GithubdClient
+	// events is the in-process broadcaster the SSE handlers read from
+	// (slice 5/6). nil falls back to a fresh one so callers can defer
+	// initialization in unit tests.
+	events *events.Broadcaster
 	// sessions seals + verifies dashboard cookies. nil falls back to an
 	// ephemeral manager (so the daemon still boots in dev with no
 	// /etc/faas/secrets/session.key) — see cmd/apid/main.go.
@@ -72,7 +77,7 @@ type Notifier interface {
 }
 
 func newServer(store state.Store, log *slog.Logger, domain string, notif Notifier) *server {
-	return newServerWithDeps(store, log, domain, notif, "", nil, nil, nil, 0)
+	return newServerWithDeps(store, log, domain, notif, "", nil, nil, nil, nil, 0)
 }
 
 // newServerWithDeps wires the full server surface including the M7
@@ -91,6 +96,7 @@ func newServerWithDeps(
 	mailer Mailer,
 	githubd GithubdClient,
 	sessions *session.Manager,
+	bcaster *events.Broadcaster,
 	loginTTL time.Duration,
 ) *server {
 	if domain == "" {
@@ -108,6 +114,9 @@ func newServerWithDeps(
 	if sessions == nil {
 		sessions, _ = session.NewEphemeralManager(7 * 24 * time.Hour)
 	}
+	if bcaster == nil {
+		bcaster = events.New()
+	}
 	if loginTTL <= 0 {
 		loginTTL = 15 * time.Minute
 	}
@@ -119,6 +128,7 @@ func newServerWithDeps(
 		stripeWebhookSecret: stripeSecret,
 		mailer:              mailer,
 		githubd:             githubd,
+		events:              bcaster,
 		sessions:            sessions,
 		loginTTL:            loginTTL,
 	}

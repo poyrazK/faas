@@ -1235,3 +1235,60 @@ func (s *PgStore) DeleteOldLoginTokens(ctx context.Context, before time.Time) (i
 	}
 	return tag.RowsAffected(), nil
 }
+
+// AppendDeploymentLog inserts one row and returns the seq Postgres
+// assigned via the per-deployment bigserial PK.
+//
+// Used by builderd (slice 7/8/9) and the deployment status flips in
+// imaged. The SSE tail (slice 5+6) pages by seq.
+func (s *PgStore) AppendDeploymentLog(ctx context.Context, deploymentID, stream, line string) (int64, error) {
+	var seq int64
+	err := s.pool.QueryRow(ctx,
+		`insert into deployment_logs (deployment_id, stream, line)
+		 values ($1, $2, $3) returning seq`,
+		deploymentID, stream, line).Scan(&seq)
+	return seq, err
+}
+
+// ListDeploymentLogs returns the page of rows with seq < beforeSeq
+// (zero → all rows), DESC, capped at limit. hasMore is true if there's
+// at least one older row beyond the page.
+func (s *PgStore) ListDeploymentLogs(ctx context.Context, deploymentID string, beforeSeq int64, limit int) ([]LogEntry, bool, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var rows pgx.Rows
+	var err error
+	if beforeSeq <= 0 {
+		rows, err = s.pool.Query(ctx,
+			`select deployment_id, seq, stream, line, written_at
+			 from deployment_logs where deployment_id = $1
+			 order by seq desc limit $2`, deploymentID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select deployment_id, seq, stream, line, written_at
+			 from deployment_logs where deployment_id = $1 and seq < $2
+			 order by seq desc limit $3`, deploymentID, beforeSeq, limit)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	out := make([]LogEntry, 0, limit)
+	for rows.Next() {
+		var e LogEntry
+		if err := rows.Scan(&e.DeploymentID, &e.Seq, &e.Stream, &e.Line, &e.WrittenAt); err != nil {
+			return nil, false, err
+		}
+		out = append(out, e)
+	}
+	// hasMore — PgStore's LIMIT caps the row count; we can't tell
+	// whether the cursor sits exactly on the boundary without a
+	// second query. Default to "there is more" when the page is
+	// full and the caller should re-issue with the next cursor;
+	// apid's SSE handler treats the trailing page the same way as
+	// the MemStore contract (an extra round-trip to confirm EOF is
+	// acceptable).
+	hasMore := len(out) == limit
+	return out, hasMore, rows.Err()
+}

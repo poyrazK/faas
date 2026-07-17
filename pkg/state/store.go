@@ -88,6 +88,22 @@ type Store interface {
 	// bound). MemStore sorts in memory; PgStore uses a LIMIT/OFFSET or
 	// keyset pagination (deferred — LIMIT/OFFSET is fine at one-box scale).
 	ListDeploymentsForAccount(ctx context.Context, accountID string, before time.Time, limit int) ([]Deployment, error)
+
+	// Deployment logs (M7.5 slice 5).
+	//
+	// AppendDeploymentLog inserts one row of build output. Builderd is
+	// the writer in production; tests write directly. Returns the seq
+	// Postgres assigned (or the MemStore-picked seq). The seq is what
+	// the SSE endpoint returns as the cursor — the client pages by
+	// `(deployment_id, seq < before_seq) ORDER BY seq DESC`.
+	//
+	// ListDeploymentLogs returns the page of rows whose seq is < before
+	// (zero → newest page first), ordered DESC. Returns the rows +
+	// hasMore so the caller knows there's another page without an
+	// extra round-trip (rows == limit + 1 sentinel keeps the impl
+	// cheap).
+	AppendDeploymentLog(ctx context.Context, deploymentID, stream, line string) (seq int64, err error)
+	ListDeploymentLogs(ctx context.Context, deploymentID string, beforeSeq int64, limit int) (rows []LogEntry, hasMore bool, err error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error

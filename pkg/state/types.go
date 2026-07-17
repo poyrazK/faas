@@ -281,3 +281,15 @@ type LoginToken struct {
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
 }
+
+// LogEntry is one line of build output for a deployment (slice 5).
+// The dashboard's SSE stream tails this row at seq > cursor; clients
+// use the combination (DeploymentID, Seq) to dedupe across reconnects
+// (an id-replay after a network blip will see the same seqs).
+type LogEntry struct {
+	DeploymentID string
+	Seq          int64
+	Stream       string // "stdout" | "stderr" | "system"
+	Line         string
+	WrittenAt    time.Time
+}

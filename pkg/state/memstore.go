@@ -41,6 +41,13 @@ type MemStore struct {
 	// raw token (so the binary []byte hash from ConsumeLoginToken
 	// matches the map key format used in MemStore everywhere else).
 	loginTokens map[string]LoginToken
+	// deploymentLogs is keyed by deployment_id; the inner slice is
+	// append-ordered (which matches the Postgres seq order). MemStore
+	// mirrors the bigserial PK by appending + assigning a monotonic
+	// per-deployment counter so cursor pagination stays identical
+	// to the production shape.
+	deploymentLogs map[string][]LogEntry
+	deploymentSeq  map[string]int64
 	snapshots   []Snapshot
 	events      []Event
 	// usage holds one row per (instance, minute) — mirrors PgStore's
@@ -83,18 +90,20 @@ type usageMinute struct {
 // NewMemStore returns an empty in-memory store.
 func NewMemStore() *MemStore {
 	return &MemStore{
-		accounts:     map[string]Account{},
-		keys:         map[string]APIKey{},
-		keyByHash:    map[string]string{},
-		apps:         map[string]App{},
-		deployments:  map[string]Deployment{},
-		builds:       map[string]Build{},
-		domains:      map[string]CustomDomain{},
-		crons:        map[string]Cron{},
-		instances:    map[string]Instance{},
-		loginTokens:  map[string]LoginToken{},
-		snapshots:    []Snapshot{},
-		events:       []Event{},
+		accounts:       map[string]Account{},
+		keys:           map[string]APIKey{},
+		keyByHash:      map[string]string{},
+		apps:           map[string]App{},
+		deployments:    map[string]Deployment{},
+		builds:         map[string]Build{},
+		domains:        map[string]CustomDomain{},
+		crons:          map[string]Cron{},
+		instances:      map[string]Instance{},
+		loginTokens:    map[string]LoginToken{},
+		deploymentLogs: map[string][]LogEntry{},
+		deploymentSeq:  map[string]int64{},
+		snapshots:      []Snapshot{},
+		events:         []Event{},
 		usage:        []usageMinute{},
 		usageByMonth: []Usage{},
 		idem:         map[string]idemEntry{},
@@ -1236,6 +1245,69 @@ func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (in
 		}
 	}
 	return removed, nil
+}
+
+// AppendDeploymentLog records one line of build output. Returns the
+// assigned seq (monotonic per deployment). MemStore mimics the
+// Postgres bigserial cursor so cursor pagination (`seq < before`)
+// works the same as production.
+func (m *MemStore) AppendDeploymentLog(_ context.Context, deploymentID, stream, line string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deploymentSeq[deploymentID]++
+	seq := m.deploymentSeq[deploymentID]
+	if m.deploymentLogs == nil {
+		m.deploymentLogs = map[string][]LogEntry{}
+	}
+	m.deploymentLogs[deploymentID] = append(m.deploymentLogs[deploymentID], LogEntry{
+		DeploymentID: deploymentID,
+		Seq:          seq,
+		Stream:       stream,
+		Line:         line,
+		WrittenAt:    time.Now().UTC(),
+	})
+	return seq, nil
+}
+
+// ListDeploymentLogs returns the page of rows whose seq < beforeSeq
+// (zero → all rows), in DESC seq order, capped at limit. hasMore is
+// true when there are older rows still to fetch (rows == limit AND
+// there's at least one more behind it).
+func (m *MemStore) ListDeploymentLogs(_ context.Context, deploymentID string, beforeSeq int64, limit int) ([]LogEntry, bool, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	all := m.deploymentLogs[deploymentID]
+	if len(all) == 0 {
+		return nil, false, nil
+	}
+	// Walk backwards (highest seq first) so the page is newest-first
+	// regardless of insert order — matches production's ORDER BY seq DESC.
+	out := make([]LogEntry, 0, limit)
+	olderRemaining := false
+	for i := len(all) - 1; i >= 0; i-- {
+		e := all[i]
+		if beforeSeq > 0 && e.Seq >= beforeSeq {
+			continue
+		}
+		if len(out) >= limit {
+			// Page is full. Stop only when we've also confirmed
+			// there's at least one row behind us we'd otherwise
+			// have included. Older rows survive any older iteration
+			// (i > 0 and a row at i-1 with seq < beforeSeq).
+			for j := i - 1; j >= 0; j-- {
+				if beforeSeq == 0 || all[j].Seq < beforeSeq {
+					olderRemaining = true
+					break
+				}
+			}
+			break
+		}
+		out = append(out, e)
+	}
+	return out, olderRemaining, nil
 }
 
 // compile-time check that MemStore satisfies Store.
