@@ -530,6 +530,14 @@ jailer --id {instance} --uid {uid} --gid {gid} \
   -- firecracker --api-sock api.sock --config-file vmconfig.json
 ```
 
+> **Superseded by [ADR-019](adr/019-jailer-invocation-and-jail-resource-ownership.md).**
+> The invocation above predates the first metal run and does not work on the
+> pinned jailer v1.7.0: jailer requires `--exec-file <firecracker>` (which also
+> names the chroot dir) and execs it itself, so nothing but firecracker's own
+> flags may follow `--` (no positional `firecracker`). ADR-019 also defines the
+> jail resource-ownership rules (`vmmd` stages read-only images `o+r`, copies +
+> chowns the writable drive1 to the jailer uid). `pkg/fcvm` is the source of truth.
+
 Firecracker machine config (cold boot):
 
 ```json

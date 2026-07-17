@@ -51,13 +51,14 @@ placeholders), which surfaced a chain of latent bugs — most now fixed:
   probe to `10.100.x.y:8080` returns 200/404 through the DNAT). ✅
 - jailer launches firecracker as the unprivileged uid in the correct chroot
   (`--exec-file` + resolved-symlink chroot basename fixes). ✅
+- The jailed uid can read its config + drives and create its API socket: `vmmd`
+  stages read-only images `o+r` and copies + chowns the writable drive1 to the
+  jailer uid (jail resource ownership, [ADR-019](../../docs/adr/019-jailer-invocation-and-jail-resource-ownership.md)). ✅
 
-**M0 does not yet pass end-to-end.** The remaining blocker is jail-resource
-ownership: the manager stages the drive/config files `0640` root-owned
-(`pkg/fcvm` `copyFile`), so the jailed firecracker (unprivileged uid) can't open
-them, and the writable app layer (drive1, the overlay upper) needs per-instance
-ownership under the jailer uid. That is a security-sensitive product change,
-tracked separately.
+**M0 boots end-to-end here.** Remember the arch caveat below: this is the arm64
+nested-KVM guest, so a green run validates the VM lifecycle and boot path — the
+**EX44 stays the source of truth for the §14 M0 gate** on the pinned x86_64
+kernel (CLAUDE.md).
 
 Two **arm64-Lima shims** live in `run-metal.sh` (never needed on the x86_64 EX44):
 the `br-tenants` bridge (host-prep the box does via ansible) and a CPU-cache

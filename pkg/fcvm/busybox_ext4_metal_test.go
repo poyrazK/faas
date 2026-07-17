@@ -185,11 +185,12 @@ func buildBusyboxExt4(dst string) error {
 		// Don't ignore "I/O error" diagnostics from mkfs — surface them.
 		return fmt.Errorf("mkfs.ext4: %w", err)
 	}
-	// drive1 (the app layer) is opened read-write by firecracker, which the jailer
-	// runs as an unprivileged uid; make this throwaway image world-writable so that
-	// uid can open it. Production per-app layers need per-instance ownership under
-	// the jailer uid instead — an M1/M2 concern, out of scope for this M0 fixture.
-	if err := os.Chmod(dst, 0o666); err != nil {
+	// The manager stages this image for the jailer uid itself: drive0 (read-only)
+	// is hardlinked in and widened for read, drive1 (read-write, the overlay upper)
+	// is copied to a private per-instance file chowned to the uid (see provision /
+	// stageWritable). So the fixture no longer needs to pre-widen perms; a normal
+	// 0644 is enough for the manager to read it while staging.
+	if err := os.Chmod(dst, 0o644); err != nil {
 		return fmt.Errorf("chmod busybox ext4: %w", err)
 	}
 	return nil

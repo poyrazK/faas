@@ -10,10 +10,10 @@
 #   sudo -E env "PATH=$PATH" ./deploy/lima/run-metal.sh -run TestMetal  # all metal
 #
 # NOTE: TestMetalHelloBoot (M0) drives the full jailer→firecracker→tap→netns→DNAT
-# path here, but does not yet pass end-to-end: the jailed firecracker runs as an
-# unprivileged uid and can't access the drive files the manager stages 0640
-# root-owned (copyFile) — the jail-resource-ownership gap (see deploy/lima/README.md).
-# The M1/M3 tests additionally need real base/layer rootfs images (M2).
+# path and boots end-to-end here — vmmd stages the jail for the unprivileged uid
+# (read-only images o+r, writable drive1 copied + chowned; ADR-019). This is the
+# arm64 nested-KVM guest, so the EX44 stays the source of truth for the §14 M0
+# gate. The M1/M3 tests additionally need real base/layer rootfs images (M2).
 set -euo pipefail
 
 export FAAS_TEST_KERNEL="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.1.128}"
