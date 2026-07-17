@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -171,7 +172,32 @@ func (s *server) handler() http.Handler {
 	// unsigned and trust the network boundary; ADR-007 hardening later).
 	mux.HandleFunc("POST /v1/webhooks/stripe", s.stripeWebhook)
 
+	// Dashboard surface (M7.5, ADR-011). Lives behind gatewayd's
+	// /dashboard/* reverse-proxy (spec §11 single-public-listener).
+	// Slice 2: stub templates, no auth yet — slice 3 adds the
+	// magic-link sessionAuth middleware; slice 4 fills in real data.
+	mux.Handle("GET /dashboard/", s.dashboardChain(s.dashboardHandler(s.log)))
+	mux.Handle("GET /dashboard", s.dashboardChain(s.dashboardHandler(s.log)))
+	mux.Handle("GET /login", s.dashboardChain(s.loginPlaceholder(s.log)))
+
 	return mux
+}
+
+// dashboardChain wraps a dashboard handler in the §11 middleware
+// (RequestID + Recovery; slice 3 adds sessionAuth; AuthLimit on
+// /login). The full chain is:
+//
+//	RequestID → Recovery → handler
+//
+// Order matters: RequestID must come first so even Recovery's 500
+// response carries the id, and Recovery must wrap the inner handler
+// so a template panic returns 500 instead of taking the daemon down.
+func (s *server) dashboardChain(h http.Handler) http.Handler {
+	// http.HandlerFunc is also http.Handler so middleware.RequestID
+	// accepts it directly. Build inside-out.
+	h = middleware.RequestID(h)
+	h = middleware.Recovery(s.log)(h)
+	return h
 }
 
 // accountHandler is a handler that has already resolved the caller's account.
