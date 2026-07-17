@@ -152,6 +152,25 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}()
 
+	// Re-stage everything the snapshot's recorded VM state still references.
+	// Park→Kill (vmm.Kill) wiped the prior chroot, so the chroot-relative
+	// basenames in the snapshot (kernel + drive backings) must be restored
+	// before /snapshot/load, otherwise Firecracker 400s when it tries to
+	// open the backing file. Drive 0 (base) is shared RO — hardlink; drive 1
+	// (per-app layer, RW overlay upper) is per-instance — copy + chown.
+	if spec.KernelPath == "" || spec.BasePath == "" || spec.LayerPath == "" {
+		return fmt.Errorf("vmm: restore spec missing kernel/base/layer: %+v", spec)
+	}
+	if _, err := stageReadOnly(root, spec.KernelPath); err != nil {
+		return fmt.Errorf("vmm: stage kernel: %w", err)
+	}
+	if _, err := stageReadOnly(root, spec.BasePath); err != nil {
+		return fmt.Errorf("vmm: stage base: %w", err)
+	}
+	if _, err := stageWritable(root, spec.LayerPath, l.UID, l.GID); err != nil {
+		return fmt.Errorf("vmm: stage layer: %w", err)
+	}
+
 	// Snapshot files are read-only inputs shared across the N instances a single
 	// snapshot may restore (invariant §6.2-5): hardlink them in and widen for read
 	// rather than chown, which would rewrite the shared inode owner.

@@ -754,6 +754,7 @@ func TestRestore_MkChrootFailure(t *testing.T) {
 	v := NewJailerVMM(base, time.Second)
 	err := v.Restore(context.Background(), Lease{Instance: "restore-fail"}, RestoreSpec{
 		MemPath: "/nonexistent/mem", VMStatePath: "/nonexistent/vmstate",
+		KernelPath: "/nonexistent/kernel", BasePath: "/nonexistent/base", LayerPath: "/nonexistent/layer",
 	})
 	if err == nil {
 		t.Fatal("expected mkChroot failure")
