@@ -34,10 +34,16 @@ make test        # unit tests — any machine, no KVM
 make test-metal  # integration tests (//go:build metal) — needs KVM + root
 make leakcheck   # assert zero leaked netns/TAPs/jails/cgroups
 make lint        # vet + gofmt (golangci-lint if installed)
+make metal-lima  # run metal tests locally on an M3+ Mac via Lima nested KVM
 ```
 
 Go ≥ 1.23. Work milestones **M0 → M8 in order** (spec §14); a milestone is done
 when its executable acceptance tests pass.
+
+The metal tests normally need the x86_64 EX44. On an Apple Silicon **M3+ Mac
+(macOS 15+)** you can run them locally via Lima nested KVM (arm64) — see
+[`deploy/lima/README.md`](deploy/lima/README.md). This is a fast dev loop for the
+arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
 
 ## Status
 
