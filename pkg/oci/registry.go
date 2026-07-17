@@ -30,7 +30,10 @@ type RegistryClient struct {
 }
 
 // compile-time assertion the client satisfies the puller seam imaged consumes.
-var _ Puller = (*RegistryClient)(nil)
+var (
+	_ Puller         = (*RegistryClient)(nil)
+	_ ManifestPuller = (*RegistryClient)(nil)
+)
 
 // Option configures a RegistryClient.
 type Option func(*RegistryClient)

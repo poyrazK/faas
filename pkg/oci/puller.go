@@ -58,12 +58,29 @@ type Puller interface {
 	PullLayers(ctx context.Context, ref string) (PullLayersResult, error)
 }
 
+// ManifestPuller is the M6 extension surface: production's RegistryClient
+// satisfies it; offline fakes do not. imaged's handleDeployment type-asserts
+// to ManifestPuller and falls back to the digest-only flow when the assertion
+// fails — that keeps every unit test green without bringing the network in.
+//
+// PullManifest returns the decoded manifest for ref, including the config
+// descriptor and every layer descriptor with its size and digest. PullBlob
+// streams the bytes of a blob (layer tarball or config JSON) referenced by
+// digest from repo. The caller MUST close the returned reader; the reader is
+// gzipped when the underlying blob is.
+type ManifestPuller interface {
+	Puller
+	PullManifest(ctx context.Context, ref string) (Manifest, error)
+	PullBlob(ctx context.Context, repo, digest string) (io.ReadCloser, error)
+}
+
 // DefaultPuller is the offline default — it echoes the reference back from
 // PullDigest / PullImageConfig and returns no layers from PullLayers.
 // imaged.New substitutes it when no puller is injected; the shape
 // pkg/imaged tests exercise.
 //
-// Production wires oci.RegistryClient, which serves real layer blobs.
+// Production wires oci.RegistryClient, which serves real layer blobs and
+// implements ManifestPuller (M6).
 type DefaultPuller struct{}
 
 func (DefaultPuller) PullDigest(_ context.Context, ref string) (string, error) {

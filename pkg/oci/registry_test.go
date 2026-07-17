@@ -15,8 +15,9 @@ import (
 )
 
 // fakeRegistry is an httptest registry that implements just enough of the v2
-// API to exercise the anonymous-token flow, digest resolution, and the
-// PullLayers path (manifests, image-config blobs, layer blobs).
+// API to exercise the anonymous-token flow, digest resolution, the
+// PullLayers path (manifests, image-config blobs, layer blobs), and the
+// M6 PullManifest + PullBlob streaming path.
 type fakeRegistry struct {
 	srv          *httptest.Server
 	token        string
@@ -27,11 +28,16 @@ type fakeRegistry struct {
 	tokenHits    int
 
 	// layerBlobs: digest → body. The /blobs/<digest> handler serves bytes
-	// from this map; missing digest returns 404. Also serves the image-config
-	// blob under the config descriptor's digest (same wire path).
+	// from this map first; missing digest returns 404. Also serves the
+	// image-config blob under the config descriptor's digest (same wire path).
 	layerBlobs  map[string][]byte
 	blobsHits   int
 	manifestHit int
+
+	// blobHandler, if non-nil, is consulted for /v2/<repo>/blobs/<digest>
+	// requests AFTER layerBlobs misses. Lets the M6 PullBlob tests inspect
+	// the requested digest/repo without pre-seeding the map.
+	blobHandler func(repo, digest string) ([]byte, error)
 }
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
@@ -74,16 +80,32 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			if i := strings.IndexByte(digest, '/'); i >= 0 {
 				digest = digest[:i]
 			}
-			body, ok := f.layerBlobs[digest]
-			if !ok {
-				http.Error(w, "blob not found", http.StatusNotFound)
+			if body, ok := f.layerBlobs[digest]; ok {
+				w.Header().Set("Content-Type", "application/octet-stream")
+				if f.digestHeader != "" {
+					w.Header().Set("Docker-Content-Digest", f.digestHeader)
+				}
+				_, _ = w.Write(body)
 				return
 			}
-			w.Header().Set("Content-Type", "application/octet-stream")
-			if f.digestHeader != "" {
-				w.Header().Set("Docker-Content-Digest", f.digestHeader)
+			if f.blobHandler != nil {
+				// path is /v2/<repo>/blobs/<digest>
+				trimmed := strings.TrimPrefix(path, "/v2/")
+				parts := strings.Split(trimmed, "/blobs/")
+				if len(parts) != 2 {
+					http.NotFound(w, r)
+					return
+				}
+				body, err := f.blobHandler(parts[0], parts[1])
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusNotFound)
+					return
+				}
+				w.Header().Set("Content-Type", "application/vnd.oci.image.layer.v1.tar+gzip")
+				_, _ = w.Write(body)
+				return
 			}
-			_, _ = w.Write(body)
+			http.Error(w, "blob not found", http.StatusNotFound)
 		case strings.Contains(path, "/manifests/"):
 			f.manifestHit++
 			if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
