@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -105,6 +106,38 @@ func (s *SynthServer) Stop(ctx context.Context) error {
 // schedd knows where to dial.
 func (s *SynthServer) SocketPath() string { return s.socketPath }
 
+// sanitizeLogField strips ASCII control characters (CR/LF and below)
+// from a value before it reaches slog. CodeQL's go/log-injection rule
+// (CWE-117) flags any tainted source flowing into a log statement;
+// even though slog's JSON encoder escapes special characters, stripping
+// them at the source keeps the log stream one-line-per-event regardless
+// of what the producer sends. Anything beyond tab (0x09) is replaced
+// with '·' so log readers can spot the sanitization without it looking
+// like data loss.
+//
+// Empty input is returned as-is (the caller usually treats that as a
+// validation failure before logging anyway, but keep the helper
+// total).
+func sanitizeLogField(s string) string {
+	if s == "" {
+		return s
+	}
+	// 0xB7 (middle dot) as a single ASCII-safe byte — keeps the output
+	// one byte per replacement regardless of source encoding so log
+	// readers can spot sanitization unambiguously.
+	const repl = '\xb7'
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\t' || r > 0x1F && r != 0x7F {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune(repl)
+		}
+	}
+	return b.String()
+}
+
 // Calls returns the number of synthesize requests served. Metric-only;
 // tests assert on it to confirm a fake-clock advance produced exactly
 // one cron fire.
@@ -143,15 +176,19 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 	// distinguish cron-fired POSTs from GETs once the proxy-side
 	// follow-up routes a real request through gatewayd.
 	//
-	// CodeQL flags structured-log fields derived from the JSON body as
-	// "log entries from user input". The synth listener is unix-socket
-	// DAC-authenticated (ADR-015): only schedd (group `faas`) can dial
-	// the socket, so app_id/method/path are not attacker-controlled in
-	// production. They're also not secret (they're identifiers a
-	// dashboard needs to render). Suppress per ADR-015.
-	s.log.Debug("gateway synth: dispatched", "app_id", req.AppID, "method", method, "path", req.Path) // #nosec G101 — ADR-015 unix-socket DAC auth
+	// The values flow from the JSON request body — CodeQL's
+	// go/log-injection (CWE-117) flags them as attacker-controlled
+	// regardless of the unix-socket DAC check (ADR-015). Even though
+	// slog's JSON encoder escapes \n / \r, defense-in-depth is to
+	// strip the control characters before logging so a compromised
+	// schedd (or anything else in the `faas` group) cannot forge
+	// lines or hide activity in the log stream.
+	logAppID := sanitizeLogField(req.AppID)
+	logMethod := sanitizeLogField(method)
+	logPath := sanitizeLogField(req.Path)
+	s.log.Debug("gateway synth: dispatched", "app_id", logAppID, "method", logMethod, "path", logPath)
 	if err := s.dispatcher.Wake(r.Context(), req.AppID); err != nil {
-		s.log.Warn("gateway synth: wake", "app_id", req.AppID, "path", req.Path, "err", err) // #nosec G101 — ADR-015 unix-socket DAC auth
+		s.log.Warn("gateway synth: wake", "app_id", logAppID, "path", logPath, "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
