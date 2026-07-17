@@ -290,7 +290,13 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 		return code, err
 	}
 	code, err := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
-	m.cleanup(ctx, inst.Lease, inst.Net)
+	// Teardown uses a context detached from the caller's: if the caller's ctx
+	// has already expired (test deadline, caller gave up), we still owe the
+	// invariant §6.2-4/5 cleanup. Without this, a 30s test deadline firing
+	// mid-Destroy leaves the netns + cgroup on disk; observed on the Lima
+	// arm64 metal path where nested-KVM cold boot can take >25s. The vmm wait
+	// above used the original ctx and is allowed to be cancelled by it.
+	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net)
 	m.mu.Lock()
 	delete(m.exportDirs, instance)
 	m.mu.Unlock()
