@@ -180,7 +180,6 @@ func runBuild(m api.BuildManifest) error {
 			}
 		}
 	}
-	fc := classify(exitCode)
 	return writeAndPoweroff(m, err, tailOf(buf.Bytes(), m.LogTailBytes))
 }
 
