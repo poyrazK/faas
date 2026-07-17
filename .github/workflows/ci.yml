@@ -194,6 +194,33 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+  load:
+    # M4 acceptance gate (spec §14 row 2): "1,000 rps to hot app adds < 2 ms p50".
+    # Decoupled from the `test` job because (a) it needs more CPU than
+    # ubuntu-latest reliably delivers — ubuntu-latest is 2 vCPU / 7 GB and
+    # 1k rps handler-only tests saturate it under CI noise; (b) it is a
+    # load test, not a coverage gate — coverage instrumentation skews
+    # latency and is intentionally excluded.
+    #
+    # Runner choice: `ubuntu-4-cpus` (4 vCPU / 16 GB) — GitHub-hosted larger
+    # runner, GA since 2024-09-26. Requires org-level enablement of larger
+    # runners (Settings → Actions → Runners → Larger runners). If the org
+    # has not enabled larger runners, this job will fail fast with
+    # "no matching runner" — fall back to `ubuntu-latest` knowing that the
+    # gate may flake under heavy shared-runner load.
+    name: load (1k rps hot-path)
+    runs-on: ubuntu-4-cpus
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+      - name: make test-load
+        run: make test-load
+
   metal:
     # Manual trigger from the Actions tab. Marked workflow_dispatch so the
     # job can be invoked on-demand once a self-hosted runner is registered
