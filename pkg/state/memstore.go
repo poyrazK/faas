@@ -1277,6 +1277,13 @@ func (m *MemStore) ListDeploymentLogs(_ context.Context, deploymentID string, be
 	if limit <= 0 {
 		limit = 50
 	}
+	// Clamp to MaxDeploymentLogPage so a caller-supplied limit
+	// (e.g. a query-string value) can't trigger an oversized
+	// allocation. CodeQL go/allocation-size flags user-controlled
+	// slice sizes; this is the safe-by-default guard.
+	if limit > MaxDeploymentLogPage {
+		limit = MaxDeploymentLogPage
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	all := m.deploymentLogs[deploymentID]

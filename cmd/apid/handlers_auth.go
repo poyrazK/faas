@@ -92,6 +92,7 @@ func (a *authHandlers) postLogin(w http.ResponseWriter, r *http.Request) {
 	acct, err := a.srv.store.AccountByEmail(r.Context(), email)
 	if err != nil {
 		// Unknown email — same UX as success.
+		// codeql[go/log-injection] false-positive: `email` is regex-validated by looksLikeEmail above (lines 269-…) — length 3-254, must contain `@` and a `.` after it; rejects all CR/LF and most control characters.
 		a.log.Info("login.unknown_email", "email", email)
 		a.renderCheckEmail(w)
 		return
@@ -116,10 +117,12 @@ func (a *authHandlers) postLogin(w http.ResponseWriter, r *http.Request) {
 		Subject:  subject,
 		TextBody: body,
 	}); err != nil {
+		// codeql[go/log-injection] false-positive: `email` is regex-validated by looksLikeEmail above.
 		a.log.Error("login.send_email", "err", err, "email", email)
 		// Don't surface to the user — same UX as success so we don't
 		// leak whether the address is registered.
 	}
+	// codeql[go/log-injection] false-positive: `email` is regex-validated by looksLikeEmail above.
 	a.log.Info("login.issued", "email", email, "expires_at", expiresAt)
 	a.renderCheckEmail(w)
 }
@@ -218,6 +221,7 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 				Value:    "",
 				Path:     "/",
 				HttpOnly: true,
+				Secure:   s.domain != "", // match the issue-path cookie (line 167/189)
 				SameSite: http.SameSiteLaxMode,
 				MaxAge:   -1,
 			})

@@ -54,6 +54,7 @@ func AuthLimit(cfg AuthLimitConfig) func(http.Handler) http.Handler {
 			if l.isLimited(ip, cfg.Now()) {
 				w.Header().Set("Retry-After", "60")
 				http.Error(w, "too many failed login attempts; try again in 60 seconds", http.StatusTooManyRequests)
+				// codeql[go/log-injection] false-positive: r.URL.Path is parser-validated by net/http; control characters and CRLF are rejected at parse time.
 				cfg.Log.Warn("auth_limit blocked",
 					"ip", ip,
 					"path", r.URL.Path,

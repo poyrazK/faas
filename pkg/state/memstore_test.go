@@ -598,6 +598,32 @@ func TestDeploymentLogsUnknownDeployment(t *testing.T) {
 	}
 }
 
+// TestDeploymentLogsLimitClamp asserts the safe-by-default guard
+// against caller-supplied limit values (CodeQL go/allocation-size).
+// A hostile caller that forgets to clamp `limit` must not be able
+// to trigger an oversized slice allocation.
+func TestDeploymentLogsLimitClamp(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	dep := "dep-clamp"
+	for i := 0; i < MaxDeploymentLogPage*2; i++ {
+		if _, err := m.AppendDeploymentLog(ctx, dep, "stdout", lineN(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Caller requests 1_000_000 rows → must clamp to MaxDeploymentLogPage.
+	page, hasMore, err := m.ListDeploymentLogs(ctx, dep, 0, 1_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != MaxDeploymentLogPage {
+		t.Errorf("clamped page len = %d, want %d", len(page), MaxDeploymentLogPage)
+	}
+	if !hasMore {
+		t.Errorf("hasMore = false; expected true (rows remain past the clamp)")
+	}
+}
+
 func lineN(i int) string {
 	return "line" + itoaSmall(i)
 }

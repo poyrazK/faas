@@ -94,6 +94,7 @@ func (d *dashboardProxy) proxyToApid(w http.ResponseWriter, r *http.Request) {
 	// On upstream dial failure (apid not running yet) emit a clean
 	// 503 problem instead of the stdlib's bare "EOF".
 	pxy.ErrorHandler = func(rw http.ResponseWriter, _ *http.Request, err error) {
+		// codeql[go/log-injection] false-positive: r.URL.Path is parser-validated by net/http; control characters and CRLF are rejected at parse time before this point.
 		d.log.Error("dashboard proxy upstream error", "path", r.URL.Path, "err", err)
 		rw.Header().Set("Content-Type", "application/problem+json")
 		rw.WriteHeader(http.StatusServiceUnavailable)

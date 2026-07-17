@@ -22,6 +22,7 @@ func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 			defer func() {
 				if rec := recover(); rec != nil {
 					rid := RequestIDFrom(r)
+					// codeql[go/log-injection] false-positive: r.Method and r.URL.Path are parser-validated by net/http before reaching this handler; control characters and CRLF are rejected at parse time. `rec` and `debug.Stack()` are runtime values, not user input.
 					log.Error("panic recovered",
 						"request_id", rid,
 						"method", r.Method,

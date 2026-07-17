@@ -11,6 +11,13 @@ import (
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
 
+// MaxDeploymentLogPage caps the per-call row count for
+// ListDeploymentLogs. Both implementations clamp the caller's
+// `limit` to this value before allocating — defense in depth so a
+// caller that forgets to validate a query-string `limit` can't
+// trigger an oversized allocation (CodeQL go/allocation-size).
+const MaxDeploymentLogPage = 500
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface
