@@ -27,17 +27,28 @@ func (f *fakeNotifier) Notify(_ context.Context, channel, payload string) error 
 }
 
 // fakeVM is the test VM driver. It returns the configured result, optionally
-// failing. The result's LayerPath is what ProcessOne stamps onto the
+// failing. The result's OCIImage is what ProcessOne stamps onto the
 // deployment row.
 type fakeVM struct {
-	out   VMResult
-	err   error
-	calls int
+	out         BuildOutcome
+	spawnErr    error
+	waitErr     error
+	spawnCalls  int
+	waitCalls   int
+	handle      BuildHandle
 }
 
-func (f *fakeVM) Spawn(_ context.Context, _ VMRequest) (VMResult, error) {
-	f.calls++
-	return f.out, f.err
+func (f *fakeVM) Spawn(_ context.Context, _ VMRequest) (BuildHandle, error) {
+	f.spawnCalls++
+	if f.handle.Instance == "" {
+		f.handle = BuildHandle{Instance: "build-test", BuildID: "test", TimeoutSec: 30}
+	}
+	return f.handle, f.spawnErr
+}
+
+func (f *fakeVM) WaitForCompletion(_ context.Context, _ BuildHandle) (BuildOutcome, error) {
+	f.waitCalls++
+	return f.out, f.waitErr
 }
 
 // seedDeployment creates an account + app + source-tarball deployment with a
@@ -101,8 +112,8 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 	if !res.CacheHit {
 		t.Error("expected cache hit")
 	}
-	if fvm.calls != 0 {
-		t.Errorf("VM spawn was called %d times, want 0 (cache hit)", fvm.calls)
+	if fvm.spawnCalls != 0 {
+		t.Errorf("VM spawn was called %d times, want 0 (cache hit)", fvm.spawnCalls)
 	}
 	dep, _ := store.DeploymentByID(context.Background(), depID)
 	if dep.RootfsPath == "" {
@@ -141,7 +152,7 @@ func TestProcessOne_VMSpawnSucceedsAndStamps(t *testing.T) {
 	if err := os.WriteFile(out, []byte("produced layer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fvm := &fakeVM{out: VMResult{LayerPath: out, Bytes: 14, ExitCode: 0}}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: out, ExitCode: 0, LogTailBytes: 14}}
 	notif := &fakeNotifier{}
 	cacheRoot := t.TempDir()
 	c := NewCache(cacheRoot)
@@ -150,8 +161,8 @@ func TestProcessOne_VMSpawnSucceedsAndStamps(t *testing.T) {
 	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
 		t.Fatalf("ProcessOne: %v", err)
 	}
-	if fvm.calls != 1 {
-		t.Errorf("VM spawn was called %d times, want 1", fvm.calls)
+	if fvm.spawnCalls != 1 {
+		t.Errorf("VM spawn was called %d times, want 1", fvm.spawnCalls)
 	}
 	dep, _ := store.DeploymentByID(context.Background(), depID)
 	if dep.RootfsBytes != 14 {
@@ -174,7 +185,7 @@ func TestProcessOne_OOMExitClassified(t *testing.T) {
 	makeTarballWithName(t, src, []string{"package.json"})
 
 	buildID, _, _ := seedDeployment(t, store, src)
-	fvm := &fakeVM{out: VMResult{LayerPath: "/dev/null", ExitCode: 137}}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: "/dev/null", ExitCode: 137, FailureClass: "FailureOOM"}} // guest-init captures this
 	notif := &fakeNotifier{}
 	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -197,7 +208,7 @@ func TestProcessOne_VMSpawnErrorIsInfra(t *testing.T) {
 	makeTarballWithName(t, src, []string{"package.json"})
 
 	buildID, _, _ := seedDeployment(t, store, src)
-	fvm := &fakeVM{err: errors.New("vmmd down")}
+	fvm := &fakeVM{spawnErr: errors.New("vmmd down")}
 	notif := &fakeNotifier{}
 	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 

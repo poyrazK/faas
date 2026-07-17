@@ -107,6 +107,24 @@ message CreateFromSnapshotRequest {
 message CreateColdBootRequest {
   string instance = 1;
   AppSpec app      = 2;
+  // Build carries the builder-VM specifics. Nil for app VMs (the common case).
+  // vmmd branches on presence: with Build set, the chroot is registered for
+  // drive1 export during Destroy and the build manifest is left untouched on
+  // drive1 (builderd's CreateBuildDrive1 wrote it). Spec §4.5, ADR-003.
+  BuildSpec build = 3;
+}
+
+// BuildSpec identifies an instance as a builder VM. vmmd's Destroy waits for
+// the firecracker child to exit, captures its exit code, and copies
+// /etc/faas/build-done.json + /build/out/* out of the chroot into ExportDir
+// before removing the chroot. Builderd writes BuildManifest (BuildManifestPath)
+// onto drive1 at CreateColdBoot time so guest-init can read it once the VM is up.
+message BuildSpec {
+  // Host directory vmmd populates during Destroy with:
+  //   <export_dir>/build-done.json
+  //   <export_dir>/build/out/image.tar  (and any siblings)
+  // Required for builder VMs; ignored otherwise. vmmd refuses export > MaxExportedLayerBytes.
+  string export_dir = 1;
 }
 
 message PauseAndSnapshotRequest {
@@ -128,6 +146,10 @@ message DestroyResponse {
   // Echoed for callers that batch destroys and want a confirmation record.
   // Successful destroys produce an empty `problem` field.
   string instance = 1;
+  // Populated for builder VMs from the firecracker child's exit status (the
+  // build's own exit code; 137 = OOM, 124 = timeout, etc — see
+  // pkg/builderd/builderd.go failure-class table). 0 for app VMs.
+  int32  exit_code = 2;
 }
 
 message StatsRequest {}

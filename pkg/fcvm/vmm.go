@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // JailerVMM is the production VMM. It provisions a jail chroot, launches
@@ -27,13 +29,29 @@ import (
 // kernel/base rootfs in (cheap) and link the per-app layer / snapshot files, then
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
-	chrootBase   string        // /srv/fc/jail
-	fcName       string        // chroot dir name jailer derives from the exec-file basename
-	readyTimeout time.Duration // WAKING/cold-boot readiness budget (spec §6)
+	chrootBase    string        // /srv/fc/jail
+	fcName        string        // chroot dir name jailer derives from the exec-file basename
+	readyTimeout  time.Duration // WAKING/cold-boot readiness budget (spec §6)
+	destroyWait   time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
+	exportMaxBytes int64        // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
 
 	mu      sync.Mutex
 	proc    map[string]*exec.Cmd // instance -> running jailer process
 	clients map[string]*http.Client
+	recs    map[string]*instanceRecord // instance -> per-process bookkeeping (M6 builder VMs)
+}
+
+// instanceRecord tracks one firecracker child + build-specific options so
+// DestroyWithExport can wait for exit, capture the code, and copy artifacts.
+// The exited/exitCode fields are written exactly once by the watchdog goroutine
+// started in startJailer; reads in DestroyWithExport block until the watchdog
+// signals done via the cond.
+type instanceRecord struct {
+	cmd       *exec.Cmd
+	exportDir string         // empty for app VMs (no export)
+	exited    bool           // set by the watchdog when cmd.Wait completes
+	exitCode  int            // captured from cmd.Wait's ProcessState.ExitCode()
+	done      chan struct{}  // closed by the watchdog; readers <-done to wake
 }
 
 // NewJailerVMM constructs a JailerVMM. readyTimeout of 0 defaults to 30s (the
@@ -43,11 +61,14 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		readyTimeout = 30 * time.Second
 	}
 	return &JailerVMM{
-		chrootBase:   chrootBase,
-		fcName:       resolveFCChrootName(),
-		readyTimeout: readyTimeout,
-		proc:         make(map[string]*exec.Cmd),
-		clients:      make(map[string]*http.Client),
+		chrootBase:    chrootBase,
+		fcName:        resolveFCChrootName(),
+		readyTimeout:  readyTimeout,
+		destroyWait:   10 * time.Minute, // builder timeout (spec §1 BuildTimeoutSeconds) + headroom
+		exportMaxBytes: 0,               // resolved to api.MaxExportedLayerBytes at first export
+		proc:          make(map[string]*exec.Cmd),
+		clients:       make(map[string]*http.Client),
+		recs:          make(map[string]*instanceRecord),
 	}
 }
 
@@ -238,15 +259,31 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 }
 
 // Kill stops the jailer process (if any) and removes the chroot. Idempotent.
+// SIGKILL'd instances don't get an artifact export — that's Builderd's path
+// (use DestroyWithExport).
 func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	v.mu.Lock()
-	cmd := v.proc[l.Instance]
-	delete(v.proc, l.Instance)
+	cmd, hasCmd := v.proc[l.Instance]
+	rec, hasRec := v.recs[l.Instance]
+	if hasCmd {
+		delete(v.proc, l.Instance)
+	}
 	v.mu.Unlock()
 
-	if cmd != nil && cmd.Process != nil {
+	if hasCmd && cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+	}
+	if hasRec && rec.done != nil {
+		// Wait for the watchdog to finish (it always does, since cmd.Process.Wait
+		// is observed by Go's runtime even on signal-induced exit). Bound by the
+		// same destroyWait so a wedged firecracker can't pin us.
+		select {
+		case <-rec.done:
+		case <-time.After(v.destroyWait):
+		}
+		v.mu.Lock()
+		delete(v.recs, l.Instance)
+		v.mu.Unlock()
 	}
 	v.closeClient(l.Instance)
 	// Chroot lives in tmpfs (spec §Gotchas); removing it frees the RAM it holds.
@@ -254,6 +291,167 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
 	}
 	return nil
+}
+
+// DestroyWithExport is the build-VM teardown path (M6 / spec §4.5). It blocks
+// until the firecracker child exits (capped by v.destroyWait — default 10m,
+// comfortable above spec §1 BuildTimeoutSeconds), captures the exit code, and
+// only if exportDir != "" loopback-mounts the chroot-local drive1 to copy out
+// /etc/faas/build-done.json and /build/out/* before removing the chroot.
+//
+// exportDir="" means "app VM", and the method becomes Kill-equivalent: wait
+// for the child, drop the chroot, return (0, nil). Existing app-VM callers
+// (Manager.Destroy) keep their contract — only builderd opts in via the
+// BuildSpec.ExportDir field.
+func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir string) (int, error) {
+	v.mu.Lock()
+	rec, ok := v.recs[l.Instance]
+	v.mu.Unlock()
+	if !ok {
+		// Unknown / already-torn-down instance: idempotent, no exit code to report.
+		v.closeClient(l.Instance)
+		_ = os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance))
+		return 0, nil
+	}
+
+	// 1. Wait for the firecracker child to exit. The watchdog goroutine started
+	//    by startJailer is the single point that calls cmd.Process.Wait;
+	//    DestroyWithExport just blocks on rec.done and reads rec.exitCode.
+	deadline := time.NewTimer(v.destroyWait)
+	defer deadline.Stop()
+	select {
+	case <-rec.done:
+	case <-deadline.C:
+		// Force-kill and re-wait with a shorter budget. A builder that ignores
+		// the spec's BuildTimeoutSeconds is misbehaving; refuse to hold vmmd
+		// forever, but don't tear down the chroot before the export either.
+		v.mu.Lock()
+		if proc := v.proc[l.Instance]; proc != nil && proc.Process != nil {
+			_ = proc.Process.Kill()
+		}
+		v.mu.Unlock()
+		select {
+		case <-rec.done:
+		case <-time.After(5 * time.Second):
+			return -1, fmt.Errorf("vmm: %s did not exit within %s", l.Instance, v.destroyWait)
+		}
+	}
+
+	v.mu.Lock()
+	exitCode := rec.exitCode
+	v.mu.Unlock()
+
+	// 2. Artifact export (build VMs only). Loopback-mount the chroot-local
+	//    drive1.ext4 and copy out /etc/faas/build-done.json + /build/out/*.
+	//    The mount uses root privileges (vmmd is the only root component, §11).
+	if exportDir != "" {
+		if err := v.exportBuildArtifacts(l.Instance, exportDir); err != nil {
+			// Don't fail Destroy — the build is dead either way; log + return
+			// the exit code so the caller can still classify.
+			return exitCode, fmt.Errorf("vmm: export build artifacts: %w", err)
+		}
+	}
+
+	// 3. Tear down the chroot + per-instance state.
+	v.mu.Lock()
+	delete(v.recs, l.Instance)
+	delete(v.proc, l.Instance)
+	v.mu.Unlock()
+	v.closeClient(l.Instance)
+	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
+		return exitCode, fmt.Errorf("vmm: remove chroot: %w", err)
+	}
+	return exitCode, nil
+}
+
+// exportBuildArtifacts loopback-mounts the chroot-local drive1 image and
+// copies /etc/faas/build-done.json and /build/out/* into exportDir. Files
+// larger than exportMaxBytes are skipped + counted as failures (best-effort
+// — never blocks the caller). vmmd is the only root component, so the mount
+// is fine; the chroot-local drive1.ext4 is owned by root after provision
+// (pkg/fcvm/vmm.go:stageWritable).
+func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) error {
+	if err := os.MkdirAll(exportDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir export: %w", err)
+	}
+	drive1 := filepath.Join(v.chrootBase, v.fcName, instance, layerImageName)
+	if _, err := os.Stat(drive1); err != nil {
+		return fmt.Errorf("stat drive1: %w", err)
+	}
+	mp, err := os.MkdirTemp("", "faas-vmm-export-")
+	if err != nil {
+		return fmt.Errorf("mkdir mountpoint: %w", err)
+	}
+	defer os.RemoveAll(mp)
+
+	// mount -o loop,ro — read-only is enough; the VM is dead by this point.
+	if out, err := exec.Command("mount", "-o", "loop,ro", drive1, mp).CombinedOutput(); err != nil {
+		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
+	}
+	defer exec.Command("umount", mp).Run()
+
+	// build-done.json is the canonical manifest builderd reads.
+	srcDone := filepath.Join(mp, "etc", "faas", "build-done.json")
+	if data, err := os.ReadFile(srcDone); err == nil {
+		if err := os.WriteFile(filepath.Join(exportDir, "build-done.json"), data, 0o644); err != nil {
+			return fmt.Errorf("write build-done.json: %w", err)
+		}
+	} // else: VM died before guest-init wrote it — caller falls back to exit-code class.
+
+	// /build/out/ holds the produced OCI tarball. Walk + copy with the size
+	// cap enforced. A build that overruns the cap is logged as infra failure
+	// via the caller's classification (no error returned — best-effort).
+	srcOut := filepath.Join(mp, "build", "out")
+	if _, err := os.Stat(srcOut); err == nil {
+		dstOut := filepath.Join(exportDir, "build", "out")
+		if err := os.MkdirAll(dstOut, 0o755); err != nil {
+			return fmt.Errorf("mkdir out: %w", err)
+		}
+		return copyTree(srcOut, dstOut, v.exportMax())
+	}
+	return nil
+}
+
+// layerImageName is the in-chroot basename vmmd provisions for drive1 (see
+// provision / stageWritable — copy preserves basename, so the chroot always
+// sees "layer.ext4").
+const layerImageName = "layer.ext4"
+
+// exportMax resolves the per-export byte cap. Zero means "unset" — fall back
+// to api.MaxExportedLayerBytes. We read via a tiny helper so tests can
+// inject a tighter cap.
+func (v *JailerVMM) exportMax() int64 {
+	if v.exportMaxBytes > 0 {
+		return v.exportMaxBytes
+	}
+	return api.MaxExportedLayerBytes
+}
+
+// copyTree copies a directory tree from src to dst, skipping any single file
+// whose size exceeds maxBytes. Best-effort by design — partial copies are OK
+// for a build that overshot the cap.
+func copyTree(src, dst string, maxBytes int64) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if maxBytes > 0 && info.Size() > maxBytes {
+			return nil // skip the oversize file
+		}
+		return copyFile(path, target)
+	})
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -288,7 +486,22 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	}
 	v.mu.Lock()
 	v.proc[l.Instance] = cmd
+	rec := &instanceRecord{cmd: cmd, done: make(chan struct{})}
+	v.recs[l.Instance] = rec
 	v.mu.Unlock()
+	// Watchdog: cmd.Wait must be called exactly once per process (stdlib
+	// contract). Run it here so DestroyWithExport can later read the captured
+	// exit code without racing the actual process termination.
+	go func() {
+		state, _ := cmd.Process.Wait()
+		v.mu.Lock()
+		if state != nil {
+			rec.exitCode = state.ExitCode()
+		}
+		rec.exited = true
+		close(rec.done)
+		v.mu.Unlock()
+	}()
 	return nil
 }
 

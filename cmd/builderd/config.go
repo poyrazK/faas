@@ -22,14 +22,28 @@ type Config struct {
 	MetricsAddr string `toml:"metrics_addr"`
 	// DBURL is the Postgres DSN; empty falls back to $DATABASE_URL (db.Open).
 	DBURL string `toml:"db_url"`
+	// BuilderBase is drive0: the read-only shared base rootfs the builder VM
+	// boots from. Built once from images/builder-base.Dockerfile by imaged;
+	// staged to /srv/fc/base/builder-base.ext4 (the default).
+	BuilderBase string `toml:"builder_base"`
+	// BuildDriveDir hosts the per-VM drive1 tmp files builderd creates at
+	// Spawn time. /var/lib/faas/build-drive (default).
+	BuildDriveDir string `toml:"build_drive_dir"`
+	// BuildExportDir is the parent of all per-build export directories. vmmd
+	// writes <dir>/<build_id>/build-done.json + /build/out/* here during
+	// Destroy. /var/lib/faas/build-out (default).
+	BuildExportDir string `toml:"build_export_dir"`
 }
 
 // LoadConfig reads a TOML file at path with defaults filled in. A missing
 // file is not an error — the defaults produce a working daemon.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
-		VMMDSocket: "/run/faas/vmmd.sock",
-		CacheDir:   "/var/cache/faas/builds",
+		VMMDSocket:    "/run/faas/vmmd.sock",
+		CacheDir:       "/var/cache/faas/builds",
+		BuilderBase:    "/srv/fc/base/builder-base.ext4",
+		BuildDriveDir:  "/var/lib/faas/build-drive",
+		BuildExportDir: "/var/lib/faas/build-out",
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

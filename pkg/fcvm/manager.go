@@ -37,6 +37,13 @@ type VMM interface {
 	// best-effort and idempotent — safe to call on an instance that never fully
 	// booted.
 	Kill(ctx context.Context, l Lease) error
+	// DestroyWithExport is the build-aware teardown: it waits for the firecracker
+	// child to exit, captures the exit code, and (if exportDir != "") loopback-
+	// mounts the chroot-local drive1 to copy out the produced artifacts before
+	// removing the chroot. App VMs pass exportDir=""; builder VMs (M6) pass the
+	// host directory builderd wants files under. Returns the captured exit code
+	// (0 for app VMs, the build's own exit code for builder VMs).
+	DestroyWithExport(ctx context.Context, l Lease, exportDir string) (int, error)
 }
 
 // Paths locates the kernel and base images on disk (spec §8). Injected so tests
@@ -55,15 +62,16 @@ type Instance struct {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
-	alloc     *Allocator
-	run       Runner
-	vmm       VMM
-	paths     Paths
-	fcVersion string // the running Firecracker version; snapshots load only on a match
-	log       *slog.Logger
+	alloc      *Allocator
+	run        Runner
+	vmm        VMM
+	paths      Paths
+	fcVersion  string // the running Firecracker version; snapshots load only on a match
+	log        *slog.Logger
 
-	mu   sync.Mutex
-	live map[string]*Instance
+	mu         sync.Mutex
+	live       map[string]*Instance
+	exportDirs map[string]string // instance -> host export dir (builder VMs only, M6)
 }
 
 // NewManager wires a Manager. fcVersion is the running Firecracker version (used
@@ -73,13 +81,14 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		log = slog.New(slog.NewTextHandler(discard{}, nil))
 	}
 	return &Manager{
-		alloc:     NewAllocator(),
-		run:       run,
-		vmm:       vmm,
-		paths:     paths,
-		fcVersion: fcVersion,
-		log:       log,
-		live:      make(map[string]*Instance),
+		alloc:      NewAllocator(),
+		run:        run,
+		vmm:        vmm,
+		paths:      paths,
+		fcVersion:  fcVersion,
+		log:        log,
+		live:       make(map[string]*Instance),
+		exportDirs: make(map[string]string),
 	}
 }
 
@@ -95,6 +104,11 @@ type WakeRequest struct {
 	MemSizeMiB int
 	EgressMbit int       // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	Snapshot   *Snapshot // nil => cold boot
+	// ExportDir, if non-empty, marks this instance as a builder VM (M6).
+	// vmmd's Manager.DestroyWithExport waits for exit, captures the exit code,
+	// and copies build artifacts (build-done.json + /build/out/*) into this host
+	// directory. App VMs leave it empty.
+	ExportDir string
 }
 
 // ColdBootRequest is the deploy-pipeline prime path: a first boot with no
@@ -106,6 +120,8 @@ type ColdBootRequest struct {
 	VcpuCount  int
 	MemSizeMiB int
 	EgressMbit int // per-plan tc cap; 0 = no cap (legacy / disabled)
+	// ExportDir is non-empty for builder VMs. See WakeRequest.
+	ExportDir string
 }
 
 // ColdBoot boots an instance from rootfs with no snapshot. It is Wake with a nil
@@ -115,6 +131,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		Instance: req.Instance, BasePath: req.BasePath, LayerPath: req.LayerPath,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		EgressMbit: req.EgressMbit, Snapshot: nil,
+		ExportDir: req.ExportDir,
 	})
 }
 
@@ -159,6 +176,9 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	inst := &Instance{Lease: lease, Net: nc, Method: method}
 	m.mu.Lock()
 	m.live[req.Instance] = inst
+	if req.ExportDir != "" {
+		m.exportDirs[req.Instance] = req.ExportDir
+	}
 	m.mu.Unlock()
 	m.log.Info("wake ok", "instance", req.Instance, "method", method.String(),
 		"uid", lease.UID, "host_ip", lease.HostIP.String())
@@ -237,8 +257,23 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 }
 
 // Destroy stops an instance and releases all its resources. Idempotent: an
-// unknown instance is a no-op (already gone).
+// unknown instance is a no-op (already gone). App-VM callers use this; builder
+// VMs use DestroyWithExport to surface the build's exit code and copy out
+// produced artifacts.
 func (m *Manager) Destroy(ctx context.Context, instance string) error {
+	_, err := m.DestroyWithExport(ctx, instance, "")
+	return err
+}
+
+// DestroyWithExport is the builder-VM teardown. It blocks until the
+// firecracker child exits, captures the exit code, and copies build artifacts
+// into exportDir (loopback-mounted from the chroot). See
+// pkg/fcvm/vmm.go::DestroyWithExport for the full contract.
+//
+// Returns the captured exit code (0 for app VMs / unknown instances). Like
+// Destroy, it tears down network + lease on the success path; on failure it
+// still runs cleanup (invariant §6.2-4/5).
+func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	if ok {
@@ -246,11 +281,24 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 	}
 	m.mu.Unlock()
 	if !ok {
-		return nil
+		// Already gone — still safe to export (idempotent), and the exit code
+		// is meaningless here.
+		if exportDir != "" {
+			_ = m.vmm // touch nothing; vmmd's recursion handles unknown
+		}
+		code, err := m.vmm.DestroyWithExport(ctx, Lease{Instance: instance}, exportDir)
+		return code, err
 	}
+	code, err := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
 	m.cleanup(ctx, inst.Lease, inst.Net)
-	m.log.Info("destroyed", "instance", instance)
-	return nil
+	m.mu.Lock()
+	delete(m.exportDirs, instance)
+	m.mu.Unlock()
+	if err != nil {
+		return code, err
+	}
+	m.log.Info("destroyed", "instance", instance, "exit_code", code)
+	return code, nil
 }
 
 // LiveCount reports how many instances the Manager currently tracks.
@@ -263,6 +311,17 @@ func (m *Manager) LiveCount() int {
 // LeasedCount reports how many allocator slots are held. After a clean teardown
 // of everything, LiveCount and LeasedCount must both be zero — the leak check.
 func (m *Manager) LeasedCount() int { return m.alloc.InUse() }
+
+// ExportDirFor returns the host export dir registered for an instance at
+// Wake/ColdBoot time (M6 builder VMs only). Returns "" for unknown or app VMs.
+// The caller MUST treat the returned path as opaque — it's a host directory
+// the goroutine that called Wake chose, and it survives only until the
+// instance is removed (DestroyWithExport).
+func (m *Manager) ExportDirFor(instance string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.exportDirs[instance]
+}
 
 // setupNetwork realises the per-instance topology (veth/tap/addressing), applies
 // the per-plan tc egress cap on the host-side veth, and then loads the

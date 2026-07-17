@@ -64,6 +64,11 @@ type fakeVMM struct {
 	restored    []string
 	snapshotted []string
 	bootCount   int
+	// M6 builder-VM path: DestroyWithExport returns this exit code, copies
+	// nothing. App VMs just see "destroyed" the same way Kill did.
+	destroyWithExportExit int
+	destroyWithExportErr  error
+	destroyedWithExport  []string
 }
 
 func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig) error {
@@ -105,6 +110,13 @@ func (v *fakeVMM) Kill(_ context.Context, l Lease) error {
 	v.killed = append(v.killed, l.Instance)
 	v.mu.Unlock()
 	return v.killErr
+}
+
+func (v *fakeVMM) DestroyWithExport(_ context.Context, l Lease, _ string) (int, error) {
+	v.mu.Lock()
+	v.destroyedWithExport = append(v.destroyedWithExport, l.Instance)
+	v.mu.Unlock()
+	return v.destroyWithExportExit, v.destroyWithExportErr
 }
 
 func (v *fakeVMM) restoredInstance(id string) bool {

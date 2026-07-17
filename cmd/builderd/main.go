@@ -39,7 +39,7 @@ type runDeps struct {
 	configPath string
 	openDB     func(context.Context, string) (*pgxpool.Pool, error)
 	migrate    func(context.Context, *pgxpool.Pool) error
-	newDriver  func(socket string) (builderdpkg.VM, error)
+	newDriver  func(socket, builderBase, driveDir, exportDir string) (builderdpkg.VM, error)
 }
 
 func defaultDeps() runDeps {
@@ -51,8 +51,8 @@ func defaultDeps() runDeps {
 		// gRPC; non-metal uses the stub that returns ErrNotMetal. The
 		// NewVMMDriver name exists in both pkg/builderd/vm_metal.go and
 		// pkg/builderd/vm_stub.go with their respective build tags.
-		newDriver: func(socket string) (builderdpkg.VM, error) {
-			return builderdpkg.NewVMMDriver(socket)
+		newDriver: func(socket, builderBase, driveDir, exportDir string) (builderdpkg.VM, error) {
+			return builderdpkg.NewVMMDriver(socket, builderBase, driveDir, exportDir)
 		},
 	}
 }
@@ -76,9 +76,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 
-	driver, err := deps.newDriver(cfg.VMMDSocket)
+	driver, err := deps.newDriver(cfg.VMMDSocket, cfg.BuilderBase, cfg.BuildDriveDir, cfg.BuildExportDir)
 	if err != nil {
 		return fmt.Errorf("builderd: vmmd driver: %w", err)
+	}
+	if c, ok := driver.(*builderdpkg.VMMDriver); ok {
+		defer func() { _ = c.Close() }()
 	}
 
 	store := state.NewPgStore(pool)

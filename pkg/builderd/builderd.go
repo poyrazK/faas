@@ -40,38 +40,15 @@ type ResidencyProbe interface {
 	ResidentMB() int
 }
 
-// VM is the small builder-VM surface. The metal implementation lives in vm.go
+// VM is the small builder-VM surface. The metal implementation lives in vm_metal.go
 // (//go:build metal); the non-metal stub returns ErrNotMetal so unit tests
 // skip the spawn without panicking.
-type VM interface {
-	// Spawn boots a builder microVM with src mounted, runs the build via the
-	// baked-in Railpack image, and returns when the in-VM build exits.
-	// The returned Result carries the produced app-layer ext4 path on disk
-	// (under /var/lib/faas/build-out/<build_id>/layer.ext4) and the exit
-	// status.
-	Spawn(ctx context.Context, req VMRequest) (VMResult, error)
-}
+//
+// Spawn returns when vmmd has accepted the cold-boot (NOT when the build
+// itself finishes) — the orchestrator then calls WaitForCompletion to
+// block on the in-VM build.
 
-// VMRequest is the input to a builder VM spawn.
-type VMRequest struct {
-	BuildID    string
-	SourcePath string // tarball or dockerfile source on disk
-	Framework  Framework
-	LogPath    string // build log appended by the VM
-	RAMMB      int    // from the plan's BuildVMRAMMB (spec §1, §4.5)
-}
-
-// VMResult is what the builder VM produced. ExitCode=0 means success.
-type VMResult struct {
-	LayerPath string
-	Bytes     int64
-	ExitCode  int
-	LogBytes  int64
-}
-
-// ErrNotMetal is returned by the non-metal VM stub. Unit tests that exercise
-// the orchestration above the spawn see this and use Cache/Harness fakes
-// instead.
+// ErrNotMetal is the sentinel returned by the non-metal VM stub.
 var ErrNotMetal = errors.New("builderd: VM spawn is metal-only; use a fake VM in unit tests")
 
 // Config is the on-disk shape of /etc/faas/builderd.toml. Every field has a
@@ -219,12 +196,15 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	vmCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	out, err := b.vm.Spawn(vmCtx, VMRequest{
-		BuildID:    build.ID,
-		SourcePath: dep.SourcePath,
-		Framework:  fw,
-		LogPath:    dep.LogPath,
-		RAMMB:      api.BuildVMRAMMB,
+	handle, err := b.vm.Spawn(vmCtx, VMRequest{
+		BuildID:      build.ID,
+		TenantID:     app.AccountID,
+		DeploymentID: dep.ID,
+		SourcePath:   dep.SourcePath,
+		Framework:    fw,
+		LogPath:      dep.LogPath,
+		RAMMB:        api.BuildVMRAMMB,
+		TimeoutSec:   b.cfg.BuildTimeoutSeconds,
 	})
 	if err != nil {
 		// Translate a context-deadline to timeout-class; everything else is infra.
@@ -235,26 +215,53 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		b.markFailed(ctx, build.ID, fc, "vm spawn: "+err.Error())
 		return BuildResult{}, err
 	}
-	if out.ExitCode != 0 {
-		// Best-effort classification: 137 = OOM-killed by kernel/slice, 124 =
-		// timeout(1) from buildkit. Everything else = user_error (the build
-		// itself failed; the VM came up fine).
-		fc := state.FailureUserError
-		switch out.ExitCode {
-		case 137:
-			fc = state.FailureOOM
-		case 124:
+
+	out, err := b.vm.WaitForCompletion(vmCtx, handle)
+	if err != nil {
+		// Translate a context-deadline to timeout-class; everything else is infra.
+		fc := state.FailureInfra
+		if errors.Is(err, context.DeadlineExceeded) {
 			fc = state.FailureTimeout
+		}
+		b.markFailed(ctx, build.ID, fc, "vm wait: "+err.Error())
+		return BuildResult{}, err
+	}
+	if out.ExitCode != 0 {
+		// Prefer the failure class the guest-init captured in build-done.json
+		// (one of: "FailureUserError", "FailureInfra", "FailureOOM",
+		// "FailureTimeout"). Falls back to the canonical exit-code table for
+		// cases where the VM died before guest-init wrote it (kill -9, OOM at
+		// guest-init, etc).
+		fc := state.FailureUserError
+		switch out.FailureClass {
+		case "FailureUserError":
+			fc = state.FailureUserError
+		case "FailureInfra":
+			fc = state.FailureInfra
+		case "FailureOOM":
+			fc = state.FailureOOM
+		case "FailureTimeout":
+			fc = state.FailureTimeout
+		case "":
+			switch out.ExitCode {
+			case 137:
+				fc = state.FailureOOM
+			case 124:
+				fc = state.FailureTimeout
+			}
 		}
 		b.markFailed(ctx, build.ID, fc, fmt.Sprintf("build exited %d", out.ExitCode))
 		return BuildResult{}, fmt.Errorf("builderd: vm exit %d", out.ExitCode)
 	}
 
 	// Stamp the cache so the next build of the same source is a hit.
-	if err := b.cache.Store(srcHash, fw, out.LayerPath, out.Bytes); err != nil {
+	if err := b.cache.Store(srcHash, fw, out.OCIImage, out.LogTailBytes); err != nil {
 		b.log.Warn("builderd: cache store failed (continuing)", "err", err)
 	}
-	if err := b.store.SetDeploymentRootfs(ctx, dep.ID, out.LayerPath, out.Bytes); err != nil {
+	// Stamp the produced layer path onto the deployment row. imaged will
+	// receive a snapshot_prime notification and convert the OCI tarball into
+	// a snapshot before any wake can land.
+	if err := b.store.SetDeploymentRootfs(ctx, dep.ID, out.OCIImage, out.LogTailBytes); err != nil {
 		b.markFailed(ctx, build.ID, state.FailureInfra, "set rootfs: "+err.Error())
 		return BuildResult{}, err
 	}
@@ -264,7 +271,7 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		return BuildResult{}, err
 	}
 	b.markSucceeded(ctx, build.ID)
-	return BuildResult{BuildID: build.ID, LayerPath: out.LayerPath, LayerBytes: out.Bytes}, nil
+	return BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: out.LogTailBytes}, nil
 }
 
 // markSucceeded updates the build row to BuildSucceeded, finished=true.

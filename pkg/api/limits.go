@@ -161,6 +161,12 @@ const (
 	FleetSnapshotAvgTargetMB = 130 // business metric; alert >160 warn, >200 page
 	SnapshotBudgetGB         = 452
 
+	// Build artifact export (M6): vmmd loopback-mounts the chroot-local drive1
+	// on Destroy to copy out /build/out/image.tar (and friends). 4 GiB is
+	// well above the §14 target (~130 MB) so it's not the limiting factor; it's
+	// the ceiling we refuse to copy past. See pkg/fcvm/vmm.go::exportBuildArtifacts.
+	MaxExportedLayerBytes int64 = 4 << 30
+
 	// Edge request caps (spec §4.1).
 	MaxRequestBodyBytes = 25 * 1024 * 1024 // 25 MB either direction
 	WakeQueueCap        = 512              // per-app wake queue
