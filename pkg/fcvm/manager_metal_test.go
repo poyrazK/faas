@@ -53,6 +53,22 @@ func newMetalManager(t *testing.T, kernel string) *Manager {
 	)
 }
 
+// withCgroupRootAt points cgroupRoot at the real /sys/fs/cgroup for the
+// duration of this metal test. The jailer writes the per-VM scope there
+// regardless of what cgroupRoot is set to in this package, so the
+// default tempdir (set by TestMain) would make writeMemoryMax probe a
+// path the jailer never wrote to, returning IsNotExist.
+//
+// Lives here (//go:build metal) rather than in cgroup_test.go so it
+// isn't flagged as unused by the lint job — which runs without -tags
+// metal and therefore can't see the metal-only test files that call it.
+func withCgroupRootAt(t *testing.T, path string) {
+	t.Helper()
+	saved := cgroupRoot
+	cgroupRoot = path
+	t.Cleanup(func() { cgroupRoot = saved })
+}
+
 // TestMetalBoot50Concurrent is the M1 headline acceptance test.
 func TestMetalBoot50Concurrent(t *testing.T) {
 	kernel, base, layer := metalImages(t)
@@ -176,6 +192,11 @@ func TestMetalParkWakeCycle(t *testing.T) {
 func TestMetalHelloBoot(t *testing.T) {
 	kernel, _, _ := metalImages(t) // base/layer will be replaced by hello img
 	m := newMetalManager(t, kernel)
+	// Metal tests run a real jailer, which writes the per-VM scope
+	// under /sys/fs/cgroup. Point cgroupRoot there so writeMemoryMax
+	// probes the same path the jailer wrote (TestMain defaults to a
+	// tempdir to keep the unit-test path isolated).
+	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	tmp := t.TempDir()
 	busybox := ensureBusyboxExt4(t, tmp)
