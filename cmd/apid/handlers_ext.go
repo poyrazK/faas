@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/stripex"
 )
@@ -219,7 +220,12 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	_ = s.notif.Notify(ctx(r), db.NotifyDomainChanged, `{"kind":"created","domain":"`+d.Domain+`"}`)
-	s.log.Info("domain created", "domain", d.Domain, "app", app.ID, "account", acct.ID)
+	// d.Domain came in via the HTTP body (bearer-token authenticated).
+	// Sanitize at the log sink — CodeQL go/log-injection (CWE-117).
+	// The notify payload above is JSON-encoded so the pg_notify channel
+	// can't be tricked into parsing an attacker-supplied structure, but
+	// the structured log line is the unencoded sink.
+	s.log.Info("domain created", "domain", logsanitize.Field(d.Domain), "app", app.ID, "account", acct.ID)
 	writeJSON(w, http.StatusAccepted, domainResponse(d))
 }
 

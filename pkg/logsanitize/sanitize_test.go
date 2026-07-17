@@ -1,16 +1,17 @@
-package gateway
+package logsanitize
 
 import (
 	"strings"
 	"testing"
 )
 
-// TestSanitizeLogField locks the contract for CodeQL's go/log-injection
-// (CWE-117) defense on the synth RPC log fields. The helper strips
-// ASCII control characters so a malicious producer cannot forge log
-// lines via CR/LF injection; tabs survive because slog's JSON encoder
-// and most log readers treat them as whitespace.
-func TestSanitizeLogField(t *testing.T) {
+// TestField locks the contract for CodeQL's go/log-injection (CWE-117)
+// defense. The helper strips ASCII control characters so a malicious
+// producer cannot forge log lines via CR/LF injection; tabs survive
+// because slog's JSON encoder and most log readers treat them as
+// benign whitespace. Tests live with the implementation so a future
+// refactor that drops the contract fails in the obvious place.
+func TestField(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
@@ -28,16 +29,17 @@ func TestSanitizeLogField(t *testing.T) {
 		{"only controls", "\n\r\x00", "···"},
 		{"path-style survives", "/v1/synthesize?foo=bar", "/v1/synthesize?foo=bar"},
 		{"quoted path survives", `/foo/"bar"`, `/foo/"bar"`},
+		{"multi-byte UTF-8 control-free survives", "日本-アプリ", "日本-アプリ"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sanitizeLogField(tc.in)
+			got := Field(tc.in)
 			if got != tc.want {
-				t.Errorf("sanitizeLogField(%q) = %q, want %q", tc.in, got, tc.want)
+				t.Errorf("Field(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 			// Belt + suspenders: no CR or LF ever leaves the helper.
 			if strings.ContainsAny(got, "\r\n") {
-				t.Errorf("sanitizeLogField(%q) leaked CR/LF: %q", tc.in, got)
+				t.Errorf("Field(%q) leaked CR/LF: %q", tc.in, got)
 			}
 		})
 	}
