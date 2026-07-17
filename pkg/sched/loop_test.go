@@ -86,3 +86,121 @@ func TestHandleNotificationRejectsBadInput(t *testing.T) {
 		Channel: db.NotifyAppChanged, Payload: `{"app_id":"x"}`,
 	})
 }
+
+// countingFlowCounter records every instance id passed to Open. Used by
+// the snapshot-builder test to pin that runReaper consults the injected
+// FlowCounter exactly once per instance (spec §17 G7).
+type countingFlowCounter struct {
+	calls map[string]int
+	given map[string]int64
+}
+
+func newCountingFlowCounter(given map[string]int64) *countingFlowCounter {
+	return &countingFlowCounter{calls: map[string]int{}, given: given}
+}
+
+func (c *countingFlowCounter) Open(_ context.Context, id string) (int64, error) {
+	c.calls[id]++
+	return c.given[id], nil
+}
+
+// TestRunReaperPopulatesOpenConns proves the snapshot builder asks the
+// injected FlowCounter exactly once per instance and copies its
+// result into InstanceInfo.OpenConns. Without this, the reaper's
+// OpenConns skip rule would always see 0 — the production G7 fix
+// would be permanently inert regardless of what the conntrack reader
+// reports.
+func TestRunReaperPopulatesOpenConns(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+
+	res, err := engine.Wake(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+
+	// OpenConns > 0 + recent LastRequest ⇒ not reaped, but we want to
+	// verify the snapshot saw the flow count. Push LastRequest far in the
+	// past so without the flow count it WOULD be reaped; with it, isn't.
+	if _, err := store.TouchInstancesLastSeen(context.Background(), []state.InstanceTouch{
+		{InstanceID: res.InstanceID, LastRequest: time.Now().Add(-time.Hour)},
+	}); err != nil {
+		t.Fatalf("touch: %v", err)
+	}
+
+	fc := newCountingFlowCounter(map[string]int64{res.InstanceID: 7})
+	loop := NewLoop(nil, engine, testLog()).WithFlowCounter(fc)
+	loop.runReaper(context.Background())
+
+	if got := fc.calls[res.InstanceID]; got != 1 {
+		t.Errorf("FlowCounter.Open calls = %d, want 1 (one per instance in snapshot)", got)
+	}
+	// LastRequest = -1h, plan default = 300s → would normally park. With
+	// OpenConns > 0 (7) the G7 rule skips it.
+	ins, _ := store.InstanceByID(context.Background(), res.InstanceID)
+	if ins.State != string(state.StateRunning) {
+		t.Errorf("state = %q, want running (G7: open flows kept it alive)", ins.State)
+	}
+}
+
+// TestRunReaperFlowCounterErrorFailsOpen verifies the conservative
+// fallback: a glitch in the flow source doesn't crash the reaper or
+// permanently skip reaping. It logs and treats the count as 0, so the
+// reaper uses only LastRequest for that instance.
+func TestRunReaperFlowCounterErrorFailsOpen(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+
+	res, err := engine.Wake(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if _, err := store.TouchInstancesLastSeen(context.Background(), []state.InstanceTouch{
+		{InstanceID: res.InstanceID, LastRequest: time.Now().Add(-time.Hour)},
+	}); err != nil {
+		t.Fatalf("touch: %v", err)
+	}
+
+	bad := errorFlowCounter{err: assertErr{"conntrack timeout"}}
+	loop := NewLoop(nil, engine, testLog()).WithFlowCounter(bad)
+	loop.runReaper(context.Background())
+
+	ins, _ := store.InstanceByID(context.Background(), res.InstanceID)
+	if ins.State != string(state.StateParked) {
+		t.Errorf("state = %q, want parked (flow error fails open to LastRequest-only path)", ins.State)
+	}
+}
+
+// assertErr is a sentinel error for the fails-open test. Defining it
+// here avoids a polluting errors.New at package scope.
+type assertErr struct{ s string }
+
+func (e assertErr) Error() string { return e.s }
+
+// errorFlowCounter always returns its configured error.
+type errorFlowCounter struct{ err error }
+
+func (e errorFlowCounter) Open(_ context.Context, _ string) (int64, error) { return 0, e.err }
+
+// TestNoopFlowCounterIsTheDefault pins that a freshly-constructed
+// Loop without WithFlowCounter uses noopFlowCounter — equivalent to
+// "never skip for open connections", preserving prior behaviour for
+// every existing test and for production until PR-B wires a real
+// reader.
+func TestNoopFlowCounterIsTheDefault(t *testing.T) {
+	l := NewLoop(nil, nil, testLog())
+	if l.flowCounts == nil {
+		t.Fatal("loop.flowCounts is nil after NewLoop, want noopFlowCounter default")
+	}
+	got, err := l.flowCounts.Open(context.Background(), "any")
+	if err != nil {
+		t.Errorf("default FlowCounter.Open returned err = %v, want nil", err)
+	}
+	if got != 0 {
+		t.Errorf("default FlowCounter.Open = %d, want 0", got)
+	}
+}

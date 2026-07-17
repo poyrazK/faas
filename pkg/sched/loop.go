@@ -28,15 +28,20 @@ import (
 // runs the idle reaper on a 10 s tick and cron on a 60 s tick (spec §4.3). The
 // Engine holds the store, ledger, and vmmd client; the Loop only orchestrates.
 type Loop struct {
-	pool    *pgxpool.Pool
-	engine  *Engine
-	log     *slog.Logger
-	gateway GatewaySynth
-	now     func() time.Time
+	pool       *pgxpool.Pool
+	engine     *Engine
+	log        *slog.Logger
+	gateway    GatewaySynth
+	now        func() time.Time
+	flowCounts FlowCounter
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
-	return &Loop{pool: pool, engine: engine, log: log, now: time.Now}
+	return &Loop{
+		pool: pool, engine: engine, log: log,
+		now:        time.Now,
+		flowCounts: noopFlowCounter{},
+	}
 }
 
 // WithGatewaySynth wires the gateway-internal RPC client the cron
@@ -52,6 +57,32 @@ func (l *Loop) WithGatewaySynth(g GatewaySynth) *Loop {
 func (l *Loop) WithClock(now func() time.Time) *Loop {
 	if now != nil {
 		l.now = now
+	}
+	return l
+}
+
+// FlowCounter is the slice of "open TCP flow count by instance" the
+// reaper uses to gate idle parking (spec §17 G7). Production injects a
+// conntrack reader in PR-B; the default noopFlowCounter returns 0 for
+// every instance, preserving the prior LastRequest-only behaviour.
+type FlowCounter interface {
+	Open(ctx context.Context, instanceID string) (int64, error)
+}
+
+// noopFlowCounter is the default FlowCounter. Used until PR-B wires a
+// real reader; keeps ReapIdle's G7 rule inert.
+type noopFlowCounter struct{}
+
+func (noopFlowCounter) Open(_ context.Context, _ string) (int64, error) { return 0, nil }
+
+// WithFlowCounter wires the conntrack-derived "open flows per
+// instance" source (spec §17 G7). Tests inject a fake to drive table
+// cases for the reaper's skip-when-busy rule; production wires a
+// real conntrack reader once that lands. Nil/inert callers leave
+// the noop default in place.
+func (l *Loop) WithFlowCounter(fc FlowCounter) *Loop {
+	if fc != nil {
+		l.flowCounts = fc
 	}
 	return l
 }
@@ -145,6 +176,17 @@ func (l *Loop) runReaper(ctx context.Context) {
 			continue
 		}
 		for _, ins := range instances {
+			// G7 flow count (spec §17): the conntrack reader is the
+			// production source; nil/error falls back to 0 so a flow-source
+			// glitch fails open (LastRequest-only path; safe default).
+			var open int64
+			if l.flowCounts != nil {
+				if v, err := l.flowCounts.Open(ctx, ins.ID); err == nil {
+					open = v
+				} else {
+					l.log.Warn("reaper: flow count", "instance", ins.ID, "err", err)
+				}
+			}
 			snapshot = append(snapshot, InstanceInfo{
 				Instance:     ins.ID,
 				AppID:        ins.AppID,
@@ -154,6 +196,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				LastRequest:  ins.LastRequestAt,
 				Started:      ins.StartedAt,
 				IdleTimeoutS: a.IdleTimeoutS,
+				OpenConns:    open,
 			})
 		}
 	}

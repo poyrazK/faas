@@ -30,6 +30,15 @@ type InstanceInfo struct {
 	LastRequest  time.Time
 	Started      time.Time
 	IdleTimeoutS int // app-configured; 0 => plan default
+	// OpenConns is the count of TCP flows in ESTABLISHED or RELATED state
+	// from this instance (spec §17 G7). An app with open flows is
+	// considered active regardless of LastRequest staleness — this stops
+	// idle reaping from killing a parked app mid-WebSocket. Zero is the
+	// default; populated by Loop.runReaper via a FlowCounter injection
+	// (see loop.go). SelectEvictions is intentionally unchanged: RAM
+	// pressure is a separate axis and tearing down connections is fine
+	// there.
+	OpenConns int64
 }
 
 func (i InstanceInfo) admissionMB() int { return i.RAMMB + api.PerVMOverheadMB }
@@ -55,10 +64,21 @@ func EffectiveIdleTimeoutS(plan api.Plan, configured int) int {
 
 // ReapIdle returns the instances to park for idleness: RUNNING instances whose
 // time since last request exceeds their effective idle timeout (spec §4.3).
+//
+// G7: an instance with OpenConns > 0 is considered active regardless of
+// LastRequest staleness — long-lived WebSockets and similar connections
+// produce no periodic /v1/... requests, so a stale LastRequest would
+// otherwise park them. The conntrack reader that fills OpenConns lives
+// outside schedd (privilege boundary; see plan-file §PR-A).
 func ReapIdle(now time.Time, instances []InstanceInfo) []string {
 	var park []string
 	for _, in := range instances {
 		if in.State != state.StateRunning {
+			continue
+		}
+		// G7: an app with open TCP flows is active. Wins over stale
+		// LastRequest so a parked app mid-WebSocket isn't reaped.
+		if in.OpenConns > 0 {
 			continue
 		}
 		timeout := time.Duration(EffectiveIdleTimeoutS(in.Plan, in.IdleTimeoutS)) * time.Second
