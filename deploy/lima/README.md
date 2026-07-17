@@ -39,15 +39,34 @@ Tear down with `limactl delete -f faas-metal`.
 `FAAS_TEST_LAYER_ROOTFS` / `FAAS_TEST_FC_VERSION` for the tests
 (see `pkg/fcvm/manager_metal_test.go`).
 
-## What passes here today
+## What runs here today
 
-- **M0 — `TestMetalHelloBoot`**: boots a busybox microVM through the full
-  jailer + firecracker + tap + netns path and tears down clean. ✅
+Driving `TestMetalHelloBoot` (M0) on nested KVM exercises the whole
+jailer → firecracker → tap → netns → nftables-DNAT path. It was the first time the
+metal suite had actually run (the M0 asset checksums are still `REPLACE_`
+placeholders), which surfaced a chain of latent bugs — most now fixed:
 
-The **M1** (50× concurrent) and **M3** (park→wake latency) tests need real
-base/layer rootfs images (`runner-node22`, …) that are an **M2** deliverable and
-not yet staged — they `t.Skip` until `FAAS_TEST_BASE_ROOTFS`/`_LAYER_ROOTFS`
-point at real images.
+- Firecracker boots a full guest under nested KVM; the netns + per-instance
+  nftables DNAT make the guest reachable at its host identity (proven: a root-ns
+  probe to `10.100.x.y:8080` returns 200/404 through the DNAT). ✅
+- jailer launches firecracker as the unprivileged uid in the correct chroot
+  (`--exec-file` + resolved-symlink chroot basename fixes). ✅
+- The jailed uid can read its config + drives and create its API socket: `vmmd`
+  stages read-only images `o+r` and copies + chowns the writable drive1 to the
+  jailer uid (jail resource ownership, [ADR-019](../../docs/adr/019-jailer-invocation-and-jail-resource-ownership.md)). ✅
+
+**M0 boots end-to-end here.** Remember the arch caveat below: this is the arm64
+nested-KVM guest, so a green run validates the VM lifecycle and boot path — the
+**EX44 stays the source of truth for the §14 M0 gate** on the pinned x86_64
+kernel (CLAUDE.md).
+
+Two **arm64-Lima shims** live in `run-metal.sh` (never needed on the x86_64 EX44):
+the `br-tenants` bridge (host-prep the box does via ansible) and a CPU-cache
+sysfs shim (jailer reads cache sizes the arm64 nested guest doesn't expose).
+
+The **M1** (50× concurrent) and **M3** (park→wake latency) tests additionally need
+real base/layer rootfs images (`runner-node22`, …), an **M2** deliverable — they
+`t.Skip` until `FAAS_TEST_BASE_ROOTFS`/`_LAYER_ROOTFS` point at real images.
 
 ## Caveats — read before trusting a result
 
