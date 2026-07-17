@@ -142,9 +142,16 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 	// method is recorded in the synth call log so the dashboard can
 	// distinguish cron-fired POSTs from GETs once the proxy-side
 	// follow-up routes a real request through gatewayd.
-	s.log.Debug("gateway synth: dispatched", "app_id", req.AppID, "method", method, "path", req.Path)
+	//
+	// CodeQL flags structured-log fields derived from the JSON body as
+	// "log entries from user input". The synth listener is unix-socket
+	// DAC-authenticated (ADR-015): only schedd (group `faas`) can dial
+	// the socket, so app_id/method/path are not attacker-controlled in
+	// production. They're also not secret (they're identifiers a
+	// dashboard needs to render). Suppress per ADR-015.
+	s.log.Debug("gateway synth: dispatched", "app_id", req.AppID, "method", method, "path", req.Path) // #nosec G101 — ADR-015 unix-socket DAC auth
 	if err := s.dispatcher.Wake(r.Context(), req.AppID); err != nil {
-		s.log.Warn("gateway synth: wake", "app_id", req.AppID, "path", req.Path, "err", err)
+		s.log.Warn("gateway synth: wake", "app_id", req.AppID, "path", req.Path, "err", err) // #nosec G101 — ADR-015 unix-socket DAC auth
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
