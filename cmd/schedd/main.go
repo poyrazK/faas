@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,13 +48,21 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath: "/etc/faas/schedd.toml",
+		configPath: envOr("FAAS_SCHEDD_CONFIG", "/etc/faas/schedd.toml"),
 		openDB:     db.Open,
 		migrate:    db.MigrateUp,
 		detectFC:   fcvm.DetectFirecrackerVersion,
 		dialVMM:    func(socket string) (sched.VMM, error) { return sched.DialVMM(socket) },
 		listen:     wire.ListenOrRecreateByName,
 	}
+}
+
+// envOr returns the value of env key, or fallback when unset/empty.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func run(ctx context.Context, log *slog.Logger) error {

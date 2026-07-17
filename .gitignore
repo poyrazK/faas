@@ -20,7 +20,8 @@ vmlinux-*
 .idea/
 .vscode/
 
-# Stray binary at repo root from `make metal-lima` / local guest-init
-# build artifact (Mach-O arm64 ~5MB). Distinct from guest/init/, which
-# is the directory holding the actual guest-init source.
+# Stray binaries at repo root from `make metal-lima` / local builds
+# (Mach-O arm64 ~5MB). Distinct from guest/init/ and cmd/<daemon>/,
+# which are the directories holding the actual source.
 /init
+/imaged

@@ -42,9 +42,18 @@ func seedDevAccount(ctx context.Context, store state.Store, token string) error 
 	return err
 }
 
+// envOr returns the value of env key, or fallback when unset/empty.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 // listenAddr is the bind address for apid. Behind gatewayd; not a public
-// listener.
-const listenAddr = "127.0.0.1:8081"
+// listener. Overridable via FAAS_APID_LISTEN so the e2e harness can pick a
+// free port without colliding with a dev daemon on 8081.
+var listenAddr = envOr("FAAS_APID_LISTEN", "127.0.0.1:8081")
 
 // runDeps is the DI seam for run — same pattern as vmmd / gatewayd so we can
 // exercise the listener lifecycle without binding :8081 from tests.
