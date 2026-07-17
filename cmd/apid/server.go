@@ -20,6 +20,9 @@ import (
 // M5+: handlers are grouped by resource in handlers.go (apps, deployments,
 // crons, domains, keys, instances, usage); this file owns the middleware
 // (auth, idempotent), the route table, and small request/response helpers.
+// M7.5: githubd is the GitHub App integration handle — see ADR-012. Slice 1
+// wires a stub that returns 503 for every RPC; slices 7-8 replace with a
+// live socket-dialed client.
 type server struct {
 	store  state.Store
 	log    *slog.Logger
@@ -31,6 +34,9 @@ type server struct {
 	// mailer emits the dunning + quota-warning emails. nil falls back
 	// to the noop sender so callers never need to nil-check.
 	mailer Mailer
+	// githubd is apid's handle to the githubd daemon (ADR-012). Never nil:
+	// slice 1 default is stubGithubdClient; slice 7 swaps for a live dial.
+	githubd GithubdClient
 }
 
 // Mailer is the slice of pkg/mail.Sender apid depends on. Kept as an
@@ -57,14 +63,15 @@ type Notifier interface {
 }
 
 func newServer(store state.Store, log *slog.Logger, domain string, notif Notifier) *server {
-	return newServerWithDeps(store, log, domain, notif, "", nil)
+	return newServerWithDeps(store, log, domain, notif, "", nil, nil)
 }
 
 // newServerWithDeps wires the full server surface including the M7
-// stripe-webhook + mailer deps. Production (cmd/apid/main.go) calls this
-// with the env-loaded secret + a real mailer; tests use the simpler
-// newServer (no secret, noop mailer).
-func newServerWithDeps(store state.Store, log *slog.Logger, domain string, notif Notifier, stripeSecret string, mailer Mailer) *server {
+// stripe-webhook + mailer deps and the M7.5 githubd client (ADR-012).
+// Production (cmd/apid/main.go) calls this with the env-loaded secret +
+// a real mailer + a live githubd dial; tests use the simpler newServer
+// (no secret, noop mailer, stub githubd).
+func newServerWithDeps(store state.Store, log *slog.Logger, domain string, notif Notifier, stripeSecret string, mailer Mailer, githubd GithubdClient) *server {
 	if domain == "" {
 		domain = "DOMAIN"
 	}
@@ -74,6 +81,9 @@ func newServerWithDeps(store state.Store, log *slog.Logger, domain string, notif
 	if mailer == nil {
 		mailer = noopMailer{}
 	}
+	if githubd == nil {
+		githubd = stubGithubdClient{}
+	}
 	return &server{
 		store:               store,
 		log:                 log,
@@ -81,6 +91,7 @@ func newServerWithDeps(store state.Store, log *slog.Logger, domain string, notif
 		notif:               notif,
 		stripeWebhookSecret: stripeSecret,
 		mailer:              mailer,
+		githubd:             githubd,
 	}
 }
 

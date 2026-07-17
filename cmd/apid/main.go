@@ -110,7 +110,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// webhook accepts unsigned payloads; never deploy this way).
 	stripeSecret := deps.getenv("STRIPE_WEBHOOK_SECRET")
 	mailer := newLogMailer(log)
-	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer)
+	// M7.5: githubd socket path (ADR-012). Empty = stub client (every
+	// method returns api.Problem{Code:"githubd_not_ready"}), which is
+	// fine until githubd is actually deployed on this host.
+	githubd := newGithubdClient(deps.getenv("FAAS_GITHUBD_SOCKET"), log)
+	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd)
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
 	if deps.bgBefore != nil {

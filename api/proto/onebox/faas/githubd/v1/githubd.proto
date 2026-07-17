@@ -1,0 +1,174 @@
+// githubd — the GitHub App integration daemon (spec §14 M7.5, ADR-012).
+//
+// githubd owns: push-webhook receiver, Checks-API status writer, OAuth
+// callback handler, per-repo install-token cache. It is the SOLE
+// outbound caller to api.github.com (Checks API + install token
+// exchange); its inbound public surface is gatewayd at /webhooks/github
+// (HMAC-verified at the edge per ADR-012).
+//
+// Wire discipline mirrors vmmd (ADR-013) and schedd (ADR-018):
+// checked-in *.pb.go generated with paths=source_relative, errors
+// enveloped through pkg/grpcerr, auth is the unix-socket DAC model
+// (mode 0660 group `faas`, ADR-015) on /run/faas/githubd.sock.
+//
+// Re-evaluation triggers: see ADR-012.
+
+syntax = "proto3";
+
+package onebox.faas.githubd.v1;
+
+option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1;githubdpb";
+
+// Githubd is the gRPC service githubd exposes on its unix socket. apid
+// is the only caller in v1.0 (the dashboard and CLI dial apid, not
+// githubd). Multi-host (Gate-A) replaces the socket with mTLS; this
+// ADR-012 surface is per-host.
+service Githubd {
+  // GetInstallState reports whether the GitHub App is installed for an
+  // account and returns the installation_id + default_branch once
+  // installed. NOT_INSTALLED is the launch state for every account
+  // until the user finishes the OAuth dance.
+  rpc GetInstallState(GetInstallStateRequest) returns (GetInstallStateResponse);
+
+  // ExchangeOAuthCode turns the GitHub OAuth code returned to the
+  // callback URL into an installation record. githubd POSTs to
+  // api.github.com/app/installations with the GitHub App JWT, then
+  // persists the installation_id onto the account (server-side, no
+  // token returned to the dashboard).
+  rpc ExchangeOAuthCode(ExchangeOAuthCodeRequest) returns (ExchangeOAuthCodeResponse);
+
+  // ListInstallableRepos returns the catalog of repos the installation
+  // has access to (the dashboard repo picker consumes this). Calls
+  // api.github.com/installation/repositories with the install token.
+  rpc ListInstallableRepos(ListInstallableReposRequest) returns (ListInstallableReposResponse);
+
+  // BindAppRepo associates an app with a repo (and production branch).
+  // Persists into app_github_bindings. Idempotent on (app_id, repo).
+  rpc BindAppRepo(BindAppRepoRequest) returns (BindAppRepoResponse);
+
+  // UnbindAppRepo removes an app↔repo binding. Webhook events for the
+  // repo stop triggering deployments for the unbound app.
+  rpc UnbindAppRepo(UnbindAppRepoRequest) returns (UnbindAppRepoResponse);
+
+  // GetAppBinding returns the current binding for an app, or empty
+  // fields when the app is not bound to any repo.
+  rpc GetAppBinding(GetAppBindingRequest) returns (GetAppBindingResponse);
+
+  // CreateDeploymentFromPush turns a verified GitHub push webhook into
+  // a deployment row in apid's `deployments` table. githubd calls this
+  // after gatewayd forwards the request and the HMAC check passes.
+  // Returns the empty deployment_id when no app is bound to the repo
+  // (a common case for forks / first-time installs).
+  rpc CreateDeploymentFromPush(CreateDeploymentFromPushRequest) returns (CreateDeploymentFromPushResponse);
+
+  // WriteCheck pushes a commit-status update back to GitHub via the
+  // Checks API (POST /repos/{owner}/{repo}/check-runs). Idempotent on
+  // (repo, sha, phase) via the check_runs dedupe row so redelivered
+  // webhooks don't create duplicate checks.
+  rpc WriteCheck(WriteCheckRequest) returns (WriteCheckResponse);
+}
+
+// InstallState is the per-account GitHub App install lifecycle. Maps to
+// the dashboard "Connect GitHub" flow state machine (UX spec §5.1).
+enum InstallState {
+  STATE_UNSPECIFIED = 0;
+  NOT_INSTALLED     = 1;  // no app installation on this account
+  INSTALLING        = 2;  // OAuth callback in flight, awaiting exchange
+  INSTALLED         = 3;  // app installed, no repo bound yet
+  BOUND             = 4;  // app installed and at least one app→repo binding
+}
+
+message GetInstallStateRequest {
+  // account_id is the accounts.id UUID (apid resolves session→account
+  // before calling; githubd never sees the bearer/session).
+  string account_id = 1;
+}
+message GetInstallStateResponse {
+  InstallState state           = 1;
+  string       installation_id = 2; // empty unless state >= INSTALLED
+  string       default_branch  = 3; // empty unless state >= BOUND
+}
+
+message ExchangeOAuthCodeRequest {
+  string account_id = 1;
+  // code is the GitHub OAuth `code` query param from the callback URL.
+  string code        = 2;
+  // state is the CSRF token githubd minted at the install URL; githubd
+  // verifies it against the cookie/db row before exchanging.
+  string state       = 3;
+}
+message ExchangeOAuthCodeResponse {
+  string installation_id = 1;
+}
+
+message Repo {
+  string full_name      = 1; // "owner/name"
+  string default_branch = 2; // "main" | "master" | custom
+  bool   private        = 3;
+}
+message ListInstallableReposRequest  { string account_id = 1; }
+message ListInstallableReposResponse { repeated Repo repos = 1; }
+
+message BindAppRepoRequest {
+  string app_id            = 1;
+  string repo_full_name    = 2; // "owner/name"
+  // production_branch defaults to "main" if empty (UX spec §5.2).
+  string production_branch = 3;
+  string account_id        = 4;
+}
+message BindAppRepoResponse {
+  string binding_id = 1;
+}
+
+message UnbindAppRepoRequest {
+  string app_id     = 1;
+  string account_id = 2;
+}
+message UnbindAppRepoResponse {}
+
+message GetAppBindingRequest {
+  string app_id     = 1;
+  string account_id = 2;
+}
+message GetAppBindingResponse {
+  string repo_full_name    = 1;
+  string production_branch = 2;
+  string binding_id        = 3;
+}
+
+message CreateDeploymentFromPushRequest {
+  string repo_full_name = 1;
+  // ref is "refs/heads/main" (githubd strips the refs/heads/ prefix
+  // before storing on the deployment row).
+  string ref           = 2;
+  string commit_sha    = 3;
+  string pusher        = 4;
+}
+message CreateDeploymentFromPushResponse {
+  // deployment_id is empty when no app is bound to this repo (a
+  // redelivered webhook for an unbound repo returns the same empty
+  // shape — idempotent).
+  string deployment_id = 1;
+  string app_id        = 2;
+}
+
+// CheckPhase is the githubd-side state machine for build progress. Maps
+// to GitHub's `status` + `conclusion` via pkg/githubd/checks.go.
+enum CheckPhase {
+  PHASE_UNSPECIFIED = 0;
+  QUEUED            = 1; // → GitHub status: queued
+  BUILDING          = 2; // → GitHub status: in_progress
+  LIVE              = 3; // → GitHub status: completed, conclusion: success
+  FAILED            = 4; // → GitHub status: completed, conclusion: failure
+}
+
+message WriteCheckRequest {
+  string    repo_full_name = 1;
+  string    commit_sha     = 2;
+  CheckPhase phase         = 3;
+  // logs_url is the dashboard deep-link for the build log (UX spec §5.2).
+  string    logs_url       = 4;
+  // summary is one-line human-readable ("Build failed: OOM at 1.4 GB").
+  string    summary        = 5;
+}
+message WriteCheckResponse {}
