@@ -246,33 +246,74 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return fmt.Errorf("imaged: validate manifest: %w", err)
 	}
 
-	pulled, err := h.oci.PullLayers(ctx, digest)
-	if err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull layers: "+err.Error())
-		return fmt.Errorf("imaged: pull layers: %w", err)
-	}
-	defer func() {
-		for _, r := range pulled.Layers {
-			_ = r.Close()
-		}
-	}()
-
+	// M6 wired-up build path: when the puller implements oci.ManifestPuller
+	// we honor the two-drive scheme (spec §4.6) — pull the app + base
+	// manifests, compute LayersAboveBase, and stream ONLY the above-base
+	// layer blobs through rootfs.Builder. Without this, every per-app
+	// ext4 would re-include base layers and break the 130 MB fleet-snapshot
+	// economics (CLAUDE.md "load-bearing — DO NOT fix"). The M5 fallback
+	// below streams all layers via oci.PullLayers for fakes that don't
+	// implement ManifestPuller.
 	outImage := filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
-	result, err := h.builder.Build(ctx, rootfs.BuildInput{
-		Layers:        layersAsReaders(pulled.Layers),
-		Manifest:      manifest,
-		GuestInitPath: h.guestInitPath,
-		Plan:          acct.Plan,
-		OutImage:      outImage,
-	})
-	if err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
-		return fmt.Errorf("imaged: build app layer: %w", err)
-	}
-
-	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
-		return fmt.Errorf("imaged: stamp rootfs: %w", err)
+	if mp, ok := h.oci.(oci.ManifestPuller); ok {
+		above, diffs, err := h.aboveBaseLayers(ctx, mp, dep.ImageDigest, app.Runtime, manifest)
+		if err != nil {
+			_ = h.transition(ctx, dep.ID, state.DeployFailed, "imaged: above-base: "+err.Error())
+			return err
+		}
+		defer func() {
+			for _, c := range above.closers {
+				_ = c.Close()
+			}
+		}()
+		result, err := h.builder.Build(ctx, rootfs.BuildInput{
+			Layers:        above.readers,
+			Manifest:      manifest,
+			GuestInitPath: h.guestInitPath,
+			Plan:          acct.Plan,
+			OutImage:      outImage,
+		})
+		if err != nil {
+			_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
+			return fmt.Errorf("imaged: build app layer: %w", err)
+		}
+		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
+			_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
+			return fmt.Errorf("imaged: stamp rootfs: %w", err)
+		}
+		h.log.Info("imaged: build app layer (two-drive)",
+			"app", app.Slug, "digest", digest, "out", result.ImagePath,
+			"bytes", result.ContentBytes, "above_diff_ids", len(diffs))
+	} else {
+		// M5 fallback: stream all layers as-is. Used by fakes that only
+		// implement oci.Puller — the existing unit tests exercise this
+		// branch.
+		pulled, err := h.oci.PullLayers(ctx, digest)
+		if err != nil {
+			_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull layers: "+err.Error())
+			return fmt.Errorf("imaged: pull layers: %w", err)
+		}
+		defer func() {
+			for _, r := range pulled.Layers {
+				_ = r.Close()
+			}
+		}()
+		result, err := h.builder.Build(ctx, rootfs.BuildInput{
+			Layers:        layersAsReaders(pulled.Layers),
+			Manifest:      manifest,
+			GuestInitPath: h.guestInitPath,
+			Plan:          acct.Plan,
+			OutImage:      outImage,
+		})
+		if err != nil {
+			_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
+			return fmt.Errorf("imaged: build app layer: %w", err)
+		}
+		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
+			_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
+			return fmt.Errorf("imaged: stamp rootfs: %w", err)
+		}
+		h.log.Info("imaged: build app layer (m5 fallback)", "app", app.Slug, "digest", digest, "out", result.ImagePath, "bytes", result.ContentBytes)
 	}
 	return nil
 }
@@ -452,4 +493,113 @@ func (h *Handler) transition(ctx context.Context, depID string, status state.Dep
 		return fmt.Errorf("imaged: set %s: %w", status, err)
 	}
 	return nil
+}
+
+// aboveBaseStream is the result of resolving the above-base layers for an
+// app image. The Reader side is fed to rootfs.Builder; the Closers slice is
+// closed by the caller in a defer so streaming ReadClosers don't leak.
+type aboveBaseStream struct {
+	readers []io.Reader
+	closers []io.Closer
+}
+
+// aboveBaseLayers is the M6 two-drive seam: given the app's image ref + runtime,
+// pull the app manifest, pull the matching base manifest, compute the
+// app's diff_ids that sit ABOVE the base, and stream only those compressed
+// blob readers. Callers MUST close the returned closers in a defer.
+//
+// Spec §4.6 (CLAUDE.md "load-bearing — DO NOT fix"): flattening the base
+// layers into every per-app ext4 would duplicate ~150 MB of base per app and
+// break the 130 MB fleet-snapshot economics. drive0 (base ext4) and drive1
+// (this ext4) overlay at guest-init; this function returns only the parts
+// that go into drive1.
+func (h *Handler) aboveBaseLayers(ctx context.Context, mp oci.ManifestPuller,
+	appRef, runtime string, _ api.AppManifest) (aboveBaseStream, []string, error) {
+	appRepo := mustRepo(appRef)
+	if appRepo == "" {
+		return aboveBaseStream{}, nil, fmt.Errorf("imaged: cannot derive repo from %q", appRef)
+	}
+	appManifest, err := mp.PullManifest(ctx, appRef)
+	if err != nil {
+		return aboveBaseStream{}, nil, fmt.Errorf("manifest: %w", err)
+	}
+	appCfg, err := h.pullConfig(ctx, mp, appRepo, appManifest.Config.Digest)
+	if err != nil {
+		return aboveBaseStream{}, nil, fmt.Errorf("app config: %w", err)
+	}
+	baseRef := baseRefFor(runtime)
+	baseRepo := mustRepo(baseRef)
+	if baseRepo == "" {
+		return aboveBaseStream{}, nil, fmt.Errorf("imaged: cannot derive repo from base %q", baseRef)
+	}
+	baseManifest, err := mp.PullManifest(ctx, baseRef)
+	if err != nil {
+		return aboveBaseStream{}, nil, fmt.Errorf("base manifest: %w", err)
+	}
+	baseCfg, err := h.pullConfig(ctx, mp, baseRepo, baseManifest.Config.Digest)
+	if err != nil {
+		return aboveBaseStream{}, nil, fmt.Errorf("base config: %w", err)
+	}
+	above, err := oci.LayersAboveBase(baseCfg.DiffIDs, appCfg.DiffIDs)
+	if err != nil {
+		return aboveBaseStream{}, nil, fmt.Errorf("layers above base: %w", err)
+	}
+
+	// Map diff_ids → compressed-blob digest. The manifest's `layers[]` lists
+	// compressed blobs in the same bottom-to-top order as config.diff_ids.
+	if len(appManifest.Layers) != len(appCfg.DiffIDs) {
+		return aboveBaseStream{}, nil, fmt.Errorf("layer count mismatch: manifest=%d config=%d",
+			len(appManifest.Layers), len(appCfg.DiffIDs))
+	}
+	blobByDiff := make(map[string]oci.Descriptor, len(appManifest.Layers))
+	for i, l := range appManifest.Layers {
+		blobByDiff[appCfg.DiffIDs[i]] = l
+	}
+
+	readers := make([]io.Reader, 0, len(above))
+	closers := make([]io.Closer, 0, len(above))
+	for _, diffID := range above {
+		desc, ok := blobByDiff[diffID]
+		if !ok {
+			// Roll back any readers we already opened.
+			for _, c := range closers {
+				_ = c.Close()
+			}
+			return aboveBaseStream{}, nil, fmt.Errorf("imaged: missing blob for diff %s", diffID)
+		}
+		rc, err := mp.PullBlob(ctx, appRepo, desc.Digest)
+		if err != nil {
+			for _, c := range closers {
+				_ = c.Close()
+			}
+			return aboveBaseStream{}, nil, fmt.Errorf("pull blob %s: %w", desc.Digest, err)
+		}
+		closers = append(closers, rc)
+		readers = append(readers, rc)
+	}
+	return aboveBaseStream{readers: readers, closers: closers}, above, nil
+}
+
+// pullConfig fetches and parses the OCI image config referenced by a manifest.
+// The config carries the env/entrypoint (run by guest-init) AND the
+// rootfs.diff_ids that drive the two-drive math.
+func (h *Handler) pullConfig(ctx context.Context, mp oci.ManifestPuller, repo, digest string) (oci.Config, error) {
+	r, err := mp.PullBlob(ctx, repo, digest)
+	if err != nil {
+		return oci.Config{}, err
+	}
+	defer func() { _ = r.Close() }()
+	return oci.ParseConfig(r)
+}
+
+// mustRepo returns the repository portion of an image reference. We need the
+// repo to ask the registry for blobs ("/v2/<repo>/blobs/<digest>"). This
+// helper keeps the error path local — a missing/empty repo is a build bug, not
+// a runtime one.
+func mustRepo(ref string) string {
+	r, err := oci.ParseReference(ref)
+	if err != nil {
+		return ""
+	}
+	return r.Repository
 }
