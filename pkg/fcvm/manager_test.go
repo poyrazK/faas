@@ -582,7 +582,7 @@ func TestSetupNetworkRunsNftBeforeVMBoot(t *testing.T) {
 	}
 
 	// Locate the tap-create argv and the DNAT argv by content.
-	var tapIdx, dnatIdx, bootIdx int = -1, -1, -1
+	var tapIdx, dnatIdx = -1, -1
 	for i, c := range run.commands {
 		line := strings.Join(c, " ")
 		switch {
@@ -601,10 +601,9 @@ func TestSetupNetworkRunsNftBeforeVMBoot(t *testing.T) {
 	if tapIdx > dnatIdx {
 		t.Errorf("tap-create (idx %d) must precede DNAT rule (idx %d)", tapIdx, dnatIdx)
 	}
-	// bootCount is incremented before setupNetwork returns — proxy: assert the
-	// fakeVMM recorded the boot (we already checked boots()==1). The order is
-	// enforced by Wake's call sequence (setupNetwork → bringUp → vmm.Boot).
-	_ = bootIdx
+	// VMM.Boot runs after setupNetwork returns (Wake's call sequence). bootCount
+	// is asserted at the top of this test via `vmm.boots() != 1`; the order
+	// between tap-create < DNAT < Boot is the load-bearing #30 invariant.
 }
 
 // TestSetupNetworkNftFailureLeaksNothing covers the leak invariant when the
