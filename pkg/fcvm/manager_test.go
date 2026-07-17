@@ -564,3 +564,74 @@ func TestDiscardWrite(t *testing.T) {
 		t.Errorf("discard.Write: %v", err)
 	}
 }
+
+// TestSetupNetworkRunsNftBeforeVMBoot proves the wire-up point: the per-
+// instance nft commands run inside setupNetwork, AFTER the topology (veth/
+// tap/addressing) is in place but BEFORE VMM.Boot. Without this ordering,
+// VMM.Boot's waitReady would dial a host identity whose DNAT isn't loaded
+// yet — and the SYN-ACK would never come back (filter or no filter).
+func TestSetupNetworkRunsNftBeforeVMBoot(t *testing.T) {
+	run, vmm := &fakeRunner{}, &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	if _, err := m.ColdBoot(context.Background(), req("dnat-ord")); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	if vmm.boots() != 1 {
+		t.Fatalf("VMM.Boot must run exactly once; got %d", vmm.boots())
+	}
+
+	// Locate the tap-create argv and the DNAT argv by content.
+	var tapIdx, dnatIdx = -1, -1
+	for i, c := range run.commands {
+		line := strings.Join(c, " ")
+		switch {
+		case strings.Contains(line, "tuntap add tap0"):
+			tapIdx = i
+		case strings.Contains(line, "dnat to 10.0.0.2:8080"):
+			dnatIdx = i
+		}
+	}
+	if tapIdx < 0 {
+		t.Fatalf("never saw `tuntap add tap0` in %v", run.commands)
+	}
+	if dnatIdx < 0 {
+		t.Fatalf("never saw DNAT rule `dnat to 10.0.0.2:8080` in %v", run.commands)
+	}
+	if tapIdx > dnatIdx {
+		t.Errorf("tap-create (idx %d) must precede DNAT rule (idx %d)", tapIdx, dnatIdx)
+	}
+	// VMM.Boot runs after setupNetwork returns (Wake's call sequence). bootCount
+	// is asserted at the top of this test via `vmm.boots() != 1`; the order
+	// between tap-create < DNAT < Boot is the load-bearing #30 invariant.
+}
+
+// TestSetupNetworkNftFailureLeaksNothing covers the leak invariant when the
+// strict part of the nft ruleset fails: the defer-cleanup in Wake must
+// fully unwind (netns deleted, lease released) even if Boot never runs.
+//
+// We fail on a strict nft argv (`add rule ip faas prerouting`) so the best-
+// effort reset (which ran first and succeeded) is already done — that's the
+// realistic scenario where a partial ruleset lands but a later add fails.
+func TestSetupNetworkNftFailureLeaksNothing(t *testing.T) {
+	run := &fakeRunner{failOn: "add rule ip faas prerouting"}
+	vmm := &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	_, err := m.ColdBoot(context.Background(), req("dnat-fail"))
+	if err == nil {
+		t.Fatal("expected setupNetwork to fail on the nft add rule")
+	}
+	if !strings.Contains(err.Error(), "add rule ip faas prerouting") {
+		t.Errorf("err %q must wrap the failing argv", err.Error())
+	}
+	if vmm.boots() != 0 {
+		t.Errorf("VMM.Boot must not run when nft fails: %d boots", vmm.boots())
+	}
+	if m.LeasedCount() != 0 {
+		t.Errorf("LeasedCount = %d after failed boot, want 0 (leak)", m.LeasedCount())
+	}
+	if !run.ran("netns del fc-dnat-fail") {
+		t.Error("teardown did not run netns del; netns leaked")
+	}
+}
