@@ -165,7 +165,7 @@ func ApplyTarball(staging, tarballPath string) error {
 	if err != nil {
 		return fmt.Errorf("rootfs: open tarball: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	appDir := filepath.Join(staging, "app")
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
 		return err

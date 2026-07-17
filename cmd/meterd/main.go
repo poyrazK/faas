@@ -45,12 +45,6 @@ type stripePusher interface {
 	PushUsageRecord(ctx context.Context, account state.Account, hour time.Time, gbHours float64) error
 }
 
-// notifier is the db.Notify wrapper. Production uses the postgres impl;
-// tests inject a recorder that captures the payload for assertion.
-type notifier interface {
-	Notify(ctx context.Context, channel, payload string) error
-}
-
 func main() {
 	wire.Daemon("meterd", run)
 }
@@ -61,11 +55,10 @@ type runDeps struct {
 	openDB     func(context.Context, string) (*pgxpool.Pool, error)
 	migrate    func(context.Context, *pgxpool.Pool) error
 	loadMeter  func(*Config) (*meter.Config, error)
-	// The four collaborators are wired in production by NewMeterdDeps;
+	// The two collaborators are wired in production by NewMeterdDeps;
 	// tests inject stubs.
 	parker parkInstanceParker
 	stripe stripePusher
-	notif  notifier
 	now    func() time.Time
 }
 

@@ -81,7 +81,7 @@ func VerifySignature(payload []byte, header, secret string, tolerance time.Durat
 
 	unix, err := strconv.ParseInt(ts, 10, 64)
 	if err != nil {
-		return fmt.Errorf("%w: bad t= value: %v", ErrBadSignature, err)
+		return fmt.Errorf("%w: bad t= value: %w", ErrBadSignature, err)
 	}
 	if age := time.Since(time.Unix(unix, 0)); age > tolerance || age < -tolerance {
 		return fmt.Errorf("%w: timestamp outside tolerance (age=%s)", ErrBadSignature, age)
