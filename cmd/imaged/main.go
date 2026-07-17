@@ -48,15 +48,17 @@ func run(ctx context.Context, log *slog.Logger) error {
 	builder := rootfs.NewBuilder(wire.ExecRunner{})
 
 	// Real registry v2 puller: resolves an image deploy's digest-pinned
-	// reference against the public registry. The HTTP transport is wrapped
-	// in WithEgressHTTPClient so a customer-side OCI reference that resolves
-	// (or DNS-rebinds) to RFC1918 / link-local / metadata / CGN / SMTP is
-	// refused before any data leaves the box (spec §11, issue #27).
+	// reference against the public registry. The HTTP transport enforces
+	// the egress denylist (RFC1918 / link-local / metadata / CGN / SMTP)
+	// at dial time so a customer-side OCI reference that resolves (or
+	// DNS-rebinds) to a private address is refused before any data leaves
+	// the box (spec §11, issue #27).
 	//
-	// FAAS_OCI_INSECURE=1 swaps the egress guard for a plain http.Client. Test
-	// harness only — never set in production. Lets e2e tests pull from an
-	// httptest registry bound to loopback (which the egress guard denies).
-	pullerOpts := []oci.Option{oci.WithEgressHTTPClient()}
+	// FAAS_OCI_INSECURE=1 swaps the egress-guarded client for a plain
+	// http.Client. Test harness only — never set in production. Lets the
+	// e2e tests pull from an httptest registry bound to loopback (which
+	// the egress guard denies).
+	pullerOpts := []oci.Option{oci.WithHTTPClient(oci.NewEgressHTTPClient())}
 	if os.Getenv("FAAS_OCI_INSECURE") == "1" {
 		log.Warn("FAAS_OCI_INSECURE=1 — egress guard disabled, e2e test mode only")
 		pullerOpts = []oci.Option{oci.WithHTTPClient(&http.Client{})}

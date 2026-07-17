@@ -32,6 +32,7 @@ type VmmdAPI interface {
 	Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
 	Park(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
 	Destroy(ctx context.Context, instance string) error
+	DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error)
 	LiveCount() int
 	LeasedCount() int
 }
@@ -128,16 +129,35 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 	}, nil
 }
 
-// Destroy tears down an instance. Idempotent for unknown instances.
+// Destroy tears down an instance. Idempotent for unknown instances. The
+// optional ExportDir (passed via CreateColdBoot.BuildSpec and remembered by
+// vmmd) triggers a build-aware teardown: vmmd waits for the in-VM build to
+// exit, captures the exit code, and copies /build/out/* + build-done.json
+// into ExportDir before releasing the chroot. The response carries the exit
+// code on the wire so builderd can classify (FailureUserError / OOM / Timeout).
 func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmdpb.DestroyResponse, error) {
 	const op = "Destroy"
 	start := time.Now()
-	if err := s.vmm.Destroy(ctx, req.GetInstance()); err != nil {
+	exportDir := s.exportDirFor(req.GetInstance())
+	code, err := s.vmm.DestroyWithExport(ctx, req.GetInstance(), exportDir)
+	if err != nil {
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	s.ops.Observe(op, time.Since(start), nil)
-	return &vmmdpb.DestroyResponse{Instance: req.GetInstance()}, nil
+	return &vmmdpb.DestroyResponse{Instance: req.GetInstance(), ExitCode: int32(code)}, nil
+}
+
+// exportDirFor asks the Manager whether the instance was registered as a
+// builder VM at cold-boot. App VMs return "" (so the gRPC Destroy stays
+// backwards-compatible — same teardown behaviour as before M6).
+func (s *Server) exportDirFor(instance string) string {
+	if getter, ok := s.vmm.(interface {
+		ExportDirFor(string) string
+	}); ok {
+		return getter.ExportDirFor(instance)
+	}
+	return ""
 }
 
 // Stats returns Manager's view: live/leased counts and per-instance

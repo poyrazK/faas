@@ -19,3 +19,9 @@ vmlinux-*
 .DS_Store
 .idea/
 .vscode/
+
+# Stray binaries at repo root from `make metal-lima` / local builds
+# (Mach-O arm64 ~5MB). Distinct from guest/init/ and cmd/<daemon>/,
+# which are the directories holding the actual source.
+/init
+/imaged

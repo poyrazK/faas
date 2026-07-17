@@ -27,11 +27,13 @@ import (
 // pkg/fcvm.Manager (Instance, Lease, WakeMethod) so the handlers do not
 // branch on a "test vs prod" path.
 type fakeVMM struct {
-	wakeFn  func(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
-	parkFn  func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
-	destroy func(ctx context.Context, instance string) error
-	live    int
-	leased  int
+	wakeFn            func(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
+	parkFn            func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
+	destroy           func(ctx context.Context, instance string) error
+	destroyWithExport func(ctx context.Context, instance, exportDir string) (int, error)
+	exportDirFn       func(instance string) string
+	live              int
+	leased            int
 }
 
 func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
@@ -73,6 +75,27 @@ func (f *fakeVMM) Destroy(ctx context.Context, instance string) error {
 	f.live = 0
 	f.leased = 0
 	return nil
+}
+
+func (f *fakeVMM) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
+	if f.destroyWithExport != nil {
+		return f.destroyWithExport(ctx, instance, exportDir)
+	}
+	// Backwards-compat: tests that wire only the legacy `destroy` hook still
+	// see their error surface here.
+	if f.destroy != nil {
+		return 0, f.destroy(ctx, instance)
+	}
+	f.live = 0
+	f.leased = 0
+	return 0, nil
+}
+
+func (f *fakeVMM) ExportDirFor(instance string) string {
+	if f.exportDirFn != nil {
+		return f.exportDirFn(instance)
+	}
+	return ""
 }
 
 func (f *fakeVMM) LiveCount() int   { return f.live }
@@ -375,5 +398,58 @@ func TestToProblem_NilReturnsNil(t *testing.T) {
 	}
 	if resp == nil {
 		t.Error("response is nil")
+	}
+}
+
+// TestDestroy_BuildAwareReturnsExitCode covers the M6 builder path: when
+// the Manager's ExportDirFor reports a non-empty dir, Destroy routes through
+// DestroyWithExport and surfaces the captured exit code on the wire so
+// builderd can classify the build's outcome (FailureUserError/OOM/Timeout).
+func TestDestroy_BuildAwareReturnsExitCode(t *testing.T) {
+	const wantCode = 137 // kernel OOM-killed
+	f := &fakeVMM{
+		exportDirFn: func(string) string { return "/var/lib/faas/build-out/abc" },
+		destroyWithExport: func(_ context.Context, _, exportDir string) (int, error) {
+			if exportDir == "" {
+				t.Errorf("expected non-empty exportDir (got %q)", exportDir)
+			}
+			return wantCode, nil
+		},
+	}
+	cli, _ := newServer(t, f)
+	resp, err := cli.Destroy(context.Background(), &vmmdpb.DestroyRequest{Instance: "build-abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.GetExitCode() != wantCode {
+		t.Errorf("exit_code = %d, want %d (137 = OOM-killed)", resp.GetExitCode(), wantCode)
+	}
+	if resp.GetInstance() != "build-abc" {
+		t.Errorf("instance echo = %q, want build-abc", resp.GetInstance())
+	}
+}
+
+// TestDestroy_AppVMSkipsExportPath covers the legacy path: no exportDir
+// registered, so DestroyWithExport is still called (with "") and the
+// captured exit code is 0 for a clean app teardown.
+func TestDestroy_AppVMSkipsExportPath(t *testing.T) {
+	var seenExportDir string
+	f := &fakeVMM{
+		exportDirFn: func(string) string { return "" }, // app VM
+		destroyWithExport: func(_ context.Context, _, exportDir string) (int, error) {
+			seenExportDir = exportDir
+			return 0, nil
+		},
+	}
+	cli, _ := newServer(t, f)
+	resp, err := cli.Destroy(context.Background(), &vmmdpb.DestroyRequest{Instance: "app-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenExportDir != "" {
+		t.Errorf("exportDir for app VM should be empty, got %q", seenExportDir)
+	}
+	if resp.GetExitCode() != 0 {
+		t.Errorf("app-VM exit_code = %d, want 0", resp.GetExitCode())
 	}
 }

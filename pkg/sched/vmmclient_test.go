@@ -69,6 +69,18 @@ func (f *fakeVMM) Destroy(ctx context.Context, instance string) error {
 	return nil
 }
 
+func (f *fakeVMM) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
+	// Schedd doesn't use the export path; treat as Destroy-equivalent.
+	if f.destFn != nil {
+		if err := f.destFn(ctx, instance); err != nil {
+			return 0, err
+		}
+	}
+	return 0, nil
+}
+
+func (f *fakeVMM) ExportDirFor(instance string) string { return "" }
+
 func (f *fakeVMM) LiveCount() int   { return 0 }
 func (f *fakeVMM) LeasedCount() int { return 0 }
 
