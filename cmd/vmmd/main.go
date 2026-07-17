@@ -94,8 +94,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		mux := http.NewServeMux()
 		mux.Handle(metricsPath, ops.Handler())
 		httpSrv = &http.Server{
-			Addr:    cfg.MetricsAddr,
-			Handler: mux,
+			Addr:              cfg.MetricsAddr,
+			Handler:           mux,
+			ReadHeaderTimeout: 10 * time.Second, // match schedd; guards the metrics endpoint against Slowloris
 		}
 		go func() {
 			if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
