@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 
@@ -98,6 +99,21 @@ func (b *fakeBuilder) Build(_ context.Context, in rootfs.BuildInput) (rootfs.Bui
 		ImagePath:    in.OutImage,
 		ContentBytes: b.bytesOut,
 	}, nil
+}
+
+// BuildBase is part of the LayerBuilder interface (M6); the existing
+// handler tests don't reach it, but the new EnsureBaseExt4 path does. The
+// fake records the call so a test can pin the OutImage + layer count.
+func (b *fakeBuilder) BuildBase(_ context.Context, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
+	b.calls = append(b.calls, rootfs.BuildInput{OutImage: in.OutImage, Plan: api.PlanScale})
+	// Write a placeholder so the EnsureBaseExt4 atomic-rename has a real
+	// source file to rename. Real mkfs would create the ext4 here; the
+	// fake stands in only to keep tests KVM-free (spec §Conventions:
+	// unit tests pass on any machine).
+	if err := os.WriteFile(in.OutImage, []byte("fake ext4"), 0o644); err != nil {
+		return rootfs.BaseBuildResult{}, err
+	}
+	return rootfs.BaseBuildResult{ImagePath: in.OutImage, SizeBytes: b.bytesOut}, nil
 }
 
 // fakeNotifier records every Notify so tests can assert fan-out.
@@ -562,6 +578,10 @@ func TestHandleDeployment_ClosesLayerReaders(t *testing.T) {
 type panicBuilder struct{}
 
 func (panicBuilder) Build(_ context.Context, _ rootfs.BuildInput) (rootfs.BuildResult, error) {
+	panic("boom")
+}
+
+func (panicBuilder) BuildBase(_ context.Context, _ rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
 	panic("boom")
 }
 

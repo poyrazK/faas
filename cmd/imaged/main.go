@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -81,8 +82,26 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer cancel()
 
+	// M6 closure: stage the builder-base ext4 on startup so cold-boot can
+	// pass it as drive0 (spec §4.6 two-drive). Pull the configured base ref
+	// (or the pinned default), assemble all layers into the shared read-only
+	// ext4 at FAAS_BUILDER_BASE_PATH. Idempotent across restarts — see
+	// imaged.EnsureBaseExt4 for the digest-pinned skip path. A failure here
+	// refuses to come up: a half-built base would mask every later builder
+	// crash as a "base missing" error and make root-causing painful.
+	baseRef := envOr("FAAS_BUILDER_BASE_REF", imaged.BaseRefBuilder)
+	basePath := envOr("FAAS_BUILDER_BASE_PATH", "/srv/fc/base/builder-base.ext4")
+	baseRes, err := h.EnsureBaseExt4(ctx, baseRef, basePath)
+	if err != nil {
+		return fmt.Errorf("imaged: stage builder base %s → %s: %w", baseRef, basePath, err)
+	}
+
 	log.Info("imaged ready",
 		"min_layer_mb", rootfs.MinLayerMB,
+		"builder_base_path", basePath,
+		"builder_base_ref", baseRef,
+		"builder_base_digest", baseRes.ConfigDigest,
+		"builder_base_skipped", baseRes.Skipped,
 		"channels", channels)
 
 	for {
