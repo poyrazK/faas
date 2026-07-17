@@ -16,7 +16,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -257,6 +261,124 @@ func TestMetalDNATPublishedToGuestPort(t *testing.T) {
 	}
 
 	if err := m.Destroy(ctx, "dnat"); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	leakcheck.AssertZero(t)
+}
+
+// TestMetalMemoryMaxFenceEnforced is the #33 acceptance gate. After a
+// cold boot, Manager.Wake writes memory.max = (plan_mb + 8) MB to the
+// per-VM cgroup scope jailer creates (spec §4.4). The test reads
+// that file back from /sys/fs/cgroup and asserts the value matches.
+//
+// The probe is a true external read (not internal vmmd self-talk):
+// even if the Wake code path silently swallows a write error and
+// returns success, this test catches it — the kernel state is the
+// only thing that actually protects the host. Skips when /sys/fs/
+// cgroup is not mounted (Lima without nested cgroup passthrough,
+// macOS dev).
+func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
+	kernel, _, _ := metalImages(t)
+	m := newMetalManager(t, kernel)
+	busybox := ensureBusyboxExt4(t, t.TempDir())
+
+	// Pre-flight: the cgroup fs must be reachable. Skipping (not
+	// failing) is the right behaviour on a dev box that can't mount
+	// cgroupv2 — the production EX44 always has it.
+	const scopeBase = "/sys/fs/cgroup/faas-tenant.slice/vm-mem.scope"
+	if _, err := os.Stat("/sys/fs/cgroup"); err != nil {
+		t.Skipf("/sys/fs/cgroup not mounted (Lima/macOS dev): %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const memMB = 128
+	if _, err := m.ColdBoot(ctx, ColdBootRequest{
+		Instance:   "mem",
+		BasePath:   busybox,
+		LayerPath:  busybox,
+		VcpuCount:  2,
+		MemSizeMiB: memMB,
+	}); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+
+	// The fence must equal (plan_mb + PerVMOverheadMB) << 20.
+	wantBytes := (memMB + 8) << 20 // 8 = pkg/api.PerVMOverheadMB
+	body, err := os.ReadFile(filepath.Join(scopeBase, "memory.max"))
+	if err != nil {
+		t.Fatalf("read %s/memory.max: %v", scopeBase, err)
+	}
+	got, err := strconv.ParseInt(strings.TrimSpace(string(body)), 10, 64)
+	if err != nil {
+		t.Fatalf("parse memory.max %q: %v", body, err)
+	}
+	if got != int64(wantBytes) {
+		t.Errorf("memory.max = %d, want %d (=%d MiB plan + %d MiB overhead)",
+			got, wantBytes, memMB, 8)
+	}
+
+	if err := m.Destroy(ctx, "mem"); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	leakcheck.AssertZero(t)
+}
+
+// TestMetalEgressCapEnforced is the #31 acceptance gate. After a cold
+// boot, Manager.setupNetwork applies a tbf qdisc on the host-side veth
+// with the plan's EgressMbit (spec §7: 10/25/100/250 Mbit). The test
+// runs `tc -s qdisc show dev <vethHost>` and asserts the live qdisc
+// carries the requested rate. Mirrors TestMetalDNATPublishedToGuestPort's
+// external-probe design: any code path that swallows a tc error and
+// returns success still gets caught here, because the live kernel
+// state is what enforces the cap.
+//
+// Skips when `tc` is not on PATH or when /sys/class/net/<vethHost>
+// is not visible (Lima without nested netns passthrough, macOS dev).
+func TestMetalEgressCapEnforced(t *testing.T) {
+	kernel, _, _ := metalImages(t)
+	m := newMetalManager(t, kernel)
+	busybox := ensureBusyboxExt4(t, t.TempDir())
+
+	if _, err := exec.LookPath("tc"); err != nil {
+		t.Skipf("`tc` not on PATH: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const rateMbit = 25 // Hobby plan
+	inst, err := m.ColdBoot(ctx, ColdBootRequest{
+		Instance:   "egress",
+		BasePath:   busybox,
+		LayerPath:  busybox,
+		VcpuCount:  2,
+		MemSizeMiB: 128,
+		EgressMbit: rateMbit,
+	})
+	if err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+
+	vethHost := inst.Net.VethHost
+	// Probe live kernel state. `tc -s qdisc show dev <name>` exits 0
+	// even if the dev has no qdisc (it prints "qdisc noqueue"), so
+	// match on the tbf keyword AND the rate.
+	out, err := exec.Command("tc", "-s", "qdisc", "show", "dev", vethHost).CombinedOutput()
+	if err != nil {
+		t.Fatalf("tc qdisc show dev %s: %v\n%s", vethHost, err, out)
+	}
+	text := string(out)
+	if !strings.Contains(text, "tbf") {
+		t.Errorf("no tbf qdisc on %s; got:\n%s", vethHost, text)
+	}
+	wantRate := fmt.Sprintf("rate %dMbit", rateMbit)
+	if !strings.Contains(text, wantRate) {
+		t.Errorf("tbf rate not %q on %s; got:\n%s", wantRate, vethHost, text)
+	}
+
+	if err := m.Destroy(ctx, "egress"); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
 	leakcheck.AssertZero(t)

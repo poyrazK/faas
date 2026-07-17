@@ -39,6 +39,7 @@ type AppSpec struct {
 	LayerPath  string // drive1 per-app layer
 	VCPUCount  int32  // 2, or 4 for Scale
 	MemSizeMiB int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
+	EgressMbit int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 }
 
 // SnapshotRef points at the snapshot files to restore from and the Firecracker
@@ -165,6 +166,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		LayerPath:  a.LayerPath,
 		VcpuCount:  a.VCPUCount,
 		MemSizeMib: a.MemSizeMiB,
+		EgressMbit: a.EgressMbit,
 	}
 }
 

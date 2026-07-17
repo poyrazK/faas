@@ -51,6 +51,10 @@ message AppSpec {
   int32  vcpu_count  = 3;
   // plan RAM in MiB (the slice fences at +8 per spec §1).
   int32  mem_size_mib = 4;
+  // per-plan egress bandwidth cap in Mbit/s (spec §7). 0 = no cap
+  // (legacy callers / disabled path); vmmd applies a tbf qdisc on the
+  // host-side veth to enforce Free/Hobby/Pro/Scale (10/25/100/250).
+  int32  egress_mbit  = 5;
 }
 
 // SnapshotRef points at the snapshot files a caller wants to restore from.

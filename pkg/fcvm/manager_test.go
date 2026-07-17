@@ -3,6 +3,8 @@ package fcvm
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -68,6 +70,15 @@ func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig) error {
 	v.mu.Lock()
 	v.bootCount++
 	v.mu.Unlock()
+	// Mirror what jailer does in production: create the per-VM cgroup
+	// scope under faas-tenant.slice. Without this the post-bringUp
+	// writeMemoryMax in Wake fails on the test side even though the
+	// code path is correct. Best-effort: if the test set cgroupRoot to
+	// a path where this would fail, leave it; the cgroup write will
+	// surface the error.
+	if err := os.MkdirAll(filepath.Join(cgroupRoot, ParentCgroup, "vm-"+l.Instance+".scope"), 0o755); err != nil {
+		return err
+	}
 	return v.bootErr
 }
 
@@ -75,6 +86,10 @@ func (v *fakeVMM) Restore(_ context.Context, l Lease, _ RestoreSpec) error {
 	v.mu.Lock()
 	v.restored = append(v.restored, l.Instance)
 	v.mu.Unlock()
+	// Same scope-create as Boot — jailer creates the scope on restore too.
+	if err := os.MkdirAll(filepath.Join(cgroupRoot, ParentCgroup, "vm-"+l.Instance+".scope"), 0o755); err != nil {
+		return err
+	}
 	return v.restoreErr
 }
 
@@ -132,6 +147,27 @@ func req(id string) ColdBootRequest {
 
 func newTestManager(run Runner, vmm VMM) *Manager {
 	return NewManager(run, vmm, Paths{Kernel: "/srv/fc/base/vmlinux-6.1"}, testFCVersion, nil)
+}
+
+// TestMain redirects cgroupRoot to a temp dir for the whole package's
+// unit tests. The metal tests (TestMetal*, in manager_metal_test.go)
+// run against the real /sys/fs/cgroup on Linux, so the per-test
+// override in cgroup_test.go is what they (or any test that wants a
+// distinct root) call instead. This blanket override is the simplest
+// seam: every existing manager_test.go and wake_test.go case goes
+// through newTestManager, and the new tests can drop the override
+// where they want a clean root.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "fcvm-cgroup-test-")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	if err := os.MkdirAll(filepath.Join(dir, "faas-tenant.slice"), 0o755); err != nil {
+		panic(err)
+	}
+	cgroupRoot = dir
+	os.Exit(m.Run())
 }
 
 func TestColdBootSuccessTracksInstance(t *testing.T) {
@@ -634,4 +670,179 @@ func TestSetupNetworkNftFailureLeaksNothing(t *testing.T) {
 	if !run.ran("netns del fc-dnat-fail") {
 		t.Error("teardown did not run netns del; netns leaked")
 	}
+}
+
+// --- tc + memory.max wiring (PR A: #31 + #33) ----------------------------
+
+// indexOfArgv returns the index of the first recorded argv whose
+// joined form contains substr, or -1 if absent. Used by the new
+// ordering / argv-shape tests below.
+func indexOfArgv(cmds [][]string, substr string) int {
+	for i, c := range cmds {
+		if strings.Contains(strings.Join(c, " "), substr) {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestSetupNetworkTcResetBeforeNftReset locks the snapshot-restore
+// ordering: each ruleset's reset (`tc qdisc del`, `nft delete table`)
+// must come BEFORE its strict add, and the tc reset must come BEFORE
+// the nft reset so a fresh netns that already had the veth set up
+// (which happens across park→wake) drops the qdisc before the nft
+// reset tries to clean the table.
+func TestSetupNetworkTcResetBeforeNftReset(t *testing.T) {
+	run, vmm := &fakeRunner{}, &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	r := req("tc-ord")
+	r.EgressMbit = 25
+	if _, err := m.ColdBoot(context.Background(), r); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	tcDel := indexOfArgv(run.commands, "tc qdisc del")
+	nftDel := indexOfArgv(run.commands, "nft delete table")
+	nftAdd := indexOfArgv(run.commands, "nft add table")
+	if tcDel < 0 || nftDel < 0 || nftAdd < 0 {
+		t.Fatalf("expected all three argvs; got tcDel=%d nftDel=%d nftAdd=%d\n%s",
+			tcDel, nftDel, nftAdd, flattenForTest(run.commands))
+	}
+	if tcDel >= nftDel {
+		t.Errorf("tc qdisc del (idx %d) must precede nft delete table (idx %d) on snapshot-restore Wake", tcDel, nftDel)
+	}
+	if nftDel >= nftAdd {
+		t.Errorf("nft delete table (idx %d) must precede nft add table (idx %d) — same reset-before-add invariant", nftDel, nftAdd)
+	}
+}
+
+// TestSetupNetworkTcRateEqualsPlan locks the wire shape: when the
+// caller sets EgressMbit, the argv that runs contains the rate.
+func TestSetupNetworkTcRateEqualsPlan(t *testing.T) {
+	run, vmm := &fakeRunner{}, &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	r := req("tc-rate")
+	r.EgressMbit = 100 // Pro plan
+	if _, err := m.ColdBoot(context.Background(), r); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	tcAdd := indexOfArgv(run.commands, "tc qdisc add")
+	if tcAdd < 0 {
+		t.Fatalf("never saw `tc qdisc add` argv: %s", flattenForTest(run.commands))
+	}
+	if !strings.Contains(strings.Join(run.commands[tcAdd], " "), "rate 100mbit") {
+		t.Errorf("tc argv %v must contain `rate 100mbit`", run.commands[tcAdd])
+	}
+}
+
+// TestSetupNetworkEgressZeroDisablesTc locks the `EgressMbit > 0`
+// guard: legacy callers (existing tests, dev CLI boot) leave the
+// field at zero and the tc argv MUST NOT run. Without the guard, a
+// `tc qdisc add ... rate 0mbit` would fail on metal with
+// "RTNETLINK answers: Invalid argument" and abort the wake.
+func TestSetupNetworkEgressZeroDisablesTc(t *testing.T) {
+	run, vmm := &fakeRunner{}, &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	r := req("tc-off")
+	r.EgressMbit = 0
+	if _, err := m.ColdBoot(context.Background(), r); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	if indexOfArgv(run.commands, "tc qdisc add") >= 0 {
+		t.Errorf("tc qdisc add must not run when EgressMbit is 0: %s", flattenForTest(run.commands))
+	}
+}
+
+// TestWakeWritesMemoryMaxAfterBringUp asserts the wire-up order for
+// the #33 cgroup fence: the scope is created by jailer during
+// Boot/Restore, so writeMemoryMax must run AFTER bringUp returns and
+// BEFORE the instance is published into m.live. This test uses
+// fakeVMM (whose Boot creates the scope on the test side, mirroring
+// jailer), runs a ColdBoot, and asserts both:
+//  1. writeMemoryMax wrote a memory.max file in the fake cgroupRoot
+//     whose value equals (MemSizeMiB + PerVMOverheadMB) << 20.
+//  2. The cgroup write happened after vmm.Boot (bootCount was
+//     already incremented when writeMemoryMax ran).
+func TestWakeWritesMemoryMaxAfterBringUp(t *testing.T) {
+	run, vmm := &fakeRunner{}, &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	r := req("cgroup-order")
+	r.MemSizeMiB = 128
+
+	if _, err := m.ColdBoot(context.Background(), r); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	if vmm.boots() != 1 {
+		t.Fatalf("expected 1 boot, got %d", vmm.boots())
+	}
+	memPath := filepath.Join(cgroupRoot, "faas-tenant.slice", "vm-cgroup-order.scope", "memory.max")
+	body, err := os.ReadFile(memPath)
+	if err != nil {
+		t.Fatalf("memory.max not written at %s: %v", memPath, err)
+	}
+	const want = (128 + 8) << 20 // PerVMOverheadMB = 8 (pkg/api/limits)
+	got := strings.TrimSpace(string(body))
+	if got != itoa(want) {
+		t.Errorf("memory.max = %q, want %d", got, want)
+	}
+}
+
+// TestWakeCgroupWriteFailureUnwindsNetns covers the leak invariant
+// when the post-bringUp cgroup write itself fails. The cleanup
+// defer in Wake must still tear down the netns and release the lease
+// so a transient cgroup permission issue doesn't leak. We point
+// cgroupRoot at a read-only directory so os.WriteFile returns an
+// error.
+func TestWakeCgroupWriteFailureUnwindsNetns(t *testing.T) {
+	// Build a directory where the slice dir exists but is read-only —
+	// the scope-create inside fakeVMM.Boot succeeds (it MkdirAll's
+	// the scope), but the subsequent memory.max WriteFile inside the
+	// scope fails. Easiest: chmod the parent dir to 0500 after the
+	// scope is created. We do it by pointing cgroupRoot at a path
+	// that exists but is unwritable.
+	tmp := t.TempDir()
+	ro := filepath.Join(tmp, "ro")
+	if err := os.Mkdir(ro, 0o555); err != nil {
+		t.Fatalf("mkdir ro: %v", err)
+	}
+	// Restore permissions on cleanup so t.TempDir can remove the
+	// tree — t.TempDir removes with a regular rm.
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o755) })
+
+	saved := cgroupRoot
+	cgroupRoot = ro
+	t.Cleanup(func() { cgroupRoot = saved })
+
+	// fakeVMM.Boot does MkdirAll(<cgroupRoot>/faas-tenant.slice/vm-…scope)
+	// on a read-only root → fails → Boot returns an error. That makes
+	// bringUp fail, which routes through the existing defer-cleanup.
+	// The expected assertion is just that the Wake error mentions the
+	// failure (whatever the underlying cause) and nothing leaks.
+	run, vmm := &fakeRunner{}, &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	_, err := m.ColdBoot(context.Background(), req("cgroup-fail"))
+	if err == nil {
+		t.Fatal("expected Wake to fail when cgroup write/setup is impossible")
+	}
+	if m.LeasedCount() != 0 {
+		t.Errorf("lease leaked after cgroup failure: leased=%d", m.LeasedCount())
+	}
+	// Network setup ran before Boot (and before the cgroup write),
+	// so the cleanup defer must have torn it down.
+	if !run.ran("netns del fc-cgroup-fail") {
+		t.Error("cleanup did not delete netns on cgroup failure")
+	}
+}
+
+func flattenForTest(cmds [][]string) string {
+	var b strings.Builder
+	for _, c := range cmds {
+		b.WriteString(strings.Join(c, " "))
+		b.WriteString("\n")
+	}
+	return b.String()
 }
