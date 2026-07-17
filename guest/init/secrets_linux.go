@@ -63,11 +63,9 @@ func isNotExist(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Wrap-friendly: walk error chain looking for fs.ErrNotExist or its
-	// syscall.Errno equivalent (ENOENT). os.ReadFile wraps as *PathError,
-	// which Unwraps fs.ErrNotExist.
-	if pe, ok := err.(*fs.PathError); ok {
-		return pe.Err == fs.ErrNotExist
-	}
-	return false
+	// Wrap-friendly: walk error chain looking for fs.ErrNotExist. os.ReadFile
+	// wraps as *fs.PathError, which Unwraps fs.ErrNotExist, so errors.Is is
+	// the right tool. The fs.PathError type-assertion we used to do here
+	// trips errorlint (and silently fails on wrapped chains).
+	return errors.Is(err, fs.ErrNotExist)
 }

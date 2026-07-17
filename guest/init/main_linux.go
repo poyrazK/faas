@@ -79,7 +79,7 @@ func boot() error {
 
 	// G2: read /etc/faas/secrets.env (unsealed JSON, written by vmmd at
 	// wake time) and stash the entry count on the supervisor via a small
-	// closure so runApp can pull them. A missing or malformed file is
+	// closure so runAppWithSecrets can pull them. A missing or malformed file is
 	// not fatal — the app runs without env secrets (consistent with
 	// the quota=0 path).
 	secrets, secErr := loadSecrets(slog.Default())
@@ -356,21 +356,6 @@ func pivotInto(root string) error {
 	// Detach the old root lazily.
 	_ = syscall.Unmount("/oldroot", syscall.MNT_DETACH)
 	return nil
-}
-
-// runApp execs the customer app as the app user and waits for it to exit.
-func runApp(m api.AppManifest) error {
-	argv := m.Entrypoint
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = m.EffectiveWorkingDir()
-	cmd.Env = BuildEnv(os.Environ(), m)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if uid := lookupUID(m.EffectiveUser()); uid > 0 {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)},
-		}
-	}
-	return cmd.Run()
 }
 
 // lookupUID resolves the app user name to a uid. The runner images create the
