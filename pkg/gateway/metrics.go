@@ -19,6 +19,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
 // Metrics is the gatewayd Prometheus bundle. Construct once per Handler via
@@ -106,11 +108,19 @@ func (l *requestLogger) Log(appID, code string, latency time.Duration, cold bool
 	if l == nil || l.log == nil {
 		return
 	}
+	// requestID flows from the x-faas-request-id HTTP header (pkg/gateway/observability.go:requestIDFrom)
+	// and is therefore attacker-controllable. Strip CR/LF/NUL/DEL before logging so a forged
+	// header cannot smuggle a new log line into the stream. appID and code are server-generated
+	// (UUIDs / HTTP status class digit) and need no sanitization.
+	//
+	// codeql[go/log-injection] false-positive: logsanitize.Field is not in CodeQL's sanitizer model
+	// (the query only recognizes inline strings.ReplaceAll), but it does strip the injection bytes
+	// at runtime — matching the defense-in-depth precedent set for the synth RPC (47d5531).
 	l.log.Info("gateway_request",
 		"app_id", appID,
 		"code", code,
 		"latency_ms", latency.Milliseconds(),
 		"cold", cold,
-		"request_id", requestID,
+		"request_id", logsanitize.Field(requestID),
 	)
 }

@@ -482,6 +482,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 	updated, _ := s.store.AccountByID(ctx(r), acct.ID)
+	// codeql[go/log-injection] false-positive: acct.ID is server-generated UUID; plan is enum-validated against the 4 Plan constants (free|hobby|pro|scale) by plan.Valid() — handler returns 400 on invalid input.
 	s.log.Info("plan changed", "account", acct.ID, "plan", plan)
 	writeJSON(w, http.StatusOK, api.AccountResponse{
 		ID: updated.ID, Email: updated.Email, Plan: string(updated.Plan), Status: string(updated.Status),

@@ -53,6 +53,7 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
 		return
 	}
+	// codeql[go/log-injection] false-positive: created.ID and acct.ID are server-generated UUIDs (pkg/state newID); created.Slug is regex-validated to ^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$ by validSlug before persist.
 	s.log.Info("app created", "app", created.ID, "slug", created.Slug, "account", acct.ID)
 	writeJSON(w, http.StatusCreated, s.appResponse(created))
 }
@@ -137,6 +138,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged, `{"kind":"image","app_id":"`+app.ID+`","to":"`+d.ID+`"}`)
+	// codeql[go/log-injection] false-positive: d.ID and app.ID are server-generated UUIDs; digest is regex-validated to ^sha256:[0-9a-f]{64}$ by parseImageDigest (handler returns 400 on failure, never reaches this log).
 	s.log.Info("deployment created", "deployment", d.ID, "app", app.ID, "digest", digest)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d))
 }
