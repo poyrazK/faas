@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    h2 { border-top: 1px solid #eee; padding-top: 1rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{if .Data}}
+      <h1>App: <code>{{.Data.App.Slug}}</code></h1>
+      <p>Status: <strong>{{.Data.App.Status}}</strong> · URL: <a href="{{.Data.App.URL}}">{{.Data.App.URL}}</a></p>
+
+      <h2>Manifest</h2>
+      <table>
+        <tr><th>Entrypoint</th><td><code>{{range .Data.Manifest.Entrypoint}}{{.}} {{end}}</code></td></tr>
+        <tr><th>WorkingDir</th><td><code>{{.Data.Manifest.WorkingDir}}</code></td></tr>
+        <tr><th>Port</th><td>{{.Data.Manifest.Port}}</td></tr>
+        <tr><th>Healthz</th><td><code>{{.Data.Manifest.Healthz}}</code></td></tr>
+        <tr><th>User</th><td><code>{{.Data.Manifest.User}}</code></td></tr>
+        <tr><th>Env</th><td>
+          {{range $k, $v := .Data.Manifest.Env}}<code>{{$k}}={{$v}}</code> {{end}}
+        </td></tr>
+      </table>
+
+      <h2>Recent deployments</h2>
+      {{if .Data.Deployments}}
+        <table>
+          <thead><tr><th>Created</th><th>Kind</th><th>Status</th><th>Error</th><th>Action</th></tr></thead>
+          <tbody>
+            {{range .Data.Deployments}}
+              <tr>
+                <td>{{.CreatedAt}}</td>
+                <td>{{.Kind}}</td>
+                <td>{{.Status}}</td>
+                <td><code>{{.Error}}</code></td>
+                <td>
+                  <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/rollback" style="display:inline">
+                    <input type="hidden" name="deployment_id" value="{{.ID}}">
+                    <button type="submit">Rollback</button>
+                  </form>
+                </td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p>No deployments yet.</p>
+      {{end}}
+
+      <h2>Crons</h2>
+      {{if .Data.Crons}}
+        <table>
+          <thead><tr><th>Schedule</th><th>Path</th><th>Enabled</th><th>Last fired</th></tr></thead>
+          <tbody>
+            {{range .Data.Crons}}
+              <tr>
+                <td><code>{{.Schedule}}</code></td>
+                <td><code>{{.Path}}</code></td>
+                <td>{{.Enabled}}</td>
+                <td>{{.LastFiredAt}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p>No crons scheduled.</p>
+      {{end}}
+    {{end}}
+  </main>
+  <footer>onebox faas · M7.5 dashboard · server-rendered, no SPA build</footer>
+</body>
+</html>

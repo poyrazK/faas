@@ -510,6 +510,41 @@ func (m *MemStore) ListDeploymentsForApp(_ context.Context, appID string, limit,
 	return all, nil
 }
 
+// ListDeploymentsForAccount walks every app the account owns, collects
+// its deployments, and returns them sorted DESC by created_at with
+// before acting as the inclusive upper bound. Cursor pagination
+// (before→NextBefore) lets the dashboard page backwards without an
+// offset scan.
+func (m *MemStore) ListDeploymentsForAccount(_ context.Context, accountID string, before time.Time, limit int) ([]Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]struct{})
+	for _, a := range m.apps {
+		if a.AccountID == accountID && a.Status != AppDeleted {
+			owned[a.ID] = struct{}{}
+		}
+	}
+	var all []Deployment
+	for _, d := range m.deployments {
+		if _, ok := owned[d.AppID]; !ok {
+			continue
+		}
+		// First page (before.IsZero()): include everything created at
+		// or before "before". Subsequent pages skip rows whose
+		// CreatedAt >= since the caller passed the previous
+		// response's last-seen CreatedAt as the "before" cursor.
+		if !before.IsZero() && !d.CreatedAt.Before(before) {
+			continue
+		}
+		all = append(all, d)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	if limit > 0 && limit < len(all) {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status DeploymentStatus, errMsg string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

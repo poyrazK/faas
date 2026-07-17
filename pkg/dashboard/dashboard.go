@@ -48,10 +48,94 @@ type Page struct {
 // AccountView is the dashboard-facing slice of state.Account. Never
 // log secrets here. Source data is pkg/state.Account; slices 3+4 expand.
 type AccountView struct {
-	ID            string
-	Email         string
-	Plan          string
-	AppCount      int
+	ID       string
+	Email    string
+	Plan     string
+	AppCount int
+}
+
+// IndexData is the /dashboard/ overview payload.
+type IndexData struct {
+	DeployedAppCount int
+	Plan             string
+}
+
+// AppListItem is one row on /dashboard/apps.
+type AppListItem struct {
+	Slug         string
+	Status       string
+	URL          string
+	LastDeployed string // empty when no deploys yet
+}
+
+// ManifestView is the runner-scaffold snapshot shown on the app detail
+// page. Names are JSONish to avoid a second copy of pkg/api.AppManifest.
+type ManifestView struct {
+	Entrypoint []string
+	Env        map[string]string
+	WorkingDir string
+	Port       int
+	Healthz    string
+	User       string
+}
+
+// DeploymentItem is one row on the app detail page's deploy list.
+type DeploymentItem struct {
+	ID        string
+	Status    string
+	Kind      string
+	CreatedAt string
+	Error     string
+}
+
+// CronItem is one row on the app detail page's crons tab.
+type CronItem struct {
+	ID           string
+	Schedule     string
+	Path         string
+	Enabled      bool
+	LastFiredAt  string // empty until first fire
+}
+
+// AppDetailData combines the bits the app detail page renders.
+type AppDetailData struct {
+	App         AppListItem
+	Manifest    ManifestView
+	Deployments []DeploymentItem
+	Crons       []CronItem
+}
+
+// UsageData is the /dashboard/usage page payload.
+type UsageData struct {
+	Month           string
+	UsedGBHours     float64
+	IncludedGBHours int64
+	OverageGBHours  float64
+	UsedPct         float64 // 0..100+
+}
+
+// BillingData is the /dashboard/billing page payload.
+type BillingData struct {
+	Plan     string
+	RAMMB    int
+	Included int64
+	AppsCap  int
+	AppLayer int
+	IdleSec  int
+}
+
+// APIKeyItem is one row on the /dashboard/account page's keys tab.
+type APIKeyItem struct {
+	ID         string
+	Prefix     string
+	Label      string
+	CreatedAt  string
+	LastUsedAt string // empty until first use
+}
+
+// AccountData is the /dashboard/account page payload.
+type AccountData struct {
+	Keys []APIKeyItem
 }
 
 // Render writes the page to w. It parses the templates on first use

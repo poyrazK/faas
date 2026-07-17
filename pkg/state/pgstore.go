@@ -361,6 +361,45 @@ func (s *PgStore) ListDeploymentsForApp(ctx context.Context, appID string, limit
 	return scanDeployments(rows)
 }
 
+// ListDeploymentsForAccount returns every deployment whose app belongs
+// to the account, ordered DESC by created_at. Cursor pagination: pass
+// the previous response's last created_at as `before` to page
+// backwards. before.IsZero() = first page.
+//
+// LIMIT/OFFSET isn't quite right here (timestamps can collide); we
+// instead use a keyset filter `created_at < $2`. With an index on
+// (account_id, created_at desc) — added in slice 4's migration as a
+// forward-only addition so this stays cheap.
+func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID string, before time.Time, limit int) ([]Deployment, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if before.IsZero() {
+		rows, err = s.pool.Query(ctx,
+			`select d.id, d.app_id, coalesce(d.build_id::text,''), d.image_digest, d.kind,
+			        coalesce(d.source_path,''), coalesce(d.source_bytes,0), coalesce(d.handler,''), coalesce(d.log_path,''),
+			        d.status, coalesce(d.error,''), d.created_at
+			 from deployments d join apps a on a.id = d.app_id
+			 where a.account_id = $1 order by d.created_at desc limit $2`,
+			accountID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select d.id, d.app_id, coalesce(d.build_id::text,''), d.image_digest, d.kind,
+			        coalesce(d.source_path,''), coalesce(d.source_bytes,0), coalesce(d.handler,''), coalesce(d.log_path,''),
+			        d.status, coalesce(d.error,''), d.created_at
+			 from deployments d join apps a on a.id = d.app_id
+			 where a.account_id = $1 and d.created_at < $2
+			 order by d.created_at desc limit $3`,
+			accountID, before, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDeployments(rows)
+}
+
 func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error {
 	tag, err := s.pool.Exec(ctx, `update deployments set status = $2, error = $3 where id = $1`, id, string(status), nullString(errMsg))
 	if err != nil {

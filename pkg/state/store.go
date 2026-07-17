@@ -81,6 +81,13 @@ type Store interface {
 	LiveDeployment(ctx context.Context, appID string) (Deployment, error)
 	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
 	ListDeploymentsForApp(ctx context.Context, appID string, limit, offset int) ([]Deployment, error)
+	// ListDeploymentsForAccount returns deployments across every app the
+	// account owns, cursor-paginated by created_at DESC. before is the
+	// inclusive upper bound — pass the previous response's NextBefore to
+	// page backwards. limit is the page cap (caller validates a sane upper
+	// bound). MemStore sorts in memory; PgStore uses a LIMIT/OFFSET or
+	// keyset pagination (deferred — LIMIT/OFFSET is fine at one-box scale).
+	ListDeploymentsForAccount(ctx context.Context, accountID string, before time.Time, limit int) ([]Deployment, error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error

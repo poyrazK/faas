@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    .meter { background: #eee; border-radius: 6px; height: 24px; overflow: hidden; margin: 0.5rem 0; }
+    .meter > div { background: #4f46e5; height: 100%; }
+    .meter.over > div { background: #dc2626; }
+    .kv { font-family: ui-monospace, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Usage · {{.Data.Month}}</h1>
+    {{if .Data}}
+      {{$d := .Data}}
+      <p>Used: <strong class="kv">{{printf "%.3f" $d.UsedGBHours}}</strong> GB-hours of included <strong class="kv">{{$d.IncludedGBHours}}</strong> GB-hours.</p>
+      <div class="meter{{if gt $d.UsedPct 100.0}} over{{end}}">
+        {{if gt $d.UsedPct 0.0}}
+          <div style="width: {{printf "%.1f" $d.UsedPct}}%;"></div>
+        {{end}}
+      </div>
+      <p class="kv">{{printf "%.1f" $d.UsedPct}}% of included quota</p>
+      {{if gt $d.OverageGBHours 0.0}}
+        <p>Overage: <strong class="kv">{{printf "%.3f" $d.OverageGBHours}}</strong> GB-hours at €0.01/GB-h.</p>
+      {{end}}
+    {{end}}
+  </main>
+  <footer>onebox faas · M7.5 dashboard · server-rendered, no SPA build</footer>
+</body>
+</html>

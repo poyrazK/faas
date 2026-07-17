@@ -125,6 +125,49 @@ func TestDashboardHandler_PropagatesInboundRequestID(t *testing.T) {
 	}
 }
 
+// TestDashboardHandler_AppsList confirms GET /dashboard/apps renders
+// 200 for an authed user, even when there are no apps yet (the
+// "create your first app" copy). Slice 4 wires the page; this is a
+// smoke-level guard against regressions where the dashboardChain
+// silently drops the route.
+func TestDashboardHandler_AppsList(t *testing.T) {
+	srv, cookie := newAuthedDashboardServer(t)
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps", nil)
+	r.AddCookie(cookie)
+	srv.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Apps") {
+		t.Errorf("body missing apps-list header\n%s", body)
+	}
+	if !strings.Contains(body, "No apps yet") {
+		t.Errorf("body missing empty-state copy\n%s", body)
+	}
+}
+
+// TestDashboardHandler_UsageAndBillingAndAccount probe the three
+// remaining dashboard routes — usage, billing, account. Slice 4 only
+// requires these to render the layout (no data assertions beyond
+// "header text is there" + 200); slice 6 wires SSE live updates.
+func TestDashboardHandler_OtherPages(t *testing.T) {
+	srv, cookie := newAuthedDashboardServer(t)
+	for _, path := range []string{"/dashboard/usage", "/dashboard/billing", "/dashboard/account"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, path, nil)
+			r.AddCookie(cookie)
+			srv.ServeHTTP(rec, r)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestDashboardHandler_RecoversFromPanic confirms a panicking handler
 // is caught by Recovery middleware and rendered as a 500 RFC 7807
 // problem. This intentionally uses a raw panicHandler — it does NOT

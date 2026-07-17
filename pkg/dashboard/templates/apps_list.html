@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
+    .badge.active { background: #d1fae5; color: #065f46; }
+    .badge.evicted { background: #fef3c7; color: #92400e; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    <h1>{{.Title}}</h1>
+    {{if .Data}}
+      {{$items := .Data}}
+      {{if $items}}
+        <table>
+          <thead><tr><th>Slug</th><th>Status</th><th>URL</th><th>Last deploy</th><th></th></tr></thead>
+          <tbody>
+            {{range $items}}
+              <tr>
+                <td><code>{{.Slug}}</code></td>
+                <td><span class="badge {{.Status}}">{{.Status}}</span></td>
+                <td><a href="{{.URL}}">{{.URL}}</a></td>
+                <td>{{.LastDeployed}}</td>
+                <td><a href="/dashboard/apps/{{.Slug}}">Details</a></td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p>No apps yet. Create one with <code>faas apps create &lt;slug&gt;</code>.</p>
+      {{end}}
+    {{else}}
+      <p>No apps yet. Create one with <code>faas apps create &lt;slug&gt;</code>.</p>
+    {{end}}
+  </main>
+  <footer>onebox faas · M7.5 dashboard · server-rendered, no SPA build</footer>
+</body>
+</html>

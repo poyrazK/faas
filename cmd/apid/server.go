@@ -195,6 +195,10 @@ func (s *server) handler() http.Handler {
 
 	// Usage.
 	mux.HandleFunc("GET /v1/usage", s.auth(s.getUsage))
+	mux.HandleFunc("GET /v1/usage/summary", s.auth(s.usageSummary))
+
+	// Account-scoped deployments list (M7.5 dashboard).
+	mux.HandleFunc("GET /v1/deployments", s.auth(s.listDeployments))
 
 	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept
 	// unsigned and trust the network boundary; ADR-007 hardening later).

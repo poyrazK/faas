@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -623,7 +624,7 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 }
 
 func cronResponse(c state.Cron) api.CronResponse {
-	return api.CronResponse{
+	resp := api.CronResponse{
 		ID:        c.ID,
 		AppID:     c.AppID,
 		Schedule:  c.Schedule,
@@ -631,6 +632,104 @@ func cronResponse(c state.Cron) api.CronResponse {
 		Enabled:   c.Enabled,
 		CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339),
 	}
+	if !c.LastFiredAt.IsZero() {
+		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
+	}
+	return resp
+}
+
+// --- dashboard support endpoints (M7.5 slice 4) -----------------------------
+
+// listDeployments serves GET /v1/deployments — every deployment the
+// account owns, in created_at DESC order. Cursor pagination via
+// ?before=<RFC3339Nano>; limit defaults to 50, capped at 200.
+func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			if n > 200 {
+				n = 200
+			}
+			limit = n
+		}
+	}
+	var before time.Time
+	if v := r.URL.Query().Get("before"); v != "" {
+		// RFC3339Nano — matches state.Deployment.CreatedAt. Lenient on
+		// RFC3339 too via a fallback parse so callers sending either
+		// format succeed.
+		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			before = t
+		} else if t, err := time.Parse(time.RFC3339, v); err == nil {
+			before = t
+		} else {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Bad cursor", "expected RFC3339 timestamp"))
+			return
+		}
+	}
+	rows, err := s.store.ListDeploymentsForAccount(ctx(r), acct.ID, before, limit)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list deployments"))
+		return
+	}
+	resp := api.DeploymentListResponse{Items: make([]api.DeploymentResponse, 0, len(rows))}
+	for _, d := range rows {
+		resp.Items = append(resp.Items, s.deploymentResponse(d))
+	}
+	if len(rows) == limit && limit > 0 && len(resp.Items) > 0 {
+		// NextBefore = CreatedAt of the LAST row (the oldest on this
+		// page). Pass it back as `before` to fetch the next page.
+		last := resp.Items[len(resp.Items)-1].CreatedAt
+		if t, err := time.Parse(time.RFC3339, last); err == nil {
+			resp.NextBefore = t.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// usageSummary serves GET /v1/usage/summary — the aggregate
+// current-month (or ?month=YYYY-MM) roll-up the dashboard's usage
+// page renders. All money is integer cents; GB-h is float.
+func (s *server) usageSummary(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	monthStr := r.URL.Query().Get("month")
+	if monthStr == "" {
+		monthStr = time.Now().UTC().Format("2006-01")
+	}
+	month, err := time.Parse("2006-01", monthStr)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Bad month", "expected YYYY-MM"))
+		return
+	}
+	rows, err := s.store.UsageByMonth(ctx(r), acct.ID, month)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load usage"))
+		return
+	}
+	var mbSec int64
+	for _, u := range rows {
+		mbSec += u.MBSeconds
+	}
+	usedGB := float64(mbSec) / 3_600_000.0
+	limits := api.MustLimitsFor(acct.Plan)
+	included := int64(limits.IncludedGBHours)
+	overage := usedGB - float64(included)
+	if overage < 0 {
+		overage = 0
+	}
+	// Spec §1 / financial model: €0.01/GB-h overage → 1 cent per
+	// GB-h. Plan's overage rate can vary in the model; constants here
+	// are the production default. Storing cents as int64 keeps
+	// floats away from money (spec §Conventions).
+	overageCents := int64(overage * 1.0)
+	writeJSON(w, http.StatusOK, api.UsageSummaryResponse{
+		Month:           monthStr,
+		UsedGBHours:     usedGB,
+		IncludedGBHours: included,
+		OverageGBHours:  overage,
+		OverageCents:    overageCents,
+	})
 }
 
 // --- small helpers ---------------------------------------------------------
