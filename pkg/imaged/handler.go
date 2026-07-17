@@ -32,6 +32,11 @@ type Notifier interface {
 // substitute a fake without dragging in a host mkfs binary.
 type LayerBuilder interface {
 	Build(ctx context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error)
+	// BuildBase handles the M6 base-image path (spec §4.6 two-drive):
+	// assemble ALL layers of a shared read-only base into /srv/fc/base/*.ext4
+	// so cold-boot can pass it as drive0. The base pipeline is the inverse
+	// of Build: no app manifest injection, no plan cap, every layer applied.
+	BuildBase(ctx context.Context, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error)
 }
 
 // Handler is the imaged orchestrator. It owns the transition walk that
