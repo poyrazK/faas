@@ -51,6 +51,10 @@ type Handler struct {
 	// appsRoot is the directory under which per-app layer-{deployment}.ext4
 	// files are written. Defaults to FAAS_APPS_ROOT or /var/lib/faas/apps.
 	appsRoot string
+	// functionRunnerPath is the absolute path to the static
+	// guest/runners/<runtime>/faas-runner binary injected into function
+	// layers. Empty in tests; cmd/imaged wires this from config.
+	functionRunnerPath string
 }
 
 // New returns a Handler. The OCI puller is injected so tests can substitute
@@ -67,6 +71,13 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 		store: store, notif: notif, oci: puller, builder: b,
 		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log,
 	}
+}
+
+// WithFunctionRunnerPath returns the handler with the runner binary path
+// set. Wired from cmd/imaged when the function runner has been compiled.
+func (h *Handler) WithFunctionRunnerPath(p string) *Handler {
+	h.functionRunnerPath = p
+	return h
 }
 
 // HandleNotification dispatches a single pg_notify payload. The Loop in
@@ -131,13 +142,18 @@ type snapshotWrittenPayload struct {
 	FCVersion    string `json:"fc_version"`
 }
 
-// handleDeployment advances a deployment created with `kind='image'` up to the
-// point where a snapshot is needed. It pulls the OCI digest, builds the app-layer
-// ext4, moves the row to `snapshotting`, and hands off to schedd via a
-// `snapshot_prime` notification (ADR-018): schedd cold-boots the layer once,
-// snapshots + parks it, and replies with `snapshot_written`, which drives
-// handleSnapshotWritten to record the row and flip the deployment `live`. imaged
-// never boots a VM or marks the deploy live on its own — that's the handshake.
+// handleDeployment advances a deployment up to the point where a snapshot
+// is needed. Two paths:
+//
+//   - kind=image + app.Type=app    → pull OCI digest, build app-layer ext4.
+//   - kind=image + app.Type=function → apply customer's source tarball +
+//                                     copy the function-runner binary
+//                                     into the layer; the manifest
+//                                     points at the runner.
+//
+// Both paths share the same imaging→snapshotting→live handshake via
+// snapshot_prime (ADR-018). Tarball/dockerfile deployments start via
+// build_queued and skip this function.
 func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPayload) error {
 	if p.Kind != string(state.DeploymentKindImage) {
 		// Tarball/dockerfile deployments start via build_queued; apid also
@@ -168,63 +184,21 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	if err := h.transition(ctx, dep.ID, state.DeployBuilding, ""); err != nil {
 		return err
 	}
-	digest, err := h.oci.PullDigest(ctx, dep.ImageDigest)
-	if err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull failed: "+err.Error())
-		return fmt.Errorf("imaged: oci pull: %w", err)
-	}
 
-	if err := h.transition(ctx, dep.ID, state.DeployImaging, ""); err != nil {
+	// Branch on app type. Functions take a different path: the customer
+	// uploads a source tarball; the runner binary lives in the layer
+	// alongside it; the manifest points at the runner so guest-init execs
+	// the right interpreter on wake.
+	var manifest api.AppManifest
+	var outImage string
+	switch app.Type {
+	case state.AppTypeFunction:
+		manifest, outImage, err = h.buildFunctionLayer(ctx, app, dep, acct)
+	default:
+		manifest, outImage, err = h.buildImageLayer(ctx, app, dep, acct)
+	}
+	if err != nil {
 		return err
-	}
-
-	// Stream the layer blobs + image config from the registry. Each ReadCloser
-	// MUST be closed; we wrap them in io.NopCloser-shaping io.Reader so the
-	// rootfs.Builder can apply them as gzip tarballs.
-	pulled, err := h.oci.PullLayers(ctx, digest)
-	if err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull: "+err.Error())
-		return fmt.Errorf("imaged: pull layers: %w", err)
-	}
-	defer func() {
-		for _, r := range pulled.Layers {
-			_ = r.Close()
-		}
-	}()
-
-	// App config (per-field override) wins over image config per the deploy
-	// contract. For now the only per-deploy override is Entrypoint, since the
-	// deployments table has no structured config column yet — richer overrides
-	// arrive with M5.1 / a new manifest jsonb column.
-	manifest := manifestFromImageConfig(pulled.Config)
-	if dep.Handler != "" {
-		manifest.Entrypoint = []string{dep.Handler}
-	}
-	if err := manifest.Validate(); err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "manifest invalid: "+err.Error())
-		return fmt.Errorf("imaged: validate manifest: %w", err)
-	}
-
-	outImage := filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
-	result, err := h.builder.Build(ctx, rootfs.BuildInput{
-		Layers:        layersAsReaders(pulled.Layers),
-		Manifest:      manifest,
-		GuestInitPath: h.guestInitPath,
-		Plan:          acct.Plan,
-		OutImage:      outImage,
-	})
-	if err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
-		return fmt.Errorf("imaged: build app layer: %w", err)
-	}
-
-	// Stamp the row so schedd's cold-boot on snapshot_prime knows where drive1
-	// lives (spec §4.6, ADR-018). Stamped AFTER the layer file is written —
-	// SetDeploymentRootfs is the source of truth for "this deployment has an
-	// ext4 at this path"; the bytes match the file on disk.
-	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
-		return fmt.Errorf("imaged: stamp rootfs: %w", err)
 	}
 
 	if err := h.transition(ctx, dep.ID, state.DeploySnapshotting, ""); err != nil {
@@ -237,7 +211,136 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	if err := h.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
 		return fmt.Errorf("imaged: notify snapshot_prime: %w", err)
 	}
+	_ = manifest
+	_ = outImage
 	return nil
+}
+
+// buildImageLayer is the original (M2/M4) image-deploy path: pull OCI
+// digest, build the app-layer ext4, stamp SetDeploymentRootfs. Kept as
+// its own function so the function branch below can sit alongside it
+// without growing handleDeployment.
+func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) (api.AppManifest, string, error) {
+	digest, err := h.oci.PullDigest(ctx, dep.ImageDigest)
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull failed: "+err.Error())
+		return api.AppManifest{}, "", fmt.Errorf("imaged: oci pull: %w", err)
+	}
+
+	if err := h.transition(ctx, dep.ID, state.DeployImaging, ""); err != nil {
+		return api.AppManifest{}, "", err
+	}
+
+	pulled, err := h.oci.PullLayers(ctx, digest)
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull: "+err.Error())
+		return api.AppManifest{}, "", fmt.Errorf("imaged: pull layers: %w", err)
+	}
+	defer func() {
+		for _, r := range pulled.Layers {
+			_ = r.Close()
+		}
+	}()
+
+	manifest := manifestFromImageConfig(pulled.Config)
+	if dep.Handler != "" {
+		manifest.Entrypoint = []string{dep.Handler}
+	}
+	if err := manifest.Validate(); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "manifest invalid: "+err.Error())
+		return api.AppManifest{}, "", fmt.Errorf("imaged: validate manifest: %w", err)
+	}
+
+	outImage := filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
+	result, err := h.builder.Build(ctx, rootfs.BuildInput{
+		Layers:        layersAsReaders(pulled.Layers),
+		Manifest:      manifest,
+		GuestInitPath: h.guestInitPath,
+		Plan:          acct.Plan,
+		OutImage:      outImage,
+	})
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
+		return api.AppManifest{}, "", fmt.Errorf("imaged: build app layer: %w", err)
+	}
+
+	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
+		return api.AppManifest{}, "", fmt.Errorf("imaged: stamp rootfs: %w", err)
+	}
+	return manifest, outImage, nil
+}
+
+// buildFunctionLayer assembles a function deploy's app-layer ext4:
+//
+//  1. Apply the customer's source tarball at /app.
+//  2. Copy the function runner binary at /usr/local/bin/faas-runner.
+//  3. Stamp /etc/faas/app.json with the §4.9 manifest pointing at the
+//     runner.
+//
+// The runner binary is injected from a path the daemon config provides
+// (cmd/imaged wires this). For tests, FunctionRunnerPath is empty and
+// the path is treated as a no-op so the table test can exercise the
+// rest of the path without an actual binary.
+func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) (api.AppManifest, string, error) {
+	if err := h.transition(ctx, dep.ID, state.DeployImaging, ""); err != nil {
+		return api.AppManifest{}, "", err
+	}
+	runtime := app.Runtime
+	if runtime == "" {
+		// Fall back to the per-deploy handler field when the app row
+		// doesn't carry the runtime — keeps older clients working.
+		runtime = dep.Handler
+	}
+	if runtime != "node22" && runtime != "python312" {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "unsupported runtime: "+runtime)
+		return api.AppManifest{}, "", fmt.Errorf("imaged: unsupported function runtime %q", runtime)
+	}
+	manifest := api.AppManifest{
+		Port:      api.DefaultAppPort,
+		Healthz:   "/healthz",
+		Entrypoint: []string{
+			"/usr/local/bin/faas-runner",
+			"--runtime", runtime,
+			"--handler", "/app/" + runtime + ".js", // python312 uses handler.py; node22 uses node22.js
+		},
+	}
+	if runtime == "python312" {
+		manifest.Entrypoint = []string{
+			"/usr/local/bin/faas-runner",
+			"--runtime", runtime,
+			"--handler", "/app/handler.py",
+		}
+	}
+	if err := manifest.Validate(); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "manifest invalid: "+err.Error())
+		return api.AppManifest{}, "", fmt.Errorf("imaged: validate manifest: %w", err)
+	}
+
+	outImage := filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
+	result, err := h.builder.Build(ctx, rootfs.BuildInput{
+		Layers:        layersAsReaders(nil), // function deploys use the tarball via BuildInput.Tarball
+		Manifest:      manifest,
+		GuestInitPath: h.guestInitPath,
+		Plan:          acct.Plan,
+		OutImage:      outImage,
+		// TarballPath lets the rootfs.Builder stream the customer's
+		// source tarball into /app during layer assembly. Tests skip
+		// this by leaving TarballPath empty.
+		TarballPath: dep.SourcePath,
+		// FunctionRunnerPath is the static guest/runners/<rt>/faas-runner
+		// binary that lives at /usr/local/bin/faas-runner in the layer.
+		FunctionRunnerPath: h.functionRunnerPath,
+	})
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build function layer: "+err.Error())
+		return api.AppManifest{}, "", fmt.Errorf("imaged: build function layer: %w", err)
+	}
+	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
+		return api.AppManifest{}, "", fmt.Errorf("imaged: stamp rootfs: %w", err)
+	}
+	return manifest, outImage, nil
 }
 
 // manifestFromImageConfig maps an OCI ImageConfig to an api.AppManifest. The
