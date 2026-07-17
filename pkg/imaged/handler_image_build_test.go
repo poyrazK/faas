@@ -125,7 +125,9 @@ func (f *fakeManifestPuller) putConfig(digest string, cfg oci.Config) {
 // which Linux-only integration tests cover).
 //
 // argv shape from rootfs.MkfsCommand:
-//   [mkfs.ext4, -F, -L, applayer, -d, stagingDir, outImage, NNNM]
+//
+//	[mkfs.ext4, -F, -L, applayer, -d, stagingDir, outImage, NNNM]
+//
 // Skip the -d flag's argument so we don't write to stagingDir.
 type recordingRunner struct {
 	argv []string

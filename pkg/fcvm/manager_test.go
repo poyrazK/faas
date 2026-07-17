@@ -68,7 +68,7 @@ type fakeVMM struct {
 	// nothing. App VMs just see "destroyed" the same way Kill did.
 	destroyWithExportExit int
 	destroyWithExportErr  error
-	destroyedWithExport  []string
+	destroyedWithExport   []string
 }
 
 func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig) error {

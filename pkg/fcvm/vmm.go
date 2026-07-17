@@ -29,11 +29,11 @@ import (
 // kernel/base rootfs in (cheap) and link the per-app layer / snapshot files, then
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
-	chrootBase    string        // /srv/fc/jail
-	fcName        string        // chroot dir name jailer derives from the exec-file basename
-	readyTimeout  time.Duration // WAKING/cold-boot readiness budget (spec §6)
-	destroyWait   time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
-	exportMaxBytes int64        // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
+	chrootBase     string        // /srv/fc/jail
+	fcName         string        // chroot dir name jailer derives from the exec-file basename
+	readyTimeout   time.Duration // WAKING/cold-boot readiness budget (spec §6)
+	destroyWait    time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
+	exportMaxBytes int64         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
 
 	mu      sync.Mutex
 	proc    map[string]*exec.Cmd // instance -> running jailer process
@@ -60,14 +60,14 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		readyTimeout = 30 * time.Second
 	}
 	return &JailerVMM{
-		chrootBase:    chrootBase,
-		fcName:        resolveFCChrootName(),
-		readyTimeout:  readyTimeout,
-		destroyWait:   10 * time.Minute, // builder timeout (spec §1 BuildTimeoutSeconds) + headroom
-		exportMaxBytes: 0,               // resolved to api.MaxExportedLayerBytes at first export
-		proc:          make(map[string]*exec.Cmd),
-		clients:       make(map[string]*http.Client),
-		recs:          make(map[string]*instanceRecord),
+		chrootBase:     chrootBase,
+		fcName:         resolveFCChrootName(),
+		readyTimeout:   readyTimeout,
+		destroyWait:    10 * time.Minute, // builder timeout (spec §1 BuildTimeoutSeconds) + headroom
+		exportMaxBytes: 0,                // resolved to api.MaxExportedLayerBytes at first export
+		proc:           make(map[string]*exec.Cmd),
+		clients:        make(map[string]*http.Client),
+		recs:           make(map[string]*instanceRecord),
 	}
 }
 

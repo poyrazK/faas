@@ -13,19 +13,26 @@ package imaged
 // TOML) so the box can roll a base image ahead of pinned refs and have imaged
 // track it without a code change.
 const (
-	BaseRefNode22     = "ghcr.io/onebox-faas/runner-node22:latest"
-	BaseRefPython312  = "ghcr.io/onebox-faas/runner-python312:latest"
-	BaseRefMinimal    = "ghcr.io/onebox-faas/base-minimal:latest"
-	BaseRefBuilder    = "ghcr.io/onebox-faas/builder-base:latest"
+	BaseRefNode22    = "ghcr.io/onebox-faas/runner-node22:latest"
+	BaseRefPython312 = "ghcr.io/onebox-faas/runner-python312:latest"
+	BaseRefMinimal   = "ghcr.io/onebox-faas/base-minimal:latest"
+	BaseRefBuilder   = "ghcr.io/onebox-faas/builder-base:latest"
+
+	// Runtime names are the values stored on state.App.Runtime. They map
+	// 1:1 to the runner shims in guest/runners/{node22,python312}. Naming
+	// them as constants keeps the baseRefFor switch and the production
+	// callers (cmd/imaged's deploy path) in lockstep.
+	RuntimeNode22    = "node22"
+	RuntimePython312 = "python312"
 )
 
 // baseRefFor returns the canonical base image reference for a runtime. The
 // empty runtime maps to the minimal base (plain apps, spec §4.6).
 func baseRefFor(runtime string) string {
 	switch runtime {
-	case "node22":
+	case RuntimeNode22:
 		return BaseRefNode22
-	case "python312":
+	case RuntimePython312:
 		return BaseRefPython312
 	default:
 		return BaseRefMinimal

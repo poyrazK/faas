@@ -62,12 +62,12 @@ type Instance struct {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
-	alloc      *Allocator
-	run        Runner
-	vmm        VMM
-	paths      Paths
-	fcVersion  string // the running Firecracker version; snapshots load only on a match
-	log        *slog.Logger
+	alloc     *Allocator
+	run       Runner
+	vmm       VMM
+	paths     Paths
+	fcVersion string // the running Firecracker version; snapshots load only on a match
+	log       *slog.Logger
 
 	mu         sync.Mutex
 	live       map[string]*Instance

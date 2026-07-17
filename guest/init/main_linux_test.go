@@ -16,7 +16,7 @@ import (
 func TestDecideMode_BuildBeatsApp(t *testing.T) {
 	fsys := fstest.MapFS{
 		"etc/faas/build.json": &fstest.MapFile{Data: mustMarshal(t, api.BuildManifest{BuildID: "b", Framework: api.FrameworkRailpackNode, TimeoutSec: 60})},
-		"etc/faas/app.json":    &fstest.MapFile{Data: []byte(`{"kind":"app"}`)},
+		"etc/faas/app.json":   &fstest.MapFile{Data: []byte(`{"kind":"app"}`)},
 	}
 	mode, m, err := decideMode(fsys)
 	if err != nil {

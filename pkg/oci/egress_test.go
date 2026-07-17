@@ -24,20 +24,20 @@ func TestIPAllowed_PublicAllowed(t *testing.T) {
 
 func TestIPAllowed_DeniedRanges(t *testing.T) {
 	cases := []string{
-		"10.0.0.1",          // RFC1918
-		"10.255.255.255",    // RFC1918 edge
-		"172.16.0.1",        // RFC1918
-		"172.31.255.255",    // RFC1918 edge
-		"192.168.0.1",       // RFC1918
-		"127.0.0.1",         // loopback
-		"169.254.169.254",   // AWS / GCP metadata
-		"100.64.0.1",        // carrier-grade NAT
-		"0.0.0.0",           // unspecified
-		"224.0.0.1",         // multicast
-		"::1",               // IPv6 loopback
-		"fe80::1",           // IPv6 link-local
-		"fc00::1",           // IPv6 ULA
-		"ff02::1",           // IPv6 multicast
+		"10.0.0.1",        // RFC1918
+		"10.255.255.255",  // RFC1918 edge
+		"172.16.0.1",      // RFC1918
+		"172.31.255.255",  // RFC1918 edge
+		"192.168.0.1",     // RFC1918
+		"127.0.0.1",       // loopback
+		"169.254.169.254", // AWS / GCP metadata
+		"100.64.0.1",      // carrier-grade NAT
+		"0.0.0.0",         // unspecified
+		"224.0.0.1",       // multicast
+		"::1",             // IPv6 loopback
+		"fe80::1",         // IPv6 link-local
+		"fc00::1",         // IPv6 ULA
+		"ff02::1",         // IPv6 multicast
 	}
 	for _, s := range cases {
 		ip := netip.MustParseAddr(s)

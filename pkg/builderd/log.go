@@ -41,4 +41,3 @@ func appendLog(ctx context.Context, store state.Store, buildID, line string) err
 	}
 	return nil
 }
-

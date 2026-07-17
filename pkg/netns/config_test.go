@@ -45,7 +45,7 @@ func TestSetupThenTeardownReferToSameResources(t *testing.T) {
 	if !strings.Contains(teardown, "link del "+c.VethHost) {
 		t.Error("teardown does not delete the host veth")
 	}
-// The tc qdisc lives on VethHost and is implicitly freed when
+	// The tc qdisc lives on VethHost and is implicitly freed when
 	// teardown deletes the link. Locking that single-side identity
 	// here prevents a future edit that accidentally moves the qdisc
 	// to the peer end (which would orphan it on teardown).

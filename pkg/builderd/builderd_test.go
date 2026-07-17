@@ -30,12 +30,12 @@ func (f *fakeNotifier) Notify(_ context.Context, channel, payload string) error 
 // failing. The result's OCIImage is what ProcessOne stamps onto the
 // deployment row.
 type fakeVM struct {
-	out         BuildOutcome
-	spawnErr    error
-	waitErr     error
-	spawnCalls  int
-	waitCalls   int
-	handle      BuildHandle
+	out        BuildOutcome
+	spawnErr   error
+	waitErr    error
+	spawnCalls int
+	waitCalls  int
+	handle     BuildHandle
 }
 
 func (f *fakeVM) Spawn(_ context.Context, _ VMRequest) (BuildHandle, error) {

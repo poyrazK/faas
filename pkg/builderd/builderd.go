@@ -119,14 +119,14 @@ type BuildResult struct {
 // ProcessOne claims the next queued build (or processes the buildID passed in
 // by the pg_notify handler) and runs it end-to-end:
 //
-//   1. Mark running (started=true, finished=false).
-//   2. Detect framework from the source tarball.
-//   3. Cache lookup — if hit, skip the VM spawn entirely.
-//   4. Allocate a slot (gate against tenant residency if 2nd).
-//   5. Spawn the builder VM.
-//   6. On success: SetDeploymentRootfs + snapshot_prime (the existing
-//      imaged handshake — same as a registry image deploy).
-//   7. On failure: classify (oom/timeout/user_error/infra) and write it.
+//  1. Mark running (started=true, finished=false).
+//  2. Detect framework from the source tarball.
+//  3. Cache lookup — if hit, skip the VM spawn entirely.
+//  4. Allocate a slot (gate against tenant residency if 2nd).
+//  5. Spawn the builder VM.
+//  6. On success: SetDeploymentRootfs + snapshot_prime (the existing
+//     imaged handshake — same as a registry image deploy).
+//  7. On failure: classify (oom/timeout/user_error/infra) and write it.
 //
 // The caller (cmd/builderd's loop) is the only writer to the build row.
 func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult, error) {

@@ -27,24 +27,24 @@ import (
 var (
 	// deniedCIDRv4 lists every IPv4 range the puller must never reach.
 	deniedCIDRv4 = []netip.Prefix{
-		netip.MustParsePrefix("0.0.0.0/8"),        // unspecified
-		netip.MustParsePrefix("10.0.0.0/8"),       // RFC1918
-		netip.MustParsePrefix("100.64.0.0/10"),    // carrier-grade NAT
-		netip.MustParsePrefix("127.0.0.0/8"),      // loopback
-		netip.MustParsePrefix("169.254.0.0/16"),   // link-local + IMDS
-		netip.MustParsePrefix("172.16.0.0/12"),    // RFC1918
-		netip.MustParsePrefix("192.0.0.0/24"),     // IETF protocol assignments
-		netip.MustParsePrefix("192.168.0.0/16"),   // RFC1918
-		netip.MustParsePrefix("198.18.0.0/15"),    // benchmarking
-		netip.MustParsePrefix("224.0.0.0/4"),      // multicast
-		netip.MustParsePrefix("240.0.0.0/4"),      // reserved
+		netip.MustParsePrefix("0.0.0.0/8"),      // unspecified
+		netip.MustParsePrefix("10.0.0.0/8"),     // RFC1918
+		netip.MustParsePrefix("100.64.0.0/10"),  // carrier-grade NAT
+		netip.MustParsePrefix("127.0.0.0/8"),    // loopback
+		netip.MustParsePrefix("169.254.0.0/16"), // link-local + IMDS
+		netip.MustParsePrefix("172.16.0.0/12"),  // RFC1918
+		netip.MustParsePrefix("192.0.0.0/24"),   // IETF protocol assignments
+		netip.MustParsePrefix("192.168.0.0/16"), // RFC1918
+		netip.MustParsePrefix("198.18.0.0/15"),  // benchmarking
+		netip.MustParsePrefix("224.0.0.0/4"),    // multicast
+		netip.MustParsePrefix("240.0.0.0/4"),    // reserved
 	}
 	deniedCIDRv6 = []netip.Prefix{
-		netip.MustParsePrefix("::/128"),           // unspecified
-		netip.MustParsePrefix("::1/128"),          // loopback
-		netip.MustParsePrefix("fe80::/10"),        // link-local
-		netip.MustParsePrefix("fc00::/7"),         // ULA
-		netip.MustParsePrefix("ff00::/8"),         // multicast
+		netip.MustParsePrefix("::/128"),    // unspecified
+		netip.MustParsePrefix("::1/128"),   // loopback
+		netip.MustParsePrefix("fe80::/10"), // link-local
+		netip.MustParsePrefix("fc00::/7"),  // ULA
+		netip.MustParsePrefix("ff00::/8"),  // multicast
 	}
 )
 

@@ -27,8 +27,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // VMMDriver is the metal VM driver. It owns a single gRPC connection to
@@ -181,12 +181,12 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	}
 
 	return BuildHandle{
-		Instance:     instance,
-		HostDrive1:   drive1Path,
-		ExportDir:    buildExportDir,
-		BuildID:      req.BuildID,
-		TimeoutSec:   timeoutSec,
-		StartedAt:    time.Now(),
+		Instance:   instance,
+		HostDrive1: drive1Path,
+		ExportDir:  buildExportDir,
+		BuildID:    req.BuildID,
+		TimeoutSec: timeoutSec,
+		StartedAt:  time.Now(),
 	}, nil
 }
 

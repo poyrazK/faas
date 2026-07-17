@@ -39,7 +39,7 @@ type Config struct {
 // file is not an error — the defaults produce a working daemon.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
-		VMMDSocket:    "/run/faas/vmmd.sock",
+		VMMDSocket:     "/run/faas/vmmd.sock",
 		CacheDir:       "/var/cache/faas/builds",
 		BuilderBase:    "/srv/fc/base/builder-base.ext4",
 		BuildDriveDir:  "/var/lib/faas/build-drive",
