@@ -102,7 +102,7 @@ func TestNftCommandsEnforceEgressPolicy(t *testing.T) {
 	// §11 ship-blocking egress denies, scoped to the guest side (iifname tap0) so
 	// the inbound DNAT path (iifname vp7) is never affected.
 	wants := []string{
-		"iifname tap0 tcp dport { 25, 465, 587 } drop",                                        // deny SMTP (spam/abuse)
+		"iifname tap0 tcp dport { 25, 465, 587 } drop",                                             // deny SMTP (spam/abuse)
 		"iifname tap0 ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } drop", // deny RFC1918 + link-local/metadata
 	}
 	for _, w := range wants {
