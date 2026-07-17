@@ -43,8 +43,13 @@ type PGBackend struct {
 	appsMu sync.RWMutex
 	apps   map[string]App // app_id -> App (plan)
 
-	tgtMu   sync.RWMutex
-	targets map[string]string // app_id -> instance addr (host:port)
+	tgtMu sync.RWMutex
+	// targets is the hot-path app_id -> instance addr (host:port) cache.
+	targets map[string]string
+	// addrInstance reverses addr -> instance_id so the last_request_at flush can
+	// attribute a touch (keyed by the addr the handler proxied to) back to the
+	// instance row schedd owns (spec §4.1, ADR-018).
+	addrInstance map[string]string
 }
 
 // compile-time assertion PGBackend satisfies the edge seam.
@@ -56,12 +61,13 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		log = slog.Default()
 	}
 	return &PGBackend{
-		router:  router,
-		sched:   sched,
-		log:     log,
-		routes:  NewRouteCache(RouteCacheCap),
-		apps:    map[string]App{},
-		targets: map[string]string{},
+		router:       router,
+		sched:        sched,
+		log:          log,
+		routes:       NewRouteCache(RouteCacheCap),
+		apps:         map[string]App{},
+		targets:      map[string]string{},
+		addrInstance: map[string]string{},
 	}
 }
 
@@ -106,13 +112,16 @@ func (b *PGBackend) Target(appID string) (string, bool) {
 // hits without waiting for the instance_changed notification round-trip. The
 // error preserves schedd's *api.Problem so writeWakeError maps it directly.
 func (b *PGBackend) Wake(ctx context.Context, appID string) error {
-	addr, err := b.sched.Wake(ctx, appID)
+	instanceID, addr, err := b.sched.Wake(ctx, appID)
 	if err != nil {
 		return err
 	}
 	if addr != "" {
 		b.tgtMu.Lock()
 		b.targets[appID] = addr
+		if instanceID != "" {
+			b.addrInstance[addr] = instanceID
+		}
 		b.tgtMu.Unlock()
 	}
 	return nil
@@ -125,8 +134,21 @@ func (b *PGBackend) Wake(ctx context.Context, appID string) error {
 // one-box scale the extra Wake round-trip is negligible.
 func (b *PGBackend) EvictTarget(appID string) {
 	b.tgtMu.Lock()
+	if addr, ok := b.targets[appID]; ok {
+		delete(b.addrInstance, addr)
+	}
 	delete(b.targets, appID)
 	b.tgtMu.Unlock()
+}
+
+// InstanceIDForAddr resolves the instance an addr was last woken as, so the
+// last_request_at flush can attribute touches (spec §4.1). Returns ok=false once
+// the target has been evicted (the instance parked); the flush drops those.
+func (b *PGBackend) InstanceIDForAddr(addr string) (string, bool) {
+	b.tgtMu.RLock()
+	id, ok := b.addrInstance[addr]
+	b.tgtMu.RUnlock()
+	return id, ok
 }
 
 // FlushRoutes clears the host→app and app→plan caches. gatewayd calls this on

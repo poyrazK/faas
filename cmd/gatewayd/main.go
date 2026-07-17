@@ -55,6 +55,10 @@ type runDeps struct {
 	listen  func(network, addr string) (net.Listener, error)
 	newSrv  func(addr string, handler http.Handler) *http.Server
 	backend gateway.Backend
+	// lastSeen flushes per-instance last_request_at to schedd (spec §4.1). nil in
+	// tests (the wake/routing path doesn't need it); production wires the
+	// schedFlushSink.
+	lastSeen gateway.LastSeenSink
 }
 
 func defaultDeps() runDeps {
@@ -101,6 +105,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	deps := defaultDeps()
 	deps.backend = backend
+	// Flush per-instance last_request_at to schedd so its idle reaper sees
+	// gateway traffic (spec §4.1, ADR-018) — without this a busy app parks once
+	// its idle timer fires. schedd is the sole writer to `instances`, so we hand
+	// it the batch over gRPC (the same client we wake through).
+	deps.lastSeen = newSchedFlushSink(backend, sched, log)
 	return runWithDeps(ctx, log, deps)
 }
 
@@ -122,6 +131,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	handler := gateway.NewHandlerWith(deps.backend, gateway.NewMetrics(), log)
 	handler.SetWakeGateHook()
+
+	// Per-instance last_request_at flush loop (spec §4.1). Present in production;
+	// nil in tests. FlushEvery stops with ctx; drain its error channel so a flaky
+	// schedd logs rather than leaks a goroutine.
+	if deps.lastSeen != nil {
+		handler.WithLastSeenSink(deps.lastSeen)
+		errc := gateway.FlushEvery(ctx, lastSeenFlushInterval, deps.lastSeen)
+		go func() {
+			for range errc {
+			}
+		}()
+	}
 
 	// SIGHUP = "drop in-memory rate-limit buckets". Operators use this after
 	// a mass-app-delete (apid → publish app.deleted; once M5 ships the LISTEN

@@ -37,10 +37,12 @@ import (
 //   - return an *api.Problem-shaped error so the gateway can map it to the
 //     right RFC 7807 status without re-classifying strings.
 type Scheduler interface {
-	// Wake ensures an instance for appID is running and returns the address
-	// it should be reached at. The error wraps an *api.Problem so the
-	// gateway's writeWakeError can map it directly.
-	Wake(ctx context.Context, appID string) (addr string, err error)
+	// Wake ensures an instance for appID is running and returns which instance
+	// serves it and at what address. The instance id lets the gateway attribute
+	// last_request_at touches back to the right row (spec §4.1, ADR-018). The
+	// error wraps an *api.Problem so the gateway's writeWakeError can map it
+	// directly.
+	Wake(ctx context.Context, appID string) (instanceID, addr string, err error)
 }
 
 // ErrSchedulerUnconfigured is returned by NoopScheduler.Wake.
@@ -51,19 +53,20 @@ var ErrSchedulerUnconfigured = errors.New("gateway: scheduler not configured (M5
 // path.
 type NoopScheduler struct{}
 
-func (NoopScheduler) Wake(context.Context, string) (string, error) {
-	return "", ErrSchedulerUnconfigured
+func (NoopScheduler) Wake(context.Context, string) (string, string, error) {
+	return "", "", ErrSchedulerUnconfigured
 }
 
 // FakeScheduler is the in-process scheduler used by handler/cmd/gatewayd
 // tests. It records every Wake call and returns a stable fake address per
 // app; configurable LatencyMs simulates a cold wake.
 type FakeScheduler struct {
-	mu        sync.Mutex
-	calls     int
-	latencyMs int
-	addr      string
-	errOnWake error
+	mu         sync.Mutex
+	calls      int
+	latencyMs  int
+	addr       string
+	instanceID string
+	errOnWake  error
 
 	// wakesByApp tracks per-app wake counts; useful for the wake-coalesce tests.
 	wakesByApp map[string]int
@@ -75,8 +78,15 @@ func NewFakeScheduler(addr string) *FakeScheduler {
 	}
 	return &FakeScheduler{
 		addr:       addr,
+		instanceID: "i-fake",
 		wakesByApp: map[string]int{},
 	}
+}
+
+// WithInstanceID sets the instance id Wake returns (default "i-fake").
+func (f *FakeScheduler) WithInstanceID(id string) *FakeScheduler {
+	f.instanceID = id
+	return f
 }
 
 // WithLatency sets the simulated cold-wake latency in milliseconds.
@@ -105,21 +115,22 @@ func (f *FakeScheduler) WakesFor(appID string) int {
 	return f.wakesByApp[appID]
 }
 
-func (f *FakeScheduler) Wake(ctx context.Context, appID string) (string, error) {
+func (f *FakeScheduler) Wake(ctx context.Context, appID string) (string, string, error) {
 	f.mu.Lock()
 	f.calls++
 	f.wakesByApp[appID]++
 	latency := time.Duration(f.latencyMs) * time.Millisecond
 	err := f.errOnWake
 	addr := f.addr
+	instanceID := f.instanceID
 	f.mu.Unlock()
 
 	if latency > 0 {
 		select {
 		case <-time.After(latency):
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", "", ctx.Err()
 		}
 	}
-	return addr, err
+	return instanceID, addr, err
 }

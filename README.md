@@ -119,9 +119,14 @@ when its executable acceptance tests pass.
     `unwiredBackend` stays as the test seam). Wake-denials round-trip their RFC
     7807 status via `pkg/grpcerr` (a lifted `*api.Problem` now recovers its HTTP
     status from the stable `Code`).
+  - **Last-seen flush** (`cmd/gatewayd` `schedFlushSink`): every 2xx Touches the
+    proxied addr; a 15 s loop resolves each addr→instance (recorded from the wake
+    response, `Scheduler.Wake` now returns the instance id) and reports the batch
+    to schedd's `ReportActivity` (schedd is the sole writer to `instances`, so
+    the gateway hands it the batch over gRPC). Without this a busy app parks once
+    its idle timer fires.
 
-  Remaining: CertMagic TLS; wiring the gateway's last-seen flush to schedd
-  `ReportActivity` (client method is ready).
+  Remaining: CertMagic TLS (M8).
 - **M5 — apid + deploy pipeline + CLI.** 🚧 The control plane and CLI work
   end-to-end (verified live against a running apid):
   - `migrations/00001_init.sql` — the full schema (spec §5) with CHECK
