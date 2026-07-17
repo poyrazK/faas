@@ -93,6 +93,7 @@ type WakeRequest struct {
 	LayerPath  string // drive1 per-app layer
 	VcpuCount  int
 	MemSizeMiB int
+	EgressMbit int       // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	Snapshot   *Snapshot // nil => cold boot
 }
 
@@ -104,6 +105,7 @@ type ColdBootRequest struct {
 	LayerPath  string
 	VcpuCount  int
 	MemSizeMiB int
+	EgressMbit int // per-plan tc cap; 0 = no cap (legacy / disabled)
 }
 
 // ColdBoot boots an instance from rootfs with no snapshot. It is Wake with a nil
@@ -111,7 +113,8 @@ type ColdBootRequest struct {
 func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance, error) {
 	return m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, BasePath: req.BasePath, LayerPath: req.LayerPath,
-		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB, Snapshot: nil,
+		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
+		EgressMbit: req.EgressMbit, Snapshot: nil,
 	})
 }
 
@@ -124,6 +127,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		return nil, fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err)
 	}
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
+	nc.EgressMbit = req.EgressMbit
 
 	// Any failure past this point must fully clean up.
 	defer func() {
@@ -140,6 +144,16 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	method, err = m.bringUp(ctx, lease, nc, req)
 	if err != nil {
 		return nil, err
+	}
+
+	// memory.max fence (spec §4.4) — written AFTER bringUp returns because
+	// the scope is created by jailer during Boot/Restore and does not exist
+	// before then. writeMemoryMax is naturally idempotent (cgroupv2 accepts
+	// an identical-value write as a no-op), so snapshot-restore Wake does
+	// not need a reset. Failure routes through the deferred cleanup path —
+	// the VM is already up, but teardown kills it and releases the lease.
+	if err = writeMemoryMax(req.Instance, req.MemSizeMiB); err != nil {
+		return nil, fmt.Errorf("wake %s: cgroup fence: %w", req.Instance, err)
 	}
 
 	inst := &Instance{Lease: lease, Net: nc, Method: method}
@@ -241,25 +255,43 @@ func (m *Manager) LiveCount() int {
 // of everything, LiveCount and LeasedCount must both be zero — the leak check.
 func (m *Manager) LeasedCount() int { return m.alloc.InUse() }
 
-// setupNetwork realises the per-instance topology (veth/tap/addressing) and then
-// applies the nftables ruleset that publishes the guest and enforces the egress
-// policy (§7/§11). Commands run in order, stopping at the first error; a failure
+// setupNetwork realises the per-instance topology (veth/tap/addressing), applies
+// the per-plan tc egress cap on the host-side veth, and then loads the
+// nftables ruleset that publishes the guest and enforces the egress policy
+// (§7/§11). Commands run in order, stopping at the first error; a failure
 // leaves the caller's deferred cleanup to unwind everything (invariant §6.2-5).
 // The DNAT rules must land before readiness is probed, so they run here, inside
 // the setup phase, rather than after bringUp.
 //
-// NftResetCommands runs best-effort BEFORE the ruleset — a snapshot-restore
-// Wake re-enters an existing netns whose table persists across VM lifetimes,
-// so we must `delete table` before `add table` to avoid the `add` failing on
-// duplicate. `delete table` exits non-zero on a fresh netns; that error is
-// logged and discarded (see the doc on the method).
+// Ordering matters on snapshot-restore Wake (the netns outlives the VM):
+// each ruleset's reset (`tc qdisc del`, `nft delete table`) runs best-effort
+// BEFORE its strict add, so the second `add` does not collide. Both resets
+// exit non-zero on a fresh netns / brand-new veth; those failures are
+// expected and logged at Debug.
 func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
 	if err := m.runCommands(ctx, nc.SetupCommands()); err != nil {
 		return err
 	}
-	// Best-effort reset. Errors here are expected on a fresh netns and are
-	// ignored (logged at Debug). On a snapshot-restore the delete succeeds
-	// and lets the subsequent `add table` win.
+
+	// tc egress cap. Best-effort reset (errors expected on fresh veth);
+	// strict add runs only when the plan carries a cap. EgressMbit == 0
+	// keeps legacy callers (existing fakeRunner tests, debug paths)
+	// working without forcing every caller to set a non-zero rate.
+	for _, argv := range nc.TcResetCommands() {
+		if err := m.run.Run(ctx, argv); err != nil {
+			m.log.Debug("tc reset (best-effort, expected on fresh veth)",
+				"instance", nc.Instance, "argv", argv, "err", err)
+		}
+	}
+	if nc.EgressMbit > 0 {
+		if err := m.runCommands(ctx, nc.TcCommands()); err != nil {
+			return fmt.Errorf("tc egress cap: %w", err)
+		}
+	}
+
+	// nft ruleset reset + strict add. See NftCommands / NftResetCommands
+	// doc comments for the established/related ordering that makes
+	// published replies survive the lateral-movement deny.
 	for _, argv := range nc.NftResetCommands() {
 		if err := m.run.Run(ctx, argv); err != nil {
 			m.log.Debug("nft reset (best-effort, expected on fresh netns)",

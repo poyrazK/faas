@@ -86,7 +86,11 @@ type AppSpec struct {
 	// 2 for free/hobby/pro; 4 for Scale.
 	VcpuCount int32 `protobuf:"varint,3,opt,name=vcpu_count,json=vcpuCount,proto3" json:"vcpu_count,omitempty"`
 	// plan RAM in MiB (the slice fences at +8 per spec §1).
-	MemSizeMib    int32 `protobuf:"varint,4,opt,name=mem_size_mib,json=memSizeMib,proto3" json:"mem_size_mib,omitempty"`
+	MemSizeMib int32 `protobuf:"varint,4,opt,name=mem_size_mib,json=memSizeMib,proto3" json:"mem_size_mib,omitempty"`
+	// per-plan egress bandwidth cap in Mbit/s (spec §7). 0 = no cap
+	// (legacy callers / disabled path); vmmd applies a tbf qdisc on the
+	// host-side veth to enforce Free/Hobby/Pro/Scale (10/25/100/250).
+	EgressMbit    int32 `protobuf:"varint,5,opt,name=egress_mbit,json=egressMbit,proto3" json:"egress_mbit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -145,6 +149,13 @@ func (x *AppSpec) GetVcpuCount() int32 {
 func (x *AppSpec) GetMemSizeMib() int32 {
 	if x != nil {
 		return x.MemSizeMib
+	}
+	return 0
+}
+
+func (x *AppSpec) GetEgressMbit() int32 {
+	if x != nil {
+		return x.EgressMbit
 	}
 	return 0
 }
@@ -831,7 +842,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x86\x01\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xa7\x01\n" +
 	"\aAppSpec\x12\x1b\n" +
 	"\tbase_path\x18\x01 \x01(\tR\bbasePath\x12\x1d\n" +
 	"\n" +
@@ -839,7 +850,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"vcpu_count\x18\x03 \x01(\x05R\tvcpuCount\x12 \n" +
 	"\fmem_size_mib\x18\x04 \x01(\x05R\n" +
-	"memSizeMib\"\x8f\x01\n" +
+	"memSizeMib\x12\x1f\n" +
+	"\vegress_mbit\x18\x05 \x01(\x05R\n" +
+	"egressMbit\"\x8f\x01\n" +
 	"\vSnapshotRef\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x19\n" +
 	"\bmem_path\x18\x02 \x01(\tR\amemPath\x12!\n" +

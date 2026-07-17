@@ -126,6 +126,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	spec := AppSpec{
 		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
+		EgressMbit: int32(limits.EgressMbit),
 	}
 	var out *WakeOutcome
 	if haveSnap {
@@ -193,6 +194,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	spec := AppSpec{
 		BasePath: basePath(app.Runtime), LayerPath: layerPath(deploymentID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
+		EgressMbit: int32(limits.EgressMbit),
 	}
 	out, err := e.vmm.CreateColdBoot(ctx, ins.ID, spec)
 	if err != nil {

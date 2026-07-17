@@ -42,6 +42,7 @@ func toWakeRequest(req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, err
 			FCVersion:   snap.GetFcVersion(),
 		}
 	}
+	wr.EgressMbit = int(app.GetEgressMbit())
 	return wr, nil
 }
 
@@ -65,6 +66,7 @@ func toColdBootRequest(req *vmmdpb.CreateColdBootRequest) (fcvm.WakeRequest, err
 		LayerPath:  app.GetLayerPath(),
 		VcpuCount:  int(app.GetVcpuCount()),
 		MemSizeMiB: int(app.GetMemSizeMib()),
+		EgressMbit: int(app.GetEgressMbit()),
 	}, nil
 }
 

@@ -1,6 +1,7 @@
 package netns
 
 import (
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -43,6 +44,13 @@ func TestSetupThenTeardownReferToSameResources(t *testing.T) {
 	}
 	if !strings.Contains(teardown, "link del "+c.VethHost) {
 		t.Error("teardown does not delete the host veth")
+	}
+	// The tc qdisc lives on VethHost and is implicitly freed when
+	// teardown deletes the link. Locking that single-side identity
+	// here prevents a future edit that accidentally moves the qdisc
+	// to the peer end (which would orphan it on teardown).
+	if !strings.Contains(flatten(c.TcCommands()), "dev "+c.VethHost) {
+		t.Error("tc commands must target VethHost (the host-side veth that teardown deletes)")
 	}
 }
 
@@ -343,4 +351,105 @@ func flatten(cmds [][]string) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// --- TcCommands / TcResetCommands ----------------------------------------
+
+// TestTcCommandsApplyRateToVethHost asserts the strict tc qdisc argv
+// targets VethHost (root-ns side of the veth pair, the choke point
+// nearest the box) and embeds the per-plan rate. Locks the wire shape
+// the manager's setupNetwork relies on.
+func TestTcCommandsApplyRateToVethHost(t *testing.T) {
+	c := testConfig()
+	c.EgressMbit = 25 // Hobby plan
+	cmds := c.TcCommands()
+	if len(cmds) != 1 {
+		t.Fatalf("TcCommands returned %d argvs, want 1: %v", len(cmds), cmds)
+	}
+	line := strings.Join(cmds[0], " ")
+	wants := []string{
+		"tc", "qdisc", "add", "dev", c.VethHost, "root", "tbf",
+		"rate", "25mbit",
+		"burst", "32kbit", "latency", "400ms",
+	}
+	for _, w := range wants {
+		if !strings.Contains(line, w) {
+			t.Errorf("tc argv missing %q\ngot: %s", w, line)
+		}
+	}
+}
+
+// TestTcResetCommandsPrependsDeleteRoot asserts the best-effort reset
+// argv targets the same root qdisc TcCommands adds. Without this, a
+// snapshot-restore Wake fails on the second `tc qdisc add` with
+// "RTNETLINK answers: File exists". Mirrors TestNftResetCommandsPrependsDeleteTable.
+func TestTcResetCommandsPrependsDeleteRoot(t *testing.T) {
+	c := testConfig()
+	reset := c.TcResetCommands()
+	if len(reset) != 1 {
+		t.Fatalf("TcResetCommands returned %d argvs, want 1: %v", len(reset), reset)
+	}
+	line := strings.Join(reset[0], " ")
+	for _, w := range []string{"tc", "qdisc", "del", "dev", c.VethHost, "root"} {
+		if !strings.Contains(line, w) {
+			t.Errorf("reset argv missing %q\ngot: %s", w, line)
+		}
+	}
+}
+
+// TestTcCommandsHaveNoShellMetacharacters is the regression net for an
+// accidental shell-injection into an argv element. tc argv legitimately
+// uses k/m/g suffixes for rate/burst, but never shell metacharacters.
+func TestTcCommandsHaveNoShellMetacharacters(t *testing.T) {
+	c := testConfig()
+	c.EgressMbit = 25
+	for _, cmds := range [][][]string{c.TcCommands(), c.TcResetCommands()} {
+		for _, cmd := range cmds {
+			for _, arg := range cmd {
+				if strings.ContainsAny(arg, "|&<>$`\n;{}") {
+					t.Errorf("tc argv element %q contains shell metacharacters", arg)
+				}
+			}
+		}
+	}
+}
+
+// TestTcCommandsPrefixNoNetnsExec locks the architectural choice: tc
+// runs in the root namespace and must NOT be wrapped in `ip netns
+// exec`. Wrapping would put the qdisc on the peer end inside the
+// per-instance netns, which (a) cannot be reached from outside without
+// re-entering the netns every time and (b) would be removed when the
+// netns is torn down at park time, losing the cap on a snapshot-
+// restore Wake. A future edit that adds the prefix by reflex —
+// mirroring NftCommands — would silently break the cap; this test
+// fails loudly.
+func TestTcCommandsPrefixNoNetnsExec(t *testing.T) {
+	c := testConfig()
+	c.EgressMbit = 25
+	for _, cmds := range [][][]string{c.TcCommands(), c.TcResetCommands()} {
+		for _, cmd := range cmds {
+			for _, arg := range cmd {
+				if arg == "netns" || arg == "exec" {
+					t.Errorf("tc argv contains 'netns exec' — must run in root ns: %v", cmd)
+				}
+			}
+		}
+	}
+}
+
+// TestTcCommandsValidRate is a defensive bound on the rate expression.
+// tbf rejects 0mbit ("RTNETLINK answers: Invalid argument") and our
+// `if nc.EgressMbit > 0` guard in setupNetwork is the only thing
+// keeping a 0 from leaking here. A future edit that drops the guard
+// would fail this test instead of silently producing a broken qdisc.
+func TestTcCommandsValidRate(t *testing.T) {
+	c := testConfig()
+	for _, mbit := range []int{10, 25, 100, 250} {
+		c.EgressMbit = mbit
+		line := strings.Join(c.TcCommands()[0], " ")
+		want := fmt.Sprintf("rate %dmbit", mbit)
+		if !strings.Contains(line, want) {
+			t.Errorf("rate %d: argv missing %q\ngot: %s", mbit, want, line)
+		}
+	}
 }
