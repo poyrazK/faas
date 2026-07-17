@@ -24,10 +24,10 @@ func TestBuildEnv_SecretsOverrideManifest(t *testing.T) {
 	got := BuildEnvWithSecrets(base, m, secrets)
 
 	want := map[string]string{
-		"FOO":        "secret", // secrets win
-		"BAR":        "base",   // only in base
+		"FOO":        "secret",   // secrets win
+		"BAR":        "base",     // only in base
 		"BAZ":        "manifest", // only in manifest
-		"SECRET_KEY": "x",      // only in secrets
+		"SECRET_KEY": "x",        // only in secrets
 	}
 	if len(got) != len(want) {
 		t.Fatalf("len = %d, want %d (got %v)", len(got), len(want), got)
@@ -77,7 +77,7 @@ func TestBuildEnv_InvalidKeysDropped(t *testing.T) {
 	// bypass the check.
 	base := []string{"ok=base"}
 	m := api.AppManifest{Env: map[string]string{
-		"lowercase": "bad",  // rejected
+		"lowercase":  "bad", // rejected
 		"BAD-HYPHEN": "bad", // rejected
 		"9DIGIT":     "bad", // rejected
 		"OK_NAME":    "good",

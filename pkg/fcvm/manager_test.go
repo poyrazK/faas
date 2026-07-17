@@ -70,7 +70,7 @@ type fakeVMM struct {
 	destroyWithExportErr  error
 	destroyedWithExport   []string
 	// G2 secrets staging.
-	stagedSecrets  []stagedSecret
+	stagedSecrets   []stagedSecret
 	stageSecretsErr error
 }
 
