@@ -133,6 +133,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		"fc_version", fcVersion)
 
 	loop := sched.NewLoop(pool, engine, log)
+	// Cron dispatch path: route synthetic requests through gatewayd's
+	// internal unix socket so metering + rate limits apply identically
+	// to user traffic (spec §4.4, M7). A failure to dial is logged but
+	// non-fatal — the cron loop tolerates a missing gateway (Wake still
+	// runs, the synth step is best-effort).
+	if cfg.GatewaySynthSocket != "" {
+		synth, dialErr := sched.DialGatewaySynth(cfg.GatewaySynthSocket, log)
+		if dialErr != nil {
+			log.Warn("gateway synth dial: cron traffic will not flow until gatewayd is up",
+				"socket", cfg.GatewaySynthSocket, "err", dialErr)
+		} else {
+			loop.WithGatewaySynth(synth)
+		}
+	}
 	loopErr := make(chan error, 1)
 	go func() { loopErr <- loop.Run(ctx) }()
 

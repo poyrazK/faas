@@ -35,6 +35,13 @@ service Schedd {
   // schedd is the ONLY writer to the `instances` table (CLAUDE.md ownership);
   // the gateway keeps the batch in memory between flushes (ADR-018).
   rpc ReportActivity(ReportActivityRequest) returns (ReportActivityResponse);
+
+  // ParkInstance forces an instance to its parked state. Added in M7 so
+  // meterd's Free-tier hard-stop can park every live instance on a
+  // suspended account (spec §4.7). Reason is for audit logs ("quota_
+  // exceeded_free" etc). Returns Ok on success; ResourceExhausted / NotFound
+  // for the obvious error paths.
+  rpc ParkInstance(ParkInstanceRequest) returns (ParkInstanceResponse);
 }
 
 message WakeRequest {
@@ -80,4 +87,17 @@ message ReportActivityResponse {
   // applied is the number of touches schedd persisted (rows that matched a
   // known instance). Lets the gateway detect a mass mismatch in tests/metrics.
   int32 applied = 1;
+}
+
+// ParkInstanceRequest asks schedd to park one instance. The reason
+// string flows through to the audit log + park-reason metric.
+message ParkInstanceRequest {
+  string instance_id = 1;
+  string reason      = 2;
+}
+
+message ParkInstanceResponse {
+  // ok reports whether the park succeeded. False means the instance
+  // was already parked (idempotent) or didn't exist.
+  bool ok = 1;
 }

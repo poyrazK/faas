@@ -27,6 +27,7 @@ import (
 type fakeEngine struct {
 	wakeFn   func(ctx context.Context, appID string) (sched.WakeResult, error)
 	reportFn func(ctx context.Context, touches []state.InstanceTouch) (int, error)
+	parkFn   func(ctx context.Context, instanceID, reason string) error
 }
 
 func (f *fakeEngine) Wake(ctx context.Context, appID string) (sched.WakeResult, error) {
@@ -35,6 +36,13 @@ func (f *fakeEngine) Wake(ctx context.Context, appID string) (sched.WakeResult, 
 
 func (f *fakeEngine) ReportActivity(ctx context.Context, touches []state.InstanceTouch) (int, error) {
 	return f.reportFn(ctx, touches)
+}
+
+func (f *fakeEngine) ParkWithReason(ctx context.Context, instanceID, reason string) error {
+	if f.parkFn != nil {
+		return f.parkFn(ctx, instanceID, reason)
+	}
+	return nil
 }
 
 func newServer(t *testing.T, eng scheddgrpc.SchedAPI) scheddpb.ScheddClient {

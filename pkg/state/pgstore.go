@@ -530,15 +530,20 @@ func (s *PgStore) CronByID(ctx context.Context, id string) (Cron, error) {
 	return c, nil
 }
 
-func (s *PgStore) UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool) (Cron, error) {
+func (s *PgStore) UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error) {
+	var createdAtArg any
+	if createdAt != nil {
+		createdAtArg = createdAt.UTC()
+	}
 	row := s.pool.QueryRow(ctx,
 		`update crons set
-		   schedule = coalesce($2, schedule),
-		   path     = coalesce($3, path),
-		   enabled  = coalesce($4, enabled)
+		   schedule   = coalesce($2, schedule),
+		   path       = coalesce($3, path),
+		   enabled    = coalesce($4, enabled),
+		   created_at = coalesce($5, created_at)
 		 where id = $1
 		 returning id, app_id, schedule, path, enabled, created_at`,
-		id, schedule, path, enabled)
+		id, schedule, path, enabled, createdAtArg)
 	c := Cron{}
 	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
 		return Cron{}, mapErr(err)
@@ -548,6 +553,20 @@ func (s *PgStore) UpdateCron(ctx context.Context, id string, schedule, path *str
 
 func (s *PgStore) DeleteCron(ctx context.Context, id, appID string) error {
 	tag, err := s.pool.Exec(ctx, `delete from crons where id = $1 and app_id = $2`, id, appID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkCronFired stamps the last_fired_at column. Schema migration
+// 00003_cron_last_fired.sql added the column.
+func (s *PgStore) MarkCronFired(ctx context.Context, id string, at time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update crons set last_fired_at = $2 where id = $1`, id, at.UTC())
 	if err != nil {
 		return err
 	}

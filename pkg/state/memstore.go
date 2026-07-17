@@ -698,7 +698,7 @@ func (m *MemStore) CronByID(_ context.Context, id string) (Cron, error) {
 	return c, nil
 }
 
-func (m *MemStore) UpdateCron(_ context.Context, id string, schedule, path *string, enabled *bool) (Cron, error) {
+func (m *MemStore) UpdateCron(_ context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.crons[id]
@@ -714,6 +714,9 @@ func (m *MemStore) UpdateCron(_ context.Context, id string, schedule, path *stri
 	if enabled != nil {
 		c.Enabled = *enabled
 	}
+	if createdAt != nil {
+		c.CreatedAt = *createdAt
+	}
 	m.crons[id] = c
 	return c, nil
 }
@@ -726,6 +729,21 @@ func (m *MemStore) DeleteCron(_ context.Context, id, appID string) error {
 		return ErrNotFound
 	}
 	delete(m.crons, id)
+	return nil
+}
+
+// MarkCronFired stamps the cron row's LastFiredAt field. Used by the
+// schedd dispatch loop after a synthetic cron request has been
+// dispatched through gatewayd (spec §4.4, M7).
+func (m *MemStore) MarkCronFired(_ context.Context, id string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.crons[id]
+	if !ok {
+		return ErrNotFound
+	}
+	c.LastFiredAt = at
+	m.crons[id] = c
 	return nil
 }
 

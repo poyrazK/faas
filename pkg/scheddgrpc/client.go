@@ -9,7 +9,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // Client is gatewayd's handle to schedd's gRPC surface (ADR-018). It satisfies
@@ -81,6 +83,28 @@ func (c *Client) ReportActivity(ctx context.Context, touches []state.InstanceTou
 		return 0, liftErr(err)
 	}
 	return int(resp.GetApplied()), nil
+}
+
+// ParkInstance forces schedd to park one instance (M7, spec §4.7). The
+// reason string is for the audit log. NotFound returns state.ErrNotFound
+// so meterd's quota loop can decide to log-and-continue vs bubble up.
+func (c *Client) ParkInstance(ctx context.Context, instanceID, reason string) error {
+	resp, err := c.cli.ParkInstance(ctx, &scheddpb.ParkInstanceRequest{
+		InstanceId: instanceID,
+		Reason:     reason,
+	})
+	if err != nil {
+		// Map gRPC NotFound → state.ErrNotFound so the meterd quota
+		// loop's errors.Is checks work against the in-memory store.
+		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+			return state.ErrNotFound
+		}
+		return liftErr(err)
+	}
+	if !resp.GetOk() {
+		return state.ErrNotFound
+	}
+	return nil
 }
 
 // liftErr converts a schedd gRPC error back into the platform's *api.Problem so

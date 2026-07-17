@@ -333,7 +333,7 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		s.notFound(w, "no such cron")
 		return
 	}
-	updated, err := s.store.UpdateCron(ctx(r), id, req.Schedule, req.Path, req.Enabled)
+	updated, err := s.store.UpdateCron(ctx(r), id, req.Schedule, req.Path, req.Enabled, nil)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return

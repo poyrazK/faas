@@ -94,10 +94,20 @@ type Store interface {
 	// Crons (apid CRUDs; schedd fires).
 	CreateCron(ctx context.Context, appID, schedule, path string, enabled bool) (Cron, error)
 	CronByID(ctx context.Context, id string) (Cron, error)
-	UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool) (Cron, error)
+	// UpdateCron mutates the optional fields of a cron row. nil pointers
+	// leave the field untouched. createdAt is supported because schedd's
+	// dispatch loop reads the boundary off CreatedAt (first-fire guard);
+	// backfilling this field is the only honest way to rewind a test or
+	// restore an imported schedule.
+	UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error)
 	DeleteCron(ctx context.Context, id, appID string) error
 	ListCronsForApp(ctx context.Context, appID string) ([]Cron, error)
 	ListEnabledCrons(ctx context.Context) ([]Cron, error)
+	// MarkCronFired stamps the last_fired_at column. The schedd cron
+	// dispatch loop calls this after a synthetic request has been
+	// dispatched through gatewayd (spec §4.4, M7). MemStore keeps a
+	// lastFiredAt map; PgStore uses a column added in migration 00003.
+	MarkCronFired(ctx context.Context, cronID string, at time.Time) error
 
 	// Instances (schedd is sole writer, spec §6). apid reads only.
 	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error)
