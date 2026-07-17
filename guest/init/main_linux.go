@@ -109,7 +109,7 @@ func runAppWithSecrets(m api.AppManifest, secrets map[string]string) error {
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if uid := lookupUID(m.EffectiveUser()); uid > 0 {
 		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Credential: &syscall.Credential{Uid: uid, Gid: uid},
+			Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)},
 		}
 	}
 	if err := cmd.Run(); err != nil {
