@@ -545,3 +545,38 @@ type panicBuilder struct{}
 func (panicBuilder) Build(_ context.Context, _ rootfs.BuildInput) (rootfs.BuildResult, error) {
 	panic("boom")
 }
+
+// TestHandleDeployment_ClosesLayerReadersOnBuildError complements the panic
+// test above: a normal error return from Builder.Build (no panic) must still
+// close the layer ReadClosers. The defer in handleDeployment is
+// unconditional so this is redundant with `TestHandleDeployment_ClosesLayerReaders`
+// for layout — both error/panic exit paths share the same defer. We keep
+// this case as a regression net because normal errors are vastly more
+// common than a builder panic.
+func TestHandleDeployment_ClosesLayerReadersOnBuildError(t *testing.T) {
+	h := newTestHarness(t, state.DeploymentKindImage, api.Plan("free"), "")
+
+	spy1 := &spyCloser{reader: strings.NewReader("layer1")}
+	spy2 := &spyCloser{reader: strings.NewReader("layer2")}
+
+	puller := fakePuller{
+		digest: "sha256:abc",
+		layersCfg: &oci.PullLayersResult{
+			Layers: []io.ReadCloser{spy1, spy2},
+			Config: oci.ImageConfig{Cmd: []string{"sh"}},
+			Digest: "sha256:abc",
+		},
+	}
+	bld := &fakeBuilder{buildErr: errors.New("mkfs: ENOSPC")}
+	handler := New(h.store, h.notif, puller, bld, "./init", h.appsR, silentLogger())
+
+	handler.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifyDeploymentChanged,
+		Payload: `{"app_id":"` + h.app.ID + `","to":"` + h.dep.ID + `","kind":"image","image_digest":"sha256:abc"}`,
+	})
+
+	if !spy1.closed || !spy2.closed {
+		t.Errorf("layer readers not closed on Builder.Build error: spy1.closed=%v spy2.closed=%v",
+			spy1.closed, spy2.closed)
+	}
+}
