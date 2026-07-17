@@ -120,3 +120,17 @@ func randomSchema(t *testing.T) string {
 	}
 	return "faas_test_" + hex.EncodeToString(b[:])
 }
+
+// SchemaOf returns the search_path the pool was opened with (the per-test
+// schema), or "" if the pool was opened without one. Lets harness code pass
+// the same schema to subprocess daemons so they share the test's tables.
+func SchemaOf(pool *pgxpool.Pool) string {
+	if pool == nil {
+		return ""
+	}
+	cfg := pool.Config()
+	if cfg == nil || cfg.ConnConfig == nil {
+		return ""
+	}
+	return cfg.ConnConfig.RuntimeParams["search_path"]
+}

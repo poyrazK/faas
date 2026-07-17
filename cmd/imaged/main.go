@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -51,7 +52,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// in WithEgressHTTPClient so a customer-side OCI reference that resolves
 	// (or DNS-rebinds) to RFC1918 / link-local / metadata / CGN / SMTP is
 	// refused before any data leaves the box (spec §11, issue #27).
-	puller := oci.NewRegistryClient(oci.WithEgressHTTPClient())
+	//
+	// FAAS_OCI_INSECURE=1 swaps the egress guard for a plain http.Client. Test
+	// harness only — never set in production. Lets e2e tests pull from an
+	// httptest registry bound to loopback (which the egress guard denies).
+	pullerOpts := []oci.Option{oci.WithEgressHTTPClient()}
+	if os.Getenv("FAAS_OCI_INSECURE") == "1" {
+		log.Warn("FAAS_OCI_INSECURE=1 — egress guard disabled, e2e test mode only")
+		pullerOpts = []oci.Option{oci.WithHTTPClient(&http.Client{})}
+	}
+	puller := oci.NewRegistryClient(pullerOpts...)
 
 	notifier := dbNotifier{pool: pool}
 	guestInitPath := envOr("FAAS_GUEST_INIT", "./init")

@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -42,10 +43,20 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath: "/etc/faas/vmmd.toml",
+		configPath: envOrConfig("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
 		detectFC:   fcvm.DetectFirecrackerVersion,
 		listen:     wire.ListenOrRecreateByName,
 	}
+}
+
+// envOrConfig returns the value of env key, or fallback when unset/empty.
+// Named envOrConfig to avoid colliding with any same-named helper in
+// cmd/<other-daemon> if these are ever linked into the same binary.
+func envOrConfig(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func run(ctx context.Context, log *slog.Logger) error {

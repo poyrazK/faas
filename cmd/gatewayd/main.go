@@ -37,17 +37,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// scheddSocket is schedd's gRPC unix socket (ADR-018).
-const scheddSocket = "/run/faas/schedd.sock"
+// scheddSocket is schedd's gRPC unix socket (ADR-018). Overridable via
+// FAAS_SCHEDD_SOCKET so the e2e harness can point at a per-test path.
+var scheddSocket = envOrGateway("FAAS_SCHEDD_SOCKET", "/run/faas/schedd.sock")
 
 // gatewaydInternalSocket is the unix-domain socket schedd dials to
 // fire synthetic cron requests through gatewayd (spec §4.4, M7).
 // Mode 0660 group `faas` (ADR-015); only schedd can dial.
 const gatewaydInternalSocket = "/run/faas/gatewayd-internal.sock"
 
+// listenAddr is the public listener (TLS lands here in M4/M8). Overridable via
+// FAAS_GATEWAY_LISTEN so the e2e harness can bind a free port without colliding
+// with a dev daemon on :8080.
+var listenAddr = envOrGateway("FAAS_GATEWAY_LISTEN", ":8080")
+
 const (
-	// listenAddr is the public listener (TLS lands here in M4/M8).
-	listenAddr = ":8080"
 	// controlAddr is the private control-plane listener — never reachable from
 	// the internet; bind to the loopback interface by default so an
 	// operator-prometheus scrape is the only thing that can reach it.
@@ -262,3 +266,13 @@ func (unwiredBackend) Lookup(context.Context, string) (gateway.App, bool) {
 }
 func (unwiredBackend) Target(string) (string, bool)       { return "", false }
 func (unwiredBackend) Wake(context.Context, string) error { return nil }
+
+// envOrGateway returns the value of env key, or fallback when unset/empty.
+// Named with the daemon prefix to avoid a collision if two daemons are ever
+// linked into the same test binary.
+func envOrGateway(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
