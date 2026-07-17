@@ -14,6 +14,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// stripePushKey is the (account, hour) dedupe key the hourly Stripe
+// pusher uses; declared above MemStore so the struct field below can
+// reference it.
+type stripePushKey struct {
+	accountID string
+	hour      time.Time
+}
+
 // MemStore is an in-memory Store for tests and local development. It is safe for
 // concurrent use and enforces the same uniqueness constraints as the schema
 // (unique email, unique slug, unique key hash) so tests exercise real error
@@ -38,6 +46,13 @@ type MemStore struct {
 	usage         []usageMinute
 	usageByMonth  []Usage
 	idem          map[string]idemEntry
+	// stripeByCustomer is the reverse-lookup index used by
+	// AccountByStripeCustomerID; keyed by Stripe `cus_…` ID.
+	stripeByCustomer map[string]string
+	// stripePushHours tracks which (account, hour) pairs the hourly
+	// Stripe pusher has already pushed; prevents double-billing on
+	// redelivery.
+	stripePushHours map[stripePushKey]struct{}
 }
 
 type idemEntry struct {
@@ -78,6 +93,12 @@ func NewMemStore() *MemStore {
 		usage:        []usageMinute{},
 		usageByMonth: []Usage{},
 		idem:         map[string]idemEntry{},
+		// stripeByCustomer is the reverse-lookup map AccountByStripeCustomerID
+		// walks; populated by UpdateAccountStripeCustomerID.
+		stripeByCustomer: map[string]string{},
+		// stripePushHours is the per-(account, hour) dedupe set the
+		// meterd hourly pusher reads/writes.
+		stripePushHours: map[stripePushKey]struct{}{},
 	}
 }
 
@@ -155,6 +176,46 @@ func (m *MemStore) UpdateAccountStatus(_ context.Context, id string, status Acco
 	a.Status = status
 	m.accounts[id] = a
 	return nil
+}
+
+// UpdateAccountStripeCustomerID records the Stripe `cus_…` ID. MemStore
+// keeps an index map for O(1) webhook lookup; PgStore mirrors with a
+// schema-level unique index (added in Slice 2's migration).
+func (m *MemStore) UpdateAccountStripeCustomerID(_ context.Context, id, stripeCustomerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	a.StripeCustomerID = stripeCustomerID
+	m.accounts[id] = a
+	// Maintain the reverse-lookup map for AccountByStripeCustomerID.
+	for k, v := range m.stripeByCustomer {
+		if v == id && k != stripeCustomerID {
+			delete(m.stripeByCustomer, k)
+			break
+		}
+	}
+	m.stripeByCustomer[stripeCustomerID] = id
+	return nil
+}
+
+// AccountByStripeCustomerID is the reverse-lookup the Stripe webhook
+// uses to find the account behind an event's `customer` field. O(1) via
+// the index map; PgStore implements this with a unique index.
+func (m *MemStore) AccountByStripeCustomerID(_ context.Context, stripeCustomerID string) (Account, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id, ok := m.stripeByCustomer[stripeCustomerID]
+	if !ok {
+		return Account{}, ErrNotFound
+	}
+	a, ok := m.accounts[id]
+	if !ok {
+		return Account{}, ErrNotFound
+	}
+	return a, nil
 }
 
 // ListAllAccounts walks the account map under the store mutex. The
@@ -975,6 +1036,26 @@ func (m *MemStore) UsageByHour(_ context.Context, accountID string, start, end t
 		})
 	}
 	return out, nil
+}
+
+// HasStripePushHour + RecordStripePushHour implement the pkg/stripex
+// PushDedupe interface. The MemStore keeps a flat set keyed by
+// (account, hour); PgStore keeps a dedicated table.
+func (m *MemStore) HasStripePushHour(_ context.Context, accountID string, hour time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.stripePushHours[stripePushKey{accountID: accountID, hour: hour.UTC()}]
+	return ok, nil
+}
+
+func (m *MemStore) RecordStripePushHour(_ context.Context, accountID string, hour time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stripePushHours == nil {
+		m.stripePushHours = map[stripePushKey]struct{}{}
+	}
+	m.stripePushHours[stripePushKey{accountID: accountID, hour: hour.UTC()}] = struct{}{}
+	return nil
 }
 
 type appHourKey struct {

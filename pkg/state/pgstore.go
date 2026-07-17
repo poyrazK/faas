@@ -89,6 +89,43 @@ func (s *PgStore) UpdateAccountStatus(ctx context.Context, id string, status Acc
 	return err
 }
 
+// UpdateAccountStripeCustomerID records the Stripe `cus_…` ID on the
+// account row. Schema carries a unique index on stripe_customer_id so a
+// second customer picking up an old ID would fail at the DB; MemStore
+// mirrors that with the same shape (single-value index map).
+func (s *PgStore) UpdateAccountStripeCustomerID(ctx context.Context, id, stripeCustomerID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update accounts set stripe_customer_id = $2 where id = $1`,
+		id, stripeCustomerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// AccountByStripeCustomerID resolves the account behind a Stripe webhook
+// payload. The unique index makes this O(log n); MemStore does it with a
+// map.
+func (s *PgStore) AccountByStripeCustomerID(ctx context.Context, stripeCustomerID string) (Account, error) {
+	row := s.pool.QueryRow(ctx,
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at
+		 from accounts where stripe_customer_id = $1`,
+		stripeCustomerID)
+	var a Account
+	var plan, status string
+	if err := row.Scan(&a.ID, &a.Email, &plan, &status, &a.StripeCustomerID, &a.CreatedAt); err != nil {
+		// pgx returns ErrNoRows when the SELECT finds nothing; map to the
+		// store sentinel so callers can errors.Is(err, state.ErrNotFound).
+		return Account{}, ErrNotFound
+	}
+	a.Plan = api.Plan(plan)
+	a.Status = AccountStatus(status)
+	return a, nil
+}
+
 // ListAllAccounts returns every account. Meterd walks this on the quota
 // tick + hourly Stripe push; bounded by the customer count on the box.
 func (s *PgStore) ListAllAccounts(ctx context.Context) ([]Account, error) {
@@ -806,6 +843,31 @@ func (s *PgStore) UsageByHour(ctx context.Context, accountID string, start, end 
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// HasStripePushHour is the dedupe gate the meterd hourly pusher reads
+// before issuing the Stripe call. Backed by a unique index on
+// (account_id, hour) in the stripe_push_dedupe table (added in
+// migration 00004).
+func (s *PgStore) HasStripePushHour(ctx context.Context, accountID string, hour time.Time) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`select exists(select 1 from stripe_push_dedupe where account_id = $1 and hour = $2)`,
+		accountID, hour.UTC()).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// RecordStripePushHour inserts the dedupe row. ON CONFLICT DO NOTHING so
+// a redelivered push is idempotent.
+func (s *PgStore) RecordStripePushHour(ctx context.Context, accountID string, hour time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into stripe_push_dedupe (account_id, hour) values ($1, $2)
+		 on conflict (account_id, hour) do nothing`,
+		accountID, hour.UTC())
+	return err
 }
 
 // --- idempotency -------------------------------------------------------------

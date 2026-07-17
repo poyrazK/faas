@@ -25,6 +25,28 @@ type server struct {
 	log    *slog.Logger
 	domain string // apps base domain for URLs
 	notif  Notifier
+	// stripeWebhookSecret is the endpoint signing secret Stripe uses
+	// for the v1 HMAC. Empty disables signature verification (dev mode).
+	stripeWebhookSecret string
+	// mailer emits the dunning + quota-warning emails. nil falls back
+	// to the noop sender so callers never need to nil-check.
+	mailer Mailer
+}
+
+// Mailer is the slice of pkg/mail.Sender apid depends on. Kept as an
+// interface so tests inject a recording stub without importing pkg/mail.
+type Mailer interface {
+	Send(ctx context.Context, msg Message) error
+}
+
+// Message is the cross-component email payload — mirrors pkg/mail.Message
+// without the import cycle (apid stays free of pkg/mail so daemons that
+// link apid don't pull the mail deps).
+type Message struct {
+	To       []string
+	Subject  string
+	TextBody string
+	HTMLBody string
 }
 
 // Notifier is the slice of pgstore behaviour apid depends on. The production
@@ -35,13 +57,52 @@ type Notifier interface {
 }
 
 func newServer(store state.Store, log *slog.Logger, domain string, notif Notifier) *server {
+	return newServerWithDeps(store, log, domain, notif, "", nil)
+}
+
+// newServerWithDeps wires the full server surface including the M7
+// stripe-webhook + mailer deps. Production (cmd/apid/main.go) calls this
+// with the env-loaded secret + a real mailer; tests use the simpler
+// newServer (no secret, noop mailer).
+func newServerWithDeps(store state.Store, log *slog.Logger, domain string, notif Notifier, stripeSecret string, mailer Mailer) *server {
 	if domain == "" {
 		domain = "DOMAIN"
 	}
 	if notif == nil {
 		notif = noopNotifier{}
 	}
-	return &server{store: store, log: log, domain: domain, notif: notif}
+	if mailer == nil {
+		mailer = noopMailer{}
+	}
+	return &server{
+		store:               store,
+		log:                 log,
+		domain:              domain,
+		notif:               notif,
+		stripeWebhookSecret: stripeSecret,
+		mailer:              mailer,
+	}
+}
+
+// noopMailer drops every email. Default when the daemon hasn't wired a
+// real transport (gap G4 — the M7 PR uses this everywhere).
+type noopMailer struct{}
+
+func (noopMailer) Send(_ context.Context, _ Message) error { return nil }
+
+// newLogMailer returns a Mailer that writes every message to slog. Used
+// until gap G4 (Postmark/Resend) lands; cmd/apid wires this on startup.
+func newLogMailer(log *slog.Logger) Mailer {
+	return &logMailer{log: log}
+}
+
+type logMailer struct{ log *slog.Logger }
+
+func (l *logMailer) Send(_ context.Context, msg Message) error {
+	l.log.Info("mail.send",
+		"to", msg.To, "subject", msg.Subject,
+		"has_html", msg.HTMLBody != "", "text_bytes", len(msg.TextBody))
+	return nil
 }
 
 // noopNotifier is the test/dev default; production wires pkg/db.Notify.

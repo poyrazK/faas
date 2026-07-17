@@ -24,6 +24,14 @@ type Store interface {
 	AccountByKeyHash(ctx context.Context, hash []byte) (Account, error)
 	UpdateAccountPlan(ctx context.Context, id string, plan api.Plan) error
 	UpdateAccountStatus(ctx context.Context, id string, status AccountStatus) error
+	// UpdateAccountStripeCustomerID records the Stripe `cus_…` ID on the
+	// account row so the webhook + push paths can join. Idempotent — a
+	// repeat call with the same value is a no-op (ADR-010, Slice 2).
+	UpdateAccountStripeCustomerID(ctx context.Context, id, stripeCustomerID string) error
+	// AccountByStripeCustomerID resolves an account from the Stripe customer
+	// ID. The webhook is the only caller; backed by an index in production
+	// (deferred). Returns ErrNotFound for unknown customers.
+	AccountByStripeCustomerID(ctx context.Context, stripeCustomerID string) (Account, error)
 	// ListAllAccounts returns every account. meterd walks it on every
 	// quota tick and every Stripe push; on a one-box that's bounded
 	// (Free + Hobby + Pro + Scale test accounts + a handful of paid).
@@ -134,6 +142,11 @@ type Store interface {
 	// GB-RAM-hours for the past hour (spec §4.7, ADR-010). MemStore scans
 	// in memory; PgStore runs a SELECT … WHERE minute >= $2 AND minute < $3.
 	UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]Usage, error)
+
+	// StripePushDedup is the dedupe table for hourly usage pushes. The
+	// PushDedupe interface in pkg/stripex is satisfied by both stores.
+	HasStripePushHour(ctx context.Context, accountID string, hour time.Time) (bool, error)
+	RecordStripePushHour(ctx context.Context, accountID string, hour time.Time) error
 
 	// Idempotency (spec §4.2: Idempotency-Key stored 24 h).
 	GetIdempotent(ctx context.Context, accountID, key string) (status int, body []byte, err error)

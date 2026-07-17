@@ -105,7 +105,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("dev account seeded from FAAS_DEV_TOKEN — do not use in production")
 	}
 
-	srv := newServer(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif())
+	// M7: pass the Stripe webhook secret (env-loaded) and the mailer
+	// (log-only until gap G4 is closed). Empty secret = dev mode (the
+	// webhook accepts unsigned payloads; never deploy this way).
+	stripeSecret := deps.getenv("STRIPE_WEBHOOK_SECRET")
+	mailer := newLogMailer(log)
+	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer)
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
 	if deps.bgBefore != nil {
