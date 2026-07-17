@@ -30,6 +30,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Schedd_Wake_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/Wake"
 	Schedd_ReportActivity_FullMethodName = "/onebox.faas.schedd.v1.Schedd/ReportActivity"
+	Schedd_ParkInstance_FullMethodName   = "/onebox.faas.schedd.v1.Schedd/ParkInstance"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -53,6 +54,12 @@ type ScheddClient interface {
 	// schedd is the ONLY writer to the `instances` table (CLAUDE.md ownership);
 	// the gateway keeps the batch in memory between flushes (ADR-018).
 	ReportActivity(ctx context.Context, in *ReportActivityRequest, opts ...grpc.CallOption) (*ReportActivityResponse, error)
+	// ParkInstance forces an instance to its parked state. Added in M7 so
+	// meterd's Free-tier hard-stop can park every live instance on a
+	// suspended account (spec §4.7). Reason is for audit logs ("quota_
+	// exceeded_free" etc). Returns Ok on success; ResourceExhausted / NotFound
+	// for the obvious error paths.
+	ParkInstance(ctx context.Context, in *ParkInstanceRequest, opts ...grpc.CallOption) (*ParkInstanceResponse, error)
 }
 
 type scheddClient struct {
@@ -83,6 +90,16 @@ func (c *scheddClient) ReportActivity(ctx context.Context, in *ReportActivityReq
 	return out, nil
 }
 
+func (c *scheddClient) ParkInstance(ctx context.Context, in *ParkInstanceRequest, opts ...grpc.CallOption) (*ParkInstanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ParkInstanceResponse)
+	err := c.cc.Invoke(ctx, Schedd_ParkInstance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ScheddServer is the server API for Schedd service.
 // All implementations must embed UnimplementedScheddServer
 // for forward compatibility.
@@ -104,6 +121,12 @@ type ScheddServer interface {
 	// schedd is the ONLY writer to the `instances` table (CLAUDE.md ownership);
 	// the gateway keeps the batch in memory between flushes (ADR-018).
 	ReportActivity(context.Context, *ReportActivityRequest) (*ReportActivityResponse, error)
+	// ParkInstance forces an instance to its parked state. Added in M7 so
+	// meterd's Free-tier hard-stop can park every live instance on a
+	// suspended account (spec §4.7). Reason is for audit logs ("quota_
+	// exceeded_free" etc). Returns Ok on success; ResourceExhausted / NotFound
+	// for the obvious error paths.
+	ParkInstance(context.Context, *ParkInstanceRequest) (*ParkInstanceResponse, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -119,6 +142,9 @@ func (UnimplementedScheddServer) Wake(context.Context, *WakeRequest) (*WakeRespo
 }
 func (UnimplementedScheddServer) ReportActivity(context.Context, *ReportActivityRequest) (*ReportActivityResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportActivity not implemented")
+}
+func (UnimplementedScheddServer) ParkInstance(context.Context, *ParkInstanceRequest) (*ParkInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ParkInstance not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -177,6 +203,24 @@ func _Schedd_ReportActivity_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_ParkInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ParkInstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).ParkInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_ParkInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).ParkInstance(ctx, req.(*ParkInstanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -191,6 +235,10 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportActivity",
 			Handler:    _Schedd_ReportActivity_Handler,
+		},
+		{
+			MethodName: "ParkInstance",
+			Handler:    _Schedd_ParkInstance_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

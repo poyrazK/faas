@@ -7,9 +7,14 @@
 package sched
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,13 +28,32 @@ import (
 // runs the idle reaper on a 10 s tick and cron on a 60 s tick (spec §4.3). The
 // Engine holds the store, ledger, and vmmd client; the Loop only orchestrates.
 type Loop struct {
-	pool   *pgxpool.Pool
-	engine *Engine
-	log    *slog.Logger
+	pool    *pgxpool.Pool
+	engine  *Engine
+	log     *slog.Logger
+	gateway GatewaySynth
+	now     func() time.Time
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
-	return &Loop{pool: pool, engine: engine, log: log}
+	return &Loop{pool: pool, engine: engine, log: log, now: time.Now}
+}
+
+// WithGatewaySynth wires the gateway-internal RPC client the cron
+// dispatch loop uses. Production calls this from cmd/schedd after
+// dialing the gateway socket; tests inject a recording stub.
+func (l *Loop) WithGatewaySynth(g GatewaySynth) *Loop {
+	l.gateway = g
+	return l
+}
+
+// WithClock swaps the time source. Tests use it to advance through cron
+// boundaries deterministically; production leaves the default.
+func (l *Loop) WithClock(now func() time.Time) *Loop {
+	if now != nil {
+		l.now = now
+	}
+	return l
 }
 
 // Run blocks until ctx is cancelled. It owns three event sources: the LISTEN
@@ -146,16 +170,157 @@ func (l *Loop) runReaper(ctx context.Context) {
 	}
 }
 
-// runCronTick is the placeholder for cron firing. M5 keeps the table CRUD; the
-// actual HTTP-POST-through-gatewayd path lands with cron (M7).
+// GatewaySynth is the slice of the gateway-internal RPC the cron loop
+// uses to fire a synthetic request through gatewayd (so metering +
+// rate-limit apply identically to user traffic). Defined as an interface
+// here so the cron loop can be tested without a live gateway socket.
+type GatewaySynth interface {
+	SynthesizeRequest(ctx context.Context, appID, method, path string) error
+}
+
+// httpGatewaySynth is the production GatewaySynth: a unix-socket HTTP
+// client pointed at gatewayd's /v1/synthesize endpoint.
+type httpGatewaySynth struct {
+	client  *http.Client
+	baseURL string
+	log     *slog.Logger
+}
+
+// DialGatewaySynth opens an HTTP unix-socket client targeting
+// gatewayd's internal listener. The client is stateless — the unix
+// socket is opened per request by the transport — so dial failures
+// surface on the first SynthesizeRequest call.
+func DialGatewaySynth(socketPath string, log *slog.Logger) (GatewaySynth, error) {
+	if socketPath == "" {
+		return nil, errors.New("sched: gateway synth socket path is empty")
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	tr := &http.Transport{
+		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+			return net.Dial("unix", socketPath)
+		},
+	}
+	c := &http.Client{Transport: tr, Timeout: 30 * time.Second}
+	return &httpGatewaySynth{
+		client:  c,
+		baseURL: "http://unix/v1/synthesize",
+		log:     log,
+	}, nil
+}
+
+// SynthesizeRequest posts {app_id, method, path} to gatewayd's internal
+// /v1/synthesize endpoint over the unix socket. The HTTP transport
+// (DialContext) handles the dial; this method just shapes the request.
+func (h *httpGatewaySynth) SynthesizeRequest(ctx context.Context, appID, method, path string) error {
+	body, err := json.Marshal(map[string]string{
+		"app_id": appID, "method": method, "path": path,
+	})
+	if err != nil {
+		return fmt.Errorf("sched: synth marshal: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.baseURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("sched: synth request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("sched: synth do: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("sched: synth: gateway returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// runCronTick walks every enabled cron and dispatches any whose
+// next-fire boundary has passed. It does NOT compute next-fire from
+// robfig itself — the customer's cron.Schedule lives on the crons row
+// (Schedule field) and we parse it per-tick. The dispatch path:
+//
+//  1. Resolve the cron + app, ensure the account isn't suspended.
+//  2. Parse the schedule with robfig/cron; if NextFireAt(lastFiredAt) is
+//     not in the past, skip.
+//  3. Wake the app via the engine (idempotent — already-running apps
+//     return their current instance).
+//  4. SynthesizeRequest through gatewayd so metering + rate limits apply.
+//  5. MarkCronFired + emit NotifyCronFired for the dashboard.
+//
+// Step 3+4 are the load-bearing spec bits (M7); they route the
+// synthetic request through the gateway's full path so the metering +
+// quota pipeline can't tell cron traffic from user traffic apart.
 func (l *Loop) runCronTick(ctx context.Context) {
 	crons, err := l.engine.Store().ListEnabledCrons(ctx)
 	if err != nil {
 		l.log.Warn("cron: list", "err", err)
 		return
 	}
-	if len(crons) == 0 {
+	now := l.now()
+	for _, c := range crons {
+		l.dispatchOneCron(ctx, c, now)
+	}
+}
+
+// dispatchOneCron is the per-cron decision tree. Factored out so the
+// test surface can drive one cron with a fake clock.
+func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time) {
+	sched, err := ParseSchedule(c.Schedule)
+	if err != nil {
+		l.log.Warn("cron: bad schedule", "cron_id", c.ID, "err", err)
 		return
 	}
-	l.log.Debug("cron tick", "enabled", len(crons))
+	// Boundary guard: fire iff we've crossed the next-fire boundary
+	// since LastFiredAt. robfig's NextFireAt(from) is exclusive — call
+	// it with LastFiredAt to get the upcoming boundary; if that boundary
+	// is in the future, we already fired in this window. If LastFiredAt
+	// is zero, the CreatedAt-based boundary is the first-fire guard so
+	// we don't double-fire a cron enabled mid-minute.
+	var boundary time.Time
+	if c.LastFiredAt.IsZero() {
+		boundary = c.CreatedAt
+	} else {
+		boundary = c.LastFiredAt
+	}
+	if sched.NextFireAt(boundary).After(now) {
+		// Already fired in the current window.
+		return
+	}
+	app, err := l.engine.Store().AppByID(ctx, c.AppID)
+	if err != nil {
+		l.log.Warn("cron: app", "cron_id", c.ID, "err", err)
+		return
+	}
+	acct, err := l.engine.Store().AccountByID(ctx, app.AccountID)
+	if err != nil {
+		l.log.Warn("cron: account", "cron_id", c.ID, "err", err)
+		return
+	}
+	if !acct.Active() {
+		// Suspended accounts don't get cron traffic (spec §11 abuse
+		// guard). The meter hard-stop will park the live instance; we
+		// just skip the synthetic request here.
+		return
+	}
+	if _, err := l.engine.Wake(ctx, c.AppID); err != nil {
+		l.log.Warn("cron: wake", "cron_id", c.ID, "err", err)
+		return
+	}
+	if l.gateway != nil {
+		if err := l.gateway.SynthesizeRequest(ctx, c.AppID, "POST", c.Path); err != nil {
+			l.log.Warn("cron: synthesize", "cron_id", c.ID, "err", err)
+			return
+		}
+	}
+	if err := l.engine.Store().MarkCronFired(ctx, c.ID, now); err != nil {
+		l.log.Warn("cron: mark fired", "cron_id", c.ID, "err", err)
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"cron_id": c.ID, "app_id": c.AppID, "at": now.UTC().Format(time.RFC3339Nano),
+	})
+	if err := l.engine.Notifier().Notify(ctx, db.NotifyCronFired, string(payload)); err != nil {
+		l.log.Warn("cron: notify cron_fired", "err", err)
+	}
 }

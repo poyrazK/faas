@@ -89,6 +89,67 @@ func (s *PgStore) UpdateAccountStatus(ctx context.Context, id string, status Acc
 	return err
 }
 
+// UpdateAccountStripeCustomerID records the Stripe `cus_…` ID on the
+// account row. Schema carries a unique index on stripe_customer_id so a
+// second customer picking up an old ID would fail at the DB; MemStore
+// mirrors that with the same shape (single-value index map).
+func (s *PgStore) UpdateAccountStripeCustomerID(ctx context.Context, id, stripeCustomerID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update accounts set stripe_customer_id = $2 where id = $1`,
+		id, stripeCustomerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// AccountByStripeCustomerID resolves the account behind a Stripe webhook
+// payload. The unique index makes this O(log n); MemStore does it with a
+// map.
+func (s *PgStore) AccountByStripeCustomerID(ctx context.Context, stripeCustomerID string) (Account, error) {
+	row := s.pool.QueryRow(ctx,
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at
+		 from accounts where stripe_customer_id = $1`,
+		stripeCustomerID)
+	var a Account
+	var plan, status string
+	if err := row.Scan(&a.ID, &a.Email, &plan, &status, &a.StripeCustomerID, &a.CreatedAt); err != nil {
+		// pgx returns ErrNoRows when the SELECT finds nothing; map to the
+		// store sentinel so callers can errors.Is(err, state.ErrNotFound).
+		return Account{}, ErrNotFound
+	}
+	a.Plan = api.Plan(plan)
+	a.Status = AccountStatus(status)
+	return a, nil
+}
+
+// ListAllAccounts returns every account. Meterd walks this on the quota
+// tick + hourly Stripe push; bounded by the customer count on the box.
+func (s *PgStore) ListAllAccounts(ctx context.Context) ([]Account, error) {
+	rows, err := s.pool.Query(ctx,
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at
+		 from accounts order by created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Account
+	for rows.Next() {
+		var a Account
+		var plan, status string
+		if err := rows.Scan(&a.ID, &a.Email, &plan, &status, &a.StripeCustomerID, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		a.Plan = api.Plan(plan)
+		a.Status = AccountStatus(status)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // --- api keys ----------------------------------------------------------------
 
 func (s *PgStore) CreateAPIKey(ctx context.Context, accountID string, hash []byte, label string) (APIKey, error) {
@@ -469,15 +530,20 @@ func (s *PgStore) CronByID(ctx context.Context, id string) (Cron, error) {
 	return c, nil
 }
 
-func (s *PgStore) UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool) (Cron, error) {
+func (s *PgStore) UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error) {
+	var createdAtArg any
+	if createdAt != nil {
+		createdAtArg = createdAt.UTC()
+	}
 	row := s.pool.QueryRow(ctx,
 		`update crons set
-		   schedule = coalesce($2, schedule),
-		   path     = coalesce($3, path),
-		   enabled  = coalesce($4, enabled)
+		   schedule   = coalesce($2, schedule),
+		   path       = coalesce($3, path),
+		   enabled    = coalesce($4, enabled),
+		   created_at = coalesce($5, created_at)
 		 where id = $1
 		 returning id, app_id, schedule, path, enabled, created_at`,
-		id, schedule, path, enabled)
+		id, schedule, path, enabled, createdAtArg)
 	c := Cron{}
 	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
 		return Cron{}, mapErr(err)
@@ -487,6 +553,20 @@ func (s *PgStore) UpdateCron(ctx context.Context, id string, schedule, path *str
 
 func (s *PgStore) DeleteCron(ctx context.Context, id, appID string) error {
 	tag, err := s.pool.Exec(ctx, `delete from crons where id = $1 and app_id = $2`, id, appID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkCronFired stamps the last_fired_at column. Schema migration
+// 00003_cron_last_fired.sql added the column.
+func (s *PgStore) MarkCronFired(ctx context.Context, id string, at time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update crons set last_fired_at = $2 where id = $1`, id, at.UTC())
 	if err != nil {
 		return err
 	}
@@ -540,6 +620,27 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
 		 from instances where app_id = $1 order by started_at desc`, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
+// ListInstancesForAccount joins instances→apps in SQL so the meterd
+// quota loop can park every live instance for an account in one round
+// trip. Filtered to instances.state ∈ {WAKING, COLD_BOOTING, RUNNING,
+// SNAPSHOTTING} would be tempting, but the meterd caller's CountsForRAM
+// guard is the canonical filter — keeping the SQL narrow and the state
+// semantics in Go makes the test surface match both stores.
+func (s *PgStore) ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error) {
+	rows, err := s.pool.Query(ctx,
+		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at
+		 from instances i
+		 join apps a on a.id = i.app_id
+		 where a.account_id = $1
+		 order by i.started_at desc`, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -729,6 +830,63 @@ func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// UsageByHour returns per-app usage rolled up from the per-minute rows
+// in the [start, end) window. The Stripe pusher calls this hourly;
+// (start, end) is the [now-1h, now) hour window so the SQL is an
+// indexed range scan on usage_minutes.minute.
+func (s *PgStore) UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]Usage, error) {
+	rows, err := s.pool.Query(ctx,
+		`select account_id, app_id,
+		        date_trunc('hour', minute) as hour,
+		        sum(mb_seconds)::bigint as mb_seconds,
+		        sum(requests)::bigint as requests
+		 from usage_minutes
+		 where account_id = $1 and minute >= $2 and minute < $3
+		 group by account_id, app_id, hour
+		 order by app_id`,
+		accountID, start.UTC(), end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Usage
+	for rows.Next() {
+		u := Usage{}
+		var hour time.Time
+		if err := rows.Scan(&u.AccountID, &u.AppID, &hour, &u.MBSeconds, &u.Requests); err != nil {
+			return nil, err
+		}
+		u.Month = hour
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// HasStripePushHour is the dedupe gate the meterd hourly pusher reads
+// before issuing the Stripe call. Backed by a unique index on
+// (account_id, hour) in the stripe_push_dedupe table (added in
+// migration 00004).
+func (s *PgStore) HasStripePushHour(ctx context.Context, accountID string, hour time.Time) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`select exists(select 1 from stripe_push_dedupe where account_id = $1 and hour = $2)`,
+		accountID, hour.UTC()).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// RecordStripePushHour inserts the dedupe row. ON CONFLICT DO NOTHING so
+// a redelivered push is idempotent.
+func (s *PgStore) RecordStripePushHour(ctx context.Context, accountID string, hour time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into stripe_push_dedupe (account_id, hour) values ($1, $2)
+		 on conflict (account_id, hour) do nothing`,
+		accountID, hour.UTC())
+	return err
 }
 
 // --- idempotency -------------------------------------------------------------

@@ -40,6 +40,11 @@ import (
 // scheddSocket is schedd's gRPC unix socket (ADR-018).
 const scheddSocket = "/run/faas/schedd.sock"
 
+// gatewaydInternalSocket is the unix-domain socket schedd dials to
+// fire synthetic cron requests through gatewayd (spec §4.4, M7).
+// Mode 0660 group `faas` (ADR-015); only schedd can dial.
+const gatewaydInternalSocket = "/run/faas/gatewayd-internal.sock"
+
 const (
 	// listenAddr is the public listener (TLS lands here in M4/M8).
 	listenAddr = ":8080"
@@ -49,12 +54,24 @@ const (
 	controlAddr = "127.0.0.1:9090"
 )
 
+// synthAdapter implements gateway.SynthDispatcher on top of the schedd
+// gRPC client. Wake is the only seam — see pkg/gateway/synth.go for why.
+type synthAdapter struct {
+	wake func(ctx context.Context, appID string) error
+}
+
+func (a *synthAdapter) Wake(ctx context.Context, appID string) error { return a.wake(ctx, appID) }
+
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
 	listen  func(network, addr string) (net.Listener, error)
 	newSrv  func(addr string, handler http.Handler) *http.Server
 	backend gateway.Backend
+	// synth is the internal unix-socket RPC server schedd dials for cron
+	// dispatch (spec §4.4, M7). nil in tests; production wires it after
+	// the schedd client is dialed.
+	synth *gateway.SynthServer
 	// lastSeen flushes per-instance last_request_at to schedd (spec §4.1). nil in
 	// tests (the wake/routing path doesn't need it); production wires the
 	// schedFlushSink.
@@ -110,6 +127,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// its idle timer fires. schedd is the sole writer to `instances`, so we hand
 	// it the batch over gRPC (the same client we wake through).
 	deps.lastSeen = newSchedFlushSink(backend, sched, log)
+	// Internal unix-socket RPC for schedd's cron dispatch loop (spec §4.4,
+	// M7). Routes a synthetic wake through schedd so metering + the
+	// per-minute sampler see the live instance. lastSeen-touches for cron
+	// traffic land in a follow-up once we expose an app-scoped touch RPC
+	// (today schedd's ReportActivity takes instance_ids, which the synth
+	// path doesn't have without a Wake first).
+	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, &synthAdapter{
+		wake: func(ctx context.Context, appID string) error {
+			_, _, err := sched.Wake(ctx, appID)
+			return err
+		},
+	}, log)
 	return runWithDeps(ctx, log, deps)
 }
 
@@ -180,7 +209,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// private bind), never reachable from the public-internet path.
 	controlMux := gateway.ControlMux(handler.Metrics(), nil)
 
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
 	l, lerr := deps.listen("tcp", listenAddr)
 	if lerr != nil {
 		log.Error("gatewayd public listen failed", "addr", listenAddr, "err", lerr)
@@ -197,6 +226,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		errc <- gateway.RunControlServer(ctx, controlAddr, controlMux)
 	}()
 
+	// Internal unix-socket RPC for schedd's cron dispatch (spec §4.4,
+	// M7). Best-effort: if the socket can't bind (e.g. /run/faas
+	// doesn't exist on a dev box), log and continue — the public +
+	// control listeners are still up.
+	if deps.synth != nil {
+		if err := deps.synth.Start(); err != nil {
+			log.Warn("gatewayd synth listen failed; cron traffic will fail until restart",
+				"socket", gatewaydInternalSocket, "err", err)
+		}
+	}
+
 	select {
 	case err := <-errc:
 		return err
@@ -205,6 +245,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer cancel()
 		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
 		_ = public.Shutdown(shutdownCtx)
+		if deps.synth != nil {
+			//nolint:contextcheck // same shutdown-ctx contract as public.Shutdown above.
+			_ = deps.synth.Stop(shutdownCtx)
+		}
 		return nil
 	}
 }

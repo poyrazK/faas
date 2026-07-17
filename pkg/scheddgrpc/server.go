@@ -8,6 +8,7 @@ package scheddgrpc
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // SchedAPI is the slice of pkg/sched.Engine the handlers need. Defined here (not
@@ -28,6 +30,10 @@ import (
 type SchedAPI interface {
 	Wake(ctx context.Context, appID string) (sched.WakeResult, error)
 	ReportActivity(ctx context.Context, touches []state.InstanceTouch) (int, error)
+	// ParkWithReason is the meterd-triggered variant (M7, spec §4.7).
+	// The reason string is for the audit log; the park semantics are
+	// identical to the idle-reaper Park.
+	ParkWithReason(ctx context.Context, instanceID, reason string) error
 }
 
 // Server implements scheddpb.ScheddServer.
@@ -92,6 +98,23 @@ func (s *Server) ReportActivity(ctx context.Context, req *scheddpb.ReportActivit
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	return &scheddpb.ReportActivityResponse{Applied: int32(applied)}, nil
+}
+
+// ParkInstance is the meterd-driven explicit park (M7, spec §4.7).
+// Idempotent: parking an already-parked instance is a no-op + Ok=true.
+func (s *Server) ParkInstance(ctx context.Context, req *scheddpb.ParkInstanceRequest) (*scheddpb.ParkInstanceResponse, error) {
+	const op = "ParkInstance"
+	start := time.Now()
+	err := s.engine.ParkWithReason(ctx, req.GetInstanceId(), req.GetReason())
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		// ErrNotFound → NotFound status; everything else Internal.
+		if errors.Is(err, state.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &scheddpb.ParkInstanceResponse{Ok: true}, nil
 }
 
 // mapMethod translates the engine's vmmd-side WakeMethod to the schedd wire

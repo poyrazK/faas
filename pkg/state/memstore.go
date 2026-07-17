@@ -14,6 +14,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// stripePushKey is the (account, hour) dedupe key the hourly Stripe
+// pusher uses; declared above MemStore so the struct field below can
+// reference it.
+type stripePushKey struct {
+	accountID string
+	hour      time.Time
+}
+
 // MemStore is an in-memory Store for tests and local development. It is safe for
 // concurrent use and enforces the same uniqueness constraints as the schema
 // (unique email, unique slug, unique key hash) so tests exercise real error
@@ -31,8 +39,20 @@ type MemStore struct {
 	instances   map[string]Instance
 	snapshots   []Snapshot
 	events      []Event
-	usage       []Usage
-	idem        map[string]idemEntry
+	// usage holds one row per (instance, minute) — mirrors PgStore's
+	// usage_minutes PK. Aggregated into `usageByMonth` (per app, per
+	// calendar month) so UsageByMonth can keep returning the spec §10
+	// per-app shape unchanged. (M7 fix; the previous shape was wrong.)
+	usage        []usageMinute
+	usageByMonth []Usage
+	idem         map[string]idemEntry
+	// stripeByCustomer is the reverse-lookup index used by
+	// AccountByStripeCustomerID; keyed by Stripe `cus_…` ID.
+	stripeByCustomer map[string]string
+	// stripePushHours tracks which (account, hour) pairs the hourly
+	// Stripe pusher has already pushed; prevents double-billing on
+	// redelivery.
+	stripePushHours map[stripePushKey]struct{}
 }
 
 type idemEntry struct {
@@ -41,20 +61,44 @@ type idemEntry struct {
 	created time.Time
 }
 
+// usageMinute mirrors the production schema (PK (instance_id, minute)).
+// Spec §10 keeps per-app aggregates for the dashboard, but the SQL contract
+// is per-instance — accumulating mb_seconds on conflict is the atomic
+// operation the minute sampler relies on. MemStore matches that shape so
+// tests are truthful for M7. Aggregated into `usageByMonth` for the
+// per-app read shape the rest of the system expects.
+type usageMinute struct {
+	AccountID  string
+	AppID      string
+	InstanceID string
+	Minute     time.Time
+	MBSeconds  int64
+	Requests   int64
+}
+
 // NewMemStore returns an empty in-memory store.
 func NewMemStore() *MemStore {
 	return &MemStore{
-		accounts:    map[string]Account{},
-		keys:        map[string]APIKey{},
-		keyByHash:   map[string]string{},
-		apps:        map[string]App{},
-		deployments: map[string]Deployment{},
-		builds:      map[string]Build{},
-		domains:     map[string]CustomDomain{},
-		crons:       map[string]Cron{},
-		instances:   map[string]Instance{},
-		snapshots:   []Snapshot{},
-		idem:        map[string]idemEntry{},
+		accounts:     map[string]Account{},
+		keys:         map[string]APIKey{},
+		keyByHash:    map[string]string{},
+		apps:         map[string]App{},
+		deployments:  map[string]Deployment{},
+		builds:       map[string]Build{},
+		domains:      map[string]CustomDomain{},
+		crons:        map[string]Cron{},
+		instances:    map[string]Instance{},
+		snapshots:    []Snapshot{},
+		events:       []Event{},
+		usage:        []usageMinute{},
+		usageByMonth: []Usage{},
+		idem:         map[string]idemEntry{},
+		// stripeByCustomer is the reverse-lookup map AccountByStripeCustomerID
+		// walks; populated by UpdateAccountStripeCustomerID.
+		stripeByCustomer: map[string]string{},
+		// stripePushHours is the per-(account, hour) dedupe set the
+		// meterd hourly pusher reads/writes.
+		stripePushHours: map[stripePushKey]struct{}{},
 	}
 }
 
@@ -132,6 +176,59 @@ func (m *MemStore) UpdateAccountStatus(_ context.Context, id string, status Acco
 	a.Status = status
 	m.accounts[id] = a
 	return nil
+}
+
+// UpdateAccountStripeCustomerID records the Stripe `cus_…` ID. MemStore
+// keeps an index map for O(1) webhook lookup; PgStore mirrors with a
+// schema-level unique index (added in Slice 2's migration).
+func (m *MemStore) UpdateAccountStripeCustomerID(_ context.Context, id, stripeCustomerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	a.StripeCustomerID = stripeCustomerID
+	m.accounts[id] = a
+	// Maintain the reverse-lookup map for AccountByStripeCustomerID.
+	for k, v := range m.stripeByCustomer {
+		if v == id && k != stripeCustomerID {
+			delete(m.stripeByCustomer, k)
+			break
+		}
+	}
+	m.stripeByCustomer[stripeCustomerID] = id
+	return nil
+}
+
+// AccountByStripeCustomerID is the reverse-lookup the Stripe webhook
+// uses to find the account behind an event's `customer` field. O(1) via
+// the index map; PgStore implements this with a unique index.
+func (m *MemStore) AccountByStripeCustomerID(_ context.Context, stripeCustomerID string) (Account, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id, ok := m.stripeByCustomer[stripeCustomerID]
+	if !ok {
+		return Account{}, ErrNotFound
+	}
+	a, ok := m.accounts[id]
+	if !ok {
+		return Account{}, ErrNotFound
+	}
+	return a, nil
+}
+
+// ListAllAccounts walks the account map under the store mutex. The
+// meterd quota + Stripe-push loops both call this; bounded by the
+// customer count on the one box.
+func (m *MemStore) ListAllAccounts(_ context.Context) ([]Account, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Account, 0, len(m.accounts))
+	for _, a := range m.accounts {
+		out = append(out, a)
+	}
+	return out, nil
 }
 
 // --- API keys ---------------------------------------------------------------
@@ -601,7 +698,7 @@ func (m *MemStore) CronByID(_ context.Context, id string) (Cron, error) {
 	return c, nil
 }
 
-func (m *MemStore) UpdateCron(_ context.Context, id string, schedule, path *string, enabled *bool) (Cron, error) {
+func (m *MemStore) UpdateCron(_ context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.crons[id]
@@ -617,6 +714,9 @@ func (m *MemStore) UpdateCron(_ context.Context, id string, schedule, path *stri
 	if enabled != nil {
 		c.Enabled = *enabled
 	}
+	if createdAt != nil {
+		c.CreatedAt = *createdAt
+	}
 	m.crons[id] = c
 	return c, nil
 }
@@ -629,6 +729,21 @@ func (m *MemStore) DeleteCron(_ context.Context, id, appID string) error {
 		return ErrNotFound
 	}
 	delete(m.crons, id)
+	return nil
+}
+
+// MarkCronFired stamps the cron row's LastFiredAt field. Used by the
+// schedd dispatch loop after a synthetic cron request has been
+// dispatched through gatewayd (spec §4.4, M7).
+func (m *MemStore) MarkCronFired(_ context.Context, id string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.crons[id]
+	if !ok {
+		return ErrNotFound
+	}
+	c.LastFiredAt = at
+	m.crons[id] = c
 	return nil
 }
 
@@ -686,6 +801,28 @@ func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Insta
 	var out []Instance
 	for _, ins := range m.instances {
 		if ins.AppID == appID {
+			out = append(out, ins)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	return out, nil
+}
+
+// ListInstancesForAccount joins the instance set against the app set
+// in-memory; the production path is a single SQL query (pgstore). Used
+// by the meterd quota loop on Free hard-stop (spec §4.7).
+func (m *MemStore) ListInstancesForAccount(_ context.Context, accountID string) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]struct{}, len(m.apps))
+	for _, a := range m.apps {
+		if a.AccountID == accountID {
+			owned[a.ID] = struct{}{}
+		}
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if _, ok := owned[ins.AppID]; ok {
 			out = append(out, ins)
 		}
 	}
@@ -839,30 +976,141 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 
 // --- Usage ------------------------------------------------------------------
 
+// AppendUsage upserts one (instance, minute) usage row and updates the
+// per-(account, app, month) aggregate so UsageByMonth keeps returning the
+// spec §10 shape without re-scanning the per-minute rows. Mirrors the
+// production INSERT … ON CONFLICT (instance_id, minute) DO UPDATE semantics:
+// multiple writes for the same minute accumulate mb_seconds + requests.
 func (m *MemStore) AppendUsage(_ context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i, u := range m.usage {
-		if u.AccountID == accountID && u.AppID == appID && u.Month.Equal(minute) {
+	key := minute.UTC().Truncate(time.Minute)
+	for i := range m.usage {
+		if m.usage[i].InstanceID == instanceID && m.usage[i].Minute.Equal(key) {
 			m.usage[i].MBSeconds += mbSeconds
 			m.usage[i].Requests += requests
+			m.recomputeMonthLocked(accountID, appID, key)
 			return nil
 		}
 	}
-	m.usage = append(m.usage, Usage{AccountID: accountID, AppID: appID, Month: minute, MBSeconds: mbSeconds, Requests: requests})
+	m.usage = append(m.usage, usageMinute{
+		AccountID: accountID, AppID: appID, InstanceID: instanceID,
+		Minute: key, MBSeconds: mbSeconds, Requests: requests,
+	})
+	m.recomputeMonthLocked(accountID, appID, key)
 	return nil
 }
 
+// UsageByMonth returns the per-app aggregates for one (account, month) —
+// the read shape the dashboard and the meter aggregator rely on. The
+// per-minute grain is internal; consumers see the rolled-up row.
 func (m *MemStore) UsageByMonth(_ context.Context, accountID string, month time.Time) ([]Usage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	key := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
 	var out []Usage
-	for _, u := range m.usage {
-		if u.AccountID == accountID && u.Month.Equal(month) {
+	for _, u := range m.usageByMonth {
+		if u.AccountID == accountID && u.Month.Equal(key) {
 			out = append(out, u)
 		}
 	}
 	return out, nil
+}
+
+// UsageByHour returns the per-app usage rows whose minute ∈ [start, end).
+// The Stripe pusher calls this hourly; MemStore synthesizes the per-hour
+// rollup from the per-minute rows on the fly — matches what PgStore would
+// do in SQL.
+func (m *MemStore) UsageByHour(_ context.Context, accountID string, start, end time.Time) ([]Usage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	type hourAgg struct {
+		AccountID string
+		AppID     string
+		MBSeconds int64
+		Requests  int64
+	}
+	bucket := map[appHourKey]hourAgg{}
+	for _, u := range m.usage {
+		if u.AccountID != accountID {
+			continue
+		}
+		if u.Minute.Before(start) || !u.Minute.Before(end) {
+			continue
+		}
+		k := appHourKey{AccountID: u.AccountID, AppID: u.AppID}
+		a := bucket[k]
+		a.AccountID = u.AccountID
+		a.AppID = u.AppID
+		a.MBSeconds += u.MBSeconds
+		a.Requests += u.Requests
+		bucket[k] = a
+	}
+	out := make([]Usage, 0, len(bucket))
+	for _, a := range bucket {
+		out = append(out, Usage{
+			AccountID: a.AccountID, AppID: a.AppID,
+			Month: start, MBSeconds: a.MBSeconds, Requests: a.Requests,
+		})
+	}
+	return out, nil
+}
+
+// HasStripePushHour + RecordStripePushHour implement the pkg/stripex
+// PushDedupe interface. The MemStore keeps a flat set keyed by
+// (account, hour); PgStore keeps a dedicated table.
+func (m *MemStore) HasStripePushHour(_ context.Context, accountID string, hour time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.stripePushHours[stripePushKey{accountID: accountID, hour: hour.UTC()}]
+	return ok, nil
+}
+
+func (m *MemStore) RecordStripePushHour(_ context.Context, accountID string, hour time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stripePushHours == nil {
+		m.stripePushHours = map[stripePushKey]struct{}{}
+	}
+	m.stripePushHours[stripePushKey{accountID: accountID, hour: hour.UTC()}] = struct{}{}
+	return nil
+}
+
+type appHourKey struct {
+	AccountID string
+	AppID     string
+}
+
+// recomputeMonthLocked rebuilds the (account, app, month) aggregate from
+// every per-minute row that falls in the calendar month. Called under m.mu
+// from AppendUsage; the slice scan is O(rows-in-month) which on a one-box
+// stays bounded (one minute × max_concurrency(plan) × apps).
+func (m *MemStore) recomputeMonthLocked(accountID, appID string, minute time.Time) {
+	month := time.Date(minute.Year(), minute.Month(), 1, 0, 0, 0, 0, time.UTC)
+	var mbSec, req int64
+	for _, u := range m.usage {
+		if u.AccountID != accountID || u.AppID != appID {
+			continue
+		}
+		if u.Minute.Year() != month.Year() || u.Minute.Month() != month.Month() {
+			continue
+		}
+		mbSec += u.MBSeconds
+		req += u.Requests
+	}
+	// Drop the existing row for this (account, app, month) if any, then append.
+	for i := range m.usageByMonth {
+		if m.usageByMonth[i].AccountID == accountID &&
+			m.usageByMonth[i].AppID == appID &&
+			m.usageByMonth[i].Month.Equal(month) {
+			m.usageByMonth = append(m.usageByMonth[:i], m.usageByMonth[i+1:]...)
+			break
+		}
+	}
+	m.usageByMonth = append(m.usageByMonth, Usage{
+		AccountID: accountID, AppID: appID, Month: month,
+		MBSeconds: mbSec, Requests: req,
+	})
 }
 
 // --- Idempotency ------------------------------------------------------------

@@ -228,6 +228,20 @@ func (e *Engine) Park(ctx context.Context, instanceID string) error {
 	return e.snapshotAndPark(ctx, *ins)
 }
 
+// ParkWithReason is the meterd-triggered variant (M7, spec §4.7). It
+// delegates to Park and stamps a structured log line with the reason
+// ("quota_exceeded_free", "manual_admin", etc) so the audit trail can
+// answer "why was this instance parked?" without grepping the code.
+func (e *Engine) ParkWithReason(ctx context.Context, instanceID, reason string) error {
+	err := e.Park(ctx, instanceID)
+	if err != nil {
+		e.log.Warn("sched: park_with_reason failed", "instance", instanceID, "reason", reason, "err", err)
+		return err
+	}
+	e.log.Info("sched: park_with_reason", "instance", instanceID, "reason", reason)
+	return nil
+}
+
 // Evict destroys a RUNNING instance under RAM pressure (spec §4.3). Unlike Park
 // it does not snapshot — the next wake cold-boots (ADR-005), so the state lands
 // in STOPPED rather than PARKED.
@@ -472,6 +486,22 @@ func (e *Engine) Ledger() *Ledger { return e.ledger }
 // Store exposes the engine's Store so the Loop can build the reaper's
 // read-only instance snapshot and read crons.
 func (e *Engine) Store() state.Store { return e.store }
+
+// Notifier returns the pg_notify notifier the engine writes through.
+// nil-safe: returns a noop when the engine was wired without one
+// (tests), so callers don't need to nil-check.
+func (e *Engine) Notifier() Notifier {
+	if e.notif == nil {
+		return noopNotifier{}
+	}
+	return e.notif
+}
+
+// noopNotifier discards every notification. Tests use it; production
+// always wires the real pgx-backed notifier in cmd/schedd.
+type noopNotifier struct{}
+
+func (noopNotifier) Notify(_ context.Context, _ string, _ string) error { return nil }
 
 // PoolNotifier adapts a pgx pool to the Notifier interface (pg_notify). cmd/schedd
 // wires one; the engine and tests depend only on the interface.

@@ -25,6 +25,19 @@ func Notify(ctx context.Context, pool *pgxpool.Pool, channel, payload string) er
 	return nil
 }
 
+// PoolNotifier adapts *pgxpool.Pool to the small Notifier interface
+// daemons (meterd, imaged, schedd) take in their constructors. Production
+// callers do `db.PoolNotifier{Pool: pool}.Notify(ctx, ch, payload)`;
+// tests substitute a recording fake so they can assert on the payload.
+type PoolNotifier struct {
+	Pool *pgxpool.Pool
+}
+
+// Notify forwards to the package-level Notify helper.
+func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error {
+	return Notify(ctx, p.Pool, channel, payload)
+}
+
 // NotifyChannels are the pg_notify channel names used across the platform.
 // Keep this list aligned with the LISTEN calls in cmd/schedd, cmd/imaged,
 // cmd/apid (verifier goroutine), and the producer side of every Store
@@ -55,6 +68,22 @@ func Notify(ctx context.Context, pool *pgxpool.Pool, channel, payload string) er
 //	                         schedd → imaged: a park wrote a snapshot blob;
 //	                         imaged records the row (it is the sole writer to the
 //	                         snapshots table, CLAUDE.md ownership).
+//	NotifyBillingPastDue    {"account_id":uuid, "used_gb":float,
+//	                         "quota_gb":int, "at":rfc3339nano}
+//	                         meterd → apid/dashboard: Free-tier hard stop
+//	                         triggered (spec §4.7). The account row is
+//	                         already flipped to `suspended` in the same tick.
+//	NotifyQuotaWarning      {"account_id":uuid, "plan":"hobby|pro|scale",
+//	                         "used_gb":float, "quota_gb":int,
+//	                         "at":rfc3339nano}
+//	                         meterd → dashboard: paid-tier overage crossed
+//	                         100 %; apps keep running, overage accrues at
+//	                         €0.01/GB-h (spec §1, §10).
+//	NotifyCronFired         {"cron_id":uuid, "app_id":uuid, "at":rfc3339nano}
+//	                         schedd → dashboard: a synthetic cron request
+//	                         was dispatched through gatewayd so metering
+//	                         and rate limits apply identically (spec §4.4,
+//	                         M7 cron firing).
 const (
 	NotifyAppChanged        = "app_changed"
 	NotifyDeploymentChanged = "deployment_changed"
@@ -66,6 +95,9 @@ const (
 	NotifyInstanceChanged   = "instance_changed"
 	NotifySnapshotPrime     = "snapshot_prime"
 	NotifySnapshotWritten   = "snapshot_written"
+	NotifyBillingPastDue    = "billing_past_due"
+	NotifyQuotaWarning      = "quota_warning"
+	NotifyCronFired         = "cron_fired"
 )
 
 // Subscribe holds a dedicated connection on the pool in LISTEN state for the

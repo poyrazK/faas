@@ -152,6 +152,25 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}()
 
+	// Re-stage everything the snapshot's recorded VM state still references.
+	// Park→Kill (vmm.Kill) wiped the prior chroot, so the chroot-relative
+	// basenames in the snapshot (kernel + drive backings) must be restored
+	// before /snapshot/load, otherwise Firecracker 400s when it tries to
+	// open the backing file. Drive 0 (base) is shared RO — hardlink; drive 1
+	// (per-app layer, RW overlay upper) is per-instance — copy + chown.
+	if spec.KernelPath == "" || spec.BasePath == "" || spec.LayerPath == "" {
+		return fmt.Errorf("vmm: restore spec missing kernel/base/layer: %+v", spec)
+	}
+	if _, err := stageReadOnly(root, spec.KernelPath); err != nil {
+		return fmt.Errorf("vmm: stage kernel: %w", err)
+	}
+	if _, err := stageReadOnly(root, spec.BasePath); err != nil {
+		return fmt.Errorf("vmm: stage base: %w", err)
+	}
+	if _, err := stageWritable(root, spec.LayerPath, l.UID, l.GID); err != nil {
+		return fmt.Errorf("vmm: stage layer: %w", err)
+	}
+
 	// Snapshot files are read-only inputs shared across the N instances a single
 	// snapshot may restore (invariant §6.2-5): hardlink them in and widen for read
 	// rather than chown, which would rewrite the shared inode owner.
@@ -390,16 +409,40 @@ func (v *JailerVMM) apiCallWithClient(ctx context.Context, client *http.Client, 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
+	// startJailer returns as soon as the jailer process is forked — the
+	// Firecracker API socket is created by firecracker itself a few ms
+	// later. On a slow nested-KVM guest (Lima arm64) the first POST
+	// races the socket creation; retry briefly before giving up so the
+	// snapshot-restore path isn't held hostage to the boot timing.
+	const maxAttempts = 20
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// Each attempt needs a fresh body reader because http.Client.Do
+		// consumes the body on send.
+		req.Body = io.NopCloser(bytes.NewReader(buf))
+		req.ContentLength = int64(len(buf))
+		resp, err := client.Do(req)
+		if err == nil {
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode >= 300 {
+				msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+				return fmt.Errorf("firecracker %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))
+			}
+			return nil
+		}
+		lastErr = err
+		// Short backoff: 5ms × 20 = 100ms total. The socket appears in
+		// single-digit ms on bare metal; nested KVM needs ~50ms.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("firecracker %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))
-	}
-	return nil
+	return lastErr
 }
 
 // stageReadOnly hardlinks a shared read-only source (kernel, drive0 base, or a

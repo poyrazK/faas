@@ -58,11 +58,23 @@ func PlanWake(snap *Snapshot, currentFCVersion string) WakeMethod {
 	return WakeColdBoot
 }
 
-// RestoreSpec locates the snapshot files to load into a fresh netns (spec §4.4).
+// RestoreSpec locates the snapshot files to load into a fresh netns and the
+// images the restored VM still references (spec §4.4).
+//
+// Drive paths + Kernel are required because Park→Kill removes the entire
+// chroot (it lives on tmpfs — see vmm.Kill). The snapshot itself records the
+// chroot-relative basename of every backing file, so on Restore we must
+// re-stage the kernel and the drives under the same basenames in the new
+// chroot before loading the snapshot. Without this the snapshot's recorded
+// drive path resolves to a file that no longer exists and Firecracker 400s
+// with "Error manipulating the backing file: No such file or directory".
 type RestoreSpec struct {
 	MemPath     string
 	VMStatePath string
 	Tap         string
+	KernelPath  string // /srv/fc/base/vmlinux-6.1.x — re-staged as basename in chroot
+	BasePath    string // drive0 shared ro base rootfs
+	LayerPath   string // drive1 per-app layer (overlay upper)
 }
 
 // SnapshotSpec is where to write a new snapshot's files (spec §4.4).

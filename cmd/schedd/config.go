@@ -20,6 +20,12 @@ type Config struct {
 	// lifecycle (ADR-014). Defaults to /run/faas/vmmd.sock.
 	VMMDSocket string `toml:"vmmd_socket"`
 
+	// GatewaySynthSocket is the unix-domain socket schedd dials to
+	// fire synthetic cron requests through gatewayd (spec §4.4, M7).
+	// Mode 0660 group `faas` (ADR-015). Defaults to
+	// /run/faas/gatewayd-internal.sock.
+	GatewaySynthSocket string `toml:"gateway_synth_socket"`
+
 	// OwnerUser owns the socket file (looked up by name). Defaults to
 	// faas-schedd.
 	OwnerUser string `toml:"owner_user"`
@@ -35,9 +41,10 @@ type Config struct {
 // is not an error — the defaults produce a working daemon.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
-		SocketPath: "/run/faas/schedd.sock",
-		VMMDSocket: "/run/faas/vmmd.sock",
-		OwnerUser:  "faas-schedd",
+		SocketPath:         "/run/faas/schedd.sock",
+		VMMDSocket:         "/run/faas/vmmd.sock",
+		GatewaySynthSocket: "/run/faas/gatewayd-internal.sock",
+		OwnerUser:          "faas-schedd",
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

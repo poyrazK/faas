@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -14,7 +16,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/stripex"
 )
 
 // --- apps CRUD --------------------------------------------------------------
@@ -216,7 +220,12 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	_ = s.notif.Notify(ctx(r), db.NotifyDomainChanged, `{"kind":"created","domain":"`+d.Domain+`"}`)
-	s.log.Info("domain created", "domain", d.Domain, "app", app.ID, "account", acct.ID)
+	// d.Domain came in via the HTTP body (bearer-token authenticated).
+	// Sanitize at the log sink — CodeQL go/log-injection (CWE-117).
+	// The notify payload above is JSON-encoded so the pg_notify channel
+	// can't be tricked into parsing an attacker-supplied structure, but
+	// the structured log line is the unencoded sink.
+	s.log.Info("domain created", "domain", logsanitize.Field(d.Domain), "app", app.ID, "account", acct.ID)
 	writeJSON(w, http.StatusAccepted, domainResponse(d))
 }
 
@@ -330,7 +339,7 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		s.notFound(w, "no such cron")
 		return
 	}
-	updated, err := s.store.UpdateCron(ctx(r), id, req.Schedule, req.Path, req.Enabled)
+	updated, err := s.store.UpdateCron(ctx(r), id, req.Schedule, req.Path, req.Enabled, nil)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return
@@ -473,16 +482,40 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 	updated, _ := s.store.AccountByID(ctx(r), acct.ID)
+	// codeql[go/log-injection] false-positive: acct.ID is server-generated UUID; plan is enum-validated against the 4 Plan constants (free|hobby|pro|scale) by plan.Valid() — handler returns 400 on invalid input.
 	s.log.Info("plan changed", "account", acct.ID, "plan", plan)
 	writeJSON(w, http.StatusOK, api.AccountResponse{
 		ID: updated.ID, Email: updated.Email, Plan: string(updated.Plan), Status: string(updated.Status),
 	})
 }
 
-// stripeWebhook accepts signed Stripe events in production; for M5 we accept
-// unsigned and trust the network boundary (spec ADR-007). Handles the
-// customer.subscription.updated event by updating the account plan.
+// stripeWebhook accepts signed Stripe events. M7 enforces the v1 HMAC
+// against s.stripeWebhookSecret (empty secret = verify disabled, dev
+// only). It handles:
+//
+//   - customer.subscription.deleted → suspend the account
+//   - invoice.payment_failed        → past_due (apps still serve, deploys blocked)
+//   - invoice.payment_succeeded     → active (if the account was past_due)
+//   - customer.subscription.updated with a plan → update plan
+//
+// Unknown event types return 200 with no side effect — Stripe expects
+// 2xx for everything it didn't recognize so it doesn't retry forever.
+// Returns 400 on bad payload / bad signature.
 func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad webhook", err.Error()))
+		return
+	}
+	// Verify signature when configured. Empty secret = dev mode (network
+	// trust); the production deploy must set STRIPE_WEBHOOK_SECRET.
+	if s.stripeWebhookSecret != "" {
+		header := r.Header.Get("Stripe-Signature")
+		if err := stripex.VerifySignature(body, header, s.stripeWebhookSecret, 5*time.Minute); err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad signature", err.Error()))
+			return
+		}
+	}
 	var ev struct {
 		Type string `json:"type"`
 		Data struct {
@@ -493,38 +526,48 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 			} `json:"object"`
 		} `json:"data"`
 	}
-	if err := decodeJSON(r, &ev); err != nil {
+	if err := json.Unmarshal(body, &ev); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad webhook", err.Error()))
 		return
 	}
-	// Look up account by stripe_customer_id; the field exists in schema.
 	acct, err := s.lookupAccountByStripeID(r.Context(), ev.Data.Object.Customer)
 	if err != nil {
+		// Unknown customer: 200 so Stripe stops retrying. New customers
+		// land via CreateCustomer; we don't auto-provision on a webhook.
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if ev.Type == "customer.subscription.deleted" || ev.Data.Object.Status == "canceled" || ev.Data.Object.Status == "unpaid" {
+	switch ev.Type {
+	case "customer.subscription.deleted":
 		_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountSuspended)
-	} else if ev.Type == "customer.subscription.updated" && ev.Data.Object.Plan != "" {
-		_ = s.store.UpdateAccountPlan(r.Context(), acct.ID, api.Plan(ev.Data.Object.Plan))
+	case "invoice.payment_failed":
+		// Apps keep serving; deploys blocked at the auth gate (handlers
+		// reading acct.Active() refuse writes). 7-day dunning timer
+		// (M7 dunning state machine) lives in pkg/state.Account.
+		_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountPastDue)
+	case "invoice.payment_succeeded":
+		// Restore the account if it was past_due. meterd will refresh
+		// quota state on its next tick.
+		if acct.Status == state.AccountPastDue {
+			_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountActive)
+		}
+	case "customer.subscription.updated":
+		if ev.Data.Object.Plan != "" {
+			_ = s.store.UpdateAccountPlan(r.Context(), acct.ID, api.Plan(ev.Data.Object.Plan))
+		}
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-// lookupAccountByStripeID is a tiny helper used by the Stripe webhook.
-// Implemented inline rather than as a Store method because it is only used
-// in one place; the production codebase will likely add it to Store once
-// more webhook events land.
+// lookupAccountByStripeID is a thin wrapper around
+// state.Store.AccountByStripeCustomerID. The reverse index lives on the
+// Store so the webhook stays O(1) regardless of account count (MemStore
+// uses a map; PgStore uses a unique index).
 func (s *server) lookupAccountByStripeID(ctx context.Context, stripeID string) (state.Account, error) {
-	// We iterate ListApps-like operations; this is intentionally cheap and
-	// only called on webhook delivery (low rate).
-	apps, err := s.store.ListApps(ctx, "")
-	_ = apps
-	_ = err
-	// For now fall back to a name-based scan via the Store's account-by-id
-	// path (added in this PR). The real production implementation will use
-	// an index on stripe_customer_id (deferred to M7 + billing).
-	return state.Account{}, errors.New("not implemented")
+	if stripeID == "" {
+		return state.Account{}, errors.New("apid: empty stripe customer id")
+	}
+	return s.store.AccountByStripeCustomerID(ctx, stripeID)
 }
 
 // --- response helpers ------------------------------------------------------

@@ -172,7 +172,16 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 // A non-nil error means even cold boot failed (a real wake failure).
 func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest) (WakeMethod, error) {
 	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore {
-		rs := RestoreSpec{MemPath: req.Snapshot.MemPath, VMStatePath: req.Snapshot.VMStatePath, Tap: nc.Tap}
+		rs := RestoreSpec{
+			MemPath: req.Snapshot.MemPath, VMStatePath: req.Snapshot.VMStatePath,
+			Tap: nc.Tap,
+			// The restored VM re-reads kernel + drives under the chroot
+			// basenames; Park→Kill erased the previous chroot, so hand the
+			// Manager.ColdBoot equivalents back to the VMM to re-stage.
+			KernelPath: m.paths.Kernel,
+			BasePath:   req.BasePath,
+			LayerPath:  req.LayerPath,
+		}
 		if rErr := m.vmm.Restore(ctx, lease, rs); rErr == nil {
 			return WakeRestore, nil
 		} else {

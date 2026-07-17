@@ -45,6 +45,14 @@ type BuildInput struct {
 	Plan api.Plan
 	// OutImage is where layer.ext4 is written.
 	OutImage string
+	// TarballPath, when set, is the customer's source tarball applied
+	// into /app during layer assembly. Used by the function-deploy path
+	// (spec §4.9, M7). Empty skips the tarball application step.
+	TarballPath string
+	// FunctionRunnerPath, when set, is copied into the layer at
+	// /usr/local/bin/faas-runner so the guest can exec it. Wired from
+	// cmd/imaged's config; empty skips the runner injection.
+	FunctionRunnerPath string
 }
 
 // BuildResult reports the produced layer.
@@ -73,6 +81,21 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	for i, layer := range in.Layers {
 		if err := ApplyLayerGz(staging, layer); err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
+		}
+	}
+	// Function-deploy path (spec §4.9, M7). When TarballPath is set the
+	// customer's source tarball is unpacked at /app; when
+	// FunctionRunnerPath is set the runner shim is injected at
+	// /usr/local/bin/faas-runner. Both default to no-op for the plain
+	// image path so existing callers don't change.
+	if in.TarballPath != "" {
+		if err := ApplyTarball(staging, in.TarballPath); err != nil {
+			return BuildResult{}, fmt.Errorf("rootfs: apply function tarball: %w", err)
+		}
+	}
+	if in.FunctionRunnerPath != "" {
+		if err := InjectFunctionRunner(staging, in.FunctionRunnerPath); err != nil {
+			return BuildResult{}, err
 		}
 	}
 	if err := InjectGuestInit(staging, in.GuestInitPath); err != nil {
@@ -129,6 +152,41 @@ func InjectGuestInit(staging, guestInitPath string) error {
 	}
 	if err := os.WriteFile(dst, data, 0o755); err != nil {
 		return fmt.Errorf("rootfs: write guest-init: %w", err)
+	}
+	return nil
+}
+
+// ApplyTarball unpacks a customer source tarball at /app. Used by the
+// function-deploy path; the tarball is the customer's handler code
+// (handler.js / handler.py). Path-escape protection reuses the
+// ApplyLayerGz allowlist so a malicious tarball can't escape /app.
+func ApplyTarball(staging, tarballPath string) error {
+	f, err := os.Open(tarballPath)
+	if err != nil {
+		return fmt.Errorf("rootfs: open tarball: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	appDir := filepath.Join(staging, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		return err
+	}
+	return ApplyLayerGz(appDir, f)
+}
+
+// InjectFunctionRunner copies the function runner binary at
+// /usr/local/bin/faas-runner so guest-init can exec it (spec §4.9).
+// Empty path = no-op (image deploys don't need it).
+func InjectFunctionRunner(staging, runnerPath string) error {
+	data, err := os.ReadFile(runnerPath)
+	if err != nil {
+		return fmt.Errorf("rootfs: read function runner: %w", err)
+	}
+	dst := filepath.Join(staging, "usr", "local", "bin", "faas-runner")
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(dst, data, 0o755); err != nil {
+		return fmt.Errorf("rootfs: write function runner: %w", err)
 	}
 	return nil
 }

@@ -191,12 +191,13 @@ func (d CustomDomain) Verified() bool { return !d.VerifiedAt.IsZero() }
 
 // Cron is a scheduled synthetic POST through gatewayd (spec §4.3).
 type Cron struct {
-	ID        string
-	AppID     string
-	Schedule  string // cron expression
-	Path      string
-	Enabled   bool
-	CreatedAt time.Time
+	ID          string
+	AppID       string
+	Schedule    string // cron expression
+	Path        string
+	Enabled     bool
+	CreatedAt   time.Time
+	LastFiredAt time.Time // zero until first fire; updated by MarkCronFired
 }
 
 // Instance mirrors the instances row; schedd is the sole writer (spec §6).

@@ -24,6 +24,18 @@ type Store interface {
 	AccountByKeyHash(ctx context.Context, hash []byte) (Account, error)
 	UpdateAccountPlan(ctx context.Context, id string, plan api.Plan) error
 	UpdateAccountStatus(ctx context.Context, id string, status AccountStatus) error
+	// UpdateAccountStripeCustomerID records the Stripe `cus_…` ID on the
+	// account row so the webhook + push paths can join. Idempotent — a
+	// repeat call with the same value is a no-op (ADR-010, Slice 2).
+	UpdateAccountStripeCustomerID(ctx context.Context, id, stripeCustomerID string) error
+	// AccountByStripeCustomerID resolves an account from the Stripe customer
+	// ID. The webhook is the only caller; backed by an index in production
+	// (deferred). Returns ErrNotFound for unknown customers.
+	AccountByStripeCustomerID(ctx context.Context, stripeCustomerID string) (Account, error)
+	// ListAllAccounts returns every account. meterd walks it on every
+	// quota tick and every Stripe push; on a one-box that's bounded
+	// (Free + Hobby + Pro + Scale test accounts + a handful of paid).
+	ListAllAccounts(ctx context.Context) ([]Account, error)
 
 	// API keys.
 	CreateAPIKey(ctx context.Context, accountID string, hash []byte, label string) (APIKey, error)
@@ -82,15 +94,31 @@ type Store interface {
 	// Crons (apid CRUDs; schedd fires).
 	CreateCron(ctx context.Context, appID, schedule, path string, enabled bool) (Cron, error)
 	CronByID(ctx context.Context, id string) (Cron, error)
-	UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool) (Cron, error)
+	// UpdateCron mutates the optional fields of a cron row. nil pointers
+	// leave the field untouched. createdAt is supported because schedd's
+	// dispatch loop reads the boundary off CreatedAt (first-fire guard);
+	// backfilling this field is the only honest way to rewind a test or
+	// restore an imported schedule.
+	UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error)
 	DeleteCron(ctx context.Context, id, appID string) error
 	ListCronsForApp(ctx context.Context, appID string) ([]Cron, error)
 	ListEnabledCrons(ctx context.Context) ([]Cron, error)
+	// MarkCronFired stamps the last_fired_at column. The schedd cron
+	// dispatch loop calls this after a synthetic request has been
+	// dispatched through gatewayd (spec §4.4, M7). MemStore keeps a
+	// lastFiredAt map; PgStore uses a column added in migration 00003.
+	MarkCronFired(ctx context.Context, cronID string, at time.Time) error
 
 	// Instances (schedd is sole writer, spec §6). apid reads only.
 	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
+	// ListInstancesForAccount returns every live instance belonging to an
+	// account. Used by the meterd quota loop to park everything when a Free
+	// account crosses 100 % (spec §4.7). Per-account scan is O(instances);
+	// on a one-box that's bounded by max_concurrency(plan) × apps, fine to
+	// run on the minute boundary.
+	ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error)
 	UpdateInstanceState(ctx context.Context, id, state string) error
 	// SetInstanceRuntime records the per-instance identity vmmd allocated on
 	// wake (netns, routable host IP, jail uid) and stamps started_at=now. schedd
@@ -119,6 +147,16 @@ type Store interface {
 	// Usage (apid reads for GET /v1/usage; meterd writes in production).
 	AppendUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error
 	UsageByMonth(ctx context.Context, accountID string, month time.Time) ([]Usage, error)
+	// UsageByHour returns the per-app usage rows whose minute ∈ [start,
+	// end). The Stripe pusher calls this hourly to compute the billable
+	// GB-RAM-hours for the past hour (spec §4.7, ADR-010). MemStore scans
+	// in memory; PgStore runs a SELECT … WHERE minute >= $2 AND minute < $3.
+	UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]Usage, error)
+
+	// StripePushDedup is the dedupe table for hourly usage pushes. The
+	// PushDedupe interface in pkg/stripex is satisfied by both stores.
+	HasStripePushHour(ctx context.Context, accountID string, hour time.Time) (bool, error)
+	RecordStripePushHour(ctx context.Context, accountID string, hour time.Time) error
 
 	// Idempotency (spec §4.2: Idempotency-Key stored 24 h).
 	GetIdempotent(ctx context.Context, accountID, key string) (status int, body []byte, err error)
