@@ -1,10 +1,10 @@
 // Package oci — OCI digest puller (spec §4.6, §9).
 //
-// The Puller interface is the single seam imaged uses to fetch a digest-pinned
-// image. The DefaultPuller shells out to a registry client (skopeo or
-// buildctl's own OCI pull); tests substitute a fake that hands back a known
-// digest without touching the network. Keeping the seam narrow means M6
-// can swap the implementation without touching imaged's orchestration.
+// The Puller interface is the single seam imaged uses to resolve a digest-pinned
+// image. RegistryClient (registry.go) is the production implementation: a
+// registry v2 client that resolves a reference to its content digest over the
+// public registry API (gap G1). DefaultPuller is the offline/test default that
+// echoes the reference, so pkg/imaged's orchestration tests need no network.
 package oci
 
 import "context"
@@ -15,9 +15,9 @@ type Puller interface {
 	PullDigest(ctx context.Context, ref string) (string, error)
 }
 
-// DefaultPuller is the production stub — it just echoes the digest. M5 doesn't
-// drive the real registry path (M6 brings it online); this lets imaged walk
-// the deployment through every transition without a network dep.
+// DefaultPuller echoes the reference back without touching the network. It is
+// the offline default (imaged.New substitutes it when no puller is injected) and
+// the shape pkg/imaged tests exercise; production wires oci.RegistryClient.
 type DefaultPuller struct{}
 
 func (DefaultPuller) PullDigest(_ context.Context, ref string) (string, error) {
