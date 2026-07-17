@@ -102,10 +102,11 @@ func TestNftCommandsPublishGuestPort(t *testing.T) {
 func TestNftCommandsEnforceEgressPolicy(t *testing.T) {
 	rules := flatten(testConfig().NftCommands())
 	// §11 ship-blocking egress denies, scoped to the guest side (iifname tap0) so
-	// the inbound DNAT path (iifname vp7) is never affected.
+	// the inbound DNAT path (iifname vp7) is never affected. CGN (100.64.0.0/10)
+	// is included for symmetry with pkg/netns.DefaultHostPolicy.ForwardDenyCIDRs.
 	wants := []string{
-		"iifname tap0 tcp dport { 25, 465, 587 } drop",                                             // deny SMTP (spam/abuse)
-		"iifname tap0 ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } drop", // deny RFC1918 + link-local/metadata
+		"iifname tap0 tcp dport { 25, 465, 587 } drop",                                                            // deny SMTP (spam/abuse)
+		"iifname tap0 ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10 } drop", // deny RFC1918 + link-local/metadata + CGN
 	}
 	for _, w := range wants {
 		if !strings.Contains(rules, w) {
@@ -153,11 +154,99 @@ func TestNftCommandsAcceptRepliesBeforeEgressDenies(t *testing.T) {
 func TestNftCommandsHaveNoShellMetacharacters(t *testing.T) {
 	// nft argv legitimately uses ; { } , for its own grammar (there is no shell —
 	// ExecRunner passes argv directly), but genuinely dangerous shell syntax must
-	// never appear.
-	for _, cmd := range testConfig().NftCommands() {
-		for _, arg := range cmd {
-			if strings.ContainsAny(arg, "|&<>$`\n") {
-				t.Errorf("nft argv element %q contains shell metacharacters", arg)
+	// never appear. Both NftCommands and NftResetCommands are covered.
+	for _, cmds := range [][][]string{testConfig().NftCommands(), testConfig().NftResetCommands()} {
+		for _, cmd := range cmds {
+			for _, arg := range cmd {
+				if strings.ContainsAny(arg, "|&<>$`\n") {
+					t.Errorf("nft argv element %q contains shell metacharacters", arg)
+				}
+			}
+		}
+	}
+}
+
+// TestNftCommandsPrefixAllInNetns is the regression net for a future edit that
+// accidentally runs an nft rule in the root namespace — every argv must start
+// with the canonical prefix [ip, netns, exec, <Netns>, nft]. Without the
+// prefix, nft would write to /var/lib/nftables (root netns) and silently fail
+// to apply inside the per-instance netns.
+func TestNftCommandsPrefixAllInNetns(t *testing.T) {
+	c := testConfig()
+	for _, cmds := range [][][]string{c.NftCommands(), c.NftResetCommands()} {
+		for i, cmd := range cmds {
+			if len(cmd) < 6 {
+				t.Errorf("argv %d too short: %v", i, cmd)
+				continue
+			}
+			want := []string{"ip", "netns", "exec", c.Netns, "nft"}
+			for j, w := range want {
+				if cmd[j] != w {
+					t.Errorf("argv %d prefix[%d] = %q, want %q (full: %v)",
+						i, j, cmd[j], w, cmd)
+				}
+			}
+		}
+	}
+}
+
+// TestNftCommandsStartsWithIdempotentReset locks the snapshot-restore Wake
+// fix: NftCommands must NOT prepend its own `delete table` (that would fail
+// on a fresh netns and abort setup). Instead the reset lives in a separate
+// best-effort NftResetCommands method, and the strict NftCommands argv list
+// starts with `add table`.
+func TestNftCommandsStartsWithAddTable(t *testing.T) {
+	first := testConfig().NftCommands()[0]
+	if len(first) < 6 {
+		t.Fatalf("first argv too short: %v", first)
+	}
+	// prefix is [ip, netns, exec, <Netns>, nft, add, ...]
+	if first[5] != "add" {
+		t.Errorf("first argv[5] = %q, want \"add\" (table-define); full: %v", first[5], first)
+	}
+	if first[6] != "table" {
+		t.Errorf("first argv[6] = %q, want \"table\"; full: %v", first[6], first)
+	}
+}
+
+// TestNftResetCommandsPrependsDeleteTable asserts the best-effort reset
+// argv targets the table we're about to (re-)add. Without this, snapshot-
+// restore Wake fails on the second `add table`.
+func TestNftResetCommandsPrependsDeleteTable(t *testing.T) {
+	reset := testConfig().NftResetCommands()
+	if len(reset) == 0 {
+		t.Fatal("NftResetCommands returned empty slice; the reset would be skipped")
+	}
+	first := reset[0]
+	if len(first) < 6 {
+		t.Fatalf("reset argv too short: %v", first)
+	}
+	// prefix is [ip, netns, exec, <Netns>, nft, delete, ...]
+	if first[5] != "delete" {
+		t.Errorf("reset argv[5] = %q, want \"delete\"; full: %v", first[5], first)
+	}
+	if first[6] != "table" || first[7] != "ip" || first[8] != "faas" {
+		t.Errorf("reset argv[6..8] = %q, want [table ip faas]; full: %v",
+			first[6:9], first)
+	}
+}
+
+// TestNftCommandsAllStartWithAddOrFlushOrDelete is a defensive guard against
+// a future edit that drops the nft subcommand (e.g. `nft ip faas add rule
+// ...` with the subcommand in the wrong slot). Every argv in NftCommands
+// and NftResetCommands must have a valid nft subcommand at index 5.
+func TestNftCommandsAllStartWithAddOrFlushOrDelete(t *testing.T) {
+	c := testConfig()
+	valid := map[string]bool{"add": true, "flush": true, "delete": true}
+	for _, cmds := range [][][]string{c.NftCommands(), c.NftResetCommands()} {
+		for i, cmd := range cmds {
+			if len(cmd) < 6 {
+				t.Errorf("argv %d too short: %v", i, cmd)
+				continue
+			}
+			if !valid[cmd[5]] {
+				t.Errorf("argv %d subcommand = %q, want one of add/flush/delete; full: %v",
+					i, cmd[5], cmd)
 			}
 		}
 	}

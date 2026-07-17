@@ -115,6 +115,11 @@ func (c Config) TeardownCommands() [][]string {
 // argv and parses it), so this works with the same stdin-less Runner that
 // executes SetupCommands. Egress bandwidth (per-plan tc) and the per-instance
 // conntrack cap (§7) are applied elsewhere, not here.
+//
+// The returned slice is FATAL — every argv must exit 0. For idempotency-reset
+// commands (delete/flush, which exit non-zero when the table is absent), see
+// NftResetCommands; those run best-effort ahead of the ruleset so a Wake that
+// re-enters an existing netns doesn't fail on `delete table`.
 func (c Config) NftCommands() [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
@@ -137,6 +142,27 @@ func (c Config) NftCommands() [][]string {
 		// to the denies, so lateral movement stays blocked.
 		nft("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept"),
 		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", "25,", "465,", "587", "}", "drop"),
-		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", "{", "10.0.0.0/8,", "172.16.0.0/12,", "192.168.0.0/16,", "169.254.0.0/16", "}", "drop"),
+		// CGN (100.64.0.0/10) included for symmetry with pkg/netns.DefaultHostPolicy
+		// .ForwardDenyCIDRs — see #32 for IPv6 follow-up.
+		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", "{", "10.0.0.0/8,", "172.16.0.0/12,", "192.168.0.0/16,", "169.254.0.0/16,", "100.64.0.0/10", "}", "drop"),
+	}
+}
+
+// NftResetCommands returns the best-effort argv list that brings the
+// per-netns nftables table to a clean slate before NftCommands runs. The
+// single `delete table` exits non-zero on a fresh netns (no table to
+// delete) — that is expected; the caller logs the failure and continues.
+// On a snapshot-restore Wake the table exists (the netns outlived the VM),
+// so the delete succeeds and the subsequent `add table` in NftCommands
+// does not collide.
+//
+// Best-effort, not fatal — this is the only place in the per-instance
+// lifecycle where we accept nft returning non-zero. Splitting it from
+// NftCommands keeps the ruleset's own commands strictly atomic.
+func (c Config) NftResetCommands() [][]string {
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	return [][]string{
+		nft("delete", "table", "ip", "faas"),
 	}
 }

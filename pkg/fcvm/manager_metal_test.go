@@ -14,6 +14,7 @@ package fcvm
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"sync"
@@ -205,5 +206,58 @@ func TestMetalHelloBoot(t *testing.T) {
 
 	// Spec §6.2-4/5: §6.2-4 = parked = zero RAM (we only had one VM but we
 	// still verify nothing leaked), §6.2-5 = no shared state.
+	leakcheck.AssertZero(t)
+}
+
+// TestMetalDNATPublishedToGuestPort is the #30 acceptance gate: the per-
+// instance nft ruleset publishes the guest's :8080 at the host identity, so
+// a root-ns HTTP client can reach the guest through the DNAT. Without #30
+// (NftCommands loaded by setupNetwork) the request never arrives.
+//
+// waitReady dials the same address internally — but a true external probe
+// proves the DNAT works for ANY caller, not just vmmd self-talk. Slot 0
+// maps to 10.100.0.2 (pkg/fcvm/alloc.go hostIPForSlot), so a fresh lease
+// for instance "dnat" lands on a directly-probeable IP.
+//
+// The M0 busybox image (busybox_ext4_metal_test.go:121-186) boots
+// `/sbin/init` running `busybox httpd -f -p 8080 -h /`, so a successful
+// probe proves the SYN goes through prerouting DNAT and the ACK comes back
+// (which exercises the established/related accept rule).
+func TestMetalDNATPublishedToGuestPort(t *testing.T) {
+	kernel, _, _ := metalImages(t) // base/layer replaced by hello img
+	m := newMetalManager(t, kernel)
+	busybox := ensureBusyboxExt4(t, t.TempDir())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	inst, err := m.ColdBoot(ctx, ColdBootRequest{
+		Instance:   "dnat",
+		BasePath:   busybox,
+		LayerPath:  busybox,
+		VcpuCount:  2,
+		MemSizeMiB: 128,
+	})
+	if err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	// inst.Lease.HostIP is the veth host-side identity (10.100.0.2 for slot 0).
+	// waitReady already proved the kernel booted and the guest is listening;
+	// here we re-probe from a root-ns http.Client to confirm the DNAT actually
+	// publishes the guest to outside callers (the load-bearing #30 assertion).
+	url := "http://" + inst.Lease.HostIP.String() + ":8080/"
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET %s status = %d, want 200", url, resp.StatusCode)
+	}
+
+	if err := m.Destroy(ctx, "dnat"); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
 	leakcheck.AssertZero(t)
 }

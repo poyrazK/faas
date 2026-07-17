@@ -247,8 +247,31 @@ func (m *Manager) LeasedCount() int { return m.alloc.InUse() }
 // leaves the caller's deferred cleanup to unwind everything (invariant §6.2-5).
 // The DNAT rules must land before readiness is probed, so they run here, inside
 // the setup phase, rather than after bringUp.
+//
+// NftResetCommands runs best-effort BEFORE the ruleset — a snapshot-restore
+// Wake re-enters an existing netns whose table persists across VM lifetimes,
+// so we must `delete table` before `add table` to avoid the `add` failing on
+// duplicate. `delete table` exits non-zero on a fresh netns; that error is
+// logged and discarded (see the doc on the method).
 func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
-	cmds := append(nc.SetupCommands(), nc.NftCommands()...)
+	if err := m.runCommands(ctx, nc.SetupCommands()); err != nil {
+		return err
+	}
+	// Best-effort reset. Errors here are expected on a fresh netns and are
+	// ignored (logged at Debug). On a snapshot-restore the delete succeeds
+	// and lets the subsequent `add table` win.
+	for _, argv := range nc.NftResetCommands() {
+		if err := m.run.Run(ctx, argv); err != nil {
+			m.log.Debug("nft reset (best-effort, expected on fresh netns)",
+				"instance", nc.Instance, "argv", argv, "err", err)
+		}
+	}
+	return m.runCommands(ctx, nc.NftCommands())
+}
+
+// runCommands runs each argv in order, stopping at the first error. The argv
+// is included in the wrapped error so the failure is identifiable in logs.
+func (m *Manager) runCommands(ctx context.Context, cmds [][]string) error {
 	for _, argv := range cmds {
 		if err := m.run.Run(ctx, argv); err != nil {
 			return fmt.Errorf("%v: %w", argv, err)
