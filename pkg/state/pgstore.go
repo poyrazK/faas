@@ -270,9 +270,10 @@ func (s *PgStore) LiveDeployment(ctx context.Context, appID string) (Deployment,
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
+		        coalesce(rootfs_path,''), coalesce(rootfs_bytes,0),
 		        status, coalesce(error,''), created_at
 		 from deployments where app_id = $1 and status = 'live' order by created_at desc limit 1`, appID)
-	return scanDeployment(row)
+	return scanDeploymentWithRootfs(row)
 }
 
 func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error) {
@@ -316,6 +317,19 @@ func (s *PgStore) MarkDeploymentSuperseded(ctx context.Context, id string) error
 
 func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	return s.UpdateDeploymentStatus(ctx, id, DeployLive, "")
+}
+
+func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path string, bytes int64) error {
+	tag, err := s.pool.Exec(ctx,
+		`update deployments set rootfs_path = $2, rootfs_bytes = $3 where id = $1`,
+		id, nullString(path), bytes)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // --- builds ------------------------------------------------------------------
@@ -801,6 +815,25 @@ func scanDeployment(row pgx.Row) (Deployment, error) {
 		&statusStr, &d.Error, &d.CreatedAt); err != nil {
 		return Deployment{}, mapErr(err)
 	}
+	d.Kind = DeploymentKind(kind)
+	d.Status = DeploymentStatus(statusStr)
+	return d, nil
+}
+
+// scanDeploymentWithRootfs is the post-imaged variant that also reads the
+// rootfs_path / rootfs_bytes columns stamped by SetDeploymentRootfs. Every
+// reads-everything query (used by schedd's prime handshake, M5) uses this so
+// the snapshot_prime consumer sees the layer path.
+func scanDeploymentWithRootfs(row pgx.Row) (Deployment, error) {
+	d := Deployment{}
+	var kind, statusStr, rootfsPath string
+	if err := row.Scan(&d.ID, &d.AppID, &d.BuildID, &d.ImageDigest, &kind,
+		&d.SourcePath, &d.SourceBytes, &d.Handler, &d.LogPath,
+		&rootfsPath, &d.RootfsBytes,
+		&statusStr, &d.Error, &d.CreatedAt); err != nil {
+		return Deployment{}, mapErr(err)
+	}
+	d.RootfsPath = rootfsPath
 	d.Kind = DeploymentKind(kind)
 	d.Status = DeploymentStatus(statusStr)
 	return d, nil

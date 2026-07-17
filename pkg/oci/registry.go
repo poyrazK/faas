@@ -75,6 +75,15 @@ var manifestAccept = strings.Join([]string{
 	"application/vnd.docker.distribution.manifest.list.v2+json",
 }, ", ")
 
+// layerMediaTypes are the manifest media types we will walk for layer blobs.
+// Indexes / manifest lists are NOT supported here — they require choosing a
+// platform; a digest-pinned reference to a single-arch image is the M5
+// contract (spec §17 G1: public registries, digest-pinned).
+var imageManifestMediaTypes = []string{
+	"application/vnd.oci.image.manifest.v1+json",
+	"application/vnd.docker.distribution.manifest.v2+json",
+}
+
 // PullDigest resolves ref to its canonical digest. A digest-pinned reference is
 // confirmed to exist; a tag reference is resolved to the digest the registry
 // currently serves. Satisfies Puller.
@@ -84,6 +93,261 @@ func (c *RegistryClient) PullDigest(ctx context.Context, ref string) (string, er
 		return "", err
 	}
 	return c.resolveDigest(ctx, r)
+}
+
+// imageManifest is the subset of an OCI / Docker image manifest we consume.
+// We accept both v1 (OCI) and v2 (Docker) shapes; their JSON differs only in
+// naming. References and configs are content-addressable by digest.
+type imageManifest struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	MediaType     string `json:"mediaType"`
+	Config        struct {
+		MediaType string `json:"mediaType"`
+		Digest    string `json:"digest"`
+		Size      int64  `json:"size"`
+	} `json:"config"`
+	Layers []struct {
+		MediaType string `json:"mediaType"`
+		Digest    string `json:"digest"`
+		Size      int64  `json:"size"`
+	} `json:"layers"`
+}
+
+// PullLayers fetches the manifest, image-config blob, and every layer blob
+// for a digest-pinned reference, returning them as gzip-compressed ReadClosers
+// (bottom-to-top, the order rootfs.Builder expects). The caller closes each
+// ReadCloser individually; an error return does NOT require closing them
+// (the registry connections are already cleaned up by then).
+//
+// Layer blobs are streamed, not buffered — large app layers never fit in
+// memory, and the build pipeline applies each layer directly into a staging
+// tree as it arrives.
+func (c *RegistryClient) PullLayers(ctx context.Context, ref string) (PullLayersResult, error) {
+	r, err := ParseReference(ref)
+	if err != nil {
+		return PullLayersResult{}, err
+	}
+	manifestURL := c.baseURL(r) + "/v2/" + r.Repository + "/manifests/" + r.ManifestRef()
+
+	// Fetch the manifest (with one retry after token challenge).
+	body, ct, err := c.fetchManifestJSON(ctx, manifestURL)
+	if err != nil {
+		return PullLayersResult{}, err
+	}
+
+	var m imageManifest
+	if err := json.Unmarshal(body, &m); err != nil {
+		return PullLayersResult{}, fmt.Errorf("oci: decode manifest %s: %w", r.String(), err)
+	}
+
+	// Reject index/manifest-list for v1 — we accept only single-arch image
+	// manifests. Surfacing a clear error here is friendlier than silently
+	// ignoring the layers array.
+	if !isImageManifest(ct, m.MediaType) {
+		return PullLayersResult{}, fmt.Errorf("oci: %s is a manifest list/index, not an image manifest (mediaType=%q); digest-pinned to a single-arch image is required", r.String(), m.MediaType)
+	}
+	if m.Config.Digest == "" {
+		return PullLayersResult{}, fmt.Errorf("oci: %s manifest has no config descriptor", r.String())
+	}
+
+	// Fetch the config blob (small — read into memory).
+	cfgBytes, err := c.fetchBlob(ctx, r, m.Config.Digest)
+	if err != nil {
+		return PullLayersResult{}, fmt.Errorf("oci: fetch image config %s: %w", r.String(), err)
+	}
+	cfg, err := parseImageConfig(cfgBytes)
+	if err != nil {
+		return PullLayersResult{}, fmt.Errorf("oci: parse image config %s: %w", r.String(), err)
+	}
+
+	// Open each layer as a streaming ReadCloser. We do NOT eagerly read.
+	layers := make([]io.ReadCloser, 0, len(m.Layers))
+	for i, layer := range m.Layers {
+		body, err := c.fetchBlobStream(ctx, r, layer.Digest)
+		if err != nil {
+			// Close any we already opened so a partial result doesn't leak.
+			for _, l := range layers {
+				_ = l.Close()
+			}
+			return PullLayersResult{}, fmt.Errorf("oci: fetch layer %d (%s) of %s: %w", i, layer.Digest, r.String(), err)
+		}
+		layers = append(layers, body)
+	}
+
+	// The manifest digest is sha256(content). Compute it here so the caller
+	// can correlate the layer set with the manifest they requested.
+	sum := sha256.Sum256(body)
+	digest := digestAlgo + hex.EncodeToString(sum[:])
+
+	return PullLayersResult{Layers: layers, Config: cfg, Digest: digest}, nil
+}
+
+// isImageManifest reports whether the manifest is a single-arch image
+// manifest (as opposed to an index / manifest-list).
+func isImageManifest(contentType, mediaType string) bool {
+	if mediaType != "" {
+		for _, mt := range imageManifestMediaTypes {
+			if mediaType == mt {
+				return true
+			}
+		}
+		return false
+	}
+	// Some registries omit mediaType in the body; fall back to the response's
+	// Content-Type header.
+	for _, mt := range imageManifestMediaTypes {
+		if contentType == mt {
+			return true
+		}
+	}
+	return false
+}
+
+// parseImageConfig decodes the subset of the OCI image config we care about.
+// Unrecognised fields are ignored — the schema is large and we want to be
+// resilient to additions upstream. The OCI spec allows either flat fields
+// (Cmd, Env, WorkingDir at the top level) or a nested "config" envelope —
+// we accept whichever the registry produced, preferring the flat fields when
+// both are present (Docker v2 convention).
+func parseImageConfig(b []byte) (ImageConfig, error) {
+	var raw struct {
+		Cmd        []string `json:"Cmd"`
+		Env        []string `json:"Env"`
+		WorkingDir string   `json:"WorkingDir"`
+		Config     struct {
+			Cmd          []string            `json:"Cmd"`
+			Env          []string            `json:"Env"`
+			WorkingDir   string              `json:"WorkingDir"`
+			ExposedPorts map[string]struct{} `json:"ExposedPorts"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return ImageConfig{}, err
+	}
+	cmd := raw.Cmd
+	if len(cmd) == 0 {
+		cmd = raw.Config.Cmd
+	}
+	envSlice := raw.Env
+	if len(envSlice) == 0 {
+		envSlice = raw.Config.Env
+	}
+	wd := raw.WorkingDir
+	if wd == "" {
+		wd = raw.Config.WorkingDir
+	}
+	env := make(map[string]string, len(envSlice))
+	for _, kv := range envSlice {
+		for i := 0; i < len(kv); i++ {
+			if kv[i] == '=' {
+				env[kv[:i]] = kv[i+1:]
+				break
+			}
+		}
+	}
+	return ImageConfig{
+		Cmd:          cmd,
+		Env:          env,
+		WorkingDir:   wd,
+		ExposedPorts: raw.Config.ExposedPorts,
+	}, nil
+}
+
+// fetchManifestJSON performs an authenticated GET on a manifest URL and
+// returns (body, content-type, err). Handles the anonymous Bearer challenge
+// exactly once.
+func (c *RegistryClient) fetchManifestJSON(ctx context.Context, url string) ([]byte, string, error) {
+	resp, err := c.getManifest(ctx, url, "")
+	if err != nil {
+		return nil, "", err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		ch := parseChallenge(resp.Header.Get("Www-Authenticate"))
+		_ = resp.Body.Close()
+		token, err := c.fetchToken(ctx, ch)
+		if err != nil {
+			return nil, "", err
+		}
+		resp, err = c.getManifest(ctx, url, token)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, "", fmt.Errorf("oci: manifest returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, "", fmt.Errorf("oci: read manifest: %w", err)
+	}
+	return body, resp.Header.Get("Content-Type"), nil
+}
+
+// fetchBlob fetches a blob by digest and returns its full body. Used for the
+// small image-config blob (manifests cap at 8 MiB; configs are usually < 64 KiB).
+func (c *RegistryClient) fetchBlob(ctx context.Context, r Reference, digest string) ([]byte, error) {
+	_, rc, err := c.openBlob(ctx, r, digest)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rc.Close() }()
+	return io.ReadAll(io.LimitReader(rc, 1<<20)) // 1 MiB cap — config blobs are tiny
+}
+
+// fetchBlobStream opens a blob as a streaming ReadCloser. The caller is
+// responsible for closing it; the body is not buffered.
+func (c *RegistryClient) fetchBlobStream(ctx context.Context, r Reference, digest string) (io.ReadCloser, error) {
+	_, body, err := c.openBlob(ctx, r, digest)
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+// openBlob performs the GET /v2/<repo>/blobs/<digest> request with one retry
+// after a 401 challenge. Returns (content-type, body, err).
+func (c *RegistryClient) openBlob(ctx context.Context, r Reference, digest string) (string, io.ReadCloser, error) {
+	url := c.baseURL(r) + "/v2/" + r.Repository + "/blobs/" + digest
+	resp, err := c.getBlob(ctx, url, "")
+	if err != nil {
+		return "", nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		ch := parseChallenge(resp.Header.Get("Www-Authenticate"))
+		_ = resp.Body.Close()
+		token, err := c.fetchToken(ctx, ch)
+		if err != nil {
+			return "", nil, err
+		}
+		resp, err = c.getBlob(ctx, url, token)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		_ = resp.Body.Close()
+		return "", nil, fmt.Errorf("oci: blob %s returned %d: %s", digest, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return resp.Header.Get("Content-Type"), resp.Body, nil
+}
+
+func (c *RegistryClient) getBlob(ctx context.Context, url, token string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("oci: build blob request: %w", err)
+	}
+	req.Header.Set("User-Agent", c.ua)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("oci: fetch blob: %w", err)
+	}
+	return resp, nil
 }
 
 func (c *RegistryClient) baseURL(r Reference) string {
