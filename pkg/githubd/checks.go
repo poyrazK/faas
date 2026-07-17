@@ -58,13 +58,13 @@ func NewChecksAPI(tokens *TokenCache, hc HTTPClient) *ChecksAPI {
 // expects. We only fill the fields github cares about for the
 // commit-icon update.
 type checkRunRequest struct {
-	Name        string `json:"name"`
-	HeadSHA     string `json:"head_sha"`
-	Status      string `json:"status"`
-	Conclusion  string `json:"conclusion,omitempty"`
-	DetailsURL  string `json:"details_url,omitempty"`
-	Output      *checkRunOutput `json:"output,omitempty"`
-	ExternalID  string `json:"external_id,omitempty"`
+	Name       string          `json:"name"`
+	HeadSHA    string          `json:"head_sha"`
+	Status     string          `json:"status"`
+	Conclusion string          `json:"conclusion,omitempty"`
+	DetailsURL string          `json:"details_url,omitempty"`
+	Output     *checkRunOutput `json:"output,omitempty"`
+	ExternalID string          `json:"external_id,omitempty"`
 }
 
 type checkRunOutput struct {
@@ -149,9 +149,9 @@ func (c *ChecksAPI) tokensForRepo(ctx context.Context, _ string) (string, error)
 }
 
 const (
-	statusQueued    = "queued"
+	statusQueued     = "queued"
 	statusInProgress = "in_progress"
-	statusCompleted = "completed"
+	statusCompleted  = "completed"
 )
 
 func phaseToStatus(p githubdgrpc.CheckPhase) string {

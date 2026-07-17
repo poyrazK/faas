@@ -50,7 +50,7 @@ type HTTPClient interface {
 // MintAppJWT (which itself feeds the OAuth flow, not the public
 // surface).
 type AppAuth struct {
-	AppID      string       // GitHub App ID (numeric, as a string)
+	AppID      string // GitHub App ID (numeric, as a string)
 	PrivateKey *rsa.PrivateKey
 	HTTPClient HTTPClient
 }

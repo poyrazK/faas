@@ -27,15 +27,15 @@ type UpdateAppRequest struct {
 
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
-	ID             string         `json:"id"`
-	Slug           string         `json:"slug"`
-	Type           string         `json:"type"`
-	Runtime        string         `json:"runtime,omitempty"`
-	RAMMB          int            `json:"ram_mb"`
-	MaxConcurrency int            `json:"max_concurrency"`
-	IdleTimeoutS   int            `json:"idle_timeout_s,omitempty"`
-	Status         string         `json:"status"`
-	URL            string         `json:"url"`
+	ID             string `json:"id"`
+	Slug           string `json:"slug"`
+	Type           string `json:"type"`
+	Runtime        string `json:"runtime,omitempty"`
+	RAMMB          int    `json:"ram_mb"`
+	MaxConcurrency int    `json:"max_concurrency"`
+	IdleTimeoutS   int    `json:"idle_timeout_s,omitempty"`
+	Status         string `json:"status"`
+	URL            string `json:"url"`
 	// Manifest is the runner-scaffold payload (env, healthz path,
 	// entrypoint). Surfaced so the dashboard's app detail page can
 	// show the function handler + env without a separate round-trip.
@@ -70,26 +70,26 @@ type DeploymentResponse struct {
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
 type AccountResponse struct {
-	ID            string         `json:"id"`
-	Email         string         `json:"email"`
-	Plan          string         `json:"plan"`
-	Status        string         `json:"status"`
-	Limits        AccountLimits  `json:"limits"`
-	UsageGBHours  float64        `json:"usage_gb_hours"`
-	AppCount      int            `json:"app_count"`
-	GitHubInstall string         `json:"github_install_id,omitempty"`
+	ID            string        `json:"id"`
+	Email         string        `json:"email"`
+	Plan          string        `json:"plan"`
+	Status        string        `json:"status"`
+	Limits        AccountLimits `json:"limits"`
+	UsageGBHours  float64       `json:"usage_gb_hours"`
+	AppCount      int           `json:"app_count"`
+	GitHubInstall string        `json:"github_install_id,omitempty"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
 // serialization. Stripped of fields the dashboard doesn't need
 // (eg. internal ops); mirror pkg/api/limits.go for the wiring.
 type AccountLimits struct {
-	Plan             string `json:"plan"`
-	RAMMB            int    `json:"ram_mb"`
-	MaxConcurrency   int    `json:"max_concurrency"`
-	DeployedApps     int    `json:"deployed_apps"`
-	IncludedGBHours  int64  `json:"included_gb_hours"`
-	AppLayerMaxMB    int    `json:"app_layer_max_mb"`
+	Plan            string `json:"plan"`
+	RAMMB           int    `json:"ram_mb"`
+	MaxConcurrency  int    `json:"max_concurrency"`
+	DeployedApps    int    `json:"deployed_apps"`
+	IncludedGBHours int64  `json:"included_gb_hours"`
+	AppLayerMaxMB   int    `json:"app_layer_max_mb"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext

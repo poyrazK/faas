@@ -31,11 +31,11 @@ import (
 // when empty). HTTPClient is optional (defaults to a 10s-timeout
 // client); tests inject a recording stub.
 type ResendConfig struct {
-	APIKey    string
-	From      string
-	BaseURL   string
+	APIKey     string
+	From       string
+	BaseURL    string
 	HTTPClient *http.Client
-	Log       *slog.Logger
+	Log        *slog.Logger
 }
 
 // ResendSender implements Sender via the Resend HTTP API.

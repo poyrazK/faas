@@ -2,16 +2,16 @@
 //
 // The dashboard auth flow:
 //
-//	1. GET  /login            → renders the email form
-//	2. POST /login            → looks up the account by email, mints a
-//	                            32-byte random token, stores its
-//	                            SHA-256 hash with a 15-minute expiry,
-//	                            emails the raw token to the user, and
-//	                            renders "check your email"
-//	3. GET  /auth/verify?token=… → consumes the token (one-shot),
-//	                                sets faas_sid cookie, redirects
-//	                                to /dashboard/
-//	4. POST /logout           → clears faas_sid, redirects to /login
+//  1. GET  /login            → renders the email form
+//  2. POST /login            → looks up the account by email, mints a
+//     32-byte random token, stores its
+//     SHA-256 hash with a 15-minute expiry,
+//     emails the raw token to the user, and
+//     renders "check your email"
+//  3. GET  /auth/verify?token=… → consumes the token (one-shot),
+//     sets faas_sid cookie, redirects
+//     to /dashboard/
+//  4. POST /logout           → clears faas_sid, redirects to /login
 //
 // sessionAuth middleware gates /dashboard/* (except /login + the
 // OAuth callback). Slice 4 fills the dashboard pages with real data;
@@ -51,11 +51,11 @@ const (
 // authHandlers groups the dashboard-side auth dependencies so we can
 // pass them around without changing the server struct just for slice 3.
 type authHandlers struct {
-	srv       *server
-	log       *slog.Logger
-	loginTTL  time.Duration
-	mailer    Mailer
-	domain    string // base URL for the magic-link (e.g. https://faas.example.test)
+	srv      *server
+	log      *slog.Logger
+	loginTTL time.Duration
+	mailer   Mailer
+	domain   string // base URL for the magic-link (e.g. https://faas.example.test)
 }
 
 // renderLoginForm renders the GET /login page.

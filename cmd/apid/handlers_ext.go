@@ -783,6 +783,7 @@ func validCron(s string) bool {
 // to resume from seq N. ?limit= caps the initial page (default 50,
 // max 500). ?follow=0 closes after the initial page (CLI-friendly
 // "fetch once" mode).
+//
 //nolint:contextcheck // ctx(r) === r.Context(); suppressed per-call to avoid line-by-line noise in a long SSE handler.
 func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
@@ -890,10 +891,10 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 // both the initial-page path and the live tail.
 func writeLogEvent(w http.ResponseWriter, flusher http.Flusher, e state.LogEntry) {
 	payload, _ := json.Marshal(map[string]any{
-		"seq":         e.Seq,
-		"stream":      e.Stream,
-		"line":        e.Line,
-		"written_at":  e.WrittenAt.UTC().Format(time.RFC3339Nano),
+		"seq":        e.Seq,
+		"stream":     e.Stream,
+		"line":       e.Line,
+		"written_at": e.WrittenAt.UTC().Format(time.RFC3339Nano),
 	})
 	_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", payload)
 	if flusher != nil {

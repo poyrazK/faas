@@ -33,9 +33,9 @@ const defaultProductionBranch = "main"
 type RealService struct {
 	githubdgrpc.UnimplementedService
 
-	Auth     *AppAuth
-	Tokens   *TokenCache
-	Checks   *ChecksAPI
+	Auth   *AppAuth
+	Tokens *TokenCache
+	Checks *ChecksAPI
 
 	// bindings is keyed by accountID → appID → binding. Direct
 	// appID lookup avoids the suffix-scan UnbindAppRepo used to

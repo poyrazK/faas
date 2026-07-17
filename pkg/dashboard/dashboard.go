@@ -90,11 +90,11 @@ type DeploymentItem struct {
 
 // CronItem is one row on the app detail page's crons tab.
 type CronItem struct {
-	ID           string
-	Schedule     string
-	Path         string
-	Enabled      bool
-	LastFiredAt  string // empty until first fire
+	ID          string
+	Schedule    string
+	Path        string
+	Enabled     bool
+	LastFiredAt string // empty until first fire
 }
 
 // AppDetailData combines the bits the app detail page renders.

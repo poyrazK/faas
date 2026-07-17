@@ -141,9 +141,9 @@ func (c *Client) GetAppBinding(ctx context.Context, appID, accountID string) (Ap
 		return AppBinding{}, liftErr(err)
 	}
 	return AppBinding{
-		RepoFullName:    resp.GetRepoFullName(),
+		RepoFullName:     resp.GetRepoFullName(),
 		ProductionBranch: resp.GetProductionBranch(),
-		BindingID:       resp.GetBindingId(),
+		BindingID:        resp.GetBindingId(),
 	}, nil
 }
 

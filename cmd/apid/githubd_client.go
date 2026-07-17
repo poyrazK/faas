@@ -45,7 +45,7 @@ type (
 )
 
 const (
-	InstallStateUnspecified = githubdgrpc.InstallStateUnspecified
+	InstallStateUnspecified  = githubdgrpc.InstallStateUnspecified
 	InstallStateNotInstalled = githubdgrpc.InstallStateNotInstalled
 	InstallStateInstalling   = githubdgrpc.InstallStateInstalling
 	InstallStateInstalled    = githubdgrpc.InstallStateInstalled

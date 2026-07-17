@@ -34,11 +34,11 @@ import (
 // AppAuth / readKeyPEM without touching Postgres, /run/faas, or
 // /etc/faas/secrets.
 type runDeps struct {
-	openDB      func(context.Context, string) (*pgxpool.Pool, error)
-	readAppID   func() string
-	readKeyPEM  func() ([]byte, error)
-	httpClient  func() githubd.HTTPClient
-	now         func() time.Time
+	openDB     func(context.Context, string) (*pgxpool.Pool, error)
+	readAppID  func() string
+	readKeyPEM func() ([]byte, error)
+	httpClient func() githubd.HTTPClient
+	now        func() time.Time
 }
 
 func defaultDeps() runDeps {

@@ -15,10 +15,10 @@ import (
 
 // Topic constants. Use one of these as the first Publish argument.
 const (
-	TopicDeploymentLog = "deployment_log"
-	TopicAppChanged    = "app_changed"
+	TopicDeploymentLog   = "deployment_log"
+	TopicAppChanged      = "app_changed"
 	TopicInstanceChanged = "instance_changed"
-	TopicCronFired    = "cron_fired"
+	TopicCronFired       = "cron_fired"
 )
 
 // Broadcaster is a process-local pub/sub. The zero value is ready to

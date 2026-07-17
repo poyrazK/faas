@@ -10,7 +10,7 @@ package githubdgrpc
 type InstallState int32
 
 const (
-	InstallStateUnspecified InstallState = 0
+	InstallStateUnspecified  InstallState = 0
 	InstallStateNotInstalled InstallState = 1
 	InstallStateInstalling   InstallState = 2
 	InstallStateInstalled    InstallState = 3
@@ -24,10 +24,10 @@ type CheckPhase int32
 
 const (
 	CheckPhaseUnspecified CheckPhase = 0
-	CheckPhaseQueued       CheckPhase = 1
-	CheckPhaseBuilding     CheckPhase = 2
-	CheckPhaseLive         CheckPhase = 3
-	CheckPhaseFailed       CheckPhase = 4
+	CheckPhaseQueued      CheckPhase = 1
+	CheckPhaseBuilding    CheckPhase = 2
+	CheckPhaseLive        CheckPhase = 3
+	CheckPhaseFailed      CheckPhase = 4
 )
 
 // Repo is one repo in the installation's catalog. The dashboard's
@@ -41,7 +41,7 @@ type Repo struct {
 // AppBinding is the (app, repo, branch) row that drives webhook
 // dispatch. Returned by GetAppBinding; empty fields mean "not bound".
 type AppBinding struct {
-	RepoFullName    string
+	RepoFullName     string
 	ProductionBranch string
-	BindingID       string
+	BindingID        string
 }

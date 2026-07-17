@@ -49,13 +49,13 @@ const listenAddr = "127.0.0.1:8081"
 // runDeps is the DI seam for run — same pattern as vmmd / gatewayd so we can
 // exercise the listener lifecycle without binding :8081 from tests.
 type runDeps struct {
-	listen    func(network, addr string) (net.Listener, error)
-	store     func() state.Store
-	notif     func() Notifier
-	getenv    func(string) string
-	newSrv    func(addr string, h http.Handler) *http.Server
-	bgBefore  func(ctx context.Context, log *slog.Logger, srv *server) // optional pre-listen hook (e.g. DNS poller)
-	loginTTL  time.Duration                                            // dashboard magic-link expiry
+	listen   func(network, addr string) (net.Listener, error)
+	store    func() state.Store
+	notif    func() Notifier
+	getenv   func(string) string
+	newSrv   func(addr string, h http.Handler) *http.Server
+	bgBefore func(ctx context.Context, log *slog.Logger, srv *server) // optional pre-listen hook (e.g. DNS poller)
+	loginTTL time.Duration                                            // dashboard magic-link expiry
 }
 
 func defaultDeps() runDeps {

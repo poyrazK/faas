@@ -81,6 +81,6 @@ func SenderFromEnv(getenv func(string) string, log *slog.Logger) Sender {
 // Sentinel error for upstream-config failures (so tests can assert
 // on misconfig instead of substring-matching the warning string).
 var (
-	ErrResendMissingAPIKey = fmt.Errorf("mail: Resend APIKey required")
+	ErrResendMissingAPIKey  = fmt.Errorf("mail: Resend APIKey required")
 	ErrPostmarkMissingToken = fmt.Errorf("mail: Postmark ServerToken required")
 )

@@ -48,8 +48,8 @@ type MemStore struct {
 	// to the production shape.
 	deploymentLogs map[string][]LogEntry
 	deploymentSeq  map[string]int64
-	snapshots   []Snapshot
-	events      []Event
+	snapshots      []Snapshot
+	events         []Event
 	// usage holds one row per (instance, minute) — mirrors PgStore's
 	// usage_minutes PK. Aggregated into `usageByMonth` (per app, per
 	// calendar month) so UsageByMonth can keep returning the spec §10
@@ -104,9 +104,9 @@ func NewMemStore() *MemStore {
 		deploymentSeq:  map[string]int64{},
 		snapshots:      []Snapshot{},
 		events:         []Event{},
-		usage:        []usageMinute{},
-		usageByMonth: []Usage{},
-		idem:         map[string]idemEntry{},
+		usage:          []usageMinute{},
+		usageByMonth:   []Usage{},
+		idem:           map[string]idemEntry{},
 		// stripeByCustomer is the reverse-lookup map AccountByStripeCustomerID
 		// walks; populated by UpdateAccountStripeCustomerID.
 		stripeByCustomer: map[string]string{},

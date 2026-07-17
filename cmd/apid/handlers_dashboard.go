@@ -28,6 +28,7 @@ import (
 // a global switch statement that drifts from the route table.
 //
 // Path conventions:
+//
 //	GET /dashboard/                  → index
 //	GET /dashboard/apps              → apps list
 //	GET /dashboard/apps/{slug}       → app detail
@@ -204,12 +205,12 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 	limits := api.MustLimitsFor(acct.Plan)
 	view, _ := AccountFrom(r.Context())
 	page := dashboard.Page{Title: "Billing", Body: "billing", Account: dashboardAccountView(view), Data: dashboard.BillingData{
-		Plan:      string(acct.Plan),
-		RAMMB:     limits.RAMMB,
-		Included:  int64(limits.IncludedGBHours),
-		AppsCap:   limits.DeployedApps,
-		AppLayer:  limits.AppLayerMaxMB,
-		IdleSec:   limits.IdleTimeoutS,
+		Plan:     string(acct.Plan),
+		RAMMB:    limits.RAMMB,
+		Included: int64(limits.IncludedGBHours),
+		AppsCap:  limits.DeployedApps,
+		AppLayer: limits.AppLayerMaxMB,
+		IdleSec:  limits.IdleTimeoutS,
 	}}
 	if err := dashboard.Render(w, log, page); err != nil {
 		renderProblem(w, log, err)
