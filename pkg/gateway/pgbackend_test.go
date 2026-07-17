@@ -85,10 +85,30 @@ func TestPGBackend_WakeSeedsTargetThenEvict(t *testing.T) {
 	if !ok || addr != "10.0.0.9:8080" {
 		t.Fatalf("target after wake = %q ok=%v", addr, ok)
 	}
-	// instance_changed → evict; next request must re-wake.
+	// The wake also records addr→instance so the last_request_at flush can
+	// attribute touches.
+	if id, ok := b.InstanceIDForAddr("10.0.0.9:8080"); !ok || id != "i-fake" {
+		t.Fatalf("InstanceIDForAddr = %q,%v, want i-fake,true", id, ok)
+	}
+	// instance_changed → evict; next request must re-wake, and the addr→instance
+	// mapping is gone (the instance parked).
 	b.EvictTarget("app-1")
 	if _, ok := b.Target("app-1"); ok {
 		t.Fatal("target survived eviction")
+	}
+	if _, ok := b.InstanceIDForAddr("10.0.0.9:8080"); ok {
+		t.Fatal("addr→instance survived eviction")
+	}
+}
+
+func TestPGBackend_WakeInstanceIDFromScheduler(t *testing.T) {
+	sched := gateway.NewFakeScheduler("10.0.0.5:8080").WithInstanceID("i-42")
+	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, sched, nil)
+	if err := b.Wake(context.Background(), "app-9"); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if id, ok := b.InstanceIDForAddr("10.0.0.5:8080"); !ok || id != "i-42" {
+		t.Errorf("InstanceIDForAddr = %q,%v, want i-42,true", id, ok)
 	}
 }
 

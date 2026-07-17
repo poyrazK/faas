@@ -49,12 +49,15 @@ func TestClientWake_ReturnsAddr(t *testing.T) {
 			return sched.WakeResult{InstanceID: "i-1", Addr: "10.100.0.2:8080", Method: vmmdpb.WakeMethod_WAKE_RESTORE}, nil
 		},
 	})
-	addr, err := c.Wake(context.Background(), "app-1")
+	instanceID, addr, err := c.Wake(context.Background(), "app-1")
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
 	if addr != "10.100.0.2:8080" {
 		t.Errorf("addr = %q", addr)
+	}
+	if instanceID != "i-1" {
+		t.Errorf("instanceID = %q, want i-1", instanceID)
 	}
 }
 
@@ -64,7 +67,7 @@ func TestClientWake_CapacityLiftsToProblem(t *testing.T) {
 			return sched.WakeResult{}, api.ErrCapacity("no RAM headroom")
 		},
 	})
-	_, err := c.Wake(context.Background(), "app-1")
+	_, _, err := c.Wake(context.Background(), "app-1")
 	if err == nil {
 		t.Fatal("expected capacity denial")
 	}
