@@ -164,3 +164,9 @@ type pgNotifier struct {
 func (p pgNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return db.Notify(ctx, p.pool, channel, payload)
 }
+
+// Subscribe hands the SSE handler a live channel stream from the
+// Postgres pool. Returns immediately if no channels are requested.
+func (p pgNotifier) Subscribe(ctx context.Context, channels []string) (<-chan db.Notification, func(), error) {
+	return db.Subscribe(ctx, p.pool, channels)
+}

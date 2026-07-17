@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -72,8 +73,14 @@ type Message struct {
 // Notifier is the slice of pgstore behaviour apid depends on. The production
 // server uses a db-backed Notifier; tests inject a no-op so they don't need a
 // running Postgres.
+//
+// Subscribe is added in M7.5 slice 6 to wire the SSE /v1/events
+// endpoint. It hands back a buffered channel of db.Notification for the
+// requested channels, plus a cancel func. The noop notifier returns an
+// empty stream that closes immediately.
 type Notifier interface {
 	Notify(ctx context.Context, channel, payload string) error
+	Subscribe(ctx context.Context, channels []string) (<-chan db.Notification, func(), error)
 }
 
 func newServer(store state.Store, log *slog.Logger, domain string, notif Notifier) *server {
@@ -160,6 +167,15 @@ type noopNotifier struct{}
 
 func (noopNotifier) Notify(_ context.Context, _, _ string) error { return nil }
 
+// Subscribe returns a closed channel immediately. The noop notifier
+// is the test/dev default; the SSE handler sees an EOF right away
+// and exits cleanly.
+func (noopNotifier) Subscribe(_ context.Context, _ []string) (<-chan db.Notification, func(), error) {
+	ch := make(chan db.Notification)
+	close(ch)
+	return ch, func() {}, nil
+}
+
 // handler builds the full Appendix A route table (Go 1.22 method+wildcard).
 // New routes append here; do not introduce per-feature sub-muxes.
 func (s *server) handler() http.Handler {
@@ -213,6 +229,12 @@ func (s *server) handler() http.Handler {
 	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept
 	// unsigned and trust the network boundary; ADR-007 hardening later).
 	mux.HandleFunc("POST /v1/webhooks/stripe", s.stripeWebhook)
+
+	// M7.5 SSE live-update (ADR-011). Handles session-cookie OR
+	// API-key auth itself — the cookie path is for the dashboard,
+	// the Bearer path for the CLI. NOT mounted behind s.auth so the
+	// cookie flow works without an API-key round trip.
+	mux.Handle("GET /v1/events", s.dashboardChain(s.eventsHandler(s.log)))
 
 	// Dashboard surface (M7.5, ADR-011). Lives behind gatewayd's
 	// /dashboard/* reverse-proxy (spec §11 single-public-listener).
