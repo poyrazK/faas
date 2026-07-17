@@ -89,6 +89,30 @@ func (s *PgStore) UpdateAccountStatus(ctx context.Context, id string, status Acc
 	return err
 }
 
+// ListAllAccounts returns every account. Meterd walks this on the quota
+// tick + hourly Stripe push; bounded by the customer count on the box.
+func (s *PgStore) ListAllAccounts(ctx context.Context) ([]Account, error) {
+	rows, err := s.pool.Query(ctx,
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at
+		 from accounts order by created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Account
+	for rows.Next() {
+		var a Account
+		var plan, status string
+		if err := rows.Scan(&a.ID, &a.Email, &plan, &status, &a.StripeCustomerID, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		a.Plan = api.Plan(plan)
+		a.Status = AccountStatus(status)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // --- api keys ----------------------------------------------------------------
 
 func (s *PgStore) CreateAPIKey(ctx context.Context, accountID string, hash []byte, label string) (APIKey, error) {
@@ -547,6 +571,27 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 	return scanInstances(rows)
 }
 
+// ListInstancesForAccount joins instances→apps in SQL so the meterd
+// quota loop can park every live instance for an account in one round
+// trip. Filtered to instances.state ∈ {WAKING, COLD_BOOTING, RUNNING,
+// SNAPSHOTTING} would be tempting, but the meterd caller's CountsForRAM
+// guard is the canonical filter — keeping the SQL narrow and the state
+// semantics in Go makes the test surface match both stores.
+func (s *PgStore) ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error) {
+	rows, err := s.pool.Query(ctx,
+		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at
+		 from instances i
+		 join apps a on a.id = i.app_id
+		 where a.account_id = $1
+		 order by i.started_at desc`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
 func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) error {
 	tag, err := s.pool.Exec(ctx, `update instances set state = $2 where id = $1`, id, state)
 	if err != nil {
@@ -726,6 +771,38 @@ func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time
 		if err := rows.Scan(&u.AccountID, &u.AppID, &u.Month, &u.MBSeconds, &u.Requests); err != nil {
 			return nil, err
 		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// UsageByHour returns per-app usage rolled up from the per-minute rows
+// in the [start, end) window. The Stripe pusher calls this hourly;
+// (start, end) is the [now-1h, now) hour window so the SQL is an
+// indexed range scan on usage_minutes.minute.
+func (s *PgStore) UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]Usage, error) {
+	rows, err := s.pool.Query(ctx,
+		`select account_id, app_id,
+		        date_trunc('hour', minute) as hour,
+		        sum(mb_seconds)::bigint as mb_seconds,
+		        sum(requests)::bigint as requests
+		 from usage_minutes
+		 where account_id = $1 and minute >= $2 and minute < $3
+		 group by account_id, app_id, hour
+		 order by app_id`,
+		accountID, start.UTC(), end.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Usage
+	for rows.Next() {
+		u := Usage{}
+		var hour time.Time
+		if err := rows.Scan(&u.AccountID, &u.AppID, &hour, &u.MBSeconds, &u.Requests); err != nil {
+			return nil, err
+		}
+		u.Month = hour
 		out = append(out, u)
 	}
 	return out, rows.Err()

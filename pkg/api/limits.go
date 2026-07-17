@@ -193,6 +193,18 @@ func MustLimitsFor(p Plan) Limits {
 	return l
 }
 
+// PlanIncludedGBHours returns the included GB-RAM-hours per calendar month
+// for the plan. Returns 0 for unknown plans so callers default to "no
+// quota band" rather than treating unknown as Free. The meter aggregator
+// (pkg/meter.CheckQuota) compares monthly usage against this number.
+func (p Plan) PlanIncludedGBHours() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.IncludedGBHours
+}
+
 // Valid reports whether p is a known plan.
 func (p Plan) Valid() bool {
 	_, ok := planLimits[p]

@@ -24,6 +24,10 @@ type Store interface {
 	AccountByKeyHash(ctx context.Context, hash []byte) (Account, error)
 	UpdateAccountPlan(ctx context.Context, id string, plan api.Plan) error
 	UpdateAccountStatus(ctx context.Context, id string, status AccountStatus) error
+	// ListAllAccounts returns every account. meterd walks it on every
+	// quota tick and every Stripe push; on a one-box that's bounded
+	// (Free + Hobby + Pro + Scale test accounts + a handful of paid).
+	ListAllAccounts(ctx context.Context) ([]Account, error)
 
 	// API keys.
 	CreateAPIKey(ctx context.Context, accountID string, hash []byte, label string) (APIKey, error)
@@ -91,6 +95,12 @@ type Store interface {
 	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
+	// ListInstancesForAccount returns every live instance belonging to an
+	// account. Used by the meterd quota loop to park everything when a Free
+	// account crosses 100 % (spec §4.7). Per-account scan is O(instances);
+	// on a one-box that's bounded by max_concurrency(plan) × apps, fine to
+	// run on the minute boundary.
+	ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error)
 	UpdateInstanceState(ctx context.Context, id, state string) error
 	// SetInstanceRuntime records the per-instance identity vmmd allocated on
 	// wake (netns, routable host IP, jail uid) and stamps started_at=now. schedd
@@ -119,6 +129,11 @@ type Store interface {
 	// Usage (apid reads for GET /v1/usage; meterd writes in production).
 	AppendUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error
 	UsageByMonth(ctx context.Context, accountID string, month time.Time) ([]Usage, error)
+	// UsageByHour returns the per-app usage rows whose minute ∈ [start,
+	// end). The Stripe pusher calls this hourly to compute the billable
+	// GB-RAM-hours for the past hour (spec §4.7, ADR-010). MemStore scans
+	// in memory; PgStore runs a SELECT … WHERE minute >= $2 AND minute < $3.
+	UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]Usage, error)
 
 	// Idempotency (spec §4.2: Idempotency-Key stored 24 h).
 	GetIdempotent(ctx context.Context, accountID, key string) (status int, body []byte, err error)
