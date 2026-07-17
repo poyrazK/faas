@@ -33,17 +33,26 @@ type nopReader struct{}
 func (nopReader) Read([]byte) (int, error) { return 0, io.EOF }
 func (nopReader) Close() error             { return nil }
 
-// fakePuller satisfies oci.Puller. digest is the value PullDigest returns.
-// layers and cfg are what PullLayers yields; set layersCfg to nil to make
-// PullLayers return an error.
+// fakePuller satisfies oci.Puller. digest is the value PullDigest returns;
+// cfg is what PullImageConfig returns. Set configErr / layerErr to make
+// the corresponding call fail; both come from the same source so the
+// "earliest failure" can be tested cleanly.
 type fakePuller struct {
 	digest    string
 	layersCfg *oci.PullLayersResult
 	layerErr  error
+	configErr error
 	cfg       oci.ImageConfig
 }
 
 func (f fakePuller) PullDigest(_ context.Context, _ string) (string, error) { return f.digest, nil }
+
+func (f fakePuller) PullImageConfig(_ context.Context, _ string) (oci.ImageConfig, error) {
+	if f.configErr != nil {
+		return oci.ImageConfig{}, f.configErr
+	}
+	return f.cfg, nil
+}
 
 func (f fakePuller) PullLayers(_ context.Context, digest string) (oci.PullLayersResult, error) {
 	if f.layerErr != nil {
@@ -57,11 +66,14 @@ func (f fakePuller) PullLayers(_ context.Context, digest string) (oci.PullLayers
 	return oci.PullLayersResult{Layers: r, Config: f.cfg, Digest: digest}, nil
 }
 
-// failingPuller makes PullDigest itself return err — exercises the earliest
+// failingPuller makes every puller call return err — exercises the earliest
 // failure path before any layer streaming happens.
 type failingPuller struct{ err error }
 
-func (f failingPuller) PullDigest(_ context.Context, _ string) (string, error) { return "", f.err }
+func (f failingPuller) PullDigest(_ context.Context, _ string) (string, error)  { return "", f.err }
+func (f failingPuller) PullImageConfig(_ context.Context, _ string) (oci.ImageConfig, error) {
+	return oci.ImageConfig{}, f.err
+}
 func (f failingPuller) PullLayers(_ context.Context, _ string) (oci.PullLayersResult, error) {
 	return oci.PullLayersResult{}, f.err
 }
@@ -401,11 +413,17 @@ func TestHandleDeployment_BuildsAppLayer_HappyPath(t *testing.T) {
 	}
 }
 
-// TestHandleDeployment_PullLayersError fails after digest resolution. The
-// deployment must be in `failed` and no prime notification may be sent.
+// TestHandleDeployment_PullLayersError fails inside the layer-streaming phase
+// (after PullImageConfig returns a valid config and manifest validation
+// passes). The deployment must be in `failed`, no prime notification may be
+// sent, and no Build must run.
 func TestHandleDeployment_PullLayersError(t *testing.T) {
 	h := newTestHarness(t, state.DeploymentKindImage, api.Plan("hobby"), "")
-	puller := fakePuller{digest: "sha256:abc", layerErr: errors.New("blob 404")}
+	puller := fakePuller{
+		digest:   "sha256:abc",
+		cfg:      oci.ImageConfig{Cmd: []string{"./app"}}, // makes PullImageConfig succeed
+		layerErr: errors.New("blob 404"),                  // makes PullLayers fail
+	}
 	handler := New(h.store, h.notif, puller, h.bld, "./init", h.appsR, silentLogger())
 
 	handler.HandleNotification(context.Background(), db.Notification{
@@ -513,6 +531,7 @@ func TestHandleDeployment_ClosesLayerReaders(t *testing.T) {
 
 	puller := fakePuller{
 		digest: "sha256:abc",
+		cfg:    oci.ImageConfig{Cmd: []string{"sh"}}, // satisfies the new PullImageConfig fail-fast check
 		layersCfg: &oci.PullLayersResult{
 			Layers: []io.ReadCloser{spy1, spy2},
 			Config: oci.ImageConfig{Cmd: []string{"sh"}},
@@ -561,6 +580,7 @@ func TestHandleDeployment_ClosesLayerReadersOnBuildError(t *testing.T) {
 
 	puller := fakePuller{
 		digest: "sha256:abc",
+		cfg:    oci.ImageConfig{Cmd: []string{"sh"}}, // satisfies the new PullImageConfig fail-fast check
 		layersCfg: &oci.PullLayersResult{
 			Layers: []io.ReadCloser{spy1, spy2},
 			Config: oci.ImageConfig{Cmd: []string{"sh"}},
@@ -579,4 +599,64 @@ func TestHandleDeployment_ClosesLayerReadersOnBuildError(t *testing.T) {
 		t.Errorf("layer readers not closed on Builder.Build error: spy1.closed=%v spy2.closed=%v",
 			spy1.closed, spy2.closed)
 	}
+}
+
+// TestHandleDeployment_NoCmdImageSkipsLayerStream is the regression for
+// review issue #6: an image without Cmd must fail fast, BEFORE any layer
+// blob is fetched. We assert PullLayers was NEVER called (callCount == 0)
+// and the deployment landed in `failed`.
+func TestHandleDeployment_NoCmdImageSkipsLayerStream(t *testing.T) {
+	h := newTestHarness(t, state.DeploymentKindImage, api.Plan("hobby"), "")
+
+	puller := &countingPuller{
+		imageCfg: oci.ImageConfig{ /* no Cmd */ },
+		layers:   []io.ReadCloser{nopReader{}, nopReader{}},
+	}
+	handler := New(h.store, h.notif, puller, h.bld, "./init", h.appsR, silentLogger())
+
+	handler.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifyDeploymentChanged,
+		Payload: `{"app_id":"` + h.app.ID + `","to":"` + h.dep.ID + `","kind":"image","image_digest":"sha256:abc"}`,
+	})
+
+	got, _ := h.store.DeploymentByID(context.Background(), h.dep.ID)
+	if got.Status != state.DeployFailed {
+		t.Errorf("status = %s, want failed", got.Status)
+	}
+	if !strings.Contains(got.Error, "manifest invalid") {
+		t.Errorf("error should mention manifest invalidation, got %q", got.Error)
+	}
+	if puller.pullLayersCount != 0 {
+		t.Errorf("PullLayers called %d times — issue #6 says it should be 0 when Cmd is missing",
+			puller.pullLayersCount)
+	}
+	if len(h.bld.calls) != 0 {
+		t.Errorf("Builder.Build should not run when manifest is invalid; calls=%d", len(h.bld.calls))
+	}
+}
+
+// countingPuller satisfies oci.Puller and counts how many times each method
+// is called. Used by TestHandleDeployment_NoCmdImageSkipsLayerStream to
+// prove fail-fast behavior end-to-end against the interface, not just via
+// the layered fakePuller.
+type countingPuller struct {
+	imageCfg oci.ImageConfig
+	layers   []io.ReadCloser
+
+	pullDigestCount    int
+	pullImageCfgCount  int
+	pullLayersCount    int
+}
+
+func (p *countingPuller) PullDigest(_ context.Context, _ string) (string, error) {
+	p.pullDigestCount++
+	return "sha256:abc", nil
+}
+func (p *countingPuller) PullImageConfig(_ context.Context, _ string) (oci.ImageConfig, error) {
+	p.pullImageCfgCount++
+	return p.imageCfg, nil
+}
+func (p *countingPuller) PullLayers(_ context.Context, _ string) (oci.PullLayersResult, error) {
+	p.pullLayersCount++
+	return oci.PullLayersResult{Layers: p.layers, Config: p.imageCfg, Digest: "sha256:abc"}, nil
 }

@@ -41,23 +41,37 @@ type PullLayersResult struct {
 	Digest string
 }
 
-// Puller fetches OCI data for imaged. PullDigest resolves a reference to its
-// canonical digest; PullLayers streams the layers + config blob the build
-// pipeline consumes.
+// Puller fetches OCI data for imaged.
+//
+// PullDigest resolves a reference to its canonical digest.
+// PullImageConfig fetches only the small image-config blob and parses it —
+// no layer streaming. The build pipeline uses this BEFORE PullLayers so a
+// manifest that can't become a valid AppManifest (e.g. no Cmd) is rejected
+// without fetching dozens of MB of layer blobs (review issue #6, DoS
+// amplification on public registries).
+// PullLayers streams every layer blob along with the parsed config; it
+// internally uses PullImageConfig's manifest handling so the two paths
+// can't drift.
 type Puller interface {
 	PullDigest(ctx context.Context, ref string) (string, error)
-	PullLayers(ctx context.Context, digest string) (PullLayersResult, error)
+	PullImageConfig(ctx context.Context, ref string) (ImageConfig, error)
+	PullLayers(ctx context.Context, ref string) (PullLayersResult, error)
 }
 
 // DefaultPuller is the offline default — it echoes the reference back from
-// PullDigest and returns no layers from PullLayers. imaged.New substitutes it
-// when no puller is injected; the shape pkg/imaged tests exercise.
+// PullDigest / PullImageConfig and returns no layers from PullLayers.
+// imaged.New substitutes it when no puller is injected; the shape
+// pkg/imaged tests exercise.
 //
 // Production wires oci.RegistryClient, which serves real layer blobs.
 type DefaultPuller struct{}
 
 func (DefaultPuller) PullDigest(_ context.Context, ref string) (string, error) {
 	return ref, nil
+}
+
+func (DefaultPuller) PullImageConfig(_ context.Context, _ string) (ImageConfig, error) {
+	return ImageConfig{}, nil
 }
 
 func (DefaultPuller) PullLayers(_ context.Context, digest string) (PullLayersResult, error) {

@@ -178,25 +178,20 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 		return err
 	}
 
-	// Stream the layer blobs + image config from the registry. Each ReadCloser
-	// MUST be closed; we wrap them in io.NopCloser-shaping io.Reader so the
-	// rootfs.Builder can apply them as gzip tarballs.
-	pulled, err := h.oci.PullLayers(ctx, digest)
+	// Cheap fail-fast: fetch only the image-config blob (small) and validate
+	// before streaming any layer blobs. A no-Cmd image would otherwise waste
+	// dozens of MB of layer pulls (review issue #6).
+	imageCfg, err := h.oci.PullImageConfig(ctx, digest)
 	if err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull: "+err.Error())
-		return fmt.Errorf("imaged: pull layers: %w", err)
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull config: "+err.Error())
+		return fmt.Errorf("imaged: pull image config: %w", err)
 	}
-	defer func() {
-		for _, r := range pulled.Layers {
-			_ = r.Close()
-		}
-	}()
 
 	// App config (per-field override) wins over image config per the deploy
 	// contract. For now the only per-deploy override is Entrypoint, since the
 	// deployments table has no structured config column yet — richer overrides
 	// arrive with M5.1 / a new manifest jsonb column.
-	manifest := manifestFromImageConfig(pulled.Config)
+	manifest := manifestFromImageConfig(imageCfg)
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
 	}
@@ -204,6 +199,20 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "manifest invalid: "+err.Error())
 		return fmt.Errorf("imaged: validate manifest: %w", err)
 	}
+
+	// Validation passed — now stream the layer blobs. Each ReadCloser MUST be
+	// closed by the defer below; we re-type each as an io.Reader for
+	// rootfs.Builder (BuildInput.Layers is []io.Reader).
+	pulled, err := h.oci.PullLayers(ctx, digest)
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull layers: "+err.Error())
+		return fmt.Errorf("imaged: pull layers: %w", err)
+	}
+	defer func() {
+		for _, r := range pulled.Layers {
+			_ = r.Close()
+		}
+	}()
 
 	outImage := filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
 	result, err := h.builder.Build(ctx, rootfs.BuildInput{
