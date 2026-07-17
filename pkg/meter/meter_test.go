@@ -47,9 +47,9 @@ func (f *fakeNotifier) byChannel(ch string) []capturedNotify {
 // fakeParker records ParkInstance calls. Returns nil so meterd's
 // quota loop continues.
 type fakeParker struct {
-	mu        sync.Mutex
-	parked    []parkedCall
-	parkErr   error
+	mu      sync.Mutex
+	parked  []parkedCall
+	parkErr error
 }
 
 type parkedCall struct {

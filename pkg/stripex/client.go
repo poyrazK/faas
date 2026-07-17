@@ -26,12 +26,12 @@ type PushDedupe interface {
 // primitive over a single stripe-go call, so testing can substitute a
 // recording stub via the interfaces in this file.
 type Client struct {
-	store   state.Store
-	dedupe  PushDedupe
-	apiKey  string
-	secret  string
-	log     *slog.Logger
-	now     func() time.Time
+	store  state.Store
+	dedupe PushDedupe
+	apiKey string
+	secret string
+	log    *slog.Logger
+	now    func() time.Time
 	// PlanPriceIDs is the lookup map EnsurePlanProducts populates and
 	// EnsureCustomer reads. key = plan:price-kind (e.g. "hobby:monthly").
 	PlanPriceIDs map[string]string

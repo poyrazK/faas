@@ -43,9 +43,9 @@ type MemStore struct {
 	// usage_minutes PK. Aggregated into `usageByMonth` (per app, per
 	// calendar month) so UsageByMonth can keep returning the spec §10
 	// per-app shape unchanged. (M7 fix; the previous shape was wrong.)
-	usage         []usageMinute
-	usageByMonth  []Usage
-	idem          map[string]idemEntry
+	usage        []usageMinute
+	usageByMonth []Usage
+	idem         map[string]idemEntry
 	// stripeByCustomer is the reverse-lookup index used by
 	// AccountByStripeCustomerID; keyed by Stripe `cus_…` ID.
 	stripeByCustomer map[string]string

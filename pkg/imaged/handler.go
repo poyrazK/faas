@@ -147,9 +147,9 @@ type snapshotWrittenPayload struct {
 //
 //   - kind=image + app.Type=app    → pull OCI digest, build app-layer ext4.
 //   - kind=image + app.Type=function → apply customer's source tarball +
-//                                     copy the function-runner binary
-//                                     into the layer; the manifest
-//                                     points at the runner.
+//     copy the function-runner binary
+//     into the layer; the manifest
+//     points at the runner.
 //
 // Both paths share the same imaging→snapshotting→live handshake via
 // snapshot_prime (ADR-018). Tarball/dockerfile deployments start via

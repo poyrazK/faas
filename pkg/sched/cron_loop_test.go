@@ -17,7 +17,7 @@ import (
 // dispatch loop's path is fully exercised. Records every wake for the
 // test to inspect.
 type fakeWakeVMM struct {
-	calls  atomic.Int64
+	calls   atomic.Int64
 	lastApp atomic.Value // last wake's app_id
 }
 
@@ -28,9 +28,9 @@ func (f *fakeWakeVMM) CreateColdBoot(_ context.Context, instanceID string, _ App
 	// guest is 10.0.0.2/30 behind tap0 inside its own netns" so that one
 	// snapshot restores as N instances). Netns naming is synthetic.
 	return &WakeOutcome{
-		Method:  0, // WAKE_COLD_BOOT
-		HostIP:  "10.100.0.2",
-		Netns:   "netns-" + instanceID,
+		Method:   0, // WAKE_COLD_BOOT
+		HostIP:   "10.100.0.2",
+		Netns:    "netns-" + instanceID,
 		LeaseUID: 20000,
 	}, nil
 }

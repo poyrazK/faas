@@ -46,15 +46,19 @@ func (l *Loop) Run(ctx context.Context) error {
 	sampler := NewSampler(l.store, l.now)
 	pusher := NewPusher(l.store, l.stripe, l.log, l.now)
 	errc := make(chan error, 3)
-	go func() { errc <- l.runTicks(ctx, l.cfg.SampleInterval, func(c context.Context) error {
-		_, err := sampler.SampleAndRoll(c)
-		return err
-	}, "sample") }()
+	go func() {
+		errc <- l.runTicks(ctx, l.cfg.SampleInterval, func(c context.Context) error {
+			_, err := sampler.SampleAndRoll(c)
+			return err
+		}, "sample")
+	}()
 	go func() { errc <- l.runQuotaTicks(ctx) }()
-	go func() { errc <- l.runTicks(ctx, l.cfg.StripeInterval, func(c context.Context) error {
-		_, err := pusher.PushHour(c)
-		return err
-	}, "stripe") }()
+	go func() {
+		errc <- l.runTicks(ctx, l.cfg.StripeInterval, func(c context.Context) error {
+			_, err := pusher.PushHour(c)
+			return err
+		}, "stripe")
+	}()
 	// Block until either ctx cancels or a hard error fires.
 	select {
 	case <-ctx.Done():

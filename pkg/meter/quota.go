@@ -44,14 +44,14 @@ type QuotaAction struct {
 // Behavior (spec §4.7, ADR-010, financial-model §1):
 //
 //   - Free + ≥100 %:    status → suspended; park every live instance; emit
-//                       `billing_past_due` pg_notify so the dashboard sees
-//                       it. Customer can still query usage; wake returns
-//                       402 (apid auth gate, handlers_ext.go).
+//     `billing_past_due` pg_notify so the dashboard sees
+//     it. Customer can still query usage; wake returns
+//     402 (apid auth gate, handlers_ext.go).
 //   - Free + <100 %:    if the account is still in `suspended`, restore
-//                       it to `active` (the customer paid/refreshed).
+//     it to `active` (the customer paid/refreshed).
 //   - Paid + ≥100 %:    overage accrues; emit `quota_warning` once per
-//                       UTC day (caller de-duplicates via last-warning
-//                       column on the account row).
+//     UTC day (caller de-duplicates via last-warning
+//     column on the account row).
 //   - Paid + <100 %:    nothing.
 //
 // The Free restore step matters: pg_notify from Stripe's

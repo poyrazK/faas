@@ -35,11 +35,11 @@ func NewSampler(store state.Store, now func() time.Time) *Sampler {
 // error so callers (the test surface, telemetry) can observe what was
 // billed without re-reading the store.
 type RolledRow struct {
-	InstanceID string
-	AppID      string
-	AccountID  string
-	Minute     time.Time
-	MBSeconds  int64
+	InstanceID  string
+	AppID       string
+	AccountID   string
+	Minute      time.Time
+	MBSeconds   int64
 	AdmissionMB int
 }
 
@@ -71,12 +71,12 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 				continue
 			}
 			row := RolledRow{
-				InstanceID: ins.ID,
-				AppID:      app.ID,
-				AccountID:  app.AccountID,
-				Minute:     minute,
+				InstanceID:  ins.ID,
+				AppID:       app.ID,
+				AccountID:   app.AccountID,
+				Minute:      minute,
 				AdmissionMB: ins.RAMMB + api.PerVMOverheadMB,
-				MBSeconds:  MBSecondsPerMinute(ins.RAMMB + api.PerVMOverheadMB),
+				MBSeconds:   MBSecondsPerMinute(ins.RAMMB + api.PerVMOverheadMB),
 			}
 			if err := s.store.AppendUsage(ctx, app.AccountID, app.ID, ins.ID, minute, row.MBSeconds, 0); err != nil {
 				return out, err

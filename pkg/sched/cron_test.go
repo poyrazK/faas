@@ -40,12 +40,12 @@ func (f *fakeSynth) SynthesizeRequest(_ context.Context, appID, method, path str
 func TestParseSchedule_AcceptsCommonExpressions(t *testing.T) {
 	t.Parallel()
 	good := []string{
-		"* * * * *",     // every minute
-		"*/5 * * * *",   // every 5 minutes
-		"0 3 * * *",     // daily at 03:00
-		"0 0 * * 0",     // weekly on Sunday
-		"15 14 1 * *",   // monthly at 14:15 on the 1st
-		"30 9 * * 1-5",  // weekdays at 09:30
+		"* * * * *",    // every minute
+		"*/5 * * * *",  // every 5 minutes
+		"0 3 * * *",    // daily at 03:00
+		"0 0 * * 0",    // weekly on Sunday
+		"15 14 1 * *",  // monthly at 14:15 on the 1st
+		"30 9 * * 1-5", // weekdays at 09:30
 	}
 	for _, expr := range good {
 		t.Run(expr, func(t *testing.T) {
@@ -63,7 +63,7 @@ func TestParseSchedule_RejectsMalformed(t *testing.T) {
 	bad := []string{
 		"",
 		"not a cron",
-		"* * *",      // too few fields
+		"* * *",       // too few fields
 		"99 99 * * *", // out-of-range hour + minute
 	}
 	for _, expr := range bad {

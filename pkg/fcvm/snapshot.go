@@ -72,9 +72,9 @@ type RestoreSpec struct {
 	MemPath     string
 	VMStatePath string
 	Tap         string
-	KernelPath  string   // /srv/fc/base/vmlinux-6.1.x — re-staged as basename in chroot
-	BasePath    string   // drive0 shared ro base rootfs
-	LayerPath   string   // drive1 per-app layer (overlay upper)
+	KernelPath  string // /srv/fc/base/vmlinux-6.1.x — re-staged as basename in chroot
+	BasePath    string // drive0 shared ro base rootfs
+	LayerPath   string // drive1 per-app layer (overlay upper)
 }
 
 // SnapshotSpec is where to write a new snapshot's files (spec §4.4).
