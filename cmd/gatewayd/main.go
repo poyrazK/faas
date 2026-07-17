@@ -204,7 +204,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if apidTarget == "" {
 		apidTarget = "http://127.0.0.1:8081"
 	}
-	publicHandler := newDashboardProxy(apidTarget, handler, log)
+	dashboardHandler := newDashboardProxy(apidTarget, handler, log)
+
+	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
+	// to githubd's loopback listener (ADR-012, §11 single-public-
+	// listener invariant). githubd stays loopback-only so the
+	// webhook secret is the only secret on this path that has to
+	// leave githubd's own config (it doesn't — it lives in
+	// gatewayd's env so the verify happens before the proxy hop).
+	githubdTarget := os.Getenv("FAAS_GITHUBD_LOOPBACK")
+	if githubdTarget == "" {
+		githubdTarget = "http://127.0.0.1:8083"
+	}
+	githubdSecret := loadGithubWebhookSecret(osGetenv)
+	publicHandler := newGithubdProxy(githubdTarget, githubdSecret, dashboardHandler, log)
 	srv := deps.newSrv(listenAddr, publicHandler)
 	public := srv
 	public.Addr = listenAddr

@@ -1,0 +1,26 @@
+{
+  "ref": "refs/heads/main",
+  "before": "0000000000000000000000000000000000000000",
+  "after": "deadbeefcafebabe1234567890abcdef12345678",
+  "repository": {
+    "id": 12345,
+    "name": "api",
+    "full_name": "octo/api",
+    "html_url": "https://github.com/octo/api",
+    "default_branch": "main"
+  },
+  "pusher": {
+    "name": "alice",
+    "email": "alice@example.test"
+  },
+  "sender": {
+    "login": "alice",
+    "id": 1
+  },
+  "commits": [
+    {
+      "id": "deadbeefcafebabe1234567890abcdef12345678",
+      "message": "Add /healthz handler"
+    }
+  ]
+}
