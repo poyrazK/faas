@@ -21,18 +21,6 @@ func withFakeCgroupRoot(t *testing.T) string {
 	return dir
 }
 
-// withCgroupRootAt redirects cgroupRoot to an explicit path for the
-// test, restoring the prior value on cleanup. The metal tests use this
-// to point at the real /sys/fs/cgroup, which is where the jailer
-// actually writes the per-VM scope -- otherwise writeMemoryMax probes
-// a path that was never written to and returns IsNotExist.
-func withCgroupRootAt(t *testing.T, path string) {
-	t.Helper()
-	saved := cgroupRoot
-	cgroupRoot = path
-	t.Cleanup(func() { cgroupRoot = saved })
-}
-
 func TestWriteMemoryMaxWritesBytesPlusOverhead(t *testing.T) {
 	dir := withFakeCgroupRoot(t)
 	inst := "foo"

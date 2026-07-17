@@ -25,3 +25,9 @@ vmlinux-*
 # which are the directories holding the actual source.
 /init
 /imaged
+
+# Stray binaries at repo root from `make metal-lima` / local guest-init
+# build (cross-compiled for the Lima arm64 guest so the Dockerfile's
+# `COPY guest-init` can stage it into builder-base). Distinct from
+# guest/init/, which is the directory holding the source.
+/guest-init
