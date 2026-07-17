@@ -390,16 +390,40 @@ func (v *JailerVMM) apiCallWithClient(ctx context.Context, client *http.Client, 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
+	// startJailer returns as soon as the jailer process is forked — the
+	// Firecracker API socket is created by firecracker itself a few ms
+	// later. On a slow nested-KVM guest (Lima arm64) the first POST
+	// races the socket creation; retry briefly before giving up so the
+	// snapshot-restore path isn't held hostage to the boot timing.
+	const maxAttempts = 20
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// Each attempt needs a fresh body reader because http.Client.Do
+		// consumes the body on send.
+		req.Body = io.NopCloser(bytes.NewReader(buf))
+		req.ContentLength = int64(len(buf))
+		resp, err := client.Do(req)
+		if err == nil {
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode >= 300 {
+				msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+				return fmt.Errorf("firecracker %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))
+			}
+			return nil
+		}
+		lastErr = err
+		// Short backoff: 5ms × 20 = 100ms total. The socket appears in
+		// single-digit ms on bare metal; nested KVM needs ~50ms.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("firecracker %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))
-	}
-	return nil
+	return lastErr
 }
 
 // stageReadOnly hardlinks a shared read-only source (kernel, drive0 base, or a
