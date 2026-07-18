@@ -1525,25 +1525,12 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	//     tx, our DELETE matches 0 rows and we leave the row alone.
 	//   - RowsAffected == 1 → row was in deleted_pending, our delete
 	//     locks it for the rest of the tx, child cascades are safe.
-	tag, err := tx.Exec(ctx,
-		`delete from accounts where id = $1 and status = 'deleted_pending'`, id)
-	if err != nil {
-		return fmt.Errorf("state: delete accounts for %s: %w", id, err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-
-	// Walk the FK graph in dependency order. The subquery pattern mirrors
-	// what apid already uses for per-app cascades; we walk explicitly
-	// (instead of `ON DELETE CASCADE`) to keep the schema stable.
 	//
-	// `events` is included (per spec §17 G6 right-to-erasure): audit
-	// rows whose subject or data payload references the account must
-	// not outlive the customer's data. The data->>'account_id' predicate
-	// is unindexed today; for the one-box this is fine (small event
-	// count, scan cost stays in the microseconds) and a follow-up ADR
-	// can add a GIN(events.data) when the volume warrants it.
+	// IMPORTANT: the sentinel runs LAST, after every child table has
+	// been emptied. The original draft put the parent DELETE first; that
+	// trips the FK constraint on `apps.account_id → accounts.id` and
+	// aborts the whole transaction. Walking children first lets the
+	// `delete from accounts` at the bottom be the natural sentinel.
 	steps := []struct {
 		name string
 		sql  string
@@ -1569,14 +1556,35 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		{"api_keys", `delete from api_keys where account_id = $1`},
 		{"idempotency_keys", `delete from idempotency_keys where account_id = $1`},
 		{"usage_minutes", `delete from usage_minutes where account_id = $1`},
+		// `events` is included (per spec §17 G6 right-to-erasure):
+		// audit rows whose subject or payload references the account
+		// must not outlive the customer's data. The data->>'account_id'
+		// predicate is unindexed today; for the one-box this is fine
+		// (small event count, scan cost stays in the microseconds) and
+		// a follow-up ADR can add a GIN(events.data) when the volume
+		// warrants it.
 		{"events", `delete from events
 		   where subject = $1::uuid
-		      or (data ? 'account_id' and data->>'account_id' = $1)`},
+		      or (data ? 'account_id' and data->>'account_id' = $1::text)`},
 	}
 	for _, step := range steps {
 		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
 			return fmt.Errorf("state: delete %s for account %s: %w", step.name, id, err)
 		}
+	}
+
+	// Walk children first so the FK back to accounts is empty by the
+	// time this fires. The conditional WHERE re-checks status in case
+	// POST /v1/account/restore raced between the walk and here — if it
+	// did, RowsAffected == 0 and we surface ErrNotFound, leaving every
+	// child row in place.
+	tag, err := tx.Exec(ctx,
+		`delete from accounts where id = $1 and status = 'deleted_pending'`, id)
+	if err != nil {
+		return fmt.Errorf("state: delete accounts for %s: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: commit delete account %s: %w", id, err)

@@ -9,8 +9,8 @@ package state_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -56,43 +56,54 @@ func pgStoreAccountDeletionWithPool(t *testing.T) pgDeps {
 // to walk. Returns the account id.
 func seedFullAccount(t *testing.T, s *state.PgStore, ctx context.Context) (string, error) {
 	t.Helper()
-	acct, err := s.CreateAccount(ctx, "g6@example.com", api.PlanHobby)
+	acctID, _, err := seedFullAccountWithDep(t, s, ctx)
+	return acctID, err
+}
+
+// seedFullAccountWithDep is the seedFullAccount variant that also
+// returns the seeded deployment id. Tests that need to create a new
+// instance (CreateInstance requires a valid deployment_id UUID) call
+// this instead.
+func seedFullAccountWithDep(t *testing.T, s *state.PgStore, ctx context.Context) (string, string, error) {
+	t.Helper()
+	email := fmt.Sprintf("g6+%s@example.com", t.Name())
+	acct, err := s.CreateAccount(ctx, email, api.PlanHobby)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	app, err := s.CreateApp(ctx, state.App{
-		AccountID: acct.ID, Slug: "g6-app", Type: state.AppTypeApp,
+		AccountID: acct.ID, Slug: fmt.Sprintf("g6-app-%s", t.Name()), Type: state.AppTypeApp,
 		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	dep, err := s.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage,
 		ImageDigest: "sha256:abc", Status: state.DeployLive,
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if _, err := s.CreateBuild(ctx, dep.ID, state.DeploymentKindDockerfile, 4096, "/tmp/log"); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if _, err := s.CreateInstance(ctx, app.ID, dep.ID, "running", 256); err != nil {
-		return "", err
+		return "", "", err
 	}
-	if _, err := s.CreateCustomDomain(ctx, "g6.example.com", app.ID, "tok"); err != nil {
-		return "", err
+	if _, err := s.CreateCustomDomain(ctx, fmt.Sprintf("g6-%s.example.com", t.Name()), app.ID, "tok"); err != nil {
+		return "", "", err
 	}
 	if _, err := s.CreateCron(ctx, app.ID, "*/5 * * * *", "/healthz", true); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := s.UpsertAppSecret(ctx, acct.ID, app.ID, "STRIPE_KEY", []byte("ct")); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if _, err := s.CreateAPIKey(ctx, acct.ID, []byte("deadbeefcafebabe"), "test"); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return acct.ID, nil
+	return acct.ID, dep.ID, nil
 }
 
 func TestPg_MarkAccountDeletionPending_Idempotent(t *testing.T) {
@@ -188,6 +199,11 @@ func TestPg_DeleteAccount_CascadesAllRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	// DeleteAccount is a conditional sentinel — it only fires for
+	// rows already in deleted_pending. Match the apid handler shape.
+	if err := s.MarkAccountDeletionPending(ctx, acctID); err != nil {
+		t.Fatalf("MarkAccountDeletionPending: %v", err)
+	}
 	if err := s.DeleteAccount(ctx, acctID); err != nil {
 		t.Fatalf("DeleteAccount: %v", err)
 	}
@@ -227,6 +243,9 @@ func TestPg_DeleteAccount_TwiceIsErrNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	if err := s.MarkAccountDeletionPending(ctx, acctID); err != nil {
+		t.Fatalf("MarkAccountDeletionPending: %v", err)
+	}
 	if err := s.DeleteAccount(ctx, acctID); err != nil {
 		t.Fatalf("first delete: %v", err)
 	}
@@ -242,7 +261,7 @@ func TestPg_DeleteAccount_TwiceIsErrNotFound(t *testing.T) {
 // this round-trip only lives in PgStore.
 func TestPg_UsageByAccount_AggregatesByMonth(t *testing.T) {
 	s, ctx := pgStore(t)
-	acctID, err := seedFullAccount(t, s, ctx)
+	acctID, depID, err := seedFullAccountWithDep(t, s, ctx)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -252,7 +271,7 @@ func TestPg_UsageByAccount_AggregatesByMonth(t *testing.T) {
 		t.Fatalf("ListApps: %v", err)
 	}
 	app := apps[0]
-	ins, err := s.CreateInstance(ctx, app.ID, "", "running", 256)
+	ins, err := s.CreateInstance(ctx, app.ID, depID, "running", 256)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -285,10 +304,14 @@ func TestPg_UsageByAccount_AggregatesByMonth(t *testing.T) {
 // Seeds two event rows against the account: one keyed by subject, one
 // keyed by data->>account_id. DeleteAccount must remove both.
 func TestPg_DeleteAccount_CascadesEvents(t *testing.T) {
-	s, ctx := pgStore(t)
+	d := pgStoreAccountDeletionWithPool(t)
+	s, ctx, pool := d.store, d.ctx, d.pool
 	acctID, err := seedFullAccount(t, s, ctx)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
+	}
+	if err := s.MarkAccountDeletionPending(ctx, acctID); err != nil {
+		t.Fatalf("MarkAccountDeletionPending: %v", err)
 	}
 	subject := acctID // events.subject is uuid; id is already uuid
 	payload := []byte(`{"account_id":"` + acctID + `","note":"GDPR export"}`)
@@ -298,35 +321,33 @@ func TestPg_DeleteAccount_CascadesEvents(t *testing.T) {
 	if err := s.AppendEvent(ctx, "test", "export", nil, payload); err != nil {
 		t.Fatalf("AppendEvent data: %v", err)
 	}
-	// Pre-condition: events exist.
-	events, err := s.ListEvents(ctx, "", 1000)
-	if err != nil {
-		t.Fatalf("ListEvents pre: %v", err)
+	// Pre-condition: both event rows exist. We can't use ListEvents("")
+	// here — the PgStore implementation filters by subject IS NOT NULL
+	// (WHERE subject = NULL matches nothing), which would mask the data-
+	// keyed event we just inserted. Use a raw count against the table
+	// instead — this is a deletion-cascade test, so reading the table
+	// directly is honest.
+	var n int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from events where data->>'account_id' = $1::text`, acctID).Scan(&n); err != nil {
+		t.Fatalf("count pre: %v", err)
 	}
-	if len(events) < 2 {
-		t.Fatalf("precondition: want ≥2 events, got %d", len(events))
+	if n != 2 {
+		t.Fatalf("precondition: want 2 events keyed to account, got %d", n)
 	}
 
 	if err := s.DeleteAccount(ctx, acctID); err != nil {
 		t.Fatalf("DeleteAccount: %v", err)
 	}
 
-	events, err = s.ListEvents(ctx, "", 1000)
-	if err != nil {
-		t.Fatalf("ListEvents post: %v", err)
+	// Post-condition: no event with subject=acctID or data->>account_id=acctID.
+	if err := pool.QueryRow(ctx,
+		`select count(*) from events where subject = $1::uuid or data->>'account_id' = $1::text`,
+		acctID).Scan(&n); err != nil {
+		t.Fatalf("count post: %v", err)
 	}
-	for _, e := range events {
-		if e.Subject != nil && e.Subject.String() == acctID {
-			t.Errorf("event with subject=%s survived DeleteAccount", acctID)
-		}
-		if len(e.Data) > 0 {
-			var got map[string]string
-			if jerr := json.Unmarshal(e.Data, &got); jerr == nil {
-				if got["account_id"] == acctID {
-					t.Errorf("event with data.account_id=%s survived DeleteAccount", acctID)
-				}
-			}
-		}
+	if n != 0 {
+		t.Errorf("want 0 events after DeleteAccount, got %d", n)
 	}
 }
 
