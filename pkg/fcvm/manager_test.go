@@ -111,7 +111,7 @@ func (v *fakeVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) error 
 		return err
 	}
 	// Mirror the production JailerVMM.Restore: after /snapshot/load, dial the
-	// vsock and trigger the resume hook. ADR-022. The test then sees the call
+// vsock and trigger the resume hook. ADR-022. The test then sees the call
 	// on v.resumeHookCalls (used by TestWakeRestore_*) and surfaces any
 	// injected error (used by TestWakeRestore_ResumeHookErrorPropagatesAndUnwinds).
 	if spec.VsockDevice != nil {

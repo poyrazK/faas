@@ -59,7 +59,7 @@ func boot() error {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
 
-	// ADR-022: bind the AF_VSOCK resume listener BEFORE the supervisor starts
+// ADR-022: bind the AF_VSOCK resume listener BEFORE the supervisor starts
 	// the app, so a post-restore dial from vmmd can never race the listener
 	// coming up. We tolerate a bind failure (e.g. AF_VSOCK not compiled into
 	// the guest kernel) on cold boot — fresh kernel entropy doesn't need a

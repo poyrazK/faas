@@ -191,8 +191,7 @@ func (s *server) handler() http.Handler {
 	// Account.
 	mux.HandleFunc("GET /v1/account", s.authLimited(s.whoami))
 	mux.HandleFunc("PATCH /v1/account/plan", s.authLimited(s.idempotent(s.changePlan)))
-
-	// G6 account self-service (spec §17 G6, ADR-021). /v1/account/dpa
+// G6 account self-service (spec §17 G6, ADR-021). /v1/account/dpa
 	// is intentionally mounted without s.auth — the DPA is a public
 	// artefact a prospect reads before signing up. The export + delete
 	// + restore paths sit behind s.auth but pass the
