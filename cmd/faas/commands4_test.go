@@ -33,7 +33,6 @@ type accountSink struct {
 	lastMethod  string
 	lastPath    string
 	lastRawQuery string
-	lastBody    []byte
 	// idempotencyKey recorded from the request headers (DELETE only).
 	lastIdemKey string
 
@@ -75,10 +74,9 @@ func (s *accountSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"deleted_pending","scheduled_at":"2026-07-18T10:00:00Z","restore_until":"2026-08-17T10:00:00Z"}`))
 	case "POST":
 		// Restore — body is irrelevant, server returns an AccountResponse.
-		status, payload := s.onPost()
-		if status == 0 {
-			status = http.StatusOK
-		}
+		// The status returned from onPost is advisory only; writeJSONTest
+		// just sets headers + writes the body, so we don't gate on it.
+		_, payload := s.onPost()
 		writeJSONTest(w, payload)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

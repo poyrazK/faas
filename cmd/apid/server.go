@@ -346,7 +346,7 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 			return
 		}
 		if !acct.Active() {
-			if !(acct.Status == state.AccountDeletedPending && isAccountScopedPath(r.URL.Path)) {
+			if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
 				api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 					"Account suspended", "resolve billing to continue: https://DOMAIN/billing"))
 				return

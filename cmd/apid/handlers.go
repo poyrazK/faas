@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -13,7 +14,7 @@ import (
 )
 
 func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	writeJSON(w, http.StatusOK, s.accountResponse(acct, r))
+	writeJSON(w, http.StatusOK, s.accountResponse(ctx(r), acct, r))
 }
 
 func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -166,7 +167,7 @@ func (s *server) appResponse(a state.App) api.AppResponse {
 //
 // GitHubInstall is left empty for now; slice 8 fills it from
 // githubd's bindings table once the daemon is live.
-func (s *server) accountResponse(acct state.Account, r *http.Request) api.AccountResponse {
+func (s *server) accountResponse(ctx context.Context, acct state.Account, r *http.Request) api.AccountResponse {
 	l := api.MustLimitsFor(acct.Plan)
 	resp := api.AccountResponse{
 		ID:     acct.ID,
@@ -183,11 +184,11 @@ func (s *server) accountResponse(acct state.Account, r *http.Request) api.Accoun
 		},
 	}
 	if r != nil {
-		if n, err := s.store.CountDeployedApps(ctx(r), acct.ID); err == nil {
+		if n, err := s.store.CountDeployedApps(ctx, acct.ID); err == nil {
 			resp.AppCount = n
 		}
 		month := time.Now().UTC()
-		if rows, err := s.store.UsageByMonth(ctx(r), acct.ID, month); err == nil {
+		if rows, err := s.store.UsageByMonth(ctx, acct.ID, month); err == nil {
 			var mbSec int64
 			for _, u := range rows {
 				mbSec += u.MBSeconds

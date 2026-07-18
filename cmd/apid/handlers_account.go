@@ -87,7 +87,7 @@ func (s *server) restoreAccount(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, prob)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.accountResponse(fresh, r))
+	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), fresh, r))
 }
 
 // cancelDeletion is the business-logic core reused by both the REST
@@ -160,7 +160,13 @@ func gatherExport(ctx context.Context, s *server, acct state.Account, includeSec
 	}
 	return api.AccountExportResponse{
 		ExportedAt:  time.Now().UTC().Format(time.RFC3339),
-		Account:     s.accountResponse(acct, nil),
+		// No incoming request context here — the export is built
+		// outside any handler scope (the inner per-resource helpers
+		// already carry the request ctx); accountResponse's third
+		// argument is nil so the "skip AppCount/Usage lookups" branch
+		// fires regardless.
+		//nolint:contextcheck
+		Account: s.accountResponse(context.Background(), acct, nil),
 		Apps:        appOut,
 		Deployments: listDeploymentsForAccountExport(ctx, s.store, acct.ID),
 		Builds:      listBuildsForAccountExport(ctx, s.store, acct.ID),

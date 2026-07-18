@@ -66,7 +66,7 @@
 
 | Path | Purpose |
 |---|---|
-| `migrations/00009_account_deletion.sql` | Adds `accounts.deletion_requested_at` + partial index |
+| `migrations/00010_account_deletion.sql` | Adds `accounts.deletion_requested_at` + partial index |
 | `pkg/grace/grace.go` | 30-day grace timer (apid-local) |
 | `pkg/grace/grace_test.go` | MemStore-driven unit tests for RunOnce |
 | `cmd/apid/handlers_account.go` | `exportAccount`, `deleteAccount`, `restoreAccount`, `dpaTemplate`, `gatherExport`, `writeDeletionEnvelope`, `scheduleDeletion`, `cancelDeletion` (each ≤50 LoC) |
