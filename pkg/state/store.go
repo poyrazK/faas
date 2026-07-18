@@ -202,7 +202,8 @@ type Store interface {
 	// cheaper than a per-app loop and lets the reader index by host_ip
 	// up front. Scoped to RUNNING/WAKING/COLD_BOOTING/SNAPSHOTTING because
 	// parked/stopped/failed instances have no veth and no flows by
-	// construction (invariant §6.2-4).
+	// construction (invariant §6.2-4). The partial index
+	// `instances_reaper_state_idx` (migration 00009) covers this query.
 	ListAllInstances(ctx context.Context) ([]Instance, error)
 	// ListInstancesForAccount returns every live instance belonging to an
 	// account. Used by the meterd quota loop to park everything when a Free

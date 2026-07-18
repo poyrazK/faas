@@ -936,8 +936,11 @@ func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Insta
 	return out, nil
 }
 
-// ListAllInstances mirrors PgStore's reaper-state filter. Test-side it lets
-// the conntrack tests assert against a store without per-app loops.
+// ListAllInstances returns every instance whose state is one schedd's
+// idle reaper considers live (running, waking, cold_booting,
+// snapshotting). Sorted DESC by StartedAt to match the partial index
+// shape in migration 00009 — pkg/state.pgstore orders the same way in
+// SQL, so tests and production behave identically.
 func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

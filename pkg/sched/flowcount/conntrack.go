@@ -48,8 +48,11 @@ func WithTTL(d time.Duration) Option {
 // future parallel reapers or external probes.
 //
 // Cache layout: counts is keyed by instance.ID. hostIndex is the reverse
-// lookup the parser uses — it's rebuilt on every successful Warm so the
-// previous tick's stale IPs don't match new traffic.
+// lookup the parser uses — both are rebuilt on every successful Warm so a
+// re-used IP slot (park → wake, see pkg/fcvm/alloc.go) can't leak flows
+// from the previous owner. The cache-fresh branch rebuilds both anyway;
+// the cost of re-parsing the cached `out` would just trade complexity for
+// nothing at our scale.
 type Reader struct {
 	runner  Runner
 	binPath string
@@ -59,6 +62,7 @@ type Reader struct {
 	hostIndex map[string]string // IP -> instance.ID, rebuilt on each Warm
 	counts    map[string]int64  // instance.ID -> open-flow count
 	cacheAt   time.Time         // when the cache was last successfully filled
+	cachedOut []byte            // last successful conntrack output, reused on cache-fresh Warm
 	failed    bool              // latch: true after a failed Warm, cleared on next successful Warm
 }
 
@@ -87,37 +91,50 @@ func NewReader(runner Runner, opts ...Option) *Reader {
 // is set, and the error is returned. Open will return (0, err) until the next
 // successful Warm. This is the fail-open contract pinned by
 // TestRunReaperFlowCounterErrorFailsOpen.
+//
+// Race window: WAKING instances appear in the warm list before vmmd's
+// SetInstanceRuntime lands host_ip in PG (see pkg/state/pgstore.go's
+// SetInstanceRuntime and the engine boot path that precedes the RUNNING
+// transition). Such instances have an empty HostIP and are silently
+// skipped by buildHostIndex; their flows are counted on the next tick
+// after the veth is up. Worst case: one tick (~10 s) of stale
+// LastRequest-only reaping for a freshly-waking instance.
 func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 	r.mu.Lock()
-	if !r.failed && !r.cacheAt.IsZero() && time.Since(r.cacheAt) < r.ttl {
-		// Cache is fresh — but the warm list may have changed (instances
-		// parked, new wakes). Rebuild the host index from the new list
-		// without re-running conntrack: every instance.ID that was already
-		// in counts keeps its prior count, new instances get 0 (they
-		// weren't running last tick so they had no flows).
-		r.hostIndex = buildHostIndex(instances)
-		r.mu.Unlock()
-		return nil
+	cacheFresh := !r.failed && !r.cacheAt.IsZero() && time.Since(r.cacheAt) < r.ttl
+	var out []byte
+	if cacheFresh && r.cachedOut != nil {
+		// Cache is fresh: re-parse the cached conntrack output against the
+		// new warm list. This is the load-bearing bit — re-using `out` but
+		// recomputing counts means a re-used IP slot (pkg/fcvm/alloc.go
+		// recycles 10.100.x.y on park→wake) can't leak flows from the
+		// previous instance to a freshly-keyed new one.
+		out = r.cachedOut
 	}
 	r.mu.Unlock()
 
-	// Cache miss or expired: shell out and parse. Done outside the lock so
-	// a slow conntrack call doesn't block other Readers — and a single
-	// reader is the only production user, so contention is theoretical.
-	out, err := r.runner.Output(ctx, []string{r.binPath, "-L", "-p", "tcp", "-n"})
-	if err != nil {
-		r.mu.Lock()
-		r.failed = true
-		r.mu.Unlock()
-		return fmt.Errorf("flowcount: conntrack: %w", err)
+	if out == nil {
+		// Cache miss or expired: shell out and parse. Done outside the lock
+		// so a slow conntrack call doesn't block other Readers — a single
+		// reader is the only production user, so contention is theoretical.
+		var err error
+		out, err = r.runner.Output(ctx, []string{r.binPath, "-L", "-p", "tcp", "-n"})
+		if err != nil {
+			r.mu.Lock()
+			r.failed = true
+			r.mu.Unlock()
+			return fmt.Errorf("flowcount: conntrack: %w", err)
+		}
 	}
 
-	counts := parseConntrack(out, r.hostIndexFor(instances))
+	hostIndex := buildHostIndex(instances)
+	counts := parseConntrack(out, hostIndex)
 
 	r.mu.Lock()
-	r.hostIndex = buildHostIndex(instances)
+	r.hostIndex = hostIndex
 	r.counts = counts
 	r.cacheAt = time.Now()
+	r.cachedOut = out
 	r.failed = false
 	r.mu.Unlock()
 	return nil
@@ -138,12 +155,6 @@ func (r *Reader) Open(_ context.Context, instanceID string) (int64, error) {
 		return 0, nil
 	}
 	return r.counts[instanceID], nil
-}
-
-// hostIndexFor is a snapshot of the warm list's (IP -> ID) map. Used by the
-// parser without holding the lock — the returned map is owned by the caller.
-func (r *Reader) hostIndexFor(instances []state.Instance) map[string]string {
-	return buildHostIndex(instances)
 }
 
 // buildHostIndex maps the per-instance host-side IP (10.100.x.y, see

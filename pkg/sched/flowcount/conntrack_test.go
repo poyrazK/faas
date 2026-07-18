@@ -268,7 +268,9 @@ func TestReader_FailedWarmLatchesUntilSuccess(t *testing.T) {
 func TestReader_WarmRebuildsHostIndex(t *testing.T) {
 	// First Warm: instance A is present. Second Warm: A has parked
 	// (no longer in the list), B has woken. Cache must reflect the new
-	// warm list on the second call even within TTL.
+	// warm list on the second call even within TTL, and a previously
+	// matching IP that now belongs to nobody must NOT count for the
+	// parked instance — that's the slot-reuse case.
 	runner := &fakeRunner{out: []byte(cannedConntrack)}
 	r := NewReader(runner, WithTTL(time.Hour))
 	first := makeInstances([2]string{"10.100.0.5", "inst-A"})
@@ -283,15 +285,19 @@ func TestReader_WarmRebuildsHostIndex(t *testing.T) {
 	if err := r.Warm(context.Background(), second); err != nil {
 		t.Fatalf("Warm #2: %v", err)
 	}
-	// inst-A is gone from the warm list, but counts[id] still holds the
-	// old value (6). This is intentional: runReaper won't call Open on
-	// inst-A because inst-A isn't in the new warm list. The stale entry
-	// is harmless and avoids re-zeroing on every tick.
-	if got, _ := r.Open(context.Background(), "inst-A"); got != 6 {
-		t.Errorf("stale inst-A count after reindex = %d, want 6 (harmless stale)", got)
+	// Within TTL: re-parse the cached conntrack output against the new
+	// hostIndex. inst-A is no longer in the warm list, so its flows
+	// (which still match 10.100.0.5 in the conntrack dump) must NOT be
+	// counted against inst-A. This pins the slot-reuse case: a park →
+	// wake where the new wake reuses the IP slot would otherwise leak
+	// flows to the parked instance. inst-B (10.100.0.7) appears in the
+	// conntrack output (line 3) regardless of warm list, so it counts
+	// its real flows.
+	if got, _ := r.Open(context.Background(), "inst-A"); got != 0 {
+		t.Errorf("stale inst-A count after reindex = %d, want 0 (slot reuse)", got)
 	}
-	if got, _ := r.Open(context.Background(), "inst-B"); got != 0 {
-		t.Errorf("inst-B count after reindex = %d, want 0 (not in conntrack output)", got)
+	if got, _ := r.Open(context.Background(), "inst-B"); got != 2 {
+		t.Errorf("inst-B count after reindex = %d, want 2 (still in cached output)", got)
 	}
 }
 
@@ -302,6 +308,50 @@ func TestReader_NewReaderPanicsOnNilRunner(t *testing.T) {
 		}
 	}()
 	_ = NewReader(nil)
+}
+
+func TestReader_WarmPropagatesContextCancel(t *testing.T) {
+	// A cancelled ctx must surface as a Warm error and trigger the
+	// failure latch — otherwise the reaper would silently fall back to
+	// stale counts on a shutdown-bound tick (the most likely silent-
+	// failure mode for the G7 path).
+	runner := &fakeRunner{err: context.Canceled}
+	r := NewReader(runner, WithTTL(time.Hour))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := r.Warm(ctx, makeInstances([2]string{"10.100.0.5", "inst-A"})); err == nil {
+		t.Fatal("Warm should have errored on cancelled ctx")
+	}
+	if got, err := r.Open(context.Background(), "inst-A"); err == nil || got != 0 {
+		t.Errorf("Open after cancelled Warm: got=(%d, %v), want (0, err)", got, err)
+	}
+}
+
+func TestReader_WarmIdempotent(t *testing.T) {
+	// Two back-to-back Warms with the same instance list produce the
+	// same counts and re-parse without re-execing (cache fresh).
+	runner := &fakeRunner{out: []byte(cannedConntrack)}
+	r := NewReader(runner, WithTTL(time.Hour))
+	insts := makeInstances(
+		[2]string{"10.100.0.5", "inst-A"},
+		[2]string{"10.100.0.7", "inst-B"},
+	)
+	if err := r.Warm(context.Background(), insts); err != nil {
+		t.Fatalf("Warm #1: %v", err)
+	}
+	if err := r.Warm(context.Background(), insts); err != nil {
+		t.Fatalf("Warm #2: %v", err)
+	}
+	if got, _ := r.Open(context.Background(), "inst-A"); got != 6 {
+		t.Errorf("inst-A = %d, want 6", got)
+	}
+	if got, _ := r.Open(context.Background(), "inst-B"); got != 2 {
+		t.Errorf("inst-B = %d, want 2", got)
+	}
+	if calls := runner.calls.Load(); calls != 1 {
+		t.Errorf("runner calls = %d, want 1 (idempotent Warm within TTL)", calls)
+	}
 }
 
 func TestBuildHostIndex_SkipsEmptyHostIP(t *testing.T) {

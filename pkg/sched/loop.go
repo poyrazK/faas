@@ -169,17 +169,17 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// instance up front so Open calls below are cheap map lookups. The
 	// type assertion keeps the FlowCounter interface narrow — test mocks
 	// that don't implement Warm are simply skipped, preserving the
-	// existing test surface.
+	// existing test surface. Either failure falls through to
+	// LastRequest-only reaping per the fail-open contract pinned by
+	// TestRunReaperFlowCounterErrorFailsOpen.
 	if warmer, ok := l.flowCounts.(interface {
 		Warm(context.Context, []state.Instance) error
 	}); ok {
 		all, err := store.ListAllInstances(ctx)
 		if err != nil {
 			l.log.Warn("reaper: list all instances for warm", "err", err)
-			// Don't return — fail open to LastRequest-only reaping.
 		} else if warmErr := warmer.Warm(ctx, all); warmErr != nil {
 			l.log.Warn("reaper: warm flow reader", "err", warmErr)
-			// Don't return — same fail-open contract.
 		}
 	}
 	now := time.Now()
