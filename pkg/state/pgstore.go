@@ -1675,18 +1675,20 @@ func (s *PgStore) UsageByAccount(ctx context.Context, accountID string, since ti
 // MarkAccountDeletionPending flips status to deleted_pending and
 // stamps deletion_requested_at with now(). Idempotent: a repeat call
 // leaves the timestamp untouched so the grace window's anchor stays
-// at the original moment the customer asked.
+// at the original moment the customer asked (COALESCE keeps the
+// original timestamp; the WHERE re-matches a row already in
+// deleted_pending so the second call still affects 1 row).
 //
-// Defence-in-depth: the WHERE clause scopes the UPDATE to status='active'.
-// In production the only caller is the apid REST handler, which runs
-// inside s.auth and refuses suspended / past_due accounts; the active
-// guard makes the invariant explicit at the data layer too.
+// Defence-in-depth: the WHERE scopes to status in
+// ('active', 'deleted_pending'). A row in past_due or any other
+// suspended state must not be re-armed into deletion by a stale
+// session cookie.
 func (s *PgStore) MarkAccountDeletionPending(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx,
 		`update accounts
 		   set status = 'deleted_pending',
 		       deletion_requested_at = coalesce(deletion_requested_at, now())
-		 where id = $1 and status = 'active'`, id)
+		 where id = $1 and status in ('active', 'deleted_pending')`, id)
 	if err != nil {
 		return err
 	}
