@@ -16,6 +16,22 @@ type VMConfig struct {
 	NetworkInterfaces []NetIface `json:"network-interfaces"`
 	// Entropy is an empty object to attach virtio-rng (always on, spec §11).
 	Entropy *Entropy `json:"entropy,omitempty"`
+	// VsockDevice, when set, attaches a vsock device (ADR-022). The host dials
+	// it from outside the chroot to trigger the post-restore resume hook
+	// (guest/init/resume.go). Always attached on cold boot too, so the cold-
+	// boot fallback path matches the restore path's device layout.
+	VsockDevice *VsockDevice `json:"vsock-device,omitempty"`
+}
+
+// VsockDevice is the Firecracker vsock binding the host uses to dial the guest
+// after a restore. guest_cid must be unique per live instance on the host (we
+// derive it from Lease.Slot, see GuestVsockCID). uds_socket is the in-chroot
+// path the jailer creates automatically; the host side of the wire reaches it
+// through chrootRoot(instance).
+type VsockDevice struct {
+	ID        string `json:"vsock_id"`   // "vsock-0" — Firecracker requires unique id
+	GuestCID  uint32 `json:"guest_cid"`  // unique per live instance
+	UDSSocket string `json:"uds_socket"` // "vsock.sock" (chroot-local)
 }
 
 type BootSource struct {
@@ -73,7 +89,12 @@ type ColdBootSpec struct {
 
 // BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS and
 // balloon are off in v1 (spec §4.4); virtio-rng is always attached (spec §11).
-func BuildColdBootConfig(s ColdBootSpec) VMConfig {
+//
+// slot is the per-instance slot from Lease.Slot; it must be in range [0, MaxSlots).
+// It derives GuestVsockCID so the in-guest resume listener is reachable at a
+// globally unique vsock address (ADR-022). The Manager passes 0 when the slot
+// is not yet known (test seams); production always passes the real slot.
+func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	return VMConfig{
 		BootSource: BootSource{KernelImagePath: s.KernelPath, BootArgs: coldBootArgs},
 		Drives: []Drive{
@@ -83,6 +104,18 @@ func BuildColdBootConfig(s ColdBootSpec) VMConfig {
 		MachineConfig:     Machine{VcpuCount: s.VcpuCount, MemSizeMib: s.MemSizeMiB, Smt: false},
 		NetworkInterfaces: []NetIface{{IfaceID: "eth0", HostDevName: s.Tap}},
 		Entropy:           &Entropy{},
+		VsockDevice:       NewVsockDevice(slot),
+	}
+}
+
+// NewVsockDevice builds a VsockDevice for the given slot. The UDS socket path
+// is the chroot-relative name (jailer creates it automatically); the host-side
+// path is chrootRoot(instance) + VsockUDSSocketName (see pkg/fcvm/vmm.go).
+func NewVsockDevice(slot int) *VsockDevice {
+	return &VsockDevice{
+		ID:        VsockDeviceID,
+		GuestCID:  GuestVsockCID(slot),
+		UDSSocket: VsockUDSSocketName,
 	}
 }
 
@@ -112,7 +145,31 @@ const (
 	FirecrackerBin = "firecracker"
 	APISockName    = "api.sock"
 	VMConfigName   = "vmconfig.json"
+	// VsockUDSSocketName is the chroot-relative path Firecracker creates the
+	// vsock UDS on when a vsock device is attached. Jailer owns it under
+	// the per-instance chroot; the host side dials through chrootRoot.
+	VsockUDSSocketName = "vsock.sock"
+	// VsockDeviceID is the Firecracker device id used in /vsock PUT bodies
+	// and referenced from the config-file.
+	VsockDeviceID = "vsock-0"
 )
+
+// Vsock CID allocation (ADR-022). The Linux kernel reserves CID 0 (wildcard),
+// 1 (host-hypervisor), and 2 (guest-hypervisor); Firecracker documents
+// guest_cid uniqueness across simultaneously-running VMs. We use a fixed host
+// CID of 3 and derive the guest CID from Lease.Slot + a base offset large
+// enough to skip both the reserved range AND the common per-slot value space
+// (Slot values go up to MaxSlots-1 = 9999).
+//
+// VsockCIDBase+slot is therefore globally unique per live instance — slot is
+// already the unique-while-live root for UID/GID/HostIP (alloc.go:113).
+const (
+	HostVsockCID uint32 = 3
+	VsockCIDBase uint32 = 0x100
+)
+
+// GuestVsockCID maps a Lease.Slot to a Firecracker guest_cid value.
+func GuestVsockCID(slot int) uint32 { return VsockCIDBase + uint32(slot) }
 
 // JailerSpec is the input to the jailer invocation for one instance.
 type JailerSpec struct {

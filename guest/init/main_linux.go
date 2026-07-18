@@ -59,6 +59,16 @@ func boot() error {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
 
+	// ADR-022: bind the AF_VSOCK resume listener BEFORE the supervisor starts
+	// the app, so a post-restore dial from vmmd can never race the listener
+	// coming up. We tolerate a bind failure (e.g. AF_VSOCK not compiled into
+	// the guest kernel) on cold boot — fresh kernel entropy doesn't need a
+	// resume hook. On restore, vmmd's TriggerResumeHook will then time out
+	// dial-resume and fail closed (per spec §11 V6).
+	if err := listenResumeHook(slog.Default()); err != nil {
+		slog.Default().Warn("vsock resume listener unavailable", "err", err)
+	}
+
 	mode, buildManifest, err := decideMode(os.DirFS("/"))
 	if err != nil {
 		return err

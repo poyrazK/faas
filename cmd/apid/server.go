@@ -189,8 +189,8 @@ func (noopNotifier) Subscribe(_ context.Context, _ []string) (<-chan db.Notifica
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	// Account.
-	mux.HandleFunc("GET /v1/account", s.auth(s.whoami))
-	mux.HandleFunc("PATCH /v1/account/plan", s.auth(s.idempotent(s.changePlan)))
+	mux.HandleFunc("GET /v1/account", s.authLimited(s.whoami))
+	mux.HandleFunc("PATCH /v1/account/plan", s.authLimited(s.idempotent(s.changePlan)))
 
 	// G6 account self-service (spec §17 G6, ADR-021). /v1/account/dpa
 	// is intentionally mounted without s.auth — the DPA is a public
@@ -204,52 +204,52 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/dpa", s.dpaTemplate)
 
 	// Apps.
-	mux.HandleFunc("GET /v1/apps", s.auth(s.listApps))
-	mux.HandleFunc("POST /v1/apps", s.auth(s.idempotent(s.createApp)))
-	mux.HandleFunc("GET /v1/apps/{slug}", s.auth(s.getApp))
-	mux.HandleFunc("PATCH /v1/apps/{slug}", s.auth(s.updateApp))
-	mux.HandleFunc("DELETE /v1/apps/{slug}", s.auth(s.deleteApp))
+	mux.HandleFunc("GET /v1/apps", s.authLimited(s.listApps))
+	mux.HandleFunc("POST /v1/apps", s.authLimited(s.idempotent(s.createApp)))
+	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.getApp))
+	mux.HandleFunc("PATCH /v1/apps/{slug}", s.authLimited(s.updateApp))
+	mux.HandleFunc("DELETE /v1/apps/{slug}", s.authLimited(s.deleteApp))
 
 	// Deployments.
-	mux.HandleFunc("POST /v1/apps/{slug}/deployments", s.auth(s.idempotent(s.createDeployment)))
-	mux.HandleFunc("GET /v1/deployments/{id}", s.auth(s.getDeployment))
-	mux.HandleFunc("GET /v1/deployments/{id}/logs", s.auth(s.streamDeploymentLogs))
-	mux.HandleFunc("POST /v1/apps/{slug}/rollback", s.auth(s.idempotent(s.rollbackApp)))
-	mux.HandleFunc("POST /v1/apps/{slug}/park", s.auth(s.parkApp))
-	mux.HandleFunc("POST /v1/apps/{slug}/wake", s.auth(s.wakeApp))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments", s.authLimited(s.idempotent(s.createDeployment)))
+	mux.HandleFunc("GET /v1/deployments/{id}", s.authLimited(s.getDeployment))
+	mux.HandleFunc("GET /v1/deployments/{id}/logs", s.authLimited(s.streamDeploymentLogs))
+	mux.HandleFunc("POST /v1/apps/{slug}/rollback", s.authLimited(s.idempotent(s.rollbackApp)))
+	mux.HandleFunc("POST /v1/apps/{slug}/park", s.authLimited(s.parkApp))
+	mux.HandleFunc("POST /v1/apps/{slug}/wake", s.authLimited(s.wakeApp))
 
 	// Instances (read-only here; schedd is the writer).
-	mux.HandleFunc("GET /v1/apps/{slug}/instances", s.auth(s.listInstances))
-	mux.HandleFunc("GET /v1/apps/{slug}/logs", s.auth(s.streamAppLogs))
+	mux.HandleFunc("GET /v1/apps/{slug}/instances", s.authLimited(s.listInstances))
+	mux.HandleFunc("GET /v1/apps/{slug}/logs", s.authLimited(s.streamAppLogs))
 
 	// Custom domains.
-	mux.HandleFunc("GET /v1/domains", s.auth(s.listDomains))
-	mux.HandleFunc("POST /v1/domains", s.auth(s.idempotent(s.createDomain)))
-	mux.HandleFunc("DELETE /v1/domains/{domain}", s.auth(s.deleteDomain))
+	mux.HandleFunc("GET /v1/domains", s.authLimited(s.listDomains))
+	mux.HandleFunc("POST /v1/domains", s.authLimited(s.idempotent(s.createDomain)))
+	mux.HandleFunc("DELETE /v1/domains/{domain}", s.authLimited(s.deleteDomain))
 
 	// Crons.
-	mux.HandleFunc("GET /v1/crons", s.auth(s.listCrons))
-	mux.HandleFunc("POST /v1/crons", s.auth(s.idempotent(s.createCron)))
-	mux.HandleFunc("PATCH /v1/crons/{id}", s.auth(s.updateCron))
-	mux.HandleFunc("DELETE /v1/crons/{id}", s.auth(s.deleteCron))
+	mux.HandleFunc("GET /v1/crons", s.authLimited(s.listCrons))
+	mux.HandleFunc("POST /v1/crons", s.authLimited(s.idempotent(s.createCron)))
+	mux.HandleFunc("PATCH /v1/crons/{id}", s.authLimited(s.updateCron))
+	mux.HandleFunc("DELETE /v1/crons/{id}", s.authLimited(s.deleteCron))
 
 	// API keys.
-	mux.HandleFunc("GET /v1/keys", s.auth(s.listKeys))
-	mux.HandleFunc("POST /v1/keys", s.auth(s.createKey))
-	mux.HandleFunc("DELETE /v1/keys/{id}", s.auth(s.deleteKey))
+	mux.HandleFunc("GET /v1/keys", s.authLimited(s.listKeys))
+	mux.HandleFunc("POST /v1/keys", s.authLimited(s.createKey))
+	mux.HandleFunc("DELETE /v1/keys/{id}", s.authLimited(s.deleteKey))
 
 	// Customer secrets (spec §11/G2). Plaintext VALUE flows through PUT
 	// over TLS; sealed server-side by handlers_secrets.go.
-	mux.HandleFunc("GET /v1/apps/{slug}/secrets", s.auth(s.listSecrets))
-	mux.HandleFunc("PUT /v1/apps/{slug}/secrets/{key}", s.auth(s.setSecret))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/secrets/{key}", s.auth(s.deleteSecret))
+	mux.HandleFunc("GET /v1/apps/{slug}/secrets", s.authLimited(s.listSecrets))
+	mux.HandleFunc("PUT /v1/apps/{slug}/secrets/{key}", s.authLimited(s.setSecret))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/secrets/{key}", s.authLimited(s.deleteSecret))
 
 	// Usage.
-	mux.HandleFunc("GET /v1/usage", s.auth(s.getUsage))
-	mux.HandleFunc("GET /v1/usage/summary", s.auth(s.usageSummary))
+	mux.HandleFunc("GET /v1/usage", s.authLimited(s.getUsage))
+	mux.HandleFunc("GET /v1/usage/summary", s.authLimited(s.usageSummary))
 
 	// Account-scoped deployments list (M7.5 dashboard).
-	mux.HandleFunc("GET /v1/deployments", s.auth(s.listDeployments))
+	mux.HandleFunc("GET /v1/deployments", s.authLimited(s.listDeployments))
 
 	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept
 	// unsigned and trust the network boundary; ADR-007 hardening later).
@@ -272,9 +272,21 @@ func (s *server) handler() http.Handler {
 	//
 	// All other /dashboard/* sit behind sessionAuth → handlers_dashboard.
 	auth := &authHandlers{srv: s, log: s.log, loginTTL: s.loginTTL, mailer: s.mailer, domain: s.domain}
-	mux.Handle("GET /login", s.dashboardChain(http.HandlerFunc(auth.renderLoginForm)))
-	mux.Handle("POST /login", s.dashboardChain(http.HandlerFunc(auth.postLogin)))
-	mux.Handle("GET /auth/verify", s.dashboardChain(http.HandlerFunc(auth.verify)))
+	mux.Handle("GET /login", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		// CountEveryAttempt: /login returns 200 even for unknown emails
+		// (anti-enumeration, see handlers_auth.go), so a 401-only limiter
+		// would miss the brute-force signal. Count every attempt instead.
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, http.HandlerFunc(auth.renderLoginForm)))
+	mux.Handle("POST /login", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, http.HandlerFunc(auth.postLogin)))
+	mux.Handle("GET /auth/verify", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		// /auth/verify 401s on unknown tokens AND 410s on consumed tokens;
+		// count both so an attacker can't cycle through one-time tokens
+		// faster than the spec §11 10/min/IP budget.
+		CountStatuses: []int{http.StatusUnauthorized, http.StatusGone},
+	}, http.HandlerFunc(auth.verify)))
 	mux.Handle("POST /logout", s.dashboardChain(http.HandlerFunc(auth.logout)))
 	// /oauth/callback is the GitHub App install redirect target
 	// (review finding #1+#2 closure for the M7.5 OAuth path).
@@ -301,19 +313,36 @@ func (s *server) handler() http.Handler {
 }
 
 // dashboardChain wraps a dashboard handler in the §11 middleware
-// (RequestID + Recovery; slice 3 adds sessionAuth; AuthLimit on
-// /login). The full chain is:
+// (RequestID + Recovery; slice 3 adds sessionAuth). The full chain is:
 //
 //	RequestID → Recovery → handler
 //
 // Order matters: RequestID must come first so even Recovery's 500
 // response carries the id, and Recovery must wrap the inner handler
 // so a template panic returns 500 instead of taking the daemon down.
+//
+// Use dashboardAuthChain (below) for /login and /auth/verify — those
+// routes need AuthLimit wrapped between Recovery and the handler.
 func (s *server) dashboardChain(h http.Handler) http.Handler {
 	// http.HandlerFunc is also http.Handler so middleware.RequestID
 	// accepts it directly. Build inside-out.
 	h = middleware.RequestID(h)
 	h = middleware.Recovery(s.log)(h)
+	return h
+}
+
+// dashboardAuthChain wraps a dashboard handler in the §11 middleware
+// plus an AuthLimit limiter. The full chain is:
+//
+//	RequestID → Recovery → AuthLimit → handler
+//
+// AuthLimit comes AFTER Recovery so a panic inside the handler still
+// returns 500 (limiter sees 500, not 429). AuthLimit comes BEFORE
+// the handler so it can 429 without ever invoking the inner logic.
+// Spec §11: "rate limit auth failures (10/min/IP)".
+func (s *server) dashboardAuthChain(cfg middleware.AuthLimitConfig, h http.Handler) http.Handler {
+	h = s.dashboardChain(h)
+	h = middleware.AuthLimit(cfg)(h)
 	return h
 }
 
@@ -367,6 +396,24 @@ func isAccountScopedPath(p string) bool {
 		return true
 	}
 	return false
+}
+
+// authLimited wraps an accountHandler in s.auth + AuthLimit (spec §11:
+// 10 failed auth attempts per IP per minute). The /v1/* API-key surface
+// uses this everywhere; only /login, /auth/verify, and /dashboard/* use
+// the cookie-based dashboardAuthChain instead.
+//
+// Counts ONLY 401s — the inner handler is responsible for any 429
+// emission (e.g. quota). CountStatuses=[401] is the explicit default
+// (the middleware's nil-means-401 fallback also covers this; we set it
+// explicitly for clarity at the wire boundary).
+func (s *server) authLimited(next accountHandler) http.HandlerFunc {
+	h := s.auth(next)
+	cfg := middleware.AuthLimitConfig{
+		CountStatuses: []int{http.StatusUnauthorized},
+		Log:           s.log,
+	}
+	return middleware.AuthLimit(cfg)(h).ServeHTTP
 }
 
 // idempotent replays a stored response for a repeated Idempotency-Key, or runs

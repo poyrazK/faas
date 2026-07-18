@@ -3,6 +3,7 @@ package fcvm
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -152,6 +153,11 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig) (err error)
 	if err = v.startJailer(ctx, l, "--config-file", VMConfigName); err != nil {
 		return err
 	}
+	if cfg.VsockDevice != nil {
+		if err = v.attachVsock(ctx, l.Instance, cfg.VsockDevice); err != nil {
+			return err
+		}
+	}
 	if err = v.waitReady(ctx, l); err != nil {
 		return fmt.Errorf("vmm: readiness: %w", err)
 	}
@@ -220,8 +226,128 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.apiPut(ctx, l.Instance, "/snapshot/load", body); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
+	if spec.VsockDevice != nil {
+		if err = v.attachVsock(ctx, l.Instance, spec.VsockDevice); err != nil {
+			return err
+		}
+		if err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano()); err != nil {
+			return fmt.Errorf("vmm: resume hook: %w", err)
+		}
+	}
 	if err = v.waitReady(ctx, l); err != nil {
 		return fmt.Errorf("vmm: readiness after restore: %w", err)
+	}
+	return nil
+}
+
+// attachVsock puts the vsock device into the running firecracker via the
+// /vsock PUT endpoint. The jailer creates the chroot-local UDS file
+// automatically once firecracker accepts the device; see vsockUDSSock.
+func (v *JailerVMM) attachVsock(ctx context.Context, instance string, dev *VsockDevice) error {
+	body := map[string]any{
+		"vsock_id":   dev.ID,
+		"guest_cid":  dev.GuestCID,
+		"uds_socket": dev.UDSSocket,
+	}
+	if err := v.apiPut(ctx, instance, "/vsock", body); err != nil {
+		return fmt.Errorf("vmm: attach vsock: %w", err)
+	}
+	return nil
+}
+
+// vsockUDSSock is the host-side path the TriggerResumeHook dialer reaches.
+// It's the chroot-local UDS the jailer creates; vmmd dials it from the
+// chroot root because the firecracker process is unprivileged and only its
+// jailer uid can read the socket file.
+func (v *JailerVMM) vsockUDSSock(instance string) string {
+	return filepath.Join(v.chrootRoot(instance), VsockUDSSocketName)
+}
+
+// resumeHookDialDeadline bounds the TriggerResumeHook wait. The jailer
+// creates the vsock UDS a few ms after firecracker accepts the /vsock PUT; on
+// a slow nested-KVM guest this can take ~50 ms. Five seconds is well above
+// the realistic ceiling and well below the spec §6.1 readyTimeout (30 s).
+const resumeHookDialDeadline = 5 * time.Second
+
+// resumeHookDialStep is the per-attempt backoff between dial retries.
+const resumeHookDialStep = 20 * time.Millisecond
+
+// resumeHookMsgResume is the wire-format discriminator for a resume request.
+// 4-byte big-endian header + JSON body (ADR-022). Adding new msg types does
+// not break the wire — guests that don't recognise a type nack-and-close.
+const resumeHookMsgResume uint32 = 1
+
+// closeWriter is implemented by net.UnixConn (and AF_VSOCK when projected
+// onto the stdlib net.Conn shape on Linux). The host uses it after writing
+// the request to signal "no more bytes" so the guest's ReadAll on the body
+// unblocks and the guest can run the hook + write the ack.
+type closeWriter interface{ CloseWrite() error }
+
+// TriggerResumeHook dials the guest's vsock UDS and asks it to run its
+// post-restore side effects (re-seed entropy + step clock). Must be called
+// from Restore after /snapshot/load and before waitReady. Spec §11 V6 is the
+// acceptance gate: two instances from one snapshot must produce distinct
+// /proc/sys/kernel/random/uuid immediately post-resume.
+//
+// Wire format (ADR-022):
+//
+//	[ 4 bytes big-endian msg type ] [ JSON body {"hostTimeUnixNano": N} ]
+//	[ 1 byte ack: 0=ok, 1=nack ]
+//
+// We fail closed: any error (dial timeout, write failure, nack) returns
+// wrapped. A restored VM with snapshot-shared entropy is exactly the failure
+// mode V6 rejects, so we refuse to declare it ready.
+func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
+	sock := v.vsockUDSSock(l.Instance)
+	deadline := time.Now().Add(resumeHookDialDeadline)
+	var conn net.Conn
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var err error
+		conn, err = net.DialTimeout("unix", sock, 200*time.Millisecond)
+		if err == nil {
+			break
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(resumeHookDialStep):
+		}
+	}
+	if conn == nil {
+		return fmt.Errorf("vmm: dial vsock uds %s: %w", sock, lastErr)
+	}
+	defer func() { _ = conn.Close() }()
+
+	body, err := json.Marshal(struct {
+		HostTimeUnixNano int64 `json:"hostTimeUnixNano"`
+	}{HostTimeUnixNano: hostTimeUnixNano})
+	if err != nil {
+		return fmt.Errorf("vmm: marshal resume body: %w", err)
+	}
+	msg := make([]byte, 4+len(body))
+	binary.BigEndian.PutUint32(msg[:4], resumeHookMsgResume)
+	copy(msg[4:], body)
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := conn.Write(msg); err != nil {
+		return fmt.Errorf("vmm: write resume request: %w", err)
+	}
+	// Close our write half so the server-side reader sees EOF and can
+	// process the message. (Otherwise ReadAll on the server side hangs
+	// until the read deadline.)
+	if cw, ok := conn.(closeWriter); ok {
+		_ = cw.CloseWrite()
+	}
+	ack := make([]byte, 1)
+	if _, err := io.ReadFull(conn, ack); err != nil {
+		return fmt.Errorf("vmm: read resume ack: %w", err)
+	}
+	if ack[0] != 0 {
+		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
 	}
 	return nil
 }

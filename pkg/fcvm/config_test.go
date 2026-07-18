@@ -18,7 +18,7 @@ func validColdSpec() ColdBootSpec {
 }
 
 func TestColdBootConfigTwoDrives(t *testing.T) {
-	cfg := BuildColdBootConfig(validColdSpec())
+	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	if len(cfg.Drives) != 2 {
 		t.Fatalf("want 2 drives (two-drive scheme §4.6), got %d", len(cfg.Drives))
 	}
@@ -32,14 +32,14 @@ func TestColdBootConfigTwoDrives(t *testing.T) {
 }
 
 func TestColdBootConfigVirtioRngAlwaysOn(t *testing.T) {
-	cfg := BuildColdBootConfig(validColdSpec())
+	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	if cfg.Entropy == nil {
 		t.Error("entropy (virtio-rng) must always be attached (spec §11)")
 	}
 }
 
 func TestColdBootConfigMarshalsToFirecrackerSchema(t *testing.T) {
-	cfg := BuildColdBootConfig(validColdSpec())
+	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	b, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestColdBootConfigMarshalsToFirecrackerSchema(t *testing.T) {
 }
 
 func TestColdBootBootArgsDisableConsole(t *testing.T) {
-	cfg := BuildColdBootConfig(validColdSpec())
+	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	if !strings.Contains(cfg.BootSource.BootArgs, "console=off") {
 		t.Errorf("boot args should disable console (spec §4.4): %q", cfg.BootSource.BootArgs)
 	}
@@ -67,7 +67,7 @@ func TestColdBootBootArgsDisableConsole(t *testing.T) {
 
 func TestColdBootBootArgsConfigureIdenticalInnerWorld(t *testing.T) {
 	// Every VM gets the same guest IP via kernel autoconfig (ADR-009).
-	cfg := BuildColdBootConfig(validColdSpec())
+	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	if !strings.Contains(cfg.BootSource.BootArgs, "ip=10.0.0.2::10.0.0.1:255.255.255.252::eth0:off") {
 		t.Errorf("boot args should carry the identical-inner-world ip= autoconfig: %q", cfg.BootSource.BootArgs)
 	}

@@ -64,6 +64,14 @@ type fakeVMM struct {
 	restored    []string
 	snapshotted []string
 	bootCount   int
+	// resumeHookErr is returned from TriggerResumeHook when non-nil; the
+	// default (nil) matches production-success semantics. V6 tests that need
+	// the dial-failure path flip this.
+	resumeHookErr error
+	// resumeHookCalls records every (instance, hostTimeUnixNano) the wake
+	// path passed to TriggerResumeHook. Tests assert both ordering (Boot
+	// doesn't fire it, Restore does) and the dial-time argument.
+	resumeHookCalls []resumeHookCall
 	// M6 builder-VM path: DestroyWithExport returns this exit code, copies
 	// nothing. App VMs just see "destroyed" the same way Kill did.
 	destroyWithExportExit int
@@ -94,7 +102,7 @@ func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig) error {
 	return v.bootErr
 }
 
-func (v *fakeVMM) Restore(_ context.Context, l Lease, _ RestoreSpec) error {
+func (v *fakeVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) error {
 	v.mu.Lock()
 	v.restored = append(v.restored, l.Instance)
 	v.mu.Unlock()
@@ -102,7 +110,131 @@ func (v *fakeVMM) Restore(_ context.Context, l Lease, _ RestoreSpec) error {
 	if err := os.MkdirAll(filepath.Join(cgroupRoot, ParentCgroup, "vm-"+l.Instance+".scope"), 0o755); err != nil {
 		return err
 	}
+	// Mirror the production JailerVMM.Restore: after /snapshot/load, dial the
+	// vsock and trigger the resume hook. ADR-022. The test then sees the call
+	// on v.resumeHookCalls (used by TestWakeRestore_*) and surfaces any
+	// injected error (used by TestWakeRestore_ResumeHookErrorPropagatesAndUnwinds).
+	if spec.VsockDevice != nil {
+		if err := v.TriggerResumeHook(ctx, l, 1); err != nil {
+			return err
+		}
+	}
 	return v.restoreErr
+}
+
+func (v *fakeVMM) TriggerResumeHook(_ context.Context, l Lease, hostTimeUnixNano int64) error {
+	v.mu.Lock()
+	v.resumeHookCalls = append(v.resumeHookCalls, resumeHookCall{Instance: l.Instance, HostTimeUnixNano: hostTimeUnixNano})
+	v.mu.Unlock()
+	// Default: succeed. Tests that exercise the resume-hook error path should
+	// set resumeHookErr (see manager_test.go).
+	return v.resumeHookErr
+}
+
+// resumeHookCall records one TriggerResumeHook invocation. The slice is
+// append-only and read under v.mu — production code never reads it.
+type resumeHookCall struct {
+	Instance         string
+	HostTimeUnixNano int64
+}
+
+// TestWakeColdBoot_DoesNotInvokeResumeHook pins the post-restore-only
+// invariant (ADR-022): a Wake with no usable snapshot MUST NOT call
+// TriggerResumeHook. Cold-boot guests get fresh kernel entropy from the
+// boot-time pool; only restore needs the resume hook (re-seed entropy +
+// step clock).
+func TestWakeColdBoot_DoesNotInvokeResumeHook(t *testing.T) {
+	mgr := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "/k"}, "1.7.0", nil)
+	if _, err := mgr.Wake(context.Background(), WakeRequest{
+		Instance:   "cold-A",
+		BasePath:   "/base.ext4",
+		LayerPath:  "/layer.ext4",
+		VcpuCount:  2,
+		MemSizeMiB: 128,
+		// Snapshot intentionally nil — forces cold boot.
+	}); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	// Reach into the fakeVMM to assert TriggerResumeHook was not called.
+	vmm, ok := mgr.vmm.(*fakeVMM)
+	if !ok {
+		t.Fatal("mgr.vmm is not *fakeVMM")
+	}
+	if n := len(vmm.resumeHookCalls); n != 0 {
+		t.Errorf("TriggerResumeHook called %d times on cold boot, want 0 (hook is post-restore only)", n)
+	}
+}
+
+// TestWakeRestore_InvokesResumeHook verifies the restore path DOES call
+// TriggerResumeHook exactly once per Wake, with the lease slot wired into
+// the VsockDevice passed via RestoreSpec.
+func TestWakeRestore_InvokesResumeHook(t *testing.T) {
+	mgr := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "/k"}, "1.7.0", nil)
+	if _, err := mgr.Wake(context.Background(), WakeRequest{
+		Instance:   "restore-A",
+		BasePath:   "/base.ext4",
+		LayerPath:  "/layer.ext4",
+		VcpuCount:  2,
+		MemSizeMiB: 128,
+		Snapshot:   usableSnapshot(),
+	}); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	vmm, ok := mgr.vmm.(*fakeVMM)
+	if !ok {
+		t.Fatal("mgr.vmm is not *fakeVMM")
+	}
+	if n := len(vmm.resumeHookCalls); n != 1 {
+		t.Errorf("TriggerResumeHook called %d times on restore, want 1", n)
+	}
+	if len(vmm.resumeHookCalls) > 0 && vmm.resumeHookCalls[0].Instance != "restore-A" {
+		t.Errorf("resume hook for instance = %q, want %q", vmm.resumeHookCalls[0].Instance, "restore-A")
+	}
+}
+
+// TestWakeRestore_ResumeHookErrorFallsBackToColdBoot verifies the resume
+// hook error path is handled safely (ADR-005 cold-boot fallback). A failed
+// TriggerResumeHook means the resumed VM would share its snapshot's entropy
+// — spec §11 V6 says "non-unique guest must not serve." The Manager's
+// restore-failure cold-boot fallback discards the bad VM and starts fresh,
+// which gives the guest unique entropy by construction.
+//
+// Invariants pinned here:
+//   - The half-restored VM is killed (no leak: fvmm.killed includes it).
+//   - Wake ultimately succeeds (the cold-boot fallback rescued it).
+//   - TriggerResumeHook is called exactly once before the fallback fires.
+func TestWakeRestore_ResumeHookErrorFallsBackToColdBoot(t *testing.T) {
+	fvmm := &fakeVMM{resumeHookErr: fmt.Errorf("dial vsock uds: synthetic failure")}
+	mgr := NewManager(&fakeRunner{}, fvmm, Paths{Kernel: "/k"}, "1.7.0", nil)
+	if _, err := mgr.Wake(context.Background(), WakeRequest{
+		Instance:   "restore-fail",
+		BasePath:   "/base.ext4",
+		LayerPath:  "/layer.ext4",
+		VcpuCount:  2,
+		MemSizeMiB: 128,
+		Snapshot:   usableSnapshot(),
+	}); err != nil {
+		t.Fatalf("Wake: %v (cold-boot fallback should have rescued it)", err)
+	}
+	// TriggerResumeHook was called once (during the restore attempt).
+	if n := len(fvmm.resumeHookCalls); n != 1 {
+		t.Errorf("TriggerResumeHook calls = %d, want 1", n)
+	}
+	// Restore was attempted once, then Kill ran to discard the half-restored
+	// VM before cold boot took over.
+	if n := len(fvmm.restored); n != 1 {
+		t.Errorf("Restore calls = %d, want 1", n)
+	}
+	if n := len(fvmm.killed); n != 1 {
+		t.Errorf("Kill calls = %d, want 1 (cold-boot fallback discards the bad VM)", n)
+	}
+	// Cold boot ran after Kill — so bootCount is 1.
+	if n := fvmm.bootCount; n != 1 {
+		t.Errorf("Boot calls = %d, want 1 (cold-boot fallback after failed resume)", n)
+	}
+	if mgr.LiveCount() != 1 {
+		t.Errorf("LiveCount = %d after successful cold-boot fallback, want 1", mgr.LiveCount())
+	}
 }
 
 func (v *fakeVMM) Snapshot(_ context.Context, l Lease, _ SnapshotSpec) (SnapshotInfo, error) {

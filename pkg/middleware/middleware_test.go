@@ -212,3 +212,77 @@ func TestAuthLimit_DoesNotCountSuccess(t *testing.T) {
 		}
 	}
 }
+
+// TestAuthLimit_CountsCustomStatus extends the bucket's failure-trigger
+// list beyond [401] (used by /auth/verify, which 410s on consumed tokens
+// in addition to 401ing on unknown ones).
+func TestAuthLimit_CountsCustomStatus(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cfg := middleware.AuthLimitConfig{
+		Window:        time.Minute,
+		MaxFailures:   2,
+		Now:           func() time.Time { return now },
+		Log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+		CountStatuses: []int{http.StatusUnauthorized, http.StatusGone},
+	}
+	gate := func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "gone", http.StatusGone) }
+	h := middleware.AuthLimit(cfg)(http.HandlerFunc(gate))
+
+	fire := func() int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/auth/verify", nil)
+		r.RemoteAddr = "203.0.113.40:55555"
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if c := fire(); c != http.StatusGone {
+		t.Fatalf("first: code = %d, want 410", c)
+	}
+	now = now.Add(time.Second)
+	if c := fire(); c != http.StatusGone {
+		t.Fatalf("second: code = %d, want 410", c)
+	}
+	now = now.Add(time.Second)
+	// Third attempt — 410s counted, must 429.
+	if c := fire(); c != http.StatusTooManyRequests {
+		t.Fatalf("third: code = %d, want 429", c)
+	}
+}
+
+// TestAuthLimit_CountsAllAttempts covers the [0] sentinel (CountEveryAttempt)
+// which counts every response regardless of status. Used on /login so
+// anti-enumeration (200 even for unknown emails) doesn't blind the
+// limiter to brute-force.
+func TestAuthLimit_CountsAllAttempts(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cfg := middleware.AuthLimitConfig{
+		Window:        time.Minute,
+		MaxFailures:   3,
+		Now:           func() time.Time { return now },
+		Log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := middleware.AuthLimit(cfg)(ok)
+
+	fire := func() int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/login", nil)
+		r.RemoteAddr = "203.0.113.50:55555"
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	for i := 1; i <= 3; i++ {
+		if c := fire(); c != http.StatusOK {
+			t.Fatalf("attempt %d: code = %d, want 200", i, c)
+		}
+		now = now.Add(time.Second)
+	}
+	// 4th attempt — every response counted, must 429 even though status
+	// is the happy 200.
+	if c := fire(); c != http.StatusTooManyRequests {
+		t.Fatalf("4th: code = %d, want 429 (count-every-attempt)", c)
+	}
+}
