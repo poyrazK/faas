@@ -51,17 +51,9 @@ func pgStoreAccountDeletionWithPool(t *testing.T) pgDeps {
 	return pgDeps{store: state.NewPgStore(pool), pool: pool, ctx: ctx}
 }
 
-// seedFullAccount creates account + app + cron + domain + secret + key
-// so DeleteAccount has every child row to walk. Returns the account id.
-//
-// NOTE: build / instance / deployment rows are intentionally not seeded.
-// CreateBuild has a pre-existing schema/code mismatch on origin/main
-// (it RETURNs builds.created_at, but the table has no such column) and
-// CreateInstance has the same shape; fixing it is out of scope for the
-// G6 cascade test — the cascade contract holds whether or not the
-// builds/instances tables have rows, and the assertion below (every
-// dependent table empty post-DeleteAccount) does not depend on the
-// rows existing pre-cascade.
+// seedFullAccount creates account + app + deployment + build + instance
+// + cron + domain + secret + key so DeleteAccount has every child row
+// to walk. Returns the account id.
 func seedFullAccount(t *testing.T, s *state.PgStore, ctx context.Context) (string, error) {
 	t.Helper()
 	acct, err := s.CreateAccount(ctx, "g6@example.com", api.PlanHobby)
@@ -73,6 +65,19 @@ func seedFullAccount(t *testing.T, s *state.PgStore, ctx context.Context) (strin
 		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
 	})
 	if err != nil {
+		return "", err
+	}
+	dep, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:abc", Status: state.DeployLive,
+	})
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.CreateBuild(ctx, dep.ID, state.DeploymentKindImage, 4096, "/tmp/log"); err != nil {
+		return "", err
+	}
+	if _, err := s.CreateInstance(ctx, app.ID, dep.ID, "running", 256); err != nil {
 		return "", err
 	}
 	if _, err := s.CreateCustomDomain(ctx, "g6.example.com", app.ID, "tok"); err != nil {

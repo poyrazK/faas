@@ -529,7 +529,7 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 		`insert into builds (deployment_id, kind, source_bytes, status, log_path)
 		 values ($1, $2, $3, 'queued', $4)
 		 returning id, deployment_id, kind, source_bytes, status,
-		           coalesce(failure_class,''), coalesce(log_path,''), created_at`,
+		           coalesce(failure_class,''), coalesce(log_path,''), started_at, finished_at`,
 		deploymentID, string(kind), sourceBytes, nullString(logPath))
 	return scanBuild(row)
 }
@@ -572,7 +572,7 @@ func (s *PgStore) UpdateBuildStatus(ctx context.Context, id string, status Build
 func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error) {
 	row := s.pool.QueryRow(ctx,
 		`insert into custom_domains (domain, app_id, challenge_token) values ($1, $2, $3)
-		 returning domain, app_id, challenge_token, verified_at`,
+		 returning domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz)`,
 		domain, appID, token)
 	d := CustomDomain{}
 	if err := row.Scan(&d.Domain, &d.AppID, &d.ChallengeToken, &d.VerifiedAt); err != nil {
@@ -583,7 +583,8 @@ func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token s
 
 func (s *PgStore) DomainByName(ctx context.Context, domain string) (CustomDomain, error) {
 	row := s.pool.QueryRow(ctx,
-		`select domain, app_id, challenge_token, verified_at from custom_domains where domain = $1`, domain)
+		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz)
+		   from custom_domains where domain = $1`, domain)
 	d := CustomDomain{}
 	if err := row.Scan(&d.Domain, &d.AppID, &d.ChallengeToken, &d.VerifiedAt); err != nil {
 		return CustomDomain{}, mapErr(err)
@@ -593,7 +594,8 @@ func (s *PgStore) DomainByName(ctx context.Context, domain string) (CustomDomain
 
 func (s *PgStore) ListDomainsForApp(ctx context.Context, appID string) ([]CustomDomain, error) {
 	rows, err := s.pool.Query(ctx,
-		`select domain, app_id, challenge_token, verified_at from custom_domains where app_id = $1 order by domain`, appID)
+		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz)
+		   from custom_domains where app_id = $1 order by domain`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -603,7 +605,7 @@ func (s *PgStore) ListDomainsForApp(ctx context.Context, appID string) ([]Custom
 
 func (s *PgStore) ListDomainsForAccount(ctx context.Context, accountID string) ([]CustomDomain, error) {
 	rows, err := s.pool.Query(ctx,
-		`select d.domain, d.app_id, d.challenge_token, d.verified_at
+		`select d.domain, d.app_id, d.challenge_token, coalesce(d.verified_at, 'epoch'::timestamptz)
 		 from custom_domains d join apps a on a.id = d.app_id
 		 where a.account_id = $1 order by d.domain`, accountID)
 	if err != nil {
