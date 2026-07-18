@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -34,12 +35,18 @@ type VMM interface {
 
 // AppSpec is the flat set of fields vmmd needs to boot an instance (ADR-014).
 // schedd fills it from its Postgres view of the app + deployment.
+//
+// SealedEnv carries the per-key ciphertext rows from `app_secrets` (spec
+// §11/G2). schedd is the only writer that can load these rows (apid writes
+// intent, schedd reads to drive wakes). Empty slice = no secrets file
+// written; vmmd treats nil and empty as equivalent.
 type AppSpec struct {
 	BasePath   string // drive0 shared read-only base rootfs (spec §4.6)
 	LayerPath  string // drive1 per-app layer
 	VCPUCount  int32  // 2, or 4 for Scale
 	MemSizeMiB int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
 	EgressMbit int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	SealedEnv  []fcvm.SealedEnvEntry
 }
 
 // SnapshotRef points at the snapshot files to restore from and the Firecracker
@@ -161,12 +168,20 @@ func (c *VMMClient) Destroy(ctx context.Context, instance string) error {
 }
 
 func (a AppSpec) toProto() *vmmdpb.AppSpec {
+	sealed := make([]*vmmdpb.SealedSecret, 0, len(a.SealedEnv))
+	for _, e := range a.SealedEnv {
+		sealed = append(sealed, &vmmdpb.SealedSecret{
+			Key:        e.Key,
+			Ciphertext: e.Ciphertext,
+		})
+	}
 	return &vmmdpb.AppSpec{
 		BasePath:   a.BasePath,
 		LayerPath:  a.LayerPath,
 		VcpuCount:  a.VCPUCount,
 		MemSizeMib: a.MemSizeMiB,
 		EgressMbit: a.EgressMbit,
+		SealedEnv:  sealed,
 	}
 }
 

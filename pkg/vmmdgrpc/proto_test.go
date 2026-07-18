@@ -162,3 +162,72 @@ func TestWakeResponseFromInstance_BadIP(t *testing.T) {
 		t.Errorf("HostIp = %q, want empty", resp.HostIp)
 	}
 }
+
+func TestSealedFromProto(t *testing.T) {
+	// Empty input → nil output (the Manager treats nil and empty
+	// equivalently: no StageSecretsEnv call).
+	if got := sealedFromProto(nil); got != nil {
+		t.Errorf("nil input: got %+v, want nil", got)
+	}
+	if got := sealedFromProto([]*vmmdpb.SealedSecret{}); got != nil {
+		t.Errorf("empty input: got %+v, want nil", got)
+	}
+
+	pbs := []*vmmdpb.SealedSecret{
+		{Key: "A", Ciphertext: []byte{0x01, 0x02}},
+		{Key: "B", Ciphertext: []byte{0x03, 0x04, 0x05}},
+	}
+	got := sealedFromProto(pbs)
+	if len(got) != 2 {
+		t.Fatalf("len=%d want 2", len(got))
+	}
+	if got[0].Key != "A" || string(got[0].Ciphertext) != string([]byte{0x01, 0x02}) {
+		t.Errorf("entry 0 wrong: %+v", got[0])
+	}
+	if got[1].Key != "B" || string(got[1].Ciphertext) != string([]byte{0x03, 0x04, 0x05}) {
+		t.Errorf("entry 1 wrong: %+v", got[1])
+	}
+}
+
+func TestToWakeRequest_ForwardsSealedEnv(t *testing.T) {
+	req := &vmmdpb.CreateFromSnapshotRequest{
+		Instance: "inst-1",
+		App: &vmmdpb.AppSpec{
+			BasePath: "/b",
+			SealedEnv: []*vmmdpb.SealedSecret{
+				{Key: "STRIPE_KEY", Ciphertext: []byte("ciphertext-1")},
+				{Key: "DB_URL", Ciphertext: []byte("ciphertext-2")},
+			},
+		},
+		Snapshot: &vmmdpb.SnapshotRef{MemPath: "/m"},
+	}
+	wr, err := toWakeRequest(req)
+	if err != nil {
+		t.Fatalf("toWakeRequest: %v", err)
+	}
+	if len(wr.SealedEnvEntries) != 2 {
+		t.Fatalf("SealedEnvEntries len=%d, want 2", len(wr.SealedEnvEntries))
+	}
+	if wr.SealedEnvEntries[0].Key != "STRIPE_KEY" || string(wr.SealedEnvEntries[0].Ciphertext) != "ciphertext-1" {
+		t.Errorf("entry 0 wrong: %+v", wr.SealedEnvEntries[0])
+	}
+}
+
+func TestToColdBootRequest_ForwardsSealedEnv(t *testing.T) {
+	req := &vmmdpb.CreateColdBootRequest{
+		Instance: "inst-2",
+		App: &vmmdpb.AppSpec{
+			BasePath: "/b",
+			SealedEnv: []*vmmdpb.SealedSecret{
+				{Key: "X", Ciphertext: []byte("ct")},
+			},
+		},
+	}
+	wr, err := toColdBootRequest(req)
+	if err != nil {
+		t.Fatalf("toColdBootRequest: %v", err)
+	}
+	if len(wr.SealedEnvEntries) != 1 || wr.SealedEnvEntries[0].Key != "X" {
+		t.Errorf("SealedEnvEntries wrong: %+v", wr.SealedEnvEntries)
+	}
+}

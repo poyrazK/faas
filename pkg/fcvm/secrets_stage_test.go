@@ -1,9 +1,10 @@
 // Tests for the G2 secrets-staging path: cold-wake + restore both unseal
-// the per-app blob, marshal it back to canonical JSON, and pass it to
-// the VMM's StageSecretsEnv method. Failure modes covered:
+// the per-app sealed entries, merge them into a single envelope, marshal
+// back to canonical JSON, and pass it to the VMM's StageSecretsEnv method.
+// Failure modes covered:
 //
-//   - empty SealedEnvCiphertext ⇒ no StageSecretsEnv call (no-op)
-//   - non-empty blob ⇒ StageSecretsEnv receives the unsealed JSON, NOT
+//   - empty SealedEnvEntries ⇒ no StageSecretsEnv call (no-op)
+//   - non-empty entries ⇒ StageSecretsEnv receives the unsealed JSON, NOT
 //     the ciphertext
 //   - missing host identity ⇒ wake fails fast with ErrNoHostKey; this is
 //     the security-critical branch — silently dropping the blob would
@@ -13,6 +14,8 @@
 //     Manager refuses to boot a half-secure VM
 //   - stageSecretsErr ⇒ the deferred cleanup path runs (no live instance
 //     is registered)
+//   - multiple per-key entries ⇒ merged into one envelope, last write
+//     wins on key collision
 package fcvm
 
 import (
@@ -47,23 +50,21 @@ func sealEnv(t *testing.T, id *age.X25519Identity, env secretbox.Envelope) []byt
 	return blob
 }
 
-// wakeRequestFor takes the standard `req(id)` ColdBootRequest and converts
-// it into a WakeRequest with a sealed env blob. WakeRequest's private
-// fields aren't settable from outside the package, but the test lives in
-// the same package so the literal is straightforward.
-func wakeRequestFor(id string, blob []byte) (ColdBootRequest, []byte) {
-	return req(id), blob
+// entriesFromBlob packages a single sealed blob into a one-element
+// SealedEnvEntries slice — the shape schedd ships for an app with one
+// secret. Tests that exercise merging build their own slices directly.
+func entriesFromBlob(blob []byte) []SealedEnvEntry {
+	return []SealedEnvEntry{{Key: "PRIMARY", Ciphertext: blob}}
 }
 
 func TestWake_EmptySealedEnv_NoStageCall(t *testing.T) {
-	// Manager.Wake with no SealedEnvCiphertext should proceed through
+	// Manager.Wake with no SealedEnvEntries should proceed through
 	// bringUp without ever invoking StageSecretsEnv. The VMM stub records
 	// any stage calls so we can assert none happened.
 	vmm := &fakeVMM{}
 	m := newTestManager(&fakeRunner{}, vmm)
 
-	cb, blob := wakeRequestFor("no-secrets", nil)
-	_ = blob
+	cb := req("no-secrets")
 	inst, err := m.ColdBoot(context.Background(), cb)
 	if err != nil {
 		t.Fatalf("ColdBoot: %v", err)
@@ -89,8 +90,8 @@ func TestWake_StageRoundTrip_UnsealsBeforeWrite(t *testing.T) {
 	m := newTestManager(&fakeRunner{}, vmm)
 	m.SetHostIdentity(id)
 
-	cb, _ := wakeRequestFor("stage-rt", blob)
-	cb.SealedEnvCiphertext = blob
+	cb := req("stage-rt")
+	cb.SealedEnvEntries = entriesFromBlob(blob)
 
 	if _, err := m.ColdBoot(context.Background(), cb); err != nil {
 		t.Fatalf("ColdBoot: %v", err)
@@ -114,6 +115,43 @@ func TestWake_StageRoundTrip_UnsealsBeforeWrite(t *testing.T) {
 	}
 }
 
+func TestWake_MultipleEntries_MergedIntoEnvelope(t *testing.T) {
+	// The per-row storage shape means each secret is independently
+	// sealed — schedd ships a slice, the Manager merges them. This test
+	// pins the merge semantics: keys accumulate, last write wins.
+	id := newIdentity(t)
+	blobA := sealEnv(t, id, secretbox.Envelope{"A": "alpha"})
+	blobB := sealEnv(t, id, secretbox.Envelope{"B": "beta"})
+	// Re-seal A with a newer value to exercise last-write-wins.
+	blobAnew := sealEnv(t, id, secretbox.Envelope{"A": "alpha2"})
+
+	vmm := &fakeVMM{}
+	m := newTestManager(&fakeRunner{}, vmm)
+	m.SetHostIdentity(id)
+
+	cb := req("merge")
+	cb.SealedEnvEntries = []SealedEnvEntry{
+		{Key: "A", Ciphertext: blobA},
+		{Key: "B", Ciphertext: blobB},
+		{Key: "A", Ciphertext: blobAnew}, // later row wins
+	}
+
+	if _, err := m.ColdBoot(context.Background(), cb); err != nil {
+		t.Fatalf("ColdBoot: %v", err)
+	}
+	got := vmm.stagedSecrets[0].blob
+	var env secretbox.Envelope
+	if err := json.Unmarshal(got, &env); err != nil {
+		t.Fatalf("decode: %v (blob=%s)", err, got)
+	}
+	if env["A"] != "alpha2" {
+		t.Errorf("A=%q want alpha2 (last-write-wins)", env["A"])
+	}
+	if env["B"] != "beta" {
+		t.Errorf("B=%q want beta", env["B"])
+	}
+}
+
 func TestWake_NoHostIdentity_RefusesSealedEnv(t *testing.T) {
 	// Critical security invariant: a wake that arrives with a sealed
 	// blob but no host age configured MUST fail — never silently drop
@@ -125,8 +163,8 @@ func TestWake_NoHostIdentity_RefusesSealedEnv(t *testing.T) {
 	m := newTestManager(&fakeRunner{}, vmm)
 	// No SetHostIdentity — hostIdentity stays nil.
 
-	cb, _ := wakeRequestFor("no-key", blob)
-	cb.SealedEnvCiphertext = blob
+	cb := req("no-key")
+	cb.SealedEnvEntries = entriesFromBlob(blob)
 
 	_, err := m.ColdBoot(context.Background(), cb)
 	if err == nil {
@@ -150,8 +188,8 @@ func TestWake_TamperedCiphertext_FailsOpen(t *testing.T) {
 	m := newTestManager(&fakeRunner{}, vmm)
 	m.SetHostIdentity(id)
 
-	cb, _ := wakeRequestFor("tamper", blob)
-	cb.SealedEnvCiphertext = blob
+	cb := req("tamper")
+	cb.SealedEnvEntries = entriesFromBlob(blob)
 
 	_, err := m.ColdBoot(context.Background(), cb)
 	if err == nil {
@@ -175,8 +213,8 @@ func TestWake_StageErr_FailsWakeAndCleansUp(t *testing.T) {
 	m := newTestManager(&fakeRunner{}, vmm)
 	m.SetHostIdentity(id)
 
-	cb, _ := wakeRequestFor("stage-fail", blob)
-	cb.SealedEnvCiphertext = blob
+	cb := req("stage-fail")
+	cb.SealedEnvEntries = entriesFromBlob(blob)
 
 	if _, err := m.ColdBoot(context.Background(), cb); err == nil {
 		t.Fatal("ColdBoot should fail when StageSecretsEnv fails")

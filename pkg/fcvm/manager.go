@@ -10,6 +10,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
@@ -85,7 +86,7 @@ type Manager struct {
 	exportDirs map[string]string // instance -> host export dir (builder VMs only, M6)
 	// hostIdentity is the X25519 secret key used to unseal per-app sealed env
 	// blobs at wake time (spec §11/G2). nil means "no host age configured" —
-	// a Wake call with SealedEnvCiphertext set is rejected with ErrNoHostKey
+	// a Wake call with SealedEnvEntries set is rejected with ErrNoHostKey
 	// rather than silently dropping plaintext. vmmd owns the on-disk file.
 	hostIdentity *age.X25519Identity
 }
@@ -121,7 +122,7 @@ func (m *Manager) SetHostIdentity(id *age.X25519Identity) {
 // daemon's start-up self-check.
 func (m *Manager) HostIdentity() *age.X25519Identity { return m.hostIdentity }
 
-// ErrNoHostKey is returned when a WakeRequest carries SealedEnvCiphertext
+// ErrNoHostKey is returned when a WakeRequest carries SealedEnvEntries
 // but the Manager was not configured with a host identity. Surface this
 // to schedd so the wake fails fast — never silently drop the ciphertext
 // or accept-and-discard the plaintext.
@@ -158,15 +159,28 @@ type WakeRequest struct {
 	// and copies build artifacts (build-done.json + /build/out/*) into this host
 	// directory. App VMs leave it empty.
 	ExportDir string
-	// SealedEnvCiphertext is the age-sealed env blob from pkg/secretbox.SealOne
-	// per app (spec §11/G2). The Manager passes it to stageSecretsEnv, which
-	// loopback-mounts drive1, writes /etc/faas/secrets.env, and umounts. Empty
-	// bytes => no secrets file; guest-init reads nothing.
+	// SealedEnvEntries are the per-key ciphertext rows from `app_secrets`
+	// the caller wants loaded into the guest's env (spec §11/G2). Each entry is
+	// sealed independently by apid via pkg/secretbox.SealOne against the host
+	// X25519 recipient; vmmd unseals each, merges into an envelope, and writes
+	// /etc/faas/secrets.env on drive1. Empty slice = no file written.
+	//
+	// Per-key (rather than one combined envelope) because that's how apid
+	// already persists them — the wire stays narrow and unseal work scales with
+	// the per-app quota (≤100 keys at Scale), not with arbitrary blob lengths.
 	//
 	// The plaintext is held ONLY in memory by the manager at this point — the
 	// Manager is the unseal-and-forget boundary. It is never logged, never
 	// persisted, never returned to any caller.
-	SealedEnvCiphertext []byte
+	SealedEnvEntries []SealedEnvEntry
+}
+
+// SealedEnvEntry is one (key, ciphertext) pair as stored in app_secrets. The
+// key is the env-var name; the ciphertext is sealed under the host age
+// recipient by apid. vmmd merges all entries into the single envelope file.
+type SealedEnvEntry struct {
+	Key        string
+	Ciphertext []byte
 }
 
 // ColdBootRequest is the deploy-pipeline prime path: a first boot with no
@@ -180,9 +194,9 @@ type ColdBootRequest struct {
 	EgressMbit int // per-plan tc cap; 0 = no cap (legacy / disabled)
 	// ExportDir is non-empty for builder VMs. See WakeRequest.
 	ExportDir string
-	// SealedEnvCiphertext is forwarded to WakeRequest for staging onto drive1
-	// (spec §11/G2). Empty bytes = no secrets file written.
-	SealedEnvCiphertext []byte
+	// SealedEnvEntries is forwarded to WakeRequest for staging onto drive1
+	// (spec §11/G2). Empty slice = no secrets file written.
+	SealedEnvEntries []SealedEnvEntry
 }
 
 // ColdBoot boots an instance from rootfs with no snapshot. It is Wake with a nil
@@ -192,7 +206,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		Instance: req.Instance, BasePath: req.BasePath, LayerPath: req.LayerPath,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		EgressMbit: req.EgressMbit, Snapshot: nil,
-		ExportDir: req.ExportDir, SealedEnvCiphertext: req.SealedEnvCiphertext,
+		ExportDir: req.ExportDir, SealedEnvEntries: req.SealedEnvEntries,
 	})
 }
 
@@ -224,23 +238,38 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 		return nil, err
 	}
 
-	// G2: stage sealed env → decrypted JSON → loopback-mounted write → umount.
-	// The Manager is the unseal point (holds host.age). We refuse the request
-	// if a sealed blob was supplied without a key configured — silent drop
-	// would mean plaintext ciphertext never reaches the guest and the caller's
-	// "wake succeeded" hides a missing secret.
-	if len(req.SealedEnvCiphertext) > 0 {
+	// G2: stage sealed env → unseal each entry → merge into envelope →
+	// loopback-mounted write → umount. The Manager is the unseal point
+	// (holds host.age). We refuse the request if any sealed blob was
+	// supplied without a key configured — silent drop would mean plaintext
+	// ciphertext never reaches the guest and the caller's "wake succeeded"
+	// hides a missing secret.
+	if len(req.SealedEnvEntries) > 0 {
 		if m.hostIdentity == nil {
 			return nil, fmt.Errorf("wake %s: %w", req.Instance, ErrNoHostKey)
 		}
-		env, err := secretbox.Open(m.hostIdentity, req.SealedEnvCiphertext)
-		if err != nil {
-			return nil, fmt.Errorf("wake %s: open sealed env: %w", req.Instance, err)
+		// We loop-and-merge rather than unseal-into-buf because each entry
+		// is a sealed full envelope (per-key rows). That's the natural shape
+		// coming from apid's per-row upserts.
+		merged := secretbox.Envelope{}
+		for _, e := range req.SealedEnvEntries {
+			inner, err := secretbox.Open(m.hostIdentity, e.Ciphertext)
+			if err != nil {
+				return nil, fmt.Errorf("wake %s: open sealed env[%s]: %w",
+					req.Instance, logsanitize.Field(e.Key), err)
+			}
+			for k, v := range inner {
+				// Last write wins on key collision. apid upserts on a single
+				// row at a time, so collisions can only happen across wake
+				// scheduling — meaning a stale row got in; the newer one is
+				// the truth.
+				merged[k] = v
+			}
 		}
 		// Re-marshal as canonical JSON so guest-init reads the same envelope
 		// shape secretbox.Open returns. The plaintext never escapes into any
 		// log line — only the size and key count are observable above.
-		blob, err := jsonMarshalEnvelope(env)
+		blob, err := jsonMarshalEnvelope(merged)
 		if err != nil {
 			return nil, fmt.Errorf("wake %s: marshal envelope: %w", req.Instance, err)
 		}
