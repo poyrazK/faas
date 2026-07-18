@@ -35,6 +35,13 @@ type secretsSink struct {
 func (s *secretsSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
+		// Default to an empty list so the rotation hint (which fires
+		// `GET /v1/apps/{slug}/secrets` before every PUT) doesn't
+		// panic when a test doesn't override onGet.
+		if s.onGet == nil {
+			writeJSONTest(w, api.AppSecretListResponse{Quota: 25})
+			return
+		}
 		status, payload := s.onGet()
 		writeJSONTest(w, payload)
 		_ = status
@@ -297,5 +304,99 @@ func TestCmdSecrets_Unset_RequiresExactlyOneKey(t *testing.T) {
 func TestCmdSecrets_DispatchUnknownSubcommand(t *testing.T) {
 	if code := cmdSecrets([]string{"frobnicate"}); code != 1 {
 		t.Errorf("unknown = %d, want 1", code)
+	}
+}
+
+// TestCmdSecrets_Set_RotationHint exercises the ADR-020 D5 warning
+// (commands3.go secretsSet): when the key being set already exists,
+// the CLI prints a notice that parked snapshots still hold the old
+// plaintext until the next wake. We assert both directions:
+//
+//   - existing key  → hint is printed BEFORE the PUT
+//   - new key       → hint is NOT printed (no false alarm)
+func TestCmdSecrets_Set_RotationHint(t *testing.T) {
+	cases := []struct {
+		name        string
+		existing    []api.AppSecretResponse
+		pairs       []string
+		wantHint    bool
+		wantSubstr  []string // substrings the hint must contain when wantHint=true
+		unwantSub   string   // substring that must NOT appear when wantHint=false
+	}{
+		{
+			name:     "fresh_add_silent",
+			existing: nil,
+			pairs:    []string{"NEW_KEY=v1"},
+			wantHint: false,
+		},
+		{
+			name:     "existing_key_prints_hint",
+			existing: []api.AppSecretResponse{{Key: "STRIPE_KEY"}},
+			pairs:    []string{"STRIPE_KEY=sk_live_NEW"},
+			wantHint: true,
+			wantSubstr: []string{
+				"rotated",
+				"STRIPE_KEY",
+				"parked snapshots",
+				"next wake",
+			},
+		},
+		{
+			name:     "mixed_one_rotated_one_fresh",
+			existing: []api.AppSecretResponse{{Key: "STRIPE_KEY"}},
+			pairs:    []string{"STRIPE_KEY=new", "FRESH_KEY=fresh"},
+			wantHint: true,
+			wantSubstr: []string{
+				"1 secret(s)",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &secretsSink{
+				onGet: func() (int, any) {
+					return http.StatusOK, api.AppSecretListResponse{
+						Secrets: tc.existing,
+						Quota:   25,
+						Count:   len(tc.existing),
+					}
+				},
+				onPut: func(body []byte) (int, any) {
+					return http.StatusOK, nil
+				},
+			}
+			srv := httptest.NewServer(sink)
+			defer srv.Close()
+
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+			var stdout bytes.Buffer
+			old := osStdout
+			osStdout = &stdout
+			defer func() { osStdout = old }()
+
+			args := append([]string{"set", "--app", "x"}, tc.pairs...)
+			if code := cmdSecrets(args); code != 0 {
+				t.Fatalf("cmdSecrets set = %d, want 0", code)
+			}
+			out := stdout.String()
+
+			if tc.wantHint {
+				if !strings.Contains(out, "note:") {
+					t.Errorf("hint not printed:\n%s", out)
+				}
+				for _, s := range tc.wantSubstr {
+					if !strings.Contains(out, s) {
+						t.Errorf("hint missing %q in output:\n%s", s, out)
+					}
+				}
+			} else {
+				if strings.Contains(out, "note:") {
+					t.Errorf("hint printed for fresh add:\n%s", out)
+				}
+			}
+		})
 	}
 }

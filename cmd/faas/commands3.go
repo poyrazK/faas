@@ -144,6 +144,34 @@ func secretsSet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+
+	// Snapshot-rotation hint (ADR-020 D5): drive1's cleartext env is
+	// frozen into every parked snapshot. When a customer rotates a
+	// secret value, the old value remains visible to anyone restoring
+	// from a previously-parked snapshot — the new value reaches the
+	// guest only at the next wake. Surface that fact before the PUT
+	// so a hasty rotation doesn't leave the customer thinking the
+	// new value is live everywhere.
+	existing := map[string]bool{}
+	if list, err := client.ListSecrets(context.Background(), *app); err == nil {
+		for _, s := range list.Secrets {
+			existing[s.Key] = true
+		}
+	}
+	rotated := 0
+	for _, p := range pairs {
+		if existing[p.Key] {
+			rotated++
+		}
+	}
+	if rotated > 0 {
+		_, _ = fmt.Fprintf(osStdout,
+			"note: %d secret(s) already existed and are being rotated.\n"+
+				"  Any parked snapshots still hold the previous plaintext until the next wake.\n"+
+				"  Deploy, or call `faas wake %s`, to force an overstamp.\n",
+			rotated, *app)
+	}
+
 	for _, p := range pairs {
 		if err := client.SetSecret(context.Background(), *app, p.Key, p.Value); err != nil {
 			return printErr("Set "+p.Key+" failed", err)
