@@ -83,6 +83,11 @@ func (s *server) listSecrets(w http.ResponseWriter, r *http.Request, acct state.
 // Quota is enforced before the seal so an over-cap request is rejected
 // before any seal work happens. Idempotent: re-PUT replaces ciphertext +
 // bumps updated_at.
+//
+// Hand-rolled phases, not a helper, because the line budget here is well
+// under the §Conventions 50-line cap and the phase order matters for
+// auditing (validate key → resolve app → validate body → check quota →
+// seal → persist → log).
 func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	slug := r.PathValue("slug")
 	key := r.PathValue("key")
@@ -107,44 +112,12 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
-	// Quota: count BEFORE upsert so we know if this row would push the
-	// app over the cap. Upsert replaces existing (key) rows, so a re-PUT
-	// of the SAME key is NOT a new row and doesn't count against the
-	// quota — count() includes the row being replaced, so we subtract 1
-	// when the (app_id, key) already exists. MemStore's list count and
-	// PgStore's count(*) both reflect the current row set.
-	n, err := s.store.CountAppSecrets(ctx(r), acct.ID, app.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not count secrets"))
+	if prob := s.checkSecretQuota(ctx(r), acct, app, key, limits); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
-	already, err := s.secretExists(ctx(r), acct.ID, app.ID, key)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not check secret"))
-		return
-	}
-	if !already && n >= limits.SecretCountMax {
-		api.WriteProblem(w, api.ErrPlanLimitSecrets(limits, n))
-		return
-	}
-	recipient := setSecretRecipient()
-	if recipient == nil {
-		// Apid started without a host.age.pub; refuse to accept plaintext.
-		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal"))
-		return
-	}
-	ciphertext, err := secretbox.SealOne(recipient, key, req.Value, limits.SecretValueMaxBytes)
-	if err != nil {
-		// SealOne may return an api.Problem (over-cap) — surface it directly.
-		if prob := api.AsProblem(err); prob != nil {
-			api.WriteProblem(w, prob)
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not seal secret"))
-		return
-	}
-	if err := s.store.UpsertAppSecret(ctx(r), acct.ID, app.ID, key, ciphertext); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not persist secret"))
+	if prob := s.sealAndPersist(ctx(r), acct, app, key, req.Value, limits); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	// Audit + log. VALUE never reaches slog. logsanitize.RedactValue is
@@ -159,6 +132,53 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	writeJSON(w, http.StatusOK, struct {
 		Key string `json:"key"`
 	}{Key: key})
+}
+
+// sealAndPersist runs the "no-recipient / seal / persist" portion of
+// setSecret. Pulled out so the handler itself reads as a sequence of
+// guards, each calling a single check. Returns nil on success or a
+// ready-to-write *api.Problem on failure.
+func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, key, value string, limits api.Limits) *api.Problem {
+	recipient := setSecretRecipient()
+	if recipient == nil {
+		// Apid started without a host.age.pub; refuse to accept plaintext.
+		return api.ErrCapacity("host age recipient not loaded — refusing to seal")
+	}
+	ciphertext, err := secretbox.SealOne(recipient, key, value, limits.SecretValueMaxBytes)
+	if err != nil {
+		// SealOne may return an api.Problem (over-cap) — surface it directly.
+		if prob := api.AsProblem(err); prob != nil {
+			return prob
+		}
+		return api.ErrCapacity("could not seal secret")
+	}
+	if err := s.store.UpsertAppSecret(c, acct.ID, app.ID, key, ciphertext); err != nil {
+		return api.ErrCapacity("could not persist secret")
+	}
+	return nil
+}
+
+// checkSecretQuota returns nil when a PUT for (app, key) is allowed under
+// the per-plan SecretCountMax, or a ready-to-write *api.Problem otherwise.
+// Re-PUTs of an existing key are not new rows and so don't count against
+// the quota — the (count - 1) for the row being replaced is implicit.
+//
+// A nil *api.Problem means "proceed"; a non-nil one means "refuse, with
+// this problem envelope". This shape keeps setSecret itself readable: it
+// reads as a sequence of guards, each calling a single check.
+func (s *server) checkSecretQuota(c stdctx, acct state.Account, app state.App, key string, limits api.Limits) *api.Problem {
+	n, err := s.store.CountAppSecrets(c, acct.ID, app.ID)
+	if err != nil {
+		return api.ErrCapacity("could not count secrets")
+	}
+	already, err := s.secretExists(c, acct.ID, app.ID, key)
+	if err != nil {
+		return api.ErrCapacity("could not check secret")
+	}
+	if !already && n >= limits.SecretCountMax {
+		return api.ErrPlanLimitSecrets(limits, n)
+	}
+	return nil
 }
 
 // deleteSecret removes the (app_id, key) row. 400 CodeSecretNotFound when
