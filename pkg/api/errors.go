@@ -105,7 +105,25 @@ const (
 	CodeImageRequired     = "image_required"
 	CodeDeployFailed      = "deploy_failed"
 	CodeNoRollbackTarget  = "no_rollback_target"
+
+	// Customer secrets (spec §11/G2). Plaintext VALUES never enter logs;
+	// these codes are returned for quota / shape / size violations only.
+	CodePlanLimitSecrets    = "plan_limit_secrets"
+	CodeSecretInvalidKey    = "secret_invalid_key"
+	CodeSecretValueTooLarge = "secret_value_too_large"
+	CodeSecretNotFound      = "secret_not_found"
 )
+
+// SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
+// (migrations/00005_secrets.sql) AND the apid input validator. Uppercase ASCII,
+// digits, underscores; must start with a letter. Plain ASCII keeps the path
+// stable across runtimes (no Unicode normalization gotchas) and matches what
+// every shell / k8s / systemd treats as an env-var name.
+const SecretKeyPattern = `^[A-Z][A-Z0-9_]*$`
+
+// MaxSecretKeyLen bounds the secret key name. Mirrors Unix env-var limits
+// (NAME_MAX is 255 on Linux) and keeps per-row index size reasonable.
+const MaxSecretKeyLen = 128
 
 // StatusForCode returns the HTTP status a given stable Code maps to. It is the
 // inverse of the per-code status the constructors below hardcode, kept in one
@@ -134,6 +152,12 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeDeployFailed:
 		return http.StatusUnprocessableEntity
+	case CodePlanLimitSecrets:
+		return http.StatusForbidden
+	case CodeSecretInvalidKey, CodeSecretNotFound:
+		return http.StatusBadRequest
+	case CodeSecretValueTooLarge:
+		return http.StatusRequestEntityTooLarge
 	default:
 		return http.StatusInternalServerError
 	}
@@ -251,4 +275,55 @@ func ErrNoRollbackTarget() *Problem {
 		"No previous deployment",
 		"there's no superseded deployment to roll back to; deploy at least twice.").
 		WithDocs("https://docs.DOMAIN/deploys#rollback")
+}
+
+// ErrPlanLimitSecrets is returned when a secret PUT would exceed the plan's
+// per-app secret count (spec §11/G2). Observed is the post-write count.
+func ErrPlanLimitSecrets(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitSecrets,
+		"Secret count limit reached",
+		fmt.Sprintf("%s plan allows %d secret(s) per app; you have %d.", l.Plan, l.SecretCountMax, observed)).
+		WithLimit(int64(l.SecretCountMax), int64(observed)).
+		WithDocs("https://docs.DOMAIN/secrets#limits")
+}
+
+// ErrSecretInvalidKey is returned when a secret key fails the
+// ^[A-Z][A-Z0-9_]*$ pattern. Detail names the specific failure so the CLI can
+// render an actionable message.
+func ErrSecretInvalidKey(detail string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeSecretInvalidKey,
+		"Invalid secret key",
+		fmt.Sprintf("secret keys must match %s; %s", SecretKeyPattern, detail)).
+		WithDocs("https://docs.DOMAIN/secrets#keys")
+}
+
+// ErrSecretValueTooLarge is returned when a PUT value exceeds
+// Limits.SecretValueMaxBytes. apid checks the byte length of the request body
+// BEFORE sealing so the cap is enforced on the wire (no over-quota ciphertext
+// ever lands in PG).
+func ErrSecretValueTooLarge(l Limits, observedBytes int) *Problem {
+	return NewProblem(http.StatusRequestEntityTooLarge, CodeSecretValueTooLarge,
+		"Secret value too large",
+		fmt.Sprintf("%s plan caps secret values at %d bytes; got %d.", l.Plan, l.SecretValueMaxBytes, observedBytes)).
+		WithLimit(int64(l.SecretValueMaxBytes), int64(observedBytes)).
+		WithDocs("https://docs.DOMAIN/secrets#limits")
+}
+
+// ErrSecretNotFound is returned by DELETE /v1/apps/{slug}/secrets/{key} when
+// the key isn't set on the app. Distinct from CodeNotFound because the URL
+// shape (the resource IS the secret) is intentional.
+func ErrSecretNotFound(key string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeSecretNotFound,
+		"Secret not set",
+		fmt.Sprintf("no secret named %q on this app.", key)).
+		WithDocs("https://docs.DOMAIN/secrets")
+}
+
+// ErrValidation is a 400 fallback for malformed request bodies. Used by
+// handlers when JSON decode fails — the underlying error detail isn't
+// surfaced (it's attacker-influenced) but the cause class is the same
+// across handlers.
+func ErrValidation(detail string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeValidation,
+		"Validation failed", detail)
 }

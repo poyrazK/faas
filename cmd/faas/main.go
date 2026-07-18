@@ -32,6 +32,7 @@ Commands:
   domains      Manage custom domains
   crons        Manage scheduled requests
   keys         Manage API keys
+  secrets      Manage env secrets on an app (--app <slug>)
   usage        Show this month's usage
   logs         Tail app or deployment logs (--follow)
   version      Print the CLI version
@@ -91,6 +92,8 @@ func run(args []string) int {
 		return cmdCrons(args[1:])
 	case "keys":
 		return cmdKeys(args[1:])
+	case "secrets":
+		return cmdSecrets(args[1:])
 	case "usage":
 		return cmdUsage(args[1:])
 	case "logs":

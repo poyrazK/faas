@@ -26,6 +26,13 @@ type fakeVMM struct {
 	wakeErr           error
 	snapErr           error
 	destroyErr        error
+
+	// lastColdBootSpec / lastRestoreSpec capture the AppSpec the engine
+	// handed to vmmd on the most recent wake call. Tests that exercise
+	// the sealed-env wire read these to verify schedd forwarded the
+	// per-key rows correctly.
+	lastColdBootSpec AppSpec
+	lastRestoreSpec  AppSpec
 }
 
 func (f *fakeVMM) outcome(instance string, method vmmdpb.WakeMethod, requested vmmdpb.WakeMethod) *WakeOutcome {
@@ -36,22 +43,24 @@ func (f *fakeVMM) outcome(instance string, method vmmdpb.WakeMethod, requested v
 	}
 }
 
-func (f *fakeVMM) CreateColdBoot(_ context.Context, instance string, _ AppSpec) (*WakeOutcome, error) {
+func (f *fakeVMM) CreateColdBoot(_ context.Context, instance string, app AppSpec) (*WakeOutcome, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.wakeErr != nil {
 		return nil, f.wakeErr
 	}
+	f.lastColdBootSpec = app
 	f.coldBoots++
 	return f.outcome(instance, vmmdpb.WakeMethod_WAKE_COLD_BOOT, vmmdpb.WakeMethod_WAKE_COLD_BOOT), nil
 }
 
-func (f *fakeVMM) CreateFromSnapshot(_ context.Context, instance string, _ AppSpec, _ SnapshotRef) (*WakeOutcome, error) {
+func (f *fakeVMM) CreateFromSnapshot(_ context.Context, instance string, app AppSpec, _ SnapshotRef) (*WakeOutcome, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.wakeErr != nil {
 		return nil, f.wakeErr
 	}
+	f.lastRestoreSpec = app
 	f.restores++
 	method := vmmdpb.WakeMethod_WAKE_RESTORE
 	if f.forceColdFallback {
@@ -211,6 +220,65 @@ func TestEngineWake_RestoreFromSnapshot(t *testing.T) {
 	}
 	if vmm.restores != 1 || vmm.coldBoots != 0 {
 		t.Errorf("restores=%d coldBoots=%d, want 1/0", vmm.restores, vmm.coldBoots)
+	}
+}
+
+func TestEngineWake_ForwardsSealedEnv(t *testing.T) {
+	// Wake must load the app's sealed env rows from the store and pack
+	// them into AppSpec.SealedEnv so vmmd can unseal + stage them onto
+	// drive1. Without this, the §11/G2 secrets feature never reaches
+	// the customer's running VM (PR-review regression target).
+	store := state.NewMemStore()
+	acct, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+
+	// Two rows — proves multi-key fan-out. We don't seal real ciphertext
+	// here (that's the secretbox package's job); the sched wire just
+	// carries the bytes through, so any byte string exercises the path.
+	if err := store.UpsertAppSecret(context.Background(), acct.ID, app.ID,
+		"STRIPE_KEY", []byte("ct-stripe")); err != nil {
+		t.Fatalf("UpsertAppSecret STRIPE_KEY: %v", err)
+	}
+	if err := store.UpsertAppSecret(context.Background(), acct.ID, app.ID,
+		"DB_URL", []byte("ct-db")); err != nil {
+		t.Fatalf("UpsertAppSecret DB_URL: %v", err)
+	}
+
+	vmm := &fakeVMM{}
+	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	if _, err := e.Wake(context.Background(), app.ID); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+
+	spec := vmm.lastColdBootSpec
+	if len(spec.SealedEnv) != 2 {
+		t.Fatalf("SealedEnv len=%d, want 2 (rows: %+v)", len(spec.SealedEnv), spec.SealedEnv)
+	}
+	// MemStore preserves insertion order; assert keys arrived.
+	gotKeys := map[string][]byte{}
+	for _, e := range spec.SealedEnv {
+		gotKeys[e.Key] = e.Ciphertext
+	}
+	if string(gotKeys["STRIPE_KEY"]) != "ct-stripe" {
+		t.Errorf("STRIPE_KEY ciphertext = %q, want ct-stripe", gotKeys["STRIPE_KEY"])
+	}
+	if string(gotKeys["DB_URL"]) != "ct-db" {
+		t.Errorf("DB_URL ciphertext = %q, want ct-db", gotKeys["DB_URL"])
+	}
+}
+
+func TestEngineWake_NoSecrets_EmptySealedEnv(t *testing.T) {
+	// An app with zero secrets must hand vmmd a nil/empty SealedEnv so
+	// the Manager short-circuits the StageSecretsEnv mount entirely.
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+
+	if _, err := e.Wake(context.Background(), app.ID); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if len(vmm.lastColdBootSpec.SealedEnv) != 0 {
+		t.Errorf("SealedEnv = %+v, want empty", vmm.lastColdBootSpec.SealedEnv)
 	}
 }
 

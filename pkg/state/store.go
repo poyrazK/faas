@@ -244,4 +244,25 @@ type Store interface {
 	// Idempotency (spec §4.2: Idempotency-Key stored 24 h).
 	GetIdempotent(ctx context.Context, accountID, key string) (status int, body []byte, err error)
 	PutIdempotent(ctx context.Context, accountID, key string, status int, body []byte) error
+
+	// Customer secrets (spec §11/G2). apid is the only writer; schedd reads
+	// ciphertext rows at wake time to hand to vmmd. Ciphertext is age-sealed
+	// (pkg/secretbox); the plaintext VALUE is never stored.
+	//
+	// UpsertAppSecret writes-or-replaces the (app_id, key) row. accountID is
+	// passed for ownership verification (the handler must own the app before
+	// it can set a secret on it); the row also stores account_id for audit
+	// and for the account-scoped delete path.
+	UpsertAppSecret(ctx context.Context, accountID, appID, key string, ciphertext []byte) error
+	// DeleteAppSecret removes the (app_id, key) row. Returns ErrNotFound if
+	// the row doesn't exist — handlers render 400 CodeSecretNotFound (not a
+	// 404) because the URL resource IS the secret name, by design.
+	DeleteAppSecret(ctx context.Context, accountID, appID, key string) error
+	// ListAppSecrets returns every secret on the app (key + ciphertext). The
+	// handler renders KEYS only; ciphertext flows to vmmd. Returns nil slice
+	// (not error) when the app has no secrets.
+	ListAppSecrets(ctx context.Context, accountID, appID string) ([]AppSecret, error)
+	// CountAppSecrets is the quota check helper. apid calls it before
+	// UpsertAppSecret to enforce Limits.SecretCountMax.
+	CountAppSecrets(ctx context.Context, accountID, appID string) (int, error)
 }

@@ -30,6 +30,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -127,6 +128,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
+		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),
 	}
 	var out *WakeOutcome
 	if haveSnap {
@@ -195,6 +197,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		BasePath: basePath(app.Runtime), LayerPath: layerPath(deploymentID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
+		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),
 	}
 	out, err := e.vmm.CreateColdBoot(ctx, ins.ID, spec)
 	if err != nil {
@@ -387,6 +390,32 @@ func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.A
 		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: unknown plan %q", acct.Plan)
 	}
 	return app, acct, limits, nil
+}
+
+// loadSealedEnv reads the per-app sealed env rows and flattens them into
+// the fcvm shape Manager.Wake consumes. A read failure here is non-fatal:
+// it logs and returns nil (an empty SealedEnv). That preserves the
+// "wake succeeds even if PG has a hiccup" property — the app comes up
+// without secrets rather than failing entirely. vmmd never sees a stale
+// ciphertext, so there's nothing to leak; the worst case is a missing
+// secret, which customer support can spot from the next failed deploy.
+//
+// We carry AccountID explicitly so a cross-account (accountID, appID) pair
+// returns ErrNotFound (consistent with apid's 404 contract).
+func (e *Engine) loadSealedEnv(ctx context.Context, accountID, appID string) []fcvm.SealedEnvEntry {
+	rows, err := e.store.ListAppSecrets(ctx, accountID, appID)
+	if err != nil {
+		e.log.Warn("load sealed env", "app", appID, "err", err)
+		return nil
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]fcvm.SealedEnvEntry, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, fcvm.SealedEnvEntry{Key: r.Key, Ciphertext: r.Ciphertext})
+	}
+	return out
 }
 
 // usableSnapshot returns the freshest non-stale snapshot for a deployment iff it

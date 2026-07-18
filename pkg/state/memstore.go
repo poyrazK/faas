@@ -69,6 +69,17 @@ type MemStore struct {
 	// Stripe pusher has already pushed; prevents double-billing on
 	// redelivery.
 	stripePushHours map[stripePushKey]struct{}
+	// secrets is keyed by (app_id, key) per the schema's PRIMARY KEY.
+	// Value carries account_id for the ownership check on delete.
+	secrets map[secretKey]AppSecret
+}
+
+// secretKey mirrors the app_secrets PRIMARY KEY (app_id, key). The
+// MemStore uses the same composite-key shape so tests don't drift from
+// production behavior.
+type secretKey struct {
+	AppID string
+	Key   string
 }
 
 type idemEntry struct {
@@ -119,6 +130,7 @@ func NewMemStore() *MemStore {
 		// stripePushHours is the per-(account, hour) dedupe set the
 		// meterd hourly pusher reads/writes.
 		stripePushHours: map[stripePushKey]struct{}{},
+		secrets:         map[secretKey]AppSecret{},
 	}
 }
 
@@ -1376,6 +1388,81 @@ func (m *MemStore) ListDeploymentLogs(_ context.Context, deploymentID string, be
 		out = append(out, e)
 	}
 	return out, olderRemaining, nil
+}
+
+// --- customer secrets (spec §11/G2) -----------------------------------------
+//
+// Mirror of the PgStore implementations above. Plaintext VALUES never enter
+// the MemStore — callers (apid handlers, schedd) pass ciphertext only. The
+// MemStore's role is to model the (account_id, app_id, key) row shape + the
+// ownership checks so unit tests can verify quota / list / delete logic
+// without touching Postgres.
+
+// UpsertAppSecret inserts or replaces the (account_id, app_id, key) row.
+// updated_at is bumped on every call so schedd's wake staging observes a
+// fresh mtime even when the ciphertext is identical (rotation flows
+// re-seal with the same plaintext).
+func (m *MemStore) UpsertAppSecret(_ context.Context, accountID, appID, key string, ciphertext []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := secretKey{AppID: appID, Key: key}
+	existing, ok := m.secrets[k]
+	now := time.Now()
+	if !ok {
+		m.secrets[k] = AppSecret{AccountID: accountID, AppID: appID, Key: key, Ciphertext: ciphertext, CreatedAt: now, UpdatedAt: now}
+		return nil
+	}
+	if existing.AccountID != accountID {
+		return ErrNotFound
+	}
+	existing.Ciphertext = ciphertext
+	existing.UpdatedAt = now
+	m.secrets[k] = existing
+	return nil
+}
+
+// DeleteAppSecret removes the (account_id, app_id, key) row. Returns
+// ErrNotFound when no row matches — same semantics as PgStore so the
+// handler renders 400 CodeSecretNotFound.
+func (m *MemStore) DeleteAppSecret(_ context.Context, accountID, appID, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := secretKey{AppID: appID, Key: key}
+	row, ok := m.secrets[k]
+	if !ok || row.AccountID != accountID {
+		return ErrNotFound
+	}
+	delete(m.secrets, k)
+	return nil
+}
+
+// ListAppSecrets returns every secret on the app, scoped to accountID.
+// Order: by key ASC (matches PgStore ORDER BY).
+func (m *MemStore) ListAppSecrets(_ context.Context, accountID, appID string) ([]AppSecret, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []AppSecret
+	for _, s := range m.secrets {
+		if s.AppID != appID || s.AccountID != accountID {
+			continue
+		}
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
+}
+
+// CountAppSecrets is the quota helper. Mirrors PgStore.CountAppSecrets.
+func (m *MemStore) CountAppSecrets(_ context.Context, accountID, appID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, s := range m.secrets {
+		if s.AppID == appID && s.AccountID == accountID {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // compile-time check that MemStore satisfies Store.

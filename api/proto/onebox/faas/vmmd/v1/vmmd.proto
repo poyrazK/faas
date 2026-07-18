@@ -55,6 +55,21 @@ message AppSpec {
   // (legacy callers / disabled path); vmmd applies a tbf qdisc on the
   // host-side veth to enforce Free/Hobby/Pro/Scale (10/25/100/250).
   int32  egress_mbit  = 5;
+  // Per-key sealed env rows the caller wants loaded into the guest's
+  // env (spec §11/G2). Each entry was sealed independently by apid
+  // against the host X25519 recipient; vmmd unseals each, merges into
+  // a single envelope, and writes /etc/faas/secrets.env on drive1.
+  // Empty list = no file written.
+  repeated SealedSecret sealed_env = 6;
+}
+
+// SealedSecret is one (key, ciphertext) pair from app_secrets. The key is
+// the env-var name; the ciphertext is sealed by apid via filippo.io/age
+// under the host X25519 recipient. vmmd merges all entries into the
+// single envelope file written to drive1.
+message SealedSecret {
+  string key        = 1;
+  bytes  ciphertext = 2;
 }
 
 // SnapshotRef points at the snapshot files a caller wants to restore from.

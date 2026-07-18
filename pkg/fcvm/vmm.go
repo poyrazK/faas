@@ -416,6 +416,54 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) error {
 // sees "layer.ext4").
 const layerImageName = "layer.ext4"
 
+// secretsEnvPath is the in-guest location guest-init reads after pivot_root
+// (spec §11/G2). JSON-encoded envelope shape is documented on secretbox.Open.
+// The same file is written once per wake — overwriting any prior content —
+// so a secret rotation propagates without re-provisioning the layer.
+const secretsEnvPath = "etc/faas/secrets.env"
+
+// StageSecretsEnv loopback-mounts drive1 (the per-app layer, the only fs
+// the VM can write at runtime), writes /etc/faas/secrets.env with mode
+// 0400, and umounts. The plaintext is read off the chroot-local image
+// only for the duration of this call. vmmd is the only root component,
+// so the loopback mount is permitted by the §11 threat model.
+//
+// Mirrors exportBuildArtifacts (read side) — same chroot layout, same
+// mountpoint-handling pattern, write-vs-read swap. The function is a no-op
+// when jsonBlob is empty: no file is written, no mount attempted. This
+// short-circuit is what lets an app with zero secrets proceed without any
+// extra mount/umount cost.
+func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
+	if len(jsonBlob) == 0 {
+		return nil
+	}
+	drive1 := filepath.Join(v.chrootBase, v.fcName, instance, layerImageName)
+	if _, err := os.Stat(drive1); err != nil {
+		return fmt.Errorf("stat drive1: %w", err)
+	}
+	mp, err := os.MkdirTemp("", "faas-vmm-secrets-")
+	if err != nil {
+		return fmt.Errorf("mkdir mountpoint: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(mp) }()
+
+	// rw,noexec,nosuid — drive1 is a vfat-less ext4; noexec would still
+	// work but we don't need it and rw alone is the minimum.
+	if out, err := exec.Command("mount", "-o", "loop,rw", drive1, mp).CombinedOutput(); err != nil {
+		return fmt.Errorf("mount loop: %w (%s)", err, bytes.TrimSpace(out))
+	}
+	defer func() { _ = exec.Command("umount", mp).Run() }()
+
+	target := filepath.Join(mp, secretsEnvPath)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("mkdir etc/faas: %w", err)
+	}
+	if err := os.WriteFile(target, jsonBlob, 0o400); err != nil {
+		return fmt.Errorf("write secrets.env: %w", err)
+	}
+	return nil
+}
+
 // exportMax resolves the per-export byte cap. Zero means "unset" — fall back
 // to api.MaxExportedLayerBytes. We read via a tiny helper so tests can
 // inject a tighter cap.

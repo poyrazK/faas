@@ -39,3 +39,36 @@ func Field(s string) string {
 	}
 	return b.String()
 }
+
+// RedactValue returns a fixed-shape placeholder for a secret VALUE that
+// must never reach slog. Used by the apid secrets handlers' defensive log
+// sites (key names are public per spec §11 — only values are redacted).
+//
+// The "<redacted:N>" shape carries the original length so an operator can
+// tell "the customer's STRIPE_KEY was 24 bytes" from "it was 4 KB" without
+// ever seeing the value. Length is the only signal that escapes.
+func RedactValue(s string) string {
+	if s == "" {
+		return "<redacted:0>"
+	}
+	// Length is bounded by Limits.SecretValueMaxBytes (32 KB at Scale); the
+	// formatted string is always well under that.
+	return "<redacted:" + itoa(len(s)) + ">"
+}
+
+// itoa is a tiny base-10 formatter. Avoids importing strconv in this hot
+// sanitizer path; the function is only ever called with len(s) ≤ 32 KB so
+// a 5-element stack buffer is plenty.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
+}

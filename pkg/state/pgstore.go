@@ -1032,6 +1032,90 @@ func (s *PgStore) PutIdempotent(ctx context.Context, accountID, key string, stat
 	return err
 }
 
+// --- secrets -----------------------------------------------------------------
+//
+// Customer secrets (spec §11/G2). Ciphertext only — apid seals server-side
+// with the host X25519 recipient (pkg/secretbox), schedd reads ciphertext at
+// wake time and hands it to vmmd which unseals. The plaintext VALUE never
+// touches the Store layer.
+//
+// All four methods enforce (account_id, app_id) ownership: a secret is only
+// readable/writable by the account that owns the app. apid looks up the
+// app_id from the slug via AppBySlug before calling, so the ownership
+// guarantee reduces to "the caller's acct.ID equals the row's account_id".
+// We still pass accountID so the SQL is self-contained and the row's FK to
+// accounts(id) is honored (no FK on app_id today; see migration 00005).
+
+// UpsertAppSecret inserts or replaces the (app_id, key) ciphertext row.
+// updated_at is bumped on conflict so schedd's "freshest per app" cache
+// can re-stage drive1 even if the value didn't change (matters for
+// rotation flows that re-seal with the same plaintext).
+func (s *PgStore) UpsertAppSecret(ctx context.Context, accountID, appID, key string, ciphertext []byte) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into app_secrets (account_id, app_id, key, ciphertext)
+		 values ($1, $2, $3, $4)
+		 on conflict (app_id, key) do update
+		   set ciphertext = excluded.ciphertext,
+		       updated_at = now()`,
+		accountID, appID, key, ciphertext)
+	return err
+}
+
+// DeleteAppSecret removes the (app_id, key) row scoped to accountID.
+// Returns ErrNotFound when no row matches the (account_id, app_id, key)
+// triple — the handler renders 400 CodeSecretNotFound (intentional: the
+// URL resource IS the secret name, by design).
+func (s *PgStore) DeleteAppSecret(ctx context.Context, accountID, appID, key string) error {
+	tag, err := s.pool.Exec(ctx,
+		`delete from app_secrets where account_id = $1 and app_id = $2 and key = $3`,
+		accountID, appID, key)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListAppSecrets returns every (key, ciphertext) row on the app, scoped
+// to accountID. Order: by key ASC for deterministic wake staging (so a
+// rotated order of upserts doesn't shuffle the env map on every wake).
+// Returns nil slice (not error) when the app has no secrets — schedd
+// treats that as "no env file to write".
+func (s *PgStore) ListAppSecrets(ctx context.Context, accountID, appID string) ([]AppSecret, error) {
+	rows, err := s.pool.Query(ctx,
+		`select account_id, app_id, key, ciphertext, created_at, updated_at
+		 from app_secrets
+		 where account_id = $1 and app_id = $2
+		 order by key asc`,
+		accountID, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AppSecret
+	for rows.Next() {
+		var s AppSecret
+		if err := rows.Scan(&s.AccountID, &s.AppID, &s.Key, &s.Ciphertext, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// CountAppSecrets is the quota helper. Used by apid's PUT handler to
+// enforce Limits.SecretCountMax BEFORE UpsertAppSecret so a quota-exceeded
+// request never overwrites an existing (app_id, key) row.
+func (s *PgStore) CountAppSecrets(ctx context.Context, accountID, appID string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`select count(*) from app_secrets where account_id = $1 and app_id = $2`,
+		accountID, appID).Scan(&n)
+	return n, err
+}
+
 // --- row scanners ------------------------------------------------------------
 
 func scanAccount(row pgx.Row) (Account, error) {

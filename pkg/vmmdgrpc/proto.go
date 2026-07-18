@@ -29,11 +29,13 @@ func toWakeRequest(req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, err
 	}
 	snap := req.GetSnapshot()
 	wr := fcvm.WakeRequest{
-		Instance:   req.GetInstance(),
-		BasePath:   app.GetBasePath(),
-		LayerPath:  app.GetLayerPath(),
-		VcpuCount:  int(app.GetVcpuCount()),
-		MemSizeMiB: int(app.GetMemSizeMib()),
+		Instance:         req.GetInstance(),
+		BasePath:         app.GetBasePath(),
+		LayerPath:        app.GetLayerPath(),
+		VcpuCount:        int(app.GetVcpuCount()),
+		MemSizeMiB:       int(app.GetMemSizeMib()),
+		EgressMbit:       int(app.GetEgressMbit()),
+		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
 	}
 	if snap != nil && snap.GetMemPath() != "" {
 		wr.Snapshot = &fcvm.Snapshot{
@@ -42,7 +44,6 @@ func toWakeRequest(req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, err
 			FCVersion:   snap.GetFcVersion(),
 		}
 	}
-	wr.EgressMbit = int(app.GetEgressMbit())
 	return wr, nil
 }
 
@@ -61,13 +62,34 @@ func toColdBootRequest(req *vmmdpb.CreateColdBootRequest) (fcvm.WakeRequest, err
 			WithDocs("https://docs/DOMAIN/vmmd#appspec")
 	}
 	return fcvm.WakeRequest{
-		Instance:   req.GetInstance(),
-		BasePath:   app.GetBasePath(),
-		LayerPath:  app.GetLayerPath(),
-		VcpuCount:  int(app.GetVcpuCount()),
-		MemSizeMiB: int(app.GetMemSizeMib()),
-		EgressMbit: int(app.GetEgressMbit()),
+		Instance:         req.GetInstance(),
+		BasePath:         app.GetBasePath(),
+		LayerPath:        app.GetLayerPath(),
+		VcpuCount:        int(app.GetVcpuCount()),
+		MemSizeMiB:       int(app.GetMemSizeMib()),
+		EgressMbit:       int(app.GetEgressMbit()),
+		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
 	}, nil
+}
+
+// sealedFromProto converts a slice of vmmdpb.SealedSecret into the fcvm
+// shape Manager.Wake consumes. Nil in -> nil out (the Manager treats
+// nil and empty equivalently: no StageSecretsEnv call). We don't reject
+// malformed rows here — the recipient + key validation already happened
+// at apid's PUT, and the Manager will surface an Open failure on a
+// truly bogus ciphertext.
+func sealedFromProto(pbs []*vmmdpb.SealedSecret) []fcvm.SealedEnvEntry {
+	if len(pbs) == 0 {
+		return nil
+	}
+	out := make([]fcvm.SealedEnvEntry, 0, len(pbs))
+	for _, p := range pbs {
+		out = append(out, fcvm.SealedEnvEntry{
+			Key:        p.GetKey(),
+			Ciphertext: p.GetCiphertext(),
+		})
+	}
+	return out
 }
 
 // wakeResponseFromInstance builds a WakeResponse from a just-woken instance.

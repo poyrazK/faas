@@ -54,6 +54,13 @@ type Limits struct {
 
 	// Networking (spec §7).
 	EgressMbit int // per-instance egress bandwidth cap via tc
+
+	// Secrets (spec §11/G2). Ciphertext quota per app; per-value byte cap.
+	// SecretCountMax bounds the (app_id, key) row count. SecretValueMaxBytes
+	// bounds the plaintext value the customer may PUT — apid rejects larger
+	// values with 413 CodeSecretValueTooLarge before sealing.
+	SecretCountMax      int // max secrets per app (Free 3, Hobby 25, Pro 50, Scale 100)
+	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
 }
 
 // planLimits is the authoritative table. Values: spec §1 quota row, §4.1 rate
@@ -67,64 +74,72 @@ type Limits struct {
 //	Scale 100/20 / 1024 / 1500
 var planLimits = map[Plan]Limits{
 	PlanFree: {
-		Plan:               PlanFree,
-		DeployedApps:       1,
-		MaxConcurrency:     1,
-		RAMMB:              128,
-		AppLayerMaxMB:      256,
-		SourceTarballMaxMB: 100,
-		VCPU:               2,
-		IdleTimeoutS:       30,
-		IncludedGBHours:    5,
-		PriceMillicents:    0,
-		RateLimitRPS:       5,
-		RateLimitBurst:     20,
-		EgressMbit:         10,
+		Plan:                PlanFree,
+		DeployedApps:        1,
+		MaxConcurrency:      1,
+		RAMMB:               128,
+		AppLayerMaxMB:       256,
+		SourceTarballMaxMB:  100,
+		VCPU:                2,
+		IdleTimeoutS:        30,
+		IncludedGBHours:     5,
+		PriceMillicents:     0,
+		RateLimitRPS:        5,
+		RateLimitBurst:      20,
+		EgressMbit:          10,
+		SecretCountMax:      3,
+		SecretValueMaxBytes: 4 * 1024,
 	},
 	PlanHobby: {
-		Plan:               PlanHobby,
-		DeployedApps:       5,
-		MaxConcurrency:     2,
-		RAMMB:              256,
-		AppLayerMaxMB:      512,
-		SourceTarballMaxMB: 100,
-		VCPU:               2,
-		IdleTimeoutS:       60,
-		IncludedGBHours:    50,
-		PriceMillicents:    900_000, // €9.00
-		RateLimitRPS:       20,
-		RateLimitBurst:     100,
-		EgressMbit:         25,
+		Plan:                PlanHobby,
+		DeployedApps:        5,
+		MaxConcurrency:      2,
+		RAMMB:               256,
+		AppLayerMaxMB:       512,
+		SourceTarballMaxMB:  100,
+		VCPU:                2,
+		IdleTimeoutS:        60,
+		IncludedGBHours:     50,
+		PriceMillicents:     900_000, // €9.00
+		RateLimitRPS:        20,
+		RateLimitBurst:      100,
+		EgressMbit:          25,
+		SecretCountMax:      25,
+		SecretValueMaxBytes: 8 * 1024,
 	},
 	PlanPro: {
-		Plan:               PlanPro,
-		DeployedApps:       25,
-		MaxConcurrency:     5,
-		RAMMB:              512,
-		AppLayerMaxMB:      1024,
-		SourceTarballMaxMB: 250,
-		VCPU:               2,
-		IdleTimeoutS:       300,
-		IncludedGBHours:    250,
-		PriceMillicents:    2_900_000, // €29.00
-		RateLimitRPS:       100,
-		RateLimitBurst:     500,
-		EgressMbit:         100,
+		Plan:                PlanPro,
+		DeployedApps:        25,
+		MaxConcurrency:      5,
+		RAMMB:               512,
+		AppLayerMaxMB:       1024,
+		SourceTarballMaxMB:  250,
+		VCPU:                2,
+		IdleTimeoutS:        300,
+		IncludedGBHours:     250,
+		PriceMillicents:     2_900_000, // €29.00
+		RateLimitRPS:        100,
+		RateLimitBurst:      500,
+		EgressMbit:          100,
+		SecretCountMax:      50,
+		SecretValueMaxBytes: 16 * 1024,
 	},
 	PlanScale: {
-		Plan:               PlanScale,
-		DeployedApps:       100,
-		MaxConcurrency:     20,
-		RAMMB:              1024,
-		AppLayerMaxMB:      2048,
-		SourceTarballMaxMB: 250,
-		VCPU:               4,
-		IdleTimeoutS:       600,
-		IncludedGBHours:    1500,
-		PriceMillicents:    9_900_000, // €99.00
-		RateLimitRPS:       500,
-		RateLimitBurst:     2000,
-		EgressMbit:         250,
+		Plan:                PlanScale,
+		DeployedApps:        100,
+		MaxConcurrency:      20,
+		RAMMB:               1024,
+		AppLayerMaxMB:       2048,
+		SourceTarballMaxMB:  250,
+		VCPU:                4,
+		IdleTimeoutS:        600,
+		IncludedGBHours:     1500,
+		PriceMillicents:     9_900_000, // €99.00
+		RateLimitRPS:        500,
+		RateLimitBurst:      2000,
+		EgressMbit:          250,
+		SecretCountMax:      100,
+		SecretValueMaxBytes: 32 * 1024,
 	},
 }
 
