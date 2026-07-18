@@ -36,6 +36,12 @@ type AppResponse struct {
 	IdleTimeoutS   int    `json:"idle_timeout_s,omitempty"`
 	Status         string `json:"status"`
 	URL            string `json:"url"`
+	// Manifest is the runner-scaffold payload (env, healthz path,
+	// entrypoint). Surfaced so the dashboard's app detail page can
+	// show the function handler + env without a separate round-trip.
+	// The DTO reuses the existing api.AppManifest (defined in
+	// appmanifest.go) so the wire shape stays a single source of truth.
+	Manifest AppManifest `json:"manifest"`
 }
 
 // CreateDeploymentRequest ships a version (JSON variant; the multipart
@@ -56,12 +62,34 @@ type DeploymentResponse struct {
 	CreatedAt   string `json:"created_at"`
 }
 
-// AccountResponse is the whoami payload.
+// AccountResponse is the whoami payload. Limits is the plan's
+// quota/limit table (RAM MB, max concurrency, included GB-h,
+// deployed-app cap) so the dashboard /account page can show
+// "you have X of Y apps" without a second round trip. UsageGBHours
+// is the roll-up for the current month (caller-aggregated from
+// Store.UsageByHour in apid; included here so the dashboard can
+// render the meter in one fetch).
 type AccountResponse struct {
-	ID     string `json:"id"`
-	Email  string `json:"email"`
-	Plan   string `json:"plan"`
-	Status string `json:"status"`
+	ID            string        `json:"id"`
+	Email         string        `json:"email"`
+	Plan          string        `json:"plan"`
+	Status        string        `json:"status"`
+	Limits        AccountLimits `json:"limits"`
+	UsageGBHours  float64       `json:"usage_gb_hours"`
+	AppCount      int           `json:"app_count"`
+	GitHubInstall string        `json:"github_install_id,omitempty"`
+}
+
+// AccountLimits is the read-only copy of api.Limits that survives
+// serialization. Stripped of fields the dashboard doesn't need
+// (eg. internal ops); mirror pkg/api/limits.go for the wiring.
+type AccountLimits struct {
+	Plan            string `json:"plan"`
+	RAMMB           int    `json:"ram_mb"`
+	MaxConcurrency  int    `json:"max_concurrency"`
+	DeployedApps    int    `json:"deployed_apps"`
+	IncludedGBHours int64  `json:"included_gb_hours"`
+	AppLayerMaxMB   int    `json:"app_layer_max_mb"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext
@@ -95,14 +123,18 @@ type CreateCustomDomainRequest struct {
 	AppID  string `json:"app_id"`
 }
 
-// CronResponse mirrors the crons table.
+// CronResponse mirrors the crons table. LastFiredAt is the most
+// recent fire stamp schedd wrote (MarkCronFired). Zero-valued
+// crons serialize as "" — the dashboard only shows the column
+// when populated.
 type CronResponse struct {
-	ID        string `json:"id"`
-	AppID     string `json:"app_id"`
-	Schedule  string `json:"schedule"`
-	Path      string `json:"path"`
-	Enabled   bool   `json:"enabled"`
-	CreatedAt string `json:"created_at"`
+	ID          string `json:"id"`
+	AppID       string `json:"app_id"`
+	Schedule    string `json:"schedule"`
+	Path        string `json:"path"`
+	Enabled     bool   `json:"enabled"`
+	CreatedAt   string `json:"created_at"`
+	LastFiredAt string `json:"last_fired_at,omitempty"`
 }
 
 // CreateCronRequest creates a scheduled synthetic POST.
@@ -141,6 +173,33 @@ type UsageResponse struct {
 	// IncludedGBHours is the included quota for the account's plan at the
 	// requested month; the CLI computes the overage from this and the rows.
 	IncludedGBHours int64 `json:"included_gb_hours"`
+}
+
+// DeploymentListResponse is the page shape for GET /v1/deployments.
+// Items is the page (in created_at DESC order); NextBefore is the
+// cursor the caller should pass on the next request to page BACKWARDS
+// (the dashboard's "older deploys" link). Empty NextBefore means the
+// page is the end of the list.
+//
+// Cursor format: RFC3339Nano (matches state.Deployment.CreatedAt).
+type DeploymentListResponse struct {
+	Items      []DeploymentResponse `json:"items"`
+	NextBefore string               `json:"next_before,omitempty"`
+}
+
+// UsageSummaryResponse is the roll-up for the current month (or any
+// month passed as a query param). Used by the dashboard usage page so
+// the customer sees a single number ("used X of Y GB-h, overage $Z")
+// without having to sum rows.
+//
+// Overage math: anything above IncludedGBHours is billable at the
+// overage rate in the financial model (€0.01/GB-h). Cents are integer.
+type UsageSummaryResponse struct {
+	Month           string  `json:"month"`             // YYYY-MM
+	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 3_600_000
+	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
+	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
+	OverageCents    int64   `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
 }
 
 // ValidateAppConfig checks a requested app config against its plan caps (spec

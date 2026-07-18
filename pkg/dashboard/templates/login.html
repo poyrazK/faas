@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    .flash { background: #fff8c5; padding: 0.5rem 1rem; border: 1px solid #e2cf6e; margin: 1rem 0; }
+    main { padding: 2rem 0; }
+    h1 { margin-top: 0; }
+    form { display: grid; gap: 0.5rem; max-width: 360px; }
+    input, button { padding: 0.5rem 0.7rem; font: inherit; }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+  {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+  <main>
+    <h1>{{.Title}}</h1>
+    <form method="POST" action="/login">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" required autocomplete="email">
+      <button type="submit">Send magic link</button>
+    </form>
+    <p>Slice-3 wires the magic-link transport. Slice-2 placeholder.</p>
+  </main>
+</body>
+</html>

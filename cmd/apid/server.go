@@ -7,8 +7,13 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,6 +25,9 @@ import (
 // M5+: handlers are grouped by resource in handlers.go (apps, deployments,
 // crons, domains, keys, instances, usage); this file owns the middleware
 // (auth, idempotent), the route table, and small request/response helpers.
+// M7.5: githubd is the GitHub App integration handle — see ADR-012. Slice 1
+// wires a stub that returns 503 for every RPC; slices 7-8 replace with a
+// live socket-dialed client.
 type server struct {
 	store  state.Store
 	log    *slog.Logger
@@ -31,6 +39,19 @@ type server struct {
 	// mailer emits the dunning + quota-warning emails. nil falls back
 	// to the noop sender so callers never need to nil-check.
 	mailer Mailer
+	// githubd is apid's handle to the githubd daemon (ADR-012). Never nil:
+	// slice 1 default is stubGithubdClient; slice 7 swaps for a live dial.
+	githubd GithubdClient
+	// events is the in-process broadcaster the SSE handlers read from
+	// (slice 5/6). nil falls back to a fresh one so callers can defer
+	// initialization in unit tests.
+	events *events.Broadcaster
+	// sessions seals + verifies dashboard cookies. nil falls back to an
+	// ephemeral manager (so the daemon still boots in dev with no
+	// /etc/faas/secrets/session.key) — see cmd/apid/main.go.
+	sessions *session.Manager
+	// loginTTL is how long a magic-link stays valid. Default 15m.
+	loginTTL time.Duration
 }
 
 // Mailer is the slice of pkg/mail.Sender apid depends on. Kept as an
@@ -52,19 +73,39 @@ type Message struct {
 // Notifier is the slice of pgstore behaviour apid depends on. The production
 // server uses a db-backed Notifier; tests inject a no-op so they don't need a
 // running Postgres.
+//
+// Subscribe is added in M7.5 slice 6 to wire the SSE /v1/events
+// endpoint. It hands back a buffered channel of db.Notification for the
+// requested channels, plus a cancel func. The noop notifier returns an
+// empty stream that closes immediately.
 type Notifier interface {
 	Notify(ctx context.Context, channel, payload string) error
+	Subscribe(ctx context.Context, channels []string) (<-chan db.Notification, func(), error)
 }
 
 func newServer(store state.Store, log *slog.Logger, domain string, notif Notifier) *server {
-	return newServerWithDeps(store, log, domain, notif, "", nil)
+	return newServerWithDeps(store, log, domain, notif, "", nil, nil, nil, nil, 0)
 }
 
 // newServerWithDeps wires the full server surface including the M7
-// stripe-webhook + mailer deps. Production (cmd/apid/main.go) calls this
-// with the env-loaded secret + a real mailer; tests use the simpler
-// newServer (no secret, noop mailer).
-func newServerWithDeps(store state.Store, log *slog.Logger, domain string, notif Notifier, stripeSecret string, mailer Mailer) *server {
+// stripe-webhook + mailer deps, the M7.5 githubd client (ADR-012),
+// the dashboard session manager + login-token TTL.
+//
+// Production (cmd/apid/main.go) calls this with env-loaded values;
+// tests use the simpler newServer (no secret, noop mailer, stub
+// githubd, nil sessions → ephemeral key, default 15m login TTL).
+func newServerWithDeps(
+	store state.Store,
+	log *slog.Logger,
+	domain string,
+	notif Notifier,
+	stripeSecret string,
+	mailer Mailer,
+	githubd GithubdClient,
+	sessions *session.Manager,
+	bcaster *events.Broadcaster,
+	loginTTL time.Duration,
+) *server {
 	if domain == "" {
 		domain = "DOMAIN"
 	}
@@ -74,6 +115,18 @@ func newServerWithDeps(store state.Store, log *slog.Logger, domain string, notif
 	if mailer == nil {
 		mailer = noopMailer{}
 	}
+	if githubd == nil {
+		githubd = stubGithubdClient{}
+	}
+	if sessions == nil {
+		sessions, _ = session.NewEphemeralManager(7 * 24 * time.Hour)
+	}
+	if bcaster == nil {
+		bcaster = events.New()
+	}
+	if loginTTL <= 0 {
+		loginTTL = 15 * time.Minute
+	}
 	return &server{
 		store:               store,
 		log:                 log,
@@ -81,6 +134,10 @@ func newServerWithDeps(store state.Store, log *slog.Logger, domain string, notif
 		notif:               notif,
 		stripeWebhookSecret: stripeSecret,
 		mailer:              mailer,
+		githubd:             githubd,
+		events:              bcaster,
+		sessions:            sessions,
+		loginTTL:            loginTTL,
 	}
 }
 
@@ -109,6 +166,15 @@ func (l *logMailer) Send(_ context.Context, msg Message) error {
 type noopNotifier struct{}
 
 func (noopNotifier) Notify(_ context.Context, _, _ string) error { return nil }
+
+// Subscribe returns a closed channel immediately. The noop notifier
+// is the test/dev default; the SSE handler sees an EOF right away
+// and exits cleanly.
+func (noopNotifier) Subscribe(_ context.Context, _ []string) (<-chan db.Notification, func(), error) {
+	ch := make(chan db.Notification)
+	close(ch)
+	return ch, func() {}, nil
+}
 
 // handler builds the full Appendix A route table (Go 1.22 method+wildcard).
 // New routes append here; do not introduce per-feature sub-muxes.
@@ -155,12 +221,66 @@ func (s *server) handler() http.Handler {
 
 	// Usage.
 	mux.HandleFunc("GET /v1/usage", s.auth(s.getUsage))
+	mux.HandleFunc("GET /v1/usage/summary", s.auth(s.usageSummary))
+
+	// Account-scoped deployments list (M7.5 dashboard).
+	mux.HandleFunc("GET /v1/deployments", s.auth(s.listDeployments))
 
 	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept
 	// unsigned and trust the network boundary; ADR-007 hardening later).
 	mux.HandleFunc("POST /v1/webhooks/stripe", s.stripeWebhook)
 
+	// M7.5 SSE live-update (ADR-011). Handles session-cookie OR
+	// API-key auth itself — the cookie path is for the dashboard,
+	// the Bearer path for the CLI. NOT mounted behind s.auth so the
+	// cookie flow works without an API-key round trip.
+	mux.Handle("GET /v1/events", s.dashboardChain(s.eventsHandler(s.log)))
+
+	// Dashboard surface (M7.5, ADR-011). Lives behind gatewayd's
+	// /dashboard/* reverse-proxy (spec §11 single-public-listener).
+	//
+	// Slice 3 wires the magic-link auth flow:
+	//   GET  /login            — render the email form
+	//   POST /login            — mint token + email it
+	//   GET  /auth/verify      — consume token, set session cookie
+	//   POST /logout           — clear cookie
+	//
+	// All other /dashboard/* sit behind sessionAuth → handlers_dashboard.
+	auth := &authHandlers{srv: s, log: s.log, loginTTL: s.loginTTL, mailer: s.mailer, domain: s.domain}
+	mux.Handle("GET /login", s.dashboardChain(http.HandlerFunc(auth.renderLoginForm)))
+	mux.Handle("POST /login", s.dashboardChain(http.HandlerFunc(auth.postLogin)))
+	mux.Handle("GET /auth/verify", s.dashboardChain(http.HandlerFunc(auth.verify)))
+	mux.Handle("POST /logout", s.dashboardChain(http.HandlerFunc(auth.logout)))
+	// /oauth/callback is the GitHub App install redirect target
+	// (review finding #1+#2 closure for the M7.5 OAuth path).
+	// Behind sessionAuth so the bind row is anchored to the
+	// logged-in account; behind dashboardChain so it shares the
+	// §11 middleware stack with the rest of the cookie-bearing
+	// surface. NOT behind s.auth — that's API-key auth, not
+	// session-cookie auth, and the redirect URL is hit by a
+	// browser.
+	mux.Handle("GET "+oauthCallbackPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderOAuthCallback))))
+	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
+	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
+
 	return mux
+}
+
+// dashboardChain wraps a dashboard handler in the §11 middleware
+// (RequestID + Recovery; slice 3 adds sessionAuth; AuthLimit on
+// /login). The full chain is:
+//
+//	RequestID → Recovery → handler
+//
+// Order matters: RequestID must come first so even Recovery's 500
+// response carries the id, and Recovery must wrap the inner handler
+// so a template panic returns 500 instead of taking the daemon down.
+func (s *server) dashboardChain(h http.Handler) http.Handler {
+	// http.HandlerFunc is also http.Handler so middleware.RequestID
+	// accepts it directly. Build inside-out.
+	h = middleware.RequestID(h)
+	h = middleware.Recovery(s.log)(h)
+	return h
 }
 
 // accountHandler is a handler that has already resolved the caller's account.

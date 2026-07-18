@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{if .Data}}
+      <h1>Plan: {{.Data.Plan}}</h1>
+      <table>
+        <tr><th>Max app memory (RAM MB)</th><td>{{.Data.RAMMB}}</td></tr>
+        <tr><th>Included GB-hours / month</th><td>{{.Data.Included}}</td></tr>
+        <tr><th>Max deployed apps</th><td>{{.Data.AppsCap}}</td></tr>
+        <tr><th>App layer cap (MB)</th><td>{{.Data.AppLayer}}</td></tr>
+        <tr><th>Idle reaper (sec)</th><td>{{.Data.IdleSec}}</td></tr>
+      </table>
+      <p>Stripe customer portal redirects ship in the post-M7.5 add-on. Today, change plan via the CLI: <code>faas account set-plan &lt;plan&gt;</code>.</p>
+    {{end}}
+  </main>
+  <footer>onebox faas · M7.5 dashboard · server-rendered, no SPA build</footer>
+</body>
+</html>

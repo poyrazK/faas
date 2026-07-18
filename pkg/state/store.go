@@ -11,6 +11,30 @@ import (
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
 
+// MaxDeploymentLogPage caps the per-call row count for
+// ListDeploymentLogs. Both implementations clamp the caller's
+// `limit` to this value before allocating — defense in depth so a
+// caller that forgets to validate a query-string `limit` can't
+// trigger an oversized allocation (CodeQL go/allocation-size).
+const MaxDeploymentLogPage = 500
+
+// clampLogLimit sanitizes the caller-supplied `limit` argument to
+// ListDeploymentLogs so the slice allocation in the store
+// implementations is provably bounded. CodeQL's
+// go/allocation-size rule recognizes the result of this helper
+// (small pure function returning a constant-bounded value) as a
+// sanitizer; an inline `if limit > X { limit = X }` branch is not
+// tracked.
+func clampLogLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	if limit > MaxDeploymentLogPage {
+		return MaxDeploymentLogPage
+	}
+	return limit
+}
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface
@@ -43,6 +67,19 @@ type Store interface {
 	ListAPIKeys(ctx context.Context, accountID string) ([]APIKey, error)
 	TouchKeyLastUsed(ctx context.Context, keyID string) error
 
+	// Login tokens (M7.5 magic-link, spec §14 + ADR-011).
+	//
+	// IssueLoginToken persists a freshly-minted token's SHA-256 hash
+	// with an expiry; the raw token is returned to the caller to
+	// embed in the email. ConsumeLoginToken marks the token consumed
+	// AND returns the bound account_id in a single statement so a
+	// replay returns ErrNotFound (or sql.ErrNoRows) — never a stale
+	// account. The DeleteOldLoginTokens helper is a maintenance call
+	// (the dashboard backend or a daily cron can prune).
+	IssueLoginToken(ctx context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error
+	ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error)
+	DeleteOldLoginTokens(ctx context.Context, before time.Time) (int64, error)
+
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)
 	AppByID(ctx context.Context, id string) (App, error)
@@ -56,6 +93,29 @@ type Store interface {
 	CountDeployedApps(ctx context.Context, accountID string) (int, error)
 	UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error)
 	DeleteApp(ctx context.Context, id string) error
+	// RecordGitHubBinding persists the (app → installation_id, repo,
+	// branch) tuple after the /oauth/callback handler verified the
+	// installation against api.github.com. Idempotent: re-binding the
+	// same app overwrites the previous values. Two apps cannot claim
+	// the same (install_id, repo) pair — the migration enforces a
+	// unique partial index for the §11 least-privilege audit.
+	RecordGitHubBinding(ctx context.Context, appID string, installID int64, repoFullName, productionBranch string) error
+	// GitHubBindingForApp returns the persisted binding for an app.
+	// Returns ErrNotFound if the app has never been GitHub-connected
+	// (the zero-value binding with installID==0 is also a miss; callers
+	// that need to distinguish "bound to install 0" — impossible per
+	// the migration check — from "not bound" should check err).
+	GitHubBindingForApp(ctx context.Context, appID string) (GitHubBinding, error)
+	// InstallationIDForRepo is the reverse-lookup that closes the
+	// review-finding #1+#2 §11 least-privilege regression: githubd's
+	// checks.go needs to mint the right per-install access token for
+	// the repo's push, not the hardcoded installation_id=1 placeholder
+	// that shipped with M7.5. Returns ErrNotFound if no app is bound
+	// to (repo). When two apps are bound to the same (install_id,
+	// repo) — impossible per the migration unique index — the first
+	// hit wins; apid is the canonical owner of bindings so this is
+	// not a contention point in practice.
+	InstallationIDForRepo(ctx context.Context, repoFullName string) (int64, error)
 
 	// Deployments.
 	CreateDeployment(ctx context.Context, d Deployment) (Deployment, error)
@@ -68,6 +128,29 @@ type Store interface {
 	LiveDeployment(ctx context.Context, appID string) (Deployment, error)
 	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
 	ListDeploymentsForApp(ctx context.Context, appID string, limit, offset int) ([]Deployment, error)
+	// ListDeploymentsForAccount returns deployments across every app the
+	// account owns, cursor-paginated by created_at DESC. before is the
+	// inclusive upper bound — pass the previous response's NextBefore to
+	// page backwards. limit is the page cap (caller validates a sane upper
+	// bound). MemStore sorts in memory; PgStore uses a LIMIT/OFFSET or
+	// keyset pagination (deferred — LIMIT/OFFSET is fine at one-box scale).
+	ListDeploymentsForAccount(ctx context.Context, accountID string, before time.Time, limit int) ([]Deployment, error)
+
+	// Deployment logs (M7.5 slice 5).
+	//
+	// AppendDeploymentLog inserts one row of build output. Builderd is
+	// the writer in production; tests write directly. Returns the seq
+	// Postgres assigned (or the MemStore-picked seq). The seq is what
+	// the SSE endpoint returns as the cursor — the client pages by
+	// `(deployment_id, seq < before_seq) ORDER BY seq DESC`.
+	//
+	// ListDeploymentLogs returns the page of rows whose seq is < before
+	// (zero → newest page first), ordered DESC. Returns the rows +
+	// hasMore so the caller knows there's another page without an
+	// extra round-trip (rows == limit + 1 sentinel keeps the impl
+	// cheap).
+	AppendDeploymentLog(ctx context.Context, deploymentID, stream, line string) (seq int64, err error)
+	ListDeploymentLogs(ctx context.Context, deploymentID string, beforeSeq int64, limit int) (rows []LogEntry, hasMore bool, err error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error

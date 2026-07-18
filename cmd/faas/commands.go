@@ -89,7 +89,7 @@ func cmdApps() int {
 func deriveName() string {
 	wd, err := os.Getwd()
 	if err != nil {
-		return "app"
+		return appSlugFallback
 	}
 	return sanitizeSlug(filepath.Base(wd))
 }

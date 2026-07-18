@@ -37,6 +37,14 @@ func HashAPIKey(plaintext string) []byte {
 	return sum[:]
 }
 
+// HashToken returns the SHA-256 of arbitrary raw bytes. Login tokens
+// (M7.5 magic link) are random 32-byte values — no API-key prefix —
+// so the storage key is the SHA-256 of the raw token, hex-decoded.
+func HashToken(raw []byte) []byte {
+	sum := sha256.Sum256(raw)
+	return sum[:]
+}
+
 // ValidAPIKeyFormat reports whether s looks like one of our keys (cheap pre-check
 // before hitting the database).
 func ValidAPIKeyFormat(s string) bool {

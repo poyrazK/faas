@@ -198,8 +198,31 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}()
 
-	// Public listener: customer traffic (spec §4.1).
-	srv := deps.newSrv(listenAddr, handler)
+	// Public listener: customer traffic (spec §4.1). The handler is
+	// wrapped in a dashboardProxy (M7.5, ADR-011) so /dashboard/* and
+	// /oauth/* reverse-proxy to apid's loopback listener while
+	// everything else falls through to gateway.Handler's wake/proxy
+	// flow. Slice 7 adds /webhooks/github to the same shape (with
+	// HMAC edge-verification in front of the proxy hop).
+	apidTarget := os.Getenv("FAAS_APID_LOOPBACK")
+	if apidTarget == "" {
+		apidTarget = "http://127.0.0.1:8081"
+	}
+	dashboardHandler := newDashboardProxy(apidTarget, handler, log)
+
+	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
+	// to githubd's loopback listener (ADR-012, §11 single-public-
+	// listener invariant). githubd stays loopback-only so the
+	// webhook secret is the only secret on this path that has to
+	// leave githubd's own config (it doesn't — it lives in
+	// gatewayd's env so the verify happens before the proxy hop).
+	githubdTarget := os.Getenv("FAAS_GITHUBD_LOOPBACK")
+	if githubdTarget == "" {
+		githubdTarget = "http://127.0.0.1:8083"
+	}
+	githubdSecret := loadGithubWebhookSecret(osGetenv)
+	publicHandler := newGithubdProxy(githubdTarget, githubdSecret, dashboardHandler, log)
+	srv := deps.newSrv(listenAddr, publicHandler)
 	public := srv
 	public.Addr = listenAddr
 	if public.ReadTimeout == 0 {

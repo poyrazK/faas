@@ -513,3 +513,215 @@ func TestIdempotencyOverwrite(t *testing.T) {
 		t.Errorf("overwrite: got (%d, %q), want (500, %q)", status, body, "second")
 	}
 }
+
+// TestDeploymentLogsAppendAndPage is the M7.5 slice 5 contract:
+// every insert returns a monotonic seq, ListDeploymentLogs returns
+// the rows DESC by seq, paging by `seq < before` works, and hasMore
+// is true iff an older row sits behind the page.
+func TestDeploymentLogsAppendAndPage(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	for i := 0; i < 200; i++ {
+		seq, err := m.AppendDeploymentLog(ctx, "dep-1", "stdout", lineN(i))
+		if err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+		if seq != int64(i+1) {
+			t.Errorf("append %d seq = %d, want %d", i, seq, i+1)
+		}
+	}
+
+	// First page: newest first.
+	page, hasMore, err := m.ListDeploymentLogs(ctx, "dep-1", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 50 {
+		t.Fatalf("first page size = %d, want 50", len(page))
+	}
+	if !hasMore {
+		t.Errorf("first page hasMore = false, want true (200 rows > 50)")
+	}
+	if page[0].Seq != 200 || page[49].Seq != 151 {
+		t.Errorf("page seq range = [%d, %d], want [200, 151]", page[0].Seq, page[49].Seq)
+	}
+
+	// Page 2: before the first row's seq boundary.
+	page2, hasMore2, err := m.ListDeploymentLogs(ctx, "dep-1", page[49].Seq, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page2) != 50 || page2[0].Seq != 150 || page2[49].Seq != 101 {
+		t.Errorf("page2 seq range = [%d, %d], want [150, 101]", page2[0].Seq, page2[49].Seq)
+	}
+	if !hasMore2 {
+		t.Errorf("page2 hasMore = false, want true")
+	}
+
+	// Last page: rows 100..51 returned, hasMore=true (rows 50..1 remain).
+	page3, hasMore3, err := m.ListDeploymentLogs(ctx, "dep-1", page2[49].Seq, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page3) != 50 || !hasMore3 {
+		t.Errorf("page3 len=%d hasMore=%v, want 50/true", len(page3), hasMore3)
+	}
+	// Past the second-to-last page: rows 50..1.
+	page4, hasMore4, err := m.ListDeploymentLogs(ctx, "dep-1", page3[49].Seq, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page4) != 50 || hasMore4 {
+		t.Errorf("page4 len=%d hasMore=%v, want 50/false (no rows behind seq=1)", len(page4), hasMore4)
+	}
+	// Past the oldest row: empty.
+	page5, hasMore5, err := m.ListDeploymentLogs(ctx, "dep-1", 1, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page5) != 0 || hasMore5 {
+		t.Errorf("page5 len=%d hasMore=%v, want 0/false", len(page5), hasMore5)
+	}
+}
+
+// TestDeploymentLogsUnknownDeployment covers the empty-row path —
+// the SSE handler always opens with a page, even when nothing has
+// been logged yet.
+func TestDeploymentLogsUnknownDeployment(t *testing.T) {
+	m := NewMemStore()
+	page, hasMore, err := m.ListDeploymentLogs(context.Background(), "missing", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 0 || hasMore {
+		t.Errorf("unknown dep page = (%d, hasMore=%v), want (0, false)", len(page), hasMore)
+	}
+}
+
+// TestDeploymentLogsLimitClamp asserts the safe-by-default guard
+// against caller-supplied limit values (CodeQL go/allocation-size).
+// A hostile caller that forgets to clamp `limit` must not be able
+// to trigger an oversized slice allocation.
+func TestDeploymentLogsLimitClamp(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	dep := "dep-clamp"
+	for i := 0; i < MaxDeploymentLogPage*2; i++ {
+		if _, err := m.AppendDeploymentLog(ctx, dep, "stdout", lineN(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Caller requests 1_000_000 rows → must clamp to MaxDeploymentLogPage.
+	page, hasMore, err := m.ListDeploymentLogs(ctx, dep, 0, 1_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != MaxDeploymentLogPage {
+		t.Errorf("clamped page len = %d, want %d", len(page), MaxDeploymentLogPage)
+	}
+	if !hasMore {
+		t.Errorf("hasMore = false; expected true (rows remain past the clamp)")
+	}
+}
+
+func lineN(i int) string {
+	return "line" + itoaSmall(i)
+}
+
+func itoaSmall(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [4]byte
+	pos := len(buf)
+	for n > 0 {
+		pos--
+		buf[pos] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[pos:])
+}
+
+// TestMemStore_GitHubBinding_RoundTrip exercises the binding
+// persistence + reverse-lookup added for review finding #1+#2
+// closure (migration 00007). Asserts:
+//
+//   - RecordGitHubBinding persists across GetGitHubBindingForApp
+//   - InstallationIDForRepo (the new reverse lookup) returns the
+//     right id for a bound repo
+//   - ErrNotFound for an unbound repo (this is the §11 fail-closed
+//     path: checks.go must NOT fall back to install_id=1 when no
+//     app is bound)
+func TestMemStore_GitHubBinding_RoundTrip(t *testing.T) {
+	store := NewMemStore()
+	acct, err := store.CreateAccount(context.Background(), "alice@example.com", "free")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(context.Background(), App{AccountID: acct.ID, Slug: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.RecordGitHubBinding(context.Background(), app.ID, 4242, "octo/api", "main"); err != nil {
+		t.Fatalf("RecordGitHubBinding: %v", err)
+	}
+
+	b, err := store.GitHubBindingForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("GitHubBindingForApp: %v", err)
+	}
+	if b.InstallID != 4242 {
+		t.Errorf("InstallID = %d, want 4242", b.InstallID)
+	}
+	if b.RepoFullName != "octo/api" {
+		t.Errorf("RepoFullName = %q, want octo/api", b.RepoFullName)
+	}
+
+	id, err := store.InstallationIDForRepo(context.Background(), "octo/api")
+	if err != nil {
+		t.Fatalf("InstallationIDForRepo: %v", err)
+	}
+	if id != 4242 {
+		t.Errorf("install id for octo/api = %d, want 4242", id)
+	}
+
+	// Unbound repo → ErrNotFound (NOT a hardcoded id=1).
+	_, err = store.InstallationIDForRepo(context.Background(), "octo/unbound")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound for unbound repo", err)
+	}
+
+	// Empty repo → ErrNotFound (defensive).
+	_, err = store.InstallationIDForRepo(context.Background(), "")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound for empty repo", err)
+	}
+}
+
+// TestMemStore_GitHubBinding_RejectsConflict mirrors the migration's
+// apps_github_install_repo_uniq partial index: two apps cannot claim
+// the same (install_id, repo) pair. The §11 least-privilege audit
+// invariant lives on this constraint.
+func TestMemStore_GitHubBinding_RejectsConflict(t *testing.T) {
+	store := NewMemStore()
+	acct, err := store.CreateAccount(context.Background(), "alice@example.com", "free")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app1, err := store.CreateApp(context.Background(), App{AccountID: acct.ID, Slug: "api1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app2, err := store.CreateApp(context.Background(), App{AccountID: acct.ID, Slug: "api2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordGitHubBinding(context.Background(), app1.ID, 1, "octo/api", "main"); err != nil {
+		t.Fatalf("first binding: %v", err)
+	}
+	err = store.RecordGitHubBinding(context.Background(), app2.ID, 1, "octo/api", "main")
+	if err == nil {
+		t.Fatal("expected conflict error when second app tries to bind same (install_id, repo)")
+	}
+}

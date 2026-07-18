@@ -132,6 +132,19 @@ type AppManifest struct {
 	User       string            `json:"user,omitempty"`
 }
 
+// GitHubBinding is the (app → github_installation) edge persisted on
+// the apps row by the /oauth/callback handler after it verifies the
+// installation against api.github.com (ADR-012, review finding #1+#2
+// closure). githubd reads this via the BindingsLookup interface so
+// CheckRun writes go out under the right installation token instead
+// of the hardcoded install_id=1 placeholder that M7.5 shipped with.
+type GitHubBinding struct {
+	AppID            string
+	InstallID        int64
+	RepoFullName     string
+	ProductionBranch string
+}
+
 // MarshalJSON encodes a zero-value Manifest as {} so the jsonb default
 // round-trips cleanly.
 func (m AppManifest) MarshalJSON() ([]byte, error) {
@@ -269,4 +282,27 @@ type Snapshot struct {
 	Path         string
 	Stale        bool
 	CreatedAt    time.Time
+}
+
+// LoginToken is one row in login_tokens (M7.5 magic-link). The token
+// itself never appears in storage — only its SHA-256 hash does. The
+// raw token is emailed to the user once and is consumed by
+// /auth/verify?token=… (one-shot).
+type LoginToken struct {
+	TokenHash  []byte
+	AccountID  string
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
+}
+
+// LogEntry is one line of build output for a deployment (slice 5).
+// The dashboard's SSE stream tails this row at seq > cursor; clients
+// use the combination (DeploymentID, Seq) to dedupe across reconnects
+// (an id-replay after a network blip will see the same seqs).
+type LogEntry struct {
+	DeploymentID string
+	Seq          int64
+	Stream       string // "stdout" | "stderr" | "system"
+	Line         string
+	WrittenAt    time.Time
 }

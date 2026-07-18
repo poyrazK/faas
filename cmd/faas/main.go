@@ -35,6 +35,9 @@ Commands:
   usage        Show this month's usage
   logs         Tail app or deployment logs (--follow)
   version      Print the CLI version
+  connect      Connect a third-party service (github)
+  deploy       Deploy (--image REF | --tarball PATH | --repo OWNER/NAME)
+  open         Open the app's URL (or its dashboard page) in your browser
 
 Run 'faas <command> --help' for command details.
 Docs: https://docs.DOMAIN
@@ -64,13 +67,17 @@ func run(args []string) int {
 		return cmdWhoami()
 	case "deploy":
 		return cmdDeployTarball(args[1:])
+	case "connect":
+		return cmdConnect(args[1:])
+	case "open":
+		return cmdOpen(args[1:])
 	case "apps":
 		// `faas apps -q <slug>` is the delete path.
 		if len(args) > 1 && (args[1] == "-q" || args[1] == "--quiet") {
 			return cmdAppsRm(args[2:])
 		}
 		return cmdApps()
-	case "app":
+	case appSlugFallback:
 		return cmdApp(args[1:])
 	case "rollback":
 		return cmdRollback(args[1:])

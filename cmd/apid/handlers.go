@@ -5,16 +5,15 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s *server) whoami(w http.ResponseWriter, _ *http.Request, acct state.Account) {
-	writeJSON(w, http.StatusOK, api.AccountResponse{
-		ID: acct.ID, Email: acct.Email, Plan: string(acct.Plan), Status: string(acct.Status),
-	})
+func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	writeJSON(w, http.StatusOK, s.accountResponse(acct, r))
 }
 
 func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -148,7 +147,55 @@ func (s *server) appResponse(a state.App) api.AppResponse {
 		ID: a.ID, Slug: a.Slug, Type: string(a.Type), Runtime: a.Runtime,
 		RAMMB: a.RAMMB, MaxConcurrency: a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
 		Status: string(a.Status), URL: fmt.Sprintf("https://%s.apps.%s", a.Slug, s.domain),
+		Manifest: api.AppManifest{
+			Entrypoint: a.Manifest.Entrypoint,
+			Env:        a.Manifest.Env,
+			WorkingDir: a.Manifest.WorkingDir,
+			Port:       a.Manifest.Port,
+			Healthz:    a.Manifest.Healthz,
+			User:       a.Manifest.User,
+		},
 	}
+}
+
+// accountResponse builds the AccountResponse DTO, populating Limits
+// (plan caps), AppCount (deployed apps), and UsageGBHours (current
+// calendar month). Errors from store reads are swallowed — best
+// effort; the dashboard renders the row even when the meter is
+// temporarily unavailable (meterd republishes every minute).
+//
+// GitHubInstall is left empty for now; slice 8 fills it from
+// githubd's bindings table once the daemon is live.
+func (s *server) accountResponse(acct state.Account, r *http.Request) api.AccountResponse {
+	l := api.MustLimitsFor(acct.Plan)
+	resp := api.AccountResponse{
+		ID:     acct.ID,
+		Email:  acct.Email,
+		Plan:   string(acct.Plan),
+		Status: string(acct.Status),
+		Limits: api.AccountLimits{
+			Plan:            string(acct.Plan),
+			RAMMB:           l.RAMMB,
+			MaxConcurrency:  l.MaxConcurrency,
+			DeployedApps:    l.DeployedApps,
+			IncludedGBHours: int64(l.IncludedGBHours),
+			AppLayerMaxMB:   l.AppLayerMaxMB,
+		},
+	}
+	if r != nil {
+		if n, err := s.store.CountDeployedApps(ctx(r), acct.ID); err == nil {
+			resp.AppCount = n
+		}
+		month := time.Now().UTC()
+		if rows, err := s.store.UsageByMonth(ctx(r), acct.ID, month); err == nil {
+			var mbSec int64
+			for _, u := range rows {
+				mbSec += u.MBSeconds
+			}
+			resp.UsageGBHours = float64(mbSec) / 3_600_000.0
+		}
+	}
+	return resp
 }
 
 var slugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)

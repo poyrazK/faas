@@ -64,6 +64,7 @@ type runDeps struct {
 	getenv   func(string) string
 	newSrv   func(addr string, h http.Handler) *http.Server
 	bgBefore func(ctx context.Context, log *slog.Logger, srv *server) // optional pre-listen hook (e.g. DNS poller)
+	loginTTL time.Duration                                            // dashboard magic-link expiry
 }
 
 func defaultDeps() runDeps {
@@ -75,6 +76,7 @@ func defaultDeps() runDeps {
 		newSrv: func(addr string, h http.Handler) *http.Server {
 			return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
 		},
+		loginTTL: 15 * time.Minute,
 	}
 }
 
@@ -119,7 +121,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// webhook accepts unsigned payloads; never deploy this way).
 	stripeSecret := deps.getenv("STRIPE_WEBHOOK_SECRET")
 	mailer := newLogMailer(log)
-	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer)
+	// M7.5: githubd socket path (ADR-012). Empty = stub client (every
+	// method returns api.Problem{Code:"githubd_not_ready"}), which is
+	// fine until githubd is actually deployed on this host.
+	githubd := newGithubdClient(deps.getenv("FAAS_GITHUBD_SOCKET"), log)
+	// M7.5: dashboard session manager. Loads the 32-byte key from
+	// FAAS_SESSION_KEY (hex-encoded); empty in dev = ephemeral key +
+	// warning so the daemon still boots for local testing. Production
+	// MUST set this to the contents of /etc/faas/secrets/session.key
+	// (root:root 0400, spec §11).
+	sessions, sessionsWarn := loadSessionManager(deps.getenv, log)
+	if sessionsWarn != "" {
+		log.Warn("session manager in dev mode; sessions reset on restart", "warning", sessionsWarn)
+	}
+	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL)
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
 	if deps.bgBefore != nil {
@@ -157,4 +172,10 @@ type pgNotifier struct {
 
 func (p pgNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return db.Notify(ctx, p.pool, channel, payload)
+}
+
+// Subscribe hands the SSE handler a live channel stream from the
+// Postgres pool. Returns immediately if no channels are requested.
+func (p pgNotifier) Subscribe(ctx context.Context, channels []string) (<-chan db.Notification, func(), error) {
+	return db.Subscribe(ctx, p.pool, channels)
 }

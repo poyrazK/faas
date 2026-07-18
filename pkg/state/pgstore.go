@@ -295,6 +295,83 @@ func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
 	return err
 }
 
+// RecordGitHubBinding writes the (install_id, repo_full_name,
+// production_branch) tuple onto the apps row. Idempotent: re-binding
+// the same app overwrites the prior values. The migration's unique
+// partial index on (install_id, repo_full_name) rejects the write
+// if a different app already holds that pair — pgx returns a
+// unique-violation we surface as ErrNotFound + a wrapped error so
+// the /oauth/callback handler can render a clean 409.
+//
+// Per migration 00007: apps.github_install_id is BIGINT NULL,
+// apps.github_repo_full_name is TEXT NULL,
+// apps.github_production_branch is TEXT NULL.
+func (s *PgStore) RecordGitHubBinding(ctx context.Context, appID string, installID int64, repoFullName, productionBranch string) error {
+	_, err := s.pool.Exec(ctx,
+		`update apps
+		 set github_install_id = $2,
+		     github_repo_full_name = $3,
+		     github_production_branch = $4
+		 where id = $1`,
+		appID, installID, repoFullName, nullString(productionBranch))
+	return err
+}
+
+// GitHubBindingForApp reads the binding columns off the apps row.
+// Returns ErrNotFound when the app has never been GitHub-connected
+// (install_id is NULL).
+func (s *PgStore) GitHubBindingForApp(ctx context.Context, appID string) (GitHubBinding, error) {
+	var b GitHubBinding
+	var installID *int64
+	var repoFullName *string
+	var branch *string
+	err := s.pool.QueryRow(ctx,
+		`select id, github_install_id, github_repo_full_name, github_production_branch
+		 from apps where id = $1`, appID,
+	).Scan(&b.AppID, &installID, &repoFullName, &branch)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return GitHubBinding{}, ErrNotFound
+		}
+		return GitHubBinding{}, err
+	}
+	if installID == nil {
+		return GitHubBinding{}, ErrNotFound
+	}
+	b.InstallID = *installID
+	if repoFullName != nil {
+		b.RepoFullName = *repoFullName
+	}
+	if branch != nil {
+		b.ProductionBranch = *branch
+	}
+	return b, nil
+}
+
+// InstallationIDForRepo is the reverse lookup githubd's checks.go
+// uses to mint the right per-install access token for a push
+// (review finding #1+#2 closure). Uses the
+// apps_github_install_id_idx partial index when available (most
+// installations bind one repo to one app), but the query also
+// filters on repo_full_name so the index isn't strictly required.
+func (s *PgStore) InstallationIDForRepo(ctx context.Context, repoFullName string) (int64, error) {
+	var installID int64
+	err := s.pool.QueryRow(ctx,
+		`select github_install_id
+		 from apps
+		 where github_repo_full_name = $1
+		   and github_install_id is not null
+		 limit 1`, repoFullName,
+	).Scan(&installID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	return installID, nil
+}
+
 // --- deployments -------------------------------------------------------------
 
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
@@ -354,6 +431,45 @@ func (s *PgStore) ListDeploymentsForApp(ctx context.Context, appID string, limit
 		        status, coalesce(error,''), created_at
 		 from deployments where app_id = $1 order by created_at desc limit $2 offset $3`,
 		appID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDeployments(rows)
+}
+
+// ListDeploymentsForAccount returns every deployment whose app belongs
+// to the account, ordered DESC by created_at. Cursor pagination: pass
+// the previous response's last created_at as `before` to page
+// backwards. before.IsZero() = first page.
+//
+// LIMIT/OFFSET isn't quite right here (timestamps can collide); we
+// instead use a keyset filter `created_at < $2`. With an index on
+// (account_id, created_at desc) — added in slice 4's migration as a
+// forward-only addition so this stays cheap.
+func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID string, before time.Time, limit int) ([]Deployment, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if before.IsZero() {
+		rows, err = s.pool.Query(ctx,
+			`select d.id, d.app_id, coalesce(d.build_id::text,''), d.image_digest, d.kind,
+			        coalesce(d.source_path,''), coalesce(d.source_bytes,0), coalesce(d.handler,''), coalesce(d.log_path,''),
+			        d.status, coalesce(d.error,''), d.created_at
+			 from deployments d join apps a on a.id = d.app_id
+			 where a.account_id = $1 order by d.created_at desc limit $2`,
+			accountID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select d.id, d.app_id, coalesce(d.build_id::text,''), d.image_digest, d.kind,
+			        coalesce(d.source_path,''), coalesce(d.source_bytes,0), coalesce(d.handler,''), coalesce(d.log_path,''),
+			        d.status, coalesce(d.error,''), d.created_at
+			 from deployments d join apps a on a.id = d.app_id
+			 where a.account_id = $1 and d.created_at < $2
+			 order by d.created_at desc limit $3`,
+			accountID, before, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1149,3 +1265,118 @@ func nullAppStatus(p *AppStatus) any {
 
 // ensure net import isn't dropped if other helpers move into this file.
 var _ = net.IPv4len
+
+// IssueLoginToken persists a magic-link token hash → account_id with
+// the given expiry. The raw token is never stored — only its SHA-256
+// hash. Conflict (same hash re-issued) is a no-op insert: the same
+// token can't be re-issued because the raw token is single-use.
+func (s *PgStore) IssueLoginToken(ctx context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into login_tokens (token_hash, account_id, expires_at) values ($1, $2, $3)
+		 on conflict (token_hash) do nothing`,
+		tokenHash, accountID, expiresAt)
+	return err
+}
+
+// ConsumeLoginToken atomically marks the token consumed and returns
+// the bound account_id. A replay (token already consumed) or expired
+// token returns ErrNotFound — never a stale account. Single-statement
+// compare-and-set keeps the consume race-free.
+func (s *PgStore) ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error) {
+	var accountID string
+	err := s.pool.QueryRow(ctx,
+		`update login_tokens
+		 set consumed_at = now()
+		 where token_hash = $1
+		   and consumed_at is null
+		   and expires_at > now()
+		 returning account_id`,
+		tokenHash,
+	).Scan(&accountID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return accountID, nil
+}
+
+// DeleteOldLoginTokens prunes tokens whose expires_at < before,
+// including those that were consumed long ago. Returns the row count.
+// Used by a maintenance job or a daily cleanup hook.
+func (s *PgStore) DeleteOldLoginTokens(ctx context.Context, before time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `delete from login_tokens where expires_at < $1`, before)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// AppendDeploymentLog inserts one row and returns the seq Postgres
+// assigned via the per-deployment bigserial PK.
+//
+// Used by builderd (slice 7/8/9) and the deployment status flips in
+// imaged. The SSE tail (slice 5+6) pages by seq.
+func (s *PgStore) AppendDeploymentLog(ctx context.Context, deploymentID, stream, line string) (int64, error) {
+	var seq int64
+	err := s.pool.QueryRow(ctx,
+		`insert into deployment_logs (deployment_id, stream, line)
+		 values ($1, $2, $3) returning seq`,
+		deploymentID, stream, line).Scan(&seq)
+	return seq, err
+}
+
+// ListDeploymentLogs returns the page of rows with seq < beforeSeq
+// (zero → all rows), DESC, capped at limit. hasMore is true if there's
+// at least one older row beyond the page.
+//
+// Review finding #7: the previous implementation set hasMore=true
+// whenever the page was full (len(out) == limit), which is also true
+// on the actual last page. We now fetch limit+1 rows in both query
+// branches, trim back to limit, and set hasMore from the trimmed
+// length — matching the MemStore contract (an exact full page
+// returns hasMore=false iff the caller hit the literal end).
+func (s *PgStore) ListDeploymentLogs(ctx context.Context, deploymentID string, beforeSeq int64, limit int) ([]LogEntry, bool, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	limit = clampLogLimit(limit)
+	// Fetch one extra row so we can tell whether the caller hit a
+	// boundary exactly. The trim happens after the scan loop so the
+	// scan doesn't need to know about the over-fetch.
+	queryLimit := limit + 1
+	var rows pgx.Rows
+	var err error
+	if beforeSeq <= 0 {
+		rows, err = s.pool.Query(ctx,
+			`select deployment_id, seq, stream, line, written_at
+			 from deployment_logs where deployment_id = $1
+			 order by seq desc limit $2`, deploymentID, queryLimit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select deployment_id, seq, stream, line, written_at
+			 from deployment_logs where deployment_id = $1 and seq < $2
+			 order by seq desc limit $3`, deploymentID, beforeSeq, queryLimit)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	out := make([]LogEntry, 0, queryLimit)
+	for rows.Next() {
+		var e LogEntry
+		if err := rows.Scan(&e.DeploymentID, &e.Seq, &e.Stream, &e.Line, &e.WrittenAt); err != nil {
+			return nil, false, err
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}

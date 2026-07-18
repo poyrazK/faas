@@ -27,18 +27,34 @@ type stripePushKey struct {
 // (unique email, unique slug, unique key hash) so tests exercise real error
 // paths. It is NOT durable — production uses the Postgres store.
 type MemStore struct {
-	mu          sync.Mutex
-	accounts    map[string]Account
-	keys        map[string]APIKey
-	keyByHash   map[string]string
-	apps        map[string]App
-	deployments map[string]Deployment
-	builds      map[string]Build
-	domains     map[string]CustomDomain
-	crons       map[string]Cron
-	instances   map[string]Instance
-	snapshots   []Snapshot
-	events      []Event
+	mu        sync.Mutex
+	accounts  map[string]Account
+	keys      map[string]APIKey
+	keyByHash map[string]string
+	apps      map[string]App
+	// githubBindings is keyed by appID. Holds the (install_id,
+	// repo_full_name, production_branch) tuple the /oauth/callback
+	// handler writes after verifying the install against api.github.com
+	// (review findings #1 + #2 closure, ADR-012).
+	githubBindings map[string]GitHubBinding
+	deployments    map[string]Deployment
+	builds         map[string]Build
+	domains        map[string]CustomDomain
+	crons          map[string]Cron
+	instances      map[string]Instance
+	// loginTokens is keyed by the hex-encoded SHA-256 hash of the
+	// raw token (so the binary []byte hash from ConsumeLoginToken
+	// matches the map key format used in MemStore everywhere else).
+	loginTokens map[string]LoginToken
+	// deploymentLogs is keyed by deployment_id; the inner slice is
+	// append-ordered (which matches the Postgres seq order). MemStore
+	// mirrors the bigserial PK by appending + assigning a monotonic
+	// per-deployment counter so cursor pagination stays identical
+	// to the production shape.
+	deploymentLogs map[string][]LogEntry
+	deploymentSeq  map[string]int64
+	snapshots      []Snapshot
+	events         []Event
 	// usage holds one row per (instance, minute) — mirrors PgStore's
 	// usage_minutes PK. Aggregated into `usageByMonth` (per app, per
 	// calendar month) so UsageByMonth can keep returning the spec §10
@@ -79,20 +95,24 @@ type usageMinute struct {
 // NewMemStore returns an empty in-memory store.
 func NewMemStore() *MemStore {
 	return &MemStore{
-		accounts:     map[string]Account{},
-		keys:         map[string]APIKey{},
-		keyByHash:    map[string]string{},
-		apps:         map[string]App{},
-		deployments:  map[string]Deployment{},
-		builds:       map[string]Build{},
-		domains:      map[string]CustomDomain{},
-		crons:        map[string]Cron{},
-		instances:    map[string]Instance{},
-		snapshots:    []Snapshot{},
-		events:       []Event{},
-		usage:        []usageMinute{},
-		usageByMonth: []Usage{},
-		idem:         map[string]idemEntry{},
+		accounts:       map[string]Account{},
+		keys:           map[string]APIKey{},
+		keyByHash:      map[string]string{},
+		apps:           map[string]App{},
+		githubBindings: map[string]GitHubBinding{},
+		deployments:    map[string]Deployment{},
+		builds:         map[string]Build{},
+		domains:        map[string]CustomDomain{},
+		crons:          map[string]Cron{},
+		instances:      map[string]Instance{},
+		loginTokens:    map[string]LoginToken{},
+		deploymentLogs: map[string][]LogEntry{},
+		deploymentSeq:  map[string]int64{},
+		snapshots:      []Snapshot{},
+		events:         []Event{},
+		usage:          []usageMinute{},
+		usageByMonth:   []Usage{},
+		idem:           map[string]idemEntry{},
 		// stripeByCustomer is the reverse-lookup map AccountByStripeCustomerID
 		// walks; populated by UpdateAccountStripeCustomerID.
 		stripeByCustomer: map[string]string{},
@@ -403,6 +423,67 @@ func (m *MemStore) DeleteApp(_ context.Context, id string) error {
 	return nil
 }
 
+// RecordGitHubBinding persists the (app → installation_id, repo,
+// branch) tuple. Idempotent: re-binding overwrites. Refuses if the
+// (install_id, repo) pair is already claimed by a different app
+// (mirrors the apps_github_install_repo_uniq partial index in
+// migration 00007 — the §11 least-privilege audit invariant).
+func (m *MemStore) RecordGitHubBinding(_ context.Context, appID string, installID int64, repoFullName, productionBranch string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.apps[appID]; !ok {
+		return ErrNotFound
+	}
+	for otherAppID, b := range m.githubBindings {
+		if otherAppID == appID {
+			continue
+		}
+		if b.InstallID == installID && b.RepoFullName == repoFullName {
+			return fmt.Errorf("state: github binding already held by app %s", otherAppID)
+		}
+	}
+	m.githubBindings[appID] = GitHubBinding{
+		AppID:            appID,
+		InstallID:        installID,
+		RepoFullName:     repoFullName,
+		ProductionBranch: productionBranch,
+	}
+	return nil
+}
+
+// GitHubBindingForApp returns the persisted binding for an app, or
+// ErrNotFound if the app has never been GitHub-connected.
+func (m *MemStore) GitHubBindingForApp(_ context.Context, appID string) (GitHubBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.githubBindings[appID]
+	if !ok || b.InstallID == 0 {
+		return GitHubBinding{}, ErrNotFound
+	}
+	return b, nil
+}
+
+// InstallationIDForRepo is the reverse lookup githubd's checks.go
+// uses to mint the right per-install access token for a push
+// (review finding #1+#2 closure for the M7.5 OAuth path).
+// Returns ErrNotFound if no app is bound to repoFullName. The map
+// scan is O(apps bound to GitHub); at v1.0 scale (≤100 apps per
+// account on the Scale plan, §4.2 limits) this is cheaper than
+// maintaining a second repo→install index.
+func (m *MemStore) InstallationIDForRepo(_ context.Context, repoFullName string) (int64, error) {
+	if repoFullName == "" {
+		return 0, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, b := range m.githubBindings {
+		if b.RepoFullName == repoFullName && b.InstallID != 0 {
+			return b.InstallID, nil
+		}
+	}
+	return 0, ErrNotFound
+}
+
 // --- Deployments ------------------------------------------------------------
 
 func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
@@ -499,6 +580,41 @@ func (m *MemStore) ListDeploymentsForApp(_ context.Context, appID string, limit,
 		return nil, nil
 	}
 	all = all[offset:]
+	if limit > 0 && limit < len(all) {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
+// ListDeploymentsForAccount walks every app the account owns, collects
+// its deployments, and returns them sorted DESC by created_at with
+// before acting as the inclusive upper bound. Cursor pagination
+// (before→NextBefore) lets the dashboard page backwards without an
+// offset scan.
+func (m *MemStore) ListDeploymentsForAccount(_ context.Context, accountID string, before time.Time, limit int) ([]Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]struct{})
+	for _, a := range m.apps {
+		if a.AccountID == accountID && a.Status != AppDeleted {
+			owned[a.ID] = struct{}{}
+		}
+	}
+	var all []Deployment
+	for _, d := range m.deployments {
+		if _, ok := owned[d.AppID]; !ok {
+			continue
+		}
+		// First page (before.IsZero()): include everything created at
+		// or before "before". Subsequent pages skip rows whose
+		// CreatedAt >= since the caller passed the previous
+		// response's last-seen CreatedAt as the "before" cursor.
+		if !before.IsZero() && !d.CreatedAt.Before(before) {
+			continue
+		}
+		all = append(all, d)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
 	if limit > 0 && limit < len(all) {
 		all = all[:limit]
 	}
@@ -1137,6 +1253,129 @@ func derefInt(p *int) int {
 		return 0
 	}
 	return *p
+}
+
+// IssueLoginToken stores a magic-link token hash → account_id mapping
+// with the given expiry. The hash is the SHA-256 of the raw token
+// (32-byte hex); see pkg/api.HashAPIKey for the canonical hash fn.
+// Re-issue of the same hash is a no-op (the entry is overwritten).
+func (m *MemStore) IssueLoginToken(_ context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.loginTokens == nil {
+		m.loginTokens = map[string]LoginToken{}
+	}
+	m.loginTokens[string(tokenHash)] = LoginToken{
+		TokenHash: append([]byte(nil), tokenHash...),
+		AccountID: accountID,
+		ExpiresAt: expiresAt,
+	}
+	return nil
+}
+
+// ConsumeLoginToken marks the token consumed in a single critical
+// section and returns the bound account_id. A replay returns
+// ErrNotFound. Expired tokens also return ErrNotFound (we don't leak
+// whether the token was real-but-stale vs never-existed).
+func (m *MemStore) ConsumeLoginToken(_ context.Context, tokenHash []byte) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tok, ok := m.loginTokens[string(tokenHash)]
+	if !ok {
+		return "", ErrNotFound
+	}
+	if tok.ConsumedAt != nil {
+		delete(m.loginTokens, string(tokenHash))
+		return "", ErrNotFound
+	}
+	if !tok.ExpiresAt.After(time.Now()) {
+		delete(m.loginTokens, string(tokenHash))
+		return "", ErrNotFound
+	}
+	now := time.Now()
+	tok.ConsumedAt = &now
+	m.loginTokens[string(tokenHash)] = tok
+	return tok.AccountID, nil
+}
+
+// DeleteOldLoginTokens prunes tokens whose expires_at < before, even
+// if they were never consumed. Returns the number removed. Used by
+// the maintenance job (or a test cleanup hook).
+func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var removed int64
+	for k, tok := range m.loginTokens {
+		if tok.ExpiresAt.Before(before) {
+			delete(m.loginTokens, k)
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// AppendDeploymentLog records one line of build output. Returns the
+// assigned seq (monotonic per deployment). MemStore mimics the
+// Postgres bigserial cursor so cursor pagination (`seq < before`)
+// works the same as production.
+func (m *MemStore) AppendDeploymentLog(_ context.Context, deploymentID, stream, line string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deploymentSeq[deploymentID]++
+	seq := m.deploymentSeq[deploymentID]
+	if m.deploymentLogs == nil {
+		m.deploymentLogs = map[string][]LogEntry{}
+	}
+	m.deploymentLogs[deploymentID] = append(m.deploymentLogs[deploymentID], LogEntry{
+		DeploymentID: deploymentID,
+		Seq:          seq,
+		Stream:       stream,
+		Line:         line,
+		WrittenAt:    time.Now().UTC(),
+	})
+	return seq, nil
+}
+
+// ListDeploymentLogs returns the page of rows whose seq < beforeSeq
+// (zero → all rows), in DESC seq order, capped at limit. hasMore is
+// true when there are older rows still to fetch (rows == limit AND
+// there's at least one more behind it).
+func (m *MemStore) ListDeploymentLogs(_ context.Context, deploymentID string, beforeSeq int64, limit int) ([]LogEntry, bool, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	limit = clampLogLimit(limit)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	all := m.deploymentLogs[deploymentID]
+	if len(all) == 0 {
+		return nil, false, nil
+	}
+	// Walk backwards (highest seq first) so the page is newest-first
+	// regardless of insert order — matches production's ORDER BY seq DESC.
+	out := make([]LogEntry, 0, limit)
+	olderRemaining := false
+	for i := len(all) - 1; i >= 0; i-- {
+		e := all[i]
+		if beforeSeq > 0 && e.Seq >= beforeSeq {
+			continue
+		}
+		if len(out) >= limit {
+			// Page is full. Stop only when we've also confirmed
+			// there's at least one row behind us we'd otherwise
+			// have included. Older rows survive any older iteration
+			// (i > 0 and a row at i-1 with seq < beforeSeq).
+			for j := i - 1; j >= 0; j-- {
+				if beforeSeq == 0 || all[j].Seq < beforeSeq {
+					olderRemaining = true
+					break
+				}
+			}
+			break
+		}
+		out = append(out, e)
+	}
+	return out, olderRemaining, nil
 }
 
 // compile-time check that MemStore satisfies Store.
