@@ -74,7 +74,7 @@ func seedFullAccount(t *testing.T, s *state.PgStore, ctx context.Context) (strin
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.CreateBuild(ctx, dep.ID, state.DeploymentKindImage, 4096, "/tmp/log"); err != nil {
+	if _, err := s.CreateBuild(ctx, dep.ID, state.DeploymentKindDockerfile, 4096, "/tmp/log"); err != nil {
 		return "", err
 	}
 	if _, err := s.CreateInstance(ctx, app.ID, dep.ID, "running", 256); err != nil {

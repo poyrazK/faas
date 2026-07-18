@@ -642,10 +642,10 @@ func (s *PgStore) DeleteCustomDomain(ctx context.Context, domain string) error {
 func (s *PgStore) CreateCron(ctx context.Context, appID, schedule, path string, enabled bool) (Cron, error) {
 	row := s.pool.QueryRow(ctx,
 		`insert into crons (app_id, schedule, path, enabled) values ($1, $2, $3, $4)
-		 returning id, app_id, schedule, path, enabled, created_at`,
+		 returning id, app_id, schedule, path, enabled`,
 		appID, schedule, path, enabled)
 	c := Cron{}
-	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled); err != nil {
 		return Cron{}, mapErr(err)
 	}
 	return c, nil
@@ -653,9 +653,9 @@ func (s *PgStore) CreateCron(ctx context.Context, appID, schedule, path string, 
 
 func (s *PgStore) CronByID(ctx context.Context, id string) (Cron, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, app_id, schedule, path, enabled, created_at from crons where id = $1`, id)
+		`select id, app_id, schedule, path, enabled from crons where id = $1`, id)
 	c := Cron{}
-	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled); err != nil {
 		return Cron{}, mapErr(err)
 	}
 	return c, nil
@@ -1254,7 +1254,7 @@ func scanCrons(rows pgx.Rows) ([]Cron, error) {
 	var out []Cron
 	for rows.Next() {
 		c := Cron{}
-		if err := rows.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -1611,13 +1611,17 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 
 // ListCronsForAccount walks every cron tied to the account's apps.
 // Used by the GDPR export bundle.
+//
+// NOTE: crons has no created_at column on origin/main (only
+// enabled + schedule + path are tracked); the export bundle
+// doesn't need a stable order, so we sort by id instead.
 func (s *PgStore) ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select c.id, c.app_id, c.schedule, c.path, c.enabled, c.created_at
+		`select c.id, c.app_id, c.schedule, c.path, c.enabled
 		 from crons c
 		 join apps a on a.id = c.app_id
 		 where a.account_id = $1
-		 order by c.created_at`, accountID)
+		 order by c.id`, accountID)
 	if err != nil {
 		return nil, err
 	}
