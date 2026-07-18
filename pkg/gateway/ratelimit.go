@@ -18,6 +18,11 @@ type Limiter struct {
 	mu      sync.Mutex
 	buckets map[string]*bucket
 	now     func() time.Time
+	// noop, when true, makes Allow always return true. Set via WithNoop;
+	// intended only for load tests that need to bypass the plan rps/burst
+	// to assert the underlying handler path. DO NOT expose as a config
+	// knob in production.
+	noop bool
 }
 
 type bucket struct {
@@ -35,6 +40,9 @@ func NewLimiter() *Limiter {
 // Allow reports whether a request for appID on plan may proceed, consuming a
 // token if so. Plan rps/burst come from the limits table (never inlined).
 func (l *Limiter) Allow(appID string, plan api.Plan) bool {
+	if l.noop {
+		return true
+	}
 	limits, ok := api.LimitsFor(plan)
 	if !ok {
 		return false
@@ -80,6 +88,24 @@ func (l *Limiter) ForgetAll() int {
 	l.buckets = map[string]*bucket{}
 	l.mu.Unlock()
 	return n
+}
+
+// WithNoop returns a new Limiter sharing l's clock + buckets but whose
+// Allow always returns true. Test-only seam for the 1k rps hot-path load
+// test (handler_load_test.go) which needs to bypass plan rps/burst to
+// measure the underlying handler path. DO NOT expose this as a config knob
+// — bypassing the limiter would silently turn the §4.1 rate-limit into a
+// noop.
+//
+// The returned limiter shares l's bucket map (read-only after construction
+// in tests; no Allow path mutates it). Constructing a fresh mutex is
+// intentional — copying a sync.Mutex is a vet error.
+func (l *Limiter) WithNoop() *Limiter {
+	return &Limiter{
+		buckets: l.buckets,
+		now:     l.now,
+		noop:    true,
+	}
 }
 
 // BucketCount returns the number of buckets currently held. /metrics and the

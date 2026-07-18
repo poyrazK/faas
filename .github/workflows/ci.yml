@@ -194,6 +194,36 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+  load:
+    # M4 acceptance gate (spec §14 row 2): "1,000 rps to hot app adds < 2 ms p50".
+    # Decoupled from the `test` job because (a) it is a load test, not a
+    # coverage gate — coverage instrumentation skews latency and is
+    # intentionally excluded; (b) it runs long (2 × 5 s + warmup) and
+    # would lengthen the developer feedback loop if folded into `test`.
+    #
+    # Runner choice: `ubuntu-latest` (2 vCPU / 7 GB GitHub-hosted). The
+    # test's gate is the DELTA between hot-load p50 and idle p50, not
+    # absolute latency — per-process noise (Go runtime, GC, scheduler
+    # jitter, CPU frequency scaling) cancels out. A 14-core local M-series
+    # machine measures delta < 0 at 1k rps; the 2 vCPU on CI has plenty of
+    # headroom for the same 5 s × 1k rps window. An earlier draft used
+    # `ubuntu-4-cpus` (GitHub-hosted larger runner), but those need
+    # org-level enablement (Settings → Actions → Runners → Larger runners)
+    # and otherwise queue forever — our org doesn't have them provisioned,
+    # so the job sat QUEUED for ~19 h without starting.
+    name: load (1k rps hot-path)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+      - name: make test-load
+        run: make test-load
+
   metal:
     # Manual trigger from the Actions tab. Marked workflow_dispatch so the
     # job can be invoked on-demand once a self-hosted runner is registered

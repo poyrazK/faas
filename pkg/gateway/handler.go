@@ -99,6 +99,16 @@ func (h *Handler) WithLastSeenSink(sink LastSeenSink) *Handler {
 	return h
 }
 
+// WithLimiter installs the per-app rate limiter. Production wires the
+// token-bucket Limiter; load tests install an unlimitedLimiter so they
+// aren't constrained by the plan rps/burst from newTestHandler's
+// PlanPro default (which would 429 ~half of a 1k rps test). Treat this
+// as a test-only seam; do NOT expose it as a config knob.
+func (h *Handler) WithLimiter(l *Limiter) *Handler {
+	h.limiter = l
+	return h
+}
+
 // SetWakeGateHook installs a callback that wakes the queue-depth gauge each
 // time WakeGate mutates an entry. Called by main once the gauge exists.
 func (h *Handler) SetWakeGateHook() {

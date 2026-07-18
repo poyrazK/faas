@@ -65,8 +65,13 @@ func TestIssue_And_Verify_RoundTrip(t *testing.T) {
 func TestVerify_RejectsTampered(t *testing.T) {
 	m, _ := session.NewManager(key(t), time.Hour)
 	v, _ := m.Issue("acct-1")
-	// Flip a base64 char in the middle of the encoded blob.
-	tampered := v[:len(v)/2] + "X" + v[len(v)/2+1:]
+	// Replace a base64 char in the middle of the encoded blob with a
+	// character that is NOT in the RawURLEncoding alphabet so the
+	// tamper is always observable. Earlier this used "X", which is a
+	// valid base64 char and happens to be the source character ~1/64
+	// of the time — producing a no-op tamper that Verify then
+	// accepts, which manifests as a 1-3% CI flake.
+	tampered := v[:len(v)/2] + "!" + v[len(v)/2+1:]
 	if _, err := m.Verify(tampered); !errors.Is(err, session.ErrInvalid) {
 		t.Errorf("err = %v, want ErrInvalid", err)
 	}
