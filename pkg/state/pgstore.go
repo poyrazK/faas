@@ -1229,8 +1229,15 @@ func scanDeployments(rows pgx.Rows) ([]Deployment, error) {
 func scanBuild(row pgx.Row) (Build, error) {
 	b := Build{}
 	var kind, statusStr, fc string
-	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &b.StartedAt, &b.FinishedAt); err != nil {
+	var startedAt, finishedAt *time.Time
+	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt); err != nil {
 		return Build{}, mapErr(err)
+	}
+	if startedAt != nil {
+		b.StartedAt = *startedAt
+	}
+	if finishedAt != nil {
+		b.FinishedAt = *finishedAt
 	}
 	b.Kind = DeploymentKind(kind)
 	b.Status = BuildStatus(statusStr)
