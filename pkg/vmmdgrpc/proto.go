@@ -29,12 +29,12 @@ func toWakeRequest(req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, err
 	}
 	snap := req.GetSnapshot()
 	wr := fcvm.WakeRequest{
-		Instance:        req.GetInstance(),
-		BasePath:        app.GetBasePath(),
-		LayerPath:       app.GetLayerPath(),
-		VcpuCount:       int(app.GetVcpuCount()),
-		MemSizeMiB:      int(app.GetMemSizeMib()),
-		EgressMbit:      int(app.GetEgressMbit()),
+		Instance:         req.GetInstance(),
+		BasePath:         app.GetBasePath(),
+		LayerPath:        app.GetLayerPath(),
+		VcpuCount:        int(app.GetVcpuCount()),
+		MemSizeMiB:       int(app.GetMemSizeMib()),
+		EgressMbit:       int(app.GetEgressMbit()),
 		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
 	}
 	if snap != nil && snap.GetMemPath() != "" {
@@ -62,12 +62,12 @@ func toColdBootRequest(req *vmmdpb.CreateColdBootRequest) (fcvm.WakeRequest, err
 			WithDocs("https://docs/DOMAIN/vmmd#appspec")
 	}
 	return fcvm.WakeRequest{
-		Instance:        req.GetInstance(),
-		BasePath:        app.GetBasePath(),
-		LayerPath:       app.GetLayerPath(),
-		VcpuCount:       int(app.GetVcpuCount()),
-		MemSizeMiB:      int(app.GetMemSizeMib()),
-		EgressMbit:      int(app.GetEgressMbit()),
+		Instance:         req.GetInstance(),
+		BasePath:         app.GetBasePath(),
+		LayerPath:        app.GetLayerPath(),
+		VcpuCount:        int(app.GetVcpuCount()),
+		MemSizeMiB:       int(app.GetMemSizeMib()),
+		EgressMbit:       int(app.GetEgressMbit()),
 		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
 	}, nil
 }

@@ -316,12 +316,12 @@ func TestCmdSecrets_DispatchUnknownSubcommand(t *testing.T) {
 //   - new key       → hint is NOT printed (no false alarm)
 func TestCmdSecrets_Set_RotationHint(t *testing.T) {
 	cases := []struct {
-		name        string
-		existing    []api.AppSecretResponse
-		pairs       []string
-		wantHint    bool
-		wantSubstr  []string // substrings the hint must contain when wantHint=true
-		unwantSub   string   // substring that must NOT appear when wantHint=false
+		name       string
+		existing   []api.AppSecretResponse
+		pairs      []string
+		wantHint   bool
+		wantSubstr []string // substrings the hint must contain when wantHint=true
+		unwantSub  string   // substring that must NOT appear when wantHint=false
 	}{
 		{
 			name:     "fresh_add_silent",

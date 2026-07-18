@@ -108,11 +108,11 @@ func TestLoadRecipient_RejectsInsecurePerms(t *testing.T) {
 	}
 
 	rejectModes := []os.FileMode{
-		0o666, // world-writable — primary concern
-		0o660, // group-writable
-		0o646, // other-writable
-		0o755, // exec for everyone
-		0o711, // exec for owner
+		0o666,  // world-writable — primary concern
+		0o660,  // group-writable
+		0o646,  // other-writable
+		0o755,  // exec for everyone
+		0o711,  // exec for owner
 		0o4744, // setuid
 		0o2744, // setgid
 		0o1744, // sticky
