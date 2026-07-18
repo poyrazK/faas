@@ -139,10 +139,10 @@ type AppManifest struct {
 // CheckRun writes go out under the right installation token instead
 // of the hardcoded install_id=1 placeholder that M7.5 shipped with.
 type GitHubBinding struct {
-	AppID             string
-	InstallID         int64
-	RepoFullName      string
-	ProductionBranch  string
+	AppID            string
+	InstallID        int64
+	RepoFullName     string
+	ProductionBranch string
 }
 
 // MarshalJSON encodes a zero-value Manifest as {} so the jsonb default

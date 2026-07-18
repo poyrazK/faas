@@ -56,7 +56,7 @@ type BindingsLookup interface {
 
 // ChecksAPI writes check-runs to api.github.com.
 type ChecksAPI struct {
-	Tokens   *TokenCache    // provides the installation token per installation_id
+	Tokens   *TokenCache // provides the installation token per installation_id
 	HTTP     HTTPClient
 	Bindings BindingsLookup // repo → installation_id (review finding #1+#2 closure)
 }

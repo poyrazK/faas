@@ -105,9 +105,9 @@ var _ HTTPClient = (*http.Client)(nil)
 // bound" can construct it with id=0 (tokensForRepo will fail at
 // the token-cache step).
 type fakeBindings struct {
-	id    int64
-	err   error
-	hits  atomic.Int32
+	id      int64
+	err     error
+	hits    atomic.Int32
 	gotRepo string
 }
 

@@ -27,11 +27,11 @@ type stripePushKey struct {
 // (unique email, unique slug, unique key hash) so tests exercise real error
 // paths. It is NOT durable — production uses the Postgres store.
 type MemStore struct {
-	mu          sync.Mutex
-	accounts    map[string]Account
-	keys        map[string]APIKey
-	keyByHash   map[string]string
-	apps        map[string]App
+	mu        sync.Mutex
+	accounts  map[string]Account
+	keys      map[string]APIKey
+	keyByHash map[string]string
+	apps      map[string]App
 	// githubBindings is keyed by appID. Holds the (install_id,
 	// repo_full_name, production_branch) tuple the /oauth/callback
 	// handler writes after verifying the install against api.github.com
