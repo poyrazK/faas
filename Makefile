@@ -68,7 +68,7 @@ test: ## Unit tests — must pass on any machine, no KVM needed
 
 .PHONY: test-load
 test-load: ## Hot-path load test (1k rps, //go:build load) — spec §14 M4 row 2. Needs ≥ 2 vCPU.
-	$(GO) test -tags=load -race -count=1 -timeout=10m ./pkg/gateway/...
+	$(GO) test -tags=load -race -count=1 -v -timeout=10m ./pkg/gateway/...
 
 .PHONY: gateway-bench
 gateway-bench: ## Bench gatewayd cold/hot/concurrent paths with -race; emits ns/op + allocs/op
