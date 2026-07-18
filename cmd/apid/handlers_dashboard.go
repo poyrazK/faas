@@ -72,7 +72,12 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 // here" stub. Slice 4's index leans on the index.html template.
 func (s *server) renderIndex(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
 	view, _ := AccountFrom(r.Context())
-	av := dashboardAccountView(view)
+	appCount, err := s.store.CountDeployedApps(r.Context(), acct.ID)
+	if err != nil {
+		log.Warn("dashboard renderIndex: count deployed apps", "account_id", acct.ID, "err", err)
+		appCount = 0
+	}
+	av := dashboardAccountView(view, appCount)
 	page := dashboard.Page{Title: "Overview", Body: "index", Account: av, Data: dashboard.IndexData{
 		DeployedAppCount: av.AppCount,
 		Plan:             string(acct.Plan),
@@ -104,7 +109,10 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 			LastDeployed: last.UTC().Format("2006-01-02 15:04 MST"),
 		})
 	}
-	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: dashboardAccountView(view), Data: items}
+	// Reuse the already-fetched apps list for the count (review
+	// finding #5: avoid a second SQL round-trip when we already
+	// have the data).
+	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: dashboardAccountView(view, len(apps)), Data: items}
 	if err := dashboard.Render(w, log, page); err != nil {
 		renderProblem(w, log, err)
 	}
@@ -151,7 +159,12 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		cronItems = append(cronItems, item)
 	}
 	view, _ := AccountFrom(r.Context())
-	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view), Data: dashboard.AppDetailData{
+	appCount, err := s.store.CountDeployedApps(r.Context(), acct.ID)
+	if err != nil {
+		log.Warn("dashboard renderAppDetail: count deployed apps", "account_id", acct.ID, "err", err)
+		appCount = 0
+	}
+	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
 		App: dashboard.AppListItem{
 			Slug:   app.Slug,
 			Status: string(app.Status),
@@ -187,7 +200,12 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 		pct = used / float64(included) * 100
 	}
 	view, _ := AccountFrom(r.Context())
-	page := dashboard.Page{Title: "Usage", Body: "usage", Account: dashboardAccountView(view), Data: dashboard.UsageData{
+	appCount, err := s.store.CountDeployedApps(r.Context(), acct.ID)
+	if err != nil {
+		log.Warn("dashboard renderUsage: count deployed apps", "account_id", acct.ID, "err", err)
+		appCount = 0
+	}
+	page := dashboard.Page{Title: "Usage", Body: "usage", Account: dashboardAccountView(view, appCount), Data: dashboard.UsageData{
 		Month:           month.Format("2006-01"),
 		UsedGBHours:     used,
 		IncludedGBHours: included,
@@ -204,7 +222,12 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
 	limits := api.MustLimitsFor(acct.Plan)
 	view, _ := AccountFrom(r.Context())
-	page := dashboard.Page{Title: "Billing", Body: "billing", Account: dashboardAccountView(view), Data: dashboard.BillingData{
+	appCount, err := s.store.CountDeployedApps(r.Context(), acct.ID)
+	if err != nil {
+		log.Warn("dashboard renderBilling: count deployed apps", "account_id", acct.ID, "err", err)
+		appCount = 0
+	}
+	page := dashboard.Page{Title: "Billing", Body: "billing", Account: dashboardAccountView(view, appCount), Data: dashboard.BillingData{
 		Plan:     string(acct.Plan),
 		RAMMB:    limits.RAMMB,
 		Included: int64(limits.IncludedGBHours),
@@ -240,7 +263,12 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		keyItems = append(keyItems, item)
 	}
 	view, _ := AccountFrom(r.Context())
-	page := dashboard.Page{Title: "Account", Body: "account", Account: dashboardAccountView(view), Data: dashboard.AccountData{
+	appCount, err := s.store.CountDeployedApps(r.Context(), acct.ID)
+	if err != nil {
+		log.Warn("dashboard renderAccount: count deployed apps", "account_id", acct.ID, "err", err)
+		appCount = 0
+	}
+	page := dashboard.Page{Title: "Account", Body: "account", Account: dashboardAccountView(view, appCount), Data: dashboard.AccountData{
 		Keys: keyItems,
 	}}
 	if err := dashboard.Render(w, log, page); err != nil {
@@ -258,8 +286,16 @@ func renderProblem(w http.ResponseWriter, log *slog.Logger, err error) {
 
 // dashboardAccountView adapts state.Account into the dashboard's
 // AccountView so we keep dashboard.go free of state-package imports.
-func dashboardAccountView(acct state.Account) *dashboard.AccountView {
-	n := 0
+// appCount is supplied by the caller (review finding #5: the previous
+// implementation hardcoded 0, so the dashboard always rendered "0
+// apps"). When appCount < 0 the caller has no count available
+// (the page already had to query the apps list separately, so we
+// reuse that count instead of issuing a second SQL round-trip).
+func dashboardAccountView(acct state.Account, appCount int) *dashboard.AccountView {
+	n := appCount
+	if n < 0 {
+		n = 0
+	}
 	return &dashboard.AccountView{
 		ID:       acct.ID,
 		Email:    acct.Email,

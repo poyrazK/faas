@@ -73,8 +73,20 @@ func (d *dashboardProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // apid. Keep the list small — anything outside these falls through
 // to the wake/proxy path (and would 404 there for legitimate
 // dashboard traffic, which is a bug we'll catch immediately in tests).
+//
+// Review finding #6: the bare HasPrefix("/dashboard") matched
+// "/dashboard.zip" and "/dashboards" too. Tighten to exact-match
+// /dashboard + /dashboard/ + the /dashboard/ subtree; /oauth/ was
+// already correctly anchored by the trailing slash.
 func isDashboardPath(p string) bool {
-	return strings.HasPrefix(p, "/dashboard") || strings.HasPrefix(p, "/oauth/")
+	const dashboardRoot = "/dashboard"
+	if p == dashboardRoot || p == dashboardRoot+"/" {
+		return true
+	}
+	if strings.HasPrefix(p, dashboardRoot+"/") {
+		return true
+	}
+	return strings.HasPrefix(p, "/oauth/")
 }
 
 // proxyToApid builds a one-shot httputil.ReverseProxy and serves the

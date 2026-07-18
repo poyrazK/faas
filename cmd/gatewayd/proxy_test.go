@@ -69,7 +69,7 @@ func TestDashboardProxy_PassesThroughNonDashboardPaths(t *testing.T) {
 	})
 	handler := newDashboardProxy(upstream.URL, next, log)
 
-	for _, path := range []string{"/", "/api/v1/apps", "/healthz", "/apps/jane/api"} {
+	for _, path := range []string{"/", "/api/v1/apps", "/healthz", "/apps/jane/api", "/dashboard.zip", "/dashboards", "/dashboardx"} {
 		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -82,8 +82,44 @@ func TestDashboardProxy_PassesThroughNonDashboardPaths(t *testing.T) {
 	if upstreamHits != 0 {
 		t.Errorf("upstream hits = %d, want 0 (paths should fall through)", upstreamHits)
 	}
-	if nextHits != 4 {
-		t.Errorf("next hits = %d, want 4", nextHits)
+	if nextHits != 7 {
+		t.Errorf("next hits = %d, want 7", nextHits)
+	}
+}
+
+// TestIsDashboardPath_TableDriven is the unit-test coverage for the
+// review finding #6 fix: bare HasPrefix("/dashboard") matched
+// "/dashboard.zip", "/dashboards", "/dashboardx" — all of which
+// would have shipped the path to apid (a 404) instead of letting
+// the wake/proxy path handle them (also a 404, but with the right
+// observability). Tighter prefix match keeps the dashboard
+// forwarding surface narrow.
+func TestIsDashboardPath_TableDriven(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/dashboard", true},
+		{"/dashboard/", true},
+		{"/dashboard/apps", true},
+		{"/dashboard/apps/foo", true},
+		{"/oauth/callback", true},
+		{"/oauth/", true},
+		// Negative cases — review finding #6 regression tests.
+		{"/dashboard.zip", false},
+		{"/dashboards", false},
+		{"/dashboardx", false},
+		{"/Dashboard", false}, // case-sensitive
+		{"/api/v1/dashboard", false},
+		{"/", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			if got := isDashboardPath(c.path); got != c.want {
+				t.Errorf("isDashboardPath(%q) = %v, want %v", c.path, got, c.want)
+			}
+		})
 	}
 }
 

@@ -1330,29 +1330,40 @@ func (s *PgStore) AppendDeploymentLog(ctx context.Context, deploymentID, stream,
 // ListDeploymentLogs returns the page of rows with seq < beforeSeq
 // (zero → all rows), DESC, capped at limit. hasMore is true if there's
 // at least one older row beyond the page.
+//
+// Review finding #7: the previous implementation set hasMore=true
+// whenever the page was full (len(out) == limit), which is also true
+// on the actual last page. We now fetch limit+1 rows in both query
+// branches, trim back to limit, and set hasMore from the trimmed
+// length — matching the MemStore contract (an exact full page
+// returns hasMore=false iff the caller hit the literal end).
 func (s *PgStore) ListDeploymentLogs(ctx context.Context, deploymentID string, beforeSeq int64, limit int) ([]LogEntry, bool, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	limit = clampLogLimit(limit)
+	// Fetch one extra row so we can tell whether the caller hit a
+	// boundary exactly. The trim happens after the scan loop so the
+	// scan doesn't need to know about the over-fetch.
+	queryLimit := limit + 1
 	var rows pgx.Rows
 	var err error
 	if beforeSeq <= 0 {
 		rows, err = s.pool.Query(ctx,
 			`select deployment_id, seq, stream, line, written_at
 			 from deployment_logs where deployment_id = $1
-			 order by seq desc limit $2`, deploymentID, limit)
+			 order by seq desc limit $2`, deploymentID, queryLimit)
 	} else {
 		rows, err = s.pool.Query(ctx,
 			`select deployment_id, seq, stream, line, written_at
 			 from deployment_logs where deployment_id = $1 and seq < $2
-			 order by seq desc limit $3`, deploymentID, beforeSeq, limit)
+			 order by seq desc limit $3`, deploymentID, beforeSeq, queryLimit)
 	}
 	if err != nil {
 		return nil, false, err
 	}
 	defer rows.Close()
-	out := make([]LogEntry, 0, limit)
+	out := make([]LogEntry, 0, queryLimit)
 	for rows.Next() {
 		var e LogEntry
 		if err := rows.Scan(&e.DeploymentID, &e.Seq, &e.Stream, &e.Line, &e.WrittenAt); err != nil {
@@ -1360,13 +1371,12 @@ func (s *PgStore) ListDeploymentLogs(ctx context.Context, deploymentID string, b
 		}
 		out = append(out, e)
 	}
-	// hasMore — PgStore's LIMIT caps the row count; we can't tell
-	// whether the cursor sits exactly on the boundary without a
-	// second query. Default to "there is more" when the page is
-	// full and the caller should re-issue with the next cursor;
-	// apid's SSE handler treats the trailing page the same way as
-	// the MemStore contract (an extra round-trip to confirm EOF is
-	// acceptable).
-	hasMore := len(out) == limit
-	return out, hasMore, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
 }

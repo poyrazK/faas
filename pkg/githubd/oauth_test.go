@@ -252,3 +252,73 @@ type fakeFetcher func(ctx context.Context, id int64) (string, time.Time, error)
 func (f fakeFetcher) ExchangeInstallationToken(ctx context.Context, id int64) (string, time.Time, error) {
 	return f(ctx, id)
 }
+
+// TestNextLink_RFC8288 is the regression test for review finding #9:
+// the previous strings.Index implementation truncated on the first
+// '>' which was wrong when the URL itself contained '>' inside a
+// query-string value (rare but not impossible for future GitHub
+// pagination URLs).
+//
+// Today GitHub's URLs never carry '>' so the simple case is the
+// dominant shape; the table covers it plus the edge cases that
+// matter for the RFC 8288 conformance contract.
+func TestNextLink_RFC8288(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "simple",
+			in:   `<https://api.github.com/repositories?page=2>; rel="next"`,
+			want: "https://api.github.com/repositories?page=2",
+		},
+		{
+			name: "comma-separated with rel=prev first",
+			in:   `<https://api.github.com/repositories?page=1>; rel="prev", <https://api.github.com/repositories?page=3>; rel="next"`,
+			want: "https://api.github.com/repositories?page=3",
+		},
+		{
+			name: "single-quoted value (RFC 8288 also allows single quotes)",
+			in:   `<https://api.github.com/repositories?page=2>; rel='next'`,
+			want: "https://api.github.com/repositories?page=2",
+		},
+		{
+			name: "case-insensitive rel",
+			in:   `<https://api.github.com/repositories?page=2>; REL="Next"`,
+			want: "https://api.github.com/repositories?page=2",
+		},
+		{
+			name: "no next page",
+			in:   `<https://api.github.com/repositories?page=1>; rel="prev"`,
+			want: "",
+		},
+		{
+			name: "empty header",
+			in:   "",
+			want: "",
+		},
+		{
+			name: "no rel at all",
+			in:   `<https://api.github.com/repositories?page=2>`,
+			want: "",
+		},
+		{
+			// This is the regression case: a '>' inside a query-string
+			// value (rare but legal per RFC 3986 — query allows pchar
+			// which includes 'sub-delims' = '&', '=', and friends).
+			// The pre-fix parser would have truncated on the second '>',
+			// returning "...?page=2&q=" instead of the full URL.
+			name: "URL contains > inside query value (regression)",
+			in:   `<https://api.github.com/repositories?page=2&q=>foo&per_page=100>; rel="next"`,
+			want: "https://api.github.com/repositories?page=2&q=>foo&per_page=100",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := nextLink(c.in); got != c.want {
+				t.Errorf("nextLink(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}

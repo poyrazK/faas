@@ -59,14 +59,14 @@ const oauthCallbackPath = "/oauth/callback"
 // Failure surfaces:
 //   - missing/invalid installation_id     → 400 problem
 //   - account suspended                   → 302 to /login (handled
-//                                           by sessionAuth; should
-//                                           not reach the handler)
+//     by sessionAuth; should
+//     not reach the handler)
 //   - githubd.VerifyInstallation returns  → 302 to
 //     verified=false                        /dashboard/account?github=forged
 //   - githubd.VerifyInstallation errs     → 500 problem with the
-//                                           underlying gRPC error
+//     underlying gRPC error
 //   - success                             → 302 to
-//                                           /dashboard/apps/new?install=…&branch=…
+//     /dashboard/apps/new?install=…&branch=…
 func (s *server) renderOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	const op = "renderOAuthCallback"
 	log := s.log.With("op", op)

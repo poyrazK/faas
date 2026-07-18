@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -160,11 +159,12 @@ type InstallableRepo struct {
 // Endpoint: GET https://api.github.com/app/installations/{id}
 // Auth:    Bearer <app JWT>
 // Status:  200 → real install, 404 → forged/unknown id, 401/403 →
-//          app JWT rejected (revoked key, wrong app).
+//
+//	app JWT rejected (revoked key, wrong app).
 type Installation struct {
-	ID            int64  `json:"id"`
-	AccountLogin  string `json:"account_login"` // nested in account.login; we keep a flat copy for the proto
-	Account       struct {
+	ID           int64  `json:"id"`
+	AccountLogin string `json:"account_login"` // nested in account.login; we keep a flat copy for the proto
+	Account      struct {
 		Login string `json:"login"`
 	} `json:"account"`
 	RepositorySelection string `json:"repository_selection"` // "all" | "selected"
@@ -277,25 +277,38 @@ func (a *AppAuth) ListInstallableRepos(ctx context.Context, installToken string,
 
 // nextLink parses GitHub's Link header and returns the URL of the
 // next page (the entry with rel="next"). Empty string = no more pages.
+//
+// RFC 8288 §3 grammar (simplified):
+//
+//	Link        = #link-value
+//	link-value  = "<" URI-Reference ">" *( ";" link-param )
+//	link-param  = token BWS "=" BWS ( token / quoted-string )
+//
+// Each entry is comma-separated. The URL is the <…> field; the rest
+// of the segment is semicolon-separated key=value params. We split
+// on ';' and look for a param whose key (lower-cased) is `rel` and
+// value (lower-cased, with surrounding quotes stripped) is `next`.
+//
+// Review finding #9: the previous implementation used strings.Index
+// to find the first '<' and '>' on the segment, which truncates
+// early when the URL field contains its own '>' — for example
+// <https://api.github.com/repos?page=2&q=>foo&per_page=100>. The
+// param-aware split fixes this: the URL ends at the '>' that
+// precedes the first ';' (or the closing '>' on the whole segment
+// if no params follow).
 func nextLink(link string) string {
 	if link == "" {
 		return ""
 	}
 	for _, part := range strings.Split(link, ",") {
 		segment := strings.TrimSpace(part)
-		if !strings.Contains(segment, `rel="next"`) {
+		uri, ok := extractLinkURI(segment)
+		if !ok {
 			continue
 		}
-		lt := strings.Index(segment, "<")
-		gt := strings.Index(segment, ">")
-		if lt < 0 || gt < 0 || gt <= lt {
-			continue
+		if linkHasRel(segment, "next") {
+			return uri
 		}
-		u, err := url.Parse(segment[lt+1 : gt])
-		if err != nil {
-			return ""
-		}
-		return u.String()
 	}
 	// Some clients/proxies split into multiple Link headers,
 	// each with one entry. The Go http.Header.Get joins them with
@@ -303,6 +316,78 @@ func nextLink(link string) string {
 	// the caller gets empty string and pagination stops, which
 	// is the safer default.
 	return ""
+}
+
+// extractLinkURI returns the <URI-Reference> field of a single
+// link-value segment (the substring between the leading '<' and
+// the '>' that closes it). Returns false if the segment doesn't
+// start with '<' or has no closing '>'.
+//
+// The closing '>' is whichever comes first: the '>' that terminates
+// the URI-reference (RFC 8288 §3.3 URI-Reference disallows '>' inside
+// unreserved+reserved chars used in practice), or — defensively —
+// the first '>' that precedes a ';' (start of the first link-param).
+// In practice GitHub's pagination URLs never contain '>', so the
+// simple "first '>'" rule is correct; the ';' guard handles the
+// hypothetical future case where a vendor encodes a '>' inside a
+// quoted-string param value.
+func extractLinkURI(segment string) (string, bool) {
+	if !strings.HasPrefix(segment, "<") {
+		return "", false
+	}
+	rest := segment[1:]
+	// Split on ';' to isolate the URI-reference from any
+	// link-params that follow. The first ';' is the canonical
+	// end of the URI field.
+	if semi := strings.Index(rest, ";"); semi >= 0 {
+		uriPart := rest[:semi]
+		if gt := strings.LastIndex(uriPart, ">"); gt >= 0 {
+			return uriPart[:gt], true
+		}
+		return "", false
+	}
+	gt := strings.Index(rest, ">")
+	if gt < 0 {
+		return "", false
+	}
+	return rest[:gt], true
+}
+
+// linkHasRel reports whether the segment (a single link-value) has a
+// link-param token equal to rel=<value>. The token comparison is
+// case-insensitive on both key and value (RFC 8288 §3.3 says link
+// parameter names are case-insensitive; the value is compared as a
+// quoted-string, so we strip surrounding quotes before comparing).
+//
+// Both single and double quotes are accepted as quoted-string
+// delimiters — RFC 8288 only mandates double quotes, but Go's
+// net/http Link header serialization is permissive (it round-trips
+// whatever the server sent), and we want a single test contract.
+func linkHasRel(segment, want string) bool {
+	parts := strings.Split(segment, ";")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		eq := strings.IndexByte(p, '=')
+		if eq < 0 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(p[:eq]))
+		val := strings.TrimSpace(p[eq+1:])
+		// Strip a matching pair of surrounding quotes (single OR
+		// double); mismatched quotes (e.g. `rel='next"`) are left
+		// alone — that wouldn't be a valid RFC 8288 segment and
+		// would fail to match anyway.
+		if len(val) >= 2 {
+			first, last := val[0], val[len(val)-1]
+			if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+				val = val[1 : len(val)-1]
+			}
+		}
+		if key == "rel" && strings.EqualFold(val, want) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseRSAPrivateKey decodes a PEM-encoded RSA private key (PKCS#1

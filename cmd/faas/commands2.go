@@ -569,8 +569,42 @@ func dashboardAccountURL(api string) string {
 }
 
 // dashboardAppURL is the canonical per-app dashboard page.
+//
+// Review finding #10: the previous url.PathEscape mismatch with the
+// apid router's substring-match would round-trip badly for slugs
+// containing '/'. App slugs cannot legitimately contain '/' (the
+// store's CreateApp sanitizer already rejects them — see
+// pkg/api.ValidateAppConfig), but a buggy caller could hand us one
+// and a PathEscape would encode it as %2F, which the apid router
+// wouldn't decode before substring-matching. Sanitize to '_' on
+// the CLI side so the dashboard link is always a valid round-trip.
 func dashboardAppURL(api, slug string) string {
-	return dashboardBaseURL(api) + "/dashboard/apps/" + url.PathEscape(slug)
+	return dashboardBaseURL(api) + "/dashboard/apps/" + sanitizeSlugForURL(slug)
+}
+
+// sanitizeSlugForURL strips characters that would either be
+// percent-encoded by url.PathEscape (causing the apid router's
+// substring-match to miss) or that would split the URL into a new
+// path segment. App slugs are validated as [a-z0-9-] by the store;
+// anything else becomes '_'.
+func sanitizeSlugForURL(slug string) string {
+	out := make([]byte, 0, len(slug))
+	for i := 0; i < len(slug); i++ {
+		c := slug[i]
+		switch {
+		case c >= 'a' && c <= 'z',
+			c >= 'A' && c <= 'Z',
+			c >= '0' && c <= '9',
+			c == '-' || c == '_' || c == '.':
+			out = append(out, c)
+		default:
+			out = append(out, '_')
+		}
+	}
+	if len(out) == 0 {
+		return "app"
+	}
+	return string(out)
 }
 
 // dashboardRepoPickerURL is where the customer finishes the repo
