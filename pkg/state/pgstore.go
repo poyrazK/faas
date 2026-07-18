@@ -1257,13 +1257,7 @@ func (s *PgStore) ListDeploymentLogs(ctx context.Context, deploymentID string, b
 	if limit <= 0 {
 		limit = 50
 	}
-	// Clamp to MaxDeploymentLogPage so a caller-supplied limit
-	// can't drive an oversized client-side allocation. The SQL
-	// `limit $2/$3` is also clamped here; the DB is already capped
-	// at MaxDeploymentLogPage by the index + slice size.
-	if limit > MaxDeploymentLogPage {
-		limit = MaxDeploymentLogPage
-	}
+	limit = clampLogLimit(limit)
 	var rows pgx.Rows
 	var err error
 	if beforeSeq <= 0 {

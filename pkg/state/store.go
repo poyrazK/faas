@@ -18,6 +18,23 @@ var ErrNotFound = errors.New("state: not found")
 // trigger an oversized allocation (CodeQL go/allocation-size).
 const MaxDeploymentLogPage = 500
 
+// clampLogLimit sanitizes the caller-supplied `limit` argument to
+// ListDeploymentLogs so the slice allocation in the store
+// implementations is provably bounded. CodeQL's
+// go/allocation-size rule recognizes the result of this helper
+// (small pure function returning a constant-bounded value) as a
+// sanitizer; an inline `if limit > X { limit = X }` branch is not
+// tracked.
+func clampLogLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	if limit > MaxDeploymentLogPage {
+		return MaxDeploymentLogPage
+	}
+	return limit
+}
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface
