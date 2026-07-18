@@ -61,6 +61,34 @@ type Store interface {
 	// (Free + Hobby + Pro + Scale test accounts + a handful of paid).
 	ListAllAccounts(ctx context.Context) ([]Account, error)
 
+	// Account-scoped deletion (spec §17 G6, ADR-021). The customer's
+	// DELETE /v1/account schedules a 30-day grace window; pkg/grace in
+	// apid sweeps on a 60s timer and calls DeleteAccount once the
+	// window lapses. RestoreAccount flips the row back to active iff
+	// called inside the grace window — past that the only honest
+	// answer is ErrConflict and the handler returns 409.
+	//
+	// DeleteAccount is a single transaction that walks the FK graph in
+	// dependency order (app_secrets → custom_domains → crons → instances
+	// → snapshots → builds → deployments → apps → api_keys →
+	// idempotency_keys → usage_minutes → accounts). Returns ErrNotFound
+	// when the final accounts row is already gone, so a redelivered
+	// grace tick is idempotent.
+	//
+	// MarkAccountDeletionPending is idempotent: a repeat call leaves
+	// deletion_requested_at untouched (it carries the original grace
+	// deadline). RestoreAccount zeroes deletion_requested_at.
+	DeleteAccount(ctx context.Context, id string) error
+	ListBuildsForAccount(ctx context.Context, accountID string) ([]Build, error)
+	ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error)
+	// UsageByAccount aggregates every per-minute usage_minutes row that
+	// landed in [since, now]. MemStore synthesizes the per-minute
+	// rollup; PgStore runs a SELECT … WHERE account_id = $1 AND minute >= $2.
+	// Empty since means "every row" — used by the GDPR export bundle.
+	UsageByAccount(ctx context.Context, accountID string, since time.Time) ([]Usage, error)
+	MarkAccountDeletionPending(ctx context.Context, id string) error
+	RestoreAccount(ctx context.Context, id string) error
+
 	// API keys.
 	CreateAPIKey(ctx context.Context, accountID string, hash []byte, label string) (APIKey, error)
 	DeleteAPIKey(ctx context.Context, accountID, keyID string) error

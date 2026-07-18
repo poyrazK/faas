@@ -55,7 +55,7 @@ func newOAuthTestServer(t *testing.T, gh GithubdClient) (http.Handler, *http.Coo
 		t.Fatalf("issue session: %v", err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "example.com", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000)
+	srv := newServerWithDeps(store, log, "example.com", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, "")
 	return srv.handler(), &http.Cookie{Name: sessionCookie, Value: cookie}
 }
 
@@ -198,7 +198,7 @@ func TestOAuthCallback_RequiresSessionAuth(t *testing.T) {
 		t.Fatalf("session manager: %v", err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "example.com", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000).handler()
+	srv := newServerWithDeps(store, log, "example.com", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").handler()
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oauth/callback?installation_id=1", nil)

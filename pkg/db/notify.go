@@ -87,21 +87,36 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         was dispatched through gatewayd so metering
 //	                         and rate limits apply identically (spec §4.4,
 //	                         M7 cron firing).
+//	NotifyAccountDeletionPending {"account_id":uuid, "scheduled_at":rfc3339nano,
+//	                         "restore_until":rfc3339nano}
+//	                         apid → audit/sessions: customer scheduled
+//	                         their account for deletion (spec §17 G6).
+//	                         schedd subscribes to drop any live instance
+//	                         belonging to the account at the moment of
+//	                         pending (RAM-admission invariant §6.2-2).
+//	NotifyAccountDeleted    {"account_id":uuid}
+//	                         apid/pkg/grace → audit: the 30-day grace
+//	                         window lapsed and the hard delete ran.
+//	                         Anything that kept an in-memory cache (the
+//	                         gateway's route table, meterd's per-account
+//	                         usage map) re-reads on this signal.
 const (
-	NotifyAppChanged        = "app_changed"
-	NotifyDeploymentChanged = "deployment_changed"
-	NotifyDomainChanged     = "domain_changed"
-	NotifyCronChanged       = "cron_changed"
-	NotifyKeyChanged        = "key_changed"
-	NotifyBuildQueued       = "build_queued"
-	NotifyBuildLog          = "build_log"
-	NotifyDomainVerify      = "domain_verify"
-	NotifyInstanceChanged   = "instance_changed"
-	NotifySnapshotPrime     = "snapshot_prime"
-	NotifySnapshotWritten   = "snapshot_written"
-	NotifyBillingPastDue    = "billing_past_due"
-	NotifyQuotaWarning      = "quota_warning"
-	NotifyCronFired         = "cron_fired"
+	NotifyAppChanged              = "app_changed"
+	NotifyDeploymentChanged       = "deployment_changed"
+	NotifyDomainChanged           = "domain_changed"
+	NotifyCronChanged             = "cron_changed"
+	NotifyKeyChanged              = "key_changed"
+	NotifyBuildQueued             = "build_queued"
+	NotifyBuildLog                = "build_log"
+	NotifyDomainVerify            = "domain_verify"
+	NotifyInstanceChanged         = "instance_changed"
+	NotifySnapshotPrime           = "snapshot_prime"
+	NotifySnapshotWritten         = "snapshot_written"
+	NotifyBillingPastDue          = "billing_past_due"
+	NotifyQuotaWarning            = "quota_warning"
+	NotifyCronFired               = "cron_fired"
+	NotifyAccountDeletionPending  = "account_deletion_pending"
+	NotifyAccountDeleted          = "account_deleted"
 )
 
 // Subscribe holds a dedicated connection on the pool in LISTEN state for the

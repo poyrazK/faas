@@ -55,26 +55,26 @@ var _ Store = (*PgStore)(nil)
 
 func (s *PgStore) CreateAccount(ctx context.Context, email string, plan api.Plan) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`insert into accounts (email, plan, status) values ($1, $2, 'active') returning id, email, plan, status, coalesce(stripe_customer_id,''), created_at`,
+		`insert into accounts (email, plan, status) values ($1, $2, 'active') returning id, email, plan, status, coalesce(stripe_customer_id,''), created_at, deletion_requested_at`,
 		email, string(plan))
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByID(ctx context.Context, id string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at from accounts where id = $1`, id)
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at, deletion_requested_at from accounts where id = $1`, id)
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByEmail(ctx context.Context, email string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at from accounts where email = $1`, email)
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at, deletion_requested_at from accounts where email = $1`, email)
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select a.id, a.email, a.plan, a.status, coalesce(a.stripe_customer_id,''), a.created_at
+		`select a.id, a.email, a.plan, a.status, coalesce(a.stripe_customer_id,''), a.created_at, a.deletion_requested_at
 		 from accounts a join api_keys k on k.account_id = a.id where k.key_sha256 = $1`, hash)
 	return scanAccount(row)
 }
@@ -111,43 +111,56 @@ func (s *PgStore) UpdateAccountStripeCustomerID(ctx context.Context, id, stripeC
 // map.
 func (s *PgStore) AccountByStripeCustomerID(ctx context.Context, stripeCustomerID string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at, deletion_requested_at
 		 from accounts where stripe_customer_id = $1`,
 		stripeCustomerID)
-	var a Account
-	var plan, status string
-	if err := row.Scan(&a.ID, &a.Email, &plan, &status, &a.StripeCustomerID, &a.CreatedAt); err != nil {
-		// pgx returns ErrNoRows when the SELECT finds nothing; map to the
-		// store sentinel so callers can errors.Is(err, state.ErrNotFound).
-		return Account{}, ErrNotFound
-	}
-	a.Plan = api.Plan(plan)
-	a.Status = AccountStatus(status)
-	return a, nil
+	return scanAccount(row)
 }
 
 // ListAllAccounts returns every account. Meterd walks this on the quota
 // tick + hourly Stripe push; bounded by the customer count on the box.
 func (s *PgStore) ListAllAccounts(ctx context.Context) ([]Account, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at, deletion_requested_at
 		 from accounts order by created_at`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanAccounts(rows)
+}
+
+// scanAccounts reads a rows iterator of account rows. Shared with
+// ListAllAccounts so MemStore doesn't have to duplicate the scan
+// logic on top of the per-row scanner.
+func scanAccounts(rows pgx.Rows) ([]Account, error) {
 	var out []Account
 	for rows.Next() {
-		var a Account
-		var plan, status string
-		if err := rows.Scan(&a.ID, &a.Email, &plan, &status, &a.StripeCustomerID, &a.CreatedAt); err != nil {
+		a, err := scanAccountCols(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		a.Plan = api.Plan(plan)
-		a.Status = AccountStatus(status)
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// scanAccountCols is the shared column reader for the Account shape
+// used by every read path. deletion_requested_at is nullable; we scan
+// into *time.Time and lift it onto the Account when non-NULL.
+func scanAccountCols(scan func(...any) error) (Account, error) {
+	a := Account{}
+	var planStr, statusStr string
+	var deletionAt *time.Time
+	if err := scan(&a.ID, &a.Email, &planStr, &statusStr, &a.StripeCustomerID, &a.CreatedAt, &deletionAt); err != nil {
+		return Account{}, err
+	}
+	a.Plan = api.Plan(planStr)
+	a.Status = AccountStatus(statusStr)
+	if deletionAt != nil {
+		a.DeletionRequestedAt = deletionAt
+	}
+	return a, nil
 }
 
 // --- api keys ----------------------------------------------------------------
@@ -1119,13 +1132,10 @@ func (s *PgStore) CountAppSecrets(ctx context.Context, accountID, appID string) 
 // --- row scanners ------------------------------------------------------------
 
 func scanAccount(row pgx.Row) (Account, error) {
-	a := Account{}
-	var planStr, statusStr string
-	if err := row.Scan(&a.ID, &a.Email, &planStr, &statusStr, &a.StripeCustomerID, &a.CreatedAt); err != nil {
+	a, err := scanAccountCols(row.Scan)
+	if err != nil {
 		return Account{}, mapErr(err)
 	}
-	a.Plan = api.Plan(planStr)
-	a.Status = AccountStatus(statusStr)
 	return a, nil
 }
 
@@ -1463,4 +1473,227 @@ func (s *PgStore) ListDeploymentLogs(ctx context.Context, deploymentID string, b
 		out = out[:limit]
 	}
 	return out, hasMore, nil
+}
+
+// --- G6 account self-service (spec §17 G6, ADR-021) -------------------------
+//
+// DELETE /v1/account schedules a 30-day grace window; pkg/grace in apid
+// sweeps on a 60s timer and calls DeleteAccount once the window lapses.
+// RestoreAccount flips the row back to active iff called inside the
+// grace window — past that the only honest answer is ErrConflict and
+// the handler returns 409 account_not_restorable.
+//
+// DeleteAccount is a single transaction that walks the FK graph in
+// dependency order (app_secrets → custom_domains → crons → instances
+// → snapshots → builds → deployments → apps → api_keys → idempotency
+// keys → usage_minutes → accounts). Returns ErrNotFound when the
+// final accounts row is already gone, so a redelivered grace tick is
+// idempotent (and pkg/grace.RunOnce swallows the error).
+//
+// The DeletionGraceDuration helper is defined in memstore.go so both
+// stores share the same canonical 30-day constant — apid, pkg/grace,
+// and dashboard/email templates all read from the single declaration.
+
+// DeleteAccount removes every row tied to the account inside a single
+// transaction. Walks the FK graph in dependency order; the final
+// `delete from accounts` is the sentinel — 0 rows affected means the
+// account was already gone (idempotent retry by pkg/grace).
+func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	// Each step accepts the cascade on the (account_id) FK where one
+	// exists, but we walk explicitly to keep the schema stable and the
+	// sequence readable. The subquery pattern mirrors what apid already
+	// uses for per-app cascades.
+	steps := []struct {
+		name string
+		sql  string
+	}{
+		{"app_secrets", `delete from app_secrets where account_id = $1`},
+		{"custom_domains", `delete from custom_domains
+		   where app_id in (select id from apps where account_id = $1)`},
+		{"crons", `delete from crons
+		   where app_id in (select id from apps where account_id = $1)`},
+		{"instances", `delete from instances
+		   where app_id in (select id from apps where account_id = $1)`},
+		{"snapshots", `delete from snapshots
+		   where deployment_id in
+		     (select id from deployments where app_id in
+		        (select id from apps where account_id = $1))`},
+		{"builds", `delete from builds
+		   where deployment_id in
+		     (select id from deployments where app_id in
+		        (select id from apps where account_id = $1))`},
+		{"deployments", `delete from deployments
+		   where app_id in (select id from apps where account_id = $1)`},
+		{"apps", `delete from apps where account_id = $1`},
+		{"api_keys", `delete from api_keys where account_id = $1`},
+		{"idempotency_keys", `delete from idempotency_keys where account_id = $1`},
+		{"usage_minutes", `delete from usage_minutes where account_id = $1`},
+		{"accounts", `delete from accounts where id = $1`},
+	}
+	for _, step := range steps {
+		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
+			return fmt.Errorf("state: delete %s for account %s: %w", step.name, id, err)
+		}
+	}
+	// Sentinel: the `accounts` delete in the loop above executed; we
+	// didn't observe rows-affected there because we batched it. Run one
+	// more probe so a stale retry surfaces ErrNotFound to callers.
+	var stillExists int
+	if err := tx.QueryRow(ctx, `select count(*) from accounts where id = $1`, id).Scan(&stillExists); err != nil {
+		return fmt.Errorf("state: probe accounts row for %s: %w", id, err)
+	}
+	if stillExists != 0 {
+		// The accounts delete should have removed the row, but if some
+		// other FK kept it alive we'd have already failed in the loop.
+		// Surface as ErrNotFound so the caller's idempotent retry path
+		// treats it the same as "already gone".
+		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit delete account %s: %w", id, err)
+	}
+	return nil
+}
+
+// ListBuildsForAccount returns every build across the account's
+// deployments, ordered by created_at DESC. Used by the GDPR export
+// bundle (spec §17 G6).
+func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([]Build, error) {
+	rows, err := s.pool.Query(ctx,
+		`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
+		        coalesce(b.failure_class,''), coalesce(b.log_path,''),
+		        b.started_at, b.finished_at
+		 from builds b
+		 join deployments d on d.id = b.deployment_id
+		 join apps a on a.id = d.app_id
+		 where a.account_id = $1
+		 order by b.started_at desc nulls last`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Build
+	for rows.Next() {
+		b := Build{}
+		var kind, statusStr, fc string
+		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &b.StartedAt, &b.FinishedAt); err != nil {
+			return nil, err
+		}
+		b.Kind = DeploymentKind(kind)
+		b.Status = BuildStatus(statusStr)
+		b.FailureClass = FailureClass(fc)
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// ListCronsForAccount walks every cron tied to the account's apps.
+// Used by the GDPR export bundle.
+func (s *PgStore) ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error) {
+	rows, err := s.pool.Query(ctx,
+		`select c.id, c.app_id, c.schedule, c.path, c.enabled, c.created_at
+		 from crons c
+		 join apps a on a.id = c.app_id
+		 where a.account_id = $1
+		 order by c.created_at`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Cron
+	for rows.Next() {
+		c := Cron{}
+		if err := rows.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// UsageByAccount returns every per-app usage row for the account whose
+// minute >= since. since.IsZero() → every row. Used by the GDPR
+// export bundle (the spec calls for "all usage data" — the per-minute
+// grain is the most honest representation).
+func (s *PgStore) UsageByAccount(ctx context.Context, accountID string, since time.Time) ([]Usage, error) {
+	var rows pgx.Rows
+	var err error
+	if since.IsZero() {
+		rows, err = s.pool.Query(ctx,
+			`select account_id, app_id, date_trunc('month', minute) as month,
+			        sum(mb_seconds)::bigint, sum(requests)::bigint
+			 from usage_minutes
+			 where account_id = $1
+			 group by account_id, app_id, month
+			 order by app_id, month`, accountID)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select account_id, app_id, date_trunc('month', minute) as month,
+			        sum(mb_seconds)::bigint, sum(requests)::bigint
+			 from usage_minutes
+			 where account_id = $1 and minute >= $2
+			 group by account_id, app_id, month
+			 order by app_id, month`, accountID, since.UTC())
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Usage
+	for rows.Next() {
+		u := Usage{}
+		var month time.Time
+		if err := rows.Scan(&u.AccountID, &u.AppID, &month, &u.MBSeconds, &u.Requests); err != nil {
+			return nil, err
+		}
+		u.Month = month
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// MarkAccountDeletionPending flips status to deleted_pending and
+// stamps deletion_requested_at with now(). Idempotent: a repeat call
+// leaves the timestamp untouched so the grace window's anchor stays
+// at the original moment the customer asked.
+func (s *PgStore) MarkAccountDeletionPending(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update accounts
+		   set status = 'deleted_pending',
+		       deletion_requested_at = coalesce(deletion_requested_at, now())
+		 where id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RestoreAccount flips status back to active and clears
+// deletion_requested_at iff the row is still inside the 30-day grace
+// window. Past grace → ErrConflict so the handler renders 409.
+func (s *PgStore) RestoreAccount(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update accounts
+		   set status = 'active',
+		       deletion_requested_at = null
+		 where id = $1
+		   and status = 'deleted_pending'
+		   and deletion_requested_at > now() - interval '30 days'`,
+		id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
 }

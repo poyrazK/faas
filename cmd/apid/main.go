@@ -26,6 +26,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -101,8 +102,57 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.notif = func() Notifier { return pgNotifier{pool: pool} }
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
 		startDNSPoller(ctx, srv, log)
+		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
+		// grace sweep lives in apid (not meterd) because the write
+		// side (DELETE /v1/account, POST /v1/account/restore) is here
+		// and meterd owns quotas/billing only. Default Interval 60s
+		// matches the grace-side precision we need; sweep is a
+		// ListAllAccounts walk so it stays bounded by the customer
+		// count on the one box.
+		graceLoop := grace.New(grace.Params{
+			Store:  srv.store,
+			Mailer: graceSenderAdapter{m: srv.mailer},
+			Log:    log,
+			Interval: graceIntervalFromEnv(log),
+			Notif: func(ctx context.Context, ch, payload string) error {
+				return srv.notif.Notify(ctx, ch, payload)
+			},
+		})
+		go func() { _ = graceLoop.Run(ctx) }()
 	}
 	return runWithDeps(ctx, log, deps)
+}
+
+// graceSenderAdapter bridges apid's Mailer (which sends the apid
+// Message struct) to pkg/grace.Sender (which takes primitive args).
+// Kept inline so the production apid binary doesn't pull the apid
+// Message type into pkg/grace — pkg/grace's signature is intentionally
+// narrow so it has no apid dependency.
+type graceSenderAdapter struct{ m Mailer }
+
+func (g graceSenderAdapter) Send(ctx context.Context, to []string, subject, body string) error {
+	return g.m.Send(ctx, Message{To: to, Subject: subject, TextBody: body})
+}
+
+// graceIntervalFromEnv reads FAAS_GRACE_INTERVAL to let the e2e test
+// accelerate the sweep (default 60s is correct for production; a CI
+// test sets it to a few hundred ms so the 30-day "grace expired"
+// case runs in seconds, not minutes). Returns 0 to let pkg/grace
+// fall back to its 60s default.
+func graceIntervalFromEnv(log *slog.Logger) time.Duration {
+	v := os.Getenv("FAAS_GRACE_INTERVAL")
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		if log != nil {
+			log.Warn("FAAS_GRACE_INTERVAL unparseable, using default",
+				"value", v, "err", err)
+		}
+		return 0
+	}
+	return d
 }
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
@@ -136,7 +186,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if sessionsWarn != "" {
 		log.Warn("session manager in dev mode; sessions reset on restart", "warning", sessionsWarn)
 	}
-	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL)
+	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, deps.getenv("FAAS_DPA_PATH"))
 
 	// G2: load the host age recipient so the secrets PUT handler can seal.
 	// vmmd owns the private half; we only need the public recipient string.

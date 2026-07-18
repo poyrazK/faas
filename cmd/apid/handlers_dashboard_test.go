@@ -37,7 +37,7 @@ func newAuthedDashboardServer(t *testing.T) (http.Handler, *http.Cookie) {
 		t.Fatalf("issue session: %v", err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "example.com", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, mgr, nil, 15*60_000_000_000)
+	srv := newServerWithDeps(store, log, "example.com", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, mgr, nil, 15*60_000_000_000, "")
 	return srv.handler(), &http.Cookie{Name: sessionCookie, Value: cookie}
 }
 

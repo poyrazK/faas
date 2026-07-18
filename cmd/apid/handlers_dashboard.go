@@ -268,9 +268,29 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		log.Warn("dashboard renderAccount: count deployed apps", "account_id", acct.ID, "err", err)
 		appCount = 0
 	}
-	page := dashboard.Page{Title: "Account", Body: "account", Account: dashboardAccountView(view, appCount), Data: dashboard.AccountData{
-		Keys: keyItems,
-	}}
+	data := dashboard.AccountData{
+		Keys:               keyItems,
+		ShowDelete:         view.Status != state.AccountDeletedPending,
+		DeleteConfirmToken: "delete:yes",
+		ShowRestore:        view.Status == state.AccountDeletedPending,
+		RestoreConfirmToken: "restore:yes",
+	}
+	if view.DeletionRequestedAt != nil {
+		restoreUntil := view.DeletionRequestedAt.Add(state.DeletionGraceDuration()).
+			UTC().Format(time.RFC3339)
+		data.RestoreUntil = restoreUntil
+	}
+	// Banner for ?deleted=1 / ?restored=1 (set after a dashboard form
+	// POST redirects back here).
+	switch r.URL.Query().Get("deleted") {
+	case "1":
+		data.FlashSurface = "Account scheduled for deletion in 30 days. Use the form below to restore before the deadline."
+	}
+	switch r.URL.Query().Get("restored") {
+	case "1":
+		data.FlashSurface = "Account restored. Welcome back."
+	}
+	page := dashboard.Page{Title: "Account", Body: "account", Account: dashboardAccountView(view, appCount), Data: data}
 	if err := dashboard.Render(w, log, page); err != nil {
 		renderProblem(w, log, err)
 	}
