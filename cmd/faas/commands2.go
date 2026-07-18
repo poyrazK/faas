@@ -30,6 +30,13 @@ const (
 	// service names reused across cmdConnect + the usage hint
 	// (commands2.go) so goconst stops flagging them.
 	svcGithub = "github"
+
+	// appSlugFallback is the placeholder slug sanitizeSlugForURL
+	// returns when the input is entirely garbage (all stripped).
+	// Lifted out of the literal so goconst stops flagging the
+	// repeated "app" string across cmd/faas (main.go dispatch,
+	// subcommand FlagSet names, fallback slug).
+	appSlugFallback = "app"
 )
 
 // cmdApp implements `faas app <slug>` (GET /v1/apps/{slug}), `faas app <slug>
@@ -602,7 +609,7 @@ func sanitizeSlugForURL(slug string) string {
 		}
 	}
 	if len(out) == 0 {
-		return "app"
+		return appSlugFallback
 	}
 	return string(out)
 }

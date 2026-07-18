@@ -77,7 +77,7 @@ func run(args []string) int {
 			return cmdAppsRm(args[2:])
 		}
 		return cmdApps()
-	case "app":
+	case appSlugFallback:
 		return cmdApp(args[1:])
 	case "rollback":
 		return cmdRollback(args[1:])
