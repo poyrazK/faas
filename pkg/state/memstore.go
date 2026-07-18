@@ -936,6 +936,22 @@ func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Insta
 	return out, nil
 }
 
+// ListAllInstances mirrors PgStore's reaper-state filter. Test-side it lets
+// the conntrack tests assert against a store without per-app loops.
+func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Instance
+	for _, ins := range m.instances {
+		switch ins.State {
+		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting):
+			out = append(out, ins)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	return out, nil
+}
+
 // ListInstancesForAccount joins the instance set against the app set
 // in-memory; the production path is a single SQL query (pgstore). Used
 // by the meterd quota loop on Free hard-stop (spec §4.7).

@@ -4,6 +4,7 @@
 //   - non-zero exit: error wraps the binary name and exit code
 //   - stderr folding: stderr content is appended to the error message
 //   - cancellation: ctx cancellation surfaces as the runner's error
+//   - Output: stdout is captured, empty argv / non-zero exit / missing binary surface the same shape as Run
 
 package wire_test
 
@@ -76,4 +77,52 @@ func TestExecRunner_ContextCancel(t *testing.T) {
 	}
 	// Either an exit error from the killed process or a context error.
 	// We don't pin a specific underlying type — the contract is "errors out".
+}
+
+func TestExecRunner_OutputSuccess(t *testing.T) {
+	r := wire.ExecRunner{}
+	out, err := r.Output(context.Background(), []string{"/bin/sh", "-c", "printf hello"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if got := string(out); got != "hello" {
+		t.Errorf("stdout = %q, want %q", got, "hello")
+	}
+}
+
+func TestExecRunner_OutputEmptyArgv(t *testing.T) {
+	r := wire.ExecRunner{}
+	_, err := r.Output(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error for empty argv")
+	}
+	if !strings.Contains(err.Error(), "empty command") {
+		t.Errorf("error %q should mention 'empty command'", err.Error())
+	}
+}
+
+func TestExecRunner_OutputNonZeroExit(t *testing.T) {
+	r := wire.ExecRunner{}
+	_, err := r.Output(context.Background(), []string{"/bin/sh", "-c", "echo boom 1>&2; exit 3"})
+	if err == nil {
+		t.Fatal("expected error for non-zero exit")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Errorf("stderr content should be folded into error, got %q", err.Error())
+	}
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		t.Errorf("error should wrap *exec.ExitError; got %T", err)
+	}
+}
+
+func TestExecRunner_OutputMissingBinary(t *testing.T) {
+	r := wire.ExecRunner{}
+	_, err := r.Output(context.Background(), []string{"/nonexistent/binary/that/does/not/exist"})
+	if err == nil {
+		t.Fatal("expected error for missing binary")
+	}
+	if !strings.Contains(err.Error(), "/nonexistent/binary") {
+		t.Errorf("error %q should name the binary", err.Error())
+	}
 }

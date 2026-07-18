@@ -196,6 +196,14 @@ type Store interface {
 	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
+	// ListAllInstances returns every instance on the box, ordered newest
+	// first. schedd's G7 reaper warm-passes this slice to the conntrack
+	// reader (pkg/sched/flowcount) once per tick — a single bulk read is
+	// cheaper than a per-app loop and lets the reader index by host_ip
+	// up front. Scoped to RUNNING/WAKING/COLD_BOOTING/SNAPSHOTTING because
+	// parked/stopped/failed instances have no veth and no flows by
+	// construction (invariant §6.2-4).
+	ListAllInstances(ctx context.Context) ([]Instance, error)
 	// ListInstancesForAccount returns every live instance belonging to an
 	// account. Used by the meterd quota loop to park everything when a Free
 	// account crosses 100 % (spec §4.7). Per-account scan is O(instances);

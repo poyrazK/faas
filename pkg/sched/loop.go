@@ -164,6 +164,24 @@ func (l *Loop) runReaper(ctx context.Context) {
 		l.log.Warn("reaper: list apps", "err", err)
 		return
 	}
+	// G7 conntrack warm (spec §17): if the FlowCounter is also a Warm-able
+	// reader (the production flowcount.Reader is), feed it every live
+	// instance up front so Open calls below are cheap map lookups. The
+	// type assertion keeps the FlowCounter interface narrow — test mocks
+	// that don't implement Warm are simply skipped, preserving the
+	// existing test surface.
+	if warmer, ok := l.flowCounts.(interface {
+		Warm(context.Context, []state.Instance) error
+	}); ok {
+		all, err := store.ListAllInstances(ctx)
+		if err != nil {
+			l.log.Warn("reaper: list all instances for warm", "err", err)
+			// Don't return — fail open to LastRequest-only reaping.
+		} else if warmErr := warmer.Warm(ctx, all); warmErr != nil {
+			l.log.Warn("reaper: warm flow reader", "err", warmErr)
+			// Don't return — same fail-open contract.
+		}
+	}
 	now := time.Now()
 	var snapshot []InstanceInfo
 	for _, a := range apps {
