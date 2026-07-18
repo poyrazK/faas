@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -141,7 +142,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		"vcpu_slots", api.VCPUSlots,
 		"fc_version", fcVersion)
 
-	loop := sched.NewLoop(pool, engine, log)
+	loop := sched.NewLoop(pool, engine, log).
+		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{}))
 	// Cron dispatch path: route synthetic requests through gatewayd's
 	// internal unix socket so metering + rate limits apply identically
 	// to user traffic (spec §4.4, M7). A failure to dial is logged but

@@ -743,6 +743,26 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 	return scanInstances(rows)
 }
 
+// ListAllInstances returns every instance in a reaper-relevant state. Used
+// by schedd's G7 conntrack warm (pkg/sched/flowcount): one bulk read feeds
+// the per-tick warm list, avoiding a per-app loop. The state filter matches
+// the set the reaper actually considers — parked/stopped/failed instances
+// have no veth and no flows, so excluding them keeps the conntrack parse
+// O(live instances) instead of O(all instances ever).
+func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
+	rows, err := s.pool.Query(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
+		 from instances
+		 where state in ('running','waking','cold_booting','snapshotting')
+		 order by started_at desc`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
 // ListInstancesForAccount joins instances→apps in SQL so the meterd
 // quota loop can park every live instance for an account in one round
 // trip. Filtered to instances.state ∈ {WAKING, COLD_BOOTING, RUNNING,
