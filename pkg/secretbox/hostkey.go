@@ -34,6 +34,16 @@ import (
 	"filippo.io/age"
 )
 
+// ErrRecipientInsecurePerms is returned by LoadRecipient when host.age.pub's
+// mode allows write/exec/setuid to anyone other than the file's owner. The
+// public half is by design world-readable, but a public-key file that is also
+// writable (or setuid) is the canonical signal that the host has been
+// tampered with: an attacker who can write to host.age.pub can substitute
+// their own recipient and start collecting freshly-sealed ciphertexts.
+// Fail-fast at apid startup rather than serving sealed blobs to a
+// hijacked recipient.
+var ErrRecipientInsecurePerms = errors.New("secretbox: host.age.pub permissions allow write/exec/setuid to non-owner")
+
 // DefaultHostKeyPath is where vmmd looks for (and auto-generates) the host
 // X25519 identity on first boot. Spec §11: secrets in /etc/faas/secrets/
 // root:root 0400.
@@ -112,7 +122,29 @@ func WriteRecipientFile(path string, id *age.X25519Identity) error {
 // LoadRecipient parses a recipient string from path. apid calls this at
 // startup to obtain the sealing key. The file is the canonical host.age.pub
 // artifact written by vmmd (mode 0444).
+//
+// Security check: refuse to start if the file's mode permits write/exec/
+// setuid to anyone other than the file's owner. The recipient is technically
+// public, but a public-key file that is ALSO writable (or setuid) is the
+// canonical signal that the host's PKI has been tampered with: an attacker
+// who can write to host.age.pub can substitute their own recipient and
+// start collecting freshly-sealed ciphertexts. Fail-fast at apid startup
+// rather than serving sealed blobs to a hijacked recipient.
+//
+// Permitted shapes: any combination of read bits for owner (0o400),
+// owner-write (0o200), group-read (0o040), and other-read (0o004). That
+// accepts the production modes 0o400, 0o440, 0o404, 0o444. Any other bit
+// (group/other write, any exec, setuid, setgid, sticky) is rejected.
 func LoadRecipient(path string) (*age.X25519Recipient, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("secretbox: stat recipient %q: %w", path, err)
+	}
+	const allowedPerm = os.FileMode(0o644)
+	if info.Mode().Perm() & ^allowedPerm != 0 {
+		return nil, fmt.Errorf("secretbox: recipient %q mode %#o: %w",
+			path, info.Mode().Perm(), ErrRecipientInsecurePerms)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: read recipient %q: %w", path, err)
