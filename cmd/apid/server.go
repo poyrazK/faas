@@ -324,9 +324,10 @@ type accountHandler func(w http.ResponseWriter, r *http.Request, acct state.Acco
 //
 // Carve-out for G6 (spec §17 G6, ADR-021): while an account is in
 // deleted_pending, the customer still needs to reach
-//   - GET    /v1/account/export  (final export during grace)
-//   - DELETE /v1/account         (idempotent re-DEL)
-//   - POST   /v1/account/restore (cancel the deletion)
+//   - GET    /v1/account          (Whoami — read-only status probe)
+//   - GET    /v1/account/export   (final export during grace)
+//   - DELETE /v1/account          (idempotent re-DEL)
+//   - POST   /v1/account/restore  (cancel the deletion)
 // All other routes still 402 with CodeBillingPastDue during grace
 // because the work surface (deploy, build, park live instances) is
 // already torn down.

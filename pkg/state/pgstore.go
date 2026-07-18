@@ -1505,10 +1505,36 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
-	// Each step accepts the cascade on the (account_id) FK where one
-	// exists, but we walk explicitly to keep the schema stable and the
-	// sequence readable. The subquery pattern mirrors what apid already
-	// uses for per-app cascades.
+	// Sentinel + race guard: the conditional DELETE on the parent row is
+	// the single source of truth for "did this delete do anything?".
+	//
+	//   - RowsAffected == 0 → row didn't exist OR wasn't deleted_pending.
+	//     Either way there's nothing to cascade. Returning ErrNotFound
+	//     makes the call idempotent (a redelivered grace tick) AND
+	//     closes the restore→tick race: if POST /v1/account/restore
+	//     flipped status='active' in between ListAllAccounts and this
+	//     tx, our DELETE matches 0 rows and we leave the row alone.
+	//   - RowsAffected == 1 → row was in deleted_pending, our delete
+	//     locks it for the rest of the tx, child cascades are safe.
+	tag, err := tx.Exec(ctx,
+		`delete from accounts where id = $1 and status = 'deleted_pending'`, id)
+	if err != nil {
+		return fmt.Errorf("state: delete accounts for %s: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	// Walk the FK graph in dependency order. The subquery pattern mirrors
+	// what apid already uses for per-app cascades; we walk explicitly
+	// (instead of `ON DELETE CASCADE`) to keep the schema stable.
+	//
+	// `events` is included (per spec §17 G6 right-to-erasure): audit
+	// rows whose subject or data payload references the account must
+	// not outlive the customer's data. The data->>'account_id' predicate
+	// is unindexed today; for the one-box this is fine (small event
+	// count, scan cost stays in the microseconds) and a follow-up ADR
+	// can add a GIN(events.data) when the volume warrants it.
 	steps := []struct {
 		name string
 		sql  string
@@ -1534,26 +1560,14 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		{"api_keys", `delete from api_keys where account_id = $1`},
 		{"idempotency_keys", `delete from idempotency_keys where account_id = $1`},
 		{"usage_minutes", `delete from usage_minutes where account_id = $1`},
-		{"accounts", `delete from accounts where id = $1`},
+		{"events", `delete from events
+		   where subject = $1::uuid
+		      or (data ? 'account_id' and data->>'account_id' = $1)`},
 	}
 	for _, step := range steps {
 		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
 			return fmt.Errorf("state: delete %s for account %s: %w", step.name, id, err)
 		}
-	}
-	// Sentinel: the `accounts` delete in the loop above executed; we
-	// didn't observe rows-affected there because we batched it. Run one
-	// more probe so a stale retry surfaces ErrNotFound to callers.
-	var stillExists int
-	if err := tx.QueryRow(ctx, `select count(*) from accounts where id = $1`, id).Scan(&stillExists); err != nil {
-		return fmt.Errorf("state: probe accounts row for %s: %w", id, err)
-	}
-	if stillExists != 0 {
-		// The accounts delete should have removed the row, but if some
-		// other FK kept it alive we'd have already failed in the loop.
-		// Surface as ErrNotFound so the caller's idempotent retry path
-		// treats it the same as "already gone".
-		return ErrNotFound
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: commit delete account %s: %w", id, err)
@@ -1662,12 +1676,17 @@ func (s *PgStore) UsageByAccount(ctx context.Context, accountID string, since ti
 // stamps deletion_requested_at with now(). Idempotent: a repeat call
 // leaves the timestamp untouched so the grace window's anchor stays
 // at the original moment the customer asked.
+//
+// Defence-in-depth: the WHERE clause scopes the UPDATE to status='active'.
+// In production the only caller is the apid REST handler, which runs
+// inside s.auth and refuses suspended / past_due accounts; the active
+// guard makes the invariant explicit at the data layer too.
 func (s *PgStore) MarkAccountDeletionPending(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx,
 		`update accounts
 		   set status = 'deleted_pending',
 		       deletion_requested_at = coalesce(deletion_requested_at, now())
-		 where id = $1`, id)
+		 where id = $1 and status = 'active'`, id)
 	if err != nil {
 		return err
 	}

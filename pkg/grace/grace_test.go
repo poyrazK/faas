@@ -237,3 +237,55 @@ func TestRunOnce_DefaultNowDoesNotDeleteFreshRow(t *testing.T) {
 		t.Errorf("fresh pending account prematurely deleted: %v", err)
 	}
 }
+
+// TestRunOnce_RestoredAccountSurvivesTick is the regression for the
+// restore→tick race (review of #46). Sequence:
+//
+//  1. Customer schedules deletion (MarkAccountDeletionPending).
+//  2. Grace window lapses.
+//  3. Customer races the timer and hits POST /v1/account/restore,
+//     flipping status back to active.
+//  4. RunOnce ticks, sees the row in ListAllAccounts, calls
+//     DeleteAccount — which must now return ErrNotFound because the
+//     conditional `WHERE status='deleted_pending'` matches zero rows.
+//
+// The customer's account must still exist and the timer must NOT have
+// sent a "your account was deleted" email.
+func TestRunOnce_RestoredAccountSurvivesTick(t *testing.T) {
+	store := state.NewMemStore()
+	mailer := &recordingSender{}
+	notif := &recordingNotifier{}
+	acct := seedAccount(t, store)
+	if err := store.MarkAccountDeletionPending(context.Background(), acct.ID); err != nil {
+		t.Fatalf("MarkAccountDeletionPending: %v", err)
+	}
+	// Customer races the timer.
+	if err := store.RestoreAccount(context.Background(), acct.ID); err != nil {
+		t.Fatalf("RestoreAccount: %v", err)
+	}
+
+	// RunOnce with the clock past grace. The conditional DELETE inside
+	// the timer's DeleteAccount call must match zero rows.
+	future := time.Now().Add(31 * 24 * time.Hour)
+	g := grace.New(params(store, mailer, makeNotifier(notif), nowFrozen(future)))
+	if err := g.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	// Account must still exist (status=active).
+	fresh, err := store.AccountByID(context.Background(), acct.ID)
+	if err != nil {
+		t.Fatalf("AccountByID after restore+race: %v, want nil "+
+			"(the race must NOT delete a restored account)", err)
+	}
+	if fresh.Status != state.AccountActive {
+		t.Errorf("status = %q, want active", fresh.Status)
+	}
+	// No "deleted" side effects.
+	if len(notif.channels) != 0 {
+		t.Errorf("notifier fired for restored row: %v", notif.channels)
+	}
+	if len(mailer.sent) != 0 {
+		t.Errorf("post-delete mail sent for restored row: %+v", mailer.sent)
+	}
+}

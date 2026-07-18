@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -184,7 +185,7 @@ func listDeploymentsForAccountExport(ctx context.Context, st state.Store, accoun
 		out = append(out, api.DeploymentResponse{
 			ID: d.ID, AppID: d.AppID, BuildID: d.BuildID,
 			ImageDigest: d.ImageDigest, Kind: string(d.Kind),
-			Status: string(d.Status), Error: d.Error,
+			Status: string(d.Status), Error: sanitizeExportString(d.Error),
 			CreatedAt: d.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
@@ -352,4 +353,25 @@ func prefixFromHash(hash []byte) string {
 		out = append(out, hexchars[b>>4], hexchars[b&0x0f])
 	}
 	return string(out)
+}
+
+// sanitizeExportString strips control characters from a string before it
+// lands in the GDPR export bundle. Today the only such field is
+// Deployment.Error; the field is opaque to apid (set by imaged / schedd)
+// so a future maintainer could unwittingly stash a path or token. This
+// is a defence-in-depth pass — preserves printable content, drops
+// anything < 0x20 except \t and \n.
+func sanitizeExportString(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }

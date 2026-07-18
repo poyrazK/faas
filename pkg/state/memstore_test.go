@@ -3,9 +3,12 @@ package state
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -844,5 +847,121 @@ func TestAppSecretOwnershipOnUpsert(t *testing.T) {
 	got, _ := m.ListAppSecrets(ctx, "acct-A", "app-1")
 	if len(got) != 1 || string(got[0].Ciphertext) != "c1" {
 		t.Errorf("row integrity: got %+v, want c1", got)
+	}
+}
+
+// --- G6 GDPR self-service regressions ----------------------------------------
+
+// TestMem_DeleteAccount_CascadesEvents is the MemStore half of the G6
+// right-to-erasure regression (spec §17 G6, ADR-021). Audit events
+// whose subject is the account id, or whose payload account_id
+// matches, must not survive DeleteAccount.
+func TestMem_DeleteAccount_CascadesEvents(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "events@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	// DeleteAccount is conditional on status='deleted_pending'; mark
+	// pending first so the cascade actually runs (mirrors the grace
+	// timer's pre-condition).
+	if err := m.MarkAccountDeletionPending(ctx, acct.ID); err != nil {
+		t.Fatalf("MarkAccountDeletionPending: %v", err)
+	}
+	// Subject-keyed event: subject == acct.ID.
+	subject := acct.ID
+	if err := m.AppendEvent(ctx, "test", "export", &subject, []byte(`{}`)); err != nil {
+		t.Fatalf("AppendEvent subject: %v", err)
+	}
+	// Data-keyed event: data.account_id == acct.ID.
+	payload := []byte(`{"account_id":"` + acct.ID + `"}`)
+	if err := m.AppendEvent(ctx, "test", "export", nil, payload); err != nil {
+		t.Fatalf("AppendEvent data: %v", err)
+	}
+	// Surviving event (different account) — must NOT be touched.
+	other := "00000000-0000-0000-0000-000000000099"
+	if err := m.AppendEvent(ctx, "test", "export", nil,
+		[]byte(`{"account_id":"`+other+`"}`)); err != nil {
+		t.Fatalf("AppendEvent other: %v", err)
+	}
+
+	if err := m.DeleteAccount(ctx, acct.ID); err != nil {
+		t.Fatalf("DeleteAccount: %v", err)
+	}
+	// ListEvents returns m.events; nothing here filters by subject so
+	// we walk the slice directly to assert both erasure predicates ran.
+	idUUID := uuid.MustParse(acct.ID)
+	for _, e := range m.events {
+		if e.Subject != nil && *e.Subject == idUUID {
+			t.Errorf("subject-keyed event survived DeleteAccount: %+v", e)
+		}
+		if len(e.Data) > 0 {
+			var got map[string]string
+			if jerr := json.Unmarshal(e.Data, &got); jerr == nil &&
+				got["account_id"] == acct.ID {
+				t.Errorf("data-keyed event survived DeleteAccount: %+v", e)
+			}
+		}
+	}
+	// Surviving-event sanity: the other account's audit row is still
+	// in the slice.
+	var sawOther bool
+	for _, e := range m.events {
+		if len(e.Data) == 0 {
+			continue
+		}
+		var got map[string]string
+		if json.Unmarshal(e.Data, &got) == nil && got["account_id"] == other {
+			sawOther = true
+		}
+	}
+	if !sawOther {
+		t.Errorf("unrelated event was collateral damage")
+	}
+}
+
+// TestMem_DeleteAccount_OnActiveRowReturnsErrNotFound is the
+// MemStore half of the conditional-DELETE sentinel regression (review
+// of #46). Before the patch, DeleteAccount ran an unconditional
+// `delete from accounts` and then a probe — so a redelivered tick on
+// an already-restored row reported success and the grace timer's
+// `errors.Is(err, ErrNotFound)` branch was dead code. The new
+// conditional matches the PG SQL and returns ErrNotFound.
+func TestMem_DeleteAccount_OnActiveRowReturnsErrNotFound(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "active@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	err = m.DeleteAccount(ctx, acct.ID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("DeleteAccount on active row = %v, want ErrNotFound", err)
+	}
+	if _, err := m.AccountByID(ctx, acct.ID); err != nil {
+		t.Errorf("AccountByID after no-op delete = %v, want nil", err)
+	}
+}
+
+// TestMem_DeleteAccount_TwiceIsErrNotFound covers the idempotent
+// retry path: the second call must report ErrNotFound, not silently
+// succeed.
+func TestMem_DeleteAccount_TwiceIsErrNotFound(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "twice@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := m.MarkAccountDeletionPending(ctx, acct.ID); err != nil {
+		t.Fatalf("MarkAccountDeletionPending: %v", err)
+	}
+	if err := m.DeleteAccount(ctx, acct.ID); err != nil {
+		t.Fatalf("first delete: %v", err)
+	}
+	err = m.DeleteAccount(ctx, acct.ID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("second delete = %v, want ErrNotFound", err)
 	}
 }

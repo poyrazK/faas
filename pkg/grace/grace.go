@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -149,8 +150,8 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 			continue
 		}
 		payload, _ := json.Marshal(deletionPayload{AccountID: acct.ID})
-		if err := g.p.Notif(ctx, "account_deleted", string(payload)); err != nil {
-			g.p.Log.Warn("grace: notify failed", "channel", "account_deleted", "err", err)
+		if err := g.p.Notif(ctx, db.NotifyAccountDeleted, string(payload)); err != nil {
+			g.p.Log.Warn("grace: notify failed", "channel", db.NotifyAccountDeleted, "err", err)
 		}
 		subject, body := mail.AccountDeletionCompleteBody(acct.Email)
 		if err := g.p.Mailer.Send(ctx, []string{acct.Email}, subject, body); err != nil {

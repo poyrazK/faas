@@ -9,6 +9,7 @@ package state_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -272,5 +273,112 @@ func TestPg_UsageByAccount_AggregatesByMonth(t *testing.T) {
 	if rows[0].MBSeconds != 1024+2048 || rows[0].Requests != 5+7 {
 		t.Errorf("UsageByAccount aggregate = %+v, want mb=%d req=%d",
 			rows[0], 1024+2048, 5+7)
+	}
+}
+
+// TestPg_DeleteAccount_CascadesEvents is the G6 right-to-erasure
+// regression (spec §17 G6, ADR-021). Audit events whose subject points
+// at the account, or whose payload's account_id matches, must NOT
+// outlive the customer — they are part of the personal data the
+// customer is requesting to be erased.
+//
+// Seeds two event rows against the account: one keyed by subject, one
+// keyed by data->>account_id. DeleteAccount must remove both.
+func TestPg_DeleteAccount_CascadesEvents(t *testing.T) {
+	s, ctx := pgStore(t)
+	acctID, err := seedFullAccount(t, s, ctx)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	subject := acctID // events.subject is uuid; id is already uuid
+	payload := []byte(`{"account_id":"` + acctID + `","note":"GDPR export"}`)
+	if err := s.AppendEvent(ctx, "test", "export", &subject, payload); err != nil {
+		t.Fatalf("AppendEvent subject=%s: %v", subject, err)
+	}
+	if err := s.AppendEvent(ctx, "test", "export", nil, payload); err != nil {
+		t.Fatalf("AppendEvent data: %v", err)
+	}
+	// Pre-condition: events exist.
+	events, err := s.ListEvents(ctx, "", 1000)
+	if err != nil {
+		t.Fatalf("ListEvents pre: %v", err)
+	}
+	if len(events) < 2 {
+		t.Fatalf("precondition: want ≥2 events, got %d", len(events))
+	}
+
+	if err := s.DeleteAccount(ctx, acctID); err != nil {
+		t.Fatalf("DeleteAccount: %v", err)
+	}
+
+	events, err = s.ListEvents(ctx, "", 1000)
+	if err != nil {
+		t.Fatalf("ListEvents post: %v", err)
+	}
+	for _, e := range events {
+		if e.Subject != nil && e.Subject.String() == acctID {
+			t.Errorf("event with subject=%s survived DeleteAccount", acctID)
+		}
+		if len(e.Data) > 0 {
+			var got map[string]string
+			if jerr := json.Unmarshal(e.Data, &got); jerr == nil {
+				if got["account_id"] == acctID {
+					t.Errorf("event with data.account_id=%s survived DeleteAccount", acctID)
+				}
+			}
+		}
+	}
+}
+
+// TestPg_DeleteAccount_RestoredRowSurvivesTick is the regression for the
+// restore→tick race (review of #46). A customer that hits
+// POST /v1/account/restore in between pkg/grace.RunOnce's
+// ListAllAccounts and DeleteAccount must NOT see their row hard-
+// deleted. The conditional `WHERE id=$1 AND status='deleted_pending'`
+// on the parent DELETE is what closes the race.
+func TestPg_DeleteAccount_RestoredRowSurvivesTick(t *testing.T) {
+	s, ctx := pgStore(t)
+	acctID, err := seedFullAccount(t, s, ctx)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := s.MarkAccountDeletionPending(ctx, acctID); err != nil {
+		t.Fatalf("MarkAccountDeletionPending: %v", err)
+	}
+	// Customer races the timer: restore BEFORE the sweep runs.
+	if err := s.RestoreAccount(ctx, acctID); err != nil {
+		t.Fatalf("RestoreAccount: %v", err)
+	}
+	// DeleteAccount now must report ErrNotFound (the conditional
+	// didn't match the row) and the account must still exist.
+	err = s.DeleteAccount(ctx, acctID)
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("DeleteAccount after restore = %v, want ErrNotFound", err)
+	}
+	if _, err := s.AccountByID(ctx, acctID); err != nil {
+		t.Errorf("AccountByID after restore+race-delete = %v, want nil "+
+			"(the race must NOT delete a restored account)", err)
+	}
+}
+
+// TestPg_DeleteAccount_OnActiveRowReturnsErrNotFound is the regression
+// for the sentinel on the conditional DELETE (review of #46). Before
+// the patch, DeleteAccount always returned nil on a redelivered tick
+// because the probe ran AFTER the unconditional accounts DELETE. The
+// new conditional DELETE returns ErrNotFound when status !=
+// 'deleted_pending' — same answer the grace timer relies on for
+// idempotency.
+func TestPg_DeleteAccount_OnActiveRowReturnsErrNotFound(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, err := s.CreateAccount(ctx, "active@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	err = s.DeleteAccount(ctx, acct.ID)
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("DeleteAccount on active row = %v, want ErrNotFound", err)
+	}
+	if _, err := s.AccountByID(ctx, acct.ID); err != nil {
+		t.Errorf("AccountByID after no-op delete = %v, want nil", err)
 	}
 }

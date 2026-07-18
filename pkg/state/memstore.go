@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -1484,7 +1485,17 @@ func DeletionGraceDuration() time.Duration { return 30 * 24 * time.Hour }
 func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.accounts[id]; !ok {
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	// Conditional-delete mirrors the PgStore SQL `WHERE id=$1 AND
+	// status='deleted_pending'`. We refuse to delete a row that's not
+	// in deleted_pending so the restore→tick race closes identically
+	// to the production path: if RestoreAccount flipped the row back
+	// to active in between ListAllAccounts and DeleteAccount, the
+	// grace timer gets ErrNotFound and swallows it.
+	if a.Status != AccountDeletedPending {
 		return ErrNotFound
 	}
 	// Drop children first so the parent's final delete is the sentinel.
@@ -1568,6 +1579,27 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.stripeByCustomer, sc)
 		}
 	}
+	// Audit events (spec §17 G6 right-to-erasure). Drop events whose
+	// subject is the account id or whose data->>account_id matches.
+	// Mirrors the PgStore cascade; a non-JSON Data is left alone (the
+	// parser below bails on the first byte).
+	idUUID, _ := uuid.Parse(id)
+	var keptEvents []Event
+	for _, e := range m.events {
+		if e.Subject != nil && idUUID != uuid.Nil && *e.Subject == idUUID {
+			continue
+		}
+		if len(e.Data) > 0 {
+			var payload map[string]any
+			if err := json.Unmarshal(e.Data, &payload); err == nil {
+				if v, ok := payload["account_id"].(string); ok && v == id {
+					continue
+				}
+			}
+		}
+		keptEvents = append(keptEvents, e)
+	}
+	m.events = keptEvents
 	delete(m.accounts, id)
 	return nil
 }
