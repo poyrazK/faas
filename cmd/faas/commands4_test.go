@@ -30,8 +30,8 @@ import (
 // test pick the response body. Mirrors the shape of secretsSink so
 // reviewers don't have to learn a new pattern.
 type accountSink struct {
-	lastMethod  string
-	lastPath    string
+	lastMethod   string
+	lastPath     string
 	lastRawQuery string
 	// idempotencyKey recorded from the request headers (DELETE only).
 	lastIdemKey string

@@ -159,14 +159,14 @@ func gatherExport(ctx context.Context, s *server, acct state.Account, includeSec
 		appOut = append(appOut, s.appResponse(a))
 	}
 	return api.AccountExportResponse{
-		ExportedAt:  time.Now().UTC().Format(time.RFC3339),
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
 		// No incoming request context here — the export is built
 		// outside any handler scope (the inner per-resource helpers
 		// already carry the request ctx); accountResponse's third
 		// argument is nil so the "skip AppCount/Usage lookups" branch
 		// fires regardless.
 		//nolint:contextcheck
-		Account: s.accountResponse(context.Background(), acct, nil),
+		Account:     s.accountResponse(context.Background(), acct, nil),
 		Apps:        appOut,
 		Deployments: listDeploymentsForAccountExport(ctx, s.store, acct.ID),
 		Builds:      listBuildsForAccountExport(ctx, s.store, acct.ID),

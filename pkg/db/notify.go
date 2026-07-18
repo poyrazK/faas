@@ -101,22 +101,22 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         gateway's route table, meterd's per-account
 //	                         usage map) re-reads on this signal.
 const (
-	NotifyAppChanged              = "app_changed"
-	NotifyDeploymentChanged       = "deployment_changed"
-	NotifyDomainChanged           = "domain_changed"
-	NotifyCronChanged             = "cron_changed"
-	NotifyKeyChanged              = "key_changed"
-	NotifyBuildQueued             = "build_queued"
-	NotifyBuildLog                = "build_log"
-	NotifyDomainVerify            = "domain_verify"
-	NotifyInstanceChanged         = "instance_changed"
-	NotifySnapshotPrime           = "snapshot_prime"
-	NotifySnapshotWritten         = "snapshot_written"
-	NotifyBillingPastDue          = "billing_past_due"
-	NotifyQuotaWarning            = "quota_warning"
-	NotifyCronFired               = "cron_fired"
-	NotifyAccountDeletionPending  = "account_deletion_pending"
-	NotifyAccountDeleted          = "account_deleted"
+	NotifyAppChanged             = "app_changed"
+	NotifyDeploymentChanged      = "deployment_changed"
+	NotifyDomainChanged          = "domain_changed"
+	NotifyCronChanged            = "cron_changed"
+	NotifyKeyChanged             = "key_changed"
+	NotifyBuildQueued            = "build_queued"
+	NotifyBuildLog               = "build_log"
+	NotifyDomainVerify           = "domain_verify"
+	NotifyInstanceChanged        = "instance_changed"
+	NotifySnapshotPrime          = "snapshot_prime"
+	NotifySnapshotWritten        = "snapshot_written"
+	NotifyBillingPastDue         = "billing_past_due"
+	NotifyQuotaWarning           = "quota_warning"
+	NotifyCronFired              = "cron_fired"
+	NotifyAccountDeletionPending = "account_deletion_pending"
+	NotifyAccountDeleted         = "account_deleted"
 )
 
 // Subscribe holds a dedicated connection on the pool in LISTEN state for the

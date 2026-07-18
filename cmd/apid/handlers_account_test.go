@@ -254,16 +254,16 @@ func TestDPATemplate_PublicServesFile(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	srv := newServerWithDeps(store,
-		nil,             // log (filled by handler if nil)
-		"example.com",   // domain
-		nil,             // notif
-		"",              // stripe secret
-		nil,             // mailer
-		nil,             // githubd
-		nil,             // sessions → ephemeral
-		nil,             // broadcaster
-		0,               // loginTTL → default
-		dpaPath,         // DPA path
+		nil,           // log (filled by handler if nil)
+		"example.com", // domain
+		nil,           // notif
+		"",            // stripe secret
+		nil,           // mailer
+		nil,           // githubd
+		nil,           // sessions → ephemeral
+		nil,           // broadcaster
+		0,             // loginTTL → default
+		dpaPath,       // DPA path
 	)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/account/dpa", nil)

@@ -143,10 +143,10 @@ type AccountData struct {
 	// + RestoreUntil render the matching "Restore account" form when
 	// the row is in deleted_pending — the deadline is the human-
 	// readable restore_until the dashboard template surfaces.
-	ShowDelete        bool
-	DeleteConfirmToken string
-	ShowRestore        bool
-	RestoreUntil       string
+	ShowDelete          bool
+	DeleteConfirmToken  string
+	ShowRestore         bool
+	RestoreUntil        string
 	RestoreConfirmToken string
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.

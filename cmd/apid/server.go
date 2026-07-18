@@ -328,6 +328,7 @@ type accountHandler func(w http.ResponseWriter, r *http.Request, acct state.Acco
 //   - GET    /v1/account/export   (final export during grace)
 //   - DELETE /v1/account          (idempotent re-DEL)
 //   - POST   /v1/account/restore  (cancel the deletion)
+//
 // All other routes still 402 with CodeBillingPastDue during grace
 // because the work surface (deploy, build, park live instances) is
 // already torn down.

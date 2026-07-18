@@ -292,7 +292,7 @@ type AppSecretExportResponse struct {
 // idempotent endpoint guarantees the response body is identical
 // across retries inside the 24 h window).
 type AccountDeletionResponse struct {
-	Status       string `json:"status"`         // always "deleted_pending"
-	ScheduledAt  string `json:"scheduled_at"`   // deletion_requested_at, RFC 3339
-	RestoreUntil string `json:"restore_until"`  // scheduled_at + 30 d, RFC 3339
+	Status       string `json:"status"`        // always "deleted_pending"
+	ScheduledAt  string `json:"scheduled_at"`  // deletion_requested_at, RFC 3339
+	RestoreUntil string `json:"restore_until"` // scheduled_at + 30 d, RFC 3339
 }

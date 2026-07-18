@@ -269,10 +269,10 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := dashboard.AccountData{
-		Keys:               keyItems,
-		ShowDelete:         view.Status != state.AccountDeletedPending,
-		DeleteConfirmToken: "delete:yes",
-		ShowRestore:        view.Status == state.AccountDeletedPending,
+		Keys:                keyItems,
+		ShowDelete:          view.Status != state.AccountDeletedPending,
+		DeleteConfirmToken:  "delete:yes",
+		ShowRestore:         view.Status == state.AccountDeletedPending,
 		RestoreConfirmToken: "restore:yes",
 	}
 	if view.DeletionRequestedAt != nil {
