@@ -24,6 +24,23 @@ func TestNewManager_RejectsShortKey(t *testing.T) {
 	}
 }
 
+// TestNewManager_ZeroesCallerKey confirms the caller's key slice is
+// wiped on a successful NewManager. The Manager itself keeps only
+// the AEAD; the caller's slice must not retain the secret.
+func TestNewManager_ZeroesCallerKey(t *testing.T) {
+	k := key(t)
+	// Snapshot a non-zero byte — if NewManager didn't wipe, we'd see it.
+	original := append([]byte(nil), k...)
+	if _, err := session.NewManager(k, time.Hour); err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	for i, b := range k {
+		if b != 0 {
+			t.Errorf("caller key not zeroed at index %d (got 0x%02x; original 0x%02x)", i, b, original[i])
+		}
+	}
+}
+
 func TestIssue_And_Verify_RoundTrip(t *testing.T) {
 	m, err := session.NewManager(key(t), time.Hour)
 	if err != nil {

@@ -60,8 +60,13 @@ func TestChecksAPI_WriteCheck_HTTP(t *testing.T) {
 	tokens := NewTokenCache(fakeFetcher(func(_ context.Context, _ int64) (string, time.Time, error) {
 		return "ghs_test_token", time.Now().Add(time.Hour), nil
 	}), time.Minute)
-	c := NewChecksAPI(tokens, &singleHostClient{base: fake.Client(), api: fake.URL})
-	err := c.WriteCheck(context.Background(), "octo/api", "deadbeef", githubdgrpc.CheckPhaseQueued, "https://example.test/logs", "queued")
+	c, err := NewChecksAPI(tokens, &singleHostClient{base: fake.Client(), api: fake.URL}, &fakeBindings{id: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.WriteCheck(context.Background(), "octo/api", "deadbeef", githubdgrpc.CheckPhaseQueued, "https://example.test/logs", "queued"); err != nil {
+		t.Fatal(err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,3 +99,75 @@ func TestChecksAPI_RejectsMissingArgs(t *testing.T) {
 
 // _ keeps imports stable for future slices that add HTTPClient mocks.
 var _ HTTPClient = (*http.Client)(nil)
+
+// fakeBindings is the test stub for BindingsLookup. Returns a fixed
+// install id by default; tests that need to simulate "no app
+// bound" can construct it with id=0 (tokensForRepo will fail at
+// the token-cache step).
+type fakeBindings struct {
+	id    int64
+	err   error
+	hits  atomic.Int32
+	gotRepo string
+}
+
+func (f *fakeBindings) InstallationIDForRepo(_ context.Context, repoFullName string) (int64, error) {
+	f.hits.Add(1)
+	f.gotRepo = repoFullName
+	return f.id, f.err
+}
+
+// TestWriteCheck_UsesBindingLookup is the regression test for
+// review finding #1+#2: checks must go out under the per-repo
+// installation's token, not the hardcoded installation_id=1.
+// The fake fetcher records which install id it was called with; we
+// assert it matches the binding lookup's id, not a constant.
+func TestWriteCheck_UsesBindingLookup(t *testing.T) {
+	var fetchedInstall atomic.Int64
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer fake.Close()
+
+	tokens := NewTokenCache(fakeFetcher(func(_ context.Context, id int64) (string, time.Time, error) {
+		fetchedInstall.Store(id)
+		return "ghs_test", time.Now().Add(time.Hour), nil
+	}), time.Minute)
+	b := &fakeBindings{id: 9876}
+	c, err := NewChecksAPI(tokens, &singleHostClient{base: fake.Client(), api: fake.URL}, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.WriteCheck(context.Background(), "octo/api", "deadbeef", githubdgrpc.CheckPhaseQueued, "", "queued"); err != nil {
+		t.Fatal(err)
+	}
+	if fetchedInstall.Load() != 9876 {
+		t.Errorf("fetched install = %d, want 9876 (the binding lookup id, not 1)", fetchedInstall.Load())
+	}
+	if b.gotRepo != "octo/api" {
+		t.Errorf("lookup repo = %q, want octo/api", b.gotRepo)
+	}
+}
+
+// TestWriteCheck_NoBindingFailsClosed asserts the §11 fail-closed
+// behavior: when no app is bound to the repo, WriteCheck returns
+// an error instead of falling back to installation_id=1 (which
+// would send another customer's check-run under the wrong install).
+func TestWriteCheck_NoBindingFailsClosed(t *testing.T) {
+	tokens := NewTokenCache(fakeFetcher(func(_ context.Context, _ int64) (string, time.Time, error) {
+		t.Fatal("token cache must not be hit when bindings lookup misses")
+		return "", time.Time{}, nil
+	}), time.Minute)
+	c, err := NewChecksAPI(tokens, http.DefaultClient, &fakeBindings{err: ErrNoBinding})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.WriteCheck(context.Background(), "octo/api", "deadbeef", githubdgrpc.CheckPhaseQueued, "", "queued")
+	if err == nil {
+		t.Fatal("expected error when no app is bound, got nil")
+	}
+	if !strings.Contains(err.Error(), "no app bound") {
+		t.Errorf("err = %v, want 'no app bound' message", err)
+	}
+}

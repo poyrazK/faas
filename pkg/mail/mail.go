@@ -9,8 +9,16 @@ package mail
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 )
+
+// ErrTransient signals a retryable mail-send failure (network error
+// or upstream 5xx). Callers can use errors.Is(err, ErrTransient) to
+// decide whether to retry on a fresh transport. Today the quota
+// warning + dunning send paths (cmd/apid handlers_auth.go) retry
+// exactly on this condition.
+var ErrTransient = errors.New("mail: transient send failure")
 
 // Message is the cross-component outbound email payload. Fields map
 // roughly to RFC 5322 — recipients, subject, plain + html body. Attachments

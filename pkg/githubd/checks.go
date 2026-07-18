@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,19 +40,40 @@ type ChecksWriter interface {
 	WriteCheck(ctx context.Context, repoFullName, commitSHA string, phase githubdgrpc.CheckPhase, logsURL, summary string) error
 }
 
+// BindingsLookup is the seam that closes review finding #1+#2: it
+// maps a repo full-name to the installation_id whose per-install
+// access token the Checks writer should use. Production wires it
+// to pkg/state.Store.InstallationIDForRepo; tests can pass a stub
+// that returns a fixed id or ErrNotFound.
+//
+// The split-out interface (rather than depending on pkg/state
+// directly) keeps the githubd package independent of the apid
+// package's persistence layer — a slice 8 architectural decision
+// that survives even after the bindings live in Postgres.
+type BindingsLookup interface {
+	InstallationIDForRepo(ctx context.Context, repoFullName string) (int64, error)
+}
+
 // ChecksAPI writes check-runs to api.github.com.
 type ChecksAPI struct {
-	Tokens *TokenCache // provides the installation token per repo
-	HTTP   HTTPClient
+	Tokens   *TokenCache    // provides the installation token per installation_id
+	HTTP     HTTPClient
+	Bindings BindingsLookup // repo → installation_id (review finding #1+#2 closure)
 }
 
 // NewChecksAPI builds a ChecksAPI. tokens may be nil for tests
-// that don't exercise the HTTP path.
-func NewChecksAPI(tokens *TokenCache, hc HTTPClient) *ChecksAPI {
+// that don't exercise the HTTP path. bindings may be nil only when
+// tokens is also nil — the gRPC checks path always needs both.
+// We refuse the (nil, nil) combo explicitly so a missing wiring
+// fails fast at startup rather than at first check-run write.
+func NewChecksAPI(tokens *TokenCache, hc HTTPClient, bindings BindingsLookup) (*ChecksAPI, error) {
 	if hc == nil {
 		hc = http.DefaultClient
 	}
-	return &ChecksAPI{Tokens: tokens, HTTP: hc}
+	if tokens == nil && bindings != nil {
+		return nil, fmt.Errorf("githubd: ChecksAPI: tokens=nil with bindings!=nil is not a valid configuration")
+	}
+	return &ChecksAPI{Tokens: tokens, HTTP: hc, Bindings: bindings}, nil
 }
 
 // checkRunRequest is the body shape POST /repos/{o}/{r}/check-runs
@@ -132,18 +154,34 @@ func (c *ChecksAPI) WriteCheck(ctx context.Context, repoFullName, commitSHA stri
 }
 
 // tokensForRepo resolves the installation token for the repo's
-// installation. Today's slice-8 design assumes a single install per
-// account; the per-repo install_id lookup will land in the
-// bindings-store slice 8 work.
-func (c *ChecksAPI) tokensForRepo(ctx context.Context, _ string) (string, error) {
+// installation. This used to hardcode installation_id=1 (every
+// account shared the same install); review finding #1+#2 forces
+// the reverse-lookup via BindingsLookup so each repo gets its own
+// install token (or we fail closed with an explicit error rather
+// than sending the request as the wrong account).
+//
+// Returns an error when the BindingsLookup is unset, when no app
+// is bound to the repo, or when the per-install token exchange
+// fails. We deliberately do NOT fall back to installation_id=1:
+// §11 least-privilege forbids one customer's check-run from
+// shipping under another customer's installation.
+func (c *ChecksAPI) tokensForRepo(ctx context.Context, repoFullName string) (string, error) {
 	if c.Tokens == nil {
 		return "", fmt.Errorf("githubd: token cache not configured (slice 8)")
 	}
-	// Single-install-per-account v1.0: use installation_id = 1 as
-	// the placeholder until the bindings store carries the real id.
-	tok, err := c.Tokens.Token(ctx, 1)
+	if c.Bindings == nil {
+		return "", fmt.Errorf("githubd: bindings lookup not configured (review finding #1+#2)")
+	}
+	installID, err := c.Bindings.InstallationIDForRepo(ctx, repoFullName)
 	if err != nil {
-		return "", fmt.Errorf("githubd: get install token: %w", err)
+		if errors.Is(err, ErrNoBinding) {
+			return "", fmt.Errorf("githubd: no app bound to repo %q (push dropped): %w", repoFullName, err)
+		}
+		return "", fmt.Errorf("githubd: lookup install id for repo %q: %w", repoFullName, err)
+	}
+	tok, err := c.Tokens.Token(ctx, installID)
+	if err != nil {
+		return "", fmt.Errorf("githubd: get install token (install=%d): %w", installID, err)
 	}
 	return tok, nil
 }

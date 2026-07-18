@@ -30,6 +30,10 @@ type GithubdClient interface {
 	GetAppBinding(ctx context.Context, appID, accountID string) (AppBinding, error)
 	CreateDeploymentFromPush(ctx context.Context, repoFullName, ref, commitSHA, pusher string) (string, string, error)
 	WriteCheck(ctx context.Context, repoFullName, commitSHA string, phase CheckPhase, logsURL, summary string) error
+	// VerifyInstallation is the "trust on first contact" check
+	// called by /oauth/callback before persisting any binding
+	// (review finding #1+#2 closure for the M7.5 OAuth path).
+	VerifyInstallation(ctx context.Context, installationID int64) (verified bool, defaultBranch string, err error)
 	Close() error
 }
 
@@ -112,6 +116,16 @@ func (stubGithubdClient) WriteCheck(context.Context, string, string, CheckPhase,
 	return errGithubdNotReady
 }
 
+// VerifyInstallation returns the not-ready problem. Slice 8
+// replaces this; the OAuth callback handler (cmd/apid/
+// handlers_oauth.go) treats the not-ready sentinel as a "GitHub
+// integration not configured" page rather than a hard 500, since
+// "Connect GitHub" is a slice 8 capability and the v1.0 launch can
+// ship without it.
+func (stubGithubdClient) VerifyInstallation(context.Context, int64) (bool, string, error) {
+	return false, "", errGithubdNotReady
+}
+
 // Close is a no-op for the stub.
 func (stubGithubdClient) Close() error { return nil }
 
@@ -170,6 +184,11 @@ func (l *liveClient) CreateDeploymentFromPush(ctx context.Context, repoFullName,
 // WriteCheck passes through to githubdgrpc.Client.WriteCheck.
 func (l *liveClient) WriteCheck(ctx context.Context, repoFullName, commitSHA string, phase CheckPhase, logsURL, summary string) error {
 	return l.c.WriteCheck(ctx, repoFullName, commitSHA, phase, logsURL, summary)
+}
+
+// VerifyInstallation passes through to githubdgrpc.Client.VerifyInstallation.
+func (l *liveClient) VerifyInstallation(ctx context.Context, installationID int64) (bool, string, error) {
+	return l.c.VerifyInstallation(ctx, installationID)
 }
 
 // newGithubdClient is the slice-1 constructor: returns the stub. Slice 7

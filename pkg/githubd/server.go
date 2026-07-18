@@ -329,3 +329,21 @@ func (a *grpcSvcAdapter) WriteCheck(repoFullName, commitSHA string, phase github
 		"repo", repoFullName, "sha", commitSHA, "phase", phase, "summary", summary)
 	return nil
 }
+
+// VerifyInstallation forwards the install verification request to
+// the githubd.Service. apid's /oauth/callback handler (cmd/apid/
+// handlers_oauth.go) is the only caller; a real install_id
+// confirms the customer actually finished the GitHub App install
+// flow before we persist a (app → install_id) binding (review
+// finding #1+#2 closure).
+//
+// Note: in production cmd/githubd wires RealService directly as the
+// gRPC Service (bypassing this adapter), so this method is the
+// slice-7 webhook-path fallback. It returns an error rather than
+// a silent false because the webhook svc has no OAuth credentials
+// and we don't want a misconfigured wiring to silently 200 an
+// unverified install_id.
+func (a *grpcSvcAdapter) VerifyInstallation(installationID int64) (bool, string, error) {
+	a.svc.Log.Warn("githubd grpc VerifyInstallation via webhook svc (no OAuth)", "installation_id", installationID)
+	return false, "", fmt.Errorf("githubd: VerifyInstallation requires the slice-8 OAuth path (install=%d)", installationID)
+}

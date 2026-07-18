@@ -107,7 +107,7 @@ func (s *ResendSender) Send(ctx context.Context, msg Message) error {
 	if err != nil {
 		// Network errors are transient by definition (caller can
 		// retry on a fresh transport).
-		return fmt.Errorf("mail: resend: do: %w", err)
+		return fmt.Errorf("mail: resend: do: %w", errors.Join(err, ErrTransient))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -126,10 +126,9 @@ func (s *ResendSender) Send(ctx context.Context, msg Message) error {
 	if detail == "" {
 		detail = string(rawBody)
 	}
-	// 5xx + transient network → ErrTransient so caller may retry.
+	// 5xx → ErrTransient so caller may retry.
 	if resp.StatusCode >= 500 {
-		return fmt.Errorf("mail: resend: %d: %w", resp.StatusCode,
-			fmt.Errorf("%s", detail))
+		return fmt.Errorf("mail: resend: %d %s: %w", resp.StatusCode, detail, ErrTransient)
 	}
 	return fmt.Errorf("mail: resend: %d: %s", resp.StatusCode, detail)
 }

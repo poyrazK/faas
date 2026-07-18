@@ -107,7 +107,7 @@ func (s *PostmarkSender) Send(ctx context.Context, msg Message) error {
 
 	resp, err := s.cfg.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("mail: postmark: do: %w", err)
+		return fmt.Errorf("mail: postmark: do: %w", errors.Join(err, ErrTransient))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -127,8 +127,7 @@ func (s *PostmarkSender) Send(ctx context.Context, msg Message) error {
 		detail = string(rawBody)
 	}
 	if resp.StatusCode >= 500 {
-		return fmt.Errorf("mail: postmark: %d: %w", resp.StatusCode,
-			fmt.Errorf("%s", detail))
+		return fmt.Errorf("mail: postmark: %d %s: %w", resp.StatusCode, detail, ErrTransient)
 	}
 	return fmt.Errorf("mail: postmark: %d: %s", resp.StatusCode, detail)
 }

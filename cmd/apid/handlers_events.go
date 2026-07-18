@@ -138,16 +138,22 @@ func (s *server) buildOwnedAppCache(ctx context.Context, accountID string) map[s
 // eventsFrameForAccount filters notifications down to those that
 // concern this account. The pg_notify payload is JSON with optional
 // `app_id` (string uuid) and `account_id` (string uuid) fields.
+//
+// Failure mode: refuse-to-decide. Unparseable JSON or payloads
+// without an `app_id` or `account_id` are dropped — we cannot
+// prove the frame belongs to this account, so the privacy-safe
+// default is to not deliver it. (Was previously fail-open: any
+// unparseable or anonymous frame was sent to every connection,
+// which leaked cross-account notifications on a one-box.)
 func eventsFrameForAccount(n db.Notification, accountID string, apps map[string]struct{}) bool {
 	var f struct {
 		AppID     string `json:"app_id"`
 		AccountID string `json:"account_id"`
 	}
 	if err := json.Unmarshal([]byte(n.Payload), &f); err != nil {
-		// Unparseable: never attribute to a stranger account; pass through
-		// to the dashboard on the safe side (it's the customer's box).
-		// Production logs this for ops; tests skip the log.
-		return true
+		// Unparseable — drop. Logging is the caller's job (the SSE
+		// handler logs every frame; this filter only decides drop/deliver).
+		return false
 	}
 	if f.AccountID != "" {
 		return f.AccountID == accountID
@@ -156,7 +162,8 @@ func eventsFrameForAccount(n db.Notification, accountID string, apps map[string]
 		_, ok := apps[f.AppID]
 		return ok
 	}
-	return true
+	// Orphan: no app_id, no account_id. Drop — same reasoning as above.
+	return false
 }
 
 // writeSSEFrame writes one pg_notify payload as an SSE frame. Event

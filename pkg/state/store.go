@@ -93,6 +93,29 @@ type Store interface {
 	CountDeployedApps(ctx context.Context, accountID string) (int, error)
 	UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error)
 	DeleteApp(ctx context.Context, id string) error
+	// RecordGitHubBinding persists the (app → installation_id, repo,
+	// branch) tuple after the /oauth/callback handler verified the
+	// installation against api.github.com. Idempotent: re-binding the
+	// same app overwrites the previous values. Two apps cannot claim
+	// the same (install_id, repo) pair — the migration enforces a
+	// unique partial index for the §11 least-privilege audit.
+	RecordGitHubBinding(ctx context.Context, appID string, installID int64, repoFullName, productionBranch string) error
+	// GitHubBindingForApp returns the persisted binding for an app.
+	// Returns ErrNotFound if the app has never been GitHub-connected
+	// (the zero-value binding with installID==0 is also a miss; callers
+	// that need to distinguish "bound to install 0" — impossible per
+	// the migration check — from "not bound" should check err).
+	GitHubBindingForApp(ctx context.Context, appID string) (GitHubBinding, error)
+	// InstallationIDForRepo is the reverse-lookup that closes the
+	// review-finding #1+#2 §11 least-privilege regression: githubd's
+	// checks.go needs to mint the right per-install access token for
+	// the repo's push, not the hardcoded installation_id=1 placeholder
+	// that shipped with M7.5. Returns ErrNotFound if no app is bound
+	// to (repo). When two apps are bound to the same (install_id,
+	// repo) — impossible per the migration unique index — the first
+	// hit wins; apid is the canonical owner of bindings so this is
+	// not a contention point in practice.
+	InstallationIDForRepo(ctx context.Context, repoFullName string) (int64, error)
 
 	// Deployments.
 	CreateDeployment(ctx context.Context, d Deployment) (Deployment, error)

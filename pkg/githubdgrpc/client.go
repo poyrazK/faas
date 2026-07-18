@@ -179,6 +179,24 @@ func (c *Client) WriteCheck(ctx context.Context, repoFullName, commitSHA string,
 	return nil
 }
 
+// VerifyInstallation is the "trust on first contact" check that
+// closes review finding #1+#2 for the M7.5 OAuth path. apid's
+// /oauth/callback handler calls this before persisting any binding;
+// githubd mints the App JWT and confirms the installation actually
+// exists for the configured GitHub App. Returns verified=true on a
+// real install, verified=false on a forged/unknown id (404 from
+// api.github.com); transport errors come back as a non-nil err so
+// the dashboard renders the right "couldn't reach GitHub" UX.
+func (c *Client) VerifyInstallation(ctx context.Context, installationID int64) (verified bool, defaultBranch string, err error) {
+	resp, err := c.cli.VerifyInstallation(ctx, &githubdpb.VerifyInstallationRequest{
+		InstallationId: installationID,
+	})
+	if err != nil {
+		return false, "", liftErr(err)
+	}
+	return resp.GetVerified(), resp.GetDefaultBranch(), nil
+}
+
 // liftErr converts a githubd gRPC error back into the platform's
 // *api.Problem so its stable Code + Limit/Observed survive to apid.
 // Errors that aren't status-shaped (e.g. a dial failure) pass through

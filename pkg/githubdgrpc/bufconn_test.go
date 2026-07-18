@@ -121,6 +121,79 @@ func TestWriteCheck_Unimplemented(t *testing.T) {
 	}
 }
 
+// TestVerifyInstallation_Unimplemented asserts the new RPC exists on
+// the wire (review finding #1+#2 closure). The default
+// githubdgrpc.UnimplementedService returns codes.Unimplemented so
+// the bufconn round-trip exercises the proto without committing
+// the verify-via-GitHub-API shape until slice 8 lands.
+func TestVerifyInstallation_Unimplemented(t *testing.T) {
+	cli := newServer(t)
+	_, err := cli.VerifyInstallation(context.Background(), &githubdpb.VerifyInstallationRequest{
+		InstallationId: 4242,
+	})
+	if err == nil {
+		t.Fatal("expected unimplemented error")
+	}
+	if code := status.Code(err); code != codes.Unimplemented {
+		t.Errorf("code = %v, want Unimplemented", code)
+	}
+}
+
+// TestVerifyInstallation_PassesThrough verifies the new Server
+// method forwards (installation_id) to the Service and returns the
+// Service's (verified, default_branch, err) tuple through the proto
+// envelope. This is the regression test for review finding #2: the
+// apid-side handler MUST receive a real verified=true/false from
+// githubd's api.github.com round-trip, not a hardcoded false.
+func TestVerifyInstallation_PassesThrough(t *testing.T) {
+	svc := &verifyingSvc{verified: true, defaultBranch: "main"}
+	srv := grpc.NewServer()
+	githubdgrpc.New(svc, wire.NewOpsMetrics("githubd_test_verify"), nil).Register(srv)
+	lis := bufconn.Listen(1024 * 1024)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
+
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	cli := githubdpb.NewGithubdClient(conn)
+	resp, err := cli.VerifyInstallation(context.Background(), &githubdpb.VerifyInstallationRequest{InstallationId: 99})
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if !resp.GetVerified() {
+		t.Errorf("verified = false, want true")
+	}
+	if resp.GetDefaultBranch() != "main" {
+		t.Errorf("default_branch = %q, want main", resp.GetDefaultBranch())
+	}
+	if svc.gotInstallID != 99 {
+		t.Errorf("installation_id passed to svc = %d, want 99", svc.gotInstallID)
+	}
+}
+
+// verifyingSvc is the slice-8 fake for VerifyInstallation — it
+// records the call and returns a canned response. Other methods
+// fall through to UnimplementedService.
+type verifyingSvc struct {
+	githubdgrpc.UnimplementedService
+
+	verified      bool
+	defaultBranch string
+	gotInstallID  int64
+}
+
+func (v *verifyingSvc) VerifyInstallation(installationID int64) (bool, string, error) {
+	v.gotInstallID = installationID
+	return v.verified, v.defaultBranch, nil
+}
+
 // TestClientRoundTrip confirms pkg/githubdgrpc.Client (apid's handle)
 // can talk to the githubd Server via bufconn. Slice 1 proves the
 // client+server contract is consistent (same proto types, same status

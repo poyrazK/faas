@@ -60,8 +60,11 @@ func TestEvents_FiltersByAccount(t *testing.T) {
 	notif.publish(db.NotifyAppChanged, `{"app_id":"my-app","account_id":"`+e.acct.ID+`"}`)
 	// Foreign account — must be dropped.
 	notif.publish(db.NotifyAppChanged, `{"app_id":"strangers","account_id":"`+"ffffffff-ffff-ffff-ffff-ffffffffffff"+`"}`)
-	// Unparseable payload — passes through (safe default).
+	// Unparseable payload — must be dropped (fail-closed).
 	notif.publish(db.NotifyAppChanged, "not-json")
+	// Orphan frame (valid JSON but neither app_id nor account_id) —
+	// must also be dropped. Was fail-open in M7.5 slice 6.
+	notif.publish(db.NotifyAppChanged, `{"foo":"bar"}`)
 	time.Sleep(50 * time.Millisecond)
 
 	// Close the recorder via request context cancel: httptest

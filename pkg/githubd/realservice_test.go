@@ -4,6 +4,9 @@ package githubd
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
@@ -131,3 +134,78 @@ func TestRealService_CreateDeploymentFromPushIsHTTPPath(t *testing.T) {
 // _ pins context import so a future refactor that drops the only
 // user doesn't drop the import.
 var _ = context.Background
+
+// TestRealService_VerifyInstallation_RequiresAuth asserts the
+// §11 fail-closed behavior: a RealService built without OAuth
+// credentials must refuse VerifyInstallation rather than silently
+// returning verified=false (which the dashboard would treat as a
+// "forged" callback and could confuse with a transient GitHub
+// outage).
+func TestRealService_VerifyInstallation_RequiresAuth(t *testing.T) {
+	svc := NewRealService(nil, nil, nil)
+	verified, _, err := svc.VerifyInstallation(1)
+	if err == nil {
+		t.Fatal("expected error when Auth is nil, got nil")
+	}
+	if verified {
+		t.Errorf("verified = true, want false when Auth is nil")
+	}
+}
+
+// TestRealService_VerifyInstallation_ForgedIsNotAnError asserts the
+// reviewed contract: a forged installation_id returns
+// (false, "", nil) — verified=false with err=nil — so the dashboard
+// renders the "forged callback" banner rather than a 5xx page.
+// A non-nil err is reserved for transport failures (api.github.com
+// unreachable, App JWT rejected).
+//
+// We exercise this with an httptest.Server that returns 404 for
+// every /app/installations/{id} request, mirroring GitHub's
+// response to an unknown install_id.
+func TestRealService_VerifyInstallation_ForgedIsNotAnError(t *testing.T) {
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/app/installations/") {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer fake.Close()
+
+	auth := &AppAuth{AppID: "1", PrivateKey: newTestKey(t), HTTPClient: &singleHostClient{base: fake.Client(), api: fake.URL}}
+	svc := NewRealService(auth, nil, nil)
+	verified, branch, err := svc.VerifyInstallation(9999999)
+	if err != nil {
+		t.Fatalf("err = %v, want nil for forged install_id", err)
+	}
+	if verified {
+		t.Errorf("verified = true, want false for forged install_id")
+	}
+	if branch != "" {
+		t.Errorf("branch = %q, want empty for forged install_id", branch)
+	}
+}
+
+// TestRealService_VerifyInstallation_TransportErrorIsErr asserts the
+// inverse: a 5xx from api.github.com (anything not 200/404) comes
+// back as a non-nil err so the dashboard can render a "couldn't
+// reach GitHub" banner instead of a "forged callback" banner.
+func TestRealService_VerifyInstallation_TransportErrorIsErr(t *testing.T) {
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"boom"}`))
+	}))
+	defer fake.Close()
+
+	auth := &AppAuth{AppID: "1", PrivateKey: newTestKey(t), HTTPClient: &singleHostClient{base: fake.Client(), api: fake.URL}}
+	svc := NewRealService(auth, nil, nil)
+	verified, _, err := svc.VerifyInstallation(1)
+	if err == nil {
+		t.Fatal("err = nil, want non-nil for 5xx response")
+	}
+	if verified {
+		t.Errorf("verified = true, want false when err is non-nil")
+	}
+}

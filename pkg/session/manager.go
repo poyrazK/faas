@@ -26,9 +26,13 @@ import (
 )
 
 // Manager owns the sealed-cookie lifecycle. Safe for concurrent use.
+//
+// Note: the 32-byte host secret is consumed in NewManager and is
+// zeroed in the caller's slice — it never lives on the Manager's
+// heap. The AEAD wraps a copy inside the standard library's
+// cipher package; that internal copy is the lifetime owner.
 type Manager struct {
 	gcm      cipher.AEAD
-	key      []byte // 32 bytes; kept around only for re-keying (M8+)
 	maxAge   time.Duration
 	now      func() time.Time
 	issuedAt time.Time
@@ -48,6 +52,12 @@ type Envelope struct {
 // fails). Callers should generate the key once at install time:
 //
 //	openssl rand -hex 32 > /etc/faas/secrets/session.key
+//
+// On success the caller's key slice is zeroed — the Manager keeps
+// only the AEAD, which holds an internal copy inside the standard
+// library cipher package. This is the minimum-viable defense
+// against the secret landing in a heap dump or core file via the
+// caller's own slice.
 func NewManager(key []byte, maxAge time.Duration) (*Manager, error) {
 	if len(key) != 32 {
 		return nil, fmt.Errorf("session: key must be 32 bytes (got %d)", len(key))
@@ -57,15 +67,26 @@ func NewManager(key []byte, maxAge time.Duration) (*Manager, error) {
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
+		// Wipe before returning — we never reached the AEAD wrap
+		// step so the cipher key is still in the caller's slice.
+		for i := range key {
+			key[i] = 0
+		}
 		return nil, fmt.Errorf("session: aes: %w", err)
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
+		for i := range key {
+			key[i] = 0
+		}
 		return nil, fmt.Errorf("session: gcm: %w", err)
+	}
+	// AEAD ready — the caller's slice is no longer needed.
+	for i := range key {
+		key[i] = 0
 	}
 	return &Manager{
 		gcm:      gcm,
-		key:      key,
 		maxAge:   maxAge,
 		now:      time.Now,
 		issuedAt: time.Now(),

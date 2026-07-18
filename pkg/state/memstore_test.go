@@ -641,3 +641,87 @@ func itoaSmall(n int) string {
 	}
 	return string(buf[pos:])
 }
+
+// TestMemStore_GitHubBinding_RoundTrip exercises the binding
+// persistence + reverse-lookup added for review finding #1+#2
+// closure (migration 00007). Asserts:
+//
+//   - RecordGitHubBinding persists across GetGitHubBindingForApp
+//   - InstallationIDForRepo (the new reverse lookup) returns the
+//     right id for a bound repo
+//   - ErrNotFound for an unbound repo (this is the §11 fail-closed
+//     path: checks.go must NOT fall back to install_id=1 when no
+//     app is bound)
+func TestMemStore_GitHubBinding_RoundTrip(t *testing.T) {
+	store := NewMemStore()
+	acct, err := store.CreateAccount(context.Background(), "alice@example.com", "free")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(context.Background(), App{AccountID: acct.ID, Slug: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.RecordGitHubBinding(context.Background(), app.ID, 4242, "octo/api", "main"); err != nil {
+		t.Fatalf("RecordGitHubBinding: %v", err)
+	}
+
+	b, err := store.GitHubBindingForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("GitHubBindingForApp: %v", err)
+	}
+	if b.InstallID != 4242 {
+		t.Errorf("InstallID = %d, want 4242", b.InstallID)
+	}
+	if b.RepoFullName != "octo/api" {
+		t.Errorf("RepoFullName = %q, want octo/api", b.RepoFullName)
+	}
+
+	id, err := store.InstallationIDForRepo(context.Background(), "octo/api")
+	if err != nil {
+		t.Fatalf("InstallationIDForRepo: %v", err)
+	}
+	if id != 4242 {
+		t.Errorf("install id for octo/api = %d, want 4242", id)
+	}
+
+	// Unbound repo → ErrNotFound (NOT a hardcoded id=1).
+	_, err = store.InstallationIDForRepo(context.Background(), "octo/unbound")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound for unbound repo", err)
+	}
+
+	// Empty repo → ErrNotFound (defensive).
+	_, err = store.InstallationIDForRepo(context.Background(), "")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound for empty repo", err)
+	}
+}
+
+// TestMemStore_GitHubBinding_RejectsConflict mirrors the migration's
+// apps_github_install_repo_uniq partial index: two apps cannot claim
+// the same (install_id, repo) pair. The §11 least-privilege audit
+// invariant lives on this constraint.
+func TestMemStore_GitHubBinding_RejectsConflict(t *testing.T) {
+	store := NewMemStore()
+	acct, err := store.CreateAccount(context.Background(), "alice@example.com", "free")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app1, err := store.CreateApp(context.Background(), App{AccountID: acct.ID, Slug: "api1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app2, err := store.CreateApp(context.Background(), App{AccountID: acct.ID, Slug: "api2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordGitHubBinding(context.Background(), app1.ID, 1, "octo/api", "main"); err != nil {
+		t.Fatalf("first binding: %v", err)
+	}
+	err = store.RecordGitHubBinding(context.Background(), app2.ID, 1, "octo/api", "main")
+	if err == nil {
+		t.Fatal("expected conflict error when second app tries to bind same (install_id, repo)")
+	}
+}

@@ -295,6 +295,83 @@ func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
 	return err
 }
 
+// RecordGitHubBinding writes the (install_id, repo_full_name,
+// production_branch) tuple onto the apps row. Idempotent: re-binding
+// the same app overwrites the prior values. The migration's unique
+// partial index on (install_id, repo_full_name) rejects the write
+// if a different app already holds that pair — pgx returns a
+// unique-violation we surface as ErrNotFound + a wrapped error so
+// the /oauth/callback handler can render a clean 409.
+//
+// Per migration 00007: apps.github_install_id is BIGINT NULL,
+// apps.github_repo_full_name is TEXT NULL,
+// apps.github_production_branch is TEXT NULL.
+func (s *PgStore) RecordGitHubBinding(ctx context.Context, appID string, installID int64, repoFullName, productionBranch string) error {
+	_, err := s.pool.Exec(ctx,
+		`update apps
+		 set github_install_id = $2,
+		     github_repo_full_name = $3,
+		     github_production_branch = $4
+		 where id = $1`,
+		appID, installID, repoFullName, nullString(productionBranch))
+	return err
+}
+
+// GitHubBindingForApp reads the binding columns off the apps row.
+// Returns ErrNotFound when the app has never been GitHub-connected
+// (install_id is NULL).
+func (s *PgStore) GitHubBindingForApp(ctx context.Context, appID string) (GitHubBinding, error) {
+	var b GitHubBinding
+	var installID *int64
+	var repoFullName *string
+	var branch *string
+	err := s.pool.QueryRow(ctx,
+		`select id, github_install_id, github_repo_full_name, github_production_branch
+		 from apps where id = $1`, appID,
+	).Scan(&b.AppID, &installID, &repoFullName, &branch)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return GitHubBinding{}, ErrNotFound
+		}
+		return GitHubBinding{}, err
+	}
+	if installID == nil {
+		return GitHubBinding{}, ErrNotFound
+	}
+	b.InstallID = *installID
+	if repoFullName != nil {
+		b.RepoFullName = *repoFullName
+	}
+	if branch != nil {
+		b.ProductionBranch = *branch
+	}
+	return b, nil
+}
+
+// InstallationIDForRepo is the reverse lookup githubd's checks.go
+// uses to mint the right per-install access token for a push
+// (review finding #1+#2 closure). Uses the
+// apps_github_install_id_idx partial index when available (most
+// installations bind one repo to one app), but the query also
+// filters on repo_full_name so the index isn't strictly required.
+func (s *PgStore) InstallationIDForRepo(ctx context.Context, repoFullName string) (int64, error) {
+	var installID int64
+	err := s.pool.QueryRow(ctx,
+		`select github_install_id
+		 from apps
+		 where github_repo_full_name = $1
+		   and github_install_id is not null
+		 limit 1`, repoFullName,
+	).Scan(&installID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	return installID, nil
+}
+
 // --- deployments -------------------------------------------------------------
 
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {

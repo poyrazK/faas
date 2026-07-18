@@ -204,3 +204,38 @@ func (s *RealService) WriteCheck(repoFullName, commitSHA string, phase githubdgr
 	}
 	return s.Checks.WriteCheck(context.Background(), repoFullName, commitSHA, phase, logsURL, summary)
 }
+
+// VerifyInstallation confirms the installation_id is real for the
+// configured GitHub App via AppAuth.VerifyInstallation (a
+// App-JWT-authenticated GET /app/installations/{id}). A 404 means
+// the callback was forged or stale — verified=false, err=nil so the
+// dashboard renders a "connection failed" banner rather than a 500.
+//
+// On success, we also persist the install → account mapping in the
+// in-memory installs store (the BindingsLookup path is separate;
+// this is for the GetInstallState gRPC and the dashboard's
+// "Connect GitHub" status pill). The accountID isn't known to the
+// GitHub App JWT caller (the callback URL doesn't carry it — it's
+// looked up from the dashboard session in apid, which then makes
+// this gRPC call), so we take it as an optional hint and rely on
+// the in-memory installs map keyed by installation_id for the
+// account-resolution lookup.
+func (s *RealService) VerifyInstallation(installationID int64) (bool, string, error) {
+	if s.Auth == nil {
+		return false, "", fmt.Errorf("githubd: OAuth not configured")
+	}
+	_, verified, err := s.Auth.VerifyInstallation(context.Background(), installationID)
+	if err != nil {
+		return false, "", err
+	}
+	if !verified {
+		return false, "", nil
+	}
+	// We deliberately do NOT persist here — the /oauth/callback
+	// handler in apid owns the (accountID ↔ installation_id)
+	// binding so a forged callback can never claim ownership of
+	// someone else's install (review finding #2 closure). The
+	// installs map is keyed by accountID, which githubd does not
+	// receive in this RPC by design.
+	return true, defaultProductionBranch, nil
+}

@@ -5,6 +5,7 @@ package mail_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -226,5 +227,82 @@ func TestSenderFromEnv_UnknownTransportFallsBack(t *testing.T) {
 	s := mail.SenderFromEnv(getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if _, ok := s.(*mail.LogSender); !ok {
 		t.Errorf("unknown transport = %T, want *mail.LogSender (fallback)", s)
+	}
+}
+
+// TestResendSender_5xxWrapsErrTransient confirms a 503 from the
+// upstream yields an error that errors.Is(..., mail.ErrTransient)
+// returns true — the contract callers retry on.
+func TestResendSender_5xxWrapsErrTransient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"name":"server_error","message":"try later"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	s, err := mail.NewResendSender(mail.ResendConfig{
+		APIKey:  "re_test",
+		From:    "ops@example.test",
+		BaseURL: srv.URL,
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("NewResendSender: %v", err)
+	}
+	err = s.Send(context.Background(), mail.Message{To: []string{"x@y.test"}, Subject: "x"})
+	if err == nil {
+		t.Fatal("expected error on 503")
+	}
+	if !errors.Is(err, mail.ErrTransient) {
+		t.Errorf("err = %v, want errors.Is(err, mail.ErrTransient)", err)
+	}
+}
+
+// TestResendSender_4xxIsNotTransient confirms a 4xx is a permanent
+// error (no ErrTransient wrap). The contract is: only retry on
+// network failures + 5xx.
+func TestResendSender_4xxIsNotTransient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"name":"validation_error"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	s, _ := mail.NewResendSender(mail.ResendConfig{
+		APIKey:  "re_test",
+		From:    "ops@example.test",
+		BaseURL: srv.URL,
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	err := s.Send(context.Background(), mail.Message{To: []string{"x@y.test"}, Subject: "x"})
+	if err == nil {
+		t.Fatal("expected error on 400")
+	}
+	if errors.Is(err, mail.ErrTransient) {
+		t.Errorf("err = %v, did not expect errors.Is(err, mail.ErrTransient)", err)
+	}
+}
+
+// TestPostmarkSender_5xxWrapsErrTransient mirrors the Resend test
+// for the Postmark sibling.
+func TestPostmarkSender_5xxWrapsErrTransient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"ErrorCode":0,"Message":"down"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	s, err := mail.NewPostmarkSender(mail.PostmarkConfig{
+		ServerToken: "pm_test",
+		From:        "ops@example.test",
+		BaseURL:     srv.URL,
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("NewPostmarkSender: %v", err)
+	}
+	err = s.Send(context.Background(), mail.Message{To: []string{"x@y.test"}, Subject: "x"})
+	if !errors.Is(err, mail.ErrTransient) {
+		t.Errorf("err = %v, want errors.Is(err, mail.ErrTransient)", err)
 	}
 }

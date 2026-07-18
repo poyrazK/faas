@@ -152,6 +152,80 @@ type InstallableRepo struct {
 	Private       bool   `json:"private"`
 }
 
+// Installation is the decoded body of GET /app/installations/{id}.
+// githubd uses it to confirm a callback's installation_id is real
+// for the configured GitHub App before persisting a binding
+// (review finding #1+#2 closure for the M7.5 OAuth path).
+//
+// Endpoint: GET https://api.github.com/app/installations/{id}
+// Auth:    Bearer <app JWT>
+// Status:  200 → real install, 404 → forged/unknown id, 401/403 →
+//          app JWT rejected (revoked key, wrong app).
+type Installation struct {
+	ID            int64  `json:"id"`
+	AccountLogin  string `json:"account_login"` // nested in account.login; we keep a flat copy for the proto
+	Account       struct {
+		Login string `json:"login"`
+	} `json:"account"`
+	RepositorySelection string `json:"repository_selection"` // "all" | "selected"
+}
+
+// VerifyInstallation confirms an installation_id returned by a GitHub
+// App install callback actually exists for the configured GitHub
+// App. Returns verified=true + the install's default branch on
+// success; verified=false on a 404 (forged/unknown id). Transport
+// errors are returned as a non-nil err so the caller can distinguish
+// "no install" (verified=false, err=nil) from "couldn't reach
+// GitHub" (verified=false, err=non-nil). The dashboard should
+// refuse to persist a binding in either case.
+//
+// Note: the per-installation /access_tokens POST already proves the
+// install exists when the dashboard later calls ExchangeInstallationToken;
+// this method is the dedicated "trust on first contact" check that
+// closes the §11 least-privilege regression where the M7.5 PR shipped
+// without one.
+func (a *AppAuth) VerifyInstallation(ctx context.Context, installationID int64) (Installation, bool, error) {
+	if a == nil || a.PrivateKey == nil {
+		return Installation{}, false, fmt.Errorf("githubd: app auth not initialized")
+	}
+	if installationID <= 0 {
+		return Installation{}, false, fmt.Errorf("githubd: invalid installation id %d", installationID)
+	}
+	jwt, err := a.MintAppJWT()
+	if err != nil {
+		return Installation{}, false, err
+	}
+	endpoint := fmt.Sprintf("%s/app/installations/%d", GitHubAPI, installationID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return Installation{}, false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "faas-githubd/1.0")
+
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return Installation{}, false, fmt.Errorf("githubd: verify install: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		// Forged or stale id — GitHub doesn't know this install.
+		return Installation{}, false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return Installation{}, false, fmt.Errorf("githubd: verify install: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var payload Installation
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return Installation{}, false, fmt.Errorf("githubd: decode install: %w", err)
+	}
+	payload.AccountLogin = payload.Account.Login
+	return payload, true, nil
+}
+
 // ListInstallableRepos enumerates the repos the installation has
 // access to. GitHub paginates at 100 per page; we walk pages until
 // the Link header says we're done (or until pageCount cap, whichever

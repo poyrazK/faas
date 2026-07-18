@@ -28,6 +28,11 @@ type Service interface {
 	GetAppBinding(appID, accountID string) (AppBinding, error)
 	CreateDeploymentFromPush(repoFullName, ref, commitSHA, pusher string) (string, string, error)
 	WriteCheck(repoFullName, commitSHA string, phase CheckPhase, logsURL, summary string) error
+	// VerifyInstallation confirms an installation_id is real for the
+	// configured GitHub App. apid's /oauth/callback handler calls this
+	// before persisting the binding, so a forged callback cannot claim
+	// an install_id the customer doesn't own (review finding #2).
+	VerifyInstallation(installationID int64) (verified bool, defaultBranch string, err error)
 }
 
 // Server implements githubdpb.GithubdServer. It wraps a Service so
@@ -180,6 +185,27 @@ func (s *Server) WriteCheck(ctx context.Context, req *githubdpb.WriteCheckReques
 	return &githubdpb.WriteCheckResponse{}, nil
 }
 
+// VerifyInstallation passes through to Service.VerifyInstallation.
+// Called by apid's /oauth/callback handler before persisting a binding
+// (review finding #1+#2 closure); githubd mints the App JWT and
+// confirms the installation_id actually exists for the configured
+// GitHub App. A forged callback without a real install returns
+// verified=false (or a non-nil err); the dashboard treats both as
+// "401 the user, don't persist".
+func (s *Server) VerifyInstallation(ctx context.Context, req *githubdpb.VerifyInstallationRequest) (*githubdpb.VerifyInstallationResponse, error) {
+	const op = "VerifyInstallation"
+	start := time.Now()
+	verified, defaultBranch, err := s.svc.VerifyInstallation(req.GetInstallationId())
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, toStatusErr(err)
+	}
+	return &githubdpb.VerifyInstallationResponse{
+		Verified:      verified,
+		DefaultBranch: defaultBranch,
+	}, nil
+}
+
 // toStatusErr converts a Service error to a gRPC status error. It
 // preserves an existing *status.Status (so slice 1's codes.Unimplemented
 // survives the round-trip), wraps *api.Problem via grpcerr.ToStatus
@@ -241,4 +267,13 @@ func (UnimplementedService) CreateDeploymentFromPush(string, string, string, str
 // WriteCheck returns Unimplemented. Slice 7 replaces this.
 func (UnimplementedService) WriteCheck(string, string, CheckPhase, string, string) error {
 	return status.Error(codes.Unimplemented, "githubd: WriteCheck not yet wired (slice 7)")
+}
+
+// VerifyInstallation returns Unimplemented. Replaced by the real
+// githubd.RealService in cmd/githubd/main.go (slice 8 closure for
+// review finding #2). The slice-1 / test build keeps returning
+// Unimplemented so the round-trip exercises the gRPC plumbing
+// without committing to the verify-via-GitHub-API shape.
+func (UnimplementedService) VerifyInstallation(int64) (bool, string, error) {
+	return false, "", status.Error(codes.Unimplemented, "githubd: VerifyInstallation not yet wired (slice 8)")
 }

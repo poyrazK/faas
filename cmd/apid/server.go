@@ -251,6 +251,15 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /login", s.dashboardChain(http.HandlerFunc(auth.postLogin)))
 	mux.Handle("GET /auth/verify", s.dashboardChain(http.HandlerFunc(auth.verify)))
 	mux.Handle("POST /logout", s.dashboardChain(http.HandlerFunc(auth.logout)))
+	// /oauth/callback is the GitHub App install redirect target
+	// (review finding #1+#2 closure for the M7.5 OAuth path).
+	// Behind sessionAuth so the bind row is anchored to the
+	// logged-in account; behind dashboardChain so it shares the
+	// §11 middleware stack with the rest of the cookie-bearing
+	// surface. NOT behind s.auth — that's API-key auth, not
+	// session-cookie auth, and the redirect URL is hit by a
+	// browser.
+	mux.Handle("GET "+oauthCallbackPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderOAuthCallback))))
 	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 

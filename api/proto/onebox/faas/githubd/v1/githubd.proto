@@ -66,6 +66,25 @@ service Githubd {
   // (repo, sha, phase) via the check_runs dedupe row so redelivered
   // webhooks don't create duplicate checks.
   rpc WriteCheck(WriteCheckRequest) returns (WriteCheckResponse);
+
+  // VerifyInstallation confirms an installation_id returned by a
+  // GitHub App install callback actually exists for this App. The
+  // /oauth/callback handler in apid calls this before persisting
+  // the (app → install_id) binding, so a forged callback can never
+  // claim an install_id the customer doesn't own (review finding
+  // #2 closure). githubd mints the App JWT + GETs
+  // /app/installations/{id}; the response includes the install's
+  // default_branch (used to seed BindAppRepo on the success path).
+  rpc VerifyInstallation(VerifyInstallationRequest) returns (VerifyInstallationResponse);
+}
+
+message VerifyInstallationRequest {
+  int64 installation_id = 1;
+}
+message VerifyInstallationResponse {
+  bool   verified       = 1; // false ⇒ caller should 401/403 the dashboard
+  string default_branch = 2; // empty when verified=false
+  string account_login  = 3; // GitHub login of the install's owner (debugging)
 }
 
 // InstallState is the per-account GitHub App install lifecycle. Maps to

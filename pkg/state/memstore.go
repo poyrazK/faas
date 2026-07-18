@@ -32,11 +32,16 @@ type MemStore struct {
 	keys        map[string]APIKey
 	keyByHash   map[string]string
 	apps        map[string]App
-	deployments map[string]Deployment
-	builds      map[string]Build
-	domains     map[string]CustomDomain
-	crons       map[string]Cron
-	instances   map[string]Instance
+	// githubBindings is keyed by appID. Holds the (install_id,
+	// repo_full_name, production_branch) tuple the /oauth/callback
+	// handler writes after verifying the install against api.github.com
+	// (review findings #1 + #2 closure, ADR-012).
+	githubBindings map[string]GitHubBinding
+	deployments    map[string]Deployment
+	builds         map[string]Build
+	domains        map[string]CustomDomain
+	crons          map[string]Cron
+	instances      map[string]Instance
 	// loginTokens is keyed by the hex-encoded SHA-256 hash of the
 	// raw token (so the binary []byte hash from ConsumeLoginToken
 	// matches the map key format used in MemStore everywhere else).
@@ -94,6 +99,7 @@ func NewMemStore() *MemStore {
 		keys:           map[string]APIKey{},
 		keyByHash:      map[string]string{},
 		apps:           map[string]App{},
+		githubBindings: map[string]GitHubBinding{},
 		deployments:    map[string]Deployment{},
 		builds:         map[string]Build{},
 		domains:        map[string]CustomDomain{},
@@ -415,6 +421,67 @@ func (m *MemStore) DeleteApp(_ context.Context, id string) error {
 	a.Status = AppDeleted
 	m.apps[id] = a
 	return nil
+}
+
+// RecordGitHubBinding persists the (app → installation_id, repo,
+// branch) tuple. Idempotent: re-binding overwrites. Refuses if the
+// (install_id, repo) pair is already claimed by a different app
+// (mirrors the apps_github_install_repo_uniq partial index in
+// migration 00007 — the §11 least-privilege audit invariant).
+func (m *MemStore) RecordGitHubBinding(_ context.Context, appID string, installID int64, repoFullName, productionBranch string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.apps[appID]; !ok {
+		return ErrNotFound
+	}
+	for otherAppID, b := range m.githubBindings {
+		if otherAppID == appID {
+			continue
+		}
+		if b.InstallID == installID && b.RepoFullName == repoFullName {
+			return fmt.Errorf("state: github binding already held by app %s", otherAppID)
+		}
+	}
+	m.githubBindings[appID] = GitHubBinding{
+		AppID:            appID,
+		InstallID:        installID,
+		RepoFullName:     repoFullName,
+		ProductionBranch: productionBranch,
+	}
+	return nil
+}
+
+// GitHubBindingForApp returns the persisted binding for an app, or
+// ErrNotFound if the app has never been GitHub-connected.
+func (m *MemStore) GitHubBindingForApp(_ context.Context, appID string) (GitHubBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.githubBindings[appID]
+	if !ok || b.InstallID == 0 {
+		return GitHubBinding{}, ErrNotFound
+	}
+	return b, nil
+}
+
+// InstallationIDForRepo is the reverse lookup githubd's checks.go
+// uses to mint the right per-install access token for a push
+// (review finding #1+#2 closure for the M7.5 OAuth path).
+// Returns ErrNotFound if no app is bound to repoFullName. The map
+// scan is O(apps bound to GitHub); at v1.0 scale (≤100 apps per
+// account on the Scale plan, §4.2 limits) this is cheaper than
+// maintaining a second repo→install index.
+func (m *MemStore) InstallationIDForRepo(_ context.Context, repoFullName string) (int64, error) {
+	if repoFullName == "" {
+		return 0, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, b := range m.githubBindings {
+		if b.RepoFullName == repoFullName && b.InstallID != 0 {
+			return b.InstallID, nil
+		}
+	}
+	return 0, ErrNotFound
 }
 
 // --- Deployments ------------------------------------------------------------
