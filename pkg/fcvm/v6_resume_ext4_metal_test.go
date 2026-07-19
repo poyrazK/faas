@@ -36,7 +36,7 @@ import (
 // a local mirror). The image contains a static guest-init + busybox and is
 // content-addressed by the SHA-256 below.
 const (
-	defaultV6BaseURL = "https://github.com/onebox-faas/faas-fixtures/releases/download/v0.1.0/v6-base.ext4"
+	defaultV6BaseURL  = "https://github.com/onebox-faas/faas-fixtures/releases/download/v0.1.0/v6-base.ext4"
 	defaultV6LayerURL = "https://github.com/onebox-faas/faas-fixtures/releases/download/v0.1.0/v6-layer.ext4"
 	// v6BaseSHA256 / v6LayerSHA256 are populated on first download by
 	// fetchV6Ext4 (loud one-shot WARN if the placeholder is still set). The

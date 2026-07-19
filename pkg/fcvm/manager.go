@@ -40,7 +40,7 @@ type VMM interface {
 	// post-restore side effects (re-seed entropy + step clock, guest/init/resume.go).
 	// Must be called from Restore after /snapshot/load and before waitReady so
 	// the app cannot accept on :8080 with a stale RNG stream (spec §11 V6).
-// ADR-022 records the wire format (4-byte msg type + JSON body, port 1024
+	// ADR-022 records the wire format (4-byte msg type + JSON body, port 1024
 	// on the fixed host CID 3).
 	TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error
 	// Snapshot pauses the running VM, writes a full snapshot to spec's paths, and
@@ -323,7 +323,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			KernelPath: m.paths.Kernel,
 			BasePath:   req.BasePath,
 			LayerPath:  req.LayerPath,
-// ADR-022: same vsock device the cold-boot path attaches, derived
+			// ADR-022: same vsock device the cold-boot path attaches, derived
 			// from the lease's slot so the guest's listener is reachable at a
 			// globally unique guest_cid.
 			VsockDevice: NewVsockDevice(lease.Slot),

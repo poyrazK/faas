@@ -813,7 +813,7 @@ func TestGuestVsockCIDSkipsReserved(t *testing.T) {
 func TestBuildColdBootConfigIncludesVsockDevice(t *testing.T) {
 	cfg := BuildColdBootConfig(validColdSpec(), 7)
 	if cfg.VsockDevice == nil {
-t.Fatal("VsockDevice = nil, want attached (ADR-022)")
+		t.Fatal("VsockDevice = nil, want attached (ADR-022)")
 	}
 	if cfg.VsockDevice.ID != VsockDeviceID {
 		t.Errorf("VsockDevice.ID = %q, want %q", cfg.VsockDevice.ID, VsockDeviceID)
@@ -845,7 +845,7 @@ func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hos
 			return
 		}
 		defer func() { _ = c.Close() }()
-// Step 1: read "CONNECT <port>\n". Read byte-by-byte until newline
+		// Step 1: read "CONNECT <port>\n". Read byte-by-byte until newline
 		// so we don't block on ReadFull waiting for a fixed count that the
 		// port number's digit count might vary.
 		connectBuf := make([]byte, 0, 32)

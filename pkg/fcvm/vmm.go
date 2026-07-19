@@ -154,7 +154,7 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig) (err error)
 	if err = v.startJailer(ctx, l, "--config-file", VMConfigName); err != nil {
 		return err
 	}
-// Vsock is configured via the config-file (top-level `vsock:` field,
+	// Vsock is configured via the config-file (top-level `vsock:` field,
 	// see VMConfig). Firecracker attaches it pre-start; the UDS at
 	// vsockUDSSock is created by the time startJailer returns. No
 	// post-start PUT needed.
@@ -226,7 +226,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.apiPut(ctx, l.Instance, "/snapshot/load", body); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
-// Vsock is in the config-file (set at config-write time before
+	// Vsock is in the config-file (set at config-write time before
 	// startJailer), so the UDS is live by the time /snapshot/load
 	// completes. Trigger the resume hook now to re-seed entropy and step
 	// the clock before the app can bind :8080 (spec §11 V6).
@@ -395,7 +395,7 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	msg := make([]byte, 4+len(body))
 	binary.BigEndian.PutUint32(msg[:4], resumeHookMsgResume)
 	copy(msg[4:], body)
-// Step 3 ends; Step 4 reads the 1-byte ack.
+	// Step 3 ends; Step 4 reads the 1-byte ack.
 	if _, err := conn.Write(msg); err != nil {
 		return fmt.Errorf("vmm: write resume request: %w", err)
 	}

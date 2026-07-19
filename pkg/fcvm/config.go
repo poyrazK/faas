@@ -16,7 +16,7 @@ type VMConfig struct {
 	NetworkInterfaces []NetIface `json:"network-interfaces"`
 	// Entropy is an empty object to attach virtio-rng (always on, spec §11).
 	Entropy *Entropy `json:"entropy,omitempty"`
-// VsockDevice, when set, attaches a vsock device (ADR-022). The host dials
+	// VsockDevice, when set, attaches a vsock device (ADR-022). The host dials
 	// it from outside the chroot to trigger the post-restore resume hook
 	// (guest/init/resume.go). Always attached on cold boot too, so the cold-
 	// boot fallback path matches the restore path's device layout.
