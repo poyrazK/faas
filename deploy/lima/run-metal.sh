@@ -39,6 +39,26 @@ if ! ip link show br-tenants >/dev/null 2>&1; then
 fi
 sysctl -wq net.ipv4.ip_forward=1
 
+# Lima-cgroup shim: the nested-KVM arm64 guest leaves /sys/fs/cgroup/faas-tenant.slice
+# in a state where writing PIDs returns EBUSY (the kernel can't migrate
+# processes across controllers when the slice's subtree_control is
+# misconfigured vs. root). Re-mount a fresh cgroup2 ON TOP of the broken
+# path so the v1.7 jailer — which always uses /sys/fs/cgroup as its v2
+# unified root per /proc/mounts — lands in a writable hierarchy. The
+# EX44 uses real systemd cgroup management and doesn't need this shim.
+if ! mountpoint -q /sys/fs/cgroup/faas-tenant.slice; then
+  if rmdir /sys/fs/cgroup/faas-tenant.slice 2>/dev/null; then
+    mkdir /sys/fs/cgroup/faas-tenant.slice
+    mount -t cgroup2 none /sys/fs/cgroup/faas-tenant.slice
+    for _ctl in $(cat /sys/fs/cgroup/cgroup.controllers); do
+      echo "+$_ctl" > /sys/fs/cgroup/faas-tenant.slice/cgroup.subtree_control 2>/dev/null || true
+    done
+  fi
+fi
+# Re-use the original /sys/fs/cgroup path the production code already targets;
+# no need to point cgroupRoot elsewhere on Lima.
+export FAAS_LIMA_CGROUP_ROOT="/sys/fs/cgroup"
+
 # ARM64-Lima shim: jailer reads CPU cache sizes from sysfs
 # (/sys/devices/system/cpu/cpuN/cache/indexM/{size,coherency_line_size,...}) and
 # panics if absent, but the arm64 nested-KVM guest doesn't expose them (firecracker

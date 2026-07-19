@@ -463,6 +463,13 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
 	}
+	// Remove the per-VM cgroup scope jailer created (--cgroup cpu.weight=…).
+	// Required by spec §6.2-4 ("parked = zero RAM") — a populated cgroup dir
+	// holds page-cache references. Idempotent; missing dir is fine.
+	scopePath := filepath.Join(cgroupRoot, ParentCgroup, "vm-"+l.Instance+".scope")
+	if err := os.RemoveAll(scopePath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("vmm: remove cgroup scope: %w", err)
+	}
 	return nil
 }
 

@@ -206,6 +206,13 @@ type JailerSpec struct {
 // Everything after `--` is firecracker's OWN argv (no binary name — jailer runs
 // the exec-file): only --api-sock here, so the control socket always exists; the
 // caller appends --config-file for a cold boot (Restore drives the API instead).
+//
+// --cgroup cpu.weight=256 is mandatory on the v2 path: without at least one
+// --cgroup-param, jailer (FC v1.7+) only attaches the jailer PID to the parent
+// slice and never creates a per-instance child scope. The vmm wrapper writes
+// memory.max into `<cgroupRoot>/faas-tenant.slice/vm-<instance>.scope` after
+// bringUp; the scope must exist by then or writeMemoryMax returns IsNotExist.
+// cpu.weight=256 is a neutral default (kernel normalises 100-1000, 256 ~ mid).
 func JailerCommand(s JailerSpec) []string {
 	execFile := s.ExecFile
 	if execFile == "" {
@@ -221,6 +228,7 @@ func JailerCommand(s JailerSpec) []string {
 		"--netns", "/run/netns/" + s.Netns,
 		"--cgroup-version", "2",
 		"--parent-cgroup", ParentCgroup,
+		"--cgroup", "cpu.weight=256",
 		"--",
 		"--api-sock", APISockName,
 	}
