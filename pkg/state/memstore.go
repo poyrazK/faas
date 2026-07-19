@@ -421,8 +421,27 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	if p.Manifest != nil {
 		a.Manifest = *p.Manifest
 	}
+	if p.SetMinInstances {
+		a.MinInstances = derefInt(p.MinInstances)
+	}
 	m.apps[id] = a
 	return a, nil
+}
+
+// SetAppMinInstances stamps the per-app floor (ux_spec §6.5). Plan-tier
+// gating is the apid handler's job — the store writes the column
+// unconditionally. Returns ErrNotFound when the app is gone so a
+// redelivered PATCH returns 404 cleanly.
+func (m *MemStore) SetAppMinInstances(_ context.Context, appID string, min int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[appID]
+	if !ok {
+		return ErrNotFound
+	}
+	a.MinInstances = min
+	m.apps[appID] = a
+	return nil
 }
 
 func (m *MemStore) DeleteApp(_ context.Context, id string) error {

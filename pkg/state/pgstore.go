@@ -225,18 +225,18 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	runtime := nullString(app.Runtime)
 	idle := nullableInt(app.IdleTimeoutS)
 	row := s.pool.QueryRow(ctx,
-		`insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest)
-		 values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb)
+		`insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances)
+		 values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9)
 		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		           max_concurrency, status, manifest, created_at`,
-		app.AccountID, app.Slug, string(app.Type), runtime, app.RAMMB, idle, app.MaxConcurrency, manifestBytes)
+		           max_concurrency, status, manifest, created_at, min_instances`,
+		app.AccountID, app.Slug, string(app.Type), runtime, app.RAMMB, idle, app.MaxConcurrency, manifestBytes, app.MinInstances)
 	return scanApp(row)
 }
 
 func (s *PgStore) AppByID(ctx context.Context, id string) (App, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		        max_concurrency, status, manifest, created_at
+		        max_concurrency, status, manifest, created_at, min_instances
 		 from apps where id = $1`, id)
 	return scanApp(row)
 }
@@ -244,7 +244,7 @@ func (s *PgStore) AppByID(ctx context.Context, id string) (App, error) {
 func (s *PgStore) AppBySlug(ctx context.Context, slug string) (App, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		        max_concurrency, status, manifest, created_at
+		        max_concurrency, status, manifest, created_at, min_instances
 		 from apps where slug = $1 and status <> 'deleted'`, slug)
 	return scanApp(row)
 }
@@ -252,7 +252,7 @@ func (s *PgStore) AppBySlug(ctx context.Context, slug string) (App, error) {
 func (s *PgStore) ListApps(ctx context.Context, accountID string) ([]App, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		        max_concurrency, status, manifest, created_at
+		        max_concurrency, status, manifest, created_at, min_instances
 		 from apps where account_id = $1 and status <> 'deleted' order by created_at desc`, accountID)
 	if err != nil {
 		return nil, err
@@ -264,7 +264,7 @@ func (s *PgStore) ListApps(ctx context.Context, accountID string) ([]App, error)
 func (s *PgStore) ListAllApps(ctx context.Context) ([]App, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		        max_concurrency, status, manifest, created_at
+		        max_concurrency, status, manifest, created_at, min_instances
 		 from apps where status <> 'deleted' order by created_at desc`)
 	if err != nil {
 		return nil, err
@@ -292,15 +292,33 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		   idle_timeout_s  = case when $3 then $4 else idle_timeout_s end,
 		   max_concurrency = coalesce($5, max_concurrency),
 		   status          = coalesce($6, status),
-		   manifest        = case when $7 then $8::jsonb else manifest end
+		   manifest        = case when $7 then $8::jsonb else manifest end,
+		   min_instances   = case when $9 then $10 else min_instances end
 		 where id = $1
 		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		           max_concurrency, status, manifest, created_at`,
+		           max_concurrency, status, manifest, created_at, min_instances`,
 		id,
 		p.RAMMB, p.SetIdleTimeout, derefInt(p.IdleTimeoutS),
 		p.MaxConcurrency, nullAppStatus(p.Status),
-		p.Manifest != nil, manifestBytes)
+		p.Manifest != nil, manifestBytes,
+		p.SetMinInstances, derefInt(p.MinInstances))
 	return scanApp(row)
+}
+
+// SetAppMinInstances stamps the per-app floor (ux_spec §6.5). Plan-tier
+// gating is the apid handler's job — the store writes the column
+// unconditionally. Returns ErrNotFound when the app is gone so a
+// redelivered PATCH returns 404 cleanly.
+func (s *PgStore) SetAppMinInstances(ctx context.Context, appID string, min int) error {
+	tag, err := s.pool.Exec(ctx,
+		`update apps set min_instances = $2 where id = $1`, appID, min)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
@@ -1166,7 +1184,7 @@ func scanApp(row pgx.Row) (App, error) {
 	var typeStr, statusStr string
 	var manifestBytes []byte
 	if err := row.Scan(&a.ID, &a.AccountID, &a.Slug, &typeStr, &a.Runtime, &a.RAMMB, &a.IdleTimeoutS,
-		&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt); err != nil {
+		&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances); err != nil {
 		return App{}, mapErr(err)
 	}
 	a.Type = AppType(typeStr)
@@ -1184,7 +1202,7 @@ func scanApps(rows pgx.Rows) ([]App, error) {
 		var typeStr, statusStr string
 		var manifestBytes []byte
 		if err := rows.Scan(&a.ID, &a.AccountID, &a.Slug, &typeStr, &a.Runtime, &a.RAMMB, &a.IdleTimeoutS,
-			&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt); err != nil {
+			&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances); err != nil {
 			return nil, err
 		}
 		a.Type = AppType(typeStr)

@@ -121,9 +121,15 @@ type App struct {
 	RAMMB          int
 	IdleTimeoutS   int // 0 => plan default
 	MaxConcurrency int
-	Status         AppStatus
-	Manifest       AppManifest
-	CreatedAt      time.Time
+	// MinInstances is the per-app floor the reaper honors when parking
+	// idle instances (ux_spec §6.5). 0 => scale to zero (default);
+	// >0 => keep at least this many RUNNING instances alive regardless
+	// of idle timeout. Pro/Scale only — the apid updateApp handler
+	// rejects Hobby/Free with 403 plan_min_instances_not_allowed.
+	MinInstances int
+	Status       AppStatus
+	Manifest     AppManifest
+	CreatedAt    time.Time
 }
 
 // AppManifest is the runner-scaffold payload. Stored as jsonb in Postgres;
@@ -262,14 +268,21 @@ type Usage struct {
 
 // UpdateAppParams is the partial-update payload for PATCH /v1/apps/{slug}.
 // Nil pointers mean "leave unchanged" (only the slug/ram/idle/concurrency/
-// status fields are user-mutable; type and runtime are immutable).
+// min_instances/status fields are user-mutable; type and runtime are
+// immutable).
 type UpdateAppParams struct {
 	RAMMB          *int
 	IdleTimeoutS   *int // explicit 0 clears to plan default
 	SetIdleTimeout bool // distinguishes nil from zero
 	MaxConcurrency *int
-	Status         *AppStatus
-	Manifest       *AppManifest
+	// MinInstances is the per-app floor for idle reaping
+	// (ux_spec §6.5). SetMinInstances distinguishes "unset" (don't
+	// touch the column) from "explicit zero" (scale to zero, the
+	// default for Free/Hobby).
+	MinInstances    *int
+	SetMinInstances bool
+	Status          *AppStatus
+	Manifest        *AppManifest
 }
 
 // Snapshot is one restoreable microVM state (spec §4.6, ADR-005).

@@ -102,11 +102,23 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 		if d, err := s.store.LatestDeployment(r.Context(), a.ID); err == nil {
 			last = d.CreatedAt
 		}
+		// ux_spec §6.3: pull the newest instance row and map
+		// its state.State onto the public badge glyph. The
+		// store orders DESC by started_at so [0] is the
+		// newest. "No rows" (fresh deploy, never woken) → ◌
+		// sleeping via BadgeForDefault.
+		cls, glyph, label := dashboard.BadgeForDefault()
+		if ins, err := s.store.ListInstancesForApp(r.Context(), a.ID); err == nil && len(ins) > 0 {
+			cls, glyph, label = dashboard.BadgeFor(state.State(ins[0].State))
+		}
 		items = append(items, dashboard.AppListItem{
-			Slug:         a.Slug,
-			Status:       string(a.Status),
-			URL:          "https://" + a.Slug + ".apps." + s.domain,
-			LastDeployed: last.UTC().Format("2006-01-02 15:04 MST"),
+			Slug:            a.Slug,
+			Status:          string(a.Status),
+			URL:             "https://" + a.Slug + ".apps." + s.domain,
+			LastDeployed:    last.UTC().Format("2006-01-02 15:04 MST"),
+			StateBadge:      cls,
+			StateBadgeGlyph: glyph,
+			StateBadgeLabel: label,
 		})
 	}
 	// Reuse the already-fetched apps list for the count (review
@@ -165,11 +177,20 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		appCount = 0
 	}
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
-		App: dashboard.AppListItem{
-			Slug:   app.Slug,
-			Status: string(app.Status),
-			URL:    "https://" + app.Slug + ".apps." + s.domain,
-		},
+		App: func() dashboard.AppListItem {
+			cls, glyph, label := dashboard.BadgeForDefault()
+			if ins, err := s.store.ListInstancesForApp(r.Context(), app.ID); err == nil && len(ins) > 0 {
+				cls, glyph, label = dashboard.BadgeFor(state.State(ins[0].State))
+			}
+			return dashboard.AppListItem{
+				Slug:            app.Slug,
+				Status:          string(app.Status),
+				URL:             "https://" + app.Slug + ".apps." + s.domain,
+				StateBadge:      cls,
+				StateBadgeGlyph: glyph,
+				StateBadgeLabel: label,
+			}
+		}(),
 		Manifest:    dashboardManifestView(app),
 		Deployments: deps,
 		Crons:       cronItems,

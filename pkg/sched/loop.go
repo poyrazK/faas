@@ -214,6 +214,11 @@ func (l *Loop) runReaper(ctx context.Context) {
 				LastRequest:  ins.LastRequestAt,
 				Started:      ins.StartedAt,
 				IdleTimeoutS: a.IdleTimeoutS,
+				// ux_spec §6.5: per-app floor the reaper honors
+				// when parking idle instances. Plan-tier-gated
+				// upstream (apid updateApp handler), so the
+				// value is always >= 0 here.
+				MinInstances: a.MinInstances,
 				OpenConns:    open,
 			})
 		}

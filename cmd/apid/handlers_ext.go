@@ -32,10 +32,11 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 	writeJSON(w, http.StatusOK, s.appResponse(app))
 }
 
-// updateApp is the PATCH /v1/apps/{slug} handler. RAM, idle_timeout_s, and
-// max_concurrency are user-tunable; type and runtime are immutable. Plan
-// caps are re-enforced when the requested RAM or concurrency changes (spec
-// §4.2: "validation enforces plan quotas before any work happens").
+// updateApp is the PATCH /v1/apps/{slug} handler. RAM, idle_timeout_s,
+// max_concurrency, and min_instances (Pro/Scale only) are user-tunable;
+// type and runtime are immutable. Plan caps are re-enforced when the
+// requested RAM or concurrency changes (spec §4.2: "validation enforces
+// plan quotas before any work happens").
 func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -60,11 +61,32 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 
+	// ux_spec §6.5: per-app cold-wake floor. Pro/Scale only —
+	// Free/Hobby can't pin N × RAMMB resident because the bill is
+	// built around scale-to-zero. 403 plan_min_instances_not_allowed.
+	// Bounds: min_instances must be in [0, MaxConcurrency] (the
+	// reaper can't keep more than the concurrency cap alive).
+	if req.MinInstances != nil {
+		if !acct.Plan.MinInstancesAllowed() {
+			api.WriteProblem(w, api.ErrPlanMinInstancesNotAllowed(acct.Plan))
+			return
+		}
+		if *req.MinInstances < 0 || *req.MinInstances > limits.MaxConcurrency {
+			api.WriteProblem(w, api.ErrInvalidMinInstances(*req.MinInstances, limits.MaxConcurrency))
+			return
+		}
+	}
+
 	updated, err := s.store.UpdateApp(ctx(r), app.ID, state.UpdateAppParams{
 		RAMMB:          req.RAMMB,
 		IdleTimeoutS:   req.IdleTimeoutS,
 		SetIdleTimeout: req.IdleTimeoutS != nil,
 		MaxConcurrency: req.MaxConcurrency,
+		// SetMinInstances distinguishes "client didn't include
+		// the field" (don't touch) from "client sent 0" (scale
+		// to zero, the default).
+		MinInstances:    req.MinInstances,
+		SetMinInstances: req.MinInstances != nil,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update app"))

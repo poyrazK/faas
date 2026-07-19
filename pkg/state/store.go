@@ -120,6 +120,12 @@ type Store interface {
 	// evicted_cold) for quota enforcement (spec §4.2).
 	CountDeployedApps(ctx context.Context, accountID string) (int, error)
 	UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error)
+	// SetAppMinInstances stamps the per-app floor (ux_spec §6.5) the
+	// reaper honors when parking idle instances. 0 => scale to zero.
+	// Plan-tier gating is the apid handler's job; the store writes the
+	// column unconditionally. Updates an existing row's min_instances
+	// column in place; returns ErrNotFound when the app is gone.
+	SetAppMinInstances(ctx context.Context, appID string, min int) error
 	DeleteApp(ctx context.Context, id string) error
 	// RecordGitHubBinding persists the (app → installation_id, repo,
 	// branch) tuple after the /oauth/callback handler verified the

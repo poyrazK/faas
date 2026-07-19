@@ -66,6 +66,15 @@ type AppListItem struct {
 	Status       string
 	URL          string
 	LastDeployed string // empty when no deploys yet
+	// StateBadge* is the cold-wake status glyph ux_spec §6.3 asks
+	// for: ● running / ◌ sleeping / ⟳ waking / · idle (failed/
+	// stopped). Set by renderAppsList via BadgeFor based on the
+	// newest instance row for the app; "" until the dashboard
+	// plumbs it (kept on the type so templates can render an empty
+	// glyph during partial migrations).
+	StateBadge      string
+	StateBadgeGlyph string
+	StateBadgeLabel string
 }
 
 // ManifestView is the runner-scaffold snapshot shown on the app detail
