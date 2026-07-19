@@ -401,40 +401,6 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	return nil
 }
 
-// resumeHookGuestPort is the AF_VSOCK port the guest-init resume
-// listener binds. Must match guest/init/listen_resume_linux.go's
-// VsockResumePort.
-const resumeHookGuestPort = 1024
-
-// readConnectAck consumes the "OK <hostside_port>\n" reply from
-// Firecracker. Returns the first whitespace-delimited token. Reads
-// until newline so the byte count doesn't matter (FC's host-assigned
-// port is a 32-bit integer — variable digit count).
-func readConnectAck(conn net.Conn) (string, error) {
-	const max = 64
-	buf := make([]byte, 0, max)
-	one := make([]byte, 1)
-	for len(buf) < max {
-		if _, err := conn.Read(one); err != nil {
-			return "", fmt.Errorf("read CONNECT reply: %w", err)
-		}
-		if one[0] == '\n' || one[0] == '\r' {
-			break
-		}
-		buf = append(buf, one[0])
-	}
-	if len(buf) == 0 {
-		return "", fmt.Errorf("empty CONNECT reply")
-	}
-	// Return the first whitespace-delimited token.
-	for i := 0; i < len(buf); i++ {
-		if buf[i] == ' ' {
-			return string(buf[:i]), nil
-		}
-	}
-	return string(buf), nil
-}
-
 // Snapshot pauses the running VM, writes a full snapshot, copies the files out to
 // spec's durable paths, and destroys the VM (spec §4.4).
 func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (SnapshotInfo, error) {
