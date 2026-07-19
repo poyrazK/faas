@@ -20,7 +20,12 @@ type VMConfig struct {
 	// it from outside the chroot to trigger the post-restore resume hook
 	// (guest/init/resume.go). Always attached on cold boot too, so the cold-
 	// boot fallback path matches the restore path's device layout.
-	VsockDevice *VsockDevice `json:"vsock-device,omitempty"`
+	//
+	// JSON tag is `vsock` (NOT `vsock-device`) to match the Firecracker
+	// config-file schema (FC swagger FullVmConfiguration.vsock). The wire
+	// shape inside is identical to the Vsock type the PUT /vsock API
+	// endpoint accepts.
+	VsockDevice *VsockDevice `json:"vsock,omitempty"`
 }
 
 // VsockDevice is the Firecracker vsock binding the host uses to dial the guest
@@ -29,14 +34,21 @@ type VMConfig struct {
 // path the jailer creates automatically; the host side of the wire reaches it
 // through chrootRoot(instance).
 //
-// JSON tag is `uds_path` (NOT `uds_socket`) to match the Firecracker PUT
-// /vsock schema — the FC API rejects unknown fields. The Go field name
-// keeps the SDK-style `UDSSocket` for readability; only the wire tag
-// matters.
+// JSON tags match the Firecracker `Vsock` schema (FC swagger). `vsock_id`
+// is deprecated in FC and we don't send it; the field is kept for
+// documentation of why the wire tag is empty.
 type VsockDevice struct {
-	ID        string `json:"vsock_id"`  // "vsock-0" — Firecracker requires unique id
-	GuestCID  uint32 `json:"guest_cid"` // unique per live instance
-	UDSSocket string `json:"uds_path"`  // "vsock.sock" (chroot-local)
+	// ID is unused on the wire (vsock_id is deprecated in FC). Kept for
+	// in-memory bookkeeping only — the JSON tag is `json:"-"` so it never
+	// reaches the FC config file.
+	ID string `json:"-"`
+	// GuestCID is the per-instance slot-derived CID (Lease.Slot +
+	// VsockCIDBase). FC requires min 3; VsockCIDBase = 0x100 satisfies.
+	GuestCID uint32 `json:"guest_cid"`
+	// UDSSocket is the in-chroot AF_UNIX path Firecracker listens on for
+	// host-initiated connections (the host writes "CONNECT <port>\n" then
+	// proxies the byte stream to the guest's AF_VSOCK listener).
+	UDSSocket string `json:"uds_path"`
 }
 
 type BootSource struct {

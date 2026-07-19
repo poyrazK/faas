@@ -826,10 +826,12 @@ func TestBuildColdBootConfigIncludesVsockDevice(t *testing.T) {
 	}
 }
 
-// fakeVsockUDSServer pretends to be the in-guest resume listener. It accepts
-// one connection, reads the request, runs the optional hook callback, and
-// writes the ack. Returns the captured body so tests can assert wire
-// formatting.
+// fakeVsockUDSServer pretends to be the Firecracker vsock UDS that
+// TriggerResumeHook dials. It mirrors the FC host-initiated protocol:
+// accept, expect "CONNECT <port>\n", reply "OK <hostside_port>\n",
+// then read the resume-hook payload ([4 BE msg type][JSON body]) and
+// write the 1-byte ack. The captured HostTimeUnixNano flows through
+// onHook so tests can assert wire formatting.
 func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hostTimeUnixNano int64) error) {
 	t.Helper()
 	l, err := net.Listen("unix", sockPath)
@@ -843,14 +845,45 @@ func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hos
 			return
 		}
 		defer func() { _ = c.Close() }()
-		// Read the whole request (header + body).
-		buf, err := io.ReadAll(c)
-		if err != nil || len(buf) < 4 {
+
+		// Step 1: read "CONNECT <port>\n". Read byte-by-byte until newline
+		// so we don't block on ReadFull waiting for a fixed count that the
+		// port number's digit count might vary.
+		connectBuf := make([]byte, 0, 32)
+		readByte := make([]byte, 1)
+		for {
+			if _, err := c.Read(readByte); err != nil {
+				_, _ = c.Write([]byte{1})
+				return
+			}
+			connectBuf = append(connectBuf, readByte[0])
+			if readByte[0] == '\n' {
+				break
+			}
+			if len(connectBuf) > 32 {
+				_, _ = c.Write([]byte{1})
+				return
+			}
+		}
+		if !strings.HasPrefix(string(connectBuf), "CONNECT ") {
+			_, _ = c.Write([]byte{1})
+			return
+		}
+		// Step 2: reply "OK <hostside_port>\n". FC picks an ephemeral
+		// port; the value is for multiplexing bookkeeping and the
+		// host-side reader doesn't validate it.
+		if _, err := c.Write([]byte("OK 1073741824\n")); err != nil {
+			return
+		}
+
+		// Step 3: read the resume-hook payload.
+		body, err := io.ReadAll(c)
+		if err != nil || len(body) < 4 {
 			_, _ = c.Write([]byte{1})
 			return
 		}
 		var nano int64
-		_ = json.Unmarshal(buf[4:], &struct {
+		_ = json.Unmarshal(body[4:], &struct {
 			Nano *int64 `json:"hostTimeUnixNano"`
 		}{Nano: &nano})
 		if onHook != nil {
@@ -989,82 +1022,56 @@ func TestTriggerResumeHookContextCancel(t *testing.T) {
 	}
 }
 
-// TestBootAttachesVsockDeviceViaAPIPut drives Boot through a fake Firecracker
-// API server bound to the instance's api.sock and asserts a PUT /vsock is
-// issued with the right body. We seed v.clients with a client pointed at a
-// unix-socket httptest server; the /vsock handler records the request.
-func TestBootAttachesVsockDeviceViaAPIPut(t *testing.T) {
-	chrootBase := shortChrootBase(t, "bootvs")
-	instance := "iA"
-	root := filepath.Join(chrootBase, "f", instance, "r")
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	sockPath := filepath.Join(root, APISockName)
-
-	// Seed an httptest server bound to a unix socket — Go's httptest
-	// normally uses TCP, but the firecracker API speaks HTTP over a unix
-	// socket, so we hijack one with a tiny http.Server.
-	var vsockHits atomic.Int32
-	var seenCID atomic.Uint32
-	var seenUDSSock atomic.Value
-	mux := http.NewServeMux()
-	mux.HandleFunc("/vsock", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			http.Error(w, "want PUT", http.StatusBadRequest)
-			return
-		}
-		var body struct {
-			VsockID   string `json:"vsock_id"`
-			GuestCID  uint32 `json:"guest_cid"`
-			UDSSocket string `json:"uds_path"` // matches Firecracker API field
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		vsockHits.Add(1)
-		seenCID.Store(body.GuestCID)
-		seenUDSSock.Store(body.UDSSocket)
-		w.WriteHeader(http.StatusNoContent)
-	})
-	apiSrv := &http.Server{Handler: mux}
-	apiL, err := net.Listen("unix", sockPath)
-	if err != nil {
-		t.Fatalf("listen %s: %v", sockPath, err)
-	}
-	t.Cleanup(func() {
-		_ = apiSrv.Close()
-		_ = apiL.Close()
-	})
-	go func() { _ = apiSrv.Serve(apiL) }()
-
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
-			},
-		},
-	}
-	v := &JailerVMM{
-		chrootBase: chrootBase,
-		fcName:     "f",
-		clients:    map[string]*http.Client{instance: httpClient},
-	}
-
+// TestBootAttachesVsockDeviceViaConfigFile verifies that the vsock device is
+// configured via the config-file JSON (top-level `vsock:` field), NOT via a
+// post-start PUT /vsock call. FC's /vsock endpoint is pre-boot only and
+// rejects post-start requests with 400 "operation is not supported after
+// starting the microVM" — the config-file path is the only legal way to
+// attach a vsock device.
+//
+// ADR-021.
+func TestBootAttachesVsockDeviceViaConfigFile(t *testing.T) {
 	cfg := BuildColdBootConfig(validColdSpec(), 7)
-	if err := v.attachVsock(context.Background(), instance, cfg.VsockDevice); err != nil {
-		t.Fatalf("attachVsock: %v", err)
+
+	if cfg.VsockDevice == nil {
+		t.Fatal("VsockDevice = nil, want attached (ADR-021)")
 	}
-	if got := vsockHits.Load(); got != 1 {
-		t.Errorf("/vsock hits = %d, want 1", got)
+
+	// Marshal to JSON exactly like Boot() does and confirm the top-level
+	// "vsock" key carries the right shape.
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal VMConfig: %v", err)
 	}
-	if got := seenCID.Load(); got != GuestVsockCID(7) {
-		t.Errorf("guest_cid = %d, want %d", got, GuestVsockCID(7))
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal VMConfig: %v", err)
 	}
-	if got, _ := seenUDSSock.Load().(string); got != VsockUDSSocketName {
-		t.Errorf("uds_path = %q, want %q", got, VsockUDSSocketName)
+	vsockRaw, ok := raw["vsock"]
+	if !ok {
+		t.Fatalf("VMConfig JSON missing top-level `vsock` key; got keys: %v", keysOf(raw))
 	}
+	var vsock struct {
+		GuestCID  uint32 `json:"guest_cid"`
+		UDSSocket string `json:"uds_path"`
+	}
+	if err := json.Unmarshal(vsockRaw, &vsock); err != nil {
+		t.Fatalf("unmarshal vsock: %v (raw=%s)", err, vsockRaw)
+	}
+	if vsock.GuestCID != GuestVsockCID(7) {
+		t.Errorf("vsock.guest_cid = %d, want %d", vsock.GuestCID, GuestVsockCID(7))
+	}
+	if vsock.UDSSocket != VsockUDSSocketName {
+		t.Errorf("vsock.uds_path = %q, want %q", vsock.UDSSocket, VsockUDSSocketName)
+	}
+}
+
+func keysOf(m map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // TestBootRestoresWake_DoesNotInvokeResumeHookOnColdBoot is in
