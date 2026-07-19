@@ -332,7 +332,13 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			return WakeRestore, nil
 		} else {
 			// Fall back to cold boot into the same netns; kill any half-restored VM.
-			m.log.Warn("restore failed; cold-boot fallback", "instance", req.Instance, "err", rErr)
+			// The wrapped rErr names the failure mode (vsock dial timeout vs
+			// ack-nack vs /snapshot/load failure) so the operator doesn't have
+			// to dig through vmm.go to find out why the resume hook fired.
+			m.log.Warn("restore failed, falling back to cold boot",
+				"instance", req.Instance,
+				"err", rErr,
+				"slot", lease.Slot)
 			_ = m.vmm.Kill(ctx, lease)
 		}
 	}

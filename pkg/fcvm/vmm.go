@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -314,7 +315,7 @@ func readConnectAck(conn net.Conn) (string, error) {
 //  4. Bidirectional byte stream — host writes the resume-hook payload,
 //     guest writes back a 1-byte ack.
 //
-// Payload format (ADR-021): 4-byte big-endian msg type (= 1 =
+// Payload format (ADR-022): 4-byte big-endian msg type (= 1 =
 // MSG_RESUME) + JSON body {"hostTimeUnixNano": N}. The guest's
 // listenResumeHook (guest/init/listen_resume_linux.go) reads the same
 // shape and writes back ack=0 (ok) or ack=1 (nack).
@@ -324,6 +325,20 @@ func readConnectAck(conn net.Conn) (string, error) {
 // shared entropy is exactly the failure mode V6 rejects, so we refuse
 // to declare it ready.
 func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
+	// Defense-in-depth: refuse to dial with a half-built VMM or empty instance.
+	// Without this guard, a refactor that passes an uninitialised JailerVMM
+	// (test seam, future caller) would dial a malformed UDS path and return a
+	// cryptic ENOENT — fails closed, but the operator gets no clue. With the
+	// guard, the failure mode is a clear "this VM was never set up right".
+	if v == nil {
+		return fmt.Errorf("vmm: TriggerResumeHook: nil receiver")
+	}
+	if l.Instance == "" {
+		return fmt.Errorf("vmm: TriggerResumeHook: empty instance")
+	}
+	if v.chrootBase == "" {
+		return fmt.Errorf("vmm: TriggerResumeHook: chrootBase not configured")
+	}
 	sock := v.vsockUDSSock(l.Instance)
 	deadline := time.Now().Add(resumeHookDialDeadline)
 	var conn net.Conn
@@ -469,9 +484,16 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	// holds page-cache references. The scope name equals jailer --id
 	// (= Lease.Instance); see pkg/fcvm/cgroup.go for the matching write path.
 	// Idempotent; missing dir is fine.
+	//
+	// EBUSY (or any other non-IsNotExist error) is logged and swallowed: the
+	// jailer process is already gone at this point, so we cannot rewind the
+	// teardown. A leftover cgroup dir leaks RAM only until the next cgroup
+	// pressure event reaps it; failing the whole call would mask the real
+	// teardown success.
 	scopePath := filepath.Join(cgroupRoot, ParentCgroup, PerInstanceScope(l.Instance))
 	if err := os.RemoveAll(scopePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("vmm: remove cgroup scope: %w", err)
+		slog.Default().Warn("cgroup scope remove failed; continuing teardown",
+			"path", scopePath, "instance", l.Instance, "err", err)
 	}
 	return nil
 }

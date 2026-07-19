@@ -1021,6 +1021,49 @@ func TestTriggerResumeHookContextCancel(t *testing.T) {
 	}
 }
 
+// TestTriggerResumeHookGuardsRejectsBadInput covers the defense-in-depth
+// guards added after the M8 PR-A review: a nil receiver, an empty
+// instance, or an unconfigured chroot base must fail closed with a clear
+// error rather than dialing a malformed UDS path and returning ENOENT.
+func TestTriggerResumeHookGuardsRejectsBadInput(t *testing.T) {
+	cases := []struct {
+		name    string
+		vmm     *JailerVMM
+		lease   Lease
+		wantSub string
+	}{
+		{
+			name:    "nil receiver",
+			vmm:     nil,
+			lease:   Lease{Instance: "i", Slot: 0},
+			wantSub: "nil receiver",
+		},
+		{
+			name:    "empty instance",
+			vmm:     &JailerVMM{chrootBase: "/tmp", fcName: "f"},
+			lease:   Lease{Instance: "", Slot: 0},
+			wantSub: "empty instance",
+		},
+		{
+			name:    "empty chroot base",
+			vmm:     &JailerVMM{chrootBase: "", fcName: "f"},
+			lease:   Lease{Instance: "i", Slot: 0},
+			wantSub: "chrootBase not configured",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.vmm.TriggerResumeHook(context.Background(), tc.lease, 1)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantSub)
+			}
+		})
+	}
+}
+
 // TestBootAttachesVsockDeviceViaConfigFile verifies that the vsock device is
 // configured via the config-file JSON (top-level `vsock:` field), NOT via a
 // post-start PUT /vsock call. FC's /vsock endpoint is pre-boot only and
@@ -1033,7 +1076,7 @@ func TestBootAttachesVsockDeviceViaConfigFile(t *testing.T) {
 	cfg := BuildColdBootConfig(validColdSpec(), 7)
 
 	if cfg.VsockDevice == nil {
-t.Fatal("VsockDevice = nil, want attached (ADR-022)")
+		t.Fatal("VsockDevice = nil, want attached (ADR-022)")
 	}
 
 	// Marshal to JSON exactly like Boot() does and confirm the top-level

@@ -57,6 +57,18 @@ type server struct {
 	// production; the dev fallback is docs/DPA.md relative to the
 	// repo root (set from FAAS_DPA_PATH or left empty to disable).
 	dpaPath string
+	// apiAuthLimiter is the shared per-IP bucket every /v1/* route
+	// draws from (spec §11 "10/min/IP" — the budget is per-IP across
+	// the whole API surface, not per (IP, endpoint)). Nil falls back
+	// to a fresh bucket in authLimited for unit tests; production
+	// wires it in newServer.
+	apiAuthLimiter *middleware.Limiter
+	// dashboardAuthLimiter is the shared per-IP bucket for the
+	// dashboard auth surface (/login, /auth/verify). Separate from
+	// apiAuthLimiter because the two surfaces count different
+	// statuses (apiAuthLimiter counts 401; dashboardAuthLimiter
+	// counts every attempt on /login to defeat anti-enumeration).
+	dashboardAuthLimiter *middleware.Limiter
 }
 
 // Mailer is the slice of pkg/mail.Sender apid depends on. Kept as an
@@ -134,18 +146,31 @@ func newServerWithDeps(
 	if loginTTL <= 0 {
 		loginTTL = 15 * time.Minute
 	}
+	// Shared per-IP auth-failure bucket across every /v1/* route. Spec §11
+	// "10/min/IP" is per-IP across the entire API surface, not per
+	// (IP, endpoint) — a fresh limiter per route would let a brute-force
+	// attack hit 10 attempts × N endpoints × 1 min and never trip any
+	// single bucket. The Limiter is per-process; a restart resets it
+	// (acceptable — gatewayd is the primary edge counter).
+	apiAuthLimiter := middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
+	// Dashboard auth surface (/login, /auth/verify) gets its own shared
+	// bucket so the CountEveryAttempt sentinel on /login doesn't bleed
+	// 200s into the API's 401-counter.
+	dashboardAuthLimiter := middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
 	return &server{
-		store:               store,
-		log:                 log,
-		domain:              domain,
-		notif:               notif,
-		stripeWebhookSecret: stripeSecret,
-		mailer:              mailer,
-		githubd:             githubd,
-		events:              bcaster,
-		sessions:            sessions,
-		loginTTL:            loginTTL,
-		dpaPath:             dpaPath,
+		store:                store,
+		log:                  log,
+		domain:               domain,
+		notif:                notif,
+		stripeWebhookSecret:  stripeSecret,
+		mailer:               mailer,
+		githubd:              githubd,
+		events:               bcaster,
+		sessions:             sessions,
+		loginTTL:             loginTTL,
+		dpaPath:              dpaPath,
+		apiAuthLimiter:       apiAuthLimiter,
+		dashboardAuthLimiter: dashboardAuthLimiter,
 	}
 }
 
@@ -341,7 +366,10 @@ func (s *server) dashboardChain(h http.Handler) http.Handler {
 // Spec §11: "rate limit auth failures (10/min/IP)".
 func (s *server) dashboardAuthChain(cfg middleware.AuthLimitConfig, h http.Handler) http.Handler {
 	h = s.dashboardChain(h)
-	h = middleware.AuthLimit(cfg)(h)
+	if s.dashboardAuthLimiter == nil {
+		s.dashboardAuthLimiter = middleware.NewLimiter(cfg)
+	}
+	h = middleware.AuthLimitWithLimiter(cfg, s.dashboardAuthLimiter)(h)
 	return h
 }
 
@@ -406,13 +434,22 @@ func isAccountScopedPath(p string) bool {
 // emission (e.g. quota). CountStatuses=[401] is the explicit default
 // (the middleware's nil-means-401 fallback also covers this; we set it
 // explicitly for clarity at the wire boundary).
+//
+// The bucket is s.apiAuthLimiter — shared across every /v1/* route so
+// spec §11 "10/min/IP" is enforced across the whole surface, not per
+// route. Tests inject a fresh limiter via apiAuthLimiter so each test
+// gets an isolated bucket; the nil-fallback keeps the daemon booting
+// in dev environments that bypass newServerWithDeps.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
 	h := s.auth(next)
 	cfg := middleware.AuthLimitConfig{
 		CountStatuses: []int{http.StatusUnauthorized},
 		Log:           s.log,
 	}
-	return middleware.AuthLimit(cfg)(h).ServeHTTP
+	if s.apiAuthLimiter == nil {
+		s.apiAuthLimiter = middleware.NewLimiter(cfg)
+	}
+	return middleware.AuthLimitWithLimiter(cfg, s.apiAuthLimiter)(h).ServeHTTP
 }
 
 // idempotent replays a stored response for a repeated Idempotency-Key, or runs
