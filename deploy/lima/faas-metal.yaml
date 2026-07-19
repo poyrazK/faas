@@ -110,3 +110,102 @@ provision:
 
       firecracker --version | head -1
       go version
+
+  # Build the V6 acceptance rootfs (spec §14 V6, ADR-022). This is the
+  # rootfs TestMetalTwoRestoresDistinctUUID uses: PID 1 = the real
+  # faas-guest-init (so the AF_VSOCK resume listener is wired), app entry-
+  # point writes /etc/faas/uuid.txt and busybox httpd-serves /. Built once
+  # per `limactl start` and reused across every subsequent metal run.
+  #
+  # We build guest-init against the host-mounted repo checkout (the Lima
+  # mount: ~ entry exposes the host $HOME — including the repo worktree)
+  # so the guest binary's wire format matches pkg/fcvm/vmm.go's
+  # TriggerResumeHook byte-for-byte. Re-runs after a guest-init source
+  # change require re-provisioning the Lima VM (limactl delete + start) —
+  # documented in deploy/lima/README.md.
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      # Default user has a writable mount of host $HOME at the same path
+      # (Lima `mounts: writable: true`). The repo worktree is mounted under
+      # the host uid; the lima-default user mirrors that uid.
+      DEFAULT_USER="$(getent passwd | awk -F: '$3>=1000 && $3<65000 {print $1; exit}')"
+      DEFAULT_HOME="$(getent passwd "${DEFAULT_USER:-ubuntu}" | cut -d: -f6)"
+
+      # Search the default user's home for the repo (typical layout: ~/code/faas
+      # or the worktree is directly at $HOME). We probe a few known locations so
+      # operators don't have to set FAAS_REPO_ROOT for the common cases.
+      REPO=""
+      for candidate in \
+        "${DEFAULT_HOME}/faas" \
+        "${DEFAULT_HOME}/code/faas" \
+        "${DEFAULT_HOME}/work/faas" \
+        "${DEFAULT_HOME}/src/faas"; do
+        if [ -f "${candidate}/guest/init/main_linux.go" ]; then
+          REPO="${candidate}"
+          break
+        fi
+      done
+      if [ -z "$REPO" ]; then
+        echo >&2 "Could not locate faas repo checkout under ${DEFAULT_HOME}."
+        echo >&2 "Place the repo at one of: ~/faas, ~/code/faas, ~/work/faas, ~/src/faas."
+        echo >&2 "Or set FAAS_REPO_ROOT in the Lima env and re-provision."
+        exit 1
+      fi
+      echo "V6 rootfs build: repo=${REPO}"
+
+      # Build guest-init (pure-Go static, CGO_ENABLED=0).
+      GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+        go build -trimpath -tags linux -o /tmp/faas-guest-init "${REPO}/guest/init"
+      install -m0755 /tmp/faas-guest-init /usr/local/bin/faas-guest-init
+
+      # Stage the V6 rootfs skeleton: busybox + guest-init + /etc/faas/app.json.
+      # The image is built ONCE per `limactl start`; after that, `make metal-lima`
+      # just reuses the staged files. To rebuild after a guest-init source change,
+      # delete + re-provision (`limactl delete -f faas-metal && limactl start ...`).
+      V6_BASE=/srv/fc/base/v6-base.ext4
+      V6_LAYER=/srv/fc/base/v6-layer.ext4
+      if [ -f "$V6_BASE" ] && [ -f "$V6_LAYER" ]; then
+        echo "V6 rootfs already staged; skipping rebuild."
+        echo "  base : $V6_BASE"
+        echo "  layer: $V6_LAYER"
+        exit 0
+      fi
+
+      WORK="$(mktemp -d)"
+      LWORK="$(mktemp -d)"
+      trap 'rm -rf "$WORK" "$LWORK"' EXIT
+
+      mkdir -p "${WORK}/bin" "${WORK}/sbin" "${WORK}/dev" "${WORK}/sys" \
+               "${WORK}/proc" "${WORK}/etc" "${WORK}/etc/faas" "${WORK}/tmp"
+      cp /usr/local/bin/faas-guest-init "${WORK}/sbin/init"
+      chmod 0755 "${WORK}/sbin/init"
+
+      cp "$(command -v busybox)" "${WORK}/bin/busybox"
+      chmod 0755 "${WORK}/bin/busybox"
+      for name in bin/sh bin/ash bin/cat; do
+        ln -s /bin/busybox "${WORK}/${name}"
+      done
+
+      # The V6 entrypoint: capture /proc/sys/kernel/random/uuid AFTER the
+      # resume hook fires, then busybox httpd-serve / on :8080 so waitReady
+      # can probe (and the test can fetch /etc/faas/uuid.txt).
+      cat >"${WORK}/etc/faas/app.json" <<'JSON'
+{"entrypoint":["/bin/sh","-c","cat /proc/sys/kernel/random/uuid > /etc/faas/uuid.txt && exec /bin/busybox httpd -f -p 8080 -h /"],"port":8080}
+JSON
+
+      # Pre-size and mkfs. ^has_journal matches the busybox helper — drive0
+      # is read-only in the two-drive scheme, journal replay panics on ro mount.
+      truncate -s 64M "$V6_BASE"
+      mkfs.ext4 -O '^has_journal' -d "$WORK" -L faas-v6 -F "$V6_BASE" >/dev/null
+      chmod 0644 "$V6_BASE"
+
+      # Writable layer upper — the guest's overlay writes here. Small is fine.
+      mkdir -p "${LWORK}/etc" "${LWORK}/etc/faas" "${LWORK}/tmp"
+      truncate -s 16M "$V6_LAYER"
+      mkfs.ext4 -O '^has_journal' -d "$LWORK" -L faas-v6-layer -F "$V6_LAYER" >/dev/null
+      chmod 0644 "$V6_LAYER"
+
+      ls -la /srv/fc/base/

@@ -39,7 +39,7 @@ func TestProvisionRewritesPathsIntoChroot(t *testing.T) {
 	cfg := BuildColdBootConfig(ColdBootSpec{
 		KernelPath: kernel, BasePath: base, LayerPath: layer,
 		VcpuCount: 2, MemSizeMiB: 128, Tap: "tap0",
-	})
+	}, 0)
 
 	v := NewJailerVMM(t.TempDir(), 0)
 	out, err := v.provision(root, cfg, 20000, 20000)
@@ -781,3 +781,341 @@ func TestKill_ChrootRemoveErrorFailsWhenBaseIsFile(t *testing.T) {
 		t.Errorf("error %q missing 'remove chroot'", err.Error())
 	}
 }
+
+// ---- ADR-022 vsock + post-restore resume hook -----------------------
+
+// TestGuestVsockCIDSkipsReserved pins the slot→CID derivation: every slot
+// must produce a guest_cid that does NOT collide with the reserved kernel
+// vsock addresses (0/1/2) and is unique per slot.
+func TestGuestVsockCIDSkipsReserved(t *testing.T) {
+	seen := map[uint32]bool{}
+	for slot := 0; slot < 16; slot++ {
+		cid := GuestVsockCID(slot)
+		if cid < VsockCIDBase {
+			t.Errorf("slot=%d -> cid=%d, must be >= VsockCIDBase=%d to skip reserved range", slot, cid, VsockCIDBase)
+		}
+		if seen[cid] {
+			t.Errorf("slot=%d -> cid=%d collides with another slot", slot, cid)
+		}
+		seen[cid] = true
+	}
+	if got := GuestVsockCID(0); got != VsockCIDBase {
+		t.Errorf("GuestVsockCID(0) = %d, want VsockCIDBase=%d", got, VsockCIDBase)
+	}
+	if got := GuestVsockCID(7); got != VsockCIDBase+7 {
+		t.Errorf("GuestVsockCID(7) = %d, want %d", got, VsockCIDBase+7)
+	}
+}
+
+// TestBuildColdBootConfigIncludesVsockDevice asserts the cold-boot config
+// always attaches a vsock device whose guest_cid is slot-derived and whose
+// UDS is the chroot-relative VsockUDSSocketName.
+func TestBuildColdBootConfigIncludesVsockDevice(t *testing.T) {
+	cfg := BuildColdBootConfig(validColdSpec(), 7)
+	if cfg.VsockDevice == nil {
+		t.Fatal("VsockDevice = nil, want attached (ADR-022)")
+	}
+	if cfg.VsockDevice.ID != VsockDeviceID {
+		t.Errorf("VsockDevice.ID = %q, want %q", cfg.VsockDevice.ID, VsockDeviceID)
+	}
+	if cfg.VsockDevice.GuestCID != GuestVsockCID(7) {
+		t.Errorf("VsockDevice.GuestCID = %d, want %d", cfg.VsockDevice.GuestCID, GuestVsockCID(7))
+	}
+	if cfg.VsockDevice.UDSSocket != VsockUDSSocketName {
+		t.Errorf("VsockDevice.UDSSocket = %q, want %q", cfg.VsockDevice.UDSSocket, VsockUDSSocketName)
+	}
+}
+
+// fakeVsockUDSServer pretends to be the Firecracker vsock UDS that
+// TriggerResumeHook dials. It mirrors the FC host-initiated protocol:
+// accept, expect "CONNECT <port>\n", reply "OK <hostside_port>\n",
+// then read the resume-hook payload ([4 BE msg type][JSON body]) and
+// write the 1-byte ack. The captured HostTimeUnixNano flows through
+// onHook so tests can assert wire formatting.
+func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hostTimeUnixNano int64) error) {
+	t.Helper()
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen %s: %v", sockPath, err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		// Step 1: read "CONNECT <port>\n". Read byte-by-byte until newline
+		// so we don't block on ReadFull waiting for a fixed count that the
+		// port number's digit count might vary.
+		connectBuf := make([]byte, 0, 32)
+		readByte := make([]byte, 1)
+		for {
+			if _, err := c.Read(readByte); err != nil {
+				_, _ = c.Write([]byte{1})
+				return
+			}
+			connectBuf = append(connectBuf, readByte[0])
+			if readByte[0] == '\n' {
+				break
+			}
+			if len(connectBuf) > 32 {
+				_, _ = c.Write([]byte{1})
+				return
+			}
+		}
+		if !strings.HasPrefix(string(connectBuf), "CONNECT ") {
+			_, _ = c.Write([]byte{1})
+			return
+		}
+		// Step 2: reply "OK <hostside_port>\n". FC picks an ephemeral
+		// port; the value is for multiplexing bookkeeping and the
+		// host-side reader doesn't validate it.
+		if _, err := c.Write([]byte("OK 1073741824\n")); err != nil {
+			return
+		}
+
+		// Step 3: read the resume-hook payload.
+		body, err := io.ReadAll(c)
+		if err != nil || len(body) < 4 {
+			_, _ = c.Write([]byte{1})
+			return
+		}
+		var nano int64
+		_ = json.Unmarshal(body[4:], &struct {
+			Nano *int64 `json:"hostTimeUnixNano"`
+		}{Nano: &nano})
+		if onHook != nil {
+			if err := onHook(nano); err != nil {
+				_, _ = c.Write([]byte{1})
+				return
+			}
+		}
+		_, _ = c.Write([]byte{ack})
+	}()
+}
+
+// shortChrootBase is the chroot root used by all unit tests that touch
+// vsock / api unix sockets. macOS' sun_path is 104 bytes; t.TempDir()'s path
+// plus "firecracker/<inst>/root/<sock>" already pushes past that on long
+// test names. Using the TMPDIR-rooted short path keeps us under the limit on
+// both Linux and darwin without losing isolation (each test calls
+// os.MkdirAll + os.RemoveAll under its own subdir).
+func shortChrootBase(t *testing.T, sub string) string {
+	t.Helper()
+	// /tmp/<pid>-<sub> keeps the path short and pid-unique for parallel tests.
+	p := filepath.Join(os.TempDir(), fmt.Sprintf("fcvmt-%d-%s", os.Getpid(), sub))
+	if err := os.RemoveAll(p); err != nil {
+		t.Fatalf("clean %s: %v", p, err)
+	}
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", p, err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(p) })
+	return p
+}
+
+// TestTriggerResumeHookDialSuccess: when the UDS is listening and acks ok,
+// TriggerResumeHook returns nil and the wire format is correct.
+func TestTriggerResumeHookDialSuccess(t *testing.T) {
+	chrootBase := shortChrootBase(t, "dialok")
+	instance := "iA"
+	// Path must mirror v.chrootRoot(iA) = <base>/<fcName>/<inst>/root.
+	// macOS' sun_path is 104 bytes; chrootBase + /f/iA/root/vsock.sock
+	// stays under it because chrootBase is TMPDIR-rooted and shortChrootBase
+	// is pid-unique.
+	root := filepath.Join(chrootBase, "f", instance, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(root, VsockUDSSocketName)
+
+	var seenNano int64
+	var callCount int32
+	fakeVsockUDSServer(t, sockPath, 0, func(nano int64) error {
+		atomic.AddInt32(&callCount, 1)
+		seenNano = nano
+		return nil
+	})
+
+	v := &JailerVMM{chrootBase: chrootBase, fcName: "f"}
+	lease := Lease{Instance: instance, Slot: 7}
+	const wantNano = int64(1700000000123456789)
+	if err := v.TriggerResumeHook(context.Background(), lease, wantNano); err != nil {
+		t.Fatalf("TriggerResumeHook: %v", err)
+	}
+	if atomic.LoadInt32(&callCount) != 1 {
+		t.Errorf("hook invocations = %d, want 1", callCount)
+	}
+	if seenNano != wantNano {
+		t.Errorf("hook saw hostTimeUnixNano=%d, want %d", seenNano, wantNano)
+	}
+}
+
+// TestTriggerResumeHookDialTimeout: when no UDS is listening,
+// TriggerResumeHook returns within resumeHookDialDeadline with a wrapped
+// "dial vsock uds" error.
+func TestTriggerResumeHookDialTimeout(t *testing.T) {
+	chrootBase := shortChrootBase(t, "dialto")
+	instance := "iA"
+	root := filepath.Join(chrootBase, "f", instance, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// No fakeVsockUDSServer — the file just doesn't exist.
+
+	v := &JailerVMM{chrootBase: chrootBase, fcName: "f"}
+	lease := Lease{Instance: instance, Slot: 0}
+	ctx, cancel := context.WithTimeout(context.Background(), resumeHookDialDeadline+time.Second)
+	defer cancel()
+	err := v.TriggerResumeHook(ctx, lease, 1)
+	if err == nil {
+		t.Fatal("expected dial-timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "dial vsock uds") {
+		t.Errorf("error %q missing 'dial vsock uds'", err.Error())
+	}
+}
+
+// TestTriggerResumeHookAckPropagatesError: when the listener acks non-zero,
+// TriggerResumeHook returns "resume hook failed (ack=N)".
+func TestTriggerResumeHookAckPropagatesError(t *testing.T) {
+	chrootBase := shortChrootBase(t, "ackerr")
+	instance := "iA"
+	root := filepath.Join(chrootBase, "f", instance, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(root, VsockUDSSocketName)
+	fakeVsockUDSServer(t, sockPath, 1, nil) // nack
+
+	v := &JailerVMM{chrootBase: chrootBase, fcName: "f"}
+	lease := Lease{Instance: instance, Slot: 0}
+	err := v.TriggerResumeHook(context.Background(), lease, 1)
+	if err == nil {
+		t.Fatal("expected nack error, got nil")
+	}
+	if !strings.Contains(err.Error(), "ack=1") {
+		t.Errorf("error %q missing 'ack=1'", err.Error())
+	}
+}
+
+// TestTriggerResumeHookContextCancel: a cancelled ctx surfaces immediately
+// instead of burning the dial budget.
+func TestTriggerResumeHookContextCancel(t *testing.T) {
+	chrootBase := shortChrootBase(t, "ctxcan")
+	instance := "iA"
+	root := filepath.Join(chrootBase, "f", instance, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// No fakeVsockUDSServer — would block until the deadline.
+
+	v := &JailerVMM{chrootBase: chrootBase, fcName: "f"}
+	lease := Lease{Instance: instance, Slot: 0}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := v.TriggerResumeHook(ctx, lease, 1)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context.Canceled", err)
+	}
+}
+
+// TestTriggerResumeHookGuardsRejectsBadInput covers the defense-in-depth
+// guards added after the M8 PR-A review: a nil receiver, an empty
+// instance, or an unconfigured chroot base must fail closed with a clear
+// error rather than dialing a malformed UDS path and returning ENOENT.
+func TestTriggerResumeHookGuardsRejectsBadInput(t *testing.T) {
+	cases := []struct {
+		name    string
+		vmm     *JailerVMM
+		lease   Lease
+		wantSub string
+	}{
+		{
+			name:    "nil receiver",
+			vmm:     nil,
+			lease:   Lease{Instance: "i", Slot: 0},
+			wantSub: "nil receiver",
+		},
+		{
+			name:    "empty instance",
+			vmm:     &JailerVMM{chrootBase: "/tmp", fcName: "f"},
+			lease:   Lease{Instance: "", Slot: 0},
+			wantSub: "empty instance",
+		},
+		{
+			name:    "empty chroot base",
+			vmm:     &JailerVMM{chrootBase: "", fcName: "f"},
+			lease:   Lease{Instance: "i", Slot: 0},
+			wantSub: "chrootBase not configured",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.vmm.TriggerResumeHook(context.Background(), tc.lease, 1)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestBootAttachesVsockDeviceViaConfigFile verifies that the vsock device is
+// configured via the config-file JSON (top-level `vsock:` field), NOT via a
+// post-start PUT /vsock call. FC's /vsock endpoint is pre-boot only and
+// rejects post-start requests with 400 "operation is not supported after
+// starting the microVM" — the config-file path is the only legal way to
+// attach a vsock device.
+//
+// ADR-022.
+func TestBootAttachesVsockDeviceViaConfigFile(t *testing.T) {
+	cfg := BuildColdBootConfig(validColdSpec(), 7)
+
+	if cfg.VsockDevice == nil {
+		t.Fatal("VsockDevice = nil, want attached (ADR-022)")
+	}
+
+	// Marshal to JSON exactly like Boot() does and confirm the top-level
+	// "vsock" key carries the right shape.
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal VMConfig: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal VMConfig: %v", err)
+	}
+	vsockRaw, ok := raw["vsock"]
+	if !ok {
+		t.Fatalf("VMConfig JSON missing top-level `vsock` key; got keys: %v", keysOf(raw))
+	}
+	var vsock struct {
+		GuestCID  uint32 `json:"guest_cid"`
+		UDSSocket string `json:"uds_path"`
+	}
+	if err := json.Unmarshal(vsockRaw, &vsock); err != nil {
+		t.Fatalf("unmarshal vsock: %v (raw=%s)", err, vsockRaw)
+	}
+	if vsock.GuestCID != GuestVsockCID(7) {
+		t.Errorf("vsock.guest_cid = %d, want %d", vsock.GuestCID, GuestVsockCID(7))
+	}
+	if vsock.UDSSocket != VsockUDSSocketName {
+		t.Errorf("vsock.uds_path = %q, want %q", vsock.UDSSocket, VsockUDSSocketName)
+	}
+}
+
+func keysOf(m map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// TestBootRestoresWake_DoesNotInvokeResumeHookOnColdBoot is in
+// manager_test.go — it lives next to seedApp and the engine wiring.
+var _ = "TestBootRestoresWake_DoesNotInvokeResumeHookOnColdBoot lives in manager_test.go"

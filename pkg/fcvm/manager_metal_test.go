@@ -14,6 +14,7 @@ package fcvm
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -306,7 +307,7 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	// Pre-flight: the cgroup fs must be reachable. Skipping (not
 	// failing) is the right behaviour on a dev box that can't mount
 	// cgroupv2 — the production EX44 always has it.
-	const scopeBase = "/sys/fs/cgroup/faas-tenant.slice/vm-mem.scope"
+	scopeBase := "/sys/fs/cgroup/faas-tenant.slice/" + PerInstanceScope("mem")
 	if _, err := os.Stat("/sys/fs/cgroup"); err != nil {
 		t.Skipf("/sys/fs/cgroup not mounted (Lima/macOS dev): %v", err)
 	}
@@ -403,4 +404,222 @@ func TestMetalEgressCapEnforced(t *testing.T) {
 		t.Fatalf("destroy: %v", err)
 	}
 	leakcheck.AssertZero(t)
+}
+
+// TestMetalTwoRestoresDistinctUUID is the V6 acceptance gate (spec §11, §14,
+// ADR-022). One snapshot, restored into two distinct leases, must produce
+// guests whose /etc/faas/uuid.txt differs — the resume hook (vmm.go
+// TriggerResumeHook → guest/init/listen_resume_linux.go) is what guarantees
+// it. Without the hook, both guests inherit the snapshot's RNG stream and
+// the UUIDs collide.
+//
+// The test primes a guest with the V6 rootfs (real faas-guest-init as PID 1
+// + busybox httpd serving / on :8080 — see v6_resume_ext4_metal_test.go),
+// parks it for a snapshot, then Wake()s into two distinct instances
+// ("v6a" and "v6b" → slots 0 and 1). Each guest writes its own
+// /proc/sys/kernel/random/uuid into /etc/faas/uuid.txt on first boot
+// AFTER the resume hook fires, so the file the httpd serves is the
+// post-reroll value.
+//
+// Failure modes this catches:
+//   - TriggerResumeHook silently swallowing errors (UUIDs collide)
+//   - guest-init's listenResumeHook failing to bind (both dials time out →
+//     cold-boot fallback → manager returns WakeColdBoot → Method check fails)
+//   - The reseed not actually re-keying the pool (regression of the
+//     reseedFromHWRNG io.CopyN call)
+func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
+	kernel, _, _ := metalImages(t)
+	m := newMetalManager(t, kernel)
+	withCgroupRootAt(t, "/sys/fs/cgroup")
+
+	// Build the V6 rootfs (guest-init + busybox + app.json) in t.TempDir so
+	// each run gets a fresh, isolated image. Pass the repo root through
+	// so buildV6BaseExt4 can `go build ./guest/init` against this checkout.
+	base, layer := ensureV6Ext4(t, t.TempDir(), repoRoot(t))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Prime: cold-boot once and grab the prime's host IP so we can read
+	// its uuid.txt before we park it. Two wake calls below will collide on
+	// slots 0 and 1; the prime holds slot 2 (instance names are unique
+	// per acquire).
+	if _, err := m.ColdBoot(ctx, ColdBootRequest{
+		Instance:   "v6prime",
+		BasePath:   base,
+		LayerPath:  layer,
+		VcpuCount:  2,
+		MemSizeMiB: 128,
+	}); err != nil {
+		t.Fatalf("V6 prime cold boot: %v", err)
+	}
+
+	// Find the prime's host IP by walking live instances — the Manager
+	// doesn't expose a public lookup, but the test owns the only instance
+	// running on this Manager so iteration is fine.
+	primeIP := ""
+	for _, inst := range m.liveInstances() {
+		if inst.Lease.Instance == "v6prime" {
+			primeIP = inst.Lease.HostIP.String()
+			break
+		}
+	}
+	if primeIP == "" {
+		t.Fatal("V6 prime not in live map after ColdBoot")
+	}
+	primeUUID := fetchV6UUID(t, primeIP)
+	if primeUUID == "" {
+		t.Fatalf("V6 prime served empty uuid")
+	}
+	t.Logf("V6 prime uuid (cold boot): %s @ %s", primeUUID, primeIP)
+
+	snapDir := t.TempDir()
+	snap := &Snapshot{
+		FCVersion:   os.Getenv("FAAS_TEST_FC_VERSION"),
+		MemPath:     snapDir + "/mem",
+		VMStatePath: snapDir + "/vmstate",
+	}
+	if _, err := m.Park(ctx, "v6prime", SnapshotSpec{MemPath: snap.MemPath, VMStatePath: snap.VMStatePath}); err != nil {
+		t.Fatalf("V6 prime park: %v", err)
+	}
+
+	// Two restores from the same snapshot. Distinct instances → distinct
+	// leases → distinct slots → distinct guest_cid (ADR-022). Each Wake
+	// must succeed via the RESTORE path (cold-boot fallback means the
+	// resume hook never fired → silent UUID collision we want to catch).
+	type restore struct {
+		name   string
+		uuid   string
+		method WakeMethod
+		ip     string
+	}
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		out   [2]restore
+		errs  = make([]error, 2)
+		names = [2]string{"v6a", "v6b"}
+	)
+	for i, name := range names {
+		i, name := i, name
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			inst, err := m.Wake(ctx, WakeRequest{
+				Instance: name, BasePath: base, LayerPath: layer,
+				VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
+			})
+			if err != nil {
+				mu.Lock()
+				errs[i] = err
+				mu.Unlock()
+				return
+			}
+			if inst.Method != WakeRestore {
+				mu.Lock()
+				errs[i] = fmt.Errorf("%s came up via %s — restore regressed (resume hook may have failed)", name, inst.Method)
+				mu.Unlock()
+				return
+			}
+			ip := inst.Lease.HostIP.String()
+			uuid := fetchV6UUID(t, ip)
+			mu.Lock()
+			out[i] = restore{name: name, uuid: uuid, method: inst.Method, ip: ip}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("restore %s: %v", names[i], err)
+		}
+	}
+	t.Logf("V6 restore A uuid: %s @ %s (method=%s)", out[0].uuid, out[0].ip, out[0].method)
+	t.Logf("V6 restore B uuid: %s @ %s (method=%s)", out[1].uuid, out[1].ip, out[1].method)
+
+	if out[0].uuid == "" || out[1].uuid == "" {
+		t.Fatalf("one or both UUIDs empty (A=%q, B=%q)", out[0].uuid, out[1].uuid)
+	}
+	if out[0].uuid == out[1].uuid {
+		t.Errorf("two restores share UUID %q — resume hook failed (V6 regression)", out[0].uuid)
+	}
+	if out[0].uuid == primeUUID || out[1].uuid == primeUUID {
+		// Snapshot stream was used as-is. Even one match is a hard fail.
+		t.Errorf("a restored guest matches the prime's UUID — resume hook didn't re-seed")
+	}
+
+	// Teardown both restores.
+	for _, name := range names {
+		if err := m.Destroy(ctx, name); err != nil {
+			t.Errorf("destroy %s: %v", name, err)
+		}
+	}
+	leakcheck.AssertZero(t)
+}
+
+// fetchV6UUID GETs /etc/faas/uuid.txt from a V6 guest's host-side identity.
+// Polls briefly because busybox httpd takes a beat to bind :8080 after the
+// resume hook fires (guest-init's listenResumeHook returns BEFORE the
+// supervisor starts the app, so the httpd only comes up after the manifest
+// entrypoint execs). waitReady's first accept is the load-bearing assertion
+// for cold boot; here we tolerate a few extra ms on restore because we're
+// asserting the post-reroll file value, not the accept itself.
+func fetchV6UUID(t *testing.T, hostIP string) string {
+	t.Helper()
+	url := "http://" + hostIP + ":8080/etc/faas/uuid.txt"
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err != nil {
+			time.Sleep(150 * time.Millisecond)
+			continue
+		}
+		if resp.StatusCode == http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			return strings.TrimSpace(string(body))
+		}
+		_ = resp.Body.Close()
+		time.Sleep(150 * time.Millisecond)
+	}
+	return ""
+}
+
+// repoRoot walks up from the test working directory until it finds
+// go.mod (the repo root). Used by ensureV6Ext4 to `go build ./guest/init`
+// against the real source — guest-init must come from THIS checkout so the
+// listener's wire format matches ADR-022 in pkg/fcvm/vmm.go.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	dir := wd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("could not find repo root (no go.mod above %s)", wd)
+		}
+		dir = parent
+	}
+}
+
+// liveInstances returns a snapshot of the Manager's live instance map.
+// Test-only helper used by V6 to find a freshly-booted instance's host IP.
+// Mirrors the package-private live field; exposed here (not in manager.go)
+// because adding a public lookup API for one test would expand the package
+// surface for no other reason.
+func (m *Manager) liveInstances() []*Instance {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*Instance, 0, len(m.live))
+	for _, inst := range m.live {
+		out = append(out, inst)
+	}
+	return out
 }

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"bufio"
 	"log/slog"
 	"net"
 	"net/http"
@@ -11,9 +12,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
-// AuthLimitConfig is the per-IP rate limit on 401 responses from a
+// AuthLimitConfig is the per-IP rate limit on failed auth attempts from a
 // protected handler (spec §11: "rate limit auth failures (10/min/IP)").
 // Default values match the spec; tests can override.
+//
+// Keying is by client IP alone — do not fragment to per-endpoint or
+// per-tenant. Spec §11 says "10/min/IP" — the doc-comment on the wire
+// field makes the binding explicit so a future maintainer doesn't add
+// a parallel limiter.
 type AuthLimitConfig struct {
 	// Window is the sliding-window length. Default 1m.
 	Window time.Duration
@@ -26,55 +32,36 @@ type AuthLimitConfig struct {
 	// ClientIPFn extracts the rate-limit key. nil ⇒ net.SplitHostPort
 	// from r.RemoteAddr, falling back to the literal string.
 	ClientIPFn func(*http.Request) string
+	// CountStatuses lists the HTTP statuses that count toward the
+	// per-IP bucket. Default: [401]. The sentinel value 0 means
+	// "count every response, regardless of status" — used on /login
+	// where anti-enumeration returns 200 even for unknown emails, so
+	// a true 401/403-only limiter would miss the brute-force signal.
+	CountStatuses []int
 }
 
-// AuthLimit wraps next so that after MaxFailures 401s from a single
-// client IP inside the Window, subsequent requests from that IP get
-// 429 Retry-After=60 with no further handler work. The limiter is
+// CountEveryAttempt is the sentinel status for CountStatuses meaning
+// "count every response regardless of status". See AuthLimitConfig.
+const CountEveryAttempt = 0
+
+// AuthLimit wraps next so that after MaxFailures tracked responses from
+// a single client IP inside the Window, subsequent requests from that IP
+// get 429 Retry-After=60 with no further handler work. The limiter is
 // in-memory; this is a defence-in-depth layer over the gateway's
 // edge-level per-app limiter, not a multi-host accurate counter.
+//
+// The bucket is fresh per call. To share one bucket across multiple
+// routes (so spec §11 "10/min/IP" is enforced across the entire /v1/*
+// surface, not per route), use NewLimiter + AuthLimitWithLimiter.
 func AuthLimit(cfg AuthLimitConfig) func(http.Handler) http.Handler {
-	if cfg.Window == 0 {
-		cfg.Window = time.Minute
-	}
-	if cfg.MaxFailures == 0 {
-		cfg.MaxFailures = 10
-	}
-	if cfg.Now == nil {
-		cfg.Now = time.Now
-	}
-	if cfg.Log == nil {
-		cfg.Log = slog.Default()
-	}
-	if cfg.ClientIPFn == nil {
-		cfg.ClientIPFn = defaultClientIP
-	}
-	l := &authLimiter{cfg: cfg}
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := cfg.ClientIPFn(r)
-			if l.isLimited(ip, cfg.Now()) {
-				w.Header().Set("Retry-After", "60")
-				http.Error(w, "too many failed login attempts; try again in 60 seconds", http.StatusTooManyRequests)
-				cfg.Log.Warn("auth_limit blocked",
-					"ip", logsanitize.Field(ip),
-					"path", logsanitize.Field(r.URL.Path),
-					"request_id", RequestIDFrom(r),
-				)
-				return
-			}
-			rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-			next.ServeHTTP(rw, r)
-			if rw.status == http.StatusUnauthorized {
-				l.recordFailure(ip, cfg.Now())
-			}
-		})
-	}
+	return AuthLimitWithLimiter(cfg, NewLimiter(cfg))
 }
 
 // statusRecorder is a tiny ResponseWriter wrapper that captures the
 // status code so AuthLimit can react to 401s without buffering the
-// body.
+// body. Forwarding Flush/Hijack is required: SSE handlers (e.g. apid's
+// streamDeploymentLogs) type-assert http.Flusher and panic if the
+// wrapper doesn't expose it.
 type statusRecorder struct {
 	http.ResponseWriter
 	status      int
@@ -97,6 +84,26 @@ func (r *statusRecorder) Write(p []byte) (int, error) {
 	return r.ResponseWriter.Write(p)
 }
 
+// Flush forwards to the underlying ResponseWriter if it implements
+// http.Flusher. Returns false otherwise (which is fine — non-flushable
+// writers like the test recorder still work, they just don't stream).
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack forwards to the underlying ResponseWriter if it implements
+// http.Hijacker (WebSocket upgrade, raw TCP behind the writer).
+// Returning http.ErrNotSupported keeps net/http's contract: a handler
+// that requests Hijack on a non-hijackable writer must fail loudly.
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
 // authLimiter is the in-memory per-IP token bucket. failures is a
 // sorted slice of timestamps; on each new failure we drop anything
 // older than Now()-Window and check the length against MaxFailures.
@@ -109,6 +116,108 @@ type authLimiter struct {
 	// failures is keyed by client IP. Each value is a slice of failure
 	// timestamps in arrival order.
 	failures map[string][]time.Time
+}
+
+// Limiter is the exported handle on an authLimiter. Use NewLimiter to
+// share one bucket across multiple AuthLimit-wrapped handlers
+// (spec §11 "rate limit auth failures 10/min/IP" is per-IP, not per
+// (IP, endpoint) — callers MUST share a Limiter across every route
+// they want covered by the same budget, otherwise each route gets its
+// own 10/min budget and the spec is silently violated).
+type Limiter struct{ inner *authLimiter }
+
+// NewLimiter returns a fresh Limiter for cfg. Pass the same Limiter
+// to AuthLimitWithLimiter on every handler that should share the
+// budget.
+func NewLimiter(cfg AuthLimitConfig) *Limiter {
+	if cfg.Window == 0 {
+		cfg.Window = time.Minute
+	}
+	if cfg.MaxFailures == 0 {
+		cfg.MaxFailures = 10
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.Log == nil {
+		cfg.Log = slog.Default()
+	}
+	if cfg.ClientIPFn == nil {
+		cfg.ClientIPFn = defaultClientIP
+	}
+	return &Limiter{inner: &authLimiter{cfg: cfg}}
+}
+
+// AuthLimitWithLimiter is AuthLimit but the bucket is shared with other
+// handlers that pass the same Limiter. Use this on a server's entire
+// /v1/* surface so a brute-force attack spread across routes still
+// trips the per-IP budget. The cfg's Window/MaxFailures/Now/Log fields
+// are read from limiter's underlying cfg; the cfg passed here is used
+// only for CountStatuses / CountEveryAttempt semantics.
+func AuthLimitWithLimiter(cfg AuthLimitConfig, lim *Limiter) func(http.Handler) http.Handler {
+	if lim == nil {
+		// Refuse to silently fall back to a fresh bucket: that is exactly
+		// the spec-violating behaviour this constructor exists to prevent.
+		panic("middleware: AuthLimitWithLimiter called with nil Limiter")
+	}
+	if cfg.Now == nil {
+		// Default time source — NewLimiter already set this on lim.inner.cfg,
+		// but the cfg the caller passes here drives cfg.Now() inside the
+		// per-request closure, so it must also default independently.
+		cfg.Now = time.Now
+	}
+	if cfg.Log == nil {
+		cfg.Log = slog.Default()
+	}
+	if cfg.ClientIPFn == nil {
+		cfg.ClientIPFn = defaultClientIP
+	}
+	countAll := false
+	for _, s := range cfg.CountStatuses {
+		if s == CountEveryAttempt {
+			countAll = true
+			break
+		}
+	}
+	if !countAll && len(cfg.CountStatuses) == 0 {
+		cfg.CountStatuses = []int{http.StatusUnauthorized}
+	}
+	countFn := func(status int) bool {
+		if countAll {
+			return true
+		}
+		for _, s := range cfg.CountStatuses {
+			if s == status {
+				return true
+			}
+		}
+		return false
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := cfg.ClientIPFn(r)
+			if lim.inner.isLimited(ip, cfg.Now()) {
+				w.Header().Set("Retry-After", "60")
+				http.Error(w, "too many failed login attempts; try again in 60 seconds", http.StatusTooManyRequests)
+				cfg.Log.Warn("auth_limit blocked",
+					"ip", logsanitize.Field(ip),
+					"path", logsanitize.Field(r.URL.Path),
+					// The id helper falls back to the X-Request-ID header set
+					// by an upstream proxy (or directly by the caller); both
+					// are attacker-influenced. Sanitize before logging so a
+					// crafted id with a CR/LF can't smuggle an extra log line
+					// (CWE-117, CodeQL go/log-injection).
+					"request_id", logsanitize.Field(RequestIDFrom(r)),
+				)
+				return
+			}
+			rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(rw, r)
+			if countFn(rw.status) {
+				lim.inner.recordFailure(ip, cfg.Now())
+			}
+		})
+	}
 }
 
 func (l *authLimiter) recordFailure(ip string, now time.Time) {

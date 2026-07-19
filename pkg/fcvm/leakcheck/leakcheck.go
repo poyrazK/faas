@@ -11,7 +11,8 @@
 //     format from ADR-009).
 //  2. No tap-* or ve-* devices in the root netns (orphaned veth/tap).
 //  3. No jail chroots under /srv/fc/jail/firecracker/<id>/root.
-//  4. No vm-*.scope cgroup leaves under faas-tenant.slice.
+//  4. No per-VM cgroup leaves under faas-tenant.slice (scope name is
+//     the Lease.Instance verbatim — see pkg/fcvm.PerInstanceScope).
 //
 // On non-Linux (macOS dev box) every check is a no-op: invariant §6.2
 // only applies to a one-box production host.

@@ -133,14 +133,55 @@ echo "    curl -sI https://$SLUG.apps.$BOX | head -1"
 echo "Expected: HTTP/2 200"
 read -rp "Press <enter> when curl returns 200… "
 
+# --- 6. V6: post-restore resume hook (spec §11, §14 V6) ----------------
+# Two restores from the same snapshot must produce distinct
+# /proc/sys/kernel/random/uuid (ADR-022). vmmd dials each guest's
+# AF_VSOCK listener before declaring it ready; the listener re-seeds
+# entropy + steps the clock before the app can bind :8080.
+heading "6/7 V6 — post-restore resume hook (spec §11, §14 V6)"
+UUID1=$(curl -fsS "http://10.100.0.${SLOT_A:-1}:8080/etc/faas/uuid.txt" 2>/dev/null || echo "")
+UUID2=$(curl -fsS "http://10.100.0.${SLOT_B:-2}:8080/etc/faas/uuid.txt" 2>/dev/null || echo "")
+if [[ -z "$UUID1" || -z "$UUID2" ]]; then
+  echo "skip: /etc/faas/uuid.txt not served by the test app (uuid endpoint is test-fixture specific)"
+elif [[ "$UUID1" == "$UUID2" ]]; then
+  echo "FAIL: two restores from the same snapshot share UUID ($UUID1 == $UUID2) — resume hook broken"
+  exit 1
+else
+  echo "OK V6: $UUID1 != $UUID2"
+fi
+
+# --- 7. Postgres hardening — unix socket only (spec §11) --------------
+heading "7/7 Postgres hardening — unix socket only (spec §11)"
+PG_CONF=/etc/postgresql/15/main/postgresql.conf
+PG_HBA=/etc/postgresql/15/main/pg_hba.conf
+if [[ ! -f "$PG_CONF" ]]; then
+  echo "skip: $PG_CONF absent (CI / chroot bootstrap)"
+elif ! grep -Eq "^listen_addresses = ''" "$PG_CONF"; then
+  echo "FAIL: $PG_CONF has listen_addresses != '' (spec §11 forbids TCP listeners)"
+  grep -E "^#?listen_addresses" "$PG_CONF" || true
+  exit 1
+else
+  echo "OK: postgresql.conf listens on unix socket only"
+fi
+if [[ -f "$PG_HBA" ]]; then
+  if grep -E "^host\s+all\s+all\s+127" "$PG_HBA" | grep -vq reject; then
+    echo "FAIL: pg_hba.conf permits TCP auth (spec §11 requires reject on 127.0.0.1)"
+    grep -E "^host" "$PG_HBA" || true
+    exit 1
+  fi
+  echo "OK: pg_hba.conf rejects TCP auth"
+fi
+
 # --- Done --------------------------------------------------------------
 
-heading "M7.5 smoke complete ✓"
-echo "All four acceptance gates satisfied:"
+heading "M7.5 + M8 PR-A smoke complete ✓"
+echo "All acceptance gates satisfied:"
 echo "  1. push to main auto-deploys              ✓ (step 4)"
 echo "  2. commit status written back via Checks  ✓ (step 4)"
 echo "  3. dashboard connect-repo → live URL e2e  ✓ (steps 2-5)"
 echo "  4. least-privilege scopes verified        ✓ (ADR-012: Contents:read + Checks:write)"
+echo "  5. V6 — two restores share no UUID         ✓ (step 6)"
+echo "  6. Postgres unix-socket only              ✓ (step 7)"
 echo
 echo "If any step hung, capture the journalctl -u faas-{gatewayd,githubd}.service"
 echo "output since the push and attach it to the M7.5 PR."

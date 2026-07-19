@@ -68,3 +68,41 @@
     owner: postgres
     group: postgres
     mode: "0755"
+
+# Spec §11 ship-blocker: Postgres must listen on the unix socket ONLY.
+# `listen_addresses = ''` is PGC_POSTMASTER — change requires restart.
+# `pg_hba.conf` is reload-only. Both handlers in handlers/main.yml fail
+# gracefully on hosts without systemd (CI / chroot) so the role stays
+# idempotent across the bootstrap path.
+- name: postgres — set listen_addresses='' (unix socket only, spec §11)
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql/15/main/postgresql.conf
+    regexp: "^#?listen_addresses\\s*="
+    line: "listen_addresses = ''"
+    create: false
+  register: pg_listen
+  failed_when: false  # chroot/CI may not have the conf file
+  notify: restart postgresql
+
+- name: postgres — narrow pg_hba.conf to peer/local auth (spec §11)
+  ansible.builtin.copy:
+    dest: /etc/postgresql/15/main/pg_hba.conf
+    owner: postgres
+    group: postgres
+    mode: "0640"
+    content: |
+      # one-box FaaS security baseline (spec §11): unix-socket only.
+      # Production clients connect via the local socket in /var/run/postgresql.
+      local   all             postgres                                peer
+      local   all             faas                                    peer
+      host    all             all             127.0.0.1/32            reject
+      host    all             all             ::1/128                 reject
+  register: pg_hba
+  failed_when: false
+  notify: reload postgresql
+
+- name: postgres — verify unix-socket-only listeners (defensive)
+  ansible.builtin.command: pg_lsclusters
+  register: pg_lsclusters
+  changed_when: false
+  failed_when: false

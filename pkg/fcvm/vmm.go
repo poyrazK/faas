@@ -3,10 +3,12 @@ package fcvm
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -152,6 +154,10 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig) (err error)
 	if err = v.startJailer(ctx, l, "--config-file", VMConfigName); err != nil {
 		return err
 	}
+	// Vsock is configured via the config-file (top-level `vsock:` field,
+	// see VMConfig). Firecracker attaches it pre-start; the UDS at
+	// vsockUDSSock is created by the time startJailer returns. No
+	// post-start PUT needed.
 	if err = v.waitReady(ctx, l); err != nil {
 		return fmt.Errorf("vmm: readiness: %w", err)
 	}
@@ -220,8 +226,192 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.apiPut(ctx, l.Instance, "/snapshot/load", body); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
+	// Vsock is in the config-file (set at config-write time before
+	// startJailer), so the UDS is live by the time /snapshot/load
+	// completes. Trigger the resume hook now to re-seed entropy and step
+	// the clock before the app can bind :8080 (spec §11 V6).
+	if err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano()); err != nil {
+		return fmt.Errorf("vmm: resume hook: %w", err)
+	}
 	if err = v.waitReady(ctx, l); err != nil {
 		return fmt.Errorf("vmm: readiness after restore: %w", err)
+	}
+	return nil
+}
+
+// vsockUDSSock is the host-side path the TriggerResumeHook dialer reaches.
+// It's the chroot-local UDS the jailer creates; vmmd dials it from the
+// chroot root because the firecracker process is unprivileged and only its
+// jailer uid can read the socket file.
+func (v *JailerVMM) vsockUDSSock(instance string) string {
+	return filepath.Join(v.chrootRoot(instance), VsockUDSSocketName)
+}
+
+// resumeHookDialDeadline bounds the TriggerResumeHook wait. The jailer
+// creates the vsock UDS a few ms after firecracker accepts the /vsock PUT; on
+// a slow nested-KVM guest this can take ~50 ms. Five seconds is well above
+// the realistic ceiling and well below the spec §6.1 readyTimeout (30 s).
+const resumeHookDialDeadline = 5 * time.Second
+
+// resumeHookDialStep is the per-attempt backoff between dial retries.
+const resumeHookDialStep = 20 * time.Millisecond
+
+// resumeHookMsgResume is the wire-format discriminator for a resume request.
+// 4-byte big-endian header + JSON body (ADR-022). Adding new msg types does
+// not break the wire — guests that don't recognise a type nack-and-close.
+const resumeHookMsgResume uint32 = 1
+
+// closeWriter is implemented by net.UnixConn (and AF_VSOCK when projected
+// onto the stdlib net.Conn shape on Linux). The host uses it after writing
+// the request to signal "no more bytes" so the guest's ReadAll on the body
+// unblocks and the guest can run the hook + write the ack.
+type closeWriter interface{ CloseWrite() error }
+
+// resumeHookGuestPort is the AF_VSOCK port the guest-init resume
+// listener binds. Must match guest/init/listen_resume_linux.go's
+// VsockResumePort.
+const resumeHookGuestPort = 1024
+
+// readConnectAck consumes the "OK <hostside_port>\n" reply from
+// Firecracker. Returns the first whitespace-delimited token. Reads
+// until newline so the byte count doesn't matter (FC's host-assigned
+// port is a 32-bit integer — variable digit count).
+func readConnectAck(conn net.Conn) (string, error) {
+	const max = 64
+	buf := make([]byte, 0, max)
+	one := make([]byte, 1)
+	for len(buf) < max {
+		if _, err := conn.Read(one); err != nil {
+			return "", fmt.Errorf("read CONNECT reply: %w", err)
+		}
+		if one[0] == '\n' || one[0] == '\r' {
+			break
+		}
+		buf = append(buf, one[0])
+	}
+	if len(buf) == 0 {
+		return "", fmt.Errorf("empty CONNECT reply")
+	}
+	// Return the first whitespace-delimited token.
+	for i := 0; i < len(buf); i++ {
+		if buf[i] == ' ' {
+			return string(buf[:i]), nil
+		}
+	}
+	return string(buf), nil
+}
+
+// TriggerResumeHook dials the guest's vsock UDS and asks it to run its
+// post-restore side effects (re-seed entropy + step clock). Must be called
+// from Restore after /snapshot/load and before waitReady. Spec §11 V6 is the
+// acceptance gate: two instances from one snapshot must produce distinct
+// /proc/sys/kernel/random/uuid immediately post-resume.
+//
+// Wire format (Firecracker vsock host-initiated, FC docs/vsock.md):
+//
+//  1. Host connects to <chroot>/vsock.sock.
+//  2. Host writes ASCII "CONNECT <port>\n" (e.g. "CONNECT 1024\n").
+//  3. Firecracker replies with "OK <assigned_hostside_port>\n".
+//  4. Bidirectional byte stream — host writes the resume-hook payload,
+//     guest writes back a 1-byte ack.
+//
+// Payload format (ADR-022): 4-byte big-endian msg type (= 1 =
+// MSG_RESUME) + JSON body {"hostTimeUnixNano": N}. The guest's
+// listenResumeHook (guest/init/listen_resume_linux.go) reads the same
+// shape and writes back ack=0 (ok) or ack=1 (nack).
+//
+// We fail closed: any error (dial timeout, CONNECT failure, payload
+// write failure, nack) returns wrapped. A restored VM with snapshot-
+// shared entropy is exactly the failure mode V6 rejects, so we refuse
+// to declare it ready.
+func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
+	// Defense-in-depth: refuse to dial with a half-built VMM or empty instance.
+	// Without this guard, a refactor that passes an uninitialised JailerVMM
+	// (test seam, future caller) would dial a malformed UDS path and return a
+	// cryptic ENOENT — fails closed, but the operator gets no clue. With the
+	// guard, the failure mode is a clear "this VM was never set up right".
+	if v == nil {
+		return fmt.Errorf("vmm: TriggerResumeHook: nil receiver")
+	}
+	if l.Instance == "" {
+		return fmt.Errorf("vmm: TriggerResumeHook: empty instance")
+	}
+	if v.chrootBase == "" {
+		return fmt.Errorf("vmm: TriggerResumeHook: chrootBase not configured")
+	}
+	sock := v.vsockUDSSock(l.Instance)
+	deadline := time.Now().Add(resumeHookDialDeadline)
+	var conn net.Conn
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var err error
+		conn, err = net.DialTimeout("unix", sock, 200*time.Millisecond)
+		if err == nil {
+			break
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(resumeHookDialStep):
+		}
+	}
+	if conn == nil {
+		return fmt.Errorf("vmm: dial vsock uds %s: %w", sock, lastErr)
+	}
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetDeadline(time.Now().Add(resumeHookDialDeadline))
+
+	// Step 1: FC CONNECT-port handshake. "CONNECT <port>\n" — ASCII,
+	// newline-terminated. Guest listens on port VsockResumePort (1024).
+	connectCmd := fmt.Sprintf("CONNECT %d\n", resumeHookGuestPort)
+	if _, err := conn.Write([]byte(connectCmd)); err != nil {
+		return fmt.Errorf("vmm: write CONNECT %d: %w", resumeHookGuestPort, err)
+	}
+
+	// Step 2: read "OK <hostside_port>\n". FC prefixes the host-assigned
+	// ephemeral port with "OK ". We don't care about the value (it's
+	// for connection-multiplexing bookkeeping on the FC side), only
+	// that the response starts with "OK ".
+	connectAck, err := readConnectAck(conn)
+	if err != nil {
+		return fmt.Errorf("vmm: read CONNECT ack: %w", err)
+	}
+	if connectAck != "OK" {
+		return fmt.Errorf("vmm: CONNECT rejected: %q", connectAck)
+	}
+
+	// Step 3: write the resume-hook payload. 4-byte BE msg type + JSON body.
+	body, err := json.Marshal(struct {
+		HostTimeUnixNano int64 `json:"hostTimeUnixNano"`
+	}{HostTimeUnixNano: hostTimeUnixNano})
+	if err != nil {
+		return fmt.Errorf("vmm: marshal resume body: %w", err)
+	}
+	msg := make([]byte, 4+len(body))
+	binary.BigEndian.PutUint32(msg[:4], resumeHookMsgResume)
+	copy(msg[4:], body)
+	// Step 3 ends; Step 4 reads the 1-byte ack.
+	if _, err := conn.Write(msg); err != nil {
+		return fmt.Errorf("vmm: write resume request: %w", err)
+	}
+	// Close our write half so the guest's ReadAll unblocks and it can
+	// write the ack.
+	if cw, ok := conn.(closeWriter); ok {
+		_ = cw.CloseWrite()
+	}
+
+	// Step 4: read the 1-byte ack from the guest.
+	ack := make([]byte, 1)
+	if _, err := io.ReadFull(conn, ack); err != nil {
+		return fmt.Errorf("vmm: read resume ack: %w", err)
+	}
+	if ack[0] != 0 {
+		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
 	}
 	return nil
 }
@@ -288,6 +478,22 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	// Chroot lives in tmpfs (spec §Gotchas); removing it frees the RAM it holds.
 	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
+	}
+	// Remove the per-VM cgroup scope jailer created (--cgroup cpu.weight=…).
+	// Required by spec §6.2-4 ("parked = zero RAM") — a populated cgroup dir
+	// holds page-cache references. The scope name equals jailer --id
+	// (= Lease.Instance); see pkg/fcvm/cgroup.go for the matching write path.
+	// Idempotent; missing dir is fine.
+	//
+	// EBUSY (or any other non-IsNotExist error) is logged and swallowed: the
+	// jailer process is already gone at this point, so we cannot rewind the
+	// teardown. A leftover cgroup dir leaks RAM only until the next cgroup
+	// pressure event reaps it; failing the whole call would mask the real
+	// teardown success.
+	scopePath := filepath.Join(cgroupRoot, ParentCgroup, PerInstanceScope(l.Instance))
+	if err := os.RemoveAll(scopePath); err != nil && !os.IsNotExist(err) {
+		slog.Default().Warn("cgroup scope remove failed; continuing teardown",
+			"path", scopePath, "instance", l.Instance, "err", err)
 	}
 	return nil
 }

@@ -68,6 +68,11 @@ func PlanWake(snap *Snapshot, currentFCVersion string) WakeMethod {
 // chroot before loading the snapshot. Without this the snapshot's recorded
 // drive path resolves to a file that no longer exists and Firecracker 400s
 // with "Error manipulating the backing file: No such file or directory".
+//
+// VsockDevice is the same device BuildColdBootConfig attaches on the cold-boot
+// path; the VMM PUTs /vsock after /snapshot/load and dials it to fire the
+// guest's post-restore resume hook (spec §4.8, §11 V6, ADR-022). nil is
+// tolerated (test seam) but production always sets it.
 type RestoreSpec struct {
 	MemPath     string
 	VMStatePath string
@@ -75,6 +80,7 @@ type RestoreSpec struct {
 	KernelPath  string // /srv/fc/base/vmlinux-6.1.x — re-staged as basename in chroot
 	BasePath    string // drive0 shared ro base rootfs
 	LayerPath   string // drive1 per-app layer (overlay upper)
+	VsockDevice *VsockDevice
 }
 
 // SnapshotSpec is where to write a new snapshot's files (spec §4.4).

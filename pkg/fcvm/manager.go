@@ -36,6 +36,13 @@ type VMM interface {
 	// Restore loads a snapshot into a fresh jailed firecracker and resumes it,
 	// returning once the guest is ready. On error it cleans up its own process.
 	Restore(ctx context.Context, l Lease, spec RestoreSpec) error
+	// TriggerResumeHook dials the guest's vsock UDS and asks it to run its
+	// post-restore side effects (re-seed entropy + step clock, guest/init/resume.go).
+	// Must be called from Restore after /snapshot/load and before waitReady so
+	// the app cannot accept on :8080 with a stale RNG stream (spec §11 V6).
+	// ADR-022 records the wire format (4-byte msg type + JSON body, port 1024
+	// on the fixed host CID 3).
+	TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error
 	// Snapshot pauses the running VM, writes a full snapshot to spec's paths, and
 	// destroys the VM (spec §4.4). The instance is gone when this returns.
 	Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (SnapshotInfo, error)
@@ -316,12 +323,22 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			KernelPath: m.paths.Kernel,
 			BasePath:   req.BasePath,
 			LayerPath:  req.LayerPath,
+			// ADR-022: same vsock device the cold-boot path attaches, derived
+			// from the lease's slot so the guest's listener is reachable at a
+			// globally unique guest_cid.
+			VsockDevice: NewVsockDevice(lease.Slot),
 		}
 		if rErr := m.vmm.Restore(ctx, lease, rs); rErr == nil {
 			return WakeRestore, nil
 		} else {
 			// Fall back to cold boot into the same netns; kill any half-restored VM.
-			m.log.Warn("restore failed; cold-boot fallback", "instance", req.Instance, "err", rErr)
+			// The wrapped rErr names the failure mode (vsock dial timeout vs
+			// ack-nack vs /snapshot/load failure) so the operator doesn't have
+			// to dig through vmm.go to find out why the resume hook fired.
+			m.log.Warn("restore failed, falling back to cold boot",
+				"instance", req.Instance,
+				"err", rErr,
+				"slot", lease.Slot)
 			_ = m.vmm.Kill(ctx, lease)
 		}
 	}
@@ -337,7 +354,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	if err := spec.Validate(); err != nil {
 		return WakeColdBoot, fmt.Errorf("wake %s: %w", req.Instance, err)
 	}
-	if err := m.vmm.Boot(ctx, lease, BuildColdBootConfig(spec)); err != nil {
+	if err := m.vmm.Boot(ctx, lease, BuildColdBootConfig(spec, lease.Slot)); err != nil {
 		return WakeColdBoot, fmt.Errorf("wake %s: cold boot: %w", req.Instance, err)
 	}
 	return WakeColdBoot, nil

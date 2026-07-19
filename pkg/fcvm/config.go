@@ -16,6 +16,39 @@ type VMConfig struct {
 	NetworkInterfaces []NetIface `json:"network-interfaces"`
 	// Entropy is an empty object to attach virtio-rng (always on, spec §11).
 	Entropy *Entropy `json:"entropy,omitempty"`
+	// VsockDevice, when set, attaches a vsock device (ADR-022). The host dials
+	// it from outside the chroot to trigger the post-restore resume hook
+	// (guest/init/resume.go). Always attached on cold boot too, so the cold-
+	// boot fallback path matches the restore path's device layout.
+	//
+	// JSON tag is `vsock` (NOT `vsock-device`) to match the Firecracker
+	// config-file schema (FC swagger FullVmConfiguration.vsock). The wire
+	// shape inside is identical to the Vsock type the PUT /vsock API
+	// endpoint accepts.
+	VsockDevice *VsockDevice `json:"vsock,omitempty"`
+}
+
+// VsockDevice is the Firecracker vsock binding the host uses to dial the guest
+// after a restore. guest_cid must be unique per live instance on the host (we
+// derive it from Lease.Slot, see GuestVsockCID). uds_path is the in-chroot
+// path the jailer creates automatically; the host side of the wire reaches it
+// through chrootRoot(instance).
+//
+// JSON tags match the Firecracker `Vsock` schema (FC swagger). `vsock_id`
+// is deprecated in FC and we don't send it; the field is kept for
+// documentation of why the wire tag is empty.
+type VsockDevice struct {
+	// ID is unused on the wire (vsock_id is deprecated in FC). Kept for
+	// in-memory bookkeeping only — the JSON tag is `json:"-"` so it never
+	// reaches the FC config file.
+	ID string `json:"-"`
+	// GuestCID is the per-instance slot-derived CID (Lease.Slot +
+	// VsockCIDBase). FC requires min 3; VsockCIDBase = 0x100 satisfies.
+	GuestCID uint32 `json:"guest_cid"`
+	// UDSSocket is the in-chroot AF_UNIX path Firecracker listens on for
+	// host-initiated connections (the host writes "CONNECT <port>\n" then
+	// proxies the byte stream to the guest's AF_VSOCK listener).
+	UDSSocket string `json:"uds_path"`
 }
 
 type BootSource struct {
@@ -73,7 +106,12 @@ type ColdBootSpec struct {
 
 // BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS and
 // balloon are off in v1 (spec §4.4); virtio-rng is always attached (spec §11).
-func BuildColdBootConfig(s ColdBootSpec) VMConfig {
+//
+// slot is the per-instance slot from Lease.Slot; it must be in range [0, MaxSlots).
+// It derives GuestVsockCID so the in-guest resume listener is reachable at a
+// globally unique vsock address (ADR-022). The Manager passes 0 when the slot
+// is not yet known (test seams); production always passes the real slot.
+func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	return VMConfig{
 		BootSource: BootSource{KernelImagePath: s.KernelPath, BootArgs: coldBootArgs},
 		Drives: []Drive{
@@ -83,6 +121,18 @@ func BuildColdBootConfig(s ColdBootSpec) VMConfig {
 		MachineConfig:     Machine{VcpuCount: s.VcpuCount, MemSizeMib: s.MemSizeMiB, Smt: false},
 		NetworkInterfaces: []NetIface{{IfaceID: "eth0", HostDevName: s.Tap}},
 		Entropy:           &Entropy{},
+		VsockDevice:       NewVsockDevice(slot),
+	}
+}
+
+// NewVsockDevice builds a VsockDevice for the given slot. The UDS socket path
+// is the chroot-relative name (jailer creates it automatically); the host-side
+// path is chrootRoot(instance) + VsockUDSSocketName (see pkg/fcvm/vmm.go).
+func NewVsockDevice(slot int) *VsockDevice {
+	return &VsockDevice{
+		ID:        VsockDeviceID,
+		GuestCID:  GuestVsockCID(slot),
+		UDSSocket: VsockUDSSocketName,
 	}
 }
 
@@ -112,7 +162,31 @@ const (
 	FirecrackerBin = "firecracker"
 	APISockName    = "api.sock"
 	VMConfigName   = "vmconfig.json"
+	// VsockUDSSocketName is the chroot-relative path Firecracker creates the
+	// vsock UDS on when a vsock device is attached. Jailer owns it under
+	// the per-instance chroot; the host side dials through chrootRoot.
+	VsockUDSSocketName = "vsock.sock"
+	// VsockDeviceID is the Firecracker device id used in /vsock PUT bodies
+	// and referenced from the config-file.
+	VsockDeviceID = "vsock-0"
 )
+
+// Vsock CID allocation (ADR-022). The Linux kernel reserves CID 0 (wildcard),
+// 1 (host-hypervisor), and 2 (guest-hypervisor); Firecracker documents
+// guest_cid uniqueness across simultaneously-running VMs. We use a fixed host
+// CID of 3 and derive the guest CID from Lease.Slot + a base offset large
+// enough to skip both the reserved range AND the common per-slot value space
+// (Slot values go up to MaxSlots-1 = 9999).
+//
+// VsockCIDBase+slot is therefore globally unique per live instance — slot is
+// already the unique-while-live root for UID/GID/HostIP (alloc.go:113).
+const (
+	HostVsockCID uint32 = 3
+	VsockCIDBase uint32 = 0x100
+)
+
+// GuestVsockCID maps a Lease.Slot to a Firecracker guest_cid value.
+func GuestVsockCID(slot int) uint32 { return VsockCIDBase + uint32(slot) }
 
 // JailerSpec is the input to the jailer invocation for one instance.
 type JailerSpec struct {
@@ -123,6 +197,18 @@ type JailerSpec struct {
 	ExecFile string // path to the firecracker binary jailer copies into the chroot
 }
 
+// PerInstanceScope returns the cgroup scope name the jailer will create
+// at <parent_cgroup>/<scope>. The name MUST be a strict subset of
+// jailer v1.7's --id character whitelist (alnum + `-` + `_`); the
+// doc-comment on JailerCommand names those chars and how we choose a
+// safe value. The vmm wrapper looks up memory.max and on-Kill removes
+// exactly this path; matching the jailer's choice keeps the two in
+// step.
+//
+// Kept as a free function so pkg/fcvm/cgroup.go and vmm.go can both
+// reach it without dragging the rest of JailerSpec into scope.
+func PerInstanceScope(instance string) string { return instance }
+
 // JailerCommand builds the jailer argv (Appendix B). vmmd execs this as root; the
 // jailer drops privileges to UID/GID, chroots, applies seccomp, and joins the
 // cgroup scope before executing firecracker.
@@ -132,6 +218,20 @@ type JailerSpec struct {
 // Everything after `--` is firecracker's OWN argv (no binary name — jailer runs
 // the exec-file): only --api-sock here, so the control socket always exists; the
 // caller appends --config-file for a cold boot (Restore drives the API instead).
+//
+// --id is set to PerInstanceScope(s.Instance) — currently just the
+// instance name, because jailer v1.7 rejects '.' and other special
+// characters in --id (panic: "Invalid char (.) at position N"). The
+// vmm wrapper writes memory.max into
+// `<cgroupRoot>/faas-tenant.slice/<instance>` after bringUp; the scope
+// must exist by then or writeMemoryMax returns IsNotExist. Note this
+// means the cgroup scope, chroot leaf, and AF_VSOCK jailer's --id are
+// all the same string — keep them in lockstep.
+//
+// --cgroup cpu.weight=256 is mandatory on the v2 path: without at least one
+// --cgroup-param, jailer (FC v1.7+) only attaches the jailer PID to the parent
+// slice and never creates a per-instance child scope. See above.
+// cpu.weight=256 is a neutral default (kernel normalises 100-1000, 256 ~ mid).
 func JailerCommand(s JailerSpec) []string {
 	execFile := s.ExecFile
 	if execFile == "" {
@@ -139,7 +239,7 @@ func JailerCommand(s JailerSpec) []string {
 	}
 	return []string{
 		"jailer",
-		"--id", s.Instance,
+		"--id", PerInstanceScope(s.Instance),
 		"--uid", fmt.Sprintf("%d", s.UID),
 		"--gid", fmt.Sprintf("%d", s.GID),
 		"--exec-file", execFile,
@@ -147,6 +247,7 @@ func JailerCommand(s JailerSpec) []string {
 		"--netns", "/run/netns/" + s.Netns,
 		"--cgroup-version", "2",
 		"--parent-cgroup", ParentCgroup,
+		"--cgroup", "cpu.weight=256",
 		"--",
 		"--api-sock", APISockName,
 	}

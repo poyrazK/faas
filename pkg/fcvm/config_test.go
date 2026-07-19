@@ -18,7 +18,7 @@ func validColdSpec() ColdBootSpec {
 }
 
 func TestColdBootConfigTwoDrives(t *testing.T) {
-	cfg := BuildColdBootConfig(validColdSpec())
+	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	if len(cfg.Drives) != 2 {
 		t.Fatalf("want 2 drives (two-drive scheme §4.6), got %d", len(cfg.Drives))
 	}
@@ -32,14 +32,14 @@ func TestColdBootConfigTwoDrives(t *testing.T) {
 }
 
 func TestColdBootConfigVirtioRngAlwaysOn(t *testing.T) {
-	cfg := BuildColdBootConfig(validColdSpec())
+	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	if cfg.Entropy == nil {
 		t.Error("entropy (virtio-rng) must always be attached (spec §11)")
 	}
 }
 
 func TestColdBootConfigMarshalsToFirecrackerSchema(t *testing.T) {
-	cfg := BuildColdBootConfig(validColdSpec())
+	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	b, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestColdBootConfigMarshalsToFirecrackerSchema(t *testing.T) {
 }
 
 func TestColdBootBootArgsDisableConsole(t *testing.T) {
-	cfg := BuildColdBootConfig(validColdSpec())
+	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	if !strings.Contains(cfg.BootSource.BootArgs, "console=off") {
 		t.Errorf("boot args should disable console (spec §4.4): %q", cfg.BootSource.BootArgs)
 	}
@@ -67,7 +67,7 @@ func TestColdBootBootArgsDisableConsole(t *testing.T) {
 
 func TestColdBootBootArgsConfigureIdenticalInnerWorld(t *testing.T) {
 	// Every VM gets the same guest IP via kernel autoconfig (ADR-009).
-	cfg := BuildColdBootConfig(validColdSpec())
+	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	if !strings.Contains(cfg.BootSource.BootArgs, "ip=10.0.0.2::10.0.0.1:255.255.255.252::eth0:off") {
 		t.Errorf("boot args should carry the identical-inner-world ip= autoconfig: %q", cfg.BootSource.BootArgs)
 	}
@@ -106,14 +106,15 @@ func TestJailerCommandMatchesSpec(t *testing.T) {
 	})
 	line := strings.Join(argv, " ")
 	wants := []string{
-		"jailer --id abc",
+		"jailer --id abc", // --id is the instance name verbatim (jailer v1.7 rejects '.' / '/' in --id, so no .scope suffix)
 		"--uid 20007 --gid 20007",
 		"--exec-file /usr/local/bin/firecracker", // required by jailer; names the chroot dir
 		"--chroot-base-dir " + JailChrootBase,
 		"--netns /run/netns/fc-abc",
 		"--cgroup-version 2",
 		"--parent-cgroup " + ParentCgroup,
-		"-- --api-sock api.sock", // firecracker's own argv only — no binary name
+		"--cgroup cpu.weight=256", // mandatory to make jailer create the per-VM child scope
+		"-- --api-sock api.sock",  // firecracker's own argv only — no binary name
 	}
 	for _, w := range wants {
 		if !strings.Contains(line, w) {

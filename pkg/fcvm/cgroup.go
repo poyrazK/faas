@@ -15,10 +15,17 @@ import (
 var cgroupRoot = "/sys/fs/cgroup"
 
 // writeMemoryMax sets memory.max on the per-VM cgroup scope jailer
-// creates during Boot/Restore (--parent-cgroup faas-tenant.slice).
-// Spec §4.4 line 137: "cgroup v2 scope faas-tenant.slice/vm-{instance}
-// .scope with memory.max = plan_mb + 8 MB". The +8 MB is the per-VM
-// overhead accounted for by api.PerVMOverheadMB (pkg/api/limits.go).
+// creates during Boot/Restore (--parent-cgroup faas-tenant.slice with
+// `jailer --cgroup cpu.weight=N`). Spec §4.4 line 137: "cgroup v2 scope
+// faas-tenant.slice/{instance} with memory.max = plan_mb + 8 MB". The
+// scope name equals the Lease.Instance verbatim — see
+// PerInstanceScope for the lockstep definition. The +8 MB is the
+// per-VM overhead accounted for by api.PerVMOverheadMB (pkg/api/limits.go).
+// Note: the original spec text used `vm-{instance}.scope`; jailer
+// v1.7's --id validator rejects '.' (panic: "Invalid char (.) at
+// position N"), so we use the bare instance name and rely on the
+// filter in pkg/fcvm/leakcheck/residentbytes.go to exclude
+// systemd-installed siblings (init.scope, user.slice, etc.).
 //
 // The scope MUST already exist by the time this runs: Manager.Wake
 // calls writeMemoryMax only after bringUp returns successfully, and
@@ -37,7 +44,7 @@ func writeMemoryMax(instance string, planMB int) error {
 		return fmt.Errorf("fcvm: cgroup: planMB %d < 1", planMB)
 	}
 	bytes := int64(planMB+api.PerVMOverheadMB) << 20
-	scope := filepath.Join(cgroupRoot, ParentCgroup, "vm-"+instance+".scope")
+	scope := filepath.Join(cgroupRoot, ParentCgroup, PerInstanceScope(instance))
 	path := filepath.Join(scope, "memory.max")
 	// Newline-terminated: matches the kernel parser's expectation and
 	// mirrors what systemd-run writes.

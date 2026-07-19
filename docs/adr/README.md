@@ -35,6 +35,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 019 | Jailer `--exec-file` invocation + jail resource ownership | accepted | M0 metal run |
 | 020 | `pkg/secretbox` host age keypair for sealed customer secrets | accepted | M7 — landed before M8 |
 | 021 | Account export + staged deletion (G6 GDPR self-service) | proposed | M8 G6 |
+| 022 | Post-restore resume hook over AF_VSOCK (V6 ship-blocker) | accepted | M8 PR-A |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

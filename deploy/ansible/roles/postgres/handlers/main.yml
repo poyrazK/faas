@@ -1,0 +1,24 @@
+# Postgres restart + reload handlers (spec §11).
+#
+# Why two handlers, not one:
+#   * listen_addresses is PGC_POSTMASTER — a change REQUIRES a full
+#     restart. notify: restart postgresql.
+#   * pg_hba.conf is reload-only — notify: reload postgresql.
+# Splitting them keeps restarts off the hot path (pg_hba flips are
+# safe under live load) and lets the lineinfile change force exactly
+# one restart per idleness epoch.
+#
+# failed_when: false on both — chroot/CI bootstrap has no systemd.
+# Production EX44 runs systemd and gets the real restart/reload.
+
+- name: restart postgresql
+  ansible.builtin.service:
+    name: postgresql
+    state: restarted
+  failed_when: false  # chroot/CI lacks systemd
+
+- name: reload postgresql
+  ansible.builtin.service:
+    name: postgresql
+    state: reloaded
+  failed_when: false
