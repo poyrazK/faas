@@ -30,7 +30,9 @@ func TestListenResumeHookLocalSocket(t *testing.T) {
 	// `make test-metal`). This test only covers the wire format.
 
 	// Spin up a minimal server mirroring handleResumeConn on a unix
-	// socket: read 4-byte BE header, branch by msg type, write ack.
+	// socket: read 4-byte BE msg type + 4-byte BE body length + JSON body,
+	// branch by msg type, write ack. Mirrors production wire exactly so a
+	// regression in either side fails this test before reaching metal.
 	dir := t.TempDir()
 	sock := dir + "/vsock.sock"
 	l, err := net.Listen("unix", sock)
@@ -46,18 +48,18 @@ func TestListenResumeHookLocalSocket(t *testing.T) {
 			return
 		}
 		defer func() { _ = c.Close() }()
-		var hdr [4]byte
+		var hdr [8]byte
 		if _, err := readFull(c, hdr[:]); err != nil {
 			return
 		}
-		mt := binary.BigEndian.Uint32(hdr[:])
-		if mt != 1 {
+		mt := binary.BigEndian.Uint32(hdr[:4])
+		if mt != VsockResumeMsgType {
 			_, _ = c.Write([]byte{VsockResumeAckNack})
 			return
 		}
-		// Read body until EOF (host calls CloseWrite).
-		body, err := readAll(c)
-		if err != nil {
+		bodyLen := binary.BigEndian.Uint32(hdr[4:8])
+		body := make([]byte, bodyLen)
+		if _, err := readFull(c, body); err != nil {
 			_, _ = c.Write([]byte{VsockResumeAckNack})
 			return
 		}
@@ -80,14 +82,12 @@ func TestListenResumeHookLocalSocket(t *testing.T) {
 	body, _ := json.Marshal(struct {
 		HostTimeUnixNano int64 `json:"hostTimeUnixNano"`
 	}{HostTimeUnixNano: 1700000000123456789})
-	msg := make([]byte, 4+len(body))
+	msg := make([]byte, 8+len(body))
 	binary.BigEndian.PutUint32(msg[:4], VsockResumeMsgType)
-	copy(msg[4:], body)
+	binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
+	copy(msg[8:], body)
 	if _, err := c.Write(msg); err != nil {
 		t.Fatalf("write: %v", err)
-	}
-	if cw, ok := c.(closeWriter); ok {
-		_ = cw.CloseWrite()
 	}
 	var ack [1]byte
 	if _, err := readFull(c, ack[:]); err != nil {
@@ -101,12 +101,8 @@ func TestListenResumeHookLocalSocket(t *testing.T) {
 	}
 }
 
-// closeWriter mirrors the production-side interface used after Write
-// to signal "no more bytes" on the wire. stdlib net.UnixConn satisfies it.
-type closeWriter interface{ CloseWrite() error }
-
-// readFull / readAll: tiny stdlib shape helpers so this file doesn't
-// pull in io for a 30-line test.
+// readFull: tiny stdlib shape helper so this file doesn't pull in io
+// for a single call.
 func readFull(c net.Conn, p []byte) (int, error) {
 	n := 0
 	for n < len(p) {
@@ -119,21 +115,4 @@ func readFull(c net.Conn, p []byte) (int, error) {
 		}
 	}
 	return n, nil
-}
-
-func readAll(c net.Conn) ([]byte, error) {
-	var out []byte
-	buf := make([]byte, 256)
-	for {
-		k, err := c.Read(buf)
-		if k > 0 {
-			out = append(out, buf[:k]...)
-		}
-		if err != nil {
-			if err.Error() == "EOF" {
-				return out, nil
-			}
-			return out, err
-		}
-	}
 }

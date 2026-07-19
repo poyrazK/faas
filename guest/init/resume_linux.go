@@ -20,12 +20,17 @@ const (
 )
 
 // RunResumeHook performs the post-restore hook: re-seed entropy from virtio-rng,
-// then step the wall clock to the host time captured at resume (unix nanos).
+// step the wall clock to the host time captured at resume (unix nanos), then
+// record /proc/sys/kernel/random/uuid at UUIDMarkerPath so the §14 V6 metal
+// test (and any operator tool) can observe the freshly-rekeyed UUID.
 func RunResumeHook(hostTimeUnixNano int64) error {
-	return ResumeOps{
-		ReseedEntropy: reseedFromHWRNG,
-		StepClock:     func() error { return stepClockTo(hostTimeUnixNano) },
-	}.Resume()
+	if err := reseedFromHWRNG(); err != nil {
+		return err
+	}
+	if err := stepClockTo(hostTimeUnixNano); err != nil {
+		return err
+	}
+	return writeUUIDMarker(hostTimeUnixNano)
 }
 
 // reseedFromHWRNG copies fresh virtio-rng bytes into /dev/urandom, mixing them

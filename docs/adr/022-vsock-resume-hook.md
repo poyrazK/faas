@@ -66,26 +66,42 @@ write "CONNECT 1024\n"              |                                     |
                                     |  → guest AF_VSOCK listen on :1024   |
                                     |  reply "OK <hostside_port>\n"       |
 read "OK ...\n"                     |                                     |
-write [4B msg type=1][JSON body]    |                                     |
+write [4B msg type=1]               |                                     |
+       [4B body len=N]              |                                     |
+       [N bytes JSON body]          |                                     |
                                     |  → forwarded to guest's accepted conn
-                                    |                                     |  read 4B msg type
-                                    |                                     |  read JSON body until EOF
+                                    |                                     |  read 4B msg type + 4B body len
+                                    |                                     |  read N bytes JSON body
                                     |                                     |  RunResumeHook(nano)
                                     |                                     |  write ack[1]
 write ack[0] ← read                 |                                     |
 ```
 
-After writing the payload, the host calls `CloseWrite()` so the guest's
-`io.ReadAll` unblocks (unix socket semantics — without the half-close the
-guest's reader hangs on EOF until the read deadline).
+The wire carries a **4-byte big-endian body length** between msg-type and
+JSON body so the guest reads exactly N bytes instead of waiting for EOF.
+The earlier "host calls CloseWrite" pattern broke under Firecracker's
+vsock proxy, which doesn't always relay the half-close promptly — the
+guest's `ReadAll` would hang until the read deadline, then EOF mid-ack,
+and the resume hook's failure on a healthy guest would force a cold-boot
+fallback (ADR-005). Length-prefixed framing is the only wire format
+guaranteed to round-trip through FC's vsock proxy in the V6 metal test.
 
 ## CID allocation
 
 ```
-host CID                       = 3     // Firecracker convention
+host CID                       = VMADDR_CID_HOST (2, Linux kernel) — not used by us
 guest CID for slot N           = 0x100 + N
 reserved (skipped)             = 0, 1, 2 (well-known), < 3 (FC min)
+guest listener bind CID        = VMADDR_CID_ANY (0xffffffff) — wildcard on own CID
 ```
+
+The guest-init listener binds on `VMADDR_CID_ANY`, NOT on the host's
+`VMADDR_CID_HOST = 2`. The Linux kernel reports the host's CID as 2
+(its well-known hypervisor CID), not 3 as Firecracker's docs sometimes
+imply; binding on 2 targets the host kernel's vsock namespace, not the
+guest. `VMADDR_CID_ANY` accepts inbound on whatever CID Firecracker
+assigned this instance (the slot-derived `guest_cid` above) — that is
+the CID the host dials via FC's CONNECT-port handshake.
 
 `Lease.Slot` is the unique-while-live root for UID/GID/HostIP/VethHost
 (alloc.go:113-124); CID derivation reuses the same invariant instead of
@@ -116,3 +132,26 @@ fresh kernel entropy doesn't need a hook.
 `TriggerResumeHook`; entropy is fresh by construction. This means a
 broken-vsock guest degrades to "no snapshots" but the platform stays up —
 consistent with ADR-005's "snapshots are cache, not truth" stance.
+
+## Post-pivot /dev, /proc, /sys remount (guest-init)
+
+The earlier `mountBasics()` mounts `proc`, `sysfs`, `tmpfs`, and
+`devtmpfs` at the corresponding top-level dirs on the OLD root filesystem.
+After `pivot_root()` into the merged overlay, those mounts are gone —
+the new root's `/dev` is whatever the base layer shipped (just
+`null/console/tty` from a hand-rolled `mknod` build step). Without a
+fresh `devtmpfs` mount on the new root, the guest has no `/dev/hwrng`,
+`/dev/urandom`, `/dev/zero`, etc.; without `/proc` the resume hook
+cannot read `/proc/sys/kernel/random/uuid` to record its freshly-rekeyed
+value (spec §11 V6).
+
+`pivotInto()` re-mounts devtmpfs, proc, sysfs, and tmpfs on the new root
+after pivot. Each mount is best-effort (a Warn, not a fatal — the
+platform must stay up even if one remount fails); the resume hook's
+nack-and-cold-boot-fallback (ADR-005) is the safety net for a half-fixed
+guest.
+
+The base layer still ships a small set of `mknod`'d device files
+(`/dev/null`, `/dev/console`, `/dev/tty`) so the kernel can open them at
+very early boot — before `pivotInto` runs. After pivot, devtmpfs takes
+over.

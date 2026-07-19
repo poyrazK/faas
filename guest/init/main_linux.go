@@ -365,6 +365,30 @@ func pivotInto(root string) error {
 	}
 	// Detach the old root lazily.
 	_ = syscall.Unmount("/oldroot", syscall.MNT_DETACH)
+
+	// Re-attach devtmpfs at the new root's /dev. The earlier mountBasics
+	// devtmpfs was on the OLD root and is gone after pivot; the merged
+	// overlay's /dev is whatever the base layer shipped (null/console/tty
+	// only) — without a fresh devtmpfs the guest has no /dev/hwrng,
+	// /dev/urandom, /dev/zero, etc. and the resume hook's reseed step
+	// fails on ENOENT.
+	if err := syscall.Mount("devtmpfs", "/dev", "devtmpfs", 0, ""); err != nil {
+		slog.Default().Warn("post-pivot devtmpfs mount failed", "err", err)
+	}
+	// Same story for /proc, /sys, /tmp — mountBasics attached them to the
+	// OLD root, so they're gone after pivot. Without /proc the resume hook
+	// can't read /proc/sys/kernel/random/uuid to record its freshly-rekeyed
+	// value (spec §11 V6).
+	for _, mnt := range []struct{ src, dst, fs string }{
+		{"proc", "/proc", "proc"},
+		{"sysfs", "/sys", "sysfs"},
+		{"tmpfs", "/tmp", "tmpfs"},
+	} {
+		_ = os.MkdirAll(mnt.dst, 0o755)
+		if err := syscall.Mount(mnt.src, mnt.dst, mnt.fs, 0, ""); err != nil {
+			slog.Default().Warn("post-pivot mount failed", "dst", mnt.dst, "err", err)
+		}
+	}
 	return nil
 }
 

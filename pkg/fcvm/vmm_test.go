@@ -2,6 +2,7 @@ package fcvm
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -638,8 +639,10 @@ func TestMkChroot_CreatesDirectory(t *testing.T) {
 	}
 }
 
-// TestMkChroot_BadBaseReturnsError covers MkdirAll failing on a path under a
-// file (not a dir). The error must wrap as "vmm: mkdir chroot: ...".
+// TestMkChroot_BadBaseReturnsError covers mkChroot failing on a path under a
+// file (not a dir). mkChroot first RemoveAll's any stale state (so jailer
+// gets a fresh /dev/net/tun) then MkdirAll's the path; either step can be
+// the one that fails here, so accept either wrapper.
 func TestMkChroot_BadBaseReturnsError(t *testing.T) {
 	base := t.TempDir()
 	// Plant a file at the path MkdirAll would need to be a directory.
@@ -650,10 +653,10 @@ func TestMkChroot_BadBaseReturnsError(t *testing.T) {
 	v := NewJailerVMM(base, time.Second)
 	_, err := v.mkChroot("anything")
 	if err == nil {
-		t.Fatal("expected MkdirAll error")
+		t.Fatal("expected mkChroot error")
 	}
-	if !strings.Contains(err.Error(), "mkdir chroot") {
-		t.Errorf("error %q missing 'mkdir chroot'", err.Error())
+	if !strings.Contains(err.Error(), "chroot") {
+		t.Errorf("error %q not from mkChroot", err.Error())
 	}
 }
 
@@ -739,7 +742,11 @@ func TestBoot_MkChrootFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected mkChroot failure")
 	}
-	if !strings.Contains(err.Error(), "mkdir chroot") {
+	// mkChroot now RemoveAll's the path first (to scrub stale jailer state
+	// from a prior failed run) then MkdirAll's it. Either step can fail
+	// on a non-empty parent; accept either wrapper so the test pins the
+	// contract, not the exact message.
+	if !strings.Contains(err.Error(), "chroot") {
 		t.Errorf("error %q not from mkChroot", err.Error())
 	}
 }
@@ -875,14 +882,22 @@ func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hos
 			return
 		}
 
-		// Step 3: read the resume-hook payload.
-		body, err := io.ReadAll(c)
-		if err != nil || len(body) < 4 {
+		// Step 3: read the resume-hook payload. Format: 4-byte BE msg type +
+		// 4-byte BE body length + JSON body. Read exactly 8 bytes header,
+		// then the body length bytes.
+		var hdr [8]byte
+		if _, err := io.ReadFull(c, hdr[:]); err != nil {
+			_, _ = c.Write([]byte{1})
+			return
+		}
+		bodyLen := binary.BigEndian.Uint32(hdr[4:8])
+		body := make([]byte, bodyLen)
+		if _, err := io.ReadFull(c, body); err != nil {
 			_, _ = c.Write([]byte{1})
 			return
 		}
 		var nano int64
-		_ = json.Unmarshal(body[4:], &struct {
+		_ = json.Unmarshal(body, &struct {
 			Nano *int64 `json:"hostTimeUnixNano"`
 		}{Nano: &nano})
 		if onHook != nil {

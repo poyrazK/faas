@@ -257,15 +257,11 @@ const resumeHookDialDeadline = 5 * time.Second
 const resumeHookDialStep = 20 * time.Millisecond
 
 // resumeHookMsgResume is the wire-format discriminator for a resume request.
-// 4-byte big-endian header + JSON body (ADR-022). Adding new msg types does
-// not break the wire — guests that don't recognise a type nack-and-close.
+// Wire: 4-byte BE msg type + 4-byte BE body length + JSON body (ADR-022).
+// The length prefix lets the guest read exactly N bytes instead of waiting
+// for EOF — some AF_VSOCK proxies don't propagate CloseWrite promptly, so
+// depending on it produced EOF-mid-ack in the V6 metal test.
 const resumeHookMsgResume uint32 = 1
-
-// closeWriter is implemented by net.UnixConn (and AF_VSOCK when projected
-// onto the stdlib net.Conn shape on Linux). The host uses it after writing
-// the request to signal "no more bytes" so the guest's ReadAll on the body
-// unblocks and the guest can run the hook + write the ack.
-type closeWriter interface{ CloseWrite() error }
 
 // resumeHookGuestPort is the AF_VSOCK port the guest-init resume
 // listener binds. Must match guest/init/listen_resume_linux.go's
@@ -385,24 +381,24 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 		return fmt.Errorf("vmm: CONNECT rejected: %q", connectAck)
 	}
 
-	// Step 3: write the resume-hook payload. 4-byte BE msg type + JSON body.
+	// Step 3: write the resume-hook payload. 4-byte BE msg type + 4-byte BE
+	// body length + JSON body. The length prefix lets the guest read exactly
+	// N bytes; we deliberately do NOT close our write half — the connection
+	// stays open for the ack roundtrip (some AF_VSOCK proxies don't propagate
+	// CloseWrite promptly, so depending on it produced EOF-mid-ack in the
+	// V6 metal test).
 	body, err := json.Marshal(struct {
 		HostTimeUnixNano int64 `json:"hostTimeUnixNano"`
 	}{HostTimeUnixNano: hostTimeUnixNano})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}
-	msg := make([]byte, 4+len(body))
+	msg := make([]byte, 8+len(body))
 	binary.BigEndian.PutUint32(msg[:4], resumeHookMsgResume)
-	copy(msg[4:], body)
-	// Step 3 ends; Step 4 reads the 1-byte ack.
+	binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
+	copy(msg[8:], body)
 	if _, err := conn.Write(msg); err != nil {
 		return fmt.Errorf("vmm: write resume request: %w", err)
-	}
-	// Close our write half so the guest's ReadAll unblocks and it can
-	// write the ack.
-	if cw, ok := conn.(closeWriter); ok {
-		_ = cw.CloseWrite()
 	}
 
 	// Step 4: read the 1-byte ack from the guest.
@@ -711,6 +707,14 @@ func copyTree(src, dst string, maxBytes int64) error {
 
 func (v *JailerVMM) mkChroot(instance string) (string, error) {
 	root := v.chrootRoot(instance)
+	// Wipe any leftover state from a prior failed Boot/Restore — jailer's
+	// chroot-creation step (mknod /dev/net/tun, mkdir -p /dev/net, etc.)
+	// is NOT idempotent and panics with EEXIST on a half-built chroot.
+	// RemoveAll on a non-existent path is a no-op, so this is safe for
+	// the common case too.
+	if err := os.RemoveAll(root); err != nil {
+		return "", fmt.Errorf("vmm: wipe stale chroot: %w", err)
+	}
 	if err := os.MkdirAll(root, 0o750); err != nil {
 		return "", fmt.Errorf("vmm: mkdir chroot: %w", err)
 	}
