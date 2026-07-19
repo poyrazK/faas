@@ -998,6 +998,34 @@ func (m *MemStore) ListInstancesForAccount(_ context.Context, accountID string) 
 	return out, nil
 }
 
+// ListLatestInstancePerApp returns the most-recently-started instance
+// for each app owned by the account (PR #48 follow-up). Used by the
+// dashboard cold-wake badge so one query replaces N per-app
+// ListInstancesForApp calls. Apps with no instance rows are absent
+// from the returned map — the dashboard treats that as ◌ sleeping
+// via BadgeForDefault.
+func (m *MemStore) ListLatestInstancePerApp(_ context.Context, accountID string) (map[string]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]struct{}, len(m.apps))
+	for _, a := range m.apps {
+		if a.AccountID == accountID {
+			owned[a.ID] = struct{}{}
+		}
+	}
+	out := map[string]Instance{}
+	for _, ins := range m.instances {
+		if _, ok := owned[ins.AppID]; !ok {
+			continue
+		}
+		cur, seen := out[ins.AppID]
+		if !seen || ins.StartedAt.After(cur.StartedAt) {
+			out[ins.AppID] = ins
+		}
+	}
+	return out, nil
+}
+
 func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

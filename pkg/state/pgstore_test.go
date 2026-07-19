@@ -151,3 +151,147 @@ func TestPg_LiveDeploymentAndListAllApps(t *testing.T) {
 		t.Errorf("ListAllApps = %+v, want one app %q", apps, appID)
 	}
 }
+
+// TestPg_SetAppMinInstances_RoundTrip mirrors TestSetAppMinInstances_RoundTrip
+// in app_min_instances_test.go to lock PgStore parity for ux_spec §6.5.
+// The MemStore test catches the API shape; this test catches the SQL.
+func TestPg_SetAppMinInstances_RoundTrip(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx)
+
+	// Default reads as 0 (scale to zero).
+	got, err := s.AppByID(ctx, appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if got.MinInstances != 0 {
+		t.Errorf("default MinInstances = %d, want 0", got.MinInstances)
+	}
+
+	// Set 2 → re-read → 2.
+	if err := s.SetAppMinInstances(ctx, appID, 2); err != nil {
+		t.Fatalf("SetAppMinInstances(2): %v", err)
+	}
+	got, err = s.AppByID(ctx, appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if got.MinInstances != 2 {
+		t.Errorf("after Set 2: MinInstances = %d, want 2", got.MinInstances)
+	}
+
+	// Reset to 0.
+	if err := s.SetAppMinInstances(ctx, appID, 0); err != nil {
+		t.Fatalf("SetAppMinInstances(0): %v", err)
+	}
+	got, err = s.AppByID(ctx, appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if got.MinInstances != 0 {
+		t.Errorf("after Set 0: MinInstances = %d, want 0", got.MinInstances)
+	}
+
+	// Unknown app → ErrNotFound (covers the RowsAffected==0 branch).
+	if err := s.SetAppMinInstances(ctx, "00000000-0000-0000-0000-000000000000", 1); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("unknown app: err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestPg_UpdateApp_WithMinInstances pins the partial-update semantics
+// of UpdateAppParams.MinInstances + SetMinInstances on PgStore. Mirrors
+// the MemStore case at app_min_instances_test.go.
+func TestPg_UpdateApp_WithMinInstances(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx)
+
+	// Pre-set floor 2 so "unset" must leave it alone.
+	if err := s.SetAppMinInstances(ctx, appID, 2); err != nil {
+		t.Fatalf("seed set: %v", err)
+	}
+
+	// PATCH with no MinInstances field → column stays at 2.
+	a, err := s.UpdateApp(ctx, appID, state.UpdateAppParams{})
+	if err != nil {
+		t.Fatalf("UpdateApp unset: %v", err)
+	}
+	if a.MinInstances != 2 {
+		t.Errorf("unset MinInstances: got %d, want 2 (must be unchanged)", a.MinInstances)
+	}
+
+	// PATCH explicit zero → 0.
+	zero := 0
+	a, err = s.UpdateApp(ctx, appID, state.UpdateAppParams{
+		MinInstances: &zero, SetMinInstances: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateApp zero: %v", err)
+	}
+	if a.MinInstances != 0 {
+		t.Errorf("explicit zero: got %d, want 0", a.MinInstances)
+	}
+
+	// PATCH 3 → 3.
+	three := 3
+	a, err = s.UpdateApp(ctx, appID, state.UpdateAppParams{
+		MinInstances: &three, SetMinInstances: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateApp three: %v", err)
+	}
+	if a.MinInstances != 3 {
+		t.Errorf("explicit 3: got %d, want 3", a.MinInstances)
+	}
+}
+
+// TestPg_ListLatestInstancePerApp pins the dashboard N+1 fix (PR #48
+// follow-up): DISTINCT ON (app_id) returns exactly one row per app
+// (the newest by started_at DESC) and the map is keyed by app ID.
+func TestPg_ListLatestInstancePerApp(t *testing.T) {
+	s, ctx := pgStore(t)
+	acctID, appID, depID := seedLiveDeploy(t, s, ctx)
+
+	// Empty before any instances exist → empty map.
+	got, err := s.ListLatestInstancePerApp(ctx, acctID)
+	if err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("empty: got %v, want empty map", got)
+	}
+
+	// Create two instances; the second started later should win.
+	old, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256)
+	if err != nil {
+		t.Fatalf("CreateInstance old: %v", err)
+	}
+	if err := s.SetInstanceRuntime(ctx, old.ID, "fc-"+old.ID, "10.100.0.5", 20005); err != nil {
+		t.Fatalf("SetInstanceRuntime old: %v", err)
+	}
+
+	// Sleep briefly so the second instance has a strictly-later started_at.
+	time.Sleep(10 * time.Millisecond)
+
+	newer, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256)
+	if err != nil {
+		t.Fatalf("CreateInstance newer: %v", err)
+	}
+	if err := s.SetInstanceRuntime(ctx, newer.ID, "fc-"+newer.ID, "10.100.0.6", 20006); err != nil {
+		t.Fatalf("SetInstanceRuntime newer: %v", err)
+	}
+
+	got, err = s.ListLatestInstancePerApp(ctx, acctID)
+	if err != nil {
+		t.Fatalf("ListLatestInstancePerApp: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1 (one app, two instances collapse to newest)", len(got))
+	}
+	ins, ok := got[appID]
+	if !ok {
+		t.Fatalf("no entry for app %q in map %v", appID, got)
+	}
+	if ins.ID != newer.ID {
+		t.Errorf("latest = %q, want %q (the newer of two)", ins.ID, newer.ID)
+	}
+}

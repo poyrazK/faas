@@ -817,6 +817,45 @@ func (s *PgStore) ListInstancesForAccount(ctx context.Context, accountID string)
 	return scanInstances(rows)
 }
 
+// ListLatestInstancePerApp returns the most-recently-started instance
+// for each app owned by the account, keyed by app ID. Used by the
+// dashboard cold-wake badge (PR #48 follow-up); collapses N per-app
+// ListInstancesForApp calls into a single round-trip.
+//
+// DISTINCT ON keeps one row per app_id with the largest started_at;
+// NULLS LAST matches the column semantics — fresh deployments have
+// nil started_at until vmmd stamps SetInstanceRuntime on first wake.
+// Apps with no instance rows simply don't appear in the result map;
+// callers must handle that case (no badge → ◌ sleeping via
+// BadgeForDefault).
+//
+// No dedicated index yet: at one-box scale (≤ Pro 25 apps/account) the
+// join on apps.account_id + seq-scan over instances is sub-millisecond.
+// Add `instances(account_id, app_id, started_at DESC)` if the box grows.
+func (s *PgStore) ListLatestInstancePerApp(ctx context.Context, accountID string) (map[string]Instance, error) {
+	rows, err := s.pool.Query(ctx,
+		`select distinct on (i.app_id)
+		        i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at
+		 from instances i
+		 join apps a on a.id = i.app_id
+		 where a.account_id = $1
+		 order by i.app_id, i.started_at desc nulls last`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]Instance{}
+	for rows.Next() {
+		ins, err := scanInstanceCols(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out[ins.AppID] = ins
+	}
+	return out, rows.Err()
+}
+
 func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) error {
 	tag, err := s.pool.Exec(ctx, `update instances set state = $2 where id = $1`, id, state)
 	if err != nil {

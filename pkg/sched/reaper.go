@@ -47,6 +47,12 @@ type InstanceInfo struct {
 	// wins (matches invariant §6.2-2: ceiling is physics, floor is
 	// budget). Pro/Scale only — the apid gate rejects Free/Hobby so
 	// the value is always sane when it lands here.
+	//
+	// Carrier semantics: every row of the same app carries the SAME
+	// value (sourced from app.MinInstances in runReaper). The reaper
+	// groups by AppID and reads the floor from the first row it sees.
+	// Don't try to set MinInstances per-instance — it's a per-app
+	// concept reflected redundantly on each row.
 	MinInstances int
 }
 

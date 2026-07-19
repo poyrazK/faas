@@ -230,6 +230,13 @@ type Store interface {
 	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
+	// ListLatestInstancePerApp returns the most-recently-started instance
+	// for each app belonging to the account. Empty map when no instance
+	// rows exist yet (a fresh deploy never woken). Used by the dashboard
+	// to populate the cold-wake state badge in one round-trip instead of
+	// N per-app ListInstancesForApp calls (PR #48 follow-up). Result is
+	// keyed by app ID; callers must handle the "no row" case explicitly.
+	ListLatestInstancePerApp(ctx context.Context, accountID string) (map[string]Instance, error)
 	// ListAllInstances returns every instance on the box, ordered newest
 	// first. schedd's G7 reaper warm-passes this slice to the conntrack
 	// reader (pkg/sched/flowcount) once per tick — a single bulk read is

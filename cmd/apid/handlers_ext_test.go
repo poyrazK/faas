@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -96,4 +97,76 @@ func mustSeedDeployment(t *testing.T, e testEnv, slug string) state.Deployment {
 		t.Fatalf("seed deployment: %v", err)
 	}
 	return d
+}
+
+// mustSeedApp provisions an app under the test account at the given
+// slug (default active status). Returns the app ID for later assertions.
+func mustSeedApp(t *testing.T, e testEnv, slug string) string {
+	t.Helper()
+	app, err := e.store.CreateApp(context.Background(), state.App{
+		AccountID: e.acct.ID,
+		Slug:      slug,
+		Type:      state.AppTypeApp,
+		Status:    state.AppActive,
+	})
+	if err != nil {
+		t.Fatalf("seed app %s: %v", slug, err)
+	}
+	return app.ID
+}
+
+// TestUpdateAppMinInstances_Hobby locks the plan-tier gate (ux_spec
+// §6.5): Hobby plans cannot set apps.min_instances. The handler must
+// return 403 plan_min_instances_not_allowed, not 422, because the
+// feature is tier-locked — the value the customer typed is irrelevant.
+func TestUpdateAppMinInstances_Hobby(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "hobby-floor")
+	one := 1
+	rec := e.do(t, "PATCH", "/v1/apps/hobby-floor", api.UpdateAppRequest{MinInstances: &one}, nil)
+	assertProblem(t, rec, 403, api.CodePlanMinInstancesNotAllowed)
+}
+
+// TestUpdateAppMinInstances_Pro is the happy path: Pro plans accept
+// min_instances and the response carries the new value.
+func TestUpdateAppMinInstances_Pro(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "pro-floor")
+	one := 1
+	rec := e.do(t, "PATCH", "/v1/apps/pro-floor", api.UpdateAppRequest{MinInstances: &one}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.MinInstances != 1 {
+		t.Errorf("MinInstances = %d, want 1", out.MinInstances)
+	}
+}
+
+// TestUpdateAppMinInstances_OutOfRange pins the bounds check: min
+// must be in [0, MaxConcurrency]. Pro caps at 5, so 6 must 422 with
+// code invalid_min_instances. Also covers the gate-precedes-bounds
+// ordering: a Hobby plan sending 6 should still get 403 (covered by
+// TestUpdateAppMinInstances_Hobby).
+func TestUpdateAppMinInstances_OutOfRange(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "pro-over")
+	six := 6
+	rec := e.do(t, "PATCH", "/v1/apps/pro-over", api.UpdateAppRequest{MinInstances: &six}, nil)
+	assertProblem(t, rec, 422, api.CodeInvalidMinInstances)
+}
+
+// TestUpdateAppMinInstances_Negative pins the lower bound: -1 must
+// 422 invalid_min_instances, regardless of plan. A negative value
+// would otherwise pass through to the PG CHECK constraint as a
+// second-layer defense, but the handler should catch it first.
+func TestUpdateAppMinInstances_Negative(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "pro-neg")
+	neg := -1
+	rec := e.do(t, "PATCH", "/v1/apps/pro-neg", api.UpdateAppRequest{MinInstances: &neg}, nil)
+	assertProblem(t, rec, 422, api.CodeInvalidMinInstances)
 }
