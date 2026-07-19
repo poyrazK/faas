@@ -8,8 +8,9 @@ import (
 // Resume hook (spec §4.8, §11 test V6). A snapshot bakes the guest's RNG state
 // and wall clock. Restore N instances from one snapshot and — without this hook —
 // they share an entropy stream (duplicate UUIDs, TLS keys) and a stale clock.
-// After restore the host signals the guest (via vsock); the guest re-seeds
-// entropy from virtio-rng, then steps the clock, then re-arms readiness.
+// After restore the host signals the guest (via vsock); the guest injects
+// host-supplied CSPRNG bytes into /dev/urandom, reseeds from virtio-rng,
+// then steps the clock, then re-arms readiness.
 //
 // This file holds the platform-independent orchestration so the ordering
 // contract is unit-tested; the Linux entropy/clock/vsock code is in
@@ -24,7 +25,19 @@ const UUIDMarkerPath = "/etc/faas/uuid.txt"
 // ResumeOps are the side effects the resume hook performs, injected so the
 // sequence is testable without a guest.
 type ResumeOps struct {
+	// HostEntropy is the CSPRNG bytes the host shipped over vsock. Wired
+	// into AddEntropy; nil/empty is tolerated (AddEntropy is then a no-op).
+	HostEntropy []byte
+	// AddEntropy injects host-supplied CSPRNG bytes into /dev/urandom via
+	// ioctl(RNDADDENTROPY). This runs FIRST because virtio-rng state is
+	// snapshotted (two restores from one snapshot pull the SAME bytes from
+	// /dev/hwrng); without a unique host-supplied prefix, the pool gets the
+	// same input and /proc/sys/kernel/random/uuid collides. May be nil on
+	// non-Linux or in tests that don't exercise the entropy path.
+	AddEntropy func([]byte) error
 	// ReseedEntropy mixes fresh virtio-rng bytes into the kernel pool.
+	// Runs after AddEntropy so the reseed phase observes an already-unique
+	// pool (belt-and-suspenders — virtio-rng itself is snapshotted).
 	ReseedEntropy func() error
 	// StepClock corrects the wall clock to the post-restore host time.
 	StepClock func() error
@@ -34,15 +47,21 @@ type ResumeOps struct {
 	WriteUUIDMarker func() error
 }
 
-// Resume runs the hook. Entropy is re-seeded FIRST: the moment the app resumes it
-// may generate a UUID or TLS key, and that must draw from unique entropy, not the
-// snapshot's frozen stream. The clock step follows. The UUID marker write
+// Resume runs the hook. AddEntropy runs FIRST: the moment the app resumes it
+// may generate a UUID or TLS key, and that must draw from unique entropy, not
+// the snapshot's frozen stream. Reseed follows (mixing virtio-rng bytes into
+// the already-unique pool). The clock step follows. The UUID marker write
 // happens LAST so it observes the re-keyed pool. If any op fails the error is
 // returned so the caller can refuse readiness (a non-unique guest must not
 // serve).
 func (o ResumeOps) Resume() error {
 	if o.ReseedEntropy == nil || o.StepClock == nil {
 		return fmt.Errorf("resume: ops not configured")
+	}
+	if o.AddEntropy != nil && len(o.HostEntropy) > 0 {
+		if err := o.AddEntropy(o.HostEntropy); err != nil {
+			return fmt.Errorf("resume: add entropy: %w", err)
+		}
 	}
 	if err := o.ReseedEntropy(); err != nil {
 		return fmt.Errorf("resume: reseed entropy: %w", err)

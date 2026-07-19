@@ -3,6 +3,8 @@ package fcvm
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -268,6 +270,15 @@ const resumeHookMsgResume uint32 = 1
 // VsockResumePort.
 const resumeHookGuestPort = 1024
 
+// resumeHookEntropyBytes is the count of host-supplied CSPRNG bytes sent
+// in every resume payload. The guest injects them into /dev/urandom via
+// ioctl(RNDADDENTROPY) BEFORE reading /proc/sys/kernel/random/uuid, so
+// each restore's draw is unique even when virtio-rng state is identical
+// (it is snapshotted, so /dev/hwrng returns the same bytes per restore).
+// 256 bits of entropy is enough to fully re-key the pool for UUID
+// generation. ADR-022 §"Why the host ships entropy".
+const resumeHookEntropyBytes = 256
+
 // readConnectAck consumes the "OK <hostside_port>\n" reply from
 // Firecracker. Returns the first whitespace-delimited token. Reads
 // until newline so the byte count doesn't matter (FC's host-assigned
@@ -312,9 +323,10 @@ func readConnectAck(conn net.Conn) (string, error) {
 //     guest writes back a 1-byte ack.
 //
 // Payload format (ADR-022): 4-byte big-endian msg type (= 1 =
-// MSG_RESUME) + JSON body {"hostTimeUnixNano": N}. The guest's
-// listenResumeHook (guest/init/listen_resume_linux.go) reads the same
-// shape and writes back ack=0 (ok) or ack=1 (nack).
+// MSG_RESUME) + JSON body {"hostTimeUnixNano": N, "entropy": "<base64>"}
+// where entropy is 256 bytes of fresh CSPRNG output from the host.
+// The guest's listenResumeHook (guest/init/listen_resume_linux.go) reads
+// the same shape and writes back ack=0 (ok) or ack=1 (nack).
 //
 // We fail closed: any error (dial timeout, CONNECT failure, payload
 // write failure, nack) returns wrapped. A restored VM with snapshot-
@@ -387,9 +399,22 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	// stays open for the ack roundtrip (some AF_VSOCK proxies don't propagate
 	// CloseWrite promptly, so depending on it produced EOF-mid-ack in the
 	// V6 metal test).
+	//
+	// The body carries fresh entropy bytes from the host's CSPRNG. The guest
+	// injects them into /dev/urandom via ioctl(RNDADDENTROPY) BEFORE reading
+	// /proc/sys/kernel/random/uuid. Without this, both restores from one
+	// snapshot read the SAME 256 bytes from /dev/hwrng (virtio-rng state is
+	// captured in the snapshot), inject the same input into the pool, and
+	// draw the same UUID — spec §11 V6 fails on every concurrent restore.
+	// See ADR-022 §"Why the host ships entropy".
+	entropy := make([]byte, resumeHookEntropyBytes)
+	if _, err := io.ReadFull(rand.Reader, entropy); err != nil {
+		return fmt.Errorf("vmm: read host entropy: %w", err)
+	}
 	body, err := json.Marshal(struct {
-		HostTimeUnixNano int64 `json:"hostTimeUnixNano"`
-	}{HostTimeUnixNano: hostTimeUnixNano})
+		HostTimeUnixNano int64  `json:"hostTimeUnixNano"`
+		Entropy          string `json:"entropy"` // base64; guest decodes + ioctl(RNDADDENTROPY)
+	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy)})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}

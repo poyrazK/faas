@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -34,6 +35,12 @@ const (
 	// after the resume hook returns. 0 = ok, anything else = nack.
 	VsockResumeAckOK   = 0
 	VsockResumeAckNack = 1
+	// VsockResumeMaxEntropyBytes is the upper bound on the entropy payload
+	// the guest will accept. Mirrors pkg/fcvm/vmm.go::resumeHookEntropyBytes
+	// (256); we keep the host's constant in sync via the V6 metal test. If
+	// the host ever ships more than this, we treat it as a wire error and
+	// nack — never inject untrusted bytes into the entropy pool.
+	VsockResumeMaxEntropyBytes = 256
 )
 
 // VsockResumeBindCID is the CID the guest's listener binds on. We use
@@ -130,15 +137,31 @@ func handleResumeConn(f *os.File, log *slog.Logger) {
 		return
 	}
 	var req struct {
-		HostTimeUnixNano int64 `json:"hostTimeUnixNano"`
+		HostTimeUnixNano int64  `json:"hostTimeUnixNano"`
+		Entropy          string `json:"entropy"` // base64; decode + ioctl(RNDADDENTROPY)
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		log.Warn("vsock resume body parse", "err", err)
 		_, _ = f.Write([]byte{VsockResumeAckNack})
 		return
 	}
+	var entropy []byte
+	if req.Entropy != "" {
+		decoded, decErr := base64.StdEncoding.DecodeString(req.Entropy)
+		if decErr != nil {
+			log.Warn("vsock resume entropy base64", "err", decErr)
+			_, _ = f.Write([]byte{VsockResumeAckNack})
+			return
+		}
+		if len(decoded) == 0 || len(decoded) > VsockResumeMaxEntropyBytes {
+			log.Warn("vsock resume entropy length out of range", "len", len(decoded), "max", VsockResumeMaxEntropyBytes)
+			_, _ = f.Write([]byte{VsockResumeAckNack})
+			return
+		}
+		entropy = decoded
+	}
 
-	if err := RunResumeHook(req.HostTimeUnixNano); err != nil {
+	if err := RunResumeHook(req.HostTimeUnixNano, entropy); err != nil {
 		log.Error("vsock resume hook failed", "err", err)
 		_, _ = f.Write([]byte{VsockResumeAckNack})
 		return

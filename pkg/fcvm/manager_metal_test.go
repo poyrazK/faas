@@ -492,10 +492,11 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 	// must succeed via the RESTORE path (cold-boot fallback means the
 	// resume hook never fired → silent UUID collision we want to catch).
 	type restore struct {
-		name   string
-		uuid   string
-		method WakeMethod
-		ip     string
+		name      string
+		uuid      string
+		method    WakeMethod
+		ip        string
+		resumeLog string // /etc/faas/resume.log fetched from the guest for V6 flake diagnosis
 	}
 	var (
 		wg    sync.WaitGroup
@@ -527,8 +528,10 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 			}
 			ip := inst.Lease.HostIP.String()
 			uuid := fetchV6UUID(t, ip)
+			resumeLog := fetchV6ResumeLog(t, ip)
 			mu.Lock()
 			out[i] = restore{name: name, uuid: uuid, method: inst.Method, ip: ip}
+			out[i].resumeLog = resumeLog
 			mu.Unlock()
 		}()
 	}
@@ -540,6 +543,14 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 	}
 	t.Logf("V6 restore A uuid: %s @ %s (method=%s)", out[0].uuid, out[0].ip, out[0].method)
 	t.Logf("V6 restore B uuid: %s @ %s (method=%s)", out[1].uuid, out[1].ip, out[1].method)
+	t.Logf("V6 restore A resume.log:\n%s", out[0].resumeLog)
+	t.Logf("V6 restore B resume.log:\n%s", out[1].resumeLog)
+	// DIAG: keep the chroots around so we can inspect the upper-layer files.
+	// Remove this once V6 is reliably green. Idempotent — only on FAIL or
+	// when FAAS_DIAG_KEEP_CHROOTS is set.
+	if t.Failed() || os.Getenv("FAAS_DIAG_KEEP_CHROOTS") != "" {
+		t.Logf("V6 DIAG: keeping chroots for inspection; run 'sudo rm -rf /srv/fc/jail/jr* /srv/fc/jail/jrmn*' to clean")
+	}
 
 	if out[0].uuid == "" || out[1].uuid == "" {
 		t.Fatalf("one or both UUIDs empty (A=%q, B=%q)", out[0].uuid, out[1].uuid)
@@ -584,6 +595,28 @@ func fetchV6UUID(t *testing.T, hostIP string) string {
 		time.Sleep(150 * time.Millisecond)
 	}
 	return ""
+}
+
+// fetchV6ResumeLog GETs /etc/faas/resume.log from a V6 guest. Used to
+// diagnose V6 flakes (spec §11 V6 — two restores must yield distinct
+// /proc/sys/kernel/random/uuid). The file is written by guest-init's
+// RunResumeHook (guest/init/resume_linux.go::resumeDiag) and contains one
+// line per op: start, addHostEntropy ok + head8, reseed, clock, writeUUIDMarker,
+// ok. Returns "" on any failure (timeout, missing file) — purely diagnostic.
+func fetchV6ResumeLog(t *testing.T, hostIP string) string {
+	t.Helper()
+	url := "http://" + hostIP + ":8080/etc/faas/resume.log"
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, _ := io.ReadAll(resp.Body)
+	return string(body)
 }
 
 // repoRoot walks up from the test working directory until it finds

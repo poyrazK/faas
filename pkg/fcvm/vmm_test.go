@@ -1,7 +1,9 @@
 package fcvm
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -837,9 +839,9 @@ func TestBuildColdBootConfigIncludesVsockDevice(t *testing.T) {
 // TriggerResumeHook dials. It mirrors the FC host-initiated protocol:
 // accept, expect "CONNECT <port>\n", reply "OK <hostside_port>\n",
 // then read the resume-hook payload ([4 BE msg type][JSON body]) and
-// write the 1-byte ack. The captured HostTimeUnixNano flows through
-// onHook so tests can assert wire formatting.
-func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hostTimeUnixNano int64) error) {
+// write the 1-byte ack. The captured HostTimeUnixNano + entropy bytes flow
+// through onHook so tests can assert wire formatting.
+func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hostTimeUnixNano int64, entropy []byte) error) {
 	t.Helper()
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -896,12 +898,17 @@ func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hos
 			_, _ = c.Write([]byte{1})
 			return
 		}
-		var nano int64
-		_ = json.Unmarshal(body, &struct {
-			Nano *int64 `json:"hostTimeUnixNano"`
-		}{Nano: &nano})
+		var payload struct {
+			Nano     int64  `json:"hostTimeUnixNano"`
+			EntropyB string `json:"entropy"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		var entropy []byte
+		if payload.EntropyB != "" {
+			entropy, _ = base64.StdEncoding.DecodeString(payload.EntropyB)
+		}
 		if onHook != nil {
-			if err := onHook(nano); err != nil {
+			if err := onHook(payload.Nano, entropy); err != nil {
 				_, _ = c.Write([]byte{1})
 				return
 			}
@@ -946,12 +953,35 @@ func TestTriggerResumeHookDialSuccess(t *testing.T) {
 	sockPath := filepath.Join(root, VsockUDSSocketName)
 
 	var seenNano int64
+	var seenEntropy []byte
 	var callCount int32
-	fakeVsockUDSServer(t, sockPath, 0, func(nano int64) error {
-		atomic.AddInt32(&callCount, 1)
-		seenNano = nano
-		return nil
-	})
+	// fakeVsockUDSServer's accept loop is single-shot. For the back-to-back
+	// dials below (assertion: every dial sends fresh entropy), spin up a
+	// persistent loop instead. We do that inline so the test doesn't need
+	// a new helper.
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen %s: %v", sockPath, err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	var firstEntropy []byte
+	go func() {
+		for i := 0; i < 2; i++ {
+			c, aErr := l.Accept()
+			if aErr != nil {
+				return
+			}
+			go handleFakeVsockHook(t, c, ackOK, func(nano int64, entropy []byte) error {
+				atomic.AddInt32(&callCount, 1)
+				seenNano = nano
+				seenEntropy = entropy
+				if i == 0 {
+					firstEntropy = append([]byte(nil), entropy...)
+				}
+				return nil
+			})
+		}
+	}()
 
 	v := &JailerVMM{chrootBase: chrootBase, fcName: "f"}
 	lease := Lease{Instance: instance, Slot: 7}
@@ -959,13 +989,93 @@ func TestTriggerResumeHookDialSuccess(t *testing.T) {
 	if err := v.TriggerResumeHook(context.Background(), lease, wantNano); err != nil {
 		t.Fatalf("TriggerResumeHook: %v", err)
 	}
-	if atomic.LoadInt32(&callCount) != 1 {
-		t.Errorf("hook invocations = %d, want 1", callCount)
+	if err := v.TriggerResumeHook(context.Background(), lease, wantNano); err != nil {
+		t.Fatalf("TriggerResumeHook (second): %v", err)
+	}
+	// Wait for both goroutines to finish recording.
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&callCount) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&callCount) != 2 {
+		t.Fatalf("hook invocations = %d, want 2", callCount)
 	}
 	if seenNano != wantNano {
 		t.Errorf("hook saw hostTimeUnixNano=%d, want %d", seenNano, wantNano)
 	}
+	if len(seenEntropy) != resumeHookEntropyBytes {
+		t.Errorf("hook saw entropy of %d bytes, want %d (host must ship exactly resumeHookEntropyBytes)", len(seenEntropy), resumeHookEntropyBytes)
+	}
+	// Spec §11 V6 guarantee: every dial sends FRESH entropy. Two back-to-back
+	// triggers with the same lease MUST yield different bytes (crypto/rand is
+	// the only source — no caching, no slot-derivation, no deterministic seed).
+	if len(firstEntropy) != resumeHookEntropyBytes {
+		t.Fatalf("first entropy = %d bytes, want %d", len(firstEntropy), resumeHookEntropyBytes)
+	}
+	if bytes.Equal(firstEntropy, seenEntropy) {
+		t.Errorf("two back-to-back dials sent identical entropy; V6 acceptance would fail (host must use crypto/rand, not a fixed seed)")
+	}
 }
+
+// handleFakeVsockHook drives one connection through the CONNECT-port handshake
+// + length-prefixed resume payload + ack roundtrip. Extracted so the
+// back-to-back test can spin up a multi-shot listener without a new helper.
+func handleFakeVsockHook(t *testing.T, c net.Conn, ack byte, onHook func(hostTimeUnixNano int64, entropy []byte) error) {
+	t.Helper()
+	defer func() { _ = c.Close() }()
+	connectBuf := make([]byte, 0, 32)
+	readByte := make([]byte, 1)
+	for {
+		if _, err := c.Read(readByte); err != nil {
+			_, _ = c.Write([]byte{1})
+			return
+		}
+		connectBuf = append(connectBuf, readByte[0])
+		if readByte[0] == '\n' {
+			break
+		}
+		if len(connectBuf) > 32 {
+			_, _ = c.Write([]byte{1})
+			return
+		}
+	}
+	if !strings.HasPrefix(string(connectBuf), "CONNECT ") {
+		_, _ = c.Write([]byte{1})
+		return
+	}
+	if _, err := c.Write([]byte("OK 1073741824\n")); err != nil {
+		return
+	}
+	var hdr [8]byte
+	if _, err := io.ReadFull(c, hdr[:]); err != nil {
+		_, _ = c.Write([]byte{1})
+		return
+	}
+	bodyLen := binary.BigEndian.Uint32(hdr[4:8])
+	body := make([]byte, bodyLen)
+	if _, err := io.ReadFull(c, body); err != nil {
+		_, _ = c.Write([]byte{1})
+		return
+	}
+	var payload struct {
+		Nano     int64  `json:"hostTimeUnixNano"`
+		EntropyB string `json:"entropy"`
+	}
+	_ = json.Unmarshal(body, &payload)
+	var entropy []byte
+	if payload.EntropyB != "" {
+		entropy, _ = base64.StdEncoding.DecodeString(payload.EntropyB)
+	}
+	if onHook != nil {
+		if err := onHook(payload.Nano, entropy); err != nil {
+			_, _ = c.Write([]byte{1})
+			return
+		}
+	}
+	_, _ = c.Write([]byte{ack})
+}
+
+const ackOK = byte(0)
 
 // TestTriggerResumeHookDialTimeout: when no UDS is listening,
 // TriggerResumeHook returns within resumeHookDialDeadline with a wrapped
