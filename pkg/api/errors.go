@@ -112,6 +112,16 @@ const (
 	CodeSecretInvalidKey    = "secret_invalid_key"
 	CodeSecretValueTooLarge = "secret_value_too_large"
 	CodeSecretNotFound      = "secret_not_found"
+
+	// Account self-service (spec §17 G6, ADR-021). The
+	// "confirm_required" code is returned when a DELETE arrives without
+	// the confirmation header so a stale CLI prompt can't silently wipe
+	// an account. The "pending" code carries the restore_until envelope
+	// the customer needs to call POST /v1/account/restore. The
+	// "not_restorable" code is the post-grace 409.
+	CodeAccountDeletionConfirm = "account_deletion_confirm_required"
+	CodeAccountDeletionPending = "account_deletion_pending"
+	CodeAccountNotRestorable   = "account_not_restorable"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -158,6 +168,8 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeSecretValueTooLarge:
 		return http.StatusRequestEntityTooLarge
+	case CodeAccountDeletionConfirm, CodeAccountDeletionPending, CodeAccountNotRestorable:
+		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
 	}

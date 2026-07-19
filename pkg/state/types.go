@@ -89,6 +89,11 @@ type Account struct {
 	Status           AccountStatus
 	StripeCustomerID string
 	CreatedAt        time.Time
+	// DeletionRequestedAt is stamped when the customer schedules the
+	// account for deletion (G6, ADR-021). NULL on every row that has
+	// never been scheduled. pkg/grace uses it to decide whether the
+	// 30-day grace window has lapsed and a hard delete should run.
+	DeletionRequestedAt *time.Time
 }
 
 // Active reports whether the account may deploy (not suspended/deleted).

@@ -136,6 +136,23 @@ type APIKeyItem struct {
 // AccountData is the /dashboard/account page payload.
 type AccountData struct {
 	Keys []APIKeyItem
+	// ShowDelete + DeleteConfirmToken drive the "Danger zone" partial
+	// in templates/account.html. The token is the literal string
+	// "delete:yes" the POST form must echo back (see
+	// cmd/apid/dashboard_delete.go::confirmTokenMatches). ShowRestore
+	// + RestoreUntil render the matching "Restore account" form when
+	// the row is in deleted_pending — the deadline is the human-
+	// readable restore_until the dashboard template surfaces.
+	ShowDelete          bool
+	DeleteConfirmToken  string
+	ShowRestore         bool
+	RestoreUntil        string
+	RestoreConfirmToken string
+	// FlashSurface holds "scheduled for deletion" / "restored" banners
+	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
+	// Kept here (not Page.Flash) so the danger-zone partial stays a
+	// self-contained block the layout file can render unconditionally.
+	FlashSurface string
 }
 
 // Render writes the page to w. It parses the templates on first use

@@ -52,6 +52,11 @@ type server struct {
 	sessions *session.Manager
 	// loginTTL is how long a magic-link stays valid. Default 15m.
 	loginTTL time.Duration
+	// dpaPath is the on-disk path of the DPA template served by
+	// GET /v1/account/dpa (spec §17 G6). Default /etc/faas/dpa.md in
+	// production; the dev fallback is docs/DPA.md relative to the
+	// repo root (set from FAAS_DPA_PATH or left empty to disable).
+	dpaPath string
 }
 
 // Mailer is the slice of pkg/mail.Sender apid depends on. Kept as an
@@ -84,12 +89,13 @@ type Notifier interface {
 }
 
 func newServer(store state.Store, log *slog.Logger, domain string, notif Notifier) *server {
-	return newServerWithDeps(store, log, domain, notif, "", nil, nil, nil, nil, 0)
+	return newServerWithDeps(store, log, domain, notif, "", nil, nil, nil, nil, 0, "")
 }
 
 // newServerWithDeps wires the full server surface including the M7
 // stripe-webhook + mailer deps, the M7.5 githubd client (ADR-012),
-// the dashboard session manager + login-token TTL.
+// the dashboard session manager + login-token TTL, and the G6 DPA
+// template path.
 //
 // Production (cmd/apid/main.go) calls this with env-loaded values;
 // tests use the simpler newServer (no secret, noop mailer, stub
@@ -105,6 +111,7 @@ func newServerWithDeps(
 	sessions *session.Manager,
 	bcaster *events.Broadcaster,
 	loginTTL time.Duration,
+	dpaPath string,
 ) *server {
 	if domain == "" {
 		domain = "DOMAIN"
@@ -138,6 +145,7 @@ func newServerWithDeps(
 		events:              bcaster,
 		sessions:            sessions,
 		loginTTL:            loginTTL,
+		dpaPath:             dpaPath,
 	}
 }
 
@@ -183,6 +191,17 @@ func (s *server) handler() http.Handler {
 	// Account.
 	mux.HandleFunc("GET /v1/account", s.auth(s.whoami))
 	mux.HandleFunc("PATCH /v1/account/plan", s.auth(s.idempotent(s.changePlan)))
+
+	// G6 account self-service (spec §17 G6, ADR-021). /v1/account/dpa
+	// is intentionally mounted without s.auth — the DPA is a public
+	// artefact a prospect reads before signing up. The export + delete
+	// + restore paths sit behind s.auth but pass the
+	// deleted_pending carve-out in isAccountScopedPath so a customer
+	// can take a final export or cancel during the 30-day grace.
+	mux.HandleFunc("GET /v1/account/export", s.auth(s.exportAccount))
+	mux.HandleFunc("DELETE /v1/account", s.auth(s.idempotent(s.deleteAccount)))
+	mux.HandleFunc("POST /v1/account/restore", s.auth(s.restoreAccount))
+	mux.HandleFunc("GET /v1/account/dpa", s.dpaTemplate)
 
 	// Apps.
 	mux.HandleFunc("GET /v1/apps", s.auth(s.listApps))
@@ -269,6 +288,15 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 
+	// G6 dashboard delete/restore (spec §17 G6, ADR-021). Both POSTs
+	// require the confirm_token form field (validated inside the
+	// handler) and sit behind sessionAuth so the call is anchored to
+	// the logged-in account. The handlers reuse scheduleDeletion /
+	// cancelDeletion from handlers_account.go so audit, email, and
+	// notification side-effects match the REST API path bit-for-bit.
+	mux.Handle("POST /dashboard/account/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDelete))))
+	mux.Handle("POST /dashboard/account/restore", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRestore))))
+
 	return mux
 }
 
@@ -293,6 +321,17 @@ func (s *server) dashboardChain(h http.Handler) http.Handler {
 type accountHandler func(w http.ResponseWriter, r *http.Request, acct state.Account)
 
 // auth authenticates by API-key hash and rejects inactive accounts (spec §11).
+//
+// Carve-out for G6 (spec §17 G6, ADR-021): while an account is in
+// deleted_pending, the customer still needs to reach
+//   - GET    /v1/account          (Whoami — read-only status probe)
+//   - GET    /v1/account/export   (final export during grace)
+//   - DELETE /v1/account          (idempotent re-DEL)
+//   - POST   /v1/account/restore  (cancel the deletion)
+//
+// All other routes still 402 with CodeBillingPastDue during grace
+// because the work surface (deploy, build, park live instances) is
+// already torn down.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok := bearerToken(r)
@@ -308,12 +347,26 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 			return
 		}
 		if !acct.Active() {
-			api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
-				"Account suspended", "resolve billing to continue: https://DOMAIN/billing"))
-			return
+			if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+				api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
+					"Account suspended", "resolve billing to continue: https://DOMAIN/billing"))
+				return
+			}
 		}
 		next(w, r, acct)
 	}
+}
+
+// isAccountScopedPath returns true for the paths that must remain
+// reachable while an account is in the deletion grace window. Keep
+// this list short and explicit — every entry is a deliberate
+// exception to the spec §11 "inactive account = 402" rule.
+func isAccountScopedPath(p string) bool {
+	switch p {
+	case "/v1/account", "/v1/account/export", "/v1/account/restore":
+		return true
+	}
+	return false
 }
 
 // idempotent replays a stored response for a repeated Idempotency-Key, or runs

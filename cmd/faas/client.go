@@ -85,6 +85,85 @@ func (c *Client) Whoami(ctx context.Context) (api.AccountResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/account", nil, &out)
 }
 
+// ExportAccount downloads the GDPR export bundle (spec §17 G6).
+// outPath is the file to write; includeSecrets=false drops the
+// ciphertext slice. Streams the response body straight to disk so a
+// large bundle doesn't load into memory.
+func (c *Client) ExportAccount(ctx context.Context, outPath string, includeSecrets bool) error {
+	path := "/v1/account/export"
+	if !includeSecrets {
+		path += "?include_secrets=false"
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("could not reach the API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		var p api.Problem
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if json.Unmarshal(body, &p) == nil && p.Code != "" {
+			return &APIError{Problem: p}
+		}
+		return fmt.Errorf("API error: %s", resp.Status)
+	}
+	f, err := os.Create(outPath)
+	if err != nil {
+		return fmt.Errorf("could not open output file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		return fmt.Errorf("write failed: %w", err)
+	}
+	return nil
+}
+
+// DeleteAccount schedules the account for deletion (spec §17 G6).
+// idempotencyKey is forwarded as Idempotency-Key so retry-safe
+// clients (CI, dashboard) get the same envelope back across retries.
+func (c *Client) DeleteAccount(ctx context.Context, idempotencyKey string) (api.AccountDeletionResponse, error) {
+	var out api.AccountDeletionResponse
+	req, _ := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/v1/account", nil)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return out, fmt.Errorf("could not reach the API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		var p api.Problem
+		if json.Unmarshal(body, &p) == nil && p.Code != "" {
+			return out, &APIError{Problem: p}
+		}
+		return out, fmt.Errorf("API error: %s", resp.Status)
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return out, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
+// RestoreAccount cancels a pending deletion (spec §17 G6). Returns
+// the refreshed AccountResponse so the CLI can print "Welcome back
+// to the <plan> plan".
+func (c *Client) RestoreAccount(ctx context.Context) (api.AccountResponse, error) {
+	var out api.AccountResponse
+	return out, c.do(ctx, "POST", "/v1/account/restore", nil, &out)
+}
+
 // ListApps returns the account's apps.
 func (c *Client) ListApps(ctx context.Context) ([]api.AppResponse, error) {
 	var out []api.AppResponse

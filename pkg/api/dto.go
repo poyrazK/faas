@@ -218,3 +218,81 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int) *Problem {
 	}
 	return nil
 }
+
+// --- G6 account self-service (spec §17 G6, ADR-021) -------------------------
+
+// AccountExportResponse is the GET /v1/account/export bundle. A
+// single JSON document with one slice per resource type the customer
+// owns (apps, deployments, builds, instances, usage, domains, crons,
+// API keys, app_secrets). Ciphertext passthrough for the secrets
+// slice — the plaintext VALUE never lands in PG (ADR-020), so the
+// customer can rotate their host age key after a restore-from-export
+// without losing the per-secret envelope.
+type AccountExportResponse struct {
+	ExportedAt  string                    `json:"exported_at"`
+	Account     AccountResponse           `json:"account"`
+	Apps        []AppResponse             `json:"apps"`
+	Deployments []DeploymentResponse      `json:"deployments"`
+	Builds      []BuildExportResponse     `json:"builds"`
+	Instances   []InstanceResponse        `json:"instances"`
+	Usage       []UsageExportResponse     `json:"usage"`
+	Domains     []CustomDomainResponse    `json:"domains"`
+	Crons       []CronResponse            `json:"crons"`
+	APIKeys     []APIKeyExportResponse    `json:"api_keys"`
+	AppSecrets  []AppSecretExportResponse `json:"app_secrets"`
+}
+
+// BuildExportResponse is the per-build row in the export bundle.
+// Reduced shape (no internal IDs the customer can't act on).
+type BuildExportResponse struct {
+	ID           string `json:"id"`
+	DeploymentID string `json:"deployment_id"`
+	AppID        string `json:"app_id"`
+	Kind         string `json:"kind"`
+	Status       string `json:"status"`
+	SourceBytes  int64  `json:"source_bytes"`
+	StartedAt    string `json:"started_at,omitempty"`
+	FinishedAt   string `json:"finished_at,omitempty"`
+}
+
+// UsageExportResponse is the per-month roll-up in the export bundle.
+// `month` is YYYY-MM (matches the dashboard's usage page render).
+type UsageExportResponse struct {
+	AppID     string `json:"app_id"`
+	Month     string `json:"month"`
+	MBSeconds int64  `json:"mb_seconds"`
+	Requests  int64  `json:"requests"`
+}
+
+// APIKeyExportResponse is one row in the export's API key slice.
+// The plaintext key never appears here (and never reappears after
+// the create response, per §4.2). Only the prefix + label + timestamps.
+type APIKeyExportResponse struct {
+	ID        string `json:"id"`
+	Prefix    string `json:"prefix"`
+	Label     string `json:"label,omitempty"`
+	CreatedAt string `json:"created_at"`
+	LastUsed  string `json:"last_used_at,omitempty"`
+}
+
+// AppSecretExportResponse is one row in the export's app_secrets slice.
+// Ciphertext is the age-sealed envelope (base64). Plaintext never
+// lands here — the customer imports the envelope into another faas
+// install (or their own age tool) to unseal.
+type AppSecretExportResponse struct {
+	AppID      string `json:"app_id"`
+	Key        string `json:"key"`
+	Ciphertext string `json:"ciphertext"` // base64
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+// AccountDeletionResponse is the response from DELETE /v1/account
+// (and the same shape is replayed on every repeat call — the
+// idempotent endpoint guarantees the response body is identical
+// across retries inside the 24 h window).
+type AccountDeletionResponse struct {
+	Status       string `json:"status"`        // always "deleted_pending"
+	ScheduledAt  string `json:"scheduled_at"`  // deletion_requested_at, RFC 3339
+	RestoreUntil string `json:"restore_until"` // scheduled_at + 30 d, RFC 3339
+}

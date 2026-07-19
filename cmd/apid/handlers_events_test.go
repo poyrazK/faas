@@ -43,7 +43,7 @@ func TestEvents_FiltersByAccount(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	notif := newRecordingNotifier()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(e.store, log, "example.com", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0).handler()
+	srv := newServerWithDeps(e.store, log, "example.com", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "").handler()
 
 	res := make(chan string, 1)
 	go func() {
@@ -92,7 +92,7 @@ func TestEvents_RequiresAuth(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	notif := newRecordingNotifier()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(e.store, log, "example.com", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0).handler()
+	srv := newServerWithDeps(e.store, log, "example.com", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "").handler()
 
 	req := httptest.NewRequest("GET", "/v1/events", nil)
 	rec := httptest.NewRecorder()

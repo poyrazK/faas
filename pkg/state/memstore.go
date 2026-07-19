@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -1482,6 +1484,260 @@ func (m *MemStore) CountAppSecrets(_ context.Context, accountID, appID string) (
 		}
 	}
 	return n, nil
+}
+
+// --- G6 account self-service (spec §17 G6, ADR-021) -------------------------
+//
+// MemStore mirrors PgStore for the G6 endpoints so handler tests
+// exercise the same shape the production store enforces. The grace
+// window lives in state.DeletionGraceDuration (the MemStore enforces
+// the same constant the production timer uses).
+
+// DeletionGraceDuration returns the customer-visible grace window the
+// customer has to restore their account. MemStore and PgStore share
+// the constant so handler tests don't drift from production behavior.
+func DeletionGraceDuration() time.Duration { return 30 * 24 * time.Hour }
+
+// DeleteAccount walks the FK graph in dependency order under a single
+// m.mu lock. The dependency order matches the PgStore tx so a redelivered
+// grace tick finds the same idempotent answer.
+func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	// Conditional-delete mirrors the PgStore SQL `WHERE id=$1 AND
+	// status='deleted_pending'`. We refuse to delete a row that's not
+	// in deleted_pending so the restore→tick race closes identically
+	// to the production path: if RestoreAccount flipped the row back
+	// to active in between ListAllAccounts and DeleteAccount, the
+	// grace timer gets ErrNotFound and swallows it.
+	if a.Status != AccountDeletedPending {
+		return ErrNotFound
+	}
+	// Drop children first so the parent's final delete is the sentinel.
+	for k := range m.secrets {
+		if m.secrets[k].AccountID == id {
+			delete(m.secrets, k)
+		}
+	}
+	for domain, d := range m.domains {
+		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
+			delete(m.domains, domain)
+		}
+	}
+	for cid, c := range m.crons {
+		if app, ok := m.apps[c.AppID]; ok && app.AccountID == id {
+			delete(m.crons, cid)
+		}
+	}
+	for iid, ins := range m.instances {
+		if app, ok := m.apps[ins.AppID]; ok && app.AccountID == id {
+			delete(m.instances, iid)
+		}
+	}
+	// Snapshots + builds are keyed by deployment_id; resolve the
+	// deployment set first.
+	deletedDeployments := map[string]struct{}{}
+	for did, d := range m.deployments {
+		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
+			deletedDeployments[did] = struct{}{}
+			delete(m.deployments, did)
+		}
+	}
+	for i := len(m.snapshots) - 1; i >= 0; i-- {
+		if _, ok := deletedDeployments[m.snapshots[i].DeploymentID]; ok {
+			m.snapshots = append(m.snapshots[:i], m.snapshots[i+1:]...)
+		}
+	}
+	for bid, b := range m.builds {
+		if _, ok := deletedDeployments[b.DeploymentID]; ok {
+			delete(m.builds, bid)
+		}
+	}
+	for aid, a := range m.apps {
+		if a.AccountID == id {
+			delete(m.apps, aid)
+			delete(m.githubBindings, aid)
+		}
+	}
+	for kid, k := range m.keys {
+		if k.AccountID == id {
+			delete(m.keys, kid)
+			delete(m.keyByHash, hex.EncodeToString(k.Hash))
+		}
+	}
+	for k := range m.idem {
+		// The MemStore idem key shape is "accountID\x00key" — strip
+		// the prefix to find this account's bucket.
+		if strings.HasPrefix(k, id+"\x00") {
+			delete(m.idem, k)
+		}
+	}
+	// usage_minutes + usageByMonth aggregates are keyed by accountID
+	// (no separate owner column); filter and rewrite both slices.
+	var kept []usageMinute
+	for _, u := range m.usage {
+		if u.AccountID != id {
+			kept = append(kept, u)
+		}
+	}
+	m.usage = kept
+	var keptMonth []Usage
+	for _, u := range m.usageByMonth {
+		if u.AccountID != id {
+			keptMonth = append(keptMonth, u)
+		}
+	}
+	m.usageByMonth = keptMonth
+	// Finally: clear stripeByCustomer reverse-index, then the parent.
+	for sc, acid := range m.stripeByCustomer {
+		if acid == id {
+			delete(m.stripeByCustomer, sc)
+		}
+	}
+	// Audit events (spec §17 G6 right-to-erasure). Drop events whose
+	// subject is the account id or whose data->>account_id matches.
+	// Mirrors the PgStore cascade; a non-JSON Data is left alone (the
+	// parser below bails on the first byte).
+	idUUID, _ := uuid.Parse(id)
+	var keptEvents []Event
+	for _, e := range m.events {
+		if e.Subject != nil && idUUID != uuid.Nil && *e.Subject == idUUID {
+			continue
+		}
+		if len(e.Data) > 0 {
+			var payload map[string]any
+			if err := json.Unmarshal(e.Data, &payload); err == nil {
+				if v, ok := payload["account_id"].(string); ok && v == id {
+					continue
+				}
+			}
+		}
+		keptEvents = append(keptEvents, e)
+	}
+	m.events = keptEvents
+	delete(m.accounts, id)
+	return nil
+}
+
+// ListBuildsForAccount returns every build tied to the account.
+func (m *MemStore) ListBuildsForAccount(_ context.Context, accountID string) ([]Build, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ownedDeployments := map[string]struct{}{}
+	for _, d := range m.deployments {
+		if app, ok := m.apps[d.AppID]; ok && app.AccountID == accountID {
+			ownedDeployments[d.ID] = struct{}{}
+		}
+	}
+	var out []Build
+	for _, b := range m.builds {
+		if _, ok := ownedDeployments[b.DeploymentID]; ok {
+			out = append(out, b)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	return out, nil
+}
+
+// ListCronsForAccount returns every cron tied to the account.
+func (m *MemStore) ListCronsForAccount(_ context.Context, accountID string) ([]Cron, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Cron
+	for _, c := range m.crons {
+		if app, ok := m.apps[c.AppID]; ok && app.AccountID == accountID {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+// UsageByAccount returns the per-month roll-up. Mirrors the PgStore
+// shape (per-app, per-month aggregated mb_seconds + requests).
+func (m *MemStore) UsageByAccount(_ context.Context, accountID string, since time.Time) ([]Usage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	type bucket struct{ mb, req int64 }
+	agg := map[string]*bucket{}
+	for _, u := range m.usage {
+		if u.AccountID != accountID {
+			continue
+		}
+		if !since.IsZero() && u.Minute.Before(since) {
+			continue
+		}
+		key := u.AppID + "\x00" + u.Minute.Format("2006-01")
+		if _, ok := agg[key]; !ok {
+			agg[key] = &bucket{}
+		}
+		agg[key].mb += u.MBSeconds
+		agg[key].req += u.Requests
+	}
+	out := make([]Usage, 0, len(agg))
+	for key, b := range agg {
+		parts := strings.SplitN(key, "\x00", 2)
+		month, _ := time.Parse("2006-01", parts[1])
+		out = append(out, Usage{
+			AccountID: accountID, AppID: parts[0], Month: month,
+			MBSeconds: b.mb, Requests: b.req,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].AppID != out[j].AppID {
+			return out[i].AppID < out[j].AppID
+		}
+		return out[i].Month.Before(out[j].Month)
+	})
+	return out, nil
+}
+
+// MarkAccountDeletionPending flips the account into deleted_pending.
+// Idempotent: if already pending, the original timestamp survives so
+// the grace window's anchor stays at the customer's first ask.
+func (m *MemStore) MarkAccountDeletionPending(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if a.Status == AccountDeletedPending && a.DeletionRequestedAt != nil {
+		return nil
+	}
+	a.Status = AccountDeletedPending
+	now := time.Now().UTC()
+	if a.DeletionRequestedAt == nil {
+		a.DeletionRequestedAt = &now
+	}
+	m.accounts[id] = a
+	return nil
+}
+
+// RestoreAccount flips status back to active and clears
+// deletion_requested_at iff inside the 30-day grace window. Past
+// grace → ErrConflict.
+func (m *MemStore) RestoreAccount(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if a.Status != AccountDeletedPending || a.DeletionRequestedAt == nil {
+		return ErrConflict
+	}
+	if time.Since(*a.DeletionRequestedAt) > DeletionGraceDuration() {
+		return ErrConflict
+	}
+	a.Status = AccountActive
+	a.DeletionRequestedAt = nil
+	m.accounts[id] = a
+	return nil
 }
 
 // compile-time check that MemStore satisfies Store.

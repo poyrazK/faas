@@ -78,6 +78,39 @@
       <h2>GitHub</h2>
       <p>Connect a GitHub App to enable push-to-deploy. Slice 8 wires this button; today it's a stub.</p>
       <button type="button" disabled>Connect GitHub (coming in M7.5 slice 8)</button>
+
+      {{if .Data.FlashSurface}}
+        <p class="flash" style="background:#fffbe6;border:1px solid #f0c000;padding:0.5rem 0.75rem;margin:1rem 0;border-radius:4px;">{{.Data.FlashSurface}}</p>
+      {{end}}
+
+      {{if or .Data.ShowDelete .Data.ShowRestore}}
+        <h2>Danger zone</h2>
+        <section class="danger-zone">
+          <p><strong>Export your data</strong> &mdash; downloads a JSON bundle of every app, deployment, build, secret (as ciphertext), API key, domain, cron, and usage row you own.</p>
+          <p><a class="btn" href="/v1/account/export" download>Download JSON export</a></p>
+
+          {{if .Data.ShowDelete}}
+            <hr>
+            <p><strong>Delete account</strong> &mdash; schedules permanent deletion in 30 days. You can cancel within the grace period by clicking "Restore" below or running <code>faas account restore</code>.</p>
+            <form method="POST" action="/dashboard/account/delete">
+              <input type="hidden" name="confirm_token" value="{{.Data.DeleteConfirmToken}}">
+              <button type="submit" class="btn-danger"
+                onclick="return confirm('Schedule your account for permanent deletion in 30 days?')">
+                Delete account
+              </button>
+            </form>
+          {{end}}
+
+          {{if .Data.ShowRestore}}
+            <hr>
+            <p><strong>Restore account</strong> &mdash; cancel the scheduled deletion. The grace window lapses on <code>{{.Data.RestoreUntil}}</code>.</p>
+            <form method="POST" action="/dashboard/account/restore">
+              <input type="hidden" name="confirm_token" value="{{.Data.RestoreConfirmToken}}">
+              <button type="submit" class="btn">Restore account</button>
+            </form>
+          {{end}}
+        </section>
+      {{end}}
     {{end}}
   </main>
   <footer>onebox faas · M7.5 dashboard · server-rendered, no SPA build</footer>
