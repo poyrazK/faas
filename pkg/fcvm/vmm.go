@@ -154,9 +154,9 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig) (err error)
 		return err
 	}
 // Vsock is configured via the config-file (top-level `vsock:` field,
-// see VMConfig). Firecracker attaches it pre-start; the UDS at
-// vsockUDSSock is created by the time startJailer returns. No
-// post-start PUT needed.
+	// see VMConfig). Firecracker attaches it pre-start; the UDS at
+	// vsockUDSSock is created by the time startJailer returns. No
+	// post-start PUT needed.
 	if err = v.waitReady(ctx, l); err != nil {
 		return fmt.Errorf("vmm: readiness: %w", err)
 	}
@@ -306,7 +306,7 @@ func readConnectAck(conn net.Conn) (string, error) {
 // acceptance gate: two instances from one snapshot must produce distinct
 // /proc/sys/kernel/random/uuid immediately post-resume.
 //
-// Wire format (ADR-022 + FC docs/vsock.md host-initiated CONNECT-port):
+// Wire format (Firecracker vsock host-initiated, FC docs/vsock.md):
 //
 //  1. Host connects to <chroot>/vsock.sock.
 //  2. Host writes ASCII "CONNECT <port>\n" (e.g. "CONNECT 1024\n").
@@ -389,6 +389,8 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	if cw, ok := conn.(closeWriter); ok {
 		_ = cw.CloseWrite()
 	}
+
+	// Step 4: read the 1-byte ack from the guest.
 	ack := make([]byte, 1)
 	if _, err := io.ReadFull(conn, ack); err != nil {
 		return fmt.Errorf("vmm: read resume ack: %w", err)
@@ -397,6 +399,40 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
 	}
 	return nil
+}
+
+// resumeHookGuestPort is the AF_VSOCK port the guest-init resume
+// listener binds. Must match guest/init/listen_resume_linux.go's
+// VsockResumePort.
+const resumeHookGuestPort = 1024
+
+// readConnectAck consumes the "OK <hostside_port>\n" reply from
+// Firecracker. Returns the first whitespace-delimited token. Reads
+// until newline so the byte count doesn't matter (FC's host-assigned
+// port is a 32-bit integer — variable digit count).
+func readConnectAck(conn net.Conn) (string, error) {
+	const max = 64
+	buf := make([]byte, 0, max)
+	one := make([]byte, 1)
+	for len(buf) < max {
+		if _, err := conn.Read(one); err != nil {
+			return "", fmt.Errorf("read CONNECT reply: %w", err)
+		}
+		if one[0] == '\n' || one[0] == '\r' {
+			break
+		}
+		buf = append(buf, one[0])
+	}
+	if len(buf) == 0 {
+		return "", fmt.Errorf("empty CONNECT reply")
+	}
+	// Return the first whitespace-delimited token.
+	for i := 0; i < len(buf); i++ {
+		if buf[i] == ' ' {
+			return string(buf[:i]), nil
+		}
+	}
+	return string(buf), nil
 }
 
 // Snapshot pauses the running VM, writes a full snapshot, copies the files out to

@@ -1033,7 +1033,7 @@ func TestBootAttachesVsockDeviceViaConfigFile(t *testing.T) {
 	cfg := BuildColdBootConfig(validColdSpec(), 7)
 
 	if cfg.VsockDevice == nil {
-		t.Fatal("VsockDevice = nil, want attached (ADR-022)")
+t.Fatal("VsockDevice = nil, want attached (ADR-022)")
 	}
 
 	// Marshal to JSON exactly like Boot() does and confirm the top-level

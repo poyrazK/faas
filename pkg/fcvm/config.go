@@ -38,6 +38,17 @@ type VMConfig struct {
 // is deprecated in FC and we don't send it; the field is kept for
 // documentation of why the wire tag is empty.
 type VsockDevice struct {
+	// ID is unused on the wire (vsock_id is deprecated in FC). Kept for
+	// in-memory bookkeeping only — the JSON tag is `json:"-"` so it never
+	// reaches the FC config file.
+	ID string `json:"-"`
+	// GuestCID is the per-instance slot-derived CID (Lease.Slot +
+	// VsockCIDBase). FC requires min 3; VsockCIDBase = 0x100 satisfies.
+	GuestCID uint32 `json:"guest_cid"`
+	// UDSSocket is the in-chroot AF_UNIX path Firecracker listens on for
+	// host-initiated connections (the host writes "CONNECT <port>\n" then
+	// proxies the byte stream to the guest's AF_VSOCK listener).
+	UDSSocket string `json:"uds_path"`
 }
 
 type BootSource struct {
