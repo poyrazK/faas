@@ -500,8 +500,10 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	}
 	// Remove the per-VM cgroup scope jailer created (--cgroup cpu.weight=…).
 	// Required by spec §6.2-4 ("parked = zero RAM") — a populated cgroup dir
-	// holds page-cache references. Idempotent; missing dir is fine.
-	scopePath := filepath.Join(cgroupRoot, ParentCgroup, "vm-"+l.Instance+".scope")
+	// holds page-cache references. The scope name equals jailer --id
+	// (= Lease.Instance); see pkg/fcvm/cgroup.go for the matching write path.
+	// Idempotent; missing dir is fine.
+	scopePath := filepath.Join(cgroupRoot, ParentCgroup, PerInstanceScope(l.Instance))
 	if err := os.RemoveAll(scopePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("vmm: remove cgroup scope: %w", err)
 	}

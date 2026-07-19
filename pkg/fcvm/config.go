@@ -197,6 +197,18 @@ type JailerSpec struct {
 	ExecFile string // path to the firecracker binary jailer copies into the chroot
 }
 
+// PerInstanceScope returns the cgroup scope name the jailer will create
+// at <parent_cgroup>/<scope>. The name MUST be a strict subset of
+// jailer v1.7's --id character whitelist (alnum + `-` + `_`); the
+// doc-comment on JailerCommand names those chars and how we choose a
+// safe value. The vmm wrapper looks up memory.max and on-Kill removes
+// exactly this path; matching the jailer's choice keeps the two in
+// step.
+//
+// Kept as a free function so pkg/fcvm/cgroup.go and vmm.go can both
+// reach it without dragging the rest of JailerSpec into scope.
+func PerInstanceScope(instance string) string { return instance }
+
 // JailerCommand builds the jailer argv (Appendix B). vmmd execs this as root; the
 // jailer drops privileges to UID/GID, chroots, applies seccomp, and joins the
 // cgroup scope before executing firecracker.
@@ -207,11 +219,18 @@ type JailerSpec struct {
 // the exec-file): only --api-sock here, so the control socket always exists; the
 // caller appends --config-file for a cold boot (Restore drives the API instead).
 //
+// --id is set to PerInstanceScope(s.Instance) — currently just the
+// instance name, because jailer v1.7 rejects '.' and other special
+// characters in --id (panic: "Invalid char (.) at position N"). The
+// vmm wrapper writes memory.max into
+// `<cgroupRoot>/faas-tenant.slice/<instance>` after bringUp; the scope
+// must exist by then or writeMemoryMax returns IsNotExist. Note this
+// means the cgroup scope, chroot leaf, and AF_VSOCK jailer's --id are
+// all the same string — keep them in lockstep.
+//
 // --cgroup cpu.weight=256 is mandatory on the v2 path: without at least one
 // --cgroup-param, jailer (FC v1.7+) only attaches the jailer PID to the parent
-// slice and never creates a per-instance child scope. The vmm wrapper writes
-// memory.max into `<cgroupRoot>/faas-tenant.slice/vm-<instance>.scope` after
-// bringUp; the scope must exist by then or writeMemoryMax returns IsNotExist.
+// slice and never creates a per-instance child scope. See above.
 // cpu.weight=256 is a neutral default (kernel normalises 100-1000, 256 ~ mid).
 func JailerCommand(s JailerSpec) []string {
 	execFile := s.ExecFile
@@ -220,7 +239,7 @@ func JailerCommand(s JailerSpec) []string {
 	}
 	return []string{
 		"jailer",
-		"--id", s.Instance,
+		"--id", PerInstanceScope(s.Instance),
 		"--uid", fmt.Sprintf("%d", s.UID),
 		"--gid", fmt.Sprintf("%d", s.GID),
 		"--exec-file", execFile,

@@ -306,7 +306,7 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	// Pre-flight: the cgroup fs must be reachable. Skipping (not
 	// failing) is the right behaviour on a dev box that can't mount
 	// cgroupv2 — the production EX44 always has it.
-	const scopeBase = "/sys/fs/cgroup/faas-tenant.slice/vm-mem.scope"
+	scopeBase := "/sys/fs/cgroup/faas-tenant.slice/" + PerInstanceScope("mem")
 	if _, err := os.Stat("/sys/fs/cgroup"); err != nil {
 		t.Skipf("/sys/fs/cgroup not mounted (Lima/macOS dev): %v", err)
 	}

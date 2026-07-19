@@ -96,7 +96,7 @@ func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig) error {
 	// code path is correct. Best-effort: if the test set cgroupRoot to
 	// a path where this would fail, leave it; the cgroup write will
 	// surface the error.
-	if err := os.MkdirAll(filepath.Join(cgroupRoot, ParentCgroup, "vm-"+l.Instance+".scope"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(cgroupRoot, ParentCgroup, PerInstanceScope(l.Instance)), 0o755); err != nil {
 		return err
 	}
 	return v.bootErr
@@ -107,7 +107,7 @@ func (v *fakeVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) error 
 	v.restored = append(v.restored, l.Instance)
 	v.mu.Unlock()
 	// Same scope-create as Boot — jailer creates the scope on restore too.
-	if err := os.MkdirAll(filepath.Join(cgroupRoot, ParentCgroup, "vm-"+l.Instance+".scope"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(cgroupRoot, ParentCgroup, PerInstanceScope(l.Instance)), 0o755); err != nil {
 		return err
 	}
 	// Mirror the production JailerVMM.Restore: after /snapshot/load, dial the
@@ -937,7 +937,7 @@ func TestWakeWritesMemoryMaxAfterBringUp(t *testing.T) {
 	if vmm.boots() != 1 {
 		t.Fatalf("expected 1 boot, got %d", vmm.boots())
 	}
-	memPath := filepath.Join(cgroupRoot, "faas-tenant.slice", "vm-cgroup-order.scope", "memory.max")
+	memPath := filepath.Join(cgroupRoot, "faas-tenant.slice", PerInstanceScope("cgroup-order"), "memory.max")
 	body, err := os.ReadFile(memPath)
 	if err != nil {
 		t.Fatalf("memory.max not written at %s: %v", memPath, err)

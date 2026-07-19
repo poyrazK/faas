@@ -24,13 +24,13 @@ func withFakeCgroupRoot(t *testing.T) string {
 func TestWriteMemoryMaxWritesBytesPlusOverhead(t *testing.T) {
 	dir := withFakeCgroupRoot(t)
 	inst := "foo"
-	if err := os.MkdirAll(filepath.Join(dir, "faas-tenant.slice", "vm-"+inst+".scope"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "faas-tenant.slice", PerInstanceScope(inst)), 0o755); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	if err := writeMemoryMax(inst, 128); err != nil {
 		t.Fatalf("writeMemoryMax: %v", err)
 	}
-	body, err := os.ReadFile(filepath.Join(dir, "faas-tenant.slice", "vm-"+inst+".scope", "memory.max"))
+	body, err := os.ReadFile(filepath.Join(dir, "faas-tenant.slice", PerInstanceScope(inst), "memory.max"))
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestWriteMemoryMaxMissingScopeFailsClean(t *testing.T) {
 	if !strings.Contains(err.Error(), "scope") || !strings.Contains(err.Error(), "bar") {
 		t.Errorf("error %q must name the missing scope and the instance id", err.Error())
 	}
-	if !strings.Contains(err.Error(), "faas-tenant.slice/vm-bar.scope") {
+	if !strings.Contains(err.Error(), "faas-tenant.slice/"+PerInstanceScope("bar")) {
 		t.Errorf("error %q must include the full scope path", err.Error())
 	}
 }
@@ -73,13 +73,13 @@ func TestWriteMemoryMaxRejectsNonPositivePlan(t *testing.T) {
 func TestWriteMemoryMaxAppendsNewline(t *testing.T) {
 	dir := withFakeCgroupRoot(t)
 	inst := "baz"
-	if err := os.MkdirAll(filepath.Join(dir, "faas-tenant.slice", "vm-"+inst+".scope"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "faas-tenant.slice", PerInstanceScope(inst)), 0o755); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	if err := writeMemoryMax(inst, 256); err != nil {
 		t.Fatalf("writeMemoryMax: %v", err)
 	}
-	body, err := os.ReadFile(filepath.Join(dir, "faas-tenant.slice", "vm-"+inst+".scope", "memory.max"))
+	body, err := os.ReadFile(filepath.Join(dir, "faas-tenant.slice", PerInstanceScope(inst), "memory.max"))
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}

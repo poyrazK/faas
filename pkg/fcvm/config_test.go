@@ -106,14 +106,15 @@ func TestJailerCommandMatchesSpec(t *testing.T) {
 	})
 	line := strings.Join(argv, " ")
 	wants := []string{
-		"jailer --id abc",
+		"jailer --id abc", // --id is the instance name verbatim (jailer v1.7 rejects '.' / '/' in --id, so no .scope suffix)
 		"--uid 20007 --gid 20007",
 		"--exec-file /usr/local/bin/firecracker", // required by jailer; names the chroot dir
 		"--chroot-base-dir " + JailChrootBase,
 		"--netns /run/netns/fc-abc",
 		"--cgroup-version 2",
 		"--parent-cgroup " + ParentCgroup,
-		"-- --api-sock api.sock", // firecracker's own argv only — no binary name
+		"--cgroup cpu.weight=256", // mandatory to make jailer create the per-VM child scope
+		"-- --api-sock api.sock",  // firecracker's own argv only — no binary name
 	}
 	for _, w := range wants {
 		if !strings.Contains(line, w) {
