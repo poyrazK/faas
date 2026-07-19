@@ -245,9 +245,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 // automatically once firecracker accepts the device; see vsockUDSSock.
 func (v *JailerVMM) attachVsock(ctx context.Context, instance string, dev *VsockDevice) error {
 	body := map[string]any{
-		"vsock_id":   dev.ID,
-		"guest_cid":  dev.GuestCID,
-		"uds_socket": dev.UDSSocket,
+		"vsock_id":  dev.ID,
+		"guest_cid": dev.GuestCID,
+		"uds_path":  dev.UDSSocket, // Firecracker API field name
 	}
 	if err := v.apiPut(ctx, instance, "/vsock", body); err != nil {
 		return fmt.Errorf("vmm: attach vsock: %w", err)

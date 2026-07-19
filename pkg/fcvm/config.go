@@ -25,13 +25,18 @@ type VMConfig struct {
 
 // VsockDevice is the Firecracker vsock binding the host uses to dial the guest
 // after a restore. guest_cid must be unique per live instance on the host (we
-// derive it from Lease.Slot, see GuestVsockCID). uds_socket is the in-chroot
+// derive it from Lease.Slot, see GuestVsockCID). uds_path is the in-chroot
 // path the jailer creates automatically; the host side of the wire reaches it
 // through chrootRoot(instance).
+//
+// JSON tag is `uds_path` (NOT `uds_socket`) to match the Firecracker PUT
+// /vsock schema — the FC API rejects unknown fields. The Go field name
+// keeps the SDK-style `UDSSocket` for readability; only the wire tag
+// matters.
 type VsockDevice struct {
-	ID        string `json:"vsock_id"`   // "vsock-0" — Firecracker requires unique id
-	GuestCID  uint32 `json:"guest_cid"`  // unique per live instance
-	UDSSocket string `json:"uds_socket"` // "vsock.sock" (chroot-local)
+	ID        string `json:"vsock_id"`  // "vsock-0" — Firecracker requires unique id
+	GuestCID  uint32 `json:"guest_cid"` // unique per live instance
+	UDSSocket string `json:"uds_path"`  // "vsock.sock" (chroot-local)
 }
 
 type BootSource struct {

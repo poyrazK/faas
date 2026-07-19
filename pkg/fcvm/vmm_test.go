@@ -1017,7 +1017,7 @@ func TestBootAttachesVsockDeviceViaAPIPut(t *testing.T) {
 		var body struct {
 			VsockID   string `json:"vsock_id"`
 			GuestCID  uint32 `json:"guest_cid"`
-			UDSSocket string `json:"uds_socket"`
+			UDSSocket string `json:"uds_path"` // matches Firecracker API field
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1063,7 +1063,7 @@ func TestBootAttachesVsockDeviceViaAPIPut(t *testing.T) {
 		t.Errorf("guest_cid = %d, want %d", got, GuestVsockCID(7))
 	}
 	if got, _ := seenUDSSock.Load().(string); got != VsockUDSSocketName {
-		t.Errorf("uds_socket = %q, want %q", got, VsockUDSSocketName)
+		t.Errorf("uds_path = %q, want %q", got, VsockUDSSocketName)
 	}
 }
 
