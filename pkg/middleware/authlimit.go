@@ -202,7 +202,12 @@ func AuthLimitWithLimiter(cfg AuthLimitConfig, lim *Limiter) func(http.Handler) 
 				cfg.Log.Warn("auth_limit blocked",
 					"ip", logsanitize.Field(ip),
 					"path", logsanitize.Field(r.URL.Path),
-					"request_id", RequestIDFrom(r),
+					// RequestIDFrom falls back to the X-Request-ID header set by
+					// an upstream proxy (or directly by the caller); both are
+					// attacker-influenced. Sanitize before logging so a crafted
+					// id with a CR/LF can't smuggle an extra log line (CWE-117,
+					// CodeQL go/log-injection).
+					"request_id", logsanitize.Field(RequestIDFrom(r)),
 				)
 				return
 			}

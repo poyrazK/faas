@@ -1,6 +1,7 @@
 package middleware_test
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"net/http"
@@ -284,5 +285,83 @@ func TestAuthLimit_CountsAllAttempts(t *testing.T) {
 	// is the happy 200.
 	if c := fire(); c != http.StatusTooManyRequests {
 		t.Fatalf("4th: code = %d, want 429 (count-every-attempt)", c)
+	}
+}
+
+// TestAuthLimit_BlockLogStripsControlChars covers the CWE-117
+// (CodeQL go/log-injection) regression. An attacker that can set
+// x-faas-request-id could otherwise smuggle CR/LF into a JSON log
+// line and produce extra events downstream of slog. The middleware
+// must sanitize the path + request id before handing them to
+// slog.Logger.Warn. We capture the JSON-encoded record and assert:
+//  1. raw control characters are replaced with U+00B7 (middle dot),
+//  2. nothing in the record contains a bare \n or \r before the
+//     closing brace (one-line-per-event invariant).
+//
+// net/http refuses raw CR/LF in URL paths and header values at parse
+// time (the actual defense-in-depth — see the request header parser
+// in net/textproto), so we drive the sanitizer with VERTICAL TAB
+// (U+000B), which is benign-looking and passes through the parser
+// unchanged. That's the attacker-influenced byte the sanitizer must
+// strip.
+func TestAuthLimit_BlockLogStripsControlChars(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	var buf bytes.Buffer
+	cfg := middleware.AuthLimitConfig{
+		Window:      time.Minute,
+		MaxFailures: 1,
+		Now:         func() time.Time { return now },
+		Log:         slog.New(slog.NewJSONHandler(&buf, nil)),
+	}
+	h := middleware.AuthLimit(cfg)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusUnauthorized)
+	}))
+
+	// First request primes the bucket: MaxFailures=1 means the NEXT
+	// request from this IP is the one that logs the "auth_limit
+	// blocked" warning.
+	{
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/login", nil)
+		r.RemoteAddr = "203.0.113.60:55555"
+		h.ServeHTTP(rec, r)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("priming request: code = %d, want 401", rec.Code)
+		}
+		now = now.Add(time.Second)
+	}
+
+	// Second request → 429 + warn log. Craft x-faas-request-id with an
+	// attacker-influenced control character (vertical tab) that survives
+	// header parsing but must be stripped before logging.
+	buf.Reset()
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/login", nil)
+	r.RemoteAddr = "203.0.113.60:55555"
+	r.Header.Set("x-faas-request-id", "abc\x0bdef")
+	h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("limited request: code = %d, want 429", rec.Code)
+	}
+
+	out := buf.String()
+	if out == "" {
+		t.Fatal("expected a warn log line, got none")
+	}
+	// One log record per event — slog JSON terminates each with \n.
+	if strings.Contains(strings.TrimRight(out, "\n"), "\n") {
+		t.Fatalf("log emitted multiple lines; log-injection regression: %q", out)
+	}
+	// slog.NewJSONHandler escapes \x0b as the literal sequence \u000b when
+	// the raw byte reaches it. The unfixed code paths the unsanitized
+	// RequestIDFrom value directly into slog, so the escaped sequence is
+	// what leaks. The fixed code routes the value through
+	// logsanitize.Field first, which replaces the VT with U+00B7 (·) so
+	// the JSON encoder writes the raw middle-dot byte instead.
+	if strings.Contains(out, `\u000b`) {
+		t.Errorf("log contains unsanitized VT escape (CodeQL go/log-injection regression): %q", out)
+	}
+	if !strings.Contains(out, `request_id`) {
+		t.Errorf("log missing request_id field: %q", out)
 	}
 }
