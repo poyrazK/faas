@@ -17,10 +17,34 @@
 set -euo pipefail
 
 export FAAS_TEST_KERNEL="${FAAS_TEST_KERNEL:-/srv/fc/base/vmlinux-6.1.128}"
-# M0 (TestMetalHelloBoot) overrides base/layer with a busybox image it builds
-# via mkfs.ext4; these just need to be non-empty so metalImages() doesn't Skip.
-export FAAS_TEST_BASE_ROOTFS="${FAAS_TEST_BASE_ROOTFS:-$FAAS_TEST_KERNEL}"
-export FAAS_TEST_LAYER_ROOTFS="${FAAS_TEST_LAYER_ROOTFS:-$FAAS_TEST_KERNEL}"
+
+# The V6 acceptance rootfs is staged by the Lima provisioner at
+# /srv/fc/base/v6-{base,layer}.ext4. Both paths flow to TestMetal*:
+#
+#   - FAAS_TEST_BASE_ROOTFS / FAAS_TEST_LAYER_ROOTFS feed metalImages()
+#     (manager_metal_test.go) — the existing M0/M1/M3 tests pass these to
+#     their own ensureBusyboxExt4-style helpers, so they self-build. Setting
+#     them here to the V6 rootfs means those tests use the same real
+#     guest-init-bearing image, which is fine for M1 (50 concurrent cold
+#     boots) and M3 (park/wake) — V6 is the only test that actively depends
+#     on the post-restore resume hook.
+#
+#   - FAAS_TEST_V6_BASE / FAAS_TEST_V6_LAYER feed ensureV6Ext4
+#     (v6_resume_ext4_metal_test.go). The helper honours these env vars and
+#     skips its in-test build path when both are set — saving ~5 s per run.
+V6_BASE="${FAAS_TEST_V6_BASE:-/srv/fc/base/v6-base.ext4}"
+V6_LAYER="${FAAS_TEST_V6_LAYER:-/srv/fc/base/v6-layer.ext4}"
+if [ ! -f "$V6_BASE" ] || [ ! -f "$V6_LAYER" ]; then
+  echo "WARN: V6 rootfs not staged at $V6_BASE / $V6_LAYER" >&2
+  echo "      Re-provision the Lima VM (limactl delete -f faas-metal && limactl start ...)" >&2
+  echo "      to rebuild from guest-init source. TestMetalTwoRestoresDistinctUUID will skip." >&2
+else
+  export FAAS_TEST_V6_BASE="$V6_BASE"
+  export FAAS_TEST_V6_LAYER="$V6_LAYER"
+  export FAAS_TEST_BASE_ROOTFS="${FAAS_TEST_BASE_ROOTFS:-$V6_BASE}"
+  export FAAS_TEST_LAYER_ROOTFS="${FAAS_TEST_LAYER_ROOTFS:-$V6_LAYER}"
+fi
+
 export FAAS_TEST_FC_VERSION="${FAAS_TEST_FC_VERSION:-$(firecracker --version | head -1 | awk '{print $2}')}"
 
 if [ ! -e /dev/kvm ]; then

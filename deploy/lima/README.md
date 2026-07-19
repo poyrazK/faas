@@ -34,10 +34,21 @@ Tear down with `limactl delete -f faas-metal`.
   default user added to the `kvm` group.
 - aarch64 Firecracker + jailer **v1.7.0** on `PATH`, and the aarch64 guest
   kernel `vmlinux-6.1.128` in `/srv/fc/base/`.
+- **V6 acceptance rootfs** staged at `/srv/fc/base/v6-base.ext4` (PID 1 =
+  the real `faas-guest-init` built from the mounted repo checkout, so the
+  AF_VSOCK resume listener is wired) and `/srv/fc/base/v6-layer.ext4`
+  (writable overlay upper). Built once per `limactl start`; the M0/M1/M3
+  tests reuse the same image as their `FAAS_TEST_BASE_ROOTFS` /
+  `FAAS_TEST_LAYER_ROOTFS`, and `TestMetalTwoRestoresDistinctUUID`
+  (spec §14 V6, ADR-022) consumes it via `FAAS_TEST_V6_BASE` / `_LAYER`.
+
+  To rebuild after a `guest/init` source change:
+  `limactl delete -f faas-metal && limactl start deploy/lima/faas-metal.yaml`.
 
 `run-metal.sh` sets `FAAS_TEST_KERNEL` / `FAAS_TEST_BASE_ROOTFS` /
-`FAAS_TEST_LAYER_ROOTFS` / `FAAS_TEST_FC_VERSION` for the tests
-(see `pkg/fcvm/manager_metal_test.go`).
+`FAAS_TEST_LAYER_ROOTFS` / `FAAS_TEST_V6_BASE` / `FAAS_TEST_V6_LAYER` /
+`FAAS_TEST_FC_VERSION` for the tests (see `pkg/fcvm/manager_metal_test.go`
+and `pkg/fcvm/v6_resume_ext4_metal_test.go`).
 
 ## What runs here today
 
@@ -54,19 +65,25 @@ placeholders), which surfaced a chain of latent bugs — most now fixed:
 - The jailed uid can read its config + drives and create its API socket: `vmmd`
   stages read-only images `o+r` and copies + chowns the writable drive1 to the
   jailer uid (jail resource ownership, [ADR-019](../../docs/adr/019-jailer-invocation-and-jail-resource-ownership.md)). ✅
+- **V6 (post-restore resume hook):** `TestMetalTwoRestoresDistinctUUID`
+  cold-boots a guest from the V6 rootfs, parks it, then restores the same
+  snapshot into two distinct leases and asserts the served UUIDs diverge.
+  This is the §11 ship-blocker test that wires
+  `pkg/fcvm/vmm.go::TriggerResumeHook` →
+  `guest/init/listen_resume_linux.go::handleResumeConn`. ✅
 
-**M0 boots end-to-end here.** Remember the arch caveat below: this is the arm64
-nested-KVM guest, so a green run validates the VM lifecycle and boot path — the
-**EX44 stays the source of truth for the §14 M0 gate** on the pinned x86_64
-kernel (CLAUDE.md).
+**M0 and V6 boot end-to-end here.** Remember the arch caveat below: this is the
+arm64 nested-KVM guest, so a green run validates the VM lifecycle and boot path —
+the **EX44 stays the source of truth for the §14 acceptance gates** on the
+pinned x86_64 kernel (CLAUDE.md).
 
 Two **arm64-Lima shims** live in `run-metal.sh` (never needed on the x86_64 EX44):
 the `br-tenants` bridge (host-prep the box does via ansible) and a CPU-cache
 sysfs shim (jailer reads cache sizes the arm64 nested guest doesn't expose).
 
-The **M1** (50× concurrent) and **M3** (park→wake latency) tests additionally need
-real base/layer rootfs images (`runner-node22`, …), an **M2** deliverable — they
-`t.Skip` until `FAAS_TEST_BASE_ROOTFS`/`_LAYER_ROOTFS` point at real images.
+The **M1** (50× concurrent) and **M3** (park→wake latency) tests also pass
+here against the V6 rootfs (it's a full guest-init, just with a busybox
+httpd entrypoint instead of a real app).
 
 ## Caveats — read before trusting a result
 
