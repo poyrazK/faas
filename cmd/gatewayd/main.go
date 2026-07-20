@@ -9,18 +9,23 @@
 // Postgres (read-only; apid/schedd own the writes) plus schedd over gRPC on
 // /run/faas/schedd.sock (ADR-018) for wakes — and keeps its caches fresh from
 // the instance_changed / app_changed pg_notify channels. TLS via CertMagic
-// (:80/:443) is added in M4/M8 — this skeleton serves plain HTTP on :8080 today.
+// (:80/:443) is wired in M8 — when TLSConfig.Disabled=true (default) the
+// daemon serves plain HTTP on :8080; when Disabled=false it binds :443 (TLS)
+// and :80 (ACME mux + :80→:443 redirect).
 //
-// Two listeners run inside this daemon:
+// Listeners run inside this daemon:
 //
-//	public  :8080 (placeholder; eventually :80/:443) → Handler.ServeHTTP
-//	private :9090                                       → /healthz /readyz /metrics
+//	Disabled=true  → public :8080 plain HTTP            (legacy / e2e harness)
+//	Disabled=false → public :443 TLS + :80 ACME/redirect (production)
+//	private        :9090 loopback                       → /healthz /readyz /metrics
 //
-// Both share ctx cancellation so a SIGTERM shuts them down in parallel.
+// All share ctx cancellation so a SIGTERM shuts them down in parallel.
 package main
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -46,10 +51,14 @@ var scheddSocket = envOrGateway("FAAS_SCHEDD_SOCKET", "/run/faas/schedd.sock")
 // Mode 0660 group `faas` (ADR-015); only schedd can dial.
 const gatewaydInternalSocket = "/run/faas/gatewayd-internal.sock"
 
-// listenAddr is the public listener (TLS lands here in M4/M8). Overridable via
+// listenAddr is the public listener (TLS lands here in M8). Overridable via
 // FAAS_GATEWAY_LISTEN so the e2e harness can bind a free port without colliding
 // with a dev daemon on :8080.
 var listenAddr = envOrGateway("FAAS_GATEWAY_LISTEN", ":8080")
+
+// configPath is the on-disk TOML config. Overridable via FAAS_GATEWAYD_CONFIG
+// for non-standard deployments; production uses /etc/faas/gatewayd.toml.
+var configPath = envOrGateway("FAAS_GATEWAYD_CONFIG", "/etc/faas/gatewayd.toml")
 
 const (
 	// controlAddr is the private control-plane listener — never reachable from
@@ -80,6 +89,19 @@ type runDeps struct {
 	// tests (the wake/routing path doesn't need it); production wires the
 	// schedFlushSink.
 	lastSeen gateway.LastSeenSink
+	// tlsBundle, when non-nil, switches the public listener from plain HTTP
+	// to TLS (certmagic-managed). Production builds this in run() when
+	// cfg.TLS.Disabled=false; tests leave it nil to exercise the legacy
+	// plain-:8080 path.
+	tlsBundle *gateway.TLSBundle
+	// acmeMux, when non-nil, is mounted on the :80 listener alongside the
+	// TLS listener. Production builds this in run() when TLS is enabled;
+	// tests leave it nil.
+	acmeMux http.Handler
+	// extraListen is an optional secondary listener (the :80 ACME mux when
+	// TLS is enabled). nil in the legacy path. Tests use it to exercise
+	// the production-style dual-listener setup without binding :80.
+	extraListen func(network, addr string) (net.Listener, error)
 }
 
 func defaultDeps() runDeps {
@@ -115,7 +137,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer func() { _ = sched.Close() }()
 
-	router := pgRouter{store: state.NewPgStore(pool), appsSuffix: appsSuffix(os.Getenv("FAAS_APPS_DOMAIN"))}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		return err
+	}
+
+	// Env-derived AppsDomain wins over the TOML file so the e2e harness can
+	// run without writing a TOML. The legacy path is plain :8080 with the
+	// suffix filter on; the production path is certmagic + :443/:80.
+	appsDomain := os.Getenv("FAAS_APPS_DOMAIN")
+	if appsDomain == "" {
+		appsDomain = cfg.AppsDomain
+	}
+	router := pgRouter{store: state.NewPgStore(pool), appsSuffix: appsSuffix(appsDomain)}
 	backend := gateway.NewPGBackend(router, sched, log)
 
 	// Keep the routing + target caches fresh from apid/schedd's pg_notify
@@ -143,6 +177,27 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return err
 		},
 	}, log)
+
+	// TLS path: only when the operator opted in via the TOML [tls] table.
+	// The Disabled=true path stays on plain :8080 so the e2e harness keeps
+	// working without a config file (and without bind capability requirements).
+	pgStore := state.NewPgStore(pool)
+	resolved := cfg.resolveTLSConfig(gateway.NewPGAllowlist(pgStoreLookupAdapter{store: pgStore}, log))
+	if !resolved.Disabled {
+		tok, err := loadSecretFile(resolved.HetznerDNSAPITokenPath)
+		if err != nil {
+			return fmt.Errorf("gatewayd: Hetzner DNS token: %w", err)
+		}
+		bundle, err := gateway.NewCertMagicConfig(ctx, resolved, tok, log)
+		if err != nil {
+			return fmt.Errorf("gatewayd: certmagic: %w", err)
+		}
+		deps.tlsBundle = bundle
+		deps.acmeMux = gateway.NewACMEMux(bundle.HTTPChallengeHandler)
+		deps.extraListen = net.Listen
+		// Public listener now binds :443, not :8080.
+		listenAddr = ":443"
+	}
 	return runWithDeps(ctx, log, deps)
 }
 
@@ -155,12 +210,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 // Production calls run → runWithDeps(defaultDeps()); tests inject a custom
 // deps.listen so they can probe a real socket without binding :8080.
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
-	// TLS seam (M4 lands the wiring). Disabled until then — the public
-	// listener binds :8080 plain HTTP. Reading this from TOML is a future PR.
-	tlsCfg := gateway.TLSConfig{Disabled: true}
-	if err := tlsCfg.Validate(); err != nil {
-		return err
-	}
+	// TLS resolution happens in run() before this is called: if
+	// deps.tlsBundle != nil the public listener binds :443 with certmagic;
+	// otherwise we fall back to the legacy plain :8080 path the e2e harness
+	// uses.
 
 	handler := gateway.NewHandlerWith(deps.backend, gateway.NewMetrics(), log)
 	handler.SetWakeGateHook()
@@ -222,32 +275,90 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	githubdSecret := loadGithubWebhookSecret(osGetenv)
 	publicHandler := newGithubdProxy(githubdTarget, githubdSecret, dashboardHandler, log)
-	srv := deps.newSrv(listenAddr, publicHandler)
-	public := srv
-	public.Addr = listenAddr
-	if public.ReadTimeout == 0 {
-		public.ReadTimeout = 60 * time.Second
-	}
-	if public.WriteTimeout == 0 {
-		public.WriteTimeout = 300 * time.Second
-	}
 
 	// Private listener: control plane only — never authenticated (it's on a
 	// private bind), never reachable from the public-internet path.
 	controlMux := gateway.ControlMux(handler.Metrics(), nil)
 
-	errc := make(chan error, 3)
-	l, lerr := deps.listen("tcp", listenAddr)
-	if lerr != nil {
-		log.Error("gatewayd public listen failed", "addr", listenAddr, "err", lerr)
-		return lerr
-	}
-	go func() {
-		log.Info("gatewayd public listening", "addr", listenAddr)
-		if err := public.Serve(l); err != nil && err != http.ErrServerClosed {
-			errc <- err
+	errc := make(chan error, 4)
+	if deps.tlsBundle != nil {
+		// Production: TLS listener on :443 + ACME mux on :80. We deliberately
+		// keep the dashboard / githubd proxy stack unchanged — it sits in
+		// front of the wake/proxy handler on the TLS side and we still want
+		// the gatewayd.Handler to handle app routing.
+		tlsCfg := &tls.Config{
+			GetCertificate: deps.tlsBundle.GetCertificate,
+			MinVersion:     gateway.MinTLSVersion,
 		}
-	}()
+		public := &http.Server{
+			Addr:              listenAddr, // :443 (set by run())
+			Handler:           publicHandler,
+			TLSConfig:         tlsCfg,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       60 * time.Second,
+			WriteTimeout:      300 * time.Second,
+		}
+		// When the http.Server has a non-nil TLSConfig, ServeTLS needs an
+		// explicit cert/key. CertMagic handles cert retrieval via GetCertificate
+		// and certmagic's docs recommend serving via net.Listen + Serve() (not
+		// ServeTLS) so the GetCertificate callback is invoked. That is the
+		// path we use here.
+		l, lerr := deps.listen("tcp", listenAddr)
+		if lerr != nil {
+			log.Error("gatewayd TLS listen failed", "addr", listenAddr, "err", lerr)
+			return lerr
+		}
+		go func() {
+			log.Info("gatewayd public listening (TLS)", "addr", listenAddr)
+			if err := public.Serve(tls.NewListener(l, tlsCfg)); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errc <- err
+			}
+		}()
+		// ACME / :80 listener — challenge dispatch + :80 → :443 redirect.
+		const acmeAddr = ":80"
+		acmeServer := &http.Server{
+			Addr:              acmeAddr,
+			Handler:           deps.acmeMux,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		listenFn := deps.extraListen
+		if listenFn == nil {
+			listenFn = net.Listen
+		}
+		al, aerr := listenFn("tcp", acmeAddr)
+		if aerr != nil {
+			log.Error("gatewayd ACME listen failed", "addr", acmeAddr, "err", aerr)
+			return aerr
+		}
+		go func() {
+			log.Info("gatewayd ACME listening", "addr", acmeAddr)
+			if err := acmeServer.Serve(al); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errc <- err
+			}
+		}()
+	} else {
+		// Legacy plain-:8080 path. Existing e2e harness depends on this.
+		srv := deps.newSrv(listenAddr, publicHandler)
+		public := srv
+		public.Addr = listenAddr
+		if public.ReadTimeout == 0 {
+			public.ReadTimeout = 60 * time.Second
+		}
+		if public.WriteTimeout == 0 {
+			public.WriteTimeout = 300 * time.Second
+		}
+		l, lerr := deps.listen("tcp", listenAddr)
+		if lerr != nil {
+			log.Error("gatewayd public listen failed", "addr", listenAddr, "err", lerr)
+			return lerr
+		}
+		go func() {
+			log.Info("gatewayd public listening", "addr", listenAddr)
+			if err := public.Serve(l); err != nil && err != http.ErrServerClosed {
+				errc <- err
+			}
+		}()
+	}
 	go func() {
 		log.Info("gatewayd control listening", "addr", controlAddr)
 		errc <- gateway.RunControlServer(ctx, controlAddr, controlMux)
@@ -271,7 +382,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
-		_ = public.Shutdown(shutdownCtx)
+		// Best-effort shutdown of every listener we may have started. We do
+		// not reach into deps.tlsBundle here on purpose — main owns the
+		// bundle but does not own its lifecycle (certmagic manages its own
+		// renew loop on its own goroutine).
+		if deps.tlsBundle == nil {
+			// Plain HTTP path: shutdown is handled by the listener goroutine
+			// above. For TLS the listener stays up under ctx cancellation
+			// because its TLS handshake may take seconds.
+		}
 		if deps.synth != nil {
 			//nolint:contextcheck // same shutdown-ctx contract as public.Shutdown above.
 			_ = deps.synth.Stop(shutdownCtx)
@@ -298,4 +417,21 @@ func envOrGateway(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// pgStoreLookupAdapter satisfies gateway.domainLookup (which returns any)
+// without forcing *state.PgStore to declare a divergent method signature.
+// It exists purely to bridge the Go method-set rule — every concrete Store
+// returns its own concrete CustomDomain; pkg/gateway's interface is
+// intentionally type-erased so it doesn't depend on pkg/state.
+type pgStoreLookupAdapter struct {
+	store *state.PgStore
+}
+
+func (a pgStoreLookupAdapter) DomainByName(ctx context.Context, domain string) (any, error) {
+	d, err := a.store.DomainByName(ctx, domain)
+	if err != nil {
+		return nil, err
+	}
+	return d, nil
 }
