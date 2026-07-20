@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -117,7 +118,7 @@ func TestWakeGateSkipsObservationOnErrQueueFull(t *testing.T) {
 	err := g.Wait(context.Background(), "appB",
 		func() bool { return false },
 		func(ctx context.Context) error { return nil })
-	if err != ErrQueueFull {
+	if !errors.Is(err, ErrQueueFull) {
 		t.Fatalf("err = %v, want ErrQueueFull", err)
 	}
 
