@@ -124,19 +124,48 @@ type WakeResult struct {
 // without a new boot — this is what lets the gateway's single-flight WakeGate
 // hand every coalesced waiter an address. Admission denial returns a *api.Problem
 // (capacity / plan concurrency) the gateway maps straight to 503/409.
+//
+// Lock discipline (commit 2, fixing finding #1 of the M7 audit):
+//
+//   - Phase 1 — fast path. Under appMu. A second Wake for the same app
+//     that races a RUNNING row returns it without a new boot.
+//   - Phase 2 — admit window. Under appMu. resolveApp, CreateInstance,
+//     emit, ledger.Admit, AppSpec build. Nothing slow.
+//   - Phase 3 — DROP THE LOCK around the vmmd RPC. The cold-boot can
+//     take up to ColdBootTimeout (35s, spec §6.1) and we must not hold
+//     the per-app mutex for the full boot — a reaper Park for the
+//     same app, or a second concurrent Wake, would block for that
+//     window. The pre-boot state (WAKING or COLD_BOOTING) plus the
+//     ledger reservation are the contract: another caller can observe
+//     them, but the row is not yet RUNNING so RunningInstanceForApp
+//     keeps missing and the second Wake proceeds to its own boot — no
+//     double boot race because of the Phase 4 re-read.
+//   - Phase 4 — RE-ACQUIRE the lock. Re-read the row under the lock;
+//     if the watchdog (commit 3) or a Park stole the state during
+//     Phase 3, abort the Wake: release the ledger, destroy the VM we
+//     just booted, and surface the error. Otherwise SetInstanceRuntime,
+//     transition → RUNNING.
+//
+// We re-acquire for Phase 4 (rather than commit without the lock)
+// because the post-vmmd commit writes a partial row (host_ip, netns,
+// guest_uid) and a Park triggered by the reaper reads the row under
+// its own appMu; without re-acquiring, the reaper could see a
+// partially-written row and act on it.
 func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
+	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
-	defer release()
-
-	// Idempotent fast path.
 	if ins, err := e.store.RunningInstanceForApp(ctx, appID); err == nil {
+		release()
 		return WakeResult{InstanceID: ins.ID, Addr: instanceAddr(ins.HostIP), Method: vmmdpb.WakeMethod_WAKE_RESTORE}, nil
 	} else if !errors.Is(err, state.ErrNotFound) {
+		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: running lookup: %w", err)
 	}
 
+	// ── Phase 2: admit window, still under appMu ──────────────────
 	app, acct, limits, dep, err := e.resolveApp(ctx, appID)
 	if err != nil {
+		release()
 		return WakeResult{}, err
 	}
 
@@ -150,6 +179,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	}
 	ins, err := e.store.CreateInstance(ctx, appID, dep.ID, string(initState), app.RAMMB)
 	if err != nil {
+		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
 	}
 	e.emitInstanceChanged(ctx, ins.ID, appID, initState)
@@ -158,60 +188,131 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		Instance: ins.ID, AppID: appID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
 	}); err != nil {
+		// Admit failed (capacity / concurrency). Lock the row to FAILED
+		// before releasing: a concurrent reader must see a coherent
+		// final state, not an unattached reservation.
 		e.transition(ctx, ins.ID, appID, state.StateFailed)
+		release()
 		return WakeResult{}, err // *api.Problem
 	}
 
+	// AppSpec is built under the lock and treated as immutable below.
+	// The boot call uses the same spec — the vmmd side reads it
+	// thread-safely without us touching it again.
 	spec := AppSpec{
 		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
 		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),
 	}
+
+	// Capture the boot inputs we need across the unlocked window. These
+	// are values (not references) — they remain valid after release.
+	bootInput := bootInput{
+		insID:      ins.ID,
+		appID:      appID,
+		depID:      dep.ID,
+		initState:  initState,
+		haveSnap:   haveSnap,
+		snapID:     snap.ID,
+		snapVer:    snap.FCVersion,
+		spec:       spec,
+	}
+	release()
+
+	// ── Phase 3: drop the lock, do the slow vmmd RPC ──────────────
 	var out *WakeOutcome
-	// Per-call deadline (commit 1, spec §6.1). Wrapping at the engine
-	// call site — not the VMM client — keeps the deadline local to the
-	// boot budget for THIS state. A future caller can pass a longer
-	// deadline (e.g. the cron tick) without changing VMMClient.
-	bootCtx, cancel := context.WithTimeout(ctx, bootTimeout(initState))
+	bootCtx, cancel := context.WithTimeout(ctx, bootTimeout(bootInput.initState))
 	defer cancel()
-	if haveSnap {
-		mem, vmstate := snapshotPaths(dep.ID)
-		out, err = e.vmm.CreateFromSnapshot(bootCtx, ins.ID, spec, SnapshotRef{
-			DeploymentID: dep.ID, MemPath: mem, VMStatePath: vmstate, FCVersion: snap.FCVersion,
+	if bootInput.haveSnap {
+		mem, vmstate := snapshotPaths(bootInput.depID)
+		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.insID, bootInput.spec, SnapshotRef{
+			DeploymentID: bootInput.depID, MemPath: mem, VMStatePath: vmstate, FCVersion: bootInput.snapVer,
 		})
 	} else {
-		out, err = e.vmm.CreateColdBoot(bootCtx, ins.ID, spec)
+		out, err = e.vmm.CreateColdBoot(bootCtx, bootInput.insID, bootInput.spec)
 	}
 	if err != nil {
-		e.ledger.Release(ins.ID)
-		e.transition(ctx, ins.ID, appID, state.StateFailed)
+		// Boot error path. Release the reservation, transition to
+		// FAILED. The transition's own re-read will write the row
+		// even though we no longer hold the lock — transition is
+		// lock-free by design (it only re-reads + writes one row).
+		e.ledger.Release(bootInput.insID)
+		e.transition(ctx, bootInput.insID, bootInput.appID, state.StateFailed)
 		return WakeResult{}, err
 	}
 
-	// A restore that fell back to cold boot means the snapshot is bad: mark it
-	// stale so the next wake cold-boots directly and the next park re-snapshots.
-	if haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
-		if err := e.store.MarkSnapshotStale(ctx, snap.ID); err != nil {
-			e.log.Warn("wake: mark snapshot stale", "snapshot", snap.ID, "err", err)
+	// A restore that fell back to cold boot means the snapshot is bad:
+	// mark it stale so the next wake cold-boots directly and the next
+	// park re-snapshots. Best-effort — failure here doesn't block the
+	// RUNNING transition (the stale snapshot also gets the next-park
+	// treatment from snapshotAndPark).
+	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+		if err := e.store.MarkSnapshotStale(ctx, bootInput.snapID); err != nil {
+			e.log.Warn("wake: mark snapshot stale", "snapshot", bootInput.snapID, "err", err)
 		}
-		e.log.Info("wake: restore fell back to cold boot", "app", appID, "instance", ins.ID)
+		e.log.Info("wake: restore fell back to cold boot", "app", bootInput.appID, "instance", bootInput.insID)
 	}
 
-	if err := e.store.SetInstanceRuntime(ctx, ins.ID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
-		// Booted but unrecordable — destroy to avoid a resource leak,
-		// then fail. Best-effort with a hard ceiling: a hung Firecracker
-		// can't pin the Wake goroutine forever.
+	// ── Phase 4: re-acquire the lock for the post-vmmd commit ────
+	release2 := e.lockApp(bootInput.appID)
+	defer release2()
+
+	// Re-read the row. If a watchdog (commit 3) or a Park or another
+	// Wake moved it out of initState during Phase 3, abort: this Wake
+	// is no longer the canonical owner. Free the reservation and
+	// destroy the VM we just booted.
+	fresh, fresErr := e.store.InstanceByID(ctx, bootInput.insID)
+	if fresErr != nil {
+		// Couldn't re-read — take the conservative path. Destroy and
+		// release; the transition will fail (no row), but the original
+		// row must already be gone too (otherwise re-read wouldn't
+		// fail).
+		e.ledger.Release(bootInput.insID)
 		destroyCtx, dcancel := context.WithTimeout(context.Background(), DestroyTimeout)
 		defer dcancel()
-		_ = e.vmm.Destroy(destroyCtx, ins.ID)
-		e.ledger.Release(ins.ID)
-		e.transition(ctx, ins.ID, appID, state.StateFailed)
+		_ = e.vmm.Destroy(destroyCtx, bootInput.insID)
+		return WakeResult{}, fmt.Errorf("sched: wake: re-read instance %s: %w", bootInput.insID, fresErr)
+	}
+	if fresh.State != string(bootInput.initState) {
+		e.ledger.Release(bootInput.insID)
+		destroyCtx, dcancel := context.WithTimeout(context.Background(), DestroyTimeout)
+		defer dcancel()
+		_ = e.vmm.Destroy(destroyCtx, bootInput.insID)
+		e.log.Warn("wake: state stolen during boot, aborting",
+			"app", bootInput.appID, "instance", bootInput.insID,
+			"expected", bootInput.initState, "got", fresh.State)
+		return WakeResult{}, fmt.Errorf("sched: wake: state stolen by another transition: was %s, now %s", bootInput.initState, fresh.State)
+	}
+
+	if err := e.store.SetInstanceRuntime(ctx, bootInput.insID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
+		// Booted but unrecordable — destroy to avoid a resource leak,
+		// then fail. Best-effort with a hard ceiling: a hung
+		// Firecracker can't pin the Wake goroutine forever.
+		destroyCtx, dcancel := context.WithTimeout(context.Background(), DestroyTimeout)
+		defer dcancel()
+		_ = e.vmm.Destroy(destroyCtx, bootInput.insID)
+		e.ledger.Release(bootInput.insID)
+		e.transition(ctx, bootInput.insID, bootInput.appID, state.StateFailed)
 		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", err)
 	}
-	e.transition(ctx, ins.ID, appID, state.StateRunning)
+	e.transition(ctx, bootInput.insID, bootInput.appID, state.StateRunning)
 
-	return WakeResult{InstanceID: ins.ID, Addr: instanceAddr(out.HostIP), Method: out.Method}, nil
+	return WakeResult{InstanceID: bootInput.insID, Addr: instanceAddr(out.HostIP), Method: out.Method}, nil
+}
+
+// bootInput is the immutable bundle of values needed across the
+// unlocked window in Wake's Phase 3. Captured under the Phase 2 lock;
+// consumed by Phase 3 (vmmd call) and Phase 4 (post-boot commit).
+type bootInput struct {
+	insID     string
+	appID     string
+	depID     string
+	initState state.State
+	haveSnap  bool
+	snapID    string // empty when haveSnap is false
+	snapVer   string // empty when haveSnap is false
+	spec      AppSpec
 }
 
 // Prime boots a freshly-built deployment once, snapshots it, and parks it —
