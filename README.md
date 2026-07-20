@@ -11,7 +11,7 @@ Hetzner EX44. Customer apps park as snapshots on disk and wake on request in
 - **Spec (source of truth):** [`docs/faas_implementation_spec.md`](docs/faas_implementation_spec.md)
 - **UX spec:** [`docs/faas_ux_spec.md`](docs/faas_ux_spec.md)
 - **Scale-out & workload classes (forward plan):** [`docs/scale_out_and_workload_classes.md`](docs/scale_out_and_workload_classes.md)
-- **Decisions:** [`docs/adr/`](docs/adr/) (ADR-001–010 inline in spec §3)
+- **Decisions:** [`docs/adr/`](docs/adr/) (ADR-001–010 inline in spec §3; ADR-011–023 filed separately)
 - **Agent guide:** [`CLAUDE.md`](CLAUDE.md)
 
 ## Layout
@@ -103,10 +103,8 @@ arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
   `FrameworkDocker` enum into `api.FrameworkDockerfile` so
   guest-init dispatches to `buildctl --frontend dockerfile` per
   ADR-004 instead of falling through to Railpack-auto.
-  Remaining: M6 §14 metal acceptance test (`cmd/e2e/build_metal_test.go`)
-  end-to-end — `apid → pg_notify('build_queued') → builderd → vmmd
-  → firecracker → in-VM Railpack/buildctl → OCI image.tar` —
-  tracked in #57. See *What's next*.
+  §14 orchestrator e2e closes M6 (PR #60, closes #57): see
+  `cmd/e2e/build_metal_test.go` for the full chain.
 - **M7 — metering, billing, functions, cron.** 🚧 The sampling/quota
   shapes are in `cmd/meterd` and `pkg/stripex`, the dunning state
   machine is `pkg/state.MarkAccountDeletionPending` (ADR-021), GB-h
@@ -150,10 +148,10 @@ arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
     ::1/128, ::/128` via `ip6 daddr { … } drop` (ADR-023), in both
     the host firewall and the per-instance netns ruleset.
   - **§11 cgroup fence verified** — `#33` `memory.max = plan + 8 MB`
-    after bringUp; metal test
-    `pkg/fcvm/manager_metal_test.go::TestMetalMemoryMaxFenceEnforced`
-    is green on Lima (the EX44 sign-off remains the §14 source of
-    truth per CLAUDE.md).
+    after bringUp; unit tests in `pkg/fcvm/cgroup_test.go` green;
+    metal test in `pkg/fcvm/manager_metal_test.go::TestMetalMemoryMaxFenceEnforced`
+    runs on EX44 (`make test-metal`) and Lima (`make metal-lima`),
+    not on a bare dev box.
   - **§12 SLO dashboard pipeline** — `fcvm_snapshot_fleet_avg_bytes`,
     `fcvm_snapshot_fleet_p95_bytes`, `fcvm_resident_ram_pct`,
     `fcvm_lv_fc_used_pct` (schedd-owned), plus
@@ -173,9 +171,8 @@ arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
     knobs in the postgres ansible role. A timed EX44 run (PG + one
     app back serving < 30 min) is the next action; the dated record
     file `docs/drills/2026-07-20-restore-drill.md` is the template.
-  - **#32 cleanup** — `docs/adr/021-vsock-resume-hook.md` removed
-    (superseded by ADR-022); `deploy/scripts/leakcheck.sh` glob fix
-    matches the v1.7 jailer `--id` constraint.
+  - **#32 cleanup** — `deploy/scripts/leakcheck.sh` glob fix matches
+    the v1.7 jailer `--id` constraint.
   The §14 M8 gates still on the board are listed in *What's next*.
 
 Post-M8 = private beta (founding doc M2–M3 hand-held phase).
@@ -187,14 +184,7 @@ and open an issue if you want it.
 
 **M6**
 
-- **§14 acceptance e2e** — PR #56 (closes #54) shipped the host-side
-  fix and a unit-level sha256 round-trip. The orchestrator-level
-  acceptance — `apid → pg_notify('build_queued') → builderd → vmmd
-  → firecracker → in-VM Railpack/buildctl → OCI image.tar` —
-  for bare Node / bare Python / Dockerfile-at-root repos is
-  tracked in #57. Includes `FAAS_BUILDERD_CONFIG` env override,
-  `Builderd` flag in `pkg/e2etest`, three `//go:embed` fixture
-  tarballs, and `cmd/e2e/build_metal_test.go`.
+*(Closed — PR #60 closes #57. See Status → M6.)*
 
 **M7**
 
