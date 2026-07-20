@@ -29,6 +29,16 @@ type OpsMetrics struct {
 	registry *prometheus.Registry
 	ops      *prometheus.CounterVec
 	dur      *prometheus.HistogramVec
+	// watchdogKills: introduced in commit 3 for the §6.1 state
+	// watchdog. Labels identify the transition the watchdog forced
+	// (from_state → to_state) — alerting on a non-zero rate of
+	// "waking→cold_booting" labels is the spec §6.1 health signal.
+	watchdogKills *prometheus.CounterVec
+	// eventsWriteFail: introduced in commit 4 for the audit-log
+	// emission. A non-zero rate indicates that transitions are
+	// succeeding but the events row isn't being written — the state
+	// row is the source of truth, so this is observation-only.
+	eventsWriteFail prometheus.Counter
 }
 
 // NewOpsMetrics builds an OpsMetrics keyed on the per-daemon prefix — e.g.
@@ -52,8 +62,37 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
 		},
 	}, []string{"op"})
-	reg.MustRegister(ops, dur)
-	return &OpsMetrics{registry: reg, ops: ops, dur: dur}
+	watchdogKills := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_watchdog_kills_total",
+		Help: "Count of instances the §6.1 watchdog transitioned out of a stuck state, labelled by from→to state.",
+	}, []string{"from_state", "to_state"})
+	eventsWriteFail := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_events_write_failures_total",
+		Help: "Count of state-transitions whose events audit-log row could not be written. The transition itself succeeded; this is observation-only (the state row is the source of truth).",
+	})
+	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail)
+	return &OpsMetrics{
+		registry:       reg,
+		ops:            ops,
+		dur:            dur,
+		watchdogKills:  watchdogKills,
+		eventsWriteFail: eventsWriteFail,
+	}
+}
+
+// WatchdogKills returns the per-(from_state, to_state) counter the
+// §6.1 watchdog increments when it transitions a stuck instance.
+// The returned Counter can be safely cached by callers; the underlying
+// CounterVec is shared with other label tuples.
+func (m *OpsMetrics) WatchdogKills(fromState, toState string) prometheus.Counter {
+	return m.watchdogKills.WithLabelValues(fromState, toState)
+}
+
+// EventsWriteFailures returns the unlabelled counter for audit-log
+// writes that failed. The transition itself succeeded; this counter
+// only signals observability debt. See also commit 4.
+func (m *OpsMetrics) EventsWriteFailures() prometheus.Counter {
+	return m.eventsWriteFail
 }
 
 // Registry returns the underlying registry — pass to promhttp.HandlerFor

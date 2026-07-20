@@ -258,6 +258,21 @@ type Store interface {
 	// run on the minute boundary.
 	ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error)
 	UpdateInstanceState(ctx context.Context, id, state string) error
+	// UpdateInstanceStateWithTimestamp is the same write but stamps
+	// parked_at to the supplied time on the same statement. Used by
+	// schedd's snapshotAndPark (commit 3) when transitioning into
+	// SNAPSHOTTING — the §6.1 watchdog reads parked_at for
+	// SNAPSHOTTING rows (started_at means "row creation", not "time
+	// entered current state"), so the engine must stamp it on entry.
+	// Non-SNAPSHOTTING transitions should still use UpdateInstanceState.
+	UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error
+	// ListInstancesByStatesOlderThan is the §6.1 watchdog's lookup.
+	// Returns rows currently in any of the given states whose
+	// "age timestamp" — started_at for WAKING/COLD_BOOTING, parked_at
+	// for SNAPSHOTTING — is strictly older than threshold.
+	// Implementations coalesce the two columns and may rely on
+	// migration 00014's partial index.
+	ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
 	// SetInstanceRuntime records the per-instance identity vmmd allocated on
 	// wake (netns, routable host IP, jail uid) and stamps started_at=now. schedd
 	// calls this between a successful vmmd boot and the RUNNING transition so the

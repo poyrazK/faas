@@ -942,9 +942,20 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state string, ramMB int) (Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ins := Instance{ID: newID(), AppID: appID, DeploymentID: deploymentID, State: state, RAMMB: ramMB}
-	if state == "running" {
-		ins.StartedAt = time.Now()
+	// Stamp started_at on creation for every state (commit 3, mirrors
+	// the Postgres trigger in migration 00013). The MemStore previously
+	// only stamped it on "running" rows, which left watchdog tests
+	// fishing for NULLs on WAKING/COLD_BOOTING fixtures. Keeping that
+	// late stamp behaviour would force every fixture to call
+	// SetInstanceRuntime first, which makes the watchdog tests
+	// describe a state-machine shape that no production code reaches.
+	ins := Instance{
+		ID:           newID(),
+		AppID:        appID,
+		DeploymentID: deploymentID,
+		State:        state,
+		RAMMB:        ramMB,
+		StartedAt:    time.Now(),
 	}
 	m.instances[ins.ID] = ins
 	return ins, nil
@@ -1052,6 +1063,52 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 	ins.State = state
 	m.instances[id] = ins
 	return nil
+}
+
+// UpdateInstanceStateWithTimestamp mirrors PgStore's variant. Mirrors
+// the §6.1 watchdog's need to know "time of entry into current
+// state" for SNAPSHOTTING rows; parked_at is the column the watchdog
+// reads on that state.
+func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state string, parkedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return ErrNotFound
+	}
+	ins.State = state
+	ins.ParkedAt = parkedAt
+	m.instances[id] = ins
+	return nil
+}
+
+// ListInstancesByStatesOlderThan is the watchdog's lookup (commit 3,
+// spec §6.1). Mirrors PgStore: coalesce started_at / parked_at on the
+// age comparison.
+func (m *MemStore) ListInstancesByStatesOlderThan(_ context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wanted := make(map[State]bool, len(states))
+	for _, s := range states {
+		wanted[s] = true
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if !wanted[State(ins.State)] {
+			continue
+		}
+		age := ins.StartedAt
+		if State(ins.State) == StateSnapshotting {
+			age = ins.ParkedAt
+		}
+		if age.IsZero() {
+			continue
+		}
+		if age.Before(threshold) {
+			out = append(out, ins)
+		}
+	}
+	return out, nil
 }
 
 func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP string, guestUID int) error {
@@ -1805,3 +1862,30 @@ func (m *MemStore) RestoreAccount(_ context.Context, id string) error {
 
 // compile-time check that MemStore satisfies Store.
 var _ Store = (*MemStore)(nil)
+
+// BackdateForTest rewinds the row's started_at to the supplied
+// absolute timestamp. Used by the §6.1 watchdog tests in pkg/sched
+// to fabricate a stuck-WAKING/COLD_BOOTING row whose age exceeds
+// the budget. Production wiring does not need this — Postgres
+// timestamps are real.
+func (m *MemStore) BackdateForTest(id string, startedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ins.StartedAt = startedAt
+		m.instances[id] = ins
+	}
+}
+
+// SetParkedAtForTest stamps the row's parked_at. Used by the
+// watchdog tests to fabricate a stuck-SNAPSHOTTING row — the
+// watchdog anchors SNAPSHOTTING age on parked_at, not started_at,
+// because started_at is creation time.
+func (m *MemStore) SetParkedAtForTest(id string, parkedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ins.ParkedAt = parkedAt
+		m.instances[id] = ins
+	}
+}

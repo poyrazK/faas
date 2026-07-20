@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // vmmd RPC deadlines (spec §6.1). Centralised here — not in VMMClient —
@@ -89,13 +90,15 @@ type Engine struct {
 	notif  Notifier
 	fcVer  string // running Firecracker version — snapshots load only on a match (ADR-005)
 	log    *slog.Logger
+	ops    *wire.OpsMetrics // nil is tolerated by KillStuck (skip the counter increment)
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
 }
 
 // NewEngine wires the engine. notif may be nil (notifications are best-effort in
-// tests); log may be nil (slog default).
+// tests); log may be nil (slog default); ops may be nil (tests don't assert on
+// metrics).
 func NewEngine(store state.Store, ledger *Ledger, vmm VMM, notif Notifier, fcVer string, log *slog.Logger) *Engine {
 	if log == nil {
 		log = slog.Default()
@@ -109,6 +112,14 @@ func NewEngine(store state.Store, ledger *Ledger, vmm VMM, notif Notifier, fcVer
 		log:    log,
 		appMu:  map[string]*sync.Mutex{},
 	}
+}
+
+// WithOpsMetrics attaches a metrics bag to the engine for the §6.1
+// watchdog's per-(from,to) kill counter and the audit-log write-failure
+// counter. Returns the engine for builder-style wiring.
+func (e *Engine) WithOpsMetrics(ops *wire.OpsMetrics) *Engine {
+	e.ops = ops
+	return e
 }
 
 // WakeResult is what the gateway needs back from a wake: which instance serves
@@ -507,7 +518,16 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error {
 	mem, vmstate := snapshotPaths(ins.DeploymentID)
 	e.ledger.BeginSnapshot(ins.ID) // drops concurrency, keeps RAM (§6.2-1 excludes snapshotting)
-	e.transition(ctx, ins.ID, ins.AppID, state.StateSnapshotting)
+	// Stamp parked_at on entry into SNAPSHOTTING so the §6.1 watchdog
+	// (commit 3) has an "age of state" anchor for the row.
+	now := time.Now()
+	if err := e.store.UpdateInstanceStateWithTimestamp(ctx, ins.ID, string(state.StateSnapshotting), now); err != nil {
+		e.log.Warn("snapshotAndPark: stamp parked_at", "instance", ins.ID, "err", err)
+		// Fall through to the normal path — the watchdog's beginSnapshot
+		// anchor being lost is recoverable (it'll trip after
+		// started_at + 20s, slightly inflating the budget).
+	}
+	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting)
 
 	b, err := e.vmm.PauseAndSnapshot(ctx, ins.ID, mem, vmstate)
 	if err != nil {
@@ -594,6 +614,119 @@ func (e *Engine) usableSnapshot(ctx context.Context, deploymentID string) (state
 		return state.Snapshot{}, false
 	}
 	return snap, true
+}
+
+// StuckReason is the watchdog's reason for forcing a transition
+// (spec §6.1 budgets: WAKING ≤5s, COLD_BOOTING ≤30s, SNAPSHOTTING ≤20s).
+// Each constant maps to one {from, to} terminal state pair in
+// KillStuck. The values are stable (wire format for the audit log + the
+// ops metric labels).
+type StuckReason string
+
+const (
+	StuckWakingTimeout   StuckReason = "waking_timeout"
+	StuckColdBootTimeout StuckReason = "cold_boot_timeout"
+	StuckSnapshotTimeout StuckReason = "snapshot_timeout"
+)
+
+// expectedStateForReason returns the source state the row must be in
+// for the supplied timeout reason. Used by KillStuck's pre-check.
+func expectedStateForReason(r StuckReason) state.State {
+	switch r {
+	case StuckWakingTimeout:
+		return state.StateWaking
+	case StuckColdBootTimeout:
+		return state.StateColdBooting
+	case StuckSnapshotTimeout:
+		return state.StateSnapshotting
+	default:
+		return ""
+	}
+}
+
+// terminalStateForReason picks the spec §6.1 transition target:
+//   - WAKING → COLD_BOOTING (the "fall back" branch; we abandon this
+//     row and let the next wake start a fresh cold-boot).
+//   - COLD_BOOTING → FAILED.
+//   - SNAPSHOTTING → STOPPED.
+func terminalStateForReason(r StuckReason) state.State {
+	switch r {
+	case StuckWakingTimeout:
+		return state.StateColdBooting
+	case StuckColdBootTimeout:
+		return state.StateFailed
+	case StuckSnapshotTimeout:
+		return state.StateStopped
+	default:
+		return ""
+	}
+}
+
+// KillStuck is the spec §6.1 watchdog's terminal action on a stuck
+// row. It runs under appMu, re-reads the row, and only acts if the
+// state matches the reason's source state (a Wake / Park that
+// completed during the watchdog's planning time must not be
+// double-killed). The fast path returns nil for the no-op case so a
+// goroutine that just raced us is safe.
+//
+// KillStuck releases the ledger reservation (idempotent), best-effort
+// destroys the vmmd-side VM with a 5s deadline (a wedged Firecracker
+// can't pin the watchdog goroutine forever), and finally writes the
+// terminal state via transition — which is itself the audit-log
+// entrypoint once commit 4 lands.
+func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason StuckReason) error {
+	if reason != StuckWakingTimeout && reason != StuckColdBootTimeout && reason != StuckSnapshotTimeout {
+		return fmt.Errorf("sched: KillStuck: unknown reason %q", reason)
+	}
+
+	release := e.lockApp(appID)
+	defer release()
+
+	fresh, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		// Row gone — someone else (or a prior watchdog pass) already
+		// cleaned up. The reservation may also be gone; Ledger.Release
+		// is a no-op on unknown instances (admission.go:117).
+		e.ledger.Release(instanceID)
+		return nil //nolint:nilerr // state.ErrNotFound is a successful no-op here
+	}
+
+	want := expectedStateForReason(reason)
+	if state.State(fresh.State) != want {
+		// Race: a Wake / Park / prior watchdog already moved the row.
+		// Don't second-guess — release the reservation in case it
+		// leaked, but do not touch the state machine.
+		e.ledger.Release(instanceID)
+		return nil
+	}
+
+	terminal := terminalStateForReason(reason)
+
+	// Free the ledger reservation first so a parallel Wake for the
+	// same app can admit a new instance immediately. Release is
+	// idempotent (admission.go:117).
+	e.ledger.Release(instanceID)
+
+	// Best-effort destroy. A wedged Firecracker can't pin the
+	// watchdog goroutine past the 5s ceiling. Use Background so a
+	// cancelled tick ctx doesn't cause us to skip the destroy.
+	destroyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := e.vmm.Destroy(destroyCtx, instanceID); err != nil {
+		e.log.Warn("watchdog: destroy failed (best-effort)", "instance", instanceID, "reason", reason, "err", err)
+	}
+
+	// Final state write. AppendEvent for the audit row is wired in
+	// commit 4 — KillStuck goes through the same `transition` helper
+	// every other state change uses, so a single AppendEvent call
+	// there covers every kind of transition (Wake, Park, Evict,
+	// KillStuck). The metric increment is done here so the
+	// CounterVec captures the {from, to} pair.
+	e.transition(ctx, instanceID, appID, terminal)
+	if e.ops != nil {
+		e.ops.WatchdogKills(string(reason), string(terminal)).Inc()
+	}
+	return nil
 }
 
 // transition validates and applies one instance state change, then emits
