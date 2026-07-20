@@ -222,14 +222,14 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	// Capture the boot inputs we need across the unlocked window. These
 	// are values (not references) — they remain valid after release.
 	bootInput := bootInput{
-		insID:      ins.ID,
-		appID:      appID,
-		depID:      dep.ID,
-		initState:  initState,
-		haveSnap:   haveSnap,
-		snapID:     snap.ID,
-		snapVer:    snap.FCVersion,
-		spec:       spec,
+		insID:     ins.ID,
+		appID:     appID,
+		depID:     dep.ID,
+		initState: initState,
+		haveSnap:  haveSnap,
+		snapID:    snap.ID,
+		snapVer:   snap.FCVersion,
+		spec:      spec,
 	}
 	release()
 
@@ -538,8 +538,10 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake
 		// cold-boots (ADR-005). The app still has a cold-bootable rootfs (§6.2-3).
+		// Audit-log it as park_snapshot_error (per the kind taxonomy) so
+		// "all park-snapshot failures in the last hour" is queryable.
 		e.ledger.Release(ins.ID)
-		e.transition(ctx, ins.ID, ins.AppID, state.StateStopped)
+		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_snapshot_error", "snapshot_failed")
 		return fmt.Errorf("sched: park: snapshot %s: %w", ins.ID, err)
 	}
 	e.ledger.Release(ins.ID)

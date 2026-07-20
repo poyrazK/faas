@@ -1220,27 +1220,50 @@ func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error
 
 // --- Audit ------------------------------------------------------------------
 
+// parseSubjectID accepts either a canonical UUID (with hyphens) or the
+// 32-char hex form that MemStore's newID() emits, and returns the
+// canonical *uuid.UUID either way. Returns nil on any parse failure so
+// callers can treat "unparseable" the same as "no subject" (which is
+// what the audit-log filter expects: no row would have produced a
+// garbage ID). The fix for the silent-drop bug surfaced by the audit-log
+// PR's tests: engine.go hands us hex IDs (newID output) and uuid.Parse
+// rejects them, so Subject stayed nil even though we said we set it.
+func parseSubjectID(s string) *uuid.UUID {
+	if s == "" {
+		return nil
+	}
+	if u, err := uuid.Parse(s); err == nil {
+		return &u
+	}
+	if len(s) == 32 {
+		if b, err := hex.DecodeString(s); err == nil {
+			u := uuid.UUID(b)
+			return &u
+		}
+	}
+	return nil
+}
+
 // AppendEvent (commit 4) fixes two pre-existing bugs that the audit-log
 // PR surfaced. Before: the row's Subject pointer was dropped on the
 // floor (line 1226-1227 had a dead type-assertion placeholder and
 // the Event literal never set Subject), so ListEvents could never
 // filter by subject. After: parse the string into a *uuid.UUID and
-// copy Data so a caller can reuse the byte slice.
+// copy Data so a caller can reuse the byte slice. The hex form is
+// accepted too (see parseSubjectID).
 func (m *MemStore) AppendEvent(_ context.Context, actor, kind string, subject *string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var subj *uuid.UUID
 	if subject != nil {
-		if u, err := uuid.Parse(*subject); err == nil {
-			subj = &u
-		}
+		subj = parseSubjectID(*subject)
 	}
 	e := Event{
-		At:    time.Now(),
-		Actor: actor,
-		Kind:  kind,
+		At:      time.Now(),
+		Actor:   actor,
+		Kind:    kind,
 		Subject: subj,
-		Data: append([]byte(nil), data...),
+		Data:    append([]byte(nil), data...),
 	}
 	m.events = append(m.events, e)
 	return nil
@@ -1251,11 +1274,10 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 	defer m.mu.Unlock()
 	var subj *uuid.UUID
 	if subject != "" {
-		if u, err := uuid.Parse(subject); err == nil {
-			subj = &u
-		} else {
-			// Subject string failed to parse — no row would have
-			// produced it, so return empty.
+		subj = parseSubjectID(subject)
+		if subj == nil {
+			// Unparseable filter — no row would have produced it,
+			// return empty rather than silently matching everything.
 			return nil, nil
 		}
 	}

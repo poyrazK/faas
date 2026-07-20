@@ -268,10 +268,15 @@ type Store interface {
 	UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error
 	// ListInstancesByStatesOlderThan is the §6.1 watchdog's lookup.
 	// Returns rows currently in any of the given states whose
-	// "age timestamp" — started_at for WAKING/COLD_BOOTING, parked_at
-	// for SNAPSHOTTING — is strictly older than threshold.
-	// Implementations coalesce the two columns and may rely on
-	// migration 00014's partial index.
+	// "age timestamp" is strictly older than threshold. The age
+	// column is state-aware: started_at for WAKING/COLD_BOOTING
+	// (stamped on creation by migration 00013), parked_at for
+	// SNAPSHOTTING (stamped on entry into that state by
+	// UpdateInstanceStateWithTimestamp). Implementations must NOT
+	// coalesce the two columns — pre-migration 00013 rows have
+	// NULL started_at, and coalesce would silently use the stale
+	// parked_at. PgStore relies on migration 00014's partial index
+	// for the state predicate.
 	ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
 	// SetInstanceRuntime records the per-instance identity vmmd allocated on
 	// wake (netns, routable host IP, jail uid) and stamps started_at=now. schedd

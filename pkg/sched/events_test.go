@@ -17,8 +17,11 @@ import (
 
 // uuidStringOf normalises either a canonical UUID (with hyphens) or a
 // raw 32-char hex string into the canonical UUID form. The MemStore's
-// newID returns hex; the PgStore returns canonical UUIDs; both must
-// compare equal when the audit log round-trips an ID.
+// newID returns hex; the PgStore returns canonical UUIDs. MemStore's
+// parseSubjectID (see pkg/state/memstore.go) converts the hex back to
+// canonical UUID bytes when storing the Subject, so an events row's
+// Subject.String() always returns the canonical form regardless of
+// which store produced it.
 func uuidStringOf(s string) string {
 	if strings.Contains(s, "-") {
 		return s
@@ -203,6 +206,89 @@ var errBoom = boomErr("boom")
 type boomErr string
 
 func (e boomErr) Error() string { return string(e) }
+
+// TestEnginePark_SnapshotFail_AppendsParkSnapshotError drives
+// snapshotAndPark's error path and asserts the events row carries
+// kind = "park_snapshot_error" (per the kind taxonomy in
+// transitionWithKind's doc). This is the audit shape that lets ops
+// query "all park-snapshot failures in the last hour" without
+// grepping log lines.
+func TestEnginePark_SnapshotFail_AppendsParkSnapshotError(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{snapErr: errBoom}
+	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+
+	res, err := engine.Wake(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if err := engine.Park(context.Background(), res.InstanceID); err == nil {
+		t.Fatal("expected Park to fail (vmm.snapErr set)")
+	}
+	events, _ := store.ListEvents(context.Background(), res.InstanceID, 0)
+	var found bool
+	for _, e := range events {
+		if e.Kind == "park_snapshot_error" {
+			found = true
+			var payload map[string]any
+			if jerr := json.Unmarshal(e.Data, &payload); jerr != nil {
+				t.Errorf("park_snapshot_error Data not valid JSON: %v", jerr)
+			}
+			if payload["from"] != "snapshotting" {
+				t.Errorf("park_snapshot_error Data from = %v, want snapshotting", payload["from"])
+			}
+			if payload["to"] != "stopped" {
+				t.Errorf("park_snapshot_error Data to = %v, want stopped", payload["to"])
+			}
+			if payload["reason"] != "snapshot_failed" {
+				t.Errorf("park_snapshot_error Data reason = %v, want snapshot_failed", payload["reason"])
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("events rows = %+v, want one with kind=park_snapshot_error", events)
+	}
+}
+
+// TestMemStoreAppendEvent_HexSubjectRoundTrips (commit 4 fix) proves
+// that a MemStore instance whose ID is the 32-char hex form
+// (newID()'s output) survives the audit-log round-trip. Before the
+// parseSubjectID fix, MemStore.AppendEvent silently dropped the
+// Subject on hex-only inputs, so ListEvents(subject=<hex>) returned
+// no rows even though AppendEvent had just been called with that
+// exact subject string.
+func TestMemStoreAppendEvent_HexSubjectRoundTrips(t *testing.T) {
+	store := state.NewMemStore()
+	ins, err := store.CreateInstance(context.Background(), "app", "dep", string(state.StateWaking), 256)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	// Hex-only ID is the production shape for MemStore instances.
+	if strings.Contains(ins.ID, "-") {
+		t.Fatalf("MemStore created a non-hex ID %q — fix is unnecessary", ins.ID)
+	}
+
+	subject := ins.ID
+	data := []byte(`{"k":"v"}`)
+	if err := store.AppendEvent(context.Background(), "schedd", "state_transition", &subject, data); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+	rows, err := store.ListEvents(context.Background(), ins.ID, 0)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("ListEvents(%q) returned %d rows, want 1", ins.ID, len(rows))
+	}
+	if rows[0].Subject == nil {
+		t.Fatal("Subject = nil after AppendEvent; parseSubjectID fix should have set it")
+	}
+	if rows[0].Subject.String() != uuidStringOf(ins.ID) {
+		t.Errorf("Subject = %s, want %s", rows[0].Subject, uuidStringOf(ins.ID))
+	}
+}
 
 // failingEventStore is a state.Store wrapper that returns an error
 // from AppendEvent only. It exists so commit 4's tests can prove the

@@ -72,10 +72,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	})
 	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail)
 	return &OpsMetrics{
-		registry:       reg,
-		ops:            ops,
-		dur:            dur,
-		watchdogKills:  watchdogKills,
+		registry:        reg,
+		ops:             ops,
+		dur:             dur,
+		watchdogKills:   watchdogKills,
 		eventsWriteFail: eventsWriteFail,
 	}
 }

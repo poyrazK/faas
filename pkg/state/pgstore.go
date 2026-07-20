@@ -909,13 +909,20 @@ func (s *PgStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, stat
 	return nil
 }
 
-// ListInstancesByStatesOlderThan is the watchdog's lookup (commit 3,
-// spec §6.1). Filters on state ∈ states and a coalesced age column:
-// started_at for everything except SNAPSHOTTING (which uses the
-// most-recent parked_at because the row's started_at is creation
-// time, not entry-into-SNAPSHOTTING time). The partial index
-// instances_watchdog_state_idx (migration 00014) covers the state IN
-// (...) predicate; the coalesce comparison happens on the row payload.
+// ListInstancesByStatesOlderThan is the watchdog's lookup (spec §6.1).
+// Filters on state ∈ states and a state-aware "age" column:
+// started_at for WAKING / COLD_BOOTING (stamped on creation by the
+// trigger in migration 00013), parked_at for SNAPSHOTTING (stamped on
+// entry into SNAPSHOTTING by UpdateInstanceStateWithTimestamp).
+//
+// The CASE shape is load-bearing — the original coalesce(started_at,
+// parked_at) predicate silently used parked_at for any row with NULL
+// started_at, which is true for every row that existed before
+// migration 00013 shipped. Such a row would compare against its
+// historical parked_at (often weeks old) and look stuck even though
+// it's normal. The partial index
+// instances_watchdog_state_idx (migration 00014) covers the state
+// predicate; the CASE comparison runs on the row payload.
 func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error) {
 	stateStrs := make([]string, len(states))
 	for i, s := range states {
@@ -926,7 +933,7 @@ func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []S
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
 		 from instances
 		 where state = any($1)
-		   and coalesce(started_at, parked_at) < $2`,
+		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
 		stateStrs, threshold)
 	if err != nil {
 		return nil, err

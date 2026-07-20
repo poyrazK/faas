@@ -14,10 +14,12 @@ import (
 )
 
 // backdateInstance rewinds the row's "age" anchor by the supplied
-// delta. MemStore stamps started_at on creation (commit 3); for
-// SNAPSHOTTING we set ParkedAt. The watchdog's
-// ListInstancesByStatesOlderThan compares coalesce(started_at,
-// parked_at) so either works.
+// delta. MemStore stamps started_at on creation; for SNAPSHOTTING
+// the watchdog reads parked_at instead, so SetParkedAtForTest is
+// used directly. The watchdog's ListInstancesByStatesOlderThan uses
+// a state-aware column (started_at for WAKING/COLD_BOOTING,
+// parked_at for SNAPSHOTTING), so a backdate on either anchor
+// works for the relevant state.
 func backdateInstance(t *testing.T, store state.Store, id string, age time.Duration) {
 	t.Helper()
 	mems := toMemStore(t, store)
@@ -200,29 +202,53 @@ func TestWatchdogSweepRejectsUnknownReason(t *testing.T) {
 	}
 }
 
-// TestLoopRunStartsWatchdogTicker asserts that Loop.Run takes the
-// 4th select branch when WithWatchdog is wired. We can't run a full
-// Loop (it requires pg_notify), but we can drive runWatchdog
-// directly and verify the channel between Loop and Watchdog is
-// healthy.
-func TestLoopRunStartsWatchdogTicker(t *testing.T) {
+// TestLoopRunDrivesWatchdog (replaces TestLoopRunStartsWatchdogTicker,
+// which had no assertions and didn't actually prove the Loop↔Watchdog
+// wiring). This test seeds a stuck WAKING row with a real ledger
+// reservation, drives loop.runWatchdog directly, and asserts:
+//   - the row transitioned to COLD_BOOTING (per §6.1 fallback),
+//   - the ledger reservation was released,
+//   - vmmd saw a Destroy.
+//
+// It covers the path Loop.Run takes on its 4th select tick without
+// needing to spin up a full Loop (which would require pg_notify).
+func TestLoopRunDrivesWatchdog(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	ops := wire.NewOpsMetrics("schedd")
+	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 
-	// Stuck WAKING row.
-	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512); err != nil {
+	waking, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512)
+	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 	engine.Ledger().Admit(Request{
-		Instance: "should-not-be-real-id", AppID: app.ID, Plan: api.PlanPro,
+		Instance: waking.ID, AppID: app.ID, Plan: api.PlanPro,
 		RAMMB: 512, VCPU: 2, MaxConcurrency: 5,
 	})
+	backdateInstance(t, store, waking.ID, 10*time.Second) // past WakingSweepBudget (5s)
 
 	w := NewWatchdog(store, engine, slog.Default()).WithClock(func() time.Time { return time.Now() })
 	loop := NewLoop(nil, engine, slog.Default()).WithWatchdog(w)
+
+	// Drive the same code path Loop.Run's watchdog ticker would.
 	loop.runWatchdog(context.Background())
+
+	if got := rowState(t, store, waking.ID); got != string(state.StateColdBooting) {
+		t.Errorf("WAKING row → %s, want COLD_BOOTING (watchdog fallback)", got)
+	}
+	if got := engine.Ledger().ResidentRAM(); got != 0 {
+		t.Errorf("resident = %d, want 0 (reservation released)", got)
+	}
+	vmm.mu.Lock()
+	defer vmm.mu.Unlock()
+	if vmm.destroys != 1 {
+		t.Errorf("destroys = %d, want 1", vmm.destroys)
+	}
+	if got := testutil.ToFloat64(ops.WatchdogKills(string(StuckWakingTimeout), string(state.StateColdBooting))); got != 1 {
+		t.Errorf("watchdog_kills{waking_timeout,cold_booting} = %v, want 1", got)
+	}
 }
 
 // rowState is a small helper to read the state field with a useful
