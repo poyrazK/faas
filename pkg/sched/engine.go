@@ -24,6 +24,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -34,6 +35,43 @@ import (
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// vmmd RPC deadlines (spec §6.1). Centralised here — not in VMMClient —
+// because the same client serves every RPC and each has a different
+// spec budget. The values are not configurable; they are spec §6.1, not
+// operator preference.
+const (
+	// WakingTimeout is the §6.1 budget for WAKING: "≤ 5s → fall back to
+	// cold-boot". 6s = 5s spec + 1s vmmd round trip. The watchdog
+	// (commit 3) trips on this same number independently — both stay
+	// within ±1s of each other so the watchdog catches a row that
+	// sneaks in just before the deadline here.
+	WakingTimeout = 6 * time.Second
+
+	// ColdBootTimeout is the §6.1 budget for COLD_BOOTING: "≤ 30s →
+	// FAILED". 35s absorbs the vmmd round trip plus jailer setup.
+	ColdBootTimeout = 35 * time.Second
+
+	// DestroyTimeout guards the best-effort Destroy calls in the error
+	// paths (Wake failed mid-boot, Evict). A hung destroy leaks at
+	// worst a stale jail cgroup for 10s — acceptable vs. leaking
+	// forever if Firecracker is wedged.
+	DestroyTimeout = 10 * time.Second
+)
+
+// bootTimeout returns the §6.1 budget for a vmmd call when the row is
+// in the given state. Unknown states get the cold-boot budget
+// (conservative); never returns zero.
+func bootTimeout(s state.State) time.Duration {
+	switch s {
+	case state.StateWaking:
+		return WakingTimeout
+	case state.StateColdBooting:
+		return ColdBootTimeout
+	default:
+		return ColdBootTimeout
+	}
+}
 
 // Notifier is the pg_notify surface the engine needs. db.Notify (pool-backed)
 // satisfies it via poolNotifier; tests inject a fake.
@@ -131,13 +169,19 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),
 	}
 	var out *WakeOutcome
+	// Per-call deadline (commit 1, spec §6.1). Wrapping at the engine
+	// call site — not the VMM client — keeps the deadline local to the
+	// boot budget for THIS state. A future caller can pass a longer
+	// deadline (e.g. the cron tick) without changing VMMClient.
+	bootCtx, cancel := context.WithTimeout(ctx, bootTimeout(initState))
+	defer cancel()
 	if haveSnap {
 		mem, vmstate := snapshotPaths(dep.ID)
-		out, err = e.vmm.CreateFromSnapshot(ctx, ins.ID, spec, SnapshotRef{
+		out, err = e.vmm.CreateFromSnapshot(bootCtx, ins.ID, spec, SnapshotRef{
 			DeploymentID: dep.ID, MemPath: mem, VMStatePath: vmstate, FCVersion: snap.FCVersion,
 		})
 	} else {
-		out, err = e.vmm.CreateColdBoot(ctx, ins.ID, spec)
+		out, err = e.vmm.CreateColdBoot(bootCtx, ins.ID, spec)
 	}
 	if err != nil {
 		e.ledger.Release(ins.ID)
@@ -155,8 +199,12 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	}
 
 	if err := e.store.SetInstanceRuntime(ctx, ins.ID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
-		// Booted but unrecordable — destroy to avoid a resource leak, then fail.
-		_ = e.vmm.Destroy(ctx, ins.ID)
+		// Booted but unrecordable — destroy to avoid a resource leak,
+		// then fail. Best-effort with a hard ceiling: a hung Firecracker
+		// can't pin the Wake goroutine forever.
+		destroyCtx, dcancel := context.WithTimeout(context.Background(), DestroyTimeout)
+		defer dcancel()
+		_ = e.vmm.Destroy(destroyCtx, ins.ID)
 		e.ledger.Release(ins.ID)
 		e.transition(ctx, ins.ID, appID, state.StateFailed)
 		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", err)
@@ -199,14 +247,26 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		EgressMbit: int32(limits.EgressMbit),
 		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),
 	}
-	out, err := e.vmm.CreateColdBoot(ctx, ins.ID, spec)
+	// Per-call deadline (commit 1, spec §6.1). Same rationale as Wake:
+	// Prime's vmmd call gets the ColdBootTimeout budget — a Prime
+	// that takes longer is dead and the operator should restart
+	// imaged's pipeline, not wait for a hung Firecracker.
+	bootCtx, pcancel := context.WithTimeout(ctx, bootTimeout(state.StateColdBooting))
+	defer pcancel()
+	out, err := e.vmm.CreateColdBoot(bootCtx, ins.ID, spec)
 	if err != nil {
 		e.ledger.Release(ins.ID)
 		e.transition(ctx, ins.ID, appID, state.StateFailed)
 		return fmt.Errorf("sched: prime: cold boot: %w", err)
 	}
 	if err := e.store.SetInstanceRuntime(ctx, ins.ID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
-		_ = e.vmm.Destroy(ctx, ins.ID)
+		// Best-effort destroy; same rationale as Wake above. Uses a
+		// detached context so a cancelled caller ctx doesn't make the
+		// destroy fire-and-forget (it would still need its own
+		// timeout).
+		destroyCtx, dcancel := context.WithTimeout(context.Background(), DestroyTimeout)
+		defer dcancel()
+		_ = e.vmm.Destroy(destroyCtx, ins.ID)
 		e.ledger.Release(ins.ID)
 		e.transition(ctx, ins.ID, appID, state.StateFailed)
 		return fmt.Errorf("sched: prime: record runtime: %w", err)
@@ -255,7 +315,14 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 	}
 	defer e.unlockApp(ins.AppID)
 
-	if err := e.vmm.Destroy(ctx, instanceID); err != nil {
+	// Per-call deadline (commit 1). Evict is RAM-pressure, so a wedged
+	// Destroy cannot pin the reaper — the deadline frees it. Using a
+	// detached context for the same reason as the Wake/Prime error
+	// paths: a shutting-down reaper should still get its destroy
+	// cleanup.
+	destroyCtx, cancel := context.WithTimeout(context.Background(), DestroyTimeout)
+	defer cancel()
+	if err := e.vmm.Destroy(destroyCtx, instanceID); err != nil {
 		return fmt.Errorf("sched: evict: destroy %s: %w", instanceID, err)
 	}
 	e.ledger.Release(instanceID)

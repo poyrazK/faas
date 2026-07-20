@@ -27,6 +27,13 @@ type fakeVMM struct {
 	snapErr           error
 	destroyErr        error
 
+	// sleepFor makes every RPC sleep before returning. Used by commit
+	// 1's deadline test to drive the §6.1 boot-budget path: a vmmd
+	// that hangs past WakingTimeout / ColdBootTimeout must surface as
+	// a context.DeadlineExceeded error to the engine. Zero (the
+	// default) means "return immediately".
+	sleepFor time.Duration
+
 	// lastColdBootSpec / lastRestoreSpec capture the AppSpec the engine
 	// handed to vmmd on the most recent wake call. Tests that exercise
 	// the sealed-env wire read these to verify schedd forwarded the
@@ -43,7 +50,14 @@ func (f *fakeVMM) outcome(instance string, method vmmdpb.WakeMethod, requested v
 	}
 }
 
-func (f *fakeVMM) CreateColdBoot(_ context.Context, instance string, app AppSpec) (*WakeOutcome, error) {
+func (f *fakeVMM) CreateColdBoot(ctx context.Context, instance string, app AppSpec) (*WakeOutcome, error) {
+	if d := f.sleepFor; d > 0 {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.wakeErr != nil {
@@ -54,7 +68,14 @@ func (f *fakeVMM) CreateColdBoot(_ context.Context, instance string, app AppSpec
 	return f.outcome(instance, vmmdpb.WakeMethod_WAKE_COLD_BOOT, vmmdpb.WakeMethod_WAKE_COLD_BOOT), nil
 }
 
-func (f *fakeVMM) CreateFromSnapshot(_ context.Context, instance string, app AppSpec, _ SnapshotRef) (*WakeOutcome, error) {
+func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, instance string, app AppSpec, _ SnapshotRef) (*WakeOutcome, error) {
+	if d := f.sleepFor; d > 0 {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.wakeErr != nil {
@@ -69,7 +90,14 @@ func (f *fakeVMM) CreateFromSnapshot(_ context.Context, instance string, app App
 	return f.outcome(instance, method, vmmdpb.WakeMethod_WAKE_RESTORE), nil
 }
 
-func (f *fakeVMM) PauseAndSnapshot(_ context.Context, _, _, _ string) (SnapshotBytes, error) {
+func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _ string) (SnapshotBytes, error) {
+	if d := f.sleepFor; d > 0 {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return SnapshotBytes{}, ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.snapErr != nil {
@@ -79,7 +107,14 @@ func (f *fakeVMM) PauseAndSnapshot(_ context.Context, _, _, _ string) (SnapshotB
 	return SnapshotBytes{MemBytes: 130 * 1024 * 1024, VMStateBytes: 4096}, nil
 }
 
-func (f *fakeVMM) Destroy(_ context.Context, _ string) error {
+func (f *fakeVMM) Destroy(ctx context.Context, _ string) error {
+	if d := f.sleepFor; d > 0 {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.destroyErr != nil {
@@ -483,5 +518,71 @@ func TestEngineSeedLedger(t *testing.T) {
 	}
 	if got := e.Ledger().ResidentRAM(); got != 512+api.PerVMOverheadMB {
 		t.Errorf("resident = %d, want %d (running instance re-accounted)", got, 512+api.PerVMOverheadMB)
+	}
+}
+
+// TestEngineWake_VMMDColdBootDeadlineEnforced (commit 1, spec §6.1) pins
+// that a Wake whose vmmd call exceeds the §6.1 budget (COLD_BOOTING ≤
+// 30s) cannot leak the ledger reservation. The fake's sleepFor is set
+// past the budget; the engine's context.WithTimeout wrapper must fire
+// before the test gives up. After the Wake fails, the ledger is
+// released and the instance row is FAILED.
+func TestEngineWake_VMMDColdBootDeadlineEnforced(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	// Cold-boot path: no snapshot, initState = COLD_BOOTING, so the
+	// deadline is ColdBootTimeout (35s). sleep well past it — but the
+	// test fails immediately if the engine doesn't honour the budget,
+	// so we set 5× and rely on the test wall-clock to bound the
+	// failure mode.
+	vmm := &fakeVMM{sleepFor: 2 * ColdBootTimeout}
+	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+
+	start := time.Now()
+	_, err := e.Wake(context.Background(), app.ID)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Wake returned nil err, expected deadline error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Wake err = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed > ColdBootTimeout+2*time.Second {
+		t.Errorf("Wake took %v, want ≤ ColdBootTimeout (35s) + slack", elapsed)
+	}
+	if got := e.Ledger().ResidentRAM(); got != 0 {
+		t.Errorf("resident = %d, want 0 (reservation released on deadline)", got)
+	}
+	rows, _ := store.ListInstancesForApp(context.Background(), app.ID)
+	if len(rows) != 1 || rows[0].State != string(state.StateFailed) {
+		t.Errorf("rows = %+v, want one FAILED row", rows)
+	}
+}
+
+// TestEnginePrime_VMMDDeadlineEnforced mirrors the Wake test for the
+// Prime path. Prime is always cold-boot, so it gets the same
+// ColdBootTimeout — the only difference is that Prime's instance goes
+// RUNNING → SNAPSHOTTING → PARKED on success, but a hung vmmd should
+// leave the row FAILED with no reservation.
+func TestEnginePrime_VMMDDeadlineEnforced(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 2)
+	vmm := &fakeVMM{sleepFor: 2 * ColdBootTimeout}
+	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+
+	err := e.Prime(context.Background(), app.ID, dep.ID)
+	if err == nil {
+		t.Fatal("Prime returned nil err, expected deadline error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Prime err = %v, want context.DeadlineExceeded", err)
+	}
+	if got := e.Ledger().ResidentRAM(); got != 0 {
+		t.Errorf("resident = %d, want 0 (reservation released on deadline)", got)
+	}
+	rows, _ := store.ListInstancesForApp(context.Background(), app.ID)
+	if len(rows) != 1 || rows[0].State != string(state.StateFailed) {
+		t.Errorf("rows = %+v, want one FAILED row", rows)
 	}
 }
