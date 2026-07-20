@@ -149,11 +149,11 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		SourceTarPath: "/build/src.tar",
 		Workdir:       "/build/src",
 		OutDir:        "/build/out",
-		Framework:     api.BuildFramework(req.Framework),
+		Framework:     MapFramework(req.Framework),
 		TimeoutSec:    timeoutSec,
 		LogTailBytes:  64 * 1024,
 	}
-	if err := CreateBuildDrive1(ctx, drive1Path, bManifest); err != nil {
+	if err := CreateBuildDrive1(ctx, drive1Path, bManifest, req.SourcePath); err != nil {
 		os.Remove(drive1Path)
 		return BuildHandle{}, fmt.Errorf("builderd: create drive1: %w", err)
 	}

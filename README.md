@@ -182,15 +182,14 @@ and open an issue if you want it.
 
 **M6**
 
-- **`pkg/builderd/drive.go`** — copy `VMRequest.SourcePath` into
-  the builder VM's scratch disk. Without it the builder VM has no
-  source tarball, so no real `npm install` / `pip install` runs.
-- **Dockerfile kind enum dispatch** — `pkg/api/build.go`'s enum is
-  `"railpack_node" / "railpack_python" / "dockerfile"` but
-  `pkg/builderd/detect.go` casts `"docker"` through Railpack-auto.
-  Wire `"dockerfile"` → `buildctl --frontend dockerfile` per
-  ADR-004. Needs a smoke test on the metal builder VM before the
-  §14 M6 gate is green.
+- **§14 acceptance e2e** — PR #56 (closes #54) shipped the host-side
+  fix and a unit-level sha256 round-trip. The orchestrator-level
+  acceptance — `apid → pg_notify('build_queued') → builderd → vmmd
+  → firecracker → in-VM Railpack/buildctl → OCI image.tar` —
+  for bare Node / bare Python / Dockerfile-at-root repos is
+  tracked in #57. Includes `FAAS_BUILDERD_CONFIG` env override,
+  `Builderd` flag in `pkg/e2etest`, three `//go:embed` fixture
+  tarballs, and `cmd/e2e/build_metal_test.go`.
 
 **M7**
 
