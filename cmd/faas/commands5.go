@@ -457,6 +457,10 @@ func cmdAppScale(slug string, args []string) int {
 	}
 	_, _ = fmt.Fprintln(osStdout, "✓ Updated")
 	if explicit["min"] && *min > 0 {
+		// Silent on Whoami failure (mid-rotation token, transient
+		// API blip). The cost echo is a transparency affordance;
+		// don't surface an unrelated auth issue right after a
+		// successful update.
 		if acct, err := client.Whoami(context.Background()); err == nil {
 			printResidentCostEcho(api.Plan(acct.Plan), updated.RAMMB, *min)
 		}

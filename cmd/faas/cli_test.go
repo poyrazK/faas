@@ -1121,3 +1121,61 @@ func TestCmdLogin_ListAppsFails_NoQuickstart(t *testing.T) {
 		t.Errorf("ListApps failure must not trigger quickstart\nfull: %s", out)
 	}
 }
+
+// TestCmdDeploy_Recovery_PrintsColdWakeSentence (issue #65 D2 polish)
+// pins the polled-recovery path: when the SSE stream emits `event:
+// end` (or any non-terminal frame) and terminalExitForDeployment
+// renders the live outcome via GetDeployment, the cold-wake sentence
+// must still print. The SSE-path coverage
+// (TestCmdDeploy_HappyPath_PrintsColdWakeSentence) only exercises
+// streamDeployLogs's live branch; this one exercises the recovery
+// branch in terminalExitForDeployment so a future refactor can't
+// accidentally drop the sentence from one of the two render sites.
+func TestCmdDeploy_Recovery_PrintsColdWakeSentence(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/apps":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
+		case r.URL.Path == "/v1/apps/my-app/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+			// No terminal frame; `event: end` forces the CLI to
+			// poll GetDeployment (terminalExitForDeployment path).
+			_, _ = fmt.Fprint(w, "data: {\"reason\":\"timeout\"}\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+			<-r.Context().Done()
+		case r.URL.Path == "/v1/deployments/d1":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "my-app"})
+		default:
+			http.Error(w, "no", 404)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+		t.Fatalf("cmdDeploy recovery exit = %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"✓ Deployed. https://my-app.apps.DOMAIN",
+		"scales to zero when idle",
+		"~0.3–0.8s to wake",
+		"normal and free",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("recovery stdout missing %q\nfull: %s", want, out)
+		}
+	}
+}

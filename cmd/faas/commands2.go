@@ -144,6 +144,10 @@ func cmdApp(args []string) int {
 	}
 	_, _ = fmt.Fprintln(osStdout, "✓ Updated")
 	if explicit["min"] && *min > 0 {
+		// Silent on Whoami failure: the customer just updated an app
+		// successfully, don't surface an unrelated auth/network blip
+		// (e.g. mid-rotation token) as a missing cost line. The echo
+		// is a transparency affordance, not a guarantee.
 		if acct, err := client.Whoami(ctx); err == nil {
 			printResidentCostEcho(api.Plan(acct.Plan), updated.RAMMB, *min)
 		}
