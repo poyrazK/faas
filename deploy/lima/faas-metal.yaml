@@ -65,21 +65,50 @@ provision:
       #!/bin/bash
       set -eux -o pipefail
 
+      # Lima's hostagent races its own apt-get installs (nerdctl, containerd
+      # binaries downloaded by `limactl start`) against our per-boot
+      # provision scripts. The shared dpkg lock is held when the per-boot
+      # scripts fire, so a single apt-get call fails with
+      # "Could not get lock /var/lib/dpkg/lock-frontend". Wait it out
+      # rather than failing the whole block. Same helper covers all
+      # three blocks; defined once here.
+      apt_wait() {
+        local deadline=$((SECONDS + 60))
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+              && ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+            return 0
+          fi
+          sleep 1
+        done
+        echo "apt_wait: dpkg lock still held after 60s" >&2
+        return 1
+      }
+
       export DEBIAN_FRONTEND=noninteractive
+      apt_wait
       apt-get update -y
+      apt_wait
       apt-get install -y --no-install-recommends \
         build-essential e2fsprogs iproute2 iptables git curl ca-certificates \
         busybox-static jq
 
       # Let the default (non-root) Lima user open /dev/kvm without sudo.
-      # The Lima cloud-init image creates the `ubuntu` user AFTER our
-      # provision scripts run (per-boot cc_scripts_per_boot fires before
-      # the user-setup module), so a `getent passwd` lookup right now
-      # returns nothing. We default to `ubuntu` (the canonical image
-      # user, also used as the SSH target) and only override if a
-      # regular login user already exists — that way both cases work.
+      # The Lima cloud-init image's "regular" login user varies across
+      # versions — Ubuntu Noble images historically created `ubuntu` with
+      # uid≥1000, but updated images (Lima 1.0+) name the user after the
+      # host's macOS user (`poyrazk.linux` / `poyrazk`, uid 501) and
+      # create it asynchronously with our per-boot scripts. The awk
+      # '$3>=1000' filter rejects uid 501, and the lookup often returns
+      # empty before cloud-init's user-setup module runs.
+      #
+      # Resolution: scan for a uid>=500 shell-user with a real login shell,
+      # fall back to `poyrazk` (the current Lima default), then `ubuntu`
+      # (legacy). That covers all three cases without rewriting this on
+      # every Lima bump.
       groupadd -f kvm || true
-      DEFAULT_USER="$(getent passwd | awk -F: '$3>=1000 && $3<65000 {print $1; exit}')"
+      DEFAULT_USER="$(getent passwd | awk -F: '$3>=500 && $3<65000 && $7 ~ /(bash|zsh|sh)$/ {print $1; exit}')"
+      DEFAULT_USER="${DEFAULT_USER:-poyrazk}"
       DEFAULT_USER="${DEFAULT_USER:-ubuntu}"
       usermod -aG kvm "${DEFAULT_USER}" || true
 
@@ -133,14 +162,32 @@ provision:
       #!/bin/bash
       set -eux -o pipefail
 
+      # Same dpkg-lock helper as the FC-setup block — Lima's hostagent
+      # can still be holding the lock when this block runs.
+      apt_wait() {
+        local deadline=$((SECONDS + 60))
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+              && ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+            return 0
+          fi
+          sleep 1
+        done
+        echo "apt_wait: dpkg lock still held after 60s" >&2
+        return 1
+      }
+
       # Default user has a writable mount of host $HOME at the same path
       # (Lima `mounts: writable: true`). The repo worktree is mounted under
-      # the host uid; the lima-default user mirrors that uid. Same caveat
-      # as the FC-setup block: `ubuntu` may not exist yet — fall back.
-      DEFAULT_USER="$(getent passwd | awk -F: '$3>=1000 && $3<65000 {print $1; exit}')"
+      # the host uid; the lima-default user mirrors that uid. The awk
+      # '$3>=1000' filter rejects the current Lima image's `poyrazk` user
+      # (uid 501) — see the FC-setup block for the same fix.
+      DEFAULT_USER="$(getent passwd | awk -F: '$3>=500 && $3<65000 && $7 ~ /(bash|zsh|sh)$/ {print $1; exit}')"
+      DEFAULT_USER="${DEFAULT_USER:-poyrazk}"
       DEFAULT_USER="${DEFAULT_USER:-ubuntu}"
       DEFAULT_HOME="$(getent passwd "${DEFAULT_USER}" | cut -d: -f6)"
       DEFAULT_HOME="${DEFAULT_HOME:-/home/${DEFAULT_USER}}"
+      apt_wait
 
       # Search the default user's home for the repo (typical layout: ~/code/faas
       # or the worktree is directly at $HOME). We probe a few known locations so
@@ -257,17 +304,34 @@ provision:
         echo "builder-base present but only $SIZE bytes — overwriting with a real build."
       fi
 
+      # Same dpkg-lock helper as the FC-setup block — this block runs
+      # after both prior blocks and can hit the same lock contention.
+      apt_wait() {
+        local deadline=$((SECONDS + 60))
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+              && ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+            return 0
+          fi
+          sleep 1
+        done
+        echo "apt_wait: dpkg lock still held after 60s" >&2
+        return 1
+      }
+
       export DEBIAN_FRONTEND=noninteractive
       # e2fsprogs is needed locally too (mkfs.ext4 + e2label below) — the
       # first provisioner block already installs it, but this block runs
       # on its own when /srv/fc/base/builder-base.ext4 is missing; relying
       # on a sibling block's install is a hidden coupling.
+      apt_wait
       apt-get install -y --no-install-recommends docker.io e2fsprogs >/dev/null
       # Lima's default user already exists in the kvm group; add them to
       # docker so `docker buildx` works without sudo. Mirrors the kvm-group
-      # step in the first provisioner block. Same `ubuntu` fallback caveat
-      # as the V6 block: cloud-init creates the user after provision runs.
-      DEFAULT_USER="$(getent passwd | awk -F: '$3>=1000 && $3<65000 {print $1; exit}')"
+      # step in the first provisioner block. The same uid>=1000 vs
+      # poyrazk(uid 501) caveat applies — see the FC-setup block.
+      DEFAULT_USER="$(getent passwd | awk -F: '$3>=500 && $3<65000 && $7 ~ /(bash|zsh|sh)$/ {print $1; exit}')"
+      DEFAULT_USER="${DEFAULT_USER:-poyrazk}"
       DEFAULT_USER="${DEFAULT_USER:-ubuntu}"
       usermod -aG docker "${DEFAULT_USER}" || true
 
