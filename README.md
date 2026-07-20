@@ -228,6 +228,29 @@ Post-M8 = private beta (founding doc M2–M3 hand-held phase).
 The §14 acceptance gates still on the board. Pick one and open an
 issue if you want it.
 
+**M6**
+
+- **`pkg/builderd/drive.go`** — copy `VMRequest.SourcePath` into
+  the builder VM's scratch disk. Without it the builder VM has no
+  source tarball, so no real `npm install` / `pip install` runs.
+- **Dockerfile kind enum dispatch** — `pkg/api/build.go`'s enum is
+  `"railpack_node" / "railpack_python" / "dockerfile"` but
+  `pkg/builderd/detect.go` casts `"docker"` through Railpack-auto.
+  Wire `"dockerfile"` → `buildctl --frontend dockerfile` per
+  ADR-004. Needs a smoke test on the metal builder VM before the
+  §14 M6 gate is green.
+
+**M7**
+
+- **`cmd/meterd/main.go` wiring** — `defaultDeps` leaves `parker`
+  and `stripe` nil. Wire `scheddgrpc.Dial(...)` for the quota
+  hard-stop's `ScheddParker`, and `stripex.NewClient(...)` for the
+  hourly push. Until then, the sampling loop runs but doesn't act
+  on quota breaches or send Stripe usage records.
+- **`pkg/stripex/usage.go::PushUsageRecord`** — currently
+  `nil`-returning `TODO stripe-go`. Bring the SDK in, write a
+  test against the Stripe sandbox.
+
 **M8**
 
 - **CertMagic TLS** for gatewayd (`*.apps.DOMAIN` via DNS-01;
