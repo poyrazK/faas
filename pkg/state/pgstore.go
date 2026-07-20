@@ -1081,9 +1081,19 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 
 func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time.Time) ([]Usage, error) {
 	monthStart := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
+	// Compare via date_trunc('month', ...) on the parameter side too.
+	// The view's month column is timestamptz (date_trunc('month', timestamptz)
+	// is timestamptz). A plain `month = $2::timestamptz` still depends on the
+	// session timezone for the parameter's interpretation, which breaks on
+	// non-UTC hosts (issue #52 PR #59 follow-up: pgx encodes time.Time as a
+	// bare timestamp literal; in TZ=Europe/Istanbul that becomes
+	// 2026-07-01 00:00:00+03, while the view value is 2026-07-01 00:00:00+03
+	// but anchored to UTC internally — they compare unequal even with the
+	// explicit cast). date_trunc normalizes both sides to the month's start
+	// in UTC, sidestepping session-TZ semantics entirely.
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, month, mb_seconds, requests from usage_monthly
-		 where account_id = $1 and month = $2 order by app_id`,
+		 where account_id = $1 and date_trunc('month', $2::timestamptz) = month order by app_id`,
 		accountID, monthStart)
 	if err != nil {
 		return nil, err

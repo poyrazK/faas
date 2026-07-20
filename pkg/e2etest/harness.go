@@ -37,6 +37,13 @@
 // FAAS_OCI_INSECURE swaps imaged's egress-guarded http.Client for a plain one
 // so the fakeregistry on 127.0.0.1 is reachable. The guard denies loopback by
 // design; this knob is for tests only (the WARN log makes that obvious).
+//
+// FAAS_SKIP_SOCKET_GROUP is set by the harness on every daemon so the
+// shared unix socket (schedd.sock, vmmd.sock) binds even when the test
+// host has no `faas` group. Production deploys always have the group —
+// the ansible role creates it at bootstrap — so this knob is test-only.
+// Without it, schedd errors with "wire: lookup gid for \"faas\": group:
+// unknown group faas" on CI runners and dev Macs (issue #52 PR #59).
 package e2etest
 
 import (
@@ -70,6 +77,7 @@ type Harness struct {
 	Pool       *pgxpool.Pool
 	TmpDir     string
 	BinDir     string
+	SockDir    string // short-path unix-socket directory (see Start comment)
 	APIDURL    string
 	ScheddSock string
 	VMMDPath   string
@@ -80,6 +88,23 @@ type Harness struct {
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
 	procs []*exec.Cmd
+}
+
+// currentHarness points at the most recently booted Harness. Used by
+// dumpProcs (called from waitUnix on timeout) to flush the live daemon
+// stdout/stderr to the test log so a CI failure has the daemon's last
+// words to bisect with. Single-active-harness is the only supported
+// shape — cmd/e2e runs one test at a time per package. Set/cleared in
+// Start + StartWithEnv.
+var currentHarness *Harness
+
+// snapshotProcs returns the active harness's running procs, or nil. Used
+// by dumpProcs to keep waitUnix timeout debug logs self-contained.
+func snapshotProcs() []*exec.Cmd {
+	if currentHarness == nil {
+		return nil
+	}
+	return currentHarness.procs
 }
 
 // Start brings up `which` daemons and wires readiness. Each daemon subprocess
@@ -98,7 +123,19 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 		t.Fatalf("e2etest: mkdir apps: %v", err)
 	}
 
-	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot}
+	// Socket dir lives outside t.TempDir() because macOS's t.TempDir() is
+	// under /var/folders/.../T/<random> and a test name + random suffix
+	// can exceed sun_path's 104-byte cap. /tmp is short and stable on
+	// every runner; we own the directory exclusively so cleanup is just
+	// an os.RemoveAll (registered via t.Cleanup).
+	sockDir, err := os.MkdirTemp("", "faas-e2e-sock-*")
+	if err != nil {
+		t.Fatalf("e2etest: mkdir sock dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+
+	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir}
+	currentHarness = h
 
 	// DB URL — pgtest opened the test pool with search_path=<schema>,public.
 	// The daemon subprocess must use the SAME schema so its reads/writes
@@ -125,8 +162,8 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 	}
 
 	if which&Schedd != 0 {
-		sockPath := filepath.Join(tmp, "schedd.sock")
-		vmmdSock := filepath.Join(tmp, "vmmd.sock")
+		sockPath := filepath.Join(h.SockDir, "schedd.sock")
+		vmmdSock := filepath.Join(h.SockDir, "vmmd.sock")
 		// schedd needs to dial vmmd; on the metal tag vmmd is started below
 		// and we use the same path. On tests that skip vmmd, schedd still
 		// starts — it just warns on wake. Wire both paths so schedd config
@@ -142,12 +179,9 @@ vmmd_socket = %q
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write schedd.toml: %v", err)
 		}
-		env := []string{
-			"FAAS_SCHEDD_CONFIG=" + cfgPath,
-			"DATABASE_URL=" + dbURL,
-			"PATH=" + os.Getenv("PATH"),
-			"HOME=" + os.Getenv("HOME"),
-		}
+		env := append(testEnvCommon(dbURL),
+			"FAAS_SCHEDD_CONFIG="+cfgPath,
+		)
 		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
 		h.ScheddSock = sockPath
 		h.VMMDSock = vmmdSock
@@ -162,7 +196,7 @@ vmmd_socket = %q
 		// Metal-only path. Caller is responsible for ensuring /dev/kvm + root.
 		sockPath := h.VMMDSock
 		if sockPath == "" {
-			sockPath = filepath.Join(tmp, "vmmd.sock")
+			sockPath = filepath.Join(h.SockDir, "vmmd.sock")
 			h.VMMDSock = sockPath
 		}
 		cfgPath := filepath.Join(tmp, "vmmd.toml")
@@ -181,11 +215,9 @@ kernel_path = %q
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
-		env := []string{
-			"FAAS_VMMD_CONFIG=" + cfgPath,
-			"PATH=" + os.Getenv("PATH"),
-			"HOME=" + os.Getenv("HOME"),
-		}
+		env := append(testEnvCommon(dbURL),
+			"FAAS_VMMD_CONFIG="+cfgPath,
+		)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
 		waitUnix(t, sockPath, 10*time.Second)
 	}
@@ -202,30 +234,24 @@ kernel_path = %q
 				t.Fatalf("e2etest: write placeholder guest init: %v", err)
 			}
 		}
-		env := []string{
-			"FAAS_GUEST_INIT=" + guestInit,
-			"FAAS_APPS_ROOT=" + appsRoot,
+		env := append(testEnvCommon(dbURL),
+			"FAAS_GUEST_INIT="+guestInit,
+			"FAAS_APPS_ROOT="+appsRoot,
 			"FAAS_OCI_INSECURE=1",
-			"DATABASE_URL=" + dbURL,
-			"PATH=" + os.Getenv("PATH"),
-			"HOME=" + os.Getenv("HOME"),
-		}
+		)
 		h.procs = append(h.procs, startProc(t, bin, "imaged", env))
 	}
 
 	if which&Gatewayd != 0 {
 		addr := freeTCPAddr(t)
 		if h.ScheddSock == "" {
-			h.ScheddSock = filepath.Join(tmp, "schedd.sock")
+			h.ScheddSock = filepath.Join(h.SockDir, "schedd.sock")
 		}
-		env := []string{
-			"FAAS_GATEWAY_LISTEN=" + addr,
-			"FAAS_SCHEDD_SOCKET=" + h.ScheddSock,
-			"FAAS_APPS_DOMAIN=" + testDomain,
-			"DATABASE_URL=" + dbURL,
-			"PATH=" + os.Getenv("PATH"),
-			"HOME=" + os.Getenv("HOME"),
-		}
+		env := append(testEnvCommon(dbURL),
+			"FAAS_GATEWAY_LISTEN="+addr,
+			"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
+			"FAAS_APPS_DOMAIN="+testDomain,
+		)
 		h.procs = append(h.procs, startProc(t, bin, "gatewayd", env))
 		h.GatewayURL = "http://" + addr
 		waitTCP(t, addr, 10*time.Second)
@@ -276,7 +302,15 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	if err := os.MkdirAll(appsRoot, 0o755); err != nil {
 		t.Fatalf("e2etest: mkdir apps: %v", err)
 	}
-	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot}
+	// See Start for why sockDir lives outside t.TempDir() — macOS sun_path
+	// limit, and `/tmp/faas-e2e-sock-*` is short and stable everywhere.
+	sockDir, err := os.MkdirTemp("", "faas-e2e-sock-*")
+	if err != nil {
+		t.Fatalf("e2etest: mkdir sock dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir}
+	currentHarness = h
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -295,21 +329,18 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 
 	if which&APID != 0 {
 		addr := freeTCPAddr(t)
-		env := []string{
-			"FAAS_APID_LISTEN=" + addr,
-			"FAAS_APPS_DOMAIN=" + testDomain,
-			"DATABASE_URL=" + dbURL,
-			"PATH=" + os.Getenv("PATH"),
-			"HOME=" + os.Getenv("HOME"),
-		}
+		env := append(testEnvCommon(dbURL),
+			"FAAS_APID_LISTEN="+addr,
+			"FAAS_APPS_DOMAIN="+testDomain,
+		)
 		env = append(env, extraEnv...)
 		h.procs = append(h.procs, startProc(t, bin, "apid", env))
 		h.APIDURL = "http://" + addr
 		waitTCP(t, addr, 10*time.Second)
 	}
 	if which&Schedd != 0 {
-		sockPath := filepath.Join(tmp, "schedd.sock")
-		vmmdSock := filepath.Join(tmp, "vmmd.sock")
+		sockPath := filepath.Join(h.SockDir, "schedd.sock")
+		vmmdSock := filepath.Join(h.SockDir, "vmmd.sock")
 		cfgPath := filepath.Join(tmp, "schedd.toml")
 		cfg := fmt.Sprintf(
 			`socket_path = %q
@@ -321,12 +352,9 @@ vmmd_socket = %q
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write schedd.toml: %v", err)
 		}
-		env := []string{
-			"FAAS_SCHEDD_CONFIG=" + cfgPath,
-			"DATABASE_URL=" + dbURL,
-			"PATH=" + os.Getenv("PATH"),
-			"HOME=" + os.Getenv("HOME"),
-		}
+		env := append(testEnvCommon(dbURL),
+			"FAAS_SCHEDD_CONFIG="+cfgPath,
+		)
 		env = append(env, extraEnv...)
 		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
 		h.ScheddSock = sockPath
@@ -338,6 +366,7 @@ vmmd_socket = %q
 	if which&Meterd != 0 {
 		startMeterd(t, h, bin, dbURL, extraEnv)
 	}
+	t.Cleanup(h.stop)
 	return h
 }
 
@@ -348,16 +377,33 @@ vmmd_socket = %q
 func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 	t.Helper()
 	addr := freeTCPAddr(t)
-	env := []string{
-		"FAAS_APID_LISTEN=" + addr,
-		"FAAS_APPS_DOMAIN=" + testDomain,
-		"DATABASE_URL=" + dbURL,
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + os.Getenv("HOME"),
-	}
+	env := append(testEnvCommon(dbURL),
+		"FAAS_APID_LISTEN="+addr,
+		"FAAS_APPS_DOMAIN="+testDomain,
+	)
 	h.procs = append(h.procs, startProc(t, bin, "apid", env))
 	h.APIDURL = "http://" + addr
 	waitTCP(t, addr, 10*time.Second)
+}
+
+// testEnvCommon returns the env every daemon gets in the harness:
+//   - DATABASE_URL  (per-test schema via search_path injection in the
+//     caller; the daemon's pool therefore targets the same schema the
+//     test seeded rows in)
+//   - FAAS_SKIP_SOCKET_GROUP=1 — see package doc comment. Without it,
+//     the daemon's wire.ListenOrRecreateByName errors on a host without
+//     the `faas` group, which is every CI runner and dev Mac. Production
+//     deploys have the group; the ansible role creates it at bootstrap.
+//   - PATH / HOME inherited so go-built daemons can `exec.LookPath`
+//     helpers (notably firecracker, which schedd warns about but does
+//     not require for the meterd quota gate).
+func testEnvCommon(dbURL string) []string {
+	return []string{
+		"DATABASE_URL=" + dbURL,
+		"FAAS_SKIP_SOCKET_GROUP=1",
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+	}
 }
 
 // startMeterd boots meterd against the test's schedd unix socket. The
@@ -373,12 +419,9 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 // waitTCP / waitUnix after startProc.
 func startMeterd(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...[]string) {
 	t.Helper()
-	env := []string{
-		"DATABASE_URL=" + dbURL,
-		"FAAS_SCHEDD_ADDR=" + h.ScheddSock,
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + os.Getenv("HOME"),
-	}
+	env := append(testEnvCommon(dbURL),
+		"FAAS_SCHEDD_ADDR="+h.ScheddSock,
+	)
 	for _, e := range extraEnv {
 		env = append(env, e...)
 	}
@@ -387,6 +430,12 @@ func startMeterd(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...[]stri
 
 // stop SIGTERMs every daemon, waits up to 5s, then SIGKILL stragglers. Owns
 // the single cmd.Wait per process — startProc must not call it (would race).
+//
+// Every daemon's stdout/stderr is dumped to the test log on teardown —
+// including a clean exit — so a quota-not-flipping e2e failure has the
+// meterd loop's last words to bisect with. The buffer is otherwise lost
+// when startProc's bytes.Buffer is GC'd; surfacing it always is cheaper
+// than re-running with -v on a CI flake (issue #52 PR #59 follow-up).
 func (h *Harness) stop() {
 	for _, p := range h.procs {
 		if p.Process == nil {
@@ -409,11 +458,11 @@ func (h *Harness) stop() {
 			_ = proc.Process.Kill()
 			<-done
 		}
-		// Surface unexpected exits with the daemon's last log lines.
-		if proc.ProcessState != nil && !proc.ProcessState.Success() {
-			if buf, ok := proc.Stdout.(*bytes.Buffer); ok {
-				h.T.Logf("e2etest: %s exited %v\n%s", filepath.Base(proc.Path), proc.ProcessState, buf.String())
-			}
+		// Always dump the daemon's last words so an e2e t.Fatalf has
+		// meterd's quota-tick output to reason about.
+		if buf, ok := proc.Stdout.(*bytes.Buffer); ok {
+			h.T.Logf("e2etest: %s final state=%v\n%s",
+				filepath.Base(proc.Path), proc.ProcessState, buf.String())
 		}
 	}
 }
@@ -539,7 +588,30 @@ func waitUnix(t *testing.T, path string, d time.Duration) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	// Surface the daemon's last words on a wait-timeout so a CI flake has
+	// something to bisect with — cmd/e2e schedd boot is the hottest failure
+	// surface and the buffer is otherwise discarded when stop() runs after
+	// t.Fatalf (issue #52 PR #59 follow-up).
+	dumpProcs(t)
 	t.Fatalf("e2etest: %s not listening within %s", path, d)
+}
+
+// dumpProcs flushes every still-running proc's stdout/stderr buffer to the
+// test log. Called from waitUnix on timeout so the failing test prints the
+// daemon's last words before the harness tears down via t.Cleanup.
+func dumpProcs(t *testing.T) {
+	t.Helper()
+	for _, p := range snapshotProcs() {
+		if p == nil || p.Process == nil {
+			continue
+		}
+		if p.ProcessState != nil {
+			continue
+		}
+		if buf, ok := p.Stdout.(*bytes.Buffer); ok {
+			t.Logf("e2etest: %s still running, output:\n%s", filepath.Base(p.Path), buf.String())
+		}
+	}
 }
 
 // SeedAccount creates a fresh account on `plan` with one API key, returns the
