@@ -127,9 +127,26 @@ func TestCmdPS_RequiresArg(t *testing.T) {
 	}
 }
 
+// TestCmdPS_RequiresLogin pins the no-token exit code (#72).
+// authedClient returns errAuth → printErr returns 2 (per cli_test:
+// exitErr.code). Three hermeticity knobs:
+//   - HOME → t.TempDir()   so os.UserConfigDir ($HOME/.config on Linux,
+//     ~/Library/Application Support on Darwin)
+//     can't read a host token file.
+//   - XDG_CONFIG_HOME set to the same temp dir so Linux GitHub-hosted
+//     runners (which export XDG_CONFIG_HOME) can't
+//     bypass the HOME override.
+//   - reset jsonOutput to false so a leaked flag from a prior test
+//     in the same package doesn't push printErr
+//     into the JSON branch (synth 500 problem).
 func TestCmdPS_RequiresLogin(t *testing.T) {
+	dir := t.TempDir()
 	t.Setenv("FAAS_API", "http://localhost")
 	t.Setenv("FAAS_TOKEN", "")
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
 	if code := cmdPS([]string{"hello"}); code != 2 {
 		t.Errorf("cmdPS without token = %d, want 2 (auth)", code)
 	}
@@ -574,9 +591,17 @@ func TestCmdEnvPush_RejectsDirectory(t *testing.T) {
 
 // --- app scale / rename ---------------------------------------------------
 
+// TestCmdAppScale_RequiresLogin pins the no-token exit code (#72).
+// See TestCmdPS_RequiresLogin for the HOME + XDG_CONFIG_HOME + jsonOutput
+// hermeticity knobs.
 func TestCmdAppScale_RequiresLogin(t *testing.T) {
+	dir := t.TempDir()
 	t.Setenv("FAAS_API", "http://localhost")
 	t.Setenv("FAAS_TOKEN", "")
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
 	if code := cmdAppScale("hello", []string{"--ram", "256"}); code != 2 {
 		t.Errorf("cmdAppScale without token = %d, want 2", code)
 	}
@@ -896,9 +921,17 @@ func TestCmdDashboard_RejectsExtraArgs(t *testing.T) {
 	}
 }
 
+// TestCmdDashboard_RequiresLogin pins the no-token exit code (#72).
+// See TestCmdPS_RequiresLogin for the HOME + XDG_CONFIG_HOME + jsonOutput
+// hermeticity knobs.
 func TestCmdDashboard_RequiresLogin(t *testing.T) {
+	dir := t.TempDir()
 	t.Setenv("FAAS_API", "http://localhost")
 	t.Setenv("FAAS_TOKEN", "")
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
 	if code := cmdDashboard(nil); code != 2 {
 		t.Errorf("cmdDashboard no-auth = %d, want 2", code)
 	}
