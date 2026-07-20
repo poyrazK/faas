@@ -115,7 +115,9 @@ func cmdStatus(args []string) int {
 	}
 	// Use the raw Client (not authedClient) so the public endpoint
 	// works without a stored token. The Client still sends the bearer
-	// header if present; apid ignores it on this route.
+	// header if present; apid mounts /status/slo.json on the PUBLIC
+	// mux (server.go:359) before any auth middleware, so the token is
+	// never inspected.
 	client := NewClient(apiBase(), loadToken())
 	page, err := client.GetStatusSLO(context.Background())
 	if err != nil {
@@ -420,8 +422,16 @@ func cmdPlan(args []string) int {
 // --- dashboard -------------------------------------------------------------
 
 // cmdDashboard opens the account-level dashboard in the browser. Same
-// fallback-to-URL pattern as cmdConnect (commands2.go:527-549). Tests
+// fallback-to-URL pattern as cmdDeployRepo (commands2.go:283-288). Tests
 // substitute browser.Default via withRecorder.
+//
+// Exit code on browser-open failure: 0, intentionally. The URL is
+// printed to stderr so the customer can paste it into a browser
+// themselves — the work the customer asked for (giving them the
+// dashboard URL) is done. Mirrors cmdDeployRepo and matches the §11
+// "open the URL, fall back gracefully" UX convention. Exit 1 here
+// would make CI scripts and `&&`-chained shell commands treat a
+// missing $DISPLAY as a hard failure, which is the wrong signal.
 func cmdDashboard(args []string) int {
 	if len(args) != 0 {
 		fmt.Fprintln(os.Stderr, "usage: faas dashboard")

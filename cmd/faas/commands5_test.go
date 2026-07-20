@@ -10,6 +10,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -548,6 +549,41 @@ func TestCmdDashboard_OpensAccountURL(t *testing.T) {
 	}
 	if !strings.Contains(rec.urls[0], "/dashboard/account") {
 		t.Errorf("opened URL = %q, want it to contain /dashboard/account", rec.urls[0])
+	}
+}
+
+// TestCmdDashboard_BrowserOpenFailureExitsZero covers the no-$DISPLAY
+// path: browser.Open returns an error, the URL falls back to stderr,
+// and exit code is 0 (the customer's intent — get the dashboard URL —
+// is satisfied). Mirrors the cmdDeployRepo convention. If this test
+// ever flips to want exit 1, the command's doc comment and
+// cmdDeployRepo (commands2.go:288) need to be revisited together.
+func TestCmdDashboard_BrowserOpenFailureExitsZero(t *testing.T) {
+	t.Setenv("FAAS_API", "https://api.example.com")
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	rec := withRecorder(t)
+	rec.err = errors.New("xdg-open: no display")
+	stderr, restore := captureStderr(t)
+	defer restore()
+	code := cmdDashboard(nil)
+	if code != 0 {
+		t.Errorf("cmdDashboard on browser-open error = %d, want 0 (URL fallback is success)", code)
+	}
+	if !strings.Contains(stderr.String(), "https://api.example.com/dashboard/account") {
+		t.Errorf("stderr missing fallback URL; got:\n%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Could not open browser") {
+		t.Errorf("stderr missing failure notice; got:\n%s", stderr.String())
+	}
+}
+
+// TestCmdDashboard_RejectsExtraArgs is the standard arg-count guard.
+func TestCmdDashboard_RejectsExtraArgs(t *testing.T) {
+	t.Setenv("FAAS_API", "https://api.example.com")
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	_ = withRecorder(t)
+	if code := cmdDashboard([]string{"junk"}); code != 1 {
+		t.Errorf("cmdDashboard extra args = %d, want 1", code)
 	}
 }
 
