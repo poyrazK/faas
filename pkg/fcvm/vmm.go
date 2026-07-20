@@ -279,6 +279,16 @@ const resumeHookGuestPort = 1024
 // generation. ADR-022 §"Why the host ships entropy".
 const resumeHookEntropyBytes = 256
 
+// resumeHookMaxBodyBytes is the upper bound on the JSON-marshaled body of
+// the resume-hook payload. The body is constructed from exactly
+// resumeHookEntropyBytes of CSPRNG output (base64 → 4/3 expansion) plus
+// the JSON envelope; 8 KiB is comfortably above the current ~400 B
+// observed size and well under int32/2, so a future bump to
+// resumeHookEntropyBytes can never push 8+len(body) into overflow
+// territory. The guest's VsockResumeMaxEntropyBytes is the matching cap
+// on the receiving side. CodeQL go/allocation-size-overflow guards.
+const resumeHookMaxBodyBytes = 8 * 1024
+
 // readConnectAck consumes the "OK <hostside_port>\n" reply from
 // Firecracker. Returns the first whitespace-delimited token. Reads
 // until newline so the byte count doesn't matter (FC's host-assigned
@@ -417,6 +427,16 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy)})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
+	}
+	// Bound the marshal output defensively. The body is constructed from
+	// exactly resumeHookEntropyBytes bytes of CSPRNG + a JSON envelope, so
+	// in practice it stays under ~400 B — but a future bump of the entropy
+	// constant or a hostile build tag could push len(body) into overflow
+	// territory, and `make([]byte, 8+len(body))` would panic with
+	// "makeslice: len out of range". CodeQL go/allocation-size-overflow
+	// flags this; the cap is the actual defense.
+	if len(body) > resumeHookMaxBodyBytes {
+		return fmt.Errorf("vmm: resume body %d bytes exceeds %d cap", len(body), resumeHookMaxBodyBytes)
 	}
 	msg := make([]byte, 8+len(body))
 	binary.BigEndian.PutUint32(msg[:4], resumeHookMsgResume)

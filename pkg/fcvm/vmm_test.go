@@ -1096,6 +1096,25 @@ func handleFakeVsockHook(t *testing.T, c net.Conn, ack byte, onHook func(hostTim
 
 const ackOK = byte(0)
 
+// TestResumeHookBodyCapCoversEntropy pins the relationship between
+// resumeHookEntropyBytes and resumeHookMaxBodyBytes. The cap is the
+// CodeQL go/allocation-size-overflow guard — a future bump to either
+// constant must keep `base64.StdEncoding.EncodedLen(entropy) + JSON
+// envelope overhead` strictly below the cap, or the make() in
+// TriggerResumeHook will allocate a negative-length slice and panic.
+// This test catches a future bump that breaks the invariant.
+func TestResumeHookBodyCapCoversEntropy(t *testing.T) {
+	const envelopeSlack = 128 // JSON keys + punctuation + future expansion
+	maxEncoded := base64.StdEncoding.EncodedLen(resumeHookEntropyBytes)
+	if maxEncoded+envelopeSlack >= resumeHookMaxBodyBytes {
+		t.Errorf("entropy cap too close to body cap: entropy encodes to %d bytes + %d envelope slack >= %d (cap); bump resumeHookMaxBodyBytes first",
+			maxEncoded, envelopeSlack, resumeHookMaxBodyBytes)
+	}
+	if resumeHookMaxBodyBytes > 1<<20 {
+		t.Errorf("body cap %d looks too large (> 1 MiB); check the design", resumeHookMaxBodyBytes)
+	}
+}
+
 // TestTriggerResumeHookDialTimeout: when no UDS is listening,
 // TriggerResumeHook returns within resumeHookDialDeadline with a wrapped
 // "dial vsock uds" error.

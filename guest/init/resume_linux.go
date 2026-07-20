@@ -135,7 +135,7 @@ func addHostEntropy(entropy []byte) error {
 		unix.SYS_IOCTL,
 		uintptr(fd),
 		uintptr(rndaddentropyIoctl),
-		uintptr(unsafe.Pointer(&pool)),
+		uintptr(unsafe.Pointer(&pool)), //nolint:gosec // pool is on the calling goroutine's stack; syscall is synchronous, no escape. See SAFETY comment above.
 	)
 	resumeDiag(fmt.Sprintf("addHostEntropy: ioctl r1=%d errno=%d", r1, errno))
 	if errno != 0 {
