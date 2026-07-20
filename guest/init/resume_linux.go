@@ -126,6 +126,11 @@ func addHostEntropy(entropy []byte) error {
 	pool := randPoolInfo{entropyCount: int32(len(entropy)) * 8, bufSize: int32(len(entropy))}
 	copy(pool.buf[:], entropy)
 	resumeDiag(fmt.Sprintf("addHostEntropy: about to ioctl bytes=%d head8=%x ec=%d bs=%d", len(entropy), entropy[:8], pool.entropyCount, pool.bufSize))
+	// SAFETY: pool lives on this goroutine's stack and the syscall is
+	// synchronous — escape analysis won't move it before Syscall returns,
+	// so unsafe.Pointer(&pool) is valid for the duration of the ioctl. Do
+	// NOT extract this block into a helper that closes over pool, and do
+	// NOT pass pool across a goroutine boundary.
 	r1, _, errno := unix.Syscall(
 		unix.SYS_IOCTL,
 		uintptr(fd),

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"io"
 	"net"
 	"net/http"
@@ -644,7 +645,9 @@ func TestMkChroot_CreatesDirectory(t *testing.T) {
 // TestMkChroot_BadBaseReturnsError covers mkChroot failing on a path under a
 // file (not a dir). mkChroot first RemoveAll's any stale state (so jailer
 // gets a fresh /dev/net/tun) then MkdirAll's the path; either step can be
-// the one that fails here, so accept either wrapper.
+// the one that fails here. Pin both wrappers explicitly — relaxing to just
+// "chroot" would silently accept a future refactor that introduces an
+// unrelated chroot-step before RemoveAll.
 func TestMkChroot_BadBaseReturnsError(t *testing.T) {
 	base := t.TempDir()
 	// Plant a file at the path MkdirAll would need to be a directory.
@@ -657,8 +660,9 @@ func TestMkChroot_BadBaseReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected mkChroot error")
 	}
-	if !strings.Contains(err.Error(), "chroot") {
-		t.Errorf("error %q not from mkChroot", err.Error())
+	msg := err.Error()
+	if !strings.Contains(msg, "wipe stale chroot") && !strings.Contains(msg, "mkdir chroot") {
+		t.Errorf("error %q must wrap either 'wipe stale chroot' or 'mkdir chroot' (got %q)", msg, msg)
 	}
 }
 
@@ -746,10 +750,11 @@ func TestBoot_MkChrootFailure(t *testing.T) {
 	}
 	// mkChroot now RemoveAll's the path first (to scrub stale jailer state
 	// from a prior failed run) then MkdirAll's it. Either step can fail
-	// on a non-empty parent; accept either wrapper so the test pins the
-	// contract, not the exact message.
-	if !strings.Contains(err.Error(), "chroot") {
-		t.Errorf("error %q not from mkChroot", err.Error())
+	// on a non-empty parent. Pin both wrappers so the test catches a future
+	// refactor that introduces an unrelated chroot-step before RemoveAll.
+	msg := err.Error()
+	if !strings.Contains(msg, "wipe stale chroot") && !strings.Contains(msg, "mkdir chroot") {
+		t.Errorf("error %q must wrap either 'wipe stale chroot' or 'mkdir chroot'", msg)
 	}
 }
 
@@ -954,6 +959,7 @@ func TestTriggerResumeHookDialSuccess(t *testing.T) {
 
 	var seenNano int64
 	var seenEntropy []byte
+	var firstEntropy []byte
 	var callCount int32
 	// fakeVsockUDSServer's accept loop is single-shot. For the back-to-back
 	// dials below (assertion: every dial sends fresh entropy), spin up a
@@ -964,20 +970,28 @@ func TestTriggerResumeHookDialSuccess(t *testing.T) {
 		t.Fatalf("listen %s: %v", sockPath, err)
 	}
 	t.Cleanup(func() { _ = l.Close() })
-	var firstEntropy []byte
+	// mu guards seenNano / seenEntropy / firstEntropy against concurrent
+	// writes from the per-connection goroutines. Without it, go test -race
+	// flags the back-to-back test (a previous version of this test relied
+	// on the callCount atomic for ordering but read byte slices with no
+	// happens-before edge).
+	var mu sync.Mutex
 	go func() {
 		for i := 0; i < 2; i++ {
 			c, aErr := l.Accept()
 			if aErr != nil {
 				return
 			}
+			idx := i
 			go handleFakeVsockHook(t, c, ackOK, func(nano int64, entropy []byte) error {
 				atomic.AddInt32(&callCount, 1)
+				mu.Lock()
 				seenNano = nano
 				seenEntropy = entropy
-				if i == 0 {
+				if idx == 0 {
 					firstEntropy = append([]byte(nil), entropy...)
 				}
+				mu.Unlock()
 				return nil
 			})
 		}
@@ -1000,19 +1014,24 @@ func TestTriggerResumeHookDialSuccess(t *testing.T) {
 	if atomic.LoadInt32(&callCount) != 2 {
 		t.Fatalf("hook invocations = %d, want 2", callCount)
 	}
-	if seenNano != wantNano {
-		t.Errorf("hook saw hostTimeUnixNano=%d, want %d", seenNano, wantNano)
+	mu.Lock()
+	recordedNano := seenNano
+	recordedEntropy := append([]byte(nil), seenEntropy...)
+	recordedFirst := append([]byte(nil), firstEntropy...)
+	mu.Unlock()
+	if recordedNano != wantNano {
+		t.Errorf("hook saw hostTimeUnixNano=%d, want %d", recordedNano, wantNano)
 	}
-	if len(seenEntropy) != resumeHookEntropyBytes {
-		t.Errorf("hook saw entropy of %d bytes, want %d (host must ship exactly resumeHookEntropyBytes)", len(seenEntropy), resumeHookEntropyBytes)
+	if len(recordedEntropy) != resumeHookEntropyBytes {
+		t.Errorf("hook saw entropy of %d bytes, want %d (host must ship exactly resumeHookEntropyBytes)", len(recordedEntropy), resumeHookEntropyBytes)
 	}
 	// Spec §11 V6 guarantee: every dial sends FRESH entropy. Two back-to-back
 	// triggers with the same lease MUST yield different bytes (crypto/rand is
 	// the only source — no caching, no slot-derivation, no deterministic seed).
-	if len(firstEntropy) != resumeHookEntropyBytes {
-		t.Fatalf("first entropy = %d bytes, want %d", len(firstEntropy), resumeHookEntropyBytes)
+	if len(recordedFirst) != resumeHookEntropyBytes {
+		t.Fatalf("first entropy = %d bytes, want %d", len(recordedFirst), resumeHookEntropyBytes)
 	}
-	if bytes.Equal(firstEntropy, seenEntropy) {
+	if bytes.Equal(recordedFirst, recordedEntropy) {
 		t.Errorf("two back-to-back dials sent identical entropy; V6 acceptance would fail (host must use crypto/rand, not a fixed seed)")
 	}
 }

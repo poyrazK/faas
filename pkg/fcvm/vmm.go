@@ -408,7 +408,7 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	// draw the same UUID — spec §11 V6 fails on every concurrent restore.
 	// See ADR-022 §"Why the host ships entropy".
 	entropy := make([]byte, resumeHookEntropyBytes)
-	if _, err := io.ReadFull(rand.Reader, entropy); err != nil {
+	if _, err := rand.Read(entropy); err != nil {
 		return fmt.Errorf("vmm: read host entropy: %w", err)
 	}
 	body, err := json.Marshal(struct {
@@ -737,6 +737,16 @@ func (v *JailerVMM) mkChroot(instance string) (string, error) {
 	// is NOT idempotent and panics with EEXIST on a half-built chroot.
 	// RemoveAll on a non-existent path is a no-op, so this is safe for
 	// the common case too.
+	//
+	// Concurrency contract: caller must hold the per-instance Lease (and
+	// therefore the unique-while-live invariant on `instance`) for the
+	// duration of Boot/Restore. The only race surface is a retry-after-
+	// failure that fires before the prior call's defer-cleanup ran; in
+	// that window the second RemoveAll nukes the first's freshly-built
+	// chroot mid-boot. Boot/Restore's deferred Kill on failure makes
+	// this self-correcting on the next retry. If we ever call Boot/
+	// Restore from a path that does NOT go through Lease uniqueness,
+	// gate this with v.mu (held for the whole Boot/Restore).
 	if err := os.RemoveAll(root); err != nil {
 		return "", fmt.Errorf("vmm: wipe stale chroot: %w", err)
 	}

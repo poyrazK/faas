@@ -9,9 +9,11 @@
   `<chroot>/vsock.sock`, performs the FC host-initiated CONNECT-port
   handshake to bridge into the guest's AF_VSOCK listener on port 1024,
   and writes the resume-hook payload. The guest runs
-  `RunResumeHook(hostTimeUnixNano)` (re-seed entropy + step clock) and
-  writes a 1-byte ack. The hook fires before `waitReady` on Restore,
-  so the app cannot accept `:8080` until entropy is fresh.
+  `RunResumeHook(hostTimeUnixNano, hostEntropy)` (inject host entropy
+  via `ioctl(RNDADDENTROPY)` + re-seed virtio-rng + step clock + write
+  UUID marker) and writes a 1-byte ack. The hook fires before
+  `waitReady` on Restore, so the app cannot accept `:8080` until
+  entropy is fresh.
 - **Why:** Spec §11 V6: two restores from one snapshot must yield distinct
   `/proc/sys/kernel/random/uuid` immediately post-resume. Without this hook
   every restored VM inherits its snapshot's RNG stream — UUID collisions
@@ -132,6 +134,73 @@ fresh kernel entropy doesn't need a hook.
 `TriggerResumeHook`; entropy is fresh by construction. This means a
 broken-vsock guest degrades to "no snapshots" but the platform stays up —
 consistent with ADR-005's "snapshots are cache, not truth" stance.
+
+## Why the host ships entropy (ADR-022 §revision, post V6 regression)
+
+The original wire payload carried only `hostTimeUnixNano`. The Lima V6
+acceptance test passed with that shape on first wiring, then flaked
+2/3 of runs on re-test. Root cause: **Firecracker captures virtio-rng
+state in the snapshot.** Two restores from one snapshot read the SAME
+256 bytes from `/dev/hwrng`, mix the same input into the kernel pool,
+and `/proc/sys/kernel/random/uuid` returns the same draw on both. The
+re-seed step (`reseedFromHWRNG`) was a no-op for uniqueness — it
+preserved the snapshot's RNG stream rather than diverging from it.
+
+The fix: the host pulls 256 B of fresh CSPRNG output (`crypto/rand`)
+on every `TriggerResumeHook` call and ships it base64-encoded in the
+resume payload. The guest decodes it and injects into `/dev/urandom`
+via `ioctl(RNDADDENTROPY)` BEFORE reading
+`/proc/sys/kernel/random/uuid`. The order matters:
+
+1. `AddEntropy(hostEntropy)` — first. Mixes a unique prefix into the
+   pool. virtio-rng state alone is identical per restore; this step is
+   what makes the UUID draws diverge.
+2. `ReseedFromHWRNG()` — second. virtio-rng bytes are snapshotted but
+   mixing a same-on-every-restore input on top of a unique prefix
+   keeps the pool advancing.
+3. `StepClock(hostTimeUnixNano)` — third. The app may now generate
+   time-based tokens.
+4. `WriteUUIDMarker()` — fourth. `/proc/sys/kernel/random/uuid` draws
+   from the re-keyed pool and lands at `/etc/faas/uuid.txt` for the
+   §14 V6 metal test (and any operator tool) to fetch.
+
+**Why RNDADDENTROPY and not `write(2)`.** A plain `write(2)` to
+`/dev/urandom` is treated by the kernel as a draw (it consumes from
+the pool to keep it opaque to observers), NOT as a deposit. The
+entropy estimate stays unchanged. The `RNDADDENTROPY` ioctl is the
+only public API that credits `entropy_count` bits to the pool. The
+ioctl requires no capability inside a VM (PID 1 already has
+`CAP_SYS_RAWIO` de facto in a Firecracker guest), but it is the
+_only_ way to make the host's bytes visible to the kernel's entropy
+estimator and therefore to `/dev/uuid`. ADR-022.
+
+**Wire payload (canonical):**
+
+```json
+{"hostTimeUnixNano": 1784481320328618754, "entropy": "<base64 256B>"}
+```
+
+**Constants:**
+- Host (`pkg/fcvm/vmm.go`): `resumeHookEntropyBytes = 256`.
+- Guest (`guest/init/listen_resume_linux.go`): `VsockResumeMaxEntropyBytes = 256`.
+- Body-length cap on the guest (`maxBody`) is derived from
+  `VsockResumeMaxEntropyBytes` (base64 expands bytes by ~4/3 + JSON
+  envelope + 64 B safety), not hard-coded. A future bump on either
+  side fails the wire fast.
+
+**Trust boundary.** The host already owns the guest's memory and
+config-file; shipping entropy is not a new capability. The guest
+caps the entropy payload at `VsockResumeMaxEntropyBytes` so a buggy
+or hostile host cannot inject arbitrarily large blobs into the
+kernel pool (4 KiB is the kernel's own ioctl-buffer cap). A
+malformed base64 string, an over-cap blob, or any wire-format
+violation nacks the dial — never injects. Fail-closed.
+
+**Verification (Lima arm64):** `TestMetalTwoRestoresDistinctUUID`
+PASS 3/3 (~60 s each) with distinct entropy head8 prefixes
+(`dac06018…`, `69c3d5c0…`, `1fd831f5…`, `49c92028…`, `3a34c386…`,
+`ad9e2026…`) and unique UUIDs. EX44 (x86_64) remains the §14 source
+of truth and is a separate sign-off.
 
 ## Post-pivot /dev, /proc, /sys remount (guest-init)
 

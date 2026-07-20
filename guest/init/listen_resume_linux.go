@@ -124,8 +124,12 @@ func handleResumeConn(f *os.File, log *slog.Logger) {
 	}
 	bodyLen := binary.BigEndian.Uint32(hdr[4:8])
 	// Guard against a malicious peer pinning the guest on a giant body.
-	const maxBody = 1024
-	if bodyLen == 0 || bodyLen > maxBody {
+	// maxBody is derived from VsockResumeMaxEntropyBytes (NOT a hard-coded
+	// 1024) so a future bump of the entropy cap on either side fails the
+	// wire fast, not silently. base64 expands bytes by ~4/3; JSON envelope
+	// + ~30 B safety for keys/punctuation.
+	maxBody := base64.StdEncoding.EncodedLen(VsockResumeMaxEntropyBytes) + 64
+	if bodyLen == 0 || bodyLen > uint32(maxBody) {
 		log.Warn("vsock resume body length out of range", "len", bodyLen, "max", maxBody)
 		_, _ = f.Write([]byte{VsockResumeAckNack})
 		return
