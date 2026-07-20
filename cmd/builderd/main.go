@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -44,9 +45,19 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath: "/etc/faas/builderd.toml",
-		openDB:     db.Open,
-		migrate:    db.MigrateUp,
+		// FAAS_BUILDERD_CONFIG lets the e2e harness (and operators) point
+		// at a writable per-test config in /tmp rather than the immutable
+		// /etc/faas/builderd.toml on the EX44. Mirrors FAAS_SCHEDD_CONFIG,
+		// FAAS_VMMD_CONFIG (cmd/schedd, cmd/vmmd).
+		configPath: envOr("FAAS_BUILDERD_CONFIG", "/etc/faas/builderd.toml"),
+		// OpenWithAppName tags every connection — including the
+		// long-lived LISTEN one — with application_name=faas-builderd
+		// so the e2e harness (and operators) can identify this daemon
+		// in pg_stat_activity without grepping query text.
+		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+			return db.OpenWithAppName(ctx, dsn, "faas-builderd")
+		},
+		migrate: db.MigrateUp,
 		// newDriver is set per build tag at link time: metal uses vmmd over
 		// gRPC; non-metal uses the stub that returns ErrNotMetal. The
 		// NewVMMDriver name exists in both pkg/builderd/vm_metal.go and
@@ -55,6 +66,15 @@ func defaultDeps() runDeps {
 			return builderdpkg.NewVMMDriver(socket, builderBase, driveDir, exportDir)
 		},
 	}
+}
+
+// envOr returns os.Getenv(key) when set, otherwise fallback. Mirrors the
+// helper in cmd/schedd/main.go and cmd/imaged/main.go.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
