@@ -61,7 +61,9 @@ arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
   scheme (`pkg/oci` diff + `pkg/rootfs` applier), base→ext4
   auto-stage (`pkg/imaged::EnsureBaseExt4`), real-mkfs build in
   Linux CI, `guest/init` overlay + crash supervisor, two-drive boot
-  verified metal-side (`cmd/e2e/deploy_wake_metal_test.go`).
+  verified metal-side (`cmd/e2e/deploy_wake_metal_test.go`) — see M5
+  *Remaining* below (same file has a known body/trim fixture mismatch
+  that also blocks M5's §14 gate).
 - **M3 — snapshots + wake.** ✅ Park/wake with the ADR-005
   restore-or-cold-boot fallback, FC version pinning
   (`snapshots.fc_version`), and the vsock post-restore resume hook
