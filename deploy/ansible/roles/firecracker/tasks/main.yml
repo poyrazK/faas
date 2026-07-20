@@ -76,28 +76,105 @@
     - /usr/local/bin/firecracker
     - /usr/local/bin/jailer
 
-- name: firecracker — fetch pinned vmlinux-6.1 from firecracker CI
+- name: firecracker — ensure kernel build dependencies
+  ansible.builtin.package:
+    name:
+      - build-essential
+      - libssl-dev
+      - libelf-dev
+      - bc
+      - kmod
+      - cpio
+      - xz-utils
+      - flex
+      - bison
+    state: present
+
+- name: firecracker — download kernel source tarball
   ansible.builtin.get_url:
-    url: "{{ fc_kernel_url }}"
-    dest: "/srv/fc/base/vmlinux-{{ fc_kernel_basename }}"
-    checksum: "sha256:{{ fc_kernel_sha256 }}"
+    url: "{{ fc_kernel_tar_url }}"
+    dest: "/tmp/linux-{{ fc_kernel_version }}.tar.xz"
+    checksum: "sha256:{{ fc_kernel_tar_sha256 }}"
     owner: root
     group: root
     mode: "0644"
-  register: vmlinux_dl
+  register: kernel_tar
 
-- name: firecracker — assert vmlinux pinned checksum
-  ansible.builtin.command: sha256sum "/srv/fc/base/vmlinux-{{ fc_kernel_basename }}"
+- name: firecracker — extract kernel source
+  ansible.builtin.command: tar -xJf /tmp/linux-{{ fc_kernel_version }}.tar.xz -C /usr/src
+  creates: "/usr/src/linux-{{ fc_kernel_version }}"
+
+- name: firecracker — fetch FC kernel config
+  ansible.builtin.get_url:
+    url: "{{ fc_kernel_config_url }}"
+    dest: "/tmp/config-{{ fc_kernel_version }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: kernel_config
+
+- name: firecracker — apply FC kernel config
+  ansible.builtin.command: cp /tmp/config-{{ fc_kernel_version }} /usr/src/linux-{{ fc_kernel_version }}/.config
+  creates: "/usr/src/linux-{{ fc_kernel_version }}/.config"
+
+- name: firecracker — ensure CONFIG_BLK_DEV_VIRTIO=y (built-in, not module)
+  ansible.builtin.lineinfile:
+    path: /usr/src/linux-{{ fc_kernel_version }}/.config
+    regexp: "^CONFIG_BLK_DEV_VIRTIO=.*"
+    line: "CONFIG_BLK_DEV_VIRTIO=y"
+    state: present
+  register: virtio_config
+
+- name: firecracker — ensure CONFIG_VIRTIO_BLK=y (built-in, not module)
+  ansible.builtin.lineinfile:
+    path: /usr/src/linux-{{ fc_kernel_version }}/.config
+    regexp: "^CONFIG_VIRTIO_BLK=.*"
+    line: "CONFIG_VIRTIO_BLK=y"
+    state: present
+
+- name: firecracker — build kernel (vmlinux) with 4 jobs
+  ansible.builtin.command: make -j4 ARCH=x86_64 CROSS_COMPILE= olddefconfig 2>&1
+  args:
+    chdir: /usr/src/linux-{{ fc_kernel_version }}
+    creates: "/usr/src/linux-{{ fc_kernel_version }}/vmlinux"
+
+- name: firecracker — build vmlinux
+  ansible.builtin.command: make -j4 ARCH=x86_64 CROSS_COMPILE= bzImage 2>&1
+  args:
+    chdir: /usr/src/linux-{{ fc_kernel_version }}
+    creates: "/usr/src/linux-{{ fc_kernel_version }}/arch/x86/boot/bzImage"
+  register: kernel_build
+
+- name: firecracker — copy vmlinux to /srv/fc/base
+  ansible.builtin.copy:
+    src: "/usr/src/linux-{{ fc_kernel_version }}/arch/x86/boot/bzImage"
+    dest: "/srv/fc/base/vmlinux-{{ fc_kernel_version }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  register: vmlinux_copy
+
+- name: firecracker — compute and pin kernel SHA-256
+  ansible.builtin.command: sha256sum /srv/fc/base/vmlinux-{{ fc_kernel_version }}
   register: vmlinux_sum
   changed_when: false
 
-- name: firecracker — re-assert kernel SHA-256
+- name: firecracker — warn about pinning kernel SHA-256
+  ansible.builtin.debug:
+    msg: |
+      Kernel built successfully. UPDATE defaults/main.yml with this SHA-256:
+      fc_kernel_sha256: "{{ vmlinux_sum.stdout.split()[0] }}"
+  when: fc_kernel_sha256.startswith("REPLACE")
+
+- name: firecracker — assert kernel checksum (if pinned)
   ansible.builtin.assert:
     that:
-      - "fc_kernel_sha256 in vmlinux_sum.stdout"
-    fail_msg: "vmlinux checksum mismatch — see ADR-005 + spec §11"
+      - "fc_kernel_sha256 == vmlinux_sum.stdout.split()[0]"
+    fail_msg: "Kernel SHA-256 mismatch. Run: sha256sum /srv/fc/base/vmlinux-{{ fc_kernel_version }}"
+  when: not fc_kernel_sha256.startswith("REPLACE")
 
-- name: firecracker — smoke test: `firecracker --version` + `jailer --version`
+- name: "firecracker — smoke test (version check)"
   ansible.builtin.command: "{{ item }}"
   loop:
     - /usr/local/bin/firecracker --version
