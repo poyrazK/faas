@@ -125,6 +125,12 @@ provision:
       EOF
       pg_ctlcluster 16 main start || true
       sleep 1
+      # pg_ctlcluster start happens BEFORE the HBA file is rewritten above,
+      # so postgres is up with the default `peer` auth on local sockets and
+      # reloads the new HBA only on next SIGHUP. Force the reload here so
+      # the `local all all trust` rule below is active before any daemons
+      # (or the test runner) try to connect.
+      pg_ctlcluster 16 main reload || true
       sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='faas'" \
         | grep -q 1 || sudo -u postgres psql -c "CREATE ROLE faas LOGIN SUPERUSER"
       sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='faas'" \
