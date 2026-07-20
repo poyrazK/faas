@@ -136,6 +136,9 @@ func cmdAccountStatus(args []string) int {
 	if err != nil {
 		return printErr("Status failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(acct))
+	}
 	fmt.Printf("account: %s\n", acct.Email)
 	fmt.Printf("plan:    %s\n", acct.Plan)
 	fmt.Printf("status:  %s\n", acct.Status)

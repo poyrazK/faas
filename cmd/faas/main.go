@@ -55,6 +55,10 @@ func main() {
 }
 
 func run(args []string) int {
+	// Issue #64 D1: every command accepts --json (top-level). Strip
+	// it before dispatch and set jsonOutput so per-command printers
+	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
+	args = applyJSONFlag(args)
 	if len(args) == 0 {
 		fmt.Print(usage)
 		return 0

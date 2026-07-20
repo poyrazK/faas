@@ -73,6 +73,9 @@ func secretsList(args []string) int {
 	if err != nil {
 		return printErr("List failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
 	if resp.Count == 0 {
 		_, _ = fmt.Fprintf(osStdout, "%s: no secrets (0/%d)\n", *app, resp.Quota)
 		return 0

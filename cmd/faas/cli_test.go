@@ -6,9 +6,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -313,11 +316,26 @@ func TestCmdDeploy_UnknownFlag(t *testing.T) {
 
 func TestCmdDeploy_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/apps":
+		switch {
+		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
-		case "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending"})
+		case r.URL.Path == "/v1/apps/my-app/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
+			// Fake-apid "live" terminal frame so the CLI exits 0.
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+			_, _ = fmt.Fprint(w, "data: {\"line\":\"building...\"}\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+			_, _ = fmt.Fprint(w, "data: {\"status\":\"live\"}\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+			// Block until the client disconnects so the CLI's stream
+			// reader sees the terminal frame before EOF.
+			<-r.Context().Done()
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -334,12 +352,20 @@ func TestCmdDeploy_HappyPath(t *testing.T) {
 func TestCmdDeploy_AppAlreadyExists(t *testing.T) {
 	// 409 on CreateApp should be treated as "exists", then Deploy proceeds.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/apps":
+		switch {
+		case r.URL.Path == "/v1/apps":
 			w.WriteHeader(409)
 			_ = json.NewEncoder(w).Encode(api.Problem{Status: 409, Code: "exists", Title: "exists", Detail: "exists"})
-		case "/v1/apps/existing/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending"})
+		case r.URL.Path == "/v1/apps/existing/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "existing"})
+		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+			_, _ = fmt.Fprint(w, "data: {\"status\":\"live\"}\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+			<-r.Context().Done()
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -391,6 +417,175 @@ func TestErrAuth_PreservesCode(t *testing.T) {
 	}
 	if !strings.Contains(ec.msg, "nope") {
 		t.Errorf("msg = %q, want contains 'nope'", ec.msg)
+	}
+}
+
+// --- --json mode tests (issue #64 D1) ---------------------------------------
+
+func TestCmdWhoami_JSON(t *testing.T) {
+	resetJSONOutput()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.AccountResponse{
+			Email: "alice@x.com", Plan: "pro", Status: "active",
+		})
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	prev := osStdout
+	osStdout = &buf
+	defer func() { osStdout = prev }()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	jsonOutput = true
+	defer func() { resetJSONOutput() }()
+	if code := cmdWhoami(); code != 0 {
+		t.Fatalf("cmdWhoami JSON = %d, want 0", code)
+	}
+	var got api.AccountResponse
+	if err := json.Unmarshal([]byte(strings.TrimRight(buf.String(), "\n")), &got); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, buf.String())
+	}
+	if got.Email != "alice@x.com" {
+		t.Errorf("email = %q, want alice@x.com", got.Email)
+	}
+}
+
+func TestCmdApps_JSON_NDJSONShape(t *testing.T) {
+	resetJSONOutput()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]api.AppResponse{
+			{Slug: "alpha", Status: "live", URL: "https://alpha.x"},
+			{Slug: "beta", Status: "parked", URL: "https://beta.x"},
+		})
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	prev := osStdout
+	osStdout = &buf
+	defer func() { osStdout = prev }()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	jsonOutput = true
+	defer func() { resetJSONOutput() }()
+	if code := cmdApps(); code != 0 {
+		t.Fatalf("cmdApps JSON = %d, want 0", code)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 NDJSON lines, got %d:\n%s", len(lines), buf.String())
+	}
+	for i, l := range lines {
+		var a api.AppResponse
+		if err := json.Unmarshal([]byte(l), &a); err != nil {
+			t.Fatalf("line %d not valid JSON: %v\n%s", i, err, l)
+		}
+	}
+}
+
+func TestCmdDeploy_JSON_SkipsStream(t *testing.T) {
+	resetJSONOutput()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
+		case "/v1/apps/my-app/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID: "d1", Status: "pending", AppID: "my-app",
+			})
+		default:
+			http.Error(w, "no", 404)
+		}
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	prev := osStdout
+	osStdout = &buf
+	defer func() { osStdout = prev }()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	jsonOutput = true
+	defer func() { resetJSONOutput() }()
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+		t.Fatalf("cmdDeploy JSON = %d, want 0", code)
+	}
+	out := strings.TrimRight(buf.String(), "\n")
+	var dep api.DeploymentResponse
+	if err := json.Unmarshal([]byte(out), &dep); err != nil {
+		t.Fatalf("expected indented JSON deployment, got %v\n%s", err, out)
+	}
+	if dep.ID != "d1" {
+		t.Errorf("dep.ID = %q, want d1", dep.ID)
+	}
+}
+
+func TestCmdUsage_JSON_IndentedScalar(t *testing.T) {
+	resetJSONOutput()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.UsageResponse{
+			AppID: "my-app", Requests: 42, MBSeconds: 123456, IncludedGBHours: 5,
+		})
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	prev := osStdout
+	osStdout = &buf
+	defer func() { osStdout = prev }()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	jsonOutput = true
+	defer func() { resetJSONOutput() }()
+	if code := cmdUsage(nil); code != 0 {
+		t.Fatalf("cmdUsage JSON = %d, want 0", code)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "\n  ") {
+		t.Fatalf("expected indented JSON, got %q", out)
+	}
+	var u api.UsageResponse
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &u); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, out)
+	}
+	if u.Requests != 42 {
+		t.Errorf("requests = %d, want 42", u.Requests)
+	}
+}
+
+func TestPrintErr_JSON_EmitsProblemOnStderr(t *testing.T) {
+	resetJSONOutput()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	prev := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = prev }()
+
+	jsonOutput = true
+	defer func() { resetJSONOutput() }()
+
+	ae := &APIError{Problem: api.Problem{
+		Status: 409, Code: api.CodeConflict, Title: "Conflict", Detail: "app exists",
+	}}
+	code := printErr("Create failed", ae)
+	if code != 1 {
+		t.Errorf("printErr code = %d, want 1", code)
+	}
+	_ = w.Close()
+	data, _ := io.ReadAll(r)
+	var p api.Problem
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &p); err != nil {
+		t.Fatalf("stderr not JSON: %v\n%s", err, data)
+	}
+	if p.Code != api.CodeConflict {
+		t.Errorf("code = %q, want %q", p.Code, api.CodeConflict)
 	}
 }
 

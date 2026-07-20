@@ -937,6 +937,16 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
+	// Issue #64 D4: poll the deployment row cheaply while we tail so
+	// we can emit `event: status` as soon as the build resolves
+	// instead of waiting for the 10-min build timeout. imaged is a
+	// separate process so the in-process TopicDeploymentLog pub/sub
+	// can't see the transition; the store is the only shared source
+	// of truth within the same apid process. One indexed lookup per
+	// poll tick — negligible load compared to the build itself.
+	statusTicker := time.NewTicker(2 * time.Second)
+	defer statusTicker.Stop()
+
 	for {
 		// Done status short-circuits the tail. deployment status flips
 		// to live/failed via NotifyDeploymentChanged; the dashboard
@@ -956,9 +966,18 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			if flusher != nil {
 				flusher.Flush()
 			}
-			// If the deployment transitions to live/failed, the
-			// producer publishes the row PLUS a sentinel; we close
-			// after the sentinel. Simpler: cap at the build timeout.
+		case <-statusTicker.C:
+			// Cheap status poll. Emits `event: status` and exits
+			// when the deployment reaches a terminal state. The
+			// 10-min backstop below still fires if something hangs.
+			if d2, err := s.store.DeploymentByID(ctx(r), id); err == nil &&
+				(d2.Status == state.DeployLive || d2.Status == state.DeployFailed) {
+				_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)
+				if flusher != nil {
+					flusher.Flush()
+				}
+				return
+			}
 		case <-ticker.C:
 			// heartbeat — keeps idle proxies from dropping the
 			// connection. Doesn't carry data.

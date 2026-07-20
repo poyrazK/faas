@@ -101,6 +101,9 @@ func cmdApp(args []string) int {
 		if err != nil {
 			return printErr("Could not fetch app", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeJSON(a))
+		}
 		fmt.Printf("%-30s %s\n", "slug:", a.Slug)
 		fmt.Printf("%-30s %s\n", "url:", a.URL)
 		fmt.Printf("%-30s %d MB\n", "ram:", a.RAMMB)
@@ -241,7 +244,7 @@ func cmdDeployTarball(args []string) int {
 		return 1
 	}
 
-	client, err := authedClient()
+	client, err := authedClientWithDeployTimeout(5 * time.Minute)
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
@@ -259,15 +262,19 @@ func cmdDeployTarball(args []string) int {
 		if err != nil {
 			return printErr("Deploy failed", err)
 		}
-		fmt.Printf("✓ Queued build %s for %s\n", dep.ID, slug)
-		return 0
+		if jsonOutput {
+			return jsonOut(writeJSON(dep))
+		}
+		return streamDeployLogs(client, dep)
 	}
 	dep, err := client.Deploy(ctx, slug, api.CreateDeploymentRequest{Image: *image})
 	if err != nil {
 		return printErr("Deploy failed", err)
 	}
-	fmt.Printf("✓ Deploying %s (%s)\n", slug, dep.Status)
-	return 0
+	if jsonOutput {
+		return jsonOut(writeJSON(dep))
+	}
+	return streamDeployLogs(client, dep)
 }
 
 // cmdDeployRepo binds (app, repo) via the dashboard and opens the
@@ -357,6 +364,9 @@ func cmdDomains(args []string) int {
 		if err != nil {
 			return printErr("Request failed", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeNDJSON(out))
+		}
 		for _, d := range out {
 			verified := statusPending
 			if d.Verified {
@@ -432,6 +442,9 @@ func cmdCrons(args []string) int {
 		if err != nil {
 			return printErr("Request failed", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeNDJSON(out))
+		}
 		for _, c := range out {
 			state := "enabled"
 			if !c.Enabled {
@@ -499,6 +512,9 @@ func cmdKeys(args []string) int {
 		if err != nil {
 			return printErr("Request failed", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeNDJSON(out))
+		}
 		for _, k := range out {
 			fmt.Printf("%-30s %s\n", k.Label, k.Prefix)
 		}
@@ -554,6 +570,9 @@ func cmdUsage(args []string) int {
 	u, err := client.GetUsage(context.Background(), *month)
 	if err != nil {
 		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(u))
 	}
 	fmt.Printf("App %s — %d requests · %.3f GB-hours (included %d)\n", u.AppID, u.Requests, float64(u.MBSeconds)/3.6e6, u.IncludedGBHours)
 	return 0
@@ -853,4 +872,102 @@ func (s *sseLineReader) fill() error {
 		return nil
 	}
 	return err
+}
+
+// streamDeployLogs opens GET /v1/deployments/{id}/logs?follow=1 and
+// prints each `event: log` line until the server emits `event: status`.
+// On `live` the function returns 0; on `failed` it renders one of the
+// four UX §2.4 copy blocks via renderDeployFailure. If the stream
+// breaks before a terminal frame arrives, exits 3 and tells the
+// customer how to follow manually.
+//
+// Issue #64 D4 — replaces the old "✓ Queued build …" and exit.
+func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
+	fmt.Printf("→ build queued for %s (deployment %s)\n", dep.AppID, dep.ID)
+	path := "/v1/deployments/" + dep.ID + "/logs?follow=1"
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return printErr("Could not open log stream", err)
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "! stream unreachable; follow manually: faas logs --deployment %s\n", dep.ID)
+		return 3
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		var p api.Problem
+		if json.Unmarshal(data, &p) == nil && p.Code != "" {
+			fmt.Fprintln(os.Stderr, (&APIError{Problem: p}).Error())
+			return exitCodeForStatus(p.Status)
+		}
+		return printErr("Build log stream failed", fmt.Errorf("status %d", resp.StatusCode))
+	}
+	dec := newSSELineReader(resp.Body)
+	for {
+		line, err := dec.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			fmt.Fprintf(os.Stderr, "! stream closed; follow manually: faas logs --deployment %s\n", dep.ID)
+			return 3
+		}
+		// event:log frames — JSON LogEntry with a `line` field.
+		var entry struct {
+			Line string `json:"line"`
+		}
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.Line != "" {
+			fmt.Println(entry.Line)
+			continue
+		}
+		// event:status terminal frame.
+		var status struct {
+			Status string `json:"status"`
+		}
+		if json.Unmarshal([]byte(line), &status) == nil &&
+			(status.Status == "live" || status.Status == "failed") {
+			if status.Status == "live" {
+				fmt.Printf("✓ Deployed. https://%s.apps.DOMAIN\n", dep.AppID)
+				return 0
+			}
+			return renderDeployFailure(dep)
+		}
+		// Unknown frame shape — print raw so the customer can see it.
+		fmt.Println(line)
+	}
+	fmt.Fprintf(os.Stderr, "! stream ended without a terminal frame; follow manually: faas logs --deployment %s\n", dep.ID)
+	return 3
+}
+
+// renderDeployFailure maps the deployment's Error string to one of the
+// four UX §2.4 copy blocks and exits 3 for infra, 1 for the rest.
+func renderDeployFailure(d api.DeploymentResponse) int {
+	fmt.Fprintf(os.Stderr, "✗ %s\n", mapFailureMessage(d.Error))
+	if d.Error == "infra" {
+		return 3
+	}
+	return 1
+}
+
+// mapFailureMessage returns the user-facing copy for one of the four
+// failure classes UX §2.4 enumerates. Anything else falls back to
+// "Build failed: <err>" so the customer sees the raw class at least.
+func mapFailureMessage(err string) string {
+	switch err {
+	case "user_error":
+		return "Build failed — see log above for the failing command."
+	case "oom":
+		return "Build ran out of memory (2 GB limit). Try fewer/smaller dependencies, or upgrade for a larger build. Docs: https://docs.faas.example/build/limits#memory"
+	case "timeout":
+		return "Build exceeded 10 min. Docs: https://docs.faas.example/build/limits#timeout"
+	case "infra":
+		return "Our build system hiccuped — we've been alerted and requeued your build automatically."
+	}
+	return "Build failed: " + err
 }
