@@ -395,6 +395,75 @@ func TestPaidOverageNoStop(t *testing.T) {
 	}
 }
 
+// TestPaidOverageDedupesPerDay is the audit-finding #1 closure: a
+// paid-tier account over its quota emits exactly one quota_warning
+// pg_notify event per UTC day, across the dedupe column on the account
+// row. Same-day repeats are no-ops; the stamp advances at UTC midnight.
+func TestPaidOverageDedupesPerDay(t *testing.T) {
+	t.Parallel()
+	s := state.NewMemStore()
+	ctx := context.Background()
+	// Anchor on a non-midnight hour so the day-rollover is mid-test.
+	day1Hour1 := time.Date(2026, 7, 17, 9, 0, 0, 0, time.UTC)
+	day1Hour2 := day1Hour1.Add(2 * time.Hour)
+	day2Hour1 := day1Hour1.Add(25 * time.Hour) // next UTC day, same wall hour
+
+	acct := makeAccount(t, ctx, s, api.PlanPro)
+	app := newApp(t, ctx, s, acct.ID)
+	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 512)
+	// Plant usage equal to one Hobby quota so CheckQuota at Pro's
+	// 250 GB-h threshold trips.
+	if err := s.AppendUsage(ctx, acct.ID, app.ID, "inst1", day1Hour1, 18_432_000*100, 0); err != nil {
+		t.Fatalf("seed usage: %v", err)
+	}
+	usages, err := s.UsageByMonth(ctx, acct.ID, meter.AccountMonthKey(day1Hour1))
+	if err != nil {
+		t.Fatalf("usage: %v", err)
+	}
+	usedGB := meter.MonthlyUsageGB(usages)
+
+	notif := &fakeNotifier{}
+	parker := &fakeParker{}
+	log := discardLog()
+
+	// Tick 1: first warning of the day.
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day1Hour1); err != nil {
+		t.Fatalf("tick 1: %v", err)
+	}
+	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 1 {
+		t.Fatalf("tick 1: quota_warning = %d, want 1", len(warns))
+	}
+
+	// Tick 2: same UTC day — must NOT emit a second warning.
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day1Hour2); err != nil {
+		t.Fatalf("tick 2: %v", err)
+	}
+	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 1 {
+		t.Fatalf("tick 2: quota_warning = %d, want 1 (same-day repeat must dedupe)", len(warns))
+	}
+
+	// Tick 3: next UTC day — fresh warning.
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day2Hour1); err != nil {
+		t.Fatalf("tick 3: %v", err)
+	}
+	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 2 {
+		t.Fatalf("tick 3: quota_warning = %d, want 2 (next-day must emit a fresh warning)", len(warns))
+	}
+
+	// ClearQuotaWarning (apid's payment_succeeded hook) lets the next
+	// tick of the SAME day emit a fresh warning. Without the clear,
+	// the second day-2 tick would still dedupe.
+	if err := s.ClearQuotaWarning(ctx, acct.ID); err != nil {
+		t.Fatalf("ClearQuotaWarning: %v", err)
+	}
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day2Hour1); err != nil {
+		t.Fatalf("tick 4: %v", err)
+	}
+	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 3 {
+		t.Fatalf("tick 4 (post-Clear): quota_warning = %d, want 3", len(warns))
+	}
+}
+
 // TestAppendUsagePerInstanceMinute pins the MemStore contract: two calls
 // for the same (instance, minute) accumulate; different minutes stay
 // separate. Matches the production INSERT … ON CONFLICT semantics.

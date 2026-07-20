@@ -632,14 +632,36 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	case "invoice.payment_failed":
 		// Apps keep serving; deploys blocked at the auth gate (handlers
 		// reading acct.Active() refuse writes). 7-day dunning timer
-		// (M7 dunning state machine) lives in pkg/state.Account.
-		_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountPastDue)
+		// (M7 dunning state machine) lives in pkg/meter.Dunning.
+		//
+		// We route through MarkDunningStep(active → past_due) instead
+		// of the unconditional UpdateAccountStatus we used to call, so
+		// past_due_at is stamped on the Stripe event itself (not on
+		// the dunning timer's first-observation backfill, which could
+		// be up to one DunningInterval later — spec §4.7). The
+		// compare-and-flip guard rejects rows already in past_due
+		// (Stripe redelivery) and rows in suspended/deleted_pending
+		// (no business flipping state backwards), both of which we
+		// swallow as no-ops.
+		if err := s.store.MarkDunningStep(r.Context(), acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				s.log.Debug("apid: payment_failed on already-advanced account",
+					"account", acct.ID, "from_status", acct.Status)
+			} else {
+				s.log.Warn("apid: payment_failed MarkDunningStep", "account", acct.ID, "err", err)
+			}
+		}
 	case "invoice.payment_succeeded":
 		// Restore the account if it was past_due. meterd will refresh
-		// quota state on its next tick.
+		// quota state on its next tick. We also clear the dedupe stamp
+		// on last_quota_warning_at so the next quota tick (if the
+		// customer is still over quota from a prior cycle) emits a
+		// fresh warning — otherwise the stamp from the previous day
+		// would suppress it (spec §4.7).
 		if acct.Status == state.AccountPastDue {
 			_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountActive)
 		}
+		_ = s.store.ClearQuotaWarning(r.Context(), acct.ID)
 	case "customer.subscription.updated":
 		if ev.Data.Object.Plan != "" {
 			_ = s.store.UpdateAccountPlan(r.Context(), acct.ID, api.Plan(ev.Data.Object.Plan))

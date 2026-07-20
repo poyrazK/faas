@@ -9,9 +9,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Loop runs the three meterd timers (sample / quota / stripe) until the
-// context cancels. Each timer fires on its own cadence; the first error
-// from any goroutine is surfaced to the caller.
+// Loop runs the four meterd timers (sample / quota / stripe / dunning)
+// until the context cancels. Each timer fires on its own cadence; the
+// first error from any goroutine is surfaced to the caller.
 //
 // The Loop never blocks the daemon's shutdown — every ticker selects on
 // both its tick and ctx.Done. Production wires this from cmd/meterd;
@@ -19,33 +19,36 @@ import (
 // directly (NewLoop is just a constructor, no goroutines started until
 // Run).
 type Loop struct {
-	store  state.Store
-	parker ScheddParker
-	stripe StripePusher
-	notif  Notifier
-	now    func() time.Time
-	log    *slog.Logger
-	cfg    *Config
+	store   state.Store
+	parker  ScheddParker
+	stripe  StripePusher
+	notif   Notifier
+	dunning *Dunning
+	now     func() time.Time
+	log     *slog.Logger
+	cfg     *Config
 }
 
 // NewLoop wires the loop. The interfaces are local to pkg/meter so the
 // daemon (cmd/meterd) can substitute test doubles without importing the
-// concrete packages (scheddgrpc, stripex).
-func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif Notifier, now func() time.Time, log *slog.Logger, cfg *Config) *Loop {
+// concrete packages (scheddgrpc, stripex). dunning may be nil; tests
+// that don't exercise dunning pass nil and the fourth goroutine is
+// skipped.
+func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif Notifier, dunning *Dunning, now func() time.Time, log *slog.Logger, cfg *Config) *Loop {
 	if now == nil {
 		now = time.Now
 	}
-	return &Loop{store: store, parker: parker, stripe: stripe, notif: notif, now: now, log: log, cfg: cfg}
+	return &Loop{store: store, parker: parker, stripe: stripe, notif: notif, dunning: dunning, now: now, log: log, cfg: cfg}
 }
 
-// Run starts the three timers and blocks until ctx cancels or any timer
-// errors out. Sampler / quota loop / stripe pusher each log + continue
-// on per-tick errors so a transient Postgres blip doesn't kill the
-// daemon; only a context cancel returns cleanly.
+// Run starts the four timers and blocks until ctx cancels or any timer
+// errors out. Sampler / quota loop / stripe pusher / dunning each log +
+// continue on per-tick errors so a transient Postgres blip doesn't kill
+// the daemon; only a context cancel returns cleanly.
 func (l *Loop) Run(ctx context.Context) error {
 	sampler := NewSampler(l.store, l.now)
 	pusher := NewPusher(l.store, l.stripe, l.log, l.now)
-	errc := make(chan error, 3)
+	errc := make(chan error, 4)
 	go func() {
 		errc <- l.runTicks(ctx, l.cfg.SampleInterval, func(c context.Context) error {
 			_, err := sampler.SampleAndRoll(c)
@@ -59,6 +62,13 @@ func (l *Loop) Run(ctx context.Context) error {
 			return err
 		}, "stripe")
 	}()
+	if l.dunning != nil {
+		go func() {
+			errc <- l.runTicks(ctx, l.cfg.DunningInterval,
+				func(c context.Context) error { return l.dunning.RunOnce(c) },
+				"dunning")
+		}()
+	}
 	// Block until either ctx cancels or a hard error fires.
 	select {
 	case <-ctx.Done():

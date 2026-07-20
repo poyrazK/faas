@@ -27,6 +27,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -78,6 +79,10 @@ type runDeps struct {
 	// after the pool is open; tests can pre-populate via the fields.
 	parker parkInstanceParker
 	stripe stripePusher
+	// mailer is the dunning-timer's outbound email. Wired via
+	// mail.SenderFromEnv in defaultDeps so the FAAS_MAIL_TRANSPORT
+	// knob is honored (default: log). Tests can inject a noop.
+	mailer mail.Sender
 	now    func() time.Time
 }
 
@@ -98,7 +103,8 @@ func defaultDeps() runDeps {
 		newStripeClient: func(apiKey, webhookSecret string, store state.Store, dedupe stripex.PushDedupe, log *slog.Logger) stripePusher {
 			return stripex.NewClient(store, dedupe, apiKey, webhookSecret, log)
 		},
-		now: time.Now,
+		mailer: nil, // populated lazily in runWithDeps via mail.SenderFromEnv
+		now:    time.Now,
 	}
 }
 
@@ -163,20 +169,54 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		webhookSecret := deps.getenv("STRIPE_WEBHOOK_SECRET")
 		stripe = deps.newStripeClient(apiKey, webhookSecret, store, store, log)
+		// Best-effort product/price cache: runs once at boot so the
+		// Stripe pusher has PlanPriceIDs populated. Failure logs +
+		// continues — the push path is the source of truth, this is
+		// only a cache. Gated on apiKey so dev boxes without a key
+		// skip the call entirely.
+		if apiKey != "" {
+			if sc, ok := stripe.(*stripex.Client); ok {
+				if err := sc.EnsurePlanProducts(ctx); err != nil {
+					log.Warn("meterd: EnsurePlanProducts failed (continuing)", "err", err)
+				}
+			}
+		}
 	}
 
-	// FAAS_QUOTA_INTERVAL / FAAS_SAMPLE_INTERVAL / FAAS_STRIPE_INTERVAL let
-	// the e2e test shrink the timer cadences to sub-second for the
-	// "parked within one tick" acceptance. A bad parse logs and falls
-	// through to mc.Defaults() rather than crashing the daemon.
+	// Mailer: defaults to mail.SenderFromEnv so FAAS_MAIL_TRANSPORT
+	// selects the transport (resend/postmark/log/noop). The dunning
+	// timer needs this for its transition emails.
+	mailer := deps.mailer
+	if mailer == nil {
+		mailer = mail.SenderFromEnv(deps.getenv, log)
+	}
+
+	// FAAS_QUOTA_INTERVAL / FAAS_SAMPLE_INTERVAL / FAAS_STRIPE_INTERVAL /
+	// FAAS_DUNNING_INTERVAL let the e2e test shrink the timer cadences
+	// to sub-second for the "transition within one tick" acceptance. A
+	// bad parse logs and falls through to mc.Defaults() rather than
+	// crashing the daemon.
 	applyEnvTick("FAAS_SAMPLE_INTERVAL", &mc.SampleInterval, deps.getenv, log)
 	applyEnvTick("FAAS_QUOTA_INTERVAL", &mc.QuotaInterval, deps.getenv, log)
 	applyEnvTick("FAAS_STRIPE_INTERVAL", &mc.StripeInterval, deps.getenv, log)
+	applyEnvTick("FAAS_DUNNING_INTERVAL", &mc.DunningInterval, deps.getenv, log)
 
-	// The three timers run in goroutines; the cancel-watcher below picks
+	// Dunning timer: drives the 7-day past_due → suspended and 21-day
+	// suspended → deleted_pending transitions (spec §4.7, §17). Wired
+	// into the loop alongside sample/quota/stripe so all four timers
+	// share the same ctx-cancel lifecycle.
+	dunning := meter.NewDunning(meter.DunningParams{
+		Store:  store,
+		Parker: parker,
+		Mailer: mailer,
+		Notif:  pn,
+		Log:    log,
+	})
+
+	// The four timers run in goroutines; the cancel-watcher below picks
 	// up the first error and returns. meterd has no inbound gRPC — the
 	// public listener is gatewayd's (spec §Component ownership).
-	loop := meter.NewLoop(store, parker, stripe, pn, deps.now, log, mc)
+	loop := meter.NewLoop(store, parker, stripe, pn, dunning, deps.now, log, mc)
 	errc := make(chan error, 1)
 	go func() { errc <- loop.Run(ctx) }()
 
