@@ -154,3 +154,110 @@ func equalSet(a, b []string) bool {
 	}
 	return true
 }
+
+// TestReapIdleRespectsMinInstancesFloor pins ux_spec §6.5: when an
+// app's MinInstances > 0, the reaper must keep at least that many
+// RUNNING instances alive regardless of idle timeout. Direction:
+// drop the FRESHEST candidates (not the most-idle ones) so the
+// freshly-woken instance that just served a user stays resident.
+//
+// Layout: 4 stale Pro instances of the same app. Floor 0 → all 4
+// reaped (matches TestReapIdle behaviour). Floor 2 → 2 reaped
+// (the two oldest by LastRequest). Floor 4 → 0 reaped. Floor
+// larger than running → 0 reaped (degenerate but bounded).
+func TestReapIdleRespectsMinInstancesFloor(t *testing.T) {
+	now := time.Now()
+	mkApp := func(id string, lastSeen time.Duration) InstanceInfo {
+		return InstanceInfo{
+			Instance: id, AppID: "app1", Plan: api.PlanPro,
+			State: state.StateRunning, LastRequest: now.Add(-lastSeen),
+		}
+	}
+	instances := []InstanceInfo{
+		mkApp("oldest", time.Hour), // most idle → reap first
+		mkApp("older", 45*time.Minute),
+		mkApp("newer", 30*time.Minute),
+		mkApp("newest", 15*time.Minute), // freshest → reap last
+	}
+	for _, in := range instances {
+		in.MinInstances = 0 // start with no floor
+	}
+	// floor 0 → reap all 4.
+	got := ReapIdle(now, instances)
+	if !equalSet(got, []string{"oldest", "older", "newer", "newest"}) {
+		t.Fatalf("floor 0: got %v, want all 4", got)
+	}
+	// floor 2 → reap 2 oldest.
+	for i := range instances {
+		instances[i].MinInstances = 2
+	}
+	got = ReapIdle(now, instances)
+	if !equalSet(got, []string{"oldest", "older"}) {
+		t.Fatalf("floor 2: got %v, want [oldest older] (drop freshest)", got)
+	}
+	// floor 4 → reap 0.
+	for i := range instances {
+		instances[i].MinInstances = 4
+	}
+	got = ReapIdle(now, instances)
+	if len(got) != 0 {
+		t.Fatalf("floor 4 (== running): got %v, want empty", got)
+	}
+	// floor 99 (degenerate; per-row) → reap 0. allowed = running(4) - 99 < 0.
+	for i := range instances {
+		instances[i].MinInstances = 99
+	}
+	got = ReapIdle(now, instances)
+	if len(got) != 0 {
+		t.Fatalf("floor 99 (>running): got %v, want empty (allowed clamps to 0)", got)
+	}
+}
+
+// TestReapIdleFloorDoesNotCrossApps locks in that the floor is
+// per-app: app1's floor 2 must not reduce app2's park count and
+// vice versa. Two stale instances of app1, three of app2 — both
+// app1 and app2 have floor 1 → app1 reaps 1 (keeps 1), app2
+// reaps 2 (keeps 1).
+func TestReapIdleFloorDoesNotCrossApps(t *testing.T) {
+	now := time.Now()
+	mkApp := func(app, id string, lastSeen time.Duration) InstanceInfo {
+		return InstanceInfo{
+			Instance: id, AppID: app, Plan: api.PlanPro,
+			State: state.StateRunning, LastRequest: now.Add(-lastSeen),
+		}
+	}
+	instances := []InstanceInfo{
+		mkApp("a1", "a1-old", time.Hour),
+		mkApp("a1", "a1-new", 30*time.Minute),
+		mkApp("a2", "a2-old", time.Hour),
+		mkApp("a2", "a2-mid", 45*time.Minute),
+		mkApp("a2", "a2-new", 15*time.Minute),
+	}
+	for i := range instances {
+		instances[i].MinInstances = 1
+	}
+	got := ReapIdle(now, instances)
+	if !equalSet(got, []string{"a1-old", "a2-old", "a2-mid"}) {
+		t.Fatalf("got %v, want [a1-old a2-old a2-mid] (1 fresh per app kept)", got)
+	}
+}
+
+// TestSelectEvictionsIgnoresMinInstances pins R5 from the plan:
+// RAM-pressure eviction ignores the floor because the ceiling
+// (inv §6.2-2) wins. Floor is budget, ceiling is physics.
+func TestSelectEvictionsIgnoresMinInstances(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-time.Hour)
+	// 1 Pro instance, RAMMB 512, floor 1 → still evictable under
+	// RAM pressure because SelectEvictions is intentionally
+	// floor-blind (spec §6.2-2: ceiling wins).
+	instances := []InstanceInfo{
+		{Instance: "warm", AppID: "app1", Plan: api.PlanPro,
+			State: state.StateRunning, RAMMB: 512,
+			LastRequest: old, Started: old, MinInstances: 1},
+	}
+	got := SelectEvictions(EvictionThresholdMB+1, now, instances)
+	if len(got) != 1 || got[0] != "warm" {
+		t.Fatalf("RAM-pressure eviction must override the floor; got %v, want [warm]", got)
+	}
+}

@@ -120,6 +120,12 @@ type Store interface {
 	// evicted_cold) for quota enforcement (spec §4.2).
 	CountDeployedApps(ctx context.Context, accountID string) (int, error)
 	UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error)
+	// SetAppMinInstances stamps the per-app floor (ux_spec §6.5) the
+	// reaper honors when parking idle instances. 0 => scale to zero.
+	// Plan-tier gating is the apid handler's job; the store writes the
+	// column unconditionally. Updates an existing row's min_instances
+	// column in place; returns ErrNotFound when the app is gone.
+	SetAppMinInstances(ctx context.Context, appID string, min int) error
 	DeleteApp(ctx context.Context, id string) error
 	// RecordGitHubBinding persists the (app → installation_id, repo,
 	// branch) tuple after the /oauth/callback handler verified the
@@ -224,6 +230,13 @@ type Store interface {
 	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
+	// ListLatestInstancePerApp returns the most-recently-started instance
+	// for each app belonging to the account. Empty map when no instance
+	// rows exist yet (a fresh deploy never woken). Used by the dashboard
+	// to populate the cold-wake state badge in one round-trip instead of
+	// N per-app ListInstancesForApp calls (PR #48 follow-up). Result is
+	// keyed by app ID; callers must handle the "no row" case explicitly.
+	ListLatestInstancePerApp(ctx context.Context, accountID string) (map[string]Instance, error)
 	// ListAllInstances returns every instance on the box, ordered newest
 	// first. schedd's G7 reaper warm-passes this slice to the conntrack
 	// reader (pkg/sched/flowcount) once per tick — a single bulk read is

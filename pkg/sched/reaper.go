@@ -39,6 +39,21 @@ type InstanceInfo struct {
 	// pressure is a separate axis and tearing down connections is fine
 	// there.
 	OpenConns int64
+	// MinInstances is the per-app cold-wake floor (ux_spec §6.5). Zero
+	// keeps today's scale-to-zero behaviour; >0 means the reaper must
+	// keep at least this many RUNNING instances alive regardless of
+	// idle timeout. Honored by ReapIdle, intentionally NOT honored by
+	// SelectEvictions — RAM-pressure eviction is the ceiling and it
+	// wins (matches invariant §6.2-2: ceiling is physics, floor is
+	// budget). Pro/Scale only — the apid gate rejects Free/Hobby so
+	// the value is always sane when it lands here.
+	//
+	// Carrier semantics: every row of the same app carries the SAME
+	// value (sourced from app.MinInstances in runReaper). The reaper
+	// groups by AppID and reads the floor from the first row it sees.
+	// Don't try to set MinInstances per-instance — it's a per-app
+	// concept reflected redundantly on each row.
+	MinInstances int
 }
 
 func (i InstanceInfo) admissionMB() int { return i.RAMMB + api.PerVMOverheadMB }
@@ -70,12 +85,36 @@ func EffectiveIdleTimeoutS(plan api.Plan, configured int) int {
 // produce no periodic /v1/... requests, so a stale LastRequest would
 // otherwise park them. The conntrack reader that fills OpenConns lives
 // outside schedd (privilege boundary; see plan-file §PR-A).
+//
+// Per-app floor (ux_spec §6.5): when an app's MinInstances > 0, the
+// reaper keeps at least that many RUNNING instances alive regardless
+// of idle timeout. We enforce this by limiting the park count to
+// (RUNNING_for_app − floor). Direction: when the candidate pool is
+// bigger than that allowed count, we drop the freshest candidates —
+// the freshly-woken one just served a user, parking it defeats the
+// floor's purpose. RAM-pressure eviction (SelectEvictions) intentionally
+// ignores the floor; spec invariant §6.2-2 puts the ceiling before the
+// floor.
 func ReapIdle(now time.Time, instances []InstanceInfo) []string {
-	var park []string
+	// appGroup counts RUNNING instances per app and gathers idle
+	// candidates separately so we can trim the candidate list against
+	// the floor AFTER the G7 / idle-timeout filter has run.
+	type appGroup struct {
+		running int            // total RUNNING instances of this app
+		floor   int            // app.MinInstances
+		cands   []InstanceInfo // idle-eligible (RUNNING, no flows, stale)
+	}
+	byApp := map[string]*appGroup{}
 	for _, in := range instances {
 		if in.State != state.StateRunning {
 			continue
 		}
+		g, ok := byApp[in.AppID]
+		if !ok {
+			g = &appGroup{floor: in.MinInstances}
+			byApp[in.AppID] = g
+		}
+		g.running++
 		// G7: an app with open TCP flows is active. Wins over stale
 		// LastRequest so a parked app mid-WebSocket isn't reaped.
 		if in.OpenConns > 0 {
@@ -83,7 +122,31 @@ func ReapIdle(now time.Time, instances []InstanceInfo) []string {
 		}
 		timeout := time.Duration(EffectiveIdleTimeoutS(in.Plan, in.IdleTimeoutS)) * time.Second
 		if now.Sub(in.LastRequest) > timeout {
-			park = append(park, in.Instance)
+			g.cands = append(g.cands, in)
+		}
+	}
+	var park []string
+	for _, g := range byApp {
+		// Sort candidates oldest-LastRequest-first so trimming the
+		// front keeps the freshest (most-recently-served) alive. If
+		// LastRequest ties (rare; sub-second precision), the instance
+		// id breaks the tie deterministically so a re-run yields the
+		// same answer.
+		sort.Slice(g.cands, func(a, b int) bool {
+			if !g.cands[a].LastRequest.Equal(g.cands[b].LastRequest) {
+				return g.cands[a].LastRequest.Before(g.cands[b].LastRequest)
+			}
+			return g.cands[a].Instance < g.cands[b].Instance
+		})
+		allowed := g.running - g.floor
+		if allowed < 0 {
+			allowed = 0
+		}
+		if len(g.cands) > allowed {
+			g.cands = g.cands[:allowed]
+		}
+		for _, c := range g.cands {
+			park = append(park, c.Instance)
 		}
 	}
 	return park

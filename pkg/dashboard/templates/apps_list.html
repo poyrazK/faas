@@ -3,6 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- ux_spec §6.3 — refresh the badge periodically so a user
+       staring at the page sees ◌ sleeping flip to ⟳ waking → ●
+       running when traffic lands. Server-rendered; no JS build
+       (HTMX polling is a follow-up if we need sub-second
+       fidelity). -->
+  <meta http-equiv="refresh" content="10">
   <title>{{.Title}} — onebox faas</title>
   <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
   <style>
@@ -18,6 +24,14 @@
     .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
     .badge.active { background: #d1fae5; color: #065f46; }
     .badge.evicted { background: #fef3c7; color: #92400e; }
+    /* ux_spec §6.3 — cold-wake state badges. Three glyphs + one dim
+       fallback. CSS class names mirror pkg/dashboard/badge.go so a
+       state that lands on (sleeping) renders the ◌ glyph green-grey,
+       not the previously-defaulted .badge.evicted yellow. */
+    .badge.running  { background: #d1fae5; color: #065f46; }
+    .badge.sleeping { background: #e5e7eb; color: #374151; }
+    .badge.waking   { background: #dbeafe; color: #1e40af; }
+    .badge.dim      { background: #f3f4f6; color: #6b7280; }
   </style>
 </head>
 <body>
@@ -37,11 +51,16 @@
       {{$items := .Data}}
       {{if $items}}
         <table>
-          <thead><tr><th>Slug</th><th>Status</th><th>URL</th><th>Last deploy</th><th></th></tr></thead>
+          <thead><tr><th>Slug</th><th>State</th><th>Lifecycle</th><th>URL</th><th>Last deploy</th><th></th></tr></thead>
           <tbody>
             {{range $items}}
               <tr>
                 <td><code>{{.Slug}}</code></td>
+                <!-- ux_spec §6.3: glyph + label render the live
+                     instance state. Replaces the prior plain
+                     .Status span (which only reflected the app's
+                     lifecycle bit). -->
+                <td><span class="badge {{.StateBadge}}" title="{{.StateBadgeLabel}}">{{.StateBadgeGlyph}} {{.StateBadgeLabel}}</span></td>
                 <td><span class="badge {{.Status}}">{{.Status}}</span></td>
                 <td><a href="{{.URL}}">{{.URL}}</a></td>
                 <td>{{.LastDeployed}}</td>

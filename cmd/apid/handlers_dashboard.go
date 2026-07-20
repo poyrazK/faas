@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -87,27 +88,63 @@ func (s *server) renderIndex(w http.ResponseWriter, r *http.Request, log *slog.L
 	}
 }
 
+// appListItem is the single source of truth for "an app rendered as
+// a dashboard row" (PR #48 follow-up). Both renderAppsList and
+// renderAppDetail call it instead of duplicating the badge lookup.
+//
+// State rules (ux_spec §6.3):
+//   - no row in `latest` (fresh deploy, never woken) → ◌ sleeping
+//   - first row's state.State → BadgeFor
+//
+// `latest` is the batched map from ListLatestInstancePerApp; passing
+// it in (rather than doing the lookup here) keeps the helper a pure
+// builder so the per-render N+1 fix lives entirely in the callers.
+func (s *server) appListItem(ctx context.Context, app state.App, latest map[string]state.Instance, lastDeployed time.Time) dashboard.AppListItem {
+	cls, glyph, label := dashboard.BadgeForDefault()
+	if ins, ok := latest[app.ID]; ok {
+		cls, glyph, label = dashboard.BadgeFor(state.State(ins.State))
+	}
+	var lastStr string
+	if !lastDeployed.IsZero() {
+		lastStr = lastDeployed.UTC().Format("2006-01-02 15:04 MST")
+	}
+	return dashboard.AppListItem{
+		Slug:            app.Slug,
+		Status:          string(app.Status),
+		URL:             "https://" + app.Slug + ".apps." + s.domain,
+		LastDeployed:    lastStr,
+		StateBadge:      cls,
+		StateBadgeGlyph: glyph,
+		StateBadgeLabel: label,
+	}
+}
+
 // renderAppsList renders /dashboard/apps — every deployed app + a
 // "create new" link.
 func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
-	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	ctx := r.Context()
+	apps, err := s.store.ListApps(ctx, acct.ID)
 	if err != nil {
 		renderProblem(w, log, err)
 		return
 	}
-	view, _ := AccountFrom(r.Context())
+	// ux_spec §6.3: one batched instance lookup instead of N
+	// per-app ListInstancesForApp calls (PR #48 follow-up). With
+	// 25 apps × 6/min meta-refresh, this drops the dashboard
+	// query count from 300/min to ~12/min for an account.
+	latest, err := s.store.ListLatestInstancePerApp(ctx, acct.ID)
+	if err != nil {
+		log.Warn("dashboard renderAppsList: latest instance per app", "account_id", acct.ID, "err", err)
+		latest = nil
+	}
+	view, _ := AccountFrom(ctx)
 	items := make([]dashboard.AppListItem, 0, len(apps))
 	for _, a := range apps {
 		var last time.Time
-		if d, err := s.store.LatestDeployment(r.Context(), a.ID); err == nil {
+		if d, err := s.store.LatestDeployment(ctx, a.ID); err == nil {
 			last = d.CreatedAt
 		}
-		items = append(items, dashboard.AppListItem{
-			Slug:         a.Slug,
-			Status:       string(a.Status),
-			URL:          "https://" + a.Slug + ".apps." + s.domain,
-			LastDeployed: last.UTC().Format("2006-01-02 15:04 MST"),
-		})
+		items = append(items, s.appListItem(ctx, a, latest, last))
 	}
 	// Reuse the already-fetched apps list for the count (review
 	// finding #5: avoid a second SQL round-trip when we already
@@ -123,12 +160,13 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 // deployment list view. Deployments tab is the primary one slice 4
 // ships; logs tab is a placeholder until slice 5 lands.
 func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
-	app, err := s.store.AppBySlug(r.Context(), slug)
+	ctx := r.Context()
+	app, err := s.store.AppBySlug(ctx, slug)
 	if err != nil || app.AccountID != acct.ID {
 		http.NotFound(w, r)
 		return
 	}
-	rows, err := s.store.ListDeploymentsForApp(r.Context(), app.ID, 25, 0)
+	rows, err := s.store.ListDeploymentsForApp(ctx, app.ID, 25, 0)
 	if err != nil {
 		renderProblem(w, log, err)
 		return
@@ -143,7 +181,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			Error:     d.Error,
 		})
 	}
-	crons, err := s.store.ListCronsForApp(r.Context(), app.ID)
+	crons, err := s.store.ListCronsForApp(ctx, app.ID)
 	if err != nil {
 		renderProblem(w, log, err)
 		return
@@ -158,18 +196,23 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		}
 		cronItems = append(cronItems, item)
 	}
-	view, _ := AccountFrom(r.Context())
-	appCount, err := s.store.CountDeployedApps(r.Context(), acct.ID)
+	// Single-app detail page reuses the batched instance map; for
+	// a one-app render that's one extra row fetched but it keeps
+	// the helper signatures symmetric with renderAppsList (PR #48
+	// follow-up).
+	latest, err := s.store.ListLatestInstancePerApp(ctx, acct.ID)
+	if err != nil {
+		log.Warn("dashboard renderAppDetail: latest instance per app", "account_id", acct.ID, "err", err)
+		latest = nil
+	}
+	view, _ := AccountFrom(ctx)
+	appCount, err := s.store.CountDeployedApps(ctx, acct.ID)
 	if err != nil {
 		log.Warn("dashboard renderAppDetail: count deployed apps", "account_id", acct.ID, "err", err)
 		appCount = 0
 	}
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
-		App: dashboard.AppListItem{
-			Slug:   app.Slug,
-			Status: string(app.Status),
-			URL:    "https://" + app.Slug + ".apps." + s.domain,
-		},
+		App:         s.appListItem(ctx, app, latest, time.Time{}),
 		Manifest:    dashboardManifestView(app),
 		Deployments: deps,
 		Crons:       cronItems,

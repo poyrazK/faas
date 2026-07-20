@@ -421,8 +421,27 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	if p.Manifest != nil {
 		a.Manifest = *p.Manifest
 	}
+	if p.SetMinInstances {
+		a.MinInstances = derefInt(p.MinInstances)
+	}
 	m.apps[id] = a
 	return a, nil
+}
+
+// SetAppMinInstances stamps the per-app floor (ux_spec §6.5). Plan-tier
+// gating is the apid handler's job — the store writes the column
+// unconditionally. Returns ErrNotFound when the app is gone so a
+// redelivered PATCH returns 404 cleanly.
+func (m *MemStore) SetAppMinInstances(_ context.Context, appID string, min int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[appID]
+	if !ok {
+		return ErrNotFound
+	}
+	a.MinInstances = min
+	m.apps[appID] = a
+	return nil
 }
 
 func (m *MemStore) DeleteApp(_ context.Context, id string) error {
@@ -976,6 +995,34 @@ func (m *MemStore) ListInstancesForAccount(_ context.Context, accountID string) 
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	return out, nil
+}
+
+// ListLatestInstancePerApp returns the most-recently-started instance
+// for each app owned by the account (PR #48 follow-up). Used by the
+// dashboard cold-wake badge so one query replaces N per-app
+// ListInstancesForApp calls. Apps with no instance rows are absent
+// from the returned map — the dashboard treats that as ◌ sleeping
+// via BadgeForDefault.
+func (m *MemStore) ListLatestInstancePerApp(_ context.Context, accountID string) (map[string]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]struct{}, len(m.apps))
+	for _, a := range m.apps {
+		if a.AccountID == accountID {
+			owned[a.ID] = struct{}{}
+		}
+	}
+	out := map[string]Instance{}
+	for _, ins := range m.instances {
+		if _, ok := owned[ins.AppID]; !ok {
+			continue
+		}
+		cur, seen := out[ins.AppID]
+		if !seen || ins.StartedAt.After(cur.StartedAt) {
+			out[ins.AppID] = ins
+		}
+	}
 	return out, nil
 }
 

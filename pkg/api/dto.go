@@ -23,6 +23,12 @@ type UpdateAppRequest struct {
 	RAMMB          *int `json:"ram_mb,omitempty"`
 	IdleTimeoutS   *int `json:"idle_timeout_s,omitempty"`
 	MaxConcurrency *int `json:"max_concurrency,omitempty"`
+	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
+	// 0 / unset => scale to zero; >0 => keep at least this many
+	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
+	// 403 plan_min_instances_not_allowed (apid gate). Must be <=
+	// plan MaxConcurrency (422 invalid_min_instances).
+	MinInstances *int `json:"min_instances,omitempty"`
 }
 
 // AppResponse is an app as returned by the API.
@@ -34,8 +40,11 @@ type AppResponse struct {
 	RAMMB          int    `json:"ram_mb"`
 	MaxConcurrency int    `json:"max_concurrency"`
 	IdleTimeoutS   int    `json:"idle_timeout_s,omitempty"`
-	Status         string `json:"status"`
-	URL            string `json:"url"`
+	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
+	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
+	MinInstances int    `json:"min_instances"`
+	Status       string `json:"status"`
+	URL          string `json:"url"`
 	// Manifest is the runner-scaffold payload (env, healthz path,
 	// entrypoint). Surfaced so the dashboard's app detail page can
 	// show the function handler + env without a separate round-trip.

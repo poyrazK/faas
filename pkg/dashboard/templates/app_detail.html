@@ -3,6 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- ux_spec §6.3 — refresh the badge periodically so the user
+       sees ◌ sleeping flip to ⟳ waking → ● running when traffic
+       lands. Same 10 s window as apps_list. -->
+  <meta http-equiv="refresh" content="10">
   <title>{{.Title}} — onebox faas</title>
   <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
   <style>
@@ -16,6 +20,13 @@
     th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
     code { font-family: ui-monospace, Menlo, monospace; }
     h2 { border-top: 1px solid #eee; padding-top: 1rem; }
+    /* ux_spec §6.3 — cold-wake state badges. Mirrors apps_list
+       so a row rendered on either page renders identically. */
+    .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
+    .badge.running  { background: #d1fae5; color: #065f46; }
+    .badge.sleeping { background: #e5e7eb; color: #374151; }
+    .badge.waking   { background: #dbeafe; color: #1e40af; }
+    .badge.dim      { background: #f3f4f6; color: #6b7280; }
   </style>
 </head>
 <body>
@@ -32,7 +43,14 @@
   <main>
     {{if .Data}}
       <h1>App: <code>{{.Data.App.Slug}}</code></h1>
-      <p>Status: <strong>{{.Data.App.Status}}</strong> · URL: <a href="{{.Data.App.URL}}">{{.Data.App.URL}}</a></p>
+      <p>
+        <!-- ux_spec §6.3: state badge first (live instance
+             status), lifecycle (active|evicted_cold|deleted) next,
+             then URL. -->
+        <span class="badge {{.Data.App.StateBadge}}" title="{{.Data.App.StateBadgeLabel}}">{{.Data.App.StateBadgeGlyph}} {{.Data.App.StateBadgeLabel}}</span>
+        · Lifecycle: <strong>{{.Data.App.Status}}</strong>
+        · URL: <a href="{{.Data.App.URL}}">{{.Data.App.URL}}</a>
+      </p>
 
       <h2>Manifest</h2>
       <table>

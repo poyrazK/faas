@@ -42,13 +42,17 @@ const (
 // cmdApp implements `faas app <slug>` (GET /v1/apps/{slug}), `faas app <slug>
 // --ram N`, and `faas apps -q <slug>` (DELETE) — UX §2.4.
 //
+// `--min N` (Pro/Scale only) sets the per-app cold-wake floor
+// (ux_spec §6.5): N instances stay RUNNING regardless of idle
+// timeout. 0 = scale to zero (default).
+//
 // UpdateAppRequest uses *int pointers on the wire so callers can distinguish
 // "unset" from "explicit zero." We use fs.Visit to detect which flags the
 // user actually passed — comparing flag values to sentinels (0 / -1) would
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas app <slug> [--ram N] [--max-concurrency N] [--idle SEC]")
+		fmt.Fprintln(os.Stderr, "usage: faas app <slug> [--ram N] [--max-concurrency N] [--idle SEC] [--min N]")
 		return 1
 	}
 	slug := args[0]
@@ -56,6 +60,11 @@ func cmdApp(args []string) int {
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
+	// --min sets the per-app cold-wake floor (ux_spec §6.5).
+	// Pro/Scale only — the API rejects Hobby/Free with 403
+	// plan_min_instances_not_allowed, which surfaces here as an
+	// "Update failed" error with the API's problem code.
+	min := fs.Int("min", 0, "min instances kept warm (Pro/Scale only; 0 = scale to zero)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
@@ -81,8 +90,12 @@ func cmdApp(args []string) int {
 		v := *idle
 		req.IdleTimeoutS = &v
 	}
+	if explicit["min"] {
+		v := *min
+		req.MinInstances = &v
+	}
 
-	if req.RAMMB == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil {
+	if req.RAMMB == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.MinInstances == nil {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -92,6 +105,15 @@ func cmdApp(args []string) int {
 		fmt.Printf("%-30s %d MB\n", "ram:", a.RAMMB)
 		fmt.Printf("%-30s %d\n", "max concurrency:", a.MaxConcurrency)
 		fmt.Printf("%-30s %ds\n", "idle timeout:", a.IdleTimeoutS)
+		// ux_spec §6.5: show the cold-wake floor alongside the
+		// other knobs so the customer sees why an instance is
+		// always resident. "scale to zero" rendering for 0 is
+		// more legible than a bare "0".
+		if a.MinInstances == 0 {
+			fmt.Printf("%-30s %s\n", "min instances:", "scale to zero")
+		} else {
+			fmt.Printf("%-30s %d\n", "min instances:", a.MinInstances)
+		}
 		fmt.Printf("%-30s %s\n", "status:", a.Status)
 		return 0
 	}

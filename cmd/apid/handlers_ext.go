@@ -32,10 +32,36 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 	writeJSON(w, http.StatusOK, s.appResponse(app))
 }
 
-// updateApp is the PATCH /v1/apps/{slug} handler. RAM, idle_timeout_s, and
-// max_concurrency are user-tunable; type and runtime are immutable. Plan
-// caps are re-enforced when the requested RAM or concurrency changes (spec
-// §4.2: "validation enforces plan quotas before any work happens").
+// validateUpdateApp enforces the per-app cold-wake floor rules
+// (ux_spec §6.5). Returns nil when the request is fine; otherwise a
+// *Problem ready for api.WriteProblem. The gate runs before bounds
+// checking because a 403 is the correct response on Free/Hobby
+// regardless of the value the customer typed — the feature is
+// tier-locked, not value-locked.
+//
+// Plan tier: only Pro/Scale may set MinInstances > 0 (403).
+// Bounds: must be in [0, MaxConcurrency] (422).
+//
+// Returns *api.Problem instead of error to mirror cmd/apid/handlers.go
+// buildApp, the established helper signature in this package.
+func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits) *api.Problem {
+	if req.MinInstances == nil {
+		return nil
+	}
+	if !acct.Plan.MinInstancesAllowed() {
+		return api.ErrPlanMinInstancesNotAllowed(acct.Plan)
+	}
+	if *req.MinInstances < 0 || *req.MinInstances > limits.MaxConcurrency {
+		return api.ErrInvalidMinInstances(*req.MinInstances, limits.MaxConcurrency)
+	}
+	return nil
+}
+
+// updateApp is the PATCH /v1/apps/{slug} handler. User-tunable:
+// RAM, idle_timeout_s, max_concurrency, and min_instances (Pro/Scale
+// only — validateUpdateApp gates the feature). Type and runtime are
+// immutable. Plan caps re-enforced when RAM or concurrency changes
+// (spec §4.2: "validation enforces plan quotas before any work").
 func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -47,11 +73,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	ram := app.RAMMB
+	ram, mc := app.RAMMB, app.MaxConcurrency
 	if req.RAMMB != nil {
 		ram = *req.RAMMB
 	}
-	mc := app.MaxConcurrency
 	if req.MaxConcurrency != nil {
 		mc = *req.MaxConcurrency
 	}
@@ -59,12 +84,19 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
-
+	if prob := validateUpdateApp(&req, acct, limits); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	// SetMinInstances: nil pointer means "don't touch"; non-nil
+	// (even pointing at 0) means "explicit set" → scale to zero.
 	updated, err := s.store.UpdateApp(ctx(r), app.ID, state.UpdateAppParams{
-		RAMMB:          req.RAMMB,
-		IdleTimeoutS:   req.IdleTimeoutS,
-		SetIdleTimeout: req.IdleTimeoutS != nil,
-		MaxConcurrency: req.MaxConcurrency,
+		RAMMB:           req.RAMMB,
+		IdleTimeoutS:    req.IdleTimeoutS,
+		SetIdleTimeout:  req.IdleTimeoutS != nil,
+		MaxConcurrency:  req.MaxConcurrency,
+		MinInstances:    req.MinInstances,
+		SetMinInstances: req.MinInstances != nil,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update app"))

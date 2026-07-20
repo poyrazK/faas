@@ -147,7 +147,10 @@ func (s *server) appResponse(a state.App) api.AppResponse {
 	return api.AppResponse{
 		ID: a.ID, Slug: a.Slug, Type: string(a.Type), Runtime: a.Runtime,
 		RAMMB: a.RAMMB, MaxConcurrency: a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
-		Status: string(a.Status), URL: fmt.Sprintf("https://%s.apps.%s", a.Slug, s.domain),
+		// ux_spec §6.5: per-app floor the reaper honors when
+		// parking idle instances. Pro/Scale only (apid gates).
+		MinInstances: a.MinInstances,
+		Status:       string(a.Status), URL: fmt.Sprintf("https://%s.apps.%s", a.Slug, s.domain),
 		Manifest: api.AppManifest{
 			Entrypoint: a.Manifest.Entrypoint,
 			Env:        a.Manifest.Env,

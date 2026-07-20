@@ -61,6 +61,13 @@ type Limits struct {
 	// values with 413 CodeSecretValueTooLarge before sealing.
 	SecretCountMax      int // max secrets per app (Free 3, Hobby 25, Pro 50, Scale 100)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
+
+	// MinInstancesAllowed toggles the per-app cold-wake floor (ux_spec
+	// §6.5). Free + Hobby keep the default scale-to-zero behaviour
+	// because `min_instances = N` keeps N × RAMMB resident at all times,
+	// which is the cost shape of the always-on tier. Pro + Scale opt in.
+	// apid's updateApp handler gates the PATCH body on this flag.
+	MinInstancesAllowed bool
 }
 
 // planLimits is the authoritative table. Values: spec §1 quota row, §4.1 rate
@@ -123,6 +130,7 @@ var planLimits = map[Plan]Limits{
 		EgressMbit:          100,
 		SecretCountMax:      50,
 		SecretValueMaxBytes: 16 * 1024,
+		MinInstancesAllowed: true,
 	},
 	PlanScale: {
 		Plan:                PlanScale,
@@ -140,6 +148,7 @@ var planLimits = map[Plan]Limits{
 		EgressMbit:          250,
 		SecretCountMax:      100,
 		SecretValueMaxBytes: 32 * 1024,
+		MinInstancesAllowed: true,
 	},
 }
 
@@ -230,6 +239,19 @@ func (p Plan) PlanIncludedGBHours() int {
 func (p Plan) Valid() bool {
 	_, ok := planLimits[p]
 	return ok
+}
+
+// MinInstancesAllowed reports whether the plan may set the per-app
+// cold-wake floor (ux_spec §6.5). Pro + Scale opt in; Free + Hobby
+// stay scale-to-zero by default. apid's updateApp handler gates
+// `req.MinInstances` on this; the CLI surfaces the rejection with
+// CodePlanMinInstancesNotAllowed.
+func (p Plan) MinInstancesAllowed() bool {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return false
+	}
+	return l.MinInstancesAllowed
 }
 
 // AdmissionMB is the RAM an instance charges against the admission ceiling and

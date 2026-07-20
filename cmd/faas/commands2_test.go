@@ -66,6 +66,8 @@ func TestCmdAppFlagSentinels(t *testing.T) {
 		wantRAMVal  int
 		wantIdleSet bool
 		wantIdleVal int
+		wantMinSet  bool
+		wantMinVal  int
 	}{
 		{
 			name:       "no flags → GET path",
@@ -92,6 +94,20 @@ func TestCmdAppFlagSentinels(t *testing.T) {
 			wantMethod:  http.MethodPatch,
 			wantIdleSet: true,
 			wantIdleVal: -1,
+		},
+		{
+			name:       "--min 0 is explicit zero (scale to zero; must NOT be dropped)",
+			args:       []string{constSlug, "--min", "0"},
+			wantMethod: http.MethodPatch,
+			wantMinSet: true,
+			wantMinVal: 0,
+		},
+		{
+			name:       "--min 1 is positive",
+			args:       []string{constSlug, "--min", "1"},
+			wantMethod: http.MethodPatch,
+			wantMinSet: true,
+			wantMinVal: 1,
 		},
 	}
 
@@ -133,8 +149,64 @@ func TestCmdAppFlagSentinels(t *testing.T) {
 			} else if got.body.IdleTimeoutS != nil {
 				t.Errorf("IdleTimeoutS = %d, want nil", *got.body.IdleTimeoutS)
 			}
+			if tc.wantMinSet {
+				if got.body.MinInstances == nil {
+					t.Fatalf("MinInstances = nil; expected pointer to %d", tc.wantMinVal)
+				}
+				if *got.body.MinInstances != tc.wantMinVal {
+					t.Errorf("MinInstances = %d, want %d", *got.body.MinInstances, tc.wantMinVal)
+				}
+			} else if got.body.MinInstances != nil {
+				t.Errorf("MinInstances = %d, want nil", *got.body.MinInstances)
+			}
 		})
 	}
+}
+
+// TestCmdAppMinInstances_HobbyRejects is the wire-level CLI check for
+// the plan-tier gate (ux_spec §6.5). When apid returns 403
+// plan_min_instances_not_allowed, the CLI must surface a non-zero exit
+// code so scripts/cron-on-CI can detect the failure without parsing
+// prose. The CLI is a thin wrapper over apid — the gate is the gate —
+// but the exit-code mapping is CLI-only behaviour worth pinning.
+func TestCmdAppMinInstances_HobbyRejects(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"type":"about:blank","title":"plan","status":403,"code":"plan_min_instances_not_allowed"}`)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	one := 1
+	if code := cmdApp([]string{constSlug, "--min", itoaForCli(one)}); code == 0 {
+		t.Fatalf("cmdApp exit = 0; want non-zero (api rejected 403)")
+	}
+}
+
+// itoaForCli is a tiny local helper for the Hobby-rejects test so the
+// file doesn't depend on strconv (matches the apid test's itoa style).
+func itoaForCli(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [8]byte
+	pos := len(buf)
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	for n > 0 {
+		pos--
+		buf[pos] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		pos--
+		buf[pos] = '-'
+	}
+	return string(buf[pos:])
 }
 
 // --- slice 9: validateRepoSlug, cmdConnect, cmdOpen, --repo dispatch -------

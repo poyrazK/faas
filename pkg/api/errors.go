@@ -113,6 +113,18 @@ const (
 	CodeSecretValueTooLarge = "secret_value_too_large"
 	CodeSecretNotFound      = "secret_not_found"
 
+	// Plan-tier feature gates (M8 §6.5). Distinct from CodePlanLimit*
+	// because the failure mode is "your plan doesn't unlock this knob
+	// at all" rather than "you used more than the plan allows".
+	// Pro + Scale unlock min_instances; Free + Hobby get 403 and the
+	// docs URL tells them which plans do.
+	CodePlanMinInstancesNotAllowed = "plan_min_instances_not_allowed"
+	// CodeInvalidMinInstances is a 422 for shape violations: < 0 or
+	// > plan MaxConcurrency. Distinct from CodeValidation so the CLI
+	// can render actionable retry guidance ("raise your plan or lower
+	// --max-concurrency").
+	CodeInvalidMinInstances = "invalid_min_instances"
+
 	// Account self-service (spec §17 G6, ADR-021). The
 	// "confirm_required" code is returned when a DELETE arrives without
 	// the confirmation header so a stale CLI prompt can't silently wipe
@@ -329,6 +341,29 @@ func ErrSecretNotFound(key string) *Problem {
 		"Secret not set",
 		fmt.Sprintf("no secret named %q on this app.", key)).
 		WithDocs("https://docs.DOMAIN/secrets")
+}
+
+// ErrPlanMinInstancesNotAllowed is returned when a Free or Hobby account
+// tries to set apps.min_instances (ux_spec §6.5, plan-tier gate). The
+// customer's bill on these plans is built around scale-to-zero; a
+// floor keeps N × RAMMB resident at all times, which is the cost
+// shape of Pro / Scale.
+func ErrPlanMinInstancesNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanMinInstancesNotAllowed,
+		"Plan doesn't allow a min-instances floor",
+		fmt.Sprintf("the %s plan always scales to zero; upgrade to Pro or Scale to keep instances warm.", p)).
+		WithDocs("https://docs.DOMAIN/plans#min-instances")
+}
+
+// ErrInvalidMinInstances is returned when the requested min_instances
+// is negative or exceeds the plan's max concurrency. 422 (not 403)
+// because the request shape is wrong, not the plan.
+func ErrInvalidMinInstances(got, maxConcur int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidMinInstances,
+		"Invalid min_instances",
+		fmt.Sprintf("min_instances must be in [0, %d] (plan max_concurrency); got %d.", maxConcur, got)).
+		WithLimit(int64(maxConcur), int64(got)).
+		WithDocs("https://docs.DOMAIN/apps#min-instances")
 }
 
 // ErrValidation is a 400 fallback for malformed request bodies. Used by
