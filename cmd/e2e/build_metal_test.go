@@ -115,8 +115,9 @@ func TestBuildMetal(t *testing.T) {
 // isDockerfile flips the multipart `dockerfile` field on so MapFramework
 // (pkg/builderd/dispatch.go) routes to api.FrameworkDockerfile and the
 // in-VM dispatcher invokes buildctl --frontend dockerfile (ADR-004).
-func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool poolQuerier, key, slug, _ string, sourceTar []byte, isDockerfile bool) {
+func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug, _ string, sourceTar []byte, isDockerfile bool) {
 	t.Helper()
+	store := state.NewPgStore(pool)
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 
@@ -144,11 +145,15 @@ func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool poolQuerier, key, sl
 		// the in-VM buildctl/railpack stderr inline. The log file lives
 		// at <FAAS_SPOOL_ROOT>/<deployment_id>/build.log on the harness
 		// host (the apid subprocess's spool dir).
-		if got, lerr := readBuildStateForDebug(t, pool, buildID); lerr == nil {
+		if got, lerr := store.BuildByID(context.Background(), buildID); lerr == nil {
 			t.Logf("build row at timeout: status=%s failure_class=%s log_path=%s",
 				got.Status, got.FailureClass, got.LogPath)
 			if got.LogPath != "" {
-				if data, rerr := os.ReadFile(got.LogPath); rerr == nil {
+				if data, rerr := os.ReadFile(got.LogPath); rerr != nil {
+					// Surface the read failure — silent failure looks
+					// like "no log produced" when actually the read failed.
+					t.Logf("read build.log at %q failed: %v", got.LogPath, rerr)
+				} else {
 					// Print at most the last 4 KiB so a multi-MB
 					// build log doesn't blow up the test output.
 					tail := data
@@ -172,7 +177,7 @@ func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool poolQuerier, key, sl
 	}
 	// Cross-check: the deployment row must have moved past building too.
 	// builderd.UpdateDeploymentStatus is the second pg_notify in the chain.
-	dep, err := e2etest.GetDeployment(ctx, t, pool, depID)
+	dep, err := store.DeploymentByID(ctx, depID)
 	if err != nil {
 		t.Fatalf("read deployment %s: %v", depID, err)
 	}
@@ -184,11 +189,6 @@ func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool poolQuerier, key, sl
 		t.Errorf("deployment.AppID = %s, want %s", dep.AppID, appID)
 	}
 }
-
-// poolQuerier is the slice of the *pgxpool.Pool API the e2e helpers need;
-// keeps runBuildSubtest signature parallel to the WaitFor* family in
-// pkg/e2etest/waiters.go.
-type poolQuerier = *pgxpool.Pool
 
 // postMultipartDeployment builds a multipart/form-data body with the
 // `source` file part (and optional `dockerfile` flag), POSTs it to apid's
@@ -260,14 +260,4 @@ func parseQueuedDeployment(t *testing.T, body []byte) (deploymentID, buildID str
 		t.Logf("deployment %s status=%q (not 'queued' — apid may have started building already)", resp.ID, resp.Status)
 	}
 	return resp.ID, resp.Build
-}
-
-// readBuildStateForDebug is the failure-path helper used inside the Wait
-// timeout. It returns whatever the build row currently says, even if the
-// poll failed — so the failure message can include the in-flight state
-// + log path. Best-effort: returns an error and an empty Build if the
-// pool is unavailable (e.g. test already in teardown).
-func readBuildStateForDebug(t *testing.T, pool poolQuerier, buildID string) (state.Build, error) {
-	t.Helper()
-	return e2etest.GetBuild(context.Background(), pool, buildID)
 }

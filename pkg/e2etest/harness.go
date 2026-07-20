@@ -528,36 +528,32 @@ func envBuilderBase(t *testing.T) string {
 	return "/srv/fc/base/builder-base.ext4"
 }
 
-// waitBuilderdListens polls the test's pgxpool for a backend session whose
-// running query is `LISTEN build_queued`. builderd is the only consumer of
-// that channel; once we see it the daemon is past db.Open + MigrateUp +
-// db.Subscribe and is ready to receive the harness's first build_queued
-// notification. Avoids the stderr-polling race against startProc's
-// bytes.Buffer (which the stop() path owns exclusively).
+// waitBuilderdListens polls the test's pgxpool for a backend session tagged
+// application_name='faas-builderd'. cmd/builderd/main.go's OpenWithAppName
+// sets this on every connection (including the long-lived LISTEN one), so
+// seeing the tag proves the daemon is past db.Open + MigrateUp + db.Subscribe
+// and is ready to receive the harness's first build_queued notification.
 //
-// pgx surfaces `LISTEN` as the query string while the server holds it;
-// state stays 'idle' once the LISTEN is registered. We check both fields so
-// the assertion fires the instant Subscribe returns, not on the next loop.
+// Filtering on application_name rather than `query ILIKE '%LISTEN%build_queued%'`
+// eliminates two races: (a) pg_stat_activity reports `query` as the last
+// query, which on a fast-rebooted daemon can be a stale `LISTEN` from the
+// previous session; (b) apid or schedd's pg_stat_activity rows never collide
+// because they don't tag themselves 'faas-builderd'. Avoids the stderr-polling
+// race against startProc's bytes.Buffer (which the stop() path owns
+// exclusively).
 func (h *Harness) waitBuilderdListens(d time.Duration) error {
 	h.T.Helper()
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		// We can't directly query other backends' LISTEN state from SQL —
-		// pg_stat_activity exposes their running query. pgx's LISTEN runs
-		// through a private connection in the daemon's pool, so we instead
-		// rely on the side effect: once the daemon has subscribed,
-		// pg_notify('build_queued', ...) from the test pool wakes a
-		// deliverable channel. Cheaper probe: just give it ~50 ms after
-		// start. We bound by the deadline so a hung daemon still fails.
 		var ready bool
 		if err := h.Pool.QueryRow(context.Background(),
-			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE query ILIKE '%LISTEN%build_queued%')`,
+			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = 'faas-builderd')`,
 		).Scan(&ready); err == nil && ready {
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return fmt.Errorf("no LISTEN build_queued in pg_stat_activity within %s", d)
+	return fmt.Errorf("no application_name='faas-builderd' in pg_stat_activity within %s", d)
 }
 
 // SeedAccount creates a fresh account on `plan` with one API key, returns the

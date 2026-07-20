@@ -258,7 +258,11 @@ provision:
       fi
 
       export DEBIAN_FRONTEND=noninteractive
-      apt-get install -y --no-install-recommends docker.io >/dev/null
+      # e2fsprogs is needed locally too (mkfs.ext4 + e2label below) — the
+      # first provisioner block already installs it, but this block runs
+      # on its own when /srv/fc/base/builder-base.ext4 is missing; relying
+      # on a sibling block's install is a hidden coupling.
+      apt-get install -y --no-install-recommends docker.io e2fsprogs >/dev/null
       # Lima's default user already exists in the kvm group; add them to
       # docker so `docker buildx` works without sudo. Mirrors the kvm-group
       # step in the first provisioner block. Same `ubuntu` fallback caveat
@@ -300,7 +304,14 @@ provision:
       # buildx in the guest has no builder registered by default; create one
       # bound to the docker driver so --platform=linux/arm64 resolves locally
       # rather than asking the docker-container driver for a missing remote.
-      docker buildx create --name faas --driver docker --use >/dev/null 2>&1 || docker buildx use faas
+      # Don't chain `|| docker buildx use faas` after the `create --use`
+      # line — it re-runs the use step on every invocation even when create
+      # succeeded. Drive create/use in two separate guarded steps.
+      if ! docker buildx create --name faas --driver docker --use >/dev/null 2>&1; then
+        # `create` failed (e.g. the builder already exists from a previous
+        # run). Switch to it rather than aborting the reprovision.
+        docker buildx use faas >/dev/null 2>&1 || true
+      fi
 
       STAGE="$(mktemp -d)"
       trap 'rm -rf "$STAGE"' EXIT

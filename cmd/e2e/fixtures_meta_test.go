@@ -12,8 +12,11 @@ package e2e_test
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"io"
+	"maps"
+	"slices"
 	"testing"
 )
 
@@ -23,7 +26,7 @@ import (
 // build fails on missing files, which is expensive to debug.
 func assertFixtureContains(t *testing.T, tarBytes []byte, wantNames ...string) {
 	t.Helper()
-	gz, err := gzip.NewReader(bytesReader(tarBytes))
+	gz, err := gzip.NewReader(bytes.NewReader(tarBytes))
 	if err != nil {
 		t.Fatalf("gzip.NewReader: %v", err)
 	}
@@ -42,7 +45,7 @@ func assertFixtureContains(t *testing.T, tarBytes []byte, wantNames ...string) {
 	}
 	for _, n := range wantNames {
 		if !got[n] {
-			t.Errorf("fixture missing %q (got %v)", n, mapKeys(got))
+			t.Errorf("fixture missing %q (got %v)", n, slices.Sorted(maps.Keys(got)))
 		}
 	}
 }
@@ -60,29 +63,4 @@ func TestPythonFixture_Shape(t *testing.T) {
 func TestDockerfileFixture_Shape(t *testing.T) {
 	assertFixtureContains(t, DockerfileFixture(t),
 		"Dockerfile", "faas-build-token")
-}
-
-// bytesReader + mapKeys are tiny helpers to keep the test above readable.
-func bytesReader(b []byte) *byteReader { return &byteReader{b: b} }
-
-type byteReader struct {
-	b []byte
-	i int
-}
-
-func (r *byteReader) Read(p []byte) (int, error) {
-	if r.i >= len(r.b) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.b[r.i:])
-	r.i += n
-	return n, nil
-}
-
-func mapKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }

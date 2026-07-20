@@ -170,40 +170,15 @@ func WaitForBuildStatus(ctx context.Context, t T, pool *pgxpool.Pool, buildID st
 		case state.BuildFailed:
 			return b, fmt.Errorf("build %s failed (failure_class=%q)", buildID, b.FailureClass)
 		}
+		if !time.Now().Before(end) {
+			return last, fmt.Errorf("deadline %s reached before build %s reached %s (last status=%s)", deadline, buildID, want, last.Status)
+		}
 		select {
 		case <-ctx.Done():
 			return last, ctx.Err()
-		case <-time.After(time.Until(end)):
-			return last, fmt.Errorf("deadline %s reached before build %s reached %s (last status=%s)", deadline, buildID, want, last.Status)
 		case <-poll.C:
 		}
 	}
-}
-
-// GetBuild reads a single build row by ID. Exists for the failure-path
-// debug dump in cmd/e2e/build_metal_test.go — when WaitForBuildStatus
-// times out we want to surface whatever state the row is in alongside
-// the last 4 KiB of the build log.
-func GetBuild(ctx context.Context, pool *pgxpool.Pool, buildID string) (state.Build, error) {
-	store := state.NewPgStore(pool)
-	b, err := store.BuildByID(ctx, buildID)
-	if err != nil {
-		return state.Build{}, fmt.Errorf("e2etest: read build %s: %w", buildID, err)
-	}
-	return b, nil
-}
-
-// GetDeployment reads a single deployment row by ID. Used by build_metal_test.go
-// to cross-check that the deployment row advanced past "building" once the
-// build succeeded.
-func GetDeployment(ctx context.Context, t T, pool *pgxpool.Pool, deploymentID string) (state.Deployment, error) {
-	t.Helper()
-	store := state.NewPgStore(pool)
-	dep, err := store.DeploymentByID(ctx, deploymentID)
-	if err != nil {
-		return state.Deployment{}, fmt.Errorf("e2etest: read deployment %s: %w", deploymentID, err)
-	}
-	return dep, nil
 }
 
 // T is the tiny interface shared between *testing.T and helpers. Lets the

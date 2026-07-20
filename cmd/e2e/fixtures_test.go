@@ -81,10 +81,10 @@ if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3000)
 `
 	files := map[string]string{
-		"requirements.txt":  reqs,
-		"app.py":            appPy,
-		".faas-fixture":     "python312\n",
-		"faas-build-token":  time.Now().UTC().Format(time.RFC3339Nano) + "\n",
+		"requirements.txt": reqs,
+		"app.py":           appPy,
+		".faas-fixture":    "python312\n",
+		"faas-build-token": time.Now().UTC().Format(time.RFC3339Nano) + "\n",
 	}
 	return buildTarGz(t, files)
 }
@@ -111,17 +111,21 @@ func DockerfileFixture(t *testing.T) []byte {
 		"EXPOSE 3000\n" +
 		"CMD [\"/bin/busybox\", \"httpd\", \"-f\", \"-p\", \"3000\", \"-h\", \"/public\"]\n"
 	files := map[string]string{
-		"Dockerfile":      dockerfile,
-		".faas-fixture":   "dockerfile\n",
+		"Dockerfile":       dockerfile,
+		".faas-fixture":    "dockerfile\n",
 		"faas-build-token": time.Now().UTC().Format(time.RFC3339Nano) + "\n",
 	}
 	return buildTarGz(t, files)
 }
 
 // buildTarGz packs a flat name→content map into a gzipped tar. Files are
-// stored with mode 0644 and a fixed mtime — apid's validateTarballShape
-// doesn't care, but deterministic mtimes keep the bytes stable so a CI
-// cache hit is possible if we ever decide to embed.
+// stored with mode 0644 and a fixed mtime so the tar headers are stable
+// across runs. The body bytes are *not* byte-stable: every fixture embeds
+// a `faas-build-token` whose value is `time.Now()` at construction time,
+// so two fixtures called within the same tick still get distinct content
+// hashes. apid's validateTarballShape doesn't care; the timestamps exist
+// to make duplicate-build dedup impossible (a CI cache that mistook two
+// calls' tarballs for one would mask a fixture regression).
 func buildTarGz(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -129,11 +133,11 @@ func buildTarGz(t *testing.T, files map[string]string) []byte {
 	tw := tar.NewWriter(gz)
 	for name, body := range files {
 		hdr := &tar.Header{
-			Name:    name,
-			Mode:    0o644,
-			Size:    int64(len(body)),
+			Name:     name,
+			Mode:     0o644,
+			Size:     int64(len(body)),
 			Typeflag: tar.TypeReg,
-			ModTime: time.Unix(0, 0),
+			ModTime:  time.Unix(0, 0),
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			t.Fatalf("buildTarGz: WriteHeader(%s): %v", name, err)

@@ -25,6 +25,21 @@ import (
 //  3. default `postgres:///faas?host=/run/postgresql&user=faas` (peer auth,
 //     matches the ansible postgres role).
 func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
+	return open(ctx, dsnOverride, "")
+}
+
+// OpenWithAppName is Open plus an application_name tag set on every
+// connection pgxpool acquires. The tag is sent at session-start (via
+// RuntimeParams), so it survives on the long-lived LISTEN connection
+// that schedd/builderd/imaged hold for pg_notify — the e2e harness
+// races on this name in pg_stat_activity rather than on `query ILIKE
+// '%LISTEN%…%'`, which can match the wrong session across rapid
+// restart cycles.
+func OpenWithAppName(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, error) {
+	return open(ctx, dsnOverride, appName)
+}
+
+func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, error) {
 	dsn := dsnOverride
 	if dsn == "" {
 		dsn = os.Getenv("DATABASE_URL")
@@ -46,6 +61,9 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 	cfg.MinConns = 1
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
+	if appName != "" {
+		cfg.ConnConfig.RuntimeParams["application_name"] = appName
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
