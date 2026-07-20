@@ -138,10 +138,16 @@ func cmdApp(args []string) int {
 		return 0
 	}
 
-	if _, err := client.UpdateApp(ctx, slug, req); err != nil {
+	updated, err := client.UpdateApp(ctx, slug, req)
+	if err != nil {
 		return printErr("Update failed", err)
 	}
-	fmt.Println("✓ Updated")
+	_, _ = fmt.Fprintln(osStdout, "✓ Updated")
+	if explicit["min"] && *min > 0 {
+		if acct, err := client.Whoami(ctx); err == nil {
+			printResidentCostEcho(api.Plan(acct.Plan), updated.RAMMB, *min)
+		}
+	}
 	return 0
 }
 
@@ -654,9 +660,31 @@ func cmdOpen(args []string) int {
 	}
 	target := app.URL
 	if *dash {
+		// Dashboard page is always served; skip the cold-wake probe.
 		target = dashboardAppURL(apiBase(), slug)
+	} else {
+		// Cold-wake transparency (UX §6.4, issue #65 D1). Probe with
+		// a 2 s deadline; if the response carries `x-faas-wake: cold`,
+		// print the cold-start line immediately, then wait up to 8 s
+		// total for the app to warm before opening — the user would
+		// otherwise see a 502 from the gateway. Probe errors collapse
+		// to "Opening." (don't block on a flaky probe).
+		state, err := probeWakeState(target, 2*time.Second)
+		switch {
+		case err != nil:
+			_, _ = fmt.Fprintln(osStdout, "Opening.")
+		case state:
+			_, _ = fmt.Fprintln(osStdout, "Waking app (cold start) — opening in your browser.")
+			deadline := time.Now().Add(8 * time.Second)
+			for state && time.Now().Before(deadline) {
+				time.Sleep(500 * time.Millisecond)
+				state, _ = probeWakeState(target, 2*time.Second)
+			}
+		default:
+			_, _ = fmt.Fprintln(osStdout, "App is warm — opening.")
+		}
 	}
-	fmt.Printf("Opening %s\n", target)
+	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", target)
 	if err := browser.Open(target); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ Could not open browser: %v\n", err)
 		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
@@ -957,7 +985,8 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 		if json.Unmarshal([]byte(line), &status) == nil &&
 			(status.Status == statusLive || status.Status == "failed") {
 			if status.Status == statusLive {
-				fmt.Printf("✓ Deployed. https://%s.apps.DOMAIN\n", dep.AppID)
+				_, _ = fmt.Fprintf(osStdout, "✓ Deployed. https://%s.apps.DOMAIN\n", dep.AppID)
+				printDeployColdWakeSentence()
 				return 0
 			}
 			return renderDeployFailure(dep)
@@ -1005,10 +1034,21 @@ func pollDeploymentFinal(c *Client, dep api.DeploymentResponse) (api.DeploymentR
 // row (which has the canonical Error string from the DB).
 func terminalExitForDeployment(d api.DeploymentResponse) int {
 	if d.Status == statusLive {
-		fmt.Printf("✓ Deployed. https://%s.apps.DOMAIN\n", d.AppID)
+		_, _ = fmt.Fprintf(osStdout, "✓ Deployed. https://%s.apps.DOMAIN\n", d.AppID)
+		printDeployColdWakeSentence()
 		return 0
 	}
 	return renderDeployFailure(d)
+}
+
+// printDeployColdWakeSentence emits the UX §2.5 cold-wake honesty
+// line after every successful deploy. Routes through osStdout so
+// tests can capture and assert. The two-line shape is verbatim
+// from docs/faas_ux_spec.md:93-101.
+func printDeployColdWakeSentence() {
+	_, _ = fmt.Fprintln(osStdout,
+		"  Your app scales to zero when idle. The first request after idle takes\n"+
+			"  ~0.3–0.8s to wake; requests after that are instant. This is normal and free.")
 }
 
 // renderDeployFailure maps the deployment's Error string to one of the

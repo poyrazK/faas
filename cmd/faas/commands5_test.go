@@ -582,6 +582,70 @@ func TestCmdAppScale_RequiresLogin(t *testing.T) {
 	}
 }
 
+// TestCmdAppScale_Min1_EchoesResidentCost (issue #65 D3) pins the
+// always-resident GB-h/mo echo after `faas app <slug> scale --min 1`
+// on a Pro plan. Cost = (512+8) × 1 × 30 / 1024 ≈ 15.2 GB-h/mo.
+func TestCmdAppScale_Min1_EchoesResidentCost(t *testing.T) {
+	sink := &multiSink{
+		onAccount: func(string) (int, any) {
+			return http.StatusOK, api.AccountResponse{Email: "jane@x.com", Plan: "pro"}
+		},
+		onScale: func(string, []byte) (int, any) {
+			return http.StatusOK, api.AppResponse{Slug: "jane-api", RAMMB: 512, MinInstances: 1}
+		},
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	stdout, restore := captureStdout(t)
+	defer restore()
+
+	if code := cmdAppScale("jane-api", []string{"--min", "1"}); code != 0 {
+		t.Fatalf("cmdAppScale exit = %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"✓ Updated",
+		"1 instance of 512 MB kept warm",
+		"~15.2 GB-h/mo",
+		"1000 millicent/GB-h overage",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout missing %q\nfull: %s", want, out)
+		}
+	}
+}
+
+// TestCmdAppScale_Min0_NoEcho (issue #65 D3) pins that the echo is
+// silent on --min 0 (the default scale-to-zero path).
+func TestCmdAppScale_Min0_NoEcho(t *testing.T) {
+	sink := &multiSink{
+		onAccount: func(string) (int, any) {
+			return http.StatusOK, api.AccountResponse{Plan: "pro"}
+		},
+		onScale: func(string, []byte) (int, any) {
+			return http.StatusOK, api.AppResponse{Slug: "jane-api", RAMMB: 512, MinInstances: 0}
+		},
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	stdout, restore := captureStdout(t)
+	defer restore()
+
+	if code := cmdAppScale("jane-api", []string{"--min", "0"}); code != 0 {
+		t.Fatalf("cmdAppScale exit = %d, want 0", code)
+	}
+	out := stdout.String()
+	if strings.Contains(out, "kept warm") {
+		t.Errorf("min=0 should not echo cost; got %q", out)
+	}
+}
+
 func TestCmdAppScale_ForwardsExplicitFlags(t *testing.T) {
 	var gotBody []byte
 	var gotSlug string

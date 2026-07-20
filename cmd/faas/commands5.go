@@ -451,10 +451,16 @@ func cmdAppScale(slug string, args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if _, err := client.UpdateApp(context.Background(), slug, req); err != nil {
+	updated, err := client.UpdateApp(context.Background(), slug, req)
+	if err != nil {
 		return printErr("Scale failed", err)
 	}
 	_, _ = fmt.Fprintln(osStdout, "✓ Updated")
+	if explicit["min"] && *min > 0 {
+		if acct, err := client.Whoami(context.Background()); err == nil {
+			printResidentCostEcho(api.Plan(acct.Plan), updated.RAMMB, *min)
+		}
+	}
 	return 0
 }
 
