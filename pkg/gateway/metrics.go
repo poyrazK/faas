@@ -29,12 +29,12 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	requests        *prometheus.CounterVec
-	wakeLatency     prometheus.Histogram
-	wakeQueueWait   prometheus.Histogram
-	queueDepth      *prometheus.GaugeVec
-	rateLimited     *prometheus.CounterVec
-	coldWake        *prometheus.CounterVec
+	requests      *prometheus.CounterVec
+	wakeLatency   prometheus.Histogram
+	wakeQueueWait prometheus.Histogram
+	queueDepth    *prometheus.GaugeVec
+	rateLimited   *prometheus.CounterVec
+	coldWake      *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
