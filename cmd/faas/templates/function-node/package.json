@@ -1,0 +1,10 @@
+{
+  "name": "function-faas",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "handler.js",
+  "engines": {
+    "node": ">=20"
+  }
+}

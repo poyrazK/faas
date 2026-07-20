@@ -120,6 +120,11 @@ type Store interface {
 	// evicted_cold) for quota enforcement (spec §4.2).
 	CountDeployedApps(ctx context.Context, accountID string) (int, error)
 	UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error)
+	// RenameApp changes an app's slug atomically (issue #63). Returns
+	// ErrNotFound if oldSlug doesn't belong to accountID; ErrConflict if
+	// newSlug is already taken by another live app. MemStore holds the
+	// same unique-slug invariant the Postgres `apps.slug` index enforces.
+	RenameApp(ctx context.Context, accountID, oldSlug, newSlug string) (App, error)
 	// SetAppMinInstances stamps the per-app floor (ux_spec §6.5) the
 	// reaper honors when parking idle instances. 0 => scale to zero.
 	// Plan-tier gating is the apid handler's job; the store writes the

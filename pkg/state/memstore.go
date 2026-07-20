@@ -428,6 +428,36 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	return a, nil
 }
 
+// RenameApp atomically swaps an app's slug (issue #63). Scans the
+// in-memory map under lock for the (accountID, oldSlug) pair; rejects
+// newSlug collisions with ErrConflict so tests can exercise the same
+// 409 surface PgStore produces from the apps.slug unique constraint.
+func (m *MemStore) RenameApp(_ context.Context, accountID, oldSlug, newSlug string) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var found *App
+	for i := range m.apps {
+		a := m.apps[i]
+		if a.AccountID == accountID && a.Slug == oldSlug && a.Status != AppDeleted {
+			cp := a
+			found = &cp
+			break
+		}
+	}
+	if found == nil {
+		return App{}, ErrNotFound
+	}
+	for i := range m.apps {
+		other := m.apps[i]
+		if other.ID != found.ID && other.Slug == newSlug && other.Status != AppDeleted {
+			return App{}, ErrConflict
+		}
+	}
+	found.Slug = newSlug
+	m.apps[found.ID] = *found
+	return *found, nil
+}
+
 // SetAppMinInstances stamps the per-app floor (ux_spec §6.5). Plan-tier
 // gating is the apid handler's job — the store writes the column
 // unconditionally. Returns ErrNotFound when the app is gone so a

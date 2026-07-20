@@ -134,6 +134,11 @@ const (
 	CodeAccountDeletionConfirm = "account_deletion_confirm_required"
 	CodeAccountDeletionPending = "account_deletion_pending"
 	CodeAccountNotRestorable   = "account_not_restorable"
+
+	// App rename (issue #63). One code covers both "slug taken by
+	// another live app" and "DB unique violation"; the Detail field
+	// distinguishes the two so the CLI can render actionable guidance.
+	CodeAppRenameFailed = "app_rename_failed"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -181,6 +186,8 @@ func StatusForCode(code string) int {
 	case CodeSecretValueTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case CodeAccountDeletionConfirm, CodeAccountDeletionPending, CodeAccountNotRestorable:
+		return http.StatusConflict
+	case CodeAppRenameFailed:
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

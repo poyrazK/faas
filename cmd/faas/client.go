@@ -248,9 +248,36 @@ func (c *Client) UpdateApp(ctx context.Context, slug string, req api.UpdateAppRe
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug, req, &out)
 }
 
+// RenameApp swaps an app's slug atomically (issue #63). The server
+// returns 409 CodeAppRenameFailed on slug collisions; client.do
+// surfaces that as APIError so the CLI can render the RFC 7807 body.
+func (c *Client) RenameApp(ctx context.Context, oldSlug, newSlug string) (api.AppResponse, error) {
+	var out api.AppResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+oldSlug+"/rename",
+		api.RenameAppRequest{NewSlug: newSlug}, &out)
+}
+
 // DeleteApp removes an app.
 func (c *Client) DeleteApp(ctx context.Context, slug string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug, nil, nil)
+}
+
+// ChangePlan changes the account's subscription tier (issue #63). The
+// endpoint is account-scoped (PATCH /v1/account/plan); the CLI exposes
+// it as a top-level `faas plan <plan>` because plan changes are not
+// per-app (see ux_spec §3.1).
+func (c *Client) ChangePlan(ctx context.Context, plan string) (api.AccountResponse, error) {
+	var out api.AccountResponse
+	return out, c.do(ctx, "PATCH", "/v1/account/plan",
+		map[string]string{"plan": plan}, &out)
+}
+
+// GetStatusSLO fetches the public SLO snapshot (issue #63). The route
+// is unauthenticated by design — the CLI still sends the bearer token
+// if present (apid ignores it on this route).
+func (c *Client) GetStatusSLO(ctx context.Context) (api.StatusPage, error) {
+	var out api.StatusPage
+	return out, c.do(ctx, "GET", "/status/slo.json", nil, &out)
 }
 
 // Rollback re-promotes the most recent superseded deployment.
