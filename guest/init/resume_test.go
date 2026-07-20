@@ -7,8 +7,10 @@ import (
 )
 
 // TestResumeOrdering asserts the spec §11 V6 sequence:
-//   AddEntropy (host CSPRNG bytes) → ReseedEntropy (virtio-rng) →
-//   StepClock → WriteUUIDMarker.
+//
+//	AddEntropy (host CSPRNG bytes) → ReseedEntropy (virtio-rng) →
+//	StepClock → WriteUUIDMarker.
+//
 // AddEntropy MUST run first: virtio-rng state is snapshotted, so without a
 // unique prefix the pool gets identical input on every restore and the UUID
 // collides (the regression that motivated ADR-022 §"Why the host ships
@@ -17,10 +19,10 @@ import (
 func TestResumeOrdering(t *testing.T) {
 	var order []string
 	ops := ResumeOps{
-		HostEntropy: []byte{1, 2, 3},
-		AddEntropy:  func(_ []byte) error { order = append(order, "add"); return nil },
-		ReseedEntropy: func() error { order = append(order, "reseed"); return nil },
-		StepClock:      func() error { order = append(order, "clock"); return nil },
+		HostEntropy:     []byte{1, 2, 3},
+		AddEntropy:      func(_ []byte) error { order = append(order, "add"); return nil },
+		ReseedEntropy:   func() error { order = append(order, "reseed"); return nil },
+		StepClock:       func() error { order = append(order, "clock"); return nil },
 		WriteUUIDMarker: func() error { order = append(order, "uuid"); return nil },
 	}
 	if err := ops.Resume(); err != nil {
@@ -40,8 +42,8 @@ func TestResumeOrdering(t *testing.T) {
 func TestResumeAddEntropyFailureStopsBeforeReseed(t *testing.T) {
 	clockRan := false
 	ops := ResumeOps{
-		HostEntropy: []byte{1, 2, 3},
-		AddEntropy:  func(_ []byte) error { return fmt.Errorf("ioctl EPERM") },
+		HostEntropy:   []byte{1, 2, 3},
+		AddEntropy:    func(_ []byte) error { return fmt.Errorf("ioctl EPERM") },
 		ReseedEntropy: func() error { t.Error("reseed must not run when AddEntropy fails"); return nil },
 		StepClock:     func() error { clockRan = true; return nil },
 	}
@@ -100,8 +102,8 @@ func TestResumeUnconfigured(t *testing.T) {
 func TestResumeUUIDMarkerFailurePropagates(t *testing.T) {
 	clockRan := true
 	ops := ResumeOps{
-		ReseedEntropy:  func() error { return nil },
-		StepClock:      func() error { return nil },
+		ReseedEntropy:   func() error { return nil },
+		StepClock:       func() error { return nil },
 		WriteUUIDMarker: func() error { return fmt.Errorf("uuid write EPERM") },
 	}
 	if err := ops.Resume(); err == nil {
@@ -132,10 +134,10 @@ func TestResumeUUIDMarkerNilIsOptional(t *testing.T) {
 func TestResumeAddEntropyEmptyPayloadIsNoop(t *testing.T) {
 	called := false
 	ops := ResumeOps{
-		HostEntropy: nil,
-		AddEntropy:  func(b []byte) error { called = true; return nil },
+		HostEntropy:   nil,
+		AddEntropy:    func(b []byte) error { called = true; return nil },
 		ReseedEntropy: func() error { return nil },
-		StepClock:      func() error { return nil },
+		StepClock:     func() error { return nil },
 	}
 	if err := ops.Resume(); err != nil {
 		t.Fatalf("Resume with nil HostEntropy: %v", err)
