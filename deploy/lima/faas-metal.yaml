@@ -65,18 +65,52 @@ provision:
       #!/bin/bash
       set -eux -o pipefail
 
+      # Lima's hostagent races its own apt-get installs (nerdctl, containerd
+      # binaries downloaded by `limactl start`) against our per-boot
+      # provision scripts. The shared dpkg lock is held when the per-boot
+      # scripts fire, so a single apt-get call fails with
+      # "Could not get lock /var/lib/dpkg/lock-frontend". Wait it out
+      # rather than failing the whole block. Same helper covers all
+      # three blocks; defined once here.
+      apt_wait() {
+        local deadline=$((SECONDS + 60))
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+              && ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+            return 0
+          fi
+          sleep 1
+        done
+        echo "apt_wait: dpkg lock still held after 60s" >&2
+        return 1
+      }
+
       export DEBIAN_FRONTEND=noninteractive
+      apt_wait
       apt-get update -y
+      apt_wait
       apt-get install -y --no-install-recommends \
         build-essential e2fsprogs iproute2 iptables git curl ca-certificates \
         busybox-static jq
 
       # Let the default (non-root) Lima user open /dev/kvm without sudo.
-      # The Lima user is not necessarily uid 1000 (it mirrors the host uid),
-      # so pick the first regular login user rather than assuming 1000.
+      # The Lima cloud-init image's "regular" login user varies across
+      # versions — Ubuntu Noble images historically created `ubuntu` with
+      # uid≥1000, but updated images (Lima 1.0+) name the user after the
+      # host's macOS user (`poyrazk.linux` / `poyrazk`, uid 501) and
+      # create it asynchronously with our per-boot scripts. The awk
+      # '$3>=1000' filter rejects uid 501, and the lookup often returns
+      # empty before cloud-init's user-setup module runs.
+      #
+      # Resolution: scan for a uid>=500 shell-user with a real login shell,
+      # fall back to `poyrazk` (the current Lima default), then `ubuntu`
+      # (legacy). That covers all three cases without rewriting this on
+      # every Lima bump.
       groupadd -f kvm || true
-      DEFAULT_USER="$(getent passwd | awk -F: '$3>=1000 && $3<65000 {print $1; exit}')" || true
-      usermod -aG kvm "${DEFAULT_USER:-ubuntu}" || true
+      DEFAULT_USER="$(getent passwd | awk -F: '$3>=500 && $3<65000 && $7 ~ /(bash|zsh|sh)$/ {print $1; exit}')"
+      DEFAULT_USER="${DEFAULT_USER:-poyrazk}"
+      DEFAULT_USER="${DEFAULT_USER:-ubuntu}"
+      usermod -aG kvm "${DEFAULT_USER}" || true
 
       # Go 1.25.7 (matches go.mod), arm64.
       GO_VER=go1.25.7
@@ -128,11 +162,32 @@ provision:
       #!/bin/bash
       set -eux -o pipefail
 
+      # Same dpkg-lock helper as the FC-setup block — Lima's hostagent
+      # can still be holding the lock when this block runs.
+      apt_wait() {
+        local deadline=$((SECONDS + 60))
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+              && ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+            return 0
+          fi
+          sleep 1
+        done
+        echo "apt_wait: dpkg lock still held after 60s" >&2
+        return 1
+      }
+
       # Default user has a writable mount of host $HOME at the same path
       # (Lima `mounts: writable: true`). The repo worktree is mounted under
-      # the host uid; the lima-default user mirrors that uid.
-      DEFAULT_USER="$(getent passwd | awk -F: '$3>=1000 && $3<65000 {print $1; exit}')"
-      DEFAULT_HOME="$(getent passwd "${DEFAULT_USER:-ubuntu}" | cut -d: -f6)"
+      # the host uid; the lima-default user mirrors that uid. The awk
+      # '$3>=1000' filter rejects the current Lima image's `poyrazk` user
+      # (uid 501) — see the FC-setup block for the same fix.
+      DEFAULT_USER="$(getent passwd | awk -F: '$3>=500 && $3<65000 && $7 ~ /(bash|zsh|sh)$/ {print $1; exit}')"
+      DEFAULT_USER="${DEFAULT_USER:-poyrazk}"
+      DEFAULT_USER="${DEFAULT_USER:-ubuntu}"
+      DEFAULT_HOME="$(getent passwd "${DEFAULT_USER}" | cut -d: -f6)"
+      DEFAULT_HOME="${DEFAULT_HOME:-/home/${DEFAULT_USER}}"
+      apt_wait
 
       # Search the default user's home for the repo (typical layout: ~/code/faas
       # or the worktree is directly at $HOME). We probe a few known locations so
@@ -192,9 +247,10 @@ provision:
       # The V6 entrypoint: capture /proc/sys/kernel/random/uuid AFTER the
       # resume hook fires, then busybox httpd-serve / on :8080 so waitReady
       # can probe (and the test can fetch /etc/faas/uuid.txt).
-      cat >"${WORK}/etc/faas/app.json" <<'JSON'
-{"entrypoint":["/bin/sh","-c","cat /proc/sys/kernel/random/uuid > /etc/faas/uuid.txt && exec /bin/busybox httpd -f -p 8080 -h /"],"port":8080}
-JSON
+      # Single-line printf (not a heredoc) because the JSON braces trip
+      # YAML's flow-mapping indicator inside the script: | literal block —
+      # yaml.v2 refuses to parse a `{` at column 1 of a literal value.
+      printf '%s\n' '{"entrypoint":["/bin/sh","-c","cat /proc/sys/kernel/random/uuid > /etc/faas/uuid.txt && exec /bin/busybox httpd -f -p 8080 -h /"],"port":8080}' >"${WORK}/etc/faas/app.json"
 
       # Pre-size and mkfs. ^has_journal matches the busybox helper — drive0
       # is read-only in the two-drive scheme, journal replay panics on ro mount.
@@ -209,3 +265,161 @@ JSON
       chmod 0644 "$V6_LAYER"
 
       ls -la /srv/fc/base/
+
+  # Build the M6 builder base rootfs (spec §4.5, ADR-003, issue #57 pre-flight).
+  # imaged::EnsureBaseExt4 normally pulls ghcr.io/onebox-faas/builder-base:latest
+  # at startup and assembles /srv/fc/base/builder-base.ext4. That path requires
+  # the ghcr.io image to already be pushed + reachable; the Lima guest has no
+  # credentials and pushing per-dev is not the right model. Instead we build
+  # the same image locally from images/builder-base.Dockerfile with buildx and
+  # flatten it to a directory, then mkfs.ext4 -d into the ext4. The wire format
+  # of the resulting rootfs matches what the EX44's imaged produces: every
+  # layer flattened, no OCI manifest, mkfs has_journal disabled (the
+  # two-drive drive0 is read-only — journal replay would panic).
+  #
+  # This blocks test #57 (M6 orchestrator e2e: apid → pg_notify → builderd →
+  # vmmd → firecracker → Railpack/buildctl → OCI image.tar). Without
+  # builder-base.ext4 on disk, builderd's vm_metal.go path errors at the
+  # cold-boot step and the harness cannot exercise the in-VM build flow.
+  #
+  # Idempotent: if /srv/fc/base/builder-base.ext4 exists with label
+  # "faas-builder-bas" we skip (re-provisioning doesn't churn it). Delete + re-
+  # provision to force a rebuild after an images/builder-base.Dockerfile change.
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      BASE=/srv/fc/base/builder-base.ext4
+      # Don't trust a stale file from an earlier provisioning run; the label
+      # check is the cheap gate (debugfs already showed it was 'applayer'
+      # at one point — clearly the wrong image). A 16MB applayer file is the
+      # signal that something else wrote into this slot.
+      if [ -f "$BASE" ] && [ "$(e2label "$BASE" 2>/dev/null || true)" = "faas-builder-bas" ]; then
+        SIZE=$(stat -c%s "$BASE")
+        if [ "$SIZE" -gt 100000000 ]; then
+          echo "builder-base already staged ($SIZE bytes, label faas-builder-bas); skipping rebuild."
+          exit 0
+        fi
+        echo "builder-base present but only $SIZE bytes — overwriting with a real build."
+      fi
+
+      # Same dpkg-lock helper as the FC-setup block — this block runs
+      # after both prior blocks and can hit the same lock contention.
+      apt_wait() {
+        local deadline=$((SECONDS + 60))
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+              && ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+            return 0
+          fi
+          sleep 1
+        done
+        echo "apt_wait: dpkg lock still held after 60s" >&2
+        return 1
+      }
+
+      export DEBIAN_FRONTEND=noninteractive
+      # e2fsprogs is needed locally too (mkfs.ext4 + e2label below) — the
+      # first provisioner block already installs it, but this block runs
+      # on its own when /srv/fc/base/builder-base.ext4 is missing; relying
+      # on a sibling block's install is a hidden coupling.
+      apt_wait
+      apt-get install -y --no-install-recommends docker.io e2fsprogs >/dev/null
+      # Lima's default user already exists in the kvm group; add them to
+      # docker so `docker buildx` works without sudo. Mirrors the kvm-group
+      # step in the first provisioner block. The same uid>=1000 vs
+      # poyrazk(uid 501) caveat applies — see the FC-setup block.
+      DEFAULT_USER="$(getent passwd | awk -F: '$3>=500 && $3<65000 && $7 ~ /(bash|zsh|sh)$/ {print $1; exit}')"
+      DEFAULT_USER="${DEFAULT_USER:-poyrazk}"
+      DEFAULT_USER="${DEFAULT_USER:-ubuntu}"
+      usermod -aG docker "${DEFAULT_USER}" || true
+
+      REPO=""
+      DEFAULT_HOME="$(getent passwd "${DEFAULT_USER}" | cut -d: -f6)"
+      DEFAULT_HOME="${DEFAULT_HOME:-/home/${DEFAULT_USER}}"
+      for candidate in \
+        "${DEFAULT_HOME}/faas" \
+        "${DEFAULT_HOME}/code/faas" \
+        "${DEFAULT_HOME}/work/faas" \
+        "${DEFAULT_HOME}/src/faas"; do
+        if [ -f "${candidate}/guest/init/main_linux.go" ]; then
+          REPO="${candidate}"
+          break
+        fi
+      done
+      if [ -z "$REPO" ]; then
+        echo >&2 "builder-base build: could not locate faas repo checkout under ${DEFAULT_HOME}."
+        exit 1
+      fi
+      echo "builder-base build: repo=${REPO}"
+
+      # guest-init must exist at ${REPO}/guest/init/faas-guest-init (the
+      # Dockerfile COPY target). Build it with the same flags as the V6
+      # provisioner block — arm64, cgo off, the static-binary contract
+      # guest/init expects. If the binary is already staged from an earlier
+      # provisioner run this is a no-op overwrite.
+      if [ ! -x "${REPO}/guest/init/faas-guest-init" ]; then
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+          go build -trimpath -tags linux -o "${REPO}/guest/init/faas-guest-init" \
+          "${REPO}/guest/init"
+      fi
+
+      # buildx in the guest has no builder registered by default; create one
+      # bound to the docker driver so --platform=linux/arm64 resolves locally
+      # rather than asking the docker-container driver for a missing remote.
+      # Don't chain `|| docker buildx use faas` after the `create --use`
+      # line — it re-runs the use step on every invocation even when create
+      # succeeded. Drive create/use in two separate guarded steps.
+      if ! docker buildx create --name faas --driver docker --use >/dev/null 2>&1; then
+        # `create` failed (e.g. the builder already exists from a previous
+        # run). Switch to it rather than aborting the reprovision.
+        docker buildx use faas >/dev/null 2>&1 || true
+      fi
+
+      STAGE="$(mktemp -d)"
+      trap 'rm -rf "$STAGE"' EXIT
+
+      # type=local,dest=… writes the unpacked, target-arch rootfs tree directly
+      # to a directory. Single command, no OCI manifest to parse, no layer
+      # apply loop to keep in lockstep with pkg/rootfs.ApplyLayerGz — buildx
+      # does the layer flatten for us. The arm64 build is intentional: this
+      # is the arm64 Lima guest, not the EX44.
+      docker buildx build \
+        --platform=linux/arm64 \
+        --builder faas \
+        --load=false \
+        --output "type=local,dest=${STAGE}" \
+        -f "${REPO}/images/builder-base.Dockerfile" \
+        "${REPO}" >/dev/null
+
+      # Sanity: buildkit + railpack + guest-init must be in the tree. If any
+      # of these are missing the build above silently produced a wrong layer
+      # (the COPY gitref args above are the usual culprit) — fail loud.
+      for must in /usr/local/bin/buildkitd /usr/local/bin/buildctl \
+                  /usr/local/bin/railpack /usr/local/bin/faas-guest-init; do
+        if [ ! -e "${STAGE}${must}" ]; then
+          echo >&2 "builder-base build: ${must} missing from unpacked tree."
+          echo >&2 "Is images/builder-base.Dockerfile current? Was guest-init built?"
+          exit 1
+        fi
+      done
+
+      # Drive0 is mounted read-only — mkfs with ^has_journal so the kernel
+      # doesn't try to replay on mount and panic. Matches the V6 rootfs
+      # provisioner block.
+      SIZE_MB=$(du -sm "$STAGE" | awk '{print $1 + 64}')  # content + 64 MB slack
+      if [ "$SIZE_MB" -lt 256 ]; then SIZE_MB=256; fi
+      truncate -s "${SIZE_MB}M" "$BASE"
+      mkfs.ext4 -O '^has_journal' -d "$STAGE" -L faas-builder-bas -F "$BASE" >/dev/null
+      chmod 0644 "$BASE"
+
+      # imaged::EnsureBaseExt4's idempotency check reads
+      # ${outImage}.digest and matches it against the remote config digest.
+      # On Lima we have no remote, so the sidecar is meaningless — but write
+      # a sentinel so an operator inspecting the dir sees the path is owned
+      # by the local build, not a half-pulled registry stage.
+      echo "local-lima-build:$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${BASE}.digest"
+
+      ls -la /srv/fc/base/
+      echo "builder-base staged: $(stat -c%s "$BASE") bytes, label faas-builder-bas"

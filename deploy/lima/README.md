@@ -44,8 +44,18 @@ Tear down with `limactl delete -f faas-metal`.
 
   To rebuild after a `guest/init` source change:
   `limactl delete -f faas-metal && limactl start deploy/lima/faas-metal.yaml`.
-
-`run-metal.sh` sets `FAAS_TEST_KERNEL` / `FAAS_TEST_BASE_ROOTFS` /
+- **M6 builder base rootfs** staged at `/srv/fc/base/builder-base.ext4`
+  (label `faas-builder-bas`, mkfs `^has_journal` to match the two-drive
+  read-only drive0 contract). Built by the third provisioner block from
+  `images/builder-base.Dockerfile` via `docker buildx build
+  --platform=linux/arm64 --output type=local,dest=…` followed by
+  `mkfs.ext4 -d`. Required by issue #57's M6 orchestrator e2e test —
+  `builderd`'s cold-boot path (`pkg/builderd/vm_metal.go`) reads this
+  image as drive0 for every builder VM. Idempotent: re-provisioning skips
+  if the file is present, labelled correctly, and > 100 MB (a 16 MB
+  `applayer`-labelled stub from a prior run is treated as stale and
+  overwritten).
+  `run-metal.sh` sets `FAAS_TEST_KERNEL` / `FAAS_TEST_BASE_ROOTFS` /
 `FAAS_TEST_LAYER_ROOTFS` / `FAAS_TEST_V6_BASE` / `FAAS_TEST_V6_LAYER` /
 `FAAS_TEST_FC_VERSION` for the tests (see `pkg/fcvm/manager_metal_test.go`
 and `pkg/fcvm/v6_resume_ext4_metal_test.go`).

@@ -33,6 +33,8 @@
 //     FAAS_OCI_INSECURE=1                  (test-only)
 //   - schedd      toml   socket_path / vmmd_socket
 //   - vmmd        toml   socket_path / kernel_path (metal tag only)
+//   - builderd    toml   vmmd_socket / cache_dir / builder_base /
+//     build_drive_dir / build_export_dir (issue #57 M6 e2e)
 //
 // FAAS_OCI_INSECURE swaps imaged's egress-guarded http.Client for a plain one
 // so the fakeregistry on 127.0.0.1 is reachable. The guard denies loopback by
@@ -73,17 +75,18 @@ import (
 //
 // Fields are exported for test consumption: H.APIDURL, H.GatewayURL, H.Pool.
 type Harness struct {
-	T          *testing.T
-	Pool       *pgxpool.Pool
-	TmpDir     string
-	BinDir     string
-	SockDir    string // short-path unix-socket directory (see Start comment)
-	APIDURL    string
-	ScheddSock string
-	VMMDPath   string
-	VMMDSock   string
-	GatewayURL string
-	ImagedTmp  string // FAAS_APPS_ROOT
+	T           *testing.T
+	Pool        *pgxpool.Pool
+	TmpDir      string
+	BinDir      string
+	SockDir     string // short-path unix-socket directory (see Start comment)
+	APIDURL     string
+	ScheddSock  string
+	VMMDPath    string
+	VMMDSock    string
+	GatewayURL  string
+	ImagedTmp   string // FAAS_APPS_ROOT
+	BuilderdCfg string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
 
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
@@ -260,13 +263,62 @@ kernel_path = %q
 	if which&Meterd != 0 {
 		startMeterd(t, h, bin, dbURL)
 	}
+	if which&Builderd != 0 {
+		// Issue #57: builderd participates in the M6 orchestrator e2e.
+		// It subscribes to build_queued on the same Postgres the harness
+		// uses, then asks vmmd to cold-boot a builder microVM. The
+		// per-test config redirects cache_dir, build_drive_dir, and
+		// build_export_dir into <tmp> so two parallel runs never collide
+		// (each t.TempDir is unique per test process). Without the env
+		// override (FAAS_BUILDERD_CONFIG, cmd/builderd/main.go), the
+		// daemon would load /etc/faas/builderd.toml and write into the
+		// host's production dirs.
+		cfgPath := filepath.Join(tmp, "builderd.toml")
+		vmmdSock := h.VMMDSock
+		if vmmdSock == "" {
+			vmmdSock = "/run/faas/vmmd.sock" // matches builderd default
+		}
+		cfg := fmt.Sprintf(
+			`vmmd_socket = %q
+cache_dir = %q
+builder_base = %q
+build_drive_dir = %q
+build_export_dir = %q
+`,
+			vmmdSock,
+			filepath.Join(tmp, "cache"),
+			envBuilderBase(t),
+			filepath.Join(tmp, "drive"),
+			filepath.Join(tmp, "out"),
+		)
+		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+			t.Fatalf("e2etest: write builderd.toml: %v", err)
+		}
+		env := []string{
+			"FAAS_BUILDERD_CONFIG=" + cfgPath,
+			"DATABASE_URL=" + dbURL,
+			"PATH=" + os.Getenv("PATH"),
+			"HOME=" + os.Getenv("HOME"),
+		}
+		h.procs = append(h.procs, startProc(t, bin, "builderd", env))
+		h.BuilderdCfg = cfgPath
+		// builderd doesn't expose a TCP/unix listener (it's a pg_notify-
+		// driven orchestrator). imaged has the same shape and the harness
+		// already relies on the same "no wait, daemon self-asserts readiness
+		// in its first log line" pattern. giveSubscribedToBuildQueued polls
+		// pg_stat_activity for a session holding LISTEN build_queued in this
+		// schema — the only consumer of that channel is builderd.
+		if err := h.waitBuilderdListens(10 * time.Second); err != nil {
+			t.Fatalf("e2etest: builderd did not subscribe to build_queued: %v", err)
+		}
+	}
 
 	t.Cleanup(h.stop)
 	return h
 }
 
 // Which flags select which daemons to boot. Bitmask so a test can ask for
-// just apid (quota) or all six (metal + meterd).
+// just apid (quota) or all seven (M6 metal + M7 meterd).
 type Which int
 
 const (
@@ -276,10 +328,11 @@ const (
 	Imaged
 	Gatewayd
 	Meterd
+	Builderd
 )
 
 // All is the full set for the metal e2e test.
-const All = APID | Schedd | VMMD | Imaged | Gatewayd | Meterd
+const All = APID | Schedd | VMMD | Imaged | Gatewayd | Meterd | Builderd
 
 const testDomain = "apps.test.example"
 
@@ -477,7 +530,7 @@ func (h *Harness) stop() {
 func buildBinaries(t *testing.T, bin string) {
 	t.Helper()
 	modulePath := modulePath(t)
-	for _, d := range []string{"apid", "schedd", "vmmd", "imaged", "gatewayd", "meterd"} {
+	for _, d := range []string{"apid", "schedd", "vmmd", "imaged", "gatewayd", "meterd", "builderd"} {
 		out := filepath.Join(bin, d)
 		cmd := exec.Command("go", "build", "-o", out, modulePath+"/cmd/"+d)
 		cmd.Stderr = os.Stderr
@@ -612,6 +665,45 @@ func dumpProcs(t *testing.T) {
 			t.Logf("e2etest: %s still running, output:\n%s", filepath.Base(p.Path), buf.String())
 		}
 	}
+}
+
+// envBuilderBase returns FAAS_BUILDER_BASE_PATH if set (lets the harness
+// point builderd at the Lima-staged arm64 rootfs), otherwise the EX44 default.
+// Mirrors cmd/imaged/main.go's envOr pattern.
+func envBuilderBase(t *testing.T) string {
+	t.Helper()
+	if v := os.Getenv("FAAS_BUILDER_BASE_PATH"); v != "" {
+		return v
+	}
+	return "/srv/fc/base/builder-base.ext4"
+}
+
+// waitBuilderdListens polls the test's pgxpool for a backend session tagged
+// application_name='faas-builderd'. cmd/builderd/main.go's OpenWithAppName
+// sets this on every connection (including the long-lived LISTEN one), so
+// seeing the tag proves the daemon is past db.Open + MigrateUp + db.Subscribe
+// and is ready to receive the harness's first build_queued notification.
+//
+// Filtering on application_name rather than `query ILIKE '%LISTEN%build_queued%'`
+// eliminates two races: (a) pg_stat_activity reports `query` as the last
+// query, which on a fast-rebooted daemon can be a stale `LISTEN` from the
+// previous session; (b) apid or schedd's pg_stat_activity rows never collide
+// because they don't tag themselves 'faas-builderd'. Avoids the stderr-polling
+// race against startProc's bytes.Buffer (which the stop() path owns
+// exclusively).
+func (h *Harness) waitBuilderdListens(d time.Duration) error {
+	h.T.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		var ready bool
+		if err := h.Pool.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = 'faas-builderd')`,
+		).Scan(&ready); err == nil && ready {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fmt.Errorf("no application_name='faas-builderd' in pg_stat_activity within %s", d)
 }
 
 // SeedAccount creates a fresh account on `plan` with one API key, returns the
