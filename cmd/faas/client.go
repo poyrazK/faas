@@ -34,8 +34,16 @@ type APIError struct{ Problem api.Problem }
 
 func (e *APIError) Error() string {
 	p := e.Problem
-	if p.DocsURL != "" {
-		return fmt.Sprintf("%s\n  %s\n  → %s", p.Title, p.Detail, p.DocsURL)
+	docs := p.DocsURL
+	// UX §3.3 requires three lines always. Synthesise the docs URL from
+	// the stable Code when the server omits DocsURL (which happens for
+	// problems reconstructed from a bare gRPC status, or codes the
+	// constructor chain doesn't decorate with WithDocs).
+	if docs == "" && p.Code != "" {
+		docs = docsURLForCode(p.Code)
+	}
+	if docs != "" {
+		return fmt.Sprintf("%s\n  %s\n  → %s", p.Title, p.Detail, docs)
 	}
 	return fmt.Sprintf("%s\n  %s", p.Title, p.Detail)
 }

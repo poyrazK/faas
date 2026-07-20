@@ -425,3 +425,46 @@ func TestAPIError_RenderWithAndWithoutDocs(t *testing.T) {
 		t.Errorf("without docs: %q must not include docs URL", without.Error())
 	}
 }
+
+// TestAPIError_FallbackURLAlwaysThreeLines (issue #64 D2) locks UX §3.3:
+// the three-line shape must hold even when the server omits DocsURL.
+// Without the per-code fallback, this test fails on the second case
+// because the renderer dropped the third line.
+func TestAPIError_FallbackURLAlwaysThreeLines(t *testing.T) {
+	cases := []struct {
+		name string
+		code string
+		want string // substring the third line should contain
+	}{
+		{"plan_limit_apps", api.CodePlanLimitApps, docsURLPrefix + "/plan-limit-apps"},
+		{"build_undetected", api.CodeBuildUndetected, docsURLPrefix + "/build/detect"},
+		{"billing_past_due", api.CodeBillingPastDue, docsURLPrefix + "/billing"},
+		{"capacity", api.CodeCapacity, docsURLPrefix + "/capacity"},
+		{"unknown_code_falls_back_to_generic", "no_such_code_xyz", docsURLPrefix},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ae := APIError{Problem: api.Problem{
+				Title: "Something broke", Detail: "details here", Code: tc.code,
+			}}
+			got := ae.Error()
+			lines := strings.Split(got, "\n")
+			if len(lines) != 3 {
+				t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), got)
+			}
+			if !strings.HasPrefix(lines[2], "  → ") {
+				t.Errorf("third line should start with '  → ', got %q", lines[2])
+			}
+			if !strings.Contains(lines[2], tc.want) {
+				t.Errorf("third line should contain %q, got %q", tc.want, lines[2])
+			}
+		})
+	}
+
+	// Empty Code → 2-line fallback (no docs URL to synthesise — preserves
+	// today's behavior for malformed problem bodies).
+	ae := APIError{Problem: api.Problem{Title: "T", Detail: "D"}}
+	if got, want := len(strings.Split(ae.Error(), "\n")), 2; got != want {
+		t.Errorf("empty Code should render %d lines, got %d:\n%s", want, got, ae.Error())
+	}
+}
