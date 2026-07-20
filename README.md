@@ -121,13 +121,15 @@ arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
   POST, idempotency-keyed on `(accountID, RFC3339 hour)`) for the
   hourly Stripe push (issue #52). Strict-exit if
   `FAAS_SCHEDD_ADDR` is unset, so a misconfigured deployment never
-  silently runs unbounded. End-to-end e2e:
-  `cmd/e2e/meterd_quota_e2e_test.go::TestQuotaBreach_ParkInstanceWithinOneTick`
-  greens a Free account → suspended + parked within one quota tick.
+  silently runs unbounded. The Free-tier hard-stop path is unit-
+  covered by `pkg/meter/meter_test.go::TestFreeHardStop`
+  (M7 §14 in-package gate); the Stripe push has a sandbox unit test
+  (`pkg/stripex/usage_test.go::TestPushUsageRecord_PostsToStripeSandbox`,
+  `t.Skip`-ed without `STRIPE_API_KEY=sk_test_…`).
   Caveat: per-account Stripe `si_…` lookup is stamped from the
   `customer.subscription.created` webhook in
   `pkg/stripex/products.go::EnsureCustomer`, which is still a stub
-  for slice follow-up (M7 follow-up: products.go real-SDK wiring).
+  (M7 follow-up: products.go real-SDK wiring).
 - **M7.5 — thin dashboard + githubd.** ✅ `pkg/dashboard` ships
   server-rendered Go `html/template` pages (apps, billing, usage,
   login, account, deployment-detail); ADR-011 keeps dashboard on
