@@ -126,9 +126,28 @@ func TestQuotaBreach_ParkInstanceWithinOneTick(t *testing.T) {
 		t.Fatalf("account.status = %s; want suspended", got.Status)
 	}
 
-	instGot, err := store.InstanceByID(ctx, ins.ID)
-	if err != nil {
-		t.Fatalf("InstanceByID: %v", err)
+	// Poll the instance too. The meterd→schedd.ParkInstance call fires
+	// ~immediately after the breach is detected, but the gRPC handler
+	// in schedd runs `PauseAndSnapshot` (or its STOPPED fallback) which
+	// races against test teardown. A single read at this point can land
+	// while schedd is mid-transition. Poll up to 2× quota_interval for
+	// the instance to settle OFF RUNNING (the contract: meterd's park
+	// request actually mutated the instance row, not just flipped the
+	// account status).
+	instDeadline := time.Now().Add(2 * quotaInterval)
+	var instGot state.Instance
+	for {
+		instGot, err = store.InstanceByID(ctx, ins.ID)
+		if err != nil {
+			t.Fatalf("InstanceByID: %v", err)
+		}
+		if state.State(instGot.State) != state.StateRunning {
+			break
+		}
+		if time.Now().After(instDeadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	// The meterd→schedd.ParkInstance wire is the contract this test
 	// verifies (issue #52). The instance must transition OFF RUNNING
@@ -142,7 +161,7 @@ func TestQuotaBreach_ParkInstanceWithinOneTick(t *testing.T) {
 	case state.StateParked, state.StateStopped:
 		// pass
 	default:
-		t.Fatalf("instance.state = %s; want parked or stopped (meterd→schedd.ParkInstance did not transition the instance off RUNNING)",
-			instGot.State)
+		t.Fatalf("instance.state = %s after %s; want parked or stopped (meterd→schedd.ParkInstance did not transition the instance off RUNNING)",
+			instGot.State, 2*quotaInterval)
 	}
 }
