@@ -1,0 +1,29 @@
+[Unit]
+Description=Prometheus node_exporter (faas host telemetry)
+Documentation=https://github.com/prometheus/node_exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=node_exporter
+Group=node_exporter
+Type=simple
+ExecStart=/usr/local/bin/node_exporter \
+  --web.listen-address={{ node_exporter_listen_addr }} \
+  --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|run)($|/) \
+  --collector.netclass.ignored-devices=^(veth|docker) \
+  --collector.diskstats.ignored-devices=^(loop|dm-)
+Restart=on-failure
+RestartSec=5
+
+# Hardening (spec §11 baseline).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

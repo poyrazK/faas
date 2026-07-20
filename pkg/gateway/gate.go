@@ -21,7 +21,15 @@ type WakeGate struct {
 	// changes, so the metrics layer can keep gateway_queue_depth current.
 	// Optional; nil-safe at every call site.
 	onChange func(appID string, depth int)
+	// metrics observes how long each caller waited in the queue. Optional;
+	// nil keeps the gate usable in unit tests that don't wire metrics.
+	metrics *Metrics
 }
+
+// SetMetrics attaches a *Metrics so Wait can observe the per-caller wait
+// duration (gateway_wake_queue_wait_seconds). Safe to call before serve
+// starts; nil-safe on the gate's read path.
+func (g *WakeGate) SetMetrics(m *Metrics) { g.metrics = m }
 
 type wakeCall struct {
 	done      chan struct{}
@@ -62,12 +70,30 @@ func NewWakeGate(capacity int, ttl time.Duration) *WakeGate {
 // departs, so a follow-on request that arrives microseconds after ensure()
 // returns cannot trigger a second wake (regression test:
 // TestConcurrentColdRequestsCoalesceToOneWake).
+//
+// Queue-wait timing: we observe time.Since(start) for callers that
+// actually waited (joined an in-flight call, or were the leader and
+// dispatched ensure). ErrQueueFull and ctx.Err() returns are NOT
+// recorded as queue-wait — they aren't wait, they're rejection or
+// cancellation, and recording them as ~0ms observations would push
+// the histogram's p95 toward zero during overload (the very signal
+// the SLO dashboard needs to surface).
 func (g *WakeGate) Wait(
 	ctx context.Context,
 	appID string,
 	shouldWake func() bool,
 	ensure func(context.Context) error,
 ) error {
+	start := time.Now()
+	// observed is set true only on the paths where the caller actually
+	// spent time in the queue. The deferred observer checks this flag.
+	observed := false
+	defer func() {
+		if observed && g.metrics != nil {
+			g.metrics.ObserveWakeQueueWait(time.Since(start))
+		}
+	}()
+
 	g.mu.Lock()
 	if call, ok := g.inflight[appID]; ok {
 		if call.waiters >= g.cap {
@@ -84,9 +110,16 @@ func (g *WakeGate) Wait(
 		if g.onChange != nil {
 			g.onChange(appID, depth)
 		}
+		observed = true
 		// Hold the followers' reference until await returns; release on exit.
 		err := g.await(ctx, call)
 		g.release(appID, call)
+		// ctx.Err() is also "didn't wait for an ensure result" — skip
+		// the metric on cancellation so a hung client's cancellation
+		// doesn't pollute the wake-latency histogram.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			observed = false
+		}
 		return err
 	}
 
@@ -127,8 +160,12 @@ func (g *WakeGate) Wait(
 		close(call.done)
 	}()
 
+	observed = true
 	err := g.await(ctx, call)
 	g.release(appID, call)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		observed = false
+	}
 	return err
 }
 

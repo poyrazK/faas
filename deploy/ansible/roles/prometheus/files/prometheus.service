@@ -1,0 +1,33 @@
+[Unit]
+Description=Prometheus (faas SLO dashboard pipeline)
+Documentation=https://github.com/onebox-faas/faas
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path={{ prom_data_dir }} \
+  --storage.tsdb.retention.time={{ prom_retention_days }}d \
+  --web.listen-address={{ prom_listen_addr }} \
+  --web.console.libraries=/usr/share/prometheus/console_libraries \
+  --web.console.templates=/usr/share/prometheus/consoles
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Hardening (spec §11 baseline).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ prom_data_dir }}
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

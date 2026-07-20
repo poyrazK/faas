@@ -158,8 +158,21 @@ func (c Config) NftCommands() [][]string {
 		nft("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept"),
 		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", "25,", "465,", "587", "}", "drop"),
 		// CGN (100.64.0.0/10) included for symmetry with pkg/netns.DefaultHostPolicy
-		// .ForwardDenyCIDRs — see #32 for IPv6 follow-up.
+		// .ForwardDenyCIDRs. IPv6 sibling follows — see ADR-023 and
+		// pkg/oci/egress.go::deniedCIDRv6.
 		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", "{", "10.0.0.0/8,", "172.16.0.0/12,", "192.168.0.0/16,", "169.254.0.0/16,", "100.64.0.0/10", "}", "drop"),
+		// The per-netns table is `ip faas` (not `inet faas` — nft requires an
+		// ip6-family table for `ip6 daddr` rules; mixing `ip` and `ip6` matches
+		// in one table is rejected). We keep the host-level table as `inet faas`
+		// and accept the table-family divergence here. A future migration to a
+		// per-netns `inet faas` table is a follow-up if we want to collapse the
+		// two; see ADR-023 "rejected alternatives" for the trade-off.
+		nft("add", "table", "ip6", "faas"),
+		nft("add", "chain", "ip6", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}"),
+		// Accept reply traffic first (mirrors the v4 chain above) so a published
+		// request's IPv6 reply isn't dropped by the lateral-movement deny.
+		nft("add", "rule", "ip6", "faas", "forward", "ct", "state", "established,related", "accept"),
+		nft("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap, "ip6", "daddr", "{", "fe80::/10,", "fc00::/7,", "ff00::/8,", "::1/128,", "::/128", "}", "drop"),
 	}
 }
 

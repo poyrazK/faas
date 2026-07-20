@@ -100,6 +100,34 @@ func TestHostPolicyRenderDeniesRFC1918AndMetadata(t *testing.T) {
 	}
 }
 
+// TestHostPolicyRenderDeniesIPv6LinkLocalAndULA — table-driven over the IPv6
+// CIDR deny list. The list mirrors pkg/oci/egress.go::deniedCIDRv6 per ADR-023
+// ("spec §11 is IPv4-only; fe80::/10 + ULA + multicast unblocked"). Every
+// range must render as a `ip6 daddr { … } drop` line — a missing entry is a
+// lateral-movement / metadata-exposure regression.
+func TestHostPolicyRenderDeniesIPv6LinkLocalAndULA(t *testing.T) {
+	out := DefaultHostPolicy.Render()
+	lineIdx := strings.Index(out, "ip6 daddr { ")
+	if lineIdx < 0 {
+		t.Fatalf("no ip6 daddr line in ruleset:\n%s", out)
+	}
+	end := strings.Index(out[lineIdx:], " } drop")
+	if end < 0 {
+		t.Fatalf("malformed ip6 daddr line:\n%s", out)
+	}
+	denyLine := out[lineIdx : lineIdx+end]
+	for _, cidr := range DefaultHostPolicy.ForwardDenyIPv6CIDRs {
+		if !strings.Contains(denyLine, cidr) {
+			t.Errorf("CIDR %s not in ip6 daddr deny set; line %q", cidr, denyLine)
+		}
+	}
+	// No `meta nfproto` wrapper — the table is `inet faas` so family is
+	// implicit, matching the v4 line above (ADR-023 rejected alternative).
+	if strings.Contains(out, "meta nfproto") {
+		t.Errorf("ip6 daddr rule wrapped in `meta nfproto`; ADR-023 chose the implicit form")
+	}
+}
+
 // TestHostPolicyRenderBridgeNameParam — vary BridgeName and confirm the
 // rendered ruleset substitutes correctly. Catches any future "hard-coded
 // `br-tenants`" that bypasses the field.

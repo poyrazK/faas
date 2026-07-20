@@ -44,6 +44,16 @@ type HostPolicy struct {
 	// link-local (169.254/16 — covers cloud metadata too), CGN (100.64/10).
 	ForwardDenyCIDRs []string
 
+	// ForwardDenyIPv6CIDRs is the IPv6 sibling of ForwardDenyCIDRs (spec §11,
+	// ADR-023). Spec §11 says "deny RFC1918 + link-local + metadata ranges" —
+	// the IPv6 equivalents (fe80::/10 link-local, fc00::/7 ULA, ff00::/8
+	// multicast, ::1/128 loopback, ::/128 unspecified) were not in the v1
+	// implementation. See ADR-023 for the family-keyword form (`ip6 daddr`)
+	// vs `meta nfproto` decision. The list mirrors pkg/oci/egress.go's
+	// `deniedCIDRv6` so user-space and firewall enforcement stay in lockstep;
+	// keep both lists identical when editing.
+	ForwardDenyIPv6CIDRs []string
+
 	// ForwardDenyTCPPorts is the egress TCP port denylist (spec §11):
 	// SMTP on 25, 465, 587. Spam = Hetzner abuse desk = existential.
 	ForwardDenyTCPPorts []int
@@ -68,6 +78,21 @@ var DefaultHostPolicy = HostPolicy{
 		"192.168.0.0/16", // RFC1918
 		"169.254.0.0/16", // link-local + cloud metadata (169.254.169.254 is AWS/GCP metadata IP)
 		"100.64.0.0/10",  // CGN (RFC6598)
+	},
+
+	// IPv6 deny — mirrors pkg/oci/egress.go::deniedCIDRv6 (see ADR-023).
+	// fe80::/10 = link-local (exposes neighbor table to guests).
+	// fc00::/7  = ULA (RFC4193; lateral movement into the control plane).
+	// ff00::/8  = multicast (no use case in this model).
+	// ::1/128   = loopback.
+	// ::/128    = unspecified (a packet with no source — misconfigured or
+	//             malicious, never routable).
+	ForwardDenyIPv6CIDRs: []string{
+		"fe80::/10",
+		"fc00::/7",
+		"ff00::/8",
+		"::1/128",
+		"::/128",
 	},
 
 	ForwardDenyTCPPorts: []int{25, 465, 587},
@@ -98,6 +123,7 @@ func (h HostPolicy) Render() string {
 	}
 
 	denyCIDRs := strings.Join(h.ForwardDenyCIDRs, " ")
+	denyIPv6CIDRs := strings.Join(h.ForwardDenyIPv6CIDRs, " ")
 	denyPorts := joinInts(h.ForwardDenyTCPPorts, ",")
 	allowPorts := joinInts(h.InputAllowTCPPorts, ",")
 
@@ -126,6 +152,7 @@ func (h HostPolicy) Render() string {
 	b.WriteString("    # spec §11 denylist\n")
 	fmt.Fprintf(&b, "    tcp dport { %s } drop\n", denyPorts)
 	fmt.Fprintf(&b, "    ip daddr { %s } drop\n", denyCIDRs)
+	fmt.Fprintf(&b, "    ip6 daddr { %s } drop\n", denyIPv6CIDRs)
 	b.WriteString("  }\n")
 	b.WriteString("\n")
 	b.WriteString("  chain output {\n")

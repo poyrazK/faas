@@ -51,6 +51,7 @@ func newMetalManager(t *testing.T, kernel string) *Manager {
 		Paths{Kernel: kernel},
 		os.Getenv("FAAS_TEST_FC_VERSION"),
 		nil,
+		nil,
 	)
 }
 
@@ -123,7 +124,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 		t.Fatalf("detect firecracker version: %v", err)
 	}
 	m := NewManager(wire.ExecRunner{}, NewJailerVMM(JailChrootBase, 30*time.Second),
-		Paths{Kernel: kernel}, fcVersion, nil)
+		Paths{Kernel: kernel}, fcVersion, nil, nil)
 
 	ctx := context.Background()
 	snapDir := t.TempDir()
@@ -301,16 +302,22 @@ func TestMetalDNATPublishedToGuestPort(t *testing.T) {
 // macOS dev).
 func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	kernel, _, _ := metalImages(t)
+	// TestMain (manager_test.go) clobbers cgroupRoot to a tempdir for
+	// unit tests; reset it to /sys/fs/cgroup so writeMemoryMax (inside
+	// Wake) probes the real path the jailer wrote to. Without this the
+	// test reads from a path the jailer never touched and IsNotExist's
+	// the fence write — a test-fixture bug, not a fence bug.
+	withCgroupRootAt(t, "/sys/fs/cgroup")
 	m := newMetalManager(t, kernel)
 	busybox := ensureBusyboxExt4(t, t.TempDir())
 
 	// Pre-flight: the cgroup fs must be reachable. Skipping (not
 	// failing) is the right behaviour on a dev box that can't mount
 	// cgroupv2 — the production EX44 always has it.
-	scopeBase := "/sys/fs/cgroup/faas-tenant.slice/" + PerInstanceScope("mem")
 	if _, err := os.Stat("/sys/fs/cgroup"); err != nil {
 		t.Skipf("/sys/fs/cgroup not mounted (Lima/macOS dev): %v", err)
 	}
+	scopeBase := filepath.Join(cgroupRoot, ParentCgroup, PerInstanceScope("mem"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

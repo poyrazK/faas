@@ -1,0 +1,11 @@
+# node_exporter — defaults (spec §11 hardening + §12 telemetry).
+#
+# node_exporter_version pins the binary; same precedent as
+# firecracker + prometheus.
+#
+# listen_addr is the bridge IP only — the input chain policy `drop`
+# on the public iface would block Prometheus's scrape. 9100 is the
+# upstream default.
+
+node_exporter_version: "1.8.2"
+node_exporter_listen_addr: "10.0.0.1:9100"

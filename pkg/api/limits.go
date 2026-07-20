@@ -184,6 +184,11 @@ const (
 	// Snapshots / disk (spec §1, §8).
 	FleetSnapshotAvgTargetMB = 130 // business metric; alert >160 warn, >200 page
 	SnapshotBudgetGB         = 452
+	// LvFcName is the LVM logical volume apps + snapshots live on (spec §8).
+	// Schedd's dashboard gauge shells out to `lvs -o data_percent <LvFcName>`
+	// to populate `fcvm_lv_fc_used_pct`. Empty on dev/macOS — the
+	// DefaultLvFcUsedPct closure returns 0 and the gauge degrades to "no data".
+	LvFcName = "lv-fc"
 
 	// Build artifact export (M6): vmmd loopback-mounts the chroot-local drive1
 	// on Destroy to copy out /build/out/image.tar (and friends). 4 GiB is

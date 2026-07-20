@@ -1,0 +1,16 @@
+- name: daemon-reload
+  ansible.builtin.systemd:
+    daemon_reload: true
+  failed_when: false  # chroot/CI may lack systemd
+
+- name: restart prometheus
+  ansible.builtin.service:
+    name: prometheus
+    state: restarted
+  failed_when: false
+
+- name: reload prometheus
+  ansible.builtin.service:
+    name: prometheus
+    state: reloaded
+  failed_when: false

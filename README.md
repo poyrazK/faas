@@ -131,25 +131,49 @@ arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
   Caveat: `pkg/dashboard/templates/` load HTMX 2.0.4 but no
   `hx-*` attributes are used yet (`apps_list.html` uses
   `<meta refresh>`); HTMX polling is a follow-up.
-- **M8 — hardening & ops.** 🚧 Ship-blockers landed via PRs
-  #46 / #47 / #48 / #49: G6 GDPR export + 30-day staged deletion
-  (ADR-021), V6 vsock resume hook (ADR-022), G7 flow-aware reaper
-  (`pkg/sched/flowcount`), `AuthLimit` shared per-IP bucket across
-  `/v1/*` (§11 "10/min/IP"), per-VM cgroup scope via jailer
-  `--cgroup cpu.weight`, and cold-wake UX surfaces 3+4+5
-  (`x-faas-wake: cold|cache|ready` + dashboard N+1 spinner).
-  In-flight on a parallel branch (dirty working tree, not merged):
-  `pkg/fcvm/metrics.go` adds `fcvm_snapshot_fleet_avg_bytes` +
-  `…_p95_bytes` + `fcvm_resident_ram_pct` +
-  `vmmd_cold_boot_fallback_total`; `pkg/gateway/metrics.go`
-  extends the gateway with `gateway_wake_queue_wait_seconds`
-  histogram and `gateway_cold_wake_total{app}` counter; ADR-023
-  closes the IPv6 §11 ship-blocker on the host firewall and
-  per-netns ruleset. The §14 acceptance gates remaining on the
-  board are listed in *What's next*.
+- **M8 — hardening & ops.** 🚧 All §11 ship-blockers and §12 ops
+  surfaces from this milestone's closeout are in via PRs
+  #46 / #47 / #48 / #49 (G6 GDPR + 30-day staged deletion per
+  ADR-021; V6 vsock resume hook per ADR-022; G7 flow-aware reaper
+  in `pkg/sched/flowcount`; `AuthLimit` shared per-IP bucket across
+  `/v1/*` per §11 "10/min/IP"; per-VM cgroup scope via jailer
+  `--cgroup cpu.weight`; cold-wake UX surfaces 3+4+5 with
+  `x-faas-wake: cold|cache|ready` and dashboard N+1 spinner) and
+  PR #51 (the closeout batch):
+  - **§11 IPv6 egress** — `pkg/netns/policy.go` and
+    `pkg/netns/config.go` now deny `fe80::/10, fc00::/7, ff00::/8,
+    ::1/128, ::/128` via `ip6 daddr { … } drop` (ADR-023), in both
+    the host firewall and the per-instance netns ruleset.
+  - **§11 cgroup fence verified** — `#33` `memory.max = plan + 8 MB`
+    after bringUp; metal test
+    `pkg/fcvm/manager_metal_test.go::TestMetalMemoryMaxFenceEnforced`
+    is green on Lima (the EX44 sign-off remains the §14 source of
+    truth per CLAUDE.md).
+  - **§12 SLO dashboard pipeline** — `fcvm_snapshot_fleet_avg_bytes`,
+    `fcvm_snapshot_fleet_p95_bytes`, `fcvm_resident_ram_pct`,
+    `fcvm_lv_fc_used_pct` (schedd-owned), plus
+    `vmmd_cold_boot_fallback_total` (vmmd-owned, ADR-016) and
+    `gateway_wake_queue_wait_seconds` (gatewayd-owned). Prometheus
+    + node_exporter are ansible roles with SHA-256-pinned binaries,
+    scrape config template at
+    `deploy/ansible/roles/prometheus/templates/prometheus.yml.j2`.
+    Grafana dashboard export at `deploy/grafana/faas-fleet.json`.
+  - **§12 public status page** — `apid` serves `GET /status` (static
+    HTML, `deploy/statuspage/index.html`) and `GET /status/slo.json`
+    (3 PromQL queries against the local Prometheus with a 30 s
+    in-process cache and graceful degradation on transient failures;
+    never 5xx the route).
+  - **§14 restore drill wired** —
+    `deploy/scripts/faas-m8-restore-drill.sh` plus WAL-archiving
+    knobs in the postgres ansible role. A timed EX44 run (PG + one
+    app back serving < 30 min) is the next action; the dated record
+    file `docs/drills/2026-07-20-restore-drill.md` is the template.
+  - **#32 cleanup** — `docs/adr/021-vsock-resume-hook.md` removed
+    (superseded by ADR-022); `deploy/scripts/leakcheck.sh` glob fix
+    matches the v1.7 jailer `--id` constraint.
+  The §14 M8 gates still on the board are listed in *What's next*.
 
-Post-M8 = private beta (founding doc roadmap M2–M3: hand-held
-first ten customers).
+Post-M8 = private beta (founding doc M2–M3 hand-held phase).
 
 ## What's next
 
@@ -185,20 +209,22 @@ and open an issue if you want it.
   on-demand HTTP-01 gated by `custom_domains` allowlist).
   `pkg/gateway/tls.go` is a config bucket; `caddyserver/certmagic`
   not yet in `go.mod`.
-- **Snapshot-fleet collectors merged end-to-end** — drafted on
-  the parallel branch as `pkg/fcvm/metrics.go`. Spec §12 alert
-  lanes (>160 warn, >200 page) light up only after schedd wires
-  its registry and a Grafana dashboard reads them.
 - **§14 V2 latency driver** — 100 park→wake cycles per app class,
   p50 ≤ 350 ms / p95 ≤ 800 ms. `cmd/e2e/deploy_wake_metal_test.go`
   does one cold wake; the loop driver doesn't exist. Runs on the
   EX44 via `make test-metal`.
 - **Documented timed restore drill** — §14 M8: PG + one app back
-  serving on a clean VM < 30 min, recorded as executed.
+  serving on a clean VM < 30 min, recorded as executed. Run
+  `deploy/scripts/faas-m8-restore-drill.sh` on the EX44 and fill
+  in `docs/drills/2026-07-20-restore-drill.md` (template present).
 - **Status page + SLO dashboard** — public SLOs from spec §12
-  (API 99.5 % monthly, wake p95 < 1 s, build success ≥ 99 %).
+  (API 99.5 % monthly, wake p95 < 1 s, build success ≥ 99 %). The
+  pipeline (Prometheus scrape + Grafana JSON + `apid /status` +
+  `apid /status/slo.json`) is in via PR #51; the operator
+  verification step (Grafana panels render non-zero data, SLO
+  JSON returns denominators) is the EX44 follow-up.
 - **§11 checklist item-by-item sign-off** (cgroups v2 only,
   `unprivileged_userns_clone=0`, auditd, unattended-upgrades,
-  etc.). The IPv6 egress item (ADR-023) is drafted on the same
-  parallel branch — merge first, then the check is green.
+  etc.). The IPv6 egress item (ADR-023) is now in via PR #51;
+  remaining items are operator verification on the EX44.
 - **Gate-A runbook** — 2nd-box active-passive (founding doc R3).

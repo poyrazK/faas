@@ -106,3 +106,60 @@
   register: pg_lsclusters
   changed_when: false
   failed_when: false
+
+# Spec §14 M8 acceptance: restore drill needs WAL archived so PG can
+# replay from the most recent basebackup. We do the cheapest viable
+# thing — local cp to a directory under /var/lib/pgsql/archive —
+# rather than reach for pgbackrest or a remote (deferred to M9,
+# tracked as out-of-scope in the M8 PR description).
+#
+# `wal_level = replica` is PGC_POSTMASTER (restart); the rest are
+# reload-only. The restart happens exactly once per idleness epoch.
+- name: postgres — set wal_level = replica (restart-needed)
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql/15/main/postgresql.conf
+    regexp: "^#?wal_level\\s*="
+    line: "wal_level = replica"
+    create: false
+  register: pg_wal_level
+  failed_when: false  # chroot/CI may not have the conf file
+  notify: restart postgresql
+
+- name: postgres — enable archive_mode (reload-only)
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql/15/main/postgresql.conf
+    regexp: "^#?archive_mode\\s*="
+    line: "archive_mode = on"
+    create: false
+  register: pg_archive_mode
+  failed_when: false
+  notify: reload postgresql
+
+- name: postgres — set archive_command (reload-only)
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql/15/main/postgresql.conf
+    regexp: "^#?archive_command\\s*="
+    line: "archive_command = 'cp %p /var/lib/pgsql/archive/%f'"
+    create: false
+  register: pg_archive_cmd
+  failed_when: false
+  notify: reload postgresql
+
+- name: postgres — bound WAL senders (reload-only, 3 = basebackup + 2 drill slack)
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql/15/main/postgresql.conf
+    regexp: "^#?max_wal_senders\\s*="
+    line: "max_wal_senders = 3"
+    create: false
+  register: pg_wal_senders
+  failed_when: false
+  notify: reload postgresql
+
+- name: postgres — create WAL archive directory (postgres:postgres 0750)
+  ansible.builtin.file:
+    path: /var/lib/pgsql/archive
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+  failed_when: false  # chroot/CI may not have the user

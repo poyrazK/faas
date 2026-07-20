@@ -16,6 +16,35 @@ local connections and `reject`s every TCP source.
    auth works for the `faas` user.
 6. **§11 hardening**: `listen_addresses=''` (restart), then a 4-line
    `pg_hba.conf` (reload) that rejects all TCP auth.
+7. **§14 M8 restore-drill wiring**:
+   - `wal_level = replica` (restart-needed)
+   - `archive_mode = on` (reload)
+   - `archive_command = 'cp %p /var/lib/pgsql/archive/%f'` (reload)
+   - `max_wal_senders = 3` (reload)
+   - Creates `/var/lib/pgsql/archive` owned `postgres:postgres 0750`.
+
+The archive directory is local-only — the M8 restore drill script
+(`deploy/scripts/faas-m8-restore-drill.sh`) replays WAL from there
+after rsyncing a nightly basebackup. Off-host WAL shipping and
+pgbackrest are explicitly **M9** follow-ups (see plan §Step 4).
+
+### `archive_command` quoting constraint
+
+`archive_command = '...'` is a **shell string** that PostgreSQL passes
+to `sh -c`. `%p` is the full path of the WAL segment to archive, `%f`
+is the filename. Today we use `cp %p /var/lib/pgsql/archive/%f` — a
+single `cp` with no shell metacharacters, so the single-quote
+delimiting in `postgresql.conf.j2` is safe.
+
+**Constraint**: keep the value a single command with no `&&`, `||`,
+pipes, or embedded variables. If you need compound behavior, wrap it
+in a shell script under `/usr/local/bin/` and call that instead. The
+restore-drill script's cleanup sed (`/^# --- faas-m8-restore-drill:/,
+/^recovery_target_action = /d`) relies on the value being a single
+line — multi-line archive commands will break the range match.
+
+The same applies to `restore_command` in the recovery stanza written
+by the drill script.
 
 ## Idempotency
 

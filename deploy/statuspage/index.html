@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>faas status</title>
+<style>
+  :root {
+    --bg: #0e1014;
+    --fg: #e6e8eb;
+    --muted: #8b929c;
+    --green: #2ea043;
+    --yellow: #d4a017;
+    --red: #d04848;
+    --bar-bg: #1d2026;
+    --card: #161922;
+    --border: #2a2f3a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 48px auto; padding: 0 20px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  .row {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    margin-bottom: 14px;
+  }
+  .label { display: flex; justify-content: space-between; align-items: baseline; }
+  .label .name { font-weight: 600; }
+  .label .value { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar {
+    height: 8px;
+    background: var(--bar-bg);
+    border-radius: 4px;
+    margin-top: 10px;
+    overflow: hidden;
+  }
+  .bar > span {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--green);
+    transition: width 600ms ease, background 200ms ease;
+  }
+  .bar.warn > span { background: var(--yellow); }
+  .bar.bad > span { background: var(--red); }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 24px; text-align: right; }
+  a { color: var(--fg); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>faas status</h1>
+  <div class="sub" id="sub">Loading…</div>
+
+  <div class="row">
+    <div class="label">
+      <span class="name">API availability</span>
+      <span class="value" id="api-v">—</span>
+    </div>
+    <div class="bar" id="api-bar"><span></span></div>
+  </div>
+
+  <div class="row">
+    <div class="label">
+      <span class="name">Cold-wake latency (p95)</span>
+      <span class="value" id="wake-v">—</span>
+    </div>
+    <div class="bar" id="wake-bar"><span></span></div>
+  </div>
+
+  <div class="row">
+    <div class="label">
+      <span class="name">Build success rate</span>
+      <span class="value" id="build-v">—</span>
+    </div>
+    <div class="bar" id="build-bar"><span></span></div>
+  </div>
+
+  <div class="foot">
+    Source: <a href="/status/slo.json">/status/slo.json</a>
+    · auto-refreshes every 30s
+  </div>
+</div>
+
+<script>
+// Polls /status/slo.json every 30s. No SPA, no build step, no
+// third-party deps. The numeric thresholds (warn at 99%, red at
+// 97%; wake warn at 350ms / red at 800ms) come straight from the
+// spec §12 SLOs.
+const WARN_API = 99;
+const RED_API = 97;
+const WARN_WAKE_MS = 350;
+const RED_WAKE_MS = 800;
+const WARN_BUILD = 95;
+const RED_BUILD = 80;
+
+function setBar(barId, valueId, pct, formatted, lowerIsBetter) {
+  const bar = document.getElementById(barId);
+  const fill = bar.querySelector('span');
+  const v = document.getElementById(valueId);
+  v.textContent = formatted;
+  if (lowerIsBetter) {
+    // For wake latency: pct is "how far under the bad threshold",
+    // mapped so 0% = empty bar (good) and the bar is mostly green
+    // when latency is far below RED_WAKE_MS. We just normalize
+    // against 2*RED so the bar feels right at typical values.
+    const fillPct = Math.max(0, Math.min(100, 100 - (pct / (RED_WAKE_MS * 2)) * 100));
+    fill.style.width = fillPct + '%';
+    bar.classList.remove('warn', 'bad');
+    if (pct >= RED_WAKE_MS) bar.classList.add('bad');
+    else if (pct >= WARN_WAKE_MS) bar.classList.add('warn');
+  } else {
+    fill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+    bar.classList.remove('warn', 'bad');
+    if (pct < RED_API || pct < RED_BUILD) bar.classList.add('bad');
+    else if (pct < WARN_API || pct < WARN_BUILD) bar.classList.add('warn');
+  }
+}
+
+async function refresh() {
+  const sub = document.getElementById('sub');
+  try {
+    const r = await fetch('/status/slo.json', {cache: 'no-store'});
+    if (!r.ok) throw new Error('http ' + r.status);
+    const s = await r.json();
+    const updated = s.as_of ? new Date(s.as_of) : new Date();
+    const age = Math.max(0, Math.round((Date.now() - updated.getTime()) / 1000));
+    const ageLabel = age < 60 ? `${age}s ago` : `${Math.round(age/60)}m ago`;
+    sub.textContent = `Updated ${ageLabel}. Source: ${s.source || 'unknown'}.`;
+
+    setBar('api-bar', 'api-v', s.api_availability_pct || 0,
+      (s.api_availability_pct || 0).toFixed(2) + '%', false);
+    setBar('wake-bar', 'wake-v', s.wake_p95_ms || 0,
+      Math.round(s.wake_p95_ms || 0) + ' ms', true);
+    setBar('build-bar', 'build-v', s.build_success_pct || 0,
+      (s.build_success_pct || 0).toFixed(2) + '%', false);
+  } catch (e) {
+    sub.textContent = 'Status source unavailable: ' + e.message;
+  }
+}
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

@@ -67,6 +67,7 @@ func TestMetalSecretsEnvReachesGuest(t *testing.T) {
 		Paths{Kernel: kernel},
 		fcVer,
 		slog.New(slog.NewTextHandler(testLogWriter{t}, nil)),
+		nil,
 	)
 	id, err := age.GenerateX25519Identity()
 	if err != nil {

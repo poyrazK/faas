@@ -91,6 +91,10 @@ type Manager struct {
 	mu         sync.Mutex
 	live       map[string]*Instance
 	exportDirs map[string]string // instance -> host export dir (builder VMs only, M6)
+	// metrics is the cold-boot fallback counter (vmmd_cold_boot_fallback_total).
+	// nil-safe: bringUp calls m.metrics.ObserveFallback() which no-ops when nil,
+	// so unit tests that construct a Manager without metrics don't need a stub.
+	metrics *ColdBootMetrics
 	// hostIdentity is the X25519 secret key used to unseal per-app sealed env
 	// blobs at wake time (spec §11/G2). nil means "no host age configured" —
 	// a Wake call with SealedEnvEntries set is rejected with ErrNoHostKey
@@ -100,7 +104,9 @@ type Manager struct {
 
 // NewManager wires a Manager. fcVersion is the running Firecracker version (used
 // to decide snapshot usability, ADR-005). log may be nil (a discard logger).
-func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Logger) *Manager {
+// metrics may be nil (e.g. unit tests that don't care about Prometheus); the
+// fallback counter is then a no-op (ColdBootMetrics.ObserveFallback is nil-safe).
+func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Logger, metrics *ColdBootMetrics) *Manager {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(discard{}, nil))
 	}
@@ -113,6 +119,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		log:        log,
 		live:       make(map[string]*Instance),
 		exportDirs: make(map[string]string),
+		metrics:    metrics,
 	}
 }
 
@@ -339,6 +346,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				"instance", req.Instance,
 				"err", rErr,
 				"slot", lease.Slot)
+			m.metrics.ObserveFallback()
 			_ = m.vmm.Kill(ctx, lease)
 		}
 	}
