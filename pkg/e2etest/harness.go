@@ -151,7 +151,11 @@ vmmd_socket = %q
 		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
 		h.ScheddSock = sockPath
 		h.VMMDSock = vmmdSock
-		waitUnix(t, sockPath, 10*time.Second)
+		// 30s tolerates schedd's first-boot db.MigrateUp on a fresh
+		// schema — observed 16s on CI's postgres15 service for 12
+		// migrations. The metal path reuses the same socket so this
+		// ceiling also covers the post-migration cold start.
+		waitUnix(t, sockPath, 30*time.Second)
 	}
 
 	if which&VMMD != 0 {
@@ -327,7 +331,9 @@ vmmd_socket = %q
 		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
 		h.ScheddSock = sockPath
 		h.VMMDSock = vmmdSock
-		waitUnix(t, sockPath, 10*time.Second)
+		// 30s tolerates schedd's first-boot db.MigrateUp (same
+		// rationale as the Start path above).
+		waitUnix(t, sockPath, 30*time.Second)
 	}
 	if which&Meterd != 0 {
 		startMeterd(t, h, bin, dbURL, extraEnv)
