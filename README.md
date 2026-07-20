@@ -174,3 +174,71 @@ arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
   Remaining: layer/config blob streaming for the real app-layer build, egress
   hardening on the puller's HTTP client (spec §11), and builderd's ephemeral
   builder microVMs (Railpack/Dockerfile) — the metal core of M6.
+- **M7 — metering, billing, functions, cron.** 🚧 Sampling/quota
+  shapes in `cmd/meterd` and `pkg/stripex`; dunning state machine
+  `pkg/state.MarkAccountDeletionPending` (ADR-021); GB-h = plan RAM
+  + 8 MB per running second in `pkg/meter`. Function runners
+  `guest/runners/node22` + `guest/runners/python312`. Cron in
+  `pkg/sched/cron.go`. `pkg/mail` interface with Resend + Postmark
+  backends (gap G4).
+  Remaining: `cmd/meterd/main.go::defaultDeps` ships nil `parker`
+  + `stripe` collaborators; `pkg/stripex/usage.go::PushUsageRecord`
+  is a `nil`-returning stub until stripe-go lands.
+- **M8 — hardening & ops.** 🚧 The §11 ship-blockers and §12 ops surfaces
+  from this milestone's closeout PR are in (PR #51):
+  - **§11 IPv6 egress** — `pkg/netns/policy.go` and `pkg/netns/config.go`
+    now deny `fe80::/10, fc00::/7, ff00::/8, ::1/128, ::/128` via
+    `ip6 daddr { … } drop` (ADR-023), in both the host firewall and the
+    per-instance netns ruleset.
+  - **§11 cgroup fence verified** — `#33` `memory.max = plan + 8 MB`
+    after bringUp; metal test `pkg/fcvm/manager_metal_test.go
+    ::TestMetalMemoryMaxFenceEnforced` is green on Lima (the EX44
+    sign-off remains the §14 source of truth per CLAUDE.md).
+  - **§12 SLO dashboard pipeline** — `fcvm_snapshot_fleet_avg_bytes`,
+    `fcvm_snapshot_fleet_p95_bytes`, `fcvm_resident_ram_pct`,
+    `fcvm_lv_fc_used_pct` (schedd-owned), plus
+    `vmmd_cold_boot_fallback_total` (vmmd-owned, ADR-016) and
+    `gateway_wake_queue_wait_seconds` (gatewayd-owned). Prometheus
+    + node_exporter are ansible roles with SHA-256-pinned binaries,
+    scrape config template at `deploy/ansible/roles/prometheus/
+    templates/prometheus.yml.j2`. Grafana dashboard export at
+    `deploy/grafana/faas-fleet.json`.
+  - **§12 public status page** — `apid` serves `GET /status` (static
+    HTML, `deploy/statuspage/index.html`) and `GET /status/slo.json`
+    (3 PromQL queries against the local Prometheus with a 30 s
+    in-process cache and graceful degradation on transient failures;
+    never 5xx the route).
+  - **§14 restore drill wired** — `deploy/scripts/faas-m8-restore-
+    drill.sh` plus WAL-archiving knobs in the postgres ansible role.
+    A timed EX44 run (PG + one app back serving < 30 min) is the next
+    action; the dated record file `docs/drills/2026-07-20-restore-
+    drill.md` is the template.
+  - **#32 cleanup** — `docs/adr/021-vsock-resume-hook.md` removed
+    (superseded by ADR-022); `deploy/scripts/leakcheck.sh` glob fix
+    matches the v1.7 jailer `--id` constraint.
+  Remaining (the §14 M8 gates still on the board): CertMagic TLS
+  for `*.apps.DOMAIN`, the documented timed restore-drill record,
+  the §11 security checklist item-by-item sign-off, and the §14 V2
+  latency driver (100 park→wake cycles, p50 ≤ 350 ms / p95 ≤ 800 ms).
+
+Post-M8 = private beta (founding doc M2–M3 hand-held phase).
+
+## What's next
+
+The §14 acceptance gates still on the board. Pick one and open an
+issue if you want it.
+
+**M8**
+
+- **CertMagic TLS** for gatewayd (`*.apps.DOMAIN` via DNS-01;
+  on-demand HTTP-01 gated by `custom_domains` allowlist).
+  `pkg/gateway/tls.go` is a config bucket; `caddyserver/certmagic`
+  not yet in `go.mod`.
+- **§14 V2 latency driver** — 100 park→wake cycles per app class,
+  p50 ≤ 350 ms / p95 ≤ 800 ms. Runs on the EX44 via `make test-metal`.
+- **Documented timed restore drill** — execute
+  `deploy/scripts/faas-m8-restore-drill.sh` on the EX44 and fill in
+  `docs/drills/2026-07-20-restore-drill.md` (template present).
+- **§11 checklist item-by-item sign-off** (cgroups v2 only,
+  `unprivileged_userns_clone=0`, auditd, unattended-upgrades, etc.).
+- **Gate-A runbook** — 2nd-box active-passive (founding doc R3).
