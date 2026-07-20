@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -278,7 +279,7 @@ func envPush(args []string) int {
 			return printErr("Read stdin", err)
 		}
 	} else {
-		f, err := os.Open(*in)
+		f, err := openEnvFile(*in)
 		if err != nil {
 			return printErr("Could not read .env", err)
 		}
@@ -338,6 +339,73 @@ func envPush(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "✓ %s set\n", p.k)
 	}
 	return 0
+}
+
+// openEnvFile opens the customer-supplied .env path with defense
+// against symlink-mediated content exfiltration.
+//
+// Without this guard, a customer could `ln -s /etc/passwd .env` (or
+// any other readable file) and then `faas env push -f .env --app x`.
+// The scanner would feed the file's lines through parseSecretsPair;
+// anything matching KEY=VALUE would be PUT to the server. Server-side
+// validation would still reject values that don't look like secrets,
+// but the network round-trip + log lines (which can include the path
+// and, on debug, content snippets) is a small info-disclosure path.
+//
+// Two checks:
+//  1. Lstat the FINAL component. If it's a symlink, the kernel would
+//     follow it on Open — refuse before opening.
+//  2. After Open, Lstat again on the resolved path. If a symlink was
+//     swapped in between (TOCTOU race), the second Lstat catches it.
+//     Also confirms the file is a regular file, not a device or FIFO.
+//
+// Note 1: we intentionally don't EvalSymlinks the whole path and
+// compare strings. On macOS, /var is itself a symlink to /private/var
+// (a system-level layout quirk), so EvalSymlinks("/var/folders/...")
+// returns "/private/var/folders/..." even for plain files. Comparing
+// strings there would reject every legitimate .env on macOS dev
+// boxes. Lstat-on-the-final-component catches the actual attack
+// (a symlink AT the path the customer named) without false-positives.
+//
+// Note 2: this doesn't fix the parallel attack surface in
+// client.DeployTarball (commands2.go:175, client.go:188-189) — the
+// tarball path is opened the same way. Filed separately because that
+// endpoint ships the file as a multipart upload, not as parsed
+// KEY=VALUE pairs; the threat model and fix differ.
+func openEnvFile(path string) (*os.File, error) {
+	absIn, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("could not absolutize %q: %w", path, err)
+	}
+	// Pre-open: refuse if the final component is a symlink.
+	preInfo, err := os.Lstat(absIn)
+	if err != nil {
+		return nil, err
+	}
+	if preInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("refusing to follow symlink at %q", path)
+	}
+	f, err := os.Open(absIn)
+	if err != nil {
+		return nil, err
+	}
+	// Post-open: confirm the path is still a regular file. Catches
+	// TOCTOU swaps (someone `ln -sf`'ing the path between our preInfo
+	// check and the Open) and refuses devices / FIFOs / directories.
+	postInfo, err := os.Lstat(absIn)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if postInfo.Mode()&os.ModeSymlink != 0 {
+		_ = f.Close()
+		return nil, fmt.Errorf("refusing to follow symlink at %q (raced after open)", path)
+	}
+	if !postInfo.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, fmt.Errorf("refusing non-regular file %q (mode %s)", path, postInfo.Mode())
+	}
+	return f, nil
 }
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------

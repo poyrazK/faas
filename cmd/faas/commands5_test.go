@@ -478,6 +478,99 @@ func TestCmdEnvPush_FromStdinAndFileRejected(t *testing.T) {
 	}
 }
 
+// TestCmdEnvPush_RejectsSymlinkAtFinalComponent is the load-bearing
+// attack-surface test. Without openEnvFile, a customer could
+// `ln -s /etc/passwd .env` and the scanner would feed arbitrary
+// file contents through parseSecretsPair. Now any symlink at the
+// final component is rejected before Open.
+//
+// We assert:
+//   (a) exit 1,
+//   (b) stderr mentions "symlink",
+//   (c) zero PUTs hit the fake server (the attack vector is closed).
+func TestCmdEnvPush_RejectsSymlinkAtFinalComponent(t *testing.T) {
+	dir := t.TempDir()
+	// Symlink target: write a "secret-shaped" file the scanner would
+	// otherwise gladly parse. Doesn't matter what's in it — we want
+	// to prove envPush never even opens it.
+	target := filepath.Join(dir, "real-target.txt")
+	if err := os.WriteFile(target, []byte("EVIL_TOKEN=hunter2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, ".env")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported on this platform: %v", err)
+	}
+
+	var puts []string
+	sink := &multiSink{onSecrets: func(method, _ string) (int, any) {
+		if method == "PUT" {
+			puts = append(puts, "leaked")
+		}
+		return http.StatusOK, api.AppSecretListResponse{}
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	stderr, restore := captureStderr(t)
+	defer restore()
+	code := envPush([]string{"--app", "hello", "-f", link})
+	if code != 1 {
+		t.Errorf("envPush on symlink = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "symlink") {
+		t.Errorf("stderr should explain symlink rejection: %q", stderr.String())
+	}
+	if len(puts) != 0 {
+		t.Errorf("symlink target contents were shipped: %v", puts)
+	}
+}
+
+// TestCmdEnvPush_RejectsDanglingSymlink: a symlink pointing nowhere.
+// Symlink check must run BEFORE the kernel resolves the target — a
+// dangling symlink would otherwise produce a confusing "no such
+// file" error and the customer wouldn't know their setup is hostile.
+func TestCmdEnvPush_RejectsDanglingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, ".env")
+	if err := os.Symlink(filepath.Join(dir, "does-not-exist"), link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	t.Setenv("FAAS_API", "http://localhost")
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	stderr, restore := captureStderr(t)
+	defer restore()
+	code := envPush([]string{"--app", "hello", "-f", link})
+	if code != 1 {
+		t.Errorf("envPush on dangling symlink = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "symlink") {
+		t.Errorf("stderr should mention symlink rejection: %q", stderr.String())
+	}
+}
+
+// TestCmdEnvPush_RejectsDirectory: envPush -f with a directory should
+// fail cleanly. Directories aren't regular files and the post-open
+// IsRegular check refuses. Without this, the scanner would spin
+// forever on os.Open (which returns a *File for directories in Go,
+// bufio.Scanner would just EOF immediately — silent no-op).
+func TestCmdEnvPush_RejectsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FAAS_API", "http://localhost")
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	stderr, restore := captureStderr(t)
+	defer restore()
+	code := envPush([]string{"--app", "hello", "-f", dir})
+	if code != 1 {
+		t.Errorf("envPush on directory = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "non-regular") {
+		t.Errorf("stderr should mention non-regular file: %q", stderr.String())
+	}
+}
+
 // --- app scale / rename ---------------------------------------------------
 
 func TestCmdAppScale_RequiresLogin(t *testing.T) {
