@@ -169,6 +169,50 @@ func TestCmdPS_RendersInstancesAndHumanizesParked(t *testing.T) {
 	}
 }
 
+// TestCmdPS_HumanizesColdBooting covers issue #63 §1's "cold-booting"
+// spelling. The wire vocabulary is snake_case (pkg/state/machine.go:18);
+// the spec renders it hyphenated so it reads as a single word. The
+// parked/sleeping case is already covered by
+// TestCmdPS_RendersInstancesAndHumanizesParked; this is the second of
+// two human translations in humanizeInstanceState.
+func TestCmdPS_HumanizesColdBooting(t *testing.T) {
+	sink := &multiSink{
+		onListApp: func(string) (int, any) {
+			return http.StatusOK, []api.InstanceResponse{
+				{ID: "i-cb", State: "cold_booting", RAMMB: 512, StartedAt: "2026-07-20T09:02:00Z", LastRequestAt: ""},
+				{ID: "i-w", State: "waking", RAMMB: 256, StartedAt: "2026-07-20T09:02:30Z", LastRequestAt: ""},
+				{ID: "i-s", State: "snapshotting", RAMMB: 512, StartedAt: "2026-07-20T09:02:45Z", LastRequestAt: ""},
+				{ID: "i-f", State: "failed", RAMMB: 256, StartedAt: "2026-07-20T09:02:55Z", LastRequestAt: ""},
+			}
+		},
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := cmdPS([]string{"hello"}); code != 0 {
+		t.Errorf("cmdPS exit = %d, want 0", code)
+	}
+	out := stdout.String()
+	// Humanized: cold_booting → cold-booting.
+	if !strings.Contains(out, "cold-booting") {
+		t.Errorf("cold_booting should render as cold-booting: %q", out)
+	}
+	// Verbatim: waking, snapshotting, failed read naturally in snake.
+	for _, want := range []string{"waking", "snapshotting", "failed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("state %q missing from output: %q", want, out)
+		}
+	}
+	// And the raw snake form must NOT leak (proves humanize actually ran).
+	if strings.Contains(out, "cold_booting") {
+		t.Errorf("raw cold_booting leaked into human output: %q", out)
+	}
+}
+
 func TestCmdPS_EmptyListShowsParkedMessage(t *testing.T) {
 	sink := &multiSink{onListApp: func(string) (int, any) { return http.StatusOK, []api.InstanceResponse{} }}
 	srv := httptest.NewServer(sink)
@@ -232,6 +276,60 @@ func TestCmdStatus_DegradedSource(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "degraded") {
 		t.Errorf("degraded source should be visible: %q", stdout.String())
+	}
+}
+
+// TestCmdStatus_JSONEmitsRawSnapshot covers issue #63 §2: the --json
+// flag must emit the raw api.StatusPage so pipelines can jq the SLO
+// numbers without parsing the human table. The JSON tag set lives on
+// pkg/api/dto.go (single source of truth) so the test asserts the
+// exact wire keys — if anyone renames a JSON tag in dto.go, this
+// test fires and the CLI/server stay in sync by construction.
+func TestCmdStatus_JSONEmitsRawSnapshot(t *testing.T) {
+	when := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	sink := &statusSink{resp: api.StatusPage{
+		APIAvailabilityPct: 99.97,
+		WakeP95MS:          312,
+		BuildSuccessPct:    98.4,
+		AsOf:               when,
+		Source:             "prometheus",
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "")
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := cmdStatus([]string{"--json"}); code != 0 {
+		t.Errorf("cmdStatus --json = %d, want 0", code)
+	}
+	var got api.StatusPage
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("--json output not parseable: %v\n%s", err, stdout.String())
+	}
+	if got.APIAvailabilityPct != 99.97 || got.WakeP95MS != 312 || got.BuildSuccessPct != 98.4 {
+		t.Errorf("JSON round-trip lost fields: %+v", got)
+	}
+	if !got.AsOf.Equal(when) {
+		t.Errorf("AsOf = %v, want %v", got.AsOf, when)
+	}
+	if got.Source != "prometheus" {
+		t.Errorf("Source = %q, want prometheus", got.Source)
+	}
+	// The human table must NOT appear in JSON mode.
+	if strings.Contains(stdout.String(), "availability:") {
+		t.Errorf("--json leaked human table: %s", stdout.String())
+	}
+}
+
+// TestCmdStatus_RejectsExtraPositional covers the flag parser's
+// positional-arg guard (the human form takes no args; --json is the
+// only flag).
+func TestCmdStatus_RejectsExtraPositional(t *testing.T) {
+	t.Setenv("FAAS_API", "http://localhost")
+	t.Setenv("FAAS_TOKEN", "")
+	if code := cmdStatus([]string{"--json", "junk"}); code != 1 {
+		t.Errorf("cmdStatus extra positional = %d, want 1", code)
 	}
 }
 
@@ -324,6 +422,59 @@ func TestCmdEnvPush_ForwardsEveryKeyValue(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "A set") || !strings.Contains(stdout.String(), "B set") {
 		t.Errorf("stdout should confirm both keys set: %q", stdout.String())
+	}
+}
+
+// TestCmdEnvPush_FromStdin mirrors the secrets set --from-stdin path
+// (commands3.go:92,102). Pipes KEY=VALUE pairs into the osStdin seam
+// and asserts the server got the same PUTs as the file path. The
+// stdin flag is the pipeline-friendly one (`cat .env | faas env push
+// --from-stdin --app foo`); the file form stays the default.
+func TestCmdEnvPush_FromStdin(t *testing.T) {
+	var puts []string
+	sink := &multiSink{onSecrets: func(method, path string) (int, any) {
+		if method == "GET" {
+			return http.StatusOK, api.AppSecretListResponse{Quota: 25}
+		}
+		if method == "PUT" {
+			parts := strings.Split(path, "/")
+			puts = append(puts, parts[len(parts)-1])
+			return http.StatusOK, nil
+		}
+		return http.StatusBadRequest, nil
+	}}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	// Swap osStdin so envPush reads our piped body instead of the real
+	// /dev/tty (which would hang the test).
+	stdin := strings.NewReader("# pipe comment\n\nA=alpha\nB=bravo\n")
+	oldStdin := osStdin
+	osStdin = stdin
+	defer func() { osStdin = oldStdin }()
+
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := envPush([]string{"--app", "hello", "--from-stdin"}); code != 0 {
+		t.Errorf("envPush --from-stdin = %d, want 0", code)
+	}
+	if !containsAll(puts, []string{"A", "B"}) {
+		t.Errorf("stdin PUT keys = %v, want [A B]", puts)
+	}
+	if !strings.Contains(stdout.String(), "A set") || !strings.Contains(stdout.String(), "B set") {
+		t.Errorf("stdout should confirm both keys set: %q", stdout.String())
+	}
+}
+
+// TestCmdEnvPush_FromStdinAndFileRejected asserts the two flags are
+// mutually exclusive — reading both would silently lose one source.
+func TestCmdEnvPush_FromStdinAndFileRejected(t *testing.T) {
+	t.Setenv("FAAS_API", "http://localhost")
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	if code := envPush([]string{"--app", "hello", "--from-stdin", "-f", "/tmp/.env"}); code != 1 {
+		t.Errorf("envPush --from-stdin + -f = %d, want 1", code)
 	}
 }
 
@@ -620,6 +771,65 @@ func TestCmdAppsDispatch_LsAlias(t *testing.T) {
 	}
 	if !hit {
 		t.Errorf("apps ls did not hit /v1/apps")
+	}
+}
+
+// --- error path: capacity_unavailable surfaces docs URL -------------------
+
+// TestCapacityError_SurfacesDocsURL covers the audit-found gap #5:
+// issue #63 §2 requires "Link to the URL on every `capacity_unavailable`
+// error per spec §3.3". The wiring exists (pkg/api/errors.go:245-249
+// wires WithDocs into ErrCapacity; client.go:35-41 prints → DocsURL),
+// but no PR-66 test exercised it end-to-end through printErr.
+//
+// Drives a 503 problem+json from a fake apid through the full chain:
+// server → Client.do → APIError → printErr → stderr. Asserts the
+// docs_url field appears in the stderr output AND that exit code is
+// non-zero (so CI scripts can distinguish a capacity error from
+// success). The 503 status maps to exit 1 via exitCodeForStatus
+// (commands.go:135 — 5xx is hard failure).
+func TestCapacityError_SurfacesDocsURL(t *testing.T) {
+	// Any command that hits the API works — use ps (small payload).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{
+			"type": "about:blank",
+			"title": "Briefly at capacity",
+			"status": 503,
+			"code": "capacity_unavailable",
+			"detail": "tenant RAM budget exhausted; try a smaller plan or wake fewer apps",
+			"docs_url": "https://status.example.com"
+		}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	stderr, restore := captureStderr(t)
+	defer restore()
+
+	// Use cmdPS to drive the error through the normal CLI surface.
+	// It calls ListInstances which returns the 503 above.
+	code := cmdPS([]string{"hello"})
+	if code == 0 {
+		t.Errorf("cmdPS on 503 capacity error = 0, want non-zero (5xx → hard failure)")
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "https://status.example.com") {
+		t.Errorf("stderr missing docs_url (UX §3.3 contract); got:\n%s", out)
+	}
+	if !strings.Contains(out, "Briefly at capacity") {
+		t.Errorf("stderr missing problem title; got:\n%s", out)
+	}
+	if !strings.Contains(out, "tenant RAM budget") {
+		t.Errorf("stderr missing problem detail; got:\n%s", out)
+	}
+	// The docs_url MUST point to the customer's path of action (a URL
+	// they can click), not just an opaque ID. Assert the URL is on its
+	// own line so a customer's terminal can render it clickably.
+	if !strings.Contains(out, "→ https://status.example.com") {
+		t.Errorf("docs_url should appear with arrow separator (matches APIError.Error); got:\n%s", out)
 	}
 }
 

@@ -18,8 +18,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -92,11 +95,29 @@ func cmdPS(args []string) int {
 }
 
 // humanizeInstanceState maps the wire-level state string to a
-// user-friendly rendering. Only "parked" gets translated today; other
-// states already read naturally to humans.
+// user-friendly rendering. The full vocabulary lives in
+// pkg/state/machine.go:14-26 (parked / waking / cold_booting / running
+// / snapshotting / stopped / failed) — issue #63 §1 lists the
+// customer-facing subset (running | cold-booting | waking | sleeping |
+// parked).
+//
+// Two translations:
+//   parked → sleeping    (the dashboard badge wording; §6 uses the
+//                         euphemism so customers don't see a
+//                         stop-anxiety signal)
+//   cold_booting → cold-booting  (snake → kebab so it reads as a
+//                                 single hyphenated word, matching the
+//                                 spec)
+//
+// All other states render verbatim — waking, running, snapshotting,
+// stopped, failed — they read naturally and any silent rename would
+// hide the wire vocabulary from operators tailing `faas ps`.
 func humanizeInstanceState(state string) string {
-	if state == "parked" {
+	switch state {
+	case "parked":
 		return "sleeping"
+	case "cold_booting":
+		return "cold-booting"
 	}
 	return state
 }
@@ -108,9 +129,18 @@ func humanizeInstanceState(state string) string {
 // fresh CLI without a stored token still works. With a token, the
 // numbers are the same fleet-wide ones; personal account SLOs land in
 // a follow-up.
+//
+// --json (issue #63 §2) emits the raw api.StatusPage so pipelines can
+// jq the SLO numbers. JSON tag set lives on the struct in
+// pkg/api/dto.go — renames there propagate here automatically.
 func cmdStatus(args []string) int {
-	if len(args) != 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas status")
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "emit raw api.StatusPage as JSON (issue #63 §2)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: faas status [--json]")
 		return 1
 	}
 	// Use the raw Client (not authedClient) so the public endpoint
@@ -122,6 +152,17 @@ func cmdStatus(args []string) int {
 	page, err := client.GetStatusSLO(context.Background())
 	if err != nil {
 		return printErr("Status failed", err)
+	}
+	if *asJSON {
+		// Marshal directly so the JSON tag set on pkg/api/dto.go is
+		// the single source of truth (no risk of drift between the
+		// CLI's pretty-printer and the wire shape).
+		enc := json.NewEncoder(osStdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(page); err != nil {
+			return printErr("Status json encode failed", err)
+		}
+		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
 	_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", page.WakeP95MS)
@@ -195,41 +236,75 @@ func envPush(args []string) int {
 	fs := flag.NewFlagSet("env push", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	in := fs.String("f", ".env", "input file (default .env)")
+	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if *app == "" {
-		fmt.Fprintln(os.Stderr, "usage: faas env push --app <slug> [-f .env]")
+		fmt.Fprintln(os.Stderr, "usage: faas env push --app <slug> [-f .env | --from-stdin]")
 		return 1
 	}
-	f, err := os.Open(*in)
-	if err != nil {
-		return printErr("Could not read .env", err)
+	if *fromStdin && *in != ".env" {
+		// fs.Changed isn't available pre-Go-1.21 in some toolchains;
+		// the default for -f is ".env", so anything else means the
+		// customer explicitly named a file. Mutually exclusive with
+		// --from-stdin so we never read both.
+		fmt.Fprintln(os.Stderr, "✗ --from-stdin and -f are mutually exclusive")
+		return 1
 	}
-	defer func() { _ = f.Close() }()
-	// Reuse parseSecretsPair from commands3.go (single '=' split, same
-	// edge cases). Skip blanks + comments ourselves so the parser sees
-	// only candidate lines.
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
 	type pair struct{ k, v string }
 	var pairs []pair
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+	if *fromStdin {
+		// Issue #63 §3: respect the --from-stdin semantics already used
+		// by `faas secrets set` (commands3.go:92). Tests pipe a string
+		// into osStdin (commands5_test.go); customers pipe a heredoc
+		// or process substitution. Same line cap (64 KB) — Scale's
+		// SecretValueMaxBytes (32 KB) plus the key name fits, anything
+		// larger truncates and the apid byte cap rejects.
+		scanner := bufio.NewScanner(osStdin)
+		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			p, err := parseSecretsPair(line)
+			if err != nil {
+				return printErr("Bad stdin line", err)
+			}
+			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
-		p, err := parseSecretsPair(line)
+		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
+			return printErr("Read stdin", err)
+		}
+	} else {
+		f, err := os.Open(*in)
 		if err != nil {
-			return printErr("Bad .env line", err)
+			return printErr("Could not read .env", err)
 		}
-		pairs = append(pairs, pair{k: p.Key, v: p.Value})
-	}
-	if err := scanner.Err(); err != nil {
-		return printErr("Read .env", err)
+		defer func() { _ = f.Close() }()
+		// Reuse parseSecretsPair from commands3.go (single '=' split, same
+		// edge cases). Skip blanks + comments ourselves so the parser sees
+		// only candidate lines.
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			p, err := parseSecretsPair(line)
+			if err != nil {
+				return printErr("Bad .env line", err)
+			}
+			pairs = append(pairs, pair{k: p.Key, v: p.Value})
+		}
+		if err := scanner.Err(); err != nil {
+			return printErr("Read .env", err)
+		}
 	}
 	if len(pairs) == 0 {
-		fmt.Fprintln(os.Stderr, "✗ no KEY=VALUE pairs in .env")
+		fmt.Fprintln(os.Stderr, "✗ no KEY=VALUE pairs in input")
 		return 1
 	}
 	client, err := authedClient()
