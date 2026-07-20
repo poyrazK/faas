@@ -138,6 +138,74 @@ func WaitForHTTPReady(ctx context.Context, t T, client *http.Client, url string,
 	return fmt.Errorf("http %s not ready within %s", url, deadline)
 }
 
+// WaitForBuildStatus polls the builds row until status matches want (a
+// terminal BuildStatus: succeeded or failed), OR deadline. build status
+// transitions don't fire a dedicated pg_notify channel — builderd writes
+// straight to the row — so we poll on a 200 ms ticker. That's tight enough
+// to surface a failed build within ~1 s of its UpdateBuildStatus call.
+//
+// Issue #57: this is the §14 M6 orchestrator e2e's terminal assertion. A
+// return with status=succeeded means apid → pg_notify → builderd →
+// vm.Spawn → in-VM Railpack/buildctl → OCI image all ran end-to-end.
+//
+// Returns the Build row at the moment the wait resolves (whether it
+// matched or hit the deadline) so the caller can inspect LogPath /
+// FailureClass for diagnostic dumps.
+func WaitForBuildStatus(ctx context.Context, t T, pool *pgxpool.Pool, buildID string, want state.BuildStatus, deadline time.Duration) (state.Build, error) {
+	t.Helper()
+	store := state.NewPgStore(pool)
+	end := time.Now().Add(deadline)
+	poll := time.NewTicker(200 * time.Millisecond)
+	defer poll.Stop()
+	var last state.Build
+	for {
+		b, err := store.BuildByID(ctx, buildID)
+		if err != nil {
+			return b, fmt.Errorf("read build %s: %w", buildID, err)
+		}
+		last = b
+		switch b.Status {
+		case want:
+			return b, nil
+		case state.BuildFailed:
+			return b, fmt.Errorf("build %s failed (failure_class=%q)", buildID, b.FailureClass)
+		}
+		select {
+		case <-ctx.Done():
+			return last, ctx.Err()
+		case <-time.After(time.Until(end)):
+			return last, fmt.Errorf("deadline %s reached before build %s reached %s (last status=%s)", deadline, buildID, want, last.Status)
+		case <-poll.C:
+		}
+	}
+}
+
+// GetBuild reads a single build row by ID. Exists for the failure-path
+// debug dump in cmd/e2e/build_metal_test.go — when WaitForBuildStatus
+// times out we want to surface whatever state the row is in alongside
+// the last 4 KiB of the build log.
+func GetBuild(ctx context.Context, pool *pgxpool.Pool, buildID string) (state.Build, error) {
+	store := state.NewPgStore(pool)
+	b, err := store.BuildByID(ctx, buildID)
+	if err != nil {
+		return state.Build{}, fmt.Errorf("e2etest: read build %s: %w", buildID, err)
+	}
+	return b, nil
+}
+
+// GetDeployment reads a single deployment row by ID. Used by build_metal_test.go
+// to cross-check that the deployment row advanced past "building" once the
+// build succeeded.
+func GetDeployment(ctx context.Context, t T, pool *pgxpool.Pool, deploymentID string) (state.Deployment, error) {
+	t.Helper()
+	store := state.NewPgStore(pool)
+	dep, err := store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return state.Deployment{}, fmt.Errorf("e2etest: read deployment %s: %w", deploymentID, err)
+	}
+	return dep, nil
+}
+
 // T is the tiny interface shared between *testing.T and helpers. Lets the
 // waiters be used from tests AND from cmd/e2e sub-tests without dragging the
 // whole testing package through pkg/e2etest's exported surface.
