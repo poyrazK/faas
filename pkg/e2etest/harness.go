@@ -72,6 +72,7 @@ type Harness struct {
 	ScheddSock string
 	VMMDPath   string
 	VMMDSock   string
+	MeterdSock string
 	GatewayURL string
 	ImagedTmp  string // FAAS_APPS_ROOT
 
@@ -219,6 +220,13 @@ kernel_path = %q
 		waitTCP(t, addr, 10*time.Second)
 	}
 
+	if which&Meterd != 0 {
+		if h.ScheddSock == "" {
+			h.ScheddSock = filepath.Join(tmp, "schedd.sock")
+		}
+		startMeterd(t, h, bin, dbURL)
+	}
+
 	t.Cleanup(h.stop)
 	return h
 }
@@ -233,10 +241,13 @@ const (
 	VMMD
 	Imaged
 	Gatewayd
+	// Meterd is the metering/quota daemon. Issue #52 wires the prod
+	// defaultDeps; the e2e test for the Free-tier hard stop uses this.
+	Meterd
 )
 
 // All is the full set for the metal e2e test.
-const All = APID | Schedd | VMMD | Imaged | Gatewayd
+const All = APID | Schedd | VMMD | Imaged | Gatewayd | Meterd
 
 const testDomain = "apps.test.example"
 
@@ -248,6 +259,10 @@ const testDomain = "apps.test.example"
 // Use this when the test isn't metal and only needs apid under
 // configuration control (which is most of the quota-style e2es; quota
 // only needs apid, no schedd/vmmd).
+//
+// Meterd can be requested alongside apid in StartWithEnv — the
+// quota-breach acceptance test (issue #52) boots {APID, Schedd,
+// Meterd} and wants the cadence override via extraEnv.
 func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []string) *Harness {
 	t.Helper()
 	tmp := t.TempDir()
@@ -284,6 +299,38 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		h.APIDURL = "http://" + addr
 		waitTCP(t, addr, 10*time.Second)
 	}
+	if which&Schedd != 0 {
+		sockPath := filepath.Join(tmp, "schedd.sock")
+		vmmdSock := filepath.Join(tmp, "vmmd.sock")
+		cfgPath := filepath.Join(tmp, "schedd.toml")
+		cfg := fmt.Sprintf(
+			`socket_path = %q
+owner_user = %q
+vmmd_socket = %q
+`,
+			sockPath, "root", vmmdSock,
+		)
+		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+			t.Fatalf("e2etest: write schedd.toml: %v", err)
+		}
+		env := []string{
+			"FAAS_SCHEDD_CONFIG=" + cfgPath,
+			"DATABASE_URL=" + dbURL,
+			"PATH=" + os.Getenv("PATH"),
+			"HOME=" + os.Getenv("HOME"),
+		}
+		env = append(env, extraEnv...)
+		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
+		h.ScheddSock = sockPath
+		h.VMMDSock = vmmdSock
+		waitUnix(t, sockPath, 10*time.Second)
+	}
+	if which&Meterd != 0 {
+		if h.ScheddSock == "" {
+			h.ScheddSock = filepath.Join(tmp, "schedd.sock")
+		}
+		startMeterd(t, h, bin, dbURL, extraEnv)
+	}
 	return h
 }
 
@@ -304,6 +351,36 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 	h.procs = append(h.procs, startProc(t, bin, "apid", env))
 	h.APIDURL = "http://" + addr
 	waitTCP(t, addr, 10*time.Second)
+}
+
+// startMeterd boots the meterd daemon with FAAS_SCHEDD_ADDR pointing at
+// the test's schedd unix socket. The Stripe push is intentionally
+// disabled — STRIPE_API_KEY is left blank, which the meterd wire-up
+// warns about and skips the SDK call. The acceptance test (issue #52)
+// only exercises the Free-tier hard stop, not the Stripe API.
+//
+// extraEnv is appended last so a test can inject FAAS_QUOTA_INTERVAL
+// for the "parked within one tick" gate (60s default would make the
+// test take a minute). Pass nil from the no-extras path inside
+// Start().
+func startMeterd(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...[]string) {
+	t.Helper()
+	// meterd's daemon config keeps the same socket defaults as
+	// schedd (config.go). We only need the env override to point it
+	// at the test's per-temp-dir schedd unix socket.
+	env := []string{
+		"DATABASE_URL=" + dbURL,
+		"FAAS_SCHEDD_ADDR=" + h.ScheddSock,
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+	}
+	for _, e := range extraEnv {
+		env = append(env, e...)
+	}
+	// Build first-time only; buildBinaries already produced the
+	// binary in Start / StartWithEnv. We don't need a separate
+	// go-build hop here.
+	h.procs = append(h.procs, startProc(t, bin, "meterd", env))
 }
 
 // stop SIGTERMs every daemon, waits up to 5s, then SIGKILL stragglers. Owns
@@ -349,7 +426,7 @@ func (h *Harness) stop() {
 func buildBinaries(t *testing.T, bin string) {
 	t.Helper()
 	modulePath := modulePath(t)
-	for _, d := range []string{"apid", "schedd", "vmmd", "imaged", "gatewayd"} {
+	for _, d := range []string{"apid", "schedd", "vmmd", "imaged", "gatewayd", "meterd"} {
 		out := filepath.Join(bin, d)
 		cmd := exec.Command("go", "build", "-o", out, modulePath+"/cmd/"+d)
 		cmd.Stderr = os.Stderr

@@ -2,30 +2,68 @@ package stripex
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	stripe "github.com/stripe/stripe-go"
+	"github.com/stripe/stripe-go/usagerecord"
 )
 
-// pushUsageRecordSDK is the seam where stripe-go lands. M7 wires a real
-// subscriptionItem.UsageRecord call here; until then the function is a
-// placeholder that returns nil so the dedupe table + pusher loop are
-// exercised end-to-end without the SDK.
+// pushUsageRecordSDK is the seam where stripe-go lands (issue #52).
 //
-// The placeholder behavior is documented in the runbook so the M7 sign-
-// off reviewer knows we're not silently dropping the actual bill —
-// production swap is a single function body replacement, plus the
-// go.mod entry for stripe-go.
+// It posts a metered UsageRecord against the per-account
+// subscription_item ID that EnsureCustomer stamps on the account row
+// via StripeCustomerSubscriptionCreated. The dedupe gate at
+// (Client).PushUsageRecord already short-circuits repeated hours, so
+// this function only runs once per (account, hour).
 //
-// TODO(m7-real-stripe): replace this body with the stripe-go call below:
+// Money is in spec-mandated integer cents/millicents per GB-h. The
+// spec doesn't require sub-cent precision here, so we send
+// millicents-of-GB — i.e. the wire quantity is
+// int64(gbHours * 1000) — and Stripe aggregates at the source-currency
+// scale (DecimalFractionDigits = 3 for USD).
 //
-//	idem := acct.ID + ":" + hour.Format(time.RFC3339)
-//	sparams := &stripe.UsageRecordParams{
-//	    Quantity: stripe.Int64(int64(gbHours * 1000)), // millicents-precision not needed; round to 3 dp
-//	    Timestamp: stripe.Int64(hour.Unix()),
-//	}
-//	sparams.IdempotencyKey = stripe.String(idem)
-//	_, err := usagerecord.New(params.SubscriptionItem, sparams)
-func (c *Client) pushUsageRecordSDK(_ context.Context, _ state.Account, _ time.Time, _ float64) error {
+// Idempotency is enforced with the standard Stripe pattern: one
+// Idempotency-Key header derived from (accountID, RFC3339 hour). A
+// redelivered meterd tick at the same hour generates the same key and
+// Stripe replays the cached response rather than double-billing.
+func (c *Client) pushUsageRecordSDK(ctx context.Context, acct state.Account, hour time.Time, gbHours float64) error {
+	if acct.StripeSubscriptionItem == "" {
+		// Mirror the StripeCustomerID-emptiness skip at
+		// client.go::PushUsageRecord — pending customers are a no-op.
+		// products.go::EnsureCustomer stamps this on the first
+		// successful subscription webhook.
+		return nil
+	}
+	if c.apiKey == "" {
+		// Without a key, we'd call usagerecord.New() against the
+		// unauthenticated `*Backend` and bounce 401 off every push.
+		// Better to skip and surface the misconfiguration in the
+		// meterd log line.
+		return fmt.Errorf("stripex: cannot push usage without apiKey (account %s)", acct.ID)
+	}
+	stripe.Key = c.apiKey
+
+	qty := int64(gbHours * 1000)
+	if qty < 0 {
+		// Defensive: a negative quantity would silently credit the
+		// customer. meterd never produces these; the gate here
+		// documents the invariant for future callers.
+		return fmt.Errorf("stripex: negative usage quantity for account %s: %d", acct.ID, qty)
+	}
+	idem := acct.ID + ":" + hour.UTC().Format(time.RFC3339)
+	params := &stripe.UsageRecordParams{
+		SubscriptionItem: stripe.String(acct.StripeSubscriptionItem),
+		Quantity:         stripe.Int64(qty),
+		Timestamp:        stripe.Int64(hour.UTC().Unix()),
+		Action:           stripe.String(stripe.UsageRecordActionIncrement),
+	}
+	params.IdempotencyKey = stripe.String(idem)
+
+	_, err := usagerecord.New(params)
+	if err != nil {
+		return fmt.Errorf("stripex: usagerecord.New account %s hour %s: %w", acct.ID, hour.UTC().Format(time.RFC3339), err)
+	}
 	return nil
 }

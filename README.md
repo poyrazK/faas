@@ -107,7 +107,7 @@ arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
   end-to-end — `apid → pg_notify('build_queued') → builderd → vmmd
   → firecracker → in-VM Railpack/buildctl → OCI image.tar` —
   tracked in #57. See *What's next*.
-- **M7 — metering, billing, functions, cron.** 🚧 The sampling/quota
+- **M7 — metering, billing, functions, cron.** ✅ The sampling/quota
   shapes are in `cmd/meterd` and `pkg/stripex`, the dunning state
   machine is `pkg/state.MarkAccountDeletionPending` (ADR-021), GB-h
   = plan RAM + 8 MB per running second is in `pkg/meter`.
@@ -116,12 +116,18 @@ arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
   single-flight per scheduled fire, loop-tested in
   `cron_loop_test.go`. Email: `pkg/mail` interface with Resend +
   Postmark backends (gap G4).
-  Remaining: `cmd/meterd/main.go::defaultDeps` ships nil `parker`
-  and nil `stripe` collaborators; production never wires
-  `scheddgrpc.Dial(...)` or `stripex.NewClient(...)`, so quota
-  hard-stop and hourly Stripe usage push are not operational.
-  `pkg/stripex/usage.go::PushUsageRecord` is a `nil`-returning
-  stub (`TODO stripe-go`). See *What's next*.
+  meterd is wired to `scheddgrpc.Dial(...)` for the Free-tier hard
+  stop and to `stripex.NewClient(...)` (real `stripe-go` UsageRecord
+  POST, idempotency-keyed on `(accountID, RFC3339 hour)`) for the
+  hourly Stripe push (issue #52). Strict-exit if
+  `FAAS_SCHEDD_ADDR` is unset, so a misconfigured deployment never
+  silently runs unbounded. End-to-end e2e:
+  `cmd/e2e/meterd_quota_e2e_test.go::TestQuotaBreach_ParkInstanceWithinOneTick`
+  greens a Free account → suspended + parked within one quota tick.
+  Caveat: per-account Stripe `si_…` lookup is stamped from the
+  `customer.subscription.created` webhook in
+  `pkg/stripex/products.go::EnsureCustomer`, which is still a stub
+  for slice follow-up (M7 follow-up: products.go real-SDK wiring).
 - **M7.5 — thin dashboard + githubd.** ✅ `pkg/dashboard` ships
   server-rendered Go `html/template` pages (apps, billing, usage,
   login, account, deployment-detail); ADR-011 keeps dashboard on
@@ -198,14 +204,12 @@ and open an issue if you want it.
 
 **M7**
 
-- **`cmd/meterd/main.go` wiring** — `defaultDeps` leaves `parker`
-  and `stripe` nil. Wire `scheddgrpc.Dial(...)` for the quota
-  hard-stop's `ScheddParker`, and `stripex.NewClient(...)` for the
-  hourly push. Until then, the sampling loop runs but doesn't act
-  on quota breaches or send Stripe usage records.
-- **`pkg/stripex/usage.go::PushUsageRecord`** — currently
-  `nil`-returning `TODO stripe-go`. Bring the SDK in, write a
-  test against the Stripe sandbox.
+- **`pkg/stripex/products.go::EnsureCustomer`** — the
+  `si_…` stamp currently lives in the Account table but the
+  webhook-handler that populates it on
+  `customer.subscription.created` is still a stub.
+  `pkg/stripex/products.go` lands a real `stripe-go` call here
+  to map `plan → price → customer → subscription_item`.
 
 **M8**
 

@@ -1,0 +1,29 @@
+# Example meterd config — copy to /etc/faas/meterd.toml on the box.
+# Every field has a working default; an empty file yields a runnable daemon.
+
+# schedd_socket: unix socket meterd dials to call ParkInstance on a
+# Free-tier hard stop (spec §4.7 / ADR-019). Overridable via the
+# FAAS_SCHEDD_ADDR env var so the e2e harness can swap in a per-test
+# socket without rewriting the unit file. Issue #52 acceptance:
+# BOTH empty means the daemon refuses to start (strict exit), so a
+# misconfigured deployment can never silently run unbounded.
+#
+# Default: /run/faas/schedd.sock
+# schedd_socket = "/run/faas/schedd.sock"
+
+# db_url: Postgres DSN. Empty => $DATABASE_URL from the environment.
+# db_url = ""
+
+# metrics_addr: bind address for the Prometheus /metrics endpoint.
+# Empty disables it.
+# metrics_addr = "127.0.0.1:9106"
+
+# meter block — timer cadences + the per-tick behavior knobs. Default
+# cadences: sample 60s, quota 60s, stripe 60m. Override via env:
+# FAAS_SAMPLE_INTERVAL, FAAS_QUOTA_INTERVAL, FAAS_STRIPE_INTERVAL.
+# Sample and quota intervals must be ≤ 60s on busy days; the stripe
+# interval can be longer (the §14 sample is monthly).
+[meter]
+# sample_interval = "60s"
+# quota_interval = "60s"
+# stripe_interval = "60m"

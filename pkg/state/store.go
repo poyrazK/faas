@@ -52,6 +52,11 @@ type Store interface {
 	// account row so the webhook + push paths can join. Idempotent — a
 	// repeat call with the same value is a no-op (ADR-010, Slice 2).
 	UpdateAccountStripeCustomerID(ctx context.Context, id, stripeCustomerID string) error
+	// UpdateAccountStripeSubscriptionItem records the Stripe metered
+	// subscription item ID (si_…) so meterd's hourly push knows
+	// where to POST UsageRecord (issue #52, M7). Empty until the
+	// customer's first subscription.created webhook lands.
+	UpdateAccountStripeSubscriptionItem(ctx context.Context, id, subItem string) error
 	// AccountByStripeCustomerID resolves an account from the Stripe customer
 	// ID. The webhook is the only caller; backed by an index in production
 	// (deferred). Returns ErrNotFound for unknown customers.

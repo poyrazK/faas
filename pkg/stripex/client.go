@@ -57,15 +57,17 @@ func NewClient(store state.Store, dedupe PushDedupe, apiKey, secret string, log 
 // PushUsageRecord is the meterd-side entry point. It deduplicates on
 // (account, hour) before issuing the Stripe call so a redelivered hour
 // is a no-op. The Stripe call itself is gated behind a real-stripe
-// interface (see TODO in usage.go); the unit tests exercise the dedupe
-// gate end-to-end without the SDK.
+// SDK call (see usage.go); the unit tests exercise the dedupe gate
+// end-to-end without the SDK.
 //
 // PushUsageRecord satisfies the pkg/meter.StripePusher interface.
 func (c *Client) PushUsageRecord(ctx context.Context, acct state.Account, hour time.Time, gbHours float64) error {
-	if acct.StripeCustomerID == "" {
-		// No customer yet — skip silently. The customer is created on
-		// the first successful subscription webhook; until then there's
-		// nothing to bill.
+	if acct.StripeCustomerID == "" || acct.StripeSubscriptionItem == "" {
+		// No customer / subscription yet — skip silently. Either
+		// field being empty means there's no Stripe surface to bill
+		// against; the missing subscription_item case is the
+		// "customer exists but products.go::EnsureCustomer hasn't
+		// stamped the subscription.created webhook yet" interregnum.
 		return nil
 	}
 	dup, err := c.dedupe.HasStripePushHour(ctx, acct.ID, hour)
