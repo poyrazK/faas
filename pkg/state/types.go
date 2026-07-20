@@ -98,7 +98,7 @@ type Account struct {
 	// PushUsageRecord skips when this is blank so a customer that hasn't
 	// subscribed yet never lands on the billing dashboard.
 	StripeSubscriptionItem string
-	CreatedAt               time.Time
+	CreatedAt              time.Time
 	// DeletionRequestedAt is stamped when the customer schedules the
 	// account for deletion (G6, ADR-021). NULL on every row that has
 	// never been scheduled. pkg/grace uses it to decide whether the
