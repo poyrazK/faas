@@ -17,6 +17,7 @@ require (
 	github.com/pressly/goose/v3 v3.27.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/stripe/stripe-go v70.15.0+incompatible
 	golang.org/x/sys v0.45.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260715232425-e75dac1f907d
 	google.golang.org/grpc v1.82.1

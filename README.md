@@ -52,7 +52,7 @@ Spec §14 milestones. Long form (per-PR attribution, what's left on
 each board) lives in [`docs/STATUS.md`](docs/STATUS.md).
 
 - **M0–M6 ✅** — scaffold, vmmd, imaged, apid, gatewayd, builderd.
-- **M7 🚧** — meterd wiring + stripe-go SDK (PR #59 in flight).
+- **M7 ✅** — meterd wiring + stripe-go SDK landed in PR #59 (closes #52).
 - **M8 🚧** — §11 hardening + SLO dashboard landed; §14 drills +
   CertMagic pending.
 

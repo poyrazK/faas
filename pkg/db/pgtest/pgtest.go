@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -133,4 +134,32 @@ func SchemaOf(pool *pgxpool.Pool) string {
 		return ""
 	}
 	return cfg.ConnConfig.RuntimeParams["search_path"]
+}
+
+// WaitForMigration blocks until goose_db_version on the given pool has
+// reached targetVersion (or beyond), or fails the test after deadline.
+//
+// Call this AFTER db.MigrateUp has been invoked so the version table exists.
+// The cmd/e2e meterd test (issue #52 acceptance) uses it to gate daemon
+// subprocess boot on schema arrival — without this, the daemon's first
+// tick races the migration and crashes with 'relation "accounts" does
+// not exist' on CI's postgres15 service. See memory
+// cmd-e2e-schedd-migration-race for the race this fixes.
+func WaitForMigration(t *testing.T, pool *pgxpool.Pool, targetVersion int64, deadline time.Duration) {
+	t.Helper()
+	end := time.Now().Add(deadline)
+	for {
+		var got int64
+		err := pool.QueryRow(context.Background(),
+			"SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied = true",
+		).Scan(&got)
+		if err == nil && got >= targetVersion {
+			return
+		}
+		if time.Now().After(end) {
+			t.Fatalf("pgtest: migration version %d not reached within %s (last got=%d err=%v)",
+				targetVersion, deadline, got, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

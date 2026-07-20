@@ -21,7 +21,7 @@ func BadgeFor(s state.State) (cls, glyph, label string) {
 	case state.StateRunning:
 		return "running", "●", "running"
 	case state.StateParked:
-		return "sleeping", "◌", "sleeping"
+		return badgeSleeping, "◌", badgeSleeping
 	case state.StateWaking, state.StateColdBooting, state.StateSnapshotting:
 		return "waking", "⟳", "waking"
 	case state.StateFailed, state.StateStopped:
@@ -34,6 +34,12 @@ func BadgeFor(s state.State) (cls, glyph, label string) {
 		return "dim", "·", "idle"
 	}
 }
+
+// badgeSleeping is promoted to a const so goconst (CI lint) stops
+// flagging the 4-occurrence literal ("class", "label", comment,
+// godoc). The dashboard copy is the user-facing string, not an
+// internal identifier — keep it in the dashboard package.
+const badgeSleeping = "sleeping"
 
 // BadgeForDefault is the badge rendered when the app has no
 // instance rows yet (fresh deploy, never woken). Per ux_spec §6.3,

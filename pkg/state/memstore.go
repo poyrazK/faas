@@ -235,6 +235,22 @@ func (m *MemStore) UpdateAccountStripeCustomerID(_ context.Context, id, stripeCu
 	return nil
 }
 
+// UpdateAccountStripeSubscriptionItem stamps the Stripe metered
+// subscription item ID (si_…) on the account row (issue #52). MemStore
+// does not maintain a reverse-lookup index — only meterd walks
+// forward from the account list. PgStore mirrors the column shape.
+func (m *MemStore) UpdateAccountStripeSubscriptionItem(_ context.Context, id, subItem string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	a.StripeSubscriptionItem = subItem
+	m.accounts[id] = a
+	return nil
+}
+
 // AccountByStripeCustomerID is the reverse-lookup the Stripe webhook
 // uses to find the account behind an event's `customer` field. O(1) via
 // the index map; PgStore implements this with a unique index.
