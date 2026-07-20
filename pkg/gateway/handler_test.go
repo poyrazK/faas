@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	dto "github.com/prometheus/client_model/go"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // fakeBackend simulates routing + a parked app that wakes on demand.

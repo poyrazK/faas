@@ -4,9 +4,9 @@
 //
 // Endpoints used (Hetzner DNS API, https://dns.hetzner.com/api/v1):
 //
-//   GET    /api/v1/zones?name=<zone>           → list zones (find Zone ID by name)
-//   POST   /api/v1/records                    → create a record (TXT, _acme-challenge.<host>)
-//   DELETE /api/v1/records/<id>               → delete a record
+//	GET    /api/v1/zones?name=<zone>           → list zones (find Zone ID by name)
+//	POST   /api/v1/records                    → create a record (TXT, _acme-challenge.<host>)
+//	DELETE /api/v1/records/<id>               → delete a record
 //
 // Auth: header "Auth-API-Token: <token>".
 //

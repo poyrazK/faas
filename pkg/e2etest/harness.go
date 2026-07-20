@@ -75,19 +75,19 @@ import (
 //
 // Fields are exported for test consumption: H.APIDURL, H.GatewayURL, H.Pool.
 type Harness struct {
-	T           *testing.T
-	Pool        *pgxpool.Pool
-	TmpDir      string
-	BinDir      string
-	SockDir     string // short-path unix-socket directory (see Start comment)
-	APIDURL          string
-	ScheddSock       string
-	VMMDPath         string
-	VMMDSock         string
-	GatewayURL       string
+	T                 *testing.T
+	Pool              *pgxpool.Pool
+	TmpDir            string
+	BinDir            string
+	SockDir           string // short-path unix-socket directory (see Start comment)
+	APIDURL           string
+	ScheddSock        string
+	VMMDPath          string
+	VMMDSock          string
+	GatewayURL        string
 	GatewayControlURL string // /metrics + /healthz, loopback only
-	ImagedTmp        string // FAAS_APPS_ROOT
-	BuilderdCfg      string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
+	ImagedTmp         string // FAAS_APPS_ROOT
+	BuilderdCfg       string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
 
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
