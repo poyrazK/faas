@@ -680,3 +680,39 @@ func (p *countingPuller) PullLayers(_ context.Context, _ string) (oci.PullLayers
 	p.pullLayersCount++
 	return oci.PullLayersResult{Layers: p.layers, Config: p.imageCfg, Digest: "sha256:abc"}, nil
 }
+
+// TestRepoWithHost pins the host-preserving derivation used by
+// aboveBaseLayers to construct blob-fetch repo paths. The OCI puller
+// synthesises a Reference from `repo+@digest` and looks up the registry
+// from that synthesised ref; passing just the repository (e.g.
+// "library/hello") makes it default to docker.io and silently dials the
+// wrong host for non-Docker-Hub deploys (issue #53). repoWithHost is the
+// load-bearing seam — TestRepoWithHost is the coverage pin.
+func TestRepoWithHost(t *testing.T) {
+	cases := map[string]string{
+		// docker.io is special-cased: the synthesised ref's default
+		// registry IS docker.io, so the repo path alone is correct.
+		"docker.io/library/hello":                     "library/hello",
+		"docker.io/onebox-faas/builder-base":          "onebox-faas/builder-base",
+		// Non-docker registries: the host must survive the round-trip.
+		"ghcr.io/onebox-faas/builder-base":            "ghcr.io/onebox-faas/builder-base",
+		"quay.io/prometheus/node-exporter":            "quay.io/prometheus/node-exporter",
+		"registry.example.com:5000/team/svc":          "registry.example.com:5000/team/svc",
+		"127.0.0.1:5000/onebox-faas/builder-base":     "127.0.0.1:5000/onebox-faas/builder-base",
+	}
+	for in, want := range cases {
+		if got := repoWithHost(in); got != want {
+			t.Errorf("repoWithHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// Parse failures must yield "" so the caller can branch on it. oci.ParseReference
+	// accepts almost any non-empty input as a docker.io repo (defaulting to
+	// "library/<name>"), so empty string is the only guaranteed parse error
+	// here. "@sha256:<64hex>" parses with an empty repository, which ParseReference
+	// rejects (line 72 of reference.go).
+	for _, in := range []string{"", "@sha256:" + strings.Repeat("a", 64)} {
+		if got := repoWithHost(in); got != "" {
+			t.Errorf("repoWithHost(%q) = %q, want \"\"", in, got)
+		}
+	}
+}
