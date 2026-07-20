@@ -1,6 +1,9 @@
 package api
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
@@ -29,6 +32,14 @@ type UpdateAppRequest struct {
 	// 403 plan_min_instances_not_allowed (apid gate). Must be <=
 	// plan MaxConcurrency (422 invalid_min_instances).
 	MinInstances *int `json:"min_instances,omitempty"`
+}
+
+// RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
+// Validated server-side via the same validSlug regex used at CreateApp
+// time; rejected on conflict with 409 CodeAppRenameFailed when another
+// live app already holds NewSlug.
+type RenameAppRequest struct {
+	NewSlug string `json:"new_slug"`
 }
 
 // AppResponse is an app as returned by the API.
@@ -304,4 +315,31 @@ type AccountDeletionResponse struct {
 	Status       string `json:"status"`        // always "deleted_pending"
 	ScheduledAt  string `json:"scheduled_at"`  // deletion_requested_at, RFC 3339
 	RestoreUntil string `json:"restore_until"` // scheduled_at + 30 d, RFC 3339
+}
+
+// StatusPage is the JSON shape served by GET /status/slo.json (spec
+// §12, M8 acceptance). Lives in pkg/api so the CLI can import it
+// without a back-reference into cmd/apid; cmd/apid/status.go embeds
+// the same JSON tags so the wire shape stays identical.
+//
+// Fields are documented in deploy/statuspage/index.html; renames here
+// must propagate to that file (and to the statusCache JSON encoder in
+// cmd/apid/status.go).
+type StatusPage struct {
+	// APIAvailabilityPct is the rolling 5-minute 2xx rate over
+	// gateway_requests_total, expressed 0..100.
+	APIAvailabilityPct float64 `json:"api_availability_pct"`
+	// WakeP95MS is the p95 of gateway_wake_latency_seconds over the
+	// last 5 minutes, in milliseconds.
+	WakeP95MS float64 `json:"wake_p95_ms"`
+	// BuildSuccessPct is the rolling 5-minute success rate of
+	// builderd builds (completed/success ÷ (completed/success +
+	// completed/failure)).
+	BuildSuccessPct float64 `json:"build_success_pct"`
+	// AsOf is the UTC timestamp the snapshot was taken. The HTML
+	// renders "Updated 3 min ago" off this.
+	AsOf time.Time `json:"as_of"`
+	// Source is "prometheus" or "degraded: <reason>" so an
+	// operator tailing the JSON can tell at a glance.
+	Source string `json:"source"`
 }

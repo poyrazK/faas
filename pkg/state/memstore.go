@@ -235,6 +235,22 @@ func (m *MemStore) UpdateAccountStripeCustomerID(_ context.Context, id, stripeCu
 	return nil
 }
 
+// UpdateAccountStripeSubscriptionItem stamps the Stripe metered
+// subscription item ID (si_…) on the account row (issue #52). MemStore
+// does not maintain a reverse-lookup index — only meterd walks
+// forward from the account list. PgStore mirrors the column shape.
+func (m *MemStore) UpdateAccountStripeSubscriptionItem(_ context.Context, id, subItem string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	a.StripeSubscriptionItem = subItem
+	m.accounts[id] = a
+	return nil
+}
+
 // AccountByStripeCustomerID is the reverse-lookup the Stripe webhook
 // uses to find the account behind an event's `customer` field. O(1) via
 // the index map; PgStore implements this with a unique index.
@@ -426,6 +442,36 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	}
 	m.apps[id] = a
 	return a, nil
+}
+
+// RenameApp atomically swaps an app's slug (issue #63). Scans the
+// in-memory map under lock for the (accountID, oldSlug) pair; rejects
+// newSlug collisions with ErrConflict so tests can exercise the same
+// 409 surface PgStore produces from the apps.slug unique constraint.
+func (m *MemStore) RenameApp(_ context.Context, accountID, oldSlug, newSlug string) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var found *App
+	for i := range m.apps {
+		a := m.apps[i]
+		if a.AccountID == accountID && a.Slug == oldSlug && a.Status != AppDeleted {
+			cp := a
+			found = &cp
+			break
+		}
+	}
+	if found == nil {
+		return App{}, ErrNotFound
+	}
+	for i := range m.apps {
+		other := m.apps[i]
+		if other.ID != found.ID && other.Slug == newSlug && other.Status != AppDeleted {
+			return App{}, ErrConflict
+		}
+	}
+	found.Slug = newSlug
+	m.apps[found.ID] = *found
+	return *found, nil
 }
 
 // SetAppMinInstances stamps the per-app floor (ux_spec §6.5). Plan-tier

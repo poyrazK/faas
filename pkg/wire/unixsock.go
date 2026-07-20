@@ -16,6 +16,13 @@ import (
 	"strconv"
 )
 
+// SkipGroupLookupEnv is the env knob tests set to tolerate a missing
+// `faas` group on a CI runner or dev Mac. The wire package falls back to
+// gid=0 instead of failing the listener boot. Production deployments never
+// set this — the ansible role creates the `faas` group as part of host
+// bootstrap.
+const SkipGroupLookupEnv = "FAAS_SKIP_SOCKET_GROUP"
+
 // DefaultSocketGroup is the unix-socket group every shared socket is owned by
 // in v1.0. Members of the group can dial the daemon. Spec §11: nothing
 // privileged runs outside this group; cgroup-scope fencing enforces the
@@ -80,6 +87,12 @@ func ListenOrRecreate(path string, uid, gid int, mode os.FileMode) (net.Listener
 // uid and the `faas` group gid, then calls ListenOrRecreate. Returns an error
 // (and a nil listener) if either lookup fails — call sites that want to
 // tolerate missing groups can use ListenOrRecreate with explicit integer ids.
+//
+// Tests that drive daemons through the cmd/e2e harness on a CI runner or
+// dev box without the ansible bootstrap set SkipGroupLookupEnv; in that
+// case the daemon falls back to gid=0 and skips the chown, so the unix
+// socket still binds (production deployments always have the `faas`
+// group, so this fallback is test-only).
 func ListenOrRecreateByName(path, daemonUser string) (net.Listener, error) {
 	uid, err := lookupUserUID(daemonUser)
 	if err != nil {
@@ -87,9 +100,48 @@ func ListenOrRecreateByName(path, daemonUser string) (net.Listener, error) {
 	}
 	gid, err := lookupGroupGID(DefaultSocketGroup)
 	if err != nil {
+		if os.Getenv(SkipGroupLookupEnv) != "" {
+			// Test-only fallback: bind the socket owned by the daemon
+			// uid with mode 0660 (no group chown). The harness sets
+			// SkipGroupLookupEnv because the `faas` group doesn't
+			// exist on dev / CI boxes that haven't run the ansible
+			// role. Production deploys never set this — the group is
+			// created at bootstrap.
+			l, lerr := listenSkipChown(path, DefaultSocketMode)
+			if lerr != nil {
+				return nil, fmt.Errorf("wire: listen (skip group) %q: %w", path, lerr)
+			}
+			return l, nil
+		}
 		return nil, fmt.Errorf("wire: lookup gid for %q: %w", DefaultSocketGroup, err)
 	}
 	return ListenOrRecreate(path, uid, gid, DefaultSocketMode)
+}
+
+// listenSkipChown binds a unix socket and chmods it without chowning (the
+// gid lookup failed and SkipGroupLookupEnv was set). Mirrors the body of
+// ListenOrRecreate minus the chown step; the test harness sets the env
+// precisely because the chown would fail on a host without the `faas` group.
+func listenSkipChown(path string, mode os.FileMode) (net.Listener, error) {
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("wire: socket path must be absolute; got %q", path)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, fmt.Errorf("wire: mkdir %q: %w", dir, err)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("wire: remove stale %q: %w", path, err)
+	}
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("wire: listen %q: %w", path, err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		_ = l.Close()
+		return nil, fmt.Errorf("wire: chmod %q to %o: %w", path, mode, err)
+	}
+	return l, nil
 }
 
 func lookupUserUID(name string) (int, error) {

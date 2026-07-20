@@ -83,12 +83,22 @@ const (
 
 // Account is a customer account.
 type Account struct {
-	ID               string
-	Email            string
-	Plan             api.Plan
-	Status           AccountStatus
+	ID     string
+	Email  string
+	Plan   api.Plan
+	Status AccountStatus
+	// StripeCustomerID is the per-account `cus_…` returned by Stripe when
+	// the customer signs up (spec §4.7). The unique index makes it a
+	// stable webhook lookup key.
 	StripeCustomerID string
-	CreatedAt        time.Time
+	// StripeSubscriptionItem is the per-account `si_…` (metered
+	// subscription item) that meterd pushes hourly usage against
+	// (issue #52, §4.7). Empty until pkg/stripex::EnsureCustomer
+	// receives the customer.subscription.created webhook and stamps it.
+	// PushUsageRecord skips when this is blank so a customer that hasn't
+	// subscribed yet never lands on the billing dashboard.
+	StripeSubscriptionItem string
+	CreatedAt              time.Time
 	// DeletionRequestedAt is stamped when the customer schedules the
 	// account for deletion (G6, ADR-021). NULL on every row that has
 	// never been scheduled. pkg/grace uses it to decide whether the

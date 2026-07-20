@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/faas/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/browser"
 )
@@ -161,11 +162,19 @@ func cmdAppsRm(args []string) int {
 // `--dockerfile`. Image digest stays as the default input. `--repo owner/name`
 // opens the dashboard's repo-picker page (slice 8) where the customer binds
 // the repo + branch; subsequent pushes auto-deploy via the webhook path.
+//
+// `--template NAME` materializes one of the six embedded starter
+// projects (cmd/faas/templates/embed.go) into a tempdir, tars+gzip it,
+// and proceeds down the --tarball path. For the function templates
+// (function-node, function-python) we force --runtime / --handler so
+// the runner wires up correctly without the customer having to know
+// those flags.
 func cmdDeployTarball(args []string) int {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
 	repo := fs.String("repo", "", "GitHub repo to bind and deploy (owner/name)")
+	templateName := fs.String("template", "", "start from an embedded template (hello-node|hello-python|hello-go|cron-example|function-node|function-python)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
 	runtime := fs.String("runtime", "", "function runtime (node22|python312)")
 	handler := fs.String("handler", "", "function handler (e.g. handler.handler)")
@@ -189,8 +198,46 @@ func cmdDeployTarball(args []string) int {
 		return cmdDeployRepo(slug, *repo)
 	}
 
+	// --template materializes an embedded starter project. For function
+	// templates we force the runtime + handler so the customer doesn't
+	// need to know the convention; for app templates we leave them
+	// unset so imaged auto-detects.
+	if *templateName != "" {
+		if !templates.Exists(*templateName) {
+			fmt.Fprintf(os.Stderr, "✗ unknown --template %q (known: %s)\n",
+				*templateName, strings.Join(templates.Names, ", "))
+			return 1
+		}
+		switch *templateName {
+		case "function-node":
+			*runtime = "node22"
+			*handler = "handler.handler"
+		case "function-python":
+			*runtime = "python312"
+			*handler = "handler.handler"
+		}
+		f, err := os.CreateTemp("", "faas-template-*.tar.gz")
+		if err != nil {
+			return printErr("Could not create temp file", err)
+		}
+		tmpPath := f.Name()
+		_ = f.Close()
+		defer func() { _ = os.Remove(tmpPath) }()
+		if err := templates.TarGz(*templateName, tmpPath); err != nil {
+			return printErr("Could not materialize template", err)
+		}
+		*tarball = tmpPath
+		// --image would have precedence over --template by accident;
+		// reject it explicitly so the customer isn't surprised by
+		// which one wins.
+		if *image != "" {
+			fmt.Fprintln(os.Stderr, "✗ --template and --image are mutually exclusive")
+			return 1
+		}
+	}
+
 	if *image == "" && *tarball == "" {
-		fmt.Fprintln(os.Stderr, "✗ one of --image, --tarball, or --repo is required.")
+		fmt.Fprintln(os.Stderr, "✗ one of --image, --tarball, --repo, or --template is required.")
 		return 1
 	}
 

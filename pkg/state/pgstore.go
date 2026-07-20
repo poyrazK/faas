@@ -55,26 +55,26 @@ var _ Store = (*PgStore)(nil)
 
 func (s *PgStore) CreateAccount(ctx context.Context, email string, plan api.Plan) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`insert into accounts (email, plan, status) values ($1, $2, 'active') returning id, email, plan, status, coalesce(stripe_customer_id,''), created_at, deletion_requested_at`,
+		`insert into accounts (email, plan, status) values ($1, $2, 'active') returning id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at`,
 		email, string(plan))
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByID(ctx context.Context, id string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at, deletion_requested_at from accounts where id = $1`, id)
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at from accounts where id = $1`, id)
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByEmail(ctx context.Context, email string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at, deletion_requested_at from accounts where email = $1`, email)
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at from accounts where email = $1`, email)
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select a.id, a.email, a.plan, a.status, coalesce(a.stripe_customer_id,''), a.created_at, a.deletion_requested_at
+		`select a.id, a.email, a.plan, a.status, coalesce(a.stripe_customer_id,''), coalesce(a.stripe_subscription_item,''), a.created_at, a.deletion_requested_at
 		 from accounts a join api_keys k on k.account_id = a.id where k.key_sha256 = $1`, hash)
 	return scanAccount(row)
 }
@@ -106,12 +106,30 @@ func (s *PgStore) UpdateAccountStripeCustomerID(ctx context.Context, id, stripeC
 	return nil
 }
 
+// UpdateAccountStripeSubscriptionItem records the Stripe subscription
+// item ID (si_…) on the account row (issue #52). meterd's hourly push
+// reads this to know where to POST the UsageRecord; the value is empty
+// until pkg/stripex::EnsureCustomer receives
+// customer.subscription.created. MemStore mirrors the column shape.
+func (s *PgStore) UpdateAccountStripeSubscriptionItem(ctx context.Context, id, subItem string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update accounts set stripe_subscription_item = $2 where id = $1`,
+		id, subItem)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // AccountByStripeCustomerID resolves the account behind a Stripe webhook
 // payload. The unique index makes this O(log n); MemStore does it with a
 // map.
 func (s *PgStore) AccountByStripeCustomerID(ctx context.Context, stripeCustomerID string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at, deletion_requested_at
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at
 		 from accounts where stripe_customer_id = $1`,
 		stripeCustomerID)
 	return scanAccount(row)
@@ -121,7 +139,7 @@ func (s *PgStore) AccountByStripeCustomerID(ctx context.Context, stripeCustomerI
 // tick + hourly Stripe push; bounded by the customer count on the box.
 func (s *PgStore) ListAllAccounts(ctx context.Context) ([]Account, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), created_at, deletion_requested_at
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at
 		 from accounts order by created_at`)
 	if err != nil {
 		return nil, err
@@ -152,7 +170,7 @@ func scanAccountCols(scan func(...any) error) (Account, error) {
 	a := Account{}
 	var planStr, statusStr string
 	var deletionAt *time.Time
-	if err := scan(&a.ID, &a.Email, &planStr, &statusStr, &a.StripeCustomerID, &a.CreatedAt, &deletionAt); err != nil {
+	if err := scan(&a.ID, &a.Email, &planStr, &statusStr, &a.StripeCustomerID, &a.StripeSubscriptionItem, &a.CreatedAt, &deletionAt); err != nil {
 		return Account{}, err
 	}
 	a.Plan = api.Plan(planStr)
@@ -319,6 +337,25 @@ func (s *PgStore) SetAppMinInstances(ctx context.Context, appID string, min int)
 		return ErrNotFound
 	}
 	return nil
+}
+
+// RenameApp changes an app's slug atomically (issue #63). The UPDATE
+// is scoped to (account_id, oldSlug, status<>'deleted') so a wrong
+// accountID or unknown slug returns ErrNotFound via mapErr → pgx.ErrNoRows.
+// The apps.slug unique constraint surfaces a duplicate newSlug as
+// ErrConflict via mapErr → unique-violation SQLSTATE. RETURNING mirrors
+// the same scanApp shape used by AppByID.
+//
+// Both PgStore and MemStore share the same error contract so the apid
+// handler can branch on errors.Is without checking the concrete type.
+func (s *PgStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug string) (App, error) {
+	row := s.pool.QueryRow(ctx,
+		`update apps set slug = $3
+		 where account_id = $1 and slug = $2 and status <> 'deleted'
+		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
+		           max_concurrency, status, manifest, created_at, min_instances`,
+		accountID, oldSlug, newSlug)
+	return scanApp(row)
 }
 
 func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
@@ -1064,9 +1101,19 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 
 func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time.Time) ([]Usage, error) {
 	monthStart := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
+	// Compare via date_trunc('month', ...) on the parameter side too.
+	// The view's month column is timestamptz (date_trunc('month', timestamptz)
+	// is timestamptz). A plain `month = $2::timestamptz` still depends on the
+	// session timezone for the parameter's interpretation, which breaks on
+	// non-UTC hosts (issue #52 PR #59 follow-up: pgx encodes time.Time as a
+	// bare timestamp literal; in TZ=Europe/Istanbul that becomes
+	// 2026-07-01 00:00:00+03, while the view value is 2026-07-01 00:00:00+03
+	// but anchored to UTC internally — they compare unequal even with the
+	// explicit cast). date_trunc normalizes both sides to the month's start
+	// in UTC, sidestepping session-TZ semantics entirely.
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, month, mb_seconds, requests from usage_monthly
-		 where account_id = $1 and month = $2 order by app_id`,
+		 where account_id = $1 and date_trunc('month', $2::timestamptz) = month order by app_id`,
 		accountID, monthStart)
 	if err != nil {
 		return nil, err

@@ -207,6 +207,63 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// renameApp swaps an app's slug atomically (issue #63). Body is
+// {"new_slug": "<slug>"}; the handler validates the new slug with the
+// same validSlug regex CreateApp uses, then delegates to
+// Store.RenameApp. The unique-slug constraint (Postgres) and MemStore's
+// in-memory scan both surface collisions as state.ErrConflict; the
+// handler maps that to 409 CodeAppRenameFailed so the CLI can render
+// an actionable error.
+//
+// Validates oldSlug ownership via loadApp (returns 404 on unknown app,
+// 403 on cross-account access — same as every other handler in this
+// file).
+func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	oldSlug := r.PathValue("slug")
+	app, ok := s.loadApp(w, r, acct, oldSlug)
+	if !ok {
+		return
+	}
+	var req api.RenameAppRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Bad request", err.Error()))
+		return
+	}
+	if !validSlug(req.NewSlug) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid slug",
+			"slug must be 3-40 chars, lowercase letters, digits, and hyphens"))
+		return
+	}
+	if req.NewSlug == oldSlug {
+		// Idempotent no-op: skip the DB round-trip and return the
+		// current app shape so retries don't 4xx.
+		writeJSON(w, http.StatusOK, s.appResponse(app))
+		return
+	}
+	updated, err := s.store.RenameApp(ctx(r), acct.ID, oldSlug, req.NewSlug)
+	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAppRenameFailed,
+				"Slug taken",
+				fmt.Sprintf("another app already uses slug %q", req.NewSlug)))
+			return
+		}
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+				"App not found", "no app with the given slug exists"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not rename app"))
+		return
+	}
+	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged,
+		fmt.Sprintf(`{"kind":"renamed","from":%q,"to":%q}`, oldSlug, req.NewSlug))
+	s.log.Info("app renamed", "app", updated.ID, "from", oldSlug, "to", req.NewSlug, "account", acct.ID)
+	writeJSON(w, http.StatusOK, s.appResponse(updated))
+}
+
 // --- instances -------------------------------------------------------------
 
 func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct state.Account) {

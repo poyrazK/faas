@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -143,8 +144,12 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged, `{"kind":"image","app_id":"`+app.ID+`","to":"`+d.ID+`"}`)
-	// codeql[go/log-injection] false-positive: d.ID and app.ID are server-generated UUIDs; req.Image is regex-validated to a digest-pinned reference by isDigestPinned (handler returns 400 on failure, never reaches this log).
-	s.log.Info("deployment created", "deployment", d.ID, "app", app.ID, "ref", req.Image)
+	// Sanitize req.Image at the log sink — CodeQL go/log-injection (CWE-117).
+	// isDigestPinned already rejects malformed refs with 400 before this line,
+	// but a future field/wrapper change would break that invariant. Sanitizing
+	// here means the log statement stays safe regardless of upstream changes.
+	// d.ID and app.ID are server-generated UUIDs — no sanitize needed.
+	s.log.Info("deployment created", "deployment", d.ID, "app", app.ID, "ref", logsanitize.Field(req.Image))
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d))
 }
 

@@ -258,6 +258,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/rollback", s.authLimited(s.idempotent(s.rollbackApp)))
 	mux.HandleFunc("POST /v1/apps/{slug}/park", s.authLimited(s.parkApp))
 	mux.HandleFunc("POST /v1/apps/{slug}/wake", s.authLimited(s.wakeApp))
+	mux.HandleFunc("POST /v1/apps/{slug}/rename", s.authLimited(s.idempotent(s.renameApp)))
 
 	// Instances (read-only here; schedd is the writer).
 	mux.HandleFunc("GET /v1/apps/{slug}/instances", s.authLimited(s.listInstances))
