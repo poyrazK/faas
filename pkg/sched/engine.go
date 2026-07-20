@@ -125,7 +125,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	}
 
 	spec := AppSpec{
-		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep),
+		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep.RootfsPath, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
 		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),
@@ -203,7 +203,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	}
 
 	spec := AppSpec{
-		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep),
+		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep.RootfsPath, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
 		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),

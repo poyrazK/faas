@@ -1,7 +1,5 @@
 package sched
 
-import "github.com/onebox-faas/faas/pkg/state"
-
 // paths.go is the single place schedd derives the host filesystem locations of
 // an instance's boot inputs (spec §8: /srv/fc/base read-only bases, lv-fc app
 // layers + snapshots). vmmd is told these paths on the wire (ADR-014); it never
@@ -41,11 +39,15 @@ func basePath(runtime string) string {
 // schedd trusts that row rather than recomputing. The legacy constant
 // layerDir is the fallback for rows where imaged predates the path stamp
 // (rare in practice — every new row gets a path on creation).
-func layerPath(dep state.Deployment) string {
-	if dep.RootfsPath != "" {
-		return dep.RootfsPath
+//
+// Two-arg signature (rootfsPath, deploymentID) keeps this helper decoupled
+// from pkg/state — sched doesn't need the full Deployment struct to derive
+// a path, and the struct's other fields aren't on this code path.
+func layerPath(rootfsPath, deploymentID string) string {
+	if rootfsPath != "" {
+		return rootfsPath
 	}
-	return layerDir + "/" + dep.ID + ".ext4"
+	return layerDir + "/" + deploymentID + ".ext4"
 }
 
 // snapshotPaths returns the mem file and vmstate file for a deployment's
