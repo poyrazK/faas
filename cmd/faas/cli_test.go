@@ -389,10 +389,10 @@ func TestCmdDeploy_AppAlreadyExists(t *testing.T) {
 func TestCmdDeploy_JSON_DeployErrorEmitsRFC7807OnStderr(t *testing.T) {
 	resetJSONOutput()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/v1/apps":
+		switch r.URL.Path {
+		case "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
-		case r.URL.Path == "/v1/apps/my-app/deployments":
+		case "/v1/apps/my-app/deployments":
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(api.Problem{
 				Status: 404, Code: api.CodeNotFound,

@@ -88,7 +88,7 @@ func run(args []string) int {
 		return cmdConnect(args[1:])
 	case "open":
 		return cmdOpen(args[1:])
-	case "apps":
+	case dispatchApps:
 		// `faas apps ls` is an alias for the default list action.
 		if len(args) > 1 && args[1] == "ls" {
 			return cmdApps()
@@ -105,7 +105,7 @@ func run(args []string) int {
 		return cmdAppDispatch(args[1:])
 	case "ps":
 		return cmdPS(args[1:])
-	case "status":
+	case statusLiteral:
 		return cmdStatus(args[1:])
 	case "env":
 		return cmdEnv(args[1:])

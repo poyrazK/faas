@@ -38,6 +38,22 @@ const (
 	// repeated "app" string across cmd/faas (main.go dispatch,
 	// subcommand FlagSet names, fallback slug).
 	appSlugFallback = "app"
+
+	// Lifted out so goconst stops flagging the repeated "status"
+	// string across the run() dispatch (main.go), account
+	// subcommand dispatch (commands4.go), the FlagSet name
+	// (commands5.go), and the SSE stream-decoder struct tag.
+	statusLiteral = "status"
+
+	// Lifted out so goconst stops flagging the repeated "live"
+	// string across the SSE decoder, the recovery poll, and the
+	// terminalExitForDeployment branch.
+	statusLive = "live"
+
+	// cmdNames reused across the run() dispatch table (main.go) so
+	// goconst stops flagging the repeated "apps" / "status" / etc.
+	// literals. Tests intentionally keep the literal form.
+	dispatchApps = "apps"
 )
 
 // cmdApp implements `faas app <slug>` (GET /v1/apps/{slug}), `faas app <slug>
@@ -935,12 +951,12 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 			continue
 		}
 		// event:status terminal frame.
-		var status struct {
-			Status string `json:"status"`
+		var status struct { //nolint:goconst
+			Status string `json:"status"` //nolint:goconst
 		}
 		if json.Unmarshal([]byte(line), &status) == nil &&
-			(status.Status == "live" || status.Status == "failed") {
-			if status.Status == "live" {
+			(status.Status == statusLive || status.Status == "failed") {
+			if status.Status == statusLive {
 				fmt.Printf("✓ Deployed. https://%s.apps.DOMAIN\n", dep.AppID)
 				return 0
 			}
@@ -978,7 +994,7 @@ func pollDeploymentFinal(c *Client, dep api.DeploymentResponse) (api.DeploymentR
 	if err != nil {
 		return api.DeploymentResponse{}, false
 	}
-	if got.Status == "live" || got.Status == "failed" {
+	if got.Status == statusLive || got.Status == "failed" {
 		return got, true
 	}
 	return api.DeploymentResponse{}, false
@@ -988,7 +1004,7 @@ func pollDeploymentFinal(c *Client, dep api.DeploymentResponse) (api.DeploymentR
 // in-stream `event: status` branch, but uses the polled deployment
 // row (which has the canonical Error string from the DB).
 func terminalExitForDeployment(d api.DeploymentResponse) int {
-	if d.Status == "live" {
+	if d.Status == statusLive {
 		fmt.Printf("✓ Deployed. https://%s.apps.DOMAIN\n", d.AppID)
 		return 0
 	}

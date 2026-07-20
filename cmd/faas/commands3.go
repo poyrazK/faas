@@ -42,7 +42,7 @@ func cmdSecrets(args []string) int {
 		return 1
 	}
 	switch args[0] {
-	case "list":
+	case subList:
 		return secretsList(args[1:])
 	case "set":
 		return secretsSet(args[1:])

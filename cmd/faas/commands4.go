@@ -36,7 +36,7 @@ func cmdAccount(args []string) int {
 		return cmdAccountDelete(args[1:])
 	case "restore":
 		return cmdAccountRestore(args[1:])
-	case "status":
+	case statusLiteral:
 		return cmdAccountStatus(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "faas account: unknown subcommand %q\n", args[0])

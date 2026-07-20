@@ -140,7 +140,7 @@ func humanizeInstanceState(state string) string {
 // jq the SLO numbers. JSON tag set lives on the struct in
 // pkg/api/dto.go — renames there propagate here automatically.
 func cmdStatus(args []string) int {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs := flag.NewFlagSet(statusLiteral, flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit raw api.StatusPage as JSON (issue #63 §2)")
 	if err := fs.Parse(args); err != nil {
 		return 1
