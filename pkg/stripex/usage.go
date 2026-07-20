@@ -7,7 +7,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/state"
 	stripe "github.com/stripe/stripe-go"
-	"github.com/stripe/stripe-go/usagerecord"
 )
 
 // pushUsageRecordSDK is the seam where stripe-go lands (issue #52).
@@ -45,21 +44,13 @@ func (c *Client) pushUsageRecordSDKWithID(ctx context.Context, acct state.Accoun
 		// successful subscription webhook.
 		return nil, nil
 	}
-	if c.apiKey == "" {
-		// Without a key, we'd call usagerecord.New() against the
-		// unauthenticated `*Backend` and bounce 401 off every push.
-		// Better to skip and surface the misconfiguration in the
-		// meterd log line.
+	if c.api == nil {
+		// Without a constructed *client.API (no apiKey supplied), we'd
+		// call UsageRecords.New against the unauthenticated `*Backend`
+		// and bounce 401 off every push. Better to skip and surface the
+		// misconfiguration in the meterd log line.
 		return nil, fmt.Errorf("stripex: cannot push usage without apiKey (account %s)", acct.ID)
 	}
-	// stripe-go exposes a package-global API key (no per-call override on
-	// UsageRecordParams). meterd owns exactly one *stripex.Client per
-	// process (cmd/meterd/main.go::defaultDeps wires it once at boot), so
-	// mutating the global is safe — there is no second Client to race with.
-	// If a future caller constructs a second Client with a different key,
-	// route the call through stripe.NewBackend(...) instead.
-	stripe.Key = c.apiKey
-
 	qty := int64(gbHours * 1000)
 	if qty < 0 {
 		// Defensive: a negative quantity would silently credit the
@@ -76,9 +67,9 @@ func (c *Client) pushUsageRecordSDKWithID(ctx context.Context, acct state.Accoun
 	}
 	params.IdempotencyKey = stripe.String(idem)
 
-	record, err := usagerecord.New(params)
+	record, err := c.api.UsageRecords.New(params)
 	if err != nil {
-		return nil, fmt.Errorf("stripex: usagerecord.New account %s hour %s: %w", acct.ID, hour.UTC().Format(time.RFC3339), err)
+		return nil, fmt.Errorf("stripex: UsageRecords.New account %s hour %s: %w", acct.ID, hour.UTC().Format(time.RFC3339), err)
 	}
 	return record, nil
 }

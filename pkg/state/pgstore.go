@@ -55,26 +55,26 @@ var _ Store = (*PgStore)(nil)
 
 func (s *PgStore) CreateAccount(ctx context.Context, email string, plan api.Plan) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`insert into accounts (email, plan, status) values ($1, $2, 'active') returning id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at`,
+		`insert into accounts (email, plan, status) values ($1, $2, 'active') returning id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at`,
 		email, string(plan))
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByID(ctx context.Context, id string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at from accounts where id = $1`, id)
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at from accounts where id = $1`, id)
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByEmail(ctx context.Context, email string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at from accounts where email = $1`, email)
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at from accounts where email = $1`, email)
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select a.id, a.email, a.plan, a.status, coalesce(a.stripe_customer_id,''), coalesce(a.stripe_subscription_item,''), a.created_at, a.deletion_requested_at
+		`select a.id, a.email, a.plan, a.status, coalesce(a.stripe_customer_id,''), coalesce(a.stripe_subscription_item,''), a.created_at, a.deletion_requested_at, a.last_quota_warning_at, a.past_due_at
 		 from accounts a join api_keys k on k.account_id = a.id where k.key_sha256 = $1`, hash)
 	return scanAccount(row)
 }
@@ -129,7 +129,7 @@ func (s *PgStore) UpdateAccountStripeSubscriptionItem(ctx context.Context, id, s
 // map.
 func (s *PgStore) AccountByStripeCustomerID(ctx context.Context, stripeCustomerID string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at
 		 from accounts where stripe_customer_id = $1`,
 		stripeCustomerID)
 	return scanAccount(row)
@@ -139,7 +139,7 @@ func (s *PgStore) AccountByStripeCustomerID(ctx context.Context, stripeCustomerI
 // tick + hourly Stripe push; bounded by the customer count on the box.
 func (s *PgStore) ListAllAccounts(ctx context.Context) ([]Account, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at
 		 from accounts order by created_at`)
 	if err != nil {
 		return nil, err
@@ -164,19 +164,26 @@ func scanAccounts(rows pgx.Rows) ([]Account, error) {
 }
 
 // scanAccountCols is the shared column reader for the Account shape
-// used by every read path. deletion_requested_at is nullable; we scan
-// into *time.Time and lift it onto the Account when non-NULL.
+// used by every read path. deletion_requested_at, last_quota_warning_at,
+// and past_due_at are nullable; we scan into *time.Time and lift them
+// onto the Account when non-NULL.
 func scanAccountCols(scan func(...any) error) (Account, error) {
 	a := Account{}
 	var planStr, statusStr string
-	var deletionAt *time.Time
-	if err := scan(&a.ID, &a.Email, &planStr, &statusStr, &a.StripeCustomerID, &a.StripeSubscriptionItem, &a.CreatedAt, &deletionAt); err != nil {
+	var deletionAt, lastWarnAt, pastDueAt *time.Time
+	if err := scan(&a.ID, &a.Email, &planStr, &statusStr, &a.StripeCustomerID, &a.StripeSubscriptionItem, &a.CreatedAt, &deletionAt, &lastWarnAt, &pastDueAt); err != nil {
 		return Account{}, err
 	}
 	a.Plan = api.Plan(planStr)
 	a.Status = AccountStatus(statusStr)
 	if deletionAt != nil {
 		a.DeletionRequestedAt = deletionAt
+	}
+	if lastWarnAt != nil {
+		a.LastQuotaWarningAt = lastWarnAt
+	}
+	if pastDueAt != nil {
+		a.PastDueAt = pastDueAt
 	}
 	return a, nil
 }
@@ -1883,6 +1890,84 @@ func (s *PgStore) RestoreAccount(ctx context.Context, id string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
+	}
+	return nil
+}
+
+// LoadAndStampLastQuotaWarning is the atomic compare-and-set that lets
+// pkg/meter.EnforceQuota emit exactly one paid-tier quota_warning per
+// UTC day (spec §4.7). The query:
+//   - Truncates `day` to its UTC midnight so the comparison is "same
+//     calendar day, not same 24h window".
+//   - Updates last_quota_warning_at to that anchor only when the row's
+//     current stamp is null OR strictly older than the anchor.
+//   - Returns (true, nil) when the row already carried today's anchor
+//     after the update (i.e. the row already had today's stamp and
+//     was a same-day repeat).
+//   - Returns ErrNotFound when no row matched the id.
+func (s *PgStore) LoadAndStampLastQuotaWarning(ctx context.Context, id string, day time.Time) (bool, error) {
+	dayStart := day.UTC().Truncate(24 * time.Hour)
+	var already bool
+	err := s.pool.QueryRow(ctx,
+		`update accounts
+		    set last_quota_warning_at = $2
+		  where id = $1
+		    and (last_quota_warning_at is null or last_quota_warning_at < $2)
+		  returning (last_quota_warning_at = $2 and last_quota_warning_at >= $2)`,
+		id, dayStart).Scan(&already)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return false, err
+	}
+	return already, nil
+}
+
+// ClearQuotaWarning nulls last_quota_warning_at so the next call to
+// LoadAndStampLastQuotaWarning (e.g. on the next quota tick) starts
+// fresh. Used by apid's invoice.payment_succeeded webhook to make sure
+// a paying customer doesn't get skipped tomorrow because of a stamp
+// from the day they crossed the threshold.
+func (s *PgStore) ClearQuotaWarning(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx,
+		`update accounts set last_quota_warning_at = null
+		  where id = $1 and last_quota_warning_at is not null`,
+		id)
+	return err
+}
+
+// MarkDunningStep is the meterd.Dunning timer's compare-and-advance
+// primitive (spec §4.7, §17 dunning). Atomically:
+//   - flips status from `from` to `to` (when from != to),
+//   - stamps past_due_at only when transitioning *into* past_due
+//     (coalesce preserves any pre-existing stamp so a back-and-forth
+//     status flip doesn't lose the original anchor),
+//   - returns ErrNotFound when no row matched (gone OR status didn't
+//     match `from` — the latter is the redelivery race between two
+//     concurrent dunning ticks).
+//
+// The from==to case is NOT short-circuited — it serves as the
+// backfill-stamp path used by pkg/meter.Dunning to plant a stamp on
+// a legacy row that entered past_due before the migration column
+// existed (audit finding #2 data-integrity guard).
+func (s *PgStore) MarkDunningStep(ctx context.Context, id string, from, to AccountStatus) error {
+	var stamp *time.Time
+	if to == AccountPastDue {
+		now := time.Now().UTC()
+		stamp = &now
+	}
+	tag, err := s.pool.Exec(ctx,
+		`update accounts
+		    set status = $2,
+		        past_due_at = case when $2 = 'past_due' then coalesce(past_due_at, $3) else past_due_at end
+		  where id = $1 and status = $4`,
+		id, string(to), stamp, string(from))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

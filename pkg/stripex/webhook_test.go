@@ -165,49 +165,33 @@ func TestAccountByStripeCustomerID_NotFound(t *testing.T) {
 	}
 }
 
-// TestEnsurePlanProducts_SetsLookupKeys is a smoke test for the product
-// setup. Asserts the four plans get a `:monthly` lookup key (Free
-// intentionally skipped — overage isn't billed on Free, spec §4.7).
-func TestEnsurePlanProducts_SetsLookupKeys(t *testing.T) {
+// TestEnsurePlanProducts_RequiresAPIKey is the post-real-SDK version
+// of the old placeholder smoke test. EnsurePlanProducts now requires
+// a non-empty apiKey (otherwise c.api is nil and the call would
+// silently skip a billing-surface setup). The actual §14 M7 gate is
+// the live-sandbox test TestPushUsageRecord_PostsToStripeSandbox
+// (run against sk_test_… with FATEST_STRIPE_SUB_ITEM); this test just
+// pins the fast-fail contract so a misconfig is loud at boot rather
+// than silent at the first push.
+func TestEnsurePlanProducts_RequiresAPIKey(t *testing.T) {
 	t.Parallel()
 	store := state.NewMemStore()
 	c := stripex.NewClient(store, store, "", "", discardLog())
-	if err := c.EnsurePlanProducts(context.Background()); err != nil {
-		t.Fatalf("ensure: %v", err)
-	}
-	for _, plan := range []string{"hobby", "pro", "scale"} {
-		k := plan + ":monthly"
-		if _, ok := c.PlanPriceIDs[k]; !ok {
-			t.Fatalf("missing plan price id for %s", k)
-		}
-	}
-	if _, ok := c.PlanPriceIDs["gb_ram_hour"]; !ok {
-		t.Fatalf("missing gb_ram_hour price id")
+	if err := c.EnsurePlanProducts(context.Background()); err == nil {
+		t.Fatal("EnsurePlanProducts with empty apiKey returned nil; want error (fast-fail)")
 	}
 }
 
-// TestCreateCustomer_WritesStripeID: CreateCustomer records the
-// returned `cus_…` on the account row.
-func TestCreateCustomer_WritesStripeID(t *testing.T) {
+// TestCreateCustomer_RequiresAPIKey: same pattern as above for
+// CreateCustomer — production callers must wire a real Stripe key.
+func TestCreateCustomer_RequiresAPIKey(t *testing.T) {
 	t.Parallel()
 	store := state.NewMemStore()
 	ctx := context.Background()
 	acct, _ := store.CreateAccount(ctx, "cc@example.com", "hobby")
-
 	c := stripex.NewClient(store, store, "", "", discardLog())
-	stripeID, err := c.CreateCustomer(ctx, acct)
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if !strings.HasPrefix(stripeID, "cus_") {
-		t.Fatalf("stripe id = %s, want cus_ prefix", stripeID)
-	}
-	got, err := store.AccountByStripeCustomerID(ctx, stripeID)
-	if err != nil {
-		t.Fatalf("lookup: %v", err)
-	}
-	if got.ID != acct.ID {
-		t.Fatalf("got %s, want %s", got.ID, acct.ID)
+	if _, err := c.CreateCustomer(ctx, acct); err == nil {
+		t.Fatal("CreateCustomer with empty apiKey returned nil; want error")
 	}
 }
 

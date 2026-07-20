@@ -1803,5 +1803,92 @@ func (m *MemStore) RestoreAccount(_ context.Context, id string) error {
 	return nil
 }
 
+// LoadAndStampLastQuotaWarning mirrors PgStore.LoadAndStampLastQuotaWarning
+// for the in-memory implementation. Same contract:
+//   - First call of the UTC day → (false, nil) and the row's stamp is
+//     set to the supplied anchor's midnight.
+//   - Same-day repeat → (true, nil) and the row's stamp stays put.
+//   - Missing id → ErrNotFound.
+func (m *MemStore) LoadAndStampLastQuotaWarning(_ context.Context, id string, day time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return false, ErrNotFound
+	}
+	dayStart := day.UTC().Truncate(24 * time.Hour)
+	if a.LastQuotaWarningAt != nil && !a.LastQuotaWarningAt.Before(dayStart) {
+		return true, nil
+	}
+	a.LastQuotaWarningAt = &dayStart
+	m.accounts[id] = a
+	return false, nil
+}
+
+// ClearQuotaWarning mirrors PgStore.ClearQuotaWarning. No-op when the
+// row is gone or the stamp is already nil.
+func (m *MemStore) ClearQuotaWarning(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return nil
+	}
+	a.LastQuotaWarningAt = nil
+	m.accounts[id] = a
+	return nil
+}
+
+// MarkDunningStep mirrors PgStore.MarkDunningStep. The MemStore enforces
+// the same compare-and-flip semantics: the row's status must match
+// `from` for the transition to land (else ErrNotFound — the
+// redelivery-race guard), and past_due_at is stamped only when
+// transitioning into past_due (coalesce preserves any pre-existing
+// stamp). The from==to case is NOT short-circuited — it's the
+// backfill-stamp path used by pkg/meter.Dunning to plant a stamp on
+// a legacy row that entered past_due before the migration column
+// existed.
+func (m *MemStore) MarkDunningStep(_ context.Context, id string, from, to AccountStatus) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if a.Status != from {
+		return ErrNotFound
+	}
+	a.Status = to
+	if to == AccountPastDue && a.PastDueAt == nil {
+		now := time.Now().UTC()
+		a.PastDueAt = &now
+	}
+	m.accounts[id] = a
+	return nil
+}
+
+// SetPastDueAtForTest is the test-only backdoor pkg/meter.Dunning tests
+// use to plant a deterministic PastDueAt. Production never calls it —
+// the only PastDueAt writer is MarkDunningStep (via the apid webhook
+// path) which stamps time.Now(). The dunning timer compares against
+// PastDueAt so the only way to exercise the 7d/21d thresholds in a
+// sub-second test is to bypass MarkDunningStep's now()-stamp.
+//
+// Prefixed with "ForTest" so a `go vet -tests-only` or production
+// audit can find it; not in pkg/state.Store (no public surface for
+// ad-hoc PastDueAt writes).
+func (m *MemStore) SetPastDueAtForTest(id string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	stamp := at.UTC()
+	a.PastDueAt = &stamp
+	m.accounts[id] = a
+	return nil
+}
+
 // compile-time check that MemStore satisfies Store.
 var _ Store = (*MemStore)(nil)

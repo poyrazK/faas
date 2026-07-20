@@ -94,6 +94,30 @@ type Store interface {
 	MarkAccountDeletionPending(ctx context.Context, id string) error
 	RestoreAccount(ctx context.Context, id string) error
 
+	// Dunning + quota warning (spec §4.7). These three are the load-
+	// bearing primitives pkg/meter.Dunning + pkg/meter.EnforceQuota's
+	// "warn" branch depend on.
+	//
+	// LoadAndStampLastQuotaWarning atomically stamps last_quota_warning_at
+	// to the supplied UTC-day anchor AND reports whether the row already
+	// carried a stamp for that day. Returns (true, nil) on a same-day
+	// repeat call (the quota gate suppresses the second notify), (false,
+	// nil) on a first-today call (caller emits the notify), and
+	// ErrNotFound when the account row is gone.
+	LoadAndStampLastQuotaWarning(ctx context.Context, accountID string, day time.Time) (alreadyWarned bool, err error)
+	// ClearQuotaWarning nulls last_quota_warning_at so a customer who
+	// paid an invoice (or any other path that resets the overage
+	// counter) sees the next quota_warning on the *next* UTC day rather
+	// than being skipped because of a stamp from days ago.
+	ClearQuotaWarning(ctx context.Context, accountID string) error
+	// MarkDunningStep atomically advances a row from `from` to `to`
+	// (e.g. past_due → suspended), stamping past_due_at only when the
+	// destination is past_due. Returns ErrNotFound when the row is
+	// missing OR its status didn't match `from` (the latter is the
+	// redelivery race: two ticks firing close together on the same
+	// overdue row, the second must not double-transition).
+	MarkDunningStep(ctx context.Context, accountID string, from, to AccountStatus) error
+
 	// API keys.
 	CreateAPIKey(ctx context.Context, accountID string, hash []byte, label string) (APIKey, error)
 	DeleteAPIKey(ctx context.Context, accountID, keyID string) error

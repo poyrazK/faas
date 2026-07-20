@@ -579,10 +579,15 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountPastDue)
 	case "invoice.payment_succeeded":
 		// Restore the account if it was past_due. meterd will refresh
-		// quota state on its next tick.
+		// quota state on its next tick. We also clear the dedupe stamp
+		// on last_quota_warning_at so the next quota tick (if the
+		// customer is still over quota from a prior cycle) emits a
+		// fresh warning — otherwise the stamp from the previous day
+		// would suppress it (spec §4.7).
 		if acct.Status == state.AccountPastDue {
 			_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountActive)
 		}
+		_ = s.store.ClearQuotaWarning(r.Context(), acct.ID)
 	case "customer.subscription.updated":
 		if ev.Data.Object.Plan != "" {
 			_ = s.store.UpdateAccountPlan(r.Context(), acct.ID, api.Plan(ev.Data.Object.Plan))
