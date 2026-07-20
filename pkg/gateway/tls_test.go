@@ -21,6 +21,23 @@ func TestTLSConfigPartialRejects(t *testing.T) {
 	}
 }
 
+// TestTLSConfig_RejectsAllowlistMissing — the spec §11 hardening: with TLS
+// enabled but no allowlist, Validate must fail closed. An attacker who can
+// reach :80 would otherwise mint certs for arbitrary hostnames.
+func TestTLSConfig_RejectsAllowlistMissing(t *testing.T) {
+	cfg := TLSConfig{
+		WildcardCertDomain:     "apps.example.com",
+		HetznerDNSAPITokenPath: "/etc/faas/secrets/hetzner-dns.token",
+		HetznerZone:            "example.com",
+		StorageDir:             "/var/lib/faas/certs",
+		// OnDemandHTTP01Allowlist intentionally nil.
+	}
+	err := cfg.Validate()
+	if !errors.Is(err, ErrTLSAllowlistMissing) {
+		t.Errorf("TLS without allowlist err = %v, want ErrTLSAllowlistMissing", err)
+	}
+}
+
 func TestTLSConfigFullAccepts(t *testing.T) {
 	cfg := TLSConfig{
 		WildcardCertDomain:      "apps.example.com",

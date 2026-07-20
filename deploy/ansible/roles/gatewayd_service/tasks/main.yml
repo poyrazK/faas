@@ -1,0 +1,84 @@
+# gatewayd_service — install systemd unit + example config for gatewayd.
+#
+# Mirrors the vmmd_service role: ship the unit + example TOML; let the
+# operator `systemctl enable --now faas-gatewayd` once /var/lib/faas/certs
+# and /etc/faas/secrets/hetzner-dns.token are provisioned.
+#
+# What's NOT here (operator-provisioned):
+#   - the hetzner-dns.token file itself (mode 0400, root:faas) — the role
+#     asserts the dir exists and is correctly perm'd so the file is the only
+#     missing step.
+#   - the gatewayd.toml copy (we ship the .example so the operator sees the
+#     shape; copying → gatewayd.toml is a one-line override that we don't
+#     want to bake into the role in case the operator wants to template
+#     apps_domain from a vault value).
+#   - the wildcard DNS-01 mint (CertMagic does this on first start once the
+#     config + token are in place; we don't run the daemon here).
+
+- name: gatewayd_service — install /etc/faas (create dir, mode 0750)
+  ansible.builtin.file:
+    path: /etc/faas
+    state: directory
+    owner: root
+    group: faas
+    mode: "0750"
+
+- name: gatewayd_service — install /etc/faas/secrets (create dir, mode 0750)
+  # The Hetzner DNS token + any other gatewayd-only secrets live here. The
+  # role does not provision the file contents — that's the operator's job
+  # (and a §11 fail-fast would land if we tried to template it from a vault
+  # without the right read-perm machinery in place).
+  ansible.builtin.file:
+    path: /etc/faas/secrets
+    state: directory
+    owner: root
+    group: faas
+    mode: "0750"
+
+- name: gatewayd_service — install /var/lib/faas/certs (CertMagic storage)
+  # CertMagic's file storage wants mode 0700. The gatewayd unit runs as user
+  # faas:faas; we hand the dir to root:faas so renewal writes (which certmagic
+  # does as root via its own cache lifecycle when invoked from a root-owned
+  # caller) don't trip the unit's read-only /var protection.
+  ansible.builtin.file:
+    path: /var/lib/faas/certs
+    state: directory
+    owner: root
+    group: faas
+    mode: "0700"
+
+- name: gatewayd_service — drop example TOML (operator copies to gatewayd.toml)
+  ansible.builtin.copy:
+    src: gatewayd.toml.example
+    dest: /etc/faas/gatewayd.toml.example
+    owner: root
+    group: faas
+    mode: "0640"
+
+- name: gatewayd_service — install systemd unit
+  ansible.builtin.copy:
+    src: faas-gatewayd.service
+    dest: /etc/systemd/system/faas-gatewayd.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: gatewayd_unit
+
+- name: gatewayd_service — systemctl daemon-reload (idempotent, after new unit file)
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: gatewayd_unit.changed
+
+- name: gatewayd_service — ensure 'faas' group exists (socket auth group, ADR-015)
+  ansible.builtin.group:
+    name: faas
+    state: present
+    system: true
+
+- name: gatewayd_service — ensure 'faas' user exists (User= in the unit)
+  ansible.builtin.user:
+    name: faas
+    group: faas
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent

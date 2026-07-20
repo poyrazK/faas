@@ -75,18 +75,19 @@ import (
 //
 // Fields are exported for test consumption: H.APIDURL, H.GatewayURL, H.Pool.
 type Harness struct {
-	T           *testing.T
-	Pool        *pgxpool.Pool
-	TmpDir      string
-	BinDir      string
-	SockDir     string // short-path unix-socket directory (see Start comment)
-	APIDURL     string
-	ScheddSock  string
-	VMMDPath    string
-	VMMDSock    string
-	GatewayURL  string
-	ImagedTmp   string // FAAS_APPS_ROOT
-	BuilderdCfg string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
+	T                 *testing.T
+	Pool              *pgxpool.Pool
+	TmpDir            string
+	BinDir            string
+	SockDir           string // short-path unix-socket directory (see Start comment)
+	APIDURL           string
+	ScheddSock        string
+	VMMDPath          string
+	VMMDSock          string
+	GatewayURL        string
+	GatewayControlURL string // /metrics + /healthz, loopback only
+	ImagedTmp         string // FAAS_APPS_ROOT
+	BuilderdCfg       string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
 
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
@@ -266,17 +267,34 @@ kernel_path = %q
 
 	if which&Gatewayd != 0 {
 		addr := freeTCPAddr(t)
+		controlAddr := freeTCPAddr(t)
 		if h.ScheddSock == "" {
 			h.ScheddSock = filepath.Join(h.SockDir, "schedd.sock")
 		}
+		// The harness always runs gatewayd in the TLS-disabled path
+		// (cfg.TLS.Disabled=true) so we don't have to provision a Hetzner
+		// DNS token + storage dir for metal tests. We still need the control
+		// listener bound to a known address so wake-latency assertions can
+		// scrape /metrics — drop a minimal TOML that overrides control_addr.
+		gwCfg := filepath.Join(t.TempDir(), "gatewayd.toml")
+		if err := os.WriteFile(gwCfg, []byte(
+			fmt.Sprintf("public_addr=%q\ncontrol_addr=%q\n", addr, controlAddr),
+		), 0o600); err != nil {
+			t.Fatalf("e2etest: write gatewayd.toml: %v", err)
+		}
 		env := append(testEnvCommon(dbURL),
 			"FAAS_GATEWAY_LISTEN="+addr,
+			"FAAS_GATEWAYD_CONFIG="+gwCfg,
 			"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 			"FAAS_APPS_DOMAIN="+testDomain,
 		)
 		h.procs = append(h.procs, startProc(t, bin, "gatewayd", env))
 		h.GatewayURL = "http://" + addr
+		// Strip the leading 127.0.0.1: from controlAddr to expose the host
+		// separately (or just hand callers the full URL — keeps it simple).
+		h.GatewayControlURL = "http://" + controlAddr
 		waitTCP(t, addr, 10*time.Second)
+		waitTCP(t, controlAddr, 10*time.Second)
 	}
 
 	if which&Meterd != 0 {

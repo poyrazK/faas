@@ -190,6 +190,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	addr, ready := h.backend.Target(app.ID)
 	cold := false
 	wakeStart := time.Now()
+	// firstByteRec is the per-request cell the wake-timing RoundTripper
+	// stamps at "first upstream response byte" (spec §6.3 — wake latency
+	// is measured request-received → first upstream byte, not full body).
+	// We install it on the request context BEFORE the proxy call so the
+	// httptrace.ClientTrace attached to the outbound request can find it.
+	firstByteRec := &firstByteRecorder{}
+	//nolint:contextcheck // WithFirstByteRecorder wraps context.WithValue on r.Context(); lint can't trace through the function call.
+	r = r.WithContext(WithFirstByteRecorder(r.Context(), firstByteRec))
 	if !ready {
 		if err := h.wake(r.Context(), app.ID); err != nil { //nolint:contextcheck // request ctx at handler boundary.
 			writeWakeError(w, err)
@@ -211,11 +219,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.proxyFor(addr).ServeHTTP(w, r)
 	h.observe(r, rec.status, app.ID, string(app.Plan), cold, addr)
 	if cold && h.metrics != nil {
-		// Wake latency is "request-received to first upstream byte". For the
-		// reverse proxy we approximate that as request-received → handler
-		// return; a precise measurement would require observing the proxy's
-		// first byte. This approximation is suitable for SLO dashboards.
-		h.metrics.ObserveColdWake(app.ID, time.Since(wakeStart))
+		// Wake latency is "request-received to first upstream byte". The
+		// wake-timing RoundTripper stamps the inbound request's recorder at
+		// GotFirstResponseByte; reading it back here yields the actual wake
+		// slice, not "wake + full upstream body copy" (the prior proxy return
+		// measurement). On any path where the stamp never landed (proxy error
+		// before headers), we fall back to the full duration with a Warn so
+		// the gap is observable but the dashboard still gets a sample.
+		firstByteAt, ok := FirstByteFrom(r)
+		if !ok {
+			h.log.Warn("gateway: wake-timing first-byte stamp missing; observing full proxy duration",
+				"app", app.ID, "addr", addr)
+			firstByteAt = time.Now()
+		}
+		h.metrics.ObserveColdWake(app.ID, firstByteAt.Sub(wakeStart))
 	}
 }
 
@@ -312,6 +329,18 @@ func writeWakeError(w http.ResponseWriter, err error) {
 	}
 }
 
+// sharedUpstreamTransport is the single *http.Transport gatewayd uses to
+// proxy to all upstream microVMs. It is wrapped in a firstByteRoundTripper
+// so the wake-timing trace can stamp the inbound request's recorder at
+// "first upstream response byte" (spec §6.3, §12). Sharing one transport
+// across requests matches Go's stdlib expectation (connection pooling
+// requires a single transport per upstream) and the spec's "single public
+// listener" invariant — gatewayd owns this transport exclusively.
+var sharedUpstreamTransport = newFirstByteRoundTripper(&http.Transport{
+	ResponseHeaderTimeout: 60 * time.Second, // spec §4.1
+	IdleConnTimeout:       90 * time.Second,
+})
+
 // defaultProxy returns a reverse proxy to addr (spec §4.1: 60 s to first
 // response byte). The spec's "25 MB either direction" outbound cap is enforced
 // by Server.MaxResponseBodyBytes on the http.Server wrapping this handler, so
@@ -319,10 +348,7 @@ func writeWakeError(w http.ResponseWriter, err error) {
 func defaultProxy(addr string) http.Handler {
 	target := &url.URL{Scheme: "http", Host: addr}
 	p := httputil.NewSingleHostReverseProxy(target)
-	p.Transport = &http.Transport{
-		ResponseHeaderTimeout: 60 * time.Second, // spec §4.1
-		IdleConnTimeout:       90 * time.Second,
-	}
+	p.Transport = sharedUpstreamTransport
 	return p
 }
 
