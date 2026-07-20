@@ -381,6 +381,60 @@ func TestCmdDeploy_AppAlreadyExists(t *testing.T) {
 
 // --- printErr / exitCodeForStatus / errAuth ---------------------------------
 
+// TestCmdDeploy_JSON_DeployErrorEmitsRFC7807OnStderr (issue #64 D1
+// acceptance) ties the two halves together: --json mode for a
+// failing deploy must emit the raw RFC 7807 body on stderr, not
+// the three-line human render. The fake-apid returns a 404 with
+// a problem body so the failure path is real.
+func TestCmdDeploy_JSON_DeployErrorEmitsRFC7807OnStderr(t *testing.T) {
+	resetJSONOutput()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/apps":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
+		case r.URL.Path == "/v1/apps/my-app/deployments":
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(api.Problem{
+				Status: 404, Code: api.CodeNotFound,
+				Title: "App not found", Detail: "no such app",
+			})
+		default:
+			http.Error(w, "no", 404)
+		}
+	}))
+	defer srv.Close()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	prev := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = prev }()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	jsonOutput = true
+	defer func() { resetJSONOutput() }()
+	code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"})
+	_ = w.Close()
+	data, _ := io.ReadAll(r)
+
+	if code != 1 {
+		t.Errorf("expected exit 1 (404), got %d", code)
+	}
+	var p api.Problem
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &p); err != nil {
+		t.Fatalf("stderr not valid RFC 7807 JSON: %v\n%s", err, data)
+	}
+	if p.Code != api.CodeNotFound {
+		t.Errorf("code = %q, want %q", p.Code, api.CodeNotFound)
+	}
+	if p.Status != 404 {
+		t.Errorf("status = %d, want 404", p.Status)
+	}
+}
+
 // TestCmdDeploy_StreamBrokenRecoversViaGetDeployment (F2) pins the
 // fallback recovery path: when the SSE log stream emits an `event:
 // end` backstop frame (apid's 10-min build timeout, or any other
