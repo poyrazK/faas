@@ -48,8 +48,14 @@ const (
 
 // ensureBusyboxExt4 returns the path to a busybox ext4 image, creating
 // one in dir if none exists. Idempotent on the same dir.
+// If FAAS_TEST_BASE_ROOTFS is set and the file exists, it is used directly.
 func ensureBusyboxExt4(t *testing.T, dir string) string {
 	t.Helper()
+	if base := os.Getenv("FAAS_TEST_BASE_ROOTFS"); base != "" {
+		if _, err := os.Stat(base); err == nil {
+			return base
+		}
+	}
 	dst := filepath.Join(dir, "busybox.ext4")
 	if _, err := os.Stat(dst); err == nil {
 		return dst
@@ -156,7 +162,7 @@ func buildBusyboxExt4(dst string) error {
 	// /etc/inittab tells busybox's init (PID 1) to start httpd on boot.
 	// The kernel's init= points to /sbin/init → busybox, which runs this inittab.
 	// Busybox init then execs the httpd applet as PID 1's child.
-	inittab := `::sysinit:/bin/busybox httpd -f -p 8080 -h /
+	inittab := `::respawn:/bin/busybox httpd -f -p 8080 -h /
 `
 	if err := os.WriteFile(filepath.Join(work, "etc/inittab"), []byte(inittab), 0o644); err != nil {
 		return err
