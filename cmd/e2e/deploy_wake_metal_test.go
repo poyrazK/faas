@@ -34,7 +34,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const helloBody = "hello from faas\n"
+// helloBody is the round-trip fixture: the bytes written into app/hello.txt
+// (intentionally without a trailing newline — `cat` would echo one if we kept
+// it, and the body/trim assertion `strings.TrimSpace(body) == helloBody` is
+// comparing the *content* against the trimmed form). Keeping the fixture
+// newline-free makes the assertion robust against CRLF or transport-layer
+// wrapping on the wire.
+const helloBody = "hello from faas"
 
 // TestDeployWakeMetal runs the four-subtest acceptance:
 //
