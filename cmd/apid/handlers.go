@@ -211,18 +211,29 @@ var slugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
 
 func validSlug(s string) bool { return slugRe.MatchString(s) }
 
+// digestPinnedRE matches a digest-pinned OCI reference end-to-end:
+//   <host>[/<repo-path>]/<name>@sha256:<64 lowercase hex>
+//
+// Where:
+//   host     = RFC 1123 hostname (alnum + '-', dot-separated labels,
+//              optional :<port>)
+//   repo     = alnum + '_-' + '.' + '/' (the OCI repository path grammar)
+//
+// The whole-ref anchoring is load-bearing: parseImageDigest feeds
+// apid.createDeployment's slog log of req.Image (CodeQL go/log-injection),
+// so a substring-search validator that only verifies the digest tail would
+// let any non-OCI prefix through (including control chars / whitespace /
+// extra @-separators). The host charset forbids control chars and
+// whitespace explicitly, so the entire accepted string is printable OCI.
+var digestPinnedRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
+
 // parseImageDigest requires a digest-pinned reference (spec gap G1: public
-// registries, digest-pinned) and returns the sha256 digest.
+// registries, digest-pinned) and returns the digest portion (sha256:...).
 func parseImageDigest(ref string) (string, bool) {
-	i := strings.Index(ref, "@sha256:")
-	if i < 0 {
+	if !digestPinnedRE.MatchString(ref) {
 		return "", false
 	}
-	digest := ref[i+1:]
-	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(digest) {
-		return "", false
-	}
-	return digest, true
+	return ref[strings.Index(ref, "@"):], true
 }
 
 // isDigestPinned reports whether ref is a digest-pinned reference (the form
@@ -230,8 +241,7 @@ func parseImageDigest(ref string) (string, bool) {
 // parse the full ref via oci.ParseReference so they can dial the right
 // registry host.
 func isDigestPinned(ref string) bool {
-	_, ok := parseImageDigest(ref)
-	return ok
+	return digestPinnedRE.MatchString(ref)
 }
 
 func orDefault(v, def string) string {
