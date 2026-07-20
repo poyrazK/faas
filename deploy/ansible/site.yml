@@ -41,5 +41,6 @@
     - role: postgres         # install + faas user; schema is M5's job
     - role: control_plane_service  # systemd units + TOMLs for apid/schedd/imaged
     - role: vmmd_service     # drop systemd unit + example TOML; does NOT enable
+    - role: gatewayd_service # drop systemd unit + example TOML + cert storage dir
     - role: node_exporter    # host-level telemetry for §12 dashboard
     - role: prometheus       # scrape config + service for §12 dashboard

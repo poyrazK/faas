@@ -1,0 +1,34 @@
+# gatewayd.toml.example — drop into /etc/faas/gatewayd.toml and edit.
+#
+# The e2e harness boots gatewayd without this file (FAAS_GATEWAYD_CONFIG
+# unset → default :8080 plain HTTP). Production uses this TOML to enable
+# CertMagic TLS (spec §11): the daemon binds :443 + :80, mints *.apps.DOMAIN
+# via DNS-01, and gates on-demand certs for custom_domains via the
+# Postgres allowlist.
+
+# Bind addresses — the TOML form lets an operator override the defaults
+# without rebuilding the binary. Defaults match the binary.
+public_addr      = ":443"             # TLS public listener (overridden to :8080 when tls.disabled = true)
+control_addr     = "127.0.0.1:9090"   # /metrics + /healthz (loopback only)
+apps_domain      = "apps.example.com"
+apid_loopback    = "http://127.0.0.1:8081"
+githubd_loopback = "http://127.0.0.1:8083"
+
+[tls]
+# Set disabled = true to serve plain HTTP (the e2e harness + legacy dev path).
+# Production sets disabled = false and fills the rest of this table.
+disabled = false
+
+# *.apps.DOMAIN wildcard — DNS-01 solver mints this via the Hetzner API.
+wildcard_cert_domain = "apps.example.com"
+
+# Token file (mode 0400 root:faas). Operator-provisioned; the daemon refuses
+# to start if the file is group/other-readable or has any exec/setuid bits.
+hetzner_dns_api_token_path = "/etc/faas/secrets/hetzner-dns.token"
+
+# DNS zone the wildcard cert is bound to. Must match wildcard_cert_domain
+# (certmagic derives the SAN list from this).
+hetzner_zone = "example.com"
+
+# CertMagic storage. ansible role creates this dir root:faas 0700.
+storage_dir = "/var/lib/faas/certs"

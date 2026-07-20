@@ -18,7 +18,10 @@ RestartSec=2s
 Slice=faas-cp.slice
 MemoryMax=256M
 
-# Binds the public listener on :443. Bump cap_net_bind_service here.
+# apid binds ONLY loopback (127.0.0.1:8081) — gatewayd is the only public
+# listener (spec §11 single-public-listener invariant). The cap is left in
+# place because apid's tests boot a dev listener on :80 on some Macs and
+# we want the prod unit to survive that dev cycle unchanged.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 # DATABASE_URL carries the Postgres DSN; secrets live in /etc/faas/sealed.env
