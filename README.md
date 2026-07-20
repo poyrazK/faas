@@ -95,13 +95,18 @@ arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
   IMDS, ULA), streamed layer blobs (`b79e370`). `cmd/imaged`
   auto-stages `/srv/fc/base/builder-base.ext4` on startup
   (`50c01c1`).
-  Remaining: (a) `pkg/builderd/drive.go` writes `build.json` into
-  the builder VM but does not copy `VMRequest.SourcePath`, so no
-  real `npm install` / `pip install` runs; (b) the Dockerfile kind
-  enum (`pkg/api/build.go` ↔ `pkg/builderd/detect.go`) currently
-  falls through to Railpack-auto for `kind=dockerfile` — the §14
-  M6 gate requires it to dispatch to `buildctl` per ADR-004. See
-  *What's next*.
+  Source-tarball staging + Dockerfile dispatch are in via PR #56
+  (closes #54): `pkg/builderd/drive.go::CreateBuildDrive1` now
+  copies `VMRequest.SourcePath` into drive1 at `/build/src.tar` and
+  re-stats a sha256 against the host source to catch torn copies;
+  `pkg/builderd/dispatch.go::MapFramework` translates the host
+  `FrameworkDocker` enum into `api.FrameworkDockerfile` so
+  guest-init dispatches to `buildctl --frontend dockerfile` per
+  ADR-004 instead of falling through to Railpack-auto.
+  Remaining: M6 §14 metal acceptance test (`cmd/e2e/build_metal_test.go`)
+  end-to-end — `apid → pg_notify('build_queued') → builderd → vmmd
+  → firecracker → in-VM Railpack/buildctl → OCI image.tar` —
+  tracked in #57. See *What's next*.
 - **M7 — metering, billing, functions, cron.** 🚧 The sampling/quota
   shapes are in `cmd/meterd` and `pkg/stripex`, the dunning state
   machine is `pkg/state.MarkAccountDeletionPending` (ADR-021), GB-h
