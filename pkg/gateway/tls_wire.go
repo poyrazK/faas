@@ -104,37 +104,47 @@ func NewCertMagicConfig(ctx context.Context, cfg TLSConfig, hetznerToken string,
 	// not world-readable; the systemd unit runs us as user faas:root so the
 	// dir must be owned by root (operator-provisioned via the ansible role).
 	cache := certmagic.NewCache(certmagic.CacheOptions{
-		GetConfigForCert: func(certmagic.Certificate) (*certmagic.Config, error) {
-			// A single Config instance governs every cert. The closure is
-			// captured by the cache; we rebuild the Config below and pass
-			// its GetConfigForCert through once the Config exists.
-			return nil, errors.New("unreachable: replaced below")
-		},
+		// GetConfigForCert left nil — a single Config governs every cert in
+		// this process, so certmagic's "find Config for cert" path collapses
+		// to "use the only Config". See tls_wire.go package doc.
 		Logger: silentZap,
 	})
 
+	// ACME contact email: prefer the operator-supplied ContactEmail; fall
+	// back to ops@<zone> so production never silently registers empty.
+	contactEmail := cfg.ContactEmail
+	if contactEmail == "" {
+		contactEmail = "ops@" + cfg.HetznerZone
+	}
+
+	issuer := &certmagic.ACMEIssuer{
+		Email: contactEmail,
+		DNS01Solver: &certmagic.DNS01Solver{
+			DNSManager: certmagic.DNSManager{
+				DNSProvider: NewHetznerDNSProvider(hetznerToken, cfg.HetznerZone),
+			},
+		},
+		Agreed: true,
+		// We don't need the HTTP-01 solver as the *primary* path because the
+		// wildcard requires DNS-01 anyway, but keeping HTTP-01 enabled lets
+		// on-demand custom-domain certs use either method (certmagic picks
+		// the cheapest that the CA allows).
+		DisableHTTPChallenge:      false,
+		DisableTLSALPNChallenge:   false,
+		DisableDistributedSolvers: true, // one-box; nothing to distribute to
+	}
+	// Test and metal suites flip UseStagingCA so a misconfigured DNS
+	// delegation doesn't burn the prod rate limit. Production must leave
+	// it false — staging certs are not browser-trusted and the browser
+	// out-of-the-box warning is annoying.
+	if cfg.UseStagingCA {
+		issuer.CA = certmagic.LetsEncryptStagingCA
+	}
+
 	magic := certmagic.New(cache, certmagic.Config{
 		Storage: &certmagic.FileStorage{Path: cfg.StorageDir},
-		// Issuers: the default ACMEIssuer fills in CA / Agreed defaults from
-		// DefaultACME; we override the DNS provider + email.
 		Issuers: []certmagic.Issuer{
-			&certmagic.ACMEIssuer{
-				Email: "ops@" + cfg.HetznerZone, // placeholder; production overrides via TOML
-				DNS01Solver: &certmagic.DNS01Solver{
-					DNSManager: certmagic.DNSManager{
-						DNSProvider: NewHetznerDNSProvider(hetznerToken, cfg.HetznerZone),
-					},
-				},
-				Agreed: true,
-				// We don't need the HTTP-01 solver as the *primary* path
-				// because the wildcard requires DNS-01 anyway, but keeping
-				// HTTP-01 enabled lets on-demand custom-domain certs use
-				// either method (certmagic picks the cheapest that the CA
-				// allows).
-				DisableHTTPChallenge:      false,
-				DisableTLSALPNChallenge:   false,
-				DisableDistributedSolvers: true, // one-box; nothing to distribute to
-			},
+			issuer,
 		},
 		OnDemand: &certmagic.OnDemandConfig{
 			DecisionFunc: allowlistToDecisionFunc(cfg.OnDemandHTTP01Allowlist, log),

@@ -298,17 +298,10 @@ func TestMetricsSpec12(t *testing.T) {
 	if got := testutil.ToFloat64(h.metrics.coldWake.WithLabelValues("app-1")); got != 1 {
 		t.Errorf("cold_wake_total=%v, want 1", got)
 	}
-	// The wake-latency histogram must record exactly one observation whose
-	// value lands somewhere reasonable for a localhost stub (<100ms is well
-	// above the trace setup overhead but well below the SLO warning bucket).
-	// The prior assertion (CollectAndCount == 1) only proved the collector
-	// emitted a series — it said nothing about the observation itself. With
-	// the first-byte RoundTripper stamp wired, this is the regression gate
-	// for "wake latency is measured to first upstream byte, not full body".
 	if got := histogramObservationCount(t, h.metrics.wakeLatency); got != 1 {
 		t.Errorf("wake_latency _count = %v, want 1 (one observation)", got)
 	}
-	if got := histogramLastObservation(t, h.metrics.wakeLatency); got <= 0 || got > 100*time.Millisecond {
+	if got := histogramMeanObservation(t, h.metrics.wakeLatency); got <= 0 || got > 100*time.Millisecond {
 		t.Errorf("wake_latency observation = %v, want (0, 100ms] for localhost stub", got)
 	}
 
@@ -349,12 +342,15 @@ func histogramObservationCount(t *testing.T, h prometheus.Histogram) uint64 {
 	return m.Histogram.GetSampleCount()
 }
 
-// histogramLastObservation returns the most recent observation's value in
-// seconds (the unit the histogram exposes). Prometheus histograms accumulate;
-// the "last observation" here is derived from the difference between the
-// sum and the prior sum, but for a single-observation test we can just
-// compute sum/count. Empty histograms yield 0.
-func histogramLastObservation(t *testing.T, h prometheus.Histogram) time.Duration {
+// histogramMeanObservation returns the mean observation across every sample
+// in the histogram (sum / count), in the histogram's base unit of seconds
+// converted to time.Duration. With a single observation that's equivalent
+// to that observation's value; with multiple observations it's the running
+// mean. Empty histograms yield 0. The name says what the function does:
+// a histogram's Prometheus exposition does not carry a per-sample
+// timestamp, so callers that want "the most recent observation" need to
+// scrape, store the previous exposure, and diff — this helper does not.
+func histogramMeanObservation(t *testing.T, h prometheus.Histogram) time.Duration {
 	t.Helper()
 	m := &dto.Metric{}
 	if err := h.(prometheus.Metric).Write(m); err != nil {
@@ -404,7 +400,7 @@ func TestMetricsSpec12_FirstByteNotFullBody(t *testing.T) {
 	// suggest for a full-body measurement. We allow generous slack for
 	// localhost jitter and Go scheduler stalls, but a full-body measurement
 	// would land >= bodyGap.
-	got := histogramLastObservation(t, h.metrics.wakeLatency)
+	got := histogramMeanObservation(t, h.metrics.wakeLatency)
 	if got == 0 {
 		t.Fatal("wake_latency observation missing")
 	}

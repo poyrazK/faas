@@ -70,6 +70,17 @@ type TOMLTLSConfig struct {
 	HetznerDNSAPITokenPath string `toml:"hetzner_dns_api_token_path"`
 	HetznerZone            string `toml:"hetzner_zone"`
 	StorageDir             string `toml:"storage_dir"`
+
+	// ContactEmail is the email CertMagic registers with the ACME CA for
+	// expiry warnings. Default "" is allowed — CertMagic will simply not
+	// register one — but production should set it to a monitored address.
+	ContactEmail string `toml:"contact_email"`
+
+	// UseStagingCA, when true, switches CertMagic to Let's Encrypt's
+	// staging directory. Production must leave this false; the staging CA
+	// issues certs browsers reject. Test and metal suites flip it on so a
+	// misconfigured DNS delegation doesn't burn the prod rate limit.
+	UseStagingCA bool `toml:"use_staging_ca"`
 }
 
 // LoadConfig reads path and returns the parsed Config with defaults applied.
@@ -111,6 +122,8 @@ func (c *Config) resolveTLSConfig(allowlist gateway.OnDemandAllowlist) gateway.T
 		HetznerDNSAPITokenPath:  c.TLS.HetznerDNSAPITokenPath,
 		HetznerZone:             c.TLS.HetznerZone,
 		StorageDir:              c.TLS.StorageDir,
+		ContactEmail:            c.TLS.ContactEmail,
+		UseStagingCA:            c.TLS.UseStagingCA,
 		OnDemandHTTP01Allowlist: allowlist,
 	}
 }

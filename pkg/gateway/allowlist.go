@@ -23,15 +23,14 @@ import (
 	"time"
 )
 
-// domainLookup is the slice of state.Store the allowlist needs. Pulling just
-// the method (rather than the full Store) lets tests inject a fake without
-// faking the rest of the API surface. The return type is any-typed and we
-// type-assert on the Verified() method via a small adapter — pkg/state's
-// concrete CustomDomain already exposes Verified(), and we don't want this
-// package to declare its own interface that diverges from state.CustomDomain.
-type domainLookup interface {
-	DomainByName(ctx context.Context, domain string) (any, error)
-}
+// OnDemandLookup is the function signature NewPGAllowlist consumes. It is a
+// function (not an interface on a Store) so callers don't have to declare an
+// adapter type that bridges the (state.CustomDomain) → (any) return-type
+// mismatch. Production passes a closure that calls state.PgStore.DomainByName
+// and wraps state.ErrNotFound as gateway.ErrNotFound; tests inject fakes
+// directly. The function returns any because the result is type-asserted on
+// the Verified() method below — pkg/gateway stays free of pkg/state.
+type OnDemandLookup func(ctx context.Context, domain string) (any, error)
 
 // verified is the shape NewPGAllowlist needs from the lookup result. The
 // concrete state.CustomDomain satisfies it; tests use fakeCustomDomain.
@@ -41,32 +40,44 @@ type verified interface {
 	Verified() bool
 }
 
-// notFoundErr is the error state.Store.DomainByName returns for unknown
-// hostnames. We expose it here so tests can return it from a fake without
-// importing pkg/state (which transitively pulls pgx).
-var notFoundErr = errors.New("allowlist: domain not found")
+// ErrNotFound is the sentinel NewPGAllowlist recognizes as "this hostname is
+// not in the custom_domains table" so it can return false without logging at
+// Warn level (the steady-state denial path; logging here would flood the
+// gatewayd log on every scan of an unowned hostname). Callers MUST surface
+// this sentinel from their lookup closure when the row is missing — wrapping
+// state.ErrNotFound (or any other concrete store sentinel) is the production
+// path in cmd/gatewayd.
+var ErrNotFound = errors.New("gateway: domain not found in allowlist")
 
-// NewPGAllowlist returns an OnDemandAllowlist backed by state.Store.
-// The store must be the same instance pgRouter uses for routing so the
-// two can't drift (a hostname that routes must be allowlisted, and vice
-// versa). The slog logger is used to record denied on-demand requests —
-// those are the loud signal that someone is poking the edge for a hostname
-// we don't own.
-func NewPGAllowlist(store domainLookup, log *slog.Logger) OnDemandAllowlist {
+// NewPGAllowlist returns an OnDemandAllowlist backed by store. The store must
+// be the same instance pgRouter uses for routing so the two can't drift (a
+// hostname that routes must be allowlisted, and vice versa). The slog logger
+// is used to record denied on-demand requests — those are the loud signal
+// that someone is poking the edge for a hostname we don't own.
+//
+// NewPGAllowlist never panics on store==nil: a nil lookup is treated as
+// deny-all, which is the safe fail-closed default for an unconfigured edge.
+func NewPGAllowlist(store OnDemandLookup, log *slog.Logger) OnDemandAllowlist {
 	if log == nil {
 		log = slog.Default()
 	}
 	return func(host string) bool {
+		if store == nil {
+			return false
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		raw, err := store.DomainByName(ctx, host)
+		raw, err := store(ctx, host)
 		if err != nil {
-			// NotFound is the steady-state denial path; everything else is a
-			// DB problem we want to fail closed (refuse to mint) on.
-			if !errors.Is(err, notFoundErr) {
-				log.Warn("gateway: allowlist lookup failed; failing closed",
-					"host", host, "err", err)
+			// NotFound is the steady-state denial path (someone probed a
+			// hostname we don't own); everything else is a DB problem we
+			// want to surface. Callers MUST surface ErrNotFound from the
+			// lookup layer so this branch fires correctly.
+			if errors.Is(err, ErrNotFound) {
+				return false
 			}
+			log.Warn("gateway: allowlist lookup failed; failing closed",
+				"host", host, "err", err)
 			return false
 		}
 		v, ok := raw.(verified)

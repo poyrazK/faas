@@ -42,8 +42,9 @@ type OnDemandAllowlist func(host string) bool
 //	HetznerDNSAPITokenPath:  "/etc/faas/secrets/hetzner-dns.token"
 //	HetznerZone:             "example.com"
 //	StorageDir:              "/var/lib/faas/certs"
+//	ContactEmail:            "ops@example.com"
+//	UseStagingCA:            false
 //	OnDemandHTTP01Allowlist: NewPGAllowlist(...) from pkg/gateway/allowlist.go
-//	ListenAddrs:             [":443", ":80"]
 type TLSConfig struct {
 	// Disabled (or all-empty) → plain HTTP; current e2e-harness behavior.
 	Disabled bool
@@ -72,10 +73,16 @@ type TLSConfig struct {
 	// if missing.
 	StorageDir string
 
-	// ListenAddrs are the bind addresses for the TLS-enabled listeners.
-	// Defaults to [":443", ":80"] when empty. The first address is the public
-	// TLS handler; the second is the HTTP-01 challenge + :80→:443 redirect.
-	ListenAddrs []string
+	// ContactEmail is the email CertMagic registers with the ACME CA for
+	// expiry warnings. May be empty; production should set a monitored
+	// address so a missed renewal isn't a customer's surprise.
+	ContactEmail string
+
+	// UseStagingCA, when true, switches CertMagic to Let's Encrypt's
+	// staging directory. Production must leave this false — staging certs
+	// are not browser-trusted. The metal test suite flips it on so a
+	// misconfigured delegation doesn't burn the prod rate limit.
+	UseStagingCA bool
 }
 
 // ErrTLSMisconfigured is returned by Validate when fields are partially

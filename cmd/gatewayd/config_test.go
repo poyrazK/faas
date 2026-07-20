@@ -19,6 +19,8 @@ wildcard_cert_domain = "apps.example.com"
 hetzner_dns_api_token_path = "/etc/faas/secrets/hetzner-dns.token"
 hetzner_zone = "example.com"
 storage_dir = "/var/lib/faas/certs"
+contact_email = "ops@example.com"
+use_staging_ca = true
 `
 
 func TestLoadConfig_DefaultsWhenMissing(t *testing.T) {
@@ -64,6 +66,15 @@ func TestLoadConfig_RoundTrip(t *testing.T) {
 	}
 	if c.TLS.StorageDir != "/var/lib/faas/certs" {
 		t.Errorf("StorageDir = %q", c.TLS.StorageDir)
+	}
+	if c.TLS.ContactEmail != "ops@example.com" {
+		t.Errorf("ContactEmail = %q, want ops@example.com", c.TLS.ContactEmail)
+	}
+	if !c.TLS.UseStagingCA {
+		t.Error("UseStagingCA should be true from the fixture")
+	}
+	if got := c.resolveTLSConfig(func(string) bool { return true }); !got.UseStagingCA || got.ContactEmail != "ops@example.com" {
+		t.Errorf("resolveTLSConfig lost TLS fields: %+v", got)
 	}
 }
 

@@ -18,7 +18,9 @@ type fakeCustomDomain struct {
 
 func (d fakeCustomDomain) Verified() bool { return !d.verifiedAt.IsZero() }
 
-// fakeDomainLookup satisfies domainLookup for tests.
+// fakeDomainLookup is a function-table lookup satisfying OnDemandLookup.
+// The struct carries the configurable state; the DomainByName method is the
+// function value tests hand to NewPGAllowlist.
 type fakeDomainLookup struct {
 	mu     sync.Mutex
 	rows   map[string]fakeCustomDomain
@@ -40,6 +42,8 @@ func (f *fakeDomainLookup) put(host string, verified bool) {
 	f.rows[host] = d
 }
 
+// DomainByName exposes the struct as an OnDemandLookup function. Tests pass
+// store.DomainByName directly to NewPGAllowlist — no adapter needed.
 func (f *fakeDomainLookup) DomainByName(_ context.Context, domain string) (any, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -49,7 +53,7 @@ func (f *fakeDomainLookup) DomainByName(_ context.Context, domain string) (any, 
 	}
 	d, ok := f.rows[domain]
 	if !ok {
-		return nil, notFoundErr
+		return nil, ErrNotFound
 	}
 	return d, nil
 }
@@ -61,7 +65,7 @@ func quietLogger() *slog.Logger {
 func TestPGAllowlist_AllowsVerifiedDomain(t *testing.T) {
 	store := newFakeDomainLookup()
 	store.put("jane-api.example.com", true)
-	al := NewPGAllowlist(store, quietLogger())
+	al := NewPGAllowlist(store.DomainByName, quietLogger())
 	if !al("jane-api.example.com") {
 		t.Fatal("verified domain must be allowlisted")
 	}
@@ -70,7 +74,7 @@ func TestPGAllowlist_AllowsVerifiedDomain(t *testing.T) {
 func TestPGAllowlist_DeniesUnverified(t *testing.T) {
 	store := newFakeDomainLookup()
 	store.put("pending.example.com", false) // exists but TXT challenge unresolved
-	al := NewPGAllowlist(store, quietLogger())
+	al := NewPGAllowlist(store.DomainByName, quietLogger())
 	if al("pending.example.com") {
 		t.Fatal("unverified domain must NOT be allowlisted (spec §7: TXT gate)")
 	}
@@ -78,7 +82,7 @@ func TestPGAllowlist_DeniesUnverified(t *testing.T) {
 
 func TestPGAllowlist_DeniesUnknown(t *testing.T) {
 	store := newFakeDomainLookup()
-	al := NewPGAllowlist(store, quietLogger())
+	al := NewPGAllowlist(store.DomainByName, quietLogger())
 	if al("attacker.example.com") {
 		t.Fatal("unknown domain must NOT be allowlisted (cert-mint abuse vector)")
 	}
@@ -90,9 +94,19 @@ func TestPGAllowlist_DeniesUnknown(t *testing.T) {
 func TestPGAllowlist_FailsClosedOnDBError(t *testing.T) {
 	store := newFakeDomainLookup()
 	store.err = errors.New("conn refused")
-	al := NewPGAllowlist(store, quietLogger())
+	al := NewPGAllowlist(store.DomainByName, quietLogger())
 	if al("anything.example.com") {
 		t.Fatal("allowlist must fail closed on DB error")
+	}
+}
+
+// TestPGAllowlist_NilLookupFailsClosed — a misconfigured edge (no DB pool,
+// or the wire-up step was skipped) must refuse to mint certs. Failing open
+// would let any hostname through.
+func TestPGAllowlist_NilLookupFailsClosed(t *testing.T) {
+	al := NewPGAllowlist(nil, quietLogger())
+	if al("anything.example.com") {
+		t.Fatal("nil lookup must deny (fail-closed on misconfiguration)")
 	}
 }
 

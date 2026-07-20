@@ -182,7 +182,21 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// The Disabled=true path stays on plain :8080 so the e2e harness keeps
 	// working without a config file (and without bind capability requirements).
 	pgStore := state.NewPgStore(pool)
-	resolved := cfg.resolveTLSConfig(gateway.NewPGAllowlist(pgStoreLookupAdapter{store: pgStore}, log))
+	// Wrap pgStore.DomainByName (which returns (state.CustomDomain, error))
+	// as the gateway.OnDemandLookup shape: any-typed result, with state.ErrNotFound
+	// surfaced as gateway.ErrNotFound so the steady-state denial path stays quiet.
+	//nolint:contextcheck // ctx is forwarded explicitly to pgStore.DomainByName; lint can't see through the function-value indirection.
+	allowLookup := func(ctx context.Context, domain string) (any, error) {
+		d, err := pgStore.DomainByName(ctx, domain)
+		if err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				return nil, gateway.ErrNotFound
+			}
+			return nil, err
+		}
+		return d, nil
+	}
+	resolved := cfg.resolveTLSConfig(gateway.NewPGAllowlist(allowLookup, log))
 	if !resolved.Disabled {
 		tok, err := loadSecretFile(resolved.HetznerDNSAPITokenPath)
 		if err != nil {
@@ -280,7 +294,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// private bind), never reachable from the public-internet path.
 	controlMux := gateway.ControlMux(handler.Metrics(), nil)
 
+	// Track every *http.Server we spin up so the shutdown path can drain
+	// them in parallel. sslib guidance is "call Shutdown on each" rather
+	// than Close: Shutdown lets in-flight requests finish; Close does not.
 	errc := make(chan error, 4)
+	var servers []*http.Server
+	addSrv := func(s *http.Server) { servers = append(servers, s) }
 	if deps.tlsBundle != nil {
 		// Production: TLS listener on :443 + ACME mux on :80. We deliberately
 		// keep the dashboard / githubd proxy stack unchanged — it sits in
@@ -298,6 +317,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ReadTimeout:       60 * time.Second,
 			WriteTimeout:      300 * time.Second,
 		}
+		addSrv(public)
 		// When the http.Server has a non-nil TLSConfig, ServeTLS needs an
 		// explicit cert/key. CertMagic handles cert retrieval via GetCertificate
 		// and certmagic's docs recommend serving via net.Listen + Serve() (not
@@ -321,6 +341,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Handler:           deps.acmeMux,
 			ReadHeaderTimeout: 10 * time.Second,
 		}
+		addSrv(acmeServer)
 		listenFn := deps.extraListen
 		if listenFn == nil {
 			listenFn = net.Listen
@@ -347,6 +368,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if public.WriteTimeout == 0 {
 			public.WriteTimeout = 300 * time.Second
 		}
+		addSrv(public)
 		l, lerr := deps.listen("tcp", listenAddr)
 		if lerr != nil {
 			log.Error("gatewayd public listen failed", "addr", listenAddr, "err", lerr)
@@ -382,14 +404,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
-		// Best-effort shutdown of every listener we may have started. We do
-		// not reach into deps.tlsBundle here on purpose — main owns the
-		// bundle but does not own its lifecycle (certmagic manages its own
-		// renew loop on its own goroutine).
-		if deps.tlsBundle == nil {
-			// Plain HTTP path: shutdown is handled by the listener goroutine
-			// above. For TLS the listener stays up under ctx cancellation
-			// because its TLS handshake may take seconds.
+		// Best-effort shutdown of every listener we may have started.
+		// Servers track themselves in `servers`; certmagic owns its own renew
+		// loop on a separate goroutine and is intentionally NOT touched here
+		// (closing the certmagic.Config would race against in-flight mints).
+		for _, s := range servers {
+			_ = s.Shutdown(shutdownCtx)
 		}
 		if deps.synth != nil {
 			//nolint:contextcheck // same shutdown-ctx contract as public.Shutdown above.
@@ -417,21 +437,4 @@ func envOrGateway(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-// pgStoreLookupAdapter satisfies gateway.domainLookup (which returns any)
-// without forcing *state.PgStore to declare a divergent method signature.
-// It exists purely to bridge the Go method-set rule — every concrete Store
-// returns its own concrete CustomDomain; pkg/gateway's interface is
-// intentionally type-erased so it doesn't depend on pkg/state.
-type pgStoreLookupAdapter struct {
-	store *state.PgStore
-}
-
-func (a pgStoreLookupAdapter) DomainByName(ctx context.Context, domain string) (any, error) {
-	d, err := a.store.DomainByName(ctx, domain)
-	if err != nil {
-		return nil, err
-	}
-	return d, nil
 }
