@@ -73,6 +73,8 @@
     msg: >-
       cp daemons installed but NOT enabled. Operator runs:
         systemctl enable --now faas-apid faas-schedd faas-imaged faas-meterd
-      once /etc/faas/sealed.env has DATABASE_URL (and STRIPE_API_KEY for
-      meterd) and the binaries are installed at
+      once /etc/faas/sealed.env has DATABASE_URL (and STRIPE_API_KEY plus
+      FAAS_SCHEDD_ADDR=/run/faas/schedd.sock for meterd — meterd refuses to
+      start without FAAS_SCHEDD_ADDR per issue #52's strict-exit rule) and
+      the binaries are installed at
       /usr/local/bin/{apid,schedd,imaged,meterd}.

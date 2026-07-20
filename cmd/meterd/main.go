@@ -69,8 +69,11 @@ type runDeps struct {
 	dialSchedd func(socketPath string) (parkInstanceParker, error)
 	// newStripeClient is the constructor for the stripex facade. nil
 	// in production (defaultDeps wires stripex.NewClient); tests inject
-	// a recording stub.
-	newStripeClient func(store state.Store, dedupe stripex.PushDedupe, log *slog.Logger) stripePusher
+	// a recording stub. apiKey + webhookSecret are passed in (not read
+	// from os.Getenv inside the closure) so a test that stubs getenv
+	// sees the same credential values flow into the Client — matches
+	// the test-double pattern at cmd/apid/main.go.
+	newStripeClient func(apiKey, webhookSecret string, store state.Store, dedupe stripex.PushDedupe, log *slog.Logger) stripePusher
 	// The two collaborators are wired in production by runWithDeps
 	// after the pool is open; tests can pre-populate via the fields.
 	parker parkInstanceParker
@@ -92,8 +95,8 @@ func defaultDeps() runDeps {
 			}
 			return c, nil
 		},
-		newStripeClient: func(store state.Store, dedupe stripex.PushDedupe, log *slog.Logger) stripePusher {
-			return stripex.NewClient(store, dedupe, envOr("STRIPE_API_KEY", ""), envOr("STRIPE_WEBHOOK_SECRET", ""), log)
+		newStripeClient: func(apiKey, webhookSecret string, store state.Store, dedupe stripex.PushDedupe, log *slog.Logger) stripePusher {
+			return stripex.NewClient(store, dedupe, apiKey, webhookSecret, log)
 		},
 		now: time.Now,
 	}
@@ -101,27 +104,6 @@ func defaultDeps() runDeps {
 
 func run(ctx context.Context, log *slog.Logger) error {
 	return runWithDeps(ctx, log, defaultDeps())
-}
-
-// envOr mirrors cmd/apid/main.go::envOr. Kept local so meterd's wiring
-// stays in one file.
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// meterdRequireEnv returns the value of key if non-empty, or a wrapped
-// error otherwise. Issue #52's strict-exit acceptance: production
-// meterd refuses to start without FAAS_SCHEDD_ADDR rather than silently
-// running with a nil parker (every Free-tier app runs unbounded).
-func meterdRequireEnv(getenv func(string) string, key string) (string, error) {
-	v := getenv(key)
-	if v == "" {
-		return "", fmt.Errorf("meterd: %s is required", key)
-	}
-	return v, nil
 }
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
@@ -148,16 +130,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	pn := db.PoolNotifier{Pool: pool}
 
 	// Resolve the schedd socket: env wins over the TOML default so the
-	// e2e harness can dial a per-test dial socket without rewriting
-	// the unit file. Both empty is the strict-exit failure case
-	// (issue #52 acceptance).
-	scheddAddr := envOr("FAAS_SCHEDD_ADDR", cfg.SocketPath)
+	// e2e harness can dial a per-test socket without rewriting the unit
+	// file. Both empty is the strict-exit failure case (issue #52
+	// acceptance — refuse to start rather than run unbounded).
+	scheddAddr := deps.getenv("FAAS_SCHEDD_ADDR")
 	if scheddAddr == "" {
-		if v, err := meterdRequireEnv(deps.getenv, "FAAS_SCHEDD_ADDR"); err != nil {
-			return err
-		} else {
-			scheddAddr = v
-		}
+		scheddAddr = cfg.SocketPath
+	}
+	if scheddAddr == "" {
+		return fmt.Errorf("meterd: FAAS_SCHEDD_ADDR (or socket_path in meterd.toml) is required")
 	}
 	parker := deps.parker
 	if parker == nil {
@@ -178,9 +159,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		apiKey := deps.getenv("STRIPE_API_KEY")
 		if apiKey == "" {
-			log.Warn("STRIPE_API_KEY is empty — hourly Stripe push will no-op (pushUsageRecordSDK skips without a key)")
+			log.Warn("STRIPE_API_KEY is empty — hourly Stripe push will no-op (pushUsageRecordSDK returns an error without a key)")
 		}
-		stripe = deps.newStripeClient(store, store, log)
+		webhookSecret := deps.getenv("STRIPE_WEBHOOK_SECRET")
+		stripe = deps.newStripeClient(apiKey, webhookSecret, store, store, log)
 	}
 
 	// FAAS_QUOTA_INTERVAL / FAAS_SAMPLE_INTERVAL / FAAS_STRIPE_INTERVAL let

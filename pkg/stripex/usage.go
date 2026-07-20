@@ -43,6 +43,12 @@ func (c *Client) pushUsageRecordSDK(ctx context.Context, acct state.Account, hou
 		// meterd log line.
 		return fmt.Errorf("stripex: cannot push usage without apiKey (account %s)", acct.ID)
 	}
+	// stripe-go exposes a package-global API key (no per-call override on
+	// UsageRecordParams). meterd owns exactly one *stripex.Client per
+	// process (cmd/meterd/main.go::defaultDeps wires it once at boot), so
+	// mutating the global is safe — there is no second Client to race with.
+	// If a future caller constructs a second Client with a different key,
+	// route the call through stripe.NewBackend(...) instead.
 	stripe.Key = c.apiKey
 
 	qty := int64(gbHours * 1000)
