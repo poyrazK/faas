@@ -54,6 +54,7 @@ func TestMetalFunctionWakeP95(t *testing.T) {
 		Paths{Kernel: kernel},
 		fcVer,
 		slog.New(slog.NewTextHandler(testLogWriter{t}, nil)),
+		nil,
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

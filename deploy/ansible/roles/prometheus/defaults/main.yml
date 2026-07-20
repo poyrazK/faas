@@ -1,0 +1,36 @@
+# prometheus — defaults (spec §12 SLO dashboard pipeline).
+#
+# prom_version pins the binary so a future upgrade is a one-line
+# change + rerun. Same precedent as the firecracker role.
+#
+# scrape_listen is the bridge address — Prometheus is only reachable
+# from the operator's admin machine (which dials the bridge), never
+# the public iface (the input chain policy `drop` would block it).
+
+prom_version: "2.54.1"
+prom_listen_addr: "10.0.0.1:9090"
+prom_retention_days: 15
+prom_data_dir: /var/lib/prometheus
+
+# faas daemon metrics endpoints. Each daemon exposes /metrics on its
+# MetricsAddr; see cmd/<daemon>/main.go for the exact port. Keep in
+# sync with the per-daemon config.toml.
+prom_targets:
+  - job: apid
+    host: 127.0.0.1
+    port: 9092
+  - job: gatewayd
+    host: 127.0.0.1
+    port: 9093
+  - job: schedd
+    host: 127.0.0.1
+    port: 9091
+  - job: vmmd
+    host: 127.0.0.1
+    port: 9104
+  - job: imaged
+    host: 127.0.0.1
+    port: 9095
+  - job: node
+    host: 127.0.0.1
+    port: 9100

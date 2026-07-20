@@ -79,12 +79,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("could not detect firecracker version; treating all snapshots as stale", "err", err)
 	}
 
+	cbm := fcvm.NewColdBootMetrics()
 	mgr := fcvm.NewManager(
 		wire.ExecRunner{},
 		fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second),
 		fcvm.Paths{Kernel: cfg.KernelPath},
 		fcVersion,
 		log,
+		cbm,
 	)
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,
 		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax)
@@ -104,6 +106,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.MetricsAddr != "" {
 		mux := http.NewServeMux()
 		mux.Handle(metricsPath, ops.Handler())
+		// Cold-boot fallback counter has its own registry (one writer,
+		// one reader). Mount at /metrics/fallback so a scrape that only
+		// wants the ops series stays clean.
+		mux.Handle(metricsPath+"/fallback", cbm.Handler())
 		httpSrv = &http.Server{
 			Addr:              cfg.MetricsAddr,
 			Handler:           mux,

@@ -101,6 +101,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	store := state.NewPgStore(pool)
 	ledger := sched.NewLedger()
 	ops := wire.NewOpsMetrics("schedd")
+	// Dashboard gauges (spec §12): schedd owns the snapshots table and the
+	// admission ledger, so the four fcvm_* gauges live here, not in vmmd.
+	// The DashboardMetrics callbacks close over `store` (PG) and `ledger`
+	// (in-memory resident accounting). The lv-fc percentage shells out to
+	// `lvs`; on dev boxes where lvs is missing, the closure returns 0 and
+	// the gauge degrades to "no data" (no error, no spike).
+	dashGauges := fcvm.NewDashboardGauges(fcvm.DashboardMetrics{
+		ListSnapshotStats: func(ctx context.Context) ([]fcvm.SnapshotStat, error) {
+			rows, err := store.ListLiveSnapshotStats(ctx)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]fcvm.SnapshotStat, len(rows))
+			for i, r := range rows {
+				out[i] = fcvm.SnapshotStat{MemBytes: r.MemBytes, DiskBytes: r.DiskBytes}
+			}
+			return out, nil
+		},
+		ResidentBytes: func(_ context.Context) (int64, error) {
+			return int64(ledger.ResidentRAM()) * 1024 * 1024, nil
+		},
+		LvFcUsedPct: fcvm.DefaultLvFcUsedPct(api.LvFcName),
+	})
 	engine := sched.NewEngine(store, ledger, vmm, sched.PoolNotifier{Pool: pool}, fcVersion, log)
 
 	// Rebuild admission accounting from any instances still live from a prior
@@ -121,6 +144,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.MetricsAddr != "" {
 		mux := http.NewServeMux()
 		mux.Handle(metricsPath, ops.Handler())
+		// Mount the §12 dashboard gauges on a sibling path so a
+		// `curl /metrics` scrape returns the canonical schedd ops
+		// series; Prometheus hits both paths.
+		mux.Handle(metricsPath+"/fcvm", dashGauges.Handler())
 		httpSrv = &http.Server{Addr: cfg.MetricsAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		go func() {
 			if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

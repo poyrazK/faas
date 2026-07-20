@@ -138,6 +138,7 @@ func TestNftCommandsEnforceEgressPolicy(t *testing.T) {
 	wants := []string{
 		"iifname tap0 tcp dport { 25, 465, 587 } drop",                                                            // deny SMTP (spam/abuse)
 		"iifname tap0 ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10 } drop", // deny RFC1918 + link-local/metadata + CGN
+		"iifname tap0 ip6 daddr { fe80::/10, fc00::/7, ff00::/8, ::1/128, ::/128 } drop",                          // deny IPv6 link-local + ULA + multicast + unspecified (ADR-023)
 	}
 	for _, w := range wants {
 		if !strings.Contains(rules, w) {

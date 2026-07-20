@@ -188,6 +188,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, deps.getenv("FAAS_DPA_PATH"))
 
+	// Status page (spec §12 public surface). The Prometheus URL is
+	// the local box's Prometheus installed by deploy/ansible/roles/
+	// prometheus (default :9090 on the bridge). The HTML path defaults
+	// to /etc/faas/statuspage/index.html; a dev override
+	// (FAAS_STATUSPAGE_PATH) lets us point at deploy/statuspage/
+	// index.html without installing.
+	srv.WithStatusCache(
+		deps.getenv("FAAS_PROMETHEUS_URL"),
+		deps.getenv("FAAS_STATUSPAGE_PATH"),
+	)
+
 	// G2: load the host age recipient so the secrets PUT handler can seal.
 	// vmmd owns the private half; we only need the public recipient string.
 	// The recipient path is opt-in via FAAS_HOST_AGE_RECIPIENT_PATH — set in

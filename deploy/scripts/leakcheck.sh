@@ -3,7 +3,10 @@
 # (spec §Commands `make leakcheck`, invariant §6.2-4/5).
 #
 # Checks: no leftover fc-* network namespaces, no orphan tap devices, no jailer
-# chroots under /srv/fc/jail, no lingering faas-tenant vm-*.scope cgroups.
+# chroots under /srv/fc/jail, no lingering faas-tenant per-instance cgroup scopes.
+# (jailer v1.7 rejects '.' in --id, so the actual scope name is the bare
+# instance id with no 'vm-' prefix and no '.scope' suffix — see
+# pkg/fcvm/cgroup.go and pkg/fcvm/config.go::PerInstanceScope.)
 # Exits non-zero listing anything that leaked. Safe to run on any Linux host;
 # on non-Linux (dev macs) it no-ops with a notice.
 set -euo pipefail
@@ -37,9 +40,15 @@ if [[ -d /srv/fc/jail ]]; then
 fi
 
 # 4. Tenant VM cgroup scopes
+# The scope directory name == instance id (no 'vm-' prefix, no '.scope'
+# suffix — jailer v1.7 rejects '.' in --id). Treat any child dir that
+# looks like a per-VM scope (has cgroup.procs or memory.max) as a leak.
 if [[ -d /sys/fs/cgroup/faas-tenant.slice ]]; then
-  for scope in /sys/fs/cgroup/faas-tenant.slice/vm-*.scope; do
-    [[ -e "$scope" ]] && note "cgroup $scope"
+  shopt -s nullglob dotglob
+  for scope in /sys/fs/cgroup/faas-tenant.slice/*/; do
+    if [[ -e "$scope/cgroup.procs" || -e "$scope/memory.max" ]]; then
+      note "cgroup scope $scope"
+    fi
   done
 fi
 

@@ -1,0 +1,10 @@
+- name: daemon-reload
+  ansible.builtin.systemd:
+    daemon_reload: true
+  failed_when: false
+
+- name: restart node_exporter
+  ansible.builtin.service:
+    name: node_exporter
+    state: restarted
+  failed_when: false

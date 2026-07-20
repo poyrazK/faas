@@ -16,6 +16,17 @@ local connections and `reject`s every TCP source.
    auth works for the `faas` user.
 6. **§11 hardening**: `listen_addresses=''` (restart), then a 4-line
    `pg_hba.conf` (reload) that rejects all TCP auth.
+7. **§14 M8 restore-drill wiring**:
+   - `wal_level = replica` (restart-needed)
+   - `archive_mode = on` (reload)
+   - `archive_command = 'cp %p /var/lib/pgsql/archive/%f'` (reload)
+   - `max_wal_senders = 3` (reload)
+   - Creates `/var/lib/pgsql/archive` owned `postgres:postgres 0750`.
+
+The archive directory is local-only — the M8 restore drill script
+(`deploy/scripts/faas-m8-restore-drill.sh`) replays WAL from there
+after rsyncing a nightly basebackup. Off-host WAL shipping and
+pgbackrest are explicitly **M9** follow-ups (see plan §Step 4).
 
 ## Idempotency
 

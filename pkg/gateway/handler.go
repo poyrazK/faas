@@ -110,13 +110,16 @@ func (h *Handler) WithLimiter(l *Limiter) *Handler {
 }
 
 // SetWakeGateHook installs a callback that wakes the queue-depth gauge each
-// time WakeGate mutates an entry. Called by main once the gauge exists.
+// time WakeGate mutates an entry, and hands the wake-queue histogram to the
+// gate so Wait can observe per-caller wait duration. Called by main once the
+// metrics bundle exists.
 func (h *Handler) SetWakeGateHook() {
 	h.gate.onChange = func(appID string, depth int) {
 		if h.metrics != nil {
 			h.metrics.SetQueueDepth(appID, depth)
 		}
 	}
+	h.gate.SetMetrics(h.metrics)
 }
 
 // Metrics exposes the Prometheus bundle (used by the control listener to mount

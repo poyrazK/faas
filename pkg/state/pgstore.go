@@ -959,6 +959,42 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 	return nil
 }
 
+// ListLiveSnapshotStats returns mem_bytes + disk_bytes for every non-stale
+// snapshot. Feeds the §12 dashboard gauge `fcvm_snapshot_fleet_avg_bytes`
+// (and the p95 sibling). One round-trip; the dashboard wrapper caches
+// the result for 5 s so this isn't on the hot scrape path. The "live"
+// filter matches the dashboard's notion of "parked apps taking up
+// disk": stale snapshots are GC'd by imaged nightly (spec §4.6) and
+// should not contribute to the fleet average.
+func (s *PgStore) ListLiveSnapshotStats(ctx context.Context) ([]SnapshotSize, error) {
+	rows, err := s.pool.Query(ctx,
+		`select mem_bytes, disk_bytes from snapshots where stale = false`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SnapshotSize
+	for rows.Next() {
+		var sz SnapshotSize
+		if err := rows.Scan(&sz.MemBytes, &sz.DiskBytes); err != nil {
+			return nil, err
+		}
+		out = append(out, sz)
+	}
+	return out, rows.Err()
+}
+
+// SnapshotSize is the per-row projection used by the dashboard gauge.
+// VMStateBytes is folded into MemBytes today (the `snapshots` table
+// stores a single bytes value for the parked footprint); a future
+// migration splitting the columns can add the field without breaking
+// callers. Keeping it here (not in pkg/fcvm) so the SQL → struct
+// mapping stays in the package that owns the schema.
+type SnapshotSize struct {
+	MemBytes  int64
+	DiskBytes int64
+}
+
 // --- events ------------------------------------------------------------------
 
 func (s *PgStore) AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error {

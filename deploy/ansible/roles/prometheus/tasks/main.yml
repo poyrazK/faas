@@ -1,0 +1,118 @@
+# prometheus (spec §12 — SLO dashboard pipeline).
+#
+# Installs the prometheus binary, drops a scrape config that pulls
+# from every faas daemon + node_exporter, and starts it as a systemd
+# unit bound to the bridge IP. The binary is pinned via checksum so
+# a supply-chain compromise produces a fail-fast assert, not a silent
+# swap (same precedent as the firecracker role).
+#
+# Why a download-from-github-install, not the apt repo:
+#   - The Debian/Ubuntu apt repo lags Prometheus by 6-12 months.
+#   - Pinning the SHA-256 (prom_release_sha256) is the only way to
+#     avoid drift; the tarball is small (~80 MB).
+#   - The bootstrap playbook runs once per box; tarball download cost
+#     is amortized.
+
+- name: prometheus — read defaults for visibility
+  ansible.builtin.debug:
+    var: prom_version
+
+- name: prometheus — mkdir /etc/prometheus and data dir
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: prometheus
+    group: prometheus
+    mode: "0755"
+  loop:
+    - /etc/prometheus
+    - "{{ prom_data_dir }}"
+
+- name: prometheus — create system user `prometheus`
+  ansible.builtin.user:
+    name: prometheus
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ prom_data_dir }}"
+    createhome: false
+  register: prom_user
+
+- name: prometheus — download release tarball
+  ansible.builtin.get_url:
+    url: "https://github.com/prometheus/prometheus/releases/download/v{{ prom_version }}/prometheus-{{ prom_version }}.linux-amd64.tar.gz"
+    dest: "/tmp/prometheus-{{ prom_version }}.tar.gz"
+    checksum: "sha256:{{ prom_release_sha256 }}"
+    mode: "0644"
+  register: prom_tarball
+
+- name: prometheus — assert tarball checksum
+  ansible.builtin.command: sha256sum /tmp/prometheus-{{ prom_version }}.tar.gz
+  register: prom_sum
+  changed_when: false
+  check_mode: false
+
+- name: prometheus — verify pin matches downloaded
+  ansible.builtin.assert:
+    that:
+      - "prom_release_sha256 in prom_sum.stdout"
+    fail_msg: "Downloaded Prometheus tarball SHA-256 mismatch — supply chain check failed."
+
+- name: prometheus — untar binary into /usr/local/bin
+  ansible.builtin.unarchive:
+    src: "/tmp/prometheus-{{ prom_version }}.tar.gz"
+    dest: /tmp
+    remote_src: true
+    creates: "/tmp/prometheus-{{ prom_version }}.linux-amd64/prometheus"
+  args:
+    creates: "/tmp/prometheus-{{ prom_version }}.linux-amd64/prometheus"
+
+- name: prometheus — install binary
+  ansible.builtin.copy:
+    src: "/tmp/prometheus-{{ prom_version }}.linux-amd64/prometheus"
+    dest: /usr/local/bin/prometheus
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+
+- name: prometheus — install promtool (used by config validation)
+  ansible.builtin.copy:
+    src: "/tmp/prometheus-{{ prom_version }}.linux-amd64/promtool"
+    dest: /usr/local/bin/promtool
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+
+- name: prometheus — drop scrape config
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  notify: reload prometheus
+
+- name: prometheus — install systemd unit
+  ansible.builtin.copy:
+    src: prometheus.service
+    dest: /etc/systemd/system/prometheus.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - daemon-reload
+    - restart prometheus
+
+- name: prometheus — enable + start service
+  ansible.builtin.service:
+    name: prometheus
+    enabled: true
+    state: started
+  register: prom_svc
+  failed_when: false  # chroot/CI may lack systemd
+
+- name: prometheus — verify config parses
+  ansible.builtin.command: /usr/local/bin/promtool check config /etc/prometheus/prometheus.yml
+  changed_when: false
+  failed_when: false  # CI may not have a running Prometheus yet

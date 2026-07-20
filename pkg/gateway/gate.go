@@ -21,7 +21,15 @@ type WakeGate struct {
 	// changes, so the metrics layer can keep gateway_queue_depth current.
 	// Optional; nil-safe at every call site.
 	onChange func(appID string, depth int)
+	// metrics observes how long each caller waited in the queue. Optional;
+	// nil keeps the gate usable in unit tests that don't wire metrics.
+	metrics *Metrics
 }
+
+// SetMetrics attaches a *Metrics so Wait can observe the per-caller wait
+// duration (gateway_wake_queue_wait_seconds). Safe to call before serve
+// starts; nil-safe on the gate's read path.
+func (g *WakeGate) SetMetrics(m *Metrics) { g.metrics = m }
 
 type wakeCall struct {
 	done      chan struct{}
@@ -68,6 +76,17 @@ func (g *WakeGate) Wait(
 	shouldWake func() bool,
 	ensure func(context.Context) error,
 ) error {
+	// Observed wait starts the moment we commit to the queue — for a
+	// follower, that's "joining an in-flight call"; for a leader, that's
+	// "we're the first one here, our ensure will run". Either way the
+	// caller experiences "time-to-instance-ready" as the queue-wait.
+	start := time.Now()
+	defer func() {
+		if g.metrics != nil {
+			g.metrics.ObserveWakeQueueWait(time.Since(start))
+		}
+	}()
+
 	g.mu.Lock()
 	if call, ok := g.inflight[appID]; ok {
 		if call.waiters >= g.cap {

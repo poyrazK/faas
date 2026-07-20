@@ -144,7 +144,7 @@ type resumeHookCall struct {
 // boot-time pool; only restore needs the resume hook (re-seed entropy +
 // step clock).
 func TestWakeColdBoot_DoesNotInvokeResumeHook(t *testing.T) {
-	mgr := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "/k"}, "1.7.0", nil)
+	mgr := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "/k"}, "1.7.0", nil, nil)
 	if _, err := mgr.Wake(context.Background(), WakeRequest{
 		Instance:   "cold-A",
 		BasePath:   "/base.ext4",
@@ -169,7 +169,7 @@ func TestWakeColdBoot_DoesNotInvokeResumeHook(t *testing.T) {
 // TriggerResumeHook exactly once per Wake, with the lease slot wired into
 // the VsockDevice passed via RestoreSpec.
 func TestWakeRestore_InvokesResumeHook(t *testing.T) {
-	mgr := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "/k"}, "1.7.0", nil)
+	mgr := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "/k"}, "1.7.0", nil, nil)
 	if _, err := mgr.Wake(context.Background(), WakeRequest{
 		Instance:   "restore-A",
 		BasePath:   "/base.ext4",
@@ -205,7 +205,7 @@ func TestWakeRestore_InvokesResumeHook(t *testing.T) {
 //   - TriggerResumeHook is called exactly once before the fallback fires.
 func TestWakeRestore_ResumeHookErrorFallsBackToColdBoot(t *testing.T) {
 	fvmm := &fakeVMM{resumeHookErr: fmt.Errorf("dial vsock uds: synthetic failure")}
-	mgr := NewManager(&fakeRunner{}, fvmm, Paths{Kernel: "/k"}, "1.7.0", nil)
+	mgr := NewManager(&fakeRunner{}, fvmm, Paths{Kernel: "/k"}, "1.7.0", nil, nil)
 	if _, err := mgr.Wake(context.Background(), WakeRequest{
 		Instance:   "restore-fail",
 		BasePath:   "/base.ext4",
@@ -304,7 +304,7 @@ func req(id string) ColdBootRequest {
 }
 
 func newTestManager(run Runner, vmm VMM) *Manager {
-	return NewManager(run, vmm, Paths{Kernel: "/srv/fc/base/vmlinux-6.1"}, testFCVersion, nil)
+	return NewManager(run, vmm, Paths{Kernel: "/srv/fc/base/vmlinux-6.1"}, testFCVersion, nil, nil)
 }
 
 // TestMain redirects cgroupRoot to a temp dir for the whole package's
@@ -646,7 +646,7 @@ func TestAcquireFailureShortCircuitsWake(t *testing.T) {
 	}
 	vmm := &fakeVMM{}
 	run := &fakeRunner{}
-	m := NewManager(run, vmm, Paths{Kernel: "/k"}, testFCVersion, nil)
+	m := NewManager(run, vmm, Paths{Kernel: "/k"}, testFCVersion, nil, nil)
 	m.alloc = alloc // swap in the saturated one
 
 	_, err := m.ColdBoot(context.Background(), req("overflow"))

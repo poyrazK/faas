@@ -69,6 +69,23 @@ type server struct {
 	// statuses (apiAuthLimiter counts 401; dashboardAuthLimiter
 	// counts every attempt on /login to defeat anti-enumeration).
 	dashboardAuthLimiter *middleware.Limiter
+	// statusCache backs GET /status/slo.json (spec §12 public status
+	// page). Wired in production via WithStatusCache; nil keeps the
+	// route functional but degraded (returns source=empty payload).
+	statusCache *statusCache
+	// statusPagePath is the on-disk path of the static HTML served
+	// at GET /status. Empty uses /etc/faas/statuspage/index.html.
+	statusPagePath string
+}
+
+// WithStatusCache wires the status-page Prometheus query cache.
+// Called from main after the config has loaded the Prometheus URL;
+// the route handlers are mounted regardless so a misconfigured
+// prometheus URL degrades the JSON to "no source" rather than 5xx.
+func (s *server) WithStatusCache(promURL, htmlPath string) *server {
+	s.statusCache = newStatusCache(promURL, s.log)
+	s.statusPagePath = htmlPath
+	return s
 }
 
 // Mailer is the slice of pkg/mail.Sender apid depends on. Kept as an
@@ -332,6 +349,13 @@ func (s *server) handler() http.Handler {
 	// notification side-effects match the REST API path bit-for-bit.
 	mux.Handle("POST /dashboard/account/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDelete))))
 	mux.Handle("POST /dashboard/account/restore", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRestore))))
+
+	// Status page (spec §12 public status page). Unauthenticated by
+	// design — prospects read it before sign-up, customers during
+	// incidents. Carries no tenant data; only fleet-wide SLIs. Mounted
+	// on the public mux so the operator's HTTPS path serves it.
+	mux.HandleFunc("GET /status", s.statusHandler)
+	mux.HandleFunc("GET /status/slo.json", s.statusJSONHandler)
 
 	return mux
 }

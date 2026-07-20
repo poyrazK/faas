@@ -6,6 +6,7 @@
 // Emitted series:
 //   - gateway_requests_total{app, plan, code}        counter
 //   - gateway_wake_latency_seconds                    histogram
+//   - gateway_wake_queue_wait_seconds                 histogram (M8 §12 dashboard)
 //   - gateway_queue_depth{app}                       gauge (set/cleared by
 //     WakeGate.SetGaugeSink)
 //   - gateway_rate_limited_total{app, plan}          counter
@@ -28,11 +29,12 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	requests    *prometheus.CounterVec
-	wakeLatency prometheus.Histogram
-	queueDepth  *prometheus.GaugeVec
-	rateLimited *prometheus.CounterVec
-	coldWake    *prometheus.CounterVec
+	requests        *prometheus.CounterVec
+	wakeLatency     prometheus.Histogram
+	wakeQueueWait   prometheus.Histogram
+	queueDepth      *prometheus.GaugeVec
+	rateLimited     *prometheus.CounterVec
+	coldWake        *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -51,6 +53,23 @@ func NewMetrics() *Metrics {
 				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
 			},
 		}),
+		// Spec §12 row "wake queue wait p95". Observed by WakeGate.Wait
+		// on every caller that joins a single-flight coalescing wake. The
+		// leader (the request that actually triggers the wake) reads near
+		// zero; followers (peer requests parked while the leader's restore
+		// runs) read close to the restore latency.
+		//
+		// Buckets skew toward the wake-completion window (50ms..2s) so
+		// the histogram exposes the p50/p95 cleanly; the long tail
+		// (5s, 10s) catches pathological stalls where the gate's 30s TTL
+		// is approaching.
+		wakeQueueWait: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name: "gateway_wake_queue_wait_seconds",
+			Help: "Time spent in the per-app wake queue (single-flight coalescing) before the request was released to upstream. Spec §12 row 'wake queue wait p95'.",
+			Buckets: []float64{
+				0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0,
+			},
+		}),
 		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_queue_depth",
 			Help: "Current number of waiters per app's wake queue (sampled).",
@@ -64,7 +83,7 @@ func NewMetrics() *Metrics {
 			Help: "Requests that triggered a cold wake for an app.",
 		}, []string{"app"}),
 	}
-	reg.MustRegister(m.requests, m.wakeLatency, m.queueDepth, m.rateLimited, m.coldWake)
+	reg.MustRegister(m.requests, m.wakeLatency, m.wakeQueueWait, m.queueDepth, m.rateLimited, m.coldWake)
 	return m
 }
 
@@ -93,6 +112,16 @@ func (m *Metrics) ObserveRateLimit(appID, plan string) {
 func (m *Metrics) ObserveColdWake(appID string, latency time.Duration) {
 	m.coldWake.WithLabelValues(appID).Inc()
 	m.wakeLatency.Observe(latency.Seconds())
+}
+
+// ObserveWakeQueueWait records how long a request waited in the
+// per-app wake queue before the gate released it (single-flight
+// coalescing). Nil-safe so WakeGate can call it without branching.
+func (m *Metrics) ObserveWakeQueueWait(d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.wakeQueueWait.Observe(d.Seconds())
 }
 
 // SetQueueDepth records the current wake-queue depth for an app.
