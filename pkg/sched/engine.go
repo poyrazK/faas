@@ -199,10 +199,12 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		Instance: ins.ID, AppID: appID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
 	}); err != nil {
-		// Admit failed (capacity / concurrency). Lock the row to FAILED
-		// before releasing: a concurrent reader must see a coherent
-		// final state, not an unattached reservation.
-		e.transition(ctx, ins.ID, appID, state.StateFailed)
+		// Admit failed (capacity / concurrency). Lock the row to
+		// FAILED before releasing: a concurrent reader must see a
+		// coherent final state, not an unattached reservation. Use
+		// transitionWithKind so the audit log records this as a
+		// wake_boot_error rather than a generic state_transition.
+		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "admit_denied")
 		release()
 		return WakeResult{}, err // *api.Problem
 	}
@@ -248,8 +250,11 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		// FAILED. The transition's own re-read will write the row
 		// even though we no longer hold the lock — transition is
 		// lock-free by design (it only re-reads + writes one row).
+		// Audit-log it under kind="wake_boot_error" so a query for
+		// `kind='wake_boot_error'` finds both this and the
+		// SetInstanceRuntime-failure case below.
 		e.ledger.Release(bootInput.insID)
-		e.transition(ctx, bootInput.insID, bootInput.appID, state.StateFailed)
+		e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "vmm_boot_failed")
 		return WakeResult{}, err
 	}
 
@@ -304,7 +309,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		defer dcancel()
 		_ = e.vmm.Destroy(destroyCtx, bootInput.insID)
 		e.ledger.Release(bootInput.insID)
-		e.transition(ctx, bootInput.insID, bootInput.appID, state.StateFailed)
+		e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
 		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", err)
 	}
 	e.transition(ctx, bootInput.insID, bootInput.appID, state.StateRunning)
@@ -349,7 +354,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		Instance: ins.ID, AppID: appID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
 	}); err != nil {
-		e.transition(ctx, ins.ID, appID, state.StateFailed)
+		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_admit_denied")
 		return err
 	}
 
@@ -368,7 +373,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	out, err := e.vmm.CreateColdBoot(bootCtx, ins.ID, spec)
 	if err != nil {
 		e.ledger.Release(ins.ID)
-		e.transition(ctx, ins.ID, appID, state.StateFailed)
+		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
 		return fmt.Errorf("sched: prime: cold boot: %w", err)
 	}
 	if err := e.store.SetInstanceRuntime(ctx, ins.ID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
@@ -380,7 +385,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		defer dcancel()
 		_ = e.vmm.Destroy(destroyCtx, ins.ID)
 		e.ledger.Release(ins.ID)
-		e.transition(ctx, ins.ID, appID, state.StateFailed)
+		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_record_runtime_failed")
 		return fmt.Errorf("sched: prime: record runtime: %w", err)
 	}
 	e.transition(ctx, ins.ID, appID, state.StateRunning)
@@ -716,13 +721,11 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 		e.log.Warn("watchdog: destroy failed (best-effort)", "instance", instanceID, "reason", reason, "err", err)
 	}
 
-	// Final state write. AppendEvent for the audit row is wired in
-	// commit 4 — KillStuck goes through the same `transition` helper
-	// every other state change uses, so a single AppendEvent call
-	// there covers every kind of transition (Wake, Park, Evict,
-	// KillStuck). The metric increment is done here so the
-	// CounterVec captures the {from, to} pair.
-	e.transition(ctx, instanceID, appID, terminal)
+	// Final state write + audit-log emission. transitionWithKind
+	// (commit 4) handles the events row's AppendEvent call as part
+	// of the normal transition path; we just supply the kind and
+	// reason so the audit row is searchable on `kind='watchdog_timeout'`.
+	e.transitionWithKind(ctx, instanceID, appID, terminal, "watchdog_timeout", string(reason))
 	if e.ops != nil {
 		e.ops.WatchdogKills(string(reason), string(terminal)).Inc()
 	}
@@ -732,7 +735,28 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 // transition validates and applies one instance state change, then emits
 // instance_changed. An illegal edge is logged and dropped rather than written —
 // schedd must never persist an impossible transition (spec §6.1).
+//
+// Commit 4 also writes the events audit-log row (spec §6.1: "every
+// transition is an events row"). The events write is best-effort —
+// the state row is the source of truth, the events table is audit.
+// A failure here logs a warning and increments the
+// events_write_failures counter; the transition itself still
+// succeeded.
+//
+// `reason` is an opaque label for the cause ("watchdog_timeout",
+// "wake_boot_error", …) carried in the events row's data payload.
+// The default kind is "state_transition" — the only other kind
+// reserved today is "watchdog_timeout" (set by KillStuck).
 func (e *Engine) transition(ctx context.Context, instanceID, appID string, to state.State) {
+	e.transitionWithKind(ctx, instanceID, appID, to, "state_transition", "")
+}
+
+// transitionWithKind is the audit-log-emitting variant of transition.
+// Callers that need a non-default kind (Wake's "wake_boot_error" path,
+// KillStuck's "watchdog_timeout", snapshotAndPark's "park_snapshot_error")
+// go through here. The transition body itself is unchanged from
+// transition() — only the appended events row differs.
+func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID string, to state.State, kind, reason string) {
 	ins, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
 		e.log.Warn("transition: load instance", "instance", instanceID, "to", to, "err", err)
@@ -751,6 +775,20 @@ func (e *Engine) transition(ctx context.Context, instanceID, appID string, to st
 		return
 	}
 	e.emitInstanceChanged(ctx, instanceID, appID, to)
+
+	// Audit-log emission (spec §6.1). Best-effort: a failure logs
+	// and counts, never rolls back the transition. The state row is
+	// the source of truth; this is observation.
+	subject := instanceID
+	data, _ := json.Marshal(map[string]any{
+		"from": string(from), "to": string(to), "reason": reason, "ts": time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if err := e.store.AppendEvent(ctx, "schedd", kind, &subject, data); err != nil {
+		e.log.Warn("transition: append event", "instance", instanceID, "from", from, "to", to, "kind", kind, "err", err)
+		if e.ops != nil {
+			e.ops.EventsWriteFailures().Inc()
+		}
+	}
 }
 
 func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID string, st state.State) {

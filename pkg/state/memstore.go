@@ -1220,12 +1220,28 @@ func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error
 
 // --- Audit ------------------------------------------------------------------
 
+// AppendEvent (commit 4) fixes two pre-existing bugs that the audit-log
+// PR surfaced. Before: the row's Subject pointer was dropped on the
+// floor (line 1226-1227 had a dead type-assertion placeholder and
+// the Event literal never set Subject), so ListEvents could never
+// filter by subject. After: parse the string into a *uuid.UUID and
+// copy Data so a caller can reuse the byte slice.
 func (m *MemStore) AppendEvent(_ context.Context, actor, kind string, subject *string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var subj *interface{ ID() string }
-	_ = subj
-	e := Event{At: time.Now(), Actor: actor, Kind: kind, Data: append([]byte(nil), data...)}
+	var subj *uuid.UUID
+	if subject != nil {
+		if u, err := uuid.Parse(*subject); err == nil {
+			subj = &u
+		}
+	}
+	e := Event{
+		At:    time.Now(),
+		Actor: actor,
+		Kind:  kind,
+		Subject: subj,
+		Data: append([]byte(nil), data...),
+	}
 	m.events = append(m.events, e)
 	return nil
 }
@@ -1233,10 +1249,23 @@ func (m *MemStore) AppendEvent(_ context.Context, actor, kind string, subject *s
 func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var subj *uuid.UUID
+	if subject != "" {
+		if u, err := uuid.Parse(subject); err == nil {
+			subj = &u
+		} else {
+			// Subject string failed to parse — no row would have
+			// produced it, so return empty.
+			return nil, nil
+		}
+	}
 	var out []Event
 	for i := len(m.events) - 1; i >= 0 && (limit <= 0 || len(out) < limit); i-- {
 		e := m.events[i]
-		if subject == "" || (e.Subject != nil && false) {
+		// Match either: no subject filter, OR the row's Subject
+		// pointer is non-nil and equals the filter. The pre-fix
+		// && false made this branch dead; tests caught it.
+		if subj == nil || (e.Subject != nil && *e.Subject == *subj) {
 			out = append(out, e)
 		}
 	}
