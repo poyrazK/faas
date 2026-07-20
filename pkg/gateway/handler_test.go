@@ -11,7 +11,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
@@ -295,8 +298,18 @@ func TestMetricsSpec12(t *testing.T) {
 	if got := testutil.ToFloat64(h.metrics.coldWake.WithLabelValues("app-1")); got != 1 {
 		t.Errorf("cold_wake_total=%v, want 1", got)
 	}
-	if got := testutil.CollectAndCount(h.metrics.wakeLatency); got != 1 {
-		t.Errorf("wake_latency series count=%v, want 1 (one observation)", got)
+	// The wake-latency histogram must record exactly one observation whose
+	// value lands somewhere reasonable for a localhost stub (<100ms is well
+	// above the trace setup overhead but well below the SLO warning bucket).
+	// The prior assertion (CollectAndCount == 1) only proved the collector
+	// emitted a series — it said nothing about the observation itself. With
+	// the first-byte RoundTripper stamp wired, this is the regression gate
+	// for "wake latency is measured to first upstream byte, not full body".
+	if got := histogramObservationCount(t, h.metrics.wakeLatency); got != 1 {
+		t.Errorf("wake_latency _count = %v, want 1 (one observation)", got)
+	}
+	if got := histogramLastObservation(t, h.metrics.wakeLatency); got <= 0 || got > 100*time.Millisecond {
+		t.Errorf("wake_latency observation = %v, want (0, 100ms] for localhost stub", got)
 	}
 
 	// Unknown host: +requests_total{404}.
@@ -318,5 +331,91 @@ func TestMetricsSpec12(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(h2.metrics.rateLimited.WithLabelValues("app-1", "free")); got < 1 {
 		t.Errorf("rate_limited_total=%v, want >=1", got)
+	}
+}
+
+// histogramObservationCount reads the histogram's _count via the Prometheus
+// dto format. Used by the wake-latency regression to assert the histogram
+// actually received an observation, not just emitted a series.
+func histogramObservationCount(t *testing.T, h prometheus.Histogram) uint64 {
+	t.Helper()
+	m := &dto.Metric{}
+	if err := h.(prometheus.Metric).Write(m); err != nil {
+		t.Fatalf("histogram write: %v", err)
+	}
+	if m.Histogram == nil {
+		return 0
+	}
+	return m.Histogram.GetSampleCount()
+}
+
+// histogramLastObservation returns the most recent observation's value in
+// seconds (the unit the histogram exposes). Prometheus histograms accumulate;
+// the "last observation" here is derived from the difference between the
+// sum and the prior sum, but for a single-observation test we can just
+// compute sum/count. Empty histograms yield 0.
+func histogramLastObservation(t *testing.T, h prometheus.Histogram) time.Duration {
+	t.Helper()
+	m := &dto.Metric{}
+	if err := h.(prometheus.Metric).Write(m); err != nil {
+		t.Fatalf("histogram write: %v", err)
+	}
+	if m.Histogram == nil || m.Histogram.GetSampleCount() == 0 {
+		return 0
+	}
+	return time.Duration(m.Histogram.GetSampleSum() / float64(m.Histogram.GetSampleCount()) * float64(time.Second))
+}
+
+// TestMetricsSpec12_FirstByteNotFullBody is the wake-timing regression: the
+// histogram must reflect the time to first upstream response byte, not the
+// time to drain the full upstream body. We construct an upstream that
+// flushes headers immediately, then sleeps 100ms before writing the body,
+// and assert the observed wake latency is well under what a full-body
+// measurement would have produced.
+func TestMetricsSpec12_FirstByteNotFullBody(t *testing.T) {
+	const bodyGap = 100 * time.Millisecond
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush() // headers + status on the wire
+		}
+		time.Sleep(bodyGap) // upstream app "thinking"
+		_, _ = io.WriteString(w, "body-after-delay")
+	}))
+	t.Cleanup(upstream.Close)
+
+	b := &fakeBackend{
+		app:      App{ID: "app-fb", Plan: api.PlanPro},
+		host:     "firstbyte.apps.dom",
+		upstream: upstream.Listener.Addr().String(),
+	}
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest("GET", "http://firstbyte.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	// First-byte observation must be much shorter than the body gap would
+	// suggest for a full-body measurement. We allow generous slack for
+	// localhost jitter and Go scheduler stalls, but a full-body measurement
+	// would land >= bodyGap.
+	got := histogramLastObservation(t, h.metrics.wakeLatency)
+	if got == 0 {
+		t.Fatal("wake_latency observation missing")
+	}
+	if got >= bodyGap {
+		t.Errorf("wake_latency observation = %v, want < %v (first-byte, not full body)", got, bodyGap)
+	}
+	// Sanity: the observation should not be so small as to suggest the
+	// trace fired before wakeStart (negative durations would be < 0; the
+	// trace fires after the request's outbound socket connects, which is
+	// after the handler's wake gate returns).
+	if got < 0 {
+		t.Errorf("wake_latency observation = %v, want > 0", got)
 	}
 }
