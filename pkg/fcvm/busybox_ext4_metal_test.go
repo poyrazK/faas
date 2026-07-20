@@ -134,7 +134,7 @@ func buildBusyboxExt4(dst string) error {
 	defer os.RemoveAll(work)
 
 	// minimal POSIX-ish tree
-	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc"} {
+	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "etc/init.d"} {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			return err
 		}
@@ -147,19 +147,18 @@ func buildBusyboxExt4(dst string) error {
 	}
 	// Absolute targets: a relative "bin/busybox" symlink placed at /bin/sh
 	// resolves to /bin/bin/busybox and the guest panics with init ENOENT.
-	for _, name := range []string{"bin/sh", "bin/ash", "init"} {
+	for _, name := range []string{"bin/sh", "bin/ash", "init", "sbin/init"} {
 		if err := os.Symlink("/bin/busybox", filepath.Join(work, name)); err != nil {
 			return err
 		}
 	}
 
-	// /sbin/init is what the cold-boot cmdline execs (config.go: init=/sbin/init),
-	// and the platform's readiness probe (vmm.go waitReady) polls the guest on
-	// :8080. Make PID 1 a tiny script that serves an empty tree there so the TCP
-	// accept succeeds — the kernel ip= autoconfig already brought eth0 up on
-	// 10.0.0.2 (ADR-009), so httpd binding 0.0.0.0:8080 is reachable.
-	initScript := "#!/bin/sh\nexec /bin/busybox httpd -f -p 8080 -h /\n"
-	if err := os.WriteFile(filepath.Join(work, "sbin/init"), []byte(initScript), 0o755); err != nil {
+	// /etc/inittab tells busybox's init (PID 1) to start httpd on boot.
+	// The kernel's init= points to /sbin/init → busybox, which runs this inittab.
+	// Busybox init then execs the httpd applet as PID 1's child.
+	inittab := `::sysinit:/bin/busybox httpd -f -p 8080 -h /
+`
+	if err := os.WriteFile(filepath.Join(work, "etc/inittab"), []byte(inittab), 0o644); err != nil {
 		return err
 	}
 
