@@ -9,9 +9,11 @@
 //     schedd, not vmmd — vmmd's Snapshot() returns a one-shot
 //     SnapshotInfo, the persistence path is schedd's pause-and-snapshot
 //     handler that follows the VMM call.)
+//
 //   - schedd owns the admission ledger and the `instances` table →
 //     fcvm_resident_ram_pct (Σ ram_mb over live instances /
 //     RAMAdmissionCeilingMB).
+//
 //   - schedd shells out to `lvs` for fcvm_lv_fc_used_pct (the
 //     filesystem the apps live on). vmmd could also do this, but
 //     schedd already runs periodic work and avoids a second ticker.
@@ -97,7 +99,7 @@ type DashboardMetrics struct {
 // Manager (the only writer) and the /metrics mux (the only reader) via
 // the same pointer. Mirrors wire.OpsMetrics's pattern.
 type ColdBootMetrics struct {
-	reg     *prometheus.Registry
+	reg      *prometheus.Registry
 	fallback prometheus.Counter
 }
 
@@ -147,12 +149,12 @@ type DashboardGauges struct {
 	ttl time.Duration
 	src DashboardMetrics
 
-	mu          sync.Mutex
-	lastEval    time.Time
-	cachedAvg   float64
-	cachedP95   float64
-	cachedRAM   float64
-	cachedLV    float64
+	mu        sync.Mutex
+	lastEval  time.Time
+	cachedAvg float64
+	cachedP95 float64
+	cachedRAM float64
+	cachedLV  float64
 	// refreshing is set while a scrape-triggered refresh is in flight
 	// (PG / lvs callbacks running outside the lock). A second scrape
 	// arriving during the same window sees refreshing==1 and skips,

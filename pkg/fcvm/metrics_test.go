@@ -161,5 +161,5 @@ func TestColdBootMetricsRegistersAndIncrements(t *testing.T) {
 // the receiver dereference unconditionally, this panics.
 func TestColdBootMetricsNilSafe(t *testing.T) {
 	var cbm *ColdBootMetrics // nil
-	cbm.ObserveFallback()   // must not panic
+	cbm.ObserveFallback()    // must not panic
 }
