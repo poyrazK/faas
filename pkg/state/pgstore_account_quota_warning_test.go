@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -129,7 +130,11 @@ func TestPg_LoadAndStampLastQuotaWarning_DedupesPerDay(t *testing.T) {
 // at pgstore.go::LoadAndStampLastQuotaWarning (pgx.ErrNoRows → state.ErrNotFound).
 func TestPg_LoadAndStampLastQuotaWarning_UnknownID(t *testing.T) {
 	s, ctx := pgStore(t)
-	already, err := s.LoadAndStampLastQuotaWarning(ctx, "missing-account-id", time.Now())
+	// accounts.id is a uuid — pass a syntactically valid UUID that
+	// doesn't correspond to any row, so the SQL exercises the
+	// `WHERE id = $1` no-match branch (pgx.ErrNoRows → state.ErrNotFound)
+	// rather than crashing on a parse error.
+	already, err := s.LoadAndStampLastQuotaWarning(ctx, uuid.New().String(), time.Now())
 	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
@@ -175,8 +180,10 @@ func TestPg_ClearQuotaWarning_ResetsStamp(t *testing.T) {
 	}
 	// Clearing an unknown id is a silent no-op — mirrors the apid
 	// webhook's "customer lookup may have returned a row that's since
-	// been deleted" reality.
-	if err := s.ClearQuotaWarning(ctx, "missing-account-id"); err != nil {
+	// been deleted" reality. Use a valid-format UUID that doesn't
+	// correspond to any row (the column type is uuid; a non-UUID
+	// string would surface as a parse error, not a no-match).
+	if err := s.ClearQuotaWarning(ctx, uuid.New().String()); err != nil {
 		t.Errorf("ClearQuotaWarning unknown id: %v, want nil", err)
 	}
 
@@ -258,8 +265,10 @@ func TestPg_MarkDunningStep_PastDueStampsPastDueAt(t *testing.T) {
 	if err := s.MarkDunningStep(ctx, acct.ID, state.AccountActive, state.AccountSuspended); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("wrong from-status: err = %v, want ErrNotFound", err)
 	}
-	// Unknown id → ErrNotFound.
-	if err := s.MarkDunningStep(ctx, "missing-account-id", state.AccountActive, state.AccountPastDue); !errors.Is(err, state.ErrNotFound) {
+	// Unknown id → ErrNotFound. accounts.id is a uuid so pass a
+	// valid-format UUID that doesn't exist — the WHERE clause won't
+	// match and RowsAffected() == 0 returns ErrNotFound.
+	if err := s.MarkDunningStep(ctx, uuid.New().String(), state.AccountActive, state.AccountPastDue); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("unknown id: err = %v, want ErrNotFound", err)
 	}
 }

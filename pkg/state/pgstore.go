@@ -1899,21 +1899,41 @@ func (s *PgStore) RestoreAccount(ctx context.Context, id string) error {
 // UTC day (spec §4.7). The query:
 //   - Truncates `day` to its UTC midnight so the comparison is "same
 //     calendar day, not same 24h window".
-//   - Updates last_quota_warning_at to that anchor only when the row's
-//     current stamp is null OR strictly older than the anchor.
-//   - Returns (true, nil) when the row already carried today's anchor
-//     after the update (i.e. the row already had today's stamp and
-//     was a same-day repeat).
-//   - Returns ErrNotFound when no row matched the id.
+//   - Uses a CTE that captures the OLD stamp (pre-UPDATE) so the
+//     scalar subquery can compare it to today's anchor — a naive
+//     `returning last_quota_warning_at = $2` reads the post-update
+//     column, which is trivially `$2` and yields `already=true` on
+//     every call (CI caught this on PR #69).
+//   - Returns one row even when the id is missing, with `already =
+//     NULL` as the sentinel for "row doesn't exist" (a bare coalesce
+//     can't distinguish "exists with NULL old stamp" from "missing
+//     row", so we use a CASE explicitly). pkg/meter/EnforceQuota only
+//     calls this against a freshly-read account id, so the missing
+//     path is purely a safety net.
+//   - Returns (true, nil) on a same-day repeat (UPDATE predicate
+//     rejects the row, OLD stamp already equals $2), (false, nil) on
+//     a first-today or next-day call (UPDATE happened), ErrNotFound
+//     when no row matches the id at all.
 func (s *PgStore) LoadAndStampLastQuotaWarning(ctx context.Context, id string, day time.Time) (bool, error) {
 	dayStart := day.UTC().Truncate(24 * time.Hour)
-	var already bool
+	var already *bool
 	err := s.pool.QueryRow(ctx,
-		`update accounts
-		    set last_quota_warning_at = $2
-		  where id = $1
-		    and (last_quota_warning_at is null or last_quota_warning_at < $2)
-		  returning (last_quota_warning_at = $2 and last_quota_warning_at >= $2)`,
+		`with existing as (
+		    select last_quota_warning_at as old
+		      from accounts where id = $1
+		 ),
+		 upd as (
+		    update accounts
+		       set last_quota_warning_at = $2
+		     where id = $1
+		       and (last_quota_warning_at is null or last_quota_warning_at < $2)
+		    returning 1
+		 )
+		 select case
+		           when not exists(select 1 from existing) then null
+		           when (select old from existing) = $2 then true
+		           else false
+		         end`,
 		id, dayStart).Scan(&already)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1921,7 +1941,10 @@ func (s *PgStore) LoadAndStampLastQuotaWarning(ctx context.Context, id string, d
 		}
 		return false, err
 	}
-	return already, nil
+	if already == nil {
+		return false, ErrNotFound
+	}
+	return *already, nil
 }
 
 // ClearQuotaWarning nulls last_quota_warning_at so the next call to
