@@ -381,6 +381,119 @@ func TestCmdDeploy_AppAlreadyExists(t *testing.T) {
 
 // --- printErr / exitCodeForStatus / errAuth ---------------------------------
 
+// TestCmdDeploy_StreamBrokenRecoversViaGetDeployment (F2) pins the
+// fallback recovery path: when the SSE log stream emits an `event:
+// end` backstop frame (apid's 10-min build timeout, or any other
+// premature close) the CLI must do one GetDeployment poll to recover
+// the terminal status. A `live` row returns 0; a `failed` row
+// returns 1 with the failure-class copy.
+func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
+	t.Run("live", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.URL.Path == "/v1/apps":
+				_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
+			case r.URL.Path == "/v1/apps/my-app/deployments":
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher, _ := w.(http.Flusher)
+				// No terminal frame; just `event: end`. Forces the
+				// CLI to fall back to GetDeployment.
+				_, _ = fmt.Fprint(w, "data: {\"reason\":\"timeout\"}\n\n")
+				if flusher != nil {
+					flusher.Flush()
+				}
+				<-r.Context().Done()
+			case r.URL.Path == "/v1/deployments/d1":
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "my-app"})
+			default:
+				http.Error(w, "no", 404)
+			}
+		}))
+		defer srv.Close()
+
+		t.Setenv("FAAS_API", srv.URL)
+		t.Setenv("FAAS_TOKEN", "fp_live_x")
+		if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+			t.Errorf("recovered live = %d, want 0", code)
+		}
+	})
+
+	t.Run("failed", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.URL.Path == "/v1/apps":
+				_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
+			case r.URL.Path == "/v1/apps/my-app/deployments":
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher, _ := w.(http.Flusher)
+				_, _ = fmt.Fprint(w, "data: {\"reason\":\"timeout\"}\n\n")
+				if flusher != nil {
+					flusher.Flush()
+				}
+				<-r.Context().Done()
+			case r.URL.Path == "/v1/deployments/d1":
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+					ID: "d1", Status: "failed", AppID: "my-app", Error: "oom",
+				})
+			default:
+				http.Error(w, "no", 404)
+			}
+		}))
+		defer srv.Close()
+
+		t.Setenv("FAAS_API", srv.URL)
+		t.Setenv("FAAS_TOKEN", "fp_live_x")
+		if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 1 {
+			t.Errorf("recovered failed/oom = %d, want 1", code)
+		}
+	})
+}
+
+// TestCmdDeploy_StreamOpenFailsRecoversViaGetDeployment covers the
+// recovery path when the SSE connection itself can't be opened (DNS,
+// proxy, TLS). The fake-apid closes the SSE endpoint without writing
+// a single byte, which surfaces as a network error on the client side
+// and triggers the GetDeployment retry.
+func TestCmdDeploy_StreamOpenFailsRecoversViaGetDeployment(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/apps":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
+		case r.URL.Path == "/v1/apps/my-app/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
+			// Hijack the connection and close it without writing a
+			// single byte — the CLI sees a network-level EOF on Do().
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				http.Error(w, "no hijack", 500)
+				return
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Errorf("hijack: %v", err)
+				return
+			}
+			_ = conn.Close()
+		case r.URL.Path == "/v1/deployments/d1":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "my-app"})
+		default:
+			http.Error(w, "no", 404)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+		t.Errorf("recovered live after stream-open failure = %d, want 0", code)
+	}
+}
+
 func TestExitCodeForStatus(t *testing.T) {
 	cases := map[int]int{
 		200: 1, // unexpected success path; never called here, but default is 1

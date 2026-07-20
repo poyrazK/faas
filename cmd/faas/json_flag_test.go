@@ -95,6 +95,39 @@ func TestApplyJSONFlag_Idempotent(t *testing.T) {
 	}
 }
 
+// TestApplyJSONFlag_EqualsTruthyValue pins the contract for --json=:
+// any suffix other than the literal "false" enables JSON output.
+// This matches the UX §3.2 "agents depend on it" intent — every
+// obvious truthy spelling should Just Work without a docs lookup.
+func TestApplyJSONFlag_EqualsTruthyValue(t *testing.T) {
+	cases := []struct {
+		suffix string
+		want   bool
+	}{
+		{"true", true},
+		{"1", true},
+		{"yes", true},
+		{"on", true},
+		{"false", false},
+		{"0", false},
+		{"", true}, // bare --json= with empty value, same as --json
+	}
+	for _, tc := range cases {
+		t.Run("suffix="+tc.suffix, func(t *testing.T) {
+			resetJSONOutput()
+			defer resetJSONOutput()
+			args := []string{"--json=" + tc.suffix, "apps"}
+			got := applyJSONFlag(args)
+			if got[0] != "apps" {
+				t.Fatalf("expected --json=%s stripped, got %v", tc.suffix, got)
+			}
+			if jsonOutput != tc.want {
+				t.Errorf("--json=%s → jsonOutput=%v, want %v", tc.suffix, jsonOutput, tc.want)
+			}
+		})
+	}
+}
+
 func TestWriteJSON_IndentedScalar(t *testing.T) {
 	resetJSONOutput()
 	var buf bytes.Buffer

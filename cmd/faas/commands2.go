@@ -878,8 +878,10 @@ func (s *sseLineReader) fill() error {
 // prints each `event: log` line until the server emits `event: status`.
 // On `live` the function returns 0; on `failed` it renders one of the
 // four UX §2.4 copy blocks via renderDeployFailure. If the stream
-// breaks before a terminal frame arrives, exits 3 and tells the
-// customer how to follow manually.
+// breaks before a terminal frame arrives, it does one cheap
+// GetDeployment poll to recover the terminal status; only if that
+// also fails (or returns a non-terminal status) does it give up and
+// tell the customer how to follow manually.
 //
 // Issue #64 D4 — replaces the old "✓ Queued build …" and exit.
 func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
@@ -895,6 +897,12 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 	req.Header.Set("Accept", "text/event-stream")
 	resp, err := c.http.Do(req)
 	if err != nil {
+		// Stream unreachable up front — try one GetDeployment poll in
+		// case the build already finished before we opened the stream
+		// (e.g., a fast tarball deploy on a slow link).
+		if final, ok := pollDeploymentFinal(c, dep); ok {
+			return terminalExitForDeployment(final)
+		}
 		fmt.Fprintf(os.Stderr, "! stream unreachable; follow manually: faas logs --deployment %s\n", dep.ID)
 		return 3
 	}
@@ -938,11 +946,53 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 			}
 			return renderDeployFailure(dep)
 		}
+		// event:end backstop frame from apid's 10-min timeout.
+		// Render a clean message instead of dumping the raw SSE
+		// envelope on stdout.
+		var end struct {
+			Reason string `json:"reason"`
+		}
+		if json.Unmarshal([]byte(line), &end) == nil && end.Reason != "" {
+			fmt.Fprintf(os.Stderr, "! build log stream ended (%s); checking deployment status…\n", end.Reason)
+			break
+		}
 		// Unknown frame shape — print raw so the customer can see it.
 		fmt.Println(line)
 	}
+	// Stream ended without a terminal frame — try one GetDeployment
+	// poll so a fast build that raced the SSE open isn't reported as
+	// "follow manually" when we actually have the answer.
+	if final, ok := pollDeploymentFinal(c, dep); ok {
+		return terminalExitForDeployment(final)
+	}
 	fmt.Fprintf(os.Stderr, "! stream ended without a terminal frame; follow manually: faas logs --deployment %s\n", dep.ID)
 	return 3
+}
+
+// pollDeploymentFinal does one cheap GET on the deployment row and
+// returns (final, true) when status is live or failed. Returns
+// (_, false) on any error or non-terminal status — the caller treats
+// both as "no answer, give up cleanly".
+func pollDeploymentFinal(c *Client, dep api.DeploymentResponse) (api.DeploymentResponse, bool) {
+	got, err := c.GetDeployment(context.Background(), dep.ID)
+	if err != nil {
+		return api.DeploymentResponse{}, false
+	}
+	if got.Status == "live" || got.Status == "failed" {
+		return got, true
+	}
+	return api.DeploymentResponse{}, false
+}
+
+// terminalExitForDeployment applies the same rendering rules as the
+// in-stream `event: status` branch, but uses the polled deployment
+// row (which has the canonical Error string from the DB).
+func terminalExitForDeployment(d api.DeploymentResponse) int {
+	if d.Status == "live" {
+		fmt.Printf("✓ Deployed. https://%s.apps.DOMAIN\n", d.AppID)
+		return 0
+	}
+	return renderDeployFailure(d)
 }
 
 // renderDeployFailure maps the deployment's Error string to one of the

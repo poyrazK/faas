@@ -47,6 +47,12 @@ Commands:
   open         Open the app's URL (or its dashboard page) in your browser
 
 Run 'faas <command> --help' for command details.
+
+Global flags:
+  --json         Machine-readable output on every command. Slices emit
+                 NDJSON (one JSON object per line, jq -c '.'); scalars
+                 emit indented JSON; errors print raw RFC 7807 to stderr.
+                 Equivalent env: FAAS_JSON=1. Negate with --json=false.
 Docs: https://docs.DOMAIN
 `
 

@@ -22,6 +22,16 @@ var jsonOutput bool
 // is explicit on the command line. Returns the args with the flag
 // stripped so downstream dispatch sees only its own flags. Idempotent
 // on a second call — safe if a subcommand happens to call it.
+//
+// Recognised boolean spellings (case-insensitive):
+//
+//	true / yes / on / 1   → enable JSON
+//	false / no / off / 0  → disable JSON
+//	empty                 → enable JSON (same as bare --json)
+//
+// Anything else (e.g. an agent typo'd `tru`) defaults to enable,
+// matching the previous behaviour and the UX §3.2 "agents depend on
+// it" intent: every obvious truthy spelling Just Works.
 func applyJSONFlag(args []string) []string {
 	if os.Getenv("FAAS_JSON") == "1" {
 		jsonOutput = true
@@ -32,11 +42,22 @@ func applyJSONFlag(args []string) []string {
 			jsonOutput = true
 			return append(args[:i], args[i+1:]...)
 		case strings.HasPrefix(a, "--json="):
-			jsonOutput = a[len("--json="):] != "false"
+			jsonOutput = jsonBoolTrue(a[len("--json="):])
 			return append(args[:i], args[i+1:]...)
 		}
 	}
 	return args
+}
+
+// jsonBoolTrue maps a --json= suffix to a boolean. Falsy spellings
+// (false / no / off / 0) disable JSON; everything else (including
+// typos and the empty string) enables it. Case-insensitive.
+func jsonBoolTrue(s string) bool {
+	switch strings.ToLower(s) {
+	case "false", "no", "off", "0":
+		return false
+	}
+	return true
 }
 
 // writeJSON emits v as one indented JSON object on osStdout. Use
