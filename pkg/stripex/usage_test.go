@@ -74,6 +74,10 @@ func TestPushUsageRecord_DedupeGateSkipsSecondCall(t *testing.T) {
 // to a sandbox subscription_item. Run locally with:
 //
 //	STRIPE_API_KEY=sk_test_... FATEST_STRIPE_SUB_ITEM=si_... go test -run PostsToStripeSandbox ./pkg/stripex/...
+//
+// Asserts the SDK returned a usage record with a non-empty ID prefixed
+// "mbur_" (Stripe's usage-record prefix). On CI this runs under
+// .github/workflows/sandbox.yml (workflow_dispatch only); see PR #59.
 func TestPushUsageRecord_PostsToStripeSandbox(t *testing.T) {
 	key := os.Getenv("STRIPE_API_KEY")
 	sub := os.Getenv("FATEST_STRIPE_SUB_ITEM")
@@ -85,13 +89,22 @@ func TestPushUsageRecord_PostsToStripeSandbox(t *testing.T) {
 	// Past hour keeps the test idempotent across reruns: a second
 	// invocation targets a different hour and never double-bills.
 	hour := time.Now().UTC().Truncate(time.Hour).Add(-time.Hour)
-	err := c.PushUsageRecord(context.Background(), state.Account{
-		ID:                     "acct_sandbox",
+	record, err := c.PushUsageRecordWithID(context.Background(), state.Account{
+		ID:                     "acct_sandbox_" + hour.Format("2006010215"),
 		StripeCustomerID:       "cus_sandbox",
 		StripeSubscriptionItem: sub,
 	}, hour, 0.001) // 1 MB-h keeps the sandbox bill line tiny
 	if err != nil {
-		t.Fatalf("PushUsageRecord against sandbox: %v", err)
+		t.Fatalf("PushUsageRecordWithID against sandbox: %v", err)
+	}
+	if record == nil {
+		t.Fatal("PushUsageRecordWithID returned nil record with no error")
+	}
+	if record.ID == "" {
+		t.Fatal("Stripe usage record ID is empty")
+	}
+	if !strings.HasPrefix(record.ID, "mbur_") {
+		t.Fatalf("Stripe usage record ID %q does not start with mbur_", record.ID)
 	}
 }
 

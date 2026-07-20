@@ -29,19 +29,28 @@ import (
 // redelivered meterd tick at the same hour generates the same key and
 // Stripe replays the cached response rather than double-billing.
 func (c *Client) pushUsageRecordSDK(ctx context.Context, acct state.Account, hour time.Time, gbHours float64) error {
+	_, err := c.pushUsageRecordSDKWithID(ctx, acct, hour, gbHours)
+	return err
+}
+
+// pushUsageRecordSDKWithID is the SDK-touching implementation that
+// returns the Stripe usage record on success. pushUsageRecordSDK
+// (above) discards the record; the exported PushUsageRecordWithID
+// surfaces it for the §14 M7 acceptance gate (issue #52).
+func (c *Client) pushUsageRecordSDKWithID(ctx context.Context, acct state.Account, hour time.Time, gbHours float64) (*stripe.UsageRecord, error) {
 	if acct.StripeSubscriptionItem == "" {
 		// Mirror the StripeCustomerID-emptiness skip at
 		// client.go::PushUsageRecord — pending customers are a no-op.
 		// products.go::EnsureCustomer stamps this on the first
 		// successful subscription webhook.
-		return nil
+		return nil, nil
 	}
 	if c.apiKey == "" {
 		// Without a key, we'd call usagerecord.New() against the
 		// unauthenticated `*Backend` and bounce 401 off every push.
 		// Better to skip and surface the misconfiguration in the
 		// meterd log line.
-		return fmt.Errorf("stripex: cannot push usage without apiKey (account %s)", acct.ID)
+		return nil, fmt.Errorf("stripex: cannot push usage without apiKey (account %s)", acct.ID)
 	}
 	// stripe-go exposes a package-global API key (no per-call override on
 	// UsageRecordParams). meterd owns exactly one *stripex.Client per
@@ -56,9 +65,9 @@ func (c *Client) pushUsageRecordSDK(ctx context.Context, acct state.Account, hou
 		// Defensive: a negative quantity would silently credit the
 		// customer. meterd never produces these; the gate here
 		// documents the invariant for future callers.
-		return fmt.Errorf("stripex: negative usage quantity for account %s: %d", acct.ID, qty)
+		return nil, fmt.Errorf("stripex: negative usage quantity for account %s: %d", acct.ID, qty)
 	}
-	idem := acct.ID + ":" + hour.UTC().Format(time.RFC3339)
+	idem := acct.ID + "/" + hour.UTC().Format(time.RFC3339)
 	params := &stripe.UsageRecordParams{
 		SubscriptionItem: stripe.String(acct.StripeSubscriptionItem),
 		Quantity:         stripe.Int64(qty),
@@ -67,9 +76,9 @@ func (c *Client) pushUsageRecordSDK(ctx context.Context, acct state.Account, hou
 	}
 	params.IdempotencyKey = stripe.String(idem)
 
-	_, err := usagerecord.New(params)
+	record, err := usagerecord.New(params)
 	if err != nil {
-		return fmt.Errorf("stripex: usagerecord.New account %s hour %s: %w", acct.ID, hour.UTC().Format(time.RFC3339), err)
+		return nil, fmt.Errorf("stripex: usagerecord.New account %s hour %s: %w", acct.ID, hour.UTC().Format(time.RFC3339), err)
 	}
-	return nil
+	return record, nil
 }

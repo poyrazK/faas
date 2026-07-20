@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	stripe "github.com/stripe/stripe-go"
 )
 
 // PushDedupe is the dedupe table that lets meterd's hourly loop push the
@@ -84,3 +85,34 @@ func (c *Client) PushUsageRecord(ctx context.Context, acct state.Account, hour t
 }
 
 // EnsurePlanProducts is declared in products.go.
+
+// PushUsageRecordWithID is the §14 M7 acceptance sibling to
+// PushUsageRecord (issue #52). Same skip / dedupe gate; returns the
+// Stripe usage record on success so the live-sandbox test can assert
+// record.ID. PushUsageRecord keeps its (ctx, acct, hour, gbHours) error
+// signature so pkg/meter.StripePusher is unchanged.
+//
+// On the skip / dedupe short-circuit, returns (nil, nil) — callers must
+// not assume a non-nil record on a successful return. The sandbox test
+// pattern is: err == nil && record != nil && record.ID != "".
+func (c *Client) PushUsageRecordWithID(ctx context.Context, acct state.Account, hour time.Time, gbHours float64) (*stripe.UsageRecord, error) {
+	if acct.StripeCustomerID == "" || acct.StripeSubscriptionItem == "" {
+		// Same skip as PushUsageRecord — pending customers are a no-op.
+		return nil, nil
+	}
+	dup, err := c.dedupe.HasStripePushHour(ctx, acct.ID, hour)
+	if err != nil {
+		return nil, err
+	}
+	if dup {
+		return nil, nil
+	}
+	record, err := c.pushUsageRecordSDKWithID(ctx, acct, hour, gbHours)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.dedupe.RecordStripePushHour(ctx, acct.ID, hour); err != nil {
+		return nil, err
+	}
+	return record, nil
+}

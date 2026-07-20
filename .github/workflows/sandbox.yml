@@ -1,0 +1,35 @@
+name: stripex sandbox
+
+# Manual-only acceptance job for the Stripe sandbox live POST (issue #52,
+# §14 M7 acceptance). Runs pkg/stripex's
+# TestPushUsageRecord_PostsToStripeSandbox against a real sk_test_… key
+# and a sandbox subscription_item. The test asserts record.ID is non-empty
+# and prefixed "mbur_" (Stripe's usage-record prefix).
+#
+# Triggered by 'Run workflow' from the Actions UI. NOT a PR gate — Stripe
+# availability must not block merges. Mirrors the workflow_dispatch gating
+# the existing metal job uses.
+#
+# Required repo secrets:
+#   - STRIPE_API_KEY        (sk_test_… key from Stripe dashboard)
+#   - FATEST_STRIPE_SUB_ITEM (si_… from a sandbox subscription)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sandbox:
+    runs-on: ubuntu-latest
+    env:
+      STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
+      FATEST_STRIPE_SUB_ITEM: ${{ secrets.FATEST_STRIPE_SUB_ITEM }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: stripex sandbox live POST
+        run: go test -v -run PostsToStripeSandbox ./pkg/stripex/...

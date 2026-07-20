@@ -7,15 +7,17 @@
 //
 // Why subprocesses (not in-process wiring):
 //
-//   - cmd/apid, cmd/schedd, cmd/imaged, cmd/gatewayd, cmd/vmmd are all
-//     package main; Go forbids importing them as libraries, so the only way
-//     to drive the real listener lifecycle is `go build` + `exec.Cmd`.
+//   - cmd/apid, cmd/schedd, cmd/imaged, cmd/gatewayd, cmd/vmmd, cmd/meterd
+//     are all package main; Go forbids importing them as libraries, so the
+//     only way to drive the real listener lifecycle is `go build` + `exec.Cmd`.
 //   - This matches the EX44 / Lima deployment: every daemon is its own
 //     process. If a test passes here, the wire is the same.
 //
 // Build-tag splits in cmd/e2e:
 //
 //   - quota_e2e_test.go            (no tag)        boots apid only; CI-safe.
+//   - meterd_quota_e2e_test.go     (no tag)        boots apid + schedd +
+//     meterd for the M7 "park within one tick" gate (issue #52).
 //   - deploy_wake_metal_test.go    //go:build metal boots apid + schedd +
 //     imaged + vmmd + gatewayd.
 //     Needs /dev/kvm and root.
@@ -111,6 +113,12 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 	}
 
 	buildBinaries(t, bin)
+
+	// Block until the schema is at the current migration target. The
+	// meterd subprocess (issue #52) reads accounts on its first tick and
+	// would otherwise race the migration — see cmd-e2e-schedd-migration-race.
+	// 12 = migrations/00012_account_stripe_subscription_item.sql (current head).
+	pgtest.WaitForMigration(t, pool, 12, 10*time.Second)
 
 	if which&APID != 0 {
 		startAPID(t, h, bin, dbURL)
@@ -219,12 +227,16 @@ kernel_path = %q
 		waitTCP(t, addr, 10*time.Second)
 	}
 
+	if which&Meterd != 0 {
+		startMeterd(t, h, bin, dbURL)
+	}
+
 	t.Cleanup(h.stop)
 	return h
 }
 
 // Which flags select which daemons to boot. Bitmask so a test can ask for
-// just apid (quota) or all five (metal).
+// just apid (quota) or all six (metal + meterd).
 type Which int
 
 const (
@@ -233,10 +245,11 @@ const (
 	VMMD
 	Imaged
 	Gatewayd
+	Meterd
 )
 
 // All is the full set for the metal e2e test.
-const All = APID | Schedd | VMMD | Imaged | Gatewayd
+const All = APID | Schedd | VMMD | Imaged | Gatewayd | Meterd
 
 const testDomain = "apps.test.example"
 
@@ -270,6 +283,12 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	}
 	buildBinaries(t, bin)
 
+	// Gate every daemon launch on the schema arriving at the current
+	// migration target. Without this, meterd's first tick races the
+	// migration (issue #52 acceptance race; see
+	// cmd-e2e-schedd-migration-race memory).
+	pgtest.WaitForMigration(t, pool, 12, 10*time.Second)
+
 	if which&APID != 0 {
 		addr := freeTCPAddr(t)
 		env := []string{
@@ -283,6 +302,35 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		h.procs = append(h.procs, startProc(t, bin, "apid", env))
 		h.APIDURL = "http://" + addr
 		waitTCP(t, addr, 10*time.Second)
+	}
+	if which&Schedd != 0 {
+		sockPath := filepath.Join(tmp, "schedd.sock")
+		vmmdSock := filepath.Join(tmp, "vmmd.sock")
+		cfgPath := filepath.Join(tmp, "schedd.toml")
+		cfg := fmt.Sprintf(
+			`socket_path = %q
+owner_user = %q
+vmmd_socket = %q
+`,
+			sockPath, "root", vmmdSock,
+		)
+		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+			t.Fatalf("e2etest: write schedd.toml: %v", err)
+		}
+		env := []string{
+			"FAAS_SCHEDD_CONFIG=" + cfgPath,
+			"DATABASE_URL=" + dbURL,
+			"PATH=" + os.Getenv("PATH"),
+			"HOME=" + os.Getenv("HOME"),
+		}
+		env = append(env, extraEnv...)
+		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
+		h.ScheddSock = sockPath
+		h.VMMDSock = vmmdSock
+		waitUnix(t, sockPath, 10*time.Second)
+	}
+	if which&Meterd != 0 {
+		startMeterd(t, h, bin, dbURL, extraEnv)
 	}
 	return h
 }
@@ -304,6 +352,31 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 	h.procs = append(h.procs, startProc(t, bin, "apid", env))
 	h.APIDURL = "http://" + addr
 	waitTCP(t, addr, 10*time.Second)
+}
+
+// startMeterd boots meterd against the test's schedd unix socket. The
+// Stripe push is intentionally disabled — STRIPE_API_KEY is left blank,
+// which the meterd wire-up warns about and the stripex SDK call skips
+// (issue #52 acceptance path uses an empty apiKey surface anyway).
+//
+// extraEnv is appended last so a test can inject FAAS_QUOTA_INTERVAL for
+// the "parked within one tick" gate (60s default would make the test
+// take a minute). Pass nil from the no-extras path inside Start.
+//
+// meterd does NOT expose a listener socket (issue #52 surface) — no
+// waitTCP / waitUnix after startProc.
+func startMeterd(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...[]string) {
+	t.Helper()
+	env := []string{
+		"DATABASE_URL=" + dbURL,
+		"FAAS_SCHEDD_ADDR=" + h.ScheddSock,
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+	}
+	for _, e := range extraEnv {
+		env = append(env, e...)
+	}
+	h.procs = append(h.procs, startProc(t, bin, "meterd", env))
 }
 
 // stop SIGTERMs every daemon, waits up to 5s, then SIGKILL stragglers. Owns
@@ -349,7 +422,7 @@ func (h *Harness) stop() {
 func buildBinaries(t *testing.T, bin string) {
 	t.Helper()
 	modulePath := modulePath(t)
-	for _, d := range []string{"apid", "schedd", "vmmd", "imaged", "gatewayd"} {
+	for _, d := range []string{"apid", "schedd", "vmmd", "imaged", "gatewayd", "meterd"} {
 		out := filepath.Join(bin, d)
 		cmd := exec.Command("go", "build", "-o", out, modulePath+"/cmd/"+d)
 		cmd.Stderr = os.Stderr
