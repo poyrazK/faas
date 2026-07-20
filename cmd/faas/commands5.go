@@ -103,12 +103,13 @@ func cmdPS(args []string) int {
 // parked).
 //
 // Two translations:
-//   parked → sleeping    (the dashboard badge wording; §6 uses the
-//                         euphemism so customers don't see a
-//                         stop-anxiety signal)
-//   cold_booting → cold-booting  (snake → kebab so it reads as a
-//                                 single hyphenated word, matching the
-//                                 spec)
+//
+//	parked → sleeping    (the dashboard badge wording; §6 uses the
+//	                      euphemism so customers don't see a
+//	                      stop-anxiety signal)
+//	cold_booting → cold-booting  (snake → kebab so it reads as a
+//	                              single hyphenated word, matching the
+//	                              spec)
 //
 // All other states render verbatim — waking, running, snapshotting,
 // stopped, failed — they read naturally and any silent rename would

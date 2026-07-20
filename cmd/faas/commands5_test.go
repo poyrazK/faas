@@ -485,9 +485,10 @@ func TestCmdEnvPush_FromStdinAndFileRejected(t *testing.T) {
 // final component is rejected before Open.
 //
 // We assert:
-//   (a) exit 1,
-//   (b) stderr mentions "symlink",
-//   (c) zero PUTs hit the fake server (the attack vector is closed).
+//
+//	(a) exit 1,
+//	(b) stderr mentions "symlink",
+//	(c) zero PUTs hit the fake server (the attack vector is closed).
 func TestCmdEnvPush_RejectsSymlinkAtFinalComponent(t *testing.T) {
 	dir := t.TempDir()
 	// Symlink target: write a "secret-shaped" file the scanner would
