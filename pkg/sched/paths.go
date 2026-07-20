@@ -1,5 +1,7 @@
 package sched
 
+import "github.com/onebox-faas/faas/pkg/state"
+
 // paths.go is the single place schedd derives the host filesystem locations of
 // an instance's boot inputs (spec §8: /srv/fc/base read-only bases, lv-fc app
 // layers + snapshots). vmmd is told these paths on the wire (ADR-014); it never
@@ -12,6 +14,7 @@ const (
 	// scheme, drive0). One per runtime; plain apps boot a generic base.
 	baseDir = "/srv/fc/base"
 	// layerDir holds per-deployment app layers (drive1). One ext4 per deployment.
+	// Default location; layerPath uses deployments.rootfs_path when set.
 	layerDir = "/srv/fc/layers"
 	// snapDir holds per-deployment snapshot blobs (mem file + vmstate).
 	snapDir = "/srv/fc/snap"
@@ -32,8 +35,17 @@ func basePath(runtime string) string {
 }
 
 // layerPath returns the drive1 per-app layer for a deployment.
-func layerPath(deploymentID string) string {
-	return layerDir + "/" + deploymentID + ".ext4"
+//
+// imaged stamps the canonical path (appsRoot/<slug>/<deploymentID>.ext4) into
+// deployments.rootfs_path after Build succeeds (pkg/imaged/handler.go);
+// schedd trusts that row rather than recomputing. The legacy constant
+// layerDir is the fallback for rows where imaged predates the path stamp
+// (rare in practice — every new row gets a path on creation).
+func layerPath(dep state.Deployment) string {
+	if dep.RootfsPath != "" {
+		return dep.RootfsPath
+	}
+	return layerDir + "/" + dep.ID + ".ext4"
 }
 
 // snapshotPaths returns the mem file and vmstate file for a deployment's

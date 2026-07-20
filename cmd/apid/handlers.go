@@ -114,8 +114,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	digest, ok := parseImageDigest(req.Image)
-	if !ok {
+	if !isDigestPinned(req.Image) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
 			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.DOMAIN/app@sha256:..."))
 		return
@@ -130,16 +129,22 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 			s.log.Warn("could not mark previous deployment superseded", "prev", prev.ID, "err", serr)
 		}
 	}
+	// Store the FULL ref (host/repo@sha256:...) into image_digest, not the bare
+	// digest. imaged's OCI puller needs the host to dial the right registry;
+	// `docker.io/library/sha256:...` is the wrong resolution for non-Docker
+	// deploys (issue #53 / M5 acceptance on Lima). The column name is historical
+	// — the contract is "a digest-pinned reference" enforced by isDigestPinned
+	// above; consumers should ParseReference it.
 	d, err := s.store.CreateDeployment(ctx(r), state.Deployment{
-		AppID: app.ID, ImageDigest: digest, Kind: state.DeploymentKindImage, Status: state.DeployPending,
+		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 		return
 	}
 	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged, `{"kind":"image","app_id":"`+app.ID+`","to":"`+d.ID+`"}`)
-	// codeql[go/log-injection] false-positive: d.ID and app.ID are server-generated UUIDs; digest is regex-validated to ^sha256:[0-9a-f]{64}$ by parseImageDigest (handler returns 400 on failure, never reaches this log).
-	s.log.Info("deployment created", "deployment", d.ID, "app", app.ID, "digest", digest)
+	// codeql[go/log-injection] false-positive: d.ID and app.ID are server-generated UUIDs; req.Image is regex-validated to a digest-pinned reference by isDigestPinned (handler returns 400 on failure, never reaches this log).
+	s.log.Info("deployment created", "deployment", d.ID, "app", app.ID, "ref", req.Image)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d))
 }
 
@@ -218,6 +223,15 @@ func parseImageDigest(ref string) (string, bool) {
 		return "", false
 	}
 	return digest, true
+}
+
+// isDigestPinned reports whether ref is a digest-pinned reference (the form
+// the deploy contract requires). Use this for input validation; consumers
+// parse the full ref via oci.ParseReference so they can dial the right
+// registry host.
+func isDigestPinned(ref string) bool {
+	_, ok := parseImageDigest(ref)
+	return ok
 }
 
 func orDefault(v, def string) string {

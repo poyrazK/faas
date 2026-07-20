@@ -79,18 +79,27 @@ func TestDeployWakeMetal(t *testing.T) {
 	// FAAS_TEST_BUILDER_BASE_REF (see pkg/e2etest/harness.go) when set.
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
-	// Stub builder-base — an empty layer is enough; imaged just stages an
-	// ext4 from the layers, and M5 acceptance never actually boots the
-	// builder VM (builderd is M6).
+	// Stub builder-base with a one-layer image — imaged's EnsureBaseExt4
+	// rejects zero-layer bases ("manifest has no layers"). The deploy-time
+	// base override (FAAS_TEST_DEPLOY_BASE_REF) points at a DIFFERENT repo
+	// whose single layer's diff_id matches the app's hello.txt layer, so
+	// oci.LayersAboveBase treats it as a base prefix and the app's hello
+	// layer lands in `above` — exactly the two-drive shape imaged would
+	// see with a real runner base + app diff.
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
 	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", helloBody)
+	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
+	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.Start(t, pool, e2etest.All)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 
-	// The reference for the test's actual app image — digest-pinned.
-	img, ref := e2etest.HelloImage("library/hello", helloBody)
+	// The reference for the test's actual app image — digest-pinned. Use
+	// the two-layer variant so oci.LayersAboveBase finds one above-base
+	// layer after subtracting the deploy-base's single layer prefix.
+	img, ref := e2etest.HelloImageAboveBase("library/hello", helloBody)
 	ref = registry.AddImage("library/hello", img)
 
 	// Create the app on Hobby plan (256 MB RAM cap, 2-concurrency cap).
@@ -111,6 +120,15 @@ func TestDeployWakeMetal(t *testing.T) {
 		t.Fatalf("decode deployment: %v body=%s", err, raw)
 	}
 
+	// apid stores the full ref (`host/repo@sha256:...`) into
+	// deployments.image_digest so imaged's OCI puller can dial the
+	// right registry host. imaged reads the row when it gets the
+	// deployment_changed pg_notify. (Historically the column held
+	// just the bare digest; that resolution collapsed every
+	// non-Docker-Hub deploy to docker.io/library/sha256:..., so the
+	// local fakeregistry was never reachable. Fixed by apid emitting
+	// the full ref — see cmd/apid/handlers.go createDeployment.)
+
 	var firstInstanceID string
 
 	// -- 1. deploy-then-parked -------------------------------------------------
@@ -119,6 +137,10 @@ func TestDeployWakeMetal(t *testing.T) {
 		defer cancel()
 		dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depResp.ID, 60*time.Second)
 		if err != nil {
+			if d, derr := state.NewPgStore(pool).DeploymentByID(ctx, depResp.ID); derr == nil {
+				t.Logf("deployment state at failure: status=%s error=%q", d.Status, d.Error)
+			}
+			h.DumpLogs(t)
 			t.Fatalf("deployment did not reach live: %v", err)
 		}
 		ins, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 60*time.Second)

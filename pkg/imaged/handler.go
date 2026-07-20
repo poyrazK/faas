@@ -60,6 +60,9 @@ type Handler struct {
 	// guest/runners/<runtime>/faas-runner binary injected into function
 	// layers. Empty in tests; cmd/imaged wires this from config.
 	functionRunnerPath string
+	// deployBaseRefOverride replaces the per-runtime base ref during
+	// aboveBaseLayers. See WithDeployBaseRef — test-only seam.
+	deployBaseRefOverride string
 }
 
 // New returns a Handler. The OCI puller is injected so tests can substitute
@@ -82,6 +85,18 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 // set. Wired from cmd/imaged when the function runner has been compiled.
 func (h *Handler) WithFunctionRunnerPath(p string) *Handler {
 	h.functionRunnerPath = p
+	return h
+}
+
+// deployBaseRefOverride, when set, replaces the ghcr.io base ref used by
+// aboveBaseLayers at deploy time. Only the test harness sets this (it
+// redirects the base manifest fetch to the local FakeRegistry); production
+// leaves it empty and the runtime→base mapping in pkg/imaged/base.go is
+// authoritative. M6 closed the door on per-runtime override because the
+// spec's base economics are a fleet-wide contract — overriding per-deploy
+// would silently fork drive0 across tenants.
+func (h *Handler) WithDeployBaseRef(ref string) *Handler {
+	h.deployBaseRefOverride = ref
 	return h
 }
 
@@ -225,8 +240,15 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 // layer pulls); PullLayers streams the blobs only after validation
 // succeeds. The per-deploy Handler override wins over the image's Cmd,
 // per the deploy contract.
+//
+// ref is the full OCI reference (`host/repo@sha256:...`) apid stored into
+// dep.ImageDigest. We use the full ref (not just the bare digest) for every
+// OCI call so the puller dials the right registry — a bare digest resolves
+// to docker.io/library/sha256:... and dials the wrong host for non-Docker
+// deploys (issue #53 / M5 acceptance on Lima).
 func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
-	digest, err := h.oci.PullDigest(ctx, dep.ImageDigest)
+	ref := dep.ImageDigest
+	digest, err := h.oci.PullDigest(ctx, ref)
 	if err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull failed: "+err.Error())
 		return fmt.Errorf("imaged: oci pull: %w", err)
@@ -236,7 +258,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return err
 	}
 
-	imageCfg, err := h.oci.PullImageConfig(ctx, digest)
+	imageCfg, err := h.oci.PullImageConfig(ctx, ref)
 	if err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull config: "+err.Error())
 		return fmt.Errorf("imaged: pull image config: %w", err)
@@ -293,7 +315,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// M5 fallback: stream all layers as-is. Used by fakes that only
 		// implement oci.Puller — the existing unit tests exercise this
 		// branch.
-		pulled, err := h.oci.PullLayers(ctx, digest)
+		pulled, err := h.oci.PullLayers(ctx, ref)
 		if err != nil {
 			_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull layers: "+err.Error())
 			return fmt.Errorf("imaged: pull layers: %w", err)
@@ -520,7 +542,7 @@ type aboveBaseStream struct {
 // that go into drive1.
 func (h *Handler) aboveBaseLayers(ctx context.Context, mp oci.ManifestPuller,
 	appRef, runtime string, _ api.AppManifest) (aboveBaseStream, []string, error) {
-	appRepo := mustRepo(appRef)
+	appRepo := repoWithHost(appRef)
 	if appRepo == "" {
 		return aboveBaseStream{}, nil, fmt.Errorf("imaged: cannot derive repo from %q", appRef)
 	}
@@ -532,8 +554,11 @@ func (h *Handler) aboveBaseLayers(ctx context.Context, mp oci.ManifestPuller,
 	if err != nil {
 		return aboveBaseStream{}, nil, fmt.Errorf("app config: %w", err)
 	}
-	baseRef := baseRefFor(runtime)
-	baseRepo := mustRepo(baseRef)
+	baseRef := h.deployBaseRefOverride
+	if baseRef == "" {
+		baseRef = baseRefFor(runtime)
+	}
+	baseRepo := repoWithHost(baseRef)
 	if baseRepo == "" {
 		return aboveBaseStream{}, nil, fmt.Errorf("imaged: cannot derive repo from base %q", baseRef)
 	}
@@ -597,14 +622,20 @@ func (h *Handler) pullConfig(ctx context.Context, mp oci.ManifestPuller, repo, d
 	return oci.ParseConfig(r)
 }
 
-// mustRepo returns the repository portion of an image reference. We need the
-// repo to ask the registry for blobs ("/v2/<repo>/blobs/<digest>"). This
-// helper keeps the error path local — a missing/empty repo is a build bug, not
-// a runtime one.
-func mustRepo(ref string) string {
+// repoWithHost returns "host/repo" for a parsed reference, or just "repo" when
+// the reference is on the default registry (docker.io). The OCI client's
+// PullBlob synthesizes a Reference from `repo+@digest` and looks up the
+// registry from that synthesized ref; if the caller passes a bare repo path
+// (e.g. "library/hello") the synthesised ref defaults to docker.io and
+// non-Docker-Hub deploys dial the wrong host. Passing "host/repo" preserves
+// the registry. Returns "" on parse failure.
+func repoWithHost(ref string) string {
 	r, err := oci.ParseReference(ref)
 	if err != nil {
 		return ""
 	}
-	return r.Repository
+	if r.Registry == "docker.io" {
+		return r.Repository
+	}
+	return r.Registry + "/" + r.Repository
 }

@@ -421,9 +421,10 @@ func (s *PgStore) DeploymentByID(ctx context.Context, id string) (Deployment, er
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
+		        coalesce(rootfs_path,''), coalesce(rootfs_bytes,0),
 		        status, coalesce(error,''), created_at
 		 from deployments where id = $1`, id)
-	return scanDeployment(row)
+	return scanDeploymentWithRootfs(row)
 }
 
 func (s *PgStore) LatestDeployment(ctx context.Context, appID string) (Deployment, error) {
