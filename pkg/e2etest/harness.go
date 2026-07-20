@@ -201,6 +201,16 @@ kernel_path = %q
 			"PATH=" + os.Getenv("PATH"),
 			"HOME=" + os.Getenv("HOME"),
 		}
+		// Optional builder-base override (Lima / CI without ghcr creds). When
+		// FAAS_TEST_BUILDER_BASE_REF is set, imaged pulls the base from there
+		// instead of the production ghcr.io/onebox-faas/builder-base:latest
+		// (which 403s anonymously). Default behavior is unchanged.
+		if ref := os.Getenv("FAAS_TEST_BUILDER_BASE_REF"); ref != "" {
+			env = append(env, "FAAS_BUILDER_BASE_REF="+ref)
+			if path := os.Getenv("FAAS_TEST_BUILDER_BASE_PATH"); path != "" {
+				env = append(env, "FAAS_BUILDER_BASE_PATH="+path)
+			}
+		}
 		h.procs = append(h.procs, startProc(t, bin, "imaged", env))
 	}
 

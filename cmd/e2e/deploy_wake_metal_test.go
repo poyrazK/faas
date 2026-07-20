@@ -71,13 +71,25 @@ func TestDeployWakeMetal(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
+	// Fake registry on loopback. Stand it up BEFORE e2etest.Start so imaged's
+	// startup-time `EnsureBaseExt4` can pull `onebox-faas/builder-base:latest`
+	// from the same local registry (FAAS_OCI_INSECURE=1 lets it dial plain
+	// HTTP). This avoids the production ghcr.io endpoint, which 403s for
+	// anonymous pulls. The harness's imaged startup honors
+	// FAAS_TEST_BUILDER_BASE_REF (see pkg/e2etest/harness.go) when set.
+	registry := e2etest.NewFakeRegistry()
+	t.Cleanup(func() { registry.Close() })
+	// Stub builder-base — an empty layer is enough; imaged just stages an
+	// ext4 from the layers, and M5 acceptance never actually boots the
+	// builder VM (builderd is M6).
+	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
+	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
+
 	h := e2etest.Start(t, pool, e2etest.All)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 
-	// Fake registry on loopback. Imaged pulls from it via FAAS_OCI_INSECURE=1
-	// (set by the harness). The reference is digest-pinned.
-	registry := e2etest.NewFakeRegistry()
-	t.Cleanup(func() { registry.Close() })
+	// The reference for the test's actual app image — digest-pinned.
 	img, ref := e2etest.HelloImage("library/hello", helloBody)
 	ref = registry.AddImage("library/hello", img)
 
