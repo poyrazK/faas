@@ -116,3 +116,17 @@
   ansible.builtin.command: /usr/local/bin/promtool check config /etc/prometheus/prometheus.yml
   changed_when: false
   failed_when: false  # CI may not have a running Prometheus yet
+
+# Cleanup: the tarball and extracted dir live in /tmp (tmpfs on the
+# EX44 — moot — but accumulates on long-lived dev VMs). Removing after
+# install keeps the role idempotent and avoids leaving 80 MB+ on disk
+# if the playbook is rerun during debugging.
+- name: prometheus — remove downloaded tarball
+  ansible.builtin.file:
+    path: "/tmp/prometheus-{{ prom_version }}.tar.gz"
+    state: absent
+
+- name: prometheus — remove extracted dir
+  ansible.builtin.file:
+    path: "/tmp/prometheus-{{ prom_version }}.linux-amd64"
+    state: absent

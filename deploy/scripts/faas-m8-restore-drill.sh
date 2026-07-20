@@ -145,7 +145,7 @@ heading "6/7 Wait for schedd admission + hit test app"
 SCHEDD_METRICS="${FAAS_SCHEDD_METRICS:-http://127.0.0.1:9091/metrics}"
 READY=0
 for i in $(seq 1 60); do
-  if curl -fsS "$SCHEDD_METRICS" 2>/dev/null | grep -q "fcvm_resident_ram_pct"; then
+  if curl -fsS "$SCHEDD_METRICS" 2>/dev/null | grep -q "fcvm_resident_ram_pct" || true; then
     READY=1
     ok "schedd admission up (after $((i*2))s)"
     break
@@ -202,7 +202,9 @@ acceptance gate keeps an audit trail.
 EOF
 
 # Clean up the recovery stanza so PG doesn't try to replay on next boot.
-sed -i '/^# --- faas-m8-restore-drill:/,/^EOF$/d' "$PG_CONF" || true
+# We can't anchor on `EOF` because bash consumes the heredoc terminator and
+# never writes it to the file — use a real written line as the close anchor.
+sed -i '/^# --- faas-m8-restore-drill:/,/^recovery_target_action = /d' "$PG_CONF" || true
 rm -f "$PG_DATA/recovery.signal"
 
 exit $(( TOTAL <= 1800 ? 0 : 1 ))

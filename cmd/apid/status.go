@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -80,8 +81,8 @@ func (s *server) statusHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
-// statusPagePath is the on-disk path of the static HTML page.
-// Optional: statusHandler falls back to /etc/faas/statuspage/index.html.
+// statusJSONHandler serves GET /status/slo.json. The cached statusPagePath
+// is configured via WithStatusCache (see server.go).
 func (s *server) statusJSONHandler(w http.ResponseWriter, r *http.Request) {
 	snap, err := s.statusCache.Get(r.Context())
 	if err != nil {
@@ -163,6 +164,11 @@ func (c *statusCache) Get(ctx context.Context) (StatusPage, error) {
 // last good number during a transient Prometheus hiccup). If every
 // query fails the function returns a non-nil error so the caller
 // can fall back to the last cached snapshot.
+//
+// We track per-query success instead of inferring failure from
+// "all values are zero" — a freshly-booted idle box legitimately
+// has 0% API availability, 0 ms wake p95, and 0% build success,
+// which is data, not failure.
 func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	if c.promURL == "" {
 		return StatusPage{}, fmt.Errorf("no prometheus URL configured")
@@ -170,11 +176,13 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 
 	snap := StatusPage{AsOf: time.Now().UTC(), Source: "prometheus"}
 	var firstErr error
+	okCount := 0
 
 	// 1. API availability over last 5m: 2xx / total.
 	availQ := `sum(rate(gateway_requests_total{code=~"2.."}[5m])) / sum(rate(gateway_requests_total[5m])) * 100`
 	if pct, err := c.queryScalar(ctx, availQ); err == nil {
 		snap.APIAvailabilityPct = pct
+		okCount++
 	} else {
 		c.log.Warn("status: api_availability query failed", "err", err)
 		if firstErr == nil {
@@ -186,6 +194,7 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	wakeQ := `histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) * 1000`
 	if ms, err := c.queryScalar(ctx, wakeQ); err == nil {
 		snap.WakeP95MS = ms
+		okCount++
 	} else {
 		c.log.Warn("status: wake_p95 query failed", "err", err)
 		if firstErr == nil {
@@ -197,6 +206,7 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 	buildQ := `sum(rate(vmmd_op_duration_seconds_count{op="create_cold_boot",code="ok"}[5m])) / sum(rate(vmmd_op_duration_seconds_count{op="create_cold_boot"}[5m])) * 100`
 	if pct, err := c.queryScalar(ctx, buildQ); err == nil {
 		snap.BuildSuccessPct = pct
+		okCount++
 	} else {
 		c.log.Warn("status: build_success query failed", "err", err)
 		if firstErr == nil {
@@ -204,9 +214,10 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 		}
 	}
 
-	// No data at all — surface the first error so the caller knows the
-	// snapshot is empty (the Get helper then serves the stale cache).
-	if snap.APIAvailabilityPct == 0 && snap.WakeP95MS == 0 && snap.BuildSuccessPct == 0 && firstErr != nil {
+	// If no query succeeded, surface the first error so the caller can
+	// serve the stale cache. Otherwise the snapshot is real data even
+	// if some fields happen to be 0 (idle-box case).
+	if okCount == 0 {
 		return snap, firstErr
 	}
 	return snap, nil
@@ -250,9 +261,11 @@ func (c *statusCache) queryScalar(ctx context.Context, query string) (float64, e
 	if !ok {
 		return 0, fmt.Errorf("unexpected value shape for query %q", query)
 	}
-	var f float64
-	if _, err := fmt.Sscanf(raw, "%f", &f); err != nil {
-		return 0, err
+	// ParseFloat (not fmt.Sscanf "%f") — locale-safe and consistent
+	// with pkg/fcvm/metrics.go::DefaultLvFcUsedPct.
+	f, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse %q for query %q: %w", raw, query, err)
 	}
 	return f, nil
 }

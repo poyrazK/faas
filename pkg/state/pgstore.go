@@ -966,9 +966,15 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 // filter matches the dashboard's notion of "parked apps taking up
 // disk": stale snapshots are GC'd by imaged nightly (spec §4.6) and
 // should not contribute to the fleet average.
+//
+// Bounded by snapshotDashboardCap (10k) — the dashboard only renders a
+// fleet average + p95, so the precision loss from truncating past 10k
+// snapshots is invisible. The cap prevents M10-scale fleet growth from
+// degrading the dashboard scrape path (PG reads O(N) snapshots every
+// 5 s otherwise). Raise this when the dashboard gains per-app panels.
 func (s *PgStore) ListLiveSnapshotStats(ctx context.Context) ([]SnapshotSize, error) {
 	rows, err := s.pool.Query(ctx,
-		`select mem_bytes, disk_bytes from snapshots where stale = false`)
+		`select mem_bytes, disk_bytes from snapshots where stale = false order by mem_bytes desc limit 10000`)
 	if err != nil {
 		return nil, err
 	}

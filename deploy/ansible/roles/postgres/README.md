@@ -28,6 +28,24 @@ The archive directory is local-only — the M8 restore drill script
 after rsyncing a nightly basebackup. Off-host WAL shipping and
 pgbackrest are explicitly **M9** follow-ups (see plan §Step 4).
 
+### `archive_command` quoting constraint
+
+`archive_command = '...'` is a **shell string** that PostgreSQL passes
+to `sh -c`. `%p` is the full path of the WAL segment to archive, `%f`
+is the filename. Today we use `cp %p /var/lib/pgsql/archive/%f` — a
+single `cp` with no shell metacharacters, so the single-quote
+delimiting in `postgresql.conf.j2` is safe.
+
+**Constraint**: keep the value a single command with no `&&`, `||`,
+pipes, or embedded variables. If you need compound behavior, wrap it
+in a shell script under `/usr/local/bin/` and call that instead. The
+restore-drill script's cleanup sed (`/^# --- faas-m8-restore-drill:/,
+/^recovery_target_action = /d`) relies on the value being a single
+line — multi-line archive commands will break the range match.
+
+The same applies to `restore_command` in the recovery stanza written
+by the drill script.
+
 ## Idempotency
 
 The hardening tasks use `register: <name>` + `failed_when: false` so

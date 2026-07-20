@@ -84,3 +84,16 @@
   retries: 5
   delay: 2
   until: ne_metrics is succeeded
+
+# Cleanup: same pattern as the prometheus role — keep /tmp tidy
+# after install. On EX44 (tmpfs) this is moot, but on long-lived
+# dev VMs the tarball + extracted dir otherwise accumulate.
+- name: node_exporter — remove downloaded tarball
+  ansible.builtin.file:
+    path: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+    state: absent
+
+- name: node_exporter — remove extracted dir
+  ansible.builtin.file:
+    path: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64"
+    state: absent

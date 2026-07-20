@@ -32,12 +32,14 @@ package fcvm
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -151,6 +153,13 @@ type DashboardGauges struct {
 	cachedP95   float64
 	cachedRAM   float64
 	cachedLV    float64
+	// refreshing is set while a scrape-triggered refresh is in flight
+	// (PG / lvs callbacks running outside the lock). A second scrape
+	// arriving during the same window sees refreshing==1 and skips,
+	// returning the cached value. Without this, a scrape storm would
+	// multiply the load on PG and lvs (the exact thing the TTL is
+	// meant to prevent). Atomic so the check is lock-free.
+	refreshing atomic.Bool
 }
 
 // NewDashboardGauges builds a DashboardGauges bound to a fresh
@@ -203,18 +212,26 @@ func (g *DashboardGauges) Handler() http.Handler {
 func (g *DashboardGauges) Registry() *prometheus.Registry { return g.reg }
 
 // refresh recomputes the cached gauge values. No-op if the cache is
-// still fresh. Errors from the source functions are swallowed: the
-// cache keeps the prior value (graceful degradation — the dashboard
-// row stays at its last good value, which is more honest than a
-// sudden zero during a transient PG hiccup).
+// still fresh OR if another scrape is already refreshing (single-
+// flight via g.refreshing). Errors from the source functions are
+// swallowed: the cache keeps the prior value (graceful degradation —
+// the dashboard row stays at its last good value, which is more
+// honest than a sudden zero during a transient PG hiccup).
 func (g *DashboardGauges) refresh(ctx context.Context) {
 	g.mu.Lock()
 	if time.Since(g.lastEval) < g.ttl {
 		g.mu.Unlock()
 		return
 	}
+	if !g.refreshing.CompareAndSwap(false, true) {
+		// Another scrape is already fetching; let it finish and
+		// return the cached values.
+		g.mu.Unlock()
+		return
+	}
 	src := g.src
 	g.mu.Unlock()
+	defer g.refreshing.Store(false)
 
 	if src.ListSnapshotStats != nil {
 		stats, err := src.ListSnapshotStats(ctx)
@@ -303,31 +320,43 @@ func (g *DashboardGauges) lvPct() float64 {
 // --- Default lv-fc implementation ------------------------------------------
 
 // DefaultLvFcUsedPct returns a closure that runs `lvs --noheadings -o
-// data_percent <lvName>` and parses the trailing percent. On any
-// failure (lvs not on PATH, lv missing, parse error) the closure
-// returns 0 and a non-nil error — the dashboard cache keeps its prior
-// value. The 1 s ctx budget matches the loop-tick cadence; lv-fc
-// stats are cheap.
+// data_percent <lvName>` and parses the trailing percent.
+//
+// On failure (lvs not on PATH, lv missing, parse error) the closure
+// returns math.NaN() and a non-nil error. NaN is the load-bearing
+// choice: Prometheus renders NaN as no-data, so Grafana shows "No
+// data" instead of "0% used" — which would be dangerously misleading
+// on a box where the lv-fc volume doesn't exist (alert at 90% never
+// fires if the gauge is silently pinned at 0). Returning 0 here would
+// also break the alert threshold; returning -1 would render as -100%
+// in some Grafana panels. NaN is the only value that degrades the
+// panel honestly.
+//
+// The dashboard cache (refresh) checks the error and keeps its prior
+// value on failure; NaN only reaches the gauge when the cache has no
+// prior value (very first scrape after boot, lv missing from the start).
+//
+// The 1 s ctx budget matches the loop-tick cadence; lv-fc stats are cheap.
 func DefaultLvFcUsedPct(lvName string) func(ctx context.Context) (float64, error) {
 	return func(ctx context.Context) (float64, error) {
 		if lvName == "" {
-			return 0, errors.New("fcvm: empty lv name")
+			return math.NaN(), errors.New("fcvm: empty lv name")
 		}
 		cctx, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
 		out, err := exec.CommandContext(cctx, "lvs", "--noheadings", "-o", "data_percent", lvName).Output()
 		if err != nil {
-			return 0, err
+			return math.NaN(), err
 		}
 		// Output looks like "  37.42\n" — trim, drop trailing %, parse.
 		s := strings.TrimSpace(string(out))
 		s = strings.TrimSuffix(s, "%")
 		if s == "" {
-			return 0, nil
+			return math.NaN(), nil
 		}
 		pct, err := strconv.ParseFloat(s, 64)
 		if err != nil {
-			return 0, err
+			return math.NaN(), err
 		}
 		return pct, nil
 	}

@@ -70,19 +70,26 @@ func NewWakeGate(capacity int, ttl time.Duration) *WakeGate {
 // departs, so a follow-on request that arrives microseconds after ensure()
 // returns cannot trigger a second wake (regression test:
 // TestConcurrentColdRequestsCoalesceToOneWake).
+//
+// Queue-wait timing: we observe time.Since(start) for callers that
+// actually waited (joined an in-flight call, or were the leader and
+// dispatched ensure). ErrQueueFull and ctx.Err() returns are NOT
+// recorded as queue-wait — they aren't wait, they're rejection or
+// cancellation, and recording them as ~0ms observations would push
+// the histogram's p95 toward zero during overload (the very signal
+// the SLO dashboard needs to surface).
 func (g *WakeGate) Wait(
 	ctx context.Context,
 	appID string,
 	shouldWake func() bool,
 	ensure func(context.Context) error,
 ) error {
-	// Observed wait starts the moment we commit to the queue — for a
-	// follower, that's "joining an in-flight call"; for a leader, that's
-	// "we're the first one here, our ensure will run". Either way the
-	// caller experiences "time-to-instance-ready" as the queue-wait.
 	start := time.Now()
+	// observed is set true only on the paths where the caller actually
+	// spent time in the queue. The deferred observer checks this flag.
+	observed := false
 	defer func() {
-		if g.metrics != nil {
+		if observed && g.metrics != nil {
 			g.metrics.ObserveWakeQueueWait(time.Since(start))
 		}
 	}()
@@ -103,9 +110,16 @@ func (g *WakeGate) Wait(
 		if g.onChange != nil {
 			g.onChange(appID, depth)
 		}
+		observed = true
 		// Hold the followers' reference until await returns; release on exit.
 		err := g.await(ctx, call)
 		g.release(appID, call)
+		// ctx.Err() is also "didn't wait for an ensure result" — skip
+		// the metric on cancellation so a hung client's cancellation
+		// doesn't pollute the wake-latency histogram.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			observed = false
+		}
 		return err
 	}
 
@@ -146,8 +160,12 @@ func (g *WakeGate) Wait(
 		close(call.done)
 	}()
 
+	observed = true
 	err := g.await(ctx, call)
 	g.release(appID, call)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		observed = false
+	}
 	return err
 }
 

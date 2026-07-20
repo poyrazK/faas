@@ -86,3 +86,96 @@ func TestWakeGateObservesWaitDuration(t *testing.T) {
 		t.Errorf("expected bucket line at le=0.05, got:\n%s", body)
 	}
 }
+
+// TestWakeGateSkipsObservationOnErrQueueFull guards against the
+// regression where ErrQueueFull and ctx-cancelled paths recorded
+// ~0ms observations, driving the p95 to near-zero during overload
+// storms (the very signal the SLO dashboard needs to surface).
+//
+// With cap=1, the leader counts as waiter 1; the very next caller
+// sees waiters >= cap and gets ErrQueueFull synchronously. That
+// rejected caller must NOT record in the wake-wait histogram.
+func TestWakeGateSkipsObservationOnErrQueueFull(t *testing.T) {
+	m := NewMetrics()
+	g := NewWakeGate(1, 5*time.Second)
+	g.SetMetrics(m)
+
+	release := make(chan struct{})
+	var done sync.WaitGroup
+	done.Add(1)
+
+	// Leader parks; counts as waiter 1 of cap=1.
+	go func() {
+		defer done.Done()
+		_ = g.Wait(context.Background(), "appB",
+			func() bool { return true },
+			func(ctx context.Context) error { <-release; return nil })
+	}()
+	time.Sleep(20 * time.Millisecond) // leader commits first
+
+	// Synchronous next caller — gate rejects with ErrQueueFull.
+	err := g.Wait(context.Background(), "appB",
+		func() bool { return false },
+		func(ctx context.Context) error { return nil })
+	if err != ErrQueueFull {
+		t.Fatalf("err = %v, want ErrQueueFull", err)
+	}
+
+	close(release)
+	done.Wait()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	m.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	// Only the leader observed (count=1); the rejected caller did not.
+	if !strings.Contains(body, "gateway_wake_queue_wait_seconds_count 1") {
+		t.Errorf("expected count=1 (rejected caller skipped), got:\n%s", body)
+	}
+}
+
+// TestWakeGateSkipsObservationOnCtxCancel guards the other
+// non-wait return: ctx cancellation. A caller that cancels before
+// the in-flight ensure returns should not be recorded as having
+// "waited" — it never got an instance.
+func TestWakeGateSkipsObservationOnCtxCancel(t *testing.T) {
+	m := NewMetrics()
+	g := NewWakeGate(8, 5*time.Second)
+	g.SetMetrics(m)
+
+	release := make(chan struct{})
+	var done sync.WaitGroup
+	done.Add(2)
+
+	// Leader parks; ensure returns nil after we release.
+	go func() {
+		defer done.Done()
+		_ = g.Wait(context.Background(), "appC",
+			func() bool { return true },
+			func(ctx context.Context) error { <-release; return nil })
+	}()
+	time.Sleep(20 * time.Millisecond)
+
+	// Follower with a cancelled context — returns ctx.Err() without
+	// waiting for the leader's ensure. Must NOT record.
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	go func() {
+		defer done.Done()
+		_ = g.Wait(cancelledCtx, "appC",
+			func() bool { return false },
+			func(ctx context.Context) error { return nil })
+	}()
+
+	close(release)
+	done.Wait()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	m.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	// Leader observed (one entry); cancelled follower did not.
+	if !strings.Contains(body, "gateway_wake_queue_wait_seconds_count 1") {
+		t.Errorf("expected count=1 (cancelled follower skipped), got:\n%s", body)
+	}
+}
