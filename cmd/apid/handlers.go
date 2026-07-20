@@ -217,12 +217,14 @@ var slugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
 func validSlug(s string) bool { return slugRe.MatchString(s) }
 
 // digestPinnedRE matches a digest-pinned OCI reference end-to-end:
-//   <host>[/<repo-path>]/<name>@sha256:<64 lowercase hex>
+//
+//	<host>[/<repo-path>]/<name>@sha256:<64 lowercase hex>
 //
 // Where:
-//   host     = RFC 1123 hostname (alnum + '-', dot-separated labels,
-//              optional :<port>)
-//   repo     = alnum + '_-' + '.' + '/' (the OCI repository path grammar)
+//
+//	host     = RFC 1123 hostname (alnum + '-', dot-separated labels,
+//	           optional :<port>)
+//	repo     = alnum + '_-' + '.' + '/' (the OCI repository path grammar)
 //
 // The whole-ref anchoring is load-bearing: parseImageDigest feeds
 // apid.createDeployment's slog log of req.Image (CodeQL go/log-injection),

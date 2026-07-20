@@ -241,9 +241,9 @@ kernel_path = %q
 			"FAAS_GUEST_INIT="+guestInit,
 			"FAAS_APPS_ROOT="+appsRoot,
 			"FAAS_OCI_INSECURE=1",
-			"DATABASE_URL=" + dbURL,
-			"PATH=" + os.Getenv("PATH"),
-			"HOME=" + os.Getenv("HOME"),
+			"DATABASE_URL="+dbURL,
+			"PATH="+os.Getenv("PATH"),
+			"HOME="+os.Getenv("HOME"),
 		)
 		// Optional builder-base override (Lima / CI without ghcr creds). When
 		// FAAS_TEST_BUILDER_BASE_REF is set, imaged pulls the base from there

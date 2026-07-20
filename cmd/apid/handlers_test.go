@@ -161,29 +161,29 @@ func TestParseImageDigest_PureUnit(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	cases := map[string]bool{
 		// Happy paths — every host/repo shape imaged pulls from must work.
-		"r/x@sha256:" + digest:                            true,
-		"ghcr.io/onebox-faas/builder-base@sha256:" + digest: true,
+		"r/x@sha256:" + digest:                                true,
+		"ghcr.io/onebox-faas/builder-base@sha256:" + digest:   true,
 		"registry.example.com:5000/team/svc@sha256:" + digest: true,
-		"127.0.0.1:5000/foo/bar@sha256:" + digest:           true,
+		"127.0.0.1:5000/foo/bar@sha256:" + digest:             true,
 		// Length / character errors in the digest.
-		"r/x@sha256:" + digest[:63]:                 false, // 63 hex chars
-		"r/x@sha256:" + strings.Repeat("A", 64):     false, // uppercase rejected
-		"r/x@sha256:short":                          false,
+		"r/x@sha256:" + digest[:63]:             false, // 63 hex chars
+		"r/x@sha256:" + strings.Repeat("A", 64): false, // uppercase rejected
+		"r/x@sha256:short":                      false,
 		// Wrong algorithm / wrong tag form.
 		"r/x@sha512:" + digest: false,
-		"r/x:latest":          false,
+		"r/x:latest":           false,
 		// Anchoring — the validator must reject non-OCI prefixes that
 		// contain control chars, whitespace, or extra @-separators. These
 		// cases are load-bearing for the slog log of req.Image in
 		// createDeployment (CodeQL go/log-injection false-positive).
-		"":                                 false,
-		"@sha256:" + digest:                false, // no host/repo
-		"foo/@sha256:" + digest:            false, // empty repo
-		"\nfoo/bar@sha256:" + digest:       false, // leading newline (log-injection)
-		"foo bar@sha256:" + digest:         false, // whitespace in prefix
-		"foo@@bar@sha256:" + digest:        false, // extra @ before the digest @-separator
-		"foo/bar@sha256:" + digest + " ":   false, // trailing whitespace
-		"foo/bar@sha256:" + digest + "\n":  false, // trailing newline (log-injection)
+		"":                                false,
+		"@sha256:" + digest:               false, // no host/repo
+		"foo/@sha256:" + digest:           false, // empty repo
+		"\nfoo/bar@sha256:" + digest:      false, // leading newline (log-injection)
+		"foo bar@sha256:" + digest:        false, // whitespace in prefix
+		"foo@@bar@sha256:" + digest:       false, // extra @ before the digest @-separator
+		"foo/bar@sha256:" + digest + " ":  false, // trailing whitespace
+		"foo/bar@sha256:" + digest + "\n": false, // trailing newline (log-injection)
 	}
 	for in, want := range cases {
 		_, ok := parseImageDigest(in)
@@ -199,8 +199,8 @@ func TestParseImageDigest_PureUnit(t *testing.T) {
 func TestIsDigestPinned(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	cases := map[string]bool{
-		"r/x@sha256:" + digest:                       true,
-		"ghcr.io/team/svc@sha256:" + digest:          true,
+		"r/x@sha256:" + digest:                           true,
+		"ghcr.io/team/svc@sha256:" + digest:              true,
 		"registry.example.com:5000/x/y@sha256:" + digest: true,
 		// Rejections: same anchoring rules as parseImageDigest.
 		"r/x@sha256:" + digest[:63]:             false,
