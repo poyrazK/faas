@@ -305,8 +305,15 @@ const (
 	Builderd
 )
 
-// All is the full set for the metal e2e test.
-const All = APID | Schedd | VMMD | Imaged | Gatewayd | Builderd
+// DeployWake is the daemon set the image deploy → snapshot → park → wake
+// acceptance requires. The path never queues a build, so Builderd is
+// excluded — the test starts faster and the failure surface is smaller.
+const DeployWake = APID | Schedd | VMMD | Imaged | Gatewayd
+
+// All is the full metal set (DeployWake + Builderd). Used by tests that
+// exercise the build pipeline (TestBuildMetal and friends) where the
+// builderd daemon must actually queue and serve a build.
+const All = DeployWake | Builderd
 
 const testDomain = "apps.test.example"
 

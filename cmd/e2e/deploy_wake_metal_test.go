@@ -93,7 +93,7 @@ func TestDeployWakeMetal(t *testing.T) {
 	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.All)
+	h := e2etest.Start(t, pool, e2etest.DeployWake)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 
 	// The reference for the test's actual app image — digest-pinned. Use
@@ -135,12 +135,17 @@ func TestDeployWakeMetal(t *testing.T) {
 	t.Run("deploy-then-parked", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
+		// Dump daemon logs on every exit path of subtest 1 — the whole
+		// point of this subtest on the Lima acceptance loop is the wire
+		// evidence. Failure path logs the deployment state + daemon
+		// output; success path logs the daemon output so a green run is
+		// self-documenting in the test log.
+		defer h.DumpLogs(t)
 		dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depResp.ID, 60*time.Second)
 		if err != nil {
 			if d, derr := state.NewPgStore(pool).DeploymentByID(ctx, depResp.ID); derr == nil {
 				t.Logf("deployment state at failure: status=%s error=%q", d.Status, d.Error)
 			}
-			h.DumpLogs(t)
 			t.Fatalf("deployment did not reach live: %v", err)
 		}
 		ins, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 60*time.Second)
@@ -153,6 +158,7 @@ func TestDeployWakeMetal(t *testing.T) {
 		if dep.Status != state.DeployLive {
 			t.Errorf("dep.Status = %s, want live", dep.Status)
 		}
+		t.Logf("deploy-then-parked: dep=%s instance=%s parked", dep.ID, ins[0].ID)
 	})
 
 	// -- 2. first-request-wakes ------------------------------------------------
