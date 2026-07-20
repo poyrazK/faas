@@ -196,6 +196,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// We install it on the request context BEFORE the proxy call so the
 	// httptrace.ClientTrace attached to the outbound request can find it.
 	firstByteRec := &firstByteRecorder{}
+	//nolint:contextcheck // WithFirstByteRecorder wraps context.WithValue on r.Context(); lint can't trace through the function call.
 	r = r.WithContext(WithFirstByteRecorder(r.Context(), firstByteRec))
 	if !ready {
 		if err := h.wake(r.Context(), app.ID); err != nil { //nolint:contextcheck // request ctx at handler boundary.

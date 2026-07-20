@@ -185,7 +185,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// Wrap pgStore.DomainByName (which returns (state.CustomDomain, error))
 	// as the gateway.OnDemandLookup shape: any-typed result, with state.ErrNotFound
 	// surfaced as gateway.ErrNotFound so the steady-state denial path stays quiet.
-	//nolint:contextcheck // ctx is forwarded explicitly to pgStore.DomainByName; lint can't see through the function-value indirection.
 	allowLookup := func(ctx context.Context, domain string) (any, error) {
 		d, err := pgStore.DomainByName(ctx, domain)
 		if err != nil {
@@ -196,6 +195,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		return d, nil
 	}
+	//nolint:contextcheck // The closure above forwards ctx to pgStore.DomainByName explicitly; golangci can't trace the call through the OnDemandLookup function-type indirection.
 	resolved := cfg.resolveTLSConfig(gateway.NewPGAllowlist(allowLookup, log))
 	if !resolved.Disabled {
 		tok, err := loadSecretFile(resolved.HetznerDNSAPITokenPath)
@@ -307,7 +307,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// the gatewayd.Handler to handle app routing.
 		tlsCfg := &tls.Config{
 			GetCertificate: deps.tlsBundle.GetCertificate,
-			MinVersion:     gateway.MinTLSVersion,
+			// Pin TLS 1.3 inline so gosec/G402 sees the literal value rather
+			// than chasing gateway.MinTLSVersion across packages (v2.4.0's
+			// gosec does not resolve cross-package constants).
+			MinVersion: tls.VersionTLS13,
 		}
 		public := &http.Server{
 			Addr:              listenAddr, // :443 (set by run())

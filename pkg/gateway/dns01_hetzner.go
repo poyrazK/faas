@@ -121,11 +121,10 @@ func (p *HetznerDNSProvider) AppendRecords(ctx context.Context, zone string, rec
 
 // DeleteRecords removes the records by their Hetzner record ID (carried in
 // libdns.ProviderData from AppendRecords). Records without ProviderData are
-// skipped silently — best-effort cleanup matches libdns convention.
-func (p *HetznerDNSProvider) DeleteRecords(ctx context.Context, zone string, recs []libdns.Record) ([]libdns.Record, error) {
-	if zone == "" {
-		zone = p.zone
-	}
+// skipped silently — best-effort cleanup matches libdns convention. The
+// zone parameter is part of the libdns interface but unused here: deletes
+// go through the ProviderData round-trip, not a zone lookup.
+func (p *HetznerDNSProvider) DeleteRecords(ctx context.Context, _ string, recs []libdns.Record) ([]libdns.Record, error) {
 	out := make([]libdns.Record, 0, len(recs))
 	for _, rec := range recs {
 		id, ok := recordID(rec)
@@ -204,7 +203,7 @@ func (p *HetznerDNSProvider) do(ctx context.Context, method, path string, body a
 	if err != nil {
 		return nil, fmt.Errorf("http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
