@@ -47,130 +47,156 @@ arch-agnostic VM lifecycle; the EX44 stays the acceptance source of truth.
 
 ## Status
 
-- **M0 — repo scaffold.** ✅ Tree, build/test/lint tooling, CI, the
-  `pkg/api` limits table (single source of every plan quota),
-  `deploy/ansible/` bootstrap (8 roles — cgroups_v2, grub, lvm, xfs,
-  firecracker, systemd_slices, nftables, postgres — all idempotent on
-  fresh Ubuntu 24.04), and a `TestMetalHelloBoot` acceptance test that
-  boots a busybox guest from the pinned FC kernel. `make bootstrap`
-  is the gate; it requires a fresh Hetzner EX44.
-- **M1 — vmmd core.** ✅ The invariant-critical logic is done and unit-tested
-  under `-race`:
-  - `pkg/fcvm` slot allocator — every per-instance resource (jail uid/gid, host
-    IP, iface names) derives from one unique slot, so §6.2-5 (no shared
-    IP/netns/uid) holds by construction; proven with a concurrent property test.
-  - `pkg/netns` — per-instance netns/veth/tap topology (ADR-009) as a testable
-    `ip`-command plan.
-  - `pkg/fcvm` cold-boot config + jailer argv builders (Appendix B).
-  - `Manager` — full lifecycle with a **guaranteed no-leak unwind** on every
-    failure path (tested with fakes).
-  - `ExecRunner` + `JailerVMM` metal layer; M1 acceptance lives in
-    `manager_metal_test.go` (`//go:build metal`, run on the EX44).
-  - **gRPC control surface** — five RPCs (CreateFromSnapshot,
-    CreateColdBoot, PauseAndSnapshot, Destroy, Stats) over a unix-domain
-    socket at `/run/faas/vmmd.sock` (ADR-013/014/016); handlers in
-    `pkg/vmmdgrpc`, wire shape in `api/proto/onebox/faas/vmmd/v1/vmmd.proto`,
-    error envelope round-trip via `pkg/grpcerr`, ops metrics via `pkg/wire`.
-    End-to-end coverage via `pkg/vmmdgrpc/bufconn_test.go`.
+- **M0 — repo scaffold.** ✅ Repo tree, build/test/lint tooling, CI,
+  `pkg/api` limits table, 8-role ansible bootstrap, hello-boot
+  acceptance test. `make bootstrap` gates it on a fresh EX44.
+- **M1 — vmmd core.** ✅ Invariant-critical VM lifecycle: slot
+  allocator (`pkg/fcvm`), per-instance netns/TAP (`pkg/netns`,
+  ADR-009), cold-boot config + jailer argv (Appendix B / ADR-019),
+  `Manager` with no-leak unwind, metal layer
+  (`manager_metal_test.go`), and the 5-RPC gRPC surface at
+  `/run/faas/vmmd.sock` (ADR-013/014/016, `pkg/vmmdgrpc`).
+  KVM + root required for the metal gate.
+- **M2 — imaged + guest-init.** ✅ OCI→app-layer pipeline, two-drive
+  scheme (`pkg/oci` diff + `pkg/rootfs` applier), base→ext4
+  auto-stage (`pkg/imaged::EnsureBaseExt4`), real-mkfs build in
+  Linux CI, `guest/init` overlay + crash supervisor, two-drive boot
+  verified metal-side (`cmd/e2e/deploy_wake_metal_test.go`).
+- **M3 — snapshots + wake.** ✅ Park/wake with the ADR-005
+  restore-or-cold-boot fallback, FC version pinning
+  (`snapshots.fc_version`), and the vsock post-restore resume hook
+  (ADR-022) that re-seeds entropy + steps clock — V6 acceptance
+  green in `pkg/fcvm/v6_resume_ext4_metal_test.go`. §14 V2 latency
+  loop driver (100 cycles, p50 ≤ 350 ms) still missing — see
+  *What's next*.
+- **M4 — gatewayd + schedd.** ✅ Routing, wake gate, admission
+  ledger (47,600 MB headroom / 160 vCPU), G7 flow-aware reaper
+  (`pkg/sched/flowcount`), `PGBackend` PG routing, schedd-over-gRPC
+  (ADR-018), last-seen flush, 1k rps CI-asserted hot-path load test
+  (PR #44), per-VM `memory.max` + per-plan `tc` egress (PR #37).
+- **M5 — apid + deploy pipeline + CLI.** 🚧 Production wiring is in
+  via the pgx-backed `state.PgStore`, real `rootfs.Builder` in
+  `pkg/imaged::handleDeployment` (PR #26), plan-quota table-tests
+  (`cmd/e2e/quota_e2e_test.go`), the snapshot-prime handshake that
+  flips a deployment to `live` after one cold-boot priming cycle,
+  and the G2 sealed-secrets path (PR #42); `faas` CLI renders
+  RFC 7807 problems (UX §3.3).
+  Remaining: `cmd/e2e/deploy_wake_metal_test.go` has a body/trim
+  mismatch on its own fixture — the M5 §14 metal acceptance gate
+  does not pass on a clean checkout. See *What's next*.
+- **M6 — builderd + real image pulls.** 🚧 Build-in-microVM is wired
+  through (`cmd/builderd`, `pkg/builderd` orchestration + executor,
+  PRs #39/#40/#43); the metal lifecycle is in `vm_metal.go`
+  (`//go:build metal`) and calls vmmd over gRPC, with `vm_stub.go`
+  returning `ErrNotMetal` for non-metal builds. OCI puller hardened
+  (`pkg/oci/egress.go` — denied CIDRs cover RFC1918, CGN, loopback,
+  IMDS, ULA), streamed layer blobs (`b79e370`). `cmd/imaged`
+  auto-stages `/srv/fc/base/builder-base.ext4` on startup
+  (`50c01c1`).
+  Remaining: (a) `pkg/builderd/drive.go` writes `build.json` into
+  the builder VM but does not copy `VMRequest.SourcePath`, so no
+  real `npm install` / `pip install` runs; (b) the Dockerfile kind
+  enum (`pkg/api/build.go` ↔ `pkg/builderd/detect.go`) currently
+  falls through to Railpack-auto for `kind=dockerfile` — the §14
+  M6 gate requires it to dispatch to `buildctl` per ADR-004. See
+  *What's next*.
+- **M7 — metering, billing, functions, cron.** 🚧 The sampling/quota
+  shapes are in `cmd/meterd` and `pkg/stripex`, the dunning state
+  machine is `pkg/state.MarkAccountDeletionPending` (ADR-021), GB-h
+  = plan RAM + 8 MB per running second is in `pkg/meter`.
+  Functions: `guest/runners/node22` + `guest/runners/python312`
+  (handler contract per spec §4.9). Cron: `pkg/sched/cron.go`,
+  single-flight per scheduled fire, loop-tested in
+  `cron_loop_test.go`. Email: `pkg/mail` interface with Resend +
+  Postmark backends (gap G4).
+  Remaining: `cmd/meterd/main.go::defaultDeps` ships nil `parker`
+  and nil `stripe` collaborators; production never wires
+  `scheddgrpc.Dial(...)` or `stripex.NewClient(...)`, so quota
+  hard-stop and hourly Stripe usage push are not operational.
+  `pkg/stripex/usage.go::PushUsageRecord` is a `nil`-returning
+  stub (`TODO stripe-go`). See *What's next*.
+- **M7.5 — thin dashboard + githubd.** ✅ `pkg/dashboard` ships
+  server-rendered Go `html/template` pages (apps, billing, usage,
+  login, account, deployment-detail); ADR-011 keeps dashboard on
+  the apid loopback, gatewayd reverse-proxies `/dashboard/*` and
+  `/oauth/*`. `pkg/githubd` + `cmd/githubd` provide HMAC-verified
+  webhook ingress, GitHub App OAuth + repo picker, Checks-API
+  status writer, and a per-install token cache with proactive
+  refresh. Magic-link auth lives in `pkg/state`
+  (`IssueLoginToken` / `ConsumeLoginToken`) with sealed cookies in
+  `pkg/session`. SSE live updates on `/v1/events`;
+  `deployment_logs` persistence landed. PR #41, ADR-011, ADR-012.
+  Caveat: `pkg/dashboard/templates/` load HTMX 2.0.4 but no
+  `hx-*` attributes are used yet (`apps_list.html` uses
+  `<meta refresh>`); HTMX polling is a follow-up.
+- **M8 — hardening & ops.** 🚧 Ship-blockers landed via PRs
+  #46 / #47 / #48 / #49: G6 GDPR export + 30-day staged deletion
+  (ADR-021), V6 vsock resume hook (ADR-022), G7 flow-aware reaper
+  (`pkg/sched/flowcount`), `AuthLimit` shared per-IP bucket across
+  `/v1/*` (§11 "10/min/IP"), per-VM cgroup scope via jailer
+  `--cgroup cpu.weight`, and cold-wake UX surfaces 3+4+5
+  (`x-faas-wake: cold|cache|ready` + dashboard N+1 spinner).
+  In-flight on a parallel branch (dirty working tree, not merged):
+  `pkg/fcvm/metrics.go` adds `fcvm_snapshot_fleet_avg_bytes` +
+  `…_p95_bytes` + `fcvm_resident_ram_pct` +
+  `vmmd_cold_boot_fallback_total`; `pkg/gateway/metrics.go`
+  extends the gateway with `gateway_wake_queue_wait_seconds`
+  histogram and `gateway_cold_wake_total{app}` counter; ADR-023
+  closes the IPv6 §11 ship-blocker on the host firewall and
+  per-netns ruleset. The §14 acceptance gates remaining on the
+  board are listed in *What's next*.
 
-  Remaining: KVM + root to run `sudo make test-metal` on the EX44 (the
-  gRPC + JVM-free code path is fully exercised in-process with fakes;
-  the metal gate adds the firecracker/jailer side).
-- **M2 — imaged + guest-init.** 🚧 The OCI→app-layer pipeline is done and tested:
-  - `pkg/oci` — layer diff that extracts only the layers ABOVE the matched base
-    (the two-drive scheme); refuses images not built FROM the base.
-  - `pkg/rootfs` — layer applier (whiteouts + path-escape rejection), app-layer
-    sizing + plan-cap enforcement, guest-init/app.json injection, and the
-    `mkfs.ext4 -d` build. A real-mkfs integration test runs in Linux CI.
-  - `pkg/api` — the `app.json` guest contract + app-layer-too-large error.
-  - `guest/init` — PID 1: overlay assembly + crash-loop supervisor; pure logic
-    unit-tested, Linux syscalls behind build tags. Guest IP via kernel `ip=`
-    autoconfig (ADR-009), so no networking code in the guest.
-  - `images/` — base/runner/builder Dockerfiles.
+Post-M8 = private beta (founding doc roadmap M2–M3: hand-held
+first ten customers).
 
-  Remaining: base-image→ext4 conversion, snapshot GC + fleet metrics, and the
-  two-drive boot on metal.
-- **M3 — snapshots + wake.** 🚧 Park/wake with the ADR-005 fallback, tested:
-  - `pkg/fcvm` snapshot model + `PlanWake` — restore only when the snapshot is
-    non-stale and matches the running Firecracker version; else cold boot.
-  - `Manager.Wake` — restore-or-cold-boot where a **restore miss/failure falls
-    back to cold boot** into the same netns and reports it (so schedd
-    re-snapshots); `Manager.Park` snapshots then frees all RAM (§6.2-4).
-  - `JailerVMM.Restore/Snapshot` via the Firecracker API over the jail socket;
-    `DetectFirecrackerVersion` pins snapshot compatibility.
-  - `guest/init` resume hook — re-seed entropy **before** the clock step (so a
-    restored guest can't mint a duplicate UUID/TLS key, test V6); ordering
-    unit-tested, entropy/clock ops behind Linux build tags.
-  - Metal park→wake latency gate (`//go:build metal`).
+## What's next
 
-  Remaining: vsock resume trigger wiring, and the metal latency/uniqueness runs.
-- **M4 — gatewayd + schedd.** 🚧 Routing, wake-blocking, admission, reaping —
-  all unit-tested:
-  - `pkg/state` — the instance state machine (§6.1): legal transitions +
-    which states count toward the concurrency / RAM invariants (§6.2-1/2).
-  - `pkg/sched` — the **admission ledger** (the 47,600 MB headroom guard,
-    per-app concurrency, 160 vCPU slots), the idle reaper, and eviction
-    selection (LRU, never <30 s, Scale last).
-  - `pkg/gateway` — per-app token-bucket rate limiter, host→app LRU route cache,
-    and the **wake gate** (single-flight per app, 512/30 s cap), composed into a
-    wake-blocking HTTP handler proven end-to-end with httptest (cold wake → 200
-    + `x-faas-wake: cold`; 50 concurrent cold requests → 1 wake).
-  - `schedd`/`gatewayd` wired to their cores; gatewayd serves HTTP.
-  - `pkg/gateway` **`PGBackend`** (M5) — the production edge backend: host→app
-    routing over Postgres (read-only; apid/schedd own the writes) with the
-    10k-entry LRU route cache, plus schedd over gRPC (`pkg/scheddgrpc.Client`,
-    ADR-018) for wakes. The app-target cache is seeded by a successful wake and
-    kept coherent from the `instance_changed` / `app_changed` / `domain_changed`
-    pg_notify channels. `cmd/gatewayd` now builds it in `run()` (the M4
-    `unwiredBackend` stays as the test seam). Wake-denials round-trip their RFC
-    7807 status via `pkg/grpcerr` (a lifted `*api.Problem` now recovers its HTTP
-    status from the stable `Code`).
-  - **Last-seen flush** (`cmd/gatewayd` `schedFlushSink`): every 2xx Touches the
-    proxied addr; a 15 s loop resolves each addr→instance (recorded from the wake
-    response, `Scheduler.Wake` now returns the instance id) and reports the batch
-    to schedd's `ReportActivity` (schedd is the sole writer to `instances`, so
-    the gateway hands it the batch over gRPC). Without this a busy app parks once
-    its idle timer fires.
+The M6 / M7 / M8 §14 acceptance gates still on the board. Pick one
+and open an issue if you want it.
 
-  Remaining: CertMagic TLS (M8).
-- **M5 — apid + deploy pipeline + CLI.** 🚧 The control plane and CLI work
-  end-to-end (verified live against a running apid):
-  - `migrations/00001_init.sql` — the full schema (spec §5) with CHECK
-    constraints and account-leading indexes.
-  - `pkg/state` — domain types + the `Store` interface with an in-memory impl
-    (the Postgres/sqlc store drops in behind the same interface).
-  - `pkg/api` — API-key generation/hashing (SHA-256), wire DTOs, and app-config
-    validation.
-  - `apid` — the REST API: key auth, **plan-quota enforcement before work**
-    (RAM/concurrency/app-count, verified by a table test across all four plans),
-    image deploys, and Idempotency-Key replay.
-  - `faas` CLI — `login`/`whoami`/`apps`/`deploy --image`, rendering the API's
-    RFC 7807 problems in the three-line CLI shape (UX §3.3).
-  - `apid`/`schedd` run on the pgx-backed `state.PgStore`; `gatewayd`'s
-    `PGBackend` (see M4) closes the routing → schedd-wake half of the request
-    path, so a request to a routed app now drives `schedd.Wake` over gRPC.
-  - **Snapshot-prime handshake** (`pkg/imaged` + `pkg/sched`): on an image
-    deploy imaged advances the row to `snapshotting` and emits `snapshot_prime`;
-    schedd's `Engine.Prime` cold-boots the layer once, snapshots + parks it
-    (RAM freed, §6.2-4), and replies `snapshot_written`; imaged records the
-    snapshot row (its sole-writer duty) and flips the deployment `live`. The
-    deploy→`PARKED` orchestration is unit-tested end-to-end with fakes.
+**M6**
 
-  Remaining (needs KVM, so it lands on the EX44, not in unit CI): the app-layer
-  ext4 build inside `handleDeployment` (real `rootfs.Builder` call; mkfs is
-  Linux-only) and the metal boot/park/wake behind the handshake, so
-  `faas deploy --image` → parked → first request wakes end-to-end. The
-  prebuilt-image acceptance is the M5 gate (§14); builder microVMs are M6.
-- **M6 — builderd + real image pulls.** 🚧 Groundwork only; the build-in-microVM
-  core (ADR-003) is metal and lands on the EX44.
-  - `pkg/oci` **`RegistryClient`** — a registry v2 client that resolves a
-    reference to its content digest over the public registry API (gap G1):
-    Docker/OCI reference parsing (docker.io + `library/` defaulting, tag vs
-    `@sha256:` digest, registry ports), the anonymous Bearer-token dance, and a
-    `Docker-Content-Digest` header / body-hash fallback. Unit-tested against an
-    httptest registry. `cmd/imaged` now resolves image deploys through it
-    (`DefaultPuller` stays as the offline/test default).
+- **`pkg/builderd/drive.go`** — copy `VMRequest.SourcePath` into
+  the builder VM's scratch disk. Without it the builder VM has no
+  source tarball, so no real `npm install` / `pip install` runs.
+- **Dockerfile kind enum dispatch** — `pkg/api/build.go`'s enum is
+  `"railpack_node" / "railpack_python" / "dockerfile"` but
+  `pkg/builderd/detect.go` casts `"docker"` through Railpack-auto.
+  Wire `"dockerfile"` → `buildctl --frontend dockerfile` per
+  ADR-004. Needs a smoke test on the metal builder VM before the
+  §14 M6 gate is green.
 
-  Remaining: layer/config blob streaming for the real app-layer build, egress
-  hardening on the puller's HTTP client (spec §11), and builderd's ephemeral
-  builder microVMs (Railpack/Dockerfile) — the metal core of M6.
+**M7**
+
+- **`cmd/meterd/main.go` wiring** — `defaultDeps` leaves `parker`
+  and `stripe` nil. Wire `scheddgrpc.Dial(...)` for the quota
+  hard-stop's `ScheddParker`, and `stripex.NewClient(...)` for the
+  hourly push. Until then, the sampling loop runs but doesn't act
+  on quota breaches or send Stripe usage records.
+- **`pkg/stripex/usage.go::PushUsageRecord`** — currently
+  `nil`-returning `TODO stripe-go`. Bring the SDK in, write a
+  test against the Stripe sandbox.
+
+**M8**
+
+- **CertMagic TLS** for gatewayd (`*.apps.DOMAIN` via DNS-01;
+  on-demand HTTP-01 gated by `custom_domains` allowlist).
+  `pkg/gateway/tls.go` is a config bucket; `caddyserver/certmagic`
+  not yet in `go.mod`.
+- **Snapshot-fleet collectors merged end-to-end** — drafted on
+  the parallel branch as `pkg/fcvm/metrics.go`. Spec §12 alert
+  lanes (>160 warn, >200 page) light up only after schedd wires
+  its registry and a Grafana dashboard reads them.
+- **§14 V2 latency driver** — 100 park→wake cycles per app class,
+  p50 ≤ 350 ms / p95 ≤ 800 ms. `cmd/e2e/deploy_wake_metal_test.go`
+  does one cold wake; the loop driver doesn't exist. Runs on the
+  EX44 via `make test-metal`.
+- **Documented timed restore drill** — §14 M8: PG + one app back
+  serving on a clean VM < 30 min, recorded as executed.
+- **Status page + SLO dashboard** — public SLOs from spec §12
+  (API 99.5 % monthly, wake p95 < 1 s, build success ≥ 99 %).
+- **§11 checklist item-by-item sign-off** (cgroups v2 only,
+  `unprivileged_userns_clone=0`, auditd, unattended-upgrades,
+  etc.). The IPv6 egress item (ADR-023) is drafted on the same
+  parallel branch — merge first, then the check is green.
+- **Gate-A runbook** — 2nd-box active-passive (founding doc R3).
