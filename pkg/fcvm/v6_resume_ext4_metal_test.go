@@ -204,11 +204,20 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 		}
 	}
 
-	// /etc/faas/app.json — the entrypoint captures a fresh uuid, then execs
-	// busybox httpd. Two restores from one snapshot both run this same
-	// script, but each gets its own entropy pool post-resume — the UUIDs
-	// MUST diverge (that's the assertion).
-	appJSON := `{"entrypoint":["/bin/sh","-c","cat /proc/sys/kernel/random/uuid > /etc/faas/uuid.txt && exec /bin/busybox httpd -f -p 8080 -h /"],"port":8080}` + "\n"
+	// /etc/faas/app.json — the entrypoint captures a fresh uuid via a
+	// pre-start hook in /usr/local/bin/faas-write-uuid, then execs busybox
+	// httpd. We avoid the `sh -c "..."` wrapper because guest-init's
+	// runAppWithSecrets (see guest/init/main_linux.go::runAppWithSecrets)
+	// does NOT exec via a shell — it uses exec.Command directly with
+	// argv[0]=argv[0], argv[1..]=argv[1..]. sh works on most distros but
+	// the /bin/sh symlink on a busybox-only rootfs silently diverges across
+	// busybox versions. Splitting into a tiny script + a direct httpd
+	// invocation is hermetic.
+	uuidShim := "#!/bin/sh\ncat /proc/sys/kernel/random/uuid > /etc/faas/uuid.txt\nexec /bin/busybox httpd -f -p 8080 -h /\n"
+	if err := os.WriteFile(filepath.Join(work, "usr", "local", "bin", "faas-write-uuid"), []byte(uuidShim), 0o755); err != nil {
+		return err
+	}
+	appJSON := `{"entrypoint":["/usr/local/bin/faas-write-uuid"],"port":8080}` + "\n"
 	if err := os.WriteFile(filepath.Join(work, "etc/faas/app.json"), []byte(appJSON), 0o644); err != nil {
 		return err
 	}

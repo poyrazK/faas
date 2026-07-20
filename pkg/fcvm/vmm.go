@@ -3,6 +3,8 @@ package fcvm
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -257,20 +259,35 @@ const resumeHookDialDeadline = 5 * time.Second
 const resumeHookDialStep = 20 * time.Millisecond
 
 // resumeHookMsgResume is the wire-format discriminator for a resume request.
-// 4-byte big-endian header + JSON body (ADR-022). Adding new msg types does
-// not break the wire — guests that don't recognise a type nack-and-close.
+// Wire: 4-byte BE msg type + 4-byte BE body length + JSON body (ADR-022).
+// The length prefix lets the guest read exactly N bytes instead of waiting
+// for EOF — some AF_VSOCK proxies don't propagate CloseWrite promptly, so
+// depending on it produced EOF-mid-ack in the V6 metal test.
 const resumeHookMsgResume uint32 = 1
-
-// closeWriter is implemented by net.UnixConn (and AF_VSOCK when projected
-// onto the stdlib net.Conn shape on Linux). The host uses it after writing
-// the request to signal "no more bytes" so the guest's ReadAll on the body
-// unblocks and the guest can run the hook + write the ack.
-type closeWriter interface{ CloseWrite() error }
 
 // resumeHookGuestPort is the AF_VSOCK port the guest-init resume
 // listener binds. Must match guest/init/listen_resume_linux.go's
 // VsockResumePort.
 const resumeHookGuestPort = 1024
+
+// resumeHookEntropyBytes is the count of host-supplied CSPRNG bytes sent
+// in every resume payload. The guest injects them into /dev/urandom via
+// ioctl(RNDADDENTROPY) BEFORE reading /proc/sys/kernel/random/uuid, so
+// each restore's draw is unique even when virtio-rng state is identical
+// (it is snapshotted, so /dev/hwrng returns the same bytes per restore).
+// 256 bits of entropy is enough to fully re-key the pool for UUID
+// generation. ADR-022 §"Why the host ships entropy".
+const resumeHookEntropyBytes = 256
+
+// resumeHookMaxBodyBytes is the upper bound on the JSON-marshaled body of
+// the resume-hook payload. The body is constructed from exactly
+// resumeHookEntropyBytes of CSPRNG output (base64 → 4/3 expansion) plus
+// the JSON envelope; 8 KiB is comfortably above the current ~400 B
+// observed size and well under int32/2, so a future bump to
+// resumeHookEntropyBytes can never push 8+len(body) into overflow
+// territory. The guest's VsockResumeMaxEntropyBytes is the matching cap
+// on the receiving side. CodeQL go/allocation-size-overflow guards.
+const resumeHookMaxBodyBytes = 8 * 1024
 
 // readConnectAck consumes the "OK <hostside_port>\n" reply from
 // Firecracker. Returns the first whitespace-delimited token. Reads
@@ -316,9 +333,10 @@ func readConnectAck(conn net.Conn) (string, error) {
 //     guest writes back a 1-byte ack.
 //
 // Payload format (ADR-022): 4-byte big-endian msg type (= 1 =
-// MSG_RESUME) + JSON body {"hostTimeUnixNano": N}. The guest's
-// listenResumeHook (guest/init/listen_resume_linux.go) reads the same
-// shape and writes back ack=0 (ok) or ack=1 (nack).
+// MSG_RESUME) + JSON body {"hostTimeUnixNano": N, "entropy": "<base64>"}
+// where entropy is 256 bytes of fresh CSPRNG output from the host.
+// The guest's listenResumeHook (guest/init/listen_resume_linux.go) reads
+// the same shape and writes back ack=0 (ok) or ack=1 (nack).
 //
 // We fail closed: any error (dial timeout, CONNECT failure, payload
 // write failure, nack) returns wrapped. A restored VM with snapshot-
@@ -385,24 +403,47 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 		return fmt.Errorf("vmm: CONNECT rejected: %q", connectAck)
 	}
 
-	// Step 3: write the resume-hook payload. 4-byte BE msg type + JSON body.
+	// Step 3: write the resume-hook payload. 4-byte BE msg type + 4-byte BE
+	// body length + JSON body. The length prefix lets the guest read exactly
+	// N bytes; we deliberately do NOT close our write half — the connection
+	// stays open for the ack roundtrip (some AF_VSOCK proxies don't propagate
+	// CloseWrite promptly, so depending on it produced EOF-mid-ack in the
+	// V6 metal test).
+	//
+	// The body carries fresh entropy bytes from the host's CSPRNG. The guest
+	// injects them into /dev/urandom via ioctl(RNDADDENTROPY) BEFORE reading
+	// /proc/sys/kernel/random/uuid. Without this, both restores from one
+	// snapshot read the SAME 256 bytes from /dev/hwrng (virtio-rng state is
+	// captured in the snapshot), inject the same input into the pool, and
+	// draw the same UUID — spec §11 V6 fails on every concurrent restore.
+	// See ADR-022 §"Why the host ships entropy".
+	entropy := make([]byte, resumeHookEntropyBytes)
+	if _, err := rand.Read(entropy); err != nil {
+		return fmt.Errorf("vmm: read host entropy: %w", err)
+	}
 	body, err := json.Marshal(struct {
-		HostTimeUnixNano int64 `json:"hostTimeUnixNano"`
-	}{HostTimeUnixNano: hostTimeUnixNano})
+		HostTimeUnixNano int64  `json:"hostTimeUnixNano"`
+		Entropy          string `json:"entropy"` // base64; guest decodes + ioctl(RNDADDENTROPY)
+	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy)})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}
-	msg := make([]byte, 4+len(body))
+	// Bound the marshal output defensively. The body is constructed from
+	// exactly resumeHookEntropyBytes bytes of CSPRNG + a JSON envelope, so
+	// in practice it stays under ~400 B — but a future bump of the entropy
+	// constant or a hostile build tag could push len(body) into overflow
+	// territory, and `make([]byte, 8+len(body))` would panic with
+	// "makeslice: len out of range". CodeQL go/allocation-size-overflow
+	// flags this; the cap is the actual defense.
+	if len(body) > resumeHookMaxBodyBytes {
+		return fmt.Errorf("vmm: resume body %d bytes exceeds %d cap", len(body), resumeHookMaxBodyBytes)
+	}
+	msg := make([]byte, 8+len(body))
 	binary.BigEndian.PutUint32(msg[:4], resumeHookMsgResume)
-	copy(msg[4:], body)
-	// Step 3 ends; Step 4 reads the 1-byte ack.
+	binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))
+	copy(msg[8:], body)
 	if _, err := conn.Write(msg); err != nil {
 		return fmt.Errorf("vmm: write resume request: %w", err)
-	}
-	// Close our write half so the guest's ReadAll unblocks and it can
-	// write the ack.
-	if cw, ok := conn.(closeWriter); ok {
-		_ = cw.CloseWrite()
 	}
 
 	// Step 4: read the 1-byte ack from the guest.
@@ -711,6 +752,24 @@ func copyTree(src, dst string, maxBytes int64) error {
 
 func (v *JailerVMM) mkChroot(instance string) (string, error) {
 	root := v.chrootRoot(instance)
+	// Wipe any leftover state from a prior failed Boot/Restore — jailer's
+	// chroot-creation step (mknod /dev/net/tun, mkdir -p /dev/net, etc.)
+	// is NOT idempotent and panics with EEXIST on a half-built chroot.
+	// RemoveAll on a non-existent path is a no-op, so this is safe for
+	// the common case too.
+	//
+	// Concurrency contract: caller must hold the per-instance Lease (and
+	// therefore the unique-while-live invariant on `instance`) for the
+	// duration of Boot/Restore. The only race surface is a retry-after-
+	// failure that fires before the prior call's defer-cleanup ran; in
+	// that window the second RemoveAll nukes the first's freshly-built
+	// chroot mid-boot. Boot/Restore's deferred Kill on failure makes
+	// this self-correcting on the next retry. If we ever call Boot/
+	// Restore from a path that does NOT go through Lease uniqueness,
+	// gate this with v.mu (held for the whole Boot/Restore).
+	if err := os.RemoveAll(root); err != nil {
+		return "", fmt.Errorf("vmm: wipe stale chroot: %w", err)
+	}
 	if err := os.MkdirAll(root, 0o750); err != nil {
 		return "", fmt.Errorf("vmm: mkdir chroot: %w", err)
 	}

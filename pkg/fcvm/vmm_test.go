@@ -1,7 +1,10 @@
 package fcvm
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -638,8 +642,12 @@ func TestMkChroot_CreatesDirectory(t *testing.T) {
 	}
 }
 
-// TestMkChroot_BadBaseReturnsError covers MkdirAll failing on a path under a
-// file (not a dir). The error must wrap as "vmm: mkdir chroot: ...".
+// TestMkChroot_BadBaseReturnsError covers mkChroot failing on a path under a
+// file (not a dir). mkChroot first RemoveAll's any stale state (so jailer
+// gets a fresh /dev/net/tun) then MkdirAll's the path; either step can be
+// the one that fails here. Pin both wrappers explicitly — relaxing to just
+// "chroot" would silently accept a future refactor that introduces an
+// unrelated chroot-step before RemoveAll.
 func TestMkChroot_BadBaseReturnsError(t *testing.T) {
 	base := t.TempDir()
 	// Plant a file at the path MkdirAll would need to be a directory.
@@ -650,10 +658,11 @@ func TestMkChroot_BadBaseReturnsError(t *testing.T) {
 	v := NewJailerVMM(base, time.Second)
 	_, err := v.mkChroot("anything")
 	if err == nil {
-		t.Fatal("expected MkdirAll error")
+		t.Fatal("expected mkChroot error")
 	}
-	if !strings.Contains(err.Error(), "mkdir chroot") {
-		t.Errorf("error %q missing 'mkdir chroot'", err.Error())
+	msg := err.Error()
+	if !strings.Contains(msg, "wipe stale chroot") && !strings.Contains(msg, "mkdir chroot") {
+		t.Errorf("error %q must wrap either 'wipe stale chroot' or 'mkdir chroot' (got %q)", msg, msg)
 	}
 }
 
@@ -739,8 +748,13 @@ func TestBoot_MkChrootFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected mkChroot failure")
 	}
-	if !strings.Contains(err.Error(), "mkdir chroot") {
-		t.Errorf("error %q not from mkChroot", err.Error())
+	// mkChroot now RemoveAll's the path first (to scrub stale jailer state
+	// from a prior failed run) then MkdirAll's it. Either step can fail
+	// on a non-empty parent. Pin both wrappers so the test catches a future
+	// refactor that introduces an unrelated chroot-step before RemoveAll.
+	msg := err.Error()
+	if !strings.Contains(msg, "wipe stale chroot") && !strings.Contains(msg, "mkdir chroot") {
+		t.Errorf("error %q must wrap either 'wipe stale chroot' or 'mkdir chroot'", msg)
 	}
 }
 
@@ -830,9 +844,9 @@ func TestBuildColdBootConfigIncludesVsockDevice(t *testing.T) {
 // TriggerResumeHook dials. It mirrors the FC host-initiated protocol:
 // accept, expect "CONNECT <port>\n", reply "OK <hostside_port>\n",
 // then read the resume-hook payload ([4 BE msg type][JSON body]) and
-// write the 1-byte ack. The captured HostTimeUnixNano flows through
-// onHook so tests can assert wire formatting.
-func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hostTimeUnixNano int64) error) {
+// write the 1-byte ack. The captured HostTimeUnixNano + entropy bytes flow
+// through onHook so tests can assert wire formatting.
+func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hostTimeUnixNano int64, entropy []byte) error) {
 	t.Helper()
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -875,18 +889,31 @@ func fakeVsockUDSServer(t *testing.T, sockPath string, ack byte, onHook func(hos
 			return
 		}
 
-		// Step 3: read the resume-hook payload.
-		body, err := io.ReadAll(c)
-		if err != nil || len(body) < 4 {
+		// Step 3: read the resume-hook payload. Format: 4-byte BE msg type +
+		// 4-byte BE body length + JSON body. Read exactly 8 bytes header,
+		// then the body length bytes.
+		var hdr [8]byte
+		if _, err := io.ReadFull(c, hdr[:]); err != nil {
 			_, _ = c.Write([]byte{1})
 			return
 		}
-		var nano int64
-		_ = json.Unmarshal(body[4:], &struct {
-			Nano *int64 `json:"hostTimeUnixNano"`
-		}{Nano: &nano})
+		bodyLen := binary.BigEndian.Uint32(hdr[4:8])
+		body := make([]byte, bodyLen)
+		if _, err := io.ReadFull(c, body); err != nil {
+			_, _ = c.Write([]byte{1})
+			return
+		}
+		var payload struct {
+			Nano     int64  `json:"hostTimeUnixNano"`
+			EntropyB string `json:"entropy"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		var entropy []byte
+		if payload.EntropyB != "" {
+			entropy, _ = base64.StdEncoding.DecodeString(payload.EntropyB)
+		}
 		if onHook != nil {
-			if err := onHook(nano); err != nil {
+			if err := onHook(payload.Nano, entropy); err != nil {
 				_, _ = c.Write([]byte{1})
 				return
 			}
@@ -931,12 +958,44 @@ func TestTriggerResumeHookDialSuccess(t *testing.T) {
 	sockPath := filepath.Join(root, VsockUDSSocketName)
 
 	var seenNano int64
+	var seenEntropy []byte
+	var firstEntropy []byte
 	var callCount int32
-	fakeVsockUDSServer(t, sockPath, 0, func(nano int64) error {
-		atomic.AddInt32(&callCount, 1)
-		seenNano = nano
-		return nil
-	})
+	// fakeVsockUDSServer's accept loop is single-shot. For the back-to-back
+	// dials below (assertion: every dial sends fresh entropy), spin up a
+	// persistent loop instead. We do that inline so the test doesn't need
+	// a new helper.
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen %s: %v", sockPath, err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	// mu guards seenNano / seenEntropy / firstEntropy against concurrent
+	// writes from the per-connection goroutines. Without it, go test -race
+	// flags the back-to-back test (a previous version of this test relied
+	// on the callCount atomic for ordering but read byte slices with no
+	// happens-before edge).
+	var mu sync.Mutex
+	go func() {
+		for i := 0; i < 2; i++ {
+			c, aErr := l.Accept()
+			if aErr != nil {
+				return
+			}
+			idx := i
+			go handleFakeVsockHook(t, c, ackOK, func(nano int64, entropy []byte) error {
+				atomic.AddInt32(&callCount, 1)
+				mu.Lock()
+				seenNano = nano
+				seenEntropy = entropy
+				if idx == 0 {
+					firstEntropy = append([]byte(nil), entropy...)
+				}
+				mu.Unlock()
+				return nil
+			})
+		}
+	}()
 
 	v := &JailerVMM{chrootBase: chrootBase, fcName: "f"}
 	lease := Lease{Instance: instance, Slot: 7}
@@ -944,11 +1003,115 @@ func TestTriggerResumeHookDialSuccess(t *testing.T) {
 	if err := v.TriggerResumeHook(context.Background(), lease, wantNano); err != nil {
 		t.Fatalf("TriggerResumeHook: %v", err)
 	}
-	if atomic.LoadInt32(&callCount) != 1 {
-		t.Errorf("hook invocations = %d, want 1", callCount)
+	if err := v.TriggerResumeHook(context.Background(), lease, wantNano); err != nil {
+		t.Fatalf("TriggerResumeHook (second): %v", err)
 	}
-	if seenNano != wantNano {
-		t.Errorf("hook saw hostTimeUnixNano=%d, want %d", seenNano, wantNano)
+	// Wait for both goroutines to finish recording.
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&callCount) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&callCount) != 2 {
+		t.Fatalf("hook invocations = %d, want 2", callCount)
+	}
+	mu.Lock()
+	recordedNano := seenNano
+	recordedEntropy := append([]byte(nil), seenEntropy...)
+	recordedFirst := append([]byte(nil), firstEntropy...)
+	mu.Unlock()
+	if recordedNano != wantNano {
+		t.Errorf("hook saw hostTimeUnixNano=%d, want %d", recordedNano, wantNano)
+	}
+	if len(recordedEntropy) != resumeHookEntropyBytes {
+		t.Errorf("hook saw entropy of %d bytes, want %d (host must ship exactly resumeHookEntropyBytes)", len(recordedEntropy), resumeHookEntropyBytes)
+	}
+	// Spec §11 V6 guarantee: every dial sends FRESH entropy. Two back-to-back
+	// triggers with the same lease MUST yield different bytes (crypto/rand is
+	// the only source — no caching, no slot-derivation, no deterministic seed).
+	if len(recordedFirst) != resumeHookEntropyBytes {
+		t.Fatalf("first entropy = %d bytes, want %d", len(recordedFirst), resumeHookEntropyBytes)
+	}
+	if bytes.Equal(recordedFirst, recordedEntropy) {
+		t.Errorf("two back-to-back dials sent identical entropy; V6 acceptance would fail (host must use crypto/rand, not a fixed seed)")
+	}
+}
+
+// handleFakeVsockHook drives one connection through the CONNECT-port handshake
+// + length-prefixed resume payload + ack roundtrip. Extracted so the
+// back-to-back test can spin up a multi-shot listener without a new helper.
+func handleFakeVsockHook(t *testing.T, c net.Conn, ack byte, onHook func(hostTimeUnixNano int64, entropy []byte) error) {
+	t.Helper()
+	defer func() { _ = c.Close() }()
+	connectBuf := make([]byte, 0, 32)
+	readByte := make([]byte, 1)
+	for {
+		if _, err := c.Read(readByte); err != nil {
+			_, _ = c.Write([]byte{1})
+			return
+		}
+		connectBuf = append(connectBuf, readByte[0])
+		if readByte[0] == '\n' {
+			break
+		}
+		if len(connectBuf) > 32 {
+			_, _ = c.Write([]byte{1})
+			return
+		}
+	}
+	if !strings.HasPrefix(string(connectBuf), "CONNECT ") {
+		_, _ = c.Write([]byte{1})
+		return
+	}
+	if _, err := c.Write([]byte("OK 1073741824\n")); err != nil {
+		return
+	}
+	var hdr [8]byte
+	if _, err := io.ReadFull(c, hdr[:]); err != nil {
+		_, _ = c.Write([]byte{1})
+		return
+	}
+	bodyLen := binary.BigEndian.Uint32(hdr[4:8])
+	body := make([]byte, bodyLen)
+	if _, err := io.ReadFull(c, body); err != nil {
+		_, _ = c.Write([]byte{1})
+		return
+	}
+	var payload struct {
+		Nano     int64  `json:"hostTimeUnixNano"`
+		EntropyB string `json:"entropy"`
+	}
+	_ = json.Unmarshal(body, &payload)
+	var entropy []byte
+	if payload.EntropyB != "" {
+		entropy, _ = base64.StdEncoding.DecodeString(payload.EntropyB)
+	}
+	if onHook != nil {
+		if err := onHook(payload.Nano, entropy); err != nil {
+			_, _ = c.Write([]byte{1})
+			return
+		}
+	}
+	_, _ = c.Write([]byte{ack})
+}
+
+const ackOK = byte(0)
+
+// TestResumeHookBodyCapCoversEntropy pins the relationship between
+// resumeHookEntropyBytes and resumeHookMaxBodyBytes. The cap is the
+// CodeQL go/allocation-size-overflow guard — a future bump to either
+// constant must keep `base64.StdEncoding.EncodedLen(entropy) + JSON
+// envelope overhead` strictly below the cap, or the make() in
+// TriggerResumeHook will allocate a negative-length slice and panic.
+// This test catches a future bump that breaks the invariant.
+func TestResumeHookBodyCapCoversEntropy(t *testing.T) {
+	const envelopeSlack = 128 // JSON keys + punctuation + future expansion
+	maxEncoded := base64.StdEncoding.EncodedLen(resumeHookEntropyBytes)
+	if maxEncoded+envelopeSlack >= resumeHookMaxBodyBytes {
+		t.Errorf("entropy cap too close to body cap: entropy encodes to %d bytes + %d envelope slack >= %d (cap); bump resumeHookMaxBodyBytes first",
+			maxEncoded, envelopeSlack, resumeHookMaxBodyBytes)
+	}
+	if resumeHookMaxBodyBytes > 1<<20 {
+		t.Errorf("body cap %d looks too large (> 1 MiB); check the design", resumeHookMaxBodyBytes)
 	}
 }
 
