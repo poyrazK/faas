@@ -30,29 +30,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// StatusPage is the JSON shape the public status page reads. Fields
-// are documented in the dashboard README; renames here must
-// propagate to deploy/statuspage/index.html.
-type StatusPage struct {
-	// APIAvailabilityPct is the rolling 5-minute 2xx rate over
-	// gateway_requests_total, expressed 0..100.
-	APIAvailabilityPct float64 `json:"api_availability_pct"`
-	// WakeP95MS is the p95 of gateway_wake_latency_seconds over the
-	// last 5 minutes, in milliseconds.
-	WakeP95MS float64 `json:"wake_p95_ms"`
-	// BuildSuccessPct is the rolling 5-minute success rate of
-	// builderd builds (completed/success ÷ (completed/success +
-	// completed/failure)).
-	BuildSuccessPct float64 `json:"build_success_pct"`
-	// AsOf is the UTC timestamp the snapshot was taken. The HTML
-	// renders "Updated 3 min ago" off this.
-	AsOf time.Time `json:"as_of"`
-	// Source is "prometheus" or "degraded: <reason>" so an
-	// operator tailing the JSON can tell at a glance.
-	Source string `json:"source"`
-}
+// StatusPage is the JSON shape the public status page reads. Defined
+// in pkg/api so the faas CLI can import it without a back-reference
+// into cmd/apid; this file uses the same alias so the existing call
+// sites don't need to be rewritten. Renames here must propagate to
+// deploy/statuspage/index.html.
+type StatusPage = api.StatusPage
 
 // statusHandler serves GET /status. Reads the static HTML from disk
 // (path from FAAS_STATUSPAGE_PATH or /etc/faas/statuspage/index.html

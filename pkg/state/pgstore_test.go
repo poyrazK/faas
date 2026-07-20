@@ -295,3 +295,129 @@ func TestPg_ListLatestInstancePerApp(t *testing.T) {
 		t.Errorf("latest = %q, want %q (the newer of two)", ins.ID, newer.ID)
 	}
 }
+
+// --- RenameApp (issue #63) --------------------------------------------------
+//
+// PgStore counterparts of the MemStore RenameApp tests in memstore_test.go.
+// These lock down the SQL UPDATE + RETURNING shape (pgstore.go:333) and the
+// mapErr → unique-violation → ErrConflict translation (pgstore.go:1470).
+// pgtest.Open auto-skips when Postgres isn't reachable; on a dev box they
+// pin the error contract against a real cluster (ADR-017).
+
+// seedTwoAppsPg creates two accounts + two apps with distinct slugs and
+// returns the (accountID, appID, otherAccountID, otherAppID) tuples.
+func seedTwoAppsPg(t *testing.T, s *state.PgStore, ctx context.Context, a, b, slugA, slugB string) (idA, appA, idB, appB string) {
+	t.Helper()
+	accA, err := s.CreateAccount(ctx, a, api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount A: %v", err)
+	}
+	accB, err := s.CreateAccount(ctx, b, api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount B: %v", err)
+	}
+	appAResp, err := s.CreateApp(ctx, state.App{
+		AccountID: accA.ID, Slug: slugA, Type: state.AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp A: %v", err)
+	}
+	appBResp, err := s.CreateApp(ctx, state.App{
+		AccountID: accB.ID, Slug: slugB, Type: state.AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp B: %v", err)
+	}
+	return accA.ID, appAResp.ID, accB.ID, appBResp.ID
+}
+
+func TestPg_RenameApp_HappyPath(t *testing.T) {
+	s, ctx := pgStore(t)
+	accID, _, _, _ := seedTwoAppsPg(t, s, ctx, "rename@x.com", "other@x.com", "pg-old", "pg-other")
+
+	got, err := s.RenameApp(ctx, accID, "pg-old", "pg-new")
+	if err != nil {
+		t.Fatalf("RenameApp: %v", err)
+	}
+	if got.Slug != "pg-new" {
+		t.Errorf("Slug = %q, want pg-new", got.Slug)
+	}
+
+	// Lookup by new slug must succeed; old slug must be gone.
+	if _, err := s.AppBySlug(ctx, "pg-new"); err != nil {
+		t.Errorf("AppBySlug(pg-new): %v", err)
+	}
+	if _, err := s.AppBySlug(ctx, "pg-old"); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("AppBySlug(pg-old) = %v, want ErrNotFound", err)
+	}
+}
+
+// TestPg_RenameApp_SlugTakenReturnsErrConflict is the load-bearing one:
+// the apps.slug UNIQUE constraint (migrations/00001_init.sql:33) must
+// translate via mapErr → pgerrcode.UniqueViolation → ErrConflict. If
+// this test fails with a different error, the apid 409 path is broken.
+func TestPg_RenameApp_SlugTakenReturnsErrConflict(t *testing.T) {
+	s, ctx := pgStore(t)
+	accID, _, _, _ := seedTwoAppsPg(t, s, ctx, "take@x.com", "other@x.com", "pg-victim", "pg-blocker")
+
+	_, err := s.RenameApp(ctx, accID, "pg-victim", "pg-blocker")
+	if !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("RenameApp onto existing slug = %v, want ErrConflict (unique violation)", err)
+	}
+	// Source row must be untouched.
+	got, err := s.AppBySlug(ctx, "pg-victim")
+	if err != nil {
+		t.Fatalf("AppBySlug(pg-victim) after failed rename: %v", err)
+	}
+	if got.Slug != "pg-victim" {
+		t.Errorf("victim.Slug = %q, want pg-victim (rename must roll back)", got.Slug)
+	}
+}
+
+func TestPg_RenameApp_UnknownSlugReturnsErrNotFound(t *testing.T) {
+	s, ctx := pgStore(t)
+	accID, _, _, _ := seedTwoAppsPg(t, s, ctx, "ghost-pg@x.com", "other@x.com", "pg-real", "pg-other")
+
+	_, err := s.RenameApp(ctx, accID, "pg-ghost", "anything")
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("RenameApp on missing slug = %v, want ErrNotFound", err)
+	}
+}
+
+// TestPg_RenameApp_CrossAccountIsolation locks the WHERE clause down:
+// account A's RenameApp(ctx, accA.ID, ...) MUST NOT touch account B's
+// row, regardless of newSlug. The source lookup is scoped by
+// account_id; without it, A could mutate B's app.
+func TestPg_RenameApp_CrossAccountIsolation(t *testing.T) {
+	s, ctx := pgStore(t)
+	accA, _, accB, _ := seedTwoAppsPg(t, s, ctx, "pg-a@x.com", "pg-b@x.com", "pg-alpha", "pg-beta")
+
+	// A cannot rename B's slug — must look like ErrNotFound (no row
+	// matches (accA.ID, "pg-beta")), not ErrConflict.
+	_, err := s.RenameApp(ctx, accA, "pg-beta", "pg-stolen")
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("A renaming B's slug = %v, want ErrNotFound (account_id scope)", err)
+	}
+
+	// Untouched: B's app must still resolve to B's account.
+	got, err := s.AppBySlug(ctx, "pg-beta")
+	if err != nil {
+		t.Fatalf("B's pg-beta vanished after cross-account rename attempt: %v", err)
+	}
+	if got.AccountID != accB {
+		t.Errorf("pg-beta.AccountID = %q, want %q (B's account)", got.AccountID, accB)
+	}
+
+	// Spot-check via list — pg-beta must not show up under A.
+	listA, err := s.ListApps(ctx, accA)
+	if err != nil {
+		t.Fatalf("ListApps(A): %v", err)
+	}
+	for _, a := range listA {
+		if a.Slug == "pg-beta" {
+			t.Errorf("B's pg-beta appears in A's list: %+v", a)
+		}
+	}
+}

@@ -1,0 +1,2 @@
+# Functions don't pull Flask — the runner invokes `handler(event, ctx)`
+# directly without an HTTP server.

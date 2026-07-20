@@ -339,6 +339,25 @@ func (s *PgStore) SetAppMinInstances(ctx context.Context, appID string, min int)
 	return nil
 }
 
+// RenameApp changes an app's slug atomically (issue #63). The UPDATE
+// is scoped to (account_id, oldSlug, status<>'deleted') so a wrong
+// accountID or unknown slug returns ErrNotFound via mapErr → pgx.ErrNoRows.
+// The apps.slug unique constraint surfaces a duplicate newSlug as
+// ErrConflict via mapErr → unique-violation SQLSTATE. RETURNING mirrors
+// the same scanApp shape used by AppByID.
+//
+// Both PgStore and MemStore share the same error contract so the apid
+// handler can branch on errors.Is without checking the concrete type.
+func (s *PgStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug string) (App, error) {
+	row := s.pool.QueryRow(ctx,
+		`update apps set slug = $3
+		 where account_id = $1 and slug = $2 and status <> 'deleted'
+		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
+		           max_concurrency, status, manifest, created_at, min_instances`,
+		accountID, oldSlug, newSlug)
+	return scanApp(row)
+}
+
 func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `update apps set status = 'deleted' where id = $1`, id)
 	return err

@@ -22,10 +22,16 @@ Commands:
   login        Authenticate this machine (--token for CI)
   logout       Remove the stored token
   whoami       Show the authenticated account
-  deploy       Deploy (--image REF | --tarball PATH [--runtime …] [--handler …] [--dockerfile])
+  deploy       Deploy (--image REF | --tarball PATH | --repo OWNER/NAME | --template NAME)
   apps         List your apps
+  apps ls      Alias for 'faas apps'
   apps -q      Delete an app
-  app          Get/update one app
+  app          Get/update one app (faas app <slug> [scale|rename <new>|--ram N|…])
+  ps           Show live instances + state for an app
+  status       Personal SLO numbers (availability, wake p95, build success)
+  env          Pull/push .env <-> sealed secrets (--app <slug>)
+  plan         Change plan (free|hobby|pro|scale)
+  dashboard    Open the account dashboard in your browser
   rollback     Re-promote the previous deployment
   park         Park an app cold (kill all live instances)
   wake         Wake a parked app (pulls out of snapshot)
@@ -38,7 +44,6 @@ Commands:
   logs         Tail app or deployment logs (--follow)
   version      Print the CLI version
   connect      Connect a third-party service (github)
-  deploy       Deploy (--image REF | --tarball PATH | --repo OWNER/NAME)
   open         Open the app's URL (or its dashboard page) in your browser
 
 Run 'faas <command> --help' for command details.
@@ -74,13 +79,30 @@ func run(args []string) int {
 	case "open":
 		return cmdOpen(args[1:])
 	case "apps":
+		// `faas apps ls` is an alias for the default list action.
+		if len(args) > 1 && args[1] == "ls" {
+			return cmdApps()
+		}
 		// `faas apps -q <slug>` is the delete path.
 		if len(args) > 1 && (args[1] == "-q" || args[1] == "--quiet") {
 			return cmdAppsRm(args[2:])
 		}
 		return cmdApps()
 	case appSlugFallback:
-		return cmdApp(args[1:])
+		// Routes to cmdAppDispatch which knows the new scale/rename
+		// subcommand form and falls back to the legacy flag-form
+		// (commands2.go::cmdApp) for backwards compat.
+		return cmdAppDispatch(args[1:])
+	case "ps":
+		return cmdPS(args[1:])
+	case "status":
+		return cmdStatus(args[1:])
+	case "env":
+		return cmdEnv(args[1:])
+	case "plan":
+		return cmdPlan(args[1:])
+	case "dashboard":
+		return cmdDashboard(args[1:])
 	case "rollback":
 		return cmdRollback(args[1:])
 	case "park":
