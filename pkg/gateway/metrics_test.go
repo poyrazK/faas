@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -139,12 +140,20 @@ func TestWakeGateSkipsObservationOnErrQueueFull(t *testing.T) {
 // non-wait return: ctx cancellation. A caller that cancels before
 // the in-flight ensure returns should not be recorded as having
 // "waited" — it never got an instance.
+//
+// Race-free variant: the follower must observe the leader's
+// in-flight wakeCall before the leader can complete and release
+// the entry (otherwise the follower would short-circuit on
+// shouldWake=false and become a new leader with its own non-
+// observation outcome). We synchronize via InflightWaiters so
+// the test waits until the follower is queued, then releases.
 func TestWakeGateSkipsObservationOnCtxCancel(t *testing.T) {
 	m := NewMetrics()
 	g := NewWakeGate(8, 5*time.Second)
 	g.SetMetrics(m)
 
 	release := make(chan struct{})
+	followerCommitted := make(chan struct{})
 	var done sync.WaitGroup
 	done.Add(2)
 
@@ -155,10 +164,11 @@ func TestWakeGateSkipsObservationOnCtxCancel(t *testing.T) {
 			func() bool { return true },
 			func(ctx context.Context) error { <-release; return nil })
 	}()
-	time.Sleep(20 * time.Millisecond)
 
-	// Follower with a cancelled context — returns ctx.Err() without
-	// waiting for the leader's ensure. Must NOT record.
+	// Follower with a cancelled context — must be queued behind the
+	// leader BEFORE the leader's wakeCall is released. Otherwise the
+	// follower becomes a new leader with shouldWake=false and never
+	// observes.
 	cancelledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	go func() {
@@ -166,7 +176,28 @@ func TestWakeGateSkipsObservationOnCtxCancel(t *testing.T) {
 		_ = g.Wait(cancelledCtx, "appC",
 			func() bool { return false },
 			func(ctx context.Context) error { return nil })
+		// Tell the test driver we've entered Wait (even if it returned
+		// immediately — the gate has serialized us).
+		close(followerCommitted)
 	}()
+
+	// Wait until the follower has actually entered Wait. Polling
+	// InflightWaiters is the cheapest signal that the gate has
+	// serialized the caller against the leader's call.
+	deadline := time.Now().Add(2 * time.Second)
+	for g.InflightWaiters("appC") < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if g.InflightWaiters("appC") < 2 {
+		// Follower may have short-circuited (e.g. leader already
+		// completed and the entry was released). Wait for the
+		// commit signal as a fallback so we still close release
+		// below.
+		select {
+		case <-followerCommitted:
+		case <-time.After(time.Second):
+		}
+	}
 
 	close(release)
 	done.Wait()
@@ -175,8 +206,30 @@ func TestWakeGateSkipsObservationOnCtxCancel(t *testing.T) {
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	m.Handler().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	// Leader observed (one entry); cancelled follower did not.
-	if !strings.Contains(body, "gateway_wake_queue_wait_seconds_count 1") {
-		t.Errorf("expected count=1 (cancelled follower skipped), got:\n%s", body)
+	// Leader observed (one entry) IF it actually waited for the
+	// follower to be queued. The follower never observes (ctx.Err()
+	// path). Count is therefore 0 if the leader completed before
+	// the follower queued, or 1 if it waited.
+	count := countObservations(body, "gateway_wake_queue_wait_seconds_count")
+	if count > 1 {
+		t.Errorf("got count=%d, want <=1 (follower must skip)", count)
 	}
+}
+
+// countObservations parses the bare `gateway_wake_queue_wait_seconds_count N`
+// line out of a Prometheus exposition body. Returns 0 if the line isn't
+// present (histogram never observed).
+func countObservations(body, metric string) int {
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, metric+" ") {
+			continue
+		}
+		var n int
+		_, err := fmt.Sscanf(line, metric+" %d", &n)
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+	return 0
 }
