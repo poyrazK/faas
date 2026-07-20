@@ -12,6 +12,7 @@ const (
 	// scheme, drive0). One per runtime; plain apps boot a generic base.
 	baseDir = "/srv/fc/base"
 	// layerDir holds per-deployment app layers (drive1). One ext4 per deployment.
+	// Default location; layerPath uses deployments.rootfs_path when set.
 	layerDir = "/srv/fc/layers"
 	// snapDir holds per-deployment snapshot blobs (mem file + vmstate).
 	snapDir = "/srv/fc/snap"
@@ -32,7 +33,20 @@ func basePath(runtime string) string {
 }
 
 // layerPath returns the drive1 per-app layer for a deployment.
-func layerPath(deploymentID string) string {
+//
+// imaged stamps the canonical path (appsRoot/<slug>/<deploymentID>.ext4) into
+// deployments.rootfs_path after Build succeeds (pkg/imaged/handler.go);
+// schedd trusts that row rather than recomputing. The legacy constant
+// layerDir is the fallback for rows where imaged predates the path stamp
+// (rare in practice — every new row gets a path on creation).
+//
+// Two-arg signature (rootfsPath, deploymentID) keeps this helper decoupled
+// from pkg/state — sched doesn't need the full Deployment struct to derive
+// a path, and the struct's other fields aren't on this code path.
+func layerPath(rootfsPath, deploymentID string) string {
+	if rootfsPath != "" {
+		return rootfsPath
+	}
 	return layerDir + "/" + deploymentID + ".ext4"
 }
 

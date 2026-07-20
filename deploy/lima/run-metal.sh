@@ -8,6 +8,12 @@
 #
 #   sudo -E env "PATH=$PATH" ./deploy/lima/run-metal.sh                 # M0 gate
 #   sudo -E env "PATH=$PATH" ./deploy/lima/run-metal.sh -run TestMetal  # all metal
+#   sudo -E env "PATH=$PATH" RUN_TARGET=./cmd/e2e/ \
+#     ./deploy/lima/run-metal.sh -run 'TestDeployWakeMetal/deploy-then-parked'  # M5 cold-boot
+#
+# RUN_TARGET selects the Go package passed to `go test`. Default is
+# ./pkg/fcvm/ (the M0/M1/M3 tests). The M5 §14 acceptance lives in
+# ./cmd/e2e/ and is invoked via `make metal-lima-m5`.
 #
 # NOTE: TestMetalHelloBoot (M0) drives the full jailer→firecracker→tap→netns→DNAT
 # path and boots end-to-end here — vmmd stages the jail for the unprivileged uid
@@ -79,9 +85,9 @@ if ! mountpoint -q /sys/fs/cgroup/faas-tenant.slice; then
     done
   fi
 fi
-# Re-use the original /sys/fs/cgroup path the production code already targets;
-# no need to point cgroupRoot elsewhere on Lima.
-export FAAS_LIMA_CGROUP_ROOT="/sys/fs/cgroup"
+# Production code targets /sys/fs/cgroup directly (pkg/fcvm/cgroup.go:14
+# hardcodes it; no env knob is read at runtime). The Lima cgroup shim
+# above keeps that path writable; no further override is needed.
 
 # ARM64-Lima shim: jailer reads CPU cache sizes from sysfs
 # (/sys/devices/system/cpu/cpuN/cache/indexM/{size,coherency_line_size,...}) and
@@ -102,10 +108,11 @@ for _idx in /sys/devices/system/cpu/cpu[0-9]*/cache/index[0-9]*; do
   mount --bind "$_tmp" "$_idx"
 done
 
+RUN_TARGET="${RUN_TARGET:-./pkg/fcvm/}"
 RUN_ARGS=("-run" "TestMetalHelloBoot")
 if [ "$#" -gt 0 ]; then
   RUN_ARGS=("$@")
 fi
 
-echo "kernel=$FAAS_TEST_KERNEL fc=$FAAS_TEST_FC_VERSION"
-exec go test -tags metal -count=1 -v "${RUN_ARGS[@]}" ./pkg/fcvm/
+echo "kernel=$FAAS_TEST_KERNEL fc=$FAAS_TEST_FC_VERSION target=$RUN_TARGET"
+exec go test -tags metal -count=1 -v "${RUN_ARGS[@]}" "$RUN_TARGET"

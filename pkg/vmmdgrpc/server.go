@@ -98,6 +98,7 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 	inst, err := s.vmm.Wake(ctx, wr)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
+		s.log.Error("vmmd: cold boot failed", "instance", req.GetInstance(), "err", err.Error())
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	return wakeResponseFromInstance(req.GetInstance(), wr, inst, vmmdpb.WakeMethod_WAKE_COLD_BOOT), nil

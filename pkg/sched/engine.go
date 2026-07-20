@@ -125,7 +125,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	}
 
 	spec := AppSpec{
-		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep.ID),
+		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep.RootfsPath, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
 		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),
@@ -179,6 +179,15 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return err
 	}
 
+	// Load the deployment row so layerPath can read the rootfs_path imaged
+	// stamped. Missing row (race with apid? — shouldn't happen, schedd only
+	// primes after receiving snapshot_prime for a row imaged has already
+	// built) is treated as a hard error.
+	dep, err := e.store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return fmt.Errorf("sched: prime: load deployment: %w", err)
+	}
+
 	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB)
 	if err != nil {
 		return fmt.Errorf("sched: prime: create instance: %w", err)
@@ -194,7 +203,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	}
 
 	spec := AppSpec{
-		BasePath: basePath(app.Runtime), LayerPath: layerPath(deploymentID),
+		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep.RootfsPath, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
 		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),

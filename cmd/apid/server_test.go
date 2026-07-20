@@ -168,7 +168,10 @@ func TestCreateDeploymentImage(t *testing.T) {
 	}
 	var out api.DeploymentResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if out.ImageDigest != digest || out.Status != "pending" {
+	// apid stores the full OCI reference into deployments.image_digest
+	// (issue #53 / M5 acceptance on Lima): the OCI puller in imaged needs
+	// the host to dial the right registry, not a bare sha256:... token.
+	if out.ImageDigest != "registry.example.com/x@"+digest || out.Status != "pending" {
 		t.Errorf("unexpected deployment: %+v", out)
 	}
 }

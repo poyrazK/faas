@@ -87,6 +87,11 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false
 	limactl shell --workdir "$(CURDIR)" faas-metal sudo ./deploy/lima/run-metal.sh
 
+.PHONY: metal-lima-m5
+metal-lima-m5: ## Run the M5 §14 deploy-to-park cold-boot acceptance on Lima (subtest 1 only)
+	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false
+	limactl shell --workdir "$(CURDIR)" faas-metal sudo env RUN_TARGET=./cmd/e2e/ ./deploy/lima/run-metal.sh -run 'TestDeployWakeMetal/deploy-then-parked'
+
 .PHONY: lint
 lint: egress-check ## golangci-lint via go tool (matches CI version v2.4.0) + egress artifact drift gate
 	@$(GO) tool golangci-lint run

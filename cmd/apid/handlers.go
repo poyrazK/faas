@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -114,8 +115,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	digest, ok := parseImageDigest(req.Image)
-	if !ok {
+	if !isDigestPinned(req.Image) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
 			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.DOMAIN/app@sha256:..."))
 		return
@@ -130,16 +130,26 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 			s.log.Warn("could not mark previous deployment superseded", "prev", prev.ID, "err", serr)
 		}
 	}
+	// Store the FULL ref (host/repo@sha256:...) into image_digest, not the bare
+	// digest. imaged's OCI puller needs the host to dial the right registry;
+	// `docker.io/library/sha256:...` is the wrong resolution for non-Docker
+	// deploys (issue #53 / M5 acceptance on Lima). The column name is historical
+	// — the contract is "a digest-pinned reference" enforced by isDigestPinned
+	// above; consumers should ParseReference it.
 	d, err := s.store.CreateDeployment(ctx(r), state.Deployment{
-		AppID: app.ID, ImageDigest: digest, Kind: state.DeploymentKindImage, Status: state.DeployPending,
+		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 		return
 	}
 	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged, `{"kind":"image","app_id":"`+app.ID+`","to":"`+d.ID+`"}`)
-	// codeql[go/log-injection] false-positive: d.ID and app.ID are server-generated UUIDs; digest is regex-validated to ^sha256:[0-9a-f]{64}$ by parseImageDigest (handler returns 400 on failure, never reaches this log).
-	s.log.Info("deployment created", "deployment", d.ID, "app", app.ID, "digest", digest)
+	// Sanitize req.Image at the log sink — CodeQL go/log-injection (CWE-117).
+	// isDigestPinned already rejects malformed refs with 400 before this line,
+	// but a future field/wrapper change would break that invariant. Sanitizing
+	// here means the log statement stays safe regardless of upstream changes.
+	// d.ID and app.ID are server-generated UUIDs — no sanitize needed.
+	s.log.Info("deployment created", "deployment", d.ID, "app", app.ID, "ref", logsanitize.Field(req.Image))
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d))
 }
 
@@ -206,18 +216,39 @@ var slugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
 
 func validSlug(s string) bool { return slugRe.MatchString(s) }
 
+// digestPinnedRE matches a digest-pinned OCI reference end-to-end:
+//
+//	<host>[/<repo-path>]/<name>@sha256:<64 lowercase hex>
+//
+// Where:
+//
+//	host     = RFC 1123 hostname (alnum + '-', dot-separated labels,
+//	           optional :<port>)
+//	repo     = alnum + '_-' + '.' + '/' (the OCI repository path grammar)
+//
+// The whole-ref anchoring is load-bearing: parseImageDigest feeds
+// apid.createDeployment's slog log of req.Image (CodeQL go/log-injection),
+// so a substring-search validator that only verifies the digest tail would
+// let any non-OCI prefix through (including control chars / whitespace /
+// extra @-separators). The host charset forbids control chars and
+// whitespace explicitly, so the entire accepted string is printable OCI.
+var digestPinnedRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
+
 // parseImageDigest requires a digest-pinned reference (spec gap G1: public
-// registries, digest-pinned) and returns the sha256 digest.
+// registries, digest-pinned) and returns the digest portion (sha256:...).
 func parseImageDigest(ref string) (string, bool) {
-	i := strings.Index(ref, "@sha256:")
-	if i < 0 {
+	if !digestPinnedRE.MatchString(ref) {
 		return "", false
 	}
-	digest := ref[i+1:]
-	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(digest) {
-		return "", false
-	}
-	return digest, true
+	return ref[strings.Index(ref, "@"):], true
+}
+
+// isDigestPinned reports whether ref is a digest-pinned reference (the form
+// the deploy contract requires). Use this for input validation; consumers
+// parse the full ref via oci.ParseReference so they can dial the right
+// registry host.
+func isDigestPinned(ref string) bool {
+	return digestPinnedRE.MatchString(ref)
 }
 
 func orDefault(v, def string) string {
