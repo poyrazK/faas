@@ -42,7 +42,7 @@ func cmdSecrets(args []string) int {
 		return 1
 	}
 	switch args[0] {
-	case "list":
+	case subList:
 		return secretsList(args[1:])
 	case "set":
 		return secretsSet(args[1:])
@@ -72,6 +72,9 @@ func secretsList(args []string) int {
 	resp, err := client.ListSecrets(context.Background(), *app)
 	if err != nil {
 		return printErr("List failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
 	}
 	if resp.Count == 0 {
 		_, _ = fmt.Fprintf(osStdout, "%s: no secrets (0/%d)\n", *app, resp.Quota)

@@ -47,6 +47,12 @@ Commands:
   open         Open the app's URL (or its dashboard page) in your browser
 
 Run 'faas <command> --help' for command details.
+
+Global flags:
+  --json         Machine-readable output on every command. Slices emit
+                 NDJSON (one JSON object per line, jq -c '.'); scalars
+                 emit indented JSON; errors print raw RFC 7807 to stderr.
+                 Equivalent env: FAAS_JSON=1. Negate with --json=false.
 Docs: https://docs.DOMAIN
 `
 
@@ -55,6 +61,10 @@ func main() {
 }
 
 func run(args []string) int {
+	// Issue #64 D1: every command accepts --json (top-level). Strip
+	// it before dispatch and set jsonOutput so per-command printers
+	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
+	args = applyJSONFlag(args)
 	if len(args) == 0 {
 		fmt.Print(usage)
 		return 0
@@ -78,7 +88,7 @@ func run(args []string) int {
 		return cmdConnect(args[1:])
 	case "open":
 		return cmdOpen(args[1:])
-	case "apps":
+	case dispatchApps:
 		// `faas apps ls` is an alias for the default list action.
 		if len(args) > 1 && args[1] == "ls" {
 			return cmdApps()
@@ -95,7 +105,7 @@ func run(args []string) int {
 		return cmdAppDispatch(args[1:])
 	case "ps":
 		return cmdPS(args[1:])
-	case "status":
+	case statusLiteral:
 		return cmdStatus(args[1:])
 	case "env":
 		return cmdEnv(args[1:])

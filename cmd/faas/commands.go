@@ -8,6 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // authedClient builds a client using the stored token, or errors (exit 2) if the
@@ -18,6 +21,17 @@ func authedClient() (*Client, error) {
 		return nil, errAuth(errors.New("not logged in — run 'faas login'"))
 	}
 	return NewClient(apiBase(), tok), nil
+}
+
+// authedClientWithDeployTimeout is the deploy-only variant of authedClient.
+// It uses a longer HTTP timeout so the tarball upload leg doesn't get
+// cut off at 30s when the source is large. Issue #64 D4.
+func authedClientWithDeployTimeout(timeout time.Duration) (*Client, error) {
+	tok := loadToken()
+	if tok == "" {
+		return nil, errAuth(errors.New("not logged in — run 'faas login'"))
+	}
+	return NewClientWithDeployTimeout(apiBase(), tok, timeout), nil
 }
 
 // cmdLogin implements `faas login [--token T]` (UX §2.2). The browser-paste flow
@@ -62,6 +76,9 @@ func cmdWhoami() int {
 	if err != nil {
 		return printErr("Request failed", err)
 	}
+	if jsonOutput {
+		return jsonOut(writeJSON(acct))
+	}
 	fmt.Printf("%s (%s plan, %s)\n", acct.Email, acct.Plan, acct.Status)
 	return 0
 }
@@ -74,6 +91,9 @@ func cmdApps() int {
 	apps, err := client.ListApps(context.Background())
 	if err != nil {
 		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeNDJSON(apps))
 	}
 	if len(apps) == 0 {
 		fmt.Println("No apps yet. Deploy one: faas deploy --image <ref>")
@@ -117,7 +137,22 @@ func sanitizeSlug(s string) string {
 }
 
 // printErr renders an error in the CLI's shape and returns the exit code (UX §3).
+// Under --json (issue #64 D1), it dumps the raw RFC 7807 Problem body to
+// stderr instead of the three-line render so scripts can `jq .code`.
 func printErr(title string, err error) int {
+	if jsonOutput {
+		var ae *APIError
+		if errors.As(err, &ae) {
+			_ = writeJSONProblem(ae.Problem)
+			return exitCodeForStatus(ae.Problem.Status)
+		}
+		// Non-API errors (network, etc.) — synthesise a 500 Problem so
+		// scripts still see a parseable JSON line on stderr.
+		_ = writeJSONProblem(api.Problem{
+			Status: 500, Code: "internal", Title: title, Detail: err.Error(),
+		})
+		return 1
+	}
 	var ae *APIError
 	if errors.As(err, &ae) {
 		fmt.Fprintf(os.Stderr, "✗ %s\n", ae.Error())

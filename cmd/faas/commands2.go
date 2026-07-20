@@ -38,6 +38,22 @@ const (
 	// repeated "app" string across cmd/faas (main.go dispatch,
 	// subcommand FlagSet names, fallback slug).
 	appSlugFallback = "app"
+
+	// Lifted out so goconst stops flagging the repeated "status"
+	// string across the run() dispatch (main.go), account
+	// subcommand dispatch (commands4.go), the FlagSet name
+	// (commands5.go), and the SSE stream-decoder struct tag.
+	statusLiteral = "status"
+
+	// Lifted out so goconst stops flagging the repeated "live"
+	// string across the SSE decoder, the recovery poll, and the
+	// terminalExitForDeployment branch.
+	statusLive = "live"
+
+	// cmdNames reused across the run() dispatch table (main.go) so
+	// goconst stops flagging the repeated "apps" / "status" / etc.
+	// literals. Tests intentionally keep the literal form.
+	dispatchApps = "apps"
 )
 
 // cmdApp implements `faas app <slug>` (GET /v1/apps/{slug}), `faas app <slug>
@@ -100,6 +116,9 @@ func cmdApp(args []string) int {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(a))
 		}
 		fmt.Printf("%-30s %s\n", "slug:", a.Slug)
 		fmt.Printf("%-30s %s\n", "url:", a.URL)
@@ -241,7 +260,7 @@ func cmdDeployTarball(args []string) int {
 		return 1
 	}
 
-	client, err := authedClient()
+	client, err := authedClientWithDeployTimeout(5 * time.Minute)
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
@@ -259,15 +278,19 @@ func cmdDeployTarball(args []string) int {
 		if err != nil {
 			return printErr("Deploy failed", err)
 		}
-		fmt.Printf("✓ Queued build %s for %s\n", dep.ID, slug)
-		return 0
+		if jsonOutput {
+			return jsonOut(writeJSON(dep))
+		}
+		return streamDeployLogs(client, dep)
 	}
 	dep, err := client.Deploy(ctx, slug, api.CreateDeploymentRequest{Image: *image})
 	if err != nil {
 		return printErr("Deploy failed", err)
 	}
-	fmt.Printf("✓ Deploying %s (%s)\n", slug, dep.Status)
-	return 0
+	if jsonOutput {
+		return jsonOut(writeJSON(dep))
+	}
+	return streamDeployLogs(client, dep)
 }
 
 // cmdDeployRepo binds (app, repo) via the dashboard and opens the
@@ -357,6 +380,9 @@ func cmdDomains(args []string) int {
 		if err != nil {
 			return printErr("Request failed", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeNDJSON(out))
+		}
 		for _, d := range out {
 			verified := statusPending
 			if d.Verified {
@@ -432,6 +458,9 @@ func cmdCrons(args []string) int {
 		if err != nil {
 			return printErr("Request failed", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeNDJSON(out))
+		}
 		for _, c := range out {
 			state := "enabled"
 			if !c.Enabled {
@@ -499,6 +528,9 @@ func cmdKeys(args []string) int {
 		if err != nil {
 			return printErr("Request failed", err)
 		}
+		if jsonOutput {
+			return jsonOut(writeNDJSON(out))
+		}
 		for _, k := range out {
 			fmt.Printf("%-30s %s\n", k.Label, k.Prefix)
 		}
@@ -554,6 +586,9 @@ func cmdUsage(args []string) int {
 	u, err := client.GetUsage(context.Background(), *month)
 	if err != nil {
 		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(u))
 	}
 	fmt.Printf("App %s — %d requests · %.3f GB-hours (included %d)\n", u.AppID, u.Requests, float64(u.MBSeconds)/3.6e6, u.IncludedGBHours)
 	return 0
@@ -853,4 +888,152 @@ func (s *sseLineReader) fill() error {
 		return nil
 	}
 	return err
+}
+
+// streamDeployLogs opens GET /v1/deployments/{id}/logs?follow=1 and
+// prints each `event: log` line until the server emits `event: status`.
+// On `live` the function returns 0; on `failed` it renders one of the
+// four UX §2.4 copy blocks via renderDeployFailure. If the stream
+// breaks before a terminal frame arrives, it does one cheap
+// GetDeployment poll to recover the terminal status; only if that
+// also fails (or returns a non-terminal status) does it give up and
+// tell the customer how to follow manually.
+//
+// Issue #64 D4 — replaces the old "✓ Queued build …" and exit.
+func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
+	fmt.Printf("→ build queued for %s (deployment %s)\n", dep.AppID, dep.ID)
+	path := "/v1/deployments/" + dep.ID + "/logs?follow=1"
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return printErr("Could not open log stream", err)
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		// Stream unreachable up front — try one GetDeployment poll in
+		// case the build already finished before we opened the stream
+		// (e.g., a fast tarball deploy on a slow link).
+		if final, ok := pollDeploymentFinal(c, dep); ok {
+			return terminalExitForDeployment(final)
+		}
+		fmt.Fprintf(os.Stderr, "! stream unreachable; follow manually: faas logs --deployment %s\n", dep.ID)
+		return 3
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		var p api.Problem
+		if json.Unmarshal(data, &p) == nil && p.Code != "" {
+			fmt.Fprintln(os.Stderr, (&APIError{Problem: p}).Error())
+			return exitCodeForStatus(p.Status)
+		}
+		return printErr("Build log stream failed", fmt.Errorf("status %d", resp.StatusCode))
+	}
+	dec := newSSELineReader(resp.Body)
+	for {
+		line, err := dec.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			fmt.Fprintf(os.Stderr, "! stream closed; follow manually: faas logs --deployment %s\n", dep.ID)
+			return 3
+		}
+		// event:log frames — JSON LogEntry with a `line` field.
+		var entry struct {
+			Line string `json:"line"`
+		}
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.Line != "" {
+			fmt.Println(entry.Line)
+			continue
+		}
+		// event:status terminal frame.
+		var status struct { //nolint:goconst
+			Status string `json:"status"` //nolint:goconst
+		}
+		if json.Unmarshal([]byte(line), &status) == nil &&
+			(status.Status == statusLive || status.Status == "failed") {
+			if status.Status == statusLive {
+				fmt.Printf("✓ Deployed. https://%s.apps.DOMAIN\n", dep.AppID)
+				return 0
+			}
+			return renderDeployFailure(dep)
+		}
+		// event:end backstop frame from apid's 10-min timeout.
+		// Render a clean message instead of dumping the raw SSE
+		// envelope on stdout.
+		var end struct {
+			Reason string `json:"reason"`
+		}
+		if json.Unmarshal([]byte(line), &end) == nil && end.Reason != "" {
+			fmt.Fprintf(os.Stderr, "! build log stream ended (%s); checking deployment status…\n", end.Reason)
+			break
+		}
+		// Unknown frame shape — print raw so the customer can see it.
+		fmt.Println(line)
+	}
+	// Stream ended without a terminal frame — try one GetDeployment
+	// poll so a fast build that raced the SSE open isn't reported as
+	// "follow manually" when we actually have the answer.
+	if final, ok := pollDeploymentFinal(c, dep); ok {
+		return terminalExitForDeployment(final)
+	}
+	fmt.Fprintf(os.Stderr, "! stream ended without a terminal frame; follow manually: faas logs --deployment %s\n", dep.ID)
+	return 3
+}
+
+// pollDeploymentFinal does one cheap GET on the deployment row and
+// returns (final, true) when status is live or failed. Returns
+// (_, false) on any error or non-terminal status — the caller treats
+// both as "no answer, give up cleanly".
+func pollDeploymentFinal(c *Client, dep api.DeploymentResponse) (api.DeploymentResponse, bool) {
+	got, err := c.GetDeployment(context.Background(), dep.ID)
+	if err != nil {
+		return api.DeploymentResponse{}, false
+	}
+	if got.Status == statusLive || got.Status == "failed" {
+		return got, true
+	}
+	return api.DeploymentResponse{}, false
+}
+
+// terminalExitForDeployment applies the same rendering rules as the
+// in-stream `event: status` branch, but uses the polled deployment
+// row (which has the canonical Error string from the DB).
+func terminalExitForDeployment(d api.DeploymentResponse) int {
+	if d.Status == statusLive {
+		fmt.Printf("✓ Deployed. https://%s.apps.DOMAIN\n", d.AppID)
+		return 0
+	}
+	return renderDeployFailure(d)
+}
+
+// renderDeployFailure maps the deployment's Error string to one of the
+// four UX §2.4 copy blocks and exits 3 for infra, 1 for the rest.
+func renderDeployFailure(d api.DeploymentResponse) int {
+	fmt.Fprintf(os.Stderr, "✗ %s\n", mapFailureMessage(d.Error))
+	if d.Error == "infra" {
+		return 3
+	}
+	return 1
+}
+
+// mapFailureMessage returns the user-facing copy for one of the four
+// failure classes UX §2.4 enumerates. Anything else falls back to
+// "Build failed: <err>" so the customer sees the raw class at least.
+func mapFailureMessage(err string) string {
+	switch err {
+	case "user_error":
+		return "Build failed — see log above for the failing command."
+	case "oom":
+		return "Build ran out of memory (2 GB limit). Try fewer/smaller dependencies, or upgrade for a larger build. Docs: https://docs.faas.example/build/limits#memory"
+	case "timeout":
+		return "Build exceeded 10 min. Docs: https://docs.faas.example/build/limits#timeout"
+	case "infra":
+		return "Our build system hiccuped — we've been alerted and requeued your build automatically."
+	}
+	return "Build failed: " + err
 }

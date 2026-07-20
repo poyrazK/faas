@@ -18,7 +18,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -82,6 +81,11 @@ func cmdPS(args []string) int {
 	if err != nil {
 		return printErr("Could not list instances", err)
 	}
+	if jsonOutput {
+		// NDJSON: empty slice renders as zero lines (no header), which
+		// `jq -c '.'` handles gracefully.
+		return jsonOut(writeNDJSON(ins))
+	}
 	if len(ins) == 0 {
 		_, _ = fmt.Fprintf(osStdout, "%s: no instances (app is parked)\n", slug)
 		return 0
@@ -136,7 +140,7 @@ func humanizeInstanceState(state string) string {
 // jq the SLO numbers. JSON tag set lives on the struct in
 // pkg/api/dto.go — renames there propagate here automatically.
 func cmdStatus(args []string) int {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs := flag.NewFlagSet(statusLiteral, flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit raw api.StatusPage as JSON (issue #63 §2)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -155,16 +159,11 @@ func cmdStatus(args []string) int {
 	if err != nil {
 		return printErr("Status failed", err)
 	}
-	if *asJSON {
-		// Marshal directly so the JSON tag set on pkg/api/dto.go is
-		// the single source of truth (no risk of drift between the
-		// CLI's pretty-printer and the wire shape).
-		enc := json.NewEncoder(osStdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(page); err != nil {
-			return printErr("Status json encode failed", err)
-		}
-		return 0
+	if *asJSON || jsonOutput {
+		// Per-command --json (PR #66) OR top-level --json (issue #64 D1).
+		// Marshal via the shared writeJSON helper so the DTO JSON tags
+		// in pkg/api/dto.go are the single source of truth.
+		return jsonOut(writeJSON(page))
 	}
 	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
 	_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", page.WakeP95MS)
