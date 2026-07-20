@@ -1,8 +1,8 @@
 //go:build metal
 
 // build_metal_test.go — M6 §14 acceptance: customer source tarball → apid →
-// builderd → vmmd → firecracker → in-VM Railpack/buildctl → build row
-// transitions to succeeded. Closes issue #57.
+// builderd → vmmd → firecracker → in-VM Railpack/buildctl → OCI image →
+// imaged → snapshot_prime → deployments.Live. Closes issue #57.
 //
 // End-to-end through the real wire: apid accepts a multipart source
 // upload (validateAndSpool, cmd/apid/deploy_inputs.go), emits a
@@ -10,14 +10,22 @@
 // cold-boot a builder microVM using /srv/fc/base/builder-base.ext4 as
 // drive0, the in-VM build dispatcher runs Railpack (Node/Python) or
 // buildctl --frontend dockerfile (ADR-004), the produced OCI image is
-// re-stamped onto the deployment row.
+// copied into the harness's build_export_dir and stamped onto the
+// deployment row. imaged consumes the image, primes a snapshot, and marks
+// the deployment Live (pkg/imaged/handler.go::handleAppChanged).
 //
 // Three subtests exercise the three framework paths that the §14 M6 gate
-// requires (one each for node, python, dockerfile). Each runs through the
-// full apid → builderd wire but stops at build_succeeded rather than going
-// on to a wake — that's the M3 metal e2e's job (deploy_wake_metal_test.go).
-// Issue #57 splits the gate into two phases deliberately: M6 owns
-// "source → OCI image", M5 owns "OCI image → parked → wake".
+// requires (one each for node, python, dockerfile). The node subtest
+// additionally runs the §14 oci-image-is-tarball assertion (#57 §4.5):
+// it opens the produced OCI tarball at
+// <TmpDir>/out/<build_id>/build/out/image.tar and asserts the standard
+// OCI layout (oci-layout + index.json + blobs/sha256/<digest>). The
+// dockerfile subtest additionally asserts the `buildctl` substring in
+// build-done.json's LogTail so a regression that re-routed ADR-004 back
+// through Railpack would surface immediately. The terminating state per
+// subtest is state.DeployLive (WaitForDeploymentLive), not BuildSucceeded
+// alone — a build that succeeded but failed imaged would still pass the
+// weaker assertion, and §14 wants the full M6+M3 chain.
 //
 // Build tag: metal. Requires:
 //   - /dev/kvm + root (jailer needs CAP_NET_ADMIN, CAP_MKNOD, …)
@@ -32,6 +40,7 @@
 package e2e_test
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -40,6 +49,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +73,13 @@ import (
 // not strictly required for build_succeeded, but the harness already
 // includes it and removing it would make this test asymmetric with
 // deploy_wake_metal_test.go for no benefit.
+//
+// Issue #57 §4 calls out three orchestrator subtests AND a fourth
+// `oci-image-is-tarball` assertion that opens the produced OCI tarball
+// and verifies the OCI layout shape. The third (dockerfile) subtest also
+// asserts ADR-004 dispatch via the `buildctl` substring in
+// build-done.json's log_tail (guest-init's last 64 KiB of buildctl
+// stdout).
 func TestBuildMetal(t *testing.T) {
 	// Pre-flight: skip cleanly when /dev/kvm isn't available so a dev box
 	// (no KVM, no Lima) gets a precise message instead of a 90 s
@@ -93,29 +110,52 @@ func TestBuildMetal(t *testing.T) {
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 
 	t.Run("node-tarball", func(t *testing.T) {
-		runBuildSubtest(t, h, pool, key, "nodeapp", "node-app", NodeFixture(t), false)
+		buildID := runBuildSubtest(t, h, pool, key, "nodeapp", "node-app", NodeFixture(t), false)
+		assertOCIImage(t, h, buildID)
 	})
 	t.Run("python-tarball", func(t *testing.T) {
 		runBuildSubtest(t, h, pool, key, "pyapp", "python-app", PythonFixture(t), false)
 	})
 	t.Run("dockerfile-tarball", func(t *testing.T) {
-		runBuildSubtest(t, h, pool, key, "dfapp", "dockerfile-app", DockerfileFixture(t), true)
+		buildID := runBuildSubtest(t, h, pool, key, "dfapp", "dockerfile-app", DockerfileFixture(t), true)
+		// ADR-004: the dockerfile path must dispatch to buildctl
+		// --frontend dockerfile (NOT railpack). guest-init tail-captures
+		// the last 64 KiB of build stdout into BuildDone.LogTail; the
+		// buildctl CLI prints "[+] Building …" lines on its way to
+		// loading the dockerfile frontend, so a substring match
+		// distinguishes it from a Railpack-only run.
+		assertBuildDoneSubstring(t, h, buildID, "buildctl")
 	})
 }
 
-// runBuildSubtest drives a single end-to-end build:
+// runBuildSubtest drives a single end-to-end build, then asserts the
+// deployment row reaches Live — the §14 M6 + M3 combined acceptance
+// chain:
 //
 //  1. POST /v1/apps with the framework's slug → appID
 //  2. POST /v1/apps/<slug>/deployments with multipart source tarball
 //     + (optional) dockerfile flag → deploymentID + buildID
 //  3. Wait for builds.status to reach BuildSucceeded (or BuildFailed).
-//     This is the §14 M6 acceptance assertion: the in-VM Railpack/buildctl
-//     ran end-to-end and produced an OCI image.
+//     This is the §14 M6 half: the in-VM Railpack/buildctl produced an
+//     OCI image stampable on the deployment row.
+//  4. Wait for deployments.status to reach DeployLive via
+//     WaitForDeploymentLive. This is the §14 M3 half: imaged
+//     consumed the OCI image, primed a snapshot, and marked the
+//     deployment Live (pkg/imaged/handler.go::handleAppChanged).
+//
+// Without step 4, a build that succeeded but failed the imaged→snapshot
+// leg would still report "passing" — that's why #57 calls this out as
+// the proper M6+M3 terminal assertion.
 //
 // isDockerfile flips the multipart `dockerfile` field on so MapFramework
 // (pkg/builderd/dispatch.go) routes to api.FrameworkDockerfile and the
 // in-VM dispatcher invokes buildctl --frontend dockerfile (ADR-004).
-func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug, _ string, sourceTar []byte, isDockerfile bool) {
+//
+// Returns the buildID so callers can post-inspect the produced OCI
+// tarball at <TmpDir>/out/<build_id>/build/out/image.tar (the
+// oci-image-is-tarball subtest) or read build-done.json (the
+// buildctl-substring assertion).
+func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug, _ string, sourceTar []byte, isDockerfile bool) string {
 	t.Helper()
 	store := state.NewPgStore(pool)
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
@@ -175,18 +215,120 @@ func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, 
 	if build.FinishedAt.IsZero() {
 		t.Errorf("build %s: FinishedAt is zero", buildID)
 	}
-	// Cross-check: the deployment row must have moved past building too.
-	// builderd.UpdateDeploymentStatus is the second pg_notify in the chain.
-	dep, err := store.DeploymentByID(ctx, depID)
+	// Step 4 — the M3 chain. builderd.UpdateBuildStatus(succeeded)
+	// emits a build_queued-done notify; imaged picks up the OCI image,
+	// primes a snapshot, and MarkDeploymentLive fires. The deployment
+	// row advances Building -> Live via deployment_changed.
+	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 4*time.Minute)
 	if err != nil {
-		t.Fatalf("read deployment %s: %v", depID, err)
-	}
-	if dep.Status == state.DeployBuilding {
-		t.Errorf("deployment %s still in building after build succeeded", depID)
+		// Surface the last deployment status so a CI failure shows
+		// whether we hung in 'building' or 'failed'.
+		if last, lerr := store.DeploymentByID(context.Background(), depID); lerr == nil {
+			t.Logf("deployment %s at timeout: status=%s error=%q", last.ID, last.Status, last.Error)
+		}
+		t.Fatalf("deployment %s did not reach live: %v", depID, err)
 	}
 	// Sanity: the app ID we got back from /v1/apps matches the deployment.
 	if dep.AppID != appID {
 		t.Errorf("deployment.AppID = %s, want %s", dep.AppID, appID)
+	}
+	return buildID
+}
+
+// assertOCIImage opens the OCI tarball at
+// <Harness.TmpDir>/out/<build_id>/build/out/image.tar and asserts it
+// contains the OCI Image Layout mandatory entries:
+//
+//   - oci-layout                    (image layout marker file)
+//   - index.json                    (top-level image manifest list)
+//   - blobs/sha256/<at least one>   (at least one content-addressable
+//     layer or manifest blob)
+//
+// This is issue #57 §4 subtest 4 (`oci-image-is-tarball`). A passing
+// assertion means the in-VM build dispatcher actually produced a
+// well-formed OCI layout on disk — not just emitted an exit code 0.
+// File presence is checked first so the failure message names the
+// missing path instead of dumping a confusing tar error.
+func assertOCIImage(t *testing.T, h *e2etest.Harness, buildID string) {
+	t.Helper()
+	imgPath := filepath.Join(h.TmpDir, "out", buildID, "build", "out", "image.tar")
+	if _, err := os.Stat(imgPath); err != nil {
+		t.Fatalf("OCI image.tar missing at %q: %v", imgPath, err)
+	}
+	f, err := os.Open(imgPath)
+	if err != nil {
+		t.Fatalf("open OCI image.tar: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	// Cap the listing memory so a flaky build that produced a multi-GB
+	// tarball doesn't OOM the test. The standard OCI layout is ~ a
+	// dozen files for a hello-world image; 64 KiB is plenty.
+	const tarListingCap = 64 * 1024
+	tr := tar.NewReader(io.LimitReader(f, tarListingCap))
+	got := map[string]bool{}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("tar Next: %v", err)
+		}
+		got[hdr.Name] = true
+	}
+	for _, want := range []string{"oci-layout", "index.json"} {
+		if !got[want] {
+			t.Errorf("OCI image at %s missing required entry %q (got %v)", imgPath, want, got)
+		}
+	}
+	hasBlob := false
+	for name := range got {
+		if strings.HasPrefix(name, "blobs/sha256/") && len(name) > len("blobs/sha256/") {
+			hasBlob = true
+			break
+		}
+	}
+	if !hasBlob {
+		t.Errorf("OCI image at %s has no blobs/sha256/<digest> entry (got %v)", imgPath, got)
+	}
+}
+
+// readBuildDone reads <Harness.TmpDir>/out/<build_id>/build-done.json
+// (the same file vmmd's Destroy copies out of the builder chroot,
+// pkg/vmmdgrpc/server.go). Used by assertBuildDoneSubstring to inspect
+// guest-init's LogTail — a 64 KiB tail of the in-VM build stdout
+// captured before the VM powers off.
+func readBuildDone(t *testing.T, h *e2etest.Harness, buildID string) api.BuildDone {
+	t.Helper()
+	p := filepath.Join(h.TmpDir, "out", buildID, "build-done.json")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read build-done.json at %q: %v", p, err)
+	}
+	var d api.BuildDone
+	if err := json.Unmarshal(data, &d); err != nil {
+		t.Fatalf("decode build-done.json: %v body=%s", err, data)
+	}
+	return d
+}
+
+// assertBuildDoneSubstring asserts guest-init's captured LogTail
+// contains substr. ADR-004 dispatch confirmation: the dockerfile path
+// must invoke buildctl --frontend dockerfile, NOT railpack. Buildctl
+// prints "[+] Building" / "buildctl: resolving" lines on the way to
+// loading the dockerfile frontend, so a substring hit proves the binary
+// ran. The inverse — Railpack-only — would print "Detected Node"
+// / "Step 1/3" prefixes that do not contain "buildctl".
+func assertBuildDoneSubstring(t *testing.T, h *e2etest.Harness, buildID, substr string) {
+	t.Helper()
+	d := readBuildDone(t, h, buildID)
+	if d.ExitCode != 0 {
+		t.Fatalf("build-done.exit_code = %d (want 0); log_tail=%.2f KB",
+			d.ExitCode, float64(len(d.LogTail))/1024)
+	}
+	if !strings.Contains(d.LogTail, substr) {
+		t.Fatalf("build-done.log_tail (%d bytes) does not contain %q\n---\n%s\n---",
+			len(d.LogTail), substr, d.LogTail)
 	}
 }
 
