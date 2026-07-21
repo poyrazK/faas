@@ -108,4 +108,9 @@ if [ "$#" -gt 0 ]; then
 fi
 
 echo "kernel=$FAAS_TEST_KERNEL fc=$FAAS_TEST_FC_VERSION"
-exec go test -tags metal -count=1 -v "${RUN_ARGS[@]}" ./pkg/fcvm/
+# -timeout 60m covers harness boot + prior M0/M1/M3/V6 metal tests + the
+# §14 V2 wake-latency 100-cycle loop (cmd/e2e/deploy_wake_metal_test.go).
+# Default Go test timeout is 10m which the 100-cycle loop overruns on Lima
+# nested-virt even when cold-boot is cached.
+exec go test -tags metal -count=1 -v -timeout 60m "${RUN_ARGS[@]}" \
+    ./pkg/fcvm/... ./cmd/e2e/...

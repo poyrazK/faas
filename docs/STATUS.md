@@ -199,9 +199,11 @@ and open an issue if you want it.
   `pkg/gateway/tls.go` is a config bucket; `caddyserver/certmagic`
   not yet in `go.mod`.
 - **§14 V2 latency driver** — 100 park→wake cycles per app class,
-  p50 ≤ 350 ms / p95 ≤ 800 ms. `cmd/e2e/deploy_wake_metal_test.go`
-  does one cold wake; the loop driver doesn't exist. Runs on the
-  EX44 via `make test-metal`.
+  p50 ≤ 350 ms / p95 ≤ 800 ms. The Hobby-class gate is wired via
+  `TestDeployWakeMetal/wake-latency-p50p95-100cycles` (extends the
+  prior 10-cycle mean-only subtest). Per-app-class (Express, Next.js,
+  Flask, FastAPI, Go static) gating is the M8 follow-up. Runs on
+  `make metal-lima RUN_ARGS='-run TestDeployWakeMetal'`.
 - **Documented timed restore drill** — §14 M8: PG + one app back
   serving on a clean VM < 30 min, recorded as executed. Run
   `deploy/scripts/faas-m8-restore-drill.sh` on the EX44 and fill
