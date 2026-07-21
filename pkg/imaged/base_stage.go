@@ -88,12 +88,17 @@ func (h *Handler) EnsureBaseExt4(ctx context.Context, ref, baseKey, digestKey, o
 	// if a build happened to land mid-stage.
 	wantDigest := manifest.Config.Digest
 	be := h.storageFor()
+	// Idempotency: trust the digest sidecar. When it matches, the base
+	// ext4 is the right artifact — we don't re-stream its bytes here.
+	// A bare Get-and-close on baseKey would stream 130 MB through the
+	// daemon for nothing; the sidecar is the source of truth. A missing
+	// base would surface as Get returning ErrNotFound, which the next
+	// cold-boot would also surface — no silent corruption.
 	if haveRC, err := be.Get(ctx, digestKey); err == nil {
 		haveBytes, rerr := io.ReadAll(haveRC)
 		_ = haveRC.Close()
 		if rerr == nil && string(haveBytes) == wantDigest {
 			if rc, err := be.Get(ctx, baseKey); err == nil {
-				_, _ = io.Copy(io.Discard, rc)
 				_ = rc.Close()
 				return BaseStageResult{
 					OutImage:     outImage,

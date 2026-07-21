@@ -50,6 +50,11 @@ type JailerVMM struct {
 	proc    map[string]*exec.Cmd // instance -> running jailer process
 	clients map[string]*http.Client
 	recs    map[string]*instanceRecord // instance -> per-process bookkeeping (M6 builder VMs)
+	// materialisedTmp tracks tmp files materializeFromStorage created for
+	// each instance so Kill/DestroyWithExport can Remove them on teardown.
+	// Without this, the tmp files (in /tmp) outlive the chroot and leak
+	// across thousands of wakes on a busy box.
+	materialisedTmp map[string][]string
 }
 
 // instanceRecord tracks one firecracker child + build-specific options so
@@ -71,14 +76,15 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		readyTimeout = 30 * time.Second
 	}
 	return &JailerVMM{
-		chrootBase:     chrootBase,
-		fcName:         resolveFCChrootName(),
-		readyTimeout:   readyTimeout,
-		destroyWait:    10 * time.Minute, // builder timeout (spec §1 BuildTimeoutSeconds) + headroom
-		exportMaxBytes: 0,                // resolved to api.MaxExportedLayerBytes at first export
-		proc:           make(map[string]*exec.Cmd),
-		clients:        make(map[string]*http.Client),
-		recs:           make(map[string]*instanceRecord),
+		chrootBase:      chrootBase,
+		fcName:          resolveFCChrootName(),
+		readyTimeout:    readyTimeout,
+		destroyWait:     10 * time.Minute, // builder timeout (spec §1 BuildTimeoutSeconds) + headroom
+		exportMaxBytes:  0,                // resolved to api.MaxExportedLayerBytes at first export
+		proc:            make(map[string]*exec.Cmd),
+		clients:         make(map[string]*http.Client),
+		recs:            make(map[string]*instanceRecord),
+		materialisedTmp: make(map[string][]string),
 	}
 }
 
@@ -206,7 +212,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// continue to consume host paths. Tmp cleanup happens in the
 	// deferred Kill (root lives on tmpfs and disappears with it).
 	if spec.StorageKey != "" && v.storage != nil {
-		memTmp, gerr := v.materializeFromStorage(ctx, spec.StorageKey)
+		memTmp, gerr := v.materializeFromStorage(ctx, l.Instance, spec.StorageKey)
 		if gerr != nil {
 			return gerr
 		}
@@ -581,6 +587,10 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
 	}
+	// Tmp files materialized from a StorageKey live in /tmp (not the chroot
+	// root) — sweep them explicitly so they don't leak across thousands of
+	// wakes.
+	v.sweepMaterialised(l.Instance)
 	// Remove the per-VM cgroup scope jailer created (--cgroup cpu.weight=…).
 	// Required by spec §6.2-4 ("parked = zero RAM") — a populated cgroup dir
 	// holds page-cache references. The scope name equals jailer --id
@@ -668,6 +678,7 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
 		return exitCode, fmt.Errorf("vmm: remove chroot: %w", err)
 	}
+	v.sweepMaterialised(l.Instance)
 	return exitCode, nil
 }
 
@@ -1141,15 +1152,17 @@ func moveOut(src, dst string) (int64, error) {
 // materializeFromStorage pulls the bytes for key via the configured
 // StorageBackend and writes them into a fresh tmp file. Returns the
 // absolute path the caller should substitute into MemPath. The tmp
-// file is owned by the caller (must be Remove'd once Restore completes
-// the chroot staging). When storage is nil or key is empty, the helper
-// is a no-op and reports the keys were unused — Restore proceeds on
-// MemPath unchanged.
+// path is registered against instanceID so Kill / DestroyWithExport
+// Remove it during teardown; without the registration the file
+// would outlive the chroot (which lives on tmpfs) and leak across
+// thousands of wakes on a busy box. When storage is nil or key is
+// empty, the helper is a no-op and reports the keys were unused —
+// Restore proceeds on MemPath unchanged.
 //
 // #96 / ADR-025 axis 2 — single seam that lets the local driver satisfy
 // the call from /srv/fc/snap and a future remote driver from a registry.
 // The chroot staging layer never has to learn about storage.
-func (v *JailerVMM) materializeFromStorage(ctx context.Context, key string) (string, error) {
+func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key string) (string, error) {
 	if v.storage == nil || key == "" {
 		return "", nil
 	}
@@ -1172,7 +1185,37 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, key string) (str
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("vmm: close tmp for %q: %w", key, err)
 	}
+	v.trackMaterialised(instanceID, tmpPath)
 	return tmpPath, nil
+}
+
+// trackMaterialised records tmpPath against instanceID so Kill /
+// DestroyWithExport can Remove it during teardown. Per-instance
+// lifecycle: registered on materialize, cleared on the next Kill.
+func (v *JailerVMM) trackMaterialised(instanceID, tmpPath string) {
+	if instanceID == "" || tmpPath == "" {
+		return
+	}
+	v.mu.Lock()
+	v.materialisedTmp[instanceID] = append(v.materialisedTmp[instanceID], tmpPath)
+	v.mu.Unlock()
+}
+
+// sweepMaterialised Removes every tmp path tracked against instanceID
+// and clears the slot. Best-effort: a missing tmp file is not an error;
+// anything else is logged so a leak is observable but never blocks the
+// chroot teardown.
+func (v *JailerVMM) sweepMaterialised(instanceID string) {
+	v.mu.Lock()
+	paths := v.materialisedTmp[instanceID]
+	delete(v.materialisedTmp, instanceID)
+	v.mu.Unlock()
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Default().Warn("vmm: remove materialised tmp",
+				"path", p, "instance", instanceID, "err", err)
+		}
+	}
 }
 
 //nolint:forbidigo // src/dst are vetted slot/instance-id paths under /srv/fc — vmmd is the sole writer of this directory; the tmpfs jail root means symlink-attack would require root (which vmmd already has, by spec §11). Copy is an internal migration helper, not a customer-path surface.

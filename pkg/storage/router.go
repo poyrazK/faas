@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -71,8 +70,13 @@ func NewPrefixRouter(routes map[string]StorageBackend, fallback StorageBackend) 
 			return nil, fmt.Errorf("storage: router: route %q has nil backend", p)
 		}
 		// Reject obviously bad prefixes up front: a route must end in
-		// '/' so dispatch never tries to split a key on a non-boundary.
-		// Validate the prefix via the storage contract.
+		// '/' so dispatch never splits a key on a non-boundary (e.g.
+		// prefix "apps" must not match "appsfoo/x"). Validate the
+		// stripped form via the storage contract so an empty-prefix
+		// route is still rejected as invalid.
+		if !strings.HasSuffix(p, "/") {
+			return nil, fmt.Errorf("storage: router: route %q must end in '/'", p)
+		}
 		if err := validateKey(strings.TrimSuffix(p, "/")); err != nil {
 			return nil, fmt.Errorf("storage: router: route %q: %w", p, err)
 		}
@@ -131,7 +135,16 @@ func (r *PrefixRouter) dispatch(key string) (StorageBackend, string, error) {
 	var best StorageBackend
 	var bestPrefix string
 	for prefix, b := range r.routes {
+		// HasPrefix match is the prefix-equal-or-longer check. The
+		// segment-boundary check below is the defense-in-depth against
+		// a mid-segment split (e.g. prefix "apps" must not match
+		// "appsfoo/x"). NewPrefixRouter enforces a trailing "/" on
+		// every route, so this only fires when the prefix lacks one —
+		// the bug case in the review.
 		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if !strings.HasSuffix(prefix, "/") && len(key) > len(prefix) && key[len(prefix)] != '/' {
 			continue
 		}
 		if len(prefix) > bestLen {
@@ -314,14 +327,19 @@ func (a *aggregatedLister) List(ctx context.Context, prefix string) ([]string, e
 			return nil, cerr
 		}
 	}
-	// Phase 2: fallback (if any). The fallback handles the call when
-	// the prefix matches no specific route AND is non-empty; when
-	// the prefix is empty, the routes already covered their scopes
-	// and the fallback would just return its own keys (which the
-	// caller wanted — list-all includes the fallback). We always
-	// list the fallback here; route-scope keys are already prefixed
-	// so there's no overlap with the routes' output.
-	if fb, ok := a.backends[""]; ok {
+	// Phase 2: fallback. The fallback is consulted in two cases:
+	//
+	//   - prefix is empty (list-all): the routes already covered their
+	//     own subtrees; the fallback covers its own root.
+	//   - prefix is non-empty and matches NO route: the fallback
+	//     handles the call directly.
+	//
+	// When the prefix matches a route's scope, the fallback is
+	// intentionally skipped — its root does not contain that subtree,
+	// so a list call would walk a non-existent path and return empty.
+	// (That was the v1 behaviour too; it produced the right answer but
+	// did unnecessary I/O. This is the cleanup.)
+	if fb, ok := a.backends[""]; ok && (prefix == "" || !anyRouteContains(a.backends, prefix)) {
 		if err := listRoute("", fb, prefix); err != nil {
 			return nil, fmt.Errorf("storage: list %q: %w", prefix, err)
 		}
@@ -330,7 +348,18 @@ func (a *aggregatedLister) List(ctx context.Context, prefix string) ([]string, e
 	return combined, nil
 }
 
-// guard against errors being reported as unused if the routing
-// rules change later — the package test imports errors only
-// through dispatch().
-var _ = errors.Is
+// anyRouteContains reports whether any registered route (non-empty
+// key) is a prefix-or-equal match for query. Used by the aggregator
+// to decide whether the fallback should be consulted for a non-empty
+// prefix — when a route owns the prefix, the fallback is irrelevant.
+func anyRouteContains(backends map[string]StorageBackend, query string) bool {
+	for route := range backends {
+		if route == "" {
+			continue
+		}
+		if query == route || strings.HasPrefix(query, route) {
+			return true
+		}
+	}
+	return false
+}

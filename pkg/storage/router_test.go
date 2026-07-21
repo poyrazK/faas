@@ -209,11 +209,25 @@ func TestPrefixRouterListAggregates(t *testing.T) {
 // misconfiguration and must fail loud at startup.
 func TestPrefixRouterRejectsBadRoute(t *testing.T) {
 	be := newTestBackend(t)
+	// Empty prefix is rejected by the trailing-slash gate before
+	// validateKey sees it — the message must mention "end in '/'".
 	if _, err := NewPrefixRouter(map[string]StorageBackend{
 		"": be,
-	}, nil); !IsInvalidKey(err) {
-		t.Fatalf("empty route: IsInvalidKey=false, err=%v", err)
+	}, nil); err == nil {
+		t.Fatalf("empty route: nil err")
+	} else if !strings.Contains(err.Error(), "end in '/'") {
+		t.Fatalf("empty route: unexpected err: %v", err)
 	}
+	// "apps" without a trailing slash would let "appsfoo/x" slip
+	// through dispatch — the trailing-slash gate must reject it.
+	if _, err := NewPrefixRouter(map[string]StorageBackend{
+		"apps": be,
+	}, nil); err == nil {
+		t.Fatalf("missing trailing slash: nil err")
+	} else if !strings.Contains(err.Error(), "end in '/'") {
+		t.Fatalf("missing trailing slash: unexpected err: %v", err)
+	}
+	// Traversal is rejected by the validateKey path (ErrInvalidKey).
 	if _, err := NewPrefixRouter(map[string]StorageBackend{
 		"../escape/": be,
 	}, nil); !IsInvalidKey(err) {
@@ -276,6 +290,45 @@ func TestPrefixRouterGetMissing(t *testing.T) {
 	// Legacy single-box idiom must keep working.
 	if !errors.Is(err, error(nil)) && !strings.Contains(err.Error(), "storage:") {
 		t.Fatalf("get missing: missing storage tag in %v", err)
+	}
+}
+
+// TestPrefixRouterMidSegmentEscape is the regression for the prefix-
+// boundary escape the PR review flagged: a route lacking a trailing
+// "/" must NOT match "appsfoo/x" and route its remainder ("foo/x")
+// into the apps backend. NewPrefixRouter already rejects routes
+// without a trailing "/" at construction time, so the test
+// constructs the PrefixRouter directly to exercise the dispatcher's
+// defense-in-depth check.
+func TestPrefixRouterMidSegmentEscape(t *testing.T) {
+	a := newTestBackend(t)
+	fb := newTestBackend(t)
+	// Construct directly to bypass the constructor's trailing-slash
+	// gate — we're testing the dispatcher's defense-in-depth, not the
+	// constructor (which has its own test in TestPrefixRouterRejectsBadRoute).
+	router := &PrefixRouter{
+		routes:   map[string]StorageBackend{"apps": a},
+		fallback: fb,
+	}
+	// "appsfoo/x" must not route into the apps backend: dispatch must
+	// fall through to the fallback. A successful Put to the fallback
+	// (which has no appsfoo subdir) is fine — the key assertion is
+	// that the apps backend did NOT receive a mid-segment write with
+	// "foo/x" as the remainder.
+	err := router.Put(context.Background(), "appsfoo/x", strings.NewReader("nope"))
+	if err != nil {
+		t.Fatalf("put to fallback: %v", err)
+	}
+	if _, err := a.Get(context.Background(), "foo/x"); err == nil {
+		t.Fatalf("apps backend received a mid-segment write — escape!")
+	}
+	// dispatch-level check: confirm the apps backend is NOT selected.
+	b, rem, err := router.dispatch("appsfoo/x")
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if b == a {
+		t.Fatalf("dispatch selected apps backend for appsfoo/x; remainder=%q", rem)
 	}
 }
 
