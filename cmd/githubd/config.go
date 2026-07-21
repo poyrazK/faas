@@ -1,4 +1,4 @@
-// Package main's config — parsed from /etc/faas/vmmd.toml (or the path
+// Package main's config — parsed from /etc/faas/githubd.toml (or the path
 // passed via --config). Each field is independent of every other so a
 // partial config file plus defaults produces a working daemon.
 
@@ -14,30 +14,24 @@ import (
 )
 
 // Config is the on-disk representation of the daemon's TOML config.
-// File reads use pelletier/go-toml/v2 (already a transitive dep of
-// many tools; pinning it here makes the daemon's config story
-// explicit).
+// File reads use BurntSushi/toml (already a transitive dep of many
+// tools; pinning it here makes the daemon's config story explicit).
 type Config struct {
+	// HTTPAddr is the loopback bind address the plain HTTP webhook
+	// listener uses. Defaults to 127.0.0.1:8083 (spec §11: githubd
+	// is loopback-only, gatewayd reverse-proxies /webhooks/github).
+	HTTPAddr string `toml:"http_addr"`
+
 	// SocketPath is the unix-domain socket the gRPC server binds when
-	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
-	// ADR-015 dictates mode 0660 group `faas`.
+	// ListenAddr is empty. Defaults to /run/faas/githubd.sock
+	// (ADR-015 dictates mode 0660 group `faas`).
 	SocketPath string `toml:"socket_path"`
 
 	// ListenAddr is the location-transparent gRPC listen target
-	// (issue #95, ADR-025). Accepts unix:///path, tcp://host:port, or
-	// dns:///host:port (the latter only valid for dial, never bind).
-	// When empty, falls back to unix://+SocketPath for backwards
-	// compatibility. tcp targets require all TLS paths to be set.
+	// (issue #95, ADR-025). Accepts unix:///path or tcp://host:port.
+	// When empty, falls back to unix://+SocketPath. tcp targets
+	// require all TLS paths to be set.
 	ListenAddr string `toml:"listen_addr"`
-
-	// MetricsAddr is the optional bind address for /metrics.
-	// Empty disables the metrics endpoint.
-	MetricsAddr string `toml:"metrics_addr"`
-
-	// OwnerUser is the uid that owns the socket file. Defaults to
-	// the daemon's own uid (lookups by name first). Only consulted
-	// when the resolved listen target is a unix socket.
-	OwnerUser string `toml:"owner_user"`
 
 	// Server-mTLS material (issue #95). All three paths empty =>
 	// no TLS; all three set => RequireAndVerifyClientCert. Partial
@@ -45,15 +39,11 @@ type Config struct {
 	TLSCertPath string `toml:"tls_cert_path"`
 	TLSKeyPath  string `toml:"tls_key_path"`
 	TLSCAPath   string `toml:"tls_ca_path"`
-
-	// KernelPath mirrors pkg/fcvm.Paths.Kernel. The daemon refuses to
-	// start if the file does not exist.
-	KernelPath string `toml:"kernel_path"`
 }
 
 // ResolveListenTarget returns the gRPC target the server should bind.
-// ListenAddr wins when set; otherwise unix://+SocketPath. Returns the
-// resolved target string (already wire.ParseTarget-compatible).
+// ListenAddr wins when set; otherwise unix://+SocketPath. The returned
+// string is wire.ParseTarget-compatible.
 func (c *Config) ResolveListenTarget() string {
 	if c.ListenAddr != "" {
 		return c.ListenAddr
@@ -69,24 +59,23 @@ func (c *Config) LoadServerTLS() (*tls.Config, error) {
 	return wire.LoadServerTLSConfig(c.TLSCertPath, c.TLSKeyPath, c.TLSCAPath)
 }
 
-// LoadConfig reads a TOML file at path and returns the parsed Config with
-// defaults filled in. A missing file is not an error if defaults suffice;
-// in that case an empty config is returned.
+// LoadConfig reads a TOML file at path and returns the parsed Config
+// with defaults filled in. A missing file is not an error if defaults
+// suffice; in that case a default config is returned.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
-		SocketPath: "/run/faas/vmmd.sock",
-		KernelPath: "/srv/fc/base/vmlinux-6.1",
-		OwnerUser:  "faas-vmmd",
+		HTTPAddr:   "127.0.0.1:8083",
+		SocketPath: "/run/faas/githubd.sock",
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return c, nil
 		}
-		return nil, fmt.Errorf("vmmd: read %q: %w", path, err)
+		return nil, fmt.Errorf("githubd: read %q: %w", path, err)
 	}
 	if err := toml.Unmarshal(b, c); err != nil {
-		return nil, fmt.Errorf("vmmd: parse %q: %w", path, err)
+		return nil, fmt.Errorf("githubd: parse %q: %w", path, err)
 	}
 	return c, nil
 }

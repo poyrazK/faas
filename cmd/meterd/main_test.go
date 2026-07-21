@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -70,7 +72,7 @@ func stubMeterdDeps(cfgPath, metricsAddr string, pool *pgxpool.Pool, listenFn fu
 		migrate:               func(context.Context, *pgxpool.Pool) error { return nil },
 		loadMeter:             func(c *Config) (*meter.Config, error) { return c.Meter, nil },
 		getenv:                env,
-		dialSchedd:            func(string) (parkInstanceParker, error) { return &nopParker{}, nil },
+		dialSchedd:            func(context.Context, string, *tls.Config) (parkInstanceParker, error) { return &nopParker{}, nil },
 		newStripeClient:       nil, // skipped when stripe is pre-populated
 		parker:                &nopParker{},
 		stripe:                &nopStripe{},
@@ -299,6 +301,48 @@ func TestRun_MetricsAddrDrainsOnCancel(t *testing.T) {
 		}
 	case <-time.After(6 * time.Second):
 		t.Fatal("run did not return within 6s (5s shutdown + slack) of cancel")
+	}
+}
+
+// TestRun_DialScheddPropagatesCancel: when the dialSchedd seam errors,
+// runWithDeps must propagate the error rather than blocking or silently
+// falling through to a nil parker. Pins the issue #95 wire-up: a real
+// dial failure (refused, timeout) is fatal at boot, not deferred.
+//
+// The cancellation half of the contract — "ctx passed to dialSchedd
+// participates in daemon shutdown" — is exercised at the wire layer by
+// pkg/wire.TestDialContextCancelled. Asserting it here too would either
+// require cancelling the parent ctx (which would short-circuit openDB
+// at the runWithDeps step *before* dialSchedd fires, leaving the seam
+// never tested) or wrapping ctx internally at the seam (which would
+// silently diverge from the production code path). Neither is worth the
+// flakiness; the seam-level error propagation already pins the
+// load-bearing behaviour for this slice.
+//
+// Requires a real Postgres (skipped on dev shells without one); the
+// seam under test is mid-`runWithDeps`, after openDB+migrate.
+func TestRun_DialScheddPropagatesCancel(t *testing.T) {
+	dir := shortDir(t)
+	cfgPath := writeMeterdConfig(t, dir, "")
+	pool := testPool(t)
+
+	wantErr := errors.New("dial cancelled (test)")
+	listenFn := func(string, http.Handler) (*http.Server, error) {
+		return nil, nil
+	}
+	deps := stubMeterdDeps(cfgPath, "", pool, listenFn, func(string) string { return "" })
+	// parker is left nil so the dialSchedd seam is the only path that
+	// runs. The stub returns the canonical error so we can assert the
+	// wrap-and-return.
+	deps.parker = nil
+	deps.dialSchedd = func(context.Context, string, *tls.Config) (parkInstanceParker, error) {
+		return nil, wantErr
+	}
+
+	if err := runWithDeps(context.Background(), discardLog(), deps); err == nil {
+		t.Fatal("expected error from dialSchedd seam; got nil")
+	} else if !errors.Is(err, wantErr) {
+		t.Errorf("err = %v; want wraps %v", err, wantErr)
 	}
 }
 

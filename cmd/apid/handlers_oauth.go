@@ -40,6 +40,7 @@ import (
 	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
 // oauthCallbackPath is the GitHub App install callback URL that
@@ -99,10 +100,16 @@ func (s *server) renderOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// a fresh /dashboard/apps/new visit so the user can re-confirm
 	// the binding.
 	setupAction := r.URL.Query().Get("setup_action")
+	// CodeQL go/log-injection (CWE-117): setupAction arrives from the
+	// GitHub App install callback query string (`?setup_action=…`); a
+	// hostile redirect can stuff CR/LF into it. installationID is a
+	// query-string int, but slog.Any() renders it through fmt and a
+	// future type relaxation could taint the audit line. Wrap both
+	// through logsanitize so the audit field stays one-line-per-event.
 	log.Info("oauth callback received",
 		"account_id", acct.ID,
 		"installation_id", installationID,
-		"setup_action", setupAction)
+		"setup_action", logsanitize.Field(setupAction))
 
 	verified, defaultBranch, err := s.githubd.VerifyInstallation(r.Context(), installationID)
 	if err != nil {

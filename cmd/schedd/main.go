@@ -10,7 +10,9 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -43,8 +45,8 @@ type runDeps struct {
 	openDB     func(context.Context, string) (*pgxpool.Pool, error)
 	migrate    func(context.Context, *pgxpool.Pool) error
 	detectFC   func(context.Context) (string, error)
-	dialVMM    func(socket string) (sched.VMM, error)
-	listen     func(path, owner string) (net.Listener, error)
+	dialVMM    func(ctx context.Context, target string, tlsCfg *tls.Config) (sched.VMM, error)
+	listen     func(ctx context.Context, target string, tlsCfg *tls.Config, owner string) (net.Listener, error)
 	// subscribeDeletion is the producer-side seam for the
 	// NotifyAccountDeletionPending consumer (ADR-026). nil = the
 	// subscriber is not started (cmd/schedd's main wires the
@@ -58,14 +60,16 @@ func defaultDeps() runDeps {
 		openDB:     db.Open,
 		migrate:    db.MigrateUp,
 		detectFC:   fcvm.DetectFirecrackerVersion,
-		dialVMM:    func(socket string) (sched.VMM, error) { return sched.DialVMM(socket) },
+		dialVMM: func(ctx context.Context, target string, tlsCfg *tls.Config) (sched.VMM, error) {
+			return sched.DialVMMContext(ctx, target, tlsCfg)
+		},
+		listen: wire.ListenAs,
 		// Production wires db.Subscribe. Tests inject a fake channel
 		// so the subscriber's Park path is exercised end-to-end
 		// without standing up Postgres.
 		subscribeDeletion: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
 			return db.Subscribe(ctx, p, []string{db.NotifyAccountDeletionPending})
 		},
-		listen: wire.ListenOrRecreateByName,
 	}
 }
 
@@ -86,6 +90,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	listenTarget := cfg.ResolveListenTarget()
+	vmmTarget := cfg.ResolveVMMTarget()
+	log.Info("config",
+		"listen_addr", listenTarget,
+		"vmmd_target", vmmTarget,
+		"socket", cfg.SocketPath,
+		"vmmd_socket", cfg.VMMDSocket,
+		"metrics_addr", cfg.MetricsAddr)
 
 	pool, err := deps.openDB(ctx, cfg.DBURL)
 	if err != nil {
@@ -104,9 +116,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("could not detect firecracker version; treating all snapshots as stale", "err", err)
 	}
 
-	vmm, err := deps.dialVMM(cfg.VMMDSocket)
+	// Issue #95 / ADR-025: dial vmmd through the location-transparent
+	// helper. tcp/dns targets require the vmmd_tls_* cluster; nil TLS on
+	// a unix target keeps single-box behaviour unchanged.
+	vmmTLS, err := cfg.LoadVMMTLS()
 	if err != nil {
-		return err
+		return fmt.Errorf("schedd: load vmmd TLS: %w", err)
+	}
+	vmm, err := deps.dialVMM(ctx, vmmTarget, vmmTLS)
+	if err != nil {
+		return fmt.Errorf("schedd: dial vmmd %s: %w", vmmTarget, err)
 	}
 
 	store := state.NewPgStore(pool)
@@ -144,10 +163,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("seed ledger", "err", err)
 	}
 
-	// gRPC surface for gatewayd (ADR-018): unix socket, mode 0660 group `faas`.
-	lis, err := deps.listen(cfg.SocketPath, cfg.OwnerUser)
+	// gRPC surface for gatewayd (ADR-018): unix socket by default;
+	// tcp requires the tls_* cluster and is issue #95.
+	serverTLS, err := cfg.LoadServerTLS()
 	if err != nil {
-		return err
+		return fmt.Errorf("schedd: load server TLS: %w", err)
+	}
+	lis, err := deps.listen(ctx, listenTarget, serverTLS, cfg.OwnerUser)
+	if err != nil {
+		return fmt.Errorf("schedd: listen %s: %w", listenTarget, err)
 	}
 	gsrv := grpc.NewServer()
 	scheddgrpc.New(engine, ops, log).Register(gsrv)
@@ -171,7 +195,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Info("grpc listening", "socket", cfg.SocketPath, "service", scheddpb.Schedd_ServiceDesc.ServiceName)
+		log.Info("grpc listening", "addr", listenTarget, "service", scheddpb.Schedd_ServiceDesc.ServiceName)
 		serveErr <- gsrv.Serve(lis)
 	}()
 

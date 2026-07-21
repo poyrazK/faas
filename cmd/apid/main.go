@@ -251,7 +251,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// M7.5: githubd socket path (ADR-012). Empty = stub client (every
 	// method returns api.Problem{Code:"githubd_not_ready"}), which is
 	// fine until githubd is actually deployed on this host.
-	githubd := newGithubdClient(deps.getenv("FAAS_GITHUBD_SOCKET"), log)
+	githubd := newGithubdClient(ctx, deps.getenv("FAAS_GITHUBD_SOCKET"), nil, log)
 	// M7.5: dashboard session manager. Loads the 32-byte key from
 	// FAAS_SESSION_KEY (hex-encoded); empty in dev = ephemeral key +
 	// warning so the daemon still boots for local testing. Production

@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
 // PostmarkConfig is the configuration for the Postmark transport.
@@ -113,8 +115,15 @@ func (s *PostmarkSender) Send(ctx context.Context, msg Message) error {
 
 	rawBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		// CodeQL go/log-injection (CWE-117): msg.To + msg.Subject are
+		// caller-supplied (account.Email + templated subject). Sanitize
+		// before logging the success-path audit line.
+		to := make([]string, len(msg.To))
+		for i, a := range msg.To {
+			to[i] = logsanitize.Field(a)
+		}
 		s.cfg.Log.Info("mail.postmark.ok",
-			"to", msg.To, "subject", msg.Subject, "status", resp.StatusCode)
+			"to", to, "subject", logsanitize.Field(msg.Subject), "status", resp.StatusCode)
 		return nil
 	}
 	var perr postmarkResponse

@@ -32,10 +32,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// runDeps is the DI seam so tests can swap openDB / listen /
+// runDeps is the DI seam so tests can swap openDB / configPath /
 // AppAuth / readKeyPEM without touching Postgres, /run/faas, or
 // /etc/faas/secrets.
 type runDeps struct {
+	configPath string
 	openDB     func(context.Context, string) (*pgxpool.Pool, error)
 	readAppID  func() string
 	readKeyPEM func() ([]byte, error)
@@ -45,6 +46,7 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
+		configPath: "/etc/faas/githubd.toml",
 		openDB:     db.Open,
 		readAppID:  func() string { return os.Getenv("FAAS_GITHUB_APP_ID") },
 		readKeyPEM: readKeyPEMDefault,
@@ -62,6 +64,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 }
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	cfg, err := LoadConfig(deps.configPath)
+	if err != nil {
+		return fmt.Errorf("githubd: config: %w", err)
+	}
+
 	pool, err := deps.openDB(ctx, "")
 	if err != nil {
 		return fmt.Errorf("githubd: open db: %w", err)
@@ -115,9 +122,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	srv := &githubd.Server{
-		Service:    webhookSvc,
-		Log:        log,
-		GRPCServer: githubdgrpc.New(gRPCImpl, wire.NewOpsMetrics("githubd"), log),
+		Service:     webhookSvc,
+		Log:         log,
+		GRPCServer:  githubdgrpc.New(gRPCImpl, wire.NewOpsMetrics("githubd"), log),
+		HTTPAddr:    cfg.HTTPAddr,
+		SocketPath:  cfg.SocketPath,
+		ListenAddr:  cfg.ListenAddr,
+		TLSCertPath: cfg.TLSCertPath,
+		TLSKeyPath:  cfg.TLSKeyPath,
+		TLSCAPath:   cfg.TLSCAPath,
 	}
 	cleanup, errc, err := srv.Start(ctx)
 	if err != nil {

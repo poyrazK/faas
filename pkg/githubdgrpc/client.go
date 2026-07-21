@@ -10,13 +10,14 @@ package githubdgrpc
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Client is apid's handle to githubd's gRPC surface (ADR-012). It is
@@ -34,16 +35,23 @@ type Client struct {
 // so the transport uses insecure credentials over a trusted local
 // socket. The connection dials on first RPC; Dial never blocks on
 // githubd being up.
+//
+// Legacy entrypoint kept for source compatibility with existing
+// callers and tests; production code should call DialContext.
 func Dial(socketPath string) (*Client, error) {
-	if socketPath == "" {
-		return nil, errors.New("githubdgrpc: empty githubd socket path")
+	return DialContext(context.Background(), socketPath, nil)
+}
+
+// DialContext opens a lazy gRPC connection to githubd. tlsCfg is
+// required for tcp/dns targets (issue #95); nil tlsCfg is fine for the
+// single-box unix default. Wire layer performs the mTLS gating.
+func DialContext(ctx context.Context, target string, tlsCfg *tls.Config) (*Client, error) {
+	if target == "" {
+		return nil, errors.New("githubdgrpc: empty githubd target")
 	}
-	conn, err := grpc.NewClient(
-		"unix://"+socketPath,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	conn, err := wire.DialContext(ctx, target, tlsCfg)
 	if err != nil {
-		return nil, fmt.Errorf("githubdgrpc: dial githubd %q: %w", socketPath, err)
+		return nil, fmt.Errorf("githubdgrpc: dial githubd %q: %w", target, err)
 	}
 	return &Client{conn: conn, cli: githubdpb.NewGithubdClient(conn)}, nil
 }

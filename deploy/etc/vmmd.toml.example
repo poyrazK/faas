@@ -17,3 +17,24 @@
 # kernel_path: path to the Firecracker-compatible kernel image. The daemon
 # refuses to start if this file is missing. Default: /srv/fc/base/vmlinux-6.1
 # kernel_path = "/srv/fc/base/vmlinux-6.1"
+
+# --- Issue #95 / ADR-025: location-transparent gRPC transport ---
+# vmmd can serve over TCP for the decoupled compute layout (vmmd on a
+# dedicated KVM host, control plane elsewhere). All five spec invariants
+# and §11 ship-blockers are unchanged.
+
+# listen_addr: gRPC listen target. Empty (default) keeps the legacy
+# unix://+socket_path behavior. Set to "tcp://0.0.0.0:50051" only when
+# the control plane and vmmd live on different hosts. A tcp target
+# requires all three tls_*_path fields to be set or startup fails closed.
+# Default: "" (unix socket)
+# listen_addr = "tcp://0.0.0.0:50051"
+
+# tls_cert_path / tls_key_path / tls_ca_path: server-mTLS cluster.
+# All three empty => no TLS (single-box loopback UNIX path). All three
+# set => RequireAndVerifyClientCert over TLS 1.3 with ALPN h2.
+# Partial cluster => startup error naming the missing fields.
+# Defaults: ""
+# tls_cert_path = "/etc/faas/tls/vmmd.crt"
+# tls_key_path = "/etc/faas/tls/vmmd.key"
+# tls_ca_path = "/etc/faas/tls/ca.pem"

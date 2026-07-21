@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func discardLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -72,7 +74,7 @@ func TestRun_DialVMMFailurePropagates(t *testing.T) {
 		openDB:     func(context.Context, string) (*pgxpool.Pool, error) { return pool, nil },
 		migrate:    func(context.Context, *pgxpool.Pool) error { return nil },
 		detectFC:   func(context.Context) (string, error) { return "1.10.0", nil },
-		dialVMM:    func(string) (sched.VMM, error) { return nil, wantErr },
+		dialVMM:    func(context.Context, string, *tls.Config) (sched.VMM, error) { return nil, wantErr },
 	}
 	if err := runWithDeps(context.Background(), discardLog(), deps); !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want wraps %v", err, wantErr)
@@ -87,8 +89,8 @@ func TestRun_ListenFailurePropagates(t *testing.T) {
 		openDB:     func(context.Context, string) (*pgxpool.Pool, error) { return pool, nil },
 		migrate:    func(context.Context, *pgxpool.Pool) error { return nil },
 		detectFC:   func(context.Context) (string, error) { return "1.10.0", nil },
-		dialVMM:    func(string) (sched.VMM, error) { return stubVMM{}, nil },
-		listen:     func(string, string) (net.Listener, error) { return nil, wantErr },
+		dialVMM:    func(context.Context, string, *tls.Config) (sched.VMM, error) { return stubVMM{}, nil },
+		listen:     func(context.Context, string, *tls.Config, string) (net.Listener, error) { return nil, wantErr },
 	}
 	if err := runWithDeps(context.Background(), discardLog(), deps); !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want wraps %v", err, wantErr)
@@ -111,8 +113,14 @@ func TestRun_DrainsOnCancel(t *testing.T) {
 		openDB:     func(context.Context, string) (*pgxpool.Pool, error) { return pool, nil },
 		migrate:    func(context.Context, *pgxpool.Pool) error { return nil },
 		detectFC:   func(context.Context) (string, error) { return "1.10.0", nil },
-		dialVMM:    func(string) (sched.VMM, error) { return stubVMM{}, nil },
-		listen:     func(path, _ string) (net.Listener, error) { return net.Listen("unix", path) },
+		dialVMM:    func(context.Context, string, *tls.Config) (sched.VMM, error) { return stubVMM{}, nil },
+		listen: func(_ context.Context, target string, _ *tls.Config, _ string) (net.Listener, error) {
+			t2, err := wire.ParseTarget(target)
+			if err != nil {
+				return nil, err
+			}
+			return net.Listen("unix", t2.Address)
+		},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

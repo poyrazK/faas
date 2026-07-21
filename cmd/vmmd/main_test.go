@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // nopHostKeyDeps returns host-key dep fields that simulate "host key
@@ -76,9 +78,15 @@ func TestRun_DrainsOnCancel(t *testing.T) {
 
 	load, write := nopHostKeyDeps(t)
 	deps := runDeps{
-		configPath:     cfgPath,
-		detectFC:       func(context.Context) (string, error) { return "1.7.0-test", nil },
-		listen:         func(path, _ string) (net.Listener, error) { return net.Listen("unix", path) },
+		configPath: cfgPath,
+		detectFC:   func(context.Context) (string, error) { return "1.7.0-test", nil },
+		listen: func(_ context.Context, target string, _ *tls.Config, _ string) (net.Listener, error) {
+			t, err := wire.ParseTarget(target)
+			if err != nil {
+				return nil, err
+			}
+			return net.Listen("unix", t.Address)
+		},
 		loadHostKey:    load,
 		writeRecipient: write,
 	}
@@ -114,7 +122,7 @@ func TestRun_ListenFailurePropagates(t *testing.T) {
 	deps := runDeps{
 		configPath:     cfgPath,
 		detectFC:       func(context.Context) (string, error) { return "1.7.0", nil },
-		listen:         func(string, string) (net.Listener, error) { return nil, wantErr },
+		listen:         func(context.Context, string, *tls.Config, string) (net.Listener, error) { return nil, wantErr },
 		loadHostKey:    load,
 		writeRecipient: write,
 	}
@@ -139,9 +147,15 @@ func TestRun_FCDetectFailureIsWarning(t *testing.T) {
 
 	load, write := nopHostKeyDeps(t)
 	deps := runDeps{
-		configPath:     cfgPath,
-		detectFC:       func(context.Context) (string, error) { return "", errors.New("no fc on host") },
-		listen:         func(path, _ string) (net.Listener, error) { return net.Listen("unix", path) },
+		configPath: cfgPath,
+		detectFC:   func(context.Context) (string, error) { return "", errors.New("no fc on host") },
+		listen: func(_ context.Context, target string, _ *tls.Config, _ string) (net.Listener, error) {
+			t, err := wire.ParseTarget(target)
+			if err != nil {
+				return nil, err
+			}
+			return net.Listen("unix", t.Address)
+		},
 		loadHostKey:    load,
 		writeRecipient: write,
 	}

@@ -1,20 +1,32 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"os"
 
 	"github.com/BurntSushi/toml"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // Config is the on-disk representation of /etc/faas/builderd.toml. Every
 // field has a working default so a missing or partial file still yields a
 // runnable daemon.
 type Config struct {
-	// VMMDSocket is the vmmd gRPC socket builderd dials to spawn builder VMs.
-	// Defaults to /run/faas/vmmd.sock — the same socket schedd uses
-	// (ADR-014/015).
+	// VMMDSocket is the vmmd gRPC socket builderd dials to spawn builder VMs
+	// when VMMTarget is empty. Defaults to /run/faas/vmmd.sock — the same
+	// socket schedd uses (ADR-014/015).
 	VMMDSocket string `toml:"vmmd_socket"`
+	// VMMTarget is the location-transparent gRPC dial target for vmmd
+	// (issue #95, ADR-025). When non-empty, takes precedence over
+	// VMMDSocket.
+	VMMTarget string `toml:"vmmd_target"`
+	// Client-mTLS material for the vmmd dial (issue #95). All three
+	// paths empty => no TLS; all three set => mTLS. Partial cluster
+	// => startup error.
+	TLSCertPath string `toml:"tls_cert_path"`
+	TLSKeyPath  string `toml:"tls_key_path"`
+	TLSCAPath   string `toml:"tls_ca_path"`
 	// CacheDir is the on-disk root for content-addressed build cache.
 	// Defaults to /var/cache/faas/builds.
 	CacheDir string `toml:"cache_dir"`
@@ -46,6 +58,21 @@ type Config struct {
 	// Empty disables the 2nd slot — same behaviour as the pre-fix
 	// nil-probe path.
 	ScheddMetricsURL string `toml:"schedd_metrics_url"`
+}
+
+// ResolveVMMTarget returns the dial target for vmmd. VMMTarget wins
+// when set; otherwise unix://+VMMDSocket.
+func (c *Config) ResolveVMMTarget() string {
+	if c.VMMTarget != "" {
+		return c.VMMTarget
+	}
+	return "unix://" + c.VMMDSocket
+}
+
+// LoadVMMTLS returns the client mTLS config builderd uses to dial vmmd.
+// Empty cluster returns (nil, nil); partial cluster is rejected.
+func (c *Config) LoadVMMTLS() (*tls.Config, error) {
+	return wire.LoadClientTLSConfig(c.TLSCertPath, c.TLSKeyPath, c.TLSCAPath)
 }
 
 // LoadConfig reads a TOML file at path with defaults filled in. A missing

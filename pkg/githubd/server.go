@@ -44,8 +44,20 @@ type Server struct {
 	// GRPCServer is the registered Server; nil → no gRPC listener.
 	GRPCServer *githubdgrpc.Server
 
-	// SocketPath is the unix socket path (default /run/faas/githubd.sock).
+	// SocketPath is the unix socket path when ListenAddr is empty
+	// (default /run/faas/githubd.sock).
 	SocketPath string
+
+	// ListenAddr is the location-transparent gRPC listen target
+	// (issue #95, ADR-025). Accepts unix:///path or tcp://host:port.
+	// Empty falls back to unix://+SocketPath.
+	ListenAddr string `toml:"listen_addr"`
+
+	// Server-mTLS material (issue #95). All three paths empty =>
+	// no TLS; all three set => mTLS. Partial cluster => startup error.
+	TLSCertPath string `toml:"tls_cert_path"`
+	TLSKeyPath  string `toml:"tls_key_path"`
+	TLSCAPath   string `toml:"tls_ca_path"`
 
 	// HTTPAddr is the loopback bind address (default 127.0.0.1:8083).
 	HTTPAddr string
@@ -66,6 +78,12 @@ const DefaultHTTPAddr = "127.0.0.1:8083"
 // returns when both are serving. The returned cleanup func
 // releases both; the returned errc channel reports listener errors
 // so the caller's select can shut everything down on first failure.
+//
+// Issue #95: the gRPC listen target is now location-transparent.
+// `ListenAddr` takes precedence; if empty, falls back to the
+// `unix://` + `SocketPath` default. When the mTLS cluster (cert,
+// key, CA) is fully populated, the listener is wrapped in a
+// `tls.NewListener`. Partial clusters fail closed at wire.Listen.
 func (s *Server) Start(ctx context.Context) (func(context.Context) error, <-chan error, error) {
 	if s.Log == nil {
 		s.Log = slog.Default()
@@ -86,22 +104,23 @@ func (s *Server) Start(ctx context.Context) (func(context.Context) error, <-chan
 		httpAddr = DefaultHTTPAddr
 	}
 
-	// gRPC socket — group `faas`, mode 0660 (ADR-015). On a dev box
-	// without the user/group the bind still works (the chown is
-	// silently skipped when lookup fails — see wire.ListenOrRecreate).
-	gLis, err := wire.ListenOrRecreateByName(socketPath, "githubd")
+	// gRPC listen target — ListenAddr wins, else unix://+SocketPath.
+	listenTarget := s.ListenAddr
+	if listenTarget == "" {
+		listenTarget = "unix://" + socketPath
+	}
+
+	// Server-mTLS cluster (issue #95). Empty cluster → nil TLS;
+	// full cluster → mTLS. Partial cluster fails closed inside
+	// LoadServerTLSConfig.
+	serverTLS, err := wire.LoadServerTLSConfig(s.TLSCertPath, s.TLSKeyPath, s.TLSCAPath)
 	if err != nil {
-		// Fall back to a plain Listen if the named lookup fails
-		// (e.g. unit tests, or dev shells without the githubd user
-		// provisioned yet). The mode is what we control; the user
-		// provisioning belongs to deploy/ansible and is exercised on
-		// the EX44.
-		s.Log.Warn("githubd: named socket bind failed, falling back to plain listen",
-			"socket", socketPath, "err", err)
-		gLis, err = net.Listen("unix", socketPath)
-		if err != nil {
-			return nil, nil, fmt.Errorf("githubd: listen %q: %w", socketPath, err)
-		}
+		return nil, nil, fmt.Errorf("githubd: tls: %w", err)
+	}
+
+	gLis, err := wire.Listen(ctx, listenTarget, serverTLS)
+	if err != nil {
+		return nil, nil, fmt.Errorf("githubd: listen %q: %w", listenTarget, err)
 	}
 	gsrv := grpc.NewServer()
 	s.GRPCServer.Register(gsrv)
@@ -123,7 +142,7 @@ func (s *Server) Start(ctx context.Context) (func(context.Context) error, <-chan
 	// caller's select can shut everything down on first failure.
 	errc := make(chan error, 2)
 	go func() {
-		s.Log.Info("githubd gRPC listening", "socket", socketPath)
+		s.Log.Info("githubd gRPC listening", "target", listenTarget)
 		if err := gsrv.Serve(gLis); err != nil {
 			errc <- fmt.Errorf("githubd gRPC serve: %w", err)
 		}

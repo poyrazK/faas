@@ -284,7 +284,12 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// old slug in their deployment.app_id-to-slug lookup.
 	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged,
 		fmt.Sprintf(`{"kind":"renamed","app_id":"%s","from":%q,"to":%q}`, app.ID, oldSlug, req.NewSlug))
-	s.log.Info("app renamed", "app", updated.ID, "from", oldSlug, "to", req.NewSlug, "account", acct.ID)
+	// CodeQL go/log-injection (CWE-117): oldSlug came from the
+	// apps.slug column (regex-validated at create) and req.NewSlug
+	// passed the same validSlug check on this request's body. Wrap
+	// both so a future relax of validSlug (or a hostile migration)
+	// cannot smuggle CR/LF into the audit line.
+	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(req.NewSlug), "account", acct.ID)
 	writeJSON(w, http.StatusOK, s.appResponse(updated))
 }
 
@@ -595,8 +600,13 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 	updated, _ := s.store.AccountByID(ctx(r), acct.ID)
-	// codeql[go/log-injection] false-positive: acct.ID is server-generated UUID; plan is enum-validated against the 4 Plan constants (free|hobby|pro|scale) by plan.Valid() — handler returns 400 on invalid input.
-	s.log.Info("plan changed", "account", acct.ID, "plan", plan)
+	// CodeQL go/log-injection (CWE-117): plan was enum-validated against
+	// the 4 Plan constants (free|hobby|pro|scale) by plan.Valid() in this
+	// handler — a bad value is rejected with 400 before reaching here,
+	// but CodeQL's taint engine doesn't model that branch. Wrap so a
+	// future relax of plan.Valid() cannot smuggle CR/LF into the audit
+	// line.
+	s.log.Info("plan changed", "account", acct.ID, "plan", logsanitize.Field(string(plan)))
 	writeJSON(w, http.StatusOK, api.AccountResponse{
 		ID: updated.ID, Email: updated.Email, Plan: string(updated.Plan), Status: string(updated.Status),
 	})

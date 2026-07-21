@@ -64,8 +64,12 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		return
 	}
-	// codeql[go/log-injection] false-positive: created.ID and acct.ID are server-generated UUIDs (pkg/state newID); created.Slug is regex-validated to ^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$ by validSlug before persist.
-	s.log.Info("app created", "app", created.ID, "slug", created.Slug, "account", acct.ID)
+	// CodeQL go/log-injection (CWE-117): created.Slug passes validSlug's
+	// regex check before persist (^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$),
+	// but CodeQL's taint engine doesn't model that sanitizer. Wrap the
+	// slug in logsanitize.Field so the audit line is one-event-per-line
+	// regardless of what a future refactor of validSlug does.
+	s.log.Info("app created", "app", created.ID, "slug", logsanitize.Field(created.Slug), "account", acct.ID)
 	writeJSON(w, http.StatusCreated, s.appResponse(created))
 }
 

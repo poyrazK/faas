@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,9 +40,9 @@ func main() {
 // uses the defaults; tests can swap individual fields to drive `run` without
 // needing KVM, root, or a real /etc/faas/vmmd.toml.
 type runDeps struct {
-	configPath string                                     // defaults to /etc/faas/vmmd.toml
-	detectFC   func(context.Context) (string, error)      // defaults to fcvm.DetectFirecrackerVersion
-	listen     func(string, string) (net.Listener, error) // defaults to wire.ListenOrRecreateByName
+	configPath string                                                                                                // defaults to /etc/faas/vmmd.toml
+	detectFC   func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
+	listen     func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
 	// hostKey plumbing — function-typed so tests can drive first-boot
 	// (LoadHostKey returns ErrHostKeyNotFound → GenerateAndSaveHostKey)
 	// and restart (LoadHostKey returns id) paths without touching disk.
@@ -54,7 +55,7 @@ func defaultDeps() runDeps {
 	return runDeps{
 		configPath:     envOrConfig("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
 		detectFC:       fcvm.DetectFirecrackerVersion,
-		listen:         wire.ListenOrRecreateByName,
+		listen:         wire.ListenAs,
 		loadHostKey:    secretbox.LoadHostKey,
 		genAndSaveKey:  secretbox.GenerateAndSaveHostKey,
 		writeRecipient: secretbox.WriteRecipientFile,
@@ -80,7 +81,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	log.Info("config", "socket", cfg.SocketPath, "kernel", cfg.KernelPath,
+	listenTarget := cfg.ResolveListenTarget()
+	log.Info("config", "listen_addr", listenTarget, "socket", cfg.SocketPath, "kernel", cfg.KernelPath,
 		"metrics_addr", cfg.MetricsAddr)
 
 	// Fill in host-key defaults if a test passed a zero-value runDeps
@@ -136,11 +138,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		"host_key_path", keyPath, "recipient_path", pubPath,
 		"recipient", hostID.Recipient().String())
 
-	// Ops + listener: unix socket with ADR-015 mode 0660 group `faas`.
+	// Ops + listener. Resolve the listen target (issue #95): unix://
+	// default, tcp/dns optional; tcp targets require a complete mTLS
+	// cluster and the loader rejects partial configs.
 	ops := wire.NewOpsMetrics("vmmd")
-	lis, err := deps.listen(cfg.SocketPath, cfg.OwnerUser)
+	serverTLS, err := cfg.LoadServerTLS()
 	if err != nil {
-		return err
+		return fmt.Errorf("vmmd: load server TLS: %w", err)
+	}
+	lis, err := deps.listen(ctx, listenTarget, serverTLS, cfg.OwnerUser)
+	if err != nil {
+		return fmt.Errorf("vmmd: listen %s: %w", listenTarget, err)
 	}
 	gsrv := grpc.NewServer()
 	impl := vmmdgrpc.New(mgr, ops, fcVersion, log)
@@ -170,7 +178,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Info("grpc listening", "socket", cfg.SocketPath, "service", vmmdpb.Vmmd_ServiceDesc.ServiceName)
+		log.Info("grpc listening", "addr", listenTarget, "service", vmmdpb.Vmmd_ServiceDesc.ServiceName)
 		serveErr <- gsrv.Serve(lis)
 	}()
 

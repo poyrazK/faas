@@ -2,7 +2,10 @@
 
 package builderd
 
-import "context"
+import (
+	"context"
+	"crypto/tls"
+)
 
 // ErrNotMetal is the sentinel returned by the non-metal VM stub. The metal
 // implementation lives in vm_metal.go (//go:build metal); the split keeps
@@ -14,6 +17,12 @@ type VMMDriver struct{}
 // NewVMMDriver returns the non-metal VMMDriver. The orchestrator ignores the
 // driver unless the VM spawn is invoked, where it returns ErrNotMetal.
 func NewVMMDriver(_, _, _, _ string) (*VMMDriver, error) { return &VMMDriver{}, nil }
+
+// NewVMMDriverContext mirrors the metal signature so both build tags
+// compile. It never dials; the spawn path always returns ErrNotMetal.
+func NewVMMDriverContext(_ context.Context, _ string, _ *tls.Config, _, _, _ string) (*VMMDriver, error) {
+	return &VMMDriver{}, nil
+}
 
 // Close is a no-op on the stub.
 func (s *VMMDriver) Close() error { return nil }

@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,9 +69,12 @@ type runDeps struct {
 	// Mirrors cmd/apid/main.go's getenv on its runDeps.
 	getenv func(string) string
 	// dialSchedd is the constructor for the schedd gRPC client. nil in
-	// production (defaultDeps wires scheddgrpc.Dial); tests inject a
-	// fake to avoid touching the unix socket.
-	dialSchedd func(socketPath string) (parkInstanceParker, error)
+	// production (defaultDeps wires scheddgrpc.DialContext); tests
+	// inject a fake to avoid touching the unix socket. Issue #95:
+	// signature takes ctx + tls config so the dial participates in the
+	// daemon's lifecycle cancellation and can dial a TLS-wrapped remote
+	// schedd once the control plane is decoupled.
+	dialSchedd func(ctx context.Context, target string, tlsCfg *tls.Config) (parkInstanceParker, error)
 	// newStripeClient is the constructor for the stripex facade. nil
 	// in production (defaultDeps wires stripex.NewClient); tests inject
 	// a recording stub. apiKey + webhookSecret are passed in (not read
@@ -104,8 +108,8 @@ func defaultDeps() runDeps {
 		migrate:    db.MigrateUp,
 		loadMeter:  func(c *Config) (*meter.Config, error) { return c.Meter, nil },
 		getenv:     os.Getenv,
-		dialSchedd: func(socketPath string) (parkInstanceParker, error) {
-			c, err := scheddgrpc.Dial(socketPath)
+		dialSchedd: func(ctx context.Context, target string, tlsCfg *tls.Config) (parkInstanceParker, error) {
+			c, err := scheddgrpc.DialContext(ctx, target, tlsCfg)
 			if err != nil {
 				return nil, err
 			}
@@ -182,7 +186,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.dialSchedd == nil {
 			return fmt.Errorf("meterd: nil dialSchedd and nil parker (refusing to start unbounded)")
 		}
-		c, err := deps.dialSchedd(scheddAddr)
+		c, err := deps.dialSchedd(ctx, scheddAddr, nil)
 		if err != nil {
 			return fmt.Errorf("meterd: dial schedd %q: %w", scheddAddr, err)
 		}

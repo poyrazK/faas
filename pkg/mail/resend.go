@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
 // ResendConfig is the configuration for the Resend transport.
@@ -113,8 +115,17 @@ func (s *ResendSender) Send(ctx context.Context, msg Message) error {
 
 	rawBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		// CodeQL go/log-injection (CWE-117): msg.To + msg.Subject are
+		// caller-supplied (constructed from account.Email / templated
+		// subject by the dunning + quota-warning senders). Sanitize
+		// before logging so a hostile slug/email cannot smuggle CR/LF
+		// into the success-path audit line.
+		to := make([]string, len(msg.To))
+		for i, a := range msg.To {
+			to[i] = logsanitize.Field(a)
+		}
 		s.cfg.Log.Info("mail.resend.ok",
-			"to", msg.To, "subject", msg.Subject, "status", resp.StatusCode)
+			"to", to, "subject", logsanitize.Field(msg.Subject), "status", resp.StatusCode)
 		return nil
 	}
 	var rerr resendError

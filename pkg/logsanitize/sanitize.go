@@ -15,7 +15,10 @@
 // failure before logging anyway, but the helper stays total).
 package logsanitize
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Field strips ASCII control characters from a string intended for a slog
 // attribute. Tab (0x09) is preserved because slog's JSON encoder and most
@@ -71,4 +74,38 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// FieldAny returns the slog-safe form of an arbitrary value, the
+// interface{} companion to Field. The map is:
+//
+//   - nil → "" (panic(nil) is a valid recover() return).
+//   - string → Field(s) (CR/LF/control stripping).
+//   - error → "<len>-byte-error: <Field(err.Error())>" so the error
+//     length is preserved as a length signal (mirrors RedactValue's
+//     rationale: only the byte count escapes, never the contents).
+//   - anything else → fmt.Sprint(v) passed through Field so a hostile
+//     type's String() method cannot smuggle CR/LF into a log record.
+//
+// Hand-rolled rather than imported so this package stays a 0-deps
+// leaf (the alternative — pulling slog in here — is the wrong
+// direction: logsanitize is the thing slog depends on, not vice
+// versa). Used by the recovery middleware to log the panic value
+// without trusting recover()'s interface{} to be plain text.
+func FieldAny(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return Field(x)
+	case error:
+		if x == nil {
+			return ""
+		}
+		// Empty error message → just "<N>-byte-error:" so the
+		// reader sees the (zero) length. Real-world empty-error
+		// is rare but Go permits it.
+		return fmt.Sprintf("%d-byte-error:%s", len(x.Error()), Field(x.Error()))
+	}
+	return Field(fmt.Sprint(v))
 }

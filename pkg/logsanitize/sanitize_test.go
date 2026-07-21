@@ -1,6 +1,7 @@
 package logsanitize
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -44,3 +45,53 @@ func TestField(t *testing.T) {
 		})
 	}
 }
+
+// TestFieldAny locks the interface{} companion contract for the
+// recovery middleware and any other call site that logs an
+// attacker-controllable any. Same defense as TestField but mapped
+// across the four top-level branches of FieldAny.
+func TestFieldAny(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want string
+	}{
+		// nil → ""; covers panic(nil) being a legitimate recover() return.
+		{"nil returns empty", nil, ""},
+		// string delegates to Field().
+		{"string delegates", "hello-world", "hello-world"},
+		{"string still strips", "a\nb", "a·b"},
+		// error: length-only prefix; sanitized message body.
+		{"error clean", errors.New("boom"), "4-byte-error:boom"},
+		{"error with CR/LF stripped",
+			errors.New("bad\rinput\nhere"), "14-byte-error:bad·input·here"},
+		{"nil error returns empty",
+			error(nil), ""}, //nolint:gocritic // testing the (error)(nil) branch deliberately
+		// anything else → fmt.Sprint then Field. fmt.Sprint on a
+		// Stringer returns the String() output verbatim (not the
+		// "%T(%v)" form); the hostile type asserts the bytes are
+		// sanitized, not the framing.
+		{"int goes through Sprint", 42, "42"},
+		{"int negative", -7, "-7"},
+		{"type with hostile String method",
+			hostileStringer("evil\nlog\rline"), "evil·log·line"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := FieldAny(tc.in)
+			if got != tc.want {
+				t.Errorf("FieldAny(%v) = %q, want %q", tc.in, got, tc.want)
+			}
+			if strings.ContainsAny(got, "\r\n") {
+				t.Errorf("FieldAny(%v) leaked CR/LF: %q", tc.in, got)
+			}
+		})
+	}
+}
+
+// hostileStringer is a test type whose String() deliberately contains
+// CR/LF so a hostile recovery value can't smuggle newlines through
+// slog's Any() path. FieldAny must route through Field() and strip.
+type hostileStringer string
+
+func (h hostileStringer) String() string { return string(h) }

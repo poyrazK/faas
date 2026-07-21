@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -40,7 +41,7 @@ type runDeps struct {
 	configPath       string
 	openDB           func(context.Context, string) (*pgxpool.Pool, error)
 	migrate          func(context.Context, *pgxpool.Pool) error
-	newDriver        func(socket, builderBase, driveDir, exportDir string) (builderdpkg.VM, error)
+	newDriver        func(ctx context.Context, target string, tlsCfg *tls.Config, builderBase, driveDir, exportDir string) (builderdpkg.VM, error)
 	newResidentProbe func(ctx context.Context, url string) builderdpkg.ResidencyProbe
 }
 
@@ -59,12 +60,12 @@ func defaultDeps() runDeps {
 			return db.OpenWithAppName(ctx, dsn, "faas-builderd")
 		},
 		migrate: db.MigrateUp,
-		// newDriver is set per build tag at link time: metal uses vmmd over
-		// gRPC; non-metal uses the stub that returns ErrNotMetal. The
-		// NewVMMDriver name exists in both pkg/builderd/vm_metal.go and
-		// pkg/builderd/vm_stub.go with their respective build tags.
-		newDriver: func(socket, builderBase, driveDir, exportDir string) (builderdpkg.VM, error) {
-			return builderdpkg.NewVMMDriver(socket, builderBase, driveDir, exportDir)
+		// newDriver is set per build tag at link time: metal uses vmmd
+		// over gRPC; non-metal uses the stub that returns ErrNotMetal.
+		// The *Context form (issue #95) threads ctx + tlsCfg through to
+		// wire.DialContext.
+		newDriver: func(ctx context.Context, target string, tlsCfg *tls.Config, builderBase, driveDir, exportDir string) (builderdpkg.VM, error) {
+			return builderdpkg.NewVMMDriverContext(ctx, target, tlsCfg, builderBase, driveDir, exportDir)
 		},
 		// newResidentProbe wires the 2nd-slot gate (spec §4.5, §13). The
 		// default polls schedd's /metrics endpoint on cfg.ScheddMetricsURL;
@@ -92,6 +93,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	vmmTarget := cfg.ResolveVMMTarget()
+	log.Info("config",
+		"vmmd_target", vmmTarget,
+		"vmmd_socket", cfg.VMMDSocket)
 
 	pool, err := deps.openDB(ctx, cfg.DBURL)
 	if err != nil {
@@ -102,7 +107,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 
-	driver, err := deps.newDriver(cfg.VMMDSocket, cfg.BuilderBase, cfg.BuildDriveDir, cfg.BuildExportDir)
+	// Issue #95 / ADR-025: dial vmmd through the location-transparent
+	// helper. tcp/dns targets require the tls_* cluster; nil TLS on a
+	// unix target keeps single-box behaviour unchanged.
+	vmmTLS, err := cfg.LoadVMMTLS()
+	if err != nil {
+		return fmt.Errorf("builderd: load vmmd TLS: %w", err)
+	}
+	driver, err := deps.newDriver(ctx, vmmTarget, vmmTLS, cfg.BuilderBase, cfg.BuildDriveDir, cfg.BuildExportDir)
 	if err != nil {
 		return fmt.Errorf("builderd: vmmd driver: %w", err)
 	}
@@ -140,7 +152,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	log.Info("builderd ready",
-		"vmmd_socket", cfg.VMMDSocket,
+		"vmmd_target", vmmTarget,
 		"cache_dir", cfg.CacheDir)
 
 	for {

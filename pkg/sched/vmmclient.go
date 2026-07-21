@@ -13,14 +13,15 @@ package sched
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // VMM is the slice of vmmd schedd depends on. Defined as an interface so the
@@ -101,16 +102,24 @@ var _ VMM = (*VMMClient)(nil)
 // deadlines here would either over-budget (every RPC gets the largest
 // budget) or under-budget (every RPC gets the smallest). Leave the
 // client transport-only.
+//
+// Legacy entrypoint kept for source compatibility with existing
+// callers and tests; production code should call DialVMMContext so the
+// caller's context controls the dial.
 func DialVMM(socketPath string) (*VMMClient, error) {
-	if socketPath == "" {
-		return nil, errors.New("sched: empty vmmd socket path")
+	return DialVMMContext(context.Background(), socketPath, nil)
+}
+
+// DialVMMContext opens a lazy gRPC connection to vmmd. tlsCfg is
+// required for tcp/dns targets (issue #95); nil tlsCfg is fine for the
+// single-box unix default. Wire layer performs the mTLS gating.
+func DialVMMContext(ctx context.Context, target string, tlsCfg *tls.Config) (*VMMClient, error) {
+	if target == "" {
+		return nil, errors.New("sched: empty vmmd target")
 	}
-	conn, err := grpc.NewClient(
-		"unix://"+socketPath,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	conn, err := wire.DialContext(ctx, target, tlsCfg)
 	if err != nil {
-		return nil, fmt.Errorf("sched: dial vmmd %q: %w", socketPath, err)
+		return nil, fmt.Errorf("sched: dial vmmd %q: %w", target, err)
 	}
 	return &VMMClient{conn: conn, cli: vmmdpb.NewVmmdClient(conn)}, nil
 }
