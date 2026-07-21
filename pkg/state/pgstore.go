@@ -573,13 +573,47 @@ func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID string) 
 	return scanDeployment(row)
 }
 
+// ListDeploymentsForApp returns deployments for an app, ordered DESC by
+// created_at. limit <= 0 means "no row cap" (every remaining row after
+// offset) — same semantics as MemStore. F-10: the prior version forwarded
+// `limit=0` to Postgres which treats LIMIT 0 as "0 rows"; the imaged
+// caller (cleanupAppFiles → pkg/imaged/handler.go:932) walked an empty
+// slice and silently kept every appsRoot/<slug>/ directory across an app
+// delete. Now both backends return the full tail when limit<=0.
+//
+// Cursor note: callers that want page-by-page behaviour should pass an
+// explicit positive limit (apids dashboard does — limit=25). The no-cap
+// shape exists for the "iterate over every deployment we own" use case
+// (imaged hard-delete on app change, code migrations, audit dumps). At
+// v1 scale the per-app deployment count is O(deploy rate × app lifetime),
+// bounded by spec §4.2 (DeployedApps ≤ plan_max). The index on
+// (app_id, created_at desc) added in migration 00007 keeps this scan cheap.
 func (s *PgStore) ListDeploymentsForApp(ctx context.Context, appID string, limit, offset int) ([]Deployment, error) {
-	rows, err := s.pool.Query(ctx,
-		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
-		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-		        status, coalesce(error,''), created_at
-		 from deployments where app_id = $1 order by created_at desc limit $2 offset $3`,
-		appID, limit, offset)
+	if offset < 0 {
+		offset = 0
+	}
+	// F-10: branch on limit rather than passing LIMIT 0 / LIMIT NULL to
+	// Postgres; both yield 0 rows on the bare version, which is the bug
+	// we're closing.
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if limit > 0 {
+		rows, err = s.pool.Query(ctx,
+			`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
+			        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
+			        status, coalesce(error,''), created_at
+			 from deployments where app_id = $1 order by created_at desc limit $2 offset $3`,
+			appID, limit, offset)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
+			        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
+			        status, coalesce(error,''), created_at
+			 from deployments where app_id = $1 order by created_at desc offset $2`,
+			appID, offset)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1193,6 +1227,109 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ListSnapshotsForGC returns every non-stale snapshot joined with its
+// deployment + app + account, ordered newest-first. The SQL filter on
+// apps.status='deleted' is what implements "soft-deleted apps' snapshots
+// are GC-eligible" — the row delete cascade in DeleteAccount only touches
+// rows, not on-disk files, so imaged still has to scrub them.
+//
+// The JOIN is bounded by snapshotDashboardCap (10k) for the same reason
+// ListLiveSnapshotStats is: the GC algorithm is O(N) per tick and a 10k
+// fleet is plenty for the v1 box (the 452 GB budget fires well before that).
+// Raise this when we go multi-box.
+func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error) {
+	rows, err := s.pool.Query(ctx,
+		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text,
+		        s.fc_version, s.mem_bytes, s.disk_bytes, s.path, s.stale, s.created_at
+		   from snapshots s
+		   join deployments d on d.id = s.deployment_id
+		   join apps a       on a.id = d.app_id
+		  where s.stale = false
+		    and a.status <> 'deleted'
+		  order by s.created_at desc
+		  limit 10000`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SnapshotForGC
+	for rows.Next() {
+		var r SnapshotForGC
+		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID,
+			&r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.Path, &r.Stale, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DeleteSnapshotsByID bulk-removes the named rows. No cascade; schedd's
+// runtime accounting (instances table) doesn't reference snapshots, so a
+// snapshot can be deleted without affecting live wakes — ADR-005 says
+// "cold boot must always work" precisely so this can be done in any
+// state. Idempotent: a second call returns 0 and nil.
+func (s *PgStore) DeleteSnapshotsByID(ctx context.Context, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `delete from snapshots where id = any($1::uuid[])`, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// MarkAllSnapshotsStaleByFCVersion flips every non-stale row whose
+// fc_version != currentVersion stale (ADR-005). Idempotent. Returns
+// the number of rows affected; a 0-row result on a stable box is the
+// expected steady state.
+func (s *PgStore) MarkAllSnapshotsStaleByFCVersion(ctx context.Context, currentVersion string) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`update snapshots set stale = true where stale = false and fc_version <> $1`,
+		currentVersion)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// MarkOldSnapshotsStale marks the given snapshot IDs stale. Used by the
+// imaged GC's per-app "current + previous" enforcement: the per-app walk
+// identifies the IDs to drop, marks them stale first (so a concurrent
+// wake's "is this usable?" check refuses them safely), and then calls
+// DeleteSnapshotsByID. Marking stale first instead of deleting directly
+// lets schedd's per-row freshness check remain the source of truth in
+// the brief window between mark and delete.
+func (s *PgStore) MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs []string) (int64, error) {
+	if len(beforeSnapshotIDs) == 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx,
+		`update snapshots set stale = true where id = any($1::uuid[])`, beforeSnapshotIDs)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeleteSnapshotsStaleOlderThan removes stale snapshots past the
+// retention window. Used by imaged's F2 startup sweep after the
+// mark-stale step — keeps stale rows restorable for a grace period
+// (typically 7 days per api.SnapshotStaleRetention) so an operator
+// rollback across an FC upgrade doesn't pay an extra cold boot.
+// F-07 closes the gap where the prior sweep only flipped stale=true
+// and stale rows accumulated indefinitely.
+func (s *PgStore) DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`delete from snapshots where stale = true and created_at < now() - $1::interval`,
+		fmt.Sprintf("%d seconds", int64(retention.Seconds())))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // ListLiveSnapshotStats returns mem_bytes + disk_bytes for every non-stale

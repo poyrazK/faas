@@ -93,7 +93,7 @@ provision:
       apt-get update -y
       apt_wait
       apt-get install -y --no-install-recommends \
-        build-essential e2fsprogs iproute2 iptables git curl ca-certificates \
+        build-essential e2fsprogs iproute2 iptables nftables git curl ca-certificates \
         busybox-static jq postgresql
 
       # Per-daemon service accounts. vmmd runs the jailed firecracker +
@@ -259,6 +259,16 @@ provision:
       GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
         go build -trimpath -tags linux -o /tmp/faas-guest-init "${REPO}/guest/init"
       install -m0755 /tmp/faas-guest-init /usr/local/bin/faas-guest-init
+
+      # Build function-runner shims (per-runtime). These live at
+      # /usr/local/bin/faas-runner inside the per-app ext4 (drive1); the
+      # M8 PR wires them via FAAS_FUNCTION_RUNNER_NODE22 / _PYTHON312.
+      # Same build matrix as guest-init (linux/arm64, CGO off, trimpath).
+      for rt in node22 python312; do
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+          go build -trimpath -o "/tmp/faas-runner-${rt}" "${REPO}/guest/runners/${rt}"
+        install -m0755 "/tmp/faas-runner-${rt}" "/usr/local/bin/faas-runner-${rt}"
+      done
 
       # Stage the V6 rootfs skeleton: busybox + guest-init + /etc/faas/app.json.
       # The image is built ONCE per `limactl start`; after that, `make metal-lima`

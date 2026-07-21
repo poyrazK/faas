@@ -875,6 +875,55 @@ func TestSetupNetworkTcResetBeforeNftReset(t *testing.T) {
 	}
 }
 
+// TestSetupNetworkEmitsConntrackCapRule locks the spec §7 wire-up:
+// pkg/fcvm/manager.go::Wake stamps nc.ConntrackCap = api.DefaultConntrackCap,
+// so the runner must observe the nft `ct count over 4096 counter name
+// "faas_cap" drop` rule in the argv list — and it must sit between the
+// established/related accept and the SMTP / daddr drops (the rule
+// position the connlimit comment in pkg/netns/config.go asserts).
+//
+// The companion unit tests for argv shape live in pkg/netns/config_test.go
+// (TestNftCommandsEmitsConntrackCapRule / CapRuleRunsAfterEstablishedBeforeDenies);
+// this test pins the wiring through pkg/fcvm/manager::setupNetwork, which
+// is the runtime code that owns rule ordering against tc reset/add.
+func TestSetupNetworkEmitsConntrackCapRule(t *testing.T) {
+	run, vmm := &fakeRunner{}, &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	if _, err := m.ColdBoot(context.Background(), req("cap-rule")); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	capV4 := indexOfArgv(run.commands, "nft add rule ip faas forward ct count over 4096")
+	capV6 := indexOfArgv(run.commands, "nft add rule ip6 faas forward ct count over 4096")
+	establishedV4 := indexOfArgv(run.commands, "nft add rule ip faas forward ct state established,related accept")
+	establishedV6 := indexOfArgv(run.commands, "nft add rule ip6 faas forward ct state established,related accept")
+	smtpDrop := indexOfArgv(run.commands, "tcp dport {")
+	daddrDropV4 := indexOfArgv(run.commands, "ip daddr { 10.0.0.0/8")
+	daddrDropV6 := indexOfArgv(run.commands, "ip6 daddr { fe80::/10")
+	if capV4 < 0 || capV6 < 0 || establishedV4 < 0 || establishedV6 < 0 || daddrDropV4 < 0 || daddrDropV6 < 0 || smtpDrop < 0 {
+		t.Fatalf("missing one or more rules in argv list: capV4=%d capV6=%d establishedV4=%d establishedV6=%d smtp=%d daddrV4=%d daddrV6=%d\n%s",
+			capV4, capV6, establishedV4, establishedV6, smtpDrop, daddrDropV4, daddrDropV6, flattenForTest(run.commands))
+	}
+	// IPv4 forward chain: established/related accept < cap < SMTP drop < daddr drop.
+	if establishedV4 >= capV4 {
+		t.Errorf("[v4] established,related accept (idx %d) must come BEFORE the cap rule (idx %d)", establishedV4, capV4)
+	}
+	if capV4 >= smtpDrop {
+		t.Errorf("[v4] cap rule (idx %d) must come BEFORE the SMTP drop (idx %d)", capV4, smtpDrop)
+	}
+	if capV4 >= daddrDropV4 {
+		t.Errorf("[v4] cap rule (idx %d) must come BEFORE the daddr lateral-movement drop (idx %d)", capV4, daddrDropV4)
+	}
+	// IPv6 forward chain: established/related accept < cap < daddr drop.
+	// (No SMTP drop on v6.)
+	if establishedV6 >= capV6 {
+		t.Errorf("[v6] established,related accept (idx %d) must come BEFORE the cap rule (idx %d)", establishedV6, capV6)
+	}
+	if capV6 >= daddrDropV6 {
+		t.Errorf("[v6] cap rule (idx %d) must come BEFORE the daddr lateral-movement drop (idx %d)", capV6, daddrDropV6)
+	}
+}
+
 // TestSetupNetworkTcRateEqualsPlan locks the wire shape: when the
 // caller sets EgressMbit, the argv that runs contains the rate.
 func TestSetupNetworkTcRateEqualsPlan(t *testing.T) {

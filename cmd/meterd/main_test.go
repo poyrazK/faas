@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -57,7 +58,10 @@ func writeMeterdConfig(t *testing.T, dir, metricsAddr string) string {
 // collaborators so runWithDeps passes its early exits without touching the
 // host. This is the meterd-side equivalent of schedd's "drains on cancel"
 // test seam.
-func stubMeterdDeps(cfgPath, metricsAddr string, pool *pgxpool.Pool, listenFn func(string, http.Handler) (*http.Server, error)) runDeps {
+//
+// env is the env-var reader (FAAS_*_INTERVAL knobs); defaults to a function
+// that returns "". Tests that want sub-second intervals pass a closure.
+func stubMeterdDeps(cfgPath, metricsAddr string, pool *pgxpool.Pool, listenFn func(string, http.Handler) (*http.Server, error), env func(string) string) runDeps {
 	return runDeps{
 		configPath: cfgPath,
 		openDB: func(context.Context, string) (*pgxpool.Pool, error) {
@@ -65,7 +69,7 @@ func stubMeterdDeps(cfgPath, metricsAddr string, pool *pgxpool.Pool, listenFn fu
 		},
 		migrate:               func(context.Context, *pgxpool.Pool) error { return nil },
 		loadMeter:             func(c *Config) (*meter.Config, error) { return c.Meter, nil },
-		getenv:                func(string) string { return "" },
+		getenv:                env,
 		dialSchedd:            func(string) (parkInstanceParker, error) { return &nopParker{}, nil },
 		newStripeClient:       nil, // skipped when stripe is pre-populated
 		parker:                &nopParker{},
@@ -73,6 +77,23 @@ func stubMeterdDeps(cfgPath, metricsAddr string, pool *pgxpool.Pool, listenFn fu
 		mailer:                nil,
 		now:                   time.Now,
 		metricsListenAndServe: listenFn,
+	}
+}
+
+// subSecondIntervalsEnv returns an env reader that pins every
+// FAAS_*_INTERVAL knob to 20 ms. Used by tests that need the four
+// meterd timers (sample / quota / stripe / dunning) to each fire at
+// least once during a brief run; without this, the production
+// defaults (60 s / 3 min / 60 min / 60 min) leave stripe + dunning
+// dormant for the life of any unit test.
+func subSecondIntervalsEnv() func(string) string {
+	return func(k string) string {
+		switch k {
+		case "FAAS_SAMPLE_INTERVAL", "FAAS_QUOTA_INTERVAL",
+			"FAAS_STRIPE_INTERVAL", "FAAS_DUNNING_INTERVAL":
+			return "20ms"
+		}
+		return ""
 	}
 }
 
@@ -117,7 +138,7 @@ func TestRun_MetricsAddrEmptySkipsListener(t *testing.T) {
 		invocations++
 		return nil, nil
 	}
-	deps := stubMeterdDeps(cfgPath, "", pool, listenFn)
+	deps := stubMeterdDeps(cfgPath, "", pool, listenFn, func(string) string { return "" })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -145,10 +166,9 @@ func TestRun_MetricsAddrEmptySkipsListener(t *testing.T) {
 //
 // The factory returns a real *http.Server whose Handler is the captured mux
 // but whose Serve is never called — Shutdown on a never-Serve'd server is a
-// no-op. The follow-up PR wiring ops.Observe into the four timer ticks will
-// surface `meterd_*` series under /metrics. Today an empty CounterVec emits
-// nothing (expected Prometheus behavior); the `promhttp_metric_handler_errors_total`
-// line is the load-bearing proof that the registry is mounted.
+// no-op. After this PR the four timer ticks each Observe once, so the
+// /metrics body carries meterd_ops_total + meterd_op_duration_seconds series
+// in addition to the promhttp internals.
 func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 	dir := shortDir(t)
 	cfgPath := writeMeterdConfig(t, dir, "127.0.0.1:0")
@@ -164,19 +184,24 @@ func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 		captured = h
 		return &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}, nil
 	}
-	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn)
+	// Shrink every timer to 20 ms so the four loops each fire at least
+	// once during the handler wait — without this the only ticks that
+	// land are stripe (60 min default), which never fires in a unit
+	// test.
+	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, subSecondIntervalsEnv())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- runWithDeps(ctx, discardLog(), deps) }()
 
-	// Wait for the goroutine to register the handler.
+	// Wait for the goroutine to register the handler AND for the four
+	// timers to land at least one tick each.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		mu.Lock()
 		got := captured
 		mu.Unlock()
-		if got != nil {
+		if got != nil && time.Now().After(deadline.Add(-1500*time.Millisecond)) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -185,21 +210,39 @@ func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// /healthz — unconditional 200.
+	// /healthz — with the sub-second intervals the four loops have
+	// already ticked, so the JSON body reports Healthy=true and a
+	// status of 200.
 	rec := httptest.NewRecorder()
 	captured.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK {
-		t.Errorf("/healthz status = %d, want 200", rec.Code)
+		t.Errorf("/healthz status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); body != "ok" {
-		t.Errorf("/healthz body = %q, want \"ok\"", body)
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("/healthz Content-Type = %q, want application/json", ct)
+	}
+	var status struct {
+		Healthy bool              `json:"healthy"`
+		Stale   []string          `json:"stale"`
+		Ticks   map[string]string `json:"ticks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatalf("/healthz body is not valid JSON: %v (body=%q)", err, rec.Body.String())
+	}
+	if !status.Healthy {
+		t.Errorf("/healthz Healthy = false on freshly-ticked meterd (Stale=%v, Ticks=%v)",
+			status.Stale, status.Ticks)
+	}
+	for name, ts := range status.Ticks {
+		if ts == "never" {
+			t.Errorf("/healthz Ticks[%q] = \"never\" after the four timers fired", name)
+		}
 	}
 
-	// /metrics — returns the meterd_ prefix per ADR-015. The ops counter
-	// starts at 0 with no series exposed; Counter vecs with no observed
-	// labels are not emitted (expected Prometheus behavior). The
-	// promhttp_metric_handler_errors_total line is the load-bearing proof
-	// that the handler is mounted and is on the per-daemon registry.
+	// /metrics — returns the meterd_ prefix per ADR-015. After the
+	// four Observe calls at boot the body must include at least one
+	// meterd_ops_total line; the promhttp internals are the
+	// load-bearing proof that the handler is mounted.
 	rec = httptest.NewRecorder()
 	captured.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if rec.Code != http.StatusOK {
@@ -208,6 +251,9 @@ func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "promhttp_metric_handler_errors_total") {
 		t.Errorf("/metrics body missing promhttp internals (handler may be unconfigured):\n%s", body)
+	}
+	if !strings.Contains(body, "meterd_ops_total") {
+		t.Errorf("/metrics body missing meterd_ops_total (Observe not wired?):\n%s", body)
 	}
 
 	cancel()
@@ -232,7 +278,7 @@ func TestRun_MetricsAddrDrainsOnCancel(t *testing.T) {
 	listenFn := func(_ string, _ http.Handler) (*http.Server, error) {
 		return &http.Server{Handler: http.NewServeMux(), ReadHeaderTimeout: 10 * time.Second}, nil
 	}
-	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn)
+	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, func(string) string { return "" })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -247,5 +293,100 @@ func TestRun_MetricsAddrDrainsOnCancel(t *testing.T) {
 		}
 	case <-time.After(6 * time.Second):
 		t.Fatal("run did not return within 6s (5s shutdown + slack) of cancel")
+	}
+}
+
+// TestRun_Healthz_StaleReturns503 — drives the loop with sub-second
+// intervals so all four timers fire, cancels, waits past the
+// 3 × interval threshold, then asserts /healthz returns 503 with a
+// JSON body listing every timer in Stale. Pins the §14 M7 wording:
+// "meterd healthy iff sampled within 3 minutes" ⇒ a loop that's gone
+// silent past 3× its interval must report stale.
+func TestRun_Healthz_StaleReturns503(t *testing.T) {
+	dir := shortDir(t)
+	cfgPath := writeMeterdConfig(t, dir, "127.0.0.1:0")
+	pool := testPool(t)
+
+	var (
+		mu       sync.Mutex
+		captured http.Handler
+	)
+	listenFn := func(_ string, h http.Handler) (*http.Server, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		captured = h
+		return &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}, nil
+	}
+	// 20 ms intervals ⇒ 60 ms threshold. The test cancels after the
+	// four timers each tick at least once, then sleeps 200 ms (>3 ×
+	// threshold) before probing /healthz.
+	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, subSecondIntervalsEnv())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runWithDeps(ctx, discardLog(), deps) }()
+
+	// Wait for the handler to register AND the four timers to tick.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		got := captured
+		mu.Unlock()
+		if got != nil && time.Now().After(deadline.Add(-1500*time.Millisecond)) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("metrics handler was not registered within 2s")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("run returned %v, want nil on clean drain", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("run did not return within 3s of cancel")
+	}
+
+	// Sleep past the 60 ms (3 × 20 ms) threshold so the handlers
+	// report every timer as stale.
+	time.Sleep(200 * time.Millisecond)
+
+	rec := httptest.NewRecorder()
+	captured.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("/healthz status = %d, want 503 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("/healthz Content-Type = %q, want application/json", ct)
+	}
+	var status struct {
+		Healthy bool              `json:"healthy"`
+		Stale   []string          `json:"stale"`
+		Ticks   map[string]string `json:"ticks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatalf("/healthz body is not valid JSON: %v (body=%q)", err, rec.Body.String())
+	}
+	if status.Healthy {
+		t.Errorf("/healthz Healthy = true after cancel + 200ms; want false (Ticks=%v)",
+			status.Ticks)
+	}
+	// Every wired timer must be reported as stale; the env override
+	// wired all four (sample / quota / stripe / dunning).
+	for _, name := range []string{"sample", "quota", "stripe", "dunning"} {
+		found := false
+		for _, n := range status.Stale {
+			if n == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("/healthz Stale missing %q (have %v)", name, status.Stale)
+		}
 	}
 }

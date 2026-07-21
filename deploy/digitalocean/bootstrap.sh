@@ -51,7 +51,7 @@ step "Installing system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq postgresql postgresql-contrib libpq-dev \
-  git curl build-essential e2fsprogs jq > /dev/null
+  git curl build-essential e2fsprogs jq ufw > /dev/null
 ok "Packages installed"
 
 # ─── 2. Go toolchain ─────────────────────────────────────────────────────────
@@ -134,7 +134,34 @@ fi
 systemctl reload postgresql
 ok "PostgreSQL configured"
 
-# ─── 6. Clone / update source ────────────────────────────────────────────────
+# ─── 6. Firewall (UFW) ───────────────────────────────────────────────────────
+step "Configuring UFW firewall (spec §11 — only gatewayd :8080 + SSH are public)"
+# Default-deny incoming, default-allow outgoing. Loopback is unaffected, so the
+# CD smoke test (curl 127.0.0.1:8080/healthz) keeps working.
+#
+# Configure the firewall BEFORE we start any service so there's no window
+# where e.g. apid is bound 0.0.0.0:8081 without a firewall in front of it
+# (issue #85, PR 2).
+#
+# Idempotency: we do NOT `ufw --force reset` on a re-bootstrap — that would
+# silently drop any operator-added rules (e.g. 443/tcp added for TLS).
+# `ufw allow` is itself idempotent; defaults are only applied on a fresh
+# install (UFW inactive).
+if ! ufw status 2>/dev/null | grep -q "Status: active"; then
+  ufw --force reset > /dev/null
+  ufw default deny incoming > /dev/null
+  ufw default allow outgoing > /dev/null
+  ok "UFW defaults: deny incoming, allow outgoing"
+fi
+ufw allow 22/tcp > /dev/null       # SSH (DigitalOcean console fallback)
+ufw allow 8080/tcp > /dev/null     # gatewayd — the only public listener
+ufw --force enable > /dev/null
+ok "UFW active: 22/tcp + 8080/tcp allowed"
+# NOTE: TLS production deployments additionally need 443/tcp + 80/tcp (ACME
+# http-01); the README "Production / TLS" section walks the operator through
+# adding those after pointing a real domain at the droplet.
+
+# ─── 7. Clone / update source ────────────────────────────────────────────────
 step "Fetching source code"
 if [[ -d "${FAAS_SRC}/.git" ]]; then
   git -C "${FAAS_SRC}" pull --ff-only
@@ -145,7 +172,7 @@ else
 fi
 ok "Source at ${FAAS_SRC}"
 
-# ─── 7. Build binaries ───────────────────────────────────────────────────────
+# ─── 8. Build binaries ───────────────────────────────────────────────────────
 step "Building daemons"
 # Stop services first to avoid text file busy on overwrite
 for svc in apid schedd gatewayd imaged meterd githubd; do
@@ -161,7 +188,7 @@ go build -o bin/migrate ./cmd/migrate
 install -m 0755 bin/migrate "${FAAS_BIN}/"
 ok "Binaries in ${FAAS_BIN}"
 
-# ─── 8. Drop configs ─────────────────────────────────────────────────────────
+# ─── 9. Drop configs ─────────────────────────────────────────────────────────
 step "Installing configs"
 DO_CONFIG_SRC="${FAAS_SRC}/deploy/digitalocean"
 
@@ -176,14 +203,41 @@ done
 
 # sealed.env
 SESSION_KEY=$(openssl rand -hex 32)
+# Dev API token — 24 random bytes → 48 hex chars, prefixed with `fp_live_` to
+# match the fp_live_<48-hex> format enforced by api.ValidAPIKeyFormat
+# (pkg/api/apikey.go:17-19, apiKeyRandomBytes=24). Generated per-bootstrap so
+# no committed secret ever leaves the repo (issue #85, PR 2).
+DEV_TOKEN="fp_live_$(openssl rand -hex 24)"
 sed -e "s/__DROPLET_IP__/${DROPLET_IP}/g" \
     -e "s/__SESSION_KEY__/${SESSION_KEY}/g" \
+    -e "s|__DEV_TOKEN__|${DEV_TOKEN}|g" \
     "${DO_CONFIG_SRC}/sealed.env.example" > "${SEALED_ENV}"
 chown root:faas "${SEALED_ENV}"
 chmod 0640 "${SEALED_ENV}"
-ok "sealed.env created (session key generated)"
+ok "sealed.env created (session key + dev token generated)"
 
-# ─── 9. Systemd units ────────────────────────────────────────────────────────
+# Operator-facing credentials file. Mode 0600 / root:root so the dev token
+# never ends up in stdout (which systemd-journal captures), in agent logs,
+# or in a shared terminal scrollback (issue #85, PR 2). apid reads the same
+# value from /etc/faas/sealed.env on boot.
+#
+# Re-bootstrap overwrites this file with the new token (rotation). The
+# prior token's hash remains valid in PG until FAAS_DEV_TOKEN in sealed.env
+# is rotated back, so a careless re-bootstrap does not invalidate a still-
+# issued token. The timestamp line lets the operator tell rotations apart
+# when reading the file later.
+CRED_FILE="/root/faas-dev-credentials.txt"
+{
+  echo "# FaaS dev credentials — mode 0600, root:root. Do NOT commit."
+  echo "# This file is overwritten on every bootstrap (token rotation)."
+  echo "# Authoritative value lives in /etc/faas/sealed.env."
+  echo "# To rotate without re-bootstrapping: see README 'Post-merge operator actions'."
+  echo "FAAS_DEV_TOKEN=${DEV_TOKEN}  # generated $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} > "${CRED_FILE}"
+chmod 0600 "${CRED_FILE}"
+ok "Dev credentials written to ${CRED_FILE}"
+
+# ─── 10. Systemd units ───────────────────────────────────────────────────────
 step "Installing systemd units"
 for f in "${DO_CONFIG_SRC}/systemd/"*.{service,slice}; do
   [[ -f "$f" ]] || continue
@@ -193,36 +247,39 @@ done
 systemctl daemon-reload
 ok "systemd reloaded"
 
-# ─── 10. Run migrations ──────────────────────────────────────────────────────
+# ─── 11. Run migrations ──────────────────────────────────────────────────────
 step "Running database migrations"
 su - faas -s /bin/bash -c "DATABASE_URL='postgres:///faas?host=/run/postgresql&user=faas' ${FAAS_BIN}/migrate"
 ok "Migrations applied"
 
-# ─── 11. Generate deploy SSH key ─────────────────────────────────────────────
+# ─── 12. Generate deploy SSH key ─────────────────────────────────────────────
 step "Generating deploy SSH key"
 mkdir -p "$(dirname "${DEPLOY_KEY_PATH}")"
+# Defensive ownership on the directory regardless of which branch runs
+# (issue #85, PR 2 — review nit #6).
+chown -R root:root "$(dirname "${DEPLOY_KEY_PATH}")"
+chmod 0700 "$(dirname "${DEPLOY_KEY_PATH}")"
 if [[ ! -f "${DEPLOY_KEY_PATH}" ]]; then
   ssh-keygen -t ed25519 -N '' -C 'faas-cd-deploy' -f "${DEPLOY_KEY_PATH}"
   # Add to authorized_keys for root
   mkdir -p /root/.ssh && chmod 700 /root/.ssh
   cat "${DEPLOY_KEY_PATH}.pub" >> /root/.ssh/authorized_keys
   chmod 600 /root/.ssh/authorized_keys
-  ok "Deploy key generated. Add this PRIVATE key as DO_SSH_KEY secret in GitHub:"
-  echo
-  cat "${DEPLOY_KEY_PATH}"
-  echo
+  ok "Deploy key generated. Retrieve it (do NOT echo to stdout / logs):"
+  echo "  scp root@${DROPLET_IP}:${DEPLOY_KEY_PATH} ./do_ssh_key"
+  echo "  # then paste the contents into the GitHub DO_SSH_KEY secret."
 else
   warn "Deploy key already exists"
 fi
 
-# ─── 12. Enable and start services ───────────────────────────────────────────
+# ─── 13. Enable and start services ───────────────────────────────────────────
 step "Starting services"
 for svc in apid schedd gatewayd imaged meterd githubd; do
   systemctl enable --now "faas-${svc}.service" 2>/dev/null || true
   ok "faas-${svc}"
 done
 
-# ─── 13. Health checks ───────────────────────────────────────────────────────
+# ─── 14. Health checks ───────────────────────────────────────────────────────
 step "Running health checks"
 sleep 3
 for svc in apid schedd gatewayd imaged; do
@@ -233,11 +290,13 @@ for svc in apid schedd gatewayd imaged; do
   fi
 done
 
-# Quick API check
-if curl -sf http://127.0.0.1:8081/healthz > /dev/null 2>&1; then
-  ok "apid /healthz OK"
+# Quick API check. Probes gatewayd's public listener (not apid directly):
+# spec §11 binds apid to loopback-only, so this exercises the full
+# gatewayd → apid proxy chain end-to-end (issue #85 PR 1 + PR 2).
+if curl -sf http://127.0.0.1:8080/healthz > /dev/null 2>&1; then
+  ok "Gateway /healthz OK (apid reachable via loopback proxy)"
 else
-  warn "apid /healthz not responding yet (may need a moment)"
+  warn "Gateway /healthz not responding yet (may need a moment)"
 fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
@@ -248,18 +307,22 @@ echo -e "\033[1;32m════════════════════�
 echo
 echo "  API:        http://${DROPLET_IP}:8080/v1/apps"
 echo "  Dashboard:  http://${DROPLET_IP}:8080/dashboard/"
-echo "  Dev token:  fp_dev_localtest"
+echo "  Dev token:  cat /root/faas-dev-credentials.txt   (mode 0600, root)"
 echo "  Status:     http://${DROPLET_IP}:8080/status"
+echo "  Healthz:    http://${DROPLET_IP}:8080/healthz"
 echo
 echo "  Logs:       journalctl -u 'faas-*' -f"
 echo "  Services:   systemctl status 'faas-*'"
+echo "  Firewall:   ufw status verbose   (default deny + 22/tcp + 8080/tcp)"
 echo
 echo "  ⚠ vmmd + builderd are NOT deployed (no /dev/kvm on DO)."
 echo "    VM lifecycle operations will return errors — this is expected."
 echo
 if [[ -f "${DEPLOY_KEY_PATH}" ]]; then
   echo "  📋 GitHub Actions CD setup:"
-  echo "     1. Add DO_SSH_KEY secret (private key printed above)"
+  echo "     1. Retrieve the deploy key (private key is NEVER printed):"
+  echo "          scp root@${DROPLET_IP}:${DEPLOY_KEY_PATH} ./do_ssh_key"
+  echo "        then paste its contents into the GitHub DO_SSH_KEY secret."
   echo "     2. Add DO_HOST secret: ${DROPLET_IP}"
   echo "     3. Push to main → auto-deploys"
   echo

@@ -14,7 +14,13 @@ func TestTLSConfigDisabledOK(t *testing.T) {
 }
 
 func TestTLSConfigPartialRejects(t *testing.T) {
-	cfg := TLSConfig{WildcardCertDomain: "apps.example.com"} // partial
+	// Provide the allowlist so the validator reaches the partial-config check
+	// (Validate returns ErrTLSAllowlistMissing first if it's nil). Leave
+	// HetznerDNSAPITokenPath empty — that is the "partial" defect.
+	cfg := TLSConfig{
+		WildcardCertDomain:      "apps.example.com",
+		OnDemandHTTP01Allowlist: func(string) bool { return false },
+	}
 	err := cfg.Validate()
 	if !errors.Is(err, ErrTLSMisconfigured) {
 		t.Errorf("partial config err = %v, want ErrTLSMisconfigured", err)

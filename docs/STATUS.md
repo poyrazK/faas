@@ -214,10 +214,14 @@ and open an issue if you want it.
 
 ### M8
 
-- ~~**CertMagic TLS** for gatewayd (`*.apps.DOMAIN` via DNS-01;
-  on-demand HTTP-01 gated by `custom_domains` allowlist).
-  `pkg/gateway/tls.go` is a config bucket; `caddyserver/certmagic`
-  not yet in `go.mod`.~~ **Closed by PR #70** (`worktree-m8-gateway-tls-wake-firstbyte`).
+- **CertMagic TLS** for gatewayd (`*.apps.DOMAIN` via DNS-01;
+  on-demand HTTP-01 gated by `custom_domains` allowlist). Plumbing
+  landed across `pkg/gateway/tls*.go`, `dns01_hetzner.go`,
+  `allowlist.go`, `acme.go`, `cmd/gatewayd/{main,config,secrets}.go`,
+  the systemd unit, and the ansible role; `caddyserver/certmagic`
+  v0.25.4 is pinned in `go.mod:14`. PR #87 closes the EX44 cut-over
+  + test gaps (see ADR-024); operator runbook at
+  `docs/ops/gatewayd-tls-cutover.md`.
 - **§14 V2 latency driver** — 100 park→wake cycles per app class,
   p50 ≤ 350 ms / p95 ≤ 800 ms. The Hobby-class gate is wired via
   `TestDeployWakeMetal/wake-latency-p50p95-100cycles` (extends the

@@ -134,16 +134,16 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 	if build.Status != state.BuildSucceeded {
 		t.Errorf("build status = %s, want succeeded", build.Status)
 	}
-	primeFound := false
+	bootFound := false
 	for _, c := range notif.calls {
-		if c.channel == db.NotifySnapshotPrime &&
+		if c.channel == db.NotifySnapshotBoot &&
 			contains(c.payload, appID) &&
 			contains(c.payload, depID) {
-			primeFound = true
+			bootFound = true
 		}
 	}
-	if !primeFound {
-		t.Errorf("expected snapshot_prime notification; got %v", notif.calls)
+	if !bootFound {
+		t.Errorf("expected snapshot_boot notification; got %v", notif.calls)
 	}
 }
 
@@ -479,17 +479,20 @@ func TestProcessOne_AppLayerUnderCapSucceeds(t *testing.T) {
 	if dep.RootfsPath == "" {
 		t.Error("expected rootfs stamped on under-cap success")
 	}
-	// Snapshot_prime must fire exactly once for the under-cap path —
-	// the cap check runs *before* the prime, so a passing test here
-	// confirms the order is right.
-	primeCount := 0
+	// snapshot_boot must fire exactly once for the under-cap path —
+	// the cap check runs *before* the boot notification, so a passing
+	// test here confirms the order is right. (The split was added on
+	// main: builderd emits NotifySnapshotBoot to imaged, which then
+	// re-emits NotifySnapshotPrime for schedd. We only need to verify
+	// builderd's contribution here.)
+	bootCount := 0
 	for _, call := range notif.calls {
-		if call.channel == db.NotifySnapshotPrime {
-			primeCount++
+		if call.channel == db.NotifySnapshotBoot {
+			bootCount++
 		}
 	}
-	if primeCount != 1 {
-		t.Errorf("snapshot_prime count = %d, want 1", primeCount)
+	if bootCount != 1 {
+		t.Errorf("snapshot_boot count = %d, want 1", bootCount)
 	}
 }
 
