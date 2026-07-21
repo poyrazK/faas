@@ -87,10 +87,14 @@ jobs:
           done
 
           # Quick smoke test.
+          # Probes gatewayd (loopback :8080), not apid directly — spec §11
+          # binds apid to loopback-only, and gatewayd reverse-proxies /healthz
+          # onto apid. So this exercises the full proxy chain end-to-end
+          # (issue #85 PR 1 + PR 2).
           sleep 3
-          curl -sf http://127.0.0.1:8081/healthz > /dev/null \
-            && echo "✓ apid healthy" \
-            || echo "⚠ apid not responding"
+          curl -sf http://127.0.0.1:8080/healthz > /dev/null \
+            && echo "✓ Gateway healthy (apid reachable via loopback proxy)" \
+            || echo "⚠ Gateway not responding"
           REMOTE
 
       - name: Verify deployment
