@@ -1427,8 +1427,12 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			MemBytes:     s.MemBytes,
 			DiskBytes:    s.DiskBytes,
 			Path:         s.Path,
-			Stale:        s.Stale,
-			CreatedAt:    s.CreatedAt,
+			// #96 / ADR-025 axis 2: forward the canonical storage
+			// key so imaged's GC loop can Storage.Delete under it
+			// without a second hop through Snapshot.
+			StorageKey: s.StorageKey,
+			Stale:      s.Stale,
+			CreatedAt:  s.CreatedAt,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

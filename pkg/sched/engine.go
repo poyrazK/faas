@@ -229,7 +229,11 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		haveSnap:  haveSnap,
 		snapID:    snap.ID,
 		snapVer:   snap.FCVersion,
-		spec:      spec,
+		// #96: canonical StorageBackend key for the mem blob. Read
+		// from the snap row (imaged stamped it from the
+		// snapshot_written payload). Empty for cold-boot paths.
+		snapKey: snap.StorageKey,
+		spec:    spec,
 	}
 	release()
 
@@ -238,10 +242,20 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	bootCtx, cancel := context.WithTimeout(ctx, bootTimeout(bootInput.initState))
 	defer cancel()
 	if bootInput.haveSnap {
+		// #96 / ADR-025 axis 2: read the storage key the snap row
+		// carries (imaged stamps it from the snapshot_written
+		// payload). Falling back to the computed legacy form keeps
+		// the deprecation-window seam — a pre-migration row whose
+		// storage_key is the empty string still wakes via the
+		// on-disk path under /srv/fc/snap/<dep>/{mem,vmstate}.
+		storageKey := bootInput.snapKey
+		if storageKey == "" {
+			storageKey = SnapshotMemKey(bootInput.depID)
+		}
 		mem, vmstate := snapshotPaths(bootInput.depID)
 		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.insID, bootInput.spec, SnapshotRef{
 			DeploymentID: bootInput.depID, MemPath: mem, VMStatePath: vmstate, FCVersion: bootInput.snapVer,
-			StorageKey: SnapshotMemKey(bootInput.depID),
+			StorageKey: storageKey,
 		})
 	} else {
 		out, err = e.vmm.CreateColdBoot(bootCtx, bootInput.insID, bootInput.spec)
@@ -323,7 +337,12 @@ type bootInput struct {
 	haveSnap  bool
 	snapID    string // empty when haveSnap is false
 	snapVer   string // empty when haveSnap is false
-	spec      AppSpec
+	// snapKey is the canonical StorageBackend key for the mem blob
+	// (issue #96, ADR-025 axis 2). Read from the snap row under
+	// Phase 2; consumed by Phase 3 to set SnapshotRef.StorageKey.
+	// Empty when haveSnap is false.
+	snapKey string
+	spec    AppSpec
 }
 
 // timedDestroy issues a vmm.Destroy bounded by `timeout` and the

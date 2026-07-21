@@ -364,9 +364,19 @@ type Snapshot struct {
 	FCVersion    string
 	MemBytes     int64
 	DiskBytes    int64
-	Path         string
-	Stale        bool
-	CreatedAt    time.Time
+	// Path is the legacy on-disk location of the mem blob (used by
+	// wake paths that pre-date #96). The canonical reference after
+	// the storage_key migration lands is StorageKey; Path is kept for
+	// one milestone as a deprecation seam.
+	Path string
+	// StorageKey is the canonical StorageBackend key for the mem blob
+	// (issue #96, ADR-025 axis 2). Local backends resolve it to a
+	// file under /srv/fc; remote backends (OCI registry) resolve it
+	// to a manifest tag. Wake reads it from this row instead of
+	// recomputing the path from the deployment id.
+	StorageKey string
+	Stale      bool
+	CreatedAt  time.Time
 }
 
 // SnapshotForGC is the join-projection used by the imaged nightly GC
@@ -387,8 +397,12 @@ type SnapshotForGC struct {
 	MemBytes     int64
 	DiskBytes    int64
 	Path         string
-	Stale        bool
-	CreatedAt    time.Time
+	// StorageKey mirrors Snapshot.StorageKey; populated from the
+	// join so imaged's snapshot GC can Storage.Delete under the
+	// canonical key (issue #96, ADR-025 axis 2 final slice).
+	StorageKey string
+	Stale      bool
+	CreatedAt  time.Time
 }
 
 // LoginToken is one row in login_tokens (M7.5 magic-link). The token
