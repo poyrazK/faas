@@ -12,6 +12,9 @@ package api
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"testing"
 	"time"
 )
 
@@ -257,7 +260,83 @@ const (
 	// Wake (pkg/fcvm/manager.go:236) and the nft rule that consumes
 	// it lives in pkg/netns/config.go::NftCommands.
 	DefaultConntrackCap = 4096
+
+	// ConntrackCap is the spec §7 per-instance conntrack cap value.
+	// Use ConntrackCapProbe() at runtime to get the effective value,
+	// which falls back to 0 on kernels without per-netns conntrack
+	// support (CONFIG_NF_CONNTRACK_NET_NS=n). The egress tc cap is
+	// unaffected.
+	ConntrackCap = DefaultConntrackCap
 )
+
+// ConntrackCapProbe returns the effective per-instance conntrack cap.
+const (
+	probeNS        = "faas-ct-probe"
+	probeTable     = "faas_ct_probe"
+	probeFamily    = "ip"
+	probeChain     = "forward"
+	probeNftCmd    = "nft"
+	probeNftAdd    = "add"
+	probeNetnsExec = "exec"
+	probeNetnsCmd  = "netns"
+)
+
+// Returns DefaultConntrackCap when the kernel supports the ct expression
+// inside network namespaces (CONFIG_NF_CONNTRACK_NET_NS=y); returns 0
+// when it doesn't so the ct cap rules are silently omitted (egress tc
+// cap is unaffected). Callers call this once at setup and cache the
+// result — the kernel conntrack netns capability never changes at runtime.
+func ConntrackCapProbe() int64 {
+	// Skip probe in tests: tests that don't use metal don't need netns,
+	// and metal tests create their own netns under leakcheck supervision.
+	if testing.Testing() {
+		return DefaultConntrackCap
+	}
+	bail := func() int64 { return 0 }
+
+	// Clean up any stale probe namespace from a previous crash.
+	if _, err := os.Stat("/run/netns/" + probeNS); err == nil {
+		go func() { _, _ = execCmd("ip", probeNetnsCmd, "del", probeNS) }()
+	}
+
+	// Create a temporary netns for the probe.
+	if _, err := execCmd("ip", probeNetnsCmd, "add", probeNS); err != nil {
+		// Cannot create netns at all (e.g. Lima nested virt). Disable.
+		return bail()
+	}
+	// Unconditional delete regardless of outcome.
+	go func() { _, _ = execCmd("ip", probeNetnsCmd, "del", probeNS) }()
+
+	// Quick probe: add a table + a rule using "ct state" (simpler than
+	// "ct count over") inside the netns. If the kernel lacks conntrack
+	// netns support, nft returns "No such file or directory".
+	probe := func(expr string) bool {
+		cmds := [][]string{
+			{"ip", probeNetnsCmd, probeNetnsExec, probeNS, probeNftCmd, probeNftAdd, "table", probeFamily, probeTable},
+			{"ip", probeNetnsCmd, probeNetnsExec, probeNS, probeNftCmd, probeNftAdd, "chain", probeFamily, probeTable, probeChain,
+				"{", "type", "filter", "hook", probeChain, "priority", "filter", ";", "policy", "accept", ";", "}"},
+			{"ip", probeNetnsCmd, probeNetnsExec, probeNS, probeNftCmd, probeNftAdd, "rule", probeFamily, probeTable, probeChain, expr},
+		}
+		for _, cmd := range cmds {
+			if _, err := execCmd(cmd[0], cmd[1:]...); err != nil {
+				return false
+			}
+		}
+		return true
+	}
+
+	if probe("ct state established,related accept") && probe("ct count over 4096") {
+		return DefaultConntrackCap
+	}
+	return bail()
+}
+
+// execCmd runs argv and returns combined output. Isolated here so
+// limits.go stays a pure config package without external syscall
+// imports polluting its API surface.
+func execCmd(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).CombinedOutput()
+}
 
 // LimitsFor returns the limits for a plan and whether the plan is known. Callers
 // that already trust the plan (e.g. read from a CHECK-constrained column) can use

@@ -155,6 +155,15 @@ func (c Config) NftCommands() [][]string {
 	cmds := make([][]string, 0, 16)
 	add := func(argv ...string) { cmds = append(cmds, nft(argv...)) }
 	add("add", "table", "ip", "faas")
+	// Counter object for the §7 conntrack cap rule (faas_cap). Must be
+	// declared before the rule that references it; nftables requires a
+	// named counter to be defined as a table-level object first, then
+	// referenced by name in the rule. Without this, nftables v1.0.x
+	// rejects "no such file or directory" and v1.1.x silently ignores the
+	// counter in the rule (the counter never increments).
+	if c.ConntrackCap > 0 {
+		add("add", "counter", "ip", "faas", "faas_cap", "{}")
+	}
 	// NAT: publish :8080 to the guest; masquerade the guest's egress.
 	add("add", "chain", "ip", "faas", "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}")
 	add("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, AppPort))
@@ -193,6 +202,11 @@ func (c Config) NftCommands() [][]string {
 	// per-netns `inet faas` table is a follow-up if we want to collapse the
 	// two; see ADR-023 "rejected alternatives" for the trade-off.
 	add("add", "table", "ip6", "faas")
+	// Same counter object for the v6 chain — faas_cap is scoped per table,
+	// so ip faas.faas_cap and ip6 faas.faas_cap are independent (ADR-023).
+	if c.ConntrackCap > 0 {
+		add("add", "counter", "ip6", "faas", "faas_cap", "{}")
+	}
 	add("add", "chain", "ip6", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}")
 	// Accept reply traffic first (mirrors the v4 chain above) so a published
 	// request's IPv6 reply isn't dropped by the lateral-movement deny.

@@ -101,6 +101,11 @@ type Manager struct {
 	// a Wake call with SealedEnvEntries set is rejected with ErrNoHostKey
 	// rather than silently dropping plaintext. vmmd owns the on-disk file.
 	hostIdentity *age.X25519Identity
+	// conntrackCap is the effective per-instance conntrack cap. Probed once
+	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
+	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
+	// 0 when it doesn't (the ct cap rule is omitted, egress tc cap unaffected).
+	conntrackCap int64
 }
 
 // NewManager wires a Manager. fcVersion is the running Firecracker version (used
@@ -112,15 +117,16 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		log = slog.New(slog.NewTextHandler(discard{}, nil))
 	}
 	return &Manager{
-		alloc:      NewAllocator(),
-		run:        run,
-		vmm:        vmm,
-		paths:      paths,
-		fcVersion:  fcVersion,
-		log:        log,
-		live:       make(map[string]*Instance),
-		exportDirs: make(map[string]string),
-		metrics:    metrics,
+		alloc:        NewAllocator(),
+		run:          run,
+		vmm:          vmm,
+		paths:        paths,
+		fcVersion:    fcVersion,
+		log:          log,
+		live:         make(map[string]*Instance),
+		exportDirs:   make(map[string]string),
+		metrics:      metrics,
+		conntrackCap: api.ConntrackCapProbe(),
 	}
 }
 
@@ -240,7 +246,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// same value (the failure mode is host-table exhaustion, shared).
 	// netns.Config omits the rule when ConntrackCap <= 0 so a vmmd that
 	// hasn't been rebuilt still wakes cleanly.
-	nc.ConntrackCap = api.DefaultConntrackCap
+	nc.ConntrackCap = m.conntrackCap
 
 	// Any failure past this point must fully clean up.
 	defer func() {

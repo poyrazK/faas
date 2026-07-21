@@ -91,6 +91,7 @@ const (
 // carries no networking code: guest 10.0.0.2, gateway 10.0.0.1, /30 mask. Every
 // VM boots with the same line — uniqueness lives entirely on the host side.
 const coldBootArgs = "console=off reboot=k panic=1 pci=off quiet " +
+	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	"root=/dev/vda ro " +
 	"ip=10.0.0.2::10.0.0.1:255.255.255.252::eth0:off init=/sbin/init"
 
