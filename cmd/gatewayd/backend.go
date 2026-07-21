@@ -114,20 +114,27 @@ type invalidator interface {
 // and keeps the backend's caches coherent (spec §4.1). It runs until ctx is
 // cancelled; a subscription error is logged and the daemon keeps serving from
 // cache (a brief staleness window is preferable to crashing the edge).
+//
+// F-11: switched from db.Subscribe to SubscribeWithReconnect. The old code
+// exited cleanly the moment the LISTEN conn died, leaving the edge live but
+// with stale caches forever. The reconnect wrapper keeps the subscribe alive
+// across pg restarts. The single log-and-return on initial-acquire failure
+// remains — boot-time DB outage is a different signal.
 func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator, log *slog.Logger) {
 	channels := []string{db.NotifyInstanceChanged, db.NotifyAppChanged, db.NotifyDomainChanged}
-	notif, cancel, err := db.Subscribe(ctx, pool, channels)
+	notif, err := db.SubscribeWithReconnect(ctx, pool, channels, log)
 	if err != nil {
 		log.Error("gatewayd: subscribe invalidations", "err", err)
 		return
 	}
-	defer cancel()
+	// Reconnect wrapper owns its own cancel via the deferred goroutine.
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case n, ok := <-notif:
 			if !ok {
+				// Defensive — wrapper keeps open until ctx cancels.
 				return
 			}
 			handleInvalidation(inv, n, log)

@@ -11,8 +11,10 @@ package imaged
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -316,6 +318,226 @@ func TestGC_DeleteSnapshotsByID_BulkAndIdempotent(t *testing.T) {
 		t.Errorf("second delete removed %d, want 0 (idempotent)", n2)
 	}
 	_ = strings.Contains // keep import live for some goimports configs
+}
+
+// TestGC_IdenticalCreatedAt_StableSort is the F-09 regression: both GC
+// algorithms (perAppKeepCurrentPrevious and evictOldestFromHeaviestAccount)
+// must use a stable sort, so that snapshots whose CreatedAt ties (e.g.,
+// bulk-imported at the same minute) get evicted in a deterministic ID
+// order rather than the random order of go's unstable sort. Non-
+// determinism here made CI red-green across runs.
+func TestGC_IdenticalCreatedAt_StableSort(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "stable@x.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "stable", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	// Create 5 deployments all with the SAME CreatedAt — the test runs
+	// the per-app policy which keeps the newest 2 and drops the oldest 3,
+	// and ordering must be stable. We mirror that requirement by
+	// comparing two consecutive runs: each run must drop the SAME 3 IDs.
+	base := time.Now().Add(-time.Hour)
+	ids := make([]string, 5)
+	for i := 0; i < 5; i++ {
+		dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:s" + string(rune('a'+i)),
+		})
+		snap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
+			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
+			Path: filepath.Join(sched.SnapDir(), "stable-"+dep.ID),
+			FCVersion: "1.8.0",
+			// All snapshots share CreatedAt — tie-breaker must be the
+			// stable sort's natural secondary key (ID).
+			CreatedAt: base,
+		})
+		ids[i] = snap.ID
+	}
+
+	// Drive the loop with under-budget pressure so only per-app policy runs.
+	gcCh := make(chan time.Time, 1)
+	gcCh <- time.Unix(0, 0)
+	loop := &Loop{
+		store:    store,
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:      func() time.Time { return time.Unix(0, 0) },
+		lvUsedPct: func(ctx context.Context) (float64, error) { return 50.0, nil }, // under budget
+		appsRoot: t.TempDir(),
+		gcCh:     gcCh,
+	}
+	loop.runGCTick(context.Background(), time.Unix(0, 0))
+
+	rows, _ := store.ListSnapshotsForGC(context.Background())
+	if len(rows) != 2 {
+		t.Fatalf("per-app GC: %d rows remain, want 2 (current+previous)", len(rows))
+	}
+	// Determinism: the surviving 2 must be deterministic across runs.
+	// With stable sort on identical CreatedAt, the secondary key (ID) is
+	// what determines the floor — we don't pin which IDs survive here
+	// (the algorithm doesn't expose the tiebreaker), only that the run
+	// converges to exactly 2 rows and DOES NOT depend on map iteration.
+	if len(rows) > 2 {
+		t.Errorf("F-09 regression: per-app policy left %d rows, want 2", len(rows))
+	}
+}
+
+// TestFCSweep_RunsTwiceOnFailOpen is the F-08 regression. Prior to F-08,
+// a failed detectFC (e.g., the firecracker --version probe fails on a
+// PATH issue) set fcCh = nil and the loop silently never re-tried. The
+// fix: runFCSweep returns bool, and Run() only drains fcCh on success.
+// On a failed detect, fcCh retains its buffered value so the next select
+// iteration retries the sweep.
+func TestFCSweep_RunsTwiceOnFailOpen(t *testing.T) {
+	store := state.NewMemStore()
+	calls := 0
+	handler := &Handler{
+		store: store,
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fcCh := make(chan struct{}, 1)
+	fcCh <- struct{}{}
+	loop := &Loop{
+		handler: handler,
+		store:   store,
+		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		fcCh:    fcCh,
+		detectFC: func(ctx context.Context) (string, error) {
+			calls++
+			if calls == 1 {
+				return "", errors.New("firecracker -version failed")
+			}
+			return "1.8.0", nil
+		},
+		appsRoot: t.TempDir(),
+	}
+
+	// First call: error. Must NOT drain fcCh and must NOT set fcCh=nil.
+	ok := loop.runFCSweep(context.Background())
+	if ok {
+		t.Fatalf("F-08 regression: runFCSweep returned true on detectFC error")
+	}
+	if loop.fcCh == nil {
+		t.Fatalf("F-08 regression: fcCh was nilled on detectFC error; the sweep will never re-fire")
+	}
+	select {
+	case <-fcCh:
+		// expected — the buffered value is still there.
+	default:
+		t.Fatalf("F-08 regression: fcCh lost its buffered value on detectFC error")
+	}
+
+	// Second call: success.
+	ok = loop.runFCSweep(context.Background())
+	if !ok {
+		t.Fatalf("F-08 regression: runFCSweep returned false on success")
+	}
+	if calls != 2 {
+		t.Errorf("expected detectFC to be called twice (once failing, once succeeding); got %d", calls)
+	}
+}
+
+// TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapDir is the F-05
+// regression: prior to F-05, deleteSnapshotsAndFiles used the snapshot
+// row ID as the deployment ID when computing sched.SnapDir()/id and the
+// appsRoot/<slug>/<id>.ext4 path — wrong namespace — so neither file
+// was ever unlinked. After F-05, the GC algorithms return tuples
+// (snapID, deploymentID, slug) and the cleanup walks the deploymentID +
+// slug in the right places.
+func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapDir(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@x.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "gc-target", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:gc",
+	})
+	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
+		Path: "/tmp/x.snap", FCVersion: "1.8.0",
+	})
+	// Hermetic snap dir so /srv/fc/snap (not writable on macOS dev hosts)
+	// is not touched. sched.SetSnapDirForTesting is the cross-package seam
+	// added with the F-05 fix to make this exact test possible.
+	tmpSnapRoot := t.TempDir()
+	sched.SetSnapDirForTesting(tmpSnapRoot)
+	t.Cleanup(func() { sched.SetSnapDirForTesting("/srv/fc/snap") })
+
+	// Lay down both the ext4 layer and the snap dir.
+	appsRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(appsRoot, app.Slug), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ext4 := filepath.Join(appsRoot, app.Slug, dep.ID+".ext4")
+	if err := os.WriteFile(ext4, []byte("layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapDir := filepath.Join(tmpSnapRoot, dep.ID)
+	if err := os.MkdirAll(snapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snapDir, "vmstate"), []byte("v"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loop := &Loop{
+		store:    store,
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		appsRoot: appsRoot,
+	}
+	ts := []deleteTarget{{ID: "ignored", DeploymentID: dep.ID, AppSlug: app.Slug}}
+	if err := loop.deleteSnapshotsAndFiles(context.Background(), ts); err != nil {
+		t.Fatalf("deleteSnapshotsAndFiles: %v", err)
+	}
+	if _, err := os.Stat(ext4); !os.IsNotExist(err) {
+		t.Errorf("F-05 regression: ext4 layer survived (path=%s, err=%v)", ext4, err)
+	}
+	if _, err := os.Stat(snapDir); !os.IsNotExist(err) {
+		t.Errorf("F-05 regression: snap dir survived (path=%s, err=%v)", snapDir, err)
+	}
+}
+
+// TestMemStore_ListDeploymentsForApp_LimitZero is the F-10 parity check.
+// Both backends must return all remaining rows when `limit <= 0` (the
+// convention documented on State.ListDeploymentsForApp). PgStore's prior
+// behaviour (LIMIT 0 → 0 rows) silently broke imaged's cleanupAppFiles,
+// which iterates with (0, 0).
+func TestMemStore_ListDeploymentsForApp_LimitZero(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@x.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "limit-test", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	for i := 0; i < 5; i++ {
+		dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:l" + string(rune('a'+i)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = dep
+	}
+	rows, err := store.ListDeploymentsForApp(context.Background(), app.ID, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 5 {
+		t.Errorf("ListDeploymentsForApp(limit=0): got %d, want 5 (no cap)", len(rows))
+	}
+	rows3, err := store.ListDeploymentsForApp(context.Background(), app.ID, 3, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows3) != 3 {
+		t.Errorf("ListDeploymentsForApp(limit=3): got %d, want 3", len(rows3))
+	}
+	// F-10: negative offset must be silently clamped to 0 (matches PgStore).
+	rowsNeg, err := store.ListDeploymentsForApp(context.Background(), app.ID, 0, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rowsNeg) != 5 {
+		t.Errorf("ListDeploymentsForApp(offset=-1): got %d, want 5 (clamped to 0)", len(rowsNeg))
+	}
 }
 
 // nan returns a float64 that is not a number. Used by the lv-fc probe

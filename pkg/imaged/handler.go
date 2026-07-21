@@ -125,11 +125,14 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 		if err := h.handleDeployment(ctx, p); err != nil {
 			h.log.Warn("imaged: deploy failed", "app", p.AppID, "deployment", p.To, "err", err)
 		}
-		// F5: when apid supersedes a deployment, drop the per-app layer ext4
-		// so appsRoot doesn't accumulate orphans. The snapshot blob is kept
-		// (one-click rollback needs it) and GC'd by the nightly sweep.
+		// F5 / F-02: when apid supersedes a deployment, drop the per-app
+		// layer ext4 so appsRoot doesn't accumulate orphans. The snapshot
+		// blob is KEPT (one-click rollback needs it) and GC'd by the
+		// nightly sweep. F-02: prior code passed keepSnap=false here,
+		// deleting the blob and forcing every rollback across a supersede
+		// to cold-boot — fixed to keepSnap=true.
 		if p.Status == string(state.DeploySuperseded) && p.To != "" {
-			if err := h.cleanupDeploymentFiles(ctx, p.To, false /* keepSnap */); err != nil {
+			if err := h.cleanupDeploymentFiles(ctx, p.To, true /* keepSnap */); err != nil {
 				h.log.Warn("imaged: cleanup superseded", "deployment", p.To, "err", err)
 			}
 		}
@@ -608,12 +611,26 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 //
 //   - flips the builds row to running so dashboards reflect the state,
 //   - resolves the deployment_id from the build row,
-//   - synthesises a snapshotBootPayload and forwards to handleSnapshotBoot.
+//   - if the deployment's rootfs_path has already been stamped by builderd,
+//     synthesises a snapshotBootPayload and forwards to handleSnapshotBoot;
+//   - otherwise, returns (the canonical path is builderd's later
+//     NotifySnapshotBoot emit).
+//
+// F-01: apid emits build_queued immediately at deploy creation; builderd
+// stamps rootfs_path LATER (after the build VM produces an OCI image).
+// The old code dispatched to handleSnapshotBoot unconditionally, which
+// failed the deployment with "empty rootfs_path" on every tarball /
+// dockerfile deploy. The canonical F4 path is the NotifySnapshotBoot
+// channel — handleBuildQueued now stays out of the way until builderd
+// has stamped.
 //
 // This keeps the apid-emitted payload shape ({build, deployment, app, kind})
 // untouched while funnelling all OCI-tarball→ext4 work through the
-// canonical handler. (F4)
+// canonical handler.
 func (h *Handler) handleBuildQueued(ctx context.Context, p buildQueuedPayload) error {
+	if p.BuildID == "" || p.DeploymentID == "" {
+		return errors.New("imaged: build_queued missing build or deployment id")
+	}
 	// failure_class is "" while the build is in-flight; both MemStore and
 	// PgStore treat the empty string as "preserve prior value" via a
 	// `case when $3 = ''` guard in the UPDATE. There is no FailureNone
@@ -625,7 +642,17 @@ func (h *Handler) handleBuildQueued(ctx context.Context, p buildQueuedPayload) e
 	if err != nil {
 		return fmt.Errorf("imaged: resolve deployment for build: %w", err)
 	}
-	h.log.Info("imaged: build queued (M6 dispatch)",
+	// F-01: wait for builderd to stamp rootfs_path before converting.
+	// The handler isn't idempotent on a not-yet-stamped deployment —
+	// running buildImageLayer / buildFunctionLayer now would either
+	// no-op (image kind, nothing to pull) or fail loud (tarball kind,
+	// no OCI tarball to convert). Either way we poison the deployment.
+	if dep.RootfsPath == "" {
+		h.log.Info("imaged: build_queued: waiting on builderd to stamp rootfs_path",
+			"app", p.AppID, "build", p.BuildID, "deployment", dep.ID, "kind", p.Kind)
+		return nil
+	}
+	h.log.Info("imaged: build queued (dispatch to handleSnapshotBoot)",
 		"app", p.AppID, "build", p.BuildID, "deployment", dep.ID, "kind", p.Kind)
 	return h.handleSnapshotBoot(ctx, snapshotBootPayload{
 		AppID:        p.AppID,
@@ -665,8 +692,13 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 		return nil
 	}
 	if dep.RootfsPath == "" {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "snapshot_boot: empty rootfs_path (builderd didn't stamp)")
-		return fmt.Errorf("imaged: deployment %s has no rootfs_path stamped by builderd", dep.ID)
+		// builderd hasn't stamped yet (or handleBuildQueued dispatched
+		// too early). Treat as a transient no-op rather than failing
+		// the deployment — the subsequent NotifySnapshotBoot / second
+		// build_queued redelivery will find a stamp. F-01.
+		h.log.Warn("imaged: snapshot_boot skipped — rootfs_path empty; waiting on builderd",
+			"deployment", p.DeploymentID)
+		return nil
 	}
 	app, err := h.store.AppByID(ctx, dep.AppID)
 	if err != nil {

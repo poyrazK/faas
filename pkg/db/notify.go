@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -46,9 +48,16 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 // Payload contracts (JSON, all optional fields may be omitted):
 //
 //	NotifyAppChanged        {"app_id":uuid}
-//	NotifyDeploymentChanged {"kind":"image|tarball|dockerfile|function",
+//	NotifyDeploymentChanged {"kind":"image|tarball|dockerfile|function|
+//	                         rollback|superseded",
 //	                         "app_id":uuid, "deployment_id":uuid,
-//	                         "to":"pending|building|...|live|failed",
+//	                         "from":uuid,         // present on rollback|superseded
+//	                         "to":uuid,           // the deployment the listener
+//	                                            //   should react to (target of
+//	                                            //   rollback, victim of supersede,
+//	                                            //   or fresh deployment on first
+//	                                            //   image/tarball/dockerfile emit)
+//	                         "status":"pending|building|...|live|failed|superseded",
 //	                         "image_digest":"sha256:..."}      // image_digest when kind=image
 //	NotifyDomainChanged     {"domain":"..."}
 //	NotifyCronChanged       {"cron_id":uuid, "app_id":uuid}
@@ -189,6 +198,106 @@ func Subscribe(ctx context.Context, pool *pgxpool.Pool, channels []string) (<-ch
 		}
 	}()
 	return out, subCancel, nil
+}
+
+// SubscribeWithReconnect is the production-grade LISTEN wrapper. It returns a
+// channel that delivers notifications across connection drops, Postgres
+// restarts, and LISTEN-side errors. On the inner channel closing (conn
+// drop, server restart, LISTEN error), the wrapper resubscribes with
+// exponential backoff (100ms → 5s cap) and re-emits on the outer channel.
+// The outer channel closes only when ctx cancels — callers in daemon
+// loops see one stable select arm forever, even if Postgres bounces.
+//
+// The first Subscribe is performed synchronously; a database that is
+// unreachable at boot should still fail-fast (caller chooses whether to
+// retry or exit). The wrapper does NOT mask the initial acquire error.
+//
+// Backoff resets to 100ms after each successful (re-)subscribe.
+//
+// F-11: replaced the silent-LISTEN-close bug class across every daemon
+// loop (schedd, builderd, imaged, gatewayd). The four call sites all
+// switched from `db.Subscribe(...)` to this function.
+func SubscribeWithReconnect(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	channels []string,
+	log *slog.Logger,
+) (<-chan Notification, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("db: SubscribeWithReconnect: nil pool")
+	}
+	if len(channels) == 0 {
+		return nil, fmt.Errorf("db: SubscribeWithReconnect: no channels")
+	}
+	inner, cancel, err := Subscribe(ctx, pool, channels)
+	if err != nil {
+		return nil, fmt.Errorf("db: SubscribeWithReconnect initial Subscribe: %w", err)
+	}
+	const (
+		minBackoff = 100 * time.Millisecond
+		maxBackoff = 5 * time.Second
+	)
+	out := make(chan Notification, 32) // larger than the inner 16 so a slow consumer doesn't drop on subscribe handoff
+	go func() {
+		defer cancel()
+		defer close(out)
+		backoff := minBackoff
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case n, ok := <-inner:
+				if !ok {
+					// Inner closed: resubscribe (could be transient conn
+					// drop, pg restart, or LISTEN error). Backoff until
+					// success or ctx cancel. The exponential cap keeps
+					// log noise reasonable on a permanently-down DB while
+					// still retrying every ≤5s.
+					if log != nil {
+						log.Warn("db: LISTEN channel closed; reconnecting",
+							"channels", channels, "backoff", backoff.String())
+					}
+					for {
+						if ctx.Err() != nil {
+							return
+						}
+						// Cancel the previous inner's cancel before re-subscribing
+						// (the Subscribe helper binds a fresh subCtx; defensive
+						// double-cancel is safe and idempotent).
+						cancel()
+						inner, cancel, err = Subscribe(ctx, pool, channels)
+						if err == nil {
+							backoff = minBackoff
+							if log != nil {
+								log.Info("db: LISTEN re-subscribed", "channels", channels)
+							}
+							break
+						}
+						if log != nil {
+							log.Warn("db: LISTEN re-subscribe failed",
+								"channels", channels, "err", err, "backoff", backoff.String())
+						}
+						select {
+						case <-time.After(backoff):
+						case <-ctx.Done():
+							return
+						}
+						backoff *= 2
+						if backoff > maxBackoff {
+							backoff = maxBackoff
+						}
+					}
+					continue
+				}
+				select {
+				case out <- n:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return out, nil
 }
 
 // quoteIdent quotes a SQL identifier so callers can pass channel names

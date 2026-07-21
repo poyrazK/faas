@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -122,20 +123,23 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 
 	var notif <-chan db.Notification
-	var cancel func()
 	if l.pool != nil {
 		var err error
-		notif, cancel, err = db.Subscribe(ctx, l.pool, []string{
+		// F-11: switched from Subscribe to SubscribeWithReconnect — the
+		// outer channel stays open across Postgres restarts so the daemon
+		// keeps reacting to deploys/rolls/deletes instead of going silent
+		// (the silent-LISTEN-close bug). The wrapper owns its own cancel
+		// via its deferred goroutine; ctx cancel propagates.
+		notif, err = db.SubscribeWithReconnect(ctx, l.pool, []string{
 			db.NotifyDeploymentChanged,
 			db.NotifyBuildQueued,
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
 			db.NotifyAppChanged,
-		})
+		}, l.log)
 		if err != nil {
 			return err
 		}
-		defer cancel()
 	}
 
 	for {
@@ -143,17 +147,22 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case n, ok := <-notif:
+			// F-11: outer channel never closes on conn drop (the wrapper
+			// resubscribes internally). The only `ok==false` path is ctx
+			// cancel. Leave the safety branch for paranoia.
 			if !ok {
-				notif = nil
-				continue
+				return nil
 			}
 			l.handler.HandleNotification(ctx, n)
 		case <-l.gcCh:
 			l.runGCTick(ctx, l.now())
 		case <-l.fcCh:
-			l.runFCSweep(ctx)
-			// Drain the channel so the sweep fires exactly once.
-			l.fcCh = nil
+			// F-08: drain fcCh only on a successful sweep. A failed
+			// detectFC leaves the buffered value on the channel so the
+			// next select iteration retries the detect.
+			if l.runFCSweep(ctx) {
+				l.fcCh = nil
+			}
 		}
 	}
 }
@@ -208,34 +217,62 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 	}
 }
 
-// runFCSweep is the F2 startup body. One-shot; runs once when the FC sweep
-// channel fires. Errors are logged, never returned — FC detection failure
-// must not block imaged startup (a degraded box still serves traffic).
-func (l *Loop) runFCSweep(ctx context.Context) {
+// runFCSweep is the F2 startup body. Returns true when the sweep ran
+// to completion (whether or not anything was marked stale — an
+// empty-stale-marker is still a successful run). Run() uses the return
+// value to decide whether to drain fcCh; on failure the channel stays
+// open so the next tick retries the detect call (F-08). Errors are
+// logged, never returned — FC detection failure must not block imaged
+// startup (a degraded box still serves traffic).
+func (l *Loop) runFCSweep(ctx context.Context) bool {
 	if l.detectFC == nil {
 		l.log.Warn("imaged: fc sweep skipped: no detectFC wired")
-		return
+		return false
 	}
 	ver, err := l.detectFC(ctx)
 	if err != nil {
+		// F-08: do not drain fcCh on error — next tick retries the
+		// detect. A permanently-broken `firecracker` binary on PATH
+		// produces repeated Warn logs; the daemon stays up so the
+		// operator notices and fixes the path.
 		l.log.Warn("imaged: fc detect", "err", err)
-		return
+		return false
 	}
 	n, err := l.handler.MarkFCSnapshotsStale(ctx, ver)
 	if err != nil {
-		l.log.Warn("imaged: fc sweep", "err", err)
-		return
+		l.log.Warn("imaged: fc sweep mark", "err", err)
+		return false
 	}
-	l.log.Info("imaged: fc sweep done", "fc_version", ver, "marked_stale", n)
+	// F-07: also evict stale snapshots past the retention window. The
+	// prior sweep only flipped stale=true, leaving rows on disk
+	// indefinitely — disk leaks on every FC upgrade.
+	evicted, err := l.store.DeleteSnapshotsStaleOlderThan(ctx, api.SnapshotStaleRetention)
+	if err != nil {
+		l.log.Warn("imaged: fc sweep evict", "err", err)
+		return true // mark-stale succeeded; partial eviction still counts as progress
+	}
+	l.log.Info("imaged: fc sweep done",
+		"fc_version", ver, "marked_stale", n, "evicted", evicted)
+	return true
 }
 
-// deleteSnapshotsAndFiles is the shared cleanup helper. Marks the IDs
-// stale first (so schedd's per-row freshness check refuses them in the
-// brief window between mark and delete), bulk-deletes the rows, then
-// removes the on-disk artifacts best-effort.
-func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ids []string) error {
-	if len(ids) == 0 {
+// deleteSnapshotsAndFiles is the shared cleanup helper. Takes the tuples
+// produced by perAppKeepCurrentPrevious / evictOldestFromHeaviestAccount;
+// each tuple carries the snap row id (for MarkOldSnapshotsStale /
+// DeleteSnapshotsByID), the deployment id (for the snap blob path under
+// sched.SnapDir()), and the app slug (for the per-app ext4 layer under
+// appsRoot). Marks the rows stale first so schedd's per-row freshness
+// check refuses them in the brief mark→delete window, bulk-deletes the
+// rows, then removes the on-disk artifacts best-effort. F-05 fixes the
+// prior snapshot-id/deployment-id namespace mismatch that prevented any
+// filesystem cleanup from running.
+func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) error {
+	if len(ts) == 0 {
 		return nil
+	}
+	ids := make([]string, len(ts))
+	for i, t := range ts {
+		ids[i] = t.ID
 	}
 	if _, err := l.store.MarkOldSnapshotsStale(ctx, ids); err != nil {
 		return err
@@ -243,22 +280,33 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ids []string) error 
 	if _, err := l.store.DeleteSnapshotsByID(ctx, ids); err != nil {
 		return err
 	}
-	for _, id := range ids {
-		dir := sched.SnapDir() + "/" + id
-		if err := os.RemoveAll(dir); err != nil {
-			l.log.Warn("imaged: gc remove snap dir", "path", dir, "err", err)
+	for _, t := range ts {
+		snapDir := filepath.Join(sched.SnapDir(), t.DeploymentID)
+		if err := os.RemoveAll(snapDir); err != nil {
+			l.log.Warn("imaged: gc remove snap dir", "path", snapDir, "err", err)
 		}
-		dep, err := l.store.DeploymentByID(ctx, id)
-		if err != nil {
-			continue
+		ext4 := ""
+		if t.AppSlug != "" {
+			ext4 = filepath.Join(l.appsRoot, t.AppSlug, t.DeploymentID+".ext4")
 		}
-		app, err := l.store.AppByID(ctx, dep.AppID)
-		if err != nil {
-			continue
-		}
-		ext4 := dep.RootfsPath
 		if ext4 == "" {
-			ext4 = l.appsRoot + "/" + app.Slug + "/" + dep.ID + ".ext4"
+			// Slug wasn't populated by the GC algorithms (the join in
+			// SnapshotForGC doesn't carry it). Fall back to one
+			// deployment-by-id lookup per row so we still drop the
+			// drive1 layer — cheap, bounded by the page size of the
+			// GC tick (≤ ~50 rows in pressure mode).
+			dep, derr := l.store.DeploymentByID(ctx, t.DeploymentID)
+			if derr != nil {
+				continue
+			}
+			app, aerr := l.store.AppByID(ctx, dep.AppID)
+			if aerr != nil {
+				continue
+			}
+			ext4 = dep.RootfsPath
+			if ext4 == "" {
+				ext4 = filepath.Join(l.appsRoot, app.Slug, t.DeploymentID+".ext4")
+			}
 		}
 		if err := os.Remove(ext4); err != nil && !os.IsNotExist(err) {
 			l.log.Warn("imaged: gc remove ext4", "path", ext4, "err", err)

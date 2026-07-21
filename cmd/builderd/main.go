@@ -111,13 +111,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		MetricsAddr: cfg.MetricsAddr,
 	}, log)
 
-	notifCh, cancel, err := db.Subscribe(ctx, pool, []string{
+	notifCh, err := db.SubscribeWithReconnect(ctx, pool, []string{
 		db.NotifyBuildQueued,
-	})
+	}, log)
 	if err != nil {
 		return err
 	}
-	defer cancel()
+	// SubscribeWithReconnect owns its own cancel inside the wrapper.
 
 	var httpSrv *http.Server
 	if cfg.MetricsAddr != "" {

@@ -195,6 +195,12 @@ type Store interface {
 	// rootfs — never neither, invariant §6.2-3).
 	LiveDeployment(ctx context.Context, appID string) (Deployment, error)
 	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
+	// ListDeploymentsForApp returns deployments for an app, ordered DESC by
+	// created_at. limit <= 0 means "no row cap" (return every remaining row
+	// after offset). MemStore and PgStore both honour this contract — F-10
+	// closed the prior silent asymmetry where Postgres' `LIMIT 0` returned
+	// zero rows and MemStore returned all rows. NaN `offset` (= negative
+	// value) is treated as 0 by both backends.
 	ListDeploymentsForApp(ctx context.Context, appID string, limit, offset int) ([]Deployment, error)
 	// ListDeploymentsForAccount returns deployments across every app the
 	// account owns, cursor-paginated by created_at DESC. before is the
@@ -325,6 +331,14 @@ type Store interface {
 	// MarkOldSnapshotsStale marks the given snapshot IDs stale (per-app
 	// "current + previous" enforcement, run before DeleteSnapshotsByID).
 	MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs []string) (int64, error)
+	// DeleteSnapshotsStaleOlderThan removes rows where stale=true AND
+	// created_at < now()-retention. Used by imaged's F2 startup sweep
+	// after the mark-stale step: old snapshots stay restorable for a
+	// retention window (typically 7 days per api.SnapshotStaleRetention)
+	// so a firecracker downgrade or operator rollback doesn't pay an
+	// extra cold boot. After the window they go away. Returns the row
+	// count. Idempotent.
+	DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error)
 
 	// Audit (append-only, spec §6.1).
 	AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error

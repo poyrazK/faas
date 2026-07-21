@@ -645,9 +645,15 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (
 	return latest, nil
 }
 
+// ListDeploymentsForApp mirrors PgStore.ListDeploymentsForApp: `limit <= 0`
+// means "no row cap" (every remaining row after offset). F-10: see PgStore
+// doc for the asymmetry that this version already conformed to.
 func (m *MemStore) ListDeploymentsForApp(_ context.Context, appID string, limit, offset int) ([]Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if offset < 0 {
+		offset = 0
+	}
 	var all []Deployment
 	for _, d := range m.deployments {
 		if d.AppID == appID {
@@ -1302,6 +1308,26 @@ func (m *MemStore) MarkOldSnapshotsStale(_ context.Context, beforeSnapshotIDs []
 			n++
 		}
 	}
+	return n, nil
+}
+
+// DeleteSnapshotsStaleOlderThan mirrors the SQL DELETE … WHERE stale=true
+// AND created_at < now()-retention. MemStore uses time.Now for the cutoff
+// (deterministic tests pass a future/injected CreatedAt at seed time).
+func (m *MemStore) DeleteSnapshotsStaleOlderThan(_ context.Context, retention time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-retention)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	kept := m.snapshots[:0]
+	for i := range m.snapshots {
+		if m.snapshots[i].Stale && m.snapshots[i].CreatedAt.Before(cutoff) {
+			n++
+			continue
+		}
+		kept = append(kept, m.snapshots[i])
+	}
+	m.snapshots = append([]Snapshot(nil), kept...)
 	return n, nil
 }
 

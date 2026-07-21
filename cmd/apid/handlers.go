@@ -143,7 +143,18 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 		return
 	}
-	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged, `{"kind":"image","app_id":"`+app.ID+`","to":"`+d.ID+`"}`)
+	// F-03: deployment_changed emits now carry status + deployment_id.
+	// status="pending" tells listeners this row is still in-flight (builderd
+	// will eventually stamp rootfs_path → imaged converts to ext4); later
+	// transitions re-emit with status="live"|"failed"|"superseded".
+	// deployment_id==to here, but imaged switches on deployment_id in
+	// handleDeployment. Apid does not synthesise every transition — the
+	// state machine walks pending→building→imaging→snapshotting→live and
+	// each row write is followed by a NotifyDeploymentChanged. The image
+	// branch below covers the first hop (submitted); later hops land in
+	// cmd/apid/deploy_steps.go.
+	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged,
+		fmt.Sprintf(`{"kind":"image","status":"pending","app_id":"%s","deployment_id":"%s","to":"%s"}`, app.ID, d.ID, d.ID))
 	// Sanitize req.Image at the log sink — CodeQL go/log-injection (CWE-117).
 	// isDigestPinned already rejects malformed refs with 400 before this line,
 	// but a future field/wrapper change would break that invariant. Sanitizing

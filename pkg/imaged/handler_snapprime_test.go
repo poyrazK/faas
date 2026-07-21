@@ -276,7 +276,15 @@ func TestHandleSnapshotBoot_RedeliverySafe(t *testing.T) {
 	}
 }
 
-func TestHandleSnapshotBoot_MissingTarballFailsLoud(t *testing.T) {
+// TestHandleSnapshotBoot_EmptyRootfsPath_NoOp is the F-01 companion
+// expectation: handleSnapshotBoot with an empty rootfs_path bails to
+// log.Warn + return nil so that the deployment is NOT marked failed.
+// The canonical path is builderd's later NotifySnapshotBoot emit which
+// arrives AFTER the rootfs_path stamp. Prior to F-01 this exact case
+// transitioned the deployment to DeployFailed with "empty rootfs_path
+// (builderd didn't stamp)", blocking every tarball deploy on day one.
+// (Renamed from TestHandleSnapshotBoot_MissingTarballFailsLoud.)
+func TestHandleSnapshotBoot_EmptyRootfsPath_NoOp(t *testing.T) {
 	store := state.NewMemStore()
 	h := newHandler(store)
 	app, _ := store.CreateApp(context.Background(), state.App{
@@ -289,12 +297,12 @@ func TestHandleSnapshotBoot_MissingTarballFailsLoud(t *testing.T) {
 	err := h.handleSnapshotBoot(context.Background(), snapshotBootPayload{
 		AppID: app.ID, DeploymentID: dep.ID,
 	})
-	if err == nil {
-		t.Fatal("expected error when rootfs_path empty")
+	if err != nil {
+		t.Fatalf("F-01 reversal: empty rootfs_path must be a transient no-op, not an error (got %v)", err)
 	}
 	got, _ := store.DeploymentByID(context.Background(), dep.ID)
-	if got.Status != state.DeployFailed {
-		t.Errorf("deployment status = %s, want failed", got.Status)
+	if got.Status == state.DeployFailed {
+		t.Errorf("F-01 reversal: empty rootfs_path must NOT transition to failed; status=%s", got.Status)
 	}
 }
 
