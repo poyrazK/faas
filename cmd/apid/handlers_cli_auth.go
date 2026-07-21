@@ -232,19 +232,20 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	if errors.Is(err, state.ErrNotFound) {
 		acct, err = h.srv.store.CreateAccount(r.Context(), email, api.PlanFree)
 		if err != nil {
-			// codeql[go/log-injection] false-positive: logsanitize.Field is not in
-			// CodeQL's sanitizer model (it only recognizes inline strings.ReplaceAll),
-			// but it strips CR/LF/NUL/DEL at runtime — matches the precedent set in
-			// pkg/gateway/metrics.go:145. Email is also bounded by looksLikeEmail.
-			h.log.Error("cli_auth.create_account", "err", err, "email", logsanitize.Field(email))
+			// Strip CR/LF inline (CodeQL's go/log-injection only
+			// recognizes strings.ReplaceAll as a sanitizer) before
+			// passing through logsanitize.Field for the rest of the
+			// C0 controls. Email is also bounded by looksLikeEmail.
+			safe := strings.ReplaceAll(strings.ReplaceAll(email, "\n", ""), "\r", "")
+			h.log.Error("cli_auth.create_account", "err", err, "email", logsanitize.Field(safe))
 			h.renderCliAuthError(w, "Could not sign you up", "Please try again.")
 			return
 		}
-		// codeql[go/log-injection] false-positive: see rationale above.
+		safe := strings.ReplaceAll(strings.ReplaceAll(email, "\n", ""), "\r", "")
 		h.log.Info("cli_auth.auto_created_account",
 			"event", api.EventCliAuthAutoCreated,
 			"account", acct.ID,
-			"email", logsanitize.Field(email))
+			"email", logsanitize.Field(safe))
 	} else if err != nil {
 		h.log.Error("cli_auth.account_by_email", "err", err)
 		http.Error(w, "internal", http.StatusInternalServerError)
