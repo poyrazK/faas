@@ -8,6 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -547,6 +550,74 @@ func TestCmdDeployRepo_RejectsBadRepoShape(t *testing.T) {
 	}
 	if code := cmdDeployTarball([]string{"--repo", "octo/api/extra"}); code == 0 {
 		t.Fatal("tri-segment repo should error")
+	}
+}
+
+// TestCmdDeployTarball_SymlinkRejectedWithBadTarballTitle pins the
+// symlink-rejection error title at the CLI dispatch layer. A customer
+// who runs `ln -s /etc/passwd source.tar.gz && faas deploy --tarball
+// source.tar.gz` must see "Bad --tarball" (not "Deploy failed"), so
+// scripted --json pipelines can jq `.title` and distinguish input-shape
+// errors from transport failures. The openCustomerFile guard fires
+// inside Client.DeployTarball, so the fake apid never sees a POST to
+// /v1/apps/<slug>/deployments. CreateApp still runs ahead of the guard
+// (commands2.go:279) and is allowed to hit the fake apid once with a
+// 409 (the swallow path at commands2.go:281) — the CreateApp call is
+// idempotent and the slug has no security content.
+func TestCmdDeployTarball_SymlinkRejectedWithBadTarballTitle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Symlink not supported on Windows")
+	}
+	stderr, restore := captureStderr(t)
+	defer restore()
+
+	// Seed a real file then symlink to it — this is the attack shape.
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.tar.gz")
+	if err := writeMinimalFile(real); err != nil {
+		t.Fatalf("seed real: %v", err)
+	}
+	link := filepath.Join(dir, "link.tar.gz")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	// Fake apid: counts requests per route. CreateApp is allowed to be
+	// hit once (commands2.go:279 swallows 409). Anything past that —
+	// specifically POST /v1/apps/<slug>/deployments — must NOT be hit.
+	var deployHits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/deployments") {
+			atomic.AddInt32(&deployHits, 1)
+		}
+		// 409 on CreateApp matches the swallow-at-409 behaviour;
+		// any other request returns 202 so we can see unexpected calls.
+		if strings.HasSuffix(r.URL.Path, "/apps") && r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"code":"conflict","status":409}`))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"id":"d1","status":"pending"}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("FAAS_TOKEN", "tok")
+	t.Setenv("FAAS_API", srv.URL)
+
+	code := cmdDeployTarball([]string{"--tarball", link, "--name", "sym-link"})
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "Bad --tarball") {
+		t.Errorf("stderr missing %q; full stderr:\n%s", "Bad --tarball", out)
+	}
+	if !strings.Contains(out, "refusing to follow symlink") {
+		t.Errorf("stderr missing %q; full stderr:\n%s", "refusing to follow symlink", out)
+	}
+	if hits := atomic.LoadInt32(&deployHits); hits != 0 {
+		t.Errorf("fake apid received %d POST(s) to /deployments; want 0 (guard fired too late)", hits)
 	}
 }
 

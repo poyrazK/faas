@@ -279,7 +279,7 @@ func envPush(args []string) int {
 			return printErr("Read stdin", err)
 		}
 	} else {
-		f, err := openEnvFile(*in)
+		f, err := openCustomerFile(*in)
 		if err != nil {
 			return printErr("Could not read .env", err)
 		}
@@ -341,16 +341,19 @@ func envPush(args []string) int {
 	return 0
 }
 
-// openEnvFile opens the customer-supplied .env path with defense
-// against symlink-mediated content exfiltration.
+// openCustomerFile opens any customer-supplied file path with defense
+// against symlink-mediated content exfiltration. Used by both:
+//
+//	faas env push -f .env --app x        (cmdEnvPush)
+//	faas deploy --tarball source.tar.gz  (Client.DeployTarball)
 //
 // Without this guard, a customer could `ln -s /etc/passwd .env` (or
 // any other readable file) and then `faas env push -f .env --app x`.
 // The scanner would feed the file's lines through parseSecretsPair;
-// anything matching KEY=VALUE would be PUT to the server. Server-side
-// validation would still reject values that don't look like secrets,
-// but the network round-trip + log lines (which can include the path
-// and, on debug, content snippets) is a small info-disclosure path.
+// anything matching KEY=VALUE would be PUT to the server. The parallel
+// `faas deploy --tarball` attack is byte-exfiltration: whatever the
+// symlink points at gets streamed verbatim into the multipart source
+// part and ends up in the build artefact the builder microVM ingests.
 //
 // Two checks:
 //  1. Lstat the FINAL component. If it's a symlink, the kernel would
@@ -363,16 +366,18 @@ func envPush(args []string) int {
 // compare strings. On macOS, /var is itself a symlink to /private/var
 // (a system-level layout quirk), so EvalSymlinks("/var/folders/...")
 // returns "/private/var/folders/..." even for plain files. Comparing
-// strings there would reject every legitimate .env on macOS dev
-// boxes. Lstat-on-the-final-component catches the actual attack
+// strings there would reject every legitimate customer file on macOS
+// dev boxes. Lstat-on-the-final-component catches the actual attack
 // (a symlink AT the path the customer named) without false-positives.
+// The same reasoning applies to the tarball call site — a customer
+// may legitimately point `--tarball` at /var/folders/.../foo.tar.gz.
 //
-// Note 2: this doesn't fix the parallel attack surface in
-// client.DeployTarball (commands2.go:175, client.go:188-189) — the
-// tarball path is opened the same way. Filed separately because that
-// endpoint ships the file as a multipart upload, not as parsed
-// KEY=VALUE pairs; the threat model and fix differ.
-func openEnvFile(path string) (*os.File, error) {
+// Note 2: both call sites — cmdEnvPush (env push) and
+// Client.DeployTarball (deploy --tarball) — now share this helper.
+// If you add a third caller that ships customer bytes over the wire,
+// route it through here too; duplicating the Lstat discipline is
+// what causes TOCTOU drift.
+func openCustomerFile(path string) (*os.File, error) {
 	absIn, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not absolutize %q: %w", path, err)
@@ -385,6 +390,13 @@ func openEnvFile(path string) (*os.File, error) {
 	if preInfo.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("refusing to follow symlink at %q", path)
 	}
+	// The Lstat guards above (pre-open + post-open) ARE the security
+	// boundary that the .golangci.yml forbidigo rule exists to enforce.
+	// This call site is the documented escape hatch: any other os.Open
+	// in this repo is a tripwire and must route through a vetted
+	// helper. The pre-open + post-open Lstat discipline below is the
+	// security boundary; the bare Open on the next line is necessary.
+	//nolint:forbidigo // openCustomerFile IS the security boundary — pre-open + post-open Lstat discipline above is what makes os.Open safe here.
 	f, err := os.Open(absIn)
 	if err != nil {
 		return nil, err

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -195,6 +196,192 @@ func TestClient_DeployTarball_AutoMintsIdempotencyKey(t *testing.T) {
 	}
 	if !uuidV4Shape.MatchString(got) {
 		t.Errorf("Idempotency-Key %q is not UUID v4 shape", got)
+	}
+}
+
+// TestClient_DeployTarball_RejectsSymlink_NoIdempotencyKeySent is the
+// load-bearing attack-surface test for `faas deploy --tarball`. A
+// customer who runs `ln -s /etc/passwd source.tar.gz && faas deploy
+// --tarball source.tar.gz` must NOT have those bytes streamed into the
+// multipart source part. The openCustomerFile guard runs before the
+// Idempotency-Key mint, so a rejected path produces no UUID, no
+// multipart buffer, and no HTTP traffic at all. Skip on Windows
+// where os.Symlink is not supported.
+func TestClient_DeployTarball_RejectsSymlink_NoIdempotencyKeySent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Symlink not supported on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.tar.gz")
+	if err := writeMinimalFile(target); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	link := filepath.Join(dir, "link.tar.gz")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	var requestCount int
+	var sawIdempotencyKey bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if r.Header.Get("Idempotency-Key") != "" {
+			sawIdempotencyKey = true
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"id":"d1","status":"pending"}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+
+	_, err := c.DeployTarball(context.Background(), "x", link, "", "", false)
+	if err == nil {
+		t.Fatal("DeployTarball accepted a symlinked tarball path")
+	}
+	if !strings.Contains(err.Error(), "refusing to follow symlink") {
+		t.Errorf("error %q does not mention symlink refusal", err)
+	}
+	if requestCount != 0 {
+		t.Errorf("fake apid received %d request(s); want 0 (symlink must be rejected before any HTTP traffic)", requestCount)
+	}
+	if sawIdempotencyKey {
+		t.Error("fake apid saw an Idempotency-Key on a rejected path — guard fired too late")
+	}
+}
+
+// TestClient_DeployTarball_RejectsDanglingSymlink pins the strongest
+// invariant: a symlink whose target does not exist must be rejected by
+// the pre-open Lstat BEFORE os.Open runs. If openCustomerFile ever
+// regresses to "open first, then check", this test fails — the
+// dangling target would cause os.Open to error out, not the guard.
+func TestClient_DeployTarball_RejectsDanglingSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Symlink not supported on Windows")
+	}
+	dir := t.TempDir()
+	link := filepath.Join(dir, "dangling.tar.gz")
+	if err := os.Symlink("/nonexistent/never-existed", link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	var requestCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"id":"d1","status":"pending"}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+
+	_, err := c.DeployTarball(context.Background(), "x", link, "", "", false)
+	if err == nil {
+		t.Fatal("DeployTarball accepted a dangling symlinked tarball path")
+	}
+	if !strings.Contains(err.Error(), "refusing to follow symlink") {
+		t.Errorf("error %q does not mention symlink refusal", err)
+	}
+	if requestCount != 0 {
+		t.Errorf("fake apid received %d request(s); want 0", requestCount)
+	}
+}
+
+// TestClient_DeployTarball_RejectsDirectoryAsTarball pins the
+// !postInfo.Mode().IsRegular() branch: directories, FIFOs, and device
+// nodes are not legitimate tarball inputs even if the customer passed
+// them by accident. The post-open check is what catches a directory
+// (Go's os.Open happily returns a *File for a directory, so the
+// pre-open Lstat alone would not be enough). Runs on Windows too —
+// directories are cross-platform.
+func TestClient_DeployTarball_RejectsDirectoryAsTarball(t *testing.T) {
+	dir := t.TempDir()
+	subdir := filepath.Join(dir, "not-a-tarball")
+	if err := os.Mkdir(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	var requestCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"id":"d1","status":"pending"}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+
+	_, err := c.DeployTarball(context.Background(), "x", subdir, "", "", false)
+	if err == nil {
+		t.Fatal("DeployTarball accepted a directory as the tarball path")
+	}
+	if !strings.Contains(err.Error(), "non-regular file") {
+		t.Errorf("error %q does not mention non-regular file refusal", err)
+	}
+	if requestCount != 0 {
+		t.Errorf("fake apid received %d request(s); want 0", requestCount)
+	}
+}
+
+// TestClient_DeployTarball_HappyPathStillUploads is the regression
+// guard for the openCustomerFile rename: a regular file (the only
+// shape the CLI should ever upload) must still produce exactly one
+// request, the multipart body must carry the seeded bytes verbatim
+// in the "source" part, AND the request must carry a UUID-v4-shaped
+// Idempotency-Key (locked here for the success branch — the failure
+// branches assert the inverse in TestClient_DeployTarball_Rejects*).
+// Together those pin the invariant that openCustomerFile runs BEFORE
+// the Idempotency-Key mint: success path mints, failure path does not.
+// If the new guard ever silently rejects regular files, this test
+// fails — uploads break.
+func TestClient_DeployTarball_HappyPathStillUploads(t *testing.T) {
+	dir := t.TempDir()
+	tar := filepath.Join(dir, "src.tar.gz")
+	if err := writeMinimalFile(tar); err != nil {
+		t.Fatalf("seed tarball: %v", err)
+	}
+
+	var requestCount int
+	var sourceBytes []byte
+	var gotIdempotencyKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		gotIdempotencyKey = r.Header.Get("Idempotency-Key")
+		// Pull the source part out of the multipart body. The CLI
+		// always uses field name "source" (client.go:271).
+		mr, err := r.MultipartReader()
+		if err == nil {
+			for {
+				p, err := mr.NextPart()
+				if err != nil {
+					break
+				}
+				if p.FormName() == "source" {
+					sourceBytes, _ = io.ReadAll(p)
+				}
+			}
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"id":"d1","status":"pending"}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+
+	resp, err := c.DeployTarball(context.Background(), "x", tar, "", "", false)
+	if err != nil {
+		t.Fatalf("DeployTarball: %v", err)
+	}
+	if resp.ID != "d1" {
+		t.Errorf("resp.ID = %q, want %q", resp.ID, "d1")
+	}
+	if requestCount != 1 {
+		t.Errorf("fake apid received %d request(s); want 1", requestCount)
+	}
+	if string(sourceBytes) != strings.Repeat("x", 64) {
+		t.Errorf("source part bytes mismatch: got %q, want 64 'x's", sourceBytes)
+	}
+	if gotIdempotencyKey == "" {
+		t.Error("missing Idempotency-Key on the happy-path upload — guard may now run AFTER the mint")
+	}
+	if !uuidV4Shape.MatchString(gotIdempotencyKey) {
+		t.Errorf("Idempotency-Key %q is not UUID v4 shape", gotIdempotencyKey)
 	}
 }
 

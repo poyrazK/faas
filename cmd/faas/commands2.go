@@ -286,7 +286,7 @@ func cmdDeployTarball(args []string) int {
 	if *tarball != "" {
 		dep, err := client.DeployTarball(ctx, slug, *tarball, *runtime, *handler, *dockerfile)
 		if err != nil {
-			return printErr("Deploy failed", err)
+			return printErr("Bad --tarball", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(dep))

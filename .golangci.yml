@@ -25,6 +25,7 @@ linters:
     - bodyclose      # unclosed *http.Response.Body on every request path
     - contextcheck   # ctx captured in goroutines, stored in structs, or detached without justification
     - depguard       # enforce the CLAUDE.md component-ownership import boundaries
+    - forbidigo      # forbid specific call patterns — see settings.forbidigo below
     - gosec          # security defects — this box runs vmmd as root + drives jailer
 
   settings:
@@ -75,6 +76,45 @@ linters:
             - pkg: github.com/onebox-faas/faas/pkg/netns
               desc: "only vmmd manages host network namespaces (CLAUDE.md ownership)"
 
+    # forbidigo: PR #101 closed the symlink-follow attack surface in
+    # `faas deploy --tarball` by routing the customer-path open through
+    # `openCustomerFile` (commands5.go:380). This rule makes that
+    # discipline CI-enforced: any new os.Open call anywhere in the
+    # tree is a tripwire — vmmd/imaged/builderd/etc. open paths
+    # derived from vetted slot/instance ids and route through their
+    # own vetted-id openers, so a bare os.Open there is a regression
+    # too. Legitimate escape hatches:
+    #
+    #   - the body of openCustomerFile itself (//nolint:forbidigo
+    #     os.Open on the next line), where the Lstat guard IS the
+    #     security boundary
+    #   - any future addition must either route through a vetted-id
+    #     helper or carry a //nolint:forbidigo comment with a
+    #     documented reason reviewed in the PR
+    #
+    # NOTE on local noise: golangci-lint 2.12.x (Homebrew default)
+    # ships a default forbidigo rule banning fmt.Print*; the action
+    # pins v2.4.0 which does NOT include that default. Local `make
+    # lint` may report fmt.Print* findings that CI will not — these
+    # are pre-existing on main and unrelated to this PR.
+    forbidigo:
+      # Don't analyze godoc — stdlib only, no test fixtures in docs.
+      exclude-godoc-examples: false
+      # Enable type-aware analysis so the `pkg:` field on a rule can
+      # distinguish `os.Open` (the stdlib call) from an unrelated
+      # method named Open on a different type.
+      analyze-types: true
+      forbid:
+        - pattern: '^os\.Open$'
+          msg: "do not open with bare os.Open — route customer paths through openCustomerFile (cmd/faas/commands5.go) so the symlink/non-regular guard fires before bytes leave the host; for vetted-id paths in daemons, use a vetted-id helper or add //nolint:forbidigo with a documented reason."
+        # The pkg field constrains the rule to imports of stdlib os,
+        # avoiding false positives on user-defined methods also named
+        # `Open`. With analyze-types=true the analyzer matches the
+        # selector against the imported package's full path.
+        - pattern: '^Open$'
+          pkg: '^os$'
+          msg: "do not call os.Open directly — see the os.Open rule above for the rationale and escape hatch."
+
     # gosec runs against a box where vmmd is root and drives jailer/firecracker
     # and builds guest rootfs images. The rule IDs below are structurally
     # inapplicable to that domain and each finding was reviewed by hand; keep the
@@ -93,7 +133,7 @@ linters:
         - G204 # subprocess with variadic args — jailer/ip/mkfs/firecracker are invoked by design; args derive from vetted slot/instance ids, never request input
         - G301 # directory perms >0750: rootfs image dirs need 0755 so the guest's non-root init/runner can traverse them
         - G302 # file perms >0600 via OpenFile: jail chroot config + rootfs image files need group/other read
-        - G304 # file path from variable — rootfs/snapshot/chroot paths derive from vetted slot/instance ids, never request input
+        - G304 # file path from variable — blanket-disabled because every site opens paths derived from vetted slot/instance ids (vmmd/imaged/builderd) or pkg/-owned caches (wire/snapshot). Re-enabled per-path for cmd/faas/ in the exclusions.rules block below, since the CLI is the only surface that takes customer-supplied paths.
         - G306 # WriteFile perms >0600: rootfs image contents (0644 data, 0755 executables) MUST be group/other readable/executable inside the guest
 
   # Per-path exclusions for noisy linters on tests, plus the
@@ -112,6 +152,34 @@ linters:
           - goconst   # repeated test-fixture literals are fine; promoting
                       # them to package consts adds noise without value
           - gosec     # tests use weak RNG, temp files, and hardcoded fixtures by design
+      # G304: re-enable for cmd/faas/ (the only surface that takes
+      # customer-supplied paths), so a future change that opens a
+      # customer path with os.OpenFile (which forbidigo won't catch)
+      # still trips G304. The forbidigo rule covers os.Open;
+      # G304-on-cmd/faas is the belt-and-suspenders backstop.
+      #
+      # Listed AFTER the _test.go gosec-blanket-suppress rule so it
+      # wins for cmd/faas test files too — those tests use os.Create
+      # (writeMinimalFile) which is not flagged by G304, and they
+      # must stay clean.
+      #
+      # The --template branch (commands2.go) uses os.CreateTemp, which
+      # G304 does not flag (server-controlled inode in $TMPDIR, not
+      # customer-symlinkable) — see PR #101 for the full threat-model
+      # analysis. If G304 ever fires on the --template path, that's
+      # a regression worth investigating, not a false positive.
+      - path: "cmd/faas/.*\\.go$"
+        linters:
+          - gosec(G304)
+      # The documented escape hatch: openCustomerFile IS the security
+      # boundary itself. forbidigo carries a //nolint:forbidigo on
+      # that single line; this gosec exemption re-suppresses G304 for
+      # the same file so the documented exception doesn't double-fire.
+      # Other gosec rules on commands5.go stay active — only G304 is
+      # exempt here.
+      - path: "cmd/faas/commands5\\.go$"
+        linters:
+          - gosec(G304) # openCustomerFile is the documented exception
       - path: "pkg/wire/metrics_test.go"
         linters:
           - errcheck

@@ -35,6 +35,8 @@ func NewDetector() *Detector { return &Detector{} }
 // Detect reads the tarball at path and returns its framework. Errors are
 // best-effort: an unreadable tarball returns FrameworkUnknown + error so the
 // caller can record a user_error failure_class.
+//
+//nolint:forbidigo // path is the apid-spooled tarball that already passed apid's validateTarballShape (in cmd/apid/deploy_inputs.go) before builderd received the build notification. Symlink-attack impossible because apid wrote the file with a fresh random id. Direct unit-test callers construct the path themselves; rationale holds.
 func (d *Detector) Detect(path string) (Framework, error) {
 	f, err := os.Open(path)
 	if err != nil {
