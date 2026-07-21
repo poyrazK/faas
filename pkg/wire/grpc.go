@@ -405,12 +405,6 @@ func loadClientTLSConfig(certPath, keyPath, caPath, prefix string) (*tls.Config,
 		MinVersion:   tls.VersionTLS13,
 		NextProtos:   []string{"h2"},
 	}
-	// CA-only verification per issue #95 / ADR-025 §Rejected alternatives:
-	// hostname matching is explicitly out of scope for this slice. Bare
-	// InsecureSkipVerify would also disable CA verification, which is not
-	// what we want. We keep InsecureSkipVerify so the stdlib stops on the
-	// hostname check, then run the chain validation ourselves below.
-	cfg.InsecureSkipVerify = true
 	verifyLeaf := func(rawCerts [][]byte) error {
 		if len(rawCerts) == 0 {
 			return errors.New("wire: server presented no certificates")
@@ -447,15 +441,16 @@ func loadClientTLSConfig(certPath, keyPath, caPath, prefix string) (*tls.Config,
 		})
 		return err
 	}
-	// CA-only verification per issue #95 / ADR-025 §Rejected alternatives:
-	// hostname matching is explicitly out of scope for this slice. Bare
-	// InsecureSkipVerify would also disable CA verification, which is not
-	// what we want. We keep InsecureSkipVerify so the stdlib stops on the
-	// hostname check, then run the chain validation ourselves below.
+	// CA-only verification per issue #95 / ADR-025 §Rejected alternatives.
+	// SAN/CN matching is explicitly out of scope for this slice. Bare
+	// InsecureSkipVerify would also disable CA chain validation, which
+	// is not what we want — InsecureSkipVerify just suppresses the
+	// stdlib's hostname check, and the two verifier hooks below run the
+	// chain validation ourselves. VerifyConnection is set alongside
+	// VerifyPeerCertificate so the verifier also runs on resumed TLS
+	// sessions (gosec G123: stdlib only calls the former on the initial
+	// handshake).
 	cfg.InsecureSkipVerify = true
-	// Set both hooks so the verifier runs on resumed TLS sessions too
-	// (gosec G123). The stdlib only calls VerifyPeerCertificate on the
-	// initial handshake; resumed sessions need VerifyConnection.
 	cfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 		return verifyLeaf(rawCerts)
 	}

@@ -429,6 +429,69 @@ func TestLoadClientTLSConfigSetsVerifyPeer(t *testing.T) {
 	}
 }
 
+// TestTLSLoadersWithPrefix: schedd's error-name accuracy depends on the
+// _WithPrefix variants. Pin that the prefix is applied to every missing
+// field name and that the no-prefix variant stays generic.
+func TestTLSLoadersWithPrefix(t *testing.T) {
+	t.Run("server+prefix names vmmd_tls_*", func(t *testing.T) {
+		_, err := LoadServerTLSConfigWithPrefix("vmmd_", "/some/cert", "", "")
+		if err == nil {
+			t.Fatalf("expected error")
+		}
+		if !strings.Contains(err.Error(), "vmmd_tls_key_path") {
+			t.Errorf("err = %v; want vmmd_tls_key_path named", err)
+		}
+		if !strings.Contains(err.Error(), "vmmd_tls_ca_path") {
+			t.Errorf("err = %v; want vmmd_tls_ca_path named", err)
+		}
+		if strings.Contains(err.Error(), "vmmd_tls_cert_path") {
+			t.Errorf("err = %v; do NOT want vmmd_tls_cert_path named (it was set)", err)
+		}
+	})
+	t.Run("client+empty prefix names tls_*", func(t *testing.T) {
+		_, err := LoadClientTLSConfigWithPrefix("", "/some/cert", "", "")
+		if err == nil {
+			t.Fatalf("expected error")
+		}
+		if !strings.Contains(err.Error(), "tls_key_path") {
+			t.Errorf("err = %v; want tls_key_path named", err)
+		}
+		if !strings.Contains(err.Error(), "tls_ca_path") {
+			t.Errorf("err = %v; want tls_ca_path named", err)
+		}
+	})
+}
+
+// TestTargetStringRoundTrip: pin the asymmetries of Target.String() so
+// nobody silently changes it. unix reconstructs the canonical form;
+// tcp and dns round-trip via ParseTarget. Pass them back through
+// ParseTarget to confirm the loop is stable.
+func TestTargetStringRoundTrip(t *testing.T) {
+	cases := []string{
+		"unix:///run/faas/vmmd.sock",
+		"tcp://127.0.0.1:50051",
+		"tcp://0.0.0.0:50051",
+		"tcp://:50051",
+		"dns:///vmmd.internal:50051",
+		"dns://vmmd.internal:50051",
+	}
+	for _, raw := range cases {
+		t.Run(raw, func(t *testing.T) {
+			tgt, err := ParseTarget(raw)
+			if err != nil {
+				t.Fatalf("ParseTarget: %v", err)
+			}
+			round, err := ParseTarget(tgt.String())
+			if err != nil {
+				t.Fatalf("ParseTarget(String()): %v", err)
+			}
+			if round != tgt {
+				t.Fatalf("round-trip mismatch: in=%+v out=%+v", tgt, round)
+			}
+		})
+	}
+}
+
 // --- TCP listener bound to a real port, no RPC ----------------------------
 
 func TestListenTCPAllocatesPort(t *testing.T) {

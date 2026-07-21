@@ -13,7 +13,7 @@ package main
 
 import (
 	"context"
-	crypto_tls "crypto/tls"
+	"crypto/tls"
 	"log/slog"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -201,7 +201,7 @@ func (l *liveClient) VerifyInstallation(ctx context.Context, installationID int6
 // apid's lifecycle; tlsCfg is nil for the loopback UNIX socket.
 // Remote-target dial + mTLS will be wired here in the follow-up that
 // decouples the control plane.
-func newGithubdClient(ctx context.Context, socketPath string, tlsCfg *crypto_tls.Config, log *slog.Logger) GithubdClient {
+func newGithubdClient(ctx context.Context, socketPath string, tlsCfg *tls.Config, log *slog.Logger) GithubdClient {
 	if socketPath == "" {
 		if log != nil {
 			log.Info("githubd socket not configured; using stub client (slice 1)")

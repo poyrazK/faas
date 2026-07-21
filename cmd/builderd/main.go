@@ -90,8 +90,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	vmmTarget := cfg.ResolveVMMTarget()
 	log.Info("config",
 		"vmmd_target", vmmTarget,
-		"vmmd_socket", cfg.VMMDSocket,
-		"cache_dir", cfg.CacheDir)
+		"vmmd_socket", cfg.VMMDSocket)
 
 	pool, err := deps.openDB(ctx, cfg.DBURL)
 	if err != nil {

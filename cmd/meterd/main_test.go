@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -294,6 +295,43 @@ func TestRun_MetricsAddrDrainsOnCancel(t *testing.T) {
 		}
 	case <-time.After(6 * time.Second):
 		t.Fatal("run did not return within 6s (5s shutdown + slack) of cancel")
+	}
+}
+
+// TestRun_DialScheddPropagatesCancel: when the dialSchedd seam receives
+// an already-cancelled ctx, runWithDeps must propagate that into the
+// dial error rather than blocking. Pins the issue #95 contract that the
+// context-aware dial participates in the daemon's lifecycle
+// cancellation; the wire layer's TestDialContextCancelled already
+// covers the lower bound.
+//
+// Requires a real Postgres (skipped on dev shells without one); the
+// seam under test is mid-`runWithDeps`, after openDB+migrate.
+func TestRun_DialScheddPropagatesCancel(t *testing.T) {
+	dir := shortDir(t)
+	cfgPath := writeMeterdConfig(t, dir, "")
+	pool := testPool(t)
+
+	wantErr := errors.New("dial cancelled (test)")
+	listenFn := func(string, http.Handler) (*http.Server, error) {
+		return nil, nil
+	}
+	deps := stubMeterdDeps(cfgPath, "", pool, listenFn, func(string) string { return "" })
+	// Override the default dialSchedd with one that asserts ctx.Err()
+	// is non-nil and returns the canonical error. parker is left nil so
+	// the seam is the only path that runs.
+	deps.parker = nil
+	deps.dialSchedd = func(ctx context.Context, _ string, _ *tls.Config) (parkInstanceParker, error) {
+		if ctx.Err() == nil {
+			t.Errorf("dialSchedd received ctx with nil err; want cancelled")
+		}
+		return nil, wantErr
+	}
+
+	if err := runWithDeps(context.Background(), discardLog(), deps); err == nil {
+		t.Fatal("expected error from cancelled dialSchedd")
+	} else if !errors.Is(err, wantErr) {
+		t.Errorf("err = %v; want wraps %v", err, wantErr)
 	}
 }
 
