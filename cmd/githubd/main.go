@@ -122,12 +122,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	srv := &githubd.Server{
-		Service:    webhookSvc,
-		Log:        log,
-		GRPCServer: githubdgrpc.New(gRPCImpl, wire.NewOpsMetrics("githubd"), log),
-		HTTPAddr:   cfg.HTTPAddr,
-		SocketPath: cfg.SocketPath,
-		ListenAddr: cfg.ListenAddr,
+		Service:     webhookSvc,
+		Log:         log,
+		GRPCServer:  githubdgrpc.New(gRPCImpl, wire.NewOpsMetrics("githubd"), log),
+		HTTPAddr:    cfg.HTTPAddr,
+		SocketPath:  cfg.SocketPath,
+		ListenAddr:  cfg.ListenAddr,
 		TLSCertPath: cfg.TLSCertPath,
 		TLSKeyPath:  cfg.TLSKeyPath,
 		TLSCAPath:   cfg.TLSCAPath,

@@ -38,8 +38,8 @@ func main() {
 // uses the defaults; tests can swap individual fields to drive `run` without
 // needing KVM, root, or a real /etc/faas/vmmd.toml.
 type runDeps struct {
-	configPath string                                                                                            // defaults to /etc/faas/vmmd.toml
-	detectFC   func(context.Context) (string, error)                                                             // defaults to fcvm.DetectFirecrackerVersion
+	configPath string                                                                                                // defaults to /etc/faas/vmmd.toml
+	detectFC   func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
 	listen     func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
 }
 
