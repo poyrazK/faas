@@ -2,6 +2,8 @@ package meter_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -57,91 +59,18 @@ func runLoopBrief(t *testing.T, store state.Store, dunning *meter.Dunning) (*met
 	return loop, ops
 }
 
-// scrapeBody renders the registry as text. Mirrors the canonical
-// pkg/wire/metrics_test.go:14-54 — scrape after a real Observe cycle
-// and substring-assert on the Prometheus text format.
+// scrapeBody renders the registry through the same handler
+// cmd/meterd mounts at /metrics, so the test asserts the actual
+// on-the-wire Prometheus text format. Mirrors pkg/wire/metrics_test.go:
+// 125-138 (HandlerStandalone) — httptest.NewRecorder + Handler().
 func scrapeBody(t *testing.T, ops *wire.OpsMetrics) string {
 	t.Helper()
-	mfs, err := ops.Registry().Gather()
-	if err != nil {
-		t.Fatalf("registry.Gather: %v", err)
+	rec := httptest.NewRecorder()
+	ops.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/metrics status = %d, want 200", rec.Code)
 	}
-	var out []string
-	for _, mf := range mfs {
-		for _, metric := range mf.GetMetric() {
-			var labels []string
-			for _, lp := range metric.GetLabel() {
-				labels = append(labels, lp.GetName()+"="+lp.GetValue())
-			}
-			switch {
-			case strings.HasSuffix(mf.GetName(), "_total"):
-				out = append(out, mf.GetName()+"{"+strings.Join(labels, ",")+"} "+
-					formatCounter(metric.GetCounter().GetValue()))
-			case mf.GetType().String() == "HISTOGRAM":
-				h := metric.GetHistogram()
-				if h == nil {
-					continue
-				}
-				out = append(out, mf.GetName()+"_count{"+strings.Join(labels, ",")+"} "+
-					formatCounter(float64(h.GetSampleCount())))
-			}
-		}
-	}
-	return strings.Join(out, "\n")
-}
-
-// formatCounter renders a Prometheus counter value as the promhttp text
-// encoder would — integer-valued counts without decimals. Counter rows
-// are integer-formatted by Prometheus; histogram counts are too.
-func formatCounter(v float64) string {
-	if v == float64(int64(v)) {
-		return intStr(int64(v))
-	}
-	return floatStr(v)
-}
-
-func intStr(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	out := ""
-	for n > 0 {
-		out = string(rune('0'+n%10)) + out
-		n /= 10
-	}
-	if neg {
-		out = "-" + out
-	}
-	return out
-}
-
-func floatStr(v float64) string {
-	neg := v < 0
-	if neg {
-		v = -v
-	}
-	intPart := int64(v)
-	frac := v - float64(intPart)
-	out := intStr(intPart)
-	if frac > 0 {
-		out += "."
-		for i := 0; i < 3; i++ {
-			frac *= 10
-			d := int64(frac)
-			out += string(rune('0' + d))
-			frac -= float64(d)
-		}
-		out = strings.TrimRight(out, "0")
-		out = strings.TrimRight(out, ".")
-	}
-	if neg {
-		out = "-" + out
-	}
-	return out
+	return rec.Body.String()
 }
 
 // TestLoop_ObserveSampleAndStripe — the two ops that share the
@@ -165,18 +94,11 @@ func TestLoop_ObserveSampleAndStripe(t *testing.T) {
 	_, ops := runLoopBrief(t, store, nil)
 	body := scrapeBody(t, ops)
 
-	// Either ok or err counts as a wired Observe. We don't pin which
-	// here; the metric value presence is what matters. scrapeBody
-	// emits `op=sample` (no quotes — see scrapeBody implementation) so
-	// we substring-match on the unquoted form.
-	hasSample := strings.Contains(body, `op=sample,`) || strings.Contains(body, `,op=sample `) ||
-		strings.Contains(body, `op=sample}`)
-	hasStripe := strings.Contains(body, `op=stripe,`) || strings.Contains(body, `,op=stripe `) ||
-		strings.Contains(body, `op=stripe}`)
-	if !hasSample {
+	// Prometheus text format quotes label values: `op="sample",code="ok"`.
+	if !strings.Contains(body, `op="sample"`) {
 		t.Errorf("missing sample op in /metrics registry:\n%s", body)
 	}
-	if !hasStripe {
+	if !strings.Contains(body, `op="stripe"`) {
 		t.Errorf("missing stripe op in /metrics registry:\n%s", body)
 	}
 }
@@ -193,9 +115,7 @@ func TestLoop_ObserveQuotaHistogram(t *testing.T) {
 	}
 	_, ops := runLoopBrief(t, store, nil)
 	body := scrapeBody(t, ops)
-	hasQuota := strings.Contains(body, `op=quota,`) || strings.Contains(body, `,op=quota `) ||
-		strings.Contains(body, `op=quota}`)
-	if !hasQuota {
+	if !strings.Contains(body, `op="quota"`) {
 		t.Errorf("missing quota op in /metrics registry:\n%s", body)
 	}
 }

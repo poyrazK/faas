@@ -80,6 +80,23 @@ func stubMeterdDeps(cfgPath, metricsAddr string, pool *pgxpool.Pool, listenFn fu
 	}
 }
 
+// subSecondIntervalsEnv returns an env reader that pins every
+// FAAS_*_INTERVAL knob to 20 ms. Used by tests that need the four
+// meterd timers (sample / quota / stripe / dunning) to each fire at
+// least once during a brief run; without this, the production
+// defaults (60 s / 3 min / 60 min / 60 min) leave stripe + dunning
+// dormant for the life of any unit test.
+func subSecondIntervalsEnv() func(string) string {
+	return func(k string) string {
+		switch k {
+		case "FAAS_SAMPLE_INTERVAL", "FAAS_QUOTA_INTERVAL",
+			"FAAS_STRIPE_INTERVAL", "FAAS_DUNNING_INTERVAL":
+			return "20ms"
+		}
+		return ""
+	}
+}
+
 // testPool returns a pgtest pool with the schema migrated, or t.Skip()s when
 // no Postgres is reachable. Mirrors cmd/schedd/main_test.go::migratedPool so
 // the runWithDeps tests can pass a non-nil pool to openDB without reaching
@@ -171,15 +188,7 @@ func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 	// once during the handler wait — without this the only ticks that
 	// land are stripe (60 min default), which never fires in a unit
 	// test.
-	env := func(k string) string {
-		switch k {
-		case "FAAS_SAMPLE_INTERVAL", "FAAS_QUOTA_INTERVAL",
-			"FAAS_STRIPE_INTERVAL", "FAAS_DUNNING_INTERVAL":
-			return "20ms"
-		}
-		return ""
-	}
-	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, env)
+	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, subSecondIntervalsEnv())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -311,15 +320,7 @@ func TestRun_Healthz_StaleReturns503(t *testing.T) {
 	// 20 ms intervals ⇒ 60 ms threshold. The test cancels after the
 	// four timers each tick at least once, then sleeps 200 ms (>3 ×
 	// threshold) before probing /healthz.
-	env := func(k string) string {
-		switch k {
-		case "FAAS_SAMPLE_INTERVAL", "FAAS_QUOTA_INTERVAL",
-			"FAAS_STRIPE_INTERVAL", "FAAS_DUNNING_INTERVAL":
-			return "20ms"
-		}
-		return ""
-	}
-	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, env)
+	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, subSecondIntervalsEnv())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

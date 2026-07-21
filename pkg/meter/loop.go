@@ -136,6 +136,13 @@ func (l *Loop) runTicks(ctx context.Context, interval time.Duration, tick func(c
 // (one bad account shouldn't stop the rest). Records the last tick
 // timestamp under "quota" — separate from runTicks because quota sweeps
 // a list rather than a single tick body.
+//
+// Observe is called with err=nil unconditionally: runQuotaOnce already
+// logs and skips per-account failures, so there is no aggregate error
+// to surface. Operators alerting on quota errors should scrape
+// journald (the warn lines carry account_id + err); this is documented
+// inline to make the silent counter explicit — a future
+// meterd_quota_errors_total counter is in the survey follow-ups.
 func (l *Loop) runQuotaTicks(ctx context.Context) error {
 	t := time.NewTicker(l.cfg.QuotaInterval)
 	defer t.Stop()

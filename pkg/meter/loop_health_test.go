@@ -2,7 +2,6 @@ package meter_test
 
 import (
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -119,19 +118,32 @@ func TestLoop_Health_StaleAfterMultiplier(t *testing.T) {
 }
 
 // TestLoop_Health_RecordsLastTick — LastTick(name) returns the wall-
-// clock time of the named tick's last successful run; ok==true and
-// the timestamp is within the brief-run window. Pinned to the public
-// LastTick seam that the /healthz handler calls into.
+// clock time of the named tick's last successful run; ok==true, the
+// timestamp is within the brief-run window, and the recorded value is
+// a recent stamp (no older than 200 ms before `time.Now()`). Pins the
+// write-path: a regression that drops the `l.recordTick(name, start)`
+// call from runTicks would leave LastTick returning the zero value
+// forever, and this test would catch it.
 func TestLoop_Health_RecordsLastTick(t *testing.T) {
 	t.Parallel()
 	loop, _ := runLoopBriefForHealth(t, state.NewMemStore())
+	// The brief run sleeps 150 ms then cancels; the last tick for any
+	// timer landed within that window. `now` is captured after the
+	// run returns — the recorded stamp must be ≤ 200 ms in the past
+	// (150 ms brief-run + slack for goroutine scheduling).
+	now := time.Now()
 	for _, name := range []string{"sample", "quota", "stripe"} {
 		ts, ok := loop.LastTick(name)
 		if !ok {
 			t.Errorf("LastTick(%q) ok = false after runLoopBrief", name)
+			continue
 		}
 		if ts.IsZero() {
-			t.Errorf("LastTick(%q) is zero value", name)
+			t.Errorf("LastTick(%q) is zero value (recordTick never fired)", name)
+		}
+		if age := now.Sub(ts); age < 0 || age > 200*time.Millisecond {
+			t.Errorf("LastTick(%q) = %v, age = %v, want 0..200ms",
+				name, ts, age)
 		}
 	}
 	// An unknown tick name returns ok=false; sanity-check the seam.
@@ -220,7 +232,3 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
-
-// _ = strings.Contains is a no-op; just silence the linter for the
-// unused-import on tooling that strips the build path.
-var _ = strings.Contains
