@@ -54,6 +54,16 @@ type AccountView struct {
 	AppCount int
 }
 
+// DPAView is the page-specific payload for the dashboard DPA route
+// (/dashboard/account/dpa). Markdown is the rendered DPA plaintext
+// the apid main passes in after reading the configured dpaPath file.
+// Keeping the body opaque here means a future maintainer can swap
+// the markdown processor (goldmark, blackfriday, etc.) without
+// touching the page template.
+type DPAView struct {
+	Markdown string
+}
+
 // IndexData is the /dashboard/ overview payload.
 type IndexData struct {
 	DeployedAppCount int

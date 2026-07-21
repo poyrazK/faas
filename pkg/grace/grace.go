@@ -149,6 +149,14 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 			g.p.Log.Warn("grace: hard delete failed", "account", acct.ID, "err", err)
 			continue
 		}
+		// Stamp completed_at on the GDPR audit row so the export
+		// bundle reflects "yes, your account was hard-deleted at
+		// <now>". Best-effort; ErrNotFound just means the customer
+		// never had a delete row (e.g. account was deleted out-of-band)
+		// — log and keep moving.
+		if err := g.p.Store.CompleteGdprRequest(ctx, acct.ID, string(state.GdprActionDelete)); err != nil && !errors.Is(err, state.ErrNotFound) {
+			g.p.Log.Warn("grace: complete gdpr_requests failed", "account", acct.ID, "err", err)
+		}
 		payload, _ := json.Marshal(deletionPayload{AccountID: acct.ID})
 		if err := g.p.Notif(ctx, db.NotifyAccountDeleted, string(payload)); err != nil {
 			g.p.Log.Warn("grace: notify failed", "channel", db.NotifyAccountDeleted, "err", err)

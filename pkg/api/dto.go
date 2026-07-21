@@ -260,6 +260,12 @@ type AccountExportResponse struct {
 	Crons       []CronResponse            `json:"crons"`
 	APIKeys     []APIKeyExportResponse    `json:"api_keys"`
 	AppSecrets  []AppSecretExportResponse `json:"app_secrets"`
+	// AuditTrail is the customer's own GDPR ledger slice: every
+	// export/delete/restore the customer has hit. Surfaced in the
+	// bundle so the export is self-describing (the customer can see
+	// "yes, my last deletion request fired at <ts>") without a
+	// separate GET round trip.
+	AuditTrail []GdprAuditExportResponse `json:"audit_trail,omitempty"`
 }
 
 // BuildExportResponse is the per-build row in the export bundle.
@@ -293,6 +299,17 @@ type APIKeyExportResponse struct {
 	Label     string `json:"label,omitempty"`
 	CreatedAt string `json:"created_at"`
 	LastUsed  string `json:"last_used_at,omitempty"`
+}
+
+// GdprAuditExportResponse is one row of the customer's own GDPR audit
+// trail as surfaced in the export bundle. CompletedAt is empty when
+// the action is still in flight (a delete row whose grace window
+// hasn't lapsed yet); the export consumer can correlate the row
+// against the deletion_requested_at timestamp on the Account envelope.
+type GdprAuditExportResponse struct {
+	Action      string `json:"action"` // "export" | "delete" | "restore"
+	RequestedAt string `json:"requested_at"`
+	CompletedAt string `json:"completed_at,omitempty"`
 }
 
 // AppSecretExportResponse is one row in the export's app_secrets slice.

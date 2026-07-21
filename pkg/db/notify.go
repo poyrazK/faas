@@ -102,7 +102,8 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         their account for deletion (spec §17 G6).
 //	                         schedd subscribes to drop any live instance
 //	                         belonging to the account at the moment of
-//	                         pending (RAM-admission invariant §6.2-2).
+//	                         pending (ADR-024 — schedd walks instances
+//	                         directly; no RAM-aggregate in the payload).
 //	NotifyAccountDeleted    {"account_id":uuid}
 //	                         apid/pkg/grace → audit: the 30-day grace
 //	                         window lapsed and the hard delete ran.

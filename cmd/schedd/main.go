@@ -45,6 +45,11 @@ type runDeps struct {
 	detectFC   func(context.Context) (string, error)
 	dialVMM    func(socket string) (sched.VMM, error)
 	listen     func(path, owner string) (net.Listener, error)
+	// subscribeDeletion is the producer-side seam for the
+	// NotifyAccountDeletionPending consumer (ADR-026). nil = the
+	// subscriber is not started (cmd/schedd's main wires the
+	// production db.Subscribe adapter; tests inject a fake).
+	subscribeDeletion func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 }
 
 func defaultDeps() runDeps {
@@ -54,7 +59,13 @@ func defaultDeps() runDeps {
 		migrate:    db.MigrateUp,
 		detectFC:   fcvm.DetectFirecrackerVersion,
 		dialVMM:    func(socket string) (sched.VMM, error) { return sched.DialVMM(socket) },
-		listen:     wire.ListenOrRecreateByName,
+		// Production wires db.Subscribe. Tests inject a fake channel
+		// so the subscriber's Park path is exercised end-to-end
+		// without standing up Postgres.
+		subscribeDeletion: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
+			return db.Subscribe(ctx, p, []string{db.NotifyAccountDeletionPending})
+		},
+		listen: wire.ListenOrRecreateByName,
 	}
 }
 
@@ -169,6 +180,66 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		"eviction_threshold_mb", sched.EvictionThresholdMB,
 		"vcpu_slots", api.VCPUSlots,
 		"fc_version", fcVersion)
+
+	// ADR-026 deletion subscriber. Long-lived goroutine under the
+	// same ctx as loop.Run. The subscriber is purely a drain (PR #83
+	// review #6 collapsed the SubFn reconnect path); the production
+	// schedule is "Subscribe once at startup, dial again on transient
+	// errors". Linear 1s → 30s backoff lives here in cmd/schedd, not
+	// inside pkg/sched, so the package stays a thin adapter. nil seam
+	// = skip in tests that don't want a fake channel.
+	if deps.subscribeDeletion != nil {
+		sub := sched.NewDeletionSubscriber(engine, log)
+		go func() {
+			delay := 1 * time.Second
+			const maxDelay = 30 * time.Second
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				delFeed, delCancel, delErr := deps.subscribeDeletion(ctx, pool)
+				if delErr != nil {
+					log.Warn("schedd: deletion subscriber dial failed",
+						"err", delErr, "retry_in", delay.String())
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(delay):
+					}
+					if delay < maxDelay {
+						delay *= 2
+						if delay > maxDelay {
+							delay = maxDelay
+						}
+					}
+					continue
+				}
+				// Dial succeeded — run the drain on this channel
+				// until it closes (a reconnect signal from
+				// db.Subscribe) or ctx fires.
+				err := sub.Run(ctx, delFeed)
+				delCancel()
+				if err != nil && !errors.Is(err, context.Canceled) {
+					log.Warn("schedd: deletion subscriber exited; retrying dial",
+						"err", err, "retry_in", delay.String())
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(delay):
+					}
+				}
+				if ctx.Err() != nil {
+					return
+				}
+				// Reset backoff after a successful drain that we
+				// voluntarily tore down (rare in practice, but
+				// keeps the curve sane after a partial outage).
+				if err == nil || errors.Is(err, context.Canceled) {
+					delay = 1 * time.Second
+				}
+			}
+		}()
+	}
 
 	loop := sched.NewLoop(pool, engine, log).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).

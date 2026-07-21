@@ -247,6 +247,33 @@ type Cron struct {
 	LastFiredAt time.Time // zero until first fire; updated by MarkCronFired
 }
 
+// GdprAction enumerates the GDPR self-service actions recorded in
+// the gdpr_requests ledger. The DB CHECK constraint enforces these
+// three values; exporting the constants avoids typo bugs in apid +
+// schedd callers.
+type GdprAction string
+
+const (
+	GdprActionExport  GdprAction = "export"
+	GdprActionDelete  GdprAction = "delete"
+	GdprActionRestore GdprAction = "restore"
+)
+
+// GdprRequest is one row of the gdpr_requests ledger. Inserted on
+// the customer-facing path; completed_at is stamped after the
+// downstream action (export bundle returned, DeleteAccount fired,
+// restore succeeded). The ledger is INSERT-only from the application
+// side; the table survives the account's DeleteAccount so a DPO can
+// audit completed erasure against an email + timestamp.
+type GdprRequest struct {
+	ID           string
+	AccountID    string
+	AccountEmail string
+	Action       GdprAction
+	RequestedAt  time.Time
+	CompletedAt  time.Time // zero until the downstream action completes
+}
+
 // Instance mirrors the instances row; schedd is the sole writer (spec §6).
 type Instance struct {
 	ID            string

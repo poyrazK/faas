@@ -19,9 +19,14 @@ package main
 // account template (see pkg/dashboard/templates/account.html).
 
 import (
+	"encoding/json"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // dashboardDelete handles POST /dashboard/account/delete. The form
@@ -69,6 +74,43 @@ func (s *server) dashboardRestore(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard/account?restored=1", http.StatusFound)
 }
 
+// dashboardExport handles GET /dashboard/account/export. The dashboard
+// template's "Download JSON export" link previously pointed at
+// /v1/account/export, which sits behind s.auth (Bearer API key) —
+// the dashboard only has the session cookie, so the link silently 401'd.
+// This handler serves the same JSON bundle from a session-authenticated
+// route, reusing gatherExport so the wire shape stays identical to the
+// REST export.
+//
+// Like the REST endpoint, this is recorded in the gdpr_requests
+// audit ledger (PR #83 review #5) so a customer browsing the
+// dashboard sees the same audit trail as one using the CLI. Set
+// X-Audit-Logged: false on the response if the audit INSERT failed
+// so DevTools-flag-reading tooling can detect the degraded state.
+func (s *server) dashboardExport(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Mirror the REST endpoint's ?include_secrets=false flag.
+	include := r.URL.Query().Get("include_secrets") != "false"
+	bundle, err := gatherExport(r.Context(), s, acct, include)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not assemble export"))
+		return
+	}
+	if !s.recordGdprRequest(r.Context(), acct, state.GdprActionExport) {
+		w.Header().Set("X-Audit-Logged", "false")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition",
+		`attachment; filename="faas-account-`+acct.ID+`-`+
+			time.Now().UTC().Format("20060102")+`.json"`)
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(bundle)
+}
+
 // confirmTokenMatches verifies the form's confirmation token against
 // the session-bound HMAC. The token shape is `action|nonce` where
 // action ∈ {"delete", "restore"} — binding the action into the token
@@ -92,4 +134,58 @@ func confirmTokenMatches(r *http.Request, action string) bool {
 	got := r.PostForm.Get("confirm_token")
 	want := action + ":yes"
 	return got == want && got != ""
+}
+
+// dashboardDPA handles GET /dashboard/account/dpa. Renders the DPA
+// markdown into the dashboard chrome (vs the public /v1/account/dpa
+// which streams the file raw). Same source, different envelope: a
+// customer signed in expects the dashboard layout, not a raw
+// markdown text body. The route is session-authed because the DPA
+// references the customer's data posture and is more useful in
+// context (no prospect browsing).
+//
+// On misconfiguration (FAAS_DPA_PATH unset) the same 503 the public
+// route emits is surfaced — a customer sees "the operator hasn't
+// installed the DPA yet, contact support" rather than a half-rendered
+// page.
+func (s *server) dashboardDPA(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if s.dpaPath == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+			api.CodeCapacity, "DPA template unavailable",
+			"the DPA is not installed on this host; contact support"))
+		return
+	}
+	body, err := os.ReadFile(s.dpaPath)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("DPA template unavailable"))
+		return
+	}
+	page := dashboard.Page{
+		Title:   "Data Processing Agreement",
+		Account: acctViewFrom(acct),
+		Body:    "dpa",
+		Data: dashboard.DPAView{
+			Markdown: string(body),
+		},
+	}
+	if err := dashboard.Render(w, s.log, page); err != nil {
+		s.log.Error("dashboard: dpa render failed", "err", err)
+	}
+}
+
+// acctViewFrom converts a state.Account to a dashboard.AccountView
+// (the dashboard layer doesn't import pkg/state). Mirrors the
+// conversion used by handlers_dashboard.go so the DPA page looks
+// identical to the rest of the dashboard chrome.
+func acctViewFrom(acct state.Account) *dashboard.AccountView {
+	return &dashboard.AccountView{
+		ID:    acct.ID,
+		Email: acct.Email,
+		Plan:  string(acct.Plan),
+	}
 }
