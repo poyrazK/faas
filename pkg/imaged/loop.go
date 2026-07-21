@@ -314,4 +314,3 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 	}
 	return nil
 }
-

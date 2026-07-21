@@ -208,7 +208,7 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	heavySnap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: heavyDep.ID, MemBytes: 5 << 30, DiskBytes: 5 << 30, // 10 GB
 		Path: "/tmp/heavy.snap", FCVersion: "1.8.0",
-		CreatedAt:    time.Now().Add(-3 * time.Minute),
+		CreatedAt: time.Now().Add(-3 * time.Minute),
 	})
 	// heavyApp needs > current+previous snapshots so the per-app floor
 	// leaves at least one evictable row. With 3 snapshots and a 2-row
@@ -231,13 +231,13 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	})
 	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: midDep.ID, MemBytes: 3 << 30, DiskBytes: 2 << 30, // 5 GB
-		Path:        "/tmp/mid.snap", FCVersion: "1.8.0",
-		CreatedAt:   time.Now().Add(-time.Minute),
+		Path: "/tmp/mid.snap", FCVersion: "1.8.0",
+		CreatedAt: time.Now().Add(-time.Minute),
 	})
 	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: lightDep.ID, MemBytes: 1 << 30, DiskBytes: 1 << 30, // 2 GB
-		Path:        "/tmp/light.snap", FCVersion: "1.8.0",
-		CreatedAt:   time.Now(),
+		Path: "/tmp/light.snap", FCVersion: "1.8.0",
+		CreatedAt: time.Now(),
 	})
 
 	gcCh := make(chan time.Time, 1)
@@ -344,7 +344,7 @@ func TestGC_IdenticalCreatedAt_StableSort(t *testing.T) {
 		})
 		snap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
-			Path: filepath.Join(sched.SnapDir(), "stable-"+dep.ID),
+			Path:      filepath.Join(sched.SnapDir(), "stable-"+dep.ID),
 			FCVersion: "1.8.0",
 			// All snapshots share CreatedAt — tie-breaker must be the
 			// stable sort's natural secondary key (ID).
@@ -357,12 +357,12 @@ func TestGC_IdenticalCreatedAt_StableSort(t *testing.T) {
 	gcCh := make(chan time.Time, 1)
 	gcCh <- time.Unix(0, 0)
 	loop := &Loop{
-		store:    store,
-		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		now:      func() time.Time { return time.Unix(0, 0) },
+		store:     store,
+		log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:       func() time.Time { return time.Unix(0, 0) },
 		lvUsedPct: func(ctx context.Context) (float64, error) { return 50.0, nil }, // under budget
-		appsRoot: t.TempDir(),
-		gcCh:     gcCh,
+		appsRoot:  t.TempDir(),
+		gcCh:      gcCh,
 	}
 	loop.runGCTick(context.Background(), time.Unix(0, 0))
 
