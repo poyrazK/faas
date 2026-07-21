@@ -183,6 +183,85 @@ func TestNftCommandsAcceptRepliesBeforeEgressDenies(t *testing.T) {
 	}
 }
 
+// TestNftCommandsEmitsConntrackCapRule asserts the §7 per-instance
+// conntrack cap rule appears in the argv when ConntrackCap > 0. The
+// named counter `faas_cap` is what PR-C's dashboard reads via
+// `nft list counters`; the count is informational, not assertion.
+//
+// Plan source: docs/faas_implementation_spec.md:344, ADR-018:186-202.
+// Implementation: pkg/netns/config.go::forwardConnlimitRule.
+func TestNftCommandsEmitsConntrackCapRule(t *testing.T) {
+	c := testConfig()
+	c.ConntrackCap = 4096
+	cmds := c.NftCommands()
+	want := "ct count over 4096 counter name \"faas_cap\" drop"
+	found := -1
+	for i, cmd := range cmds {
+		if strings.Contains(strings.Join(cmd, " "), want) {
+			found = i
+			break
+		}
+	}
+	if found < 0 {
+		t.Fatalf("ConntrackCap=4096 expected rule %q in NftCommands, none found:\n%s", want, flatten(cmds))
+	}
+}
+
+// TestNftCommandsOmitsConntrackCapRule_WhenZero is the opt-out pin:
+// a Config with ConntrackCap <= 0 emits no cap rule. Mirrors the
+// EgressMbit==0 → no tc rule contract in pkg/fcvm/manager.go:500.
+func TestNftCommandsOmitsConntrackCapRule_WhenZero(t *testing.T) {
+	c := testConfig() // zero value for ConntrackCap
+	if c.ConntrackCap != 0 {
+		t.Fatalf("test precondition: testConfig() must have ConntrackCap=0, got %d", c.ConntrackCap)
+	}
+	for i, cmd := range c.NftCommands() {
+		if strings.Contains(strings.Join(cmd, " "), "ct count over") {
+			t.Errorf("rule %d contains `ct count over` but ConntrackCap=0:\n%s", i, strings.Join(cmd, " "))
+		}
+	}
+}
+
+// TestNftCommandsCapRuleRunsAfterEstablishedBeforeDenies asserts the
+// placement the comment in forwardConnlimitRule promises: the cap is
+// AFTER the established/related accept (so reply packets on existing
+// flows keep flowing regardless of count) and BEFORE the SMTP / daddr
+// drops (so an app scanning many denied destinations still hits the
+// cap). nft evaluates in declaration order, so a misplaced rule would
+// silently degrade either cap enforcement or published-request reach.
+func TestNftCommandsCapRuleRunsAfterEstablishedBeforeDenies(t *testing.T) {
+	c := testConfig()
+	c.ConntrackCap = 4096
+	cmds := c.NftCommands()
+	established, cap, smtpDrop, daddrDrop := -1, -1, -1, -1
+	for i, cmd := range cmds {
+		line := strings.Join(cmd, " ")
+		switch {
+		case established < 0 && strings.Contains(line, "forward") && strings.Contains(line, "ct state established,related accept"):
+			established = i
+		case cap < 0 && strings.Contains(line, "forward") && strings.Contains(line, "ct count over"):
+			cap = i
+		case smtpDrop < 0 && strings.Contains(line, "forward") && strings.Contains(line, "tcp dport") && strings.Contains(line, "drop"):
+			smtpDrop = i
+		case daddrDrop < 0 && strings.Contains(line, "forward") && strings.Contains(line, "daddr") && strings.Contains(line, "drop"):
+			daddrDrop = i
+		}
+	}
+	if established < 0 || cap < 0 || smtpDrop < 0 || daddrDrop < 0 {
+		t.Fatalf("missing rule in NftCommands: established=%d cap=%d smtp=%d daddr=%d\n%s",
+			established, cap, smtpDrop, daddrDrop, flatten(cmds))
+	}
+	if !(established < cap) {
+		t.Errorf("established,related accept (rule %d) must come BEFORE the connlimit cap (rule %d)", established, cap)
+	}
+	if !(cap < smtpDrop) {
+		t.Errorf("connlimit cap (rule %d) must come BEFORE the SMTP drop (rule %d)", cap, smtpDrop)
+	}
+	if !(cap < daddrDrop) {
+		t.Errorf("connlimit cap (rule %d) must come BEFORE the daddr lateral-movement drop (rule %d)", cap, daddrDrop)
+	}
+}
+
 func TestNftCommandsHaveNoShellMetacharacters(t *testing.T) {
 	// nft argv legitimately uses ; { } , for its own grammar (there is no shell —
 	// ExecRunner passes argv directly), but genuinely dangerous shell syntax must

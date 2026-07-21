@@ -224,6 +224,16 @@ const (
 	// hourly cadence means a row that just crossed 30d is deleted within
 	// the next hour.
 	DefaultRetentionInterval = 1 * time.Hour
+
+	// DefaultConntrackCap is the spec §7 per-instance conntrack cap
+	// (docs/faas_implementation_spec.md:344). One platform-wide number;
+	// not per-plan tiered — every tenant sees the same cap because the
+	// failure mode (host conntrack exhaustion) is a single shared
+	// resource. ADR-018 deferred the enforcement to this PR; the value
+	// is the spec literal. vmmd wires it into netns.Config at every
+	// Wake (pkg/fcvm/manager.go:236) and the nft rule that consumes
+	// it lives in pkg/netns/config.go::NftCommands.
+	DefaultConntrackCap = 4096
 )
 
 // LimitsFor returns the limits for a plan and whether the plan is known. Callers

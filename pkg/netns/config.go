@@ -36,6 +36,16 @@ type Config struct {
 	HostIP     netip.Addr // routable identity, 10.100.x.y
 	HostBits   int        // prefix length for HostIP (16)
 	EgressMbit int        // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
+	// ConntrackCap caps the per-instance conntrack table size at
+	// `forward` time (spec §7 line 344 of docs/faas_implementation_spec.md,
+	// ADR-018 deferral resolved). 0 = no cap rule emitted, so existing
+	// callers that haven't been wired yet stay silent. Production sets
+	// it to api.DefaultConntrackCap at every Wake (pkg/fcvm/manager.go).
+	// Rule shape: `nft add rule ip faas forward ct count over N
+	// counter name "faas_cap" drop`. The named counter is `nft list
+	// counters`-readable so PR-C can surface cap-hit telemetry without
+	// a netlink dependency.
+	ConntrackCap int64
 }
 
 // NewConfig fills the constant fields (tap name, /16) around the allocated names
@@ -139,41 +149,69 @@ func (c Config) NftCommands() [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
 	port := fmt.Sprintf("%d", AppPort)
-	return [][]string{
-		nft("add", "table", "ip", "faas"),
-		// NAT: publish :8080 to the guest; masquerade the guest's egress.
-		nft("add", "chain", "ip", "faas", "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}"),
-		nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, AppPort)),
-		nft("add", "chain", "ip", "faas", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}"),
-		nft("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade"),
-		// Egress filter (§11): default-accept, deny from the guest side only.
-		nft("add", "chain", "ip", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}"),
-		// Accept reply traffic first. The inbound DNAT'd request is published from
-		// the host identity (10.100.x.y ∈ 10.100.0.0/16), so the guest's reply
-		// leaves iifname tap0 with daddr in that range — which is ALSO inside the
-		// 10.0.0.0/8 lateral-movement deny below. Without this established/related
-		// accept the deny would drop every reply and no published request would
-		// ever complete. Guest-INITIATED (ct state new) traffic still falls through
-		// to the denies, so lateral movement stays blocked.
-		nft("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept"),
-		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", "25,", "465,", "587", "}", "drop"),
-		// CGN (100.64.0.0/10) included for symmetry with pkg/netns.DefaultHostPolicy
-		// .ForwardDenyCIDRs. IPv6 sibling follows — see ADR-023 and
-		// pkg/oci/egress.go::deniedCIDRv6.
-		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", "{", "10.0.0.0/8,", "172.16.0.0/12,", "192.168.0.0/16,", "169.254.0.0/16,", "100.64.0.0/10", "}", "drop"),
-		// The per-netns table is `ip faas` (not `inet faas` — nft requires an
-		// ip6-family table for `ip6 daddr` rules; mixing `ip` and `ip6` matches
-		// in one table is rejected). We keep the host-level table as `inet faas`
-		// and accept the table-family divergence here. A future migration to a
-		// per-netns `inet faas` table is a follow-up if we want to collapse the
-		// two; see ADR-023 "rejected alternatives" for the trade-off.
-		nft("add", "table", "ip6", "faas"),
-		nft("add", "chain", "ip6", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}"),
-		// Accept reply traffic first (mirrors the v4 chain above) so a published
-		// request's IPv6 reply isn't dropped by the lateral-movement deny.
-		nft("add", "rule", "ip6", "faas", "forward", "ct", "state", "established,related", "accept"),
-		nft("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap, "ip6", "daddr", "{", "fe80::/10,", "fc00::/7,", "ff00::/8,", "::1/128,", "::/128", "}", "drop"),
+	// Builder (not a literal slice) so the optional §7 conntrack-cap
+	// rule can be appended without leaving a nil element when
+	// ConntrackCap == 0.
+	cmds := make([][]string, 0, 16)
+	add := func(argv ...string) { cmds = append(cmds, nft(argv...)) }
+	add("add", "table", "ip", "faas")
+	// NAT: publish :8080 to the guest; masquerade the guest's egress.
+	add("add", "chain", "ip", "faas", "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}")
+	add("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, AppPort))
+	add("add", "chain", "ip", "faas", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
+	add("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade")
+	// Egress filter (§11): default-accept, deny from the guest side only.
+	add("add", "chain", "ip", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}")
+	// Accept reply traffic first. The inbound DNAT'd request is published from
+	// the host identity (10.100.x.y ∈ 10.100.0.0/16), so the guest's reply
+	// leaves iifname tap0 with daddr in that range — which is ALSO inside the
+	// 10.0.0.0/8 lateral-movement deny below. Without this established/related
+	// accept the deny would drop every reply and no published request would
+	// ever complete. Guest-INITIATED (ct state new) traffic still falls through
+	// to the denies, so lateral movement stays blocked.
+	add("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept")
+	// Spec §7 cap (only when ConntrackCap > 0): drop new forward flows whose
+	// origin conntrack table already holds > N entries, so one misbehaving
+	// tenant can't exhaust the host-wide conntrack table. Sits AFTER the
+	// established/related accept (reply packets on existing flows keep flowing
+	// regardless of count) and BEFORE the SMTP / lateral-movement drops (a
+	// misbehaving app scanning many denied destinations still hits the cap).
+	// `ct count over` is the native nft conntrack primitive (nft ≥ 1.0.7);
+	// the named counter makes `nft list counters` PR-C-readable.
+	if rule := c.forwardConnlimitRule(nft); rule != nil {
+		cmds = append(cmds, rule)
 	}
+	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", "25,", "465,", "587", "}", "drop")
+	// CGN (100.64.0.0/10) included for symmetry with pkg/netns.DefaultHostPolicy
+	// .ForwardDenyCIDRs. IPv6 sibling follows — see ADR-023 and
+	// pkg/oci/egress.go::deniedCIDRv6.
+	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", "{", "10.0.0.0/8,", "172.16.0.0/12,", "192.168.0.0/16,", "169.254.0.0/16,", "100.64.0.0/10", "}", "drop")
+	// The per-netns table is `ip faas` (not `inet faas` — nft requires an
+	// ip6-family table for `ip6 daddr` rules; mixing `ip` and `ip6` matches
+	// in one table is rejected). We keep the host-level table as `inet faas`
+	// and accept the table-family divergence here. A future migration to a
+	// per-netns `inet faas` table is a follow-up if we want to collapse the
+	// two; see ADR-023 "rejected alternatives" for the trade-off.
+	add("add", "table", "ip6", "faas")
+	add("add", "chain", "ip6", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}")
+	// Accept reply traffic first (mirrors the v4 chain above) so a published
+	// request's IPv6 reply isn't dropped by the lateral-movement deny.
+	add("add", "rule", "ip6", "faas", "forward", "ct", "state", "established,related", "accept")
+	add("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap, "ip6", "daddr", "{", "fe80::/10,", "fc00::/7,", "ff00::/8,", "::1/128,", "::/128", "}", "drop")
+	return cmds
+}
+
+// forwardConnlimitRule emits a single-element argv (or nothing when the
+// cap is disabled) for the §7 per-instance conntrack cap. Factored out
+// from NftCommands so the disabled/zero branch is unit-testable without
+// forking the entire ruleset, and so the "stringly-quoted counter name"
+// stays in one place. See Config.ConntrackCap for the rule's contract.
+func (c Config) forwardConnlimitRule(nft func(...string) []string) []string {
+	if c.ConntrackCap <= 0 {
+		return nil
+	}
+	return nft("add", "rule", "ip", "faas", "forward", "ct", "count", "over",
+		fmt.Sprintf("%d", c.ConntrackCap), "counter", "name", `"faas_cap"`, "drop")
 }
 
 // NftResetCommands returns the best-effort argv list that brings the

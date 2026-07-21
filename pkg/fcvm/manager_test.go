@@ -875,6 +875,43 @@ func TestSetupNetworkTcResetBeforeNftReset(t *testing.T) {
 	}
 }
 
+// TestSetupNetworkEmitsConntrackCapRule locks the spec §7 wire-up:
+// pkg/fcvm/manager.go::Wake stamps nc.ConntrackCap = api.DefaultConntrackCap,
+// so the runner must observe the nft `ct count over 4096 counter name
+// "faas_cap" drop` rule in the argv list — and it must sit between the
+// established/related accept and the SMTP / daddr drops (the rule
+// position the connlimit comment in pkg/netns/config.go asserts).
+//
+// The companion unit tests for argv shape live in pkg/netns/config_test.go
+// (TestNftCommandsEmitsConntrackCapRule / CapRuleRunsAfterEstablishedBeforeDenies);
+// this test pins the wiring through pkg/fcvm/manager::setupNetwork, which
+// is the runtime code that owns rule ordering against tc reset/add.
+func TestSetupNetworkEmitsConntrackCapRule(t *testing.T) {
+	run, vmm := &fakeRunner{}, &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	if _, err := m.ColdBoot(context.Background(), req("cap-rule")); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	cap := indexOfArgv(run.commands, "ct count over 4096")
+	established := indexOfArgv(run.commands, "ct state established,related accept")
+	smtpDrop := indexOfArgv(run.commands, "tcp dport {")
+	daddrDrop := indexOfArgv(run.commands, "ip daddr {")
+	if cap < 0 || established < 0 || smtpDrop < 0 || daddrDrop < 0 {
+		t.Fatalf("missing one or more rules in argv list: cap=%d established=%d smtp=%d daddr=%d\n%s",
+			cap, established, smtpDrop, daddrDrop, flattenForTest(run.commands))
+	}
+	if !(established < cap) {
+		t.Errorf("established,related accept (idx %d) must come BEFORE the cap rule (idx %d)", established, cap)
+	}
+	if !(cap < smtpDrop) {
+		t.Errorf("cap rule (idx %d) must come BEFORE the SMTP drop (idx %d)", cap, smtpDrop)
+	}
+	if !(cap < daddrDrop) {
+		t.Errorf("cap rule (idx %d) must come BEFORE the daddr lateral-movement drop (idx %d)", cap, daddrDrop)
+	}
+}
+
 // TestSetupNetworkTcRateEqualsPlan locks the wire shape: when the
 // caller sets EgressMbit, the argv that runs contains the rate.
 func TestSetupNetworkTcRateEqualsPlan(t *testing.T) {
