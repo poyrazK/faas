@@ -47,6 +47,17 @@
     documented Stripe SLA: p99 ≈ 5 s, p99.9 ≈ 30 s, the 60 s ceiling
     is the documented API timeout. Bucket drift requires a follow-up
     ADR — documented in the histogram `Help` string.
+  - At registration time, `pkg/wire.NewOpsMetrics` calls
+    `stripePushDur.WithLabelValues(label)` for every label in
+    `stripex.PushResultLabels()`. This pre-instantiates the closed
+    label set so the histogram's HELP/TYPE and zero-valued buckets
+    surface in `/metrics` from the moment the daemon boots — even
+    before the first Stripe push. Prometheus' default exposition
+    skips HistogramVec series with zero observed label tuples, which
+    would render the dashboard's stripe-push panel as "no data"
+    until at least one push happened (a real ops hazard). Adding a
+    label requires extending `PushResultLabels()` AND this loop; the
+    two stay in lockstep via the shared `stripex` package.
   - `pkg/meter/pusher.go::PushHour` calls
     `p.ops.ObserveCode("stripe", code, dur)` and
     `p.ops.StripePushDuration(code).Observe(dur.Seconds())` per

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/stripex"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -88,6 +89,18 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Buckets: []float64{0.5, 1, 2, 5, 10, 20, 30, 45, 60},
 	}, []string{"result"})
 	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, stripePushDur)
+	// Pre-instantiate every label in the closed result set so the
+	// histogram's HELP/TYPE and zero-valued buckets surface in
+	// `/metrics` from the moment the daemon boots — even before the
+	// first Stripe push. Prometheus' default exposition skips
+	// HistogramVec series with zero observed label tuples, which would
+	// render the dashboard's stripe-push panel as "no data" until at
+	// least one push happened (a real ops hazard). The label set is
+	// the canonical closed list from stripex.PushResultLabels —
+	// adding a label there must also extend this loop. ADR-024.
+	for _, label := range stripex.PushResultLabels() {
+		stripePushDur.WithLabelValues(label)
+	}
 	return &OpsMetrics{
 		registry:        reg,
 		ops:             ops,

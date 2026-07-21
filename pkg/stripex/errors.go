@@ -107,3 +107,33 @@ func ClassifyPushError(err error) string {
 		return labelOther
 	}
 }
+
+// PushResultLabels returns the closed set of result labels ClassifyPushError
+// may emit, in stable order. The set is the canonical list for the
+// `_stripe_push_duration_seconds` and `meterd_ops_total{op="stripe",code}`
+// label tuples — pkg/wire pre-instantiates every label here at registry
+// construction time so the histogram's HELP/TYPE lines appear in
+// `/metrics` from the moment the daemon boots, even before the first
+// push. Without pre-instantiation, Prometheus' default exposition skips
+// histograms with zero observed label tuples, which would make the
+// dashboard's panel render as "no data" until at least one push
+// happened — a real-world ops hazard.
+//
+// Adding a new label requires editing this function AND the dashboard's
+// panel config; do not extend ClassifyPushError's switch arms without
+// also adding the label here. Documented in ADR-024 §"Consequences".
+func PushResultLabels() []string {
+	return []string{
+		labelOK,
+		labelNoAPIKey,
+		labelNegativeQuantity,
+		labelAPIConnection,
+		labelAPIError,
+		labelAuthError,
+		labelPermission,
+		labelCardError,
+		labelInvalidRequest,
+		labelRateLimit,
+		labelOther,
+	}
+}
