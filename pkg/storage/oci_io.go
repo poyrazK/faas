@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"io"
 	"os"
 )
 
@@ -47,3 +48,19 @@ func osOpen(p string) (*os.File, error) {
 func errorsIs(err, target error) bool {
 	return errors.Is(err, target)
 }
+
+// noopCloserFile adapts an *os.File to an io.ReadSeekCloser whose
+// Close is a no-op. net/http's transport calls Close on the request
+// body when the request finishes (especially on error or after the
+// body has been fully read); without this wrapper the underlying fd
+// would be invalidated before the POST→PUT fallback re-reads it for
+// the Location PUT.
+//
+// The owner (pushBlobFile) is responsible for closing the underlying
+// *os.File via a defer — this adapter never closes.
+type noopCloserFile struct{ *os.File }
+
+func (noopCloserFile) Close() error { return nil }
+
+// compile-time interface assertion.
+var _ io.ReadSeekCloser = noopCloserFile{}

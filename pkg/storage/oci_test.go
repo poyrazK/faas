@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/oci"
 )
 
 // fakeRegistry is the in-process OCI distribution-spec v2 server that
@@ -23,10 +26,13 @@ import (
 // round-trip:
 //
 //	GET  /token                                    → anonymous bearer
-//	POST /v2/<repo>/blobs/uploads/?digest=sha256:… → monolithic blob PUT
-//	PUT  /v2/<repo>/manifests/<tag>                → store manifest
-//	GET  /v2/<repo>/manifests/<tag>                → return stored manifest
-//	DELETE /v2/<repo>/manifests/<tag>              → remove
+//	POST /v2/<repo>/blobs/uploads/?digest=sha256:… → monolithic blob PUT (202+Location by default;
+//	                                                   opt-in via monolithicOK=true to also accept 201)
+//	PUT  /v2/<repo>/blobs/uploads/<uuid>?digest=…  → chunked upload follow-up (registered by POST 202)
+//	PUT  /v2/<repo>/manifests/<digest>             → store manifest (DELETE is by digest per spec)
+//	GET  /v2/<repo>/manifests/<tag-or-digest>      → return stored manifest
+//	DELETE /v2/<repo>/manifests/<tag>              → 405 (spec: DELETE must be by digest)
+//	DELETE /v2/<repo>/manifests/<digest>           → remove
 //	GET  /v2/<repo>/blobs/<digest>                 → return stored blob
 //	GET  /v2/<repo>/tags/list                      → return stored tags
 //
@@ -37,10 +43,15 @@ type fakeRegistry struct {
 	srv          *httptest.Server
 	token        string
 	requireToken bool
+	// monolithicOK: when true the blob upload POST returns 201 directly.
+	// When false (the default) it returns 202 + Location so the
+	// driver's fallback PUT path is exercised — production registries
+	// vary in which they return.
+	monolithicOK bool
 	mu           sync.Mutex
 	// blobs: digest → body
 	blobs map[string][]byte
-	// manifests: repo → tag → raw JSON body
+	// manifests: repo → tag OR digest → raw JSON body
 	manifests map[string]map[string][]byte
 }
 
@@ -49,6 +60,7 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 	f := &fakeRegistry{
 		token:        "tok-abc",
 		requireToken: true,
+		monolithicOK: false, // default: 202+Location, exercises the PUT fallback
 		blobs:        map[string][]byte{},
 		manifests:    map[string]map[string][]byte{},
 	}
@@ -71,6 +83,33 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 				authChallenge(w, f.srv.URL, "repository:test:pull,push")
 				return
 			}
+			// Two-step chunked upload: PUT to /v2/<repo>/blobs/uploads/<uuid>
+			// completes a blob the registry advertised via a 202 Location.
+			// Body and digest verification mirror the monolithic POST.
+			if strings.Contains(path, "/blobs/uploads/") && r.Method == http.MethodPut {
+				digest := r.URL.Query().Get("digest")
+				if !strings.HasPrefix(digest, "sha256:") {
+					http.Error(w, "missing digest", http.StatusBadRequest)
+					return
+				}
+				body, err := io.ReadAll(io.LimitReader(r.Body, 4<<30))
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				sum := sha256.Sum256(body)
+				got := "sha256:" + hex.EncodeToString(sum[:])
+				if got != digest {
+					http.Error(w, fmt.Sprintf("digest mismatch: want %s got %s", digest, got), http.StatusBadRequest)
+					return
+				}
+				f.mu.Lock()
+				f.blobs[digest] = body
+				f.mu.Unlock()
+				w.Header().Set("Docker-Content-Digest", digest)
+				w.WriteHeader(http.StatusCreated)
+				return
+			}
 			if r.Method != http.MethodPost {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
@@ -80,22 +119,32 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 				http.Error(w, "missing digest", http.StatusBadRequest)
 				return
 			}
-			body, err := io.ReadAll(io.LimitReader(r.Body, 4<<30))
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+			if f.monolithicOK {
+				body, err := io.ReadAll(io.LimitReader(r.Body, 4<<30))
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				sum := sha256.Sum256(body)
+				got := "sha256:" + hex.EncodeToString(sum[:])
+				if got != digest {
+					http.Error(w, fmt.Sprintf("digest mismatch: want %s got %s", digest, got), http.StatusBadRequest)
+					return
+				}
+				f.mu.Lock()
+				f.blobs[digest] = body
+				f.mu.Unlock()
+				w.Header().Set("Docker-Content-Digest", digest)
+				w.WriteHeader(http.StatusCreated)
 				return
 			}
-			sum := sha256.Sum256(body)
-			got := "sha256:" + hex.EncodeToString(sum[:])
-			if got != digest {
-				http.Error(w, fmt.Sprintf("digest mismatch: want %s got %s", digest, got), http.StatusBadRequest)
-				return
-			}
-			f.mu.Lock()
-			f.blobs[digest] = body
-			f.mu.Unlock()
-			w.Header().Set("Docker-Content-Digest", digest)
-			w.WriteHeader(http.StatusCreated)
+			// 202 + Location: the registry wants the caller to PUT the
+			// body. Use a stable per-request UUID so the Location header
+			// is a path the same mux can dispatch (no second handler
+			// registration; the /v2/ switch above also matches PUTs).
+			uploadID := fmt.Sprintf("upload-%d", time.Now().UnixNano())
+			w.Header().Set("Location", fmt.Sprintf("%s/v2/%s/blobs/uploads/%s", f.srv.URL, extractRepoFromUploadPath(path), uploadID))
+			w.WriteHeader(http.StatusAccepted)
 		case strings.Contains(path, "/manifests/"):
 			parts := strings.SplitN(path, "/manifests/", 2)
 			if len(parts) != 2 {
@@ -118,8 +167,11 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 				if f.manifests[repo] == nil {
 					f.manifests[repo] = map[string][]byte{}
 				}
+				// Accept under both the supplied reference (tag OR digest)
+				// so the driver can PUT by tag and later DELETE by digest.
 				f.manifests[repo][ref] = body
 				f.mu.Unlock()
+				w.Header().Set("Docker-Content-Digest", digestOf(body))
 				w.WriteHeader(http.StatusCreated)
 			case http.MethodGet:
 				f.mu.Lock()
@@ -133,6 +185,14 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 				w.Header().Set("Docker-Content-Digest", digestOf(body))
 				_, _ = w.Write(body)
 			case http.MethodDelete:
+				// Spec: manifest DELETE must be by digest, not tag.
+				// A reference that doesn't look like sha256:<hex> gets
+				// 405 so a regression to tag-DELETE surfaces as a test
+				// failure rather than silent success.
+				if !strings.HasPrefix(ref, "sha256:") {
+					http.Error(w, "manifest DELETE must reference a digest", http.StatusMethodNotAllowed)
+					return
+				}
 				f.mu.Lock()
 				delete(f.manifests[repo], ref)
 				f.mu.Unlock()
@@ -214,30 +274,44 @@ func digestOf(b []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// extractRepoFromUploadPath pulls "<repo>" out of a path like
+// "faas/apps/blobs/uploads/" — the segment before "/blobs/uploads/".
+// The fake uses it to build the absolute Location URL it returns on
+// the 202 Accepted branch.
+func extractRepoFromUploadPath(path string) string {
+	const sep = "/blobs/uploads/"
+	if idx := strings.Index(path, sep); idx >= 0 {
+		return path[:idx]
+	}
+	return ""
+}
+
 // --- plan() tests ------------------------------------------------------
 
 func TestPlan_AppsKey(t *testing.T) {
 	o := &OCIRegistryStorageBackend{prefix: "faas"}
-	repo, tag, err := o.plan("apps/my-app/dep-abc.ext4")
+	depUUID := "550e8400-e29b-41d4-a716-446655440000"
+	repo, tag, err := o.plan("apps/my-app/" + depUUID + ".ext4")
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 	if repo != "apps" {
 		t.Errorf("repo = %q, want apps", repo)
 	}
-	if tag != "my-app-dep-abc" {
-		t.Errorf("tag = %q, want my-app-dep-abc", tag)
+	if tag != "my-app__"+depUUID {
+		t.Errorf("tag = %q, want my-app__%s", tag, depUUID)
 	}
 }
 
 func TestPlan_SnapKey(t *testing.T) {
 	o := &OCIRegistryStorageBackend{prefix: "faas"}
-	repo, tag, err := o.plan("snap/abcd1234/mem")
+	depUUID := "550e8400-e29b-41d4-a716-446655440000"
+	repo, tag, err := o.plan("snap/" + depUUID + "/mem")
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if repo != "snap-abcd1234" {
-		t.Errorf("repo = %q, want snap-abcd1234", repo)
+	if repo != "snap-"+depUUID {
+		t.Errorf("repo = %q, want snap-%s", repo, depUUID)
 	}
 	if tag != "mem" {
 		t.Errorf("tag = %q, want mem", tag)
@@ -246,12 +320,13 @@ func TestPlan_SnapKey(t *testing.T) {
 
 func TestPlan_LayersKey(t *testing.T) {
 	o := &OCIRegistryStorageBackend{prefix: "faas"}
-	repo, tag, err := o.plan("layers/abcd1234.ext4")
+	depUUID := "550e8400-e29b-41d4-a716-446655440000"
+	repo, tag, err := o.plan("layers/" + depUUID + ".ext4")
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if repo != "layers" || tag != "abcd1234" {
-		t.Errorf("got (%q,%q), want (layers, abcd1234)", repo, tag)
+	if repo != "layers" || tag != depUUID {
+		t.Errorf("got (%q,%q), want (layers, %s)", repo, tag, depUUID)
 	}
 }
 
@@ -294,17 +369,18 @@ func TestPlan_KernelKey(t *testing.T) {
 func TestPlan_InvalidKeys(t *testing.T) {
 	o := &OCIRegistryStorageBackend{prefix: "faas"}
 	tests := []string{
-		"",                               // empty
-		"apps/",                          // apps without slug
-		"apps/slug/",                     // apps without dep
-		"apps/slug/dep",                  // missing .ext4
-		"apps/slug/dep.tar.gz",           // wrong extension
-		"snap/abc/mem",                   // non-hex dep
-		"snap/abcd1234/bogus",            // wrong segment
-		"base/runner.ext4.digest.digest", // double-suffix
-		"layers/abc.txt",                 // wrong extension
-		"unknown/foo/bar",                // unknown namespace
-		"apps/slug!/dep.ext4",            // bang is not in tag charset
+		"",                     // empty
+		"apps/",                // apps without slug
+		"apps/slug/",           // apps without dep
+		"apps/slug/dep",        // missing .ext4
+		"apps/slug/dep.tar.gz", // wrong extension
+		"snap/abcd1234/mem",    // bare-hex dep no longer accepted (UUID only)
+		"snap/550e8400-e29b-41d4-a716-44665544000z/mem",   // non-hex UUID char
+		"snap/550e8400-e29b-41d4-a716-446655440000/bogus", // wrong segment
+		"base/runner.ext4.digest.digest",                  // double-suffix
+		"layers/abc.txt",                                  // wrong extension
+		"unknown/foo/bar",                                 // unknown namespace
+		"apps/slug!/dep.ext4",                             // bang is not in tag charset
 	}
 	for _, k := range tests {
 		t.Run(k, func(t *testing.T) {
@@ -328,13 +404,17 @@ func TestOCIRoundTrip(t *testing.T) {
 	defer f.srv.Close()
 	be := f.client(t)
 
+	// Two real UUIDs to exercise the apps-tag separator and the
+	// snap-per-deployment repo namespacing under one test run.
+	dep1 := "550e8400-e29b-41d4-a716-446655440000"
+	dep2 := "660e8400-e29b-41d4-a716-446655440001"
 	keys := []string{
-		"apps/my-app/dep-abc.ext4",
-		"snap/abcd1234/mem",
-		"snap/abcd1234/vmstate",
+		"apps/my-app/" + dep1 + ".ext4",
+		"snap/" + dep1 + "/mem",
+		"snap/" + dep1 + "/vmstate",
 		"base/runner-node22.ext4",
 		"base/runner-node22.ext4.digest",
-		"layers/abcd1234.ext4",
+		"layers/" + dep2 + ".ext4",
 		"kernel/v1.10.0",
 	}
 	bodies := [][]byte{
@@ -376,7 +456,7 @@ func TestOCIGetMissing(t *testing.T) {
 	f := newFakeRegistry(t)
 	defer f.srv.Close()
 	be := f.client(t)
-	_, err := be.Get(context.Background(), "apps/my-app/dep-nonexistent.ext4")
+	_, err := be.Get(context.Background(), "apps/my-app/00000000-0000-4000-8000-000000000000.ext4")
 	if err == nil {
 		t.Fatal("expected error for missing key")
 	}
@@ -386,13 +466,16 @@ func TestOCIGetMissing(t *testing.T) {
 }
 
 // TestOCIDeleteIdempotent covers the LocalStorageBackend-style
-// idempotent Delete: second Delete is a no-op.
+// idempotent Delete: second Delete is a no-op. The driver MUST
+// resolve the manifest digest before DELETE; the fake rejects tag-
+// based DELETE so a regression to that path is loud.
 func TestOCIDeleteIdempotent(t *testing.T) {
 	f := newFakeRegistry(t)
 	defer f.srv.Close()
 	be := f.client(t)
 	ctx := context.Background()
-	key := "apps/my-app/dep-abc.ext4"
+	depUUID := "550e8400-e29b-41d4-a716-446655440000"
+	key := "apps/my-app/" + depUUID + ".ext4"
 	if err := be.Put(ctx, key, bytes.NewReader([]byte("payload"))); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -412,10 +495,12 @@ func TestOCIListUnderApps(t *testing.T) {
 	defer f.srv.Close()
 	be := f.client(t)
 	ctx := context.Background()
-	if err := be.Put(ctx, "apps/foo/dep1.ext4", bytes.NewReader([]byte("a"))); err != nil {
+	dep1 := "550e8400-e29b-41d4-a716-446655440000"
+	dep2 := "660e8400-e29b-41d4-a716-446655440001"
+	if err := be.Put(ctx, "apps/foo/"+dep1+".ext4", bytes.NewReader([]byte("a"))); err != nil {
 		t.Fatalf("Put foo: %v", err)
 	}
-	if err := be.Put(ctx, "apps/bar/dep2.ext4", bytes.NewReader([]byte("b"))); err != nil {
+	if err := be.Put(ctx, "apps/bar/"+dep2+".ext4", bytes.NewReader([]byte("b"))); err != nil {
 		t.Fatalf("Put bar: %v", err)
 	}
 	got, err := be.List(ctx, "apps/")
@@ -426,8 +511,8 @@ func TestOCIListUnderApps(t *testing.T) {
 		t.Fatalf("List returned %d keys, want 2: %v", len(got), got)
 	}
 	want := map[string]bool{
-		"apps/foo/dep1.ext4": true,
-		"apps/bar/dep2.ext4": true,
+		"apps/foo/" + dep1 + ".ext4": true,
+		"apps/bar/" + dep2 + ".ext4": true,
 	}
 	for _, k := range got {
 		if !want[k] {
@@ -449,10 +534,11 @@ func TestOCIListUnderSnap(t *testing.T) {
 	defer f.srv.Close()
 	be := f.client(t)
 	ctx := context.Background()
-	if err := be.Put(ctx, "snap/abcd1234/mem", bytes.NewReader([]byte("m"))); err != nil {
+	depUUID := "550e8400-e29b-41d4-a716-446655440000"
+	if err := be.Put(ctx, "snap/"+depUUID+"/mem", bytes.NewReader([]byte("m"))); err != nil {
 		t.Fatalf("Put snap mem: %v", err)
 	}
-	if err := be.Put(ctx, "snap/abcd1234/vmstate", bytes.NewReader([]byte("v"))); err != nil {
+	if err := be.Put(ctx, "snap/"+depUUID+"/vmstate", bytes.NewReader([]byte("v"))); err != nil {
 		t.Fatalf("Put snap vmstate: %v", err)
 	}
 	got, err := be.List(ctx, "snap/")
@@ -463,8 +549,8 @@ func TestOCIListUnderSnap(t *testing.T) {
 		t.Fatalf("List snap returned %d keys, want 2: %v", len(got), got)
 	}
 	want := map[string]bool{
-		"snap/abcd1234/mem":     true,
-		"snap/abcd1234/vmstate": true,
+		"snap/" + depUUID + "/mem":     true,
+		"snap/" + depUUID + "/vmstate": true,
 	}
 	for _, k := range got {
 		if !want[k] {
@@ -564,7 +650,7 @@ func TestOCIContextCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel BEFORE Put → should error out before any network IO
-	err = be.Put(ctx, "apps/foo/dep.ext4", bytes.NewReader([]byte("payload")))
+	err = be.Put(ctx, "apps/foo/550e8400-e29b-41d4-a716-446655440000.ext4", bytes.NewReader([]byte("payload")))
 	if err == nil {
 		t.Fatal("expected error from cancelled ctx, got nil")
 	}
@@ -594,15 +680,16 @@ func TestOCIWithCustomPrefix(t *testing.T) {
 		t.Errorf("RepoPrefix = %q, want faas-team-a", be.RepoPrefix())
 	}
 	ctx := context.Background()
-	key := "apps/foo/dep.ext4"
+	depUUID := "550e8400-e29b-41d4-a716-446655440000"
+	key := "apps/foo/" + depUUID + ".ext4"
 	if err := be.Put(ctx, key, bytes.NewReader([]byte("x"))); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	f.mu.Lock()
-	_, ok := f.manifests["faas-team-a/apps"]["foo-dep"]
+	_, ok := f.manifests["faas-team-a/apps"]["foo__"+depUUID]
 	f.mu.Unlock()
 	if !ok {
-		t.Errorf("manifest not stored under faas-team-a/apps/foo-dep")
+		t.Errorf("manifest not stored under faas-team-a/apps/foo__%s", depUUID)
 	}
 }
 
@@ -611,13 +698,14 @@ func TestOCIWithCustomPrefix(t *testing.T) {
 // functions must produce the original.
 func TestOCIUnplanInverse(t *testing.T) {
 	o := &OCIRegistryStorageBackend{prefix: "faas"}
+	depUUID := "550e8400-e29b-41d4-a716-446655440000"
 	keys := []string{
-		"apps/slug-1/abcd1234.ext4",
-		"snap/abcd1234/mem",
-		"snap/abcd1234/vmstate",
+		"apps/slug-1/" + depUUID + ".ext4",
+		"snap/" + depUUID + "/mem",
+		"snap/" + depUUID + "/vmstate",
 		"base/runner-node22.ext4",
 		"base/runner-node22.ext4.digest",
-		"layers/abcd1234.ext4",
+		"layers/" + depUUID + ".ext4",
 		"kernel/v1.10.0",
 	}
 	for _, k := range keys {
@@ -656,10 +744,11 @@ func TestOCILargeBlobStreaming(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := be.Put(ctx, "apps/foo/large.ext4", bytes.NewReader(body)); err != nil {
+	depUUID := "550e8400-e29b-41d4-a716-446655440000"
+	if err := be.Put(ctx, "apps/foo/"+depUUID+".ext4", bytes.NewReader(body)); err != nil {
 		t.Fatalf("Put 64MiB: %v", err)
 	}
-	rc, err := be.Get(ctx, "apps/foo/large.ext4")
+	rc, err := be.Get(ctx, "apps/foo/"+depUUID+".ext4")
 	if err != nil {
 		t.Fatalf("Get 64MiB: %v", err)
 	}
@@ -675,3 +764,128 @@ func TestOCILargeBlobStreaming(t *testing.T) {
 		t.Fatalf("64 MiB body mismatch (sha256 catch-all)")
 	}
 }
+
+// TestOCIEgressComposition asserts the storage backend defaults to the
+// RFC1918/loopback/link-local-denying egress transport when
+// WithHTTPClient is NOT passed. The composition is security-critical —
+// a misconfigured FAAS_OCI_REGISTRY pointing at a private host must
+// refuse to dial, same posture as the build-time puller (spec §11).
+//
+// Without this test a future constructor change could silently replace
+// the egress-guarded client with a vanilla http.Client while all
+// underlying pkg/oci egress tests stay green.
+func TestOCIEgressComposition(t *testing.T) {
+	be, err := NewOCIRegistryStorageBackend(
+		WithRegistry("https://10.0.0.5"), // RFC1918 — must be refused
+	)
+	if err != nil {
+		t.Fatalf("NewOCIRegistryStorageBackend: %v", err)
+	}
+	err = be.Put(context.Background(), "apps/foo/550e8400-e29b-41d4-a716-446655440000.ext4",
+		bytes.NewReader([]byte("x")))
+	if err == nil {
+		t.Fatal("Put to RFC1918 host should have been refused by the egress transport, got nil")
+	}
+	if !errors.Is(err, oci.ErrEgressDenied) {
+		t.Errorf("err = %v, want errors.Is(_, oci.ErrEgressDenied) true", err)
+	}
+}
+
+// TestOCIBearerRealmPin asserts the bearer-realm trust boundary
+// described on bearerForChallenge. With FAAS_OCI_USERNAME set, a
+// 401 challenge advertising a cleartext or unrelated-host realm is
+// rejected before any token-endpoint request goes out.
+func TestOCIBearerRealmPin(t *testing.T) {
+	tests := []struct {
+		name       string
+		realm      string
+		wantErrSub string
+	}{
+		{
+			name:       "cleartext realm rejected",
+			realm:      "http://ghcr.io/token",
+			wantErrSub: "must be https",
+		},
+		{
+			name:       "unrelated-host realm rejected",
+			realm:      "https://attacker.example.com/token",
+			wantErrSub: "is not the registry host",
+		},
+		{
+			name:       "single-segment subdomain allowed",
+			realm:      "https://auth.ghcr.io/token",
+			wantErrSub: "", // accepted — go past the realm guard, fail on the
+			// token-endpoint dial against an unreachable host (the test
+			// httptest fake serves only the registry host).
+		},
+		{
+			name:       "parent-host realm allowed",
+			realm:      "https://ghcr.io/token",
+			wantErrSub: "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			be, err := NewOCIRegistryStorageBackend(
+				WithRegistry("https://ghcr.io/onebox"),
+				WithCredentials("user", "pw"),
+				WithHTTPClient(&http.Client{Timeout: 5 * time.Second}),
+			)
+			if err != nil {
+				t.Fatalf("NewOCIRegistryStorageBackend: %v", err)
+			}
+			// Probe the bearer challenge path directly — no registry
+			// needed because validateBearerRealm is a pure-function
+			// gate. We test through the public surface anyway for
+			// parity with how the production 401 path exercises it.
+			_, err = be.bearerForChallenge(context.Background(),
+				fmt.Sprintf(`Bearer realm=%q,service="registry"`, tc.realm),
+				"repository:faas/apps:pull")
+			if tc.wantErrSub == "" {
+				// Expect a network/dial error (or a 401 from the
+				// in-process fake), not a realm-guard error.
+				if err != nil && strings.Contains(err.Error(), "realm") {
+					t.Errorf("expected realm guard to accept, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected realm guard to reject %q, got nil", tc.realm)
+			}
+			if !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Errorf("err = %v, want substring %q", err, tc.wantErrSub)
+			}
+		})
+	}
+}
+
+// TestOCIMonolithicOK exercises the 201-Created blob upload variant.
+// Some registries accept the Single POST flow outright (201 Created)
+// instead of the 202+Location dance the fake default exercises.
+// Pinned here so both branches are regression-tested.
+func TestOCIMonolithicOK(t *testing.T) {
+	f := newFakeRegistry(t)
+	f.monolithicOK = true
+	defer f.srv.Close()
+	be := f.client(t)
+	depUUID := "550e8400-e29b-41d4-a716-446655440000"
+	key := "apps/foo/" + depUUID + ".ext4"
+	if err := be.Put(context.Background(), key, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatalf("Put (monolithic 201): %v", err)
+	}
+	rc, err := be.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("Get read: %v", err)
+	}
+	if string(got) != "payload" {
+		t.Errorf("Get bytes = %q, want %q", got, "payload")
+	}
+}
+
+// TestOCIRequiresRepoForEmptyRegistry remains the constructor-time
+// guard against silent cross-org publishes (see NewOCIRegistryStorageBackend).

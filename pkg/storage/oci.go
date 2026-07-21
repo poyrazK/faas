@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -168,7 +169,7 @@ func WithTimeout(d time.Duration) Option {
 // FAAS_OCI_REGISTRY or, worse, into the default OCI namespace.
 func NewOCIRegistryStorageBackend(opts ...Option) (*OCIRegistryStorageBackend, error) {
 	o := &OCIRegistryStorageBackend{
-		prefix:  "faas",
+		prefix:  defaultRepoPrefix,
 		ua:      "faas-storage/1 (+https://DOMAIN)",
 		timeout: 60 * time.Second,
 	}
@@ -209,15 +210,30 @@ const (
 	repoKernel = "kernel"
 )
 
+// defaultRepoPrefix is the per-namespace repo prefix the driver uses
+// when WithRepoPrefix is not supplied. Promoted to a constant because
+// the same literal appears in the constructor default, the WithRepoPrefix
+// doc comment, and the unit tests — goconst would flag the duplicate.
+const defaultRepoPrefix = "faas"
+
 var (
 	// tagCharset is the OCI distribution-spec v2 tag charset:
 	// [a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}. We allow 1..128 chars.
 	tagCharset = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$`)
 
-	// depIDCharset matches the deployment-ID format produced by
-	// pkg/state (lowercase hex). snap keys embed the depID in the repo
-	// name; everything else uses it in the tag.
-	depIDCharset = regexp.MustCompile(`^[a-f0-9]{6,64}$`)
+	// depIDCharset matches the canonical UUID form produced by
+	// postgres gen_random_uuid() (8-4-4-4-12 lowercase hex with dashes),
+	// e.g. "550e8400-e29b-41d4-a716-446655440000". Production
+	// deployment IDs come from deployments.id (migrations/00001_init.sql);
+	// every keyed lookup in pkg/sched/paths.go uses this raw form.
+	depIDCharset = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
+
+	// appsTagSep separates the slug from the UUID in an apps/<slug>/<uuid>
+	// manifest tag. Slugs cannot contain an underscore (the apps.slug
+	// column is a slugified form of the customer-supplied name and
+	// the regex admits [a-z0-9-] only), so "__" is unambiguous and
+	// trivially reverses.
+	appsTagSep = "__"
 )
 
 // plan translates a storage key into the (repo, manifestRef) tuple the
@@ -232,12 +248,15 @@ func (o *OCIRegistryStorageBackend) plan(key string) (repo, ref string, err erro
 	}
 	switch parts[0] {
 	case repoApps:
-		// apps/<slug>/<dep>.ext4 → repo "apps", tag "<slug>-<dep>"
+		// apps/<slug>/<dep>.ext4 → repo "apps", tag "<slug>__<dep>".
+		// The "__" separator is unambiguous because the slug charset
+		// ([a-z0-9-]) doesn't admit underscores; round-tripping via
+		// unplan() is just strings.LastIndex("__").
 		if len(parts) != 3 || !strings.HasSuffix(parts[2], ".ext4") {
 			return "", "", fmt.Errorf("%w: %q does not match apps/<slug>/<dep>.ext4", ErrInvalidKey, key)
 		}
 		dep := strings.TrimSuffix(parts[2], ".ext4")
-		tag := parts[1] + "-" + dep
+		tag := parts[1] + appsTagSep + dep
 		if !tagCharset.MatchString(tag) {
 			return "", "", fmt.Errorf("%w: %q produces invalid OCI tag %q", ErrInvalidKey, key, tag)
 		}
@@ -342,18 +361,14 @@ func (o *OCIRegistryStorageBackend) Put(ctx context.Context, key string, r io.Re
 	// Push the layer blob via the monolithic-PUT endpoint
 	// (POST /v2/<repo>/blobs/uploads/?digest=sha256:...). The registry
 	// hashes the body; a mismatch returns 4xx and we surface it.
-	// We re-open the tmp file as an io.ReadSeeker so net/http can
-	// stream the body AND pushBlobMonolithic can rewind on a 401
-	// retry without re-reading the whole 150 MB.
-	blobRC, err := osOpen(tmpPath)
-	if err != nil {
-		return fmt.Errorf("storage: oci put %q: reopen blob: %w", key, err)
-	}
-	if err := o.pushBlobMonolithic(ctx, repo, digestHex, blobRC); err != nil {
-		_ = blobRC.Close()
+	// We open a fresh file handle each time the body is needed (POST
+	// then PUT fallback) so net/http's body-close on the prior request
+	// doesn't strand our file descriptor. The body is wrapped in
+	// io.NopCloser for the in-process call so the helper's transport
+	// doesn't close the fd between attempts.
+	if err := o.pushBlobFile(ctx, repo, digestHex, tmpPath); err != nil {
 		return fmt.Errorf("storage: oci put %q: blob: %w", key, err)
 	}
-	_ = blobRC.Close()
 
 	// Push the image manifest last so a partially-written key isn't
 	// visible until the layer blob is committed.
@@ -504,21 +519,19 @@ func (o *OCIRegistryStorageBackend) reposForPrefix(prefix string) []string {
 // storage key. Returns ("", false) when the (repo, tag) tuple doesn't
 // match anything we know how to produce.
 //
-// The apps tag is "<slug>-<dep>" but BOTH slug and dep are allowed to
-// contain dashes (the slug regex permits dashes; the dep regex requires
-// hex digits but the dep's tag is the trim of ".ext4" so it can be any
-// charset-bounded string). We split on the LAST dash so multi-dash slugs
-// round-trip cleanly. If a future change makes the dep ambiguous we
-// need a non-conflicting separator here.
+// The apps tag is "<slug>__<uuid>" (see plan()). Splitting on "__"
+// reverses the encoding exactly because slugs never contain
+// underscores. (Earlier versions split on the last dash which was
+// ambiguous once deployment IDs became canonical UUIDs — the
+// deployment portion itself contains four dashes.)
 func (o *OCIRegistryStorageBackend) unplan(repo, tag string) (string, bool) {
 	switch repo {
 	case repoApps:
-		// apps tag is "<slug>-<dep>"; split on the LAST dash.
-		idx := strings.LastIndexByte(tag, '-')
+		idx := strings.Index(tag, appsTagSep)
 		if idx < 0 {
 			return "", false
 		}
-		return "apps/" + tag[:idx] + "/" + tag[idx+1:] + ".ext4", true
+		return "apps/" + tag[:idx] + "/" + tag[idx+len(appsTagSep):] + ".ext4", true
 	case repoBase:
 		if strings.HasSuffix(tag, "-digest") {
 			rt := strings.TrimSuffix(tag, "-digest")
@@ -552,7 +565,7 @@ func (o *OCIRegistryStorageBackend) fullRepo(repo string) string {
 // rejected at the layer-count check (List only walks tags, never
 // indexes).
 var manifestAccept = strings.Join([]string{
-	"application/vnd.oci.image.manifest.v1+json",
+	imageManifestMediaType,
 	"application/vnd.docker.distribution.manifest.v2+json",
 	"application/vnd.oci.image.index.v1+json",
 	"application/vnd.docker.distribution.manifest.list.v2+json",
@@ -566,6 +579,12 @@ const blobMediaType = "application/vnd.oci.image.layer.v1.tar+gzip"
 // configMediaType is the OCI image config media type for the stub
 // blob we push alongside each artifact.
 const configMediaType = "application/vnd.oci.image.config.v1+json"
+
+// imageManifestMediaType is the OCI image manifest v1 media type the
+// driver PUTs / GETs. Promoted to a constant because it appears three
+// times (manifestAccept list, buildImageManifest default, pushManifest
+// Content-Type) and goconst flags string literals used ≥ 3 times.
+const imageManifestMediaType = "application/vnd.oci.image.manifest.v1+json"
 
 // configStubJSON is the minimal valid OCI image config: a 1-byte blob
 // ("{}" would parse as `{}` which is valid; "{}" is 2 bytes). The
@@ -597,7 +616,7 @@ type imageManifest struct {
 func buildImageManifest(configDigest, layerDigest string, size int64) ([]byte, error) {
 	m := imageManifest{
 		SchemaVersion: 2,
-		MediaType:     "application/vnd.oci.image.manifest.v1+json",
+		MediaType:     imageManifestMediaType,
 	}
 	m.Config.MediaType = configMediaType
 	m.Config.Digest = configDigest
@@ -672,136 +691,174 @@ func (o *OCIRegistryStorageBackend) pushConfigStub(ctx context.Context, repo str
 	return digestStr, nil
 }
 
-// pushBlobMonolithic uploads a single-shot blob via the
-// POST /v2/<repo>/blobs/uploads/?digest=... monolithic PUT. The body
-// is the file at path OR an io.Reader (the config-stub case uses the
-// latter). On 4xx/5xx we surface the status code + a 512-byte snippet
-// of the response body to make failures debuggable.
+// pushBlobFile is the layer-blob helper used by Put(). It owns the
+// file-handle lifecycle: opens a fresh *os.File per request attempt so
+// net/http's body-close on the prior POST (which would otherwise
+// strand our fd) doesn't prevent the POST→PUT fallback from re-reading
+// the body. The helper wraps the file in noopCloserFile (see oci_io.go)
+// so net/http's transport.Close() call is a no-op on our fd; the
+// deferred Close on the file itself runs when pushBlobMonolithic
+// returns.
+func (o *OCIRegistryStorageBackend) pushBlobFile(ctx context.Context, repo, digestHex, tmpPath string) error {
+	f, err := osOpen(tmpPath)
+	if err != nil {
+		return fmt.Errorf("open blob tmp: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	return o.pushBlobMonolithic(ctx, repo, digestHex, noopCloserFile{f})
+}
+
+// pushBlobMonolithic uploads a single-shot blob via the OCI
+// distribution-spec "Single POST" flow (POST /v2/<repo>/blobs/uploads/
+// ?digest=sha256:<hex>). The body is streamed in the same request.
+//
+// Two response codes are valid per spec:
+//
+//   - 201 Created with a Location header — the registry accepted the
+//     blob in this single round trip. We're done.
+//   - 202 Accepted with a Location header — the registry wants a
+//     follow-up PUT to the Location (some implementations refuse the
+//     monolithic form). We MUST issue that PUT or the blob is silently
+//     uncommitted. Treating 202 as success without the PUT leaves
+//     orphan manifests pointing at missing blobs.
 //
 // The bearer-token dance is the same anonymous-or-Basic pattern as
 // the puller. Caching happens in the helper below.
 func (o *OCIRegistryStorageBackend) pushBlobMonolithic(ctx context.Context, repo, digestHex string, body io.Reader) error {
-	// If body is a *os.File (the layer-blob path), the Reader-from-File
-	// pattern lets net/http stream it; for the config-stub case body is
-	// already a bytes.Reader.
-	u := o.registry + "/v2/" + o.fullRepo(repo) + "/blobs/uploads/?digest=sha256:" + digestHex
-	// Try POST first (some registries reject PUT on the upload URL);
-	// fall back to PUT on the upload URL the response Location header
-	// points at (RFC defines two-step POST-init then PUT-finalize).
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, body)
-	if err != nil {
-		return fmt.Errorf("build upload request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/octet-stream")
-	if o.ua != "" {
-		req.Header.Set("User-Agent", o.ua)
-	}
-	if seeker, ok := body.(io.Seeker); ok {
-		// Monolithic POST needs a known Content-Length; for a file
-		// (most cases) we can seek to set it.
-		if size, err := seeker.Seek(0, io.SeekEnd); err == nil {
-			_, _ = seeker.Seek(0, io.SeekStart)
-			req.ContentLength = size
-		}
-	}
-	tok, err := o.bearer(ctx, "repository:"+o.fullRepo(repo)+":pull,push")
-	if err == nil && tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := o.hc.Do(req)
+	fullRepo := o.fullRepo(repo)
+	scope := "repository:" + fullRepo + ":pull,push"
+	u := o.registry + "/v2/" + fullRepo + "/blobs/uploads/?digest=sha256:" + digestHex
+	resp, err := o.doBearerRequest(ctx, bearerReqOpts{
+		Method:      http.MethodPost,
+		URL:         u,
+		Scope:       scope,
+		ContentType: "application/octet-stream",
+		Body:        body,
+		Rewind:      true, // *os.File body must be re-readable on 401 retry
+	})
 	if err != nil {
 		return fmt.Errorf("post upload: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusCreated {
+	switch resp.StatusCode {
+	case http.StatusCreated:
 		return nil
-	}
-	if resp.StatusCode == http.StatusAccepted {
-		return nil
-	}
-	// Some registries reply 401 with a token challenge; refresh + retry once.
-	if resp.StatusCode == http.StatusUnauthorized {
-		o.invalidateToken("repository:" + o.fullRepo(repo) + ":pull,push")
-		// Re-build the request with the fresh token.
-		body2, err2 := rewindBody(body)
-		if err2 != nil {
-			return fmt.Errorf("401 retry rewind: %w", err2)
+	case http.StatusAccepted:
+		// Registry wants the chunked upload — issue a PUT to the Location
+		// it advertised. Without this PUT, the blob is uncommitted and
+		// later manifest GETs will 404.
+		loc := resp.Header.Get("Location")
+		if loc == "" {
+			return fmt.Errorf("upload returned 202 without Location header")
 		}
-		req2, err2 := http.NewRequestWithContext(ctx, http.MethodPost, u, body2)
-		if err2 != nil {
-			return fmt.Errorf("401 retry build: %w", err2)
+		uploadURL, perr := resolveUploadLocation(o.registry, loc)
+		if perr != nil {
+			return fmt.Errorf("upload Location: %w", perr)
 		}
-		req2.Header.Set("Content-Type", "application/octet-stream")
-		if o.ua != "" {
-			req2.Header.Set("User-Agent", o.ua)
+		uploadURL = appendDigestQuery(uploadURL, digestHex)
+		// Rewind the body — the POST above already consumed it.
+		// doBearerRequest's Rewind branch only fires on a 401 retry,
+		// not on a clean success→202 transition.
+		if seeker, ok := body.(io.Seeker); ok {
+			if _, serr := seeker.Seek(0, io.SeekStart); serr != nil {
+				return fmt.Errorf("rewind body for PUT: %w", serr)
+			}
 		}
-		tok2, err2 := o.bearerForChallenge(ctx, resp.Header.Get("Www-Authenticate"),
-			"repository:"+o.fullRepo(repo)+":pull,push")
-		if err2 != nil {
-			return fmt.Errorf("401 retry fetch token: %w", err2)
-		}
-		if tok2 != "" {
-			req2.Header.Set("Authorization", "Bearer "+tok2)
-		}
-		resp2, err2 := o.hc.Do(req2)
-		if err2 != nil {
-			return fmt.Errorf("401 retry do: %w", err2)
-		}
-		defer func() { _ = resp2.Body.Close() }()
-		if resp2.StatusCode == http.StatusCreated || resp2.StatusCode == http.StatusAccepted {
-			return nil
-		}
-		snippet, _ := io.ReadAll(io.LimitReader(resp2.Body, 512))
-		return fmt.Errorf("upload returned %d: %s", resp2.StatusCode, strings.TrimSpace(string(snippet)))
+		return o.putToUploadLocation(ctx, uploadURL, scope, body)
 	}
 	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	return fmt.Errorf("upload returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 }
 
+// putToUploadLocation PUTs the body to the registry-supplied upload
+// Location, which marks the blob committed. The body must be an
+// io.ReadSeeker — the 401-retry path may have already consumed it
+// once, so Rewind=true is mandatory.
+func (o *OCIRegistryStorageBackend) putToUploadLocation(ctx context.Context, uploadURL, scope string, body io.Reader) error {
+	resp, err := o.doBearerRequest(ctx, bearerReqOpts{
+		Method:      http.MethodPut,
+		URL:         uploadURL,
+		Scope:       scope,
+		ContentType: "application/octet-stream",
+		Body:        body,
+		Rewind:      true,
+	})
+	if err != nil {
+		return fmt.Errorf("put upload: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	return fmt.Errorf("upload put returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+}
+
+// resolveUploadLocation joins a registry-supplied upload Location URL
+// against the configured registry base. Per the spec the Location is
+// either an absolute URL on the same origin (rare) or a path on the
+// same origin. Refusing cross-origin absolute URLs blocks the
+// "registry-supplied host" SSRF avenue that the bearer-realm
+// validation in bearerForChallenge handles for auth — symmetric
+// protection here for the upload flow.
+func resolveUploadLocation(registryBase, loc string) (string, error) {
+	if loc == "" {
+		return "", fmt.Errorf("empty Location header")
+	}
+	if strings.HasPrefix(loc, "http://") || strings.HasPrefix(loc, "https://") {
+		base, err := url.Parse(registryBase)
+		if err != nil {
+			return "", fmt.Errorf("parse registry %q: %w", registryBase, err)
+		}
+		locURL, err := url.Parse(loc)
+		if err != nil {
+			return "", fmt.Errorf("parse Location %q: %w", loc, err)
+		}
+		if locURL.Scheme != base.Scheme || locURL.Host != base.Host {
+			return "", fmt.Errorf("upload location host %q does not match registry %q", locURL.Host, base.Host)
+		}
+		return loc, nil
+	}
+	if !strings.HasPrefix(loc, "/") {
+		return "", fmt.Errorf("upload location %q is neither absolute nor path-absolute", loc)
+	}
+	return strings.TrimRight(registryBase, "/") + loc, nil
+}
+
+// appendDigestQuery appends ?digest=sha256:<hex> to a URL if the URL
+// doesn't already carry one. The OCI distribution spec mandates the
+// digest is on the final PUT so the registry can verify content
+// addressability.
+func appendDigestQuery(u, digestHex string) string {
+	if strings.Contains(u, "digest=") {
+		return u
+	}
+	sep := "?"
+	if strings.Contains(u, "?") {
+		sep = "&"
+	}
+	return u + sep + "digest=sha256:" + digestHex
+}
+
 // pushManifest PUTs the image-manifest JSON to /v2/<repo>/manifests/<tag>.
 func (o *OCIRegistryStorageBackend) pushManifest(ctx context.Context, repo, tag string, body []byte) error {
 	u := o.registry + "/v2/" + o.fullRepo(repo) + "/manifests/" + tag
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build manifest request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
-	if o.ua != "" {
-		req.Header.Set("User-Agent", o.ua)
-	}
-	tok, terr := o.bearer(ctx, "repository:"+o.fullRepo(repo)+":pull,push")
-	if terr == nil && tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := o.hc.Do(req)
+	// bytes.Reader is reusable; Rewind=true is safe because the same
+	// bytes are re-sent on a 401 retry.
+	resp, err := o.doBearerRequest(ctx, bearerReqOpts{
+		Method:      http.MethodPut,
+		URL:         u,
+		Scope:       "repository:" + o.fullRepo(repo) + ":pull,push",
+		ContentType: imageManifestMediaType,
+		Body:        bytes.NewReader(body),
+		Rewind:      true,
+	})
 	if err != nil {
 		return fmt.Errorf("put manifest: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusOK {
 		return nil
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		// One retry with a freshly-refreshed token.
-		o.invalidateToken("repository:" + o.fullRepo(repo) + ":pull,push")
-		tok2, terr2 := o.bearerForChallenge(ctx, resp.Header.Get("Www-Authenticate"),
-			"repository:"+o.fullRepo(repo)+":pull,push")
-		if terr2 != nil {
-			return fmt.Errorf("manifest 401 fetch token: %w", terr2)
-		}
-		if tok2 != "" {
-			req.Header.Set("Authorization", "Bearer "+tok2)
-		}
-		resp2, err2 := o.hc.Do(req)
-		if err2 != nil {
-			return fmt.Errorf("manifest 401 retry: %w", err2)
-		}
-		defer func() { _ = resp2.Body.Close() }()
-		if resp2.StatusCode == http.StatusCreated || resp2.StatusCode == http.StatusAccepted || resp2.StatusCode == http.StatusOK {
-			return nil
-		}
-		snippet, _ := io.ReadAll(io.LimitReader(resp2.Body, 512))
-		return fmt.Errorf("manifest returned %d: %s", resp2.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	return fmt.Errorf("manifest returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
@@ -812,45 +869,20 @@ func (o *OCIRegistryStorageBackend) pushManifest(ctx context.Context, repo, tag 
 // is a non-fatal error with the response code in the message.
 func (o *OCIRegistryStorageBackend) fetchManifest(ctx context.Context, repo, tag string) (imageManifest, error) {
 	u := o.registry + "/v2/" + o.fullRepo(repo) + "/manifests/" + tag
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return imageManifest{}, fmt.Errorf("build manifest request: %w", err)
-	}
-	req.Header.Set("Accept", manifestAccept)
-	if o.ua != "" {
-		req.Header.Set("User-Agent", o.ua)
-	}
-	tok, terr := o.bearer(ctx, "repository:"+o.fullRepo(repo)+":pull")
-	if terr == nil && tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := o.hc.Do(req)
+	resp, err := o.doBearerRequest(ctx, bearerReqOpts{
+		Method: http.MethodGet,
+		URL:    u,
+		Scope:  "repository:" + o.fullRepo(repo) + ":pull",
+		ExtraHeaders: map[string]string{
+			"Accept": manifestAccept,
+		},
+	})
 	if err != nil {
 		return imageManifest{}, fmt.Errorf("get manifest: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return imageManifest{}, fmt.Errorf("%w: manifest %s/%s not found", ErrNotFound, o.fullRepo(repo), tag)
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		o.invalidateToken("repository:" + o.fullRepo(repo) + ":pull")
-		tok2, terr2 := o.bearerForChallenge(ctx, resp.Header.Get("Www-Authenticate"),
-			"repository:"+o.fullRepo(repo)+":pull")
-		if terr2 != nil {
-			return imageManifest{}, fmt.Errorf("manifest 401 fetch token: %w", terr2)
-		}
-		if tok2 != "" {
-			req.Header.Set("Authorization", "Bearer "+tok2)
-		}
-		resp2, err2 := o.hc.Do(req)
-		if err2 != nil {
-			return imageManifest{}, fmt.Errorf("401 retry: %w", err2)
-		}
-		defer func() { _ = resp2.Body.Close() }()
-		if resp2.StatusCode == http.StatusNotFound {
-			return imageManifest{}, fmt.Errorf("%w: manifest %s/%s not found", ErrNotFound, o.fullRepo(repo), tag)
-		}
-		resp = resp2
 	}
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -871,50 +903,17 @@ func (o *OCIRegistryStorageBackend) fetchManifest(ctx context.Context, repo, tag
 // surfaces as ErrNotFound wrapped. The caller MUST close the body.
 func (o *OCIRegistryStorageBackend) fetchBlob(ctx context.Context, repo, digest string) (io.ReadCloser, error) {
 	u := o.registry + "/v2/" + o.fullRepo(repo) + "/blobs/" + digest
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build blob request: %w", err)
-	}
-	if o.ua != "" {
-		req.Header.Set("User-Agent", o.ua)
-	}
-	tok, terr := o.bearer(ctx, "repository:"+o.fullRepo(repo)+":pull")
-	if terr == nil && tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := o.hc.Do(req)
+	resp, err := o.doBearerRequest(ctx, bearerReqOpts{
+		Method: http.MethodGet,
+		URL:    u,
+		Scope:  "repository:" + o.fullRepo(repo) + ":pull",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get blob: %w", err)
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("%w: blob %s/%s not found", ErrNotFound, o.fullRepo(repo), digest)
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		_ = resp.Body.Close()
-		o.invalidateToken("repository:" + o.fullRepo(repo) + ":pull")
-		tok2, terr2 := o.bearerForChallenge(ctx, resp.Header.Get("Www-Authenticate"),
-			"repository:"+o.fullRepo(repo)+":pull")
-		if terr2 != nil {
-			return nil, fmt.Errorf("blob 401 fetch token: %w", terr2)
-		}
-		if tok2 != "" {
-			req.Header.Set("Authorization", "Bearer "+tok2)
-		}
-		resp2, err2 := o.hc.Do(req)
-		if err2 != nil {
-			return nil, fmt.Errorf("401 retry: %w", err2)
-		}
-		if resp2.StatusCode == http.StatusNotFound {
-			_ = resp2.Body.Close()
-			return nil, fmt.Errorf("%w: blob %s/%s not found", ErrNotFound, o.fullRepo(repo), digest)
-		}
-		if resp2.StatusCode != http.StatusOK {
-			snippet, _ := io.ReadAll(io.LimitReader(resp2.Body, 512))
-			_ = resp2.Body.Close()
-			return nil, fmt.Errorf("blob returned %d: %s", resp2.StatusCode, strings.TrimSpace(string(snippet)))
-		}
-		return resp2.Body, nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -927,38 +926,30 @@ func (o *OCIRegistryStorageBackend) fetchBlob(ctx context.Context, repo, digest 
 // deleteManifest DELETEs the manifest at (repo, tag). A 404 is a
 // non-error (idempotent Delete matches LocalStorageBackend's
 // contract).
+//
+// The OCI distribution spec requires DELETE by digest, not tag; we
+// resolve the manifest first and DELETE by the Docker-Content-Digest
+// header (or compute it ourselves when the registry omits the header)
+// so a conforming registry accepts the request. Tag-based DELETE is
+// implementation-defined behaviour and most public registries refuse it.
 func (o *OCIRegistryStorageBackend) deleteManifest(ctx context.Context, repo, tag string) error {
-	u := o.registry + "/v2/" + o.fullRepo(repo) + "/manifests/" + tag
-	scope := "repository:" + o.fullRepo(repo) + ":pull,push"
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
+	fullRepo := o.fullRepo(repo)
+	scope := "repository:" + fullRepo + ":pull,push"
+	digest, err := o.resolveManifestDigest(ctx, repo, tag)
 	if err != nil {
-		return fmt.Errorf("build delete request: %w", err)
-	}
-	if o.ua != "" {
-		req.Header.Set("User-Agent", o.ua)
-	}
-	tok, terr := o.bearer(ctx, scope)
-	if terr == nil && tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := o.hc.Do(req)
-	if err != nil {
+		if isNotFoundErr(err) {
+			return nil // already gone — idempotent
+		}
 		return fmt.Errorf("delete manifest: %w", err)
 	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		_ = resp.Body.Close()
-		o.invalidateToken(scope)
-		tok2, terr2 := o.bearerForChallenge(ctx, resp.Header.Get("Www-Authenticate"), scope)
-		if terr2 != nil {
-			return fmt.Errorf("delete 401 fetch token: %w", terr2)
-		}
-		if tok2 != "" {
-			req.Header.Set("Authorization", "Bearer "+tok2)
-		}
-		resp, err = o.hc.Do(req)
-		if err != nil {
-			return fmt.Errorf("delete 401 retry: %w", err)
-		}
+	u := o.registry + "/v2/" + fullRepo + "/manifests/" + digest
+	resp, err := o.doBearerRequest(ctx, bearerReqOpts{
+		Method: http.MethodDelete,
+		URL:    u,
+		Scope:  scope,
+	})
+	if err != nil {
+		return fmt.Errorf("delete manifest: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusOK {
@@ -968,48 +959,63 @@ func (o *OCIRegistryStorageBackend) deleteManifest(ctx context.Context, repo, ta
 	return fmt.Errorf("delete returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 }
 
+// resolveManifestDigest fetches the manifest and returns its
+// content-addressable digest (sha256:…). The OCI distribution spec
+// requires manifest DELETE by digest; we trust the registry's
+// Docker-Content-Digest header when present, otherwise we compute the
+// digest ourselves (some implementations skip the header). Returns
+// ErrNotFound when the manifest doesn't exist so deleteManifest can
+// short-circuit idempotently.
+func (o *OCIRegistryStorageBackend) resolveManifestDigest(ctx context.Context, repo, tag string) (string, error) {
+	u := o.registry + "/v2/" + o.fullRepo(repo) + "/manifests/" + tag
+	resp, err := o.doBearerRequest(ctx, bearerReqOpts{
+		Method: http.MethodGet,
+		URL:    u,
+		Scope:  "repository:" + o.fullRepo(repo) + ":pull",
+		ExtraHeaders: map[string]string{
+			"Accept": manifestAccept,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("resolve digest: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("%w: manifest %s/%s not found", ErrNotFound, o.fullRepo(repo), tag)
+	}
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", fmt.Errorf("resolve digest returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	if d := resp.Header.Get("Docker-Content-Digest"); d != "" {
+		return d, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return "", fmt.Errorf("resolve digest read: %w", err)
+	}
+	sum := sha256.Sum256(body)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
 // fetchTags GETs /v2/<repo>/tags/list and returns the tag list. An
 // empty list + nil error means "no tags" (the repo exists but is
 // empty); an HTTP 404 surfaces as ErrNotFound (the repo doesn't
 // exist). Other failures return wrapped errors so List can skip them.
 func (o *OCIRegistryStorageBackend) fetchTags(ctx context.Context, repo string) ([]string, error) {
 	u := o.registry + "/v2/" + o.fullRepo(repo) + "/tags/list"
-	scope := "repository:" + o.fullRepo(repo) + ":pull"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build tags request: %w", err)
-	}
-	if o.ua != "" {
-		req.Header.Set("User-Agent", o.ua)
-	}
-	tok, terr := o.bearer(ctx, scope)
-	if terr == nil && tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := o.hc.Do(req)
+	resp, err := o.doBearerRequest(ctx, bearerReqOpts{
+		Method: http.MethodGet,
+		URL:    u,
+		Scope:  "repository:" + o.fullRepo(repo) + ":pull",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get tags: %w", err)
 	}
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		_ = resp.Body.Close()
 		return nil, nil // repo doesn't exist → empty
 	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		_ = resp.Body.Close()
-		o.invalidateToken(scope)
-		tok2, terr2 := o.bearerForChallenge(ctx, resp.Header.Get("Www-Authenticate"), scope)
-		if terr2 != nil {
-			return nil, fmt.Errorf("tags 401 fetch token: %w", terr2)
-		}
-		if tok2 != "" {
-			req.Header.Set("Authorization", "Bearer "+tok2)
-		}
-		resp, err = o.hc.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("tags 401 retry: %w", err)
-		}
-	}
-	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, fmt.Errorf("tags returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
@@ -1057,10 +1063,35 @@ func (o *OCIRegistryStorageBackend) bearer(ctx context.Context, scope string) (s
 // Www-Authenticate header in hand and the realm URL to POST to.
 // Returns the new bearer and caches it under scope so subsequent
 // requests on the same scope skip the 401 challenge.
+//
+// Realm-trust boundary (issue #96 review finding #3): the realm URL
+// comes from the registry on every 401. A compromised or malicious
+// registry can advertise realm="https://attacker.example/token" and
+// receive the configured Basic credentials on the next round-trip.
+// The egress transport blocks private/loopback destinations but NOT
+// arbitrary public hosts (a public-host attacker is the point). Two
+// guards:
+//
+//   - When creds are configured, the realm MUST be HTTPS — a
+//     cleartext realm would let any on-path observer capture them.
+//   - The realm host MUST be the registry host or a one-segment
+//     subdomain (e.g. registry=ghcr.io/onebox → realm=auth.ghcr.io
+//     is allowed but realm=evil.com is not). Most major registries
+//     colocate the token endpoint on the registry host itself
+//     (ghcr.io, registry-1.docker.io) or a single subdomain.
+//
+// Anonymous (no creds) flows skip both guards: a realm advertised by
+// the registry on a public read can't leak anything except a token
+// with no privileges.
 func (o *OCIRegistryStorageBackend) bearerForChallenge(ctx context.Context, challenge, scope string) (string, error) {
 	ch := oci.ParseChallenge(challenge)
 	if ch.Realm() == "" {
 		return "", fmt.Errorf("registry returned 401 with no bearer realm; not an OCI distribution-spec server?")
+	}
+	if o.user != "" {
+		if err := validateBearerRealm(o.registry, ch.Realm()); err != nil {
+			return "", fmt.Errorf("realm %q rejected: %w", ch.Realm(), err)
+		}
 	}
 	auth := (*oci.BasicAuth)(nil)
 	if o.user != "" {
@@ -1076,6 +1107,184 @@ func (o *OCIRegistryStorageBackend) bearerForChallenge(ctx context.Context, chal
 		realmURL: ch.Realm(),
 	})
 	return tok.AccessToken, nil
+}
+
+// validateBearerRealm enforces the trust boundary described on
+// bearerForChallenge. Returns nil when the realm is acceptable for
+// credential-bearing requests.
+//
+// Allowed hosts:
+//
+//   - exact match of the registry host (the common case for ghcr.io,
+//     docker.io, and self-hosted distribution),
+//   - a single-segment subdomain of the registry host (auth.ghcr.io
+//     when registry=ghcr.io),
+//   - a single-segment parent (registry=auth.ghcr.io → realm=ghcr.io).
+//
+// The matching is host-only; path / port are not part of the trust
+// decision so an operator can reconfigure paths without whitelisting.
+func validateBearerRealm(registryBase, realm string) error {
+	rURL, err := url.Parse(realm)
+	if err != nil {
+		return fmt.Errorf("parse realm: %w", err)
+	}
+	if rURL.Scheme != "https" {
+		return fmt.Errorf("realm must be https when credentials are configured (got %q)", rURL.Scheme)
+	}
+	regURL, err := url.Parse(registryBase)
+	if err != nil {
+		return fmt.Errorf("parse registry: %w", err)
+	}
+	if !realmHostAllowed(rURL.Host, regURL.Host) {
+		return fmt.Errorf("realm host %q is not the registry host %q nor a single-segment neighbour", rURL.Host, regURL.Host)
+	}
+	return nil
+}
+
+// realmHostAllowed reports whether realmHost is the registry host or
+// a single-segment neighbour. A "single-segment neighbour" is exactly
+// one extra label on either side:
+//
+//	registry=ghcr.io       → auth.ghcr.io, ghcr.io (exact)
+//	registry=auth.ghcr.io  → auth.ghcr.io (exact), ghcr.io (parent)
+//
+// Anything more distant (attacker.com, foo.bar.ghcr.io) is rejected.
+// This matches what real OCI registries do — the token endpoint lives
+// at most one DNS hop from the registry hostname.
+func realmHostAllowed(realmHost, registryHost string) bool {
+	if realmHost == "" || registryHost == "" {
+		return false
+	}
+	if realmHost == registryHost {
+		return true
+	}
+	realmLabels := strings.Split(realmHost, ".")
+	regLabels := strings.Split(registryHost, ".")
+	// A single-segment neighbour differs by exactly one label.
+	if len(realmLabels) == len(regLabels)+1 {
+		// realm is registry + 1 prefix (e.g. auth.ghcr.io vs ghcr.io)
+		for i := range regLabels {
+			if realmLabels[i+1] != regLabels[i] {
+				return false
+			}
+		}
+		return true
+	}
+	if len(realmLabels)+1 == len(regLabels) {
+		// realm is registry - 1 prefix (e.g. ghcr.io vs auth.ghcr.io)
+		for i := range realmLabels {
+			if realmLabels[i] != regLabels[i+1] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// bearerReqOpts configures doBearerRequest. The zero value is a sane
+// default for a GET without a body rewind; non-GET callers should set
+// ContentType and (for streaming bodies) Rewind.
+type bearerReqOpts struct {
+	Method       string
+	URL          string
+	Scope        string            // "repository:<fullRepo>:<pull,push>" or similar
+	ContentType  string            // "" → no Content-Type header
+	Body         io.Reader         // nil → no body
+	Rewind       bool              // true → body must be io.ReadSeeker; helper seeks to 0 on retry
+	ExtraHeaders map[string]string // optional: applied AFTER ContentType/Authorization so they win
+}
+
+// doBearerRequest sends req, attaches the cached bearer, and on 401
+// invalidates + refetches the token via Www-Authenticate + retries
+// once. The returned response is the final attempt (success or last
+// try); the caller checks status code, maps 404 → ErrNotFound as
+// needed, and closes the body.
+//
+// 401 here after the retry means the registry keeps refusing the
+// fresh bearer (creds revoked? scope mis-configured?) — we surface
+// the status code + a 512-byte response snippet so ops have a hook
+// to diagnose.
+func (o *OCIRegistryStorageBackend) doBearerRequest(ctx context.Context, opts bearerReqOpts) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, opts.Method, opts.URL, opts.Body)
+	if err != nil {
+		return nil, fmt.Errorf("build %s %s: %w", opts.Method, opts.URL, err)
+	}
+	if opts.ContentType != "" {
+		req.Header.Set("Content-Type", opts.ContentType)
+	}
+	if o.ua != "" {
+		req.Header.Set("User-Agent", o.ua)
+	}
+	// Set the bearer only if cached; if absent we still send the request
+	// unauthenticated and let the 401-retry path populate it.
+	if tok, _ := o.bearer(ctx, opts.Scope); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := o.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send %s %s: %w", opts.Method, opts.URL, err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		return resp, nil
+	}
+	// 401 — capture the challenge, then invalidate + refetch + retry.
+	challenge := resp.Header.Get("Www-Authenticate")
+	_ = resp.Body.Close()
+	o.invalidateToken(opts.Scope)
+	tok, terr := o.bearerForChallenge(ctx, challenge, opts.Scope)
+	if terr != nil {
+		return nil, fmt.Errorf("401 retry fetch token: %w", terr)
+	}
+	if opts.Rewind {
+		// Body must be an io.ReadSeeker — pushBlobMonolithic uses an
+		// *os.File. Seek to 0 so net/http re-reads.
+		seeker, ok := opts.Body.(io.Seeker)
+		if !ok {
+			return nil, fmt.Errorf("401 retry rewind: body of type %T is not an io.Seeker", opts.Body)
+		}
+		if _, serr := seeker.Seek(0, io.SeekStart); serr != nil {
+			return nil, fmt.Errorf("401 retry rewind: %w", serr)
+		}
+		req2, rerr := http.NewRequestWithContext(ctx, opts.Method, opts.URL, opts.Body)
+		if rerr != nil {
+			return nil, fmt.Errorf("401 retry build: %w", rerr)
+		}
+		if opts.ContentType != "" {
+			req2.Header.Set("Content-Type", opts.ContentType)
+		}
+		if o.ua != "" {
+			req2.Header.Set("User-Agent", o.ua)
+		}
+		if tok != "" {
+			req2.Header.Set("Authorization", "Bearer "+tok)
+		}
+		resp, err = o.hc.Do(req2)
+		if err != nil {
+			return nil, fmt.Errorf("401 retry send: %w", err)
+		}
+		return resp, nil
+	}
+	// No rewind — rebuild the request from the same body (the original
+	// is consumed if it was a one-shot Reader, but most GETs are nil-body).
+	req2, rerr := http.NewRequestWithContext(ctx, opts.Method, opts.URL, opts.Body)
+	if rerr != nil {
+		return nil, fmt.Errorf("401 retry build: %w", rerr)
+	}
+	if opts.ContentType != "" {
+		req2.Header.Set("Content-Type", opts.ContentType)
+	}
+	if o.ua != "" {
+		req2.Header.Set("User-Agent", o.ua)
+	}
+	if tok != "" {
+		req2.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err = o.hc.Do(req2)
+	if err != nil {
+		return nil, fmt.Errorf("401 retry send: %w", err)
+	}
+	return resp, nil
 }
 
 // invalidateToken drops a cached bearer so the next bearer() call
@@ -1132,20 +1341,4 @@ func isNotFoundErr(err error) bool {
 		return false
 	}
 	return errorsIs(err, ErrNotFound)
-}
-
-// rewindBody returns a fresh reader over the same bytes. For *os.File
-// (the layer-blob case) it seeks to 0; for io.ReadSeeker in general it
-// calls Seek(0, 0). Used by the 401-retry path which has to re-send the
-// body.
-func rewindBody(r io.Reader) (io.Reader, error) {
-	switch v := r.(type) {
-	case io.ReadSeeker:
-		if _, err := v.Seek(0, io.SeekStart); err != nil {
-			return nil, err
-		}
-		return v, nil
-	default:
-		return nil, fmt.Errorf("cannot rewind body of type %T", r)
-	}
 }
