@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/browser"
@@ -351,6 +355,163 @@ func TestCmdOpen_DashboardFlagHitsDashboardPage(t *testing.T) {
 	want := srv.URL + "/dashboard/apps/hello"
 	if len(rec.urls) != 1 || rec.urls[0] != want {
 		t.Fatalf("urls = %v, want [%q]", rec.urls, want)
+	}
+}
+
+// wakeStub is a test double for the public gateway that returns
+// x-faas-wake: cold for the first N requests, then drops the header
+// to simulate the app warming up. Used to drive cmdOpen's probe loop.
+type wakeStub struct {
+	calls  int32
+	coldN  int    // first coldN requests return cold; rest are warm
+	probeN *int32 // counts only /probe hits (used by dashboard-skip test)
+}
+
+func (w *wakeStub) ServeHTTP(rw http.ResponseWriter, _ *http.Request) {
+	if w.probeN != nil {
+		atomic.AddInt32(w.probeN, 1)
+	}
+	n := atomic.AddInt32(&w.calls, 1)
+	if int(n) <= w.coldN {
+		rw.Header().Set("x-faas-wake", "cold")
+	}
+	_, _ = rw.Write([]byte("ok"))
+}
+
+func TestCmdOpen_WarmAppOpensImmediately(t *testing.T) {
+	rec := withRecorder(t)
+	t.Setenv("FAAS_TOKEN", "tok")
+
+	probeCalls := int32(0)
+	stub := &wakeStub{coldN: 0, probeN: &probeCalls}
+	gw := httptest.NewServer(stub)
+	defer gw.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"id":"a-1","slug":"hello","type":"function","runtime":"node22","ram_mb":256,"max_concurrency":2,"idle_timeout_s":60,"status":"active","url":%q,"manifest":{}}`, gw.URL))
+	}))
+	defer apiSrv.Close()
+	t.Setenv("FAAS_API", apiSrv.URL)
+
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	if code := cmdOpen([]string{"hello"}); code != 0 {
+		t.Fatalf("cmdOpen exit = %d, want 0", code)
+	}
+	// Warm app → exactly one probe (the initial check) then open.
+	if got := atomic.LoadInt32(&probeCalls); got != 1 {
+		t.Errorf("probe calls = %d, want 1 (warm app, single probe)", got)
+	}
+	if len(rec.urls) != 1 || rec.urls[0] != gw.URL {
+		t.Fatalf("urls = %v, want [%q]", rec.urls, gw.URL)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "App is warm — opening.") {
+		t.Errorf("missing warm line\nfull: %s", out)
+	}
+	if strings.Contains(out, "Waking app") {
+		t.Errorf("unexpected cold line on warm app\nfull: %s", out)
+	}
+}
+
+func TestCmdOpen_ColdAppWaitsForWarm(t *testing.T) {
+	rec := withRecorder(t)
+	t.Setenv("FAAS_TOKEN", "tok")
+
+	probeCalls := int32(0)
+	// First 3 probes return cold (cold→cold→cold→warm). Probe loop
+	// uses 500 ms sleep between attempts, so the test takes ~1.5 s.
+	stub := &wakeStub{coldN: 3, probeN: &probeCalls}
+	gw := httptest.NewServer(stub)
+	defer gw.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"id":"a-1","slug":"hello","type":"function","runtime":"node22","ram_mb":256,"max_concurrency":2,"idle_timeout_s":60,"status":"active","url":%q,"manifest":{}}`, gw.URL))
+	}))
+	defer apiSrv.Close()
+	t.Setenv("FAAS_API", apiSrv.URL)
+
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	if code := cmdOpen([]string{"hello"}); code != 0 {
+		t.Fatalf("cmdOpen exit = %d, want 0", code)
+	}
+	if got := atomic.LoadInt32(&probeCalls); got != 4 {
+		t.Errorf("probe calls = %d, want 4 (cold×3 then warm)", got)
+	}
+	if len(rec.urls) != 1 || rec.urls[0] != gw.URL {
+		t.Fatalf("urls = %v, want [%q]", rec.urls, gw.URL)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Waking app (cold start) — opening in your browser.") {
+		t.Errorf("missing cold line\nfull: %s", out)
+	}
+}
+
+func TestCmdOpen_ColdAppDeadlineExhausts(t *testing.T) {
+	rec := withRecorder(t)
+	t.Setenv("FAAS_TOKEN", "tok")
+
+	probeCalls := int32(0)
+	// Always cold — cmdOpen waits up to 8 s total then opens anyway.
+	stub := &wakeStub{coldN: 1000, probeN: &probeCalls}
+	gw := httptest.NewServer(stub)
+	defer gw.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"id":"a-1","slug":"hello","type":"function","runtime":"node22","ram_mb":256,"max_concurrency":2,"idle_timeout_s":60,"status":"active","url":%q,"manifest":{}}`, gw.URL))
+	}))
+	defer apiSrv.Close()
+	t.Setenv("FAAS_API", apiSrv.URL)
+
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	start := time.Now()
+	if code := cmdOpen([]string{"hello"}); code != 0 {
+		t.Fatalf("cmdOpen exit = %d, want 0", code)
+	}
+	elapsed := time.Since(start)
+	if elapsed < 7*time.Second || elapsed > 12*time.Second {
+		t.Errorf("elapsed = %v, want ~8 s (deadline budget)", elapsed)
+	}
+	if len(rec.urls) != 1 {
+		t.Errorf("browser should still be invoked after deadline; got urls=%v", rec.urls)
+	}
+}
+
+func TestCmdOpen_DashboardSkipsProbe(t *testing.T) {
+	_ = withRecorder(t)
+	t.Setenv("FAAS_TOKEN", "tok")
+
+	probeCalls := int32(0)
+	stub := &wakeStub{coldN: 0, probeN: &probeCalls}
+	gw := httptest.NewServer(stub)
+	defer gw.Close()
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"id":"a-1","slug":"hello","type":"function","runtime":"node22","ram_mb":256,"max_concurrency":2,"idle_timeout_s":60,"status":"active","url":%q,"manifest":{}}`, gw.URL))
+	}))
+	defer apiSrv.Close()
+	t.Setenv("FAAS_API", apiSrv.URL)
+
+	if code := cmdOpen([]string{"--dashboard", "hello"}); code != 0 {
+		t.Fatalf("cmdOpen exit = %d, want 0", code)
+	}
+	if got := atomic.LoadInt32(&probeCalls); got != 0 {
+		t.Errorf("probe calls = %d, want 0 (dashboard skips probe)", got)
 	}
 }
 
