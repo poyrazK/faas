@@ -63,9 +63,13 @@ func TestMigrations_00022_SnapshotsStorageKey_Backfill(t *testing.T) {
 	`, depID); err != nil {
 		t.Fatalf("seed deployment: %v", err)
 	}
+	// Backdate the snapshot's created_at so the fence
+	// (`created_at < now() - interval '1 second'`, F-5) lets the
+	// backfill UPDATE target it. A fresh row stamped at now() would
+	// be skipped by the fence, defeating the test.
 	if _, err := pool.Exec(ctx, `
 		insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, path, storage_key, created_at)
-		values ($1, '1.8.0', 100, 100, '/srv/fc/snap/x/mem', '', now())
+		values ($1, '1.8.0', 100, 100, '/srv/fc/snap/x/mem', '', now() - interval '1 minute')
 	`, depID); err != nil {
 		t.Fatalf("seed snapshot: %v", err)
 	}
@@ -75,8 +79,9 @@ func TestMigrations_00022_SnapshotsStorageKey_Backfill(t *testing.T) {
 	//   update snapshots
 	//      set storage_key = 'snap/' || deployment_id::text || '/mem'
 	//    where storage_key = ''
+	//      and created_at < now() - interval '1 second'
 	if _, err := pool.Exec(ctx,
-		`update snapshots set storage_key = 'snap/' || deployment_id::text || '/mem' where storage_key = ''`,
+		`update snapshots set storage_key = 'snap/' || deployment_id::text || '/mem' where storage_key = '' and created_at < now() - interval '1 second'`,
 	); err != nil {
 		t.Fatalf("re-run backfill SQL: %v", err)
 	}

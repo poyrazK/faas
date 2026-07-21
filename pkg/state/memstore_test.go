@@ -1128,12 +1128,14 @@ func TestMemStore_ListSnapshotsForGC(t *testing.T) {
 	if _, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100,
 		Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depA.ID),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depB.ID, MemBytes: 200, DiskBytes: 200,
 		Path: "/tmp/b.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depB.ID),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1166,6 +1168,7 @@ func TestMemStore_ListSnapshotsForGC_ExcludesDeletedApp(t *testing.T) {
 	if _, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 		Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(dep.ID),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1190,9 +1193,11 @@ func TestMemStore_DeleteSnapshotsByID_BulkAndIdempotent(t *testing.T) {
 	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
 	snapA, _ := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depA.ID),
 	})
 	snapB, _ := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depB.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/b.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depB.ID),
 	})
 
 	n, err := m.DeleteSnapshotsByID(ctx, []string{snapA.ID, snapB.ID})
@@ -1223,6 +1228,7 @@ func TestMemStore_MarkAllSnapshotsStaleByFCVersion(t *testing.T) {
 		snap, _ := m.CreateSnapshot(ctx, Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 			Path: "/tmp/" + v + ".snap", FCVersion: v,
+			StorageKey: SnapMemKey(dep.ID),
 		})
 		return snap.ID
 	}
@@ -1257,9 +1263,11 @@ func TestMemStore_MarkOldSnapshotsStale(t *testing.T) {
 	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
 	snapA, _ := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depA.ID),
 	})
 	_, _ = m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depB.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/b.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depB.ID),
 	})
 
 	n, err := m.MarkOldSnapshotsStale(ctx, []string{snapA.ID})

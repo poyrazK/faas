@@ -1223,21 +1223,24 @@ func (s *PgStore) TouchInstancesLastSeen(ctx context.Context, touches []Instance
 // so imaged can ignore a duplicate emission; the rest of imaged treats the
 // first successful write as truth.
 func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, error) {
-	// Default the storage_key to the legacy sched.SnapshotMemKey form
-	// when the caller doesn't set one. This keeps the imageless test
-	// harnesses (which construct Snapshot{} literally) passing
-	// without forcing every fixture to know about storage_key. The
-	// production path (pkg/imaged/handler.go::handleSnapshotWritten)
-	// always populates it from the snapshot_written payload.
-	storageKey := snap.StorageKey
-	if storageKey == "" {
-		storageKey = "snap/" + snap.DeploymentID + "/mem"
+	// StorageKey is required. The migration's `NOT NULL DEFAULT ''`
+	// is a safety net for any path we miss, but the contract here is
+	// that the caller populates it explicitly (production: imaged
+	// copies it from the snapshot_written payload; tests: call
+	// sched.SnapshotMemKey(deploymentID) at the fixture's
+	// CreateSnapshot site — see pkg/sched/paths.go). An empty value
+	// used to silently default to the legacy-path form, which masked
+	// bugs in callers that forgot the field — that loophole is now
+	// closed. pkg/state can't import pkg/sched (cycle: sched →
+	// state), so the helper lives in sched and callers wire it.
+	if snap.StorageKey == "" {
+		return Snapshot{}, fmt.Errorf("state: CreateSnapshot: storage_key required (populate via sched.SnapshotMemKey at the call site)")
 	}
 	row := s.pool.QueryRow(ctx,
 		`insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, path, storage_key, stale)
 		 values ($1, $2, $3, $4, $5, $6, $7)
 		 returning id, deployment_id::text, fc_version, mem_bytes, disk_bytes, path, storage_key, stale, created_at`,
-		snap.DeploymentID, snap.FCVersion, snap.MemBytes, snap.DiskBytes, snap.Path, storageKey, snap.Stale)
+		snap.DeploymentID, snap.FCVersion, snap.MemBytes, snap.DiskBytes, snap.Path, snap.StorageKey, snap.Stale)
 	out, err := scanSnapshot(row)
 	if err != nil {
 		var pgErr *pgconn.PgError

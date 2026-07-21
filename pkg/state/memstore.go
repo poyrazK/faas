@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -1342,6 +1343,15 @@ func (m *MemStore) TouchInstancesLastSeen(_ context.Context, touches []InstanceT
 func (m *MemStore) CreateSnapshot(_ context.Context, snap Snapshot) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// StorageKey is required on both backends (see PgStore for the
+	// rationale). The in-memory store doesn't have a DB DEFAULT to
+	// fall back on, so the contract is enforced here as well —
+	// silently storing "" would propagate to the GC loop and have it
+	// Storage.Delete under an empty key (a no-op for every backend
+	// since none accept "").
+	if snap.StorageKey == "" {
+		return Snapshot{}, errors.New("state: MemStore.CreateSnapshot: storage_key required (populate via sched.SnapshotMemKey at the call site)")
+	}
 	if snap.ID == "" {
 		snap.ID = uuid.NewString()
 	}
@@ -2518,5 +2528,23 @@ func (m *MemStore) SetTerminalAtForTest(id string, terminalAt time.Time) {
 		ts := terminalAt
 		ins.TerminalAt = &ts
 		m.instances[id] = ins
+	}
+}
+
+// SetSnapshotStorageKeyForTest is the F-2 test seam: the engine's
+// Wake fallback for empty StorageKey (engine.go:251-254) needs a
+// pre-migration row shape. The MemStore's CreateSnapshot rejects
+// empty values by contract (F-1), so the only way to fabricate the
+// pre-migration shape is to mutate a stored row directly. Production
+// wiring does not need this — the migration's backfill UPDATE plus
+// the empty-key fallback in Wake cover the real transition.
+func (m *MemStore) SetSnapshotStorageKeyForTest(deploymentID, storageKey string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, s := range m.snapshots {
+		if s.DeploymentID == deploymentID {
+			m.snapshots[i].StorageKey = storageKey
+			return
+		}
 	}
 }

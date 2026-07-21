@@ -229,9 +229,9 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		haveSnap:  haveSnap,
 		snapID:    snap.ID,
 		snapVer:   snap.FCVersion,
-		// #96: canonical StorageBackend key for the mem blob. Read
-		// from the snap row (imaged stamped it from the
-		// snapshot_written payload). Empty for cold-boot paths.
+		// #96: snap row's canonical StorageBackend key (empty on
+		// cold-boot paths and pre-migration rows — Phase 3 handles
+		// both with a fallback).
 		snapKey: snap.StorageKey,
 		spec:    spec,
 	}

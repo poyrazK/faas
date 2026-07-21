@@ -33,9 +33,18 @@ alter table snapshots
 -- deployment row has a valid UUID (FK enforces it), so the concat
 -- is total. Empty-string rows only exist post-insert and have no
 -- deployment to compute from — the default already handles them.
+--
+-- The `created_at < now() - interval '1 second'` fence is a
+-- rerun-safety belt: if a re-applied migration interleaves with
+-- an in-flight imaged insert (e.g. a developer re-runs the
+-- migration during a local repro), the WHERE skips any row that
+-- was stamped in the last second. The 1s slack is harmless on a
+-- cold-boot path (snapshots are seconds old by the time anyone
+-- queries them) and rules out the overwrite race entirely.
 update snapshots
    set storage_key = 'snap/' || deployment_id::text || '/mem'
- where storage_key = '';
+ where storage_key = ''
+   and created_at < now() - interval '1 second';
 
 -- (No new index needed: storage_key is read together with deployment_id
 -- and the existing snapshots_deployment_idx covers the wake lookup.

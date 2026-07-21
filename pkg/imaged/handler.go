@@ -647,13 +647,9 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 		DeploymentID: p.DeploymentID,
 		FCVersion:    p.FCVersion, // pins restore compatibility (ADR-005)
 		Path:         p.MemPath,
-		// StorageKey is the canonical StorageBackend key (issue #96,
-		// ADR-025 axis 2). schedd already populated it in the
-		// snapshot_written payload; the row carries it forward so
-		// Wake reads it back instead of recomputing the legacy path.
-		StorageKey: p.StorageKey,
-		MemBytes:   p.MemBytes,
-		DiskBytes:  p.VMStateBytes,
+		StorageKey:   p.StorageKey, // see snapshotWrittenPayload.StorageKey
+		MemBytes:     p.MemBytes,
+		DiskBytes:    p.VMStateBytes,
 	}
 	if _, err := h.store.CreateSnapshot(ctx, snap); err != nil && !errors.Is(err, state.ErrConflict) {
 		return fmt.Errorf("imaged: create snapshot: %w", err)
