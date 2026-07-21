@@ -25,14 +25,28 @@ import (
 var ErrInsecureSecretPerms = errors.New("gatewayd: secret file mode permits more than owner read/write")
 
 // allowedSecretPerm reports whether perm is a safe mode for a token file.
-// The Hetzner DNS API token is operator-provisioned and used only by the
-// gatewayd process (running as root). The narrowest safe shape is owner-only
-// (0400 / 0600); we reject any bit set outside the owner's read/write —
-// group-readable is unnecessary, other-readable is a leak, and any exec /
-// setuid / setgid / sticky bit is the canonical privilege-escalation signal.
+// The Hetzner DNS API token is operator-provisioned and read by the
+// gatewayd process (running as faas:faas per the systemd unit). The
+// systemd unit gives the daemon no other capabilities, so the only safe
+// perms are owner-only OR owner+group-read with the file's group set to
+// the daemon's group (`faas`). We accept:
+//
+//	0400, 0440, 0600, 0640   — owner and optionally group read/write
+//
+// and reject everything else — other-readable is a leak, group-writable is
+// a privilege-escalation signal (any process running as faas could
+// overwrite the gateway's ACME credentials), and any exec / setuid /
+// setgid / sticky bit is the canonical privilege-escalation signal.
+//
+// The list is explicit (rather than a bitmask) because a bitmask cannot
+// distinguish "group-r allowed, group-w forbidden" — and group-w is the
+// canonical priv-esc signal we MUST close on.
 func allowedSecretPerm(perm os.FileMode) bool {
-	const ownerOnly = os.FileMode(0o600)
-	return perm&^ownerOnly == 0
+	switch perm {
+	case 0o400, 0o440, 0o600, 0o640:
+		return true
+	}
+	return false
 }
 
 // loadSecretFile reads path and returns its trimmed contents. Fails closed
