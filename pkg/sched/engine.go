@@ -285,16 +285,12 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		// row must already be gone too (otherwise re-read wouldn't
 		// fail).
 		e.ledger.Release(bootInput.insID)
-		destroyCtx, dcancel := context.WithTimeout(context.Background(), DestroyTimeout)
-		defer dcancel()
-		_ = e.vmm.Destroy(destroyCtx, bootInput.insID)
+		e.bestEffortDestroy(ctx, bootInput.insID)
 		return WakeResult{}, fmt.Errorf("sched: wake: re-read instance %s: %w", bootInput.insID, fresErr)
 	}
 	if fresh.State != string(bootInput.initState) {
 		e.ledger.Release(bootInput.insID)
-		destroyCtx, dcancel := context.WithTimeout(context.Background(), DestroyTimeout)
-		defer dcancel()
-		_ = e.vmm.Destroy(destroyCtx, bootInput.insID)
+		e.bestEffortDestroy(ctx, bootInput.insID)
 		e.log.Warn("wake: state stolen during boot, aborting",
 			"app", bootInput.appID, "instance", bootInput.insID,
 			"expected", bootInput.initState, "got", fresh.State)
@@ -305,9 +301,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		// Booted but unrecordable — destroy to avoid a resource leak,
 		// then fail. Best-effort with a hard ceiling: a hung
 		// Firecracker can't pin the Wake goroutine forever.
-		destroyCtx, dcancel := context.WithTimeout(context.Background(), DestroyTimeout)
-		defer dcancel()
-		_ = e.vmm.Destroy(destroyCtx, bootInput.insID)
+		e.bestEffortDestroy(ctx, bootInput.insID)
 		e.ledger.Release(bootInput.insID)
 		e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
 		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", err)
@@ -329,6 +323,24 @@ type bootInput struct {
 	snapID    string // empty when haveSnap is false
 	snapVer   string // empty when haveSnap is false
 	spec      AppSpec
+}
+
+// bestEffortDestroy issues a vmm.Destroy with a hard timeout using a
+// detached context. We deliberately use context.Background() rather
+// than the caller's ctx so a shutting-down caller (cancelled ctx) still
+// gets its destroy cleanup — the destroy is best-effort but must not
+// be skipped. The lint exemption lives once, here, instead of at every
+// call site; contextcheck considers the use-site a violation regardless
+// of comment placement.
+//
+// The ctx parameter is accepted to satisfy the contextcheck linter's
+// expectation that context-using functions take a parent context. We
+// deliberately discard it — see the Background() justification above.
+func (e *Engine) bestEffortDestroy(ctx context.Context, instanceID string) {
+	_ = ctx // see comment above
+	destroyCtx, cancel := context.WithTimeout(context.Background(), DestroyTimeout)
+	defer cancel()
+	_ = e.vmm.Destroy(destroyCtx, instanceID) //nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
 }
 
 // Prime boots a freshly-built deployment once, snapshots it, and parks it —
@@ -381,9 +393,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// detached context so a cancelled caller ctx doesn't make the
 		// destroy fire-and-forget (it would still need its own
 		// timeout).
-		destroyCtx, dcancel := context.WithTimeout(context.Background(), DestroyTimeout)
-		defer dcancel()
-		_ = e.vmm.Destroy(destroyCtx, ins.ID)
+		e.bestEffortDestroy(ctx, ins.ID)
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_record_runtime_failed")
 		return fmt.Errorf("sched: prime: record runtime: %w", err)
@@ -439,7 +449,7 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 	// cleanup.
 	destroyCtx, cancel := context.WithTimeout(context.Background(), DestroyTimeout)
 	defer cancel()
-	if err := e.vmm.Destroy(destroyCtx, instanceID); err != nil {
+	if err := e.vmm.Destroy(destroyCtx, instanceID); err != nil { //nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
 		return fmt.Errorf("sched: evict: destroy %s: %w", instanceID, err)
 	}
 	e.ledger.Release(instanceID)
@@ -719,7 +729,7 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 	// cancelled tick ctx doesn't cause us to skip the destroy.
 	destroyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := e.vmm.Destroy(destroyCtx, instanceID); err != nil {
+	if err := e.vmm.Destroy(destroyCtx, instanceID); err != nil { //nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
 		e.log.Warn("watchdog: destroy failed (best-effort)", "instance", instanceID, "reason", reason, "err", err)
 	}
 
