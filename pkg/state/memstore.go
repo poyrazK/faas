@@ -943,7 +943,7 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Stamp started_at on creation for every state (commit 3, mirrors
-	// the Postgres trigger in migration 00013). The MemStore previously
+	// the Postgres trigger in migration 00015). The MemStore previously
 	// only stamped it on "running" rows, which left watchdog tests
 	// fishing for NULLs on WAKING/COLD_BOOTING fixtures. Keeping that
 	// late stamp behaviour would force every fixture to call

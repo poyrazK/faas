@@ -767,7 +767,7 @@ func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 
 func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error) {
 	// started_at is stamped explicitly here in addition to the
-	// BEFORE INSERT trigger from migration 00013. The trigger is the
+	// BEFORE INSERT trigger from migration 00015. The trigger is the
 	// belt; this is the braces. Either alone works; both together
 	// make the contract obvious to anyone reading PgStore and prevent
 	// a future trigger drop from silently regressing the watchdog
@@ -895,7 +895,7 @@ func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) err
 // statement that writes the new state. schedd's snapshotAndPark calls
 // this when transitioning into SNAPSHOTTING — the §6.1 watchdog reads
 // parked_at on SNAPSHOTTING rows to compute "age of state", distinct
-// from started_at which is now stamped on creation (migration 00013).
+// from started_at which is now stamped on creation (migration 00015).
 func (s *PgStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error {
 	tag, err := s.pool.Exec(ctx,
 		`update instances set state = $2, parked_at = $3 where id = $1`,
@@ -912,16 +912,16 @@ func (s *PgStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, stat
 // ListInstancesByStatesOlderThan is the watchdog's lookup (spec §6.1).
 // Filters on state ∈ states and a state-aware "age" column:
 // started_at for WAKING / COLD_BOOTING (stamped on creation by the
-// trigger in migration 00013), parked_at for SNAPSHOTTING (stamped on
+// trigger in migration 00015), parked_at for SNAPSHOTTING (stamped on
 // entry into SNAPSHOTTING by UpdateInstanceStateWithTimestamp).
 //
 // The CASE shape is load-bearing — the original coalesce(started_at,
 // parked_at) predicate silently used parked_at for any row with NULL
 // started_at, which is true for every row that existed before
-// migration 00013 shipped. Such a row would compare against its
+// migration 00015 shipped. Such a row would compare against its
 // historical parked_at (often weeks old) and look stuck even though
 // it's normal. The partial index
-// instances_watchdog_state_idx (migration 00014) covers the state
+// instances_watchdog_state_idx (migration 00016) covers the state
 // predicate; the CASE comparison runs on the row payload.
 func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error) {
 	stateStrs := make([]string, len(states))

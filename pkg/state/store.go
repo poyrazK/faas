@@ -270,12 +270,12 @@ type Store interface {
 	// Returns rows currently in any of the given states whose
 	// "age timestamp" is strictly older than threshold. The age
 	// column is state-aware: started_at for WAKING/COLD_BOOTING
-	// (stamped on creation by migration 00013), parked_at for
+	// (stamped on creation by migration 00015), parked_at for
 	// SNAPSHOTTING (stamped on entry into that state by
 	// UpdateInstanceStateWithTimestamp). Implementations must NOT
-	// coalesce the two columns — pre-migration 00013 rows have
+	// coalesce the two columns — pre-migration 00015 rows have
 	// NULL started_at, and coalesce would silently use the stale
-	// parked_at. PgStore relies on migration 00014's partial index
+	// parked_at. PgStore relies on migration 00016's partial index
 	// for the state predicate.
 	ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
 	// SetInstanceRuntime records the per-instance identity vmmd allocated on
