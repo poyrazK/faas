@@ -793,8 +793,14 @@ func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 // --- instances --------------------------------------------------------------
 
 func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error) {
+	// started_at is stamped explicitly here in addition to the
+	// BEFORE INSERT trigger from migration 00015. The trigger is the
+	// belt; this is the braces. Either alone works; both together
+	// make the contract obvious to anyone reading PgStore and prevent
+	// a future trigger drop from silently regressing the watchdog
+	// (commit 3, spec §6.1).
 	row := s.pool.QueryRow(ctx,
-		`insert into instances (app_id, deployment_id, state, ram_mb) values ($1, $2, $3, $4)
+		`insert into instances (app_id, deployment_id, state, ram_mb, started_at) values ($1, $2, $3, $4, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at`,
 		appID, deploymentID, state, ramMB)
@@ -910,6 +916,57 @@ func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) err
 		return ErrNotFound
 	}
 	return nil
+}
+
+// UpdateInstanceStateWithTimestamp stamps parked_at on the same
+// statement that writes the new state. schedd's snapshotAndPark calls
+// this when transitioning into SNAPSHOTTING — the §6.1 watchdog reads
+// parked_at on SNAPSHOTTING rows to compute "age of state", distinct
+// from started_at which is now stamped on creation (migration 00015).
+func (s *PgStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances set state = $2, parked_at = $3 where id = $1`,
+		id, state, parkedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListInstancesByStatesOlderThan is the watchdog's lookup (spec §6.1).
+// Filters on state ∈ states and a state-aware "age" column:
+// started_at for WAKING / COLD_BOOTING (stamped on creation by the
+// trigger in migration 00015), parked_at for SNAPSHOTTING (stamped on
+// entry into SNAPSHOTTING by UpdateInstanceStateWithTimestamp).
+//
+// The CASE shape is load-bearing — the original coalesce(started_at,
+// parked_at) predicate silently used parked_at for any row with NULL
+// started_at, which is true for every row that existed before
+// migration 00015 shipped. Such a row would compare against its
+// historical parked_at (often weeks old) and look stuck even though
+// it's normal. The partial index
+// instances_watchdog_state_idx (migration 00016) covers the state
+// predicate; the CASE comparison runs on the row payload.
+func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	stateStrs := make([]string, len(states))
+	for i, s := range states {
+		stateStrs[i] = string(s)
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
+		 from instances
+		 where state = any($1)
+		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
+		stateStrs, threshold)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
 }
 
 func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error {

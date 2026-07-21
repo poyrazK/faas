@@ -34,6 +34,7 @@ type Loop struct {
 	gateway    GatewaySynth
 	now        func() time.Time
 	flowCounts FlowCounter
+	watchdog   *Watchdog // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -42,6 +43,16 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 		now:        time.Now,
 		flowCounts: noopFlowCounter{},
 	}
+}
+
+// WithWatchdog attaches the §6.1 watchdog (commit 3). Tests can skip
+// it by not calling this; the watchdog field stays nil and Run's
+// 4th ticker simply never fires a case. Production cmd/schedd wires
+// the real Watchdog from the existing engine deps so the watchdog
+// shares the same store / engine / clock as the rest of the loop.
+func (l *Loop) WithWatchdog(w *Watchdog) *Loop {
+	l.watchdog = w
+	return l
 }
 
 // WithGatewaySynth wires the gateway-internal RPC client the cron
@@ -104,6 +115,16 @@ func (l *Loop) Run(ctx context.Context) error {
 	defer reaperT.Stop()
 	cronT := time.NewTicker(60 * time.Second)
 	defer cronT.Stop()
+	// Watchdog ticker (commit 3, spec §6.1). 1s cadence matches the
+	// spec's "per-second" granularity for catching stuck rows before
+	// they pin a ledger reservation for the full 30s cold-boot
+	// budget. nil watchdog skips this ticker entirely so the test
+	// surface stays green without a watchdog dependency.
+	var watchdogT *time.Ticker
+	if l.watchdog != nil {
+		watchdogT = time.NewTicker(DefaultWatchdogInterval)
+		defer watchdogT.Stop()
+	}
 
 	for {
 		select {
@@ -118,8 +139,27 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runReaper(ctx)
 		case <-cronT.C:
 			l.runCronTick(ctx)
+		case <-watchdogTick(watchdogT):
+			l.runWatchdog(ctx)
 		}
 	}
+}
+
+// watchdogTick is a helper that turns a nil-ticker's channel into a
+// never-firing channel. It keeps the main select above free of
+// per-iteration nil checks.
+func watchdogTick(t *time.Ticker) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
+}
+
+// runWatchdog dispatches one sweep of the §6.1 watchdog. Exported as a
+// method so tests can drive a single tick without spinning up Run's
+// goroutine.
+func (l *Loop) runWatchdog(ctx context.Context) {
+	l.watchdog.sweepRuns(ctx)
 }
 
 // handleNotification decodes the JSON payload and applies the policy.

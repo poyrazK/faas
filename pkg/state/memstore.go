@@ -972,9 +972,20 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state string, ramMB int) (Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ins := Instance{ID: newID(), AppID: appID, DeploymentID: deploymentID, State: state, RAMMB: ramMB}
-	if state == "running" {
-		ins.StartedAt = time.Now()
+	// Stamp started_at on creation for every state (commit 3, mirrors
+	// the Postgres trigger in migration 00015). The MemStore previously
+	// only stamped it on "running" rows, which left watchdog tests
+	// fishing for NULLs on WAKING/COLD_BOOTING fixtures. Keeping that
+	// late stamp behaviour would force every fixture to call
+	// SetInstanceRuntime first, which makes the watchdog tests
+	// describe a state-machine shape that no production code reaches.
+	ins := Instance{
+		ID:           newID(),
+		AppID:        appID,
+		DeploymentID: deploymentID,
+		State:        state,
+		RAMMB:        ramMB,
+		StartedAt:    time.Now(),
 	}
 	m.instances[ins.ID] = ins
 	return ins, nil
@@ -1082,6 +1093,52 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 	ins.State = state
 	m.instances[id] = ins
 	return nil
+}
+
+// UpdateInstanceStateWithTimestamp mirrors PgStore's variant. Mirrors
+// the §6.1 watchdog's need to know "time of entry into current
+// state" for SNAPSHOTTING rows; parked_at is the column the watchdog
+// reads on that state.
+func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state string, parkedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return ErrNotFound
+	}
+	ins.State = state
+	ins.ParkedAt = parkedAt
+	m.instances[id] = ins
+	return nil
+}
+
+// ListInstancesByStatesOlderThan is the watchdog's lookup (commit 3,
+// spec §6.1). Mirrors PgStore: coalesce started_at / parked_at on the
+// age comparison.
+func (m *MemStore) ListInstancesByStatesOlderThan(_ context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wanted := make(map[State]bool, len(states))
+	for _, s := range states {
+		wanted[s] = true
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if !wanted[State(ins.State)] {
+			continue
+		}
+		age := ins.StartedAt
+		if State(ins.State) == StateSnapshotting {
+			age = ins.ParkedAt
+		}
+		if age.IsZero() {
+			continue
+		}
+		if age.Before(threshold) {
+			out = append(out, ins)
+		}
+	}
+	return out, nil
 }
 
 func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP string, guestUID int) error {
@@ -1193,12 +1250,51 @@ func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error
 
 // --- Audit ------------------------------------------------------------------
 
+// parseSubjectID accepts either a canonical UUID (with hyphens) or the
+// 32-char hex form that MemStore's newID() emits, and returns the
+// canonical *uuid.UUID either way. Returns nil on any parse failure so
+// callers can treat "unparseable" the same as "no subject" (which is
+// what the audit-log filter expects: no row would have produced a
+// garbage ID). The fix for the silent-drop bug surfaced by the audit-log
+// PR's tests: engine.go hands us hex IDs (newID output) and uuid.Parse
+// rejects them, so Subject stayed nil even though we said we set it.
+func parseSubjectID(s string) *uuid.UUID {
+	if s == "" {
+		return nil
+	}
+	if u, err := uuid.Parse(s); err == nil {
+		return &u
+	}
+	if len(s) == 32 {
+		if b, err := hex.DecodeString(s); err == nil {
+			u := uuid.UUID(b)
+			return &u
+		}
+	}
+	return nil
+}
+
+// AppendEvent (commit 4) fixes two pre-existing bugs that the audit-log
+// PR surfaced. Before: the row's Subject pointer was dropped on the
+// floor (line 1226-1227 had a dead type-assertion placeholder and
+// the Event literal never set Subject), so ListEvents could never
+// filter by subject. After: parse the string into a *uuid.UUID and
+// copy Data so a caller can reuse the byte slice. The hex form is
+// accepted too (see parseSubjectID).
 func (m *MemStore) AppendEvent(_ context.Context, actor, kind string, subject *string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var subj *interface{ ID() string }
-	_ = subj
-	e := Event{At: time.Now(), Actor: actor, Kind: kind, Data: append([]byte(nil), data...)}
+	var subj *uuid.UUID
+	if subject != nil {
+		subj = parseSubjectID(*subject)
+	}
+	e := Event{
+		At:      time.Now(),
+		Actor:   actor,
+		Kind:    kind,
+		Subject: subj,
+		Data:    append([]byte(nil), data...),
+	}
 	m.events = append(m.events, e)
 	return nil
 }
@@ -1206,10 +1302,22 @@ func (m *MemStore) AppendEvent(_ context.Context, actor, kind string, subject *s
 func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var subj *uuid.UUID
+	if subject != "" {
+		subj = parseSubjectID(subject)
+		if subj == nil {
+			// Unparseable filter — no row would have produced it,
+			// return empty rather than silently matching everything.
+			return nil, nil
+		}
+	}
 	var out []Event
 	for i := len(m.events) - 1; i >= 0 && (limit <= 0 || len(out) < limit); i-- {
 		e := m.events[i]
-		if subject == "" || (e.Subject != nil && false) {
+		// Match either: no subject filter, OR the row's Subject
+		// pointer is non-nil and equals the filter. The pre-fix
+		// && false made this branch dead; tests caught it.
+		if subj == nil || (e.Subject != nil && *e.Subject == *subj) {
 			out = append(out, e)
 		}
 	}
@@ -1922,3 +2030,30 @@ func (m *MemStore) SetPastDueAtForTest(id string, at time.Time) error {
 
 // compile-time check that MemStore satisfies Store.
 var _ Store = (*MemStore)(nil)
+
+// BackdateForTest rewinds the row's started_at to the supplied
+// absolute timestamp. Used by the §6.1 watchdog tests in pkg/sched
+// to fabricate a stuck-WAKING/COLD_BOOTING row whose age exceeds
+// the budget. Production wiring does not need this — Postgres
+// timestamps are real.
+func (m *MemStore) BackdateForTest(id string, startedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ins.StartedAt = startedAt
+		m.instances[id] = ins
+	}
+}
+
+// SetParkedAtForTest stamps the row's parked_at. Used by the
+// watchdog tests to fabricate a stuck-SNAPSHOTTING row — the
+// watchdog anchors SNAPSHOTTING age on parked_at, not started_at,
+// because started_at is creation time.
+func (m *MemStore) SetParkedAtForTest(id string, parkedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ins.ParkedAt = parkedAt
+		m.instances[id] = ins
+	}
+}
