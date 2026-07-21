@@ -397,24 +397,35 @@ func TestRun_Healthz_StaleReturns503(t *testing.T) {
 	}
 }
 
-// recordingStripe is the cmd/meterd-side test fake for the Stripe
-// pusher. Same shape as the meterd pkg's recordingStripe — exposed
-// here so the daemon wiring is exercised end-to-end. Returns nil
-// from PushUsageRecord so the pusher's "ok" path fires and the
-// labels surface.
-type recordingStripe struct {
+// meterRec is the cmd/meterd-side test fake for the Stripe pusher.
+// Renamed from `recordingStripe` because it deliberately differs from
+// the pkg/meter-side recordingStripe in pusher_shadow_test.go:
+//
+//   - pkg/meter's fake records full (acct, hour, gb) tuples because
+//     TestPushHour_Shadow24h asserts the GB-h math against a synthetic
+//     dataset.
+//   - cmd/meterd's fake only counts calls because
+//     TestRun_MetricsAddr_StripePushLabels asserts the /metrics scrape
+//     shape, not the push math.
+//
+// Lifting either into a shared pkg/metertest would over-fit the
+// other (or grow into a kitchen-sink fake). Keeping them as adjacent
+// single-purpose helpers preserves locality: each test reads its fake
+// next to its assertions, and changes to one fake don't drag the
+// other along.
+type meterRec struct {
 	mu    sync.Mutex
 	calls int
 }
 
-func (r *recordingStripe) PushUsageRecord(context.Context, state.Account, time.Time, float64) error {
+func (r *meterRec) PushUsageRecord(context.Context, state.Account, time.Time, float64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls++
 	return nil
 }
 
-func (r *recordingStripe) Calls() int {
+func (r *meterRec) Calls() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.calls
@@ -422,12 +433,12 @@ func (r *recordingStripe) Calls() int {
 
 // TestRun_MetricsAddr_StripePushLabels — the §14 M7 dashboard
 // acceptance for the new wire.OpsMetrics seam. Drives the meterd
-// stripe-tick at sub-second cadence against an injected
-// recordingStripe, then asserts the /metrics body carries the
-// per-push counter + histogram with the canonical code label
-// `result="ok"`. With nopStripe (the default) the histogram's
-// observation never lands; this test wires the recording stub via
-// runDeps.stripe to exercise the production code path.
+// stripe-tick at sub-second cadence against an injected meterRec,
+// then asserts the /metrics body carries the per-push counter +
+// histogram with the canonical code label `result="ok"`. With
+// nopStripe (the default) the histogram's observation never lands;
+// this test wires the recording stub via runDeps.stripe to exercise
+// the production code path.
 func TestRun_MetricsAddr_StripePushLabels(t *testing.T) {
 	dir := shortDir(t)
 	cfgPath := writeMeterdConfig(t, dir, "127.0.0.1:0")
@@ -443,7 +454,7 @@ func TestRun_MetricsAddr_StripePushLabels(t *testing.T) {
 		captured = h
 		return &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}, nil
 	}
-	rec := &recordingStripe{}
+	rec := &meterRec{}
 	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, subSecondIntervalsEnv())
 	deps.stripe = rec // override nopStripe; pre-populated field on runDeps
 

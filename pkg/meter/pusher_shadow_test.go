@@ -2,6 +2,8 @@ package meter_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +11,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
+	stripe "github.com/stripe/stripe-go"
 )
 
 // newAppWithSlug is the parameterized sibling of newApp for tests
@@ -44,9 +48,17 @@ func newAppWithSlug(t *testing.T, ctx context.Context, s *state.MemStore, accoun
 // (acct.ID, hour, gb) the pusher passes through, so the test can
 // assert the exact value the SDK would see against the synthetic
 // dataset's hand-computed number.
+//
+// err is an optional return-error knob — when set, every PushUsageRecord
+// returns it (wrapped or unwrapped) before recording the call. The
+// TestPushHour_RecordsStripeError test sets err to a *stripe.Error so
+// the classifier seam (stripex.ClassifyPushError) is exercised through
+// the pusher rather than directly. When err is nil the fake returns
+// nil — same behavior as the production stripex Client on success.
 type recordingStripe struct {
 	mu    sync.Mutex
 	calls []recordedCall
+	err   error
 }
 
 type recordedCall struct {
@@ -59,7 +71,7 @@ func (r *recordingStripe) PushUsageRecord(_ context.Context, acct state.Account,
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, recordedCall{AccountID: acct.ID, Hour: hour, GBHours: gbHours})
-	return nil
+	return r.err
 }
 
 func (r *recordingStripe) Calls() []recordedCall {
@@ -67,6 +79,47 @@ func (r *recordingStripe) Calls() []recordedCall {
 	defer r.mu.Unlock()
 	out := make([]recordedCall, len(r.calls))
 	copy(out, r.calls)
+	return out
+}
+
+// testOpsMetrics returns a fresh pkg/wire.OpsMetrics registry the test
+// can scrape for the stripe-push counter. Lives here (not as a
+// package-global) so two tests registering "_stripe_push_total" don't
+// collide on the global Prometheus default registry.
+func testOpsMetrics(t *testing.T) *wire.OpsMetrics {
+	t.Helper()
+	return wire.NewOpsMetrics("meter_test_" + t.Name())
+}
+
+// scrapeOpsTotal pulls the `_ops_total` counter family out of the test
+// registry as a map keyed by `op|code`. Used by TestPushHour_RecordsStripeError
+// to assert the classifier→wire seam produced the right label without
+// standing up an HTTP handler — the wire package's underlying
+// registry is exposed for exactly this in-process test style.
+func scrapeOpsTotal(t *testing.T, m *wire.OpsMetrics) map[string]int {
+	t.Helper()
+	families, err := m.Registry().Gather()
+	if err != nil {
+		t.Fatalf("registry gather: %v", err)
+	}
+	out := make(map[string]int)
+	for _, fam := range families {
+		if !strings.HasSuffix(fam.GetName(), "_ops_total") {
+			continue
+		}
+		for _, mv := range fam.GetMetric() {
+			var op, code string
+			for _, l := range mv.GetLabel() {
+				switch l.GetName() {
+				case "op":
+					op = l.GetValue()
+				case "code":
+					code = l.GetValue()
+				}
+			}
+			out[op+"|"+code] = int(mv.GetCounter().GetValue())
+		}
+	}
 	return out
 }
 
@@ -83,15 +136,19 @@ func (r *recordingStripe) Calls() []recordedCall {
 // acceptance scenario mirrors that cadence exactly. Each call must
 // see its own hour's worth of usage rows.
 //
-// Sample layout: starting at HH:00 and stepping `now` BEFORE each
-// SampleAndRoll, the 1440 samples land at minutes [HH+1, HH+24h+1].
+// Sample layout: starting at T0 (top of hour) and stepping `now`
+// AFTER each SampleAndRoll, the 1440 samples land at minutes
+// [T0, T0+23h+59min] = [T0, T0+24h). That spans exactly 24 distinct
+// hour-buckets from [T0, T0+1h) through [T0+23h, T0+24h) with no
+// spillover, and 24 PushHour ticks at `now = T0+1h, T0+2h, …,
+// T0+24h` cover them one-for-one — 60 samples per bucket.
 func TestPushHour_Shadow24h(t *testing.T) {
 	t.Parallel()
 	s := state.NewMemStore()
 	ctx := context.Background()
 
-	now := time.Date(2026, 7, 17, 13, 0, 0, 0, time.UTC)
-	t0 := now
+	t0 := time.Date(2026, 7, 17, 13, 0, 0, 0, time.UTC)
+	now := t0
 	clock := func() time.Time { return now }
 
 	// Hobby plan: free-tier hard-stop is gated behind 5 GB-h on the
@@ -102,26 +159,26 @@ func TestPushHour_Shadow24h(t *testing.T) {
 	makeLiveInstance(t, ctx, s, app.ID, acct.ID, 256)
 
 	sampler := meter.NewSampler(s, clock)
-	const minutesIn24h = 24 * 60
+	const hoursIn24h = 24
+	const minutesIn24h = hoursIn24h * 60
 	for i := 0; i < minutesIn24h; i++ {
-		now = now.Add(time.Minute)
 		if _, err := sampler.SampleAndRoll(ctx); err != nil {
 			t.Fatalf("sample %d: %v", i, err)
 		}
+		now = now.Add(time.Minute)
 	}
-	// After 1440 minute-steps `now` = T0 + 24h + 1min. The samples
-	// landed at minutes [T0+1min, T0+24h+1min], spanning 25 distinct
-	// hour-buckets from [T0, T0+1h) through [T0+24h, T0+25h). We need
-	// 25 PushHour ticks to cover them — one tick per bucket. The
-	// PushHour at "now = T0+1h" covers [T0, T0+1h) (the first bucket);
-	// at "now = T0+25h" covers [T0+24h, T0+25h) (the last).
-	const hoursToPush = 25
+	// After 1440 minute-steps `now` = T0 + 24h. The samples landed at
+	// minutes [T0, T0+23h+59min] = [T0, T0+24h), spanning exactly 24
+	// hour-buckets from [T0, T0+1h) through [T0+23h, T0+24h). The
+	// PushHour at "now = T0+1h" covers [T0, T0+1h) (the first
+	// bucket); at "now = T0+24h" covers [T0+23h, T0+24h) (the last).
+	const hoursToPush = hoursIn24h
 
 	rec := &recordingStripe{}
 	pusher := meter.NewPusher(s, rec, discardLog(), clock, nil)
 
 	// pin `now` to the top of the hour after the first sample. The
-	// sample loop's first sample was at T0+1min, so its hour bucket is
+	// sample loop's first sample was at T0, so its hour bucket is
 	// [T0, T0+1h) — PushHour at T0+1h covers it.
 	now = t0.Add(time.Hour)
 	for h := 0; h < hoursToPush; h++ {
@@ -233,5 +290,84 @@ func TestPushHour_SkipsFreeAndSuspended(t *testing.T) {
 	}
 	if got := len(rec.Calls()); got != 0 {
 		t.Errorf("recorded calls = %d, want 0 (Free + suspended both skip)", got)
+	}
+}
+
+// TestPushHour_RecordsStripeError is the classifier-seam integration
+// test. The cmd/meterd daemon-subprocess test exercises the same
+// code path, but only when Postgres is available; this test pins the
+// pusher-to-wire contract in-process so the seam can't drift without
+// CI catching it.
+//
+// The fake StripePusher returns a wrapped *stripe.Error{Type:
+// ErrorTypeCard} on every call — the canonical "customer's card
+// declined" failure. The pusher must:
+//  1. still attempt the SDK call (recordingStripe saw the call),
+//  2. invoke stripex.ClassifyPushError on the returned error,
+//  3. feed the resulting "card-error" code into ops.ObserveCode so
+//     `meterd_ops_total{op="stripe",code="card-error"}` increments.
+//
+// Why Card and not RateLimit: card-error is the most operator-
+// actionable bucket (route to customer's billing UI, not a meterd
+// backoff). The rate-limit path is structurally identical and covered
+// by the stripex unit tests at pkg/stripex/usage_test.go.
+func TestPushHour_RecordsStripeError(t *testing.T) {
+	t.Parallel()
+	s := state.NewMemStore()
+	ctx := context.Background()
+
+	t0 := time.Date(2026, 7, 17, 13, 0, 0, 0, time.UTC)
+	now := t0
+	clock := func() time.Time { return now }
+
+	acct := makeAccount(t, ctx, s, api.PlanHobby)
+	app := newApp(t, ctx, s, acct.ID)
+	makeLiveInstance(t, ctx, s, app.ID, acct.ID, 256)
+
+	// One hour of sampling produces exactly one billable (acct, hour)
+	// pair — the simplest setup where PushHour can attempt a single
+	// SDK call.
+	sampler := meter.NewSampler(s, clock)
+	for i := 0; i < 60; i++ {
+		if _, err := sampler.SampleAndRoll(ctx); err != nil {
+			t.Fatalf("sample %d: %v", i, err)
+		}
+		now = now.Add(time.Minute)
+	}
+	// After 60 minute-steps now = T0 + 1h. HourWindow(T0+1h) returns
+	// [T0, T0+1h) — exactly the span the 60 samples landed in.
+	// No further advance: pushing the clock past T0+1h would shift the
+	// window into [T0+1h, T0+2h) and find no samples.
+
+	rec := &recordingStripe{
+		err: fmt.Errorf("stripex: UsageRecords.New account %s hour %s: %w",
+			acct.ID, now.UTC().Format(time.RFC3339),
+			&stripe.Error{Type: stripe.ErrorTypeCard, HTTPStatusCode: 402}),
+	}
+	ops := testOpsMetrics(t)
+	pusher := meter.NewPusher(s, rec, discardLog(), clock, ops)
+
+	pushed, err := pusher.PushHour(ctx)
+	if err != nil {
+		t.Fatalf("PushHour returned aggregate error: %v (per-account errors must not surface)", err)
+	}
+	if pushed != 0 {
+		t.Errorf("pushed = %d, want 0 (Stripe returned an error → push did not complete)", pushed)
+	}
+	if got := len(rec.Calls()); got != 1 {
+		t.Fatalf("recorded calls = %d, want 1 (the pusher must still attempt the SDK call before classifying)", got)
+	}
+
+	// Scrape the test registry directly — the wire package exposes
+	// the underlying registry so tests can assert metric shape without
+	// scraping via HTTP. The contract pinned here is:
+	//   meterd_ops_total{op="stripe",code="card-error"} = 1
+	// The loop-tick path uses code="ok"|"err" only — the per-push
+	// classification feeds into the same `ops` counter, but here we
+	// observe only the push itself (no Loop wrapping), so the counter
+	// should land at 1 with the classified label.
+	body := scrapeOpsTotal(t, ops)
+	if got := body[`stripe|card-error`]; got != 1 {
+		t.Errorf("ops_total{op=stripe,code=card-error} = %d, want 1 (classifier seam must feed the wire counter)", got)
 	}
 }
