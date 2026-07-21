@@ -59,19 +59,11 @@ jobs:
       - name: Upload binaries to temporary directory
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            root@${{ secrets.DO_HOST }} "mkdir -p /opt/faas/bin/deploy-tmp /opt/faas/bin/deploy-tmp/migrations"
+            root@${{ secrets.DO_HOST }} "mkdir -p /opt/faas/bin/deploy-tmp"
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             bin/apid bin/schedd bin/gatewayd bin/imaged bin/meterd \
             bin/githubd bin/faas bin/migrate \
             root@${{ secrets.DO_HOST }}:/opt/faas/bin/deploy-tmp/
-          # Also ship migrations/*.sql so the v14/v19 prod backfill
-          # (see 'Install binaries, run migrations & restart services')
-          # can `psql -f` the same SQL that's embedded in the binary.
-          # TODO(remove-once-prod-clean): drop this scp once the
-          # backfill heredoc below is gone.
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            migrations/*.sql \
-            root@${{ secrets.DO_HOST }}:/opt/faas/bin/deploy-tmp/migrations/
 
       - name: Install binaries, run migrations & restart services
         run: |
@@ -83,41 +75,6 @@ jobs:
           for bin in apid schedd gatewayd imaged meterd githubd faas migrate; do
             install -m 0755 /opt/faas/bin/deploy-tmp/$bin /opt/faas/bin/$bin
           done
-
-          # TODO(remove-once-prod-clean): backfill slots v14 + v19 that
-          # prod's goose_db_version is missing (PR #103, follow-up to
-          # PR #102's merge). PR #83 era left prod at v13 -> v15
-          # without a v14 row; PR #102 renumbered 00020_gdpr_requests.sql
-          # -> 00019_gdpr_requests.sql so prod now also lacks v19. Both
-          # SQL files are idempotent (CREATE TABLE IF NOT EXISTS /
-          # CREATE INDEX IF NOT EXISTS), and the version-row INSERTs
-          # use ON CONFLICT DO NOTHING, so re-running is safe. Once
-          # an operator confirms prod has rows for v14 AND v19, every
-          # EXISTS check below is a no-op — remove this block and
-          # the matching migrations/*.sql scp above.
-          backfill_slot() {
-            local version="$1" sql_file="$2"
-            local present
-            present=$(su - faas -s /bin/bash -c \
-              "psql -At -d faas -c \"SELECT EXISTS (SELECT 1 FROM goose_db_version WHERE version_id = ${version})\"" \
-              2>/dev/null) || present=""
-            if [ "$present" = "t" ]; then
-              echo "✓ v${version} already recorded, skipping"
-              return 0
-            fi
-            echo "→ Backfilling v${version} (${sql_file##*/})"
-            su - faas -s /bin/bash -c \
-              "psql -v ON_ERROR_STOP=1 -d faas -f ${sql_file}"
-            su - faas -s /bin/bash -c \
-              "psql -v ON_ERROR_STOP=1 -d faas -c \"
-                 INSERT INTO goose_db_version (version_id, is_applied)
-                 VALUES (${version}, true) ON CONFLICT DO NOTHING;\""
-            echo "✓ v${version} backfilled"
-          }
-          backfill_slot 14 /opt/faas/bin/deploy-tmp/migrations/00014_cli_auth_codes.sql
-          backfill_slot 19 /opt/faas/bin/deploy-tmp/migrations/00019_gdpr_requests.sql
-          # END TODO(remove-once-prod-clean)
-
           rm -rf /opt/faas/bin/deploy-tmp
 
           # Run pending migrations as faas user.
