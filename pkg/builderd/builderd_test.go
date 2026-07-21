@@ -184,7 +184,7 @@ func TestProcessOne_OOMExitClassified(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "src.tar.gz")
 	makeTarballWithName(t, src, []string{"package.json"})
 
-	buildID, _, _ := seedDeployment(t, store, src)
+	buildID, depID, _ := seedDeployment(t, store, src)
 	fvm := &fakeVM{out: BuildOutcome{OCIImage: "/dev/null", ExitCode: 137, FailureClass: "FailureOOM"}} // guest-init captures this
 	notif := &fakeNotifier{}
 	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -199,6 +199,73 @@ func TestProcessOne_OOMExitClassified(t *testing.T) {
 	}
 	if build.FailureClass != state.FailureOOM {
 		t.Errorf("failure_class = %s, want oom", build.FailureClass)
+	}
+	// M6 §9.2 closure: a failed build must also flip the deployment row so
+	// the dashboard doesn't leave it stuck in DeployBuilding forever.
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.Status != state.DeployFailed {
+		t.Errorf("deployment status = %s, want %s", dep.Status, state.DeployFailed)
+	}
+	if !contains(dep.Error, "build exited 137") {
+		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "build exited 137")
+	}
+}
+
+// TestProcessOne_FrameworkDetectFailsFlipsDeployment covers the user_error
+// path in markFailed — every failure class has to propagate to the owning
+// deployment so the dashboard reflects reality, not just the build row.
+func TestProcessOne_FrameworkDetectFailsFlipsDeployment(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	// No package.json, no Dockerfile, no requirements — detector errors
+	// with user_error (this path pre-dates the VM spawn).
+	makeTarballWithName(t, src, []string{"README.md"})
+
+	buildID, depID, _ := seedDeployment(t, store, src)
+	notif := &fakeNotifier{}
+	b := New(store, notif, nil, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	_, err := b.ProcessOne(context.Background(), buildID)
+	if err == nil {
+		t.Fatal("expected detector failure")
+	}
+	build, _ := store.BuildByID(context.Background(), buildID)
+	if build.FailureClass != state.FailureUserError {
+		t.Errorf("build failure_class = %s, want %s", build.FailureClass, state.FailureUserError)
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.Status != state.DeployFailed {
+		t.Errorf("deployment status = %s, want %s", dep.Status, state.DeployFailed)
+	}
+	if !contains(dep.Error, "framework detect") {
+		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "framework detect")
+	}
+}
+
+// TestProcessOne_VMSpawnErrorFlipsDeployment is the infra-failure path —
+// builderd couldn't even reach the VM. The deployment must still flip to
+// DeployFailed so the customer's next deploy doesn't get blocked waiting on
+// a DeployBuilding row.
+func TestProcessOne_VMSpawnErrorFlipsDeployment(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+
+	buildID, depID, _ := seedDeployment(t, store, src)
+	fvm := &fakeVM{spawnErr: errors.New("vmmd socket dead")}
+	notif := &fakeNotifier{}
+	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	_, err := b.ProcessOne(context.Background(), buildID)
+	if err == nil {
+		t.Fatal("expected spawn error")
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.Status != state.DeployFailed {
+		t.Errorf("deployment status = %s, want %s", dep.Status, state.DeployFailed)
+	}
+	if !contains(dep.Error, "vm spawn") {
+		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "vm spawn")
 	}
 }
 
