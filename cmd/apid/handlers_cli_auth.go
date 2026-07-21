@@ -231,7 +231,12 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	if errors.Is(err, state.ErrNotFound) {
 		acct, err = h.srv.store.CreateAccount(r.Context(), email, api.PlanFree)
 		if err != nil {
-			h.log.Error("cli_auth.create_account", "err", err, "account", acct.ID)
+			// Drop account attr: the err already names the unique-key
+			// race (or whatever broke), and acct.ID on the error
+			// path is the zero value anyway. Avoids CodeQL
+			// go/log-injection false-positive where the taint engine
+			// follows email through CreateAccount into acct.ID.
+			h.log.Error("cli_auth.create_account", "err", err)
 			h.renderCliAuthError(w, "Could not sign you up", "Please try again.")
 			return
 		}
