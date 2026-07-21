@@ -10,6 +10,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -234,6 +235,12 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	}
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 	nc.EgressMbit = req.EgressMbit
+	// Spec §7 conntrack cap (ADR-018 deferral). Platform-wide constant;
+	// not propagated through vmmd gRPC because every instance sees the
+	// same value (the failure mode is host-table exhaustion, shared).
+	// netns.Config omits the rule when ConntrackCap <= 0 so a vmmd that
+	// hasn't been rebuilt still wakes cleanly.
+	nc.ConntrackCap = api.DefaultConntrackCap
 
 	// Any failure past this point must fully clean up.
 	defer func() {
