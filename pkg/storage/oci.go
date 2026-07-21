@@ -476,9 +476,9 @@ func (o *OCIRegistryStorageBackend) List(ctx context.Context, prefix string) ([]
 	}
 	repos := o.reposForPrefix(prefix)
 	var (
-		keys        []string
-		errs        []error
-		anySuccess  bool
+		keys       []string
+		errs       []error
+		anySuccess bool
 	)
 	for _, repo := range repos {
 		tags, err := o.fetchTags(ctx, repo)
