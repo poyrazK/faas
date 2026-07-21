@@ -294,17 +294,17 @@ func TestPlan_KernelKey(t *testing.T) {
 func TestPlan_InvalidKeys(t *testing.T) {
 	o := &OCIRegistryStorageBackend{prefix: "faas"}
 	tests := []string{
-		"",                              // empty
-		"apps/",                         // apps without slug
-		"apps/slug/",                    // apps without dep
-		"apps/slug/dep",                 // missing .ext4
-		"apps/slug/dep.tar.gz",          // wrong extension
-		"snap/abc/mem",                  // non-hex dep
-		"snap/abcd1234/bogus",           // wrong segment
+		"",                               // empty
+		"apps/",                          // apps without slug
+		"apps/slug/",                     // apps without dep
+		"apps/slug/dep",                  // missing .ext4
+		"apps/slug/dep.tar.gz",           // wrong extension
+		"snap/abc/mem",                   // non-hex dep
+		"snap/abcd1234/bogus",            // wrong segment
 		"base/runner.ext4.digest.digest", // double-suffix
-		"layers/abc.txt",                // wrong extension
-		"unknown/foo/bar",               // unknown namespace
-		"apps/slug!/dep.ext4",           // bang is not in tag charset
+		"layers/abc.txt",                 // wrong extension
+		"unknown/foo/bar",                // unknown namespace
+		"apps/slug!/dep.ext4",            // bang is not in tag charset
 	}
 	for _, k := range tests {
 		t.Run(k, func(t *testing.T) {

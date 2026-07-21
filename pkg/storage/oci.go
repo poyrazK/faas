@@ -79,7 +79,7 @@ type cachedToken struct {
 
 // Compile-time asserts.
 var (
-	_ StorageBackend     = (*OCIRegistryStorageBackend)(nil)
+	_ StorageBackend      = (*OCIRegistryStorageBackend)(nil)
 	_ LocalArtifactLister = (*OCIRegistryStorageBackend)(nil)
 )
 
