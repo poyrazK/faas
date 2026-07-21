@@ -76,6 +76,15 @@ type StorageBackend interface {
 
 ---
 
+## Future Scaling & Multi-Node Orchestration
+
+This decoupling directly unlocks horizontal scaling of the compute layer:
+1. **Multi-Node Scheduling:** `schedd` will be upgraded from a single-box allocator to a multi-node scheduler. It will track the capacity and resources (vCPU, memory headroom, slot allocations) of all registered compute nodes, dispatching wake and create commands to the node selected by its placement algorithm.
+2. **Cross-Node Routing:** The routing registry will map active instances to their host compute node's private IP. When `gatewayd` receives a request, it resolves the destination to the correct remote compute node IP and routes traffic across the private overlay network.
+3. **Stateless Compute Nodes:** Because the filesystem is decoupled via the `StorageBackend` abstraction, compute nodes do not hold persistent customer state. They act as stateless execution runtimes that pull image layers on-demand, allowing new dedicated servers to be added to the cluster instantly.
+
+---
+
 ## Rejected Alternatives
 
 - **Always TCP (remove UNIX socket support):**
