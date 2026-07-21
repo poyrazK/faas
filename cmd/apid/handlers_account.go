@@ -201,6 +201,11 @@ func gatherExport(ctx context.Context, s *server, acct state.Account, includeSec
 	// slice to map each build's DeploymentID back to its AppID
 	// (BuildExportResponse.AppID was previously zeroed because builds
 	// have no AppID column of their own).
+	// FIXME: pagination — 1000 is a placeholder. A real customer with
+	// > 1000 deployments gets a truncated bundle. Plan is: switch this
+	// to a windowed loop keyed on CreatedAt + ID once the export spans
+	// pages, and surface a "truncated: bool" in the bundle envelope so
+	// the dashboard can show a notice.
 	depRows, err := s.store.ListDeploymentsForAccount(ctx, acct.ID, time.Time{}, 1000)
 	if err != nil {
 		return api.AccountExportResponse{}, err
