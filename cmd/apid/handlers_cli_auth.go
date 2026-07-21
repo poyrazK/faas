@@ -231,16 +231,13 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	if errors.Is(err, state.ErrNotFound) {
 		acct, err = h.srv.store.CreateAccount(r.Context(), email, api.PlanFree)
 		if err != nil {
-			safe := strings.NewReplacer("\n", "", "\r", "").Replace(email)
-			h.log.Error("cli_auth.create_account", "err", err, "email", safe) // codeql[go/log-injection] false-positive: NewReplacer is in CodeQL's sanitizer model and email is bounded by looksLikeEmail upstream.
+			h.log.Error("cli_auth.create_account", "err", err, "account", acct.ID)
 			h.renderCliAuthError(w, "Could not sign you up", "Please try again.")
 			return
 		}
-		safe := strings.NewReplacer("\n", "", "\r", "").Replace(email)
-		h.log.Info("cli_auth.auto_created_account", // codeql[go/log-injection] false-positive: see rationale above.
+		h.log.Info("cli_auth.auto_created_account",
 			"event", api.EventCliAuthAutoCreated,
-			"account", acct.ID,
-			"email", safe)
+			"account", acct.ID)
 	} else if err != nil {
 		h.log.Error("cli_auth.account_by_email", "err", err)
 		http.Error(w, "internal", http.StatusInternalServerError)
