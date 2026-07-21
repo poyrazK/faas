@@ -339,6 +339,15 @@ type Store interface {
 	// entered current state"), so the engine must stamp it on entry.
 	// Non-SNAPSHOTTING transitions should still use UpdateInstanceState.
 	UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error
+	// UpdateInstanceStateToTerminal writes state AND stamps terminal_at
+	// on the same UPDATE (PR #74, spec §17 follow-up). terminal_at is
+	// the dedicated retention anchor the daily sweep (pkg/sched.Retention)
+	// reads; started_at means "row creation" and parked_at is overloaded
+	// (also means "entered PARKED"), so neither is correct for a STOPPED
+	// row whose vmmd boot succeeded days earlier. Engine.transition
+	// routes here when the target state is STOPPED or FAILED; every other
+	// transition still uses UpdateInstanceState / UpdateInstanceStateWithTimestamp.
+	UpdateInstanceStateToTerminal(ctx context.Context, id, state string, terminalAt time.Time) error
 	// ListInstancesByStatesOlderThan is the §6.1 watchdog's lookup.
 	// Returns rows currently in any of the given states whose
 	// "age timestamp" is strictly older than threshold. The age
@@ -351,6 +360,25 @@ type Store interface {
 	// parked_at. PgStore relies on migration 00016's partial index
 	// for the state predicate.
 	ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
+	// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
+	// lookup (PR #74). Returns rows currently in any of the given states
+	// (today: {STOPPED, FAILED}) whose terminal_at is strictly older than
+	// threshold. Order is implementation-defined. Reads the dedicated
+	// terminal_at column — distinct from ListInstancesByStatesOlderThan,
+	// which uses the state-aware started_at/parked_at comparison and is
+	// the wrong tool for retention aging (a STOPPED row that booted
+	// successfully has a stale started_at). PgStore relies on migration
+	// 00017's partial index for the state predicate.
+	ListInstancesInTerminalStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
+	// DeleteInstance removes a single instance row unconditionally
+	// (PR #74). Returns ErrNotFound when the row is already gone — the
+	// retention sweep swallows that case for redelivery. There are NO
+	// foreign-key cascades: events.subject and usage_minutes.instance_id
+	// carry no FK to instances today (audit log is append-only by spec
+	// §6.1; usage is reconciled by account hard-delete). Adding a FK
+	// in a future migration would silently break this sweep — review
+	// PR-#74's readme when touching either table.
+	DeleteInstance(ctx context.Context, id string) error
 	// SetInstanceRuntime records the per-instance identity vmmd allocated on
 	// wake (netns, routable host IP, jail uid) and stamps started_at=now. schedd
 	// calls this between a successful vmmd boot and the RUNNING transition so the

@@ -260,6 +260,15 @@ type Instance struct {
 	StartedAt     time.Time
 	LastRequestAt time.Time
 	ParkedAt      time.Time
+	// TerminalAt is stamped by Engine.transition on the same UPDATE that
+	// writes state = 'stopped' or 'failed' (PR #74, spec §17 follow-up).
+	// It is the dedicated retention anchor: started_at means "row
+	// creation" and parked_at is overloaded (also means "entered
+	// PARKED"). A STOPPED row whose vmmd boot succeeded 25 days ago
+	// has a stale started_at; terminal_at is the only correct age.
+	// The retention sweep (pkg/sched.Retention) DELETEs rows where
+	// state ∈ {STOPPED, FAILED} AND terminal_at < now-30d.
+	TerminalAt *time.Time
 }
 
 // InstanceTouch is one entry in a last_request_at flush batch (spec §4.1). The

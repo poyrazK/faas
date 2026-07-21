@@ -34,7 +34,8 @@ type Loop struct {
 	gateway    GatewaySynth
 	now        func() time.Time
 	flowCounts FlowCounter
-	watchdog   *Watchdog // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
+	watchdog   *Watchdog  // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
+	retention  *Retention // §17 retention sweep; nil means "no retention" (tests can opt out)
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -52,6 +53,15 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 // shares the same store / engine / clock as the rest of the loop.
 func (l *Loop) WithWatchdog(w *Watchdog) *Loop {
 	l.watchdog = w
+	return l
+}
+
+// WithRetention attaches the §17 retention sweep (PR #74). Same opt-out
+// shape as WithWatchdog: nil means no ticker fires the retention case.
+// Production wires NewRetention(store, log); the default retention
+// window + interval live in pkg/api/limits.
+func (l *Loop) WithRetention(r *Retention) *Loop {
+	l.retention = r
 	return l
 }
 
@@ -125,6 +135,28 @@ func (l *Loop) Run(ctx context.Context) error {
 		watchdogT = time.NewTicker(DefaultWatchdogInterval)
 		defer watchdogT.Stop()
 	}
+	// Retention ticker (PR #74, spec §17 follow-up). Default cadence
+	// is hourly (pkg/api.DefaultRetentionInterval) — the sweep itself
+	// reads now-30d, so hourly granularity means a row that crossed
+	// the threshold gets DELETED within the next hour. nil retention
+	// skips this ticker entirely.
+	//
+	// First-fire is intentionally DEFERRED one minute after startup
+	// (retentionFirstFireDelay). A bare time.NewTicker fires once
+	// immediately, which on a fresh deploy would race the §6.1
+	// watchdog's first sweep and delete any rows the backfill
+	// (migration 00017) anchored to a now()-based terminal_at before
+	// the watchdog has had a chance to stamp its first batch.
+	var retentionT *time.Ticker
+	var retentionFirst <-chan time.Time
+	if l.retention != nil {
+		t := time.NewTicker(api.DefaultRetentionInterval)
+		defer t.Stop()
+		retentionT = t
+		delay := time.NewTimer(retentionFirstFireDelay)
+		defer delay.Stop()
+		retentionFirst = delay.C
+	}
 
 	for {
 		select {
@@ -141,6 +173,14 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runCronTick(ctx)
 		case <-watchdogTick(watchdogT):
 			l.runWatchdog(ctx)
+		case <-retentionFirst:
+			// One-shot first fire (see retentionFirstFireDelay). After
+			// this the channel is set to nil so subsequent ticks
+			// exclusively come from retentionT (the 1h ticker).
+			l.runRetention(ctx)
+			retentionFirst = nil
+		case <-retentionTick(retentionT):
+			l.runRetention(ctx)
 		}
 	}
 }
@@ -155,11 +195,37 @@ func watchdogTick(t *time.Ticker) <-chan time.Time {
 	return t.C
 }
 
+// retentionTick is the same nil-safe pattern as watchdogTick, kept
+// separate so each ticker type's name shows up in stack traces if
+// a future regression corrupts the channel wiring.
+func retentionTick(t *time.Ticker) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
+}
+
 // runWatchdog dispatches one sweep of the §6.1 watchdog. Exported as a
 // method so tests can drive a single tick without spinning up Run's
 // goroutine.
 func (l *Loop) runWatchdog(ctx context.Context) {
 	l.watchdog.sweepRuns(ctx)
+}
+
+// runRetention dispatches one sweep of the §17 retention sweep. Same
+// shape as runWatchdog — exported as a method so tests drive a single
+// tick without spinning up Run. Errors from SweepOnce are logged +
+// swallowed (the sweep itself is idempotent + redelivery-safe; an
+// error means a transient store outage, not a permanent fault).
+func (l *Loop) runRetention(ctx context.Context) {
+	deleted, err := l.retention.SweepOnce(ctx)
+	if err != nil {
+		l.log.Warn("retention: sweep failed", "err", err)
+		return
+	}
+	if deleted > 0 {
+		l.log.Info("retention: swept", "deleted", deleted)
+	}
 }
 
 // handleNotification decodes the JSON payload and applies the policy.

@@ -1156,6 +1156,64 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 	return nil
 }
 
+// UpdateInstanceStateToTerminal mirrors PgStore's variant. Writes the
+// new state AND stamps terminal_at on the same locked read-modify-write
+// (PR #74). Engine.transition routes here for {STOPPED, FAILED}; today
+// no caller writes a different timestamp column for those states.
+func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state string, terminalAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return ErrNotFound
+	}
+	ins.State = state
+	ts := terminalAt
+	ins.TerminalAt = &ts
+	m.instances[id] = ins
+	return nil
+}
+
+// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
+// lookup (PR #74). Mirrors ListInstancesByStatesOlderThan but reads
+// terminal_at instead of the state-aware started_at/parked_at pair.
+func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wanted := make(map[State]bool, len(states))
+	for _, s := range states {
+		wanted[s] = true
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if !wanted[State(ins.State)] {
+			continue
+		}
+		if ins.TerminalAt == nil {
+			continue
+		}
+		if !ins.TerminalAt.Before(threshold) {
+			continue
+		}
+		out = append(out, ins)
+	}
+	return out, nil
+}
+
+// DeleteInstance removes an instance row unconditionally (PR #74).
+// Returns ErrNotFound when the row is already gone — the retention
+// sweep swallows that case for redelivery. There are no FK cascades;
+// events.subject and usage_minutes.instance_id carry no FK today.
+func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.instances[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m.instances, id)
+	return nil
+}
+
 // ListInstancesByStatesOlderThan is the watchdog's lookup (commit 3,
 // spec §6.1). Mirrors PgStore: coalesce started_at / parked_at on the
 // age comparison.
@@ -2099,6 +2157,21 @@ func (m *MemStore) SetParkedAtForTest(id string, parkedAt time.Time) {
 	defer m.mu.Unlock()
 	if ins, ok := m.instances[id]; ok {
 		ins.ParkedAt = parkedAt
+		m.instances[id] = ins
+	}
+}
+
+// SetTerminalAtForTest stamps the row's terminal_at. Used by the §17
+// retention sweep tests in pkg/sched to fabricate terminal rows
+// (STOPPED / FAILED) whose age exceeds the configured retention
+// window. Production wiring does not need this — Engine.transition
+// stamps terminal_at atomically via UpdateInstanceStateToTerminal.
+func (m *MemStore) SetTerminalAtForTest(id string, terminalAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ts := terminalAt
+		ins.TerminalAt = &ts
 		m.instances[id] = ins
 	}
 }

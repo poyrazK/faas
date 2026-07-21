@@ -10,7 +10,10 @@
 // review (spec §Conventions).
 package api
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Plan is a customer subscription tier. The zero value is intentionally invalid
 // so an unset plan never silently reads as Free.
@@ -208,6 +211,19 @@ const (
 
 	// Free-tier disk reaper (spec §4.3): zero requests this long => EVICTED_COLD.
 	FreeTierColdEvictDays = 14
+
+	// Instance retention (spec §17 follow-up, PR #74): STOPPED/FAILED
+	// rows are DELETED by pkg/sched.Retention this long after entering
+	// the terminal state. Tunable in cmd/schedd config; this default is
+	// the spec baseline (30 days). Retention only touches terminal
+	// instances — it never affects quota/RAM/concurrency counts because
+	// those only sum non-terminal rows (state/machine.go CountsFor*).
+	DefaultInstanceRetention = 30 * 24 * time.Hour
+	// DefaultRetentionInterval is how often the retention sweep actually
+	// runs. Once per hour is plenty — the sweep itself reads now-30d, so
+	// hourly cadence means a row that just crossed 30d is deleted within
+	// the next hour.
+	DefaultRetentionInterval = 1 * time.Hour
 )
 
 // LimitsFor returns the limits for a plan and whether the plan is known. Callers
