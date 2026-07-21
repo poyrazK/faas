@@ -186,7 +186,13 @@ func (p *metricsResidentProbe) scrape(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	// Discard-on-close is intentional: the body has already been fully
+	// drained by parseResidentPct (which uses bufio.Scanner until EOF), so
+	// any Close error here is a connection-reset signal already captured
+	// by the parseResidentPct call below. Wrapping the deferred close in
+	// an explicit ignore silences errcheck + bodyclose (golangci-lint
+	// enforced; matches pkg/fcvm/vmm.go:954).
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("residency probe: %s returned %d", p.url, resp.StatusCode)
 	}
