@@ -24,7 +24,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -116,30 +115,19 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	appsRoot := envOr("FAAS_APPS_ROOT", "/var/lib/faas/apps")
 
 	// #96 / ADR-025 axis 2: build the StorageBackend the imaged Handler
-	// publishes through. FAAS_STORAGE_ROOT covers /srv/fc (base/, layers/,
-	// snap/, kernel/). The apps prefix is in FAAS_APPS_ROOT, which is a
-	// sibling of FAAS_STORAGE_ROOT in production, so we route it through
-	// a PrefixRouter. When the two roots coincide, the router collapses
-	// to a single backend — the operator can opt into the split layout.
-	storageRoot := envOr("FAAS_STORAGE_ROOT", "/srv/fc")
-	fcBackend, err := storage.NewLocalStorageBackend(storageRoot)
+	// publishes through. The env-driven fork (FAAS_STORAGE_BACKEND) lets
+	// operators route the same call sites through a remote OCI
+	// distribution-spec backend instead of the local FS layout — the
+	// PrefixRouter / apps-fc split only applies to the local driver.
+	storageBackend, err := storage.BackendFromEnv()
 	if err != nil {
-		return fmt.Errorf("imaged: storage root %q: %w", storageRoot, err)
+		return fmt.Errorf("imaged: %w", err)
 	}
-	var storageBackend storage.StorageBackend = fcBackend
-	if filepath.Clean(appsRoot) != filepath.Clean(storageRoot) {
-		appsBackend, err := storage.NewLocalStorageBackend(appsRoot)
-		if err != nil {
-			return fmt.Errorf("imaged: apps storage root %q: %w", appsRoot, err)
-		}
-		router, err := storage.NewPrefixRouter(map[string]storage.StorageBackend{
-			"apps/": appsBackend,
-		}, fcBackend)
-		if err != nil {
-			return fmt.Errorf("imaged: storage prefix router: %w", err)
-		}
-		storageBackend = router
-		log.Info("imaged: storage prefix router", "fc_root", storageRoot, "apps_root", appsRoot)
+	if envOr("FAAS_STORAGE_BACKEND", "local") == "oci" {
+		log.Info("imaged: storage backend = oci", "registry", envOr("FAAS_OCI_REGISTRY", ""))
+	} else {
+		log.Info("imaged: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
+			"apps_root", appsRoot)
 	}
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
 		WithStorage(storageBackend)

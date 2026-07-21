@@ -511,102 +511,14 @@ func (c *RegistryClient) getManifest(ctx context.Context, url, token string) (*h
 }
 
 // fetchToken performs the anonymous Bearer-token GET the WWW-Authenticate
-// challenge points at (realm?service=&scope=). Public pulls need no credentials.
+// challenge points at (realm?service=&scope=). Public pulls need no
+// credentials. The challenge-parse + token-fetch plumbing lives in auth.go
+// so pkg/storage.OCIRegistryStorageBackend (issue #96 slice 2) can reuse
+// it with optional Basic creds for private push.
 func (c *RegistryClient) fetchToken(ctx context.Context, ch authChallenge) (string, error) {
-	if ch.realm == "" {
-		return "", fmt.Errorf("oci: 401 with no bearer realm; not a public registry?")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ch.realm, nil)
+	tok, err := FetchToken(ctx, c.hc, c.ua, newAuthChallenge(ch), nil)
 	if err != nil {
-		return "", fmt.Errorf("oci: build token request: %w", err)
+		return "", err
 	}
-	q := req.URL.Query()
-	if ch.service != "" {
-		q.Set("service", ch.service)
-	}
-	if ch.scope != "" {
-		q.Set("scope", ch.scope)
-	}
-	req.URL.RawQuery = q.Encode()
-	req.Header.Set("User-Agent", c.ua)
-
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("oci: fetch token: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("oci: token endpoint returned %d", resp.StatusCode)
-	}
-	var tok struct {
-		Token       string `json:"token"`
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tok); err != nil {
-		return "", fmt.Errorf("oci: decode token: %w", err)
-	}
-	if tok.Token != "" {
-		return tok.Token, nil
-	}
-	if tok.AccessToken != "" {
-		return tok.AccessToken, nil
-	}
-	return "", fmt.Errorf("oci: token endpoint returned no token")
-}
-
-// authChallenge is the parsed subset of a `WWW-Authenticate: Bearer …` header.
-type authChallenge struct {
-	realm   string
-	service string
-	scope   string
-}
-
-// parseChallenge extracts realm/service/scope from a Bearer challenge header
-// (e.g. `Bearer realm="https://auth/token",service="registry",scope="repository:x:pull"`).
-func parseChallenge(header string) authChallenge {
-	var ch authChallenge
-	rest, ok := strings.CutPrefix(header, "Bearer ")
-	if !ok {
-		return ch
-	}
-	for _, part := range splitParams(rest) {
-		k, v, found := strings.Cut(part, "=")
-		if !found {
-			continue
-		}
-		v = strings.Trim(strings.TrimSpace(v), `"`)
-		switch strings.TrimSpace(k) {
-		case "realm":
-			ch.realm = v
-		case "service":
-			ch.service = v
-		case "scope":
-			ch.scope = v
-		}
-	}
-	return ch
-}
-
-// splitParams splits a challenge's comma-separated key="value" params without
-// breaking on commas inside quoted values (scopes can contain them).
-func splitParams(s string) []string {
-	var parts []string
-	var cur strings.Builder
-	inQuote := false
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; {
-		case c == '"':
-			inQuote = !inQuote
-			cur.WriteByte(c)
-		case c == ',' && !inQuote:
-			parts = append(parts, cur.String())
-			cur.Reset()
-		default:
-			cur.WriteByte(c)
-		}
-	}
-	if cur.Len() > 0 {
-		parts = append(parts, cur.String())
-	}
-	return parts
+	return tok.AccessToken, nil
 }

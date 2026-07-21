@@ -198,19 +198,9 @@ func TestRegistryPullDigest_BadReference(t *testing.T) {
 	}
 }
 
-func TestParseChallenge(t *testing.T) {
-	ch := parseChallenge(`Bearer realm="https://auth.example/token",service="registry",scope="repository:org/app:pull,push"`)
-	if ch.realm != "https://auth.example/token" {
-		t.Errorf("realm = %q", ch.realm)
-	}
-	if ch.service != "registry" {
-		t.Errorf("service = %q", ch.service)
-	}
-	// The scope contains a comma; it must not be split into two params.
-	if ch.scope != "repository:org/app:pull,push" {
-		t.Errorf("scope = %q", ch.scope)
-	}
-}
+// (TestParseChallenge moved to auth_test.go during the slice-2 refactor
+// that exported ParseChallenge. The package-private form is exercised by
+// the in-process registry in registry_test.go's TestPullLayers et al.)
 
 var _ Puller = (*RegistryClient)(nil)
 
