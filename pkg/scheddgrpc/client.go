@@ -2,15 +2,16 @@ package scheddgrpc
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -27,16 +28,26 @@ type Client struct {
 // (ADR-015) the socket's 0660/group-`faas` DAC is the only auth in v1.0, so the
 // transport uses insecure credentials over a trusted local socket. The
 // connection dials on first RPC; Dial never blocks on schedd being up.
+//
+// This is the legacy entrypoint retained for source compatibility with
+// existing callers and tests; production code should call DialContext so the
+// caller's context controls the dial. Issue #95 keeps the legacy shape
+// working unchanged.
 func Dial(socketPath string) (*Client, error) {
-	if socketPath == "" {
-		return nil, errors.New("scheddgrpc: empty schedd socket path")
+	return DialContext(context.Background(), socketPath, nil)
+}
+
+// DialContext opens a lazy gRPC connection to schedd. tlsCfg is required
+// for tcp/dns targets (issue #95); a nil tlsCfg is fine for the
+// single-box unix default. Wire layer performs the mTLS gating — see
+// pkg/wire.DialContext.
+func DialContext(ctx context.Context, target string, tlsCfg *tls.Config) (*Client, error) {
+	if target == "" {
+		return nil, errors.New("scheddgrpc: empty schedd target")
 	}
-	conn, err := grpc.NewClient(
-		"unix://"+socketPath,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	conn, err := wire.DialContext(ctx, target, tlsCfg)
 	if err != nil {
-		return nil, fmt.Errorf("scheddgrpc: dial schedd %q: %w", socketPath, err)
+		return nil, fmt.Errorf("scheddgrpc: dial schedd %q: %w", target, err)
 	}
 	return &Client{conn: conn, cli: scheddpb.NewScheddClient(conn)}, nil
 }

@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	crypto_tls "crypto/tls"
 	"log/slog"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -195,14 +196,19 @@ func (l *liveClient) VerifyInstallation(ctx context.Context, installationID int6
 // replaces with a live dial when cfg.Socket != "". Returning an
 // interface (not a concrete *stubGithubdClient) means callers never have
 // to type-assert, and the slice-7 swap is a one-line change here.
-func newGithubdClient(socketPath string, log *slog.Logger) GithubdClient {
+//
+// Issue #95: signature now takes ctx so the dial participates in
+// apid's lifecycle; tlsCfg is nil for the loopback UNIX socket.
+// Remote-target dial + mTLS will be wired here in the follow-up that
+// decouples the control plane.
+func newGithubdClient(ctx context.Context, socketPath string, tlsCfg *crypto_tls.Config, log *slog.Logger) GithubdClient {
 	if socketPath == "" {
 		if log != nil {
 			log.Info("githubd socket not configured; using stub client (slice 1)")
 		}
 		return stubGithubdClient{}
 	}
-	c, err := githubdgrpc.Dial(socketPath)
+	c, err := githubdgrpc.DialContext(ctx, socketPath, tlsCfg)
 	if err != nil {
 		if log != nil {
 			log.Error("githubd dial failed; falling back to stub", "socket", socketPath, "err", err)

@@ -21,3 +21,38 @@
 
 # db_url: Postgres DSN. Empty => $DATABASE_URL from the environment.
 # db_url = ""
+
+# --- Issue #95 / ADR-025: location-transparent gRPC transport ---
+# schedd is both a server (gatewayd + imaged dial it) and a client
+# (it dials vmmd). The two roles use distinct TLS clusters so a
+# remote vmmd cannot accidentally TLS-wrap the local gatewayd-facing
+# server, and each leaf cert carries a single EKU.
+
+# listen_addr: gRPC listen target. Empty (default) keeps the legacy
+# unix://+socket_path behavior. tcp targets require all tls_*_path
+# fields set or startup fails closed.
+# Default: "" (unix socket)
+# listen_addr = "tcp://0.0.0.0:50052"
+
+# vmmd_target: where schedd reaches vmmd. Takes precedence over the
+# legacy vmmd_socket; empty falls back to unix://+vmmd_socket.
+# Default: "" (legacy vmmd_socket)
+# vmmd_target = "tcp://vmmd.internal:50051"
+
+# tls_cert_path / tls_key_path / tls_ca_path: server-mTLS cluster
+# (front of gatewayd). All three empty => no TLS. All three set =>
+# RequireAndVerifyClientCert. Partial cluster => startup error.
+# Defaults: ""
+# tls_cert_path = "/etc/faas/tls/schedd.crt"
+# tls_key_path = "/etc/faas/tls/schedd.key"
+# tls_ca_path = "/etc/faas/tls/ca.pem"
+
+# vmmd_tls_cert_path / vmmd_tls_key_path / vmmd_tls_ca_path: client-mTLS
+# cluster (front of vmmd). All three empty => no TLS. All three set =>
+# CA-only verification via VerifyPeerCertificate (no bare
+# InsecureSkipVerify). Partial cluster => startup error naming the
+# vmmd_tls_* fields.
+# Defaults: ""
+# vmmd_tls_cert_path = "/etc/faas/tls/vmmd-client.crt"
+# vmmd_tls_key_path = "/etc/faas/tls/vmmd-client.key"
+# vmmd_tls_ca_path = "/etc/faas/tls/ca.pem"

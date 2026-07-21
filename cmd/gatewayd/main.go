@@ -136,7 +136,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer pool.Close()
 
-	sched, err := scheddgrpc.Dial(scheddSocket)
+	sched, err := scheddgrpc.DialContext(ctx, scheddSocket, nil)
 	if err != nil {
 		return fmt.Errorf("gatewayd: dial schedd: %w", err)
 	}

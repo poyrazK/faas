@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -70,7 +71,7 @@ func stubMeterdDeps(cfgPath, metricsAddr string, pool *pgxpool.Pool, listenFn fu
 		migrate:               func(context.Context, *pgxpool.Pool) error { return nil },
 		loadMeter:             func(c *Config) (*meter.Config, error) { return c.Meter, nil },
 		getenv:                env,
-		dialSchedd:            func(string) (parkInstanceParker, error) { return &nopParker{}, nil },
+		dialSchedd:            func(context.Context, string, *tls.Config) (parkInstanceParker, error) { return &nopParker{}, nil },
 		newStripeClient:       nil, // skipped when stripe is pre-populated
 		parker:                &nopParker{},
 		stripe:                &nopStripe{},

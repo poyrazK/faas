@@ -18,6 +18,7 @@ package builderd
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,10 +26,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // VMMDriver is the metal VM driver. It owns a single gRPC connection to
@@ -55,7 +56,18 @@ type VMMDriver struct {
 }
 
 // NewVMMDriver opens a lazy gRPC connection to vmmd's socket.
+//
+// Legacy entrypoint kept for source compatibility with cmd/builderd and
+// existing tests; production code should call NewVMMDriverContext so the
+// caller's context controls the dial.
 func NewVMMDriver(socketPath, builderBase, driveDir, exportDir string) (*VMMDriver, error) {
+	return NewVMMDriverContext(context.Background(), socketPath, nil, builderBase, driveDir, exportDir)
+}
+
+// NewVMMDriverContext opens a lazy gRPC connection to vmmd. tlsCfg is
+// required for tcp/dns targets (issue #95); nil tlsCfg is fine for the
+// single-box unix default. Wire layer performs the mTLS gating.
+func NewVMMDriverContext(ctx context.Context, socketPath string, tlsCfg *tls.Config, builderBase, driveDir, exportDir string) (*VMMDriver, error) {
 	if socketPath == "" {
 		return nil, fmt.Errorf("builderd: empty vmmd socket path")
 	}
@@ -68,10 +80,7 @@ func NewVMMDriver(socketPath, builderBase, driveDir, exportDir string) (*VMMDriv
 	if exportDir == "" {
 		exportDir = "/var/lib/faas/build-out"
 	}
-	conn, err := grpc.NewClient(
-		"unix://"+socketPath,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	conn, err := wire.DialContext(ctx, socketPath, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("builderd: dial vmmd: %w", err)
 	}

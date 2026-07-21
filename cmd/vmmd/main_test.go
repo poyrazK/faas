@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log/slog"
@@ -15,6 +16,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // shortDir mirrors the helper in pkg/wire's test (kept private here so this
@@ -53,7 +56,13 @@ func TestRun_DrainsOnCancel(t *testing.T) {
 	deps := runDeps{
 		configPath: cfgPath,
 		detectFC:   func(context.Context) (string, error) { return "1.7.0-test", nil },
-		listen:     func(path, _ string) (net.Listener, error) { return net.Listen("unix", path) },
+		listen: func(_ context.Context, target string, _ *tls.Config, _ string) (net.Listener, error) {
+			t, err := wire.ParseTarget(target)
+			if err != nil {
+				return nil, err
+			}
+			return net.Listen("unix", t.Address)
+		},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -86,7 +95,7 @@ func TestRun_ListenFailurePropagates(t *testing.T) {
 	deps := runDeps{
 		configPath: cfgPath,
 		detectFC:   func(context.Context) (string, error) { return "1.7.0", nil },
-		listen:     func(string, string) (net.Listener, error) { return nil, wantErr },
+		listen:     func(context.Context, string, *tls.Config, string) (net.Listener, error) { return nil, wantErr },
 	}
 	err := runWithDeps(context.Background(), slog.New(slog.NewTextHandler(io.Discard, nil)), deps)
 	if err == nil {
@@ -110,7 +119,13 @@ func TestRun_FCDetectFailureIsWarning(t *testing.T) {
 	deps := runDeps{
 		configPath: cfgPath,
 		detectFC:   func(context.Context) (string, error) { return "", errors.New("no fc on host") },
-		listen:     func(path, _ string) (net.Listener, error) { return net.Listen("unix", path) },
+		listen: func(_ context.Context, target string, _ *tls.Config, _ string) (net.Listener, error) {
+			t, err := wire.ParseTarget(target)
+			if err != nil {
+				return nil, err
+			}
+			return net.Listen("unix", t.Address)
+		},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
