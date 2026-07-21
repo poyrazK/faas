@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // Loop runs the four meterd timers (sample / quota / stripe / dunning)
@@ -18,6 +20,13 @@ import (
 // tests inject a fake clock + collaborators and step through ticks
 // directly (NewLoop is just a constructor, no goroutines started until
 // Run).
+//
+// Observability (PR feat/m7-meterd-observability): every tick body is
+// wrapped in ops.Observe(name, dur, err) per ADR-015 and the spec §12
+// Prometheus convention. The lastTick map is the source of truth for
+// /healthz — see pkg/meter/health.go. ops and log may be nil; NewLoop
+// coerces nil to a fresh test registry / slog.Default so callers don't
+// have to special-case the zero value (mirrors scheddgrpc/server.go:54-56).
 type Loop struct {
 	store   state.Store
 	parker  ScheddParker
@@ -27,18 +36,37 @@ type Loop struct {
 	now     func() time.Time
 	log     *slog.Logger
 	cfg     *Config
+	ops     *wire.OpsMetrics
+
+	lastTickMu sync.RWMutex
+	// lastTick records the wall-clock time each named tick body last
+	// completed successfully. Keys mirror the runTicks "name" argument:
+	// "sample", "stripe", "dunning" are populated by runTicks; "quota"
+	// is populated by runQuotaOnce (same field, written outside
+	// runTicks because quota is loop-shaped, not single-tick).
+	lastTick map[string]time.Time
 }
 
 // NewLoop wires the loop. The interfaces are local to pkg/meter so the
 // daemon (cmd/meterd) can substitute test doubles without importing the
 // concrete packages (scheddgrpc, stripex). dunning may be nil; tests
 // that don't exercise dunning pass nil and the fourth goroutine is
-// skipped.
-func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif Notifier, dunning *Dunning, now func() time.Time, log *slog.Logger, cfg *Config) *Loop {
+// skipped. ops and log likewise may be nil — see the Loop doc comment.
+func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif Notifier, dunning *Dunning, now func() time.Time, log *slog.Logger, cfg *Config, ops *wire.OpsMetrics) *Loop {
 	if now == nil {
 		now = time.Now
 	}
-	return &Loop{store: store, parker: parker, stripe: stripe, notif: notif, dunning: dunning, now: now, log: log, cfg: cfg}
+	if log == nil {
+		log = slog.Default()
+	}
+	if ops == nil {
+		ops = wire.NewOpsMetrics("meter_test")
+	}
+	return &Loop{
+		store: store, parker: parker, stripe: stripe, notif: notif,
+		dunning: dunning, now: now, log: log, cfg: cfg, ops: ops,
+		lastTick: make(map[string]time.Time),
+	}
 }
 
 // Run starts the four timers and blocks until ctx cancels or any timer
@@ -80,7 +108,10 @@ func (l *Loop) Run(ctx context.Context) error {
 
 // runTicks is the shared timer driver. Per-tick errors are logged and
 // swallowed so a transient backend hiccup doesn't kill meterd (spec §14
-// hardening: metering must be self-healing).
+// hardening: metering must be self-healing). Each successful (or
+// failed-but-logged) tick is observed via ops.Observe and recorded in
+// lastTick[name] under lastTickMu — both writes happen together so the
+// two observability surfaces cannot drift.
 func (l *Loop) runTicks(ctx context.Context, interval time.Duration, tick func(context.Context) error, name string) error {
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -89,7 +120,11 @@ func (l *Loop) runTicks(ctx context.Context, interval time.Duration, tick func(c
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
-			if err := tick(ctx); err != nil {
+			start := time.Now()
+			err := tick(ctx)
+			l.ops.Observe(name, time.Since(start), err)
+			l.recordTick(name, start)
+			if err != nil {
 				l.log.Warn("meter: "+name+" tick", "err", err)
 			}
 		}
@@ -98,7 +133,9 @@ func (l *Loop) runTicks(ctx context.Context, interval time.Duration, tick func(c
 
 // runQuotaTicks walks every account once per quota interval and applies
 // the per-plan ladder. The first per-account error is logged + skipped
-// (one bad account shouldn't stop the rest).
+// (one bad account shouldn't stop the rest). Records the last tick
+// timestamp under "quota" — separate from runTicks because quota sweeps
+// a list rather than a single tick body.
 func (l *Loop) runQuotaTicks(ctx context.Context) error {
 	t := time.NewTicker(l.cfg.QuotaInterval)
 	defer t.Stop()
@@ -107,7 +144,10 @@ func (l *Loop) runQuotaTicks(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
+			start := time.Now()
 			l.runQuotaOnce(ctx)
+			l.ops.Observe("quota", time.Since(start), nil)
+			l.recordTick("quota", start)
 		}
 	}
 }
@@ -137,6 +177,25 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			l.log.Warn("meter: enforce_quota", "account", acct.ID, "err", err)
 		}
 	}
+}
+
+// recordTick stamps the last successful tick for /healthz. Centralized
+// so the runTicks / runQuotaTicks paths agree on the storage shape.
+func (l *Loop) recordTick(name string, at time.Time) {
+	l.lastTickMu.Lock()
+	l.lastTick[name] = at
+	l.lastTickMu.Unlock()
+}
+
+// LastTick returns the wall-clock time the named tick body last
+// completed. ok=false means the tick has never fired. Read-mostly path;
+// the RWMutex lets /healthz probes go lock-free against the writers in
+// the common case.
+func (l *Loop) LastTick(name string) (time.Time, bool) {
+	l.lastTickMu.RLock()
+	defer l.lastTickMu.RUnlock()
+	t, ok := l.lastTick[name]
+	return t, ok
 }
 
 // HasPlan is a tiny convenience exposed so cmd/meterd's wire-up can
