@@ -936,6 +936,25 @@ func (s *PgStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, stat
 	return nil
 }
 
+// UpdateInstanceStateToTerminal writes state AND stamps terminal_at on
+// the same UPDATE (PR #74). Engine.transition routes here for
+// {STOPPED, FAILED}; terminal_at is the dedicated retention anchor the
+// §17 sweep reads (started_at means "row creation"; parked_at is
+// overloaded). One statement, atomic — same RowAffected/ErrNotFound
+// shape as UpdateInstanceState.
+func (s *PgStore) UpdateInstanceStateToTerminal(ctx context.Context, id, state string, terminalAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances set state = $2, terminal_at = $3 where id = $1`,
+		id, state, terminalAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ListInstancesByStatesOlderThan is the watchdog's lookup (spec §6.1).
 // Filters on state ∈ states and a state-aware "age" column:
 // started_at for WAKING / COLD_BOOTING (stamped on creation by the
@@ -967,6 +986,48 @@ func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []S
 	}
 	defer rows.Close()
 	return scanInstances(rows)
+}
+
+// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
+// lookup (PR #74). Reads the dedicated terminal_at column — distinct
+// from the watchdog's state-aware started_at/parked_at comparison.
+// Today only {STOPPED, FAILED} are terminal; we still parameterize
+// states to keep the door open if a future state earns the same
+// treatment. Migration 00017's partial index
+// `instances_terminal_at_idx` covers this query.
+func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	stateStrs := make([]string, len(states))
+	for i, s := range states {
+		stateStrs[i] = string(s)
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, terminal_at
+		 from instances
+		 where state = any($1)
+		   and terminal_at is not null
+		   and terminal_at < $2`,
+		stateStrs, threshold)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstancesWithTerminal(rows)
+}
+
+// DeleteInstance removes one instance row unconditionally (PR #74).
+// Returns ErrNotFound when the row is gone (the sweep swallows that
+// case for redelivery). No FK cascade — events.subject and
+// usage_minutes.instance_id carry no FK today.
+func (s *PgStore) DeleteInstance(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `delete from instances where id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error {
@@ -1540,6 +1601,38 @@ func scanInstanceCols(scan func(...any) error) (Instance, error) {
 		ins.ParkedAt = *parked
 	}
 	return ins, nil
+}
+
+// scanInstancesWithTerminal is the 12-column variant of scanInstanceCols
+// that also lifts terminal_at (PR #74). Used only by
+// ListInstancesInTerminalStatesOlderThan — the rest of the codebase reads
+// 11-column instances rows and doesn't need terminal_at, so threading it
+// into scanInstanceCols would force every SELECT to expose it for no
+// reason.
+func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
+	var out []Instance
+	for rows.Next() {
+		ins := Instance{}
+		var started, lastReq, parked, terminal *time.Time
+		if err := rows.Scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
+			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &terminal); err != nil {
+			return nil, err
+		}
+		if started != nil {
+			ins.StartedAt = *started
+		}
+		if lastReq != nil {
+			ins.LastRequestAt = *lastReq
+		}
+		if parked != nil {
+			ins.ParkedAt = *parked
+		}
+		if terminal != nil {
+			ins.TerminalAt = terminal
+		}
+		out = append(out, ins)
+	}
+	return out, rows.Err()
 }
 
 func scanSnapshot(row pgx.Row) (Snapshot, error) {
