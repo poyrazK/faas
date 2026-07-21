@@ -7,6 +7,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/state"
 	stripe "github.com/stripe/stripe-go"
+	"github.com/stripe/stripe-go/client"
 )
 
 // PushDedupe is the dedupe table that lets meterd's hourly loop push the
@@ -26,6 +27,16 @@ type PushDedupe interface {
 // methods M7 uses. The struct is intentionally tiny — every method is a
 // primitive over a single stripe-go call, so testing can substitute a
 // recording stub via the interfaces in this file.
+//
+// api is a typed per-call *client.API built once in NewClient when
+// apiKey is non-empty. nil when apiKey == "" so the dev-loop no-key
+// path keeps skipping every SDK call (mirrors the existing skip in
+// pushUsageRecordSDK). Replaces the previous stripe.Key global mutation
+// at usage.go which was process-global state (the package-level key is
+// shared by every *stripex.Client in the same process — there was only
+// ever one Client per meterd, but the *client.API field is the
+// stripe-go-v70-blessed way to scope a key to a single Client and
+// future-proofs against a second Client with a different key).
 type Client struct {
 	store  state.Store
 	dedupe PushDedupe
@@ -33,18 +44,23 @@ type Client struct {
 	secret string
 	log    *slog.Logger
 	now    func() time.Time
+	// api is the typed stripe-go client (customer, plan, usagerecord
+	// sub-clients pre-bound to the apiKey). Nil when apiKey == "".
+	api *client.API
 	// PlanPriceIDs is the lookup map EnsurePlanProducts populates and
 	// EnsureCustomer reads. key = plan:price-kind (e.g. "hobby:monthly").
 	PlanPriceIDs map[string]string
 }
 
 // NewClient wires the facade. apiKey + secret are read from the config;
-// callers pass empty strings in tests.
+// callers pass empty strings in tests. When apiKey is non-empty,
+// constructs a per-call *client.API so subsequent SDK calls don't have
+// to mutate the package-global stripe.Key.
 func NewClient(store state.Store, dedupe PushDedupe, apiKey, secret string, log *slog.Logger) *Client {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Client{
+	c := &Client{
 		store:        store,
 		dedupe:       dedupe,
 		apiKey:       apiKey,
@@ -53,6 +69,12 @@ func NewClient(store state.Store, dedupe PushDedupe, apiKey, secret string, log 
 		now:          time.Now,
 		PlanPriceIDs: map[string]string{},
 	}
+	if apiKey != "" {
+		c.api = client.New(apiKey, &stripe.Backends{
+			API: stripe.GetBackend(stripe.APIBackend),
+		})
+	}
+	return c
 }
 
 // PushUsageRecord is the meterd-side entry point. It deduplicates on

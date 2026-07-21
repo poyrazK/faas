@@ -207,6 +207,63 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// renameApp swaps an app's slug atomically (issue #63). Body is
+// {"new_slug": "<slug>"}; the handler validates the new slug with the
+// same validSlug regex CreateApp uses, then delegates to
+// Store.RenameApp. The unique-slug constraint (Postgres) and MemStore's
+// in-memory scan both surface collisions as state.ErrConflict; the
+// handler maps that to 409 CodeAppRenameFailed so the CLI can render
+// an actionable error.
+//
+// Validates oldSlug ownership via loadApp (returns 404 on unknown app,
+// 403 on cross-account access — same as every other handler in this
+// file).
+func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	oldSlug := r.PathValue("slug")
+	app, ok := s.loadApp(w, r, acct, oldSlug)
+	if !ok {
+		return
+	}
+	var req api.RenameAppRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Bad request", err.Error()))
+		return
+	}
+	if !validSlug(req.NewSlug) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid slug",
+			"slug must be 3-40 chars, lowercase letters, digits, and hyphens"))
+		return
+	}
+	if req.NewSlug == oldSlug {
+		// Idempotent no-op: skip the DB round-trip and return the
+		// current app shape so retries don't 4xx.
+		writeJSON(w, http.StatusOK, s.appResponse(app))
+		return
+	}
+	updated, err := s.store.RenameApp(ctx(r), acct.ID, oldSlug, req.NewSlug)
+	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAppRenameFailed,
+				"Slug taken",
+				fmt.Sprintf("another app already uses slug %q", req.NewSlug)))
+			return
+		}
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+				"App not found", "no app with the given slug exists"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not rename app"))
+		return
+	}
+	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged,
+		fmt.Sprintf(`{"kind":"renamed","from":%q,"to":%q}`, oldSlug, req.NewSlug))
+	s.log.Info("app renamed", "app", updated.ID, "from", oldSlug, "to", req.NewSlug, "account", acct.ID)
+	writeJSON(w, http.StatusOK, s.appResponse(updated))
+}
+
 // --- instances -------------------------------------------------------------
 
 func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -575,14 +632,36 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	case "invoice.payment_failed":
 		// Apps keep serving; deploys blocked at the auth gate (handlers
 		// reading acct.Active() refuse writes). 7-day dunning timer
-		// (M7 dunning state machine) lives in pkg/state.Account.
-		_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountPastDue)
+		// (M7 dunning state machine) lives in pkg/meter.Dunning.
+		//
+		// We route through MarkDunningStep(active → past_due) instead
+		// of the unconditional UpdateAccountStatus we used to call, so
+		// past_due_at is stamped on the Stripe event itself (not on
+		// the dunning timer's first-observation backfill, which could
+		// be up to one DunningInterval later — spec §4.7). The
+		// compare-and-flip guard rejects rows already in past_due
+		// (Stripe redelivery) and rows in suspended/deleted_pending
+		// (no business flipping state backwards), both of which we
+		// swallow as no-ops.
+		if err := s.store.MarkDunningStep(r.Context(), acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				s.log.Debug("apid: payment_failed on already-advanced account",
+					"account", acct.ID, "from_status", acct.Status)
+			} else {
+				s.log.Warn("apid: payment_failed MarkDunningStep", "account", acct.ID, "err", err)
+			}
+		}
 	case "invoice.payment_succeeded":
 		// Restore the account if it was past_due. meterd will refresh
-		// quota state on its next tick.
+		// quota state on its next tick. We also clear the dedupe stamp
+		// on last_quota_warning_at so the next quota tick (if the
+		// customer is still over quota from a prior cycle) emits a
+		// fresh warning — otherwise the stamp from the previous day
+		// would suppress it (spec §4.7).
 		if acct.Status == state.AccountPastDue {
 			_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountActive)
 		}
+		_ = s.store.ClearQuotaWarning(r.Context(), acct.ID)
 	case "customer.subscription.updated":
 		if ev.Data.Object.Plan != "" {
 			_ = s.store.UpdateAccountPlan(r.Context(), acct.ID, api.Plan(ev.Data.Object.Plan))
@@ -880,6 +959,16 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
+	// Issue #64 D4: poll the deployment row cheaply while we tail so
+	// we can emit `event: status` as soon as the build resolves
+	// instead of waiting for the 10-min build timeout. imaged is a
+	// separate process so the in-process TopicDeploymentLog pub/sub
+	// can't see the transition; the store is the only shared source
+	// of truth within the same apid process. One indexed lookup per
+	// poll tick — negligible load compared to the build itself.
+	statusTicker := time.NewTicker(2 * time.Second)
+	defer statusTicker.Stop()
+
 	for {
 		// Done status short-circuits the tail. deployment status flips
 		// to live/failed via NotifyDeploymentChanged; the dashboard
@@ -899,9 +988,18 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			if flusher != nil {
 				flusher.Flush()
 			}
-			// If the deployment transitions to live/failed, the
-			// producer publishes the row PLUS a sentinel; we close
-			// after the sentinel. Simpler: cap at the build timeout.
+		case <-statusTicker.C:
+			// Cheap status poll. Emits `event: status` and exits
+			// when the deployment reaches a terminal state. The
+			// 10-min backstop below still fires if something hangs.
+			if d2, err := s.store.DeploymentByID(ctx(r), id); err == nil &&
+				(d2.Status == state.DeployLive || d2.Status == state.DeployFailed) {
+				_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)
+				if flusher != nil {
+					flusher.Flush()
+				}
+				return
+			}
 		case <-ticker.C:
 			// heartbeat — keeps idle proxies from dropping the
 			// connection. Doesn't carry data.

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,13 +17,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// newUUIDv4 returns an RFC 4122 v4 UUID string. Inline to avoid a uuid
+// dependency; spec §4.2 only requires "any v4 UUID" — the shape only
+// matters for the server-side Idempotency-Key cache key (apid/server.go).
+func newUUIDv4() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	s := hex.EncodeToString(b[:])
+	return s[0:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:32]
+}
+
 // Client is a thin typed wrapper over the v1 REST API. It renders the API's
 // RFC 7807 problems into the CLI's three-line error shape (UX §3.3) rather than
 // inventing copy.
 type Client struct {
-	baseURL string
-	token   string
-	http    *http.Client
+	baseURL    string
+	token      string
+	http       *http.Client
+	deployHTTP *http.Client // nil → uploadHTTP() returns http
 }
 
 // NewClient builds a client for baseURL with a bearer token.
@@ -29,13 +44,42 @@ func NewClient(baseURL, token string) *Client {
 	return &Client{baseURL: baseURL, token: token, http: &http.Client{Timeout: 30 * time.Second}}
 }
 
+// NewClientWithDeployTimeout is like NewClient but configures a longer
+// timeout on the upload HTTP client. Used by cmdDeployTarball so a
+// multi-MB tarball doesn't trip the 30s default (issue #64 D4). A
+// non-positive timeout falls back to the default 30s client.
+func NewClientWithDeployTimeout(baseURL, token string, deployTimeout time.Duration) *Client {
+	c := NewClient(baseURL, token)
+	if deployTimeout > 0 {
+		c.deployHTTP = &http.Client{Timeout: deployTimeout}
+	}
+	return c
+}
+
+// uploadHTTP returns the http client for upload (longer timeout) or
+// the default one. Used by DeployTarball.
+func (c *Client) uploadHTTP() *http.Client {
+	if c.deployHTTP != nil {
+		return c.deployHTTP
+	}
+	return c.http
+}
+
 // APIError carries a server problem for the CLI to render.
 type APIError struct{ Problem api.Problem }
 
 func (e *APIError) Error() string {
 	p := e.Problem
-	if p.DocsURL != "" {
-		return fmt.Sprintf("%s\n  %s\n  → %s", p.Title, p.Detail, p.DocsURL)
+	docs := p.DocsURL
+	// UX §3.3 requires three lines always. Synthesise the docs URL from
+	// the stable Code when the server omits DocsURL (which happens for
+	// problems reconstructed from a bare gRPC status, or codes the
+	// constructor chain doesn't decorate with WithDocs).
+	if docs == "" && p.Code != "" {
+		docs = docsURLForCode(p.Code)
+	}
+	if docs != "" {
+		return fmt.Sprintf("%s\n  %s\n  → %s", p.Title, p.Detail, docs)
 	}
 	return fmt.Sprintf("%s\n  %s", p.Title, p.Detail)
 }
@@ -55,6 +99,14 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	// UX §3.2 / impl §4.2: every mutating call carries Idempotency-Key
+	// so a retried deploy/park/wake/rollback/etc. never double-charges
+	// or double-creates. The server middleware at apid/server.go dedupes
+	// on the header when present (24h replay). We never override an
+	// explicit key the caller already set.
+	if method != http.MethodGet && method != http.MethodHead && req.Header.Get("Idempotency-Key") == "" {
+		req.Header.Set("Idempotency-Key", newUUIDv4())
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -136,6 +188,11 @@ func (c *Client) DeleteAccount(ctx context.Context, idempotencyKey string) (api.
 	}
 	if idempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", idempotencyKey)
+	} else {
+		// Caller didn't supply a key — auto-mint so the server middleware
+		// can dedupe retries (issue #64 D3). The explicit-key path keeps
+		// the `cli-delete-…` prefix for traceability.
+		req.Header.Set("Idempotency-Key", newUUIDv4())
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -182,6 +239,13 @@ func (c *Client) Deploy(ctx context.Context, slug string, req api.CreateDeployme
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/deployments", req, &out)
 }
 
+// GetDeployment returns a deployment by ID. Used by cmdDeployTarball
+// to poll terminal status after the SSE log stream closes (issue #64 D4).
+func (c *Client) GetDeployment(ctx context.Context, id string) (api.DeploymentResponse, error) {
+	var out api.DeploymentResponse
+	return out, c.do(ctx, "GET", "/v1/deployments/"+id, nil, &out)
+}
+
 // DeployTarball ships a source tarball (with optional runtime + handler) to
 // the multi-part deploy endpoint. The apid handler validates the archive and
 // emits `pg_notify('build_queued', ...)` for imaged to pick up.
@@ -219,7 +283,13 @@ func (c *Client) DeployTarball(ctx context.Context, slug, path, runtime, handler
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	resp, err := c.http.Do(req)
+	// DeployTarball bypasses Client.do; auto-mint Idempotency-Key here
+	// so retry-safe semantics still hold (issue #64 D3).
+	req.Header.Set("Idempotency-Key", newUUIDv4())
+	// Use the longer-timeout client for uploads so a multi-MB tarball
+	// doesn't trip the 30s default (issue #64 D4). uploadHTTP falls back
+	// to the regular client when no deploy timeout was configured.
+	resp, err := c.uploadHTTP().Do(req)
 	if err != nil {
 		return api.DeploymentResponse{}, fmt.Errorf("could not reach the API: %w", err)
 	}
@@ -248,9 +318,36 @@ func (c *Client) UpdateApp(ctx context.Context, slug string, req api.UpdateAppRe
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug, req, &out)
 }
 
+// RenameApp swaps an app's slug atomically (issue #63). The server
+// returns 409 CodeAppRenameFailed on slug collisions; client.do
+// surfaces that as APIError so the CLI can render the RFC 7807 body.
+func (c *Client) RenameApp(ctx context.Context, oldSlug, newSlug string) (api.AppResponse, error) {
+	var out api.AppResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+oldSlug+"/rename",
+		api.RenameAppRequest{NewSlug: newSlug}, &out)
+}
+
 // DeleteApp removes an app.
 func (c *Client) DeleteApp(ctx context.Context, slug string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug, nil, nil)
+}
+
+// ChangePlan changes the account's subscription tier (issue #63). The
+// endpoint is account-scoped (PATCH /v1/account/plan); the CLI exposes
+// it as a top-level `faas plan <plan>` because plan changes are not
+// per-app (see ux_spec §3.1).
+func (c *Client) ChangePlan(ctx context.Context, plan string) (api.AccountResponse, error) {
+	var out api.AccountResponse
+	return out, c.do(ctx, "PATCH", "/v1/account/plan",
+		map[string]string{"plan": plan}, &out)
+}
+
+// GetStatusSLO fetches the public SLO snapshot (issue #63). The route
+// is unauthenticated by design — the CLI still sends the bearer token
+// if present (apid ignores it on this route).
+func (c *Client) GetStatusSLO(ctx context.Context) (api.StatusPage, error) {
+	var out api.StatusPage
+	return out, c.do(ctx, "GET", "/status/slo.json", nil, &out)
 }
 
 // Rollback re-promotes the most recent superseded deployment.

@@ -965,3 +965,151 @@ func TestMem_DeleteAccount_TwiceIsErrNotFound(t *testing.T) {
 		t.Errorf("second delete = %v, want ErrNotFound", err)
 	}
 }
+
+// --- RenameApp (issue #63) --------------------------------------------------
+//
+// These tests lock down the MemStore contract that the apid handler relies
+// on (handlers_ext.go:247 errors.Is(err, state.ErrConflict)) and that the
+// PgStore must mirror via mapErr → unique-violation SQLSTATE. They run as
+// pure in-memory tests, so they're part of `make test` (no KVM, no real
+// Postgres). The PgStore equivalents live in pgstore_test.go behind
+// pgtest.Open — the two together pin the error contract.
+
+func TestMem_RenameApp_HappyPath(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acc, _ := m.CreateAccount(ctx, "rename@x.com", api.PlanHobby)
+	app, err := m.CreateApp(ctx, App{
+		AccountID: acc.ID, Slug: "old-name", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60, Status: AppActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	got, err := m.RenameApp(ctx, acc.ID, "old-name", "new-name")
+	if err != nil {
+		t.Fatalf("RenameApp: %v", err)
+	}
+	if got.Slug != "new-name" {
+		t.Errorf("Slug = %q, want new-name", got.Slug)
+	}
+	if got.ID != app.ID {
+		t.Errorf("ID = %q, want %q (same row, mutated in place)", got.ID, app.ID)
+	}
+
+	// Old slug must be gone from the lookup table.
+	if _, err := m.AppBySlug(ctx, "old-name"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("AppBySlug(old-name) = %v, want ErrNotFound", err)
+	}
+	// New slug must resolve.
+	if back, err := m.AppBySlug(ctx, "new-name"); err != nil {
+		t.Errorf("AppBySlug(new-name): %v", err)
+	} else if back.ID != app.ID {
+		t.Errorf("AppBySlug(new-name).ID = %q, want %q", back.ID, app.ID)
+	}
+}
+
+func TestMem_RenameApp_SlugTakenReturnsErrConflict(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acc, _ := m.CreateAccount(ctx, "take@x.com", api.PlanHobby)
+	if _, err := m.CreateApp(ctx, App{
+		AccountID: acc.ID, Slug: "victim", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, Status: AppActive,
+	}); err != nil {
+		t.Fatalf("CreateApp victim: %v", err)
+	}
+	if _, err := m.CreateApp(ctx, App{
+		AccountID: acc.ID, Slug: "blocker", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, Status: AppActive,
+	}); err != nil {
+		t.Fatalf("CreateApp blocker: %v", err)
+	}
+
+	_, err := m.RenameApp(ctx, acc.ID, "victim", "blocker")
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("RenameApp onto existing slug = %v, want ErrConflict", err)
+	}
+
+	// The losing rename must not have moved the victim.
+	if _, err := m.AppBySlug(ctx, "victim"); err != nil {
+		t.Errorf("victim disappeared after failed rename: %v", err)
+	}
+	if _, err := m.AppBySlug(ctx, "blocker"); err != nil {
+		t.Errorf("blocker disappeared after failed rename: %v", err)
+	}
+}
+
+func TestMem_RenameApp_UnknownSlugReturnsErrNotFound(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acc, _ := m.CreateAccount(ctx, "ghost@x.com", api.PlanHobby)
+	if _, err := m.CreateApp(ctx, App{
+		AccountID: acc.ID, Slug: "real", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, Status: AppActive,
+	}); err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	_, err := m.RenameApp(ctx, acc.ID, "ghost", "anything")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("RenameApp on missing slug = %v, want ErrNotFound", err)
+	}
+}
+
+// TestMem_RenameApp_CrossAccountIsolation pins the (account_id, slug)
+// pair in the source lookup: account A must not be able to mutate an
+// app that belongs to account B. Attempting to rename B's slug from
+// A's context looks the same as "no such slug in this account" →
+// ErrNotFound. Without the accountID scope in the WHERE clause, this
+// would be a horizontal-priv-esc.
+//
+// The collision direction (A trying to rename alpha → beta where B owns
+// beta) is a SEPARATE concern — slug namespacing is global by design
+// (apps.slug is a unique constraint, same as CreateApp). Probing for
+// foreign slugs via rename collisions is a known enumeration surface
+// that mirrors CreateApp's; not in scope for this test.
+func TestMem_RenameApp_CrossAccountIsolation(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	accA, _ := m.CreateAccount(ctx, "a@x.com", api.PlanHobby)
+	accB, _ := m.CreateAccount(ctx, "b@x.com", api.PlanHobby)
+
+	if _, err := m.CreateApp(ctx, App{
+		AccountID: accA.ID, Slug: "alpha", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, Status: AppActive,
+	}); err != nil {
+		t.Fatalf("CreateApp A: %v", err)
+	}
+	if _, err := m.CreateApp(ctx, App{
+		AccountID: accB.ID, Slug: "beta", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, Status: AppActive,
+	}); err != nil {
+		t.Fatalf("CreateApp B: %v", err)
+	}
+
+	// A cannot rename B's slug — must look like ErrNotFound, not
+	// ErrConflict (which would leak existence info about B's app).
+	if _, err := m.RenameApp(ctx, accA.ID, "beta", "stolen"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("A renaming B's slug = %v, want ErrNotFound (account scope on source lookup)", err)
+	}
+	// Symmetric: A also cannot touch B's slug when asking for an
+	// unrelated rename target.
+	if _, err := m.RenameApp(ctx, accA.ID, "beta", "renamed-beta"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("A renaming B's slug (any target) = %v, want ErrNotFound", err)
+	}
+
+	// B's app must still exist under the original slug.
+	if got, err := m.AppBySlug(ctx, "beta"); err != nil {
+		t.Errorf("B's beta vanished after failed cross-account rename: %v", err)
+	} else if got.AccountID != accB.ID {
+		t.Errorf("B's beta reassigned to %q after cross-account rename attempt", got.AccountID)
+	}
+	// A's app must not have been touched either.
+	if got, err := m.AppBySlug(ctx, "alpha"); err != nil {
+		t.Errorf("A's alpha vanished after cross-account attempt: %v", err)
+	} else if got.AccountID != accA.ID {
+		t.Errorf("A's alpha reassigned: %v", err)
+	}
+}

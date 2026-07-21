@@ -95,6 +95,29 @@ The **M1** (50× concurrent) and **M3** (park→wake latency) tests also pass
 here against the V6 rootfs (it's a full guest-init, just with a busybox
 httpd entrypoint instead of a real app).
 
+## M5 §14 acceptance: `TestDeployWakeMetal`
+
+The M5 deploy→wake test (`cmd/e2e/deploy_wake_metal_test.go`) is the
+`spec §14` acceptance for "faas deploy → parked → first request wakes".
+It goes through the full wire (apid → imaged → schedd → vmmd → firecracker,
+then a real HTTP request through gatewayd) and asserts the served body
+matches the OCI-fixture bytes byte-for-byte.
+
+It boots the V6 rootfs as both `basePath("")` (no runtime) and
+`basePath("node22")`, so the Lima provisioner stages `/srv/fc/base/base.ext4`
+and `/srv/fc/base/runner-node22.ext4` from the same `v6-base.ext4` image —
+no extra setup step is needed.
+
+The test registers a fake OCI registry on loopback and configures
+`imaged` to pull from it via `FAAS_OCI_INSECURE=1` +
+`FAAS_TEST_BUILDER_BASE_REF` /
+`FAAS_TEST_DEPLOY_BASE_REF`. The harness forwards those env vars
+(see `pkg/e2etest/harness.go`).
+
+The test's per-daemon log buffers are dumped via `t.Logf` on failure
+(`e2etest.Harness.DumpLogs`), so a flake shows the daemon's last words
+in the test output.
+
 ## Caveats — read before trusting a result
 
 - **Arch:** the guest is **arm64**; the production EX44 is **x86_64**. This

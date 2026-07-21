@@ -36,7 +36,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const helloBody = "hello from faas\n"
+// helloBody is the round-trip fixture: the bytes written into app/hello.txt
+// (intentionally without a trailing newline — `cat` would echo one if we kept
+// it, and the body/trim assertion `strings.TrimSpace(body) == helloBody` is
+// comparing the *content* against the trimmed form). Keeping the fixture
+// newline-free makes the assertion robust against CRLF or transport-layer
+// wrapping on the wire.
+const helloBody = "hello from faas"
 
 // TestDeployWakeMetal runs the five-subtest acceptance:
 //
@@ -69,14 +75,35 @@ func TestDeployWakeMetal(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	h := e2etest.Start(t, pool, e2etest.All)
-	key := h.SeedAccount(context.Background(), api.PlanHobby)
-
-	// Fake registry on loopback. Imaged pulls from it via FAAS_OCI_INSECURE=1
-	// (set by the harness). The reference is digest-pinned.
+	// Fake registry on loopback. Stand it up BEFORE e2etest.Start so imaged's
+	// startup-time `EnsureBaseExt4` can pull `onebox-faas/builder-base:latest`
+	// from the same local registry (FAAS_OCI_INSECURE=1 lets it dial plain
+	// HTTP). This avoids the production ghcr.io endpoint, which 403s for
+	// anonymous pulls. The harness's imaged startup honors
+	// FAAS_TEST_BUILDER_BASE_REF (see pkg/e2etest/harness.go) when set.
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
-	img, ref := e2etest.HelloImage("library/hello", helloBody)
+	// Stub builder-base with a one-layer image — imaged's EnsureBaseExt4
+	// rejects zero-layer bases ("manifest has no layers"). The deploy-time
+	// base override (FAAS_TEST_DEPLOY_BASE_REF) points at a DIFFERENT repo
+	// whose single layer's diff_id matches the app's hello.txt layer, so
+	// oci.LayersAboveBase treats it as a base prefix and the app's hello
+	// layer lands in `above` — exactly the two-drive shape imaged would
+	// see with a real runner base + app diff.
+	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
+	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", helloBody)
+	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
+	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
+	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+
+	h := e2etest.Start(t, pool, e2etest.DeployWake)
+	key := h.SeedAccount(context.Background(), api.PlanHobby)
+
+	// The reference for the test's actual app image — digest-pinned. Use
+	// the two-layer variant so oci.LayersAboveBase finds one above-base
+	// layer after subtracting the deploy-base's single layer prefix.
+	img, ref := e2etest.HelloImageAboveBase("library/hello", helloBody)
 	ref = registry.AddImage("library/hello", img)
 
 	// Create the app on Hobby plan (256 MB RAM cap, 2-concurrency cap).
@@ -97,14 +124,32 @@ func TestDeployWakeMetal(t *testing.T) {
 		t.Fatalf("decode deployment: %v body=%s", err, raw)
 	}
 
+	// apid stores the full ref (`host/repo@sha256:...`) into
+	// deployments.image_digest so imaged's OCI puller can dial the
+	// right registry host. imaged reads the row when it gets the
+	// deployment_changed pg_notify. (Historically the column held
+	// just the bare digest; that resolution collapsed every
+	// non-Docker-Hub deploy to docker.io/library/sha256:..., so the
+	// local fakeregistry was never reachable. Fixed by apid emitting
+	// the full ref — see cmd/apid/handlers.go createDeployment.)
+
 	var firstInstanceID string
 
 	// -- 1. deploy-then-parked -------------------------------------------------
 	t.Run("deploy-then-parked", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
+		// Dump daemon logs on every exit path of subtest 1 — the whole
+		// point of this subtest on the Lima acceptance loop is the wire
+		// evidence. Failure path logs the deployment state + daemon
+		// output; success path logs the daemon output so a green run is
+		// self-documenting in the test log.
+		defer h.DumpLogs(t)
 		dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depResp.ID, 60*time.Second)
 		if err != nil {
+			if d, derr := state.NewPgStore(pool).DeploymentByID(ctx, depResp.ID); derr == nil {
+				t.Logf("deployment state at failure: status=%s error=%q", d.Status, d.Error)
+			}
 			t.Fatalf("deployment did not reach live: %v", err)
 		}
 		ins, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 60*time.Second)
@@ -117,6 +162,7 @@ func TestDeployWakeMetal(t *testing.T) {
 		if dep.Status != state.DeployLive {
 			t.Errorf("dep.Status = %s, want live", dep.Status)
 		}
+		t.Logf("deploy-then-parked: dep=%s instance=%s parked", dep.ID, ins[0].ID)
 	})
 
 	// -- 2. first-request-wakes ------------------------------------------------

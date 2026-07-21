@@ -114,6 +114,9 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 		return BuildResult{}, err // *api.Problem naming cap + observed size
 	}
 
+	if err := os.MkdirAll(filepath.Dir(in.OutImage), 0o755); err != nil {
+		return BuildResult{}, fmt.Errorf("rootfs: mkdir out dir: %w", err)
+	}
 	if err := b.run.Run(ctx, MkfsCommand(staging, in.OutImage, sizeMB)); err != nil {
 		return BuildResult{}, fmt.Errorf("rootfs: mkfs: %w", err)
 	}

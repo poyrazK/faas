@@ -242,7 +242,26 @@ kernel_path = %q
 			"FAAS_GUEST_INIT="+guestInit,
 			"FAAS_APPS_ROOT="+appsRoot,
 			"FAAS_OCI_INSECURE=1",
+			"DATABASE_URL="+dbURL,
+			"PATH="+os.Getenv("PATH"),
+			"HOME="+os.Getenv("HOME"),
 		)
+		// Optional builder-base override (Lima / CI without ghcr creds). When
+		// FAAS_TEST_BUILDER_BASE_REF is set, imaged pulls the base from there
+		// instead of the production ghcr.io/onebox-faas/builder-base:latest
+		// (which 403s anonymously). FAAS_TEST_DEPLOY_BASE_REF, if set,
+		// overrides the per-runtime base ref used by aboveBaseLayers at
+		// deploy time so it also dials the stub registry. Default behavior
+		// is unchanged.
+		if ref := os.Getenv("FAAS_TEST_BUILDER_BASE_REF"); ref != "" {
+			env = append(env, "FAAS_BUILDER_BASE_REF="+ref)
+			if path := os.Getenv("FAAS_TEST_BUILDER_BASE_PATH"); path != "" {
+				env = append(env, "FAAS_BUILDER_BASE_PATH="+path)
+			}
+		}
+		if dbr := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); dbr != "" {
+			env = append(env, "FAAS_DEPLOY_BASE_REF="+dbr)
+		}
 		h.procs = append(h.procs, startProc(t, bin, "imaged", env))
 	}
 
@@ -349,8 +368,16 @@ const (
 	Builderd
 )
 
-// All is the full set for the metal e2e test.
-const All = APID | Schedd | VMMD | Imaged | Gatewayd | Meterd | Builderd
+// DeployWake is the daemon set the image deploy → snapshot → park → wake
+// acceptance requires. The path never queues a build, so Builderd is
+// excluded — the test starts faster and the failure surface is smaller.
+const DeployWake = APID | Schedd | VMMD | Imaged | Gatewayd
+
+// All is the full metal set (DeployWake + Meterd + Builderd). Used by tests that
+// exercise the build pipeline (TestBuildMetal and friends) where the
+// builderd daemon must actually queue and serve a build, and by the M7 meterd
+// tests that need the quota-meter writer running.
+const All = DeployWake | Meterd | Builderd
 
 const testDomain = "apps.test.example"
 
@@ -597,6 +624,24 @@ func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 		t.Fatalf("e2etest: start %s: %v", name, err)
 	}
 	return cmd
+}
+
+// DumpLogs prints the captured stdout/stderr of every running daemon
+// subprocess to the test log. Useful when a deploy/instance waiter
+// stalls and you need the daemon's last words without waiting for the
+// process to exit (the stop-time Logf only fires on non-zero exit).
+// Intended for debugging — production tests don't call this.
+func (h *Harness) DumpLogs(t *testing.T) {
+	t.Helper()
+	for _, p := range h.procs {
+		if buf, ok := p.Stdout.(*bytes.Buffer); ok {
+			s := buf.String()
+			if s == "" {
+				continue
+			}
+			t.Logf("e2etest: %s captured output:\n%s", filepath.Base(p.Path), s)
+		}
+	}
 }
 
 // injectSearchPath adds (or replaces) the search_path query parameter on a

@@ -55,26 +55,26 @@ var _ Store = (*PgStore)(nil)
 
 func (s *PgStore) CreateAccount(ctx context.Context, email string, plan api.Plan) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`insert into accounts (email, plan, status) values ($1, $2, 'active') returning id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at`,
+		`insert into accounts (email, plan, status) values ($1, $2, 'active') returning id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at`,
 		email, string(plan))
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByID(ctx context.Context, id string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at from accounts where id = $1`, id)
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at from accounts where id = $1`, id)
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByEmail(ctx context.Context, email string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at from accounts where email = $1`, email)
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at from accounts where email = $1`, email)
 	return scanAccount(row)
 }
 
 func (s *PgStore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select a.id, a.email, a.plan, a.status, coalesce(a.stripe_customer_id,''), coalesce(a.stripe_subscription_item,''), a.created_at, a.deletion_requested_at
+		`select a.id, a.email, a.plan, a.status, coalesce(a.stripe_customer_id,''), coalesce(a.stripe_subscription_item,''), a.created_at, a.deletion_requested_at, a.last_quota_warning_at, a.past_due_at
 		 from accounts a join api_keys k on k.account_id = a.id where k.key_sha256 = $1`, hash)
 	return scanAccount(row)
 }
@@ -129,7 +129,7 @@ func (s *PgStore) UpdateAccountStripeSubscriptionItem(ctx context.Context, id, s
 // map.
 func (s *PgStore) AccountByStripeCustomerID(ctx context.Context, stripeCustomerID string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at
 		 from accounts where stripe_customer_id = $1`,
 		stripeCustomerID)
 	return scanAccount(row)
@@ -139,7 +139,7 @@ func (s *PgStore) AccountByStripeCustomerID(ctx context.Context, stripeCustomerI
 // tick + hourly Stripe push; bounded by the customer count on the box.
 func (s *PgStore) ListAllAccounts(ctx context.Context) ([]Account, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at
+		`select id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at
 		 from accounts order by created_at`)
 	if err != nil {
 		return nil, err
@@ -164,19 +164,26 @@ func scanAccounts(rows pgx.Rows) ([]Account, error) {
 }
 
 // scanAccountCols is the shared column reader for the Account shape
-// used by every read path. deletion_requested_at is nullable; we scan
-// into *time.Time and lift it onto the Account when non-NULL.
+// used by every read path. deletion_requested_at, last_quota_warning_at,
+// and past_due_at are nullable; we scan into *time.Time and lift them
+// onto the Account when non-NULL.
 func scanAccountCols(scan func(...any) error) (Account, error) {
 	a := Account{}
 	var planStr, statusStr string
-	var deletionAt *time.Time
-	if err := scan(&a.ID, &a.Email, &planStr, &statusStr, &a.StripeCustomerID, &a.StripeSubscriptionItem, &a.CreatedAt, &deletionAt); err != nil {
+	var deletionAt, lastWarnAt, pastDueAt *time.Time
+	if err := scan(&a.ID, &a.Email, &planStr, &statusStr, &a.StripeCustomerID, &a.StripeSubscriptionItem, &a.CreatedAt, &deletionAt, &lastWarnAt, &pastDueAt); err != nil {
 		return Account{}, err
 	}
 	a.Plan = api.Plan(planStr)
 	a.Status = AccountStatus(statusStr)
 	if deletionAt != nil {
 		a.DeletionRequestedAt = deletionAt
+	}
+	if lastWarnAt != nil {
+		a.LastQuotaWarningAt = lastWarnAt
+	}
+	if pastDueAt != nil {
+		a.PastDueAt = pastDueAt
 	}
 	return a, nil
 }
@@ -339,6 +346,25 @@ func (s *PgStore) SetAppMinInstances(ctx context.Context, appID string, min int)
 	return nil
 }
 
+// RenameApp changes an app's slug atomically (issue #63). The UPDATE
+// is scoped to (account_id, oldSlug, status<>'deleted') so a wrong
+// accountID or unknown slug returns ErrNotFound via mapErr → pgx.ErrNoRows.
+// The apps.slug unique constraint surfaces a duplicate newSlug as
+// ErrConflict via mapErr → unique-violation SQLSTATE. RETURNING mirrors
+// the same scanApp shape used by AppByID.
+//
+// Both PgStore and MemStore share the same error contract so the apid
+// handler can branch on errors.Is without checking the concrete type.
+func (s *PgStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug string) (App, error) {
+	row := s.pool.QueryRow(ctx,
+		`update apps set slug = $3
+		 where account_id = $1 and slug = $2 and status <> 'deleted'
+		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
+		           max_concurrency, status, manifest, created_at, min_instances`,
+		accountID, oldSlug, newSlug)
+	return scanApp(row)
+}
+
 func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `update apps set status = 'deleted' where id = $1`, id)
 	return err
@@ -439,9 +465,10 @@ func (s *PgStore) DeploymentByID(ctx context.Context, id string) (Deployment, er
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
+		        coalesce(rootfs_path,''), coalesce(rootfs_bytes,0),
 		        status, coalesce(error,''), created_at
 		 from deployments where id = $1`, id)
-	return scanDeployment(row)
+	return scanDeploymentWithRootfs(row)
 }
 
 func (s *PgStore) LatestDeployment(ctx context.Context, appID string) (Deployment, error) {
@@ -766,8 +793,14 @@ func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 // --- instances --------------------------------------------------------------
 
 func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error) {
+	// started_at is stamped explicitly here in addition to the
+	// BEFORE INSERT trigger from migration 00015. The trigger is the
+	// belt; this is the braces. Either alone works; both together
+	// make the contract obvious to anyone reading PgStore and prevent
+	// a future trigger drop from silently regressing the watchdog
+	// (commit 3, spec §6.1).
 	row := s.pool.QueryRow(ctx,
-		`insert into instances (app_id, deployment_id, state, ram_mb) values ($1, $2, $3, $4)
+		`insert into instances (app_id, deployment_id, state, ram_mb, started_at) values ($1, $2, $3, $4, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at`,
 		appID, deploymentID, state, ramMB)
@@ -883,6 +916,57 @@ func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) err
 		return ErrNotFound
 	}
 	return nil
+}
+
+// UpdateInstanceStateWithTimestamp stamps parked_at on the same
+// statement that writes the new state. schedd's snapshotAndPark calls
+// this when transitioning into SNAPSHOTTING — the §6.1 watchdog reads
+// parked_at on SNAPSHOTTING rows to compute "age of state", distinct
+// from started_at which is now stamped on creation (migration 00015).
+func (s *PgStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances set state = $2, parked_at = $3 where id = $1`,
+		id, state, parkedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListInstancesByStatesOlderThan is the watchdog's lookup (spec §6.1).
+// Filters on state ∈ states and a state-aware "age" column:
+// started_at for WAKING / COLD_BOOTING (stamped on creation by the
+// trigger in migration 00015), parked_at for SNAPSHOTTING (stamped on
+// entry into SNAPSHOTTING by UpdateInstanceStateWithTimestamp).
+//
+// The CASE shape is load-bearing — the original coalesce(started_at,
+// parked_at) predicate silently used parked_at for any row with NULL
+// started_at, which is true for every row that existed before
+// migration 00015 shipped. Such a row would compare against its
+// historical parked_at (often weeks old) and look stuck even though
+// it's normal. The partial index
+// instances_watchdog_state_idx (migration 00016) covers the state
+// predicate; the CASE comparison runs on the row payload.
+func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	stateStrs := make([]string, len(states))
+	for i, s := range states {
+		stateStrs[i] = string(s)
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
+		 from instances
+		 where state = any($1)
+		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
+		stateStrs, threshold)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
 }
 
 func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error {
@@ -1883,6 +1967,107 @@ func (s *PgStore) RestoreAccount(ctx context.Context, id string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
+	}
+	return nil
+}
+
+// LoadAndStampLastQuotaWarning is the atomic compare-and-set that lets
+// pkg/meter.EnforceQuota emit exactly one paid-tier quota_warning per
+// UTC day (spec §4.7). The query:
+//   - Truncates `day` to its UTC midnight so the comparison is "same
+//     calendar day, not same 24h window".
+//   - Uses a CTE that captures the OLD stamp (pre-UPDATE) so the
+//     scalar subquery can compare it to today's anchor — a naive
+//     `returning last_quota_warning_at = $2` reads the post-update
+//     column, which is trivially `$2` and yields `already=true` on
+//     every call (CI caught this on PR #69).
+//   - Returns one row even when the id is missing, with `already =
+//     NULL` as the sentinel for "row doesn't exist" (a bare coalesce
+//     can't distinguish "exists with NULL old stamp" from "missing
+//     row", so we use a CASE explicitly). pkg/meter/EnforceQuota only
+//     calls this against a freshly-read account id, so the missing
+//     path is purely a safety net.
+//   - Returns (true, nil) on a same-day repeat (UPDATE predicate
+//     rejects the row, OLD stamp already equals $2), (false, nil) on
+//     a first-today or next-day call (UPDATE happened), ErrNotFound
+//     when no row matches the id at all.
+func (s *PgStore) LoadAndStampLastQuotaWarning(ctx context.Context, id string, day time.Time) (bool, error) {
+	dayStart := day.UTC().Truncate(24 * time.Hour)
+	var already *bool
+	err := s.pool.QueryRow(ctx,
+		`with existing as (
+		    select last_quota_warning_at as old
+		      from accounts where id = $1
+		 ),
+		 upd as (
+		    update accounts
+		       set last_quota_warning_at = $2
+		     where id = $1
+		       and (last_quota_warning_at is null or last_quota_warning_at < $2)
+		    returning 1
+		 )
+		 select case
+		           when not exists(select 1 from existing) then null
+		           when (select old from existing) = $2 then true
+		           else false
+		         end`,
+		id, dayStart).Scan(&already)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return false, err
+	}
+	if already == nil {
+		return false, ErrNotFound
+	}
+	return *already, nil
+}
+
+// ClearQuotaWarning nulls last_quota_warning_at so the next call to
+// LoadAndStampLastQuotaWarning (e.g. on the next quota tick) starts
+// fresh. Used by apid's invoice.payment_succeeded webhook to make sure
+// a paying customer doesn't get skipped tomorrow because of a stamp
+// from the day they crossed the threshold.
+func (s *PgStore) ClearQuotaWarning(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx,
+		`update accounts set last_quota_warning_at = null
+		  where id = $1 and last_quota_warning_at is not null`,
+		id)
+	return err
+}
+
+// MarkDunningStep is the meterd.Dunning timer's compare-and-advance
+// primitive (spec §4.7, §17 dunning). Atomically:
+//   - flips status from `from` to `to` (when from != to),
+//   - stamps past_due_at only when transitioning *into* past_due
+//     (coalesce preserves any pre-existing stamp so a back-and-forth
+//     status flip doesn't lose the original anchor),
+//   - returns ErrNotFound when no row matched (gone OR status didn't
+//     match `from` — the latter is the redelivery race between two
+//     concurrent dunning ticks).
+//
+// The from==to case is NOT short-circuited — it serves as the
+// backfill-stamp path used by pkg/meter.Dunning to plant a stamp on
+// a legacy row that entered past_due before the migration column
+// existed (audit finding #2 data-integrity guard).
+func (s *PgStore) MarkDunningStep(ctx context.Context, id string, from, to AccountStatus) error {
+	var stamp *time.Time
+	if to == AccountPastDue {
+		now := time.Now().UTC()
+		stamp = &now
+	}
+	tag, err := s.pool.Exec(ctx,
+		`update accounts
+		    set status = $2,
+		        past_due_at = case when $2 = 'past_due' then coalesce(past_due_at, $3) else past_due_at end
+		  where id = $1 and status = $4`,
+		id, string(to), stamp, string(from))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

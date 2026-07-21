@@ -56,13 +56,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// the box (spec §11, issue #27).
 	//
 	// FAAS_OCI_INSECURE=1 swaps the egress-guarded client for a plain
-	// http.Client. Test harness only — never set in production. Lets the
-	// e2e tests pull from an httptest registry bound to loopback (which
-	// the egress guard denies).
+	// http.Client AND flips the OCI scheme to http. Test harness only —
+	// never set in production. Lets the e2e tests pull from an httptest
+	// registry bound to loopback (which the egress guard denies and which
+	// serves plain HTTP, not HTTPS). WithEndpoint("http", "") sets the
+	// scheme while leaving the per-reference host derivation intact (the
+	// puller falls back to r.APIHost() when its pinned host is empty).
 	pullerOpts := []oci.Option{oci.WithHTTPClient(oci.NewEgressHTTPClient())}
 	if os.Getenv("FAAS_OCI_INSECURE") == "1" {
 		log.Warn("FAAS_OCI_INSECURE=1 — egress guard disabled, e2e test mode only")
-		pullerOpts = []oci.Option{oci.WithHTTPClient(&http.Client{})}
+		pullerOpts = []oci.Option{
+			oci.WithHTTPClient(&http.Client{}),
+			oci.WithEndpoint("http", ""),
+		}
 	}
 	puller := oci.NewRegistryClient(pullerOpts...)
 
@@ -70,6 +76,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	guestInitPath := envOr("FAAS_GUEST_INIT", "./init")
 	appsRoot := envOr("FAAS_APPS_ROOT", "/var/lib/faas/apps")
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log)
+
+	// FAAS_DEPLOY_BASE_REF overrides the per-runtime base ref used by
+	// aboveBaseLayers at deploy time. Wired from the test harness via the
+	// same FAAS_TEST_BUILDER_BASE_REF it already uses for startup-time
+	// staging — production never sets this (see Handler.WithDeployBaseRef).
+	if dbr := os.Getenv("FAAS_DEPLOY_BASE_REF"); dbr != "" {
+		h.WithDeployBaseRef(dbr)
+	}
 
 	channels := []string{
 		db.NotifyDeploymentChanged,

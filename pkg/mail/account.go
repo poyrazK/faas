@@ -66,3 +66,33 @@ and we'll work with you to recover what we can from our backups.
 `, accountEmail)
 	return
 }
+
+// AccountSuspendedBody is the dunning-driven "your apps are now
+// suspended" email (spec §4.7, §17 dunning state machine). Sent when
+// pkg/meter.Dunning transitions an account from past_due to suspended
+// after 7 days without payment. Distinct subject from the deletion
+// emails so the customer can tell what happened at a glance.
+func AccountSuspendedBody(email string, at time.Time) (subject, body string) {
+	atStr := at.UTC().Format("2006-01-02 15:04 UTC")
+	subject = "Your faas apps have been suspended"
+	body = fmt.Sprintf(`Hi,
+
+Your faas account (%s) has not received a successful payment for 7
+days. As of %s, every running instance tied to your account has been
+parked and new deploys are blocked.
+
+To restore service, update your payment method and run:
+
+    faas billing retry
+
+Once Stripe confirms the payment, meterd will resume your apps on the
+next quota tick (within 60 s). If the payment does not arrive within
+21 days of the original failure (i.e. %s — 14 days from now), your
+account will be scheduled for permanent deletion.
+
+If this charge is unexpected, contact support@DOMAIN.
+
+— onebox faas
+`, email, atStr, atStr)
+	return
+}

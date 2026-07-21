@@ -104,6 +104,19 @@ type Account struct {
 	// never been scheduled. pkg/grace uses it to decide whether the
 	// 30-day grace window has lapsed and a hard delete should run.
 	DeletionRequestedAt *time.Time
+	// LastQuotaWarningAt is the UTC day (midnight-truncated timestamptz)
+	// the meterd quota loop last emitted a `quota_warning` pg_notify for
+	// this account (spec §4.7). The dedupe gate at quota.go reads +
+	// stamps this column atomically so a paid-tier overage produces
+	// exactly one warning event per UTC day — across daemon restarts.
+	// NULL on every row that has never tripped.
+	LastQuotaWarningAt *time.Time
+	// PastDueAt is the moment the account entered `past_due` (set by
+	// the apid invoice.payment_failed webhook). pkg/meter.Dunning uses
+	// it as the anchor for the 7-day past_due → suspended and 21-day
+	// suspended → deleted_pending transitions. NULL on accounts that
+	// have never been past_due.
+	PastDueAt *time.Time
 }
 
 // Active reports whether the account may deploy (not suspended/deleted).

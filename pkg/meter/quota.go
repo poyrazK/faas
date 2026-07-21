@@ -103,8 +103,22 @@ func EnforceQuota(
 			log.Warn("meter: notify billing_past_due", "err", err)
 		}
 	case "warn":
-		// Paid overage — one warning event. Caller (loop) keeps a
-		// per-account last-warning date to avoid spamming dashboards.
+		// Paid overage — one warning event per UTC day (spec §4.7).
+		// The dedupe gate is persisted in accounts.last_quota_warning_at
+		// (added in migration 00013). LoadAndStampLastQuotaWarning
+		// atomically stamps the column to today's UTC midnight AND
+		// reports whether the row already carried that stamp — when
+		// true we skip the notify emission entirely.
+		today := at.UTC().Truncate(24 * time.Hour)
+		already, err := store.LoadAndStampLastQuotaWarning(ctx, account.ID, today)
+		if err != nil {
+			return act, fmt.Errorf("meter: dedupe quota_warning for %s: %w", account.ID, err)
+		}
+		if already {
+			log.Debug("meter: paid-tier quota warning already emitted today",
+				"account", account.ID, "day", today)
+			break
+		}
 		payload, _ := json.Marshal(map[string]any{
 			"account_id": account.ID, "plan": string(account.Plan),
 			"used_gb": usedGB, "quota_gb": res.QuotaGB,

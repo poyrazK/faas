@@ -93,6 +93,14 @@ var _ VMM = (*VMMClient)(nil)
 // socket's 0660/group-`faas` DAC is the only auth for v1.0, so the transport is
 // insecure credentials over a trusted local socket). The connection dials on
 // first RPC; DialVMM never blocks on vmmd being up.
+//
+// Per-call deadlines (spec §6.1, commit 1) live at the engine call site,
+// not in this client. Each vmmd RPC has a different spec budget (5s for
+// WAKING, 30s for COLD_BOOTING, 10s for Destroy) and the engine wraps
+// the call with the appropriate context.WithTimeout; centralising
+// deadlines here would either over-budget (every RPC gets the largest
+// budget) or under-budget (every RPC gets the smallest). Leave the
+// client transport-only.
 func DialVMM(socketPath string) (*VMMClient, error) {
 	if socketPath == "" {
 		return nil, errors.New("sched: empty vmmd socket path")

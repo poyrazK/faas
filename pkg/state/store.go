@@ -94,6 +94,30 @@ type Store interface {
 	MarkAccountDeletionPending(ctx context.Context, id string) error
 	RestoreAccount(ctx context.Context, id string) error
 
+	// Dunning + quota warning (spec §4.7). These three are the load-
+	// bearing primitives pkg/meter.Dunning + pkg/meter.EnforceQuota's
+	// "warn" branch depend on.
+	//
+	// LoadAndStampLastQuotaWarning atomically stamps last_quota_warning_at
+	// to the supplied UTC-day anchor AND reports whether the row already
+	// carried a stamp for that day. Returns (true, nil) on a same-day
+	// repeat call (the quota gate suppresses the second notify), (false,
+	// nil) on a first-today call (caller emits the notify), and
+	// ErrNotFound when the account row is gone.
+	LoadAndStampLastQuotaWarning(ctx context.Context, accountID string, day time.Time) (alreadyWarned bool, err error)
+	// ClearQuotaWarning nulls last_quota_warning_at so a customer who
+	// paid an invoice (or any other path that resets the overage
+	// counter) sees the next quota_warning on the *next* UTC day rather
+	// than being skipped because of a stamp from days ago.
+	ClearQuotaWarning(ctx context.Context, accountID string) error
+	// MarkDunningStep atomically advances a row from `from` to `to`
+	// (e.g. past_due → suspended), stamping past_due_at only when the
+	// destination is past_due. Returns ErrNotFound when the row is
+	// missing OR its status didn't match `from` (the latter is the
+	// redelivery race: two ticks firing close together on the same
+	// overdue row, the second must not double-transition).
+	MarkDunningStep(ctx context.Context, accountID string, from, to AccountStatus) error
+
 	// API keys.
 	CreateAPIKey(ctx context.Context, accountID string, hash []byte, label string) (APIKey, error)
 	DeleteAPIKey(ctx context.Context, accountID, keyID string) error
@@ -125,6 +149,11 @@ type Store interface {
 	// evicted_cold) for quota enforcement (spec §4.2).
 	CountDeployedApps(ctx context.Context, accountID string) (int, error)
 	UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error)
+	// RenameApp changes an app's slug atomically (issue #63). Returns
+	// ErrNotFound if oldSlug doesn't belong to accountID; ErrConflict if
+	// newSlug is already taken by another live app. MemStore holds the
+	// same unique-slug invariant the Postgres `apps.slug` index enforces.
+	RenameApp(ctx context.Context, accountID, oldSlug, newSlug string) (App, error)
 	// SetAppMinInstances stamps the per-app floor (ux_spec §6.5) the
 	// reaper honors when parking idle instances. 0 => scale to zero.
 	// Plan-tier gating is the apid handler's job; the store writes the
@@ -258,6 +287,26 @@ type Store interface {
 	// run on the minute boundary.
 	ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error)
 	UpdateInstanceState(ctx context.Context, id, state string) error
+	// UpdateInstanceStateWithTimestamp is the same write but stamps
+	// parked_at to the supplied time on the same statement. Used by
+	// schedd's snapshotAndPark (commit 3) when transitioning into
+	// SNAPSHOTTING — the §6.1 watchdog reads parked_at for
+	// SNAPSHOTTING rows (started_at means "row creation", not "time
+	// entered current state"), so the engine must stamp it on entry.
+	// Non-SNAPSHOTTING transitions should still use UpdateInstanceState.
+	UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error
+	// ListInstancesByStatesOlderThan is the §6.1 watchdog's lookup.
+	// Returns rows currently in any of the given states whose
+	// "age timestamp" is strictly older than threshold. The age
+	// column is state-aware: started_at for WAKING/COLD_BOOTING
+	// (stamped on creation by migration 00015), parked_at for
+	// SNAPSHOTTING (stamped on entry into that state by
+	// UpdateInstanceStateWithTimestamp). Implementations must NOT
+	// coalesce the two columns — pre-migration 00015 rows have
+	// NULL started_at, and coalesce would silently use the stale
+	// parked_at. PgStore relies on migration 00016's partial index
+	// for the state predicate.
+	ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
 	// SetInstanceRuntime records the per-instance identity vmmd allocated on
 	// wake (netns, routable host IP, jail uid) and stamps started_at=now. schedd
 	// calls this between a successful vmmd boot and the RUNNING transition so the

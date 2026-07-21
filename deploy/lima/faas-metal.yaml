@@ -60,6 +60,9 @@ probes:
 provision:
   # System setup: build toolchain, mkfs.ext4, iproute2, busybox (metal-test
   # rootfs fallback), kvm group, Go 1.25, and aarch64 Firecracker + kernel.
+  # Also install + start postgres (the metal tests need a reachable socket
+  # at /run/postgresql) and create the per-daemon faas-* users the jailer
+  # chowns to.
   - mode: system
     script: |
       #!/bin/bash
@@ -91,7 +94,48 @@ provision:
       apt_wait
       apt-get install -y --no-install-recommends \
         build-essential e2fsprogs iproute2 iptables git curl ca-certificates \
-        busybox-static jq
+        busybox-static jq postgresql
+
+      # Per-daemon service accounts. vmmd runs the jailed firecracker +
+      # chowns the chroot to the per-instance uid range (20000–29999), so
+      # /srv/fc, /etc/faas, and the per-daemon config live here.
+      for u in faas faas-apid faas-schedd faas-vmmd faas-gatewayd faas-imaged; do
+        if ! id -u "$u" >/dev/null 2>&1; then
+          useradd -r -M -s /usr/sbin/nologin "$u"
+        fi
+      done
+      groupadd -f faas || true
+      for u in faas-apid faas-schedd faas-vmmd faas-gatewayd faas-imaged; do
+        usermod -aG faas "$u" 2>/dev/null || true
+      done
+      install -d -m 0755 -o root -g root /etc/faas
+      install -d -m 0755 -o faas-vmmd -g faas /srv/fc/base
+      install -d -m 0755 -o faas-vmmd -g faas /srv/fc/jail
+      install -d -m 0755 -o faas-vmmd -g faas /srv/fc/snap
+      install -d -m 0755 -o faas-vmmd -g faas /srv/fc/layers
+
+      # Postgres: edit-until-idempotent config, start, create role/db. The
+      # metal test suite expects /run/postgresql (default Debian location).
+      install -d -m 0755 -o postgres -g postgres /var/run/postgresql
+      ln -sfn /var/run/postgresql /run/postgresql
+      cat >/etc/postgresql/16/main/pg_hba.conf <<EOF
+      local all all trust
+      host all all 127.0.0.1/32 trust
+      host all all ::1/128 trust
+      EOF
+      pg_ctlcluster 16 main start || true
+      sleep 1
+      # pg_ctlcluster start happens BEFORE the HBA file is rewritten above,
+      # so postgres is up with the default `peer` auth on local sockets and
+      # reloads the new HBA only on next SIGHUP. Force the reload here so
+      # the `local all all trust` rule below is active before any daemons
+      # (or the test runner) try to connect.
+      pg_ctlcluster 16 main reload || true
+      sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='faas'" \
+        | grep -q 1 || sudo -u postgres psql -c "CREATE ROLE faas LOGIN SUPERUSER"
+      sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='faas'" \
+        | grep -q 1 || sudo -u postgres createdb faas
+      sudo -u postgres psql -c "GRANT ALL ON DATABASE faas TO faas" || true
 
       # Let the default (non-root) Lima user open /dev/kvm without sudo.
       # The Lima cloud-init image's "regular" login user varies across
@@ -258,11 +302,20 @@ provision:
       mkfs.ext4 -O '^has_journal' -d "$WORK" -L faas-v6 -F "$V6_BASE" >/dev/null
       chmod 0644 "$V6_BASE"
 
+      # The deploy-wake acceptance test (cmd/e2e/deploy_wake_metal_test.go)
+      # uses sched.Engine.Prime, which hands vmmd BasePath = basePath("") =
+      # /srv/fc/base/base.ext4 (no runtime) by default and .ext4 for
+      # node22. Symlink both to the same v6-base so a single staged image
+      # services every cold-boot path.
+      install -m 0644 -o faas-vmmd -g faas "$V6_BASE" /srv/fc/base/base.ext4
+      install -m 0644 -o faas-vmmd -g faas "$V6_BASE" /srv/fc/base/runner-node22.ext4
+
       # Writable layer upper — the guest's overlay writes here. Small is fine.
       mkdir -p "${LWORK}/etc" "${LWORK}/etc/faas" "${LWORK}/tmp"
       truncate -s 16M "$V6_LAYER"
       mkfs.ext4 -O '^has_journal' -d "$LWORK" -L faas-v6-layer -F "$V6_LAYER" >/dev/null
       chmod 0644 "$V6_LAYER"
+      chown faas-vmmd:faas "$V6_LAYER" "$V6_BASE"
 
       ls -la /srv/fc/base/
 
