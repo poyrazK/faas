@@ -78,6 +78,11 @@ func (d *dashboardProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // "/dashboard.zip" and "/dashboards" too. Tighten to exact-match
 // /dashboard + /dashboard/ + the /dashboard/ subtree; /oauth/ was
 // already correctly anchored by the trailing slash.
+//
+// /cli-auth is the device-code approval page (spec §2.2). It sits at
+// the apid root, NOT under /dashboard/, so without this branch it
+// would fall through to gatewayd's wake/rate-limit path and 404.
+// The same single-host reverse proxy handles it; no rewrite needed.
 func isDashboardPath(p string) bool {
 	const dashboardRoot = "/dashboard"
 	if p == dashboardRoot || p == dashboardRoot+"/" {
@@ -86,7 +91,14 @@ func isDashboardPath(p string) bool {
 	if strings.HasPrefix(p, dashboardRoot+"/") {
 		return true
 	}
-	return strings.HasPrefix(p, "/oauth/")
+	if strings.HasPrefix(p, "/oauth/") {
+		return true
+	}
+	// Exact match + subtree (no /cli-auth.zip etc.).
+	if p == "/cli-auth" {
+		return true
+	}
+	return false
 }
 
 // proxyToApid builds a one-shot httputil.ReverseProxy and serves the

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    .flash { background: #fff8c5; padding: 0.5rem 1rem; border: 1px solid #e2cf6e; margin: 1rem 0; }
+    .error { background: #fde7e9; padding: 0.5rem 1rem; border: 1px solid #e0a3aa; margin: 1rem 0; }
+    main { padding: 2rem 0; }
+    h1 { margin-top: 0; }
+    form { display: grid; gap: 0.5rem; max-width: 360px; }
+    input, button { padding: 0.5rem 0.7rem; font: inherit; }
+    button { cursor: pointer; }
+    code { background: #eee; padding: 0.1rem 0.3rem; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  {{if .Flash}}
+    {{if index .Data "Error"}}<div class="error">{{.Flash}}</div>{{else}}<div class="flash">{{.Flash}}</div>{{end}}
+  {{end}}
+  <main>
+    <h1>{{.Title}}</h1>
+    {{if index .Data "Error"}}
+      <p>This code is no longer usable. Open a fresh terminal and run <code>faas login</code> again to get a new code.</p>
+    {{else}}
+      <p>Your terminal opened this page from <code>faas login</code>. Confirm the email below to log in your CLI.</p>
+      <form method="POST" action="/cli-auth">
+        <input type="hidden" name="code" value="{{index .Data "Code"}}">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required autocomplete="email">
+        <button type="submit">Sign in</button>
+      </form>
+      <p style="font-size: 0.9em; color: #666;">First successful login creates the account row if the email is new — signup and login are the same door.</p>
+    {{end}}
+  </main>
+</body>
+</html>

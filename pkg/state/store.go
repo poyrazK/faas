@@ -161,6 +161,25 @@ type Store interface {
 	ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error)
 	DeleteOldLoginTokens(ctx context.Context, before time.Time) (int64, error)
 
+	// CLI auth codes (spec §2.2 device-code flow). The mint + peek +
+	// claim + consume cycle mirrors the magic-link primitives but with
+	// a nullable account_id — the binding to a customer happens at
+	// claim time (dashboard POST /cli-auth), not at mint time
+	// (anonymous POST /v1/cli-auth/code).
+	//
+	// IssueCliAuthCode persists a freshly-minted code's SHA-256 hash
+	// with no account (account_id NULL). PeekCliAuthCode returns the
+	// row's status without mutating it (the dashboard render uses
+	// this). ClaimCliAuthCode atomically transitions pending →
+	// consumed and binds account_id in one statement; a racing second
+	// claim returns ErrConflict. ConsumeCliAuthCode is the CLI's poll
+	// path: returns (status, account_id, err) so the CLI can mint the
+	// API key once it sees "consumed".
+	IssueCliAuthCode(ctx context.Context, tokenHash []byte, expiresAt time.Time) error
+	PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error)
+	ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error
+	ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error)
+
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)
 	// CreateAppIfUnderQuota inserts app iff the account currently holds

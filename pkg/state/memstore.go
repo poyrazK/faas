@@ -48,6 +48,11 @@ type MemStore struct {
 	// raw token (so the binary []byte hash from ConsumeLoginToken
 	// matches the map key format used in MemStore everywhere else).
 	loginTokens map[string]LoginToken
+	// cliAuthCodes is keyed by the SHA-256 hash of the raw code
+	// (same key format as loginTokens). AccountID is empty until the
+	// dashboard claims the code; the claim statement fills it in
+	// atomically. See pkg/state/types.go CliAuthCode.
+	cliAuthCodes map[string]CliAuthCode
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic
@@ -119,6 +124,7 @@ func NewMemStore() *MemStore {
 		crons:          map[string]Cron{},
 		instances:      map[string]Instance{},
 		loginTokens:    map[string]LoginToken{},
+		cliAuthCodes:  map[string]CliAuthCode{},
 		deploymentLogs: map[string][]LogEntry{},
 		deploymentSeq:  map[string]int64{},
 		snapshots:      []Snapshot{},
@@ -1591,6 +1597,92 @@ func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (in
 		}
 	}
 	return removed, nil
+}
+
+// IssueCliAuthCode stores a freshly-minted code's SHA-256 hash with
+// no account binding (AccountID empty). The hash key format matches
+// loginTokens (the binary []byte hash used as a string key). A
+// re-issue of the same hash is a no-op overwriting the entry, which
+// matches the production on-conflict-do-nothing semantics.
+func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cliAuthCodes == nil {
+		m.cliAuthCodes = map[string]CliAuthCode{}
+	}
+	m.cliAuthCodes[string(tokenHash)] = CliAuthCode{
+		TokenHash: append([]byte(nil), tokenHash...),
+		ExpiresAt: expiresAt,
+	}
+	return nil
+}
+
+// PeekCliAuthCode returns the row's status without mutating it. Used
+// by the dashboard GET /cli-auth render to decide whether to show the
+// email-input form or the "code unavailable" error page.
+func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if row.ConsumedAt != nil {
+		return api.CliAuthStatusConsumed, row.AccountID, nil
+	}
+	return api.CliAuthStatusPending, row.AccountID, nil
+}
+
+// ClaimCliAuthCode atomically transitions pending → consumed and
+// binds account_id. A racing second claim returns ErrConflict; an
+// expired or already-consumed code also returns ErrConflict (the
+// dashboard maps both errors to the same user-facing error page).
+func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, accountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return ErrConflict
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return ErrConflict
+	}
+	if row.ConsumedAt != nil {
+		return ErrConflict
+	}
+	now := time.Now()
+	row.AccountID = accountID
+	row.ConsumedAt = &now
+	m.cliAuthCodes[string(tokenHash)] = row
+	return nil
+}
+
+// ConsumeCliAuthCode is the CLI's poll-side read. It does NOT mutate
+// state (the claim already happened in the dashboard POST handler);
+// it surfaces the current status so the CLI can mint the API key
+// after seeing "consumed".
+//
+// Return contract:
+//   pending   → (Pending,  "",       nil)       keep polling
+//   consumed  → (Consumed, acct_id, nil)       mint API key for acct_id
+//   expired/unknown → (Expired, "", ErrNotFound) stop with a clear error
+func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if row.ConsumedAt == nil {
+		return api.CliAuthStatusPending, "", nil
+	}
+	return api.CliAuthStatusConsumed, row.AccountID, nil
 }
 
 // AppendDeploymentLog records one line of build output. Returns the

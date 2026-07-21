@@ -69,6 +69,12 @@ type server struct {
 	// statuses (apiAuthLimiter counts 401; dashboardAuthLimiter
 	// counts every attempt on /login to defeat anti-enumeration).
 	dashboardAuthLimiter *middleware.Limiter
+	// cliAuthLimiter is the per-IP bucket for the anonymous
+	// /v1/cli-auth/* endpoints (spec §2.2). Separate from
+	// apiAuthLimiter + dashboardAuthLimiter so a brute-force on
+	// codes cannot starve the bearer-token auth surface OR the
+	// dashboard /login bucket.
+	cliAuthLimiter *middleware.Limiter
 	// statusCache backs GET /status/slo.json (spec §12 public status
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
@@ -343,6 +349,25 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /status", s.statusHandler)
 	mux.HandleFunc("GET /status/slo.json", s.statusJSONHandler)
 
+	// CLI auth device-code flow (spec §2.2). Anonymous on purpose —
+	// the CLI hasn't logged in yet. Anti-enumeration limiter is its
+	// own bucket (s.cliAuthLimiter) so brute-force on /v1/cli-auth/*
+	// doesn't burn the API-key auth budget at the top of this file.
+	cli := &cliAuthHandlers{srv: s, log: s.log, domain: s.domain}
+	mux.Handle("POST /v1/cli-auth/code", s.cliAuthChain(http.HandlerFunc(cli.mintCliAuthCode)))
+	mux.Handle("POST /v1/cli-auth/exchange", s.cliAuthChain(http.HandlerFunc(cli.exchangeCliAuthCode)))
+	// Dashboard-side render + consume page. Shares s.dashboardAuthLimiter
+	// (same bucket as /login + /auth/verify) — these are the human
+	// clicks that should burn the dashboard's auth budget, not the
+	// anonymous CLI's. Count every attempt so a probing bot can't
+	// hide in 200 responses.
+	mux.Handle("GET "+cliAuthPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, http.HandlerFunc(cli.renderCliAuthPage)))
+	mux.Handle("POST "+cliAuthPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, http.HandlerFunc(cli.postCliAuthPage)))
+
 	return mux
 }
 
@@ -380,6 +405,33 @@ func (s *server) dashboardAuthChain(cfg middleware.AuthLimitConfig, h http.Handl
 		s.dashboardAuthLimiter = middleware.NewLimiter(cfg)
 	}
 	h = middleware.AuthLimitWithLimiter(cfg, s.dashboardAuthLimiter)(h)
+	return h
+}
+
+// cliAuthChain wraps the anonymous /v1/cli-auth/* endpoints in the
+// §11 middleware plus an AuthLimit limiter on its own bucket
+// (s.cliAuthLimiter, separate from s.apiAuthLimiter and
+// s.dashboardAuthLimiter). The full chain is:
+//
+//	RequestID → Recovery → AuthLimit → handler
+//
+// Why a separate bucket: a brute-force on codes shouldn't lock out
+// the customer's bearer-token flow, and the dashboard's /login
+// bucket shouldn't burn from anonymous CLI traffic either. Count
+// 429 + 400 so an attacker cycling on shape-rejected bodies still
+// hits the limit. (A successful 200 mint happens once per real CLI,
+// so it would never naturally exhaust the budget; we don't need to
+// count it.)
+func (s *server) cliAuthChain(h http.Handler) http.Handler {
+	h = middleware.RequestID(h)
+	h = middleware.Recovery(s.log)(h)
+	if s.cliAuthLimiter == nil {
+		s.cliAuthLimiter = middleware.NewLimiter(middleware.AuthLimitConfig{Log: s.log})
+	}
+	h = middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
+		CountStatuses: []int{http.StatusTooManyRequests, http.StatusBadRequest},
+		Log:           s.log,
+	}, s.cliAuthLimiter)(h)
 	return h
 }
 

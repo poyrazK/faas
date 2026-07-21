@@ -1723,6 +1723,95 @@ func (s *PgStore) DeleteOldLoginTokens(ctx context.Context, before time.Time) (i
 	return tag.RowsAffected(), nil
 }
 
+// IssueCliAuthCode persists a freshly-minted code's SHA-256 hash with
+// no account binding (account_id NULL until the dashboard claims it).
+// Conflict (same hash re-issued) is a no-op insert; the same code is
+// effectively single-use because the dashboard /cli-auth POST must
+// claim a still-pending row, and a re-issue collides on the hash.
+func (s *PgStore) IssueCliAuthCode(ctx context.Context, tokenHash []byte, expiresAt time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into cli_auth_codes (token_hash, expires_at) values ($1, $2)
+		 on conflict (token_hash) do nothing`,
+		tokenHash, expiresAt)
+	return err
+}
+
+// PeekCliAuthCode returns the row's status without mutating it. Used
+// by the dashboard GET /cli-auth render to decide whether the user
+// sees the email-input form or the "code unavailable" error page.
+// A missing or expired row returns (Expired, "", ErrNotFound) — the
+// dashboard treats every not-pending state identically.
+func (s *PgStore) PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	var status string
+	var accountID *string
+	err := s.pool.QueryRow(ctx,
+		`select status, account_id
+		 from cli_auth_codes
+		 where token_hash = $1 and expires_at > now()`,
+		tokenHash).Scan(&status, &accountID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return api.CliAuthStatusExpired, "", ErrNotFound
+		}
+		return "", "", err
+	}
+	var aid string
+	if accountID != nil {
+		aid = *accountID
+	}
+	return api.CliAuthStatus(status), aid, nil
+}
+
+// ClaimCliAuthCode atomically transitions pending → consumed and binds
+// account_id in one statement. A racing second claim returns
+// ErrConflict; an expired or already-consumed code returns ErrConflict
+// too (the single "code unavailable" path). The dashboard /cli-auth
+// POST handler maps both errors to the same user-facing error page.
+func (s *PgStore) ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update cli_auth_codes
+		 set status = 'consumed', account_id = $2, consumed_at = now()
+		 where token_hash = $1
+		   and status = 'pending'
+		   and expires_at > now()`,
+		tokenHash, accountID)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// ConsumeCliAuthCode is the CLI's poll-side read. It does NOT mutate
+// state (the claim already happened in the dashboard POST handler);
+// it surfaces the current status so the CLI can mint the API key
+// after seeing "consumed". The caller issues the API-key insert.
+//
+// Return contract:
+//   pending → (Pending, "", nil)             keep polling
+//   consumed → (Consumed, account_id, nil)   mint API key for account_id
+//   expired/unknown → (Expired, "", ErrNotFound) stop with a clear error
+func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	var status, accountID string
+	err := s.pool.QueryRow(ctx,
+		`select status, coalesce(account_id::text, '')
+		 from cli_auth_codes
+		 where token_hash = $1 and expires_at > now()`,
+		tokenHash).Scan(&status, &accountID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return api.CliAuthStatusExpired, "", ErrNotFound
+		}
+		return "", "", err
+	}
+	if status == string(api.CliAuthStatusPending) {
+		return api.CliAuthStatusPending, "", nil
+	}
+	return api.CliAuthStatus(status), accountID, nil
+}
+
 // AppendDeploymentLog inserts one row and returns the seq Postgres
 // assigned via the per-deployment bigserial PK.
 //

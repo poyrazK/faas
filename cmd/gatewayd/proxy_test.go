@@ -105,6 +105,11 @@ func TestIsDashboardPath_TableDriven(t *testing.T) {
 		{"/dashboard/apps/foo", true},
 		{"/oauth/callback", true},
 		{"/oauth/", true},
+		// /cli-auth is the device-code approval page (spec §2.2).
+		// Lives at the apid root, not under /dashboard/, so it
+		// needs its own gatewayd allowlist entry — otherwise the
+		// URL would 404 from the wake path on the public listener.
+		{"/cli-auth", true},
 		// Negative cases — review finding #6 regression tests.
 		{"/dashboard.zip", false},
 		{"/dashboards", false},
@@ -112,6 +117,7 @@ func TestIsDashboardPath_TableDriven(t *testing.T) {
 		{"/Dashboard", false}, // case-sensitive
 		{"/api/v1/dashboard", false},
 		{"/", false},
+		{"/cli-auth.zip", false}, // exact-match guard
 		{"", false},
 	}
 	for _, c := range cases {
