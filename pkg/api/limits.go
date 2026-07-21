@@ -262,7 +262,17 @@ func (p Plan) MinInstancesAllowed() bool {
 // AdmissionMB is the RAM an instance charges against the admission ceiling and
 // tenant slice: its plan RAM plus the fixed per-VM overhead (spec §4.3, §6.2-2).
 func (l Limits) AdmissionMB() int {
-	return l.RAMMB + PerVMOverheadMB
+	return BillableRAMMB(l.RAMMB)
+}
+
+// BillableRAMMB returns the RAM one instance charges against both the admission
+// ceiling (schedd's ledger, invariant §6.2-2) and the metering ledger (meterd's
+// sampler, spec §4.7): the customer's configured ram_mb plus the fixed per-VM
+// overhead. Single source of truth — every site that previously inlined
+// `ram_mb + PerVMOverheadMB` now goes through this helper so a future change
+// to the overhead constant updates exactly one place.
+func BillableRAMMB(ramMB int) int {
+	return ramMB + PerVMOverheadMB
 }
 
 // IdleTimeoutBounds returns the [floor, ceiling] seconds a customer may configure

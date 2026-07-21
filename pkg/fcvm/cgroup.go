@@ -43,7 +43,7 @@ func writeMemoryMax(instance string, planMB int) error {
 	if planMB < 1 {
 		return fmt.Errorf("fcvm: cgroup: planMB %d < 1", planMB)
 	}
-	bytes := int64(planMB+api.PerVMOverheadMB) << 20
+	bytes := int64(api.BillableRAMMB(planMB)) << 20
 	scope := filepath.Join(cgroupRoot, ParentCgroup, PerInstanceScope(instance))
 	path := filepath.Join(scope, "memory.max")
 	// Newline-terminated: matches the kernel parser's expectation and

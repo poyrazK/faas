@@ -18,6 +18,12 @@ import (
 // admission MB is the source of truth — schedd's ledger already charges the
 // same number, so a row in usage_minutes matches what schedd counted toward
 // invariant §6.2-2. Tests assert this parity.
+//
+// PR #75 (#71 in flight on this branch at PR open): the inline
+// `ram_mb + api.PerVMOverheadMB` constant folded into api.BillableRAMMB; the
+// AppendUsage idempotency on (instance_id, minute) is the meterd↔storage
+// contract that prevents silent double-billing under any restart — see
+// pkg/state/store.go::Store.AppendUsage.
 type Sampler struct {
 	store state.Store
 	now   func() time.Time // injectable for tests
@@ -75,8 +81,8 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 				AppID:       app.ID,
 				AccountID:   app.AccountID,
 				Minute:      minute,
-				AdmissionMB: ins.RAMMB + api.PerVMOverheadMB,
-				MBSeconds:   MBSecondsPerMinute(ins.RAMMB + api.PerVMOverheadMB),
+				AdmissionMB: api.BillableRAMMB(ins.RAMMB),
+				MBSeconds:   MBSecondsPerMinute(api.BillableRAMMB(ins.RAMMB)),
 			}
 			if err := s.store.AppendUsage(ctx, app.AccountID, app.ID, ins.ID, minute, row.MBSeconds, 0); err != nil {
 				return out, err

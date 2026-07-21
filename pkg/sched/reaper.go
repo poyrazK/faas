@@ -56,7 +56,7 @@ type InstanceInfo struct {
 	MinInstances int
 }
 
-func (i InstanceInfo) admissionMB() int { return i.RAMMB + api.PerVMOverheadMB }
+func (i InstanceInfo) admissionMB() int { return api.BillableRAMMB(i.RAMMB) }
 
 // EffectiveIdleTimeoutS resolves an app's idle timeout: the plan default unless
 // the app configured one within bounds (floor 10 s, ceiling plan default × 2,

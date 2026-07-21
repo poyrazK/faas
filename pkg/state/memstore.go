@@ -1370,20 +1370,21 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 
 // --- Usage ------------------------------------------------------------------
 
-// AppendUsage upserts one (instance, minute) usage row and updates the
+// AppendUsage writes one (instance, minute) usage row and updates the
 // per-(account, app, month) aggregate so UsageByMonth keeps returning the
-// spec §10 shape without re-scanning the per-minute rows. Mirrors the
-// production INSERT … ON CONFLICT (instance_id, minute) DO UPDATE semantics:
-// multiple writes for the same minute accumulate mb_seconds + requests.
+// spec §10 shape without re-scanning the per-minute rows. Idempotent on
+// (instance_id, minute): a redelivered minute is a no-op (first write
+// wins). Mirrors the production INSERT … ON CONFLICT (instance_id, minute)
+// DO NOTHING semantics in pgstore.go — see M7 hardening PR
+// feat/m7-beta-hardening for the audit that surfaced this contract change.
 func (m *MemStore) AppendUsage(_ context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := minute.UTC().Truncate(time.Minute)
 	for i := range m.usage {
 		if m.usage[i].InstanceID == instanceID && m.usage[i].Minute.Equal(key) {
-			m.usage[i].MBSeconds += mbSeconds
-			m.usage[i].Requests += requests
-			m.recomputeMonthLocked(accountID, appID, key)
+			// Idempotent: redelivered minute is a no-op. The first tick
+			// wins; restart-driven redelivery does not inflate billing.
 			return nil
 		}
 	}

@@ -1226,12 +1226,15 @@ func (s *PgStore) ListEvents(ctx context.Context, subject string, limit int) ([]
 // --- usage -------------------------------------------------------------------
 
 func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error {
+	// Idempotent on (instance_id, minute). Mirrors the sqlc source in
+	// queries.sql::AppendUsage — make sqlc-check verifies these stay in
+	// lockstep. The first write wins; a redelivered minute is a no-op so a
+	// meterd restart / network blip / two meterd instances cannot inflate
+	// billing. M7 hardening, PR feat/m7-beta-hardening.
 	_, err := s.pool.Exec(ctx,
 		`insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests)
 		 values ($1, $2, $3, $4, $5, $6)
-		 on conflict (instance_id, minute) do update
-		   set mb_seconds = usage_minutes.mb_seconds + excluded.mb_seconds,
-		       requests = usage_minutes.requests + excluded.requests`,
+		 on conflict (instance_id, minute) do nothing`,
 		accountID, appID, instanceID, minute, mbSeconds, requests)
 	return err
 }

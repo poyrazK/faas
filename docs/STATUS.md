@@ -100,12 +100,27 @@ the dunning state machine is `pkg/state.MarkAccountDeletionPending`
 in `cron_loop_test.go`. Email: `pkg/mail` interface with Resend +
 Postmark backends (gap G4).
 
-**Remaining:** `cmd/meterd/main.go::defaultDeps` ships nil `parker`
-and nil `stripe` collaborators; production never wires
-`scheddgrpc.Dial(...)` or `stripex.NewClient(...)`, so quota
-hard-stop and hourly Stripe usage push are not operational.
+**Remaining (pre-PR-#69 claim, now stale):** `cmd/meterd/main.go::defaultDeps` ships
+nil `parker` and nil `stripe` collaborators; production never wires
+`scheddgrpc.Dial(...)` or `stripex.NewClient(...)`, so quota hard-stop and
+hourly Stripe usage push are not operational.
 `pkg/stripex/usage.go::PushUsageRecord` is a `nil`-returning stub
 (`TODO stripe-go`). PR #59 in flight.
+
+**Actually remaining after #69 (which landed the wiring + dunning + SDK):**
+
+- **Idempotent billing** — `usage_minutes` used to upsert-add on redelivered
+  minutes, silently inflating bills under any meterd restart. PR #71
+  (`feat/m7-beta-hardening`) flips to `ON CONFLICT DO NOTHING` and adds a
+  parity test for the shared `BillableRAMMB` helper.
+- **observability surface** — `cmd/meterd` previously had no `/metrics` or
+  `/healthz`. Same PR #71 wires both via `wire.NewOpsMetrics("meterd")` and
+  an inline `/healthz` (returning 200 unconditionally — richer semantics
+  follow-up).
+- **§14 M7 acceptance test (24h GB-h shadow, <0.1 % delta)** — not in tree.
+  Required before §14 close; separate PR.
+- **A3 (transactional suspend-and-park)**, **A4 (Free restore)**,
+  **A5 (quota/dunning ordering race)** — separate PRs, polish.
 
 ## M7.5 — thin dashboard + githubd. ✅
 
@@ -183,21 +198,26 @@ and open an issue if you want it.
 
 ### M7
 
-- **`cmd/meterd/main.go` wiring** — `defaultDeps` leaves `parker`
+- ~~**`cmd/meterd/main.go` wiring** — `defaultDeps` leaves `parker`
   and `stripe` nil. Wire `scheddgrpc.Dial(...)` for the quota
   hard-stop's `ScheddParker`, and `stripex.NewClient(...)` for the
   hourly push. Until then, the sampling loop runs but doesn't act
-  on quota breaches or send Stripe usage records.
-- **`pkg/stripex/usage.go::PushUsageRecord`** — currently
+  on quota breaches or send Stripe usage records.~~ **Closed by
+  PR #69** (`worktree-harden-meterd`).
+- ~~**`pkg/stripex/usage.go::PushUsageRecord`** — currently
   `nil`-returning `TODO stripe-go`. Bring the SDK in, write a
-  test against the Stripe sandbox.
+  test against the Stripe sandbox.~~ **Closed by PR #69.**
+- **§14 M7 acceptance test (24h GB-h shadow, <0.1 % delta)** — not
+  in tree. Required before §14 close; separate PR.
+- **Idempotent billing + meterd `/metrics` + `/healthz`** —
+  PR #71 (`feat/m7-beta-hardening`).
 
 ### M8
 
-- **CertMagic TLS** for gatewayd (`*.apps.DOMAIN` via DNS-01;
+- ~~**CertMagic TLS** for gatewayd (`*.apps.DOMAIN` via DNS-01;
   on-demand HTTP-01 gated by `custom_domains` allowlist).
   `pkg/gateway/tls.go` is a config bucket; `caddyserver/certmagic`
-  not yet in `go.mod`.
+  not yet in `go.mod`.~~ **Closed by PR #70** (`worktree-m8-gateway-tls-wake-firstbyte`).
 - **§14 V2 latency driver** — 100 park→wake cycles per app class,
   p50 ≤ 350 ms / p95 ≤ 800 ms. The Hobby-class gate is wired via
   `TestDeployWakeMetal/wake-latency-p50p95-100cycles` (extends the
