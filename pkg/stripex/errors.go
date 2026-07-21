@@ -2,7 +2,6 @@ package stripex
 
 import (
 	"errors"
-	"strings"
 
 	stripe "github.com/stripe/stripe-go"
 )
@@ -30,13 +29,16 @@ import (
 //	*stripe.Error{Type: InvalidRequest}-> "invalid-request"
 //	*stripe.Error{Type: RateLimit}     -> "rate-limit"
 //	*stripe.Error{Type: …} (other)     -> "other"
-//	any other error containing "apiKey" -> "no-api-key"
-//	any other error containing "negative" -> "negative-quantity"
+//	errors.Is(err, ErrNoAPIKey)         -> "no-api-key"
+//	errors.Is(err, ErrNegativeQuantity) -> "negative-quantity"
 //	any other error                    -> "other"
 //
-// The string-match branches catch the two errors pushUsageRecordSDK
+// The errors.Is branches catch the two errors pushUsageRecordSDK
 // synthesizes before the SDK is invoked (no apiKey, negative quantity)
 // — these never become *stripe.Error, so they need their own labels.
+// They are matched via the sentinels declared at usage.go:17-30,
+// not by string-fragment, so adding context to the wrapped message
+// (account id, qty) does not change classification.
 //
 // "ok" is intentionally returned for nil so the pusher can write a
 // uniform:
@@ -67,20 +69,20 @@ func ClassifyPushError(err error) string {
 	}
 
 	// Pre-SDK errors — pushUsageRecordSDK raises these before touching
-	// the network. Detect them by string fragment rather than type
-	// assertion because they're fmt.Errorf-wrapped, not exported types.
-	// The fragments match the format strings at usage.go:52,59.
-	msg := err.Error()
-	if strings.Contains(msg, "apiKey") {
+	// the network. Match by sentinel (declared at usage.go) so the
+	// wrapped message can carry diagnostic context (account id, qty)
+	// without changing the classification. Sentinels are added when a
+	// new pre-SDK failure mode is introduced.
+	if errors.Is(err, ErrNoAPIKey) {
 		return labelNoAPIKey
 	}
-	if strings.Contains(msg, "negative") {
+	if errors.Is(err, ErrNegativeQuantity) {
 		return labelNegativeQuantity
 	}
 
 	// SDK errors — unwrap with errors.As. pushUsageRecordSDKWithID
 	// returns the wrapped *stripe.Error via fmt.Errorf with %w at
-	// usage.go:72.
+	// usage.go:92.
 	var se *stripe.Error
 	if !errors.As(err, &se) {
 		return labelOther

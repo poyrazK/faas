@@ -2,6 +2,7 @@ package stripex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -37,15 +38,17 @@ func TestPushUsageRecord_NoCustomerSkips(t *testing.T) {
 
 // TestPushUsageRecord_MissingAPIKeyFails asserts the no-key path
 // returns an error rather than silently dropping the bill (the meterd
-// log line is the operator signal on a misconfigured deployment).
+// log line is the operator signal on a misconfigured deployment). The
+// classifier identifies it via errors.Is(err, ErrNoAPIKey) so the test
+// pins the sentinel contract, not a string fragment.
 func TestPushUsageRecord_MissingAPIKeyFails(t *testing.T) {
 	store := state.NewMemStore()
 	c := NewClient(store, store, "", "", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	err := c.pushUsageRecordSDK(context.Background(), state.Account{
 		ID: "acct_x", StripeCustomerID: "cus_x", StripeSubscriptionItem: "si_test",
 	}, time.Now(), 1.5)
-	if err == nil || !strings.Contains(err.Error(), "apiKey") {
-		t.Fatalf("expected error mentioning apiKey, got %v", err)
+	if err == nil || !errors.Is(err, ErrNoAPIKey) {
+		t.Fatalf("expected error wrapping ErrNoAPIKey, got %v", err)
 	}
 }
 
@@ -112,15 +115,16 @@ func TestPushUsageRecord_PostsToStripeSandbox(t *testing.T) {
 
 // TestPushUsageRecord_ValidationNegativeQuantity ensures the
 // defensive guard at pushUsageRecordSDK rejects negative quantities
-// (which would silently credit the customer instead of billing).
+// (which would silently credit the customer instead of billing). The
+// classifier identifies it via errors.Is(err, ErrNegativeQuantity).
 func TestPushUsageRecord_ValidationNegativeQuantity(t *testing.T) {
 	store := state.NewMemStore()
 	c := NewClient(store, store, "sk_test_x", "whsec_x", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	err := c.pushUsageRecordSDK(context.Background(), state.Account{
 		ID: "acct_neg", StripeCustomerID: "cus_x", StripeSubscriptionItem: "si_test",
 	}, time.Now(), -0.5)
-	if err == nil || !strings.Contains(err.Error(), "negative") {
-		t.Fatalf("expected error mentioning negative quantity, got %v", err)
+	if err == nil || !errors.Is(err, ErrNegativeQuantity) {
+		t.Fatalf("expected error wrapping ErrNegativeQuantity, got %v", err)
 	}
 }
 
@@ -145,19 +149,21 @@ func TestClassifyPushError_Nil(t *testing.T) {
 }
 
 // TestClassifyPushError_NoAPIKey — pre-SDK error from
-// pushUsageRecordSDK when apiKey is empty. Matched on the literal
-// "apiKey" fragment from usage.go:52.
+// pushUsageRecordSDK when apiKey is empty. The classifier matches the
+// ErrNoAPIKey sentinel via errors.Is, so the wrapped message can
+// carry diagnostic context (account id) without affecting the label.
 func TestClassifyPushError_NoAPIKey(t *testing.T) {
-	err := fmt.Errorf("stripex: cannot push usage without apiKey (account %s)", "acct_x")
+	err := fmt.Errorf("%w (account %s)", ErrNoAPIKey, "acct_x")
 	if got := ClassifyPushError(err); got != "no-api-key" {
 		t.Errorf("ClassifyPushError(no-api-key err) = %q, want \"no-api-key\"", got)
 	}
 }
 
 // TestClassifyPushError_NegativeQuantity — pre-SDK error from the
-// defensive quantity guard at usage.go:55-60.
+// defensive quantity guard at usage.go:74-80. Same sentinel-based
+// pattern as NoAPIKey.
 func TestClassifyPushError_NegativeQuantity(t *testing.T) {
-	err := fmt.Errorf("stripex: negative usage quantity for account %s: %d", "acct_x", -5)
+	err := fmt.Errorf("%w (account %s, qty %d)", ErrNegativeQuantity, "acct_x", -5)
 	if got := ClassifyPushError(err); got != "negative-quantity" {
 		t.Errorf("ClassifyPushError(negative-quantity err) = %q, want \"negative-quantity\"", got)
 	}
