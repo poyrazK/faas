@@ -44,6 +44,9 @@ func authedClientWithDeployTimeout(timeout time.Duration) (*Client, error) {
 // the bearer token without re-authenticating.
 func cmdLogin(args []string) int {
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
+	fs.Usage = func() {
+		PrintUsage(os.Stderr, "usage: faas login [--token T]", "auth")
+	}
 	token := fs.String("token", "", "API token (CI/non-interactive)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -88,7 +91,7 @@ func cmdLogin(args []string) int {
 	// paste mode — the user can either paste the code into this
 	// terminal or open the URL in a real browser on another box.
 	if err := browser.Open(codeResp.URL); err != nil {
-		fmt.Fprintf(os.Stderr, "✗ Could not open browser: %v\n", err)
+		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", codeResp.URL)
 	}
 
@@ -105,7 +108,7 @@ func cmdLogin(args []string) int {
 		return waitForApproval(ctx, c, codeResp)
 	}
 	if len(pasted) != 8 {
-		fmt.Fprintf(os.Stderr, "✗ Code should be 8 characters (XXXX-NNNN), got %d\n", len(pasted))
+		PrintFail(os.Stderr, "Code should be 8 characters (XXXX-NNNN), got %d", len(pasted))
 		return 1
 	}
 	return exchangeOnce(ctx, c, pasted)
@@ -123,7 +126,7 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 	backoff := 1 * time.Second
 	for {
 		if !expiry.IsZero() && time.Now().After(expiry.Add(2*time.Second)) {
-			fmt.Fprintln(os.Stderr, "✗ Code expired. Run 'faas login' again.")
+			PrintFail(os.Stderr, "Code expired. Run 'faas login' again.")
 			return 1
 		}
 		select {
@@ -145,7 +148,7 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 			case api.CodeCliAuthPending:
 				continue // keep polling
 			case api.CodeCliAuthUnavailable:
-				fmt.Fprintln(os.Stderr, "✗ ", ae.Error())
+				renderAPIError(os.Stderr, ae)
 				return 1
 			default:
 				return printErr("Login failed", err)
@@ -178,7 +181,7 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext string, acct api.Ac
 	if err := saveToken(plaintext); err != nil {
 		return printErr("Could not save token", err)
 	}
-	_, _ = fmt.Fprintf(osStdout, "✓ Logged in as %s (%s plan)\n", acct.Email, acct.Plan)
+	PrintOK(osStdout, "Logged in as %s (%s plan)", acct.Email, acct.Plan)
 
 	// First-run quickstart (UX §8, issue #65 D4). If the account has
 	// no apps yet, drop a 3-line pointer to the two deploy paths.
@@ -225,7 +228,7 @@ func cmdLogout() int {
 	if p, err := tokenPath(); err == nil {
 		_ = os.Remove(p)
 	}
-	fmt.Println("✓ Logged out")
+	PrintOK(osStdout, "Logged out")
 	return 0
 }
 
@@ -302,6 +305,8 @@ func sanitizeSlug(s string) string {
 // printErr renders an error in the CLI's shape and returns the exit code (UX §3).
 // Under --json (issue #64 D1), it dumps the raw RFC 7807 Problem body to
 // stderr instead of the three-line render so scripts can `jq .code`.
+// Otherwise (UX §3.2), the leading `✗` glyph is dropped when stdout is
+// not a TTY or NO_COLOR is set; the body of each line is unchanged.
 func printErr(title string, err error) int {
 	if jsonOutput {
 		var ae *APIError
@@ -318,16 +323,40 @@ func printErr(title string, err error) int {
 	}
 	var ae *APIError
 	if errors.As(err, &ae) {
-		fmt.Fprintf(os.Stderr, "✗ %s\n", ae.Error())
+		renderAPIError(os.Stderr, ae)
 		return exitCodeForStatus(ae.Problem.Status)
 	}
 	var ec *exitErr
 	if errors.As(err, &ec) {
-		fmt.Fprintf(os.Stderr, "✗ %s\n  %s\n", title, ec.msg)
+		PrintFail(os.Stderr, "%s\n  %s", title, ec.msg)
 		return ec.code
 	}
-	fmt.Fprintf(os.Stderr, "✗ %s\n  %s\n", title, err.Error())
+	PrintFail(os.Stderr, "%s\n  %s", title, err.Error())
 	return 1
+}
+
+// renderAPIError is the single presentation path for *APIError.
+// Delegates to RenderTitle/RenderDocsRow in output.go so the gate
+// (output.go) owns every literal ✓/✗/→ string in the package —
+// lint_tripwires_test.go::TestLintTripwire_NoGlyphLiteralOutsideOutput
+// then has a single allow-listed file to audit.
+func renderAPIError(w io.Writer, e *APIError) {
+	if e == nil || e.Problem.Title == "" {
+		return
+	}
+	p := e.Problem
+	RenderTitle(w, p.Title)
+	// Detail row has no glyph — direct write is intentional. Routing
+	// through a no-op RenderDetailRow would only mirror the formatter,
+	// not add behaviour; the asymmetry keeps the gate's job small.
+	// Fprintf error intentionally discarded (same convention as the
+	// rest of cmd/faas — see output.go::writeStatus).
+	if p.Detail != "" {
+		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
+	}
+	if p.DocsURL != "" {
+		RenderDocsRow(w, p.DocsURL)
+	}
 }
 
 func exitCodeForStatus(status int) int {

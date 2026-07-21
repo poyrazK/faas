@@ -910,6 +910,50 @@ func TestAPIError_FallbackURLAlwaysThreeLines(t *testing.T) {
 	}
 }
 
+// TestRenderAPIError_TTYGatedGlyph locks UX §3.2's interaction with
+// §3.3's three-line contract: the static *APIError.Error() always carries
+// "  → <URL>", but the renderer (renderAPIError) drops the leading "✗"
+// and the docs-row "→" glyph when stdout is not a TTY. The line COUNT
+// is identical either way — only the glyphs change — so script consumers
+// that split on "\n" still see the same shape. Subtests cover both
+// branches; the TTY hook (testOnlyTTY in output.go) makes the result
+// deterministic regardless of how `go test` is invoked.
+func TestRenderAPIError_TTYGatedGlyph(t *testing.T) {
+	ae := &APIError{Problem: api.Problem{
+		Title: "Plan limit reached", Detail: "scale=2", DocsURL: "https://docs.x/limit",
+	}}
+	for _, tc := range []struct {
+		name      string
+		tty       bool
+		wantFirst string // prefix of line 0
+		wantThird string // prefix of line 2
+	}{
+		{"tty_keeps_glyphs", true, "✗ ", "  → "},
+		{"non_tty_drops_glyphs", false, "Plan limit", "  https://"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := testOnlyTTY
+			defer func() { testOnlyTTY = prev }()
+			hook := tc.tty
+			testOnlyTTY = &hook
+			var buf bytes.Buffer
+			renderAPIError(&buf, ae)
+			// renderAPIError emits a trailing newline, so Split produces
+			// 4 elements; trim the trailing empty before counting content lines.
+			lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+			if len(lines) != 3 {
+				t.Fatalf("want 3 lines, got %d:\n%s", len(lines), buf.String())
+			}
+			if !strings.HasPrefix(lines[0], tc.wantFirst) {
+				t.Errorf("line 0 prefix = %q, want %q", lines[0], tc.wantFirst)
+			}
+			if !strings.HasPrefix(lines[2], tc.wantThird) {
+				t.Errorf("line 2 prefix = %q, want %q", lines[2], tc.wantThird)
+			}
+		})
+	}
+}
+
 // --- cmdApp --min N cost echo (issue #65 D3) --------------------------------
 
 // TestCmdApp_Min1_EchoesResidentCost pins the legacy flag form

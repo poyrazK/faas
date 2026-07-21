@@ -38,7 +38,7 @@ var (
 
 func cmdSecrets(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas secrets <list|set|unset> --app <slug> [args]")
+		PrintUsage(os.Stderr, "usage: faas secrets <list|set|unset> --app <slug> [args]", "secrets")
 		return 1
 	}
 	switch args[0] {
@@ -62,7 +62,7 @@ func secretsList(args []string) int {
 		return 1
 	}
 	if *app == "" {
-		fmt.Fprintln(os.Stderr, "usage: faas secrets list --app <slug>")
+		PrintUsage(os.Stderr, "usage: faas secrets list --app <slug>", "secrets")
 		return 1
 	}
 	client, err := authedClient()
@@ -97,7 +97,7 @@ func secretsSet(args []string) int {
 		return 1
 	}
 	if *app == "" {
-		fmt.Fprintln(os.Stderr, "usage: faas secrets set --app <slug> KEY=VALUE [...] [--from-stdin]")
+		PrintUsage(os.Stderr, "usage: faas secrets set --app <slug> KEY=VALUE [...] [--from-stdin]", "secrets")
 		return 1
 	}
 
@@ -179,7 +179,7 @@ func secretsSet(args []string) int {
 		if err := client.SetSecret(context.Background(), *app, p.Key, p.Value); err != nil {
 			return printErr("Set "+p.Key+" failed", err)
 		}
-		_, _ = fmt.Fprintf(osStdout, "✓ %s set\n", p.Key)
+		PrintOK(osStdout, "%s set", p.Key)
 	}
 	return 0
 }
@@ -213,7 +213,7 @@ func secretsUnset(args []string) int {
 		return 1
 	}
 	if *app == "" || fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: faas secrets unset --app <slug> KEY")
+		PrintUsage(os.Stderr, "usage: faas secrets unset --app <slug> KEY", "secrets")
 		return 1
 	}
 	key := fs.Arg(0)
@@ -224,6 +224,6 @@ func secretsUnset(args []string) int {
 	if err := client.UnsetSecret(context.Background(), *app, key); err != nil {
 		return printErr("Unset failed", err)
 	}
-	_, _ = fmt.Fprintf(osStdout, "✓ %s unset\n", key)
+	PrintOK(osStdout, "%s unset", key)
 	return 0
 }
