@@ -136,13 +136,15 @@ func TestMailFactory_PicksCorrectTransport(t *testing.T) {
 			}
 
 			// The mailAdapter path is what runWithDeps actually wires;
-			// assert the adapter forwards a probe without panicking and
-			// reaches the underlying sender.
-			rec := &recordingSender{}
-			_ = newMailerAdapter(rec) // sanity: non-nil
-			// For the live transports (Resend/Postmark) a probe Send would
-			// dial out and fail; we only need to prove the adapter shape is
-			// correct, which fmt.Sprintf("%T") above already covers.
+			// exercise the adapter's nil-collapse contract on every
+			// branch (nil → noopMailer — non-nil → wraps the sender).
+			// For live transports (Resend/Postmark) the sender itself
+			// would dial out on a probe; we don't probe through those,
+			// we only prove the adapter accepts the chosen transport
+			// without panicking and returns a non-nil Mailer.
+			if got := newMailerAdapter(m); got == nil {
+				t.Errorf("newMailerAdapter(%s) returned nil", tc.wantType)
+			}
 		})
 	}
 }
@@ -207,9 +209,12 @@ func TestMailAdapter_SurfacesSenderError(t *testing.T) {
 // the newMailerAdapter path, the production code only ever hit
 // newLogMailer (which calls slog) and this message would never appear.
 func TestMagicLinkDeliveredThroughMailer(t *testing.T) {
+	const email = "user@example.com"
+	// The login handler only dispatches an email when AccountByEmail
+	// resolves — the unknown-email branch is silent (handlers_auth.go:
+	// postLogin). Seed the account so the happy path fires.
 	store := state.NewMemStore()
-	acct, err := store.CreateAccount(context.Background(), "user@example.com", api.PlanFree)
-	if err != nil {
+	if _, err := store.CreateAccount(context.Background(), email, api.PlanFree); err != nil {
 		t.Fatal(err)
 	}
 	rec := &recordingSender{}
@@ -218,7 +223,7 @@ func TestMagicLinkDeliveredThroughMailer(t *testing.T) {
 	h := srv.handler()
 
 	// POST /login takes a form-encoded email (handlers_auth.go::postLogin).
-	form := url.Values{"email": {"user@example.com"}}
+	form := url.Values{"email": {email}}
 	req := httptest.NewRequest("POST", "/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recHTTP := httptest.NewRecorder()
@@ -233,19 +238,16 @@ func TestMagicLinkDeliveredThroughMailer(t *testing.T) {
 		t.Fatal("no message recorded; magic link not delivered through mailAdapter")
 	}
 	m := msgs[0]
-	if len(m.To) == 0 || m.To[0] != "user@example.com" {
-		t.Errorf("recipient = %v, want user@example.com", m.To)
+	if len(m.To) == 0 || m.To[0] != email {
+		t.Errorf("recipient = %v, want %s", m.To, email)
 	}
-	if m.Subject == "" {
-		t.Error("empty subject on magic-link email")
+	// Pin the literal subject the handler writes (cmd/apid/handlers_auth.go:
+	// postLogin). Marketing copy is deliberate; if it ever changes, this
+	// test breaks loudly so the change shows up in review.
+	if m.Subject != "Sign in to onebox faas" {
+		t.Errorf("subject = %q, want %q", m.Subject, "Sign in to onebox faas")
 	}
-	if !strings.Contains(strings.ToLower(m.Subject), "sign") &&
-		!strings.Contains(strings.ToLower(m.Subject), "log") &&
-		!strings.Contains(strings.ToLower(m.Subject), "magic") {
-		t.Errorf("subject %q does not look like a magic-link email", m.Subject)
-	}
-	if !strings.Contains(m.TextBody, "?token=") {
+	if !strings.Contains(m.TextBody, "verify?token=") {
 		t.Errorf("body missing token URL: %q", m.TextBody)
 	}
-	_ = acct // silence unused if createAccount path shifts in future
 }
