@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -53,9 +54,19 @@ func (f *fakeVM) WaitForCompletion(_ context.Context, _ BuildHandle) (BuildOutco
 
 // seedDeployment creates an account + app + source-tarball deployment with a
 // build row in the queued state. Returns the buildID and the deployment ID.
+// Account defaults to "pro" plan; tests that need a different plan call
+// seedDeploymentWithPlan directly.
 func seedDeployment(t *testing.T, store state.Store, source string) (string, string, string) {
 	t.Helper()
-	acct, err := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	return seedDeploymentWithPlan(t, store, source, "pro")
+}
+
+// seedDeploymentWithPlan is the parameterized form. Used by the
+// AppLayerMaxMB cap test below (hobby = 512 MB cap, smaller than the
+// 1 MiB filler the fake VM writes).
+func seedDeploymentWithPlan(t *testing.T, store state.Store, source, plan string) (string, string, string) {
+	t.Helper()
+	acct, err := store.CreateAccount(context.Background(), "u@example.com", api.Plan(plan))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +195,7 @@ func TestProcessOne_OOMExitClassified(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "src.tar.gz")
 	makeTarballWithName(t, src, []string{"package.json"})
 
-	buildID, _, _ := seedDeployment(t, store, src)
+	buildID, depID, _ := seedDeployment(t, store, src)
 	fvm := &fakeVM{out: BuildOutcome{OCIImage: "/dev/null", ExitCode: 137, FailureClass: "FailureOOM"}} // guest-init captures this
 	notif := &fakeNotifier{}
 	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -199,6 +210,73 @@ func TestProcessOne_OOMExitClassified(t *testing.T) {
 	}
 	if build.FailureClass != state.FailureOOM {
 		t.Errorf("failure_class = %s, want oom", build.FailureClass)
+	}
+	// M6 §9.2 closure: a failed build must also flip the deployment row so
+	// the dashboard doesn't leave it stuck in DeployBuilding forever.
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.Status != state.DeployFailed {
+		t.Errorf("deployment status = %s, want %s", dep.Status, state.DeployFailed)
+	}
+	if !contains(dep.Error, "build exited 137") {
+		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "build exited 137")
+	}
+}
+
+// TestProcessOne_FrameworkDetectFailsFlipsDeployment covers the user_error
+// path in markFailed — every failure class has to propagate to the owning
+// deployment so the dashboard reflects reality, not just the build row.
+func TestProcessOne_FrameworkDetectFailsFlipsDeployment(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	// No package.json, no Dockerfile, no requirements — detector errors
+	// with user_error (this path pre-dates the VM spawn).
+	makeTarballWithName(t, src, []string{"README.md"})
+
+	buildID, depID, _ := seedDeployment(t, store, src)
+	notif := &fakeNotifier{}
+	b := New(store, notif, nil, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	_, err := b.ProcessOne(context.Background(), buildID)
+	if err == nil {
+		t.Fatal("expected detector failure")
+	}
+	build, _ := store.BuildByID(context.Background(), buildID)
+	if build.FailureClass != state.FailureUserError {
+		t.Errorf("build failure_class = %s, want %s", build.FailureClass, state.FailureUserError)
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.Status != state.DeployFailed {
+		t.Errorf("deployment status = %s, want %s", dep.Status, state.DeployFailed)
+	}
+	if !contains(dep.Error, "framework detect") {
+		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "framework detect")
+	}
+}
+
+// TestProcessOne_VMSpawnErrorFlipsDeployment is the infra-failure path —
+// builderd couldn't even reach the VM. The deployment must still flip to
+// DeployFailed so the customer's next deploy doesn't get blocked waiting on
+// a DeployBuilding row.
+func TestProcessOne_VMSpawnErrorFlipsDeployment(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+
+	buildID, depID, _ := seedDeployment(t, store, src)
+	fvm := &fakeVM{spawnErr: errors.New("vmmd socket dead")}
+	notif := &fakeNotifier{}
+	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	_, err := b.ProcessOne(context.Background(), buildID)
+	if err == nil {
+		t.Fatal("expected spawn error")
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.Status != state.DeployFailed {
+		t.Errorf("deployment status = %s, want %s", dep.Status, state.DeployFailed)
+	}
+	if !contains(dep.Error, "vm spawn") {
+		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "vm spawn")
 	}
 }
 
@@ -260,6 +338,178 @@ func TestProcessOne_UnknownFrameworkFails(t *testing.T) {
 	if build.FailureClass != state.FailureUserError {
 		t.Errorf("failure_class = %s, want user_error", build.FailureClass)
 	}
+}
+
+// TestProcessOne_AppLayerOverCapFails pins the §4.5 app-layer cap
+// enforcement. We point the fake VM at a 600 MB OCI tarball while the
+// account is on Hobby (cap = 512 MB). The build must fail with
+// failure_class=user_error (this is a customer-content failure, not
+// infra) and the deployment must flip to DeployFailed with the cap
+// numbers in the error message so the dashboard can surface them.
+func TestProcessOne_AppLayerOverCapFails(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+
+	// Hobby = 512 MB cap. Make sure the produced layer is bigger.
+	buildID, depID, _ := seedDeploymentWithPlan(t, store, src, "hobby")
+	overCapPath := filepath.Join(t.TempDir(), "produced.ext4")
+	if err := writeSparse(t, overCapPath, 600*1024*1024); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: overCapPath, ExitCode: 0, LogTailBytes: 14}}
+	notif := &fakeNotifier{}
+	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	_, err := b.ProcessOne(context.Background(), buildID)
+	if err == nil {
+		t.Fatal("expected cap failure")
+	}
+	if !contains(err.Error(), "exceeds plan cap") {
+		t.Errorf("err = %v, want substring %q", err, "exceeds plan cap")
+	}
+	build, _ := store.BuildByID(context.Background(), buildID)
+	if build.Status != state.BuildFailed {
+		t.Errorf("build status = %s, want failed", build.Status)
+	}
+	if build.FailureClass != state.FailureUserError {
+		t.Errorf("failure_class = %s, want user_error", build.FailureClass)
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.Status != state.DeployFailed {
+		t.Errorf("deployment status = %s, want %s", dep.Status, state.DeployFailed)
+	}
+	if !contains(dep.Error, "600") || !contains(dep.Error, "512") {
+		t.Errorf("deployment Error = %q, want both 600 and 512 in the message", dep.Error)
+	}
+}
+
+// TestProcessOne_AppLayerAtCapSucceeds is the boundary twin of
+// TestProcessOne_AppLayerOverCapFails. Hobby cap = 512 MB; a layer of
+// exactly 512 MB must NOT trip the cap. The cap check in builderd.go is
+// `>`; this test pins that comparison so a one-byte change to `>=` would
+// make the boundary fail and surface in review.
+func TestProcessOne_AppLayerAtCapSucceeds(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+
+	buildID, _, _ := seedDeploymentWithPlan(t, store, src, "hobby")
+	atCapPath := filepath.Join(t.TempDir(), "at-cap.ext4")
+	const atCapBytes = int64(512 * 1024 * 1024) // exactly the cap
+	if err := writeSparse(t, atCapPath, atCapBytes); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: atCapPath, ExitCode: 0, LogTailBytes: 14}}
+	notif := &fakeNotifier{}
+	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		t.Fatalf("ProcessOne (at cap, must succeed): %v", err)
+	}
+	build, _ := store.BuildByID(context.Background(), buildID)
+	if build.Status != state.BuildSucceeded {
+		t.Errorf("build status = %s, want succeeded (at-cap boundary)", build.Status)
+	}
+}
+
+// TestProcessOne_AppLayerOneOverCapFails is the matching +/-1 byte case
+// for TestProcessOne_AppLayerAtCapSucceeds. Hobby cap = 512 MB; a layer
+// of 512 MiB + 1 byte must trip the cap. Together with the at-cap test
+// this pins the `>` comparison in builderd.go.
+func TestProcessOne_AppLayerOneOverCapFails(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+
+	buildID, depID, _ := seedDeploymentWithPlan(t, store, src, "hobby")
+	justOverPath := filepath.Join(t.TempDir(), "just-over.ext4")
+	const justOverBytes = int64(512*1024*1024) + 1 // cap + 1 byte
+	if err := writeSparse(t, justOverPath, justOverBytes); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: justOverPath, ExitCode: 0, LogTailBytes: 14}}
+	notif := &fakeNotifier{}
+	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	_, err := b.ProcessOne(context.Background(), buildID)
+	if err == nil {
+		t.Fatal("expected cap failure on cap+1 byte boundary")
+	}
+	if !contains(err.Error(), "exceeds plan cap") {
+		t.Errorf("err = %v, want substring %q", err, "exceeds plan cap")
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.Status != state.DeployFailed {
+		t.Errorf("deployment status = %s, want %s (cap+1 byte)", dep.Status, state.DeployFailed)
+	}
+}
+
+// TestProcessOne_AppLayerUnderCapSucceeds is the negative-control twin
+// of TestProcessOne_AppLayerOverCapFails. Hobby (512 MB cap) with a
+// 1-byte tarball must hit the existing success path — rootfs stamped,
+// snapshot_prime emitted. If this test regresses the cap logic is
+// checking the wrong field (e.g. source_bytes instead of the produced
+// layer size).
+//
+// Note: DeployLive is stamped by imaged (snapshot_prime → imaged handler),
+// not by builderd. So we assert the builder-side success markers (rootfs
+// stamped on the deployment row, cache populated, no error returned)
+// rather than dep.Status — same pattern as TestProcessOne_VMSpawnSucceedsAndStamps.
+func TestProcessOne_AppLayerUnderCapSucceeds(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+
+	buildID, depID, _ := seedDeploymentWithPlan(t, store, src, "hobby")
+	underCapPath := filepath.Join(t.TempDir(), "tiny.ext4")
+	if err := os.WriteFile(underCapPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: underCapPath, ExitCode: 0, LogTailBytes: 1}}
+	notif := &fakeNotifier{}
+	cacheRoot := t.TempDir()
+	c := NewCache(cacheRoot)
+	b := New(store, notif, fvm, c, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		t.Fatalf("ProcessOne (under cap): %v", err)
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.RootfsPath == "" {
+		t.Error("expected rootfs stamped on under-cap success")
+	}
+	// snapshot_boot must fire exactly once for the under-cap path —
+	// the cap check runs *before* the boot notification, so a passing
+	// test here confirms the order is right. (The split was added on
+	// main: builderd emits NotifySnapshotBoot to imaged, which then
+	// re-emits NotifySnapshotPrime for schedd. We only need to verify
+	// builderd's contribution here.)
+	bootCount := 0
+	for _, call := range notif.calls {
+		if call.channel == db.NotifySnapshotBoot {
+			bootCount++
+		}
+	}
+	if bootCount != 1 {
+		t.Errorf("snapshot_boot count = %d, want 1", bootCount)
+	}
+}
+
+// writeSparse creates a file of size bytes without allocating the full
+// range — we only stat the file, not read it, so a sparse hole is fine
+// and saves 600 MB of disk in the cap test above.
+func writeSparse(t *testing.T, path string, size int64) error {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Truncate(size); err != nil {
+		return err
+	}
+	return nil
 }
 
 // makeTarballWithName is a small wrapper around the makeTarball in
