@@ -248,3 +248,67 @@ func TokenRequest(refreshToken string) url.Values {
 	q.Set("refresh_token", refreshToken)
 	return q
 }
+
+// RefreshToken posts a refresh_token grant to the token endpoint and
+// returns the new Token. The shape mirrors FetchToken so callers can
+// swap them transparently. On a non-200 response we surface the status
+// code + a 512-byte snippet of the body so the storage backend's
+// challenge-based fallback path has a diagnostic hook.
+//
+// Distribution-spec compliant servers accept grant_type=refresh_token
+// on the realm endpoint; a 4xx here typically means the refresh_token
+// was revoked or expired — the caller should fall back to a fresh
+// challenge-driven GET.
+func RefreshToken(ctx context.Context, hc *http.Client, ua, realm, refreshToken string, auth *BasicAuth) (Token, error) {
+	if realm == "" {
+		return Token{}, fmt.Errorf("oci: refresh requires non-empty realm")
+	}
+	if refreshToken == "" {
+		return Token{}, fmt.Errorf("oci: refresh requires non-empty refresh_token")
+	}
+	form := TokenRequest(refreshToken)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, realm, strings.NewReader(form.Encode()))
+	if err != nil {
+		return Token{}, fmt.Errorf("oci: build refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if ua != "" {
+		req.Header.Set("User-Agent", ua)
+	}
+	if auth != nil && auth.Username != "" {
+		req.SetBasicAuth(auth.Username, auth.Password)
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return Token{}, fmt.Errorf("oci: post refresh: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return Token{}, fmt.Errorf("oci: refresh returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	var raw struct {
+		Token        string `json:"token"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&raw); err != nil {
+		return Token{}, fmt.Errorf("oci: decode refresh: %w", err)
+	}
+	access := raw.Token
+	if access == "" {
+		access = raw.AccessToken
+	}
+	if access == "" {
+		return Token{}, fmt.Errorf("oci: refresh response carried no access_token")
+	}
+	tok := Token{
+		AccessToken:  access,
+		RefreshToken: raw.RefreshToken,
+	}
+	if raw.ExpiresIn > 0 {
+		tok.ExpiresIn = time.Duration(raw.ExpiresIn) * time.Second
+	}
+	return tok, nil
+}

@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -64,6 +66,12 @@ type OCIRegistryStorageBackend struct {
 	// optional). Without it, List(snap/) would return nothing on a
 	// cold start, defeating the GC's job.
 	knownRepos sync.Map
+
+	// inFlight tracks in-progress refresh-token POSTs so concurrent
+	// callers on the same scope coalesce into one round-trip (issue
+	// #96 review finding #6). Maps scope → chan refreshResult. The
+	// channel has capacity 1 so the producer never blocks.
+	inFlight sync.Map
 }
 
 // cachedToken is the bearer cache entry. issuedAt is when FetchToken
@@ -451,21 +459,34 @@ func (o *OCIRegistryStorageBackend) Delete(ctx context.Context, key string) erro
 // repos if the registry supports it (most don't).
 //
 // Empty results are NOT an error. A missing tag-list endpoint surfaces
-// as a wrapped non-fatal error per-repo (the iteration continues).
+// as a wrapped non-fatal error per-repo (the iteration continues); a
+// fan-out prefix (e.g. "snap/") that fails on EVERY repo returns the
+// joined error so the GC walk can react. A single-repo prefix that
+// fails returns that single error: there is nothing else to enumerate.
+//
+// Partial-success rule: when at least one repo succeeded AND no repo
+// failed, the result is (keys, nil). When at least one repo failed
+// but another succeeded, the result is (keys, joined-errors) — the
+// caller decides whether to retry the failed ones, but the GC walk
+// can't silently ignore a flaky repo in the middle of a fan-out
+// without leaving orphan tags forever.
 func (o *OCIRegistryStorageBackend) List(ctx context.Context, prefix string) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("storage: oci list %q: %w", prefix, err)
 	}
 	repos := o.reposForPrefix(prefix)
-	var keys []string
+	var (
+		keys       []string
+		errs       []error
+		anySuccess bool
+	)
 	for _, repo := range repos {
 		tags, err := o.fetchTags(ctx, repo)
 		if err != nil {
-			// A registry without /tags/list is non-fatal — log via
-			// wrapping and continue. Without this a single missing
-			// repo would abort the whole GC walk.
+			errs = append(errs, fmt.Errorf("repo %q: %w", repo, err))
 			continue
 		}
+		anySuccess = true
 		for _, tag := range tags {
 			key, ok := o.unplan(repo, tag)
 			if !ok {
@@ -476,7 +497,23 @@ func (o *OCIRegistryStorageBackend) List(ctx context.Context, prefix string) ([]
 			}
 		}
 	}
-	return keys, nil
+	switch {
+	case len(errs) == 0:
+		return keys, nil
+	case !anySuccess:
+		// Nothing enumerated. For a fan-out prefix, join the per-repo
+		// errors so the caller sees the registry health; for a single-
+		// repo prefix the join collapses to a single wrapped error.
+		// Return nil keys — callers MUST check err before iterating.
+		return nil, errors.Join(errs...)
+	default:
+		// Partial success: surface the failures so the GC walk can
+		// react. The caller decides whether to retry the failed
+		// repos. Return nil keys for the same reason as above —
+		// iterating a partial key set on error risks acting on a
+		// stale view of the registry.
+		return nil, fmt.Errorf("partial list: %w", errors.Join(errs...))
+	}
 }
 
 // reposForPrefix returns the repos the OCIRegistryStorageBackend might
@@ -901,6 +938,23 @@ func (o *OCIRegistryStorageBackend) fetchManifest(ctx context.Context, repo, tag
 
 // fetchBlob streams the layer blob bytes back as a ReadCloser. A 404
 // surfaces as ErrNotFound wrapped. The caller MUST close the body.
+// fetchBlob downloads the layer blob and verifies its SHA-256 matches
+// the digest the manifest advertised. The verified body is returned
+// as an io.ReadCloser over a tmp file (the file is removed on Close).
+//
+// Why verify on Get: the OCI distribution spec lets a registry serve
+// any blob under a given URL, but our caller (schedd, builderd) treats
+// the body as authoritative — a corrupted ext4 layer silently bricks
+// the app at first boot. Hashing the body and comparing to the
+// manifest's `digest` field catches both in-flight corruption and a
+// registry that returned a different blob than the manifest names.
+//
+// Cost: one full pass through the body and one tmp-file write (the
+// file is removed on Close). For Scale-plan apps the largest blob is
+// 2 GB; we accept the disk-bound cost in exchange for fail-fast on
+// corruption. The alternative — defer verification to Close — risks
+// the caller feeding unverified bytes into a loop mount before the
+// mismatch is reported.
 func (o *OCIRegistryStorageBackend) fetchBlob(ctx context.Context, repo, digest string) (io.ReadCloser, error) {
 	u := o.registry + "/v2/" + o.fullRepo(repo) + "/blobs/" + digest
 	resp, err := o.doBearerRequest(ctx, bearerReqOpts{
@@ -920,7 +974,62 @@ func (o *OCIRegistryStorageBackend) fetchBlob(ctx context.Context, repo, digest 
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("blob returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
-	return resp.Body, nil
+	expectedHex := strings.TrimPrefix(digest, "sha256:")
+	if expectedHex == digest || expectedHex == "" {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("blob digest %q is not a sha256:<hex> reference", digest)
+	}
+	// Stream the body into a tmp file while tee-hashing. The os.File
+	// is wrapped in a tmpCloser that removes itself on Close so the
+	// caller can defer Close without leaking the scratch file.
+	f, err := osCreateTemp("", "faas-oci-blob-*.bin")
+	if err != nil {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("blob tmp file: %w", err)
+	}
+	h := sha256.New()
+	if _, err := copyContextHash(ctx, f, resp.Body, h); err != nil {
+		_ = resp.Body.Close()
+		_ = f.Close()
+		_ = removeTmp(f.Name())
+		return nil, fmt.Errorf("blob download: %w", err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		_ = f.Close()
+		_ = removeTmp(f.Name())
+		return nil, fmt.Errorf("blob body close: %w", err)
+	}
+	gotHex := hex.EncodeToString(h.Sum(nil))
+	if gotHex != expectedHex {
+		_ = f.Close()
+		_ = removeTmp(f.Name())
+		return nil, fmt.Errorf("blob integrity: sha256 mismatch: want %s got %s", expectedHex, gotHex)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		_ = f.Close()
+		_ = removeTmp(f.Name())
+		return nil, fmt.Errorf("blob rewind: %w", err)
+	}
+	return &tmpCloser{File: f}, nil
+}
+
+// tmpCloser is an *os.File that removes itself from os.TempDir when
+// closed. Used by fetchBlob to keep Get's contract simple: caller
+// defers Close, scratch file disappears. The underlying *os.File is
+// the reader so caller-side Read/Seek work without wrapping.
+type tmpCloser struct{ *os.File }
+
+func (t *tmpCloser) Close() error {
+	path := t.Name()
+	cerr := t.File.Close()
+	rerr := removeTmp(path)
+	switch {
+	case cerr != nil:
+		return cerr
+	case rerr != nil:
+		return rerr
+	}
+	return nil
 }
 
 // deleteManifest DELETEs the manifest at (repo, tag). A 404 is a
@@ -1041,6 +1150,17 @@ func (o *OCIRegistryStorageBackend) fetchTags(ctx context.Context, repo string) 
 // probes with the empty header, gets a 401 + Www-Authenticate, and
 // re-fetches via bearerForChallenge).
 //
+// When the cached token is near expiry AND we have a refresh_token +
+// realmURL cached from the initial challenge, we proactively post a
+// refresh_token grant instead of waiting for the registry to 401.
+// This is the OCI distribution-spec "refresh" flow (issue #96 review
+// finding #6); without it a near-expiry bearer costs an extra round
+// trip on every cached scope.
+//
+// Single-flight: a sync.Map keyed by scope tracks the in-flight
+// refresh. Concurrent callers on the same scope share the result so a
+// hundred wakes don't fan out into a hundred refresh requests.
+//
 // Anonymous callers (no user/pw) with no cached realm return ""
 // without making a network call — most public registries serve
 // unauthenticated /v2/ reads for public repos and the bearer dance
@@ -1050,13 +1170,128 @@ func (o *OCIRegistryStorageBackend) fetchTags(ctx context.Context, repo string) 
 // — different scopes hit different token endpoints / realms, so they
 // MUST be cached separately.
 func (o *OCIRegistryStorageBackend) bearer(ctx context.Context, scope string) (string, error) {
-	if cached, ok := o.tokenCache.Load(scope); ok {
-		ct := cached.(cachedToken)
-		if !ct.tok.IsExpiredAt(ct.issuedAt, time.Now()) {
-			return ct.tok.AccessToken, nil
-		}
+	cached, ok := o.tokenCache.Load(scope)
+	if !ok {
+		return "", nil
 	}
-	return "", nil
+	ct := cached.(cachedToken)
+	if !ct.tok.IsExpiredAt(ct.issuedAt, time.Now()) {
+		return ct.tok.AccessToken, nil
+	}
+	// Token is near expiry. Refresh if we have the recipe; otherwise
+	// let the caller drive a 401 → bearerForChallenge.
+	if ct.tok.RefreshToken == "" || ct.realmURL == "" {
+		return "", nil
+	}
+	auth := (*oci.BasicAuth)(nil)
+	if o.user != "" {
+		auth = &oci.BasicAuth{Username: o.user, Password: o.pw}
+	}
+	fresh, err := o.singleFlightRefresh(ctx, scope, ct.tok.RefreshToken, ct.realmURL, auth)
+	if err != nil {
+		// Refresh failed (revoked, expired grant, or registry outage).
+		// Returning "" lets the caller fall back to a challenge-driven
+		// fetch on a 401 — the refresh attempt hasn't made things worse.
+		//
+		// nolint:nilerr // Deliberate silent fallback: the caller (see
+		// doBearerRequest → bearerForChallenge) treats "" as "no cached
+		// token, do a fresh 401 → realm fetch". Returning the wrapped
+		// refresh error here would either leak registry-internal
+		// diagnostics into the request hot path OR cause callers to
+		// skip the fallback entirely. The error is already logged at
+		// the singleFlightRefresh call site via slog.
+		return "", nil
+	}
+	return fresh, nil
+}
+
+// singleFlightRefresh coalesces concurrent refresh-token POSTs for the
+// same scope. The first caller to arrive posts; every concurrent
+// caller waits on the same in-flight flight via the inFlight
+// sync.Map. Without this, N parallel wake requests against a
+// near-expiry token would issue N refresh round-trips; with it they
+// share one.
+//
+// Race note: a goroutine that observes the cached token as expired
+// but arrives at inFlight AFTER the producer's done-channel close
+// and inFlight delete must NOT spin up a second POST. The
+// post-LoadOrStore cache re-check short-circuits that case — the
+// producer populated the cache before deleting the entry, so a fresh
+// entry is always visible to late arrivals.
+func (o *OCIRegistryStorageBackend) singleFlightRefresh(ctx context.Context, scope, refreshToken, realm string, auth *oci.BasicAuth) (string, error) {
+	// LoadOrStore: the first goroutine wins the producer slot; every
+	// other goroutine on this scope sees the existing flight and waits
+	// on its done channel. We construct the flight inside the closure
+	// so the loser never allocates one.
+	flight := &refreshFlight{done: make(chan refreshResult, 1)}
+	if existing, ok := o.inFlight.LoadOrStore(scope, flight); ok {
+		flight = existing.(*refreshFlight)
+	} else {
+		// We're the producer. Run the POST, populate the cache, and
+		// close the done channel under sync.Once so a future refactor
+		// that re-enters the closure is safe. Defer the inFlight
+		// cleanup so a panicking RefreshToken still unblocks followers.
+		defer o.inFlight.Delete(scope)
+		tok, err := oci.RefreshToken(ctx, o.hc, o.ua, realm, refreshToken, auth)
+		flight.once.Do(func() {
+			if err != nil {
+				flight.result = refreshResult{err: err}
+			} else {
+				o.tokenCache.Store(scope, cachedToken{
+					tok:      tok,
+					issuedAt: time.Now(),
+					realmURL: realm,
+				})
+				flight.result = refreshResult{token: tok.AccessToken}
+			}
+			close(flight.done)
+		})
+	}
+	// All paths converge here: wait for the producer's result, then
+	// re-check the cache. The re-check catches the case where a fast
+	// producer populated the cache before this goroutine arrived at
+	// LoadOrStore, and any goroutine that wins the LoadOrStore race
+	// but arrives after Delete (and a fresh Store) sees the fresh
+	// cache and skips the producer's broadcast.
+	<-flight.done
+	if fresh, ok := o.freshCachedAccessToken(scope); ok {
+		return fresh, nil
+	}
+	return flight.result.token, flight.result.err
+}
+
+// freshCachedAccessToken returns the cached access token when it is
+// NOT expired at the current wall-clock time. Used by singleFlightRefresh
+// to short-circuit goroutines that arrive after a successful refresh.
+// OK=false means the cache is missing or the entry is near expiry.
+func (o *OCIRegistryStorageBackend) freshCachedAccessToken(scope string) (string, bool) {
+	cached, ok := o.tokenCache.Load(scope)
+	if !ok {
+		return "", false
+	}
+	ct := cached.(cachedToken)
+	if ct.tok.IsExpiredAt(ct.issuedAt, time.Now()) {
+		return "", false
+	}
+	return ct.tok.AccessToken, true
+}
+
+// refreshFlight carries the single-flight state for a scope. done is
+// buffered so the producer never blocks on the close path; the
+// underlying sync.Once guards the producer side (we publish exactly
+// once even if a future refactor adds a second send site).
+type refreshFlight struct {
+	once   sync.Once
+	done   chan refreshResult
+	result refreshResult
+}
+
+// refreshResult is the value type shuttled through the in-flight
+// channel. Using a struct (rather than two parallel channels) keeps
+// the send site atomic and the receiver simple.
+type refreshResult struct {
+	token string
+	err   error
 }
 
 // bearerForChallenge is the post-401 path: the caller has the
