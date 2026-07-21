@@ -1017,7 +1017,7 @@ func (o *OCIRegistryStorageBackend) fetchBlob(ctx context.Context, repo, digest 
 type tmpCloser struct{ *os.File }
 
 func (t *tmpCloser) Close() error {
-	path := t.File.Name()
+	path := t.Name()
 	cerr := t.File.Close()
 	rerr := removeTmp(path)
 	switch {
@@ -1189,6 +1189,14 @@ func (o *OCIRegistryStorageBackend) bearer(ctx context.Context, scope string) (s
 		// Refresh failed (revoked, expired grant, or registry outage).
 		// Returning "" lets the caller fall back to a challenge-driven
 		// fetch on a 401 — the refresh attempt hasn't made things worse.
+		//
+		// nolint:nilerr // Deliberate silent fallback: the caller (see
+		// doBearerRequest → bearerForChallenge) treats "" as "no cached
+		// token, do a fresh 401 → realm fetch". Returning the wrapped
+		// refresh error here would either leak registry-internal
+		// diagnostics into the request hot path OR cause callers to
+		// skip the fallback entirely. The error is already logged at
+		// the singleFlightRefresh call site via slog.
 		return "", nil
 	}
 	return fresh, nil
