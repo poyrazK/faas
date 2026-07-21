@@ -49,11 +49,10 @@ func TestMigrations_00022_SnapshotsStorageKey_Backfill(t *testing.T) {
 		t.Fatalf("seed account: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, ram_mb, max_concurrency, idle_timeout_s,
-		                  min_instances, status, created_at, updated_at)
+		insert into apps (id, account_id, slug, ram_mb, max_concurrency, idle_timeout_s, status, created_at)
 		values ('00000000-0000-0000-0000-000000000002',
 		        '00000000-0000-0000-0000-000000000001',
-		        'backfill-app', 256, 1, 30, 0, 'active', now(), now())
+		        'backfill-app', 256, 1, 30, 'active', now())
 	`); err != nil {
 		t.Fatalf("seed app: %v", err)
 	}
