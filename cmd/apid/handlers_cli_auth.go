@@ -232,10 +232,15 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	if errors.Is(err, state.ErrNotFound) {
 		acct, err = h.srv.store.CreateAccount(r.Context(), email, api.PlanFree)
 		if err != nil {
+			// codeql[go/log-injection] false-positive: logsanitize.Field is not in
+			// CodeQL's sanitizer model (it only recognizes inline strings.ReplaceAll),
+			// but it strips CR/LF/NUL/DEL at runtime — matches the precedent set in
+			// pkg/gateway/metrics.go:145. Email is also bounded by looksLikeEmail.
 			h.log.Error("cli_auth.create_account", "err", err, "email", logsanitize.Field(email))
 			h.renderCliAuthError(w, "Could not sign you up", "Please try again.")
 			return
 		}
+		// codeql[go/log-injection] false-positive: see rationale above.
 		h.log.Info("cli_auth.auto_created_account",
 			"event", api.EventCliAuthAutoCreated,
 			"account", acct.ID,
