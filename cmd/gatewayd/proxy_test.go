@@ -73,6 +73,61 @@ func TestApidProxy_ForwardsApidPaths(t *testing.T) {
 	}
 }
 
+// TestApidProxy_ForwardsNonGetMethods confirms the proxy passes the
+// HTTP method through unchanged. POST is the load-bearing case for
+// the /v1/* write surface (apps, deployments, secrets, crons,
+// webhooks/stripe) and for /login + /logout, so a future regression
+// that accidentally filters methods would be loud here.
+func TestApidProxy_ForwardsNonGetMethods(t *testing.T) {
+	var upstreamHits int
+	var seenMethod string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		seenMethod = r.Method
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("apid: ok"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("next handler invoked; should have been proxied")
+		w.WriteHeader(http.StatusTeapot)
+	})
+	handler := newApidProxy(upstream.URL, next, log)
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		// /v1 writes (auth-required in production; the proxy
+		// doesn't care — it just forwards).
+		{http.MethodPost, "/v1/apps"},
+		{http.MethodPatch, "/v1/apps/foo"},
+		{http.MethodDelete, "/v1/apps/foo"},
+		// Magic-link + session auth POSTs.
+		{http.MethodPost, "/login"},
+		{http.MethodPost, "/logout"},
+	}
+	for _, c := range cases {
+		t.Run(c.method+" "+c.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(c.method, c.path, nil)
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Errorf("code = %d, want 200", rec.Code)
+			}
+			if seenMethod != c.method {
+				t.Errorf("upstream saw method %q, want %q", seenMethod, c.method)
+			}
+		})
+	}
+	if upstreamHits != len(cases) {
+		t.Errorf("upstream hits = %d, want %d", upstreamHits, len(cases))
+	}
+}
+
 // TestApidProxy_PassesThroughNonApidPaths confirms requests outside
 // the apid prefix set fall through to the next handler (e.g.
 // gateway.Handler's wake/proxy path) without touching apid.

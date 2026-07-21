@@ -42,8 +42,11 @@ type Config struct {
 	// (custom-domain-only deployments).
 	AppsDomain string `toml:"apps_domain"`
 
-	// APIDLoopback is the in-box URL gatewayd proxies /dashboard/* to.
-	// Defaults to http://127.0.0.1:8081 (apid's own bind).
+	// APIDLoopback is the in-box URL gatewayd reverse-proxies the apid
+	// public surface (/v1/*, /dashboard/*, /oauth/*, /login*,
+	// /auth/verify, /logout, /status*, /healthz) to. Defaults to
+	// http://127.0.0.1:8081 (apid's loopback bind). Issue #85 widened
+	// the proxy surface from /dashboard/* to the full set above.
 	APIDLoopback string `toml:"apid_loopback"`
 
 	// GithubdLoopback is the in-box URL gatewayd proxies /webhooks/github

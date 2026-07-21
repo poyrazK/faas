@@ -132,8 +132,12 @@ func isApidPath(p string) bool {
 			return true
 		}
 	}
-	// /oauth/* — only the subtree form (there's no useful /oauth
-	// exact route today).
+	// /oauth/* — only the subtree form. Deliberately no exact
+	// /oauth match: apid has no /oauth route today (only
+	// /oauth/callback is mounted), so a bare /oauth request would
+	// 404 on apid's mux either way. Pinning this in tests
+	// ({"/oauth", false}) defends against an accidental future
+	// expansion that would steal what should be a 404 path.
 	return strings.HasPrefix(p, apidRootOAuthPrefix)
 }
 
