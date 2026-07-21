@@ -3,6 +3,7 @@ package state_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -492,5 +493,179 @@ func TestPg_SetDeploymentFailed_UnknownReturnsErrNotFound(t *testing.T) {
 	_, err := s.SetDeploymentFailed(ctx, "00000000-0000-0000-0000-000000000000", api.CodeImageNotFound, "x")
 	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("unknown id err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestPg_CreateAppIfUnderQuota_Concurrent is the real-Postgres mirror
+// of cmd/apid/handlers_quota_test.go::TestCreateApp_ConcurrentQuotaEnforcement_MemStore.
+// Fires N goroutines at CreateAppIfUnderQuota on a Free account
+// (DeployedApps=1). With the SELECT … FOR UPDATE lock on the parent
+// accounts row, exactly one call must commit; the rest must return
+// *QuotaError. Pre-PR this race slipped through because the handler
+// did CountDeployedApps + CreateApp as two separate statements — the
+// MemStore mutex hid it from unit tests, so only a real Postgres run
+// would surface it.
+func TestPg_CreateAppIfUnderQuota_Concurrent(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, err := s.CreateAccount(ctx, "race@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	limits := api.MustLimitsFor(acct.Plan) // DeployedApps = 1
+
+	const n = 10
+	type result struct {
+		app state.App
+		err error
+	}
+	results := make(chan result, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			app := state.App{
+				AccountID: acct.ID,
+				Slug:      "race-" + strconv.Itoa(i),
+				Type:      state.AppTypeApp,
+				RAMMB:     128, MaxConcurrency: 1,
+				Status: state.AppActive,
+			}
+			<-start
+			created, err := s.CreateAppIfUnderQuota(ctx, app, limits)
+			results <- result{app: created, err: err}
+		}()
+	}
+	close(start)
+
+	var ok int
+	var quota int
+	var other int
+	for i := 0; i < n; i++ {
+		r := <-results
+		switch {
+		case r.err == nil:
+			ok++
+		case errors.Is(r.err, state.ErrQuotaExceeded):
+			quota++
+		default:
+			other++
+			t.Logf("unexpected error: %v", r.err)
+		}
+	}
+	if ok != 1 {
+		t.Errorf("expected exactly one success under cap=1, got %d", ok)
+	}
+	if quota != n-1 {
+		t.Errorf("expected %d ErrQuotaExceeded, got %d", n-1, quota)
+	}
+	if other != 0 {
+		t.Errorf("got %d unexpected errors", other)
+	}
+
+	// Ground truth: the store holds exactly one app for this account.
+	count, err := s.CountDeployedApps(ctx, acct.ID)
+	if err != nil {
+		t.Fatalf("CountDeployedApps: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("store holds %d apps, want 1", count)
+	}
+}
+
+// TestPg_CreateAppIfUnderQuota_ConcurrentAcrossAccounts pins the
+// cross-account invariant: PgStore's FOR UPDATE lock is row-scoped
+// to the parent accounts row, so two concurrent creates on different
+// accounts must both succeed even though both transactions hold row
+// locks simultaneously. All goroutines start on one channel so lock
+// acquisition on each row is contended; if the lock ever widened
+// (e.g. table-level guard, advisory lock over the apps table), the
+// per-account post-conditions would still hold but errA/errB counts
+// would diverge from the cap math. Today this test pins both:
+// each Free account gets one success + N-1 quota errors, regardless
+// of how the other account's calls behave.
+func TestPg_CreateAppIfUnderQuota_ConcurrentAcrossAccounts(t *testing.T) {
+	s, ctx := pgStore(t)
+
+	acctA, err := s.CreateAccount(ctx, "a@x.com", api.PlanFree)
+	if err != nil {
+		t.Fatalf("CreateAccount(A): %v", err)
+	}
+	acctB, err := s.CreateAccount(ctx, "b@x.com", api.PlanFree)
+	if err != nil {
+		t.Fatalf("CreateAccount(B): %v", err)
+	}
+	limitsA := api.MustLimitsFor(acctA.Plan)
+	limitsB := api.MustLimitsFor(acctB.Plan)
+
+	const perAccount = 5
+	type result struct {
+		owner string // "A" or "B" — disambiguates the channel aggregation
+		err   error
+	}
+	results := make(chan result, 2*perAccount)
+	start := make(chan struct{})
+
+	for i := 0; i < perAccount; i++ {
+		i := i
+		go func() {
+			<-start
+			_, err := s.CreateAppIfUnderQuota(ctx, state.App{
+				AccountID: acctA.ID,
+				Slug:      "a-cross-" + strconv.Itoa(i),
+				Type:      state.AppTypeApp,
+				RAMMB:     128, MaxConcurrency: 1,
+				Status: state.AppActive,
+			}, limitsA)
+			results <- result{owner: "A", err: err}
+		}()
+		go func() {
+			<-start
+			_, err := s.CreateAppIfUnderQuota(ctx, state.App{
+				AccountID: acctB.ID,
+				Slug:      "b-cross-" + strconv.Itoa(i),
+				Type:      state.AppTypeApp,
+				RAMMB:     128, MaxConcurrency: 1,
+				Status: state.AppActive,
+			}, limitsB)
+			results <- result{owner: "B", err: err}
+		}()
+	}
+	close(start)
+
+	var okA, okB, quotaA, quotaB int
+	for k := 0; k < 2*perAccount; k++ {
+		r := <-results
+		switch {
+		case r.err == nil && r.owner == "A":
+			okA++
+		case r.err == nil && r.owner == "B":
+			okB++
+		case errors.Is(r.err, state.ErrQuotaExceeded) && r.owner == "A":
+			quotaA++
+		case errors.Is(r.err, state.ErrQuotaExceeded) && r.owner == "B":
+			quotaB++
+		default:
+			t.Logf("unexpected error (owner=%s): %v", r.owner, r.err)
+		}
+	}
+	// The invariant: per-account cap math. Cross-account contention
+	// must NOT cause either side to lose a success slot or gain a
+	// spurious quota error.
+	if okA != 1 || okB != 1 {
+		t.Errorf("okA=%d okB=%d, want 1/1 — cross-account locking regression", okA, okB)
+	}
+	if quotaA != perAccount-1 || quotaB != perAccount-1 {
+		t.Errorf("quotaA=%d quotaB=%d, want %d/%d", quotaA, quotaB, perAccount-1, perAccount-1)
+	}
+	if got, err := s.CountDeployedApps(ctx, acctA.ID); err != nil {
+		t.Errorf("CountDeployedApps(A): %v", err)
+	} else if got != 1 {
+		t.Errorf("count(A) = %d, want 1", got)
+	}
+	if got, err := s.CountDeployedApps(ctx, acctB.ID); err != nil {
+		t.Errorf("CountDeployedApps(B): %v", err)
+	} else if got != 1 {
+		t.Errorf("count(B) = %d, want 1", got)
+
 	}
 }

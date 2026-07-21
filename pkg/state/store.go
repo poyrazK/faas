@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -10,6 +11,29 @@ import (
 
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
+
+// ErrQuotaExceeded is returned by CreateAppIfUnderQuota when the
+// account already holds limits.DeployedApps live apps. The error wraps
+// the observed count so apid can include it in the 403 envelope via
+// api.ErrPlanLimitApps without re-running the count.
+type QuotaError struct {
+	Limit    int // limits.DeployedApps at the time of the call
+	Observed int // count(*) of live apps observed inside the same critical section
+}
+
+func (e *QuotaError) Error() string {
+	return fmt.Sprintf("state: deployed-app quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
+}
+
+// Is allows errors.Is(err, ErrQuotaExceeded) to match any *QuotaError.
+// Behaviour parity with ErrNotFound / ErrConflict.
+func (e *QuotaError) Is(target error) bool {
+	return target == ErrQuotaExceeded
+}
+
+// ErrQuotaExceeded is the sentinel callers compare against via errors.Is.
+// Concrete instances are *QuotaError so handlers can read limit/observed.
+var ErrQuotaExceeded = errors.New("state: deployed-app quota exceeded")
 
 // MaxDeploymentLogPage caps the per-call row count for
 // ListDeploymentLogs. Both implementations clamp the caller's
@@ -84,6 +108,25 @@ type Store interface {
 	// deletion_requested_at untouched (it carries the original grace
 	// deadline). RestoreAccount zeroes deletion_requested_at.
 	DeleteAccount(ctx context.Context, id string) error
+	// AppendGdprRequest records a single GDPR self-service action
+	// (export, delete, restore) against the account email at the
+	// moment it lands. Append-only by contract; the gdpr_requests
+	// table outlives DeleteAccount so a customer (or a DPO) can be
+	// shown the proof of erasure against an email + timestamp. The
+	// Completed field is set when the action has run to its end
+	// (export = on insert, delete = after pg/grace hard-delete fires,
+	// restore = on insert since restore is itself the endpoint).
+	AppendGdprRequest(ctx context.Context, req GdprRequest) error
+	// ListGdprRequestsForAccount returns the ledger rows for an
+	// account in requested_at desc order, bounded by limit. Used by
+	// the GDPR export bundle's audit slice so the customer sees their
+	// own actions reflected in the same JSON.
+	ListGdprRequestsForAccount(ctx context.Context, accountID string, limit int) ([]GdprRequest, error)
+	// CompleteGdprRequest stamps completed_at on the most recent
+	// un-completed row of (account_id, action). Called by pkg/grace
+	// after DeleteAccount succeeds so the delete row in the ledger
+	// carries the actual hard-delete timestamp.
+	CompleteGdprRequest(ctx context.Context, accountID, action string) error
 	ListBuildsForAccount(ctx context.Context, accountID string) ([]Build, error)
 	ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error)
 	// UsageByAccount aggregates every per-minute usage_minutes row that
@@ -137,8 +180,47 @@ type Store interface {
 	ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error)
 	DeleteOldLoginTokens(ctx context.Context, before time.Time) (int64, error)
 
+	// CLI auth codes (spec §2.2 device-code flow). The mint + peek +
+	// claim + consume cycle mirrors the magic-link primitives but with
+	// a nullable account_id — the binding to a customer happens at
+	// claim time (dashboard POST /cli-auth), not at mint time
+	// (anonymous POST /v1/cli-auth/code).
+	//
+	// IssueCliAuthCode persists a freshly-minted code's SHA-256 hash
+	// with no account (account_id NULL). PeekCliAuthCode returns the
+	// row's status without mutating it (the dashboard render uses
+	// this). ClaimCliAuthCode atomically transitions pending →
+	// consumed and binds account_id in one statement; a racing second
+	// claim returns ErrConflict. ConsumeCliAuthCode is the CLI's poll
+	// path: returns (status, account_id, err) so the CLI can mint the
+	// API key once it sees "consumed".
+	IssueCliAuthCode(ctx context.Context, tokenHash []byte, expiresAt time.Time) error
+	PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error)
+	ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error
+	ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error)
+
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)
+	// CreateAppIfUnderQuota inserts app iff the account currently holds
+	// fewer than limits.DeployedApps live apps (active + evicted_cold).
+	// The count + insert happen under a single critical section — PgStore
+	// opens a transaction that SELECT … FOR UPDATE locks the parent
+	// accounts row, MemStore holds m.mu — so two concurrent createApp
+	// calls on a Free account cannot both pass the cap check (spec §4.2,
+	// PR fix for the TOCTOU in handlers.go::createApp).
+	//
+	// Returns:
+	//   - (App, nil) on success
+	//   - (App{}, *QuotaError) when the cap is reached — handlers map
+	//     this to 403 CodePlanLimitApps with limit + observed
+	//   - (App{}, ErrConflict) when app.Slug is already taken
+	//   - (App{}, ErrNotFound) when the account row is gone
+	//   - (App{}, other) on transport / SQL errors
+	//
+	// limits.DeployedApps is the per-plan cap (api.MustLimitsFor(plan)).
+	// Implementations enforce it authoritatively; callers MUST NOT also
+	// call CountDeployedApps before this method (that's the bug).
+	CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error)
 	AppByID(ctx context.Context, id string) (App, error)
 	AppBySlug(ctx context.Context, slug string) (App, error)
 	ListApps(ctx context.Context, accountID string) ([]App, error)
@@ -301,6 +383,54 @@ type Store interface {
 	// run on the minute boundary.
 	ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error)
 	UpdateInstanceState(ctx context.Context, id, state string) error
+	// UpdateInstanceStateWithTimestamp is the same write but stamps
+	// parked_at to the supplied time on the same statement. Used by
+	// schedd's snapshotAndPark (commit 3) when transitioning into
+	// SNAPSHOTTING — the §6.1 watchdog reads parked_at for
+	// SNAPSHOTTING rows (started_at means "row creation", not "time
+	// entered current state"), so the engine must stamp it on entry.
+	// Non-SNAPSHOTTING transitions should still use UpdateInstanceState.
+	UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error
+	// UpdateInstanceStateToTerminal writes state AND stamps terminal_at
+	// on the same UPDATE (PR #74, spec §17 follow-up). terminal_at is
+	// the dedicated retention anchor the daily sweep (pkg/sched.Retention)
+	// reads; started_at means "row creation" and parked_at is overloaded
+	// (also means "entered PARKED"), so neither is correct for a STOPPED
+	// row whose vmmd boot succeeded days earlier. Engine.transition
+	// routes here when the target state is STOPPED or FAILED; every other
+	// transition still uses UpdateInstanceState / UpdateInstanceStateWithTimestamp.
+	UpdateInstanceStateToTerminal(ctx context.Context, id, state string, terminalAt time.Time) error
+	// ListInstancesByStatesOlderThan is the §6.1 watchdog's lookup.
+	// Returns rows currently in any of the given states whose
+	// "age timestamp" is strictly older than threshold. The age
+	// column is state-aware: started_at for WAKING/COLD_BOOTING
+	// (stamped on creation by migration 00015), parked_at for
+	// SNAPSHOTTING (stamped on entry into that state by
+	// UpdateInstanceStateWithTimestamp). Implementations must NOT
+	// coalesce the two columns — pre-migration 00015 rows have
+	// NULL started_at, and coalesce would silently use the stale
+	// parked_at. PgStore relies on migration 00016's partial index
+	// for the state predicate.
+	ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
+	// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
+	// lookup (PR #74). Returns rows currently in any of the given states
+	// (today: {STOPPED, FAILED}) whose terminal_at is strictly older than
+	// threshold. Order is implementation-defined. Reads the dedicated
+	// terminal_at column — distinct from ListInstancesByStatesOlderThan,
+	// which uses the state-aware started_at/parked_at comparison and is
+	// the wrong tool for retention aging (a STOPPED row that booted
+	// successfully has a stale started_at). PgStore relies on migration
+	// 00017's partial index for the state predicate.
+	ListInstancesInTerminalStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
+	// DeleteInstance removes a single instance row unconditionally
+	// (PR #74). Returns ErrNotFound when the row is already gone — the
+	// retention sweep swallows that case for redelivery. There are NO
+	// foreign-key cascades: events.subject and usage_minutes.instance_id
+	// carry no FK to instances today (audit log is append-only by spec
+	// §6.1; usage is reconciled by account hard-delete). Adding a FK
+	// in a future migration would silently break this sweep — review
+	// PR-#74's readme when touching either table.
+	DeleteInstance(ctx context.Context, id string) error
 	// SetInstanceRuntime records the per-instance identity vmmd allocated on
 	// wake (netns, routable host IP, jail uid) and stamps started_at=now. schedd
 	// calls this between a successful vmmd boot and the RUNNING transition so the
@@ -353,6 +483,9 @@ type Store interface {
 	ListEvents(ctx context.Context, subject string, limit int) ([]Event, error)
 
 	// Usage (apid reads for GET /v1/usage; meterd writes in production).
+	// AppendUsage is idempotent on (instance_id, minute): the first write
+	// wins, a redelivered minute is a no-op. This prevents silent
+	// double-billing under any meterd restart (M7 hardening).
 	AppendUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error
 	UsageByMonth(ctx context.Context, accountID string, month time.Time) ([]Usage, error)
 	// UsageByHour returns the per-app usage rows whose minute ∈ [start,

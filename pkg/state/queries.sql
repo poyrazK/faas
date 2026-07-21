@@ -209,11 +209,13 @@ select id, at, actor, kind, subject, data
 from events where subject = $1 order by at desc limit $2;
 
 -- name: AppendUsage :exec
+-- Idempotent: a redelivered (instance_id, minute) is a no-op. First write
+-- wins (M7 hardening, PR feat/m7-beta-hardening). Prevents silent
+-- double-billing when meterd restarts, the network blips, or two meterd
+-- instances ever run concurrently.
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests)
 values ($1, $2, $3, $4, $5, $6)
-on conflict (instance_id, minute) do update
-  set mb_seconds = usage_minutes.mb_seconds + excluded.mb_seconds,
-      requests = usage_minutes.requests + excluded.requests;
+on conflict (instance_id, minute) do nothing;
 
 -- name: UsageByMonth :many
 select account_id, app_id, month, mb_seconds, requests

@@ -156,6 +156,15 @@ const (
 	CodeImageNotFound        = "image_not_found"
 	CodeImageEgressDenied    = "image_egress_denied"
 	CodeImageManifestInvalid = "image_manifest_invalid"
+
+	// CLI auth (spec §2.2 device-code flow). Pending is the "user has
+	// not yet approved" signal the CLI's poll loop keys off; the CLI
+	// keeps polling until it sees 200 OK or a different 4xx. The
+	// "unavailable" code covers every other failure mode (expired,
+	// already used, unknown) — the CLI does not need to distinguish
+	// them, and returning a single code avoids probing.
+	CodeCliAuthPending     = "cli_auth_code_pending"
+	CodeCliAuthUnavailable = "cli_auth_code_unavailable"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -210,6 +219,10 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeAppRenameFailed:
 		return http.StatusConflict
+	case CodeCliAuthPending:
+		return http.StatusNotFound
+	case CodeCliAuthUnavailable:
+		return http.StatusGone
 	default:
 		return http.StatusInternalServerError
 	}

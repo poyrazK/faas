@@ -51,6 +51,8 @@ var errorDocsURL = map[string]string{
 	api.CodeAccountDeletionPending:     docsURLPrefix + "/account/delete",
 	api.CodeAccountNotRestorable:       docsURLPrefix + "/account/delete",
 	api.CodeAppRenameFailed:            docsURLPrefix + "/apps/rename",
+	api.CodeCliAuthPending:             docsURLPrefix + "/cli-auth/pending",
+	api.CodeCliAuthUnavailable:         docsURLPrefix + "/cli-auth/unavailable",
 }
 
 // docsURLForCode returns the per-code docs URL, falling back to the

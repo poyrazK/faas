@@ -1,16 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/browser"
 )
 
 // authedClient builds a client using the stored token, or errors (exit 2) if the
@@ -34,29 +37,188 @@ func authedClientWithDeployTimeout(timeout time.Duration) (*Client, error) {
 	return NewClientWithDeployTimeout(apiBase(), tok, timeout), nil
 }
 
-// cmdLogin implements `faas login [--token T]` (UX §2.2). The browser-paste flow
-// is the default UX; --token is the CI path (gap G5).
+// cmdLogin implements `faas login [--token T]` (UX §2.2). The
+// browser-paste flow is the default UX; --token is the CI path
+// (gap G5). On success writes the API key to the config file at
+// 0600 perms (config.go::saveToken) so subsequent commands can use
+// the bearer token without re-authenticating.
 func cmdLogin(args []string) int {
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
 	token := fs.String("token", "", "API token (CI/non-interactive)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *token == "" {
-		fmt.Fprintln(os.Stderr, "✗ Interactive browser login isn't wired yet.")
-		fmt.Fprintln(os.Stderr, "  Use 'faas login --token <token>' (get one from the dashboard).")
+
+	// CI path — unchanged behavior. Keep --token working so build
+	// servers + scripts aren't broken by this change. Routes through
+	// finalizeLogin so the UX §8 first-run quickstart fires for the
+	// --token flag too (issue #65 D4 — signup ≡ login via API key
+	// still needs the deploy-pointer nudge for fresh accounts).
+	if *token != "" {
+		client := NewClient(apiBase(), *token)
+		acct, err := client.Whoami(context.Background())
+		if err != nil {
+			return printErr("Login failed", err)
+		}
+		if err := saveToken(*token); err != nil {
+			return printErr("Could not save token", err)
+		}
+		// Use a fresh ctx for the quickstart probe; the --token
+		// path is CI-shaped (no caller-supplied cancellation).
+		probeCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		return finalizeLogin(probeCtx, client, *token, acct)
+	}
+
+	// Interactive flow (spec §2.2 device-code pair).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := NewClient(apiBase(), "")
+
+	codeResp, err := c.MintCliAuthCode(ctx)
+	if err != nil {
+		return printErr("Could not start login", err)
+	}
+
+	_, _ = fmt.Fprintf(osStdout, "Opening %s in your browser...\n", codeResp.URL)
+	_, _ = fmt.Fprintln(osStdout, "  (or visit that URL and paste the code below)")
+
+	// Best-effort browser open. On a sandboxed CI box the helper
+	// returns an error (no DISPLAY); we surface it but stay in
+	// paste mode — the user can either paste the code into this
+	// terminal or open the URL in a real browser on another box.
+	if err := browser.Open(codeResp.URL); err != nil {
+		fmt.Fprintf(os.Stderr, "✗ Could not open browser: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", codeResp.URL)
+	}
+
+	// Two-mode wait: prompt for a pasted code, OR fall through to
+	// polling if the user just hits Enter. Read with a short
+	// timeout so the poll loop can take over.
+	_, _ = fmt.Fprint(osStdout, "Paste code (or press Enter to wait for browser): ")
+	var pasted string
+	if v, ok := readLineWithTimeout(osStdin, 3*time.Second); ok {
+		pasted = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(v), "-", ""))
+	}
+
+	if pasted == "" {
+		return waitForApproval(ctx, c, codeResp)
+	}
+	if len(pasted) != 8 {
+		fmt.Fprintf(os.Stderr, "✗ Code should be 8 characters (XXXX-NNNN), got %d\n", len(pasted))
 		return 1
 	}
-	client := NewClient(apiBase(), *token)
-	acct, err := client.Whoami(context.Background())
+	return exchangeOnce(ctx, c, pasted)
+}
+
+// waitForApproval polls /v1/cli-auth/exchange at 1s until the user
+// approves the code in the browser or the server-stated expiry
+// passes. Stops early on consumed (someone else exchanged this code
+// on a different machine — race; tell the user).
+//
+// Spec §2.2: the CLI is the source of truth for the polling cadence;
+// the server-side limit is 5 min (cliAuthCodeTTL in handlers_cli_auth.go).
+func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeResponse) int {
+	expiry, _ := time.Parse(time.RFC3339, codeResp.ExpiresAt)
+	backoff := 1 * time.Second
+	for {
+		if !expiry.IsZero() && time.Now().After(expiry.Add(2*time.Second)) {
+			fmt.Fprintln(os.Stderr, "✗ Code expired. Run 'faas login' again.")
+			return 1
+		}
+		select {
+		case <-ctx.Done():
+			return 1
+		case <-time.After(backoff):
+		}
+		// Strip the dash so the server's normalizeCliAuthCode
+		// doesn't have to. The server is case-insensitive so
+		// uppercase is purely cosmetic on the wire.
+		normalized := strings.ReplaceAll(codeResp.Code, "-", "")
+		resp, err := c.ExchangeCliAuthCode(ctx, normalized)
+		if err == nil {
+			return finalizeLogin(ctx, c, resp.Plaintext, resp.Account)
+		}
+		var ae *APIError
+		if errors.As(err, &ae) {
+			switch ae.Problem.Code {
+			case api.CodeCliAuthPending:
+				continue // keep polling
+			case api.CodeCliAuthUnavailable:
+				fmt.Fprintln(os.Stderr, "✗ ", ae.Error())
+				return 1
+			default:
+				return printErr("Login failed", err)
+			}
+		}
+		// Network error — keep polling until the deadline so a
+		// flaky TCP doesn't break the flow. Stops naturally when
+		// expiry passes.
+		continue
+	}
+}
+
+// exchangeOnce is the paste-the-code single-shot path. Same exchange
+// endpoint, but no polling — used after a successful browser-open
+// that the user decided to mirror by pasting the code back into the
+// same terminal.
+func exchangeOnce(ctx context.Context, c *Client, normalized string) int {
+	resp, err := c.ExchangeCliAuthCode(ctx, normalized)
 	if err != nil {
 		return printErr("Login failed", err)
 	}
-	if err := saveToken(*token); err != nil {
+	return finalizeLogin(ctx, c, resp.Plaintext, resp.Account)
+}
+
+// finalizeLogin writes the freshly-minted plaintext API key to disk
+// and prints the success line. Splits the path so the paste +
+// browser-open flows can share it without duplicating the printer
+// or saveToken call.
+func finalizeLogin(ctx context.Context, c *Client, plaintext string, acct api.AccountResponse) int {
+	if err := saveToken(plaintext); err != nil {
 		return printErr("Could not save token", err)
 	}
-	fmt.Printf("✓ Logged in as %s (%s plan)\n", acct.Email, acct.Plan)
+	_, _ = fmt.Fprintf(osStdout, "✓ Logged in as %s (%s plan)\n", acct.Email, acct.Plan)
+
+	// First-run quickstart (UX §8, issue #65 D4). If the account has
+	// no apps yet, drop a 3-line pointer to the two deploy paths.
+	// A failing ListApps is silent — login must not be blocked by
+	// transient API issues.
+	if apps, err := c.ListApps(ctx); err == nil && len(apps) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "")
+		_, _ = fmt.Fprintln(osStdout, "You're in. Next step — deploy your first app:")
+		_, _ = fmt.Fprintln(osStdout, "  faas deploy --template hello-node    # start from an embedded template")
+		_, _ = fmt.Fprintln(osStdout, "  faas deploy --tarball <path.tar.gz>  # or ship your own source")
+	}
 	return 0
+}
+
+// readLineWithTimeout reads a single line from r. Returns
+// (trimmed-line, true) if a newline arrives within d, or
+// ("", false) on timeout. Used by cmdLogin to multiplex the
+// "paste code" prompt with the "press Enter to wait" fallback.
+//
+// Implementation note: we run a single goroutine that reads until
+// newline; the timeout is the only way to abort it (the goroutine
+// is intentionally orphaned — when the caller drops the result the
+// goroutine's slice can no longer affect anything because r is
+// typically osStdin, which blocks anyway after the line arrives).
+func readLineWithTimeout(r io.Reader, d time.Duration) (string, bool) {
+	type result struct {
+		line string
+	}
+	ch := make(chan result, 1)
+	go func() {
+		br := bufio.NewReader(r)
+		line, _ := br.ReadString('\n')
+		ch <- result{strings.TrimRight(line, "\r\n")}
+	}()
+	select {
+	case res := <-ch:
+		return res.line, true
+	case <-time.After(d):
+		return "", false
+	}
 }
 
 func cmdLogout() int {
@@ -96,7 +258,8 @@ func cmdApps() int {
 		return jsonOut(writeNDJSON(apps))
 	}
 	if len(apps) == 0 {
-		fmt.Println("No apps yet. Deploy one: faas deploy --image <ref>")
+		_, _ = fmt.Fprintln(osStdout, "No apps yet.")
+		_, _ = fmt.Fprintln(osStdout, "Deploy one: `faas deploy --template hello-node` (or `faas deploy --tarball path/to/source.tar.gz`).")
 		return 0
 	}
 	for _, a := range apps {

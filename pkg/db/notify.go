@@ -102,7 +102,8 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         their account for deletion (spec §17 G6).
 //	                         schedd subscribes to drop any live instance
 //	                         belonging to the account at the moment of
-//	                         pending (RAM-admission invariant §6.2-2).
+//	                         pending (ADR-024 — schedd walks instances
+//	                         directly; no RAM-aggregate in the payload).
 //	NotifyAccountDeleted    {"account_id":uuid}
 //	                         apid/pkg/grace → audit: the 30-day grace
 //	                         window lapsed and the hard delete ran.
@@ -138,6 +139,13 @@ const (
 	NotifyCronFired              = "cron_fired"
 	NotifyAccountDeletionPending = "account_deletion_pending"
 	NotifyAccountDeleted         = "account_deleted"
+	// NotifyCliAuthCodeActivated fires when a dashboard /cli-auth
+	// POST successfully claims a pending code (binds it to an
+	// account_id). Reserved for a follow-up SSE push from apid to
+	// the CLI; today the CLI polls /v1/cli-auth/exchange at 1s, so
+	// no listener is wired. Add the listener when §11 introduces
+	// the public-listener SSE channel design.
+	NotifyCliAuthCodeActivated = "cli_auth_code_activated"
 )
 
 // Subscribe holds a dedicated connection on the pool in LISTEN state for the

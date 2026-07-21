@@ -1,0 +1,28 @@
+[Unit]
+Description=onebox-faas schedd — scheduler + lifecycle owner
+After=network.target postgresql.service faas-cp.slice
+Wants=faas-cp.slice
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=faas-schedd
+Group=faas
+ExecStart=/opt/faas/bin/schedd --config /etc/faas/schedd.toml
+Restart=on-failure
+RestartSec=2s
+Slice=faas-cp.slice
+MemoryMax=256M
+EnvironmentFile=/etc/faas/sealed.env
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/var/log/faas
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+[Unit]
+Description=onebox-faas gatewayd — edge proxy (DO dev, TLS disabled)
+After=faas-cp.slice network-online.target faas-apid.service faas-schedd.service
+Wants=faas-cp.slice faas-apid.service faas-schedd.service
+
+[Service]
+Type=simple
+ExecStart=/opt/faas/bin/gatewayd --config /etc/faas/gatewayd.toml
+Restart=on-failure
+RestartSec=2s
+Slice=faas-cp.slice
+MemoryMax=512M
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ExecReload=/bin/kill -HUP $MAINPID
+User=faas
+Group=faas
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RuntimeDirectory=faas
+RuntimeDirectoryMode=0770
+ReadOnlyPaths=/etc/faas
+EnvironmentFile=/etc/faas/sealed.env
+
+[Install]
+WantedBy=multi-user.target

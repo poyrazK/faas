@@ -14,11 +14,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"filippo.io/age"
@@ -27,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/grace"
+	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -37,12 +40,20 @@ func seedDevAccount(ctx context.Context, store state.Store, token string) error 
 	if !api.ValidAPIKeyFormat(token) {
 		return fmt.Errorf("FAAS_DEV_TOKEN is not a valid API key (want %s… format)", api.APIKeyPrefix)
 	}
-	acct, err := store.CreateAccount(ctx, "dev@local", api.PlanFree)
-	if err != nil {
+	acct, err := store.AccountByEmail(ctx, "dev@local")
+	if errors.Is(err, state.ErrNotFound) {
+		acct, err = store.CreateAccount(ctx, "dev@local", api.PlanFree)
+		if err != nil {
+			return err
+		}
+	} else if err != nil {
 		return err
 	}
 	_, err = store.CreateAPIKey(ctx, acct.ID, api.HashAPIKey(token), "dev")
-	return err
+	if err != nil && !errors.Is(err, state.ErrConflict) {
+		return err
+	}
+	return nil
 }
 
 // envOr returns the value of env key, or fallback when unset/empty.
@@ -68,6 +79,10 @@ type runDeps struct {
 	newSrv   func(addr string, h http.Handler) *http.Server
 	bgBefore func(ctx context.Context, log *slog.Logger, srv *server) // optional pre-listen hook (e.g. DNS poller)
 	loginTTL time.Duration                                            // dashboard magic-link expiry
+	// mailer is the outbound email sender (gap G4). Nil means "pick
+	// from env at startup" via mail.SenderFromEnv — same pattern meterd
+	// uses (cmd/meterd/main.go:82-87). Tests inject a stub.
+	mailer mail.Sender
 }
 
 func defaultDeps() runDeps {
@@ -134,6 +149,36 @@ func (g graceSenderAdapter) Send(ctx context.Context, to []string, subject, body
 	return g.m.Send(ctx, Message{To: to, Subject: subject, TextBody: body})
 }
 
+// mailAdapter bridges pkg/mail.Sender (the cross-daemon outbound-email
+// seam) to apid's internal Mailer interface. Same shape as
+// graceSenderAdapter above but in the opposite direction: the apid
+// Message type stays free of pkg/mail so daemons that link apid don't
+// pull the mail deps transitively. Gap G4 closure: the production
+// wire-up in runWithDeps wraps mail.SenderFromEnv(...)
+// (Resend/Postmark/Log/Noop) in this adapter so magic-link + dunning +
+// quota-warning + deletion-pending emails actually reach the customer.
+type mailAdapter struct{ s mail.Sender }
+
+// newMailerAdapter wraps a pkg/mail.Sender so it satisfies apid's
+// Mailer interface. Returns noopMailer{} for a nil sender so callers
+// never need to nil-check (matches newServerWithDeps's nil → noop
+// convention).
+func newMailerAdapter(s mail.Sender) Mailer {
+	if s == nil {
+		return noopMailer{}
+	}
+	return mailAdapter{s: s}
+}
+
+func (a mailAdapter) Send(ctx context.Context, m Message) error {
+	return a.s.Send(ctx, mail.Message{
+		To:       m.To,
+		Subject:  m.Subject,
+		TextBody: m.TextBody,
+		HTMLBody: m.HTMLBody,
+	})
+}
+
 // graceIntervalFromEnv reads FAAS_GRACE_INTERVAL to let the e2e test
 // accelerate the sweep (default 60s is correct for production; a CI
 // test sets it to a few hundred ms so the 30-day "grace expired"
@@ -155,6 +200,28 @@ func graceIntervalFromEnv(log *slog.Logger) time.Duration {
 	return d
 }
 
+// dpaPathFromEnv resolves the DPA template path. Production wires an
+// explicit FAAS_DPA_PATH pointing at the installed /etc/faas/dpa.md;
+// when that's unset, fall back to <cwd>/docs/DPA.md if that file
+// exists, so `go run ./cmd/apid` from the repo root serves the dev
+// template without a setup step. When neither is set the handler
+// returns 503 — a misconfigured production deploy is observable
+// rather than silently empty (see handlers_account.go::dpaTemplate).
+func dpaPathFromEnv(getenv func(string) string) string {
+	if p := getenv("FAAS_DPA_PATH"); p != "" {
+		return p
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	candidate := filepath.Join(cwd, "docs", "DPA.md")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+	return ""
+}
+
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	store := deps.store()
 
@@ -172,7 +239,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (log-only until gap G4 is closed). Empty secret = dev mode (the
 	// webhook accepts unsigned payloads; never deploy this way).
 	stripeSecret := deps.getenv("STRIPE_WEBHOOK_SECRET")
-	mailer := newLogMailer(log)
+	// Gap G4 closure (PR): wire the env-driven mail factory so prod
+	// boots with FAAS_MAIL_TRANSPORT=resend and emails go out for real.
+	// Tests + dev can keep mailer nil and the factory returns a log
+	// sender — behaviour matches the pre-PR newLogMailer(log) wiring.
+	m := deps.mailer
+	if m == nil {
+		m = mail.SenderFromEnv(deps.getenv, log)
+	}
+	mailer := newMailerAdapter(m)
 	// M7.5: githubd socket path (ADR-012). Empty = stub client (every
 	// method returns api.Problem{Code:"githubd_not_ready"}), which is
 	// fine until githubd is actually deployed on this host.
@@ -186,7 +261,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if sessionsWarn != "" {
 		log.Warn("session manager in dev mode; sessions reset on restart", "warning", sessionsWarn)
 	}
-	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, deps.getenv("FAAS_DPA_PATH"))
+	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv))
 
 	// Status page (spec §12 public surface). The Prometheus URL is
 	// the local box's Prometheus installed by deploy/ansible/roles/

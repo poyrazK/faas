@@ -195,6 +195,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 		CodeQuotaExhausted, CodeBillingPastDue, CodeCapacity,
 		CodeUnauthorized, CodeNotFound, CodeValidation,
 		CodeImageNotFound, CodeImageEgressDenied, CodeImageManifestInvalid,
+		CodeCliAuthPending, CodeCliAuthUnavailable,
 	}
 	seen := make(map[string]bool)
 	for _, c := range codes {

@@ -1,0 +1,3 @@
+# DO dev deployment — imaged config.
+log_level = "info"
+snapshot_root = "/srv/fc/snap"

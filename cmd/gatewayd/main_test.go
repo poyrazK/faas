@@ -69,6 +69,15 @@ func TestRunWithDeps_ServesAndShutsDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	deps.listen = func(_, _ string) (net.Listener, error) { return ln, nil }
+	// Free-port the control listener so this test doesn't race with
+	// TestRunWithDeps_TLSBundleCloseStopsRenewLoop for the hard-coded
+	// 127.0.0.1:9090.
+	ctrlLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = ctrlLn.Close()
+	deps.controlAddr = ctrlLn.Addr().String()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -194,5 +203,96 @@ func TestFixedBackend_Delegates(t *testing.T) {
 	}
 	if b.wakeCalled != 1 || b.wakeName != "x" {
 		t.Errorf("Wake call not recorded: %d %q", b.wakeCalled, b.wakeName)
+	}
+}
+
+// TestRunWithDeps_TLSBundleCloseStopsRenewLoop — D2.4 / D4 lifecycle assertion.
+// When the daemon is configured with a TLS bundle, the shutdown path must
+// call (*TLSBundle).Close. certmagic v0.25 has no public Stop API so Close is
+// a no-op today, but the call is the load-bearing seam: a future certmagic
+// upgrade can wire real shutdown without touching main.go.
+//
+// What this test asserts:
+//
+//  1. runWithDeps enters the TLS branch (deps.tlsBundle != nil) cleanly when
+//     listeners are injected via deps.listen / deps.extraListen.
+//  2. The shutdown branch executes without panicking when ctx is cancelled
+//     (the deps.tlsBundle.Close() call inside main.go is reached and
+//     returns nil for a Config==nil bundle).
+//  3. (*TLSBundle).Close is idempotent — calling it twice returns nil both
+//     times, which is the contract documented on the method.
+//
+// What this test does NOT assert: that Close actually tears down certmagic
+// internals. certmagic v0.25 has no public Stop API; that's owned by the
+// wire-shape suite in pkg/gateway. Asserting goroutine count after Close is
+// flaky (certmagic's renew tick is on an unobservable goroutine) so we
+// don't — the call-site wiring is the verifiable contract.
+func TestRunWithDeps_TLSBundleCloseStopsRenewLoop(t *testing.T) {
+	// Minimal stub TLSBundle. Config is nil → Close returns nil fast.
+	// GetCertificate nil is fine because we never dial TLS into this
+	// listener — the test only observes shutdown semantics.
+	bundle := &gateway.TLSBundle{}
+	deps := defaultDeps()
+	deps.backend = &fixedBackend{}
+	deps.tlsBundle = bundle
+	// deps.acmeMux is required when deps.tlsBundle != nil (main.go wires it
+	// on the :80 listener). A no-op mux is fine — the listener won't get
+	// traffic in this test.
+	deps.acmeMux = http.NewServeMux()
+	// Bind listeners on free ports. We don't dial in; we just need the
+	// accept loop to be alive so runWithDeps reaches the shutdown branch
+	// cleanly when ctx cancels.
+	publicLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acmeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps.listen = func(_, _ string) (net.Listener, error) { return publicLn, nil }
+	deps.extraListen = func(_, _ string) (net.Listener, error) { return acmeLn, nil }
+	// Free-port the control listener so this test doesn't race with
+	// TestRunWithDeps_ServesAndShutsDown for the hard-coded 127.0.0.1:9090.
+	ctrlLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = ctrlLn.Close()
+	deps.controlAddr = ctrlLn.Addr().String()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runWithDeps(ctx, discardLogger(), deps) }()
+	t.Cleanup(cancel)
+
+	// Let the listeners come up.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c, derr := net.Dial("tcp", publicLn.Addr().String())
+		if derr == nil {
+			_ = c.Close()
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "Server closed") && !strings.Contains(err.Error(), "use of closed network connection") {
+			t.Errorf("runWithDeps returned %v, want nil or context.Canceled", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("runWithDeps did not return after ctx cancel")
+	}
+
+	// Close idempotency contract: a real production shutdown may call Close
+	// twice if SIGTERM lands while the cancel branch is mid-flight. Both
+	// calls must return nil (Close's "calling twice is a no-op" doc).
+	for i := 0; i < 2; i++ {
+		if err := bundle.Close(); err != nil {
+			t.Errorf("bundle.Close call #%d returned %v, want nil", i, err)
+		}
 	}
 }

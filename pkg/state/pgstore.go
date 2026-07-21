@@ -31,6 +31,7 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -57,7 +58,17 @@ func (s *PgStore) CreateAccount(ctx context.Context, email string, plan api.Plan
 	row := s.pool.QueryRow(ctx,
 		`insert into accounts (email, plan, status) values ($1, $2, 'active') returning id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at`,
 		email, string(plan))
-	return scanAccount(row)
+	acct, err := scanAccount(row)
+	if err != nil {
+		// Funnel through mapErr so a unique-email collision surfaces as
+		// state.ErrConflict (the same shape every other insert returns).
+		// A future hardening could use `on conflict (email) do nothing
+		// returning ...` to make the race atomic; today the handler
+		// ladder AccountByEmail → CreateAccount relies on this funnel
+		// to detect the dup-key outcome.
+		return Account{}, mapErr(err)
+	}
+	return acct, nil
 }
 
 func (s *PgStore) AccountByID(ctx context.Context, id string) (Account, error) {
@@ -256,6 +267,79 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 		           max_concurrency, status, manifest, created_at, min_instances`,
 		app.AccountID, app.Slug, string(app.Type), runtime, app.RAMMB, idle, app.MaxConcurrency, manifestBytes, app.MinInstances)
 	return scanApp(row)
+}
+
+// CreateAppIfUnderQuota inserts an app iff the account currently holds
+// fewer than limits.DeployedApps live apps (active + evicted_cold). The
+// count + insert run inside a single transaction that SELECT … FOR UPDATE
+// locks the parent accounts row, so two concurrent calls on a metered
+// plan cannot both pass the cap check (closes the TOCTOU in the handler).
+//
+// Returns:
+//   - (App, nil) on success
+//   - (App{}, *QuotaError) when the cap is reached
+//   - (App{}, ErrConflict) on slug collision (apps.slug unique index)
+//   - (App{}, ErrNotFound) when the account row is gone
+//
+// The lock is on the single accounts row — the request blocks behind any
+// other createApp for the same account only. Cross-account inserts don't
+// contend, so the one-box stays well under its max_concurrency ceiling.
+func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return App{}, fmt.Errorf("state: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	// 1. Lock the parent accounts row. SELECT 1 + FOR UPDATE keeps the
+	//    lock acquisition in one round-trip; the FOR UPDATE blocks any
+	//    concurrent createApp for the same account until COMMIT/ROLLBACK.
+	//    apps_account_idx (account_id, status) exists from migration 00001
+	//    so the lock search is an index hit.
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, app.AccountID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return App{}, ErrNotFound
+		}
+		return App{}, fmt.Errorf("state: lock account %s: %w", app.AccountID, err)
+	}
+
+	// 2. Authoritative count under the lock. Same predicate as
+	//    CountDeployedApps — matches the MemStore shape so handlers
+	//    don't have to know which store is in use.
+	var observed int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from apps where account_id = $1 and status in ('active','evicted_cold')`,
+		app.AccountID).Scan(&observed); err != nil {
+		return App{}, fmt.Errorf("state: count apps for account %s: %w", app.AccountID, err)
+	}
+	if observed >= limits.DeployedApps {
+		return App{}, &QuotaError{Limit: limits.DeployedApps, Observed: observed}
+	}
+
+	// 3. Conditional insert. The slug unique index surfaces a collision
+	//    as a pgx unique-violation SQLSTATE; mapErr wraps it in ErrConflict.
+	manifest := app.Manifest
+	if manifest.Entrypoint == nil && manifest.Env == nil {
+		manifest = AppManifest{}
+	}
+	manifestBytes, _ := json.Marshal(manifest)
+	runtime := nullString(app.Runtime)
+	idle := nullableInt(app.IdleTimeoutS)
+	row := tx.QueryRow(ctx,
+		`insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances)
+		 values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9)
+		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
+		           max_concurrency, status, manifest, created_at, min_instances`,
+		app.AccountID, app.Slug, string(app.Type), runtime, app.RAMMB, idle, app.MaxConcurrency, manifestBytes, app.MinInstances)
+	created, err := scanApp(row)
+	if err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: commit create app: %w", err)
+	}
+	return created, nil
 }
 
 func (s *PgStore) AppByID(ctx context.Context, id string) (App, error) {
@@ -850,8 +934,14 @@ func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 // --- instances --------------------------------------------------------------
 
 func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error) {
+	// started_at is stamped explicitly here in addition to the
+	// BEFORE INSERT trigger from migration 00015. The trigger is the
+	// belt; this is the braces. Either alone works; both together
+	// make the contract obvious to anyone reading PgStore and prevent
+	// a future trigger drop from silently regressing the watchdog
+	// (commit 3, spec §6.1).
 	row := s.pool.QueryRow(ctx,
-		`insert into instances (app_id, deployment_id, state, ram_mb) values ($1, $2, $3, $4)
+		`insert into instances (app_id, deployment_id, state, ram_mb, started_at) values ($1, $2, $3, $4, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at`,
 		appID, deploymentID, state, ramMB)
@@ -960,6 +1050,118 @@ func (s *PgStore) ListLatestInstancePerApp(ctx context.Context, accountID string
 
 func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) error {
 	tag, err := s.pool.Exec(ctx, `update instances set state = $2 where id = $1`, id, state)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateInstanceStateWithTimestamp stamps parked_at on the same
+// statement that writes the new state. schedd's snapshotAndPark calls
+// this when transitioning into SNAPSHOTTING — the §6.1 watchdog reads
+// parked_at on SNAPSHOTTING rows to compute "age of state", distinct
+// from started_at which is now stamped on creation (migration 00015).
+func (s *PgStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances set state = $2, parked_at = $3 where id = $1`,
+		id, state, parkedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateInstanceStateToTerminal writes state AND stamps terminal_at on
+// the same UPDATE (PR #74). Engine.transition routes here for
+// {STOPPED, FAILED}; terminal_at is the dedicated retention anchor the
+// §17 sweep reads (started_at means "row creation"; parked_at is
+// overloaded). One statement, atomic — same RowAffected/ErrNotFound
+// shape as UpdateInstanceState.
+func (s *PgStore) UpdateInstanceStateToTerminal(ctx context.Context, id, state string, terminalAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances set state = $2, terminal_at = $3 where id = $1`,
+		id, state, terminalAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListInstancesByStatesOlderThan is the watchdog's lookup (spec §6.1).
+// Filters on state ∈ states and a state-aware "age" column:
+// started_at for WAKING / COLD_BOOTING (stamped on creation by the
+// trigger in migration 00015), parked_at for SNAPSHOTTING (stamped on
+// entry into SNAPSHOTTING by UpdateInstanceStateWithTimestamp).
+//
+// The CASE shape is load-bearing — the original coalesce(started_at,
+// parked_at) predicate silently used parked_at for any row with NULL
+// started_at, which is true for every row that existed before
+// migration 00015 shipped. Such a row would compare against its
+// historical parked_at (often weeks old) and look stuck even though
+// it's normal. The partial index
+// instances_watchdog_state_idx (migration 00016) covers the state
+// predicate; the CASE comparison runs on the row payload.
+func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	stateStrs := make([]string, len(states))
+	for i, s := range states {
+		stateStrs[i] = string(s)
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
+		 from instances
+		 where state = any($1)
+		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
+		stateStrs, threshold)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
+// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
+// lookup (PR #74). Reads the dedicated terminal_at column — distinct
+// from the watchdog's state-aware started_at/parked_at comparison.
+// Today only {STOPPED, FAILED} are terminal; we still parameterize
+// states to keep the door open if a future state earns the same
+// treatment. Migration 00017's partial index
+// `instances_terminal_at_idx` covers this query.
+func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	stateStrs := make([]string, len(states))
+	for i, s := range states {
+		stateStrs[i] = string(s)
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, terminal_at
+		 from instances
+		 where state = any($1)
+		   and terminal_at is not null
+		   and terminal_at < $2`,
+		stateStrs, threshold)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstancesWithTerminal(rows)
+}
+
+// DeleteInstance removes one instance row unconditionally (PR #74).
+// Returns ErrNotFound when the row is gone (the sweep swallows that
+// case for redelivery). No FK cascade — events.subject and
+// usage_minutes.instance_id carry no FK today.
+func (s *PgStore) DeleteInstance(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `delete from instances where id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -1256,12 +1458,15 @@ func (s *PgStore) ListEvents(ctx context.Context, subject string, limit int) ([]
 // --- usage -------------------------------------------------------------------
 
 func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error {
+	// Idempotent on (instance_id, minute). Mirrors the sqlc source in
+	// queries.sql::AppendUsage — make sqlc-check verifies these stay in
+	// lockstep. The first write wins; a redelivered minute is a no-op so a
+	// meterd restart / network blip / two meterd instances cannot inflate
+	// billing. M7 hardening, PR feat/m7-beta-hardening.
 	_, err := s.pool.Exec(ctx,
 		`insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests)
 		 values ($1, $2, $3, $4, $5, $6)
-		 on conflict (instance_id, minute) do update
-		   set mb_seconds = usage_minutes.mb_seconds + excluded.mb_seconds,
-		       requests = usage_minutes.requests + excluded.requests`,
+		 on conflict (instance_id, minute) do nothing`,
 		accountID, appID, instanceID, minute, mbSeconds, requests)
 	return err
 }
@@ -1645,6 +1850,38 @@ func scanInstanceCols(scan func(...any) error) (Instance, error) {
 	return ins, nil
 }
 
+// scanInstancesWithTerminal is the 12-column variant of scanInstanceCols
+// that also lifts terminal_at (PR #74). Used only by
+// ListInstancesInTerminalStatesOlderThan — the rest of the codebase reads
+// 11-column instances rows and doesn't need terminal_at, so threading it
+// into scanInstanceCols would force every SELECT to expose it for no
+// reason.
+func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
+	var out []Instance
+	for rows.Next() {
+		ins := Instance{}
+		var started, lastReq, parked, terminal *time.Time
+		if err := rows.Scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
+			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &terminal); err != nil {
+			return nil, err
+		}
+		if started != nil {
+			ins.StartedAt = *started
+		}
+		if lastReq != nil {
+			ins.LastRequestAt = *lastReq
+		}
+		if parked != nil {
+			ins.ParkedAt = *parked
+		}
+		if terminal != nil {
+			ins.TerminalAt = terminal
+		}
+		out = append(out, ins)
+	}
+	return out, rows.Err()
+}
+
 func scanSnapshot(row pgx.Row) (Snapshot, error) {
 	s := Snapshot{}
 	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.MemBytes, &s.DiskBytes, &s.Path, &s.Stale, &s.CreatedAt); err != nil {
@@ -1748,6 +1985,151 @@ func (s *PgStore) DeleteOldLoginTokens(ctx context.Context, before time.Time) (i
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+// IssueCliAuthCode persists a freshly-minted code's SHA-256 hash with
+// no account binding (account_id NULL until the dashboard claims it).
+// Conflict (same hash re-issued) is a no-op insert; the same code is
+// effectively single-use because the dashboard /cli-auth POST must
+// claim a still-pending row, and a re-issue collides on the hash.
+func (s *PgStore) IssueCliAuthCode(ctx context.Context, tokenHash []byte, expiresAt time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into cli_auth_codes (token_hash, expires_at) values ($1, $2)
+		 on conflict (token_hash) do nothing`,
+		tokenHash, expiresAt)
+	return err
+}
+
+// PeekCliAuthCode returns the row's status without mutating it. Used
+// by the dashboard GET /cli-auth render to decide whether the user
+// sees the email-input form or the "code unavailable" error page.
+// A missing or expired row returns (Expired, "", ErrNotFound) — the
+// dashboard treats every not-pending state identically.
+func (s *PgStore) PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	var status string
+	var accountID *string
+	err := s.pool.QueryRow(ctx,
+		`select status, account_id
+		 from cli_auth_codes
+		 where token_hash = $1 and expires_at > now()`,
+		tokenHash).Scan(&status, &accountID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return api.CliAuthStatusExpired, "", ErrNotFound
+		}
+		return "", "", err
+	}
+	var aid string
+	if accountID != nil {
+		aid = *accountID
+	}
+	return api.CliAuthStatus(status), aid, nil
+}
+
+// ClaimCliAuthCode atomically transitions pending → consumed and binds
+// account_id in one statement. Two error shapes distinguish the
+// reasons a claim can fail (handler renders different banners):
+//
+//	ErrNotFound  — row missing OR expired (never minted or TTL passed)
+//	ErrConflict  — row exists but status != 'pending' (already used)
+//
+// IMPORTANT: this MUST NOT touch consumed_at — that field is the
+// exclusive mint-gate for ConsumeCliAuthCode. Pre-setting consumed_at
+// here would short-circuit the CAS that the CLI's exchange relies on
+// to mint exactly one API key per code (review finding F4).
+//
+// Implementation: a single UPDATE returns 0 rows on either failure;
+// a follow-up SELECT classifies which one (no TOCTOU window because
+// the UPDATE is still atomic — the post-classification SELECT only
+// affects the error we report, not the state).
+func (s *PgStore) ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update cli_auth_codes
+		 set status = 'consumed', account_id = $2
+		 where token_hash = $1
+		   and status = 'pending'
+		   and expires_at > now()`,
+		tokenHash, accountID)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() != 0 {
+		return nil
+	}
+	// Classify the zero-rows case. If the row doesn't exist at all
+	// (never minted) or has expired, the user typed a stale code and
+	// gets the "expired" banner. If the row exists and isn't expired
+	// it must have been claimed already → ErrConflict.
+	var exists, fresh bool
+	err = s.pool.QueryRow(ctx,
+		`select true, expires_at > now()
+		 from cli_auth_codes where token_hash = $1`,
+		tokenHash,
+	).Scan(&exists, &fresh)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !fresh {
+		return ErrNotFound
+	}
+	return ErrConflict
+}
+
+// ConsumeCliAuthCode is the CLI's poll-side read PLUS mint gate. It
+// is a CAS in the same shape as ConsumeLoginToken: mutates
+// `consumed_at` from NULL to NOW on the FIRST call only, returning
+// the bound account_id; every subsequent call returns ErrNotFound.
+// The handler mints the API key only when this returns success, so
+// a buggy / replaying CLI cannot mint multiple keys for the same
+// code (review finding F4).
+//
+// Filter: `account_id IS NOT NULL` is required — without a
+// dashboard-side claim the row is still pending and the CLI should
+// keep polling, NOT see the (Consumed, "", nil) shape that
+// otherwise lets it mint a key for an unbound code (which would be
+// a useless NULL FK insert into api_keys).
+//
+// Return contract (CLI key-mints only on Consumed + non-empty acct):
+//
+//	pending (or empty account_id) → (Pending,  "",       nil)        keep polling
+//	consumed (first call)        → (Consumed, acct_id,  nil)        mint API key
+//	consumed (replay) / expired / unknown → (Expired, "", ErrNotFound)
+func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	var accountID string
+	err := s.pool.QueryRow(ctx,
+		`update cli_auth_codes
+		 set consumed_at = now()
+		 where token_hash = $1
+		   and status = 'consumed'
+		   and account_id is not null
+		   and consumed_at is null
+		   and expires_at > now()
+		 returning account_id`,
+		tokenHash,
+	).Scan(&accountID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Either pending, expired, already-consumed, or never
+			// minted. Disambiguate pending vs not-found for the
+			// polling CLI: if the row exists and is still pending
+			// we tell it to keep waiting; otherwise we stop.
+			var status string
+			err2 := s.pool.QueryRow(ctx,
+				`select status from cli_auth_codes
+				 where token_hash = $1 and expires_at > now()`,
+				tokenHash,
+			).Scan(&status)
+			if err2 == nil && status == string(api.CliAuthStatusPending) {
+				return api.CliAuthStatusPending, "", nil
+			}
+			return api.CliAuthStatusExpired, "", ErrNotFound
+		}
+		return "", "", err
+	}
+	return api.CliAuthStatusConsumed, accountID, nil
 }
 
 // AppendDeploymentLog inserts one row and returns the seq Postgres
@@ -1978,7 +2360,11 @@ func (s *PgStore) ListCronsForAccount(ctx context.Context, accountID string) ([]
 	var out []Cron
 	for rows.Next() {
 		c := Cron{}
-		if err := rows.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+		// crons table has no created_at column (see NOTE above); scan
+		// only the 5 selected columns. Cron.CreatedAt stays at the zero
+		// value for rows read by this query — the export bundle omits
+		// it because the GDPR surface doesn't need it.
+		if err := rows.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -2070,6 +2456,98 @@ func (s *PgStore) RestoreAccount(ctx context.Context, id string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
+	}
+	return nil
+}
+
+// AppendGdprRequest records a customer-facing GDPR action against the
+// account email captured at the moment of request. The ledger is
+// INSERT-only from the application side; PgStore does not expose an
+// UPDATE/DELETE path on this table. CompletedAt stays NULL until
+// CompleteGdprRequest stamps it.
+func (s *PgStore) AppendGdprRequest(ctx context.Context, r GdprRequest) error {
+	if r.ID == "" {
+		return fmt.Errorf("AppendGdprRequest: id is required")
+	}
+	if r.RequestedAt.IsZero() {
+		r.RequestedAt = time.Now().UTC()
+	}
+	_, err := s.pool.Exec(ctx,
+		`insert into gdpr_requests
+		   (id, account_id, account_email, action, requested_at, completed_at)
+		 values ($1, $2, $3, $4, $5, $6)`,
+		r.ID, r.AccountID, r.AccountEmail, string(r.Action),
+		r.RequestedAt.UTC(), nullableTimestamptz(r.CompletedAt))
+	return err
+}
+
+// ListGdprRequestsForAccount returns the ledger rows for an account
+// in requested_at desc order. Bounded by limit; passing 0 means "no
+// rows" (MemStore mirrors this so the call site never has to special-
+// case the zero).
+func (s *PgStore) ListGdprRequestsForAccount(ctx context.Context, accountID string, limit int) ([]GdprRequest, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, account_id, account_email, action, requested_at, completed_at
+		   from gdpr_requests
+		  where account_id = $1
+		  order by requested_at desc
+		  limit $2`, accountID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GdprRequest
+	for rows.Next() {
+		var (
+			g           GdprRequest
+			completedAt pgtype.Timestamptz
+		)
+		if err := rows.Scan(&g.ID, &g.AccountID, &g.AccountEmail,
+			&g.Action, &g.RequestedAt, &completedAt); err != nil {
+			return nil, err
+		}
+		if completedAt.Valid {
+			g.CompletedAt = completedAt.Time
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// nullableTimestamptz returns a pgx-friendly NULL when t.IsZero(), so
+// AppendGdprRequest can keep completed_at NULL while the downstream
+// action is in flight. Local helper: there's no shared equivalent in
+// pkg/state yet (other INSERTs in this file use coalesce/default
+// inside SQL, not nullable Go values).
+func nullableTimestamptz(t time.Time) pgtype.Timestamptz {
+	if t.IsZero() {
+		return pgtype.Timestamptz{Valid: false}
+	}
+	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
+}
+
+// CompleteGdprRequest stamps completed_at on the most recent
+// un-completed row of (account_id, action). Returns ErrNotFound when
+// there is no matching row, so pkg/grace after a successful
+// DeleteAccount can detect a stale tick and skip the log.
+func (s *PgStore) CompleteGdprRequest(ctx context.Context, accountID, action string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update gdpr_requests
+		   set completed_at = coalesce(completed_at, now())
+		 where id = (
+		   select id from gdpr_requests
+		    where account_id = $1 and action = $2 and completed_at is null
+		    order by requested_at desc
+		    limit 1
+		 )`, accountID, action)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

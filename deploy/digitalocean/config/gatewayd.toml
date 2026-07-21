@@ -1,0 +1,9 @@
+# DO dev deployment — gatewayd config. TLS disabled.
+public_addr = ":8080"
+control_addr = "127.0.0.1:9090"
+apps_domain = "__DROPLET_IP__.nip.io"
+apid_loopback = "http://127.0.0.1:8081"
+githubd_loopback = "http://127.0.0.1:8083"
+
+[tls]
+disabled = true

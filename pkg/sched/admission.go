@@ -47,7 +47,7 @@ type Request struct {
 	MaxConcurrency int // the app's configured max (already validated ≤ plan cap)
 }
 
-func (r Request) admissionMB() int { return r.RAMMB + api.PerVMOverheadMB }
+func (r Request) admissionMB() int { return api.BillableRAMMB(r.RAMMB) }
 
 // Admit reserves resources for one new instance, enforcing the headroom guard
 // (spec §4.3). It checks concurrency first (a per-app limit the customer can act

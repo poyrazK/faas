@@ -93,7 +93,7 @@ provision:
       apt-get update -y
       apt_wait
       apt-get install -y --no-install-recommends \
-        build-essential e2fsprogs iproute2 iptables git curl ca-certificates \
+        build-essential e2fsprogs iproute2 iptables nftables git curl ca-certificates \
         busybox-static jq postgresql
 
       # Per-daemon service accounts. vmmd runs the jailed firecracker +

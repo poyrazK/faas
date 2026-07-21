@@ -36,14 +36,17 @@
     mode: "0750"
 
 - name: gatewayd_service — install /var/lib/faas/certs (CertMagic storage)
-  # CertMagic's file storage wants mode 0700. The gatewayd unit runs as user
-  # faas:faas; we hand the dir to root:faas so renewal writes (which certmagic
-  # does as root via its own cache lifecycle when invoked from a root-owned
-  # caller) don't trip the unit's read-only /var protection.
+  # CertMagic's file storage wants mode 0700. The gatewayd systemd unit
+  # runs the daemon as user faas:faas (User=faas Group=faas); CertMagic
+  # issues + renews certs by writing into this directory. The dir MUST
+  # be owned by faas:faas — root:faas 0700 leaves group-writable only for
+  # root, and the daemon (running as faas) cannot write its renewed certs
+  # there. ProtectSystem=strict + ReadWritePaths=/var/lib/faas/certs in
+  # the unit carves the path out of the read-only /var.
   ansible.builtin.file:
     path: /var/lib/faas/certs
     state: directory
-    owner: root
+    owner: faas
     group: faas
     mode: "0700"
 

@@ -48,6 +48,11 @@ type MemStore struct {
 	// raw token (so the binary []byte hash from ConsumeLoginToken
 	// matches the map key format used in MemStore everywhere else).
 	loginTokens map[string]LoginToken
+	// cliAuthCodes is keyed by the SHA-256 hash of the raw code
+	// (same key format as loginTokens). AccountID is empty until the
+	// dashboard claims the code; the claim statement fills it in
+	// atomically. See pkg/state/types.go CliAuthCode.
+	cliAuthCodes map[string]CliAuthCode
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic
@@ -67,6 +72,13 @@ type MemStore struct {
 	// stripeByCustomer is the reverse-lookup index used by
 	// AccountByStripeCustomerID; keyed by Stripe `cus_…` ID.
 	stripeByCustomer map[string]string
+	// gdprRequests is the in-memory mirror of the gdpr_requests ledger
+	// row. MemStore does not auto-cascade on DeleteAccount (the
+	// production pgstore does), but AppendGdprRequest rows here are
+	// also intentionally NOT pruned — a unit test that asserts "after
+	// DeleteAccount, the GDPR ledger still has the delete row" needs
+	// them to survive.
+	gdprRequests []GdprRequest
 	// stripePushHours tracks which (account, hour) pairs the hourly
 	// Stripe pusher has already pushed; prevents double-billing on
 	// redelivery.
@@ -119,6 +131,7 @@ func NewMemStore() *MemStore {
 		crons:          map[string]Cron{},
 		instances:      map[string]Instance{},
 		loginTokens:    map[string]LoginToken{},
+		cliAuthCodes:   map[string]CliAuthCode{},
 		deploymentLogs: map[string][]LogEntry{},
 		deploymentSeq:  map[string]int64{},
 		snapshots:      []Snapshot{},
@@ -129,6 +142,8 @@ func NewMemStore() *MemStore {
 		// stripeByCustomer is the reverse-lookup map AccountByStripeCustomerID
 		// walks; populated by UpdateAccountStripeCustomerID.
 		stripeByCustomer: map[string]string{},
+		// gdprRequests starts empty; AppendGdprRequest appends.
+		gdprRequests: nil,
 		// stripePushHours is the per-(account, hour) dedupe set the
 		// meterd hourly pusher reads/writes.
 		stripePushHours: map[stripePushKey]struct{}{},
@@ -341,6 +356,50 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	for _, a := range m.apps {
 		if a.Slug == app.Slug && a.Status != AppDeleted {
 			return App{}, fmt.Errorf("state: slug %q already taken", app.Slug)
+		}
+	}
+	if app.ID == "" {
+		app.ID = newID()
+	}
+	if app.CreatedAt.IsZero() {
+		app.CreatedAt = time.Now()
+	}
+	if app.Status == "" {
+		app.Status = AppActive
+	}
+	m.apps[app.ID] = app
+	return app, nil
+}
+
+// CreateAppIfUnderQuota is the MemStore mirror of PgStore.CreateAppIfUnderQuota.
+// The TOCTOU is impossible here because every mutation holds m.mu for
+// the full check + insert — two goroutines serialize on the same lock,
+// so a Free account that already holds 1 app always sees observed=1 on
+// the second call. The handler's CreateApp call site becomes store-
+// agnostic.
+func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.Limits) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[app.AccountID]; !ok {
+		return App{}, ErrNotFound
+	}
+	// 1. Authoritative count under the same lock. Mirrors the predicate
+	//    PgStore uses against the apps table.
+	observed := 0
+	for _, a := range m.apps {
+		if a.AccountID == app.AccountID && (a.Status == AppActive || a.Status == AppEvictedCold) {
+			observed++
+		}
+	}
+	if observed >= limits.DeployedApps {
+		return App{}, &QuotaError{Limit: limits.DeployedApps, Observed: observed}
+	}
+	// 2. Conditional insert. Slug uniqueness is enforced by the same
+	//    loop CreateApp uses; returning ErrConflict keeps the wire
+	//    contract identical to PgStore's apps.slug unique-index path.
+	for _, a := range m.apps {
+		if a.Slug == app.Slug && a.Status != AppDeleted {
+			return App{}, ErrConflict
 		}
 	}
 	if app.ID == "" {
@@ -996,9 +1055,20 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state string, ramMB int) (Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ins := Instance{ID: newID(), AppID: appID, DeploymentID: deploymentID, State: state, RAMMB: ramMB}
-	if state == "running" {
-		ins.StartedAt = time.Now()
+	// Stamp started_at on creation for every state (commit 3, mirrors
+	// the Postgres trigger in migration 00015). The MemStore previously
+	// only stamped it on "running" rows, which left watchdog tests
+	// fishing for NULLs on WAKING/COLD_BOOTING fixtures. Keeping that
+	// late stamp behaviour would force every fixture to call
+	// SetInstanceRuntime first, which makes the watchdog tests
+	// describe a state-machine shape that no production code reaches.
+	ins := Instance{
+		ID:           newID(),
+		AppID:        appID,
+		DeploymentID: deploymentID,
+		State:        state,
+		RAMMB:        ramMB,
+		StartedAt:    time.Now(),
 	}
 	m.instances[ins.ID] = ins
 	return ins, nil
@@ -1106,6 +1176,110 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 	ins.State = state
 	m.instances[id] = ins
 	return nil
+}
+
+// UpdateInstanceStateWithTimestamp mirrors PgStore's variant. Mirrors
+// the §6.1 watchdog's need to know "time of entry into current
+// state" for SNAPSHOTTING rows; parked_at is the column the watchdog
+// reads on that state.
+func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state string, parkedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return ErrNotFound
+	}
+	ins.State = state
+	ins.ParkedAt = parkedAt
+	m.instances[id] = ins
+	return nil
+}
+
+// UpdateInstanceStateToTerminal mirrors PgStore's variant. Writes the
+// new state AND stamps terminal_at on the same locked read-modify-write
+// (PR #74). Engine.transition routes here for {STOPPED, FAILED}; today
+// no caller writes a different timestamp column for those states.
+func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state string, terminalAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return ErrNotFound
+	}
+	ins.State = state
+	ts := terminalAt
+	ins.TerminalAt = &ts
+	m.instances[id] = ins
+	return nil
+}
+
+// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
+// lookup (PR #74). Mirrors ListInstancesByStatesOlderThan but reads
+// terminal_at instead of the state-aware started_at/parked_at pair.
+func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wanted := make(map[State]bool, len(states))
+	for _, s := range states {
+		wanted[s] = true
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if !wanted[State(ins.State)] {
+			continue
+		}
+		if ins.TerminalAt == nil {
+			continue
+		}
+		if !ins.TerminalAt.Before(threshold) {
+			continue
+		}
+		out = append(out, ins)
+	}
+	return out, nil
+}
+
+// DeleteInstance removes an instance row unconditionally (PR #74).
+// Returns ErrNotFound when the row is already gone — the retention
+// sweep swallows that case for redelivery. There are no FK cascades;
+// events.subject and usage_minutes.instance_id carry no FK today.
+func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.instances[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m.instances, id)
+	return nil
+}
+
+// ListInstancesByStatesOlderThan is the watchdog's lookup (commit 3,
+// spec §6.1). Mirrors PgStore: coalesce started_at / parked_at on the
+// age comparison.
+func (m *MemStore) ListInstancesByStatesOlderThan(_ context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wanted := make(map[State]bool, len(states))
+	for _, s := range states {
+		wanted[s] = true
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if !wanted[State(ins.State)] {
+			continue
+		}
+		age := ins.StartedAt
+		if State(ins.State) == StateSnapshotting {
+			age = ins.ParkedAt
+		}
+		if age.IsZero() {
+			continue
+		}
+		if age.Before(threshold) {
+			out = append(out, ins)
+		}
+	}
+	return out, nil
 }
 
 func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP string, guestUID int) error {
@@ -1351,12 +1525,51 @@ func (m *MemStore) DeleteSnapshotsStaleOlderThan(_ context.Context, retention ti
 
 // --- Audit ------------------------------------------------------------------
 
+// parseSubjectID accepts either a canonical UUID (with hyphens) or the
+// 32-char hex form that MemStore's newID() emits, and returns the
+// canonical *uuid.UUID either way. Returns nil on any parse failure so
+// callers can treat "unparseable" the same as "no subject" (which is
+// what the audit-log filter expects: no row would have produced a
+// garbage ID). The fix for the silent-drop bug surfaced by the audit-log
+// PR's tests: engine.go hands us hex IDs (newID output) and uuid.Parse
+// rejects them, so Subject stayed nil even though we said we set it.
+func parseSubjectID(s string) *uuid.UUID {
+	if s == "" {
+		return nil
+	}
+	if u, err := uuid.Parse(s); err == nil {
+		return &u
+	}
+	if len(s) == 32 {
+		if b, err := hex.DecodeString(s); err == nil {
+			u := uuid.UUID(b)
+			return &u
+		}
+	}
+	return nil
+}
+
+// AppendEvent (commit 4) fixes two pre-existing bugs that the audit-log
+// PR surfaced. Before: the row's Subject pointer was dropped on the
+// floor (line 1226-1227 had a dead type-assertion placeholder and
+// the Event literal never set Subject), so ListEvents could never
+// filter by subject. After: parse the string into a *uuid.UUID and
+// copy Data so a caller can reuse the byte slice. The hex form is
+// accepted too (see parseSubjectID).
 func (m *MemStore) AppendEvent(_ context.Context, actor, kind string, subject *string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var subj *interface{ ID() string }
-	_ = subj
-	e := Event{At: time.Now(), Actor: actor, Kind: kind, Data: append([]byte(nil), data...)}
+	var subj *uuid.UUID
+	if subject != nil {
+		subj = parseSubjectID(*subject)
+	}
+	e := Event{
+		At:      time.Now(),
+		Actor:   actor,
+		Kind:    kind,
+		Subject: subj,
+		Data:    append([]byte(nil), data...),
+	}
 	m.events = append(m.events, e)
 	return nil
 }
@@ -1364,10 +1577,22 @@ func (m *MemStore) AppendEvent(_ context.Context, actor, kind string, subject *s
 func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var subj *uuid.UUID
+	if subject != "" {
+		subj = parseSubjectID(subject)
+		if subj == nil {
+			// Unparseable filter — no row would have produced it,
+			// return empty rather than silently matching everything.
+			return nil, nil
+		}
+	}
 	var out []Event
 	for i := len(m.events) - 1; i >= 0 && (limit <= 0 || len(out) < limit); i-- {
 		e := m.events[i]
-		if subject == "" || (e.Subject != nil && false) {
+		// Match either: no subject filter, OR the row's Subject
+		// pointer is non-nil and equals the filter. The pre-fix
+		// && false made this branch dead; tests caught it.
+		if subj == nil || (e.Subject != nil && *e.Subject == *subj) {
 			out = append(out, e)
 		}
 	}
@@ -1376,20 +1601,21 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 
 // --- Usage ------------------------------------------------------------------
 
-// AppendUsage upserts one (instance, minute) usage row and updates the
+// AppendUsage writes one (instance, minute) usage row and updates the
 // per-(account, app, month) aggregate so UsageByMonth keeps returning the
-// spec §10 shape without re-scanning the per-minute rows. Mirrors the
-// production INSERT … ON CONFLICT (instance_id, minute) DO UPDATE semantics:
-// multiple writes for the same minute accumulate mb_seconds + requests.
+// spec §10 shape without re-scanning the per-minute rows. Idempotent on
+// (instance_id, minute): a redelivered minute is a no-op (first write
+// wins). Mirrors the production INSERT … ON CONFLICT (instance_id, minute)
+// DO NOTHING semantics in pgstore.go — see M7 hardening PR
+// feat/m7-beta-hardening for the audit that surfaced this contract change.
 func (m *MemStore) AppendUsage(_ context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := minute.UTC().Truncate(time.Minute)
 	for i := range m.usage {
 		if m.usage[i].InstanceID == instanceID && m.usage[i].Minute.Equal(key) {
-			m.usage[i].MBSeconds += mbSeconds
-			m.usage[i].Requests += requests
-			m.recomputeMonthLocked(accountID, appID, key)
+			// Idempotent: redelivered minute is a no-op. The first tick
+			// wins; restart-driven redelivery does not inflate billing.
 			return nil
 		}
 	}
@@ -1596,6 +1822,121 @@ func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (in
 		}
 	}
 	return removed, nil
+}
+
+// IssueCliAuthCode stores a freshly-minted code's SHA-256 hash with
+// no account binding (AccountID empty). The hash key format matches
+// loginTokens (the binary []byte hash used as a string key). A
+// re-issue of the same hash is a no-op overwriting the entry, which
+// matches the production on-conflict-do-nothing semantics.
+func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cliAuthCodes == nil {
+		m.cliAuthCodes = map[string]CliAuthCode{}
+	}
+	m.cliAuthCodes[string(tokenHash)] = CliAuthCode{
+		TokenHash: append([]byte(nil), tokenHash...),
+		ExpiresAt: expiresAt,
+	}
+	return nil
+}
+
+// PeekCliAuthCode returns the row's status without mutating it. Used
+// by the dashboard GET /cli-auth render to decide whether to show the
+// email-input form or the "code unavailable" error page.
+func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if row.ConsumedAt != nil {
+		return api.CliAuthStatusConsumed, row.AccountID, nil
+	}
+	return api.CliAuthStatusPending, row.AccountID, nil
+}
+
+// ClaimCliAuthCode atomically transitions pending → consumed and
+// binds account_id. Error shapes mirror PgStore (review finding F5):
+//
+//	ErrNotFound  — row missing OR expired (never minted or TTL passed)
+//	ErrConflict  — row exists but already claimed by a prior call
+//
+// The CAS-equivalent for MemStore is the m.mu serializing all
+// readers/writers; the second concurrent caller observes the
+// first's write (AccountID != "") and returns ErrConflict.
+//
+// IMPORTANT: this MUST NOT touch ConsumedAt — that field is the
+// exclusive mint-gate for ConsumeCliAuthCode. Pre-setting it here
+// would short-circuit the CAS that the CLI's exchange relies on to
+// mint exactly one API key per code (review finding F4).
+func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, accountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return ErrNotFound
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return ErrNotFound
+	}
+	if row.AccountID != "" {
+		// A prior claim already bound the row to some account_id.
+		// Dashboard POST never re-claims, so this is either a retry
+		// (user double-clicked) or a parallel claim race. Either
+		// way the row is no longer pending → ErrConflict so the
+		// handler can render "Code already used".
+		return ErrConflict
+	}
+	row.AccountID = accountID
+	m.cliAuthCodes[string(tokenHash)] = row
+	return nil
+}
+
+// ConsumeCliAuthCode is the CLI's poll-side read PLUS mint gate.
+// Atomic CAS (mirrors ConsumeLoginToken): only mutates consumed_at
+// on the FIRST call, returns the bound account_id exactly once.
+// A buggy or replaying CLI cannot mint multiple keys for the same
+// code (review finding F4).
+//
+// Filter: `account_id` must be non-empty (Claim must have run
+// first) — without it the row is still pending and the CLI should
+// keep polling, not see (Consumed,"") which would mint a key for an
+// unbound account.
+//
+// Return contract:
+//
+//	pending (or empty account_id) → (Pending,  "",       nil)        keep polling
+//	consumed (first call)        → (Consumed, acct_id,  nil)        mint API key
+//	replay / expired / unknown    → (Expired, "",        ErrNotFound)
+func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if row.AccountID == "" || row.ConsumedAt != nil {
+		// Either still pending (dashboard hasn't claimed yet) or
+		// already consumed (replay). The caller distinguishes via
+		// the consumed_at nil check.
+		if row.ConsumedAt != nil {
+			return api.CliAuthStatusExpired, "", ErrNotFound
+		}
+		return api.CliAuthStatusPending, "", nil
+	}
+	now := time.Now()
+	row.ConsumedAt = &now
+	m.cliAuthCodes[string(tokenHash)] = row
+	return api.CliAuthStatusConsumed, row.AccountID, nil
 }
 
 // AppendDeploymentLog records one line of build output. Returns the
@@ -1991,6 +2332,59 @@ func (m *MemStore) RestoreAccount(_ context.Context, id string) error {
 	return nil
 }
 
+// AppendGdprRequest records the action on the in-memory ledger. Mirrors
+// PgStore: no auto-prune on DeleteAccount (the production table also
+// outlives the account row), so a test can assert the audit row
+// against the email + timestamp after the account row is gone.
+func (m *MemStore) AppendGdprRequest(_ context.Context, r GdprRequest) error {
+	if r.ID == "" {
+		return fmt.Errorf("AppendGdprRequest: id is required")
+	}
+	if r.RequestedAt.IsZero() {
+		r.RequestedAt = time.Now().UTC()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.gdprRequests = append(m.gdprRequests, r)
+	return nil
+}
+
+// ListGdprRequestsForAccount returns the rows in requested_at desc
+// order, bounded by limit. limit <= 0 returns no rows (mirrors the
+// PgStore guard).
+func (m *MemStore) ListGdprRequestsForAccount(_ context.Context, accountID string, limit int) ([]GdprRequest, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]GdprRequest, 0)
+	for i := len(m.gdprRequests) - 1; i >= 0 && len(out) < limit; i-- {
+		if m.gdprRequests[i].AccountID == accountID {
+			out = append(out, m.gdprRequests[i])
+		}
+	}
+	return out, nil
+}
+
+// CompleteGdprRequest stamps completed_at on the most recent
+// un-completed row of (account_id, action) in the in-memory ledger.
+// Returns ErrNotFound when no matching row exists so callers can skip
+// stale ticks without logging noise.
+func (m *MemStore) CompleteGdprRequest(_ context.Context, accountID, action string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now().UTC()
+	for i := len(m.gdprRequests) - 1; i >= 0; i-- {
+		r := &m.gdprRequests[i]
+		if r.AccountID == accountID && r.Action == GdprAction(action) && r.CompletedAt.IsZero() {
+			r.CompletedAt = now
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
 // LoadAndStampLastQuotaWarning mirrors PgStore.LoadAndStampLastQuotaWarning
 // for the in-memory implementation. Same contract:
 //   - First call of the UTC day → (false, nil) and the row's stamp is
@@ -2080,3 +2474,45 @@ func (m *MemStore) SetPastDueAtForTest(id string, at time.Time) error {
 
 // compile-time check that MemStore satisfies Store.
 var _ Store = (*MemStore)(nil)
+
+// BackdateForTest rewinds the row's started_at to the supplied
+// absolute timestamp. Used by the §6.1 watchdog tests in pkg/sched
+// to fabricate a stuck-WAKING/COLD_BOOTING row whose age exceeds
+// the budget. Production wiring does not need this — Postgres
+// timestamps are real.
+func (m *MemStore) BackdateForTest(id string, startedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ins.StartedAt = startedAt
+		m.instances[id] = ins
+	}
+}
+
+// SetParkedAtForTest stamps the row's parked_at. Used by the
+// watchdog tests to fabricate a stuck-SNAPSHOTTING row — the
+// watchdog anchors SNAPSHOTTING age on parked_at, not started_at,
+// because started_at is creation time.
+func (m *MemStore) SetParkedAtForTest(id string, parkedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ins.ParkedAt = parkedAt
+		m.instances[id] = ins
+	}
+}
+
+// SetTerminalAtForTest stamps the row's terminal_at. Used by the §17
+// retention sweep tests in pkg/sched to fabricate terminal rows
+// (STOPPED / FAILED) whose age exceeds the configured retention
+// window. Production wiring does not need this — Engine.transition
+// stamps terminal_at atomically via UpdateInstanceStateToTerminal.
+func (m *MemStore) SetTerminalAtForTest(id string, terminalAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ts := terminalAt
+		ins.TerminalAt = &ts
+		m.instances[id] = ins
+	}
+}

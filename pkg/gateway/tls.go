@@ -98,16 +98,21 @@ var ErrTLSAllowlistMissing = errors.New("gateway: TLS enabled without OnDemandHT
 
 // Validate sanity-checks a TLSConfig. cmd/gatewayd calls this before
 // attempting to bind :443.
+//
+// Check order matters: we report the more specific error first so an
+// operator who only forgot the allowlist doesn't get the misleading
+// "partial config" sentinel. The allowlist check is the §11 ship-blocking
+// guard — it must surface clearly when it's the actual defect.
 func (c TLSConfig) Validate() error {
 	if c.Disabled {
 		return nil
 	}
+	if c.OnDemandHTTP01Allowlist == nil {
+		return ErrTLSAllowlistMissing
+	}
 	if c.WildcardCertDomain == "" || c.HetznerDNSAPITokenPath == "" ||
 		c.HetznerZone == "" || c.StorageDir == "" {
 		return ErrTLSMisconfigured
-	}
-	if c.OnDemandHTTP01Allowlist == nil {
-		return ErrTLSAllowlistMissing
 	}
 	return nil
 }

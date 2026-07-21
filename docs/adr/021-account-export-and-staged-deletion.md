@@ -1,6 +1,6 @@
 # ADR-021 · Account export and staged deletion (G6)
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-07-18
 - **Decision:** Ship a customer-facing GDPR self-service surface (export
   bundle + 30-day staged deletion + restore) on top of apid, with a
