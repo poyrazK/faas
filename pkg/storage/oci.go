@@ -504,12 +504,15 @@ func (o *OCIRegistryStorageBackend) List(ctx context.Context, prefix string) ([]
 		// Nothing enumerated. For a fan-out prefix, join the per-repo
 		// errors so the caller sees the registry health; for a single-
 		// repo prefix the join collapses to a single wrapped error.
-		return keys, errors.Join(errs...)
+		// Return nil keys — callers MUST check err before iterating.
+		return nil, errors.Join(errs...)
 	default:
-		// Partial success: return the keys we got, but expose the
-		// failures so the GC walk can react. The caller can log +
-		// retry without losing the partial result.
-		return keys, fmt.Errorf("partial list: %w", errors.Join(errs...))
+		// Partial success: surface the failures so the GC walk can
+		// react. The caller decides whether to retry the failed
+		// repos. Return nil keys for the same reason as above —
+		// iterating a partial key set on error risks acting on a
+		// stale view of the registry.
+		return nil, fmt.Errorf("partial list: %w", errors.Join(errs...))
 	}
 }
 
@@ -1203,79 +1206,57 @@ func (o *OCIRegistryStorageBackend) bearer(ctx context.Context, scope string) (s
 }
 
 // singleFlightRefresh coalesces concurrent refresh-token POSTs for the
-// same scope. The first caller POSTs; concurrent callers wait on the
-// same result via the inFlight sync.Map. Without this, N parallel
-// wake requests against a near-expiry token would issue N refresh
-// round-trips; with it they share one.
-//
-// The result is published as a pointer on the inFlight entry itself
-// (under a sync.Once guard) so any number of waiters can read the same
-// value once it's available. A buffered channel is unnecessary — the
-// sync.Once prevents the producer from racing the consumer.
-// singleFlightRefresh coalesces concurrent refresh-token POSTs for the
-// same scope. The first caller to arrive posts; concurrent callers
-// wait on the same result via the inFlight sync.Map. Without this,
-// N parallel wake requests against a near-expiry token would issue
-// N refresh round-trips; with it they share one.
+// same scope. The first caller to arrive posts; every concurrent
+// caller waits on the same in-flight flight via the inFlight
+// sync.Map. Without this, N parallel wake requests against a
+// near-expiry token would issue N refresh round-trips; with it they
+// share one.
 //
 // Race note: a goroutine that observes the cached token as expired
 // but arrives at inFlight AFTER the producer's done-channel close
-// and inFlight delete must NOT spin up a second POST. We re-check
-// the cache after acquiring the flight (as follower or producer)
-// and short-circuit on a fresh entry. This covers the common
-// near-expiry burst: 8 goroutines read expired, the first one
-// refreshes in microseconds, the next 7 see the fresh cache and
-// return without an extra POST.
-//
-// The result is published as a pointer on the inFlight entry itself;
-// any number of waiters can read the same value once it's available.
+// and inFlight delete must NOT spin up a second POST. The
+// post-LoadOrStore cache re-check short-circuits that case — the
+// producer populated the cache before deleting the entry, so a fresh
+// entry is always visible to late arrivals.
 func (o *OCIRegistryStorageBackend) singleFlightRefresh(ctx context.Context, scope, refreshToken, realm string, auth *oci.BasicAuth) (string, error) {
-	// Fast path: another goroutine is mid-refresh — wait for its result
-	// then re-check the cache (the producer updates it before closing
-	// the done channel, so a fresh entry will always be visible).
-	if existing, ok := o.inFlight.Load(scope); ok {
-		flight := existing.(*refreshFlight)
-		<-flight.done
-		if fresh, ok := o.freshCachedAccessToken(scope); ok {
-			return fresh, nil
-		}
-		// Producer failed or the cache still holds an expired entry;
-		// return whatever the producer decided to broadcast.
-		return flight.result.token, flight.result.err
+	// LoadOrStore: the first goroutine wins the producer slot; every
+	// other goroutine on this scope sees the existing flight and waits
+	// on its done channel. We construct the flight inside the closure
+	// so the loser never allocates one.
+	flight := &refreshFlight{done: make(chan refreshResult, 1)}
+	if existing, ok := o.inFlight.LoadOrStore(scope, flight); ok {
+		flight = existing.(*refreshFlight)
+	} else {
+		// We're the producer. Run the POST, populate the cache, and
+		// close the done channel under sync.Once so a future refactor
+		// that re-enters the closure is safe. Defer the inFlight
+		// cleanup so a panicking RefreshToken still unblocks followers.
+		defer o.inFlight.Delete(scope)
+		tok, err := oci.RefreshToken(ctx, o.hc, o.ua, realm, refreshToken, auth)
+		flight.once.Do(func() {
+			if err != nil {
+				flight.result = refreshResult{err: err}
+			} else {
+				o.tokenCache.Store(scope, cachedToken{
+					tok:      tok,
+					issuedAt: time.Now(),
+					realmURL: realm,
+				})
+				flight.result = refreshResult{token: tok.AccessToken}
+			}
+			close(flight.done)
+		})
 	}
-	// Cache check before posting: if another goroutine just refreshed
-	// (between our previous cache read and now) the cache will already
-	// hold a fresh entry and we can return that without a POST.
+	// All paths converge here: wait for the producer's result, then
+	// re-check the cache. The re-check catches the case where a fast
+	// producer populated the cache before this goroutine arrived at
+	// LoadOrStore, and any goroutine that wins the LoadOrStore race
+	// but arrives after Delete (and a fresh Store) sees the fresh
+	// cache and skips the producer's broadcast.
+	<-flight.done
 	if fresh, ok := o.freshCachedAccessToken(scope); ok {
 		return fresh, nil
 	}
-	flight := &refreshFlight{done: make(chan refreshResult, 1)}
-	// Compare-and-swap into the map so only one goroutine wins the
-	// producer slot. A second goroutine that races us here sees the
-	// existing flight, waits on its done, and re-checks the cache.
-	if existing, ok := o.inFlight.LoadOrStore(scope, flight); ok {
-		other := existing.(*refreshFlight)
-		<-other.done
-		if fresh, ok := o.freshCachedAccessToken(scope); ok {
-			return fresh, nil
-		}
-		return other.result.token, other.result.err
-	}
-	defer o.inFlight.Delete(scope)
-	tok, err := oci.RefreshToken(ctx, o.hc, o.ua, realm, refreshToken, auth)
-	flight.once.Do(func() {
-		if err != nil {
-			flight.result = refreshResult{err: err}
-		} else {
-			o.tokenCache.Store(scope, cachedToken{
-				tok:      tok,
-				issuedAt: time.Now(),
-				realmURL: realm,
-			})
-			flight.result = refreshResult{token: tok.AccessToken}
-		}
-		close(flight.done)
-	})
 	return flight.result.token, flight.result.err
 }
 

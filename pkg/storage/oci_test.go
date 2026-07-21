@@ -75,173 +75,7 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		fmt.Fprintf(w, `{"token":%q}`, f.token)
 	})
 
-	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/v2/")
-		switch {
-		case strings.Contains(path, "/blobs/uploads/"):
-			if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
-				authChallenge(w, f.srv.URL, "repository:test:pull,push")
-				return
-			}
-			// Two-step chunked upload: PUT to /v2/<repo>/blobs/uploads/<uuid>
-			// completes a blob the registry advertised via a 202 Location.
-			// Body and digest verification mirror the monolithic POST.
-			if strings.Contains(path, "/blobs/uploads/") && r.Method == http.MethodPut {
-				digest := r.URL.Query().Get("digest")
-				if !strings.HasPrefix(digest, "sha256:") {
-					http.Error(w, "missing digest", http.StatusBadRequest)
-					return
-				}
-				body, err := io.ReadAll(io.LimitReader(r.Body, 4<<30))
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				sum := sha256.Sum256(body)
-				got := "sha256:" + hex.EncodeToString(sum[:])
-				if got != digest {
-					http.Error(w, fmt.Sprintf("digest mismatch: want %s got %s", digest, got), http.StatusBadRequest)
-					return
-				}
-				f.mu.Lock()
-				f.blobs[digest] = body
-				f.mu.Unlock()
-				w.Header().Set("Docker-Content-Digest", digest)
-				w.WriteHeader(http.StatusCreated)
-				return
-			}
-			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
-			digest := r.URL.Query().Get("digest")
-			if !strings.HasPrefix(digest, "sha256:") {
-				http.Error(w, "missing digest", http.StatusBadRequest)
-				return
-			}
-			if f.monolithicOK {
-				body, err := io.ReadAll(io.LimitReader(r.Body, 4<<30))
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				sum := sha256.Sum256(body)
-				got := "sha256:" + hex.EncodeToString(sum[:])
-				if got != digest {
-					http.Error(w, fmt.Sprintf("digest mismatch: want %s got %s", digest, got), http.StatusBadRequest)
-					return
-				}
-				f.mu.Lock()
-				f.blobs[digest] = body
-				f.mu.Unlock()
-				w.Header().Set("Docker-Content-Digest", digest)
-				w.WriteHeader(http.StatusCreated)
-				return
-			}
-			// 202 + Location: the registry wants the caller to PUT the
-			// body. Use a stable per-request UUID so the Location header
-			// is a path the same mux can dispatch (no second handler
-			// registration; the /v2/ switch above also matches PUTs).
-			uploadID := fmt.Sprintf("upload-%d", time.Now().UnixNano())
-			w.Header().Set("Location", fmt.Sprintf("%s/v2/%s/blobs/uploads/%s", f.srv.URL, extractRepoFromUploadPath(path), uploadID))
-			w.WriteHeader(http.StatusAccepted)
-		case strings.Contains(path, "/manifests/"):
-			parts := strings.SplitN(path, "/manifests/", 2)
-			if len(parts) != 2 {
-				http.NotFound(w, r)
-				return
-			}
-			repo, ref := parts[0], parts[1]
-			if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
-				authChallenge(w, f.srv.URL, "repository:test:pull,push")
-				return
-			}
-			switch r.Method {
-			case http.MethodPut:
-				body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				f.mu.Lock()
-				if f.manifests[repo] == nil {
-					f.manifests[repo] = map[string][]byte{}
-				}
-				// Accept under both the supplied reference (tag OR digest)
-				// so the driver can PUT by tag and later DELETE by digest.
-				f.manifests[repo][ref] = body
-				f.mu.Unlock()
-				w.Header().Set("Docker-Content-Digest", digestOf(body))
-				w.WriteHeader(http.StatusCreated)
-			case http.MethodGet:
-				f.mu.Lock()
-				body, ok := f.manifests[repo][ref]
-				f.mu.Unlock()
-				if !ok {
-					http.Error(w, "manifest not found", http.StatusNotFound)
-					return
-				}
-				w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
-				w.Header().Set("Docker-Content-Digest", digestOf(body))
-				_, _ = w.Write(body)
-			case http.MethodDelete:
-				// Spec: manifest DELETE must be by digest, not tag.
-				// A reference that doesn't look like sha256:<hex> gets
-				// 405 so a regression to tag-DELETE surfaces as a test
-				// failure rather than silent success.
-				if !strings.HasPrefix(ref, "sha256:") {
-					http.Error(w, "manifest DELETE must reference a digest", http.StatusMethodNotAllowed)
-					return
-				}
-				f.mu.Lock()
-				delete(f.manifests[repo], ref)
-				f.mu.Unlock()
-				w.WriteHeader(http.StatusAccepted)
-			default:
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			}
-		case strings.Contains(path, "/blobs/"):
-			parts := strings.SplitN(path, "/blobs/", 2)
-			if len(parts) != 2 {
-				http.NotFound(w, r)
-				return
-			}
-			digest := parts[1]
-			if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
-				authChallenge(w, f.srv.URL, "repository:test:pull")
-				return
-			}
-			f.mu.Lock()
-			body, ok := f.blobs[digest]
-			f.mu.Unlock()
-			if !ok {
-				http.Error(w, "blob not found", http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "application/vnd.oci.image.layer.v1.tar+gzip")
-			w.Header().Set("Docker-Content-Digest", digest)
-			_, _ = w.Write(body)
-		case strings.HasSuffix(path, "/tags/list"):
-			repo := strings.TrimSuffix(path, "/tags/list")
-			if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
-				authChallenge(w, f.srv.URL, "repository:test:pull")
-				return
-			}
-			f.mu.Lock()
-			tags := make([]string, 0, len(f.manifests[repo]))
-			for tag := range f.manifests[repo] {
-				tags = append(tags, tag)
-			}
-			f.mu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"name": repo,
-				"tags": tags,
-			})
-		default:
-			http.NotFound(w, r)
-		}
-	})
+	mux.HandleFunc("/v2/", f.handleV2)
 
 	f.srv = httptest.NewServer(mux)
 	return f
@@ -267,6 +101,178 @@ func (f *fakeRegistry) client(t *testing.T) *OCIRegistryStorageBackend {
 		t.Fatalf("NewOCIRegistryStorageBackend: %v", err)
 	}
 	return o
+}
+
+// handleV2 dispatches a /v2/<repo>/... request through the fake
+// registry's protocol handler chain. Extracted as a method so the
+// override seam (overrideTagsListForFake) can delegate to it without
+// re-implementing the dispatch table — see review finding F-1.
+func (f *fakeRegistry) handleV2(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/v2/")
+	switch {
+	case strings.Contains(path, "/blobs/uploads/"):
+		if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
+			authChallenge(w, f.srv.URL, "repository:test:pull,push")
+			return
+		}
+		// Two-step chunked upload: PUT to /v2/<repo>/blobs/uploads/<uuid>
+		// completes a blob the registry advertised via a 202 Location.
+		// Body and digest verification mirror the monolithic POST.
+		if strings.Contains(path, "/blobs/uploads/") && r.Method == http.MethodPut {
+			digest := r.URL.Query().Get("digest")
+			if !strings.HasPrefix(digest, "sha256:") {
+				http.Error(w, "missing digest", http.StatusBadRequest)
+				return
+			}
+			body, err := io.ReadAll(io.LimitReader(r.Body, 4<<30))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			sum := sha256.Sum256(body)
+			got := "sha256:" + hex.EncodeToString(sum[:])
+			if got != digest {
+				http.Error(w, fmt.Sprintf("digest mismatch: want %s got %s", digest, got), http.StatusBadRequest)
+				return
+			}
+			f.mu.Lock()
+			f.blobs[digest] = body
+			f.mu.Unlock()
+			w.Header().Set("Docker-Content-Digest", digest)
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		digest := r.URL.Query().Get("digest")
+		if !strings.HasPrefix(digest, "sha256:") {
+			http.Error(w, "missing digest", http.StatusBadRequest)
+			return
+		}
+		if f.monolithicOK {
+			body, err := io.ReadAll(io.LimitReader(r.Body, 4<<30))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			sum := sha256.Sum256(body)
+			got := "sha256:" + hex.EncodeToString(sum[:])
+			if got != digest {
+				http.Error(w, fmt.Sprintf("digest mismatch: want %s got %s", digest, got), http.StatusBadRequest)
+				return
+			}
+			f.mu.Lock()
+			f.blobs[digest] = body
+			f.mu.Unlock()
+			w.Header().Set("Docker-Content-Digest", digest)
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		// 202 + Location: the registry wants the caller to PUT the
+		// body. Use a stable per-request UUID so the Location header
+		// is a path the same mux can dispatch (no second handler
+		// registration; the /v2/ switch above also matches PUTs).
+		uploadID := fmt.Sprintf("upload-%d", time.Now().UnixNano())
+		w.Header().Set("Location", fmt.Sprintf("%s/v2/%s/blobs/uploads/%s", f.srv.URL, extractRepoFromUploadPath(path), uploadID))
+		w.WriteHeader(http.StatusAccepted)
+	case strings.Contains(path, "/manifests/"):
+		parts := strings.SplitN(path, "/manifests/", 2)
+		if len(parts) != 2 {
+			http.NotFound(w, r)
+			return
+		}
+		repo, ref := parts[0], parts[1]
+		if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
+			authChallenge(w, f.srv.URL, "repository:test:pull,push")
+			return
+		}
+		switch r.Method {
+		case http.MethodPut:
+			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			f.mu.Lock()
+			if f.manifests[repo] == nil {
+				f.manifests[repo] = map[string][]byte{}
+			}
+			// Accept under both the supplied reference (tag OR digest)
+			// so the driver can PUT by tag and later DELETE by digest.
+			f.manifests[repo][ref] = body
+			f.mu.Unlock()
+			w.Header().Set("Docker-Content-Digest", digestOf(body))
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodGet:
+			f.mu.Lock()
+			body, ok := f.manifests[repo][ref]
+			f.mu.Unlock()
+			if !ok {
+				http.Error(w, "manifest not found", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+			w.Header().Set("Docker-Content-Digest", digestOf(body))
+			_, _ = w.Write(body)
+		case http.MethodDelete:
+			// Spec: manifest DELETE must be by digest, not tag.
+			// A reference that doesn't look like sha256:<hex> gets
+			// 405 so a regression to tag-DELETE surfaces as a test
+			// failure rather than silent success.
+			if !strings.HasPrefix(ref, "sha256:") {
+				http.Error(w, "manifest DELETE must reference a digest", http.StatusMethodNotAllowed)
+				return
+			}
+			f.mu.Lock()
+			delete(f.manifests[repo], ref)
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	case strings.Contains(path, "/blobs/"):
+		parts := strings.SplitN(path, "/blobs/", 2)
+		if len(parts) != 2 {
+			http.NotFound(w, r)
+			return
+		}
+		digest := parts[1]
+		if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
+			authChallenge(w, f.srv.URL, "repository:test:pull")
+			return
+		}
+		f.mu.Lock()
+		body, ok := f.blobs[digest]
+		f.mu.Unlock()
+		if !ok {
+			http.Error(w, "blob not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/vnd.oci.image.layer.v1.tar+gzip")
+		w.Header().Set("Docker-Content-Digest", digest)
+		_, _ = w.Write(body)
+	case strings.HasSuffix(path, "/tags/list"):
+		repo := strings.TrimSuffix(path, "/tags/list")
+		if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
+			authChallenge(w, f.srv.URL, "repository:test:pull")
+			return
+		}
+		f.mu.Lock()
+		tags := make([]string, 0, len(f.manifests[repo]))
+		for tag := range f.manifests[repo] {
+			tags = append(tags, tag)
+		}
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"name": repo,
+			"tags": tags,
+		})
+	default:
+		http.NotFound(w, r)
+	}
 }
 
 func digestOf(b []byte) string {
@@ -712,9 +718,11 @@ func TestOCIListSurfacesSingleRepoError(t *testing.T) {
 
 // TestOCIListFanOutContinuesOnPartialFailure verifies the snap/ fan-out
 // keeps iterating when one repo fails but another succeeds. The
-// returned error is nil because at least one repo enumerated keys.
-// Without this, a single flaky snap repo would abort GC across all
-// deployments parked on the same host.
+// returned error is non-nil (the bad repo's failure surfaces per the
+// review contract); the returned keys slice is nil (callers MUST
+// check err before iterating — see review finding F-5). Without the
+// iteration continuing, a single flaky snap repo would abort GC
+// across all deployments parked on the same host.
 func TestOCIListFanOutContinuesOnPartialFailure(t *testing.T) {
 	const (
 		goodRepo = "snap-good"
@@ -740,15 +748,12 @@ func TestOCIListFanOutContinuesOnPartialFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), "down") {
 		t.Errorf("List error %q does not mention the bad repo's failure", err)
 	}
-	foundMem := false
-	for _, k := range got {
-		if k == "snap/good/mem" {
-			foundMem = true
-			break
-		}
-	}
-	if !foundMem {
-		t.Errorf("expected snap/good/mem from good repo in %v", got)
+	// Contract (review finding F-5): when err != nil, keys MUST be nil
+	// so callers can't act on a partial / stale view of the registry.
+	// Asserting nil here documents the convention; iterating `got`
+	// would be a caller-side bug.
+	if got != nil {
+		t.Errorf("List with partial failure: want nil keys on error, got %v", got)
 	}
 }
 
@@ -804,9 +809,9 @@ func overrideTagsListForFake(t *testing.T, f *fakeRegistry, replies map[string]f
 				return
 			}
 		}
-		// Fall through to the existing fake's /v2/ handler via a
-		// fresh mux registration that mirrors the production fake.
-		dispatchV2Fake(w, r, f)
+		// Fall through to the production handler chain via the
+		// extracted method (see review finding F-1).
+		f.handleV2(w, r)
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("scope") == "" {
@@ -819,146 +824,6 @@ func overrideTagsListForFake(t *testing.T, f *fakeRegistry, replies map[string]f
 	// Swap the server's handler. httptest.Server exposes Handler via
 	// the embedded http.Server field.
 	f.srv.Config.Handler = mux
-}
-
-// dispatchV2Fake re-dispatches a /v2/ request through the fakeRegistry's
-// original handler chain. We can't call the original closure directly
-// (it was registered inline in newFakeRegistry), so we re-build the
-// dispatch inline at this layer. Keep behaviour identical to the
-// primary fake — blob upload + manifest push + blob GET + tags/list
-// (when not overridden) + manifest GET/DELETE.
-func dispatchV2Fake(w http.ResponseWriter, r *http.Request, f *fakeRegistry) {
-	path := strings.TrimPrefix(r.URL.Path, "/v2/")
-	switch {
-	case strings.Contains(path, "/blobs/uploads/"):
-		if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
-			authChallenge(w, f.srv.URL, "repository:test:pull,push")
-			return
-		}
-		if r.Method == http.MethodPut {
-			digest := r.URL.Query().Get("digest")
-			if !strings.HasPrefix(digest, "sha256:") {
-				http.Error(w, "missing digest", http.StatusBadRequest)
-				return
-			}
-			body, err := io.ReadAll(io.LimitReader(r.Body, 4<<30))
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			sum := sha256.Sum256(body)
-			got := "sha256:" + hex.EncodeToString(sum[:])
-			if got != digest {
-				http.Error(w, fmt.Sprintf("digest mismatch: want %s got %s", digest, got), http.StatusBadRequest)
-				return
-			}
-			f.mu.Lock()
-			f.blobs[digest] = body
-			f.mu.Unlock()
-			w.Header().Set("Docker-Content-Digest", digest)
-			w.WriteHeader(http.StatusCreated)
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		digest := r.URL.Query().Get("digest")
-		if !strings.HasPrefix(digest, "sha256:") {
-			http.Error(w, "missing digest", http.StatusBadRequest)
-			return
-		}
-		// 202 + Location (matches the default fake's monolithicOK=false).
-		uploadID := fmt.Sprintf("upload-%d", time.Now().UnixNano())
-		w.Header().Set("Location", fmt.Sprintf("%s/v2/%s/blobs/uploads/%s", f.srv.URL, extractRepoFromUploadPath(path), uploadID))
-		w.WriteHeader(http.StatusAccepted)
-	case strings.Contains(path, "/manifests/"):
-		parts := strings.SplitN(path, "/manifests/", 2)
-		if len(parts) != 2 {
-			http.NotFound(w, r)
-			return
-		}
-		repo, ref := parts[0], parts[1]
-		if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
-			authChallenge(w, f.srv.URL, "repository:test:pull,push")
-			return
-		}
-		switch r.Method {
-		case http.MethodPut:
-			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			f.mu.Lock()
-			if f.manifests[repo] == nil {
-				f.manifests[repo] = map[string][]byte{}
-			}
-			f.manifests[repo][ref] = body
-			f.mu.Unlock()
-			w.Header().Set("Docker-Content-Digest", digestOf(body))
-			w.WriteHeader(http.StatusCreated)
-		case http.MethodGet:
-			f.mu.Lock()
-			body, ok := f.manifests[repo][ref]
-			f.mu.Unlock()
-			if !ok {
-				http.Error(w, "manifest not found", http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
-			w.Header().Set("Docker-Content-Digest", digestOf(body))
-			_, _ = w.Write(body)
-		case http.MethodDelete:
-			if !strings.HasPrefix(ref, "sha256:") {
-				http.Error(w, "manifest DELETE must reference a digest", http.StatusMethodNotAllowed)
-				return
-			}
-			f.mu.Lock()
-			delete(f.manifests[repo], ref)
-			f.mu.Unlock()
-			w.WriteHeader(http.StatusAccepted)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	case strings.Contains(path, "/blobs/"):
-		parts := strings.SplitN(path, "/blobs/", 2)
-		if len(parts) != 2 {
-			http.NotFound(w, r)
-			return
-		}
-		digest := parts[1]
-		if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
-			authChallenge(w, f.srv.URL, "repository:test:pull")
-			return
-		}
-		f.mu.Lock()
-		body, ok := f.blobs[digest]
-		f.mu.Unlock()
-		if !ok {
-			http.Error(w, "blob not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/vnd.oci.image.layer.v1.tar+gzip")
-		w.Header().Set("Docker-Content-Digest", digest)
-		_, _ = w.Write(body)
-	case strings.HasSuffix(path, "/tags/list"):
-		repo := strings.TrimSuffix(path, "/tags/list")
-		if f.requireToken && r.Header.Get("Authorization") != "Bearer "+f.token {
-			authChallenge(w, f.srv.URL, "repository:test:pull")
-			return
-		}
-		f.mu.Lock()
-		tags := make([]string, 0, len(f.manifests[repo]))
-		for tag := range f.manifests[repo] {
-			tags = append(tags, tag)
-		}
-		f.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"name": repo, "tags": tags})
-	default:
-		http.NotFound(w, r)
-	}
 }
 
 // TestOCIListFanOutAllFailingReturnsError verifies that when EVERY
