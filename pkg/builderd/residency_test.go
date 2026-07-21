@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestParseResidentPct_PlainValue(t *testing.T) {
@@ -114,24 +116,74 @@ func TestMetricsResident_HappyPath(t *testing.T) {
 	}
 }
 
-// TestMetricsResident_EmptyURLReturnsFixedZero pins the "no schedd wired"
-// behaviour — empty URL ⇒ probe reports 0 (same as nil-probe path before
-// this PR). DecideSlot then grants opportunistic by default (the safe
-// ramp-up posture when startup is fresh).
-func TestMetricsResident_EmptyURLReturnsFixedZero(t *testing.T) {
+// TestMetricsResident_EmptyURLDeniesOpportunistic pins the "no schedd
+// wired" behaviour — empty URL means "operator hasn't pointed
+// ScheddMetricsURL at schedd yet", which must match the nil-probe posture
+// in slot.go: guaranteed slot only, no opportunistic ask. Returning 0 here
+// would silently let DecideSlot grant both slots during a partial boot
+// and outrank tenant wakes.
+func TestMetricsResident_EmptyURLDeniesOpportunistic(t *testing.T) {
 	p := NewMetricsResident(context.Background(), "")
-	if got := p.ResidentMB(); got != 0 {
-		t.Errorf("empty-URL probe = %d MB, want 0", got)
+	if got := p.ResidentMB(); got != denyOpportunisticResidentMB {
+		t.Errorf("empty-URL probe = %d MB, want denyOpportunisticResidentMB (%d)",
+			got, denyOpportunisticResidentMB)
+	}
+	// Pairwise assertion with the slot gate: DecideSlot must land in the
+	// guaranteed-only branch regardless of ceiling. Use a tiny ceiling to
+	// prove the fallback isn't accidentally ceiling-dependent.
+	if d := DecideSlot(p, 1); d.Label != "guaranteed" || d.Allowed == false {
+		t.Errorf("empty-URL slot decision: got %+v, want guaranteed allowed", d)
 	}
 }
 
-// TestMetricsResident_HTTPDownSwallowsError exercises the error path. A
-// refused connection must NOT panic and ResidentMB() must keep returning
-// the most recently cached value (zero, here, since the prime failed).
-func TestMetricsResident_HTTPDownSwallowsError(t *testing.T) {
-	p := NewMetricsResident(context.Background(), "http://127.0.0.1:1/metrics")
-	if got := p.ResidentMB(); got != 0 {
-		t.Errorf("refused-conn probe = %d MB, want 0", got)
+// TestMetricsResident_MissingGaugeDeniesOpportunistic is the regression
+// test for the wrong-URL bug found in PR #92 review: when the polled
+// endpoint serves Prometheus text but does NOT expose fcvm_resident_ram_pct
+// (e.g. the bare /metrics endpoint that schedd mounts ops counters on,
+// NOT the dashboard gauges), the probe must NOT silently grant
+// opportunistic. The first scrape fails → probe stays unhealthy →
+// ResidentMB() returns the deny-opportunistic sentinel → DecideSlot lands
+// in the guaranteed-only branch.
+func TestMetricsResident_MissingGaugeDeniesOpportunistic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		// schedd's bare /metrics exposes only ops counters; no fcvm_*.
+		fmt.Fprintln(w, "faas_schedd_ops_total{kind=\"wake\"} 42")
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Use the unexported seam with startLoop=false: this test only needs
+	// one prime-scrape to fail. Avoids racing with t.Cleanup var swaps.
+	p := newMetricsResident(ctx, srv.URL+"/metrics", false)
+
+	if got := p.ResidentMB(); got != denyOpportunisticResidentMB {
+		t.Errorf("missing-gauge probe = %d MB, want denyOpportunisticResidentMB (%d)",
+			got, denyOpportunisticResidentMB)
+	}
+	if d := DecideSlot(p, api.RAMAdmissionCeilingMB); d.Label != "guaranteed" || d.Allowed == false {
+		t.Errorf("missing-gauge slot decision: got %+v, want guaranteed allowed", d)
+	}
+}
+
+// TestMetricsResident_HTTPDownDeniesOpportunistic exercises the
+// connection-refused path (e.g. schedd down or wrong port). The probe
+// stays unhealthy → ResidentMB() returns the deny-opportunistic sentinel
+// → DecideSlot lands in the guaranteed-only branch. Same posture as the
+// missing-gauge case above: "can't talk to schedd ⇒ don't double-spend
+// the 2nd slot".
+//
+// Use the unexported no-loop seam so the test doesn't race against
+// residentPollInterval cleanup.
+func TestMetricsResident_HTTPDownDeniesOpportunistic(t *testing.T) {
+	p := newMetricsResident(context.Background(), "http://127.0.0.1:1/metrics", false)
+	if got := p.ResidentMB(); got != denyOpportunisticResidentMB {
+		t.Errorf("refused-conn probe = %d MB, want denyOpportunisticResidentMB (%d)",
+			got, denyOpportunisticResidentMB)
+	}
+	if d := DecideSlot(p, api.RAMAdmissionCeilingMB); d.Label != "guaranteed" || d.Allowed == false {
+		t.Errorf("refused-conn slot decision: got %+v, want guaranteed allowed", d)
 	}
 }
 

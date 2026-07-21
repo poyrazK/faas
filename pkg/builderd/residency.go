@@ -12,16 +12,17 @@
 //     "schedd unreachable at boot" fallback. Returns the value verbatim;
 //     stale data is preferable to blocking.
 //
-//   - metricsResidentProbe — polls <schedd-metrics>/metrics on a 2-second
+//   - metricsResidentProbe — polls <schedd-metrics>/fcvm on a 2-second
 //     cadence, parses `fcvm_resident_ram_pct` (the gauge schedd exposes —
-//     see pkg/fcvm/metrics.go:185). Multiplying by RAMAdmissionCeilingMB/100
+//     see pkg/fcvm/metrics.go:186). Multiplying by RAMAdmissionCeilingMB/100
 //     converts it back to MB. The HTTP scrape itself is best-effort and
 //     cached behind mu.Lock so a slow schedd never blocks DecideSlot.
 //
 // The metrics endpoint contract is published by cmd/schedd/main.go (the
-// sibling daemon exposes the fcvm_* gauges on the metricsAddr from
-// schedd.toml). builderd does NOT call schedd's gRPC socket — the metrics
-// endpoint is shared by Prometheus already, so no extra surface is added.
+// sibling daemon exposes the fcvm_* gauges on metricsPath+"/fcvm" from
+// schedd.toml; /metrics itself only has the daemon's own ops counters).
+// builderd does NOT call schedd's gRPC socket — the metrics endpoint is
+// shared by Prometheus already, so no extra surface is added.
 package builderd
 
 import (
@@ -29,6 +30,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -60,7 +62,9 @@ type fixedResidentProbe struct {
 }
 
 // FixedResident returns a ResidencyProbe that always reports mb MB. Pass
-// 0 to mimic "no tenants resident" (grants the opportunistic slot).
+// 0 to mimic "no tenants resident" (grants the opportunistic slot); pass
+// math.MaxInt/2 to mimic "always-deny-opportunistic" (the unconfigured-URL
+// fallback below uses this).
 func FixedResident(mb int) ResidencyProbe {
 	return &fixedResidentProbe{mb: mb}
 }
@@ -71,54 +75,93 @@ func (p *fixedResidentProbe) ResidentMB() int {
 	return p.mb
 }
 
-// metricsResidentProbe polls schedd's /metrics endpoint and extracts
+// denyOpportunisticResident is the fallback probe returned for an
+// unconfigured ScheddMetricsURL. It reports a residency value well above
+// any realistic RAMAdmissionCeilingMB so DecideSlot always lands in the
+// "guaranteed-only" branch — matching the nil-probe posture in slot.go.
+// We don't import api.MaxInt here to keep this file dependency-light and
+// testable; math.MaxInt/2 is comfortably above api.RAMAdmissionCeilingMB
+// (47,600 MB) without any future-scaling ambiguity.
+const denyOpportunisticResidentMB = math.MaxInt / 2
+
+// metricsResidentProbe polls schedd's /metrics/fcvm endpoint and extracts
 // fcvm_resident_ram_pct. The poll runs on a goroutine bound to ctx; the
 // returned ResidencyProbe is safe for concurrent use.
 type metricsResidentProbe struct {
 	url string
 
-	// mu protects mb and lastGood.
-	mu       sync.Mutex
-	mb       int
-	lastGood time.Time
+	// mu protects mb and healthy.
+	mu      sync.Mutex
+	mb      int
+	healthy bool // true once at least one successful scrape has set mb
 
 	client *http.Client
 }
 
 // NewMetricsResident returns a ResidencyProbe that polls url on a 2-second
-// cadence. The poller exits when ctx is cancelled. If url is empty the
-// probe returns 0 (matches the previous nil-probe behavior of "guaranteed
-// slot only") — no error is returned, since an empty config just means
-// "deploy without the 2nd slot until you wire schedd's metrics URL".
+// cadence. The poller exits when ctx is cancelled.
+//
+// An empty url means "no schedd metrics wired" (config not filled in yet,
+// or this daemon is being run without schedd). In that case we return a
+// probe that always denies the opportunistic slot — matching the nil-probe
+// posture in slot.go. The operator's safe default is: "guaranteed slot only
+// until you point ScheddMetricsURL at schedd", not "grant both slots and
+// risk outranking tenant wakes during a partially-deployed boot".
+//
+// A non-empty url that points at the wrong endpoint (e.g. schedd's bare
+// /metrics which doesn't expose fcvm_*) takes the same posture until the
+// first successful scrape: until then, ResidentMB() returns the
+// deny-opportunistic sentinel. Only after the probe has actually seen the
+// gauge do we trust the cached value, including a cached 0.
 func NewMetricsResident(ctx context.Context, url string) ResidencyProbe {
-	if url == "" {
-		return FixedResident(0)
-	}
+	p := newMetricsResident(ctx, url, true /* startLoop */)
+	return p
+}
+
+// newMetricsResident is the unexported test seam. Production calls go
+// through NewMetricsResident (startLoop=true); tests that only need a
+// single prime-scrape can pass startLoop=false so they don't have to
+// reason about the background goroutine or the residentPollInterval
+// package var. url must be non-empty (the empty-URL short-circuit
+// happens at NewMetricsResident).
+func newMetricsResident(ctx context.Context, url string, startLoop bool) *metricsResidentProbe {
 	p := &metricsResidentProbe{
 		url:    url,
 		client: &http.Client{Timeout: residentHTTPTimeout},
 	}
 	// Prime before returning so the first DecideSlot has a real value.
-	// Failure here is silent — return the cached zero and the background
-	// loop will fill it in.
+	// Failure leaves healthy=false; DecideSlot will then deny the
+	// opportunistic slot until schedd becomes reachable.
 	_ = p.scrape(ctx)
-	go p.loop(ctx)
+	if startLoop {
+		go p.loop(ctx)
+	}
 	return p
 }
 
 func (p *metricsResidentProbe) ResidentMB() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if !p.healthy {
+		return denyOpportunisticResidentMB
+	}
 	return p.mb
 }
 
 // loop runs until ctx is done, polling every residentPollInterval. Errors
 // are swallowed: the cached mb stays put, which is preferable to "strip
-// the 2nd slot just because schedd hiccuped once". lastGood is consulted
-// (but currently unused — placeholder for a future "stale > 30 s ⇒ give up"
-// alarm).
+// the 2nd slot just because schedd hiccuped once". A future enhancement
+// could deny opportunistic after some staleness threshold (e.g. > 30s
+// since last good scrape); that requires threading time.Time through the
+// probe struct, which is intentionally deferred to keep the current
+// contract simple.
+//
+// residentPollInterval is captured at loop start to avoid racing with
+// unit tests that swap the package var via t.Cleanup (see
+// residency_test.go for the test-only swap pattern).
 func (p *metricsResidentProbe) loop(ctx context.Context) {
-	t := time.NewTicker(residentPollInterval)
+	interval := residentPollInterval
+	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {
@@ -154,7 +197,7 @@ func (p *metricsResidentProbe) scrape(ctx context.Context) error {
 	mb := int(float64(api.RAMAdmissionCeilingMB) * pct / 100.0)
 	p.mu.Lock()
 	p.mb = mb
-	p.lastGood = time.Now()
+	p.healthy = true
 	p.mu.Unlock()
 	return nil
 }

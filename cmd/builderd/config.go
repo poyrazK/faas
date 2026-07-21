@@ -33,13 +33,18 @@ type Config struct {
 	// writes <dir>/<build_id>/build-done.json + /build/out/* here during
 	// Destroy. /var/lib/faas/build-out (default).
 	BuildExportDir string `toml:"build_export_dir"`
-	// ScheddMetricsURL is where builderd polls schedd's /metrics endpoint
-	// for the fcvm_resident_ram_pct gauge (spec §4.5 opportunistic-slot
-	// rule). Empty disables the 2nd slot — same behaviour as the pre-fix
-	// nil-probe path. Default points at the loopback schedd metrics port.
-	// Schedd exposes this gauge on the metricsAddr from schedd.toml — the
-	// fcvm_* collectors are registered alongside the daemon's own ops
-	// counters via pkg/fcvm/metrics.go::NewDashboardGauges.
+	// ScheddMetricsURL is where builderd polls schedd's /metrics
+	// endpoint for the fcvm_resident_ram_pct gauge (spec §4.5
+	// opportunistic-slot rule).
+	//
+	// Schedd mounts the daemon's own ops counters at /metrics and the
+	// fcvm_* dashboard gauges at /metrics/fcvm (see cmd/schedd/main.go).
+	// The default therefore includes the /fcvm subpath — pointing at
+	// /metrics silently strips the opportunistic slot because
+	// parseResidentPct never finds the gauge there.
+	//
+	// Empty disables the 2nd slot — same behaviour as the pre-fix
+	// nil-probe path.
 	ScheddMetricsURL string `toml:"schedd_metrics_url"`
 }
 
@@ -52,7 +57,7 @@ func LoadConfig(path string) (*Config, error) {
 		BuilderBase:      "/srv/fc/base/builder-base.ext4",
 		BuildDriveDir:    "/var/lib/faas/build-drive",
 		BuildExportDir:   "/var/lib/faas/build-out",
-		ScheddMetricsURL: "http://127.0.0.1:9090/metrics",
+		ScheddMetricsURL: "http://127.0.0.1:9090/metrics/fcvm",
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

@@ -384,6 +384,67 @@ func TestProcessOne_AppLayerOverCapFails(t *testing.T) {
 	}
 }
 
+// TestProcessOne_AppLayerAtCapSucceeds is the boundary twin of
+// TestProcessOne_AppLayerOverCapFails. Hobby cap = 512 MB; a layer of
+// exactly 512 MB must NOT trip the cap. The cap check in builderd.go is
+// `>`; this test pins that comparison so a one-byte change to `>=` would
+// make the boundary fail and surface in review.
+func TestProcessOne_AppLayerAtCapSucceeds(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+
+	buildID, _, _ := seedDeploymentWithPlan(t, store, src, "hobby")
+	atCapPath := filepath.Join(t.TempDir(), "at-cap.ext4")
+	const atCapBytes = int64(512 * 1024 * 1024) // exactly the cap
+	if err := writeSparse(t, atCapPath, atCapBytes); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: atCapPath, ExitCode: 0, LogTailBytes: 14}}
+	notif := &fakeNotifier{}
+	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		t.Fatalf("ProcessOne (at cap, must succeed): %v", err)
+	}
+	build, _ := store.BuildByID(context.Background(), buildID)
+	if build.Status != state.BuildSucceeded {
+		t.Errorf("build status = %s, want succeeded (at-cap boundary)", build.Status)
+	}
+}
+
+// TestProcessOne_AppLayerOneOverCapFails is the matching +/-1 byte case
+// for TestProcessOne_AppLayerAtCapSucceeds. Hobby cap = 512 MB; a layer
+// of 512 MiB + 1 byte must trip the cap. Together with the at-cap test
+// this pins the `>` comparison in builderd.go.
+func TestProcessOne_AppLayerOneOverCapFails(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+
+	buildID, depID, _ := seedDeploymentWithPlan(t, store, src, "hobby")
+	justOverPath := filepath.Join(t.TempDir(), "just-over.ext4")
+	const justOverBytes = int64(512*1024*1024) + 1 // cap + 1 byte
+	if err := writeSparse(t, justOverPath, justOverBytes); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: justOverPath, ExitCode: 0, LogTailBytes: 14}}
+	notif := &fakeNotifier{}
+	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	_, err := b.ProcessOne(context.Background(), buildID)
+	if err == nil {
+		t.Fatal("expected cap failure on cap+1 byte boundary")
+	}
+	if !contains(err.Error(), "exceeds plan cap") {
+		t.Errorf("err = %v, want substring %q", err, "exceeds plan cap")
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.Status != state.DeployFailed {
+		t.Errorf("deployment status = %s, want %s (cap+1 byte)", dep.Status, state.DeployFailed)
+	}
+}
+
 // TestProcessOne_AppLayerUnderCapSucceeds is the negative-control twin
 // of TestProcessOne_AppLayerOverCapFails. Hobby (512 MB cap) with a
 // 1-byte tarball must hit the existing success path — rootfs stamped,

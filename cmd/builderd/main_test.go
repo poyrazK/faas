@@ -72,22 +72,19 @@ func TestRun_BadConfigPath(t *testing.T) {
 
 // TestDefaultDeps_NewResidentProbeWired verifies the opportunistic-slot
 // wiring (spec §4.5): defaultDeps must populate newResidentProbe so the
-// run loop's probe field is non-nil. Empty URL still returns a valid
-// (FixedResident(0)) probe — pin that contract too.
+// run loop's probe field is non-nil. Empty URL is the unconfigured-URL
+// failure mode and must match the nil-probe posture in slot.go — return
+// a probe whose value trips the 60 % threshold and forces guaranteed-only.
 func TestDefaultDeps_NewResidentProbeWired(t *testing.T) {
 	deps := defaultDeps()
 	if deps.newResidentProbe == nil {
 		t.Fatal("defaultDeps.newResidentProbe is nil; the opportunistic slot will be dead in prod (regression of #M6-gap-1)")
 	}
-	// Calling with empty URL is the production failure mode for an
-	// unconfigured ScheddMetricsURL — it must NOT panic and must return
-	// a usable probe (decisions return a fixed 0 = opportunistic grants
-	// by default during ramp-up).
 	p := deps.newResidentProbe(context.Background(), "")
 	if p == nil {
 		t.Fatal("newResidentProbe returned nil for empty URL")
 	}
-	if got := p.ResidentMB(); got != 0 {
-		t.Errorf("empty-URL probe ResidentMB = %d, want 0", got)
+	if got := p.ResidentMB(); got <= 0 {
+		t.Errorf("empty-URL probe ResidentMB = %d, want > 0 (must deny opportunistic)", got)
 	}
 }
