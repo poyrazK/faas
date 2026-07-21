@@ -69,6 +69,7 @@ func TestMetalSecretsEnvReachesGuest(t *testing.T) {
 		slog.New(slog.NewTextHandler(testLogWriter{t}, nil)),
 		nil,
 	)
+	withCgroupRootAt(t, "/sys/fs/cgroup")
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatalf("gen host identity: %v", err)

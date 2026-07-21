@@ -56,6 +56,7 @@ func TestMetalFunctionWakeP95(t *testing.T) {
 		slog.New(slog.NewTextHandler(testLogWriter{t}, nil)),
 		nil,
 	)
+	withCgroupRootAt(t, "/sys/fs/cgroup")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
