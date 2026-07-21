@@ -48,6 +48,18 @@ const (
 // concurrent wake in flight).
 const DefaultWatchdogInterval = 1 * time.Second
 
+// retentionFirstFireDelay is the deliberate pause before Loop.Run's
+// retention ticker fires for the first time (PR #74 review-fix). A
+// bare time.NewTicker fires once immediately on construction; if
+// schedd restarts and the sweep races the §6.1 watchdog's first
+// tick, the backfill-anchored rows in migration 00017 (terminal_at
+// = coalesce(parked_at, started_at, now())) would be deleted before
+// the watchdog has had a chance to reclaim stuck rows from the
+// previous run. One minute is long enough for the watchdog to
+// establish state on a cold start, short enough that operators
+// observe the first sweep inside a heartbeat window.
+const retentionFirstFireDelay = 1 * time.Minute
+
 // Watchdog owns one tick of the §6.1 sweep. It is stateless across
 // ticks — each tick queries the store fresh — so a panicking tick
 // does not corrupt subsequent ticks.

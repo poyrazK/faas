@@ -34,7 +34,7 @@ type Loop struct {
 	gateway    GatewaySynth
 	now        func() time.Time
 	flowCounts FlowCounter
-	watchdog   *Watchdog // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
+	watchdog   *Watchdog  // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
 	retention  *Retention // §17 retention sweep; nil means "no retention" (tests can opt out)
 }
 
@@ -140,10 +140,22 @@ func (l *Loop) Run(ctx context.Context) error {
 	// reads now-30d, so hourly granularity means a row that crossed
 	// the threshold gets DELETED within the next hour. nil retention
 	// skips this ticker entirely.
+	//
+	// First-fire is intentionally DEFERRED one minute after startup
+	// (retentionFirstFireDelay). A bare time.NewTicker fires once
+	// immediately, which on a fresh deploy would race the §6.1
+	// watchdog's first sweep and delete any rows the backfill
+	// (migration 00017) anchored to a now()-based terminal_at before
+	// the watchdog has had a chance to stamp its first batch.
 	var retentionT *time.Ticker
+	var retentionFirst <-chan time.Time
 	if l.retention != nil {
-		retentionT = time.NewTicker(api.DefaultRetentionInterval)
-		defer retentionT.Stop()
+		t := time.NewTicker(api.DefaultRetentionInterval)
+		defer t.Stop()
+		retentionT = t
+		delay := time.NewTimer(retentionFirstFireDelay)
+		defer delay.Stop()
+		retentionFirst = delay.C
 	}
 
 	for {
@@ -161,6 +173,12 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runCronTick(ctx)
 		case <-watchdogTick(watchdogT):
 			l.runWatchdog(ctx)
+		case <-retentionFirst:
+			// One-shot first fire (see retentionFirstFireDelay). After
+			// this the channel is set to nil so subsequent ticks
+			// exclusively come from retentionT (the 1h ticker).
+			l.runRetention(ctx)
+			retentionFirst = nil
 		case <-retentionTick(retentionT):
 			l.runRetention(ctx)
 		}

@@ -15,13 +15,26 @@
 alter table instances
   add column if not exists terminal_at timestamptz;
 
--- Backfill existing terminal rows so the first sweep after deploy
--- doesn't give them a free 30-day grace period. Best-effort anchor:
--- coalesce the existing clocks. Falls back to now() on legacy rows
--- that have neither (one-box only has these on parked/stopped rows
--- from the v1 schema pre-00015).
+-- Backfill existing terminal rows from the best available clock so
+-- the sweep ages them correctly. The fallback chain is:
+--   1. parked_at — schema populated this on every PARKED transition
+--      (migration 00003 / 00015); a STOPPED row that was previously
+--      parked carries the timestamp of the last park, which is a
+--      reasonable lower bound for "how long ago this row entered a
+--      terminal-ish state".
+--   2. started_at — created on INSERT (migration 00015). For rows
+--      that never parked first (rare; pre-§6.1 watchdog), this is
+--      the row age itself, which is the worst-case but correct
+--      upper bound.
+--   3. now() - interval '30 days' — pure-safety floor for any legacy
+--      rows that somehow have neither clock (one-box only has these
+--      on rows from the v1 schema pre-00015, which never completed
+--      migration 00015). Anchoring them 30d in the past gives the
+--      full retention window before the first sweep can delete them;
+--      a tighter fallback (e.g. now()) would silently drop them on
+--      the very first retention tick after deploy.
 update instances
-  set terminal_at = coalesce(parked_at, started_at, now())
+  set terminal_at = coalesce(parked_at, started_at, now() - interval '30 days')
   where state in ('stopped', 'failed')
     and terminal_at is null;
 
