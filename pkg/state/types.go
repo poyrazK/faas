@@ -207,7 +207,15 @@ type Deployment struct {
 	RootfsBytes int64
 	Status      DeploymentStatus
 	Error       string
-	CreatedAt   time.Time
+	// ErrorCode is the RFC 7807 code stamped at the same time as
+	// Error when a deployment transitions to `failed`. ADR-021:
+	// oci.ErrImageNotFound / ErrImageEgressDenied /
+	// ErrImageManifestInvalid map via pkg/api.SentinelToCode to
+	// the stable codes that imaged writes here. Empty for every
+	// other transition (and for deployments created before the
+	// migrations/00022 column add).
+	ErrorCode string
+	CreatedAt time.Time
 }
 
 // Build is one build pipeline run for a deployment (spec §9). Builderd writes

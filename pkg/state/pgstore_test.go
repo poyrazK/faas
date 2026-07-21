@@ -423,6 +423,79 @@ func TestPg_RenameApp_CrossAccountIsolation(t *testing.T) {
 	}
 }
 
+// TestPg_SetDeploymentFailed_PersistsCode locks the failure-specific helper
+// ADR-021 introduced alongside the deployments.error_code column. The MemStore
+// parity test (memstore_test.go) catches the API shape; this test catches
+// the SQL. The contract being locked:
+//
+//   - status is pinned to 'failed' regardless of prior status.
+//   - error_code carries the RFC 7807 code pkg/api.SentinelToCode lifted
+//     from the wrapping error (the 'lift' is tested in pkg/imaged).
+//   - error carries the free-text message for debugging.
+//   - the column reads back via DeploymentByID and the read-side scanners.
+//
+// A regression here would silently break the M7.5 dashboard's failure-mode
+// grouping and the G1 ship-blocker that PR #99 closes.
+func TestPg_SetDeploymentFailed_PersistsCode(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, _, depID := seedLiveDeploy(t, s, ctx)
+
+	got, err := s.SetDeploymentFailed(ctx, depID, api.CodeImageNotFound, "oci pull failed: registry returned 404")
+	if err != nil {
+		t.Fatalf("SetDeploymentFailed: %v", err)
+	}
+	if got.Status != state.DeployFailed {
+		t.Errorf("status = %s, want failed", got.Status)
+	}
+	if got.ErrorCode != api.CodeImageNotFound {
+		t.Errorf("error_code = %q, want %q", got.ErrorCode, api.CodeImageNotFound)
+	}
+	if got.Error != "oci pull failed: registry returned 404" {
+		t.Errorf("error = %q, want oci-pull message", got.Error)
+	}
+
+	// Round-trip via the read path used by the customer-facing API.
+	read, err := s.DeploymentByID(ctx, depID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if read.ErrorCode != api.CodeImageNotFound {
+		t.Errorf("DeploymentByID error_code = %q, want %q (scanner regression?)", read.ErrorCode, api.CodeImageNotFound)
+	}
+}
+
+// TestPg_SetDeploymentFailed_EmptyCodePassesThrough covers the fallthrough
+// path: a non-sentinel failure (e.g. transient network error) must still
+// land in the deployments.error column but leave error_code empty. The
+// dashboard branches on ErrorCode != "" to differentiate mapped codes from
+// unmapped failures.
+func TestPg_SetDeploymentFailed_EmptyCodePassesThrough(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, _, depID := seedLiveDeploy(t, s, ctx)
+
+	got, err := s.SetDeploymentFailed(ctx, depID, "", "net down")
+	if err != nil {
+		t.Fatalf("SetDeploymentFailed: %v", err)
+	}
+	if got.ErrorCode != "" {
+		t.Errorf("error_code = %q, want empty (non-sentinel failure)", got.ErrorCode)
+	}
+	if got.Error != "net down" {
+		t.Errorf("error = %q, want net down", got.Error)
+	}
+}
+
+// TestPg_SetDeploymentFailed_UnknownReturnsErrNotFound guards the
+// not-found branch — callers must not silently no-op when a stale
+// deployment id is passed.
+func TestPg_SetDeploymentFailed_UnknownReturnsErrNotFound(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, err := s.SetDeploymentFailed(ctx, "00000000-0000-0000-0000-000000000000", api.CodeImageNotFound, "x")
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("unknown id err = %v, want ErrNotFound", err)
+	}
+}
+
 // TestPg_CreateAppIfUnderQuota_Concurrent is the real-Postgres mirror
 // of cmd/apid/handlers_quota_test.go::TestCreateApp_ConcurrentQuotaEnforcement_MemStore.
 // Fires N goroutines at CreateAppIfUnderQuota on a Free account
@@ -593,5 +666,6 @@ func TestPg_CreateAppIfUnderQuota_ConcurrentAcrossAccounts(t *testing.T) {
 		t.Errorf("CountDeployedApps(B): %v", err)
 	} else if got != 1 {
 		t.Errorf("count(B) = %d, want 1", got)
+
 	}
 }

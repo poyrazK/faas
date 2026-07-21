@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"testing"
 )
@@ -41,8 +42,15 @@ func TestRegistryPullManifest_RejectsManifestList(t *testing.T) {
         "mediaType": "application/vnd.oci.image.index.v1+json",
         "manifests": []
     }`)
-	if _, err := f.client().PullManifest(context.Background(), "ghcr.io/org/app:main"); err == nil {
+	_, err := f.client().PullManifest(context.Background(), "ghcr.io/org/app:main")
+	if err == nil {
 		t.Fatal("manifest list should be rejected")
+	}
+	// ADR-021: the manifest-list rejection must lift to
+	// ErrImageManifestInvalid so the imaged handler persists
+	// deployments.error_code = image_manifest_invalid.
+	if !errors.Is(err, ErrImageManifestInvalid) {
+		t.Errorf("PullManifest manifest-list err = %v, want errors.Is(_, ErrImageManifestInvalid) true", err)
 	}
 }
 
@@ -53,8 +61,16 @@ func TestRegistryPullManifest_RejectsBadLayerDigest(t *testing.T) {
         "config": {"mediaType":"application/vnd.oci.image.config.v1+json","digest":"sha256:` + hex64 + `","size":1},
         "layers": [{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:short","size":1}]
     }`)
-	if _, err := f.client().PullManifest(context.Background(), "ghcr.io/org/app:main"); err == nil {
+	_, err := f.client().PullManifest(context.Background(), "ghcr.io/org/app:main")
+	if err == nil {
 		t.Fatal("bad digest should be rejected")
+	}
+	// ADR-021: schema-validation failures (missing config, no layers,
+	// malformed digest) all lift to ErrImageManifestInvalid so the
+	// imaged handler can branch on the same code regardless of which
+	// manifest-validation step rejected the body.
+	if !errors.Is(err, ErrImageManifestInvalid) {
+		t.Errorf("PullManifest bad-digest err = %v, want errors.Is(_, ErrImageManifestInvalid) true", err)
 	}
 }
 

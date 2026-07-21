@@ -119,6 +119,29 @@ order by created_at desc limit 1;
 -- name: UpdateDeploymentStatus :exec
 update deployments set status = $2, error = $3 where id = $1;
 
+-- name: SetDeploymentFailed :one
+-- ADR-021 (G1, image digest enforcement hardening): durable
+-- carrier for the RFC 7807 failure code that imaged writes when a
+-- deployment transitions to `failed`. pkg/api.SentinelToCode maps
+-- the three puller-side sentinels to the codes pkg/api.CodeImage*
+-- (image_not_found / image_egress_denied / image_manifest_invalid)
+-- and imaged passes the resulting code as $3 here. The free-text
+-- error column ($2) is preserved for debugging. Status is pinned
+-- to 'failed' (caller's status argument is ignored — this is a
+-- failure-specific helper, not a generic update).
+--
+-- errcode is omitted in the scan (empty string on success means
+-- "no code mapped"; null in the column means "not yet stamped" —
+-- both render as "" on the Go side via the coalesce in the SELECT).
+update deployments
+   set status = 'failed', error = $2, error_code = $3
+ where id = $1
+returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
+          coalesce(source_path, ''), coalesce(source_bytes, 0),
+          coalesce(handler, ''), coalesce(log_path, ''),
+          coalesce(rootfs_path, ''), coalesce(rootfs_bytes, 0),
+          status, coalesce(error, ''), coalesce(error_code, ''), created_at;
+
 -- name: MarkDeploymentSuperseded :exec
 update deployments set status = 'superseded' where id = $1;
 

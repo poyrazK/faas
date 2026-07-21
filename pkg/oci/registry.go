@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // RegistryClient is a minimal OCI/Docker registry v2 client. It resolves a
@@ -47,6 +49,29 @@ func WithHTTPClient(hc *http.Client) Option {
 	}
 }
 
+// WithTimeout overrides the per-request HTTP timeout. The default is
+// api.OCIPullTimeoutSeconds (60s, ADR-021).
+//
+// Composition with WithHTTPClient is asymmetric on purpose: WithHTTPClient
+// replaces the underlying *http.Client outright (including its Timeout
+// field), and WithTimeout writes back into c.hc.Timeout. The ordering
+// that produces a meaningful timeout+custom-transport result is therefore
+//
+//	NewRegistryClient(WithHTTPClient(myHC), WithTimeout(d))   // → myHC.Timeout == d
+//
+// If you reverse the order (WithTimeout first, then WithHTTPClient) the
+// transport's own zero Timeout wins and the deadline is lost. Pass
+// WithTimeout last whenever you also pass WithHTTPClient. Callers that
+// only need a deadline (no custom transport) can pass WithTimeout alone.
+func WithTimeout(d time.Duration) Option {
+	return func(c *RegistryClient) {
+		if d <= 0 {
+			return
+		}
+		c.hc.Timeout = d
+	}
+}
+
 // WithEndpoint pins the scheme and API host for every request, bypassing the
 // per-reference host derivation. Used by tests to point at an httptest server;
 // not for production use.
@@ -57,10 +82,13 @@ func WithEndpoint(scheme, host string) Option {
 	}
 }
 
-// NewRegistryClient builds a client with sensible defaults (HTTPS, 30 s timeout).
+// NewRegistryClient builds a client with sensible defaults (HTTPS,
+// api.OCIPullTimeoutSeconds timeout — currently 60s). Tests that need a
+// shorter deadline can pass WithTimeout; production passes
+// WithHTTPClient(NewEgressHTTPClient()) for the §11 egress guard.
 func NewRegistryClient(opts ...Option) *RegistryClient {
 	c := &RegistryClient{
-		hc:     &http.Client{Timeout: 30 * time.Second},
+		hc:     &http.Client{Timeout: time.Duration(api.OCIPullTimeoutSeconds) * time.Second},
 		scheme: "https",
 		ua:     "faas-imaged/1 (+https://DOMAIN)",
 	}
@@ -222,8 +250,16 @@ func (c *RegistryClient) fetchManifest(ctx context.Context, r Reference) (imageM
 	// Reject index/manifest-list for v1 — we accept only single-arch image
 	// manifests. Surfacing a clear error here is friendlier than silently
 	// ignoring the layers array.
+	//
+	// ADR-021: this is one of the puller-side failure modes that maps to
+	// the RFC 7807 CodeImageManifestInvalid (422). imaged's buildImageLayer
+	// failure path runs errors.As(err, ErrImageManifestInvalid) and
+	// persists the resulting code on deployments.error_code. Wrap with %w
+	// so errors.Is matches both the bare sentinel and any further
+	// %w-wrapped form by imaged.
 	if !isImageManifest(ct, m.MediaType) {
-		return empty, nil, fmt.Errorf("oci: %s is a manifest list/index, not an image manifest (mediaType=%q); digest-pinned to a single-arch image is required", r.String(), m.MediaType)
+		return empty, nil, fmt.Errorf("%w: %s is a manifest list/index, not an image manifest (mediaType=%q); digest-pinned to a single-arch image is required",
+			ErrImageManifestInvalid, r.String(), m.MediaType)
 	}
 	return m, body, nil
 }
@@ -427,8 +463,18 @@ func (c *RegistryClient) resolveDigest(ctx context.Context, r Reference) (string
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("oci: manifest %s: registry returned %d: %s",
+		msg := fmt.Sprintf("oci: manifest %s: registry returned %d: %s",
 			r.String(), resp.StatusCode, strings.TrimSpace(string(body)))
+		// ADR-021: lift the 404 (image-not-found) failure mode to a
+		// sentinel that pkg/api.SentinelToCode maps to the RFC 7807
+		// CodeImageNotFound so the customer / dashboard can branch on
+		// a stable string. Other non-200 statuses (5xx, 401-after-
+		// retry, 403) keep their free-text surface — those are not
+		// the three puller-side failure modes this ADR closes.
+		if resp.StatusCode == http.StatusNotFound {
+			return "", fmt.Errorf("%w: %s", ErrImageNotFound, msg)
+		}
+		return "", fmt.Errorf("%s", msg)
 	}
 
 	// Prefer the registry's content digest header; fall back to hashing the

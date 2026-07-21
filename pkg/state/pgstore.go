@@ -539,7 +539,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		 values ($1, $2, $3, $4, $5, $6, $7, 'pending')
 		 returning id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		           coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-		           status, coalesce(error,''), created_at`,
+		           status, coalesce(error,''), coalesce(error_code,''), created_at`,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), d.SourceBytes,
 		nullString(d.Handler), nullString(d.LogPath))
 	return scanDeployment(row)
@@ -550,7 +550,7 @@ func (s *PgStore) DeploymentByID(ctx context.Context, id string) (Deployment, er
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
 		        coalesce(rootfs_path,''), coalesce(rootfs_bytes,0),
-		        status, coalesce(error,''), created_at
+		        status, coalesce(error,''), coalesce(error_code,''), created_at
 		 from deployments where id = $1`, id)
 	return scanDeploymentWithRootfs(row)
 }
@@ -559,7 +559,7 @@ func (s *PgStore) LatestDeployment(ctx context.Context, appID string) (Deploymen
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-		        status, coalesce(error,''), created_at
+		        status, coalesce(error,''), coalesce(error_code,''), created_at
 		 from deployments where app_id = $1 order by created_at desc limit 1`, appID)
 	return scanDeployment(row)
 }
@@ -569,7 +569,7 @@ func (s *PgStore) LiveDeployment(ctx context.Context, appID string) (Deployment,
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
 		        coalesce(rootfs_path,''), coalesce(rootfs_bytes,0),
-		        status, coalesce(error,''), created_at
+		        status, coalesce(error,''), coalesce(error_code,''), created_at
 		 from deployments where app_id = $1 and status = 'live' order by created_at desc limit 1`, appID)
 	return scanDeploymentWithRootfs(row)
 }
@@ -578,7 +578,7 @@ func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID string) 
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-		        status, coalesce(error,''), created_at
+		        status, coalesce(error,''), coalesce(error_code,''), created_at
 		 from deployments where app_id = $1 and status = 'superseded'
 		 order by created_at desc limit 1`, appID)
 	return scanDeployment(row)
@@ -614,14 +614,14 @@ func (s *PgStore) ListDeploymentsForApp(ctx context.Context, appID string, limit
 		rows, err = s.pool.Query(ctx,
 			`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 			        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-			        status, coalesce(error,''), created_at
+			        status, coalesce(error,''), coalesce(error_code,''), created_at
 			 from deployments where app_id = $1 order by created_at desc limit $2 offset $3`,
 			appID, limit, offset)
 	} else {
 		rows, err = s.pool.Query(ctx,
 			`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 			        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-			        status, coalesce(error,''), created_at
+			        status, coalesce(error,''), coalesce(error_code,''), created_at
 			 from deployments where app_id = $1 order by created_at desc offset $2`,
 			appID, offset)
 	}
@@ -650,7 +650,7 @@ func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID strin
 		rows, err = s.pool.Query(ctx,
 			`select d.id, d.app_id, coalesce(d.build_id::text,''), d.image_digest, d.kind,
 			        coalesce(d.source_path,''), coalesce(d.source_bytes,0), coalesce(d.handler,''), coalesce(d.log_path,''),
-			        d.status, coalesce(d.error,''), d.created_at
+			        d.status, coalesce(d.error,''), coalesce(d.error_code,''), d.created_at
 			 from deployments d join apps a on a.id = d.app_id
 			 where a.account_id = $1 order by d.created_at desc limit $2`,
 			accountID, limit)
@@ -658,7 +658,7 @@ func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID strin
 		rows, err = s.pool.Query(ctx,
 			`select d.id, d.app_id, coalesce(d.build_id::text,''), d.image_digest, d.kind,
 			        coalesce(d.source_path,''), coalesce(d.source_bytes,0), coalesce(d.handler,''), coalesce(d.log_path,''),
-			        d.status, coalesce(d.error,''), d.created_at
+			        d.status, coalesce(d.error,''), coalesce(d.error_code,''), d.created_at
 			 from deployments d join apps a on a.id = d.app_id
 			 where a.account_id = $1 and d.created_at < $2
 			 order by d.created_at desc limit $3`,
@@ -701,6 +701,29 @@ func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path string, byte
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetDeploymentFailed is the failure-specific helper ADR-021 introduced
+// alongside the deployments.error_code column. Status is pinned to
+// 'failed' (no caller choice — use UpdateDeploymentStatus for other
+// transitions). code is the RFC 7807 code pkg/api.SentinelToCode lifted
+// from the wrapping error; "" when the failure did not map to a
+// sentinel. message is the free-text string for debugging / the
+// existing error column. Returns the refreshed row.
+//
+// Idempotent on (status='failed') rows: a redeploy after a fix will
+// overwrite both columns.
+func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error) {
+	row := s.pool.QueryRow(ctx,
+		`update deployments
+		    set status = 'failed', error = $2, error_code = $3
+		  where id = $1
+		  returning id, app_id, coalesce(build_id::text,''), image_digest, kind,
+		            coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
+		            coalesce(rootfs_path,''), coalesce(rootfs_bytes,0),
+		            status, coalesce(error,''), coalesce(error_code,''), created_at`,
+		id, nullString(message), nullString(code))
+	return scanDeploymentWithRootfs(row)
 }
 
 // --- builds ------------------------------------------------------------------
@@ -1698,7 +1721,7 @@ func scanDeployment(row pgx.Row) (Deployment, error) {
 	var kind, statusStr string
 	if err := row.Scan(&d.ID, &d.AppID, &d.BuildID, &d.ImageDigest, &kind,
 		&d.SourcePath, &d.SourceBytes, &d.Handler, &d.LogPath,
-		&statusStr, &d.Error, &d.CreatedAt); err != nil {
+		&statusStr, &d.Error, &d.ErrorCode, &d.CreatedAt); err != nil {
 		return Deployment{}, mapErr(err)
 	}
 	d.Kind = DeploymentKind(kind)
@@ -1716,7 +1739,7 @@ func scanDeploymentWithRootfs(row pgx.Row) (Deployment, error) {
 	if err := row.Scan(&d.ID, &d.AppID, &d.BuildID, &d.ImageDigest, &kind,
 		&d.SourcePath, &d.SourceBytes, &d.Handler, &d.LogPath,
 		&rootfsPath, &d.RootfsBytes,
-		&statusStr, &d.Error, &d.CreatedAt); err != nil {
+		&statusStr, &d.Error, &d.ErrorCode, &d.CreatedAt); err != nil {
 		return Deployment{}, mapErr(err)
 	}
 	d.RootfsPath = rootfsPath
@@ -1732,7 +1755,7 @@ func scanDeployments(rows pgx.Rows) ([]Deployment, error) {
 		var kind, statusStr string
 		if err := rows.Scan(&d.ID, &d.AppID, &d.BuildID, &d.ImageDigest, &kind,
 			&d.SourcePath, &d.SourceBytes, &d.Handler, &d.LogPath,
-			&statusStr, &d.Error, &d.CreatedAt); err != nil {
+			&statusStr, &d.Error, &d.ErrorCode, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		d.Kind = DeploymentKind(kind)
