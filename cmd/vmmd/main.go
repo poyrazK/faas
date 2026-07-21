@@ -54,7 +54,7 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath:     envOrConfig("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
+		configPath:     envOr("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
 		detectFC:       fcvm.DetectFirecrackerVersion,
 		listen:         wire.ListenAs,
 		loadHostKey:    secretbox.LoadHostKey,
@@ -63,10 +63,10 @@ func defaultDeps() runDeps {
 	}
 }
 
-// envOrConfig returns the value of env key, or fallback when unset/empty.
-// Named envOrConfig to avoid colliding with any same-named helper in
+// envOr returns the value of env key, or fallback when unset/empty.
+// Named envOr to avoid colliding with any same-named helper in
 // cmd/<other-daemon> if these are ever linked into the same binary.
-func envOrConfig(key, fallback string) string {
+func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
@@ -117,8 +117,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// fresh X25519 identity; the restart branch loads the existing
 	// one and re-emits the public recipient file (idempotent).
 	hostID, keyPath, pubPath, err := loadOrGenerateHostIdentity(deps,
-		envOrConfig("FAAS_HOST_KEY_PATH", secretbox.DefaultHostKeyPath),
-		envOrConfig("FAAS_HOST_AGE_RECIPIENT_PATH", secretbox.DefaultHostAgeRecipientPath),
+		envOr("FAAS_HOST_KEY_PATH", secretbox.DefaultHostKeyPath),
+		envOr("FAAS_HOST_AGE_RECIPIENT_PATH", secretbox.DefaultHostAgeRecipientPath),
 	)
 	if err != nil {
 		return err
@@ -127,15 +127,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	cbm := fcvm.NewColdBootMetrics()
 	// #96 / ADR-025 axis 2: vmmd publishes the mem blob via the configured
 	// StorageBackend after a successful Snapshot, and resolves it back
-	// from the key on Restore. FAAS_STORAGE_ROOT covers /srv/fc (snap/,
-	// base/, layers/, kernel/) — vmmd never writes app layers.
-	storageRoot := os.Getenv("FAAS_STORAGE_ROOT")
-	if storageRoot == "" {
-		storageRoot = "/srv/fc"
-	}
-	storageBackend, err := storage.NewLocalStorageBackend(storageRoot)
+	// from the key on Restore. The env-driven fork (FAAS_STORAGE_BACKEND)
+	// routes the same call sites through a remote OCI distribution-spec
+	// backend when the operator sets one up.
+	storageBackend, err := storage.BackendFromEnv()
 	if err != nil {
-		return fmt.Errorf("vmmd: storage root %q: %w", storageRoot, err)
+		return fmt.Errorf("vmmd: %w", err)
+	}
+	if envOr("FAAS_STORAGE_BACKEND", "local") == "oci" {
+		log.Info("vmmd: storage backend = oci", "registry", envOr("FAAS_OCI_REGISTRY", ""))
+	} else {
+		log.Info("vmmd: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"))
 	}
 	mgr := fcvm.NewManager(
 		wire.ExecRunner{},
