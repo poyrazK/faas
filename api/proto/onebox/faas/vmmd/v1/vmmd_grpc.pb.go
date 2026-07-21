@@ -150,19 +150,19 @@ type VmmdServer interface {
 type UnimplementedVmmdServer struct{}
 
 func (UnimplementedVmmdServer) CreateFromSnapshot(context.Context, *CreateFromSnapshotRequest) (*WakeResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateFromSnapshot not implemented")
+	return nil, status.Error(codes.Unimplemented, "method CreateFromSnapshot not implemented")
 }
 func (UnimplementedVmmdServer) CreateColdBoot(context.Context, *CreateColdBootRequest) (*WakeResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateColdBoot not implemented")
+	return nil, status.Error(codes.Unimplemented, "method CreateColdBoot not implemented")
 }
 func (UnimplementedVmmdServer) PauseAndSnapshot(context.Context, *PauseAndSnapshotRequest) (*SnapshotResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PauseAndSnapshot not implemented")
+	return nil, status.Error(codes.Unimplemented, "method PauseAndSnapshot not implemented")
 }
 func (UnimplementedVmmdServer) Destroy(context.Context, *DestroyRequest) (*DestroyResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Destroy not implemented")
+	return nil, status.Error(codes.Unimplemented, "method Destroy not implemented")
 }
 func (UnimplementedVmmdServer) Stats(context.Context, *StatsRequest) (*StatsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Stats not implemented")
+	return nil, status.Error(codes.Unimplemented, "method Stats not implemented")
 }
 func (UnimplementedVmmdServer) mustEmbedUnimplementedVmmdServer() {}
 func (UnimplementedVmmdServer) testEmbeddedByValue()              {}
@@ -175,7 +175,7 @@ type UnsafeVmmdServer interface {
 }
 
 func RegisterVmmdServer(s grpc.ServiceRegistrar, srv VmmdServer) {
-	// If the following call pancis, it indicates UnimplementedVmmdServer was
+	// If the following call panics, it indicates UnimplementedVmmdServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.

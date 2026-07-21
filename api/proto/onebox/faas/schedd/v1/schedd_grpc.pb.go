@@ -138,13 +138,13 @@ type ScheddServer interface {
 type UnimplementedScheddServer struct{}
 
 func (UnimplementedScheddServer) Wake(context.Context, *WakeRequest) (*WakeResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Wake not implemented")
+	return nil, status.Error(codes.Unimplemented, "method Wake not implemented")
 }
 func (UnimplementedScheddServer) ReportActivity(context.Context, *ReportActivityRequest) (*ReportActivityResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ReportActivity not implemented")
+	return nil, status.Error(codes.Unimplemented, "method ReportActivity not implemented")
 }
 func (UnimplementedScheddServer) ParkInstance(context.Context, *ParkInstanceRequest) (*ParkInstanceResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ParkInstance not implemented")
+	return nil, status.Error(codes.Unimplemented, "method ParkInstance not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -157,7 +157,7 @@ type UnsafeScheddServer interface {
 }
 
 func RegisterScheddServer(s grpc.ServiceRegistrar, srv ScheddServer) {
-	// If the following call pancis, it indicates UnimplementedScheddServer was
+	// If the following call panics, it indicates UnimplementedScheddServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
