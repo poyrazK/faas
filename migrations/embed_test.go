@@ -24,10 +24,13 @@ import (
 	"testing"
 )
 
-// migrationFile is one parsed entry in the embedded migration set.
-type migrationFile struct {
-	version int64
-	name    string // filename, e.g. "00014_cli_auth_codes.sql"
+// MigrationFile is one parsed entry in the embedded migration set. Exported
+// so apply_walk_test.go (external test package) can reuse the parsing
+// rules without forking them; if the filename convention ever changes,
+// both packages see the change in lockstep.
+type MigrationFile struct {
+	Version int64
+	Name    string // filename, e.g. "00014_cli_auth_codes.sql"
 }
 
 // nameRe matches the goose "NNNNN_name.sql" convention. The leading digits
@@ -42,12 +45,17 @@ var nameRe = regexp.MustCompile(`^(\d+)_(.+)\.sql$`)
 // alongside this PR for new migrations).
 var filenameCommentRe = regexp.MustCompile(`^-- filename:\s*(\S+)\s*$`)
 
-// loadMigrations reads every embedded *.sql file, parses its filename, and
+// LoadMigrations reads every embedded *.sql file, parses its filename, and
 // returns the set sorted by version. Files that don't match the
 // NNNNN_name.sql pattern are reported via t.Errorf and skipped — they
 // would be silently dropped by goose anyway, but a parse failure here is
 // the only signal at PR time that the convention has drifted.
-func loadMigrations(t *testing.T) []migrationFile {
+//
+// Exported so apply_walk_test.go can reuse it from a different test
+// package without re-implementing the regex / sort. Keep the surface
+// minimal: returns the parsed set, leaves per-file diagnostics (Up/Down
+// directive, filename comment) to the embedded-side tests.
+func LoadMigrations(t *testing.T) []MigrationFile {
 	t.Helper()
 
 	entries, err := fs.ReadDir(FS, ".")
@@ -55,7 +63,7 @@ func loadMigrations(t *testing.T) []migrationFile {
 		t.Fatalf("read embedded migrations: %v", err)
 	}
 
-	var out []migrationFile
+	var out []MigrationFile
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -73,10 +81,10 @@ func loadMigrations(t *testing.T) []migrationFile {
 			t.Errorf("migration %q: parsing prefix %q: %v", e.Name(), m[1], err)
 			continue
 		}
-		out = append(out, migrationFile{version: v, name: e.Name()})
+		out = append(out, MigrationFile{Version: v, Name: e.Name()})
 	}
 
-	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
+	sort.Slice(out, func(i, j int) bool { return out[i].Version < out[j].Version })
 	return out
 }
 
@@ -87,14 +95,14 @@ func loadMigrations(t *testing.T) []migrationFile {
 // deploy (run 29841378918). The first missing slot is reported; full
 // contiguity is required for the check to pass.
 func TestMigrationsContiguous(t *testing.T) {
-	files := loadMigrations(t)
+	files := LoadMigrations(t)
 	if len(files) == 0 {
 		t.Fatal("no embedded migrations; embed.go is empty?")
 	}
 	for i, f := range files {
 		want := int64(i + 1)
-		if f.version != want {
-			t.Errorf("migration slot %d is missing (got %s in position %d); migrations are append-only and contiguous, never skip a slot", want, f.name, i+1)
+		if f.Version != want {
+			t.Errorf("migration slot %d is missing (got %s in position %d); migrations are append-only and contiguous, never skip a slot", want, f.Name, i+1)
 			return // report first gap, not all
 		}
 	}
@@ -107,13 +115,13 @@ func TestMigrationsContiguous(t *testing.T) {
 // both with prefix 14 would parse but produce the same version, which
 // contiguity alone misses.
 func TestMigrationsUniquePrefixes(t *testing.T) {
-	files := loadMigrations(t)
+	files := LoadMigrations(t)
 	seen := make(map[int64]string, len(files))
 	for _, f := range files {
-		if other, dup := seen[f.version]; dup {
-			t.Errorf("duplicate migration prefix %05d: %s and %s", f.version, other, f.name)
+		if other, dup := seen[f.Version]; dup {
+			t.Errorf("duplicate migration prefix %05d: %s and %s", f.Version, other, f.Name)
 		}
-		seen[f.version] = f.name
+		seen[f.Version] = f.Name
 	}
 }
 
@@ -123,10 +131,10 @@ func TestMigrationsUniquePrefixes(t *testing.T) {
 // fail: every existing migration has Up today and every future migration
 // must too.
 func TestMigrationsGooseUpDirective(t *testing.T) {
-	files := loadMigrations(t)
+	files := LoadMigrations(t)
 	for _, f := range files {
-		if !hasDirective(t, f.name, "-- +goose Up") {
-			t.Errorf("%s: missing '-- +goose Up' directive; goose will silently skip the file", f.name)
+		if !hasDirective(t, f.Name, "-- +goose Up") {
+			t.Errorf("%s: missing '-- +goose Up' directive; goose will silently skip the file", f.Name)
 		}
 	}
 }
@@ -138,10 +146,10 @@ func TestMigrationsGooseUpDirective(t *testing.T) {
 // doesn't fail the test. Promote to t.Errorf once all migrations have
 // Down (or backfill the missing directives in a separate PR).
 func TestMigrationsGooseDownDirective(t *testing.T) {
-	files := loadMigrations(t)
+	files := LoadMigrations(t)
 	for _, f := range files {
-		if !hasDirective(t, f.name, "-- +goose Down") {
-			t.Logf("%s: missing '-- +goose Down' directive (warn-only; backfill when convenient)", f.name)
+		if !hasDirective(t, f.Name, "-- +goose Down") {
+			t.Logf("%s: missing '-- +goose Down' directive (warn-only; backfill when convenient)", f.Name)
 		}
 	}
 }
@@ -153,14 +161,14 @@ func TestMigrationsGooseDownDirective(t *testing.T) {
 // fails. Forward-looking — no existing migration has the comment, so
 // the rule is dormant until a contributor opts in.
 func TestMigrationsFilenameMatchesComment(t *testing.T) {
-	files := loadMigrations(t)
+	files := LoadMigrations(t)
 	for _, f := range files {
-		got := readFirstFilenameComment(t, f.name)
+		got := readFirstFilenameComment(t, f.Name)
 		if got == "" {
 			continue // additive: no comment, no rule
 		}
-		if got != f.name {
-			t.Errorf("%s: header comment '-- filename: %s' does not match actual filename %q", f.name, got, f.name)
+		if got != f.Name {
+			t.Errorf("%s: header comment '-- filename: %s' does not match actual filename %q", f.Name, got, f.Name)
 		}
 	}
 }
@@ -169,14 +177,23 @@ func TestMigrationsFilenameMatchesComment(t *testing.T) {
 // as a non-blank line within the first 20 lines. 20 is generous enough to
 // catch a directive preceded by a copyright header but bounded so a SQL
 // line containing "-- +goose Up" deep inside a migration doesn't count.
-// Exact match is required — goose is case-insensitive at runtime but the
-// repo convention is exact-case, and enforcing that here keeps the
-// convention crisp.
+// Exact match is required. Note: goose's parser (v3.27.2
+// internal/sqlparser/parser.go:319 extractAnnotation via strings.EqualFold)
+// is case-insensitive at runtime, but the repo convention is exact-case
+// and we enforce that here to keep the convention crisp. Migrating the
+// test to case-insensitive match is a deliberate non-goal: case-correct
+// directives read more uniformly in diffs and reviews.
+//
+// On read failure the helper reports via t.Errorf and returns false
+// instead of t.Fatalf — the caller is in a per-file loop and a single
+// unreadable file should not abort the sweep. (Reads can't realistically
+// fail against an embed.FS at runtime; this is defence-in-depth.)
 func hasDirective(t *testing.T, name, directive string) bool {
 	t.Helper()
 	data, err := fs.ReadFile(FS, name)
 	if err != nil {
-		t.Fatalf("read %s: %v", name, err)
+		t.Errorf("read %s: %v", name, err)
+		return false
 	}
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for i := 0; i < 20 && scanner.Scan(); i++ {
@@ -191,11 +208,16 @@ func hasDirective(t *testing.T, name, directive string) bool {
 // "-- filename: …" comment and returns the captured filename, or ""
 // if none is found. Anchored to line start with optional leading
 // whitespace ignored.
+//
+// On read failure the helper reports via t.Errorf and returns "" so
+// the caller's per-file loop continues. (See hasDirective for the
+// reasoning on t.Errorf vs t.Fatalf here.)
 func readFirstFilenameComment(t *testing.T, name string) string {
 	t.Helper()
 	data, err := fs.ReadFile(FS, name)
 	if err != nil {
-		t.Fatalf("read %s: %v", name, err)
+		t.Errorf("read %s: %v", name, err)
+		return ""
 	}
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for i := 0; i < 10 && scanner.Scan(); i++ {

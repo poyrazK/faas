@@ -14,9 +14,6 @@ package migrations_test
 
 import (
 	"context"
-	"io/fs"
-	"regexp"
-	"strconv"
 	"testing"
 
 	"github.com/onebox-faas/faas/migrations"
@@ -24,12 +21,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-var migrationNameRe = regexp.MustCompile(`^(\d+)_.+\.sql$`)
-
 // TestMigrationsApplyAndWalk runs the full migration set against a fresh
 // per-test schema and walks the resulting goose_db_version table.
 //
-// Two assertions:
+// Three assertions:
 //
 //  1. row_count == max(version_id) for applied rows — a gap in the
 //     version sequence would mean a row was inserted out of order, which
@@ -40,6 +35,11 @@ var migrationNameRe = regexp.MustCompile(`^(\d+)_.+\.sql$`)
 //     findMissingMigrations-style failures that embed_test.go misses (e.g.,
 //     a future migration whose SQL fails to apply, leaving the version
 //     table short of the filename set).
+//  3. applied row count (minus the v0 sentinel) == number of embedded
+//     migration files — every migration present on disk must have been
+//     applied to the schema. Catches the silent-skip failure mode where
+//     a file's `-- +goose Up` directive was malformed and the SQL was
+//     never executed.
 //
 // On developer laptops without Postgres the test skips via pgtest.Open's
 // t.Skipf path — no Docker required.
@@ -56,6 +56,12 @@ func TestMigrationsApplyAndWalk(t *testing.T) {
 	// migration — so for N migrations applied the table holds N+1 rows
 	// and MAX(version_id) == N. A gap in the version sequence manifests
 	// as MAX(version_id) < (nRows - 1), not as a row-count mismatch.
+	//
+	// The WHERE is_applied filter is deliberate: goose keeps a row with
+	// is_applied=false for the migration it's currently working on (the
+	// "started but not committed" state). Those rows are an internal
+	// implementation detail of goose's transactional apply path and
+	// shouldn't influence a contiguity sanity check.
 	var nRows, maxVer int64
 	if err := pool.QueryRow(ctx,
 		"SELECT COUNT(*), COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied",
@@ -66,49 +72,28 @@ func TestMigrationsApplyAndWalk(t *testing.T) {
 		t.Errorf("goose_db_version row count %d != max(version_id) %d + 1: hole in the applied version sequence (the +1 is the version=0 sentinel goose inserts at table creation)", nRows, maxVer)
 	}
 
-	// Highest embedded prefix — derived the same way embed_test.go does.
-	entries, err := fs.ReadDir(migrations.FS, ".")
-	if err != nil {
-		t.Fatalf("read embedded migrations: %v", err)
+	// Pull the parsed embedded set from the shared helper. Reusing
+	// migrations.LoadMigrations keeps filename-parsing rules identical
+	// between the static and apply-and-walk tests — if the convention
+	// ever changes (e.g. dropping the leading digits), both packages
+	// see the change in lockstep.
+	files := migrations.LoadMigrations(t)
+	if len(files) == 0 {
+		t.Fatal("no embedded migrations; embed.go is empty?")
 	}
-	var highest int64
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		m := migrationNameRe.FindStringSubmatch(e.Name())
-		if m == nil {
-			continue
-		}
-		v, err := strconv.ParseInt(m[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		if v > highest {
-			highest = v
-		}
-	}
+	highest := files[len(files)-1].Version
+	highestName := files[len(files)-1].Name
 
 	if maxVer != highest {
-		t.Errorf("goose_db_version max(version_id) = %d, but embedded migration set's highest prefix = %d; they must agree", maxVer, highest)
+		t.Errorf("goose_db_version max(version_id) = %d, but embedded migration set's highest prefix is %s (version %d); they must agree", maxVer, highestName, highest)
 	}
 
 	// Sanity assertion: every embedded migration is accounted for. The
 	// embedded set has no version=0 row, but goose's table does (the
-	// createVersionTable sentinel) — so we compare embeddedVersions
+	// createVersionTable sentinel) — so we compare len(files)
 	// against (nRows - 1). A future migration whose SQL failed to
-	// apply would leave (nRows - 1) short of embeddedVersions.
-	var embeddedVersions int64
-	for _, e := range entries {
-		m := migrationNameRe.FindStringSubmatch(e.Name())
-		if m == nil {
-			continue
-		}
-		if _, err := strconv.ParseInt(m[1], 10, 64); err == nil {
-			embeddedVersions++
-		}
-	}
-	if nRows-1 != embeddedVersions {
-		t.Errorf("goose_db_version applied rows - 1 (sentinel) = %d, embedded migration count = %d; some migrations failed to apply silently", nRows-1, embeddedVersions)
+	// apply would leave (nRows - 1) short of len(files).
+	if nRows-1 != int64(len(files)) {
+		t.Errorf("goose_db_version applied rows - 1 (sentinel) = %d, embedded migration count = %d; some migrations failed to apply silently", nRows-1, len(files))
 	}
 }

@@ -281,5 +281,11 @@ jobs:
           cache-dependency-path: go.sum
       - name: migrations check (static)
         run: make migrations-check
+      # No `-tags no_pg` here on purpose: apply_walk_test.go carries
+      # `//go:build !no_pg`, so the static-only `make migrations-check`
+      # step skips it and this step picks it up. The `-run` filter
+      # narrows to the single apply test; the five static tests live
+      # in embed_test.go and are not built under `!no_pg` exclusion
+      # here because their package has no build tag.
       - name: migrations apply-and-walk
         run: go test -race -count=1 -v -run TestMigrationsApplyAndWalk ./migrations/...
