@@ -85,7 +85,7 @@ test: ## Unit tests — must pass on any machine, no KVM needed
 
 .PHONY: migrations-check
 migrations-check: ## Static migration-contiguity check (no Postgres needed) — PR #93 follow-up
-	$(GO) test -race -count=1 -run 'TestMigrations' ./migrations/...
+	$(GO) test -tags no_pg -race -count=1 -run 'TestMigrations' ./migrations/...
 
 .PHONY: test-load
 test-load: ## Hot-path load test (1k rps, //go:build load) — spec §14 M4 row 2. Needs ≥ 2 vCPU.

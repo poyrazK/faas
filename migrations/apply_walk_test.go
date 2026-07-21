@@ -51,16 +51,19 @@ func TestMigrationsApplyAndWalk(t *testing.T) {
 		t.Fatalf("db.MigrateUp: %v (this is the failure mode that bit PR #93's deploy: a missing migration slot between 1 and max(version))", err)
 	}
 
-	// Walk goose_db_version: row count must equal max version (no holes),
-	// and max version must equal the highest prefix in the embedded set.
+	// Walk goose_db_version. Goose creates a sentinel row (version_id=0,
+	// is_applied=true) on first table creation, then one row per applied
+	// migration — so for N migrations applied the table holds N+1 rows
+	// and MAX(version_id) == N. A gap in the version sequence manifests
+	// as MAX(version_id) < (nRows - 1), not as a row-count mismatch.
 	var nRows, maxVer int64
 	if err := pool.QueryRow(ctx,
 		"SELECT COUNT(*), COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied",
 	).Scan(&nRows, &maxVer); err != nil {
 		t.Fatalf("query goose_db_version: %v", err)
 	}
-	if nRows != maxVer {
-		t.Errorf("goose_db_version row count %d != max(version_id) %d: hole in the version sequence", nRows, maxVer)
+	if nRows != maxVer+1 {
+		t.Errorf("goose_db_version row count %d != max(version_id) %d + 1: hole in the applied version sequence (the +1 is the version=0 sentinel goose inserts at table creation)", nRows, maxVer)
 	}
 
 	// Highest embedded prefix — derived the same way embed_test.go does.
@@ -90,10 +93,11 @@ func TestMigrationsApplyAndWalk(t *testing.T) {
 		t.Errorf("goose_db_version max(version_id) = %d, but embedded migration set's highest prefix = %d; they must agree", maxVer, highest)
 	}
 
-	// Sanity assertion: every embedded migration is accounted for. We
-	// recompute the count of distinct versions in the embedded set and
-	// require it to equal nRows — a future migration whose SQL failed
-	// to apply would leave nRows short.
+	// Sanity assertion: every embedded migration is accounted for. The
+	// embedded set has no version=0 row, but goose's table does (the
+	// createVersionTable sentinel) — so we compare embeddedVersions
+	// against (nRows - 1). A future migration whose SQL failed to
+	// apply would leave (nRows - 1) short of embeddedVersions.
 	var embeddedVersions int64
 	for _, e := range entries {
 		m := migrationNameRe.FindStringSubmatch(e.Name())
@@ -104,7 +108,7 @@ func TestMigrationsApplyAndWalk(t *testing.T) {
 			embeddedVersions++
 		}
 	}
-	if nRows != embeddedVersions {
-		t.Errorf("goose_db_version applied rows = %d, embedded migration count = %d; some migrations failed to apply silently", nRows, embeddedVersions)
+	if nRows-1 != embeddedVersions {
+		t.Errorf("goose_db_version applied rows - 1 (sentinel) = %d, embedded migration count = %d; some migrations failed to apply silently", nRows-1, embeddedVersions)
 	}
 }
