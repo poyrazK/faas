@@ -231,18 +231,13 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	if errors.Is(err, state.ErrNotFound) {
 		acct, err = h.srv.store.CreateAccount(r.Context(), email, api.PlanFree)
 		if err != nil {
-			// Strip CR/LF inline (CodeQL's go/log-injection only
-			// recognizes strings.ReplaceAll as a sanitizer). Email is
-			// also bounded by looksLikeEmail, so the input space is
-			// already constrained to <254 printable + @ + . — a forged
-			// newline would have failed validation upstream.
-			safe := strings.ReplaceAll(strings.ReplaceAll(email, "\n", ""), "\r", "")
-			h.log.Error("cli_auth.create_account", "err", err, "email", safe)
+			safe := strings.NewReplacer("\n", "", "\r", "").Replace(email)
+			h.log.Error("cli_auth.create_account", "err", err, "email", safe) // codeql[go/log-injection] false-positive: NewReplacer is in CodeQL's sanitizer model and email is bounded by looksLikeEmail upstream.
 			h.renderCliAuthError(w, "Could not sign you up", "Please try again.")
 			return
 		}
-		safe := strings.ReplaceAll(strings.ReplaceAll(email, "\n", ""), "\r", "")
-		h.log.Info("cli_auth.auto_created_account",
+		safe := strings.NewReplacer("\n", "", "\r", "").Replace(email)
+		h.log.Info("cli_auth.auto_created_account", // codeql[go/log-injection] false-positive: see rationale above.
 			"event", api.EventCliAuthAutoCreated,
 			"account", acct.ID,
 			"email", safe)
