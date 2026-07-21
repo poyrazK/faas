@@ -138,16 +138,28 @@ ok "PostgreSQL configured"
 step "Configuring UFW firewall (spec §11 — only gatewayd :8080 + SSH are public)"
 # Default-deny incoming, default-allow outgoing. Loopback is unaffected, so the
 # CD smoke test (curl 127.0.0.1:8080/healthz) keeps working.
-ufw --force reset > /dev/null
-ufw default deny incoming > /dev/null
-ufw default allow outgoing > /dev/null
+#
+# Configure the firewall BEFORE we start any service so there's no window
+# where e.g. apid is bound 0.0.0.0:8081 without a firewall in front of it
+# (issue #85, PR 2).
+#
+# Idempotency: we do NOT `ufw --force reset` on a re-bootstrap — that would
+# silently drop any operator-added rules (e.g. 443/tcp added for TLS).
+# `ufw allow` is itself idempotent; defaults are only applied on a fresh
+# install (UFW inactive).
+if ! ufw status 2>/dev/null | grep -q "Status: active"; then
+  ufw --force reset > /dev/null
+  ufw default deny incoming > /dev/null
+  ufw default allow outgoing > /dev/null
+  ok "UFW defaults: deny incoming, allow outgoing"
+fi
 ufw allow 22/tcp > /dev/null       # SSH (DigitalOcean console fallback)
 ufw allow 8080/tcp > /dev/null     # gatewayd — the only public listener
+ufw --force enable > /dev/null
+ok "UFW active: 22/tcp + 8080/tcp allowed"
 # NOTE: TLS production deployments additionally need 443/tcp + 80/tcp (ACME
 # http-01); the README "Production / TLS" section walks the operator through
 # adding those after pointing a real domain at the droplet.
-ufw --force enable > /dev/null
-ok "UFW active: default deny + 22/tcp + 8080/tcp"
 
 # ─── 7. Clone / update source ────────────────────────────────────────────────
 step "Fetching source code"
@@ -208,11 +220,19 @@ ok "sealed.env created (session key + dev token generated)"
 # never ends up in stdout (which systemd-journal captures), in agent logs,
 # or in a shared terminal scrollback (issue #85, PR 2). apid reads the same
 # value from /etc/faas/sealed.env on boot.
+#
+# Re-bootstrap overwrites this file with the new token (rotation). The
+# prior token's hash remains valid in PG until FAAS_DEV_TOKEN in sealed.env
+# is rotated back, so a careless re-bootstrap does not invalidate a still-
+# issued token. The timestamp line lets the operator tell rotations apart
+# when reading the file later.
 CRED_FILE="/root/faas-dev-credentials.txt"
 {
   echo "# FaaS dev credentials — mode 0600, root:root. Do NOT commit."
-  echo "# Rotate via: ssh root@${DROPLET_IP} 'openssl rand -hex 24' + edit /etc/faas/sealed.env"
-  echo "FAAS_DEV_TOKEN=${DEV_TOKEN}"
+  echo "# This file is overwritten on every bootstrap (token rotation)."
+  echo "# Authoritative value lives in /etc/faas/sealed.env."
+  echo "# To rotate without re-bootstrapping: see README 'Post-merge operator actions'."
+  echo "FAAS_DEV_TOKEN=${DEV_TOKEN}  # generated $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "${CRED_FILE}"
 chmod 0600 "${CRED_FILE}"
 ok "Dev credentials written to ${CRED_FILE}"
@@ -235,15 +255,16 @@ ok "Migrations applied"
 # ─── 12. Generate deploy SSH key ─────────────────────────────────────────────
 step "Generating deploy SSH key"
 mkdir -p "$(dirname "${DEPLOY_KEY_PATH}")"
+# Defensive ownership on the directory regardless of which branch runs
+# (issue #85, PR 2 — review nit #6).
+chown -R root:root "$(dirname "${DEPLOY_KEY_PATH}")"
+chmod 0700 "$(dirname "${DEPLOY_KEY_PATH}")"
 if [[ ! -f "${DEPLOY_KEY_PATH}" ]]; then
   ssh-keygen -t ed25519 -N '' -C 'faas-cd-deploy' -f "${DEPLOY_KEY_PATH}"
   # Add to authorized_keys for root
   mkdir -p /root/.ssh && chmod 700 /root/.ssh
   cat "${DEPLOY_KEY_PATH}.pub" >> /root/.ssh/authorized_keys
   chmod 600 /root/.ssh/authorized_keys
-  # Defensive ownership on the directory we just created (issue #85, PR 2).
-  chown -R root:root "$(dirname "${DEPLOY_KEY_PATH}")"
-  chmod 0700 "$(dirname "${DEPLOY_KEY_PATH}")"
   ok "Deploy key generated. Retrieve it (do NOT echo to stdout / logs):"
   echo "  scp root@${DROPLET_IP}:${DEPLOY_KEY_PATH} ./do_ssh_key"
   echo "  # then paste the contents into the GitHub DO_SSH_KEY secret."

@@ -54,7 +54,9 @@ The script:
 # From the Droplet
 curl http://127.0.0.1:8080/healthz                              # gatewayd → apid
 curl http://127.0.0.1:9090/healthz                              # gatewayd control
-TOKEN=$(sudo grep FAAS_DEV_TOKEN /root/faas-dev-credentials.txt | cut -d= -f2)
+# awk strips the trailing "  # generated <ts>" comment so the bare token
+# is what reaches the Authorization header.
+TOKEN=$(awk -F= '/^FAAS_DEV_TOKEN=/{print $2; exit}' /root/faas-dev-credentials.txt | awk '{print $1}')
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/v1/account
 
 # From your laptop
@@ -234,10 +236,24 @@ scp root@<DROPLET_IP>:/opt/faas/.ssh/deploy_ed25519 ./do_ssh_key
 ssh-keyscan -R <DROPLET_IP> 2>/dev/null || true
 ```
 
-The old key remains authorized on the droplet until you `ssh-keygen -R`
-or remove it from `/root/.ssh/authorized_keys` by hand. Removing it is
-optional — DO allows multiple authorized keys, and a now-rotated-out
-key with `restrict` in `authorized_keys` is harmless.
+The old key remains authorized on the droplet until you remove it from
+`/root/.ssh/authorized_keys` by hand. **This step is required, not optional**:
+once a private key has been printed in any log, treat it as exposed and
+yank the corresponding public key from `authorized_keys`. Leaving an old
+key authorized means anyone with the leaked private key still has shell:
+
+```bash
+# 5. On the droplet, remove the old public key from authorized_keys.
+ssh root@<DROPLET_IP>
+# Find the line matching the old comment ('faas-cd-deploy') and delete it.
+# Don't blanket-delete authorized_keys — other keys may be in there.
+ssh-keygen -y -f /opt/faas/.ssh/deploy_ed25519.pub   # confirm the new pubkey
+grep -n 'faas-cd-deploy' /root/.ssh/authorized_keys  # locate old entries
+# Manually edit /root/.ssh/authorized_keys and remove every line whose
+# comment starts with 'faas-cd-deploy' (excluding the one you just rotated
+# in). Then:
+systemctl reload sshd   # or: service ssh reload
+```
 
 ### Rotate the dev API token
 
@@ -250,7 +266,15 @@ you want to rotate without re-running bootstrap:
 ssh root@<DROPLET_IP>
 NEW_TOKEN="fp_live_$(openssl rand -hex 24)"
 sudo sed -i "s/^FAAS_DEV_TOKEN=.*/FAAS_DEV_TOKEN=${NEW_TOKEN}/" /etc/faas/sealed.env
-echo "FAAS_DEV_TOKEN=${NEW_TOKEN}" | sudo tee -a /root/faas-dev-credentials.txt
+# Mirror the format bootstrap.sh writes — overwrite the file with the
+# new token + a rotation timestamp so future readers can tell when it
+# changed.
+sudo tee /root/faas-dev-credentials.txt > /dev/null <<EOF
+# FaaS dev credentials — mode 0600, root:root. Do NOT commit.
+# Authoritative value lives in /etc/faas/sealed.env.
+FAAS_DEV_TOKEN=${NEW_TOKEN}  # rotated $(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+sudo chmod 0600 /root/faas-dev-credentials.txt
 sudo systemctl restart faas-apid
 ```
 
