@@ -290,13 +290,13 @@ type callCountingBuilder struct{ calls int }
 func (b *callCountingBuilder) Build(_ context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error) {
 	return rootfs.BuildResult{ImageKey: in.StorageKey}, nil
 }
-func (b *callCountingBuilder) BuildBase(_ context.Context, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
+func (b *callCountingBuilder) BuildBase(ctx context.Context, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
 	b.calls++
 	if in.Storage != nil && in.StorageKey != "" {
 		// Mimic BuildBase's behaviour: produce a (small) placeholder and
 		// Put it to the storage key so the storage backend's byte stream
 		// is non-empty (skipping the empty-byte rejection in LocalStorageBackend).
-		_ = in.Storage.Put(context.Background(), in.StorageKey, bytes.NewReader([]byte("fake ext4")))
+		_ = in.Storage.Put(ctx, in.StorageKey, bytes.NewReader([]byte("fake ext4")))
 	}
 	return rootfs.BaseBuildResult{ImageKey: in.StorageKey}, nil
 }

@@ -206,6 +206,9 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 	if err := b.run.Run(ctx, MkfsCommand(staging, tmpPath, sizeMB)); err != nil {
 		return fmt.Errorf("rootfs: mkfs: %w", err)
 	}
+	// nolint:forbidigo // tmpPath is from os.MkdirTemp at the top of
+	// this function — a daemon-internal scratch file the builder just
+	// wrote via MkfsCommand. Not a customer path.
 	f, err := os.Open(tmpPath)
 	if err != nil {
 		return fmt.Errorf("rootfs: open mkfs output: %w", err)

@@ -103,7 +103,7 @@ type fakeBuilder struct {
 	buildErr error
 }
 
-func (b *fakeBuilder) Build(_ context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error) {
+func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error) {
 	b.calls = append(b.calls, in)
 	if b.buildErr != nil {
 		return rootfs.BuildResult{}, b.buildErr
@@ -115,7 +115,7 @@ func (b *fakeBuilder) Build(_ context.Context, in rootfs.BuildInput) (rootfs.Bui
 	// rejection in LocalStorageBackend. Legacy OutImage path is also
 	// supported for tests that still exercise it.
 	if in.Storage != nil && in.StorageKey != "" {
-		if err := in.Storage.Put(context.Background(), in.StorageKey, strings.NewReader("fake ext4")); err != nil {
+		if err := in.Storage.Put(ctx, in.StorageKey, strings.NewReader("fake ext4")); err != nil {
 			return rootfs.BuildResult{}, err
 		}
 		return rootfs.BuildResult{
@@ -145,10 +145,10 @@ func (b *fakeBuilder) Build(_ context.Context, in rootfs.BuildInput) (rootfs.Bui
 // (spec §Conventions: unit tests pass on any machine); it mirrors
 // the production behaviour by streaming a small placeholder into the
 // storage backend under StorageKey.
-func (b *fakeBuilder) BuildBase(_ context.Context, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
+func (b *fakeBuilder) BuildBase(ctx context.Context, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
 	b.calls = append(b.calls, rootfs.BuildInput{Plan: api.PlanScale})
 	if in.Storage != nil && in.StorageKey != "" {
-		if err := in.Storage.Put(context.Background(), in.StorageKey, strings.NewReader("fake ext4")); err != nil {
+		if err := in.Storage.Put(ctx, in.StorageKey, strings.NewReader("fake ext4")); err != nil {
 			return rootfs.BaseBuildResult{}, err
 		}
 		return rootfs.BaseBuildResult{ImageKey: in.StorageKey, SizeBytes: b.bytesOut}, nil

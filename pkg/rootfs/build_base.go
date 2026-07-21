@@ -122,6 +122,9 @@ func (b *Builder) publishBaseExt4(ctx context.Context, in BaseBuildInput, stagin
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("rootfs: base mkfs: %w", err)
 	}
+	// nolint:forbidigo // tmpPath is from os.MkdirTemp at the top of
+	// this function — a daemon-internal scratch file the builder just
+	// wrote via MkfsCommand. Not a customer path.
 	f, err := os.Open(tmpPath)
 	if err != nil {
 		_ = os.Remove(tmpPath)

@@ -168,6 +168,11 @@ func (l *LocalStorageBackend) Get(ctx context.Context, key string) (io.ReadClose
 	if err != nil {
 		return nil, err
 	}
+	// nolint:forbidigo // `full` is the post-join absolute path under the
+	// backend's vetted root; validateKey + the post-join containment check
+	// in join() guarantee no customer-input symlink traversal is possible.
+	// The customer-path guard in openCustomerFile is for paths derived from
+	// cli args; storage keys flow through the same validateKey contract.
 	f, err := os.Open(full)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

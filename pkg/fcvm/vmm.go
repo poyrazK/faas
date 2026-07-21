@@ -534,6 +534,11 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 	}
 
 	if spec.StorageKey != "" && v.storage != nil {
+		// nolint:forbidigo // spec.MemPath is the host path this very
+		// Snapshot call wrote via moveOut from a vetted chroot root
+		// (chrootBase/fcName/<instance>); vmmd is the sole writer and
+		// the openCustomerFile guard does not apply to daemons opening
+		// paths they just wrote themselves.
 		f, oerr := os.Open(spec.MemPath)
 		if oerr != nil {
 			// Best-effort: leave MemPath populated so the legacy

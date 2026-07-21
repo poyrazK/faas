@@ -8,7 +8,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
-	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // Base stage — imaged startup provisions the shared read-only drive0 used by
@@ -194,11 +193,4 @@ func (r *stringReaderImpl) Read(p []byte) (int, error) {
 	n := copy(p, r.s[r.off:])
 	r.off += n
 	return n, nil
-}
-
-// ensureBaseKeys computes the conventional (baseKey, digestKey) pair for
-// a runtime. Lives alongside EnsureBaseExt4 so the cmd/imaged caller
-// (and tests) don't have to repeat the storage key contract.
-func ensureBaseKeys(runtime string) (baseKey, digestKey string) {
-	return sched.BaseKey(runtime), sched.BaseDigestKey(runtime)
 }
