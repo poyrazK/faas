@@ -124,7 +124,7 @@ func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, instance string, app A
 	return f.outcome(instance, method, vmmdpb.WakeMethod_WAKE_RESTORE), nil
 }
 
-func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _ string) (SnapshotBytes, error) {
+func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _, _ string) (SnapshotBytes, error) {
 	if d := f.sleepFor; d > 0 {
 		select {
 		case <-time.After(d):

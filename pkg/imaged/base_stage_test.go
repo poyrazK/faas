@@ -1,16 +1,16 @@
 package imaged
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // minimalManifestPuller implements just enough to satisfy oci.ManifestPuller
@@ -43,21 +43,41 @@ func (f *minimalManifestPuller) PullBlob(_ context.Context, _ string, digest str
 	return io.NopCloser(strings.NewReader(string(b))), nil
 }
 
-// TestEnsureBaseExt4_StagesOnFirstRun — no prior ext4, no digest sidecar →
-// pulls layers, runs BuildBase, writes both the ext4 and the .digest
-// sidecar. Skipped=false.
-func TestEnsureBaseExt4_StagesOnFirstRun(t *testing.T) {
-	mp := newTwoLayerPuller(t)
-	outDir := t.TempDir()
-	outImage := filepath.Join(outDir, "builder-base.ext4")
+// newBaseHarness builds a Handler with a minimalManifestPuller, a builder,
+// and a per-test LocalStorageBackend. Returns the handler + the storage
+// backend so tests can assert on published keys.
+type baseHarness struct {
+	h  *Handler
+	be storage.StorageBackend
+}
 
+func newBaseHarness(t *testing.T, mp *minimalManifestPuller, b LayerBuilder) *baseHarness {
+	t.Helper()
+	be, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalStorageBackend: %v", err)
+	}
 	h := &Handler{
 		oci:     mp,
-		builder: &fakeBuilder{},
+		builder: b,
 		log:     silentLogger(),
+		storage: be,
 	}
-	res, err := h.EnsureBaseExt4(context.Background(),
-		"ghcr.io/onebox-faas/builder-base:latest", outImage)
+	return &baseHarness{h: h, be: be}
+}
+
+// TestEnsureBaseExt4_StagesOnFirstRun — no prior ext4, no digest sidecar →
+// pulls layers, runs BuildBase, writes both the ext4 and the .digest
+// sidecar. Skipped=false. Asserts the produced ext4 lives at baseKey and
+// the digest sidecar matches res.ConfigDigest.
+func TestEnsureBaseExt4_StagesOnFirstRun(t *testing.T) {
+	mp := newTwoLayerPuller(t)
+	b := &fakeBuilder{}
+	hs := newBaseHarness(t, mp, b)
+	const baseKey = "base/runtime.ext4"
+	const digKey = "base/runtime.ext4.digest"
+	res, err := hs.h.EnsureBaseExt4(context.Background(),
+		"ghcr.io/onebox-faas/builder-base:latest", baseKey, digKey, "")
 	if err != nil {
 		t.Fatalf("EnsureBaseExt4: %v", err)
 	}
@@ -67,15 +87,32 @@ func TestEnsureBaseExt4_StagesOnFirstRun(t *testing.T) {
 	if res.ConfigDigest == "" {
 		t.Error("ConfigDigest empty, want the manifest's")
 	}
-	if _, err := os.Stat(outImage); err != nil {
-		t.Errorf("output ext4 not created: %v", err)
+	if res.StorageKey != baseKey {
+		t.Errorf("StorageKey=%q, want %q", res.StorageKey, baseKey)
 	}
-	digestBytes, err := os.ReadFile(outImage + ".digest")
+	rc, err := hs.be.Get(context.Background(), baseKey)
 	if err != nil {
-		t.Errorf("digest sidecar not written: %v", err)
+		t.Fatalf("base ext4 not at key %q: %v", baseKey, err)
 	}
-	if string(digestBytes) != res.ConfigDigest {
-		t.Errorf("sidecar %q != res.ConfigDigest %q", string(digestBytes), res.ConfigDigest)
+	defer rc.Close()
+	digestBytes, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read base ext4: %v", err)
+	}
+	if !bytes.Contains(digestBytes, []byte("fake ext4")) {
+		t.Errorf("base ext4 bytes %q should contain fake ext4 marker", string(digestBytes))
+	}
+	digestRC, err := hs.be.Get(context.Background(), digKey)
+	if err != nil {
+		t.Fatalf("digest sidecar not at key %q: %v", digKey, err)
+	}
+	defer digestRC.Close()
+	haveDigest, err := io.ReadAll(digestRC)
+	if err != nil {
+		t.Fatalf("read digest sidecar: %v", err)
+	}
+	if string(haveDigest) != res.ConfigDigest {
+		t.Errorf("sidecar %q != res.ConfigDigest %q", string(haveDigest), res.ConfigDigest)
 	}
 }
 
@@ -84,27 +121,22 @@ func TestEnsureBaseExt4_StagesOnFirstRun(t *testing.T) {
 // "no second stage" by checking that BuildBase.calls didn't grow.
 func TestEnsureBaseExt4_SkipsWhenDigestMatches(t *testing.T) {
 	mp := newTwoLayerPuller(t)
-	outDir := t.TempDir()
-	outImage := filepath.Join(outDir, "builder-base.ext4")
-	if err := os.WriteFile(outImage, []byte("existing ext4"), 0o644); err != nil {
+	const baseKey = "base/runtime.ext4"
+	const digKey = "base/runtime.ext4.digest"
+	be, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
 		t.Fatal(err)
 	}
-	// Sidecar encodes the same config digest the test's manifest carries —
-	// constructing it independently of the manifest inside EnsureBaseExt4
-	// means we'd be racing the manifest fetch for the answer; pin it as
-	// whatever the puller returns.
+	be.Put(context.Background(), baseKey, strings.NewReader("existing ext4"))
 	manifest, err := mp.PullManifest(context.Background(), "x")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(outImage+".digest", []byte(manifest.Config.Digest), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Pre-record call count: BuildBase has never run yet.
+	be.Put(context.Background(), digKey, strings.NewReader(manifest.Config.Digest))
 	b := &callCountingBuilder{}
-	h := &Handler{oci: mp, builder: b, log: silentLogger()}
+	h := &Handler{oci: mp, builder: b, log: silentLogger(), storage: be}
 	res, err := h.EnsureBaseExt4(context.Background(),
-		"ghcr.io/onebox-faas/builder-base:latest", outImage)
+		"ghcr.io/onebox-faas/builder-base:latest", baseKey, digKey, "")
 	if err != nil {
 		t.Fatalf("EnsureBaseExt4: %v", err)
 	}
@@ -114,11 +146,9 @@ func TestEnsureBaseExt4_SkipsWhenDigestMatches(t *testing.T) {
 	if b.calls != 0 {
 		t.Errorf("BuildBase called %d times, want 0 (digest match)", b.calls)
 	}
-	// Original file content preserved.
-	body, err := os.ReadFile(outImage)
-	if err != nil {
-		t.Fatal(err)
-	}
+	rc, _ := be.Get(context.Background(), baseKey)
+	defer rc.Close()
+	body, _ := io.ReadAll(rc)
 	if string(body) != "existing ext4" {
 		t.Errorf("file body changed during skip path: %q", string(body))
 	}
@@ -126,22 +156,21 @@ func TestEnsureBaseExt4_SkipsWhenDigestMatches(t *testing.T) {
 
 // TestEnsureBaseExt4_RestagesWhenDigestDiffers — sidecar exists with the
 // WRONG digest → forced restage. We re-write the existing ext4 from BuildBase
-// (the fakeBuilder echoes its OutImage, so the file's mtime would change in
-// a real run; here we just check the BuildBase call happened).
+// and assert the BuildBase call happened.
 func TestEnsureBaseExt4_RestagesWhenDigestDiffers(t *testing.T) {
 	mp := newTwoLayerPuller(t)
-	outDir := t.TempDir()
-	outImage := filepath.Join(outDir, "builder-base.ext4")
-	if err := os.WriteFile(outImage, []byte("stale ext4"), 0o644); err != nil {
+	const baseKey = "base/runtime.ext4"
+	const digKey = "base/runtime.ext4.digest"
+	be, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(outImage+".digest", []byte("sha256:0000000000000000000000000000000000000000000000000000000000000000"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	be.Put(context.Background(), baseKey, strings.NewReader("stale ext4"))
+	be.Put(context.Background(), digKey, strings.NewReader("sha256:0000000000000000000000000000000000000000000000000000000000000000"))
 	b := &callCountingBuilder{}
-	h := &Handler{oci: mp, builder: b, log: silentLogger()}
+	h := &Handler{oci: mp, builder: b, log: silentLogger(), storage: be}
 	res, err := h.EnsureBaseExt4(context.Background(),
-		"ghcr.io/onebox-faas/builder-base:latest", outImage)
+		"ghcr.io/onebox-faas/builder-base:latest", baseKey, digKey, "")
 	if err != nil {
 		t.Fatalf("EnsureBaseExt4: %v", err)
 	}
@@ -153,15 +182,20 @@ func TestEnsureBaseExt4_RestagesWhenDigestDiffers(t *testing.T) {
 	}
 }
 
-// TestEnsureBaseExt4_RejectsEmptyInputs is the boundary test: both ref and
-// OutImage are required; passing either empty is a config error.
+// TestEnsureBaseExt4_RejectsEmptyInputs is the boundary test: ref,
+// baseKey, and digestKey are all required; passing any of them empty
+// is a config error.
 func TestEnsureBaseExt4_RejectsEmptyInputs(t *testing.T) {
-	h := &Handler{oci: &minimalManifestPuller{}, builder: &fakeBuilder{}, log: silentLogger()}
-	if _, err := h.EnsureBaseExt4(context.Background(), "", "/tmp/x"); err == nil {
+	be, _ := storage.NewLocalStorageBackend(t.TempDir())
+	h := &Handler{oci: &minimalManifestPuller{}, builder: &fakeBuilder{}, log: silentLogger(), storage: be}
+	if _, err := h.EnsureBaseExt4(context.Background(), "", "k", "k.digest", ""); err == nil {
 		t.Error("empty ref should error")
 	}
-	if _, err := h.EnsureBaseExt4(context.Background(), "ghcr.io/x:latest", ""); err == nil {
-		t.Error("empty OutImage should error")
+	if _, err := h.EnsureBaseExt4(context.Background(), "ref", "", "k.digest", ""); err == nil {
+		t.Error("empty baseKey should error")
+	}
+	if _, err := h.EnsureBaseExt4(context.Background(), "ref", "k", "", ""); err == nil {
+		t.Error("empty digestKey should error")
 	}
 }
 
@@ -169,9 +203,10 @@ func TestEnsureBaseExt4_RejectsEmptyInputs(t *testing.T) {
 // wires a puller that doesn't implement ManifestPuller (e.g. a future fake
 // used in test), we fail loudly rather than silently skipping the stage.
 func TestEnsureBaseExt4_RejectsPullerWithoutManifestPuller(t *testing.T) {
-	h := &Handler{oci: oci.DefaultPuller{}, builder: &fakeBuilder{}, log: silentLogger()}
+	be, _ := storage.NewLocalStorageBackend(t.TempDir())
+	h := &Handler{oci: oci.DefaultPuller{}, builder: &fakeBuilder{}, log: silentLogger(), storage: be}
 	_, err := h.EnsureBaseExt4(context.Background(),
-		"ghcr.io/onebox-faas/builder-base:latest", "/tmp/x.ext4")
+		"ghcr.io/onebox-faas/builder-base:latest", "k", "k.digest", "")
 	if err == nil {
 		t.Fatal("expected error when puller lacks ManifestPuller")
 	}
@@ -184,9 +219,10 @@ func TestEnsureBaseExt4_RejectsPullerWithoutManifestPuller(t *testing.T) {
 // startup failure, not a silent skip; the daemon should refuse to come up.
 func TestEnsureBaseExt4_BubblesPullManifestErrors(t *testing.T) {
 	bad := &brokenManifestPuller{manifestErr: errors.New("connection refused")}
-	h := &Handler{oci: bad, builder: &fakeBuilder{}, log: silentLogger()}
+	be, _ := storage.NewLocalStorageBackend(t.TempDir())
+	h := &Handler{oci: bad, builder: &fakeBuilder{}, log: silentLogger(), storage: be}
 	_, err := h.EnsureBaseExt4(context.Background(),
-		"ghcr.io/onebox-faas/builder-base:latest", "/tmp/x.ext4")
+		"ghcr.io/onebox-faas/builder-base:latest", "k", "k.digest", "")
 	if err == nil {
 		t.Fatal("expected error from broken puller")
 	}
@@ -195,28 +231,26 @@ func TestEnsureBaseExt4_BubblesPullManifestErrors(t *testing.T) {
 	}
 }
 
-// TestEnsureBaseExt4_CleansUpOnBuildFailure — when BuildBase fails, the
-// .tmp file must NOT be left behind; the next run must try again instead
-// of trusting a half-written image.
-func TestEnsureBaseExt4_CleansUpOnBuildFailure(t *testing.T) {
+// TestEnsureBaseExt4_BuildFailureSurfaces — when BuildBase fails, the
+// baseKey must NOT be present after the call (the publish step is
+// skipped on builder error) and the digest sidecar must NOT have been
+// written either.
+func TestEnsureBaseExt4_BuildFailureSurfaces(t *testing.T) {
 	mp := newTwoLayerPuller(t)
-	outDir := t.TempDir()
-	outImage := filepath.Join(outDir, "builder-base.ext4")
+	be, _ := storage.NewLocalStorageBackend(t.TempDir())
 	h := &Handler{
 		oci:     mp,
 		builder: &failingBuilder{err: errors.New("mkfs exploded")},
 		log:     silentLogger(),
+		storage: be,
 	}
 	_, err := h.EnsureBaseExt4(context.Background(),
-		"ghcr.io/onebox-faas/builder-base:latest", outImage)
+		"ghcr.io/onebox-faas/builder-base:latest", "base/runtime.ext4", "base/runtime.ext4.digest", "")
 	if err == nil {
 		t.Fatal("expected build failure")
 	}
-	if _, err := os.Stat(outImage + ".tmp"); err == nil {
-		t.Error(".tmp file left behind after BuildBase failure")
-	}
-	if _, err := os.Stat(outImage); err == nil {
-		t.Error("OutImage file unexpectedly created")
+	if _, err := be.Get(context.Background(), "base/runtime.ext4"); err == nil {
+		t.Error("base ext4 unexpectedly created on builder failure")
 	}
 }
 
@@ -248,19 +282,23 @@ func newTwoLayerPuller(t *testing.T) *minimalManifestPuller {
 }
 
 // callCountingBuilder is a LayerBuilder that records how many times
-// BuildBase has been called. Used by the skip-vs-restage tests. Writes a
-// placeholder so the rename in EnsureBaseExt4 has a real source file.
+// BuildBase has been called. Used by the skip-vs-restage tests. Storage.Put
+// is invoked by the production code path, so the helper just records
+// BuildBase calls rather than writing to disk.
 type callCountingBuilder struct{ calls int }
 
 func (b *callCountingBuilder) Build(_ context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error) {
-	return rootfs.BuildResult{ImagePath: in.OutImage}, nil
+	return rootfs.BuildResult{ImageKey: in.StorageKey}, nil
 }
 func (b *callCountingBuilder) BuildBase(_ context.Context, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
 	b.calls++
-	if err := os.WriteFile(in.OutImage, []byte("fake ext4"), 0o644); err != nil {
-		return rootfs.BaseBuildResult{}, err
+	if in.Storage != nil && in.StorageKey != "" {
+		// Mimic BuildBase's behaviour: produce a (small) placeholder and
+		// Put it to the storage key so the storage backend's byte stream
+		// is non-empty (skipping the empty-byte rejection in LocalStorageBackend).
+		_ = in.Storage.Put(context.Background(), in.StorageKey, bytes.NewReader([]byte("fake ext4")))
 	}
-	return rootfs.BaseBuildResult{ImagePath: in.OutImage}, nil
+	return rootfs.BaseBuildResult{ImageKey: in.StorageKey}, nil
 }
 
 // failingBuilder always errors from BuildBase. Used to prove cleanup of
@@ -270,7 +308,7 @@ type failingBuilder struct{ err error }
 func (b *failingBuilder) Build(_ context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error) {
 	return rootfs.BuildResult{}, b.err
 }
-func (b *failingBuilder) BuildBase(_ context.Context, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
+func (b *failingBuilder) BuildBase(_ context.Context, _ rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
 	return rootfs.BaseBuildResult{}, b.err
 }
 

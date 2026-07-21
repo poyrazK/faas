@@ -241,6 +241,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		mem, vmstate := snapshotPaths(bootInput.depID)
 		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.insID, bootInput.spec, SnapshotRef{
 			DeploymentID: bootInput.depID, MemPath: mem, VMStatePath: vmstate, FCVersion: bootInput.snapVer,
+			StorageKey: SnapshotMemKey(bootInput.depID),
 		})
 	} else {
 		out, err = e.vmm.CreateColdBoot(bootCtx, bootInput.insID, bootInput.spec)
@@ -549,6 +550,10 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 // emitting snapshot_written for imaged to record the row.
 func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error {
 	mem, vmstate := snapshotPaths(ins.DeploymentID)
+	// #96 / ADR-025 axis 2: the canonical storage key under which vmmd
+	// publishes the mem blob via the StorageBackend. Empty string keeps
+	// the legacy mem-path-only workflow intact (one-release window).
+	storageKey := SnapshotMemKey(ins.DeploymentID)
 	e.ledger.BeginSnapshot(ins.ID) // drops concurrency, keeps RAM (§6.2-1 excludes snapshotting)
 	// Stamp parked_at on entry into SNAPSHOTTING so the §6.1 watchdog
 	// (commit 3) has an "age of state" anchor for the row.
@@ -561,7 +566,7 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	}
 	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting)
 
-	b, err := e.vmm.PauseAndSnapshot(ctx, ins.ID, mem, vmstate)
+	b, err := e.vmm.PauseAndSnapshot(ctx, ins.ID, mem, vmstate, storageKey)
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake
 		// cold-boots (ADR-005). The app still has a cold-bootable rootfs (§6.2-3).
@@ -847,6 +852,7 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, memPath,
 		"deployment_id": deploymentID,
 		"mem_path":      memPath,
 		"vmstate_path":  vmstatePath,
+		"storage_key":   SnapshotMemKey(deploymentID),
 		"mem_bytes":     b.MemBytes,
 		"vmstate_bytes": b.VMStateBytes,
 		"fc_version":    e.fcVer,

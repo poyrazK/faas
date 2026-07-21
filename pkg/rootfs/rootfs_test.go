@@ -185,16 +185,36 @@ type fakeRunner struct{ argv []string }
 
 func (f *fakeRunner) Run(_ context.Context, argv []string) error { f.argv = argv; return nil }
 
+// mkfsFakeRunner mimics mkfs.ext4's behaviour for tests that need the
+// Storage-Put path to observe non-empty bytes. It writes a fixed
+// payload to the path mkfs argv's "outImage" arg points at, so the
+// downstream Storage.Put copies real bytes through.
+//
+// Production wiring uses wire.ExecRunner{}.Run with the real mkfs
+// binary; this fake exists so unit tests don't require e2fsprogs.
+type mkfsFakeRunner struct {
+	fill []byte
+	argv []string
+}
+
+func (f *mkfsFakeRunner) Run(_ context.Context, argv []string) error {
+	f.argv = argv
+	// Mkfs argv is {mkfs.ext4, -F, -L, label, -d, staging, outImage, sizeM}.
+	// outImage is the second-to-last arg.
+	out := argv[len(argv)-2]
+	return os.WriteFile(out, f.fill, 0o644)
+}
+
 func TestBuildProducesSizedLayer(t *testing.T) {
 	// A fake guest-init binary on disk.
 	gi := filepath.Join(t.TempDir(), "guest-init")
 	if err := os.WriteFile(gi, bytes.Repeat([]byte{0}, 1024), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	run := &fakeRunner{}
+	run := &mkfsFakeRunner{fill: []byte("FAKE-EXT4")}
 	b := NewBuilder(run)
+	be := newTestStorage(t)
 
-	out := filepath.Join(t.TempDir(), "layer.ext4")
 	res, err := b.Build(context.Background(), BuildInput{
 		Layers: []io.Reader{gzLayer(t, []entry{
 			{name: "app/", typeflag: tar.TypeDir},
@@ -203,7 +223,8 @@ func TestBuildProducesSizedLayer(t *testing.T) {
 		Manifest:      api.AppManifest{Entrypoint: []string{"node", "app/server.js"}},
 		GuestInitPath: gi,
 		Plan:          api.PlanFree,
-		OutImage:      out,
+		Storage:       be,
+		StorageKey:    "apps/slug/dep.ext4",
 	})
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -211,16 +232,14 @@ func TestBuildProducesSizedLayer(t *testing.T) {
 	if res.SizeMB < MinLayerMB {
 		t.Errorf("size %d below floor", res.SizeMB)
 	}
-	// mkfs was invoked with the right output + size.
-	line := ""
-	for _, a := range run.argv {
-		line += a + " "
-	}
 	if run.argv[0] != "mkfs.ext4" {
 		t.Errorf("expected mkfs.ext4, got %v", run.argv)
 	}
-	if run.argv[len(run.argv)-2] != out {
-		t.Errorf("mkfs output arg = %q, want %q", run.argv[len(run.argv)-2], out)
+	// The Storage path mkfs-es into a tmp file, NOT directly to OutImage;
+	// the published key is what callers observe. Storage must hold the
+	// produced ext4 at the requested key.
+	if _, err := be.Get(context.Background(), "apps/slug/dep.ext4"); err != nil {
+		t.Fatalf("storage Get after build: %v", err)
 	}
 }
 
@@ -238,7 +257,8 @@ func TestBuildRejectsOversizeApp(t *testing.T) {
 		Manifest:      api.AppManifest{Entrypoint: []string{"x"}},
 		GuestInitPath: gi,
 		Plan:          api.PlanFree,
-		OutImage:      filepath.Join(t.TempDir(), "layer.ext4"),
+		Storage:       newTestStorage(t),
+		StorageKey:    "apps/slug/dep.ext4",
 	})
 	if err == nil {
 		t.Fatal("oversize app should fail the build")
@@ -284,7 +304,8 @@ func TestBuildInjectsManifestAndInit(t *testing.T) {
 		Manifest:      api.AppManifest{Entrypoint: []string{"node", "x"}},
 		GuestInitPath: gi,
 		Plan:          api.PlanHobby,
-		OutImage:      filepath.Join(t.TempDir(), "layer.ext4"),
+		Storage:       newTestStorage(t),
+		StorageKey:    "apps/slug/dep.ext4",
 	})
 	if err != nil {
 		t.Fatal(err)

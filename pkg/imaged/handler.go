@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -21,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // Notifier is the minimal interface imaged needs from pkg/db. The real
@@ -68,6 +68,12 @@ type Handler struct {
 	// deployBaseRefOverride replaces the per-runtime base ref during
 	// aboveBaseLayers. See WithDeployBaseRef — test-only seam.
 	deployBaseRefOverride string
+	// storage is the artifact backend where per-app ext4 layers,
+	// snapshot blobs, base images, and kernel artifacts live (issue
+	// #96 / ADR-025 axis 2). Optional; when nil the handler falls back
+	// to a per-app LocalStorageBackend rooted at appsRoot so legacy
+	// callers keep working without rewiring New(...).
+	storage storage.StorageBackend
 }
 
 // New returns a Handler. The OCI puller is injected so tests can substitute
@@ -110,6 +116,48 @@ func (h *Handler) WithFunctionRunnerPython312(p string) *Handler {
 func (h *Handler) WithDeployBaseRef(ref string) *Handler {
 	h.deployBaseRefOverride = ref
 	return h
+}
+
+// WithStorage wires the artifact backend the handler publishes per-app
+// layers and base images to. Issue #96 / ADR-025 axis 2 — replaces the
+// direct appsRoot/<slug>/<depID>.ext4 write path in imaged with a
+// StorageBackend.Put under key "apps/<slug>/<depID>.ext4". Production
+// wiring lives in cmd/imaged (PrefixRouter composing apps- and fc-roots);
+// tests build a per-test LocalStorageBackend so assertions on the
+// published key stay hermetic. Calling WithStorage(nil) clears the
+// override and falls back to the appsRoot-derived default.
+func (h *Handler) WithStorage(s storage.StorageBackend) *Handler {
+	h.storage = s
+	return h
+}
+
+// storageFor returns the wired StorageBackend, building a default
+// per-appsRoot LocalStorageBackend on first use. The lazy-default keeps
+// existing callers — every test that never calls WithStorage — running
+// against the legacy path without a churn. production calls WithStorage
+// in cmd/imaged so the default is never exercised in prod.
+func (h *Handler) storageFor() storage.StorageBackend {
+	if h.storage != nil {
+		return h.storage
+	}
+	// Safe-by-default: NewLocalStorageBackend only errors on empty root or
+	// NUL bytes in the path (appsRoot is supplied by cmd/imaged and tests
+	// use t.TempDir()). Falling back to a nil backend would crash every
+	// Build call, which is the loud failure we want.
+	be, err := storage.NewLocalStorageBackend(h.appsRoot)
+	if err != nil {
+		panic(fmt.Sprintf("imaged: storageFor default backend: %v", err))
+	}
+	h.storage = be
+	return be
+}
+
+// appsRootPath returns the on-disk legacy path the legacy code path
+// stamped into deployments.rootfs_path. Used to keep the SetDeploymentRootfs
+// row contract identical to pre-#96 even when the new Storage path is
+// used to write the ext4.
+func (h *Handler) appsRootPath(slug, deploymentID string) string {
+	return filepath.Join(h.appsRoot, slug, deploymentID+".ext4")
 }
 
 // HandleNotification dispatches a single pg_notify payload. The Loop in
@@ -352,7 +400,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	// economics (CLAUDE.md "load-bearing — DO NOT fix"). The M5 fallback
 	// below streams all layers via oci.PullLayers for fakes that don't
 	// implement ManifestPuller.
-	outImage := filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
+	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
 	if mp, ok := h.oci.(oci.ManifestPuller); ok {
 		above, diffs, err := h.aboveBaseLayers(ctx, mp, dep.ImageDigest, app.Runtime, manifest)
 		if err != nil {
@@ -375,18 +423,19 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			Manifest:      manifest,
 			GuestInitPath: h.guestInitPath,
 			Plan:          acct.Plan,
-			OutImage:      outImage,
+			Storage:       h.storageFor(),
+			StorageKey:    appsKey,
 		})
 		if err != nil {
 			_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
 			return fmt.Errorf("imaged: build app layer: %w", err)
 		}
-		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
+		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), result.ContentBytes); err != nil {
 			_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
 			return fmt.Errorf("imaged: stamp rootfs: %w", err)
 		}
 		h.log.Info("imaged: build app layer (two-drive)",
-			"app", app.Slug, "digest", digest, "out", result.ImagePath,
+			"app", app.Slug, "digest", digest, "key", result.ImageKey,
 			"bytes", result.ContentBytes, "above_diff_ids", len(diffs))
 	} else {
 		// M5 fallback: stream all layers as-is. Used by fakes that only
@@ -407,17 +456,18 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			Manifest:      manifest,
 			GuestInitPath: h.guestInitPath,
 			Plan:          acct.Plan,
-			OutImage:      outImage,
+			Storage:       h.storageFor(),
+			StorageKey:    appsKey,
 		})
 		if err != nil {
 			_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
 			return fmt.Errorf("imaged: build app layer: %w", err)
 		}
-		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
+		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), result.ContentBytes); err != nil {
 			_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
 			return fmt.Errorf("imaged: stamp rootfs: %w", err)
 		}
-		h.log.Info("imaged: build app layer (m5 fallback)", "app", app.Slug, "digest", digest, "out", result.ImagePath, "bytes", result.ContentBytes)
+		h.log.Info("imaged: build app layer (m5 fallback)", "app", app.Slug, "digest", digest, "key", result.ImageKey, "bytes", result.ContentBytes)
 	}
 	return nil
 }
@@ -478,13 +528,14 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		return fmt.Errorf("imaged: validate manifest: %w", err)
 	}
 
-	outImage := filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
+	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
 	result, err := h.builder.Build(ctx, rootfs.BuildInput{
 		Layers:        layersAsReaders(nil), // function deploys use the tarball via BuildInput.Tarball
 		Manifest:      manifest,
 		GuestInitPath: h.guestInitPath,
 		Plan:          acct.Plan,
-		OutImage:      outImage,
+		Storage:       h.storageFor(),
+		StorageKey:    appsKey,
 		// TarballPath lets the rootfs.Builder stream the customer's
 		// source tarball into /app during layer assembly. Tests skip
 		// this by leaving TarballPath empty.
@@ -497,7 +548,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build function layer: "+err.Error())
 		return fmt.Errorf("imaged: build function layer: %w", err)
 	}
-	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, result.ImagePath, result.ContentBytes); err != nil {
+	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), result.ContentBytes); err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
 		return fmt.Errorf("imaged: stamp rootfs: %w", err)
 	}
@@ -924,18 +975,21 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup load app: %w", err)
 	}
-	// Per-app ext4 (drive1).
-	ext4 := dep.RootfsPath
-	if ext4 == "" {
-		ext4 = filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
-	}
-	if err := os.Remove(ext4); err != nil && !os.IsNotExist(err) {
-		h.log.Warn("imaged: cleanup ext4", "path", ext4, "err", err)
+	// Per-app ext4 (drive1). Storage.Delete swallows ErrNotFound; the
+	// legacy os.Remove-Warn check is preserved via the storage backend's
+	// own error wrapping.
+	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	if err := h.storageFor().Delete(ctx, appsKey); err != nil {
+		h.log.Warn("imaged: cleanup ext4", "key", appsKey, "err", err)
 	}
 	if !keepSnap {
-		dir := filepath.Join(sched.SnapDir(), dep.ID)
-		if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
-			h.log.Warn("imaged: cleanup snap dir", "path", dir, "err", err)
+		memKey := sched.SnapshotMemKey(dep.ID)
+		vmKey := sched.SnapshotVMStateKey(dep.ID)
+		if err := h.storageFor().Delete(ctx, memKey); err != nil {
+			h.log.Warn("imaged: cleanup snap mem", "key", memKey, "err", err)
+		}
+		if err := h.storageFor().Delete(ctx, vmKey); err != nil {
+			h.log.Warn("imaged: cleanup snap vmstate", "key", vmKey, "err", err)
 		}
 	}
 	return nil
@@ -962,22 +1016,20 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup list deployments: %w", err)
 	}
+	be := h.storageFor()
 	for _, d := range deps {
-		ext4 := d.RootfsPath
-		if ext4 == "" {
-			ext4 = filepath.Join(h.appsRoot, app.Slug, d.ID+".ext4")
+		appsKey := sched.AppLayerKey(app.Slug, d.ID)
+		if err := be.Delete(ctx, appsKey); err != nil {
+			h.log.Warn("imaged: app cleanup ext4", "key", appsKey, "err", err)
 		}
-		if err := os.Remove(ext4); err != nil && !os.IsNotExist(err) {
-			h.log.Warn("imaged: app cleanup ext4", "path", ext4, "err", err)
+		memKey := sched.SnapshotMemKey(d.ID)
+		vmKey := sched.SnapshotVMStateKey(d.ID)
+		if err := be.Delete(ctx, memKey); err != nil {
+			h.log.Warn("imaged: app cleanup snap mem", "key", memKey, "err", err)
 		}
-		dir := filepath.Join(sched.SnapDir(), d.ID)
-		if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
-			h.log.Warn("imaged: app cleanup snap dir", "path", dir, "err", err)
+		if err := be.Delete(ctx, vmKey); err != nil {
+			h.log.Warn("imaged: app cleanup snap vmstate", "key", vmKey, "err", err)
 		}
-	}
-	dir := filepath.Join(h.appsRoot, app.Slug)
-	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
-		h.log.Warn("imaged: app cleanup app dir", "path", dir, "err", err)
 	}
 	return nil
 }

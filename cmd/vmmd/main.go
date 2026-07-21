@@ -25,6 +25,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
@@ -124,9 +125,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	cbm := fcvm.NewColdBootMetrics()
+	// #96 / ADR-025 axis 2: vmmd publishes the mem blob via the configured
+	// StorageBackend after a successful Snapshot, and resolves it back
+	// from the key on Restore. FAAS_STORAGE_ROOT covers /srv/fc (snap/,
+	// base/, layers/, kernel/) — vmmd never writes app layers.
+	storageRoot := os.Getenv("FAAS_STORAGE_ROOT")
+	if storageRoot == "" {
+		storageRoot = "/srv/fc"
+	}
+	storageBackend, err := storage.NewLocalStorageBackend(storageRoot)
+	if err != nil {
+		return fmt.Errorf("vmmd: storage root %q: %w", storageRoot, err)
+	}
 	mgr := fcvm.NewManager(
 		wire.ExecRunner{},
-		fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second),
+		fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).WithStorage(storageBackend),
 		fcvm.Paths{Kernel: cfg.KernelPath},
 		fcVersion,
 		log,

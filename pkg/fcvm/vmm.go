@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // JailerVMM is the production VMM. It provisions a jail chroot, launches
@@ -38,6 +39,12 @@ type JailerVMM struct {
 	readyTimeout   time.Duration // WAKING/cold-boot readiness budget (spec §6)
 	destroyWait    time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
 	exportMaxBytes int64         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
+	// storage is the artifact backend where snapshot blobs live per
+	// #96 / ADR-025 axis 2. Restore resolves StorageKey → local tmp;
+	// Snapshot Streams the produced mem blob back through Storage.Put.
+	// Optional — when nil, Restore/Snapshot fall back to the legacy
+	// MemPath/VMStatePath branch unchanged.
+	storage storage.StorageBackend
 
 	mu      sync.Mutex
 	proc    map[string]*exec.Cmd // instance -> running jailer process
@@ -73,6 +80,19 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		clients:        make(map[string]*http.Client),
 		recs:           make(map[string]*instanceRecord),
 	}
+}
+
+// WithStorage wires the artifact backend the VMM uses for snapshot blob
+// (de)serialization. Issue #96 / ADR-025 axis 2 — when Restore carries a
+// StorageKey, the VMM streams the bytes through Storage.Get into a tmp
+// file and uses the absolute path for the chroot staging step. On
+// Snapshot, the produced mem blob is Put under the configured StorageKey
+// after the move-out. Calling WithStorage(nil) clears the override and
+// restores the legacy MemPath-only contract (one-release deprecation
+// window).
+func (v *JailerVMM) WithStorage(s storage.StorageBackend) *JailerVMM {
+	v.storage = s
+	return v
 }
 
 // resolveFCChrootName returns the directory name jailer will use for the chroot:
@@ -179,6 +199,21 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 			_ = v.Kill(context.WithoutCancel(ctx), l)
 		}
 	}()
+
+	// #96 / ADR-025 axis 2 — when the caller supplied a StorageKey, pull
+	// the bytes through the StorageBackend into a tmp file and substitute
+	// the absolute path into MemPath. The chroot staging steps below
+	// continue to consume host paths. Tmp cleanup happens in the
+	// deferred Kill (root lives on tmpfs and disappears with it).
+	if spec.StorageKey != "" && v.storage != nil {
+		memTmp, gerr := v.materializeFromStorage(ctx, spec.StorageKey)
+		if gerr != nil {
+			return gerr
+		}
+		if memTmp != "" {
+			spec.MemPath = memTmp
+		}
+	}
 
 	// Re-stage everything the snapshot's recorded VM state still references.
 	// Park→Kill (vmm.Kill) wiped the prior chroot, so the chroot-relative
@@ -459,6 +494,15 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 
 // Snapshot pauses the running VM, writes a full snapshot, copies the files out to
 // spec's durable paths, and destroys the VM (spec §4.4).
+//
+// #96 / ADR-025 axis 2 — when spec.StorageKey is set, the produced mem
+// blob is Put under it via the configured StorageBackend AFTER the
+// successful moveOut. The local driver maps "snap/<depID>/mem" to the
+// canonical /srv/fc/snap path so the Put is effectively a no-op bytewise
+// move; a future remote driver would actually stream the bytes. On Put
+// failure we leave MemPath populated so the legacy code path can still
+// recover the snapshot on the next read — the storage publish is best-
+// effort with a Warn log rather than a hard error.
 func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (SnapshotInfo, error) {
 	root := v.chrootRoot(l.Instance)
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
@@ -481,6 +525,23 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 	stateBytes, err := moveOut(filepath.Join(root, stateName), spec.VMStatePath)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: export vmstate: %w", err)
+	}
+
+	if spec.StorageKey != "" && v.storage != nil {
+		f, oerr := os.Open(spec.MemPath)
+		if oerr != nil {
+			// Best-effort: leave MemPath populated so the legacy
+			// caller still has the bytes. Log so an operator sees
+			// the missing Put.
+			slog.Default().Warn("vmm: snapshot storage open failed",
+				"key", spec.StorageKey, "err", oerr)
+		} else {
+			if perr := v.storage.Put(ctx, spec.StorageKey, f); perr != nil {
+				slog.Default().Warn("vmm: snapshot storage put failed",
+					"key", spec.StorageKey, "err", perr)
+			}
+			_ = f.Close()
+		}
 	}
 
 	// Snapshot semantics: the VM is destroyed after a successful snapshot.
@@ -1075,6 +1136,43 @@ func moveOut(src, dst string) (int64, error) {
 		return 0, err
 	}
 	return fi.Size(), nil
+}
+
+// materializeFromStorage pulls the bytes for key via the configured
+// StorageBackend and writes them into a fresh tmp file. Returns the
+// absolute path the caller should substitute into MemPath. The tmp
+// file is owned by the caller (must be Remove'd once Restore completes
+// the chroot staging). When storage is nil or key is empty, the helper
+// is a no-op and reports the keys were unused — Restore proceeds on
+// MemPath unchanged.
+//
+// #96 / ADR-025 axis 2 — single seam that lets the local driver satisfy
+// the call from /srv/fc/snap and a future remote driver from a registry.
+// The chroot staging layer never has to learn about storage.
+func (v *JailerVMM) materializeFromStorage(ctx context.Context, key string) (string, error) {
+	if v.storage == nil || key == "" {
+		return "", nil
+	}
+	rc, err := v.storage.Get(ctx, key)
+	if err != nil {
+		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
+	}
+	defer func() { _ = rc.Close() }()
+	tmp, err := os.CreateTemp("", "faas-snap-*.bin")
+	if err != nil {
+		return "", fmt.Errorf("vmm: create tmp for %q: %w", key, err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := io.Copy(tmp, rc); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("vmm: copy %q: %w", key, err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("vmm: close tmp for %q: %w", key, err)
+	}
+	return tmpPath, nil
 }
 
 //nolint:forbidigo // src/dst are vetted slot/instance-id paths under /srv/fc — vmmd is the sole writer of this directory; the tmpfs jail root means symlink-attack would require root (which vmmd already has, by spec §11). Copy is an internal migration helper, not a customer-path surface.

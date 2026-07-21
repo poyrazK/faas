@@ -66,3 +66,71 @@ func snapshotPaths(deploymentID string) (memPath, vmstatePath string) {
 	dir := snapDir + "/" + deploymentID
 	return dir + "/mem", dir + "/vmstate"
 }
+
+// --- Storage key helpers (issue #96 / ADR-025 axis 2) ---------------------
+//
+// Each helper returns a StorageBackend key (see pkg/storage) instead of
+// a host path. The helpers are the single source of truth so call sites
+// in imaged, vmmd, and sched agree on the canonical form. Keys map to
+// today's absolute paths 1:1 when the Production PrefixRouter is rooted
+// at /srv/fc with apps/ → /var/lib/faas/apps.
+//
+// The helpers live in sched (not storage) because they encode the
+// namespaced layout sched already owns in this file; introducing a new
+// package would have the same interface twice.
+
+// AppLayerKey returns the storage key for a per-app drive1 ext4 layer.
+// Mirrors the legacy <appsRoot>/<slug>/<deploymentID>.ext4 path; the
+// production PrefixRouter maps "apps/" to /var/lib/faas/apps.
+func AppLayerKey(slug, deploymentID string) string {
+	return "apps/" + slug + "/" + deploymentID + ".ext4"
+}
+
+// SnapshotMemKey returns the storage key for a deployment's snapshot mem
+// blob (the RAM state at Pause). Mirrors the legacy
+// <snapDir>/<deploymentID>/mem path.
+func SnapshotMemKey(deploymentID string) string {
+	return "snap/" + deploymentID + "/mem"
+}
+
+// SnapshotVMStateKey returns the storage key for a deployment's snapshot
+// vmstate blob (Firecracker microVM state file at Pause). Mirrors
+// <snapDir>/<deploymentID>/vmstate.
+func SnapshotVMStateKey(deploymentID string) string {
+	return "snap/" + deploymentID + "/vmstate"
+}
+
+// BaseKey returns the storage key for a runtime's shared drive0 base ext4
+// image. Mirrors the legacy <baseDir>/<runtime>.ext4 (e.g. base.ext4 for
+// plain apps).
+func BaseKey(runtime string) string {
+	if runtime == "" {
+		return "base/base.ext4"
+	}
+	return "base/runner-" + runtime + ".ext4"
+}
+
+// BaseDigestKey returns the storage key for a runtime's base-image
+// config digest sidecar. The sidecar is the immutable check on whether
+// the staged base ext4 needs re-pulling.
+func BaseDigestKey(runtime string) string {
+	if runtime == "" {
+		return "base/base.ext4.digest"
+	}
+	return "base/runner-" + runtime + ".ext4.digest"
+}
+
+// LayerKey returns the storage key for a deployment's drive1 layer in
+// the legacy location (<layerDir>/<deploymentID>.ext4). Kept so any
+// rows that still carry a layerDir-rooted path resolve identically
+// after #96.
+func LayerKey(deploymentID string) string {
+	return "layers/" + deploymentID + ".ext4"
+}
+
+// KernelKey returns the storage key for a firecracker kernel artifact
+// pinned to a firecracker version. vmmd fetches this on first boot of
+// the version.
+func KernelKey(fcVersion string) string {
+	return "kernel/" + fcVersion
+}

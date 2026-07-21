@@ -38,7 +38,7 @@ func (f *fakeWakeVMM) CreateColdBoot(_ context.Context, instanceID string, _ App
 func (f *fakeWakeVMM) CreateFromSnapshot(_ context.Context, _ string, _ AppSpec, _ SnapshotRef) (*WakeOutcome, error) {
 	return nil, errors.New("snapshot not available in test")
 }
-func (f *fakeWakeVMM) PauseAndSnapshot(_ context.Context, _ string, _, _ string) (SnapshotBytes, error) {
+func (f *fakeWakeVMM) PauseAndSnapshot(_ context.Context, _ string, _, _, _ string) (SnapshotBytes, error) {
 	return SnapshotBytes{}, nil
 }
 func (f *fakeWakeVMM) Destroy(_ context.Context, _ string) error { return nil }

@@ -10,10 +10,10 @@ package imaged
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // Loop is the imaged M8 daemon loop. cmd/imaged constructs it after wiring
@@ -259,13 +260,20 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 // deleteSnapshotsAndFiles is the shared cleanup helper. Takes the tuples
 // produced by perAppKeepCurrentPrevious / evictOldestFromHeaviestAccount;
 // each tuple carries the snap row id (for MarkOldSnapshotsStale /
-// DeleteSnapshotsByID), the deployment id (for the snap blob path under
-// sched.SnapDir()), and the app slug (for the per-app ext4 layer under
-// appsRoot). Marks the rows stale first so schedd's per-row freshness
-// check refuses them in the brief mark→delete window, bulk-deletes the
-// rows, then removes the on-disk artifacts best-effort. F-05 fixes the
-// prior snapshot-id/deployment-id namespace mismatch that prevented any
+// DeleteSnapshotsByID) and the deployment id (for the storage key
+// under sched.SnapshotMemKey / sched.SnapshotVMStateKey). Marks the rows
+// stale first so schedd's per-row freshness check refuses them in the
+// brief mark→delete window, bulk-deletes the rows, then drops the
+// on-disk artifacts via the Storage backend. F-05 fixes the prior
+// snapshot-id/deployment-id namespace mismatch that prevented any
 // filesystem cleanup from running.
+//
+// Issue #96 (ADR-025 axis 2) reframes cleanup as storage.Delete calls;
+// the LocalStorageBackend swallows ErrNotFound so a transient race with
+// schedd's restore path can't turn into an error. A future remote
+// backend without LocalArtifactLister compatibility will need its own
+// GC; we log + skip in that case (a remote registry has its own
+// lifecycle).
 func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) error {
 	if len(ts) == 0 {
 		return nil
@@ -280,37 +288,44 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 	if _, err := l.store.DeleteSnapshotsByID(ctx, ids); err != nil {
 		return err
 	}
+	be := l.handler.storageFor()
 	for _, t := range ts {
-		snapDir := filepath.Join(sched.SnapDir(), t.DeploymentID)
-		if err := os.RemoveAll(snapDir); err != nil {
-			l.log.Warn("imaged: gc remove snap dir", "path", snapDir, "err", err)
+		// snap blobs: delete both files; the storage backend swallows
+		// missing keys so a transient race with restore is harmless.
+		if err := be.Delete(ctx, sched.SnapshotMemKey(t.DeploymentID)); err != nil {
+			l.log.Warn("imaged: gc remove snap mem", "deployment", t.DeploymentID, "err", err)
 		}
-		ext4 := ""
-		if t.AppSlug != "" {
-			ext4 = filepath.Join(l.appsRoot, t.AppSlug, t.DeploymentID+".ext4")
+		if err := be.Delete(ctx, sched.SnapshotVMStateKey(t.DeploymentID)); err != nil {
+			l.log.Warn("imaged: gc remove snap vmstate", "deployment", t.DeploymentID, "err", err)
 		}
-		if ext4 == "" {
-			// Slug wasn't populated by the GC algorithms (the join in
-			// SnapshotForGC doesn't carry it). Fall back to one
-			// deployment-by-id lookup per row so we still drop the
-			// drive1 layer — cheap, bounded by the page size of the
-			// GC tick (≤ ~50 rows in pressure mode).
+		// Per-app ext4 (drive1) — derive the key the same way buildImageLayer
+		// writes it. We need the app slug for the key; fall back to a
+		// single DeploymentByID + AppByID lookup when the GC algorithms
+		// (which don't carry the slug) returned an empty AppSlug.
+		slug := t.AppSlug
+		if slug == "" {
 			dep, derr := l.store.DeploymentByID(ctx, t.DeploymentID)
-			if derr != nil {
-				continue
-			}
-			app, aerr := l.store.AppByID(ctx, dep.AppID)
-			if aerr != nil {
-				continue
-			}
-			ext4 = dep.RootfsPath
-			if ext4 == "" {
-				ext4 = filepath.Join(l.appsRoot, app.Slug, t.DeploymentID+".ext4")
+			if derr == nil {
+				app, aerr := l.store.AppByID(ctx, dep.AppID)
+				if aerr == nil {
+					slug = app.Slug
+				}
 			}
 		}
-		if err := os.Remove(ext4); err != nil && !os.IsNotExist(err) {
-			l.log.Warn("imaged: gc remove ext4", "path", ext4, "err", err)
+		if slug != "" {
+			if err := be.Delete(ctx, sched.AppLayerKey(slug, t.DeploymentID)); err != nil {
+				l.log.Warn("imaged: gc remove ext4", "deployment", t.DeploymentID, "err", err)
+			}
 		}
+	}
+	// Best-effort: if the backend supports LocalArtifactLister (it does
+	// in production via LocalStorageBackend + PrefixRouter) the next
+	// nightly tick will see the smaller set without our help. We log a
+	// debug-level hint when the backend isn't capable of list so the
+	// remote-driver future is observable in the daemon's metrics.
+	if _, ok := be.(storage.LocalArtifactLister); !ok {
+		l.log.Warn("imaged: gc backend cannot list; rely on remote driver to reclaim space",
+			"backend", fmt.Sprintf("%T", be))
 	}
 	return nil
 }

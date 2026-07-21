@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -34,7 +35,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -111,7 +114,35 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	notifier := dbNotifier{pool: pool}
 	guestInitPath := envOr("FAAS_GUEST_INIT", "./init")
 	appsRoot := envOr("FAAS_APPS_ROOT", "/var/lib/faas/apps")
-	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log)
+
+	// #96 / ADR-025 axis 2: build the StorageBackend the imaged Handler
+	// publishes through. FAAS_STORAGE_ROOT covers /srv/fc (base/, layers/,
+	// snap/, kernel/). The apps prefix is in FAAS_APPS_ROOT, which is a
+	// sibling of FAAS_STORAGE_ROOT in production, so we route it through
+	// a PrefixRouter. When the two roots coincide, the router collapses
+	// to a single backend — the operator can opt into the split layout.
+	storageRoot := envOr("FAAS_STORAGE_ROOT", "/srv/fc")
+	fcBackend, err := storage.NewLocalStorageBackend(storageRoot)
+	if err != nil {
+		return fmt.Errorf("imaged: storage root %q: %w", storageRoot, err)
+	}
+	var storageBackend storage.StorageBackend = fcBackend
+	if filepath.Clean(appsRoot) != filepath.Clean(storageRoot) {
+		appsBackend, err := storage.NewLocalStorageBackend(appsRoot)
+		if err != nil {
+			return fmt.Errorf("imaged: apps storage root %q: %w", appsRoot, err)
+		}
+		router, err := storage.NewPrefixRouter(map[string]storage.StorageBackend{
+			"apps/": appsBackend,
+		}, fcBackend)
+		if err != nil {
+			return fmt.Errorf("imaged: storage prefix router: %w", err)
+		}
+		storageBackend = router
+		log.Info("imaged: storage prefix router", "fc_root", storageRoot, "apps_root", appsRoot)
+	}
+	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
+		WithStorage(storageBackend)
 
 	// F3: function runner wiring. cmd/imaged refuses to come up if either
 	// env var is set but the path doesn't exist on disk — silent omission
@@ -169,7 +200,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		}
 	}
 	basePath := envOr("FAAS_BUILDER_BASE_PATH", "/srv/fc/base/builder-base.ext4")
-	baseRes, err := h.EnsureBaseExt4(ctx, baseRef, basePath)
+	// #96 / ADR-025 axis 2: EnsureBaseExt4 publishes via the StorageBackend
+	// under sched.BaseKey / sched.BaseDigestKey. basePath is kept as a
+	// resolution target (LocalStorageBackend joins it under FAAS_STORAGE_ROOT)
+	// for one release — the migration slice flips to key-only.
+	baseKey := sched.BaseKey("builder")
+	digestKey := sched.BaseDigestKey("builder")
+	baseRes, err := h.EnsureBaseExt4(ctx, baseRef, baseKey, digestKey, basePath)
 	if err != nil {
 		return fmt.Errorf("imaged: stage builder base %s → %s: %w", baseRef, basePath, err)
 	}
