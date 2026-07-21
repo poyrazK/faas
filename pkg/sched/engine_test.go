@@ -341,7 +341,7 @@ func TestEngineWake_StorageKey_ForwardedFromRow(t *testing.T) {
 //
 // Setup: MemStore's CreateSnapshot rejects empty StorageKey (the
 // F-1 contract), so we insert a valid row first and then call
-// SetSnapshotStorageKeyForTest to clear the value back to ''.
+// SetSnapshotStorageKeyForTest to clear the value back to ”.
 func TestEngineWake_StorageKey_FallbackOnEmpty(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
