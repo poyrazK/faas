@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -252,6 +253,34 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		}
 		b.markFailed(ctx, dep.ID, build.ID, fc, fmt.Sprintf("build exited %d", out.ExitCode))
 		return BuildResult{}, fmt.Errorf("builderd: vm exit %d", out.ExitCode)
+	}
+
+	// Enforce AppLayerMaxMB before stamping the rootfs or populating the
+	// cache (spec §4.5: 256 / 512 / 1024 / 2048 MB per plan). Without this
+	// gate a customer could pay for Hobby but ship a 2 GB app layer that
+	// would silently bloat the per-VM memory.overhead accounting on the
+	// next cold boot. Use the produced tarball's on-disk size — that's
+	// the truth we'll snapshot, not LogTailBytes (which only counts the
+	// in-VM build log tail).
+	st, statErr := os.Stat(out.OCIImage)
+	if statErr != nil {
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "stat produced layer: "+statErr.Error())
+		return BuildResult{}, statErr
+	}
+	acct, acctErr := b.store.AccountByID(ctx, app.AccountID)
+	if acctErr != nil {
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "load account: "+acctErr.Error())
+		return BuildResult{}, acctErr
+	}
+	lim, known := api.LimitsFor(acct.Plan)
+	if !known {
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "unknown plan: "+string(acct.Plan))
+		return BuildResult{}, errors.New("builderd: unknown plan")
+	}
+	if sizeMB := (st.Size() + (1 << 20) - 1) >> 20; sizeMB > int64(lim.AppLayerMaxMB) {
+		msg := fmt.Sprintf("app layer %d MB exceeds plan cap %d MB", sizeMB, lim.AppLayerMaxMB)
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureUserError, msg)
+		return BuildResult{}, errors.New("builderd: " + msg)
 	}
 
 	// Stamp the cache so the next build of the same source is a hit.
