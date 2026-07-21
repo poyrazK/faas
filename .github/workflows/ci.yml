@@ -242,3 +242,44 @@ jobs:
         run: sudo make test-metal
       - name: leak check
         run: sudo make leakcheck
+
+  migrations:
+    # PR #93 follow-up: deploy run 29841378918 failed at the migrate step
+    # with "goose: error: found 1 missing migrations before current version
+    # 21: version 14". The static check (make migrations-check) catches the
+    # same failure mode from filenames alone in microseconds; the apply-and-
+    # walk test exercises pkg/db.MigrateUp end-to-end against a fresh
+    # schema, so SQL that parses but fails to apply is also caught here.
+    # Decoupled from `test` so a regression surfaces immediately with the
+    # exact missing-slot name rather than being buried in the unit-test
+    # sweep.
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+    name: migrations (contiguity + apply)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+      - name: migrations check (static)
+        run: make migrations-check
+      - name: migrations apply-and-walk
+        run: go test -race -count=1 -v -run TestMigrationsApplyAndWalk ./migrations/...

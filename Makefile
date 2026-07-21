@@ -83,6 +83,10 @@ proto-normalize: proto
 test: ## Unit tests — must pass on any machine, no KVM needed
 	$(GO) test -race -count=1 $(PKGS)
 
+.PHONY: migrations-check
+migrations-check: ## Static migration-contiguity check (no Postgres needed) — PR #93 follow-up
+	$(GO) test -race -count=1 -run 'TestMigrations' ./migrations/...
+
 .PHONY: test-load
 test-load: ## Hot-path load test (1k rps, //go:build load) — spec §14 M4 row 2. Needs ≥ 2 vCPU.
 	$(GO) test -tags=load -race -count=1 -v -timeout=10m ./pkg/gateway/...
