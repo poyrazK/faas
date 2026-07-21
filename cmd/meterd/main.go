@@ -22,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"time"
 
@@ -84,6 +86,11 @@ type runDeps struct {
 	// knob is honored (default: log). Tests can inject a noop.
 	mailer mail.Sender
 	now    func() time.Time
+	// metricsListenAndServe binds addr and serves h on a goroutine; the
+	// returned shutdown func is called during graceful drain. Mirrors the
+	// pattern at cmd/schedd/main.go:143-158. Tests inject a recorder that
+	// captures the handler without binding a real socket.
+	metricsListenAndServe func(addr string, h http.Handler) (net.Listener, func(context.Context) error, error)
 }
 
 func defaultDeps() runDeps {
@@ -105,6 +112,14 @@ func defaultDeps() runDeps {
 		},
 		mailer: nil, // populated lazily in runWithDeps via mail.SenderFromEnv
 		now:    time.Now,
+		metricsListenAndServe: func(addr string, h http.Handler) (net.Listener, func(context.Context) error, error) {
+			ln, err := net.Listen("tcp", addr)
+			if err != nil {
+				return nil, nil, err
+			}
+			srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
+			return ln, srv.Shutdown, nil
+		},
 	}
 }
 
@@ -220,6 +235,43 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	errc := make(chan error, 1)
 	go func() { errc <- loop.Run(ctx) }()
 
+	// Metrics + healthz listener. Mirrors cmd/schedd/main.go:143-158 —
+	// per-daemon Prometheus registry (ADR-015), mux at /metrics +
+	// /healthz, 5s graceful shutdown on drain. Empty cfg.MetricsAddr
+	// disables both endpoints (the production default in
+	// deploy/etc/meterd.toml.example).
+	const metricsPath = "/metrics"
+	var httpShutdown func(context.Context) error
+	if cfg.MetricsAddr != "" {
+		if deps.metricsListenAndServe == nil {
+			return fmt.Errorf("meterd: nil metricsListenAndServe (refusing to start with MetricsAddr set)")
+		}
+		ops := wire.NewOpsMetrics("meterd")
+		mux := http.NewServeMux()
+		mux.Handle(metricsPath, ops.Handler())
+		// /healthz — unconditional 200 for now. Follow-up PR will cache
+		// the last successful sample / quota / stripe / dunning tick and
+		// return 503 if any is older than 3× its interval (spec §14 M7
+		// acceptance — "meterd healthy iff sampled within 3 minutes").
+		// Matches the one-liner at pkg/gateway/synth.go:115-117.
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		})
+		ln, shutdown, err := deps.metricsListenAndServe(cfg.MetricsAddr, mux)
+		if err != nil {
+			return fmt.Errorf("meterd: metrics listen %q: %w", cfg.MetricsAddr, err)
+		}
+		httpShutdown = shutdown
+		go func() {
+			srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+			if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("meterd: metrics http", "err", err)
+			}
+		}()
+		log.Info("meterd metrics listening", "addr", cfg.MetricsAddr)
+	}
+
 	select {
 	case <-ctx.Done():
 		log.Info("meterd draining")
@@ -227,6 +279,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if err != nil && !errors.Is(err, context.Canceled) {
 			return err
 		}
+	}
+
+	// Graceful shutdown: detach a context from the already-cancelled caller
+	// ctx (net/http Shutdown requires a non-Done parent). 5s matches the
+	// schedd/vmmd/builderd shutdown deadline.
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if httpShutdown != nil {
+		//nolint:contextcheck // shutdown ctx must outlive the already-cancelled caller ctx per net/http contract.
+		_ = httpShutdown(stopCtx)
 	}
 	return nil
 }

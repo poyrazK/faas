@@ -464,9 +464,11 @@ func TestPaidOverageDedupesPerDay(t *testing.T) {
 	}
 }
 
-// TestAppendUsagePerInstanceMinute pins the MemStore contract: two calls
-// for the same (instance, minute) accumulate; different minutes stay
-// separate. Matches the production INSERT … ON CONFLICT semantics.
+// TestAppendUsagePerInstanceMinute pins the MemStore contract: AppendUsage is
+// idempotent on (instance_id, minute) — the first write wins; a redelivered
+// minute is a no-op. Different minutes stay separate. Matches the production
+// INSERT … ON CONFLICT (instance_id, minute) DO NOTHING semantics introduced
+// by the M7 hardening PR (feat/m7-beta-hardening).
 func TestAppendUsagePerInstanceMinute(t *testing.T) {
 	t.Parallel()
 	s := state.NewMemStore()
@@ -475,14 +477,15 @@ func TestAppendUsagePerInstanceMinute(t *testing.T) {
 	acct := makeAccount(t, ctx, s, api.PlanHobby)
 	app := newApp(t, ctx, s, acct.ID)
 
-	// Two writes for the same (instance, minute) accumulate.
+	// First write for (inst-A, m) — wins, mb_seconds=100, requests=1.
 	if err := s.AppendUsage(ctx, acct.ID, app.ID, "inst-A", m, 100, 1); err != nil {
 		t.Fatalf("append 1: %v", err)
 	}
+	// Redelivered minute: a no-op. mb_seconds stays 100, requests stays 1.
 	if err := s.AppendUsage(ctx, acct.ID, app.ID, "inst-A", m, 50, 2); err != nil {
-		t.Fatalf("append 2: %v", err)
+		t.Fatalf("append 2 (redelivered): %v", err)
 	}
-	// Same account/app, different minute, separate row.
+	// Different minute: separate row.
 	if err := s.AppendUsage(ctx, acct.ID, app.ID, "inst-A", m.Add(time.Minute), 75, 1); err != nil {
 		t.Fatalf("append 3: %v", err)
 	}
@@ -493,11 +496,12 @@ func TestAppendUsagePerInstanceMinute(t *testing.T) {
 	if len(usages) != 1 {
 		t.Fatalf("rows = %d, want 1 (per app)", len(usages))
 	}
-	if usages[0].MBSeconds != 100+50+75 {
-		t.Fatalf("MBSeconds = %d, want 225", usages[0].MBSeconds)
+	// First write wins for m: 100 mb_seconds + 1 request. The m+1 row adds 75 + 1.
+	if usages[0].MBSeconds != 100+75 {
+		t.Fatalf("MBSeconds = %d, want 175 (100 from first m-write + 75 from m+1)", usages[0].MBSeconds)
 	}
-	if usages[0].Requests != 1+2+1 {
-		t.Fatalf("Requests = %d, want 4", usages[0].Requests)
+	if usages[0].Requests != 1+1 {
+		t.Fatalf("Requests = %d, want 2 (1 from first m-write + 1 from m+1)", usages[0].Requests)
 	}
 }
 

@@ -312,6 +312,9 @@ type Store interface {
 	ListEvents(ctx context.Context, subject string, limit int) ([]Event, error)
 
 	// Usage (apid reads for GET /v1/usage; meterd writes in production).
+	// AppendUsage is idempotent on (instance_id, minute): the first write
+	// wins, a redelivered minute is a no-op. This prevents silent
+	// double-billing under any meterd restart (M7 hardening).
 	AppendUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error
 	UsageByMonth(ctx context.Context, accountID string, month time.Time) ([]Usage, error)
 	// UsageByHour returns the per-app usage rows whose minute ∈ [start,

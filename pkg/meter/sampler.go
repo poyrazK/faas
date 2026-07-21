@@ -75,8 +75,8 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 				AppID:       app.ID,
 				AccountID:   app.AccountID,
 				Minute:      minute,
-				AdmissionMB: ins.RAMMB + api.PerVMOverheadMB,
-				MBSeconds:   MBSecondsPerMinute(ins.RAMMB + api.PerVMOverheadMB),
+				AdmissionMB: api.BillableRAMMB(ins.RAMMB),
+				MBSeconds:   MBSecondsPerMinute(api.BillableRAMMB(ins.RAMMB)),
 			}
 			if err := s.store.AppendUsage(ctx, app.AccountID, app.ID, ins.ID, minute, row.MBSeconds, 0); err != nil {
 				return out, err
