@@ -1,0 +1,28 @@
+[Unit]
+Description=onebox-faas imaged — OCI + rootfs layer builder
+After=network.target postgresql.service faas-cp.slice
+Wants=faas-cp.slice
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=faas-imaged
+Group=faas
+ExecStart=/opt/faas/bin/imaged --config /etc/faas/imaged.toml
+Restart=on-failure
+RestartSec=2s
+Slice=faas-cp.slice
+MemoryMax=1G
+EnvironmentFile=/etc/faas/sealed.env
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/srv/fc/snap /srv/fc/base /var/log/faas /var/spool/faas
+
+[Install]
+WantedBy=multi-user.target

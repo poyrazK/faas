@@ -3,7 +3,7 @@
 
 GO      ?= go
 PKGS    := ./...
-DAEMONS := apid gatewayd schedd vmmd builderd imaged meterd faas
+DAEMONS := apid gatewayd schedd vmmd builderd imaged meterd faas githubd
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION)
 BINDIR  := bin

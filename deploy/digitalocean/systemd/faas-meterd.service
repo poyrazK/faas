@@ -1,0 +1,28 @@
+[Unit]
+Description=onebox-faas meterd — metering and billing
+After=network.target postgresql.service faas-schedd.service faas-cp.slice
+Wants=faas-cp.slice faas-schedd.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=faas-meterd
+Group=faas
+ExecStart=/opt/faas/bin/meterd --config /etc/faas/meterd.toml
+Restart=on-failure
+RestartSec=2s
+Slice=faas-cp.slice
+MemoryMax=256M
+EnvironmentFile=/etc/faas/sealed.env
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/var/log/faas
+
+[Install]
+WantedBy=multi-user.target
