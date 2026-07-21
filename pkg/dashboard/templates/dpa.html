@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    /* DPA is rendered as <pre> because we don't trust the operator's
+       markdown to be safe HTML and we don't ship a markdown processor
+       in the binary. The DPA template is plain text with optional
+       placeholders that get substituted by operations, not by the
+       customer. */
+    pre.dpa { white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    <h1>{{.Title}}</h1>
+    {{if .Account}}
+      <p>Signed in as <code>{{.Account.Email}}</code>.</p>
+    {{end}}
+    {{if .Data}}
+      {{$d := .Data}}
+      {{if $d.Markdown}}
+        <pre class="dpa">{{$d.Markdown}}</pre>
+      {{else}}
+        <p><em>DPA template not installed.</em></p>
+      {{end}}
+    {{end}}
+    <p><a href="/dashboard/account">← Back to Account</a></p>
+  </main>
+  <footer>onebox faas · M7.5 dashboard · server-rendered, no SPA build</footer>
+</body>
+</html>

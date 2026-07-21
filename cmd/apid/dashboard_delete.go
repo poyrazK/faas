@@ -21,9 +21,12 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // dashboardDelete handles POST /dashboard/account/delete. The form
@@ -122,4 +125,58 @@ func confirmTokenMatches(r *http.Request, action string) bool {
 	got := r.PostForm.Get("confirm_token")
 	want := action + ":yes"
 	return got == want && got != ""
+}
+
+// dashboardDPA handles GET /dashboard/account/dpa. Renders the DPA
+// markdown into the dashboard chrome (vs the public /v1/account/dpa
+// which streams the file raw). Same source, different envelope: a
+// customer signed in expects the dashboard layout, not a raw
+// markdown text body. The route is session-authed because the DPA
+// references the customer's data posture and is more useful in
+// context (no prospect browsing).
+//
+// On misconfiguration (FAAS_DPA_PATH unset) the same 503 the public
+// route emits is surfaced — a customer sees "the operator hasn't
+// installed the DPA yet, contact support" rather than a half-rendered
+// page.
+func (s *server) dashboardDPA(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if s.dpaPath == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+			api.CodeCapacity, "DPA template unavailable",
+			"the DPA is not installed on this host; contact support"))
+		return
+	}
+	body, err := os.ReadFile(s.dpaPath)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("DPA template unavailable"))
+		return
+	}
+	page := dashboard.Page{
+		Title:   "Data Processing Agreement",
+		Account: acctViewFrom(acct),
+		Body:    "dpa",
+		Data: dashboard.DPAView{
+			Markdown: string(body),
+		},
+	}
+	if err := dashboard.Render(w, s.log, page); err != nil {
+		s.log.Error("dashboard: dpa render failed", "err", err)
+	}
+}
+
+// acctViewFrom converts a state.Account to a dashboard.AccountView
+// (the dashboard layer doesn't import pkg/state). Mirrors the
+// conversion used by handlers_dashboard.go so the DPA page looks
+// identical to the rest of the dashboard chrome.
+func acctViewFrom(acct state.Account) *dashboard.AccountView {
+	return &dashboard.AccountView{
+		ID:    acct.ID,
+		Email: acct.Email,
+		Plan:  string(acct.Plan),
+	}
 }

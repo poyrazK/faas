@@ -342,6 +342,11 @@ func (s *server) handler() http.Handler {
 	// dashboard_delete.go reuses gatherExport so the wire shape is
 	// identical to the REST path.
 	mux.Handle("GET /dashboard/account/export", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardExport))))
+	// Session-authed twin of GET /v1/account/dpa. The dashboard chrome
+	// is the right surface when a customer reads the DPA in context
+	// (vs. the public route, which streams raw markdown for prospects
+	// and pre-signup browsing). Same file, different envelope.
+	mux.Handle("GET /dashboard/account/dpa", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDPA))))
 
 	// Status page (spec §12 public status page). Unauthenticated by
 	// design — prospects read it before sign-up, customers during

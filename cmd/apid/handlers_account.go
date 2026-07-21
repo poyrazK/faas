@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/mail"
@@ -45,6 +46,10 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("could not assemble export"))
 		return
 	}
+	// GDPR audit ledger — record that an export was served. Best-
+	// effort; the ledger survives DeleteAccount so a future DPO can
+	// see the request even after the account row is gone.
+	s.recordGdprRequest(r.Context(), acct, state.GdprActionExport)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition",
 		`attachment; filename="faas-account-`+acct.ID+`-`+
@@ -104,10 +109,42 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account) (stat
 						"account", fresh.ID, "err", err)
 				}
 			}
+			// GDPR self-serve audit ledger — captures the request at
+			// the moment it landed so a customer (or a DPO) can be
+			// shown proof of erasure against email + timestamp. The
+			// row outlives DeleteAccount; pkg/grace stamps
+			// completed_at after the hard-delete fires.
+			s.recordGdprRequest(ctx, fresh, state.GdprActionDelete)
 		}
 		return fresh, nil
 	}
 	return acct, nil
+}
+
+// recordGdprRequest appends a single row to the gdpr_requests ledger
+// and stamps completed_at if the action is "complete on insert"
+// (export: the bundle is in hand, restore: the row is restored).
+// Failures are logged Warn — never 5xx — so a flaky audit DB can
+// never block a customer's GDPR action. Mirrors the pg_notify
+// best-effort posture in scheduleDeletion above.
+func (s *server) recordGdprRequest(ctx context.Context, acct state.Account, action state.GdprAction) {
+	req := state.GdprRequest{
+		ID:           uuid.NewString(),
+		AccountID:    acct.ID,
+		AccountEmail: acct.Email,
+		Action:       action,
+		RequestedAt:  time.Now().UTC(),
+	}
+	// Export + restore complete at insert time; delete completes when
+	// pkg/grace fires DeleteAccount and calls CompleteGdprRequest.
+	switch action {
+	case state.GdprActionExport, state.GdprActionRestore:
+		req.CompletedAt = req.RequestedAt
+	}
+	if err := s.store.AppendGdprRequest(ctx, req); err != nil {
+		s.log.Warn("apid: append gdpr_requests failed",
+			"account", acct.ID, "action", string(action), "err", err)
+	}
 }
 
 // restoreAccount flips the account back to active iff inside the
@@ -118,6 +155,7 @@ func (s *server) restoreAccount(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, prob)
 		return
 	}
+	s.recordGdprRequest(r.Context(), fresh, state.GdprActionRestore)
 	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), fresh, r))
 }
 
@@ -223,8 +261,9 @@ func gatherExport(ctx context.Context, s *server, acct state.Account, includeSec
 	keys, keyErr := listKeysForAccountExport(ctx, s.store, acct.ID)
 	builds, bldErr := listBuildsForAccountExport(ctx, s.store, acct.ID, depByID)
 	secrets, secErr := listSecretsForAccountExport(ctx, s.store, acct.ID, apps, includeSecrets)
+	audit, audErr := listGdprRequestsForAccountExport(ctx, s.store, acct.ID)
 
-	if err := errors.Join(depErr, insErr, useErr, domErr, crnErr, keyErr, bldErr, secErr); err != nil {
+	if err := errors.Join(depErr, insErr, useErr, domErr, crnErr, keyErr, bldErr, secErr, audErr); err != nil {
 		// Log per-resource failures so an operator can correlate a
 		// customer-reported "export is missing X" with the actual DB
 		// failure. The handler returns 500; the customer retries.
@@ -250,6 +289,7 @@ func gatherExport(ctx context.Context, s *server, acct state.Account, includeSec
 		Crons:       crons,
 		APIKeys:     keys,
 		AppSecrets:  secrets,
+		AuditTrail:  audit,
 	}, nil
 }
 
@@ -374,6 +414,26 @@ func listKeysForAccountExport(ctx context.Context, st state.Store, accountID str
 			Label:     k.Label,
 			CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339),
 			LastUsed:  formatTimeOrEmpty(k.LastUsedAt),
+		})
+	}
+	return out, nil
+}
+
+// listGdprRequestsForAccountExport surfaces the customer's own GDPR
+// audit ledger slice in the export bundle. Bounded to 1000 rows so
+// the bundle stays < ~300 KB even for power customers; pagination is
+// the right fix here, deferred per the FIXME in gatherExport.
+func listGdprRequestsForAccountExport(ctx context.Context, st state.Store, accountID string) ([]api.GdprAuditExportResponse, error) {
+	rows, err := st.ListGdprRequestsForAccount(ctx, accountID, 1000)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.GdprAuditExportResponse, 0, len(rows))
+	for _, g := range rows {
+		out = append(out, api.GdprAuditExportResponse{
+			Action:      string(g.Action),
+			RequestedAt: g.RequestedAt.UTC().Format(time.RFC3339),
+			CompletedAt: formatTimeOrEmpty(g.CompletedAt),
 		})
 	}
 	return out, nil

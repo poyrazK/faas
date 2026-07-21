@@ -45,6 +45,11 @@ type runDeps struct {
 	detectFC   func(context.Context) (string, error)
 	dialVMM    func(socket string) (sched.VMM, error)
 	listen     func(path, owner string) (net.Listener, error)
+	// subscribeDeletion is the producer-side seam for the
+	// NotifyAccountDeletionPending consumer (ADR-026). nil = the
+	// subscriber is not started (cmd/schedd's main wires the
+	// production db.Subscribe adapter; tests inject a fake).
+	subscribeDeletion func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 }
 
 func defaultDeps() runDeps {
@@ -54,7 +59,13 @@ func defaultDeps() runDeps {
 		migrate:    db.MigrateUp,
 		detectFC:   fcvm.DetectFirecrackerVersion,
 		dialVMM:    func(socket string) (sched.VMM, error) { return sched.DialVMM(socket) },
-		listen:     wire.ListenOrRecreateByName,
+		// Production wires db.Subscribe. Tests inject a fake channel
+		// so the subscriber's Park path is exercised end-to-end
+		// without standing up Postgres.
+		subscribeDeletion: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
+			return db.Subscribe(ctx, p, []string{db.NotifyAccountDeletionPending})
+		},
+		listen: wire.ListenOrRecreateByName,
 	}
 }
 
@@ -169,6 +180,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		"eviction_threshold_mb", sched.EvictionThresholdMB,
 		"vcpu_slots", api.VCPUSlots,
 		"fc_version", fcVersion)
+
+	// ADR-026 deletion subscriber. Long-lived goroutine under the
+	// same ctx as loop.Run; manages reconnect on Subscribe failures.
+	// nil seam = skip in tests that don't want a fake channel.
+	if deps.subscribeDeletion != nil {
+		delFeed, delCancel, delErr := deps.subscribeDeletion(ctx, pool)
+		if delErr != nil {
+			log.Warn("schedd: deletion subscriber initial dial failed; retrying inside Run",
+				"err", delErr)
+		} else {
+			sub := sched.NewDeletionSubscriberFromChannel(engine, delFeed, log)
+			sub.SetBackoff(1*time.Second, 30*time.Second)
+			go func() {
+				defer delCancel()
+				if err := sub.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					log.Warn("schedd: deletion subscriber exited", "err", err)
+				}
+			}()
+		}
+	}
 
 	loop := sched.NewLoop(pool, engine, log).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).

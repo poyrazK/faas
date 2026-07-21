@@ -39,6 +39,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 023 | IPv6 tenant egress policy (`ip6 daddr`, allow-and-restrict) | accepted | M8 |
 | 024 | CertMagic cut-over + test closure (gatewayd TLS) | accepted | M8 |
 | 025 | Decoupled control plane and compute nodes | proposed | M8 |
+| 026 | schedd consumes `NotifyAccountDeletionPending` and evicts live instances | accepted | M8 — landed 2026-07-21 |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
