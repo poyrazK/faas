@@ -102,13 +102,19 @@ type runDeps struct {
 	// TLS is enabled). nil in the legacy path. Tests use it to exercise
 	// the production-style dual-listener setup without binding :80.
 	extraListen func(network, addr string) (net.Listener, error)
+	// controlAddr is the loopback control-plane bind (default
+	// 127.0.0.1:9090). Tests inject a free-port value via "127.0.0.1:0"
+	// + the resolved listener so two tests in the same package don't race
+	// for the hard-coded production port.
+	controlAddr string
 }
 
 func defaultDeps() runDeps {
 	return runDeps{
-		listen:  net.Listen,
-		newSrv:  defaultServer,
-		backend: unwiredBackend{},
+		listen:      net.Listen,
+		newSrv:      defaultServer,
+		backend:     unwiredBackend{},
+		controlAddr: controlAddr,
 	}
 }
 
@@ -202,7 +208,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("gatewayd: Hetzner DNS token: %w", err)
 		}
-		bundle, err := gateway.NewCertMagicConfig(ctx, resolved, tok, log)
+		bundle, err := gateway.NewCertMagicConfig(ctx, resolved, tok, log, nil)
 		if err != nil {
 			return fmt.Errorf("gatewayd: certmagic: %w", err)
 		}
@@ -384,9 +390,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}()
 	}
+	ctrlAddr := controlAddr
+	if deps.controlAddr != "" {
+		ctrlAddr = deps.controlAddr
+	}
 	go func() {
-		log.Info("gatewayd control listening", "addr", controlAddr)
-		errc <- gateway.RunControlServer(ctx, controlAddr, controlMux)
+		log.Info("gatewayd control listening", "addr", ctrlAddr)
+		errc <- gateway.RunControlServer(ctx, ctrlAddr, controlMux)
 	}()
 
 	// Internal unix-socket RPC for schedd's cron dispatch (spec §4.4,
@@ -408,11 +418,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer cancel()
 		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
 		// Best-effort shutdown of every listener we may have started.
-		// Servers track themselves in `servers`; certmagic owns its own renew
-		// loop on a separate goroutine and is intentionally NOT touched here
-		// (closing the certmagic.Config would race against in-flight mints).
+		// Servers track themselves in `servers`; certmagic owns its renew loop
+		// on a separate goroutine — we Close the bundle now that the public +
+		// ACME servers have drained. The bundle's Close is a no-op against
+		// certmagic v0.25 (no public Stop API) but the seam lets a future
+		// upgrade wire real shutdown without touching call sites.
 		for _, s := range servers {
 			_ = s.Shutdown(shutdownCtx)
+		}
+		if deps.tlsBundle != nil {
+			//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
+			_ = deps.tlsBundle.Close(shutdownCtx)
 		}
 		if deps.synth != nil {
 			//nolint:contextcheck // same shutdown-ctx contract as public.Shutdown above.

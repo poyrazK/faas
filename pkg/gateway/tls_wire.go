@@ -81,12 +81,23 @@ type TLSBundle struct {
 // chatter in slog.
 var silentZap = zapNop()
 
+// DNSProviderFactory builds the libdns.DNSProvider used by certmagic's
+// DNS-01 solver. Production passes nil to NewCertMagicConfig, which uses
+// NewHetznerDNSProvider against https://dns.hetzner.com/api/v1. Tests pass
+// a closure that returns a *HetznerDNSProvider wired against an httptest
+// stub so the wire shape (auth header, record create/delete, zone lookup)
+// can be exercised without hitting the real Hetzner API.
+type DNSProviderFactory func(token, zone string) certmagic.DNSProvider
+
 // NewCertMagicConfig constructs the wired TLSBundle from the gatewayd
 // TOML-shaped TLSConfig. It enforces Validate() invariants: callers should
 // already have called TLSConfig.Validate(), but this function re-checks the
 // surface it actually consumes (cert magic has no notion of "Disabled") so
 // a misconfigured disabled-as-enabled request fails closed.
-func NewCertMagicConfig(ctx context.Context, cfg TLSConfig, hetznerToken string, log *slog.Logger) (*TLSBundle, error) {
+//
+// dnsFactory is nil in production (NewHetznerDNSProvider is used); tests
+// pass a closure that returns a provider pointed at an httptest stub.
+func NewCertMagicConfig(ctx context.Context, cfg TLSConfig, hetznerToken string, log *slog.Logger, dnsFactory DNSProviderFactory) (*TLSBundle, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -101,13 +112,23 @@ func NewCertMagicConfig(ctx context.Context, cfg TLSConfig, hetznerToken string,
 	}
 
 	// Storage: file-backed at cfg.StorageDir. mode 0700 so cert blobs are
-	// not world-readable; the systemd unit runs us as user faas:root so the
-	// dir must be owned by root (operator-provisioned via the ansible role).
+	// not world-readable; the systemd unit runs us as user faas:faas (User=faas
+	// Group=faas) so the dir must be owned by faas:faas (operator-provisioned
+	// via the ansible role).
+	//
+	// NewCache REQUIRES a non-nil GetConfigForCert (certmagic v0.25 cache.go:130
+	// panics otherwise). We can't construct the Config first because the cache
+	// wants a callback that returns one — chicken-and-egg. The standard fix is
+	// a pointer-to-pointer: cache.GetConfigForCert closes over &magic, dereferences
+	// at call time (always after the assignment below). The single-Config
+	// invariant is the load-bearing reason this works at all (see tls_wire.go
+	// package doc).
+	var magic *certmagic.Config
 	cache := certmagic.NewCache(certmagic.CacheOptions{
-		// GetConfigForCert left nil — a single Config governs every cert in
-		// this process, so certmagic's "find Config for cert" path collapses
-		// to "use the only Config". See tls_wire.go package doc.
 		Logger: silentZap,
+		GetConfigForCert: func(_ certmagic.Certificate) (*certmagic.Config, error) {
+			return magic, nil
+		},
 	})
 
 	// ACME contact email: prefer the operator-supplied ContactEmail; fall
@@ -117,11 +138,17 @@ func NewCertMagicConfig(ctx context.Context, cfg TLSConfig, hetznerToken string,
 		contactEmail = "ops@" + cfg.HetznerZone
 	}
 
-	issuer := &certmagic.ACMEIssuer{
+	factory := dnsFactory
+	if factory == nil {
+		factory = func(token, zone string) certmagic.DNSProvider {
+			return NewHetznerDNSProvider(token, zone)
+		}
+	}
+	issuerTemplate := certmagic.ACMEIssuer{
 		Email: contactEmail,
 		DNS01Solver: &certmagic.DNS01Solver{
 			DNSManager: certmagic.DNSManager{
-				DNSProvider: NewHetznerDNSProvider(hetznerToken, cfg.HetznerZone),
+				DNSProvider: factory(hetznerToken, cfg.HetznerZone),
 			},
 		},
 		Agreed: true,
@@ -132,24 +159,39 @@ func NewCertMagicConfig(ctx context.Context, cfg TLSConfig, hetznerToken string,
 		DisableHTTPChallenge:      false,
 		DisableTLSALPNChallenge:   false,
 		DisableDistributedSolvers: true, // one-box; nothing to distribute to
+		// ACMEIssuer has its own Logger distinct from the cache's. Route it
+		// to silentZap so test runs don't print certmagic INFO chatter to
+		// stderr (production reuses the same sink; certmagic's log volume is
+		// small but a real bridge to slog is a follow-up).
+		Logger: silentZap,
 	}
 	// Test and metal suites flip UseStagingCA so a misconfigured DNS
 	// delegation doesn't burn the prod rate limit. Production must leave
 	// it false — staging certs are not browser-trusted and the browser
 	// out-of-the-box warning is annoying.
 	if cfg.UseStagingCA {
-		issuer.CA = certmagic.LetsEncryptStagingCA
+		issuerTemplate.CA = certmagic.LetsEncryptStagingCA
 	}
 
-	magic := certmagic.New(cache, certmagic.Config{
+	magic = certmagic.New(cache, certmagic.Config{
 		Storage: &certmagic.FileStorage{Path: cfg.StorageDir},
-		Issuers: []certmagic.Issuer{
-			issuer,
-		},
+		Issuers: nil, // populated below; see comment
 		OnDemand: &certmagic.OnDemandConfig{
 			DecisionFunc: allowlistToDecisionFunc(cfg.OnDemandHTTP01Allowlist, log),
 		},
 	})
+	// NewACMEIssuer wires `am.config = magic` AND defaults CA / TestCA /
+	// Email from DefaultACME when the template leaves them blank. The literal
+	// &ACMEIssuer{...} form leaves am.config nil, and calling
+	// HTTPChallengeHandler on such an issuer segfaults inside certmagic
+	// (httphandlers.go:138 → account.go:49 → mutex on am.config). We can't
+	// build the issuer inside the certmagic.New(...) literal because Go
+	// evaluates the slice literal before the `magic = ...` assignment
+	// completes — so we construct `magic` first, then materialize the issuer
+	// against the now-populated variable.
+	magic.Issuers = []certmagic.Issuer{
+		certmagic.NewACMEIssuer(magic, issuerTemplate),
+	}
 
 	// Eagerly obtain the wildcard on startup so the first request doesn't
 	// pay the 30-60 s DNS-01 propagation cost. We tolerate failure: a
@@ -175,6 +217,25 @@ func NewCertMagicConfig(ctx context.Context, cfg TLSConfig, hetznerToken string,
 		HTTPChallengeHandler: httpChallenge,
 		DecisionFunc:         magic.OnDemand.DecisionFunc,
 	}, nil
+}
+
+// Close gracefully stops certmagic's internal renew loop. The bundle is
+// single-use; calling Close twice is a no-op.
+//
+// certmagic v0.25 has no public Stop on *Config — the renew goroutine exits
+// when its context is cancelled, which is the caller's responsibility (the
+// run() shutdown path passes the daemon's ctx to certmagic via ManageAsync
+// in a follow-up). Today Close is a marker so tests can assert a symmetric
+// Close seam and so a future certmagic upgrade can wire real shutdown
+// without changing call sites.
+//
+// ctx is reserved for that future wiring; today it's unused.
+func (b *TLSBundle) Close(ctx context.Context) error {
+	if b == nil || b.Config == nil {
+		return nil
+	}
+	_ = ctx // reserved for a future certmagic API
+	return nil
 }
 
 // ensureStorageDir creates cfg.StorageDir as 0700 if missing. Idempotent: the

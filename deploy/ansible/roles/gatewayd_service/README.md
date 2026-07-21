@@ -11,7 +11,7 @@ and the only public listener on the box). Mirrors the `vmmd_service` role.
 | `/etc/faas/gatewayd.toml.example`     | 0640    | root:faas   | config template |
 | `/etc/faas/`                          | 0750    | root:faas   | config dir |
 | `/etc/faas/secrets/`                  | 0750    | root:faas   | gatewayd-only secrets (Hetzner DNS token) |
-| `/var/lib/faas/certs/`                | 0700    | root:faas   | CertMagic storage |
+| `/var/lib/faas/certs/`                | 0700    | faas:faas   | CertMagic storage (owned by the daemon's user so renewals can write) |
 
 ## What this role does NOT do
 
