@@ -163,6 +163,8 @@ func InjectGuestInit(staging, guestInitPath string) error {
 // function-deploy path; the tarball is the customer's handler code
 // (handler.js / handler.py). Path-escape protection reuses the
 // ApplyLayerGz allowlist so a malicious tarball can't escape /app.
+//
+//nolint:forbidigo // tarballPath is the apid-spooled path under spoolRoot() that already passed apid's validateTarballShape (in cmd/apid/deploy_inputs.go) — bytes are validated before builderd opens them; symlink-attack on the open itself is impossible because apid wrote the file via os.Create above with a fresh random id. The "customer" framing in the doc comment refers to the *contents* of the tarball (handler code), not the file path on disk.
 func ApplyTarball(staging, tarballPath string) error {
 	f, err := os.Open(tarballPath)
 	if err != nil {

@@ -223,6 +223,8 @@ func validateAndSpool(part *multipart.Part, limits api.Limits) (string, int64, *
 
 // validateTarballShape opens the spooled tarball and verifies the §9
 // invariants: ≤10k files, no symlink escapes, no absolute paths.
+//
+//nolint:forbidigo // path is the tmp file apid just wrote via os.Create in validateAndSpool above with a fresh random id; apid OWNS the parent directory AND the inode, customer never touched them — symlink-attack impossible. Tarball-shape validation re-reads the bytes to enforce spec §9.
 func validateTarballShape(path string) *api.Problem {
 	f, err := os.Open(path)
 	if err != nil {

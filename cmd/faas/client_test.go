@@ -323,9 +323,14 @@ func TestClient_DeployTarball_RejectsDirectoryAsTarball(t *testing.T) {
 // TestClient_DeployTarball_HappyPathStillUploads is the regression
 // guard for the openCustomerFile rename: a regular file (the only
 // shape the CLI should ever upload) must still produce exactly one
-// request, and the multipart body must carry the seeded bytes
-// verbatim in the "source" part. If the new guard ever silently
-// rejects regular files, this test fails — uploads break.
+// request, the multipart body must carry the seeded bytes verbatim
+// in the "source" part, AND the request must carry a UUID-v4-shaped
+// Idempotency-Key (locked here for the success branch — the failure
+// branches assert the inverse in TestClient_DeployTarball_Rejects*).
+// Together those pin the invariant that openCustomerFile runs BEFORE
+// the Idempotency-Key mint: success path mints, failure path does not.
+// If the new guard ever silently rejects regular files, this test
+// fails — uploads break.
 func TestClient_DeployTarball_HappyPathStillUploads(t *testing.T) {
 	dir := t.TempDir()
 	tar := filepath.Join(dir, "src.tar.gz")
@@ -335,8 +340,10 @@ func TestClient_DeployTarball_HappyPathStillUploads(t *testing.T) {
 
 	var requestCount int
 	var sourceBytes []byte
+	var gotIdempotencyKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
+		gotIdempotencyKey = r.Header.Get("Idempotency-Key")
 		// Pull the source part out of the multipart body. The CLI
 		// always uses field name "source" (client.go:271).
 		mr, err := r.MultipartReader()
@@ -369,6 +376,12 @@ func TestClient_DeployTarball_HappyPathStillUploads(t *testing.T) {
 	}
 	if string(sourceBytes) != strings.Repeat("x", 64) {
 		t.Errorf("source part bytes mismatch: got %q, want 64 'x's", sourceBytes)
+	}
+	if gotIdempotencyKey == "" {
+		t.Error("missing Idempotency-Key on the happy-path upload — guard may now run AFTER the mint")
+	}
+	if !uuidV4Shape.MatchString(gotIdempotencyKey) {
+		t.Errorf("Idempotency-Key %q is not UUID v4 shape", gotIdempotencyKey)
 	}
 }
 

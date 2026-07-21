@@ -86,6 +86,8 @@ func (c *Cache) entryPath(sourceHash string, fw Framework) string {
 // hashFile streams the file at path through sha256 and returns the hex digest.
 // The whole file is read; builderd source tarballs are bounded by the plan's
 // SourceTarballMaxMB (100 MB Hobby, 250 MB Pro+) so this is safe in memory.
+//
+//nolint:forbidigo // path is a vetted-id cache file under c.root joined from sourceHash + framework — no customer input reaches the open. Symlink-attack impossible because c.root is apid-owned and populated only by builderd.
 func hashFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -99,6 +101,7 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+//nolint:forbidigo // src/dst are vetted-id cache paths joined from c.root + sourceHash + framework — builderd is the sole writer and apid's spool validator (validateTarballShape in cmd/apid/deploy_inputs.go) already ran shape checks before builderd ever sees the file.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {

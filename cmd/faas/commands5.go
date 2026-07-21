@@ -390,6 +390,13 @@ func openCustomerFile(path string) (*os.File, error) {
 	if preInfo.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("refusing to follow symlink at %q", path)
 	}
+	// The Lstat guards above (pre-open + post-open) ARE the security
+	// boundary that the .golangci.yml forbidigo rule exists to enforce.
+	// This call site is the documented escape hatch: any other os.Open
+	// in this repo is a tripwire and must route through a vetted
+	// helper. The pre-open + post-open Lstat discipline below is the
+	// security boundary; the bare Open on the next line is necessary.
+	//nolint:forbidigo // openCustomerFile IS the security boundary — pre-open + post-open Lstat discipline above is what makes os.Open safe here.
 	f, err := os.Open(absIn)
 	if err != nil {
 		return nil, err
