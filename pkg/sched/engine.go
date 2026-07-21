@@ -325,28 +325,24 @@ type bootInput struct {
 	spec      AppSpec
 }
 
-// timedDestroy issues a vmm.Destroy with a hard timeout using a
-// detached context. We deliberately use context.Background() rather
-// than the caller's ctx so a shutting-down caller (cancelled ctx)
-// still gets its destroy cleanup — the destroy is best-effort but
-// must not be skipped. The lint exemption lives once, here; every
-// caller goes through this helper so future destroy paths can't
-// accidentally fall back to the caller's ctx.
+// timedDestroy issues a vmm.Destroy bounded by `timeout` and the
+// caller's ctx. The parent ctx is preserved so cancellation propagates
+// normally — if the caller (Wake / Prime / Park / KillStuck) is
+// shutting down, the destroy returns immediately rather than
+// continuing against a cancelled parent. The timeout is the upper
+// bound: a wedged Firecracker can't pin the caller past `timeout`.
 //
-// The ctx parameter is accepted to satisfy the contextcheck linter's
-// expectation that context-using functions take a parent context. We
-// deliberately discard it — see the Background() justification above.
-// The timeout parameter lets callers pick the deadline (most use
-// DestroyTimeout; KillStuck uses a tighter 5s so a wedged Firecracker
-// can't pin the watchdog goroutine).
+// KillStuck uses a tighter 5s so a wedged Firecracker can't pin the
+// watchdog goroutine. All other callers use DestroyTimeout.
 //
-// Returns the underlying vmmd error so callers can decide whether
-// to log, surface, or discard; the timeout itself is not surfaced.
+// If a destroy really must run after the caller's ctx is cancelled
+// (rare — today, none of the callers do this), route it through a
+// dedicated cleanup goroutine in cmd/schedd instead of lying about
+// the context here.
 func (e *Engine) timedDestroy(ctx context.Context, instanceID string, timeout time.Duration) error {
-	_ = ctx // see comment above
-	destroyCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	destroyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return e.vmm.Destroy(destroyCtx, instanceID) //nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
+	return e.vmm.Destroy(destroyCtx, instanceID)
 }
 
 // bestEffortDestroy is the no-error-discard wrapper around
