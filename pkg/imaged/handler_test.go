@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -333,12 +334,18 @@ func TestHandleDeploymentOCIFailure(t *testing.T) {
 	}
 }
 
-// TestHandleBuildQueued asserts the queued build is marked running.
+// TestHandleBuildQueued asserts the queued build is dispatched to the canonical
+// snapshot_boot handler: imaged decodes apid's actual payload shape
+// ({"app","build","deployment","kind"}), walks the deployment to snapshotting,
+// and re-emits NotifySnapshotPrime for schedd. The M5 contract changed in
+// the M8 PR — apid's emit shape is the source of truth and imaged no longer
+// flips the build row to running inline (builderd owns that transition).
 func TestHandleBuildQueued(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "src-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+		Runtime: RuntimeNode22,
 	})
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/x.tgz",
@@ -347,15 +354,41 @@ func TestHandleBuildQueued(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
+	// Stamp the rootfs the way builderd would (a tarball path).
+	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", 4096); err != nil {
+		t.Fatal(err)
+	}
+	notif := &fakeNotifier{}
+	appsRoot := t.TempDir()
+	// Pre-place a fake function runner so buildFunctionLayer doesn't bail out
+	// for the empty-path case (F3 fail-loud).
+	bin := filepath.Join(t.TempDir(), "faas-runner")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := New(store, notif, fakePuller{digest: "sha256:abc"}, &fakeBuilder{bytesOut: 4096}, "./init", appsRoot, silentLogger())
+	h.WithFunctionRunnerNode22(bin)
+	// apid emits the canonical M8 shape — app, build, deployment, kind.
 	n := db.Notification{
 		Channel: db.NotifyBuildQueued,
-		Payload: `{"app_id":"` + app.ID + `","build_id":"` + b.ID + `","kind":"tarball"}`,
+		Payload: `{"app":"` + app.ID + `","build":"` + b.ID + `","deployment":"` + dep.ID + `","kind":"tarball"}`,
 	}
 	h.HandleNotification(context.Background(), n)
-	got, _ := store.BuildByID(context.Background(), b.ID)
-	if got.Status != state.BuildRunning {
-		t.Errorf("build status = %s, want running", got.Status)
+	got, _ := store.DeploymentByID(context.Background(), dep.ID)
+	if got.Status != state.DeploySnapshotting {
+		t.Errorf("deployment status = %s, want snapshotting", got.Status)
+	}
+	// Must re-emit NotifySnapshotPrime for schedd (M6 chain).
+	primeFound := false
+	for _, c := range notif.calls {
+		if c.channel == db.NotifySnapshotPrime &&
+			strings.Contains(c.payload, app.ID) &&
+			strings.Contains(c.payload, dep.ID) {
+			primeFound = true
+		}
+	}
+	if !primeFound {
+		t.Errorf("expected NotifySnapshotPrime to schedd; got %v", notif.calls)
 	}
 }
 

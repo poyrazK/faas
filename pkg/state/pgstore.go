@@ -1004,6 +1004,92 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 	return nil
 }
 
+// ListSnapshotsForGC returns every non-stale snapshot joined with its
+// deployment + app + account, ordered newest-first. The SQL filter on
+// apps.status='deleted' is what implements "soft-deleted apps' snapshots
+// are GC-eligible" — the row delete cascade in DeleteAccount only touches
+// rows, not on-disk files, so imaged still has to scrub them.
+//
+// The JOIN is bounded by snapshotDashboardCap (10k) for the same reason
+// ListLiveSnapshotStats is: the GC algorithm is O(N) per tick and a 10k
+// fleet is plenty for the v1 box (the 452 GB budget fires well before that).
+// Raise this when we go multi-box.
+func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error) {
+	rows, err := s.pool.Query(ctx,
+		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text,
+		        s.fc_version, s.mem_bytes, s.disk_bytes, s.path, s.stale, s.created_at
+		   from snapshots s
+		   join deployments d on d.id = s.deployment_id
+		   join apps a       on a.id = d.app_id
+		  where s.stale = false
+		    and a.status <> 'deleted'
+		  order by s.created_at desc
+		  limit 10000`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SnapshotForGC
+	for rows.Next() {
+		var r SnapshotForGC
+		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID,
+			&r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.Path, &r.Stale, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DeleteSnapshotsByID bulk-removes the named rows. No cascade; schedd's
+// runtime accounting (instances table) doesn't reference snapshots, so a
+// snapshot can be deleted without affecting live wakes — ADR-005 says
+// "cold boot must always work" precisely so this can be done in any
+// state. Idempotent: a second call returns 0 and nil.
+func (s *PgStore) DeleteSnapshotsByID(ctx context.Context, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `delete from snapshots where id = any($1::uuid[])`, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// MarkAllSnapshotsStaleByFCVersion flips every non-stale row whose
+// fc_version != currentVersion stale (ADR-005). Idempotent. Returns
+// the number of rows affected; a 0-row result on a stable box is the
+// expected steady state.
+func (s *PgStore) MarkAllSnapshotsStaleByFCVersion(ctx context.Context, currentVersion string) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`update snapshots set stale = true where stale = false and fc_version <> $1`,
+		currentVersion)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// MarkOldSnapshotsStale marks the given snapshot IDs stale. Used by the
+// imaged GC's per-app "current + previous" enforcement: the per-app walk
+// identifies the IDs to drop, marks them stale first (so a concurrent
+// wake's "is this usable?" check refuses them safely), and then calls
+// DeleteSnapshotsByID. Marking stale first instead of deleting directly
+// lets schedd's per-row freshness check remain the source of truth in
+// the brief window between mark and delete.
+func (s *PgStore) MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs []string) (int64, error) {
+	if len(beforeSnapshotIDs) == 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx,
+		`update snapshots set stale = true where id = any($1::uuid[])`, beforeSnapshotIDs)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ListLiveSnapshotStats returns mem_bytes + disk_bytes for every non-stale
 // snapshot. Feeds the §12 dashboard gauge `fcvm_snapshot_fleet_avg_bytes`
 // (and the p95 sibling). One round-trip; the dashboard wrapper caches

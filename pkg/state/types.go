@@ -325,6 +325,28 @@ type Snapshot struct {
 	CreatedAt    time.Time
 }
 
+// SnapshotForGC is the join-projection used by the imaged nightly GC
+// (spec §4.6: keep current + previous deployment's snapshots per app;
+// fleet budget pressure evicts from biggest-over-quota accounts first).
+// It denormalises snapshot → deployment → app → account into one row so
+// the GC algorithm doesn't have to round-trip per row.
+//
+// Snapshots for soft-deleted apps (apps.status = 'deleted') are filtered
+// at the SQL layer; they have no in-flight wake target and keeping them
+// would leak the 452 GB budget indefinitely.
+type SnapshotForGC struct {
+	ID           string
+	DeploymentID string
+	AppID        string
+	AccountID    string
+	FCVersion    string
+	MemBytes     int64
+	DiskBytes    int64
+	Path         string
+	Stale        bool
+	CreatedAt    time.Time
+}
+
 // LoginToken is one row in login_tokens (M7.5 magic-link). The token
 // itself never appears in storage — only its SHA-256 hash does. The
 // raw token is emailed to the user once and is consumed by

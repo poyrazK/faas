@@ -18,6 +18,12 @@ const (
 	snapDir = "/srv/fc/snap"
 )
 
+// SnapDir returns the per-deployment snapshot blob directory root. imaged
+// uses this for F5 filesystem cleanup (delete the snap dir when a deployment
+// falls out of the "current + previous" retention window or when its app
+// is soft-deleted).
+func SnapDir() string { return snapDir }
+
 // basePath returns the drive0 shared base rootfs for an app's runtime. Function
 // apps (runtime set) boot the matching runner base; plain apps boot the generic
 // base image (spec §2, ADR-003 — same data plane either way).

@@ -12,12 +12,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -56,10 +58,13 @@ type Handler struct {
 	// appsRoot is the directory under which per-app layer-{deployment}.ext4
 	// files are written. Defaults to FAAS_APPS_ROOT or /var/lib/faas/apps.
 	appsRoot string
-	// functionRunnerPath is the absolute path to the static
-	// guest/runners/<runtime>/faas-runner binary injected into function
-	// layers. Empty in tests; cmd/imaged wires this from config.
-	functionRunnerPath string
+	// functionRunnerNode22Path is the absolute path to the static
+	// guest/runners/node22/faas-runner binary injected into node22 function
+	// layers. Empty in tests; cmd/imaged wires this from FAAS_FUNCTION_RUNNER_NODE22.
+	functionRunnerNode22Path string
+	// functionRunnerPython312Path mirrors functionRunnerNode22Path for the
+	// python312 runtime (FAAS_FUNCTION_RUNNER_PYTHON312).
+	functionRunnerPython312Path string
 	// deployBaseRefOverride replaces the per-runtime base ref during
 	// aboveBaseLayers. See WithDeployBaseRef — test-only seam.
 	deployBaseRefOverride string
@@ -81,10 +86,17 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 	}
 }
 
-// WithFunctionRunnerPath returns the handler with the runner binary path
-// set. Wired from cmd/imaged when the function runner has been compiled.
-func (h *Handler) WithFunctionRunnerPath(p string) *Handler {
-	h.functionRunnerPath = p
+// WithFunctionRunnerNode22 returns the handler with the node22 runner binary
+// path set. Wired from cmd/imaged when the function runner has been compiled
+// (Makefile target `guest-runners`).
+func (h *Handler) WithFunctionRunnerNode22(p string) *Handler {
+	h.functionRunnerNode22Path = p
+	return h
+}
+
+// WithFunctionRunnerPython312 mirrors WithFunctionRunnerNode22 for python312.
+func (h *Handler) WithFunctionRunnerPython312(p string) *Handler {
+	h.functionRunnerPython312Path = p
 	return h
 }
 
@@ -113,6 +125,14 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 		if err := h.handleDeployment(ctx, p); err != nil {
 			h.log.Warn("imaged: deploy failed", "app", p.AppID, "deployment", p.To, "err", err)
 		}
+		// F5: when apid supersedes a deployment, drop the per-app layer ext4
+		// so appsRoot doesn't accumulate orphans. The snapshot blob is kept
+		// (one-click rollback needs it) and GC'd by the nightly sweep.
+		if p.Status == string(state.DeploySuperseded) && p.To != "" {
+			if err := h.cleanupDeploymentFiles(ctx, p.To, false /* keepSnap */); err != nil {
+				h.log.Warn("imaged: cleanup superseded", "deployment", p.To, "err", err)
+			}
+		}
 	case db.NotifyBuildQueued:
 		var p buildQueuedPayload
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
@@ -122,6 +142,15 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 		if err := h.handleBuildQueued(ctx, p); err != nil {
 			h.log.Warn("imaged: build queue failed", "app", p.AppID, "build", p.BuildID, "err", err)
 		}
+	case db.NotifySnapshotBoot:
+		var p snapshotBootPayload
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+			h.log.Warn("imaged: bad snapshot_boot payload", "err", err)
+			return
+		}
+		if err := h.handleSnapshotBoot(ctx, p); err != nil {
+			h.log.Warn("imaged: snapshot boot failed", "deployment", p.DeploymentID, "err", err)
+		}
 	case db.NotifySnapshotWritten:
 		var p snapshotWrittenPayload
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
@@ -130,6 +159,18 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 		}
 		if err := h.handleSnapshotWritten(ctx, p); err != nil {
 			h.log.Warn("imaged: record snapshot failed", "deployment", p.DeploymentID, "err", err)
+		}
+	case db.NotifyAppChanged:
+		var p appChangedPayload
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+			h.log.Warn("imaged: bad app_changed payload", "err", err)
+			return
+		}
+		// F5: app soft-delete triggers the full filesystem scrub.
+		if p.Kind == "deleted" && p.AppID != "" {
+			if err := h.cleanupAppFiles(ctx, p.AppID); err != nil {
+				h.log.Warn("imaged: cleanup app", "app", p.AppID, "err", err)
+			}
 		}
 	}
 }
@@ -141,13 +182,28 @@ type deploymentChangedPayload struct {
 	To          string `json:"to"`
 	Kind        string `json:"kind"`
 	ImageDigest string `json:"image_digest,omitempty"`
+	// Status is the post-transition deployment status (e.g. "live",
+	// "superseded"). imaged uses it to detect supersede for F5 cleanup.
+	Status string `json:"status,omitempty"`
 }
 
-// buildQueuedPayload is the JSON shape apid emits on `build_queued`.
+// appChangedPayload is the JSON shape apid emits on `app_changed`. imaged
+// only listens for soft-delete today (F5); other kinds (created, updated)
+// are no-ops.
+type appChangedPayload struct {
+	AppID string `json:"app_id"`
+	Kind  string `json:"kind"`
+}
+
+// buildQueuedPayload is the JSON shape apid emits on `build_queued` (see
+// cmd/apid/deploy_inputs.go — `{"build", "deployment", "app", "kind"}`).
+// F4 closes the gap where this struct decoded `app_id`/`build_id` while
+// the on-wire shape used `app`/`build`, so the M5 stub never fired.
 type buildQueuedPayload struct {
-	AppID   string `json:"app_id"`
-	BuildID string `json:"build_id"`
-	Kind    string `json:"kind"`
+	AppID        string `json:"app"`
+	BuildID      string `json:"build"`
+	DeploymentID string `json:"deployment"`
+	Kind         string `json:"kind"`
 }
 
 // snapshotWrittenPayload is the JSON shape schedd emits on `snapshot_written`
@@ -160,6 +216,18 @@ type snapshotWrittenPayload struct {
 	MemBytes     int64  `json:"mem_bytes"`
 	VMStateBytes int64  `json:"vmstate_bytes"`
 	FCVersion    string `json:"fc_version"`
+}
+
+// snapshotBootPayload is the JSON shape builderd emits on `snapshot_boot`
+// after a build VM has produced an OCI image tarball and stamped it on
+// deployments.rootfs_path (see pkg/builderd/builderd.go::ProcessOne). imaged
+// is the sole subscriber: it converts the OCI tarball into a per-app ext4
+// (drive1) and then re-emits NotifySnapshotPrime so schedd can cold-boot
+// + snapshot (F4). The payload is intentionally minimal so the channel
+// stays narrow.
+type snapshotBootPayload struct {
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
 }
 
 // handleDeployment advances a deployment up to the point where a snapshot
@@ -352,10 +420,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 //  3. Stamp /etc/faas/app.json with the §4.9 manifest pointing at the
 //     runner.
 //
-// The runner binary is injected from a path the daemon config provides
-// (cmd/imaged wires this). For tests, FunctionRunnerPath is empty and
-// the path is treated as a no-op so the table test can exercise the
-// rest of the path without an actual binary.
+// The runner binary is injected from a per-runtime path the daemon config
+// provides (cmd/imaged wires both env-driven). Fails loud when the matching
+// path is empty — silent omission meant production function deploys were
+// shipping a layer without /usr/local/bin/faas-runner (M8 readiness).
 func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
 	if err := h.transition(ctx, dep.ID, state.DeployImaging, ""); err != nil {
 		return err
@@ -366,9 +434,19 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		// doesn't carry the runtime — keeps older clients working.
 		runtime = dep.Handler
 	}
-	if runtime != "node22" && runtime != "python312" {
+	if runtime != RuntimeNode22 && runtime != RuntimePython312 {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "unsupported runtime: "+runtime)
 		return fmt.Errorf("imaged: unsupported function runtime %q", runtime)
+	}
+	// Fail loud when the runner binary isn't wired. This is the gap that
+	// shipped in M6: the runner binary was never plumbed from cmd/imaged,
+	// so a node22 or python312 deploy would silently leave the ext4
+	// without /usr/local/bin/faas-runner and FAILED on first wake.
+	runnerPath := h.runnerPathFor(runtime)
+	if runnerPath == "" {
+		msg := fmt.Sprintf("function runner binary not configured for runtime %q (set FAAS_FUNCTION_RUNNER_%s on the imaged unit)", runtime, runtimeToEnvSuffix(runtime))
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, msg)
+		return fmt.Errorf("imaged: %s", msg)
 	}
 	manifest := api.AppManifest{
 		Port:    api.DefaultAppPort,
@@ -379,7 +457,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 			"--handler", "/app/" + runtime + ".js", // python312 uses handler.py; node22 uses node22.js
 		},
 	}
-	if runtime == "python312" {
+	if runtime == RuntimePython312 {
 		manifest.Entrypoint = []string{
 			"/usr/local/bin/faas-runner",
 			"--runtime", runtime,
@@ -404,7 +482,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		TarballPath: dep.SourcePath,
 		// FunctionRunnerPath is the static guest/runners/<rt>/faas-runner
 		// binary that lives at /usr/local/bin/faas-runner in the layer.
-		FunctionRunnerPath: h.functionRunnerPath,
+		FunctionRunnerPath: runnerPath,
 	})
 	if err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build function layer: "+err.Error())
@@ -415,6 +493,32 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		return fmt.Errorf("imaged: stamp rootfs: %w", err)
 	}
 	return nil
+}
+
+// runnerPathFor returns the wired static-binary path for the runtime, or ""
+// when nothing was wired. Empty string is the fail-loud signal — callers
+// must transition the deployment to failed before building.
+func (h *Handler) runnerPathFor(runtime string) string {
+	switch runtime {
+	case RuntimeNode22:
+		return h.functionRunnerNode22Path
+	case RuntimePython312:
+		return h.functionRunnerPython312Path
+	}
+	return ""
+}
+
+// runtimeToEnvSuffix maps a runtime identifier to its env-var suffix so the
+// fail-loud error message names the operator-facing knob (e.g. NODE22 for
+// FAAS_FUNCTION_RUNNER_NODE22).
+func runtimeToEnvSuffix(runtime string) string {
+	switch runtime {
+	case RuntimeNode22:
+		return "NODE22"
+	case RuntimePython312:
+		return "PYTHON312"
+	}
+	return runtime
 }
 
 // manifestFromImageConfig maps an OCI ImageConfig to an api.AppManifest. The
@@ -496,8 +600,19 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	return nil
 }
 
-// handleBuildQueued advances a queued source build. M5 only flips status +
-// emits a log line; the actual builder-microVM (ADR-003) lands in M6.
+// handleBuildQueued advances a queued source build. The full builderd VM
+// pipeline runs in pkg/builderd and emits NotifySnapshotBoot when the OCI
+// tarball is ready; imaged subscribes to that channel (handleSnapshotBoot)
+// and converts the tarball into an app-layer ext4. handleBuildQueued here
+// is a thin dispatcher that:
+//
+//   - flips the builds row to running so dashboards reflect the state,
+//   - resolves the deployment_id from the build row,
+//   - synthesises a snapshotBootPayload and forwards to handleSnapshotBoot.
+//
+// This keeps the apid-emitted payload shape ({build, deployment, app, kind})
+// untouched while funnelling all OCI-tarball→ext4 work through the
+// canonical handler. (F4)
 func (h *Handler) handleBuildQueued(ctx context.Context, p buildQueuedPayload) error {
 	// failure_class is "" while the build is in-flight; both MemStore and
 	// PgStore treat the empty string as "preserve prior value" via a
@@ -506,10 +621,92 @@ func (h *Handler) handleBuildQueued(ctx context.Context, p buildQueuedPayload) e
 	if err := h.store.UpdateBuildStatus(ctx, p.BuildID, state.BuildRunning, "", true, false); err != nil {
 		return fmt.Errorf("imaged: mark building: %w", err)
 	}
-	h.log.Info("imaged: build queued (M5 stub)", "app", p.AppID, "build", p.BuildID, "kind", p.Kind)
-	// Real M6 work: call into pkg/builderd to run railpack/buildctl inside a
-	// builder microVM and produce an OCI digest, then continue the same
-	// imaging→snapshotting→live path as handleDeployment.
+	dep, err := h.store.DeploymentByID(ctx, p.DeploymentID)
+	if err != nil {
+		return fmt.Errorf("imaged: resolve deployment for build: %w", err)
+	}
+	h.log.Info("imaged: build queued (M6 dispatch)",
+		"app", p.AppID, "build", p.BuildID, "deployment", dep.ID, "kind", p.Kind)
+	return h.handleSnapshotBoot(ctx, snapshotBootPayload{
+		AppID:        p.AppID,
+		DeploymentID: dep.ID,
+	})
+}
+
+// handleSnapshotBoot is the canonical builderd-driven path (F4). builderd
+// has finished its build VM, stamped the OCI image tarball onto
+// deployments.rootfs_path, and emitted NotifySnapshotBoot. imaged:
+//
+//   - redelivery-guards on the deployment status (no work past `building`),
+//   - runs the same buildImageLayer path the image deploy uses — the OCI
+//     tarball is consumed via rootfs.Builder,
+//   - re-emits NotifySnapshotPrime for schedd to cold-boot + snapshot.
+//
+// The pre-image-deploy transitions (pending → building → imaging →
+// snapshotting) are NOT walked here: by the time builderd fires the boot
+// notification, apid has already advanced the row to `building` (apid's
+// POST /v1/apps/{app}/deployments handler flips it). imaged picks up at
+// `imaging` to keep the state-machine CHECK constraints happy.
+func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload) error {
+	if p.DeploymentID == "" {
+		return errors.New("imaged: snapshot_boot missing deployment_id")
+	}
+	dep, err := h.store.DeploymentByID(ctx, p.DeploymentID)
+	if err != nil {
+		return fmt.Errorf("imaged: load deployment: %w", err)
+	}
+	switch dep.Status {
+	case state.DeployPending, state.DeployBuilding:
+		// proceed
+	default:
+		// Redelivery or out-of-order; bail silently.
+		h.log.Info("imaged: snapshot_boot ignored",
+			"deployment", p.DeploymentID, "status", dep.Status)
+		return nil
+	}
+	if dep.RootfsPath == "" {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "snapshot_boot: empty rootfs_path (builderd didn't stamp)")
+		return fmt.Errorf("imaged: deployment %s has no rootfs_path stamped by builderd", dep.ID)
+	}
+	app, err := h.store.AppByID(ctx, dep.AppID)
+	if err != nil {
+		return fmt.Errorf("imaged: load app: %w", err)
+	}
+	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		return fmt.Errorf("imaged: load account: %w", err)
+	}
+	if err := h.transition(ctx, dep.ID, state.DeployImaging, ""); err != nil {
+		return err
+	}
+	// Dispatch on the deploy kind — builderd stamps the OCI tarball
+	// (function deploy) or OCI image ref (tarball/dockerfile deploy)
+	// onto deployments.rootfs_path before emitting NotifySnapshotBoot.
+	// F4: an image-kind deploy for a tarball/dockerfile source is a
+	// misconfig; we fail loud rather than silently try to OCI-pull a
+	// local file.
+	switch dep.Kind {
+	case state.DeploymentKindImage:
+		if err := h.buildImageLayer(ctx, app, dep, acct); err != nil {
+			return err
+		}
+	case state.DeploymentKindTarball, state.DeploymentKindDockerfile:
+		if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
+	}
+	if err := h.transition(ctx, dep.ID, state.DeploySnapshotting, ""); err != nil {
+		return err
+	}
+	primePayload, _ := json.Marshal(map[string]string{
+		"app_id":        app.ID,
+		"deployment_id": dep.ID,
+	})
+	if err := h.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
+		return fmt.Errorf("imaged: notify snapshot_prime: %w", err)
+	}
 	return nil
 }
 
@@ -638,4 +835,105 @@ func repoWithHost(ref string) string {
 		return r.Repository
 	}
 	return r.Registry + "/" + r.Repository
+}
+
+// --- F5: filesystem cleanup -------------------------------------------------
+//
+// imaged is the sole owner of `/srv/fc/snap/<depID>/` and
+// `<appsRoot>/<slug>/<depID>.ext4`. The DB row is the source of truth; the
+// filesystem is the cache. Missing files log Warn, never fail (ADR-005:
+// cold boot must always work, even if a stale filesystem lingers).
+//
+// Cleanup fires on two events:
+//   - deployment superseded → drop the per-app ext4 (drive1). The snapshot
+//     blob is KEPT so one-click rollback stays instant; the GC evicts it
+//     when it falls out of the "current + previous" window.
+//   - app soft-deleted → drop the ext4 AND the snap blobs for every
+//     deployment of the app. Best-effort.
+
+// cleanupDeploymentFiles removes the on-disk artifacts for a single deployment.
+// keepSnap=true leaves the snapshot blob (one-click rollback) and only removes
+// the per-app ext4.
+func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID string, keepSnap bool) error {
+	dep, err := h.store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return fmt.Errorf("imaged: cleanup load deployment: %w", err)
+	}
+	app, err := h.store.AppByID(ctx, dep.AppID)
+	if err != nil {
+		return fmt.Errorf("imaged: cleanup load app: %w", err)
+	}
+	// Per-app ext4 (drive1).
+	ext4 := dep.RootfsPath
+	if ext4 == "" {
+		ext4 = filepath.Join(h.appsRoot, app.Slug, dep.ID+".ext4")
+	}
+	if err := os.Remove(ext4); err != nil && !os.IsNotExist(err) {
+		h.log.Warn("imaged: cleanup ext4", "path", ext4, "err", err)
+	}
+	if !keepSnap {
+		dir := filepath.Join(sched.SnapDir(), dep.ID)
+		if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+			h.log.Warn("imaged: cleanup snap dir", "path", dir, "err", err)
+		}
+	}
+	return nil
+}
+
+// cleanupAppFiles walks every deployment for the app, drops the per-app ext4
+// AND the snap blobs for each, then unlinks the per-app directory entirely.
+//
+// A missing app row is treated as a silent no-op (logs at Info level when
+// the store surfaces ErrNotFound). app_changed notifications can fire on
+// non-delete transitions; the switch in HandleNotification only routes
+// kind="deleted" here, but defensive zero-error keeps the loop steady
+// under redelivery or operator replay.
+func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
+	app, err := h.store.AppByID(ctx, appID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			h.log.Info("imaged: cleanup app no-op (missing)", "app", appID)
+			return nil
+		}
+		return fmt.Errorf("imaged: cleanup load app: %w", err)
+	}
+	deps, err := h.store.ListDeploymentsForApp(ctx, appID, 0, 0)
+	if err != nil {
+		return fmt.Errorf("imaged: cleanup list deployments: %w", err)
+	}
+	for _, d := range deps {
+		ext4 := d.RootfsPath
+		if ext4 == "" {
+			ext4 = filepath.Join(h.appsRoot, app.Slug, d.ID+".ext4")
+		}
+		if err := os.Remove(ext4); err != nil && !os.IsNotExist(err) {
+			h.log.Warn("imaged: app cleanup ext4", "path", ext4, "err", err)
+		}
+		dir := filepath.Join(sched.SnapDir(), d.ID)
+		if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+			h.log.Warn("imaged: app cleanup snap dir", "path", dir, "err", err)
+		}
+	}
+	dir := filepath.Join(h.appsRoot, app.Slug)
+	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+		h.log.Warn("imaged: app cleanup app dir", "path", dir, "err", err)
+	}
+	return nil
+}
+
+// --- F2: FC-version startup sweep ------------------------------------------
+
+// MarkFCSnapshotsStale is the F2 sweep body. It is invoked once at imaged
+// startup (cmd/imaged/main.go wires it) and never on a timer — a Firecracker
+// upgrade requires the operator to restart imaged, which matches the
+// "snapshots are cache, not truth" framing (ADR-005). Idempotent.
+func (h *Handler) MarkFCSnapshotsStale(ctx context.Context, fcVersion string) (int64, error) {
+	if fcVersion == "" {
+		return 0, errors.New("imaged: MarkFCSnapshotsStale: empty fc version")
+	}
+	n, err := h.store.MarkAllSnapshotsStaleByFCVersion(ctx, fcVersion)
+	if err != nil {
+		return 0, fmt.Errorf("imaged: mark stale by fc: %w", err)
+	}
+	return n, nil
 }

@@ -3,13 +3,18 @@
 // imaged owns OCI→bootable-rootfs conversion (the two-drive scheme), base/runner
 // images, and snapshot GC. It turns the layers ABOVE a shared base into a per-app
 // ext4 app layer, injects guest-init + the app.json contract, and enforces the
-// plan's app-layer cap. Never flatten to one rootfs per app (spec §4.6). Snapshot
-// GC + the fleet-size metrics land later in M2/M3.
+// plan's app-layer cap. Never flatten to one rootfs per app (spec §4.6).
 //
-// M5: imaged is a real consumer of apid's pg_notify events. It subscribes to
-// `deployment_changed` (image: digest) and `build_queued` (tarball/dockerfile),
-// advances the deployment row through every status transition, and writes the
-// snapshots row that schedd uses to restore instances on wake (ADR-005).
+// M8 wiring: the daemon owns a Loop that drives
+//
+//   - the LISTEN subscriber (deployment_changed, build_queued, snapshot_boot,
+//     snapshot_written, app_changed),
+//   - the nightly GC (per-app keep current+previous; fleet budget pressure
+//     evicts from the heaviest accounts first),
+//   - a one-shot FC-version sweep on startup that marks all stale-version
+//     snapshots stale (ADR-005).
+//
+// runDeps is the DI seam for tests (mirror cmd/schedd/main.go).
 package main
 
 import (
@@ -35,13 +40,39 @@ func main() {
 	wire.Daemon("imaged", run)
 }
 
+// runDeps is the DI seam for tests. Production wires every field via
+// defaultDeps(); tests swap one or two. Mirrors cmd/schedd/main.go::runDeps.
+type runDeps struct {
+	openDB    func(ctx context.Context, url string) (*pgxpool.Pool, error)
+	migrate   func(ctx context.Context, pool *pgxpool.Pool) error
+	lvUsedPct func(ctx context.Context) (float64, error)
+	detectFC  func(ctx context.Context) (string, error)
+	now       func() time.Time
+}
+
+func defaultDeps() runDeps {
+	return runDeps{
+		openDB: db.Open,
+		migrate: func(ctx context.Context, pool *pgxpool.Pool) error {
+			return db.MigrateUp(ctx, pool)
+		},
+		lvUsedPct: imaged.DefaultLvFcUsedPct(imaged.LvFcName),
+		detectFC:  imaged.DetectFirecrackerVersion,
+		now:       time.Now,
+	}
+}
+
 func run(ctx context.Context, log *slog.Logger) error {
-	pool, err := db.Open(ctx, "")
+	return defaultDeps().run(ctx, log)
+}
+
+func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
+	pool, err := d.openDB(ctx, "")
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
-	if err := db.MigrateUp(ctx, pool); err != nil {
+	if err := d.migrate(ctx, pool); err != nil {
 		return err
 	}
 
@@ -59,9 +90,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// http.Client AND flips the OCI scheme to http. Test harness only —
 	// never set in production. Lets the e2e tests pull from an httptest
 	// registry bound to loopback (which the egress guard denies and which
-	// serves plain HTTP, not HTTPS). WithEndpoint("http", "") sets the
-	// scheme while leaving the per-reference host derivation intact (the
-	// puller falls back to r.APIHost() when its pinned host is empty).
+	// serves plain HTTP, not HTTPS).
 	pullerOpts := []oci.Option{oci.WithHTTPClient(oci.NewEgressHTTPClient())}
 	if os.Getenv("FAAS_OCI_INSECURE") == "1" {
 		log.Warn("FAAS_OCI_INSECURE=1 — egress guard disabled, e2e test mode only")
@@ -77,32 +106,38 @@ func run(ctx context.Context, log *slog.Logger) error {
 	appsRoot := envOr("FAAS_APPS_ROOT", "/var/lib/faas/apps")
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log)
 
+	// F3: function runner wiring. cmd/imaged refuses to come up if either
+	// env var is set but the path doesn't exist on disk — silent omission
+	// was the M6 bug (a function deploy would build a layer without
+	// /usr/local/bin/faas-runner and FAILED on first wake).
+	for _, kw := range []struct {
+		envKey, runtime string
+		apply           func(string)
+	}{
+		{"FAAS_FUNCTION_RUNNER_NODE22", imaged.RuntimeNode22, func(p string) { h.WithFunctionRunnerNode22(p) }},
+		{"FAAS_FUNCTION_RUNNER_PYTHON312", imaged.RuntimePython312, func(p string) { h.WithFunctionRunnerPython312(p) }},
+	} {
+		p := os.Getenv(kw.envKey)
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err != nil {
+			return fmt.Errorf("imaged: %s=%q: %w", kw.envKey, p, err)
+		}
+		kw.apply(p)
+		log.Info("imaged: function runner wired", "runtime", kw.runtime, "path", p)
+	}
+
 	// FAAS_DEPLOY_BASE_REF overrides the per-runtime base ref used by
-	// aboveBaseLayers at deploy time. Wired from the test harness via the
-	// same FAAS_TEST_BUILDER_BASE_REF it already uses for startup-time
-	// staging — production never sets this (see Handler.WithDeployBaseRef).
+	// aboveBaseLayers at deploy time. Test-only.
 	if dbr := os.Getenv("FAAS_DEPLOY_BASE_REF"); dbr != "" {
 		h.WithDeployBaseRef(dbr)
 	}
 
-	channels := []string{
-		db.NotifyDeploymentChanged,
-		db.NotifyBuildQueued,
-		db.NotifySnapshotWritten,
-	}
-	notif, cancel, err := db.Subscribe(ctx, pool, channels)
-	if err != nil {
-		return err
-	}
-	defer cancel()
-
-	// M6 closure: stage the builder-base ext4 on startup so cold-boot can
-	// pass it as drive0 (spec §4.6 two-drive). Pull the configured base ref
-	// (or the pinned default), assemble all layers into the shared read-only
-	// ext4 at FAAS_BUILDER_BASE_PATH. Idempotent across restarts — see
-	// imaged.EnsureBaseExt4 for the digest-pinned skip path. A failure here
-	// refuses to come up: a half-built base would mask every later builder
-	// crash as a "base missing" error and make root-causing painful.
+	// F1 + F2: stage the builder-base ext4 on startup, then hand off to the
+	// M8 loop which drives the LISTEN subscriber + nightly GC + one-shot FC
+	// sweep. The stage is still required for cold-boot of builder microVMs
+	// (see spec §4.6 two-drive scheme).
 	baseRef := envOr("FAAS_BUILDER_BASE_REF", imaged.BaseRefBuilder)
 	basePath := envOr("FAAS_BUILDER_BASE_PATH", "/srv/fc/base/builder-base.ext4")
 	baseRes, err := h.EnsureBaseExt4(ctx, baseRef, basePath)
@@ -110,25 +145,26 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("imaged: stage builder base %s → %s: %w", baseRef, basePath, err)
 	}
 
+	loop := imaged.NewLoop(imaged.LoopConfig{
+		Handler:   h,
+		Store:     store,
+		Pool:      pool,
+		Log:       log,
+		Now:       d.now,
+		LvUsedPct: d.lvUsedPct,
+		DetectFC:  d.detectFC,
+		AppsRoot:  appsRoot,
+		GCEvery:   envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
+	})
+
 	log.Info("imaged ready",
 		"min_layer_mb", rootfs.MinLayerMB,
 		"builder_base_path", basePath,
 		"builder_base_ref", baseRef,
 		"builder_base_digest", baseRes.ConfigDigest,
 		"builder_base_skipped", baseRes.Skipped,
-		"channels", channels)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case n, ok := <-notif:
-			if !ok {
-				return nil
-			}
-			h.HandleNotification(ctx, n)
-		}
-	}
+	)
+	return loop.Run(ctx)
 }
 
 // dbNotifier adapts *pgxpool.Pool to imaged.Notifier by closing over the pool
@@ -146,13 +182,24 @@ func (d dbNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return nil
 }
 
-// silence unused-import in builds where rootfs isn't referenced yet.
-var _ = time.Now
-
 // envOr returns the value of env key, or fallback when unset/empty.
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return fallback
+}
+
+// envDuration parses a duration env var, returning fallback on parse error
+// or empty string. Used for the GC tick override (FAAS_GC_INTERVAL).
+func envDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
 }

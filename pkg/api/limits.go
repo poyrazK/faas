@@ -184,6 +184,12 @@ const (
 	// Snapshots / disk (spec §1, §8).
 	FleetSnapshotAvgTargetMB = 130 // business metric; alert >160 warn, >200 page
 	SnapshotBudgetGB         = 452
+	// SnapshotBudgetAlarmPct is the lv-fc percentage at which the nightly
+	// imaged GC switches from per-app retention (keep current+previous
+	// deployments per app) to fleet budget pressure (evict from the
+	// biggest-over-quota accounts first). Matches spec §12. NaN lv-fc
+	// readings (lvs missing on dev/macOS) short-circuit the pressure branch.
+	SnapshotBudgetAlarmPct = 90.0
 	// LvFcName is the LVM logical volume apps + snapshots live on (spec §8).
 	// Schedd's dashboard gauge shells out to `lvs -o data_percent <LvFcName>`
 	// to populate `fcvm_lv_fc_used_pct`. Empty on dev/macOS — the

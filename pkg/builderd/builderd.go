@@ -169,10 +169,14 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 			b.markFailed(ctx, build.ID, state.FailureInfra, "set rootfs: "+err.Error())
 			return BuildResult{}, err
 		}
-		// Prime handshake — schedd picks it up just like a registry-image deploy.
-		if err := b.notif.Notify(ctx, db.NotifySnapshotPrime,
+		// imaged handles the cache-hit tarball the same as a fresh build:
+		// it converts the OCI image into an app-layer ext4 and re-emits
+		// NotifySnapshotPrime for schedd. The split (snapshot_boot for
+		// imaged, snapshot_prime for schedd) avoids the race where schedd
+		// tries to mount a .tar as a virtio-blk drive.
+		if err := b.notif.Notify(ctx, db.NotifySnapshotBoot,
 			fmt.Sprintf(`{"app_id":"%s","deployment_id":"%s"}`, app.ID, dep.ID)); err != nil {
-			b.markFailed(ctx, build.ID, state.FailureInfra, "notify prime: "+err.Error())
+			b.markFailed(ctx, build.ID, state.FailureInfra, "notify boot: "+err.Error())
 			return BuildResult{}, err
 		}
 		b.markSucceeded(ctx, build.ID)
@@ -259,15 +263,17 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		b.log.Warn("builderd: cache store failed (continuing)", "err", err)
 	}
 	// Stamp the produced layer path onto the deployment row. imaged will
-	// receive a snapshot_prime notification and convert the OCI tarball into
-	// a snapshot before any wake can land.
+	// receive a snapshot_boot notification, convert the OCI tarball into
+	// a per-app ext4 (drive1), and re-emit NotifySnapshotPrime for schedd
+	// to cold-boot + snapshot. Splitting the channel prevents schedd from
+	// trying to mount the OCI tarball as a virtio-blk drive (it would 400).
 	if err := b.store.SetDeploymentRootfs(ctx, dep.ID, out.OCIImage, out.LogTailBytes); err != nil {
 		b.markFailed(ctx, build.ID, state.FailureInfra, "set rootfs: "+err.Error())
 		return BuildResult{}, err
 	}
-	if err := b.notif.Notify(ctx, db.NotifySnapshotPrime,
+	if err := b.notif.Notify(ctx, db.NotifySnapshotBoot,
 		fmt.Sprintf(`{"app_id":"%s","deployment_id":"%s"}`, app.ID, dep.ID)); err != nil {
-		b.markFailed(ctx, build.ID, state.FailureInfra, "notify prime: "+err.Error())
+		b.markFailed(ctx, build.ID, state.FailureInfra, "notify boot: "+err.Error())
 		return BuildResult{}, err
 	}
 	b.markSucceeded(ctx, build.ID)

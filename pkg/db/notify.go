@@ -100,6 +100,17 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         Anything that kept an in-memory cache (the
 //	                         gateway's route table, meterd's per-account
 //	                         usage map) re-reads on this signal.
+//	NotifySnapshotBoot      {"app_id":uuid, "deployment_id":uuid}
+//	                         builderd → imaged: a build VM has produced an
+//	                         OCI image tarball and stamped it on
+//	                         deployments.rootfs_path. imaged converts the
+//	                             tarball into the per-app ext4 (drive1) and
+//	                             then re-emits NotifySnapshotPrime for schedd
+//	                             to cold-boot + snapshot. Splits the
+//	                             "prime" edge in two so the OCI tarball is
+//	                             never exposed to schedd's vmmd call (which
+//	                             would try to mount .tar as virtio-blk and
+//	                             400). Only imaged subscribes.
 const (
 	NotifyAppChanged             = "app_changed"
 	NotifyDeploymentChanged      = "deployment_changed"
@@ -111,6 +122,7 @@ const (
 	NotifyDomainVerify           = "domain_verify"
 	NotifyInstanceChanged        = "instance_changed"
 	NotifySnapshotPrime          = "snapshot_prime"
+	NotifySnapshotBoot           = "snapshot_boot"
 	NotifySnapshotWritten        = "snapshot_written"
 	NotifyBillingPastDue         = "billing_past_due"
 	NotifyQuotaWarning           = "quota_warning"

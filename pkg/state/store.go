@@ -307,6 +307,25 @@ type Store interface {
 	LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error)
 	MarkSnapshotStale(ctx context.Context, snapshotID string) error
 
+	// Snapshot GC (imaged nightly + on FC upgrade, spec §4.6 + §4.4).
+	//
+	// ListSnapshotsForGC returns every non-stale snapshot joined with its
+	// deployment + app + account. Soft-deleted apps (status='deleted') are
+	// excluded; their snapshots have no in-flight wake target.
+	ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error)
+	// DeleteSnapshotsByID bulk-removes the named snapshot rows (no cascade).
+	// Returns the number of rows deleted; a second call with the same ids
+	// returns 0 and no error.
+	DeleteSnapshotsByID(ctx context.Context, ids []string) (int64, error)
+	// MarkAllSnapshotsStaleByFCVersion flips every non-stale row whose
+	// fc_version != currentVersion stale (ADR-005: snapshots are pinned to
+	// the Firecracker version that made them). Returns the number of rows
+	// affected. Idempotent.
+	MarkAllSnapshotsStaleByFCVersion(ctx context.Context, currentVersion string) (int64, error)
+	// MarkOldSnapshotsStale marks the given snapshot IDs stale (per-app
+	// "current + previous" enforcement, run before DeleteSnapshotsByID).
+	MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs []string) (int64, error)
+
 	// Audit (append-only, spec §6.1).
 	AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error
 	ListEvents(ctx context.Context, subject string, limit int) ([]Event, error)
