@@ -141,3 +141,18 @@ func TestPlanMinInstancesAllowed(t *testing.T) {
 		}
 	}
 }
+
+// TestOCIPullTimeoutSeconds pins the per-pull HTTP timeout (ADR-021) —
+// pkg/oci.RegistryClient consults this when no WithTimeout override is
+// passed. The number is a platform constant: every plan shares the same
+// ceiling so the cold-boot latency contract stays predictable. 60s is
+// well above the largest manifest + image-config GET and a generous
+// safety margin over the fail-fast PullImageConfig path.
+func TestOCIPullTimeoutSeconds(t *testing.T) {
+	if OCIPullTimeoutSeconds != 60 {
+		t.Errorf("OCIPullTimeoutSeconds = %d, want 60", OCIPullTimeoutSeconds)
+	}
+	if OCIPullTimeoutSeconds < 10 {
+		t.Errorf("OCIPullTimeoutSeconds = %d must be >= 10s so a slow registry cannot starve the cold-boot latency budget", OCIPullTimeoutSeconds)
+	}
+}

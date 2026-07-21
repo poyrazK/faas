@@ -128,6 +128,7 @@ func copySourceTarball(mountPoint, sourcePath string) error {
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir build: %w", err)
 	}
+	//nolint:forbidigo // sourcePath is the apid-spooled tarball that already passed apid's validateTarballShape (in cmd/apid/deploy_inputs.go) — same rationale as pkg/rootfs/build.go:ApplyTarball; symmetric validation chain.
 	in, err := os.Open(sourcePath)
 	if err != nil {
 		return fmt.Errorf("open source: %w", err)
@@ -151,6 +152,8 @@ func copySourceTarball(mountPoint, sourcePath string) error {
 
 // fileSHA256 returns the hex sha256 of path, hex-encoded. Used to verify
 // the host source and the staged copy on drive1 match byte-for-byte.
+//
+//nolint:forbidigo // path is the buildDir/src.tar written by copySourceTarball in this file (or the equivalent apid-spooled source) — builderd is the sole writer of buildDir in the local case, and in the spooled case apid's validateTarballShape has already run. Symlink-attack impossible.
 func fileSHA256(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {

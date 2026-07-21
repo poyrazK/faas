@@ -2,6 +2,7 @@ package oci
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -55,6 +56,16 @@ func TestEgressDialContext_RefusesRFC1918(t *testing.T) {
 		_ = conn.Close()
 		t.Fatal("egress dial to localhost should be denied")
 	}
+	// ADR-021: a denied dial must lift to the canonical
+	// ErrImageEgressDenied sentinel so the imaged handler can persist
+	// deployments.error_code = image_egress_denied (403, security-class).
+	// The legacy ErrEgressDenied is wrapped inside it for backwards compat.
+	if !errors.Is(err, ErrImageEgressDenied) {
+		t.Errorf("egress dial RFC1918 err = %v, want errors.Is(_, ErrImageEgressDenied) true", err)
+	}
+	if !errors.Is(err, ErrEgressDenied) {
+		t.Errorf("egress dial RFC1918 err = %v, want errors.Is(_, ErrEgressDenied) true (legacy compat)", err)
+	}
 }
 
 func TestEgressDialContext_RefusesMetadataIP(t *testing.T) {
@@ -62,6 +73,9 @@ func TestEgressDialContext_RefusesMetadataIP(t *testing.T) {
 	_, err := dial(context.Background(), "tcp", "169.254.169.254:80")
 	if err == nil {
 		t.Fatal("egress dial to 169.254.169.254 should be denied")
+	}
+	if !errors.Is(err, ErrImageEgressDenied) {
+		t.Errorf("egress dial IMDS err = %v, want errors.Is(_, ErrImageEgressDenied) true", err)
 	}
 }
 

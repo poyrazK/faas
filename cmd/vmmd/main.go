@@ -21,8 +21,10 @@ import (
 	"os"
 	"time"
 
+	"filippo.io/age"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
@@ -41,13 +43,22 @@ type runDeps struct {
 	configPath string                                                                                                // defaults to /etc/faas/vmmd.toml
 	detectFC   func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
 	listen     func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
+	// hostKey plumbing — function-typed so tests can drive first-boot
+	// (LoadHostKey returns ErrHostKeyNotFound → GenerateAndSaveHostKey)
+	// and restart (LoadHostKey returns id) paths without touching disk.
+	loadHostKey    func(path string) (*age.X25519Identity, error)
+	genAndSaveKey  func(path string) (*age.X25519Identity, error)
+	writeRecipient func(path string, id *age.X25519Identity) error
 }
 
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath: envOrConfig("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
-		detectFC:   fcvm.DetectFirecrackerVersion,
-		listen:     wire.ListenAs,
+		configPath:     envOrConfig("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
+		detectFC:       fcvm.DetectFirecrackerVersion,
+		listen:         wire.ListenAs,
+		loadHostKey:    secretbox.LoadHostKey,
+		genAndSaveKey:  secretbox.GenerateAndSaveHostKey,
+		writeRecipient: secretbox.WriteRecipientFile,
 	}
 }
 
@@ -74,12 +85,42 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("config", "listen_addr", listenTarget, "socket", cfg.SocketPath, "kernel", cfg.KernelPath,
 		"metrics_addr", cfg.MetricsAddr)
 
+	// Fill in host-key defaults if a test passed a zero-value runDeps
+	// without these. The other deps (configPath, detectFC, listen) are
+	// not defaulted here — they're test seams where nil is meaningful
+	// (e.g. TestRun_BadConfigPath passes configPath = a directory).
+	if deps.loadHostKey == nil {
+		deps.loadHostKey = secretbox.LoadHostKey
+	}
+	if deps.genAndSaveKey == nil {
+		deps.genAndSaveKey = secretbox.GenerateAndSaveHostKey
+	}
+	if deps.writeRecipient == nil {
+		deps.writeRecipient = secretbox.WriteRecipientFile
+	}
+
 	// Snapshots are pinned to the running Firecracker version (ADR-005);
 	// detect it so restore only loads compatible snapshots and everything
 	// else cold boots.
 	fcVersion, err := deps.detectFC(ctx)
 	if err != nil {
 		log.Warn("could not detect firecracker version; treating all snapshots as stale", "err", err)
+	}
+
+	// Host-key lifecycle (ADR-020 / spec §11 G2). Without this, the
+	// Manager refuses to wake any app that PUT a secret (Manager.Wake
+	// returns ErrNoHostKey). vmmd is the only writer to the on-disk
+	// key — apid reads the public recipient to seal, builderd reads
+	// it to seal build-time env, and the wake path inside vmmd unseals
+	// with the private identity. The first-boot branch generates a
+	// fresh X25519 identity; the restart branch loads the existing
+	// one and re-emits the public recipient file (idempotent).
+	hostID, keyPath, pubPath, err := loadOrGenerateHostIdentity(deps,
+		envOrConfig("FAAS_HOST_KEY_PATH", secretbox.DefaultHostKeyPath),
+		envOrConfig("FAAS_HOST_AGE_RECIPIENT_PATH", secretbox.DefaultHostAgeRecipientPath),
+	)
+	if err != nil {
+		return err
 	}
 
 	cbm := fcvm.NewColdBootMetrics()
@@ -91,8 +132,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log,
 		cbm,
 	)
+	mgr.SetHostIdentity(hostID)
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,
-		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax)
+		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax,
+		"host_key_path", keyPath, "recipient_path", pubPath,
+		"recipient", hostID.Recipient().String())
 
 	// Ops + listener. Resolve the listen target (issue #95): unix://
 	// default, tcp/dns optional; tcp targets require a complete mTLS
@@ -167,4 +211,28 @@ heartbeat:
 	}
 	_ = lis.Close()
 	return nil
+}
+
+// loadOrGenerateHostIdentity implements the G2 host-key lifecycle:
+//
+//  1. Try LoadHostKey(path).
+//  2. On ErrHostKeyNotFound (first boot) → GenerateAndSaveHostKey(path).
+//  3. Always WriteRecipientFile(pubPath, id) so apid / builderd have
+//     a fresh public recipient to seal against on every startup.
+//
+// Returns the identity plus the resolved paths so the caller can log
+// them. Extracted so tests can drive the lifecycle without booting
+// the full gRPC + listener stack.
+func loadOrGenerateHostIdentity(deps runDeps, keyPath, pubPath string) (*age.X25519Identity, string, string, error) {
+	id, err := deps.loadHostKey(keyPath)
+	if errors.Is(err, secretbox.ErrHostKeyNotFound) {
+		id, err = deps.genAndSaveKey(keyPath)
+	}
+	if err != nil {
+		return nil, keyPath, pubPath, fmt.Errorf("vmmd: host key (%s): %w", keyPath, err)
+	}
+	if err := deps.writeRecipient(pubPath, id); err != nil {
+		return nil, keyPath, pubPath, fmt.Errorf("vmmd: write recipient (%s): %w", pubPath, err)
+	}
+	return id, keyPath, pubPath, nil
 }

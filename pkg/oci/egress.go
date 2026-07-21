@@ -87,7 +87,17 @@ func EgressDialContext(parent *net.Dialer) func(ctx context.Context, network, ad
 			}
 			addr = addr.Unmap()
 			if !ipAllowed(addr) {
-				return nil, fmt.Errorf("oci: egress: address %s (%s) denied by policy", host, addr)
+				// ADR-021: lift the egress-denial failure mode to a
+				// sentinel that pkg/api.SentinelToCode maps to the
+				// RFC 7807 CodeImageEgressDenied (security-class
+				// signal, 403). The legacy ErrEgressDenied sentinel
+				// below is wrapped inside this one for backwards
+				// compat — pkg/oci consumers that already check
+				// errors.Is(err, ErrEgressDenied) continue to work,
+				// and pkg/api.SentinelToCode picks up the new
+				// canonical sentinel.
+				return nil, fmt.Errorf("%w: %w: address %s (%s)",
+					ErrImageEgressDenied, ErrEgressDenied, host, addr)
 			}
 		}
 		// Dial the first public IP explicitly to defeat DNS rebinding across

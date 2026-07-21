@@ -149,6 +149,7 @@ func addHostEntropy(entropy []byte) error {
 // a fresh (same-on-every-restore) input on top of a unique prefix keeps the
 // pool advancing.
 func reseedFromHWRNG() error {
+	//nolint:forbidigo // hwrngPath is the virtio-rng chardev (/dev/hwrng by default) exposed to the microVM. Kernel-internal device, the customer has no write surface to a chardev on the guest side; symlink-attack impossible.
 	src, err := os.Open(hwrngPath)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", hwrngPath, err)

@@ -194,6 +194,8 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 		CodeBuildUndetected, CodeBuildOOM, CodeBuildTimeout,
 		CodeQuotaExhausted, CodeBillingPastDue, CodeCapacity,
 		CodeUnauthorized, CodeNotFound, CodeValidation,
+		CodeImageNotFound, CodeImageEgressDenied, CodeImageManifestInvalid,
+		CodeCliAuthPending, CodeCliAuthUnavailable,
 	}
 	seen := make(map[string]bool)
 	for _, c := range codes {
@@ -205,6 +207,30 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 			t.Errorf("duplicate code constant: %q", c)
 		}
 		seen[c] = true
+	}
+}
+
+// TestStatusForCode_ImageCodes locks the HTTP status mapping for the three
+// puller-side codes (ADR-021). 422 for the validation-class failures
+// (image_not_found, image_manifest_invalid); 403 for the security-class
+// egress denial (distinct from 422 / 404 so customers can tell the policy
+// block apart from a 404). Unknown codes must default to 500.
+func TestStatusForCode_ImageCodes(t *testing.T) {
+	cases := []struct {
+		code string
+		want int
+	}{
+		{CodeImageNotFound, http.StatusUnprocessableEntity},
+		{CodeImageManifestInvalid, http.StatusUnprocessableEntity},
+		{CodeImageEgressDenied, http.StatusForbidden},
+		{"totally_made_up_code", http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			if got := StatusForCode(tc.code); got != tc.want {
+				t.Errorf("StatusForCode(%q) = %d, want %d", tc.code, got, tc.want)
+			}
+		})
 	}
 }
 

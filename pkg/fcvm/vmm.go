@@ -1077,6 +1077,7 @@ func moveOut(src, dst string) (int64, error) {
 	return fi.Size(), nil
 }
 
+//nolint:forbidigo // src/dst are vetted slot/instance-id paths under /srv/fc — vmmd is the sole writer of this directory; the tmpfs jail root means symlink-attack would require root (which vmmd already has, by spec §11). Copy is an internal migration helper, not a customer-path surface.
 func copyFile(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {

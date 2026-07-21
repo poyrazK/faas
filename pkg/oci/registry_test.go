@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // fakeRegistry is an httptest registry that implements just enough of the v2
@@ -180,6 +184,11 @@ func TestRegistryPullDigest_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 404 manifest")
 	}
+	// ADR-021: the 404 path must lift to ErrImageNotFound so the
+	// imaged handler can persist deployments.error_code = image_not_found.
+	if !errors.Is(err, ErrImageNotFound) {
+		t.Errorf("PullDigest 404 err = %v, want errors.Is(_, ErrImageNotFound) true", err)
+	}
 }
 
 func TestRegistryPullDigest_BadReference(t *testing.T) {
@@ -322,6 +331,12 @@ func TestRegistryPullLayers_ManifestListRejected(t *testing.T) {
 	if !strings.Contains(err.Error(), "manifest list") {
 		t.Errorf("error should mention manifest list: %v", err)
 	}
+	// ADR-021: the manifest-list rejection must lift to
+	// ErrImageManifestInvalid so pkg/imaged can persist
+	// deployments.error_code = image_manifest_invalid.
+	if !errors.Is(err, ErrImageManifestInvalid) {
+		t.Errorf("PullLayers manifest-list err = %v, want errors.Is(_, ErrImageManifestInvalid) true", err)
+	}
 }
 
 // TestRegistryPullLayers_LayerMissing closes any already-opened layers when
@@ -378,5 +393,37 @@ func TestParseImageConfig_OciNestedConfig(t *testing.T) {
 	}
 	if got.Cmd[0] != "node" || got.Env["PORT"] != "8080" {
 		t.Errorf("parsed wrong: %+v", got)
+	}
+}
+
+// TestWithTimeout_ComposesAfterWithHTTPClient locks the WithTimeout /
+// WithHTTPClient ordering contract documented on WithTimeout (ADR-021).
+// Pass WithHTTPClient first, then WithTimeout, and the deadline survives
+// the transport swap. A future refactor that breaks this contract will
+// silently strip the 60s ceiling from any cmd/imaged wiring that uses
+// the custom egress transport.
+func TestWithTimeout_ComposesAfterWithHTTPClient(t *testing.T) {
+	hc := &http.Client{Timeout: 0} // custom transport with no deadline
+	c := NewRegistryClient(
+		WithHTTPClient(hc),
+		WithTimeout(45*time.Second),
+	)
+	if c.hc.Timeout != 45*time.Second {
+		t.Errorf("hc.Timeout = %v, want 45s (WithTimeout must survive WithHTTPClient when passed after)", c.hc.Timeout)
+	}
+}
+
+// TestWithTimeout_ZeroIgnored guards against WithTimeout(0) silently
+// overwriting a meaningful deadline with the zero value (which would
+// disable http.Client.Timeout). The ADR documents "non-positive
+// durations are ignored".
+func TestWithTimeout_ZeroIgnored(t *testing.T) {
+	c := NewRegistryClient(WithTimeout(0))
+	if c.hc.Timeout != time.Duration(api.OCIPullTimeoutSeconds)*time.Second {
+		t.Errorf("WithTimeout(0) clobbered default: got %v, want %vs", c.hc.Timeout, api.OCIPullTimeoutSeconds)
+	}
+	c = NewRegistryClient(WithTimeout(-1 * time.Second))
+	if c.hc.Timeout != time.Duration(api.OCIPullTimeoutSeconds)*time.Second {
+		t.Errorf("WithTimeout(-1s) clobbered default: got %v, want %vs", c.hc.Timeout, api.OCIPullTimeoutSeconds)
 	}
 }

@@ -77,6 +77,7 @@ func boot() error {
 		return runBuild(buildManifest)
 	}
 
+	//nolint:forbidigo // api.AppManifestPath is a compile-time constant defined in pkg/api (/etc/faas/app.json) — the manifest is written into the guest's rootfs by the builder before boot, the customer never writes it. Inside the microVM, the path is not customer-spoofable.
 	f, err := os.Open(api.AppManifestPath)
 	if err != nil {
 		return fmt.Errorf("open manifest: %w", err)

@@ -521,7 +521,7 @@ func TestCmdEnvPush_FromStdinAndFileRejected(t *testing.T) {
 }
 
 // TestCmdEnvPush_RejectsSymlinkAtFinalComponent is the load-bearing
-// attack-surface test. Without openEnvFile, a customer could
+// attack-surface test. Without openCustomerFile, a customer could
 // `ln -s /etc/passwd .env` and the scanner would feed arbitrary
 // file contents through parseSecretsPair. Now any symlink at the
 // final component is rejected before Open.

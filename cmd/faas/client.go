@@ -249,8 +249,13 @@ func (c *Client) GetDeployment(ctx context.Context, id string) (api.DeploymentRe
 // DeployTarball ships a source tarball (with optional runtime + handler) to
 // the multi-part deploy endpoint. The apid handler validates the archive and
 // emits `pg_notify('build_queued', ...)` for imaged to pick up.
+//
+// Refuses to open symlinks or non-regular files (see openCustomerFile in
+// commands5.go); a rejected path returns an error before any wire traffic
+// is generated, so a symlinked tarball cannot exfiltrate bytes the
+// customer did not intend to ship.
 func (c *Client) DeployTarball(ctx context.Context, slug, path, runtime, handler string, dockerfile bool) (api.DeploymentResponse, error) {
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
@@ -284,7 +289,9 @@ func (c *Client) DeployTarball(ctx context.Context, slug, path, runtime, handler
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	// DeployTarball bypasses Client.do; auto-mint Idempotency-Key here
-	// so retry-safe semantics still hold (issue #64 D3).
+	// so retry-safe semantics still hold (issue #64 D3). The file-open
+	// guard (openCustomerFile in commands5.go) runs above this mint, so
+	// a rejected symlink never produces an Idempotency-Key on the wire.
 	req.Header.Set("Idempotency-Key", newUUIDv4())
 	// Use the longer-timeout client for uploads so a multi-MB tarball
 	// doesn't trip the 30s default (issue #64 D4). uploadHTTP falls back

@@ -61,8 +61,16 @@ func (c *RegistryClient) PullManifest(ctx context.Context, ref string) (Manifest
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return Manifest{}, fmt.Errorf("oci: manifest %s: registry returned %d: %s",
+		msg := fmt.Errorf("oci: manifest %s: registry returned %d: %s",
 			r.String(), resp.StatusCode, string(body))
+		// ADR-021: puller-side 404s map to the canonical
+		// ErrImageNotFound sentinel (surface as 422). 4xx / 5xx that
+		// aren't 404 keep their plain-text shape — those are not the
+		// three puller-side failure modes this ADR closes.
+		if resp.StatusCode == http.StatusNotFound {
+			return Manifest{}, fmt.Errorf("%w: %s", ErrImageNotFound, msg.Error())
+		}
+		return Manifest{}, msg
 	}
 
 	// A manifest-index / manifest-list points at per-platform manifests — we
@@ -71,25 +79,31 @@ func (c *RegistryClient) PullManifest(ctx context.Context, ref string) (Manifest
 	mt := resp.Header.Get("Content-Type")
 	if mt == "application/vnd.oci.image.index.v1+json" ||
 		mt == "application/vnd.docker.distribution.manifest.list.v2+json" {
-		return Manifest{}, fmt.Errorf("oci: %s is a manifest list; pin a digest", r.String())
+		return Manifest{}, fmt.Errorf("%w: %s is a manifest list; pin a digest",
+			ErrImageManifestInvalid, r.String())
 	}
 
 	var doc Manifest
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&doc); err != nil {
-		return Manifest{}, fmt.Errorf("oci: decode manifest %s: %w", r.String(), err)
+		return Manifest{}, fmt.Errorf("%w: decode manifest %s: %s",
+			ErrImageManifestInvalid, r.String(), err.Error())
 	}
 	if doc.Config.Digest == "" {
-		return Manifest{}, fmt.Errorf("oci: manifest %s missing config descriptor", r.String())
+		return Manifest{}, fmt.Errorf("%w: %s missing config descriptor",
+			ErrImageManifestInvalid, r.String())
 	}
 	if len(doc.Layers) == 0 {
-		return Manifest{}, fmt.Errorf("oci: manifest %s has no layers", r.String())
+		return Manifest{}, fmt.Errorf("%w: %s has no layers",
+			ErrImageManifestInvalid, r.String())
 	}
 	if err := validateDigest(doc.Config.Digest); err != nil {
-		return Manifest{}, fmt.Errorf("oci: manifest %s config: %w", r.String(), err)
+		return Manifest{}, fmt.Errorf("%w: %s config: %s",
+			ErrImageManifestInvalid, r.String(), err.Error())
 	}
 	for i, l := range doc.Layers {
 		if err := validateDigest(l.Digest); err != nil {
-			return Manifest{}, fmt.Errorf("oci: manifest %s layer %d: %w", r.String(), i, err)
+			return Manifest{}, fmt.Errorf("%w: %s layer %d: %s",
+				ErrImageManifestInvalid, r.String(), i, err.Error())
 		}
 	}
 	return doc, nil

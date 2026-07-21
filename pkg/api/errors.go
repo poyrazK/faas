@@ -140,6 +140,23 @@ const (
 	// distinguishes the two so the CLI can render actionable guidance.
 	CodeAppRenameFailed = "app_rename_failed"
 
+	// Image pull failure modes (ADR-021, spec §17 G1). The three codes
+	// here are the customer-facing stable string for the puller-side
+	// sentinels in pkg/oci/errors.go. imaged's buildImageLayer failure
+	// path runs SentinelToCode(err) to pick one of these, persists it on
+	// deployments.error_code, and the wake path lifts it into the
+	// RFC 7807 Problem at the corresponding HTTP status below.
+	//
+	// Why three codes, not one: each signals a different remediation
+	// path. image_not_found → check the digest / tag. image_egress_denied
+	// → check the registry is in the public ranges (and isn't metadata
+	// 169.254/16). image_manifest_invalid → pin to a single-arch digest,
+	// the manifest-list rejection is part of the same code so dashboards
+	// can group "wrong artifact shape" together.
+	CodeImageNotFound        = "image_not_found"
+	CodeImageEgressDenied    = "image_egress_denied"
+	CodeImageManifestInvalid = "image_manifest_invalid"
+
 	// CLI auth (spec §2.2 device-code flow). Pending is the "user has
 	// not yet approved" signal the CLI's poll loop keys off; the CLI
 	// keeps polling until it sees 200 OK or a different 4xx. The
@@ -188,6 +205,10 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeDeployFailed:
 		return http.StatusUnprocessableEntity
+	case CodeImageNotFound, CodeImageManifestInvalid:
+		return http.StatusUnprocessableEntity
+	case CodeImageEgressDenied:
+		return http.StatusForbidden
 	case CodePlanLimitSecrets:
 		return http.StatusForbidden
 	case CodeSecretInvalidKey, CodeSecretNotFound:
