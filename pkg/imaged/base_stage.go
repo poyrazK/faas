@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
@@ -23,32 +21,52 @@ import (
 // the ext4 is rewritten atomically (write to <out>.tmp, fsync, rename).
 
 // BaseStageResult reports what EnsureBaseExt4 did. Skip=true means the
-// existing file matched the remote digest and was left untouched.
+// existing artifact matched the remote digest and was left untouched.
 type BaseStageResult struct {
-	OutImage     string
+	// OutImage is the host-side path the staged ext4 lives at. Computed
+	// from the routed StorageBackend's "snapshot" path so schedd's
+	// drive0 lookup can pass it to vmmd verbatim (spec §4.6 two-drive
+	// scheme). Empty when the LocalStorageBackend is not the canonical
+	// /srv/fc root (a remote driver; callers downstream use the
+	// StorageKey instead).
+	OutImage string
+	// StorageKey is the canonical key the staged ext4 was published
+	// under, e.g. "base/runner-node22.ext4". Same value baseStageKey
+	// took; reported back so callers don't have to recompute it.
+	StorageKey   string
 	ConfigDigest string // empty when Skip
 	Skipped      bool
 }
 
-// EnsureBaseExt4 guarantees outImage exists and reflects ref's current layers.
+// EnsureBaseExt4 guarantees baseKey exists and reflects ref's current
+// layers.
 //
 // ref is the OCI reference to pull the base image from (e.g. ghcr.io/onebox-
-// faas/builder-base:latest). When ref is unchanged (matching the digest
-// sidecar next to outImage), the existing file is left in place and Skipped
-// is true. When ref has changed, the layers are pulled fresh and outImage is
-// rewritten via a tempfile + rename so a partial stage never blocks cold
-// boot.
+// faas/builder-base:latest). When ref's config digest matches the digest
+// sidecar at digestKey, the existing artifact is left in place and Skipped
+// is true. When ref has changed, the layers are pulled fresh and baseKey
+// is republished via Storage.Put; storage.Put's internal temp+rename
+// preserves the atomicity the legacy os.Rename provided.
+//
+// outImage is the resolved host path schedd hands to vmmd when cold-
+// booting a builder against the local /srv/fc base. For a non-canonical
+// storage root (a future remote driver) outImage is empty and schedd
+// must read from baseKey via Get instead — handled by the cmd/vmmd
+// caller.
 //
 // Requires the OCI puller to implement oci.ManifestPuller (registry v2
 // streaming). Without it, EnsureBaseExt4 returns an error: M6+'s builderd
 // only runs with full M6 wiring, and skipping silently would mask a real
 // config error.
-func (h *Handler) EnsureBaseExt4(ctx context.Context, ref, outImage string) (BaseStageResult, error) {
+func (h *Handler) EnsureBaseExt4(ctx context.Context, ref, baseKey, digestKey, outImage string) (BaseStageResult, error) {
 	if ref == "" {
 		return BaseStageResult{}, errors.New("imaged: EnsureBaseExt4: empty ref")
 	}
-	if outImage == "" {
-		return BaseStageResult{}, errors.New("imaged: EnsureBaseExt4: empty outImage")
+	if baseKey == "" {
+		return BaseStageResult{}, errors.New("imaged: EnsureBaseExt4: empty baseKey")
+	}
+	if digestKey == "" {
+		return BaseStageResult{}, errors.New("imaged: EnsureBaseExt4: empty digestKey")
 	}
 
 	mp, ok := h.oci.(oci.ManifestPuller)
@@ -62,28 +80,34 @@ func (h *Handler) EnsureBaseExt4(ctx context.Context, ref, outImage string) (Bas
 		return BaseStageResult{}, fmt.Errorf("imaged: pull base manifest %s: %w", ref, err)
 	}
 
-	// Idempotency: sidecar file at <outImage>.digest records the config
-	// digest the staged ext4 was built from. When it matches, trust the
-	// existing file — re-fetching tens of MB of layers on every daemon
-	// restart would be wasteful and would also race the cold-boot path if
-	// a build happened to land mid-stage.
+	// Idempotency: digest sidecar at digestKey records the config digest
+	// the staged ext4 was built from. When it matches, trust the
+	// existing artifact — re-fetching tens of MB of layers on every daemon
+	// restart would be wasteful and would also race the cold-boot path
+	// if a build happened to land mid-stage.
 	wantDigest := manifest.Config.Digest
-	if haveDigest, err := os.ReadFile(outImage + ".digest"); err == nil {
-		if string(haveDigest) == wantDigest {
-			// File may legitimately be absent (e.g. /srv/fc not yet
-			// mounted after boot) — fall through to staging in that case.
-			if _, statErr := os.Stat(outImage); statErr == nil {
-				return BaseStageResult{OutImage: outImage, ConfigDigest: wantDigest, Skipped: true}, nil
+	be := h.storageFor()
+	// Idempotency: trust the digest sidecar. When it matches, the base
+	// ext4 is the right artifact — we don't re-stream its bytes here.
+	// A bare Get-and-close on baseKey would stream 130 MB through the
+	// daemon for nothing; the sidecar is the source of truth. A missing
+	// base would surface as Get returning ErrNotFound, which the next
+	// cold-boot would also surface — no silent corruption.
+	if haveRC, err := be.Get(ctx, digestKey); err == nil {
+		haveBytes, rerr := io.ReadAll(haveRC)
+		_ = haveRC.Close()
+		if rerr == nil && string(haveBytes) == wantDigest {
+			if rc, err := be.Get(ctx, baseKey); err == nil {
+				_ = rc.Close()
+				return BaseStageResult{
+					OutImage:     outImage,
+					StorageKey:   baseKey,
+					ConfigDigest: wantDigest,
+					Skipped:      true,
+				}, nil
 			}
 		}
 	}
-
-	if err := os.MkdirAll(filepath.Dir(outImage), 0o755); err != nil {
-		return BaseStageResult{}, fmt.Errorf("imaged: mkdir base dir: %w", err)
-	}
-	tmpOut := outImage + ".tmp"
-	// Best-effort cleanup of a stale tmp file left by a previous crash.
-	_ = os.Remove(tmpOut)
 
 	// Pre-allocate the readers slice + closers so a partial pull on layer N
 	// still closes layers 0..N-1. PullBlob streams the gzipped tarball; we
@@ -104,7 +128,6 @@ func (h *Handler) EnsureBaseExt4(ctx context.Context, ref, outImage string) (Bas
 			for _, c := range closers {
 				_ = c.Close()
 			}
-			_ = os.Remove(tmpOut)
 			return BaseStageResult{}, fmt.Errorf("imaged: pull base layer %s: %w", l.Digest, err)
 		}
 		readers = append(readers, body)
@@ -117,29 +140,57 @@ func (h *Handler) EnsureBaseExt4(ctx context.Context, ref, outImage string) (Bas
 	}()
 
 	res, err := h.builder.BuildBase(ctx, rootfs.BaseBuildInput{
-		Layers:   readers,
-		OutImage: tmpOut,
+		Layers:     readers,
+		Storage:    be,
+		StorageKey: baseKey,
 	})
 	if err != nil {
-		_ = os.Remove(tmpOut)
 		return BaseStageResult{}, fmt.Errorf("imaged: build base ext4: %w", err)
 	}
 
-	// Atomic publish: rename tmp into place, then write the digest sidecar.
-	// os.Rename is atomic on the same filesystem (ext4 in /srv/fc/base).
-	if err := os.Rename(tmpOut, outImage); err != nil {
-		_ = os.Remove(tmpOut)
-		return BaseStageResult{}, fmt.Errorf("imaged: publish base ext4: %w", err)
+	// Sidecar is a tiny text payload, but the storage backend is the
+	// source of truth — Put under digestKey. Put's atomicity is per-key,
+	// but since reads compare baseKey's existence first and digestKey
+	// is only used as a decision oracle, a transient inconsistency
+	// between the two is observable next run as "rebuild" rather than
+	// "use half-published artifact".
+	digestRC, err := openStringReader(wantDigest)
+	if err != nil {
+		return BaseStageResult{}, fmt.Errorf("imaged: open digest sidecar: %w", err)
 	}
-	if err := os.WriteFile(outImage+".digest", []byte(wantDigest), 0o644); err != nil {
-		// Non-fatal — next run will re-pull layers, costing MB but not
-		// correctness. Log so an operator notices a fs that doesn't
-		// allow sidecar files.
-		h.log.Warn("imaged: write base digest sidecar", "path", outImage+".digest", "err", err)
+	if err := be.Put(ctx, digestKey, digestRC); err != nil {
+		h.log.Warn("imaged: write base digest sidecar", "key", digestKey, "err", err)
 	}
 	h.log.Info("imaged: staged builder base",
-		"ref", ref, "out", res.ImagePath, "size_bytes", res.SizeBytes,
+		"ref", ref, "key", res.ImageKey, "size_bytes", res.SizeBytes,
 		"digest", wantDigest)
 
-	return BaseStageResult{OutImage: outImage, ConfigDigest: wantDigest}, nil
+	return BaseStageResult{
+		OutImage:     outImage,
+		StorageKey:   res.ImageKey,
+		ConfigDigest: wantDigest,
+	}, nil
+}
+
+// openStringReader returns an io.Reader for the supplied string. The
+// helper exists so the digest sidecar Put has a content source without
+// dragging in bytes.NewReader (which would also force a package-level
+// bytes import that's only used here).
+func openStringReader(s string) (io.Reader, error) {
+	return stringReader(s), nil
+}
+
+type stringReaderImpl struct {
+	s   string
+	off int
+}
+
+func stringReader(s string) io.Reader { return &stringReaderImpl{s: s} }
+func (r *stringReaderImpl) Read(p []byte) (int, error) {
+	if r.off >= len(r.s) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.s[r.off:])
+	r.off += n
+	return n, nil
 }

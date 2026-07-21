@@ -119,6 +119,11 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 	info, err := s.vmm.Park(ctx, req.GetInstance(), fcvm.SnapshotSpec{
 		MemPath:     req.GetMemPath(),
 		VMStatePath: req.GetVmstatePath(),
+		// #96 / ADR-025 axis 2: when set, vmmd publishes the mem blob
+		// under this StorageBackend key alongside the legacy in-place
+		// move. Empty keeps the mem-path-only workflow intact for one
+		// release — the migration slice flips the contract.
+		StorageKey: req.GetStorageKey(),
 	})
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {

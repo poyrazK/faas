@@ -42,6 +42,7 @@ func toWakeRequest(req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, err
 			MemPath:     snap.GetMemPath(),
 			VMStatePath: snap.GetVmstatePath(),
 			FCVersion:   snap.GetFcVersion(),
+			StorageKey:  snap.GetStorageKey(),
 		}
 	}
 	return wr, nil

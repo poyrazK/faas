@@ -147,7 +147,7 @@ func TestVMMClient_CreateFromSnapshot_FallbackReported(t *testing.T) {
 
 func TestVMMClient_PauseAndSnapshot(t *testing.T) {
 	c := newClient(t, &fakeVMM{})
-	b, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/mem", "/snap/vmstate")
+	b, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/mem", "/snap/vmstate", "snap/i-1/mem")
 	if err != nil {
 		t.Fatalf("PauseAndSnapshot: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestVMMClient_PauseAndSnapshot(t *testing.T) {
 
 func TestVMMClient_PauseAndSnapshot_MissingPaths(t *testing.T) {
 	c := newClient(t, &fakeVMM{})
-	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "", "/snap/vmstate")
+	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "", "/snap/vmstate", "snap/i-1/mem")
 	if err == nil {
 		t.Fatal("expected error for empty mem_path")
 	}

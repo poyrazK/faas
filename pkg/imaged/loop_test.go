@@ -14,7 +14,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // gcFixture wires a Loop with a memstore, an injected tick channel, and a
@@ -32,6 +32,7 @@ type gcFixture struct {
 	store    *state.MemStore
 	gcCh     chan time.Time
 	tickSent func() // tickOnce helper
+	be       storage.StorageBackend
 }
 
 func newGCFixture(t *testing.T, lvPct float64) *gcFixture {
@@ -40,27 +41,40 @@ func newGCFixture(t *testing.T, lvPct float64) *gcFixture {
 
 	// Hermetic sched.SnapDir() — sched.SnapDir() is a function, not a
 	// variable, so the loop uses the canonical /srv/fc/snap path. The
-	// deleteSnapshotsAndFiles helper only os.RemoveAll's that path
-	// (best-effort), so an empty parent is fine — we just pre-create
-	// each snap dir we'll be deleting.
+	// deleteSnapshotsAndFiles helper issues storage.Delete calls keyed
+	// on the storage backend; an empty backend swallows them (Delete
+	// on a missing key is a no-op). Tests that need to assert on the
+	// delete side effect use the storage backend reference below.
 	_ = sched.SnapDir()
+
+	appsRoot := t.TempDir()
+	be, err := storage.NewLocalStorageBackend(appsRoot)
+	if err != nil {
+		t.Fatalf("storage.NewLocalStorageBackend: %v", err)
+	}
 
 	gcCh := make(chan time.Time, 16)
 	loop := &Loop{
-		handler: &Handler{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))},
-		store:   store,
-		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		now:     func() time.Time { return time.Unix(0, 0) },
+		handler: &Handler{
+			store:    store,
+			log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+			appsRoot: appsRoot,
+			storage:  be,
+		},
+		store: store,
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:   func() time.Time { return time.Unix(0, 0) },
 		lvUsedPct: func(ctx context.Context) (float64, error) {
 			return lvPct, nil
 		},
-		appsRoot: t.TempDir(),
+		appsRoot: appsRoot,
 		gcCh:     gcCh,
 	}
 	return &gcFixture{
 		loop:  loop,
 		store: store,
 		gcCh:  gcCh,
+		be:    be,
 		tickSent: func() {
 			gcCh <- time.Unix(0, 0)
 		},
@@ -155,6 +169,8 @@ func TestGC_NoOpUnderBudget(t *testing.T) {
 
 func TestGC_NaNLvUsedPct_IsSafeNoOp(t *testing.T) {
 	store := state.NewMemStore()
+	appsRoot := t.TempDir()
+	be, _ := storage.NewLocalStorageBackend(appsRoot)
 	gcCh := make(chan time.Time, 1)
 	loop := &Loop{
 		store: store,
@@ -163,8 +179,14 @@ func TestGC_NaNLvUsedPct_IsSafeNoOp(t *testing.T) {
 		lvUsedPct: func(ctx context.Context) (float64, error) {
 			return nan(), nil
 		},
-		appsRoot: t.TempDir(),
+		appsRoot: appsRoot,
 		gcCh:     gcCh,
+		handler: &Handler{
+			store:    store,
+			log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+			appsRoot: appsRoot,
+			storage:  be,
+		},
 	}
 	_, _, _ = seedSnapshotWithApp(t, store, 100, 100)
 	gcCh <- time.Unix(0, 0)
@@ -245,6 +267,8 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	// the eviction (relief) so the loop exits cleanly. Mirrors what the
 	// real lv-fc watcher would do after reclaiming 10 GB.
 	calls := 0
+	appsRoot := t.TempDir()
+	be, _ := storage.NewLocalStorageBackend(appsRoot)
 	loop := &Loop{
 		store: store,
 		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -256,8 +280,14 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 			}
 			return 50.0, nil
 		},
-		appsRoot: t.TempDir(),
+		appsRoot: appsRoot,
 		gcCh:     gcCh,
+		handler: &Handler{
+			store:    store,
+			log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+			appsRoot: appsRoot,
+			storage:  be,
+		},
 	}
 	gcCh <- time.Unix(0, 0)
 	loop.runGCTick(context.Background(), time.Unix(0, 0))
@@ -356,13 +386,21 @@ func TestGC_IdenticalCreatedAt_StableSort(t *testing.T) {
 	// Drive the loop with under-budget pressure so only per-app policy runs.
 	gcCh := make(chan time.Time, 1)
 	gcCh <- time.Unix(0, 0)
+	appsRootLoop := t.TempDir()
+	beLoop, _ := storage.NewLocalStorageBackend(appsRootLoop)
 	loop := &Loop{
 		store:     store,
 		log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		now:       func() time.Time { return time.Unix(0, 0) },
 		lvUsedPct: func(ctx context.Context) (float64, error) { return 50.0, nil }, // under budget
-		appsRoot:  t.TempDir(),
+		appsRoot:  appsRootLoop,
 		gcCh:      gcCh,
+		handler: &Handler{
+			store:    store,
+			log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+			appsRoot: appsRootLoop,
+			storage:  beLoop,
+		},
 	}
 	loop.runGCTick(context.Background(), time.Unix(0, 0))
 
@@ -395,6 +433,9 @@ func TestFCSweep_RunsTwiceOnFailOpen(t *testing.T) {
 	}
 	fcCh := make(chan struct{}, 1)
 	fcCh <- struct{}{}
+	appsRootLoop := t.TempDir()
+	beLoop, _ := storage.NewLocalStorageBackend(appsRootLoop)
+	handler.storage = beLoop
 	loop := &Loop{
 		handler: handler,
 		store:   store,
@@ -407,7 +448,7 @@ func TestFCSweep_RunsTwiceOnFailOpen(t *testing.T) {
 			}
 			return "1.8.0", nil
 		},
-		appsRoot: t.TempDir(),
+		appsRoot: appsRootLoop,
 	}
 
 	// First call: error. Must NOT drain fcCh and must NOT set fcCh=nil.
@@ -435,14 +476,13 @@ func TestFCSweep_RunsTwiceOnFailOpen(t *testing.T) {
 	}
 }
 
-// TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapDir is the F-05
-// regression: prior to F-05, deleteSnapshotsAndFiles used the snapshot
-// row ID as the deployment ID when computing sched.SnapDir()/id and the
-// appsRoot/<slug>/<id>.ext4 path — wrong namespace — so neither file
-// was ever unlinked. After F-05, the GC algorithms return tuples
-// (snapID, deploymentID, slug) and the cleanup walks the deploymentID +
-// slug in the right places.
-func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapDir(t *testing.T) {
+// TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys is the F-05
+// regression now expressed against the StorageBackend API (#96). The
+// loop deletes both the per-app ext4 (apps/<slug>/<dep>.ext4) and the
+// snap mem / vmstate keys (snap/<dep>/mem, snap/<dep>/vmstate). The
+// GC's deleteTarget tuple carries (snapID, deploymentID, slug), so the
+// seam we test here is the key resolution + Delete propagation.
+func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@x.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
@@ -455,44 +495,45 @@ func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapDir(t *testing.T) {
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 		Path: "/tmp/x.snap", FCVersion: "1.8.0",
 	})
-	// Hermetic snap dir so /srv/fc/snap (not writable on macOS dev hosts)
-	// is not touched. sched.SetSnapDirForTesting is the cross-package seam
-	// added with the F-05 fix to make this exact test possible.
-	tmpSnapRoot := t.TempDir()
-	sched.SetSnapDirForTesting(tmpSnapRoot)
-	t.Cleanup(func() { sched.SetSnapDirForTesting("/srv/fc/snap") })
 
-	// Lay down both the ext4 layer and the snap dir.
 	appsRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(appsRoot, app.Slug), 0o755); err != nil {
-		t.Fatal(err)
+	be, err := storage.NewLocalStorageBackend(appsRoot)
+	if err != nil {
+		t.Fatalf("storage.NewLocalStorageBackend: %v", err)
 	}
-	ext4 := filepath.Join(appsRoot, app.Slug, dep.ID+".ext4")
-	if err := os.WriteFile(ext4, []byte("layer"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	snapDir := filepath.Join(tmpSnapRoot, dep.ID)
-	if err := os.MkdirAll(snapDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(snapDir, "vmstate"), []byte("v"), 0o644); err != nil {
-		t.Fatal(err)
+	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	memKey := sched.SnapshotMemKey(dep.ID)
+	vmKey := sched.SnapshotVMStateKey(dep.ID)
+	for k, body := range map[string]string{
+		appsKey: "layer",
+		memKey:  "m",
+		vmKey:   "v",
+	} {
+		if err := be.Put(context.Background(), k, strings.NewReader(body)); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
 	}
 
 	loop := &Loop{
 		store:    store,
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		appsRoot: appsRoot,
+		handler: &Handler{
+			store:    store,
+			log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+			appsRoot: appsRoot,
+			storage:  be,
+		},
 	}
 	ts := []deleteTarget{{ID: "ignored", DeploymentID: dep.ID, AppSlug: app.Slug}}
 	if err := loop.deleteSnapshotsAndFiles(context.Background(), ts); err != nil {
 		t.Fatalf("deleteSnapshotsAndFiles: %v", err)
 	}
-	if _, err := os.Stat(ext4); !os.IsNotExist(err) {
-		t.Errorf("F-05 regression: ext4 layer survived (path=%s, err=%v)", ext4, err)
-	}
-	if _, err := os.Stat(snapDir); !os.IsNotExist(err) {
-		t.Errorf("F-05 regression: snap dir survived (path=%s, err=%v)", snapDir, err)
+	for _, k := range []string{appsKey, memKey, vmKey} {
+		if rc, err := be.Get(context.Background(), k); err == nil {
+			_ = rc.Close()
+			t.Errorf("F-05 regression: key %s survived deleteSnapshotsAndFiles", k)
+		}
 	}
 }
 

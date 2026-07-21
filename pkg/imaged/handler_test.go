@@ -15,8 +15,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
+
+// mustLocalStorage builds a LocalStorageBackend rooted at the temp dir.
+// Panics on construction error (which only fails on empty / NUL root, and
+// t.TempDir() guarantees neither).
+func mustLocalStorage(t *testing.T, root string) storage.StorageBackend {
+	t.Helper()
+	be, err := storage.NewLocalStorageBackend(root)
+	if err != nil {
+		t.Fatalf("storage.NewLocalStorageBackend(%s): %v", root, err)
+	}
+	return be
+}
 
 // findNotify returns the first recorded Notify on the given channel, or nil.
 func findNotify(n *fakeNotifier, channel string) *notifyCall {
@@ -89,29 +103,58 @@ type fakeBuilder struct {
 	buildErr error
 }
 
-func (b *fakeBuilder) Build(_ context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error) {
+func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error) {
 	b.calls = append(b.calls, in)
 	if b.buildErr != nil {
 		return rootfs.BuildResult{}, b.buildErr
 	}
-	// The handler asks for `appsRoot/<slug>/<id>.ext4`. The fake echoes
-	// whatever input got — no actual mkfs runs, so a path that did not exist
-	// would surface in the "after Build" assertions via the recorded call.
-	return rootfs.BuildResult{
-		ImagePath:    in.OutImage,
-		ContentBytes: b.bytesOut,
-	}, nil
+	// #96: the handler publishes the produced ext4 via Storage.Put under
+	// the apps/<slug>/<dep>.ext4 key. The fake mirrors real mkfs by
+	// putting a non-empty placeholder there so downstream code that
+	// reads the stored layer sees bytes rather than the zero-byte
+	// rejection in LocalStorageBackend. Legacy OutImage path is also
+	// supported for tests that still exercise it.
+	if in.Storage != nil && in.StorageKey != "" {
+		if err := in.Storage.Put(ctx, in.StorageKey, strings.NewReader("fake ext4")); err != nil {
+			return rootfs.BuildResult{}, err
+		}
+		return rootfs.BuildResult{
+			ImageKey:     in.StorageKey,
+			ContentBytes: b.bytesOut,
+		}, nil
+	}
+	if in.OutImage != "" {
+		if err := os.WriteFile(in.OutImage, []byte("fake ext4"), 0o644); err != nil {
+			return rootfs.BuildResult{}, err
+		}
+		return rootfs.BuildResult{
+			ImagePath:    in.OutImage,
+			ContentBytes: b.bytesOut,
+		}, nil
+	}
+	return rootfs.BuildResult{ContentBytes: b.bytesOut}, nil
 }
 
 // BuildBase is part of the LayerBuilder interface (M6); the existing
 // handler tests don't reach it, but the new EnsureBaseExt4 path does. The
-// fake records the call so a test can pin the OutImage + layer count.
-func (b *fakeBuilder) BuildBase(_ context.Context, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
-	b.calls = append(b.calls, rootfs.BuildInput{OutImage: in.OutImage, Plan: api.PlanScale})
-	// Write a placeholder so the EnsureBaseExt4 atomic-rename has a real
-	// source file to rename. Real mkfs would create the ext4 here; the
-	// fake stands in only to keep tests KVM-free (spec §Conventions:
-	// unit tests pass on any machine).
+// fake records the call so a test can pin the Storage + StorageKey +
+// layer count.
+//
+// #96: the produced ext4 is published via Storage.Put instead of
+// writing to a tmp file. The fake stands in to keep tests KVM-free
+// (spec §Conventions: unit tests pass on any machine); it mirrors
+// the production behaviour by streaming a small placeholder into the
+// storage backend under StorageKey.
+func (b *fakeBuilder) BuildBase(ctx context.Context, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error) {
+	b.calls = append(b.calls, rootfs.BuildInput{Plan: api.PlanScale})
+	if in.Storage != nil && in.StorageKey != "" {
+		if err := in.Storage.Put(ctx, in.StorageKey, strings.NewReader("fake ext4")); err != nil {
+			return rootfs.BaseBuildResult{}, err
+		}
+		return rootfs.BaseBuildResult{ImageKey: in.StorageKey, SizeBytes: b.bytesOut}, nil
+	}
+	// Legacy OutImage path — kept for tests that still exercise the
+	// deprecated code path (build_test.go's TestBuildBase_LegacyOutImage).
 	if err := os.WriteFile(in.OutImage, []byte("fake ext4"), 0o644); err != nil {
 		return rootfs.BaseBuildResult{}, err
 	}
@@ -516,6 +559,10 @@ func TestHandleBuildQueued_EmptyRootfsPath_NoOp(t *testing.T) {
 // {"kind":"deleted","slug":"<slug>"} with no app_id). imaged switches on
 // app_id to drive cleanupAppFiles; without the field, deleted apps
 // accumulated orphans in appsRoot/<slug>/.
+//
+// #96: the per-app ext4 layer lives in the StorageBackend (under
+// sched.AppLayerKey(slug, depID)). The test seeds the storage backend
+// before dispatching the notification and asserts the key is gone after.
 func TestHandleNotification_AppChanged_Deleted_CarriesAppID(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
@@ -526,25 +573,24 @@ func TestHandleNotification_AppChanged_Deleted_CarriesAppID(t *testing.T) {
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 	})
-	// Stash a fake ext4 layer where cleanupAppFiles expects to find it.
 	appsRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(appsRoot, app.Slug), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	ext4 := filepath.Join(appsRoot, app.Slug, dep.ID+".ext4")
-	if err := os.WriteFile(ext4, []byte("layer"), 0o644); err != nil {
-		t.Fatal(err)
+	be := mustLocalStorage(t, appsRoot)
+	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	if err := be.Put(context.Background(), appsKey, strings.NewReader("layer")); err != nil {
+		t.Fatalf("seed apps layer: %v", err)
 	}
 	notif := &fakeNotifier{}
-	h := New(store, notif, fakePuller{digest: "sha256:abc"}, &fakeBuilder{bytesOut: 4096}, "./init", appsRoot, silentLogger())
+	h := New(store, notif, fakePuller{digest: "sha256:abc"}, &fakeBuilder{bytesOut: 4096}, "./init", appsRoot, silentLogger()).WithStorage(be)
 	// New payload: carries app_id. F-04.
 	n := db.Notification{
 		Channel: db.NotifyAppChanged,
 		Payload: `{"kind":"deleted","slug":"` + app.Slug + `","app_id":"` + app.ID + `"}`,
 	}
 	h.HandleNotification(context.Background(), n)
-	if _, err := os.Stat(ext4); !os.IsNotExist(err) {
-		t.Errorf("F-04 regression: per-app ext4 layer survived a deleted app_changed emit (path=%s, err=%v)", ext4, err)
+	rc, err := be.Get(context.Background(), appsKey)
+	if err == nil {
+		_ = rc.Close()
+		t.Errorf("F-04 regression: per-app ext4 layer survived a deleted app_changed emit (key=%s)", appsKey)
 	}
 }
 
@@ -555,7 +601,13 @@ func TestHandleNotification_AppChanged_Deleted_CarriesAppID(t *testing.T) {
 // blob survive; the per-app ext4 layer is the only thing the cleanup may
 // drop. The test exercises the full wire path: HandleNotification on the
 // NotifyDeploymentChanged channel with status="superseded" must drop the
-// ext4 layer but leave the snap dir intact.
+// ext4 layer but leave the snap blob intact.
+//
+// #96: the ext4 layer lives at the storage key sched.AppLayerKey(slug,
+// depID) and the snap blob at sched.SnapshotMemKey(depID). The test
+// seeds both, fires the supersede notification, and asserts the layer is
+// gone while the snap blob key still resolves through the storage
+// backend.
 func TestHandleNotification_Supersede_KeepsSnapBlob_EndToEnd(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
@@ -567,18 +619,18 @@ func TestHandleNotification_Supersede_KeepsSnapBlob_EndToEnd(t *testing.T) {
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:v1",
 	})
-	// Lay down both an ext4 layer (under appsRoot/<slug>/<depID>.ext4)
-	// and a snap dir (under /srv/fc/snap/<depID>/ mem+vmstate paths).
 	appsRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(appsRoot, app.Slug), 0o755); err != nil {
-		t.Fatal(err)
+	be := mustLocalStorage(t, appsRoot)
+	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	memKey := sched.SnapshotMemKey(dep.ID)
+	if err := be.Put(context.Background(), appsKey, strings.NewReader("layer")); err != nil {
+		t.Fatalf("seed apps layer: %v", err)
 	}
-	ext4 := filepath.Join(appsRoot, app.Slug, dep.ID+".ext4")
-	if err := os.WriteFile(ext4, []byte("layer"), 0o644); err != nil {
-		t.Fatal(err)
+	if err := be.Put(context.Background(), memKey, strings.NewReader("snap-mem")); err != nil {
+		t.Fatalf("seed snap mem: %v", err)
 	}
 	notif := &fakeNotifier{}
-	h := New(store, notif, fakePuller{digest: "sha256:abc"}, &fakeBuilder{bytesOut: 4096}, "./init", appsRoot, silentLogger())
+	h := New(store, notif, fakePuller{digest: "sha256:abc"}, &fakeBuilder{bytesOut: 4096}, "./init", appsRoot, silentLogger()).WithStorage(be)
 	// Supersede payload — F-02: status must be in payload for the branch
 	// to fire, and to must equal the deployment id being superseded.
 	n := db.Notification{
@@ -586,23 +638,17 @@ func TestHandleNotification_Supersede_KeepsSnapBlob_EndToEnd(t *testing.T) {
 		Payload: `{"kind":"superseded","status":"superseded","app_id":"` + app.ID + `","deployment_id":"` + dep.ID + `","to":"` + dep.ID + `"}`,
 	}
 	h.HandleNotification(context.Background(), n)
-	if _, err := os.Stat(ext4); !os.IsNotExist(err) {
-		t.Errorf("F-05 regression: superseded ext4 layer not removed (path=%s, err=%v)", ext4, err)
+	if rc, err := be.Get(context.Background(), appsKey); err == nil {
+		_ = rc.Close()
+		t.Errorf("F-05 regression: superseded ext4 layer not removed (key=%s)", appsKey)
 	}
-	// Snap dir must NOT have been touched because cleanupDeploymentFiles
-	// on a superseded deploy only touches the per-app layer; the snap
-	// blob is left for the nightly GC or for one-click rollback. The
-	// /srv/fc/snap path is keyed on deployment_id, so we directly verify
-	// the function's behaviour through its public surface (the
-	// deployment row stays put, the appsRoot layer goes away, the snap
-	// blob is GC'd separately by deleteSnapshotsAndFiles).
+	if rc, err := be.Get(context.Background(), memKey); err != nil {
+		t.Errorf("F-02 regression: snap mem blob was dropped on supersede (key=%s, err=%v)", memKey, err)
+	} else {
+		_ = rc.Close()
+	}
 	dep2, _ := store.DeploymentByID(context.Background(), dep.ID)
 	if dep2.Status == state.DeploySuperseded {
-		// superseded status would mean cleanupDeploymentFiles called
-		// transition → DeploySuperseded, which is wrong on the M8 codepath.
-		// imaged should NOT call transition on supersede — apid owns the
-		// status flip to `superseded` via MarkDeploymentSuperseded; imaged
-		// only handles filesystem cleanup.
 		t.Errorf("F-02 regression: imaged shouldn't transition deployment status on supersede (status=%s)", dep2.Status)
 	}
 }

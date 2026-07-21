@@ -81,6 +81,12 @@ message SnapshotRef {
   // The Firecracker version the snapshot was made with (ADR-005: pinned).
   // If empty, the daemon uses the running fcVersion (current behaviour).
   string fc_version    = 4;
+  // storage_key is the canonical StorageBackend key (issue #96, ADR-025
+  // axis 2) under which the mem blob lives. When set, the daemon resolves
+  // the bytes through the configured StorageBackend before staging.
+  // Empty keeps the legacy mem_path-only workflow intact (one-release
+  // deprecation window).
+  string storage_key   = 5;
 }
 
 // WakeResponse is the common return shape of CreateFromSnapshot and
@@ -146,6 +152,12 @@ message PauseAndSnapshotRequest {
   string instance    = 1;
   string mem_path    = 2;
   string vmstate_path = 3;
+  // storage_key (issue #96, ADR-025 axis 2) is the canonical StorageBackend
+  // key the mem blob is published under after the snapshot. When set, the
+  // daemon stores via the configured StorageBackend alongside the legacy
+  // in-place move; one-release deprecation window before mem_path / vmstate_path
+  // become fully derived. Same shape for SnapshotRef above.
+  string storage_key = 4;
 }
 
 message SnapshotResponse {

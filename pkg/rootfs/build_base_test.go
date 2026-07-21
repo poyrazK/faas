@@ -1,6 +1,7 @@
 package rootfs
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -10,25 +11,26 @@ import (
 )
 
 // TestBuildBase_HappyPath proves the full pipeline: two gzipped layers go
-// in, mkfs is invoked with a populated staging tree, and the OutImage path
-// is what we passed in. Mirrors TestBuildProducesSizedLayer's style.
+// in, mkfs is invoked with a populated staging tree, and the produced ext4
+// is published via the Storage backend under StorageKey. Mirrors
+// TestBuildProducesSizedLayer's style on the new key-aware API.
 func TestBuildBase_HappyPath(t *testing.T) {
-	run := &fakeRunner{}
+	be := newTestStorage(t)
+	run := &mkfsFakeRunner{fill: []byte("FAKE-BASE-EXT4")}
 	b := NewBuilder(run)
-
-	out := filepath.Join(t.TempDir(), "builder-base.ext4")
 	res, err := b.BuildBase(context.Background(), BaseBuildInput{
 		Layers: []io.Reader{
 			gzLayer(t, []entry{{name: "etc/faas", body: "v1"}}),
 			gzLayer(t, []entry{{name: "bin/railpack", body: "rb1"}}),
 		},
-		OutImage: out,
+		Storage:    be,
+		StorageKey: "base/runtime.ext4",
 	})
 	if err != nil {
 		t.Fatalf("BuildBase: %v", err)
 	}
-	if res.ImagePath != out {
-		t.Errorf("ImagePath = %q, want %q", res.ImagePath, out)
+	if res.ImageKey != "base/runtime.ext4" {
+		t.Errorf("ImageKey = %q, want %q", res.ImageKey, "base/runtime.ext4")
 	}
 	if res.SizeBytes == 0 {
 		t.Error("SizeBytes = 0, want > 0")
@@ -39,11 +41,47 @@ func TestBuildBase_HappyPath(t *testing.T) {
 	if run.argv[0] != "mkfs.ext4" {
 		t.Errorf("argv[0] = %q, want mkfs.ext4", run.argv[0])
 	}
-	if !containsString(run.argv, out) {
-		t.Errorf("argv %v must contain %q", run.argv, out)
-	}
 	if !containsString(run.argv, "-d") {
 		t.Errorf("argv %v must use -d (mkfs with source dir, no mount needed)", run.argv)
+	}
+	// The legacy OutImage path is NOT used; the Storage backend must
+	// hold the published ext4 at the requested key.
+	rc, err := be.Get(context.Background(), "base/runtime.ext4")
+	if err != nil {
+		t.Fatalf("storage Get after BuildBase: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read all: %v", err)
+	}
+	if !bytes.Equal(got, run.fill) {
+		t.Fatalf("content mismatch: got %q, want %q", got, run.fill)
+	}
+}
+
+// TestBuildBase_LegacyOutImage covers the deprecation path: existing
+// callers (TestBuildBase_* in earlier slices, the integration test)
+// pass OutImage and BuildBase writes directly. Kept for one release
+// per the ADR-025 deprecation window.
+func TestBuildBase_LegacyOutImage(t *testing.T) {
+	run := &fakeRunner{}
+	b := NewBuilder(run)
+	out := filepath.Join(t.TempDir(), "builder-base.ext4")
+	res, err := b.BuildBase(context.Background(), BaseBuildInput{
+		Layers: []io.Reader{
+			gzLayer(t, []entry{{name: "etc/faas", body: "v1"}}),
+		},
+		OutImage: out,
+	})
+	if err != nil {
+		t.Fatalf("BuildBase: %v", err)
+	}
+	if res.ImagePath != out {
+		t.Errorf("ImagePath = %q, want %q", res.ImagePath, out)
+	}
+	if !containsString(run.argv, out) {
+		t.Errorf("argv %v must contain %q (legacy path)", run.argv, out)
 	}
 }
 
@@ -53,16 +91,17 @@ func TestBuildBase_HappyPath(t *testing.T) {
 // mkfs runs. We assert by recording (run took the staged dir as -d) and
 // by side-effect: layer-2 wins over layer-1 on the same path.
 func TestBuildBase_AppliesAllLayers(t *testing.T) {
+	be := newTestStorage(t)
 	run := &fakeRunner{}
 	b := NewBuilder(run)
-
 	_, err := b.BuildBase(context.Background(), BaseBuildInput{
 		Layers: []io.Reader{
 			gzLayer(t, []entry{{name: "usr/local/bin/railpack", body: "v0"}}),
 			gzLayer(t, []entry{{name: "usr/local/bin/railpack", body: "v1"}}),
 			gzLayer(t, []entry{{name: "etc/motd", body: "hello"}}),
 		},
-		OutImage: filepath.Join(t.TempDir(), "base.ext4"),
+		Storage:    be,
+		StorageKey: "base/runtime.ext4",
 	})
 	if err != nil {
 		t.Fatalf("BuildBase: %v", err)
@@ -83,7 +122,10 @@ func TestBuildBase_AppliesAllLayers(t *testing.T) {
 // supplying zero layers is a structural mistake, not a noop.
 func TestBuildBase_EmptyLayersErrors(t *testing.T) {
 	b := NewBuilder(&fakeRunner{})
-	_, err := b.BuildBase(context.Background(), BaseBuildInput{OutImage: "/tmp/x.ext4"})
+	_, err := b.BuildBase(context.Background(), BaseBuildInput{
+		Storage:    newTestStorage(t),
+		StorageKey: "base/runtime.ext4",
+	})
 	if err == nil {
 		t.Fatal("expected error on empty Layers")
 	}
@@ -92,15 +134,16 @@ func TestBuildBase_EmptyLayersErrors(t *testing.T) {
 	}
 }
 
-// TestBuildBase_EmptyOutImageErrors — OutImage is the production target;
-// silently defaulting would write into CWD.
+// TestBuildBase_EmptyOutImageErrors — the legacy OutImage path is
+// production-wired to Storage/StorageKey today; this test pins the
+// rule that the legacy path also rejects an empty OutImage.
 func TestBuildBase_EmptyOutImageErrors(t *testing.T) {
 	b := NewBuilder(&fakeRunner{})
 	_, err := b.BuildBase(context.Background(), BaseBuildInput{
 		Layers: []io.Reader{strings.NewReader("")},
 	})
 	if err == nil {
-		t.Fatal("expected error on empty OutImage")
+		t.Fatal("expected error on empty output target")
 	}
 }
 
@@ -109,8 +152,9 @@ func TestBuildBase_EmptyOutImageErrors(t *testing.T) {
 func TestBuildBase_LayerApplyError(t *testing.T) {
 	b := NewBuilder(&fakeRunner{})
 	_, err := b.BuildBase(context.Background(), BaseBuildInput{
-		Layers:   []io.Reader{strings.NewReader("not a gz stream")},
-		OutImage: filepath.Join(t.TempDir(), "x.ext4"),
+		Layers:     []io.Reader{strings.NewReader("not a gz stream")},
+		Storage:    newTestStorage(t),
+		StorageKey: "base/runtime.ext4",
 	})
 	if err == nil {
 		t.Fatal("expected error on corrupt layer")
@@ -125,14 +169,30 @@ func TestBuildBase_LayerApplyError(t *testing.T) {
 func TestBuildBase_MkfsError(t *testing.T) {
 	b := NewBuilder(fakeErrorRunner{err: errors.New("disk full")})
 	_, err := b.BuildBase(context.Background(), BaseBuildInput{
-		Layers:   []io.Reader{gzLayer(t, []entry{{name: "f", body: "x"}})},
-		OutImage: filepath.Join(t.TempDir(), "x.ext4"),
+		Layers:     []io.Reader{gzLayer(t, []entry{{name: "f", body: "x"}})},
+		Storage:    newTestStorage(t),
+		StorageKey: "base/runtime.ext4",
 	})
 	if err == nil {
 		t.Fatal("expected mkfs error")
 	}
 	if !strings.Contains(err.Error(), "base mkfs") {
 		t.Errorf("error %q must mention base mkfs", err.Error())
+	}
+}
+
+// TestBuildBase_RejectsBothOutputTargets covers the same exclusive-or
+// rule as Build: the validator must surface the misconfiguration loudly.
+func TestBuildBase_RejectsBothOutputTargets(t *testing.T) {
+	b := NewBuilder(&fakeRunner{})
+	_, err := b.BuildBase(context.Background(), BaseBuildInput{
+		Layers:     []io.Reader{strings.NewReader("")}, // ignored; we error first
+		Storage:    newTestStorage(t),
+		StorageKey: "base/runtime.ext4",
+		OutImage:   filepath.Join(t.TempDir(), "out.ext4"),
+	})
+	if err == nil {
+		t.Fatal("both output targets should error")
 	}
 }
 
