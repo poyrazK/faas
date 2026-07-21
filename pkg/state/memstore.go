@@ -48,6 +48,11 @@ type MemStore struct {
 	// raw token (so the binary []byte hash from ConsumeLoginToken
 	// matches the map key format used in MemStore everywhere else).
 	loginTokens map[string]LoginToken
+	// cliAuthCodes is keyed by the SHA-256 hash of the raw code
+	// (same key format as loginTokens). AccountID is empty until the
+	// dashboard claims the code; the claim statement fills it in
+	// atomically. See pkg/state/types.go CliAuthCode.
+	cliAuthCodes map[string]CliAuthCode
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic
@@ -67,6 +72,13 @@ type MemStore struct {
 	// stripeByCustomer is the reverse-lookup index used by
 	// AccountByStripeCustomerID; keyed by Stripe `cus_…` ID.
 	stripeByCustomer map[string]string
+	// gdprRequests is the in-memory mirror of the gdpr_requests ledger
+	// row. MemStore does not auto-cascade on DeleteAccount (the
+	// production pgstore does), but AppendGdprRequest rows here are
+	// also intentionally NOT pruned — a unit test that asserts "after
+	// DeleteAccount, the GDPR ledger still has the delete row" needs
+	// them to survive.
+	gdprRequests []GdprRequest
 	// stripePushHours tracks which (account, hour) pairs the hourly
 	// Stripe pusher has already pushed; prevents double-billing on
 	// redelivery.
@@ -119,6 +131,7 @@ func NewMemStore() *MemStore {
 		crons:          map[string]Cron{},
 		instances:      map[string]Instance{},
 		loginTokens:    map[string]LoginToken{},
+		cliAuthCodes:   map[string]CliAuthCode{},
 		deploymentLogs: map[string][]LogEntry{},
 		deploymentSeq:  map[string]int64{},
 		snapshots:      []Snapshot{},
@@ -129,6 +142,8 @@ func NewMemStore() *MemStore {
 		// stripeByCustomer is the reverse-lookup map AccountByStripeCustomerID
 		// walks; populated by UpdateAccountStripeCustomerID.
 		stripeByCustomer: map[string]string{},
+		// gdprRequests starts empty; AppendGdprRequest appends.
+		gdprRequests: nil,
 		// stripePushHours is the per-(account, hour) dedupe set the
 		// meterd hourly pusher reads/writes.
 		stripePushHours: map[stripePushKey]struct{}{},
@@ -1791,6 +1806,121 @@ func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (in
 	return removed, nil
 }
 
+// IssueCliAuthCode stores a freshly-minted code's SHA-256 hash with
+// no account binding (AccountID empty). The hash key format matches
+// loginTokens (the binary []byte hash used as a string key). A
+// re-issue of the same hash is a no-op overwriting the entry, which
+// matches the production on-conflict-do-nothing semantics.
+func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cliAuthCodes == nil {
+		m.cliAuthCodes = map[string]CliAuthCode{}
+	}
+	m.cliAuthCodes[string(tokenHash)] = CliAuthCode{
+		TokenHash: append([]byte(nil), tokenHash...),
+		ExpiresAt: expiresAt,
+	}
+	return nil
+}
+
+// PeekCliAuthCode returns the row's status without mutating it. Used
+// by the dashboard GET /cli-auth render to decide whether to show the
+// email-input form or the "code unavailable" error page.
+func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if row.ConsumedAt != nil {
+		return api.CliAuthStatusConsumed, row.AccountID, nil
+	}
+	return api.CliAuthStatusPending, row.AccountID, nil
+}
+
+// ClaimCliAuthCode atomically transitions pending → consumed and
+// binds account_id. Error shapes mirror PgStore (review finding F5):
+//
+//	ErrNotFound  — row missing OR expired (never minted or TTL passed)
+//	ErrConflict  — row exists but already claimed by a prior call
+//
+// The CAS-equivalent for MemStore is the m.mu serializing all
+// readers/writers; the second concurrent caller observes the
+// first's write (AccountID != "") and returns ErrConflict.
+//
+// IMPORTANT: this MUST NOT touch ConsumedAt — that field is the
+// exclusive mint-gate for ConsumeCliAuthCode. Pre-setting it here
+// would short-circuit the CAS that the CLI's exchange relies on to
+// mint exactly one API key per code (review finding F4).
+func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, accountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return ErrNotFound
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return ErrNotFound
+	}
+	if row.AccountID != "" {
+		// A prior claim already bound the row to some account_id.
+		// Dashboard POST never re-claims, so this is either a retry
+		// (user double-clicked) or a parallel claim race. Either
+		// way the row is no longer pending → ErrConflict so the
+		// handler can render "Code already used".
+		return ErrConflict
+	}
+	row.AccountID = accountID
+	m.cliAuthCodes[string(tokenHash)] = row
+	return nil
+}
+
+// ConsumeCliAuthCode is the CLI's poll-side read PLUS mint gate.
+// Atomic CAS (mirrors ConsumeLoginToken): only mutates consumed_at
+// on the FIRST call, returns the bound account_id exactly once.
+// A buggy or replaying CLI cannot mint multiple keys for the same
+// code (review finding F4).
+//
+// Filter: `account_id` must be non-empty (Claim must have run
+// first) — without it the row is still pending and the CLI should
+// keep polling, not see (Consumed,"") which would mint a key for an
+// unbound account.
+//
+// Return contract:
+//
+//	pending (or empty account_id) → (Pending,  "",       nil)        keep polling
+//	consumed (first call)        → (Consumed, acct_id,  nil)        mint API key
+//	replay / expired / unknown    → (Expired, "",        ErrNotFound)
+func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if row.AccountID == "" || row.ConsumedAt != nil {
+		// Either still pending (dashboard hasn't claimed yet) or
+		// already consumed (replay). The caller distinguishes via
+		// the consumed_at nil check.
+		if row.ConsumedAt != nil {
+			return api.CliAuthStatusExpired, "", ErrNotFound
+		}
+		return api.CliAuthStatusPending, "", nil
+	}
+	now := time.Now()
+	row.ConsumedAt = &now
+	m.cliAuthCodes[string(tokenHash)] = row
+	return api.CliAuthStatusConsumed, row.AccountID, nil
+}
+
 // AppendDeploymentLog records one line of build output. Returns the
 // assigned seq (monotonic per deployment). MemStore mimics the
 // Postgres bigserial cursor so cursor pagination (`seq < before`)
@@ -2182,6 +2312,59 @@ func (m *MemStore) RestoreAccount(_ context.Context, id string) error {
 	a.DeletionRequestedAt = nil
 	m.accounts[id] = a
 	return nil
+}
+
+// AppendGdprRequest records the action on the in-memory ledger. Mirrors
+// PgStore: no auto-prune on DeleteAccount (the production table also
+// outlives the account row), so a test can assert the audit row
+// against the email + timestamp after the account row is gone.
+func (m *MemStore) AppendGdprRequest(_ context.Context, r GdprRequest) error {
+	if r.ID == "" {
+		return fmt.Errorf("AppendGdprRequest: id is required")
+	}
+	if r.RequestedAt.IsZero() {
+		r.RequestedAt = time.Now().UTC()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.gdprRequests = append(m.gdprRequests, r)
+	return nil
+}
+
+// ListGdprRequestsForAccount returns the rows in requested_at desc
+// order, bounded by limit. limit <= 0 returns no rows (mirrors the
+// PgStore guard).
+func (m *MemStore) ListGdprRequestsForAccount(_ context.Context, accountID string, limit int) ([]GdprRequest, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]GdprRequest, 0)
+	for i := len(m.gdprRequests) - 1; i >= 0 && len(out) < limit; i-- {
+		if m.gdprRequests[i].AccountID == accountID {
+			out = append(out, m.gdprRequests[i])
+		}
+	}
+	return out, nil
+}
+
+// CompleteGdprRequest stamps completed_at on the most recent
+// un-completed row of (account_id, action) in the in-memory ledger.
+// Returns ErrNotFound when no matching row exists so callers can skip
+// stale ticks without logging noise.
+func (m *MemStore) CompleteGdprRequest(_ context.Context, accountID, action string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now().UTC()
+	for i := len(m.gdprRequests) - 1; i >= 0; i-- {
+		r := &m.gdprRequests[i]
+		if r.AccountID == accountID && r.Action == GdprAction(action) && r.CompletedAt.IsZero() {
+			r.CompletedAt = now
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 
 // LoadAndStampLastQuotaWarning mirrors PgStore.LoadAndStampLastQuotaWarning

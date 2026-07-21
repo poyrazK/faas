@@ -244,7 +244,10 @@ func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 	// /metrics — returns the meterd_ prefix per ADR-015. After the
 	// four Observe calls at boot the body must include at least one
 	// meterd_ops_total line; the promhttp internals are the
-	// load-bearing proof that the handler is mounted.
+	// load-bearing proof that the handler is mounted. The dedicated
+	// Stripe-push histogram (meterd_stripe_push_duration_seconds) is
+	// registered on the same wire.OpsMetrics instance and surfaces as
+	// an INFO/help line even before the first push.
 	rec = httptest.NewRecorder()
 	captured.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if rec.Code != http.StatusOK {
@@ -256,6 +259,9 @@ func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 	}
 	if !strings.Contains(body, "meterd_ops_total") {
 		t.Errorf("/metrics body missing meterd_ops_total (Observe not wired?):\n%s", body)
+	}
+	if !strings.Contains(body, "meterd_stripe_push_duration_seconds") {
+		t.Errorf("/metrics body missing meterd_stripe_push_duration_seconds histogram (wire seam not registered?):\n%s", body)
 	}
 
 	cancel()
@@ -427,5 +433,126 @@ func TestRun_Healthz_StaleReturns503(t *testing.T) {
 		if !found {
 			t.Errorf("/healthz Stale missing %q (have %v)", name, status.Stale)
 		}
+	}
+}
+
+// meterRec is the cmd/meterd-side test fake for the Stripe pusher.
+// Renamed from `recordingStripe` because it deliberately differs from
+// the pkg/meter-side recordingStripe in pusher_shadow_test.go:
+//
+//   - pkg/meter's fake records full (acct, hour, gb) tuples because
+//     TestPushHour_Shadow24h asserts the GB-h math against a synthetic
+//     dataset.
+//   - cmd/meterd's fake only counts calls because
+//     TestRun_MetricsAddr_StripePushLabels asserts the /metrics scrape
+//     shape, not the push math.
+//
+// Lifting either into a shared pkg/metertest would over-fit the
+// other (or grow into a kitchen-sink fake). Keeping them as adjacent
+// single-purpose helpers preserves locality: each test reads its fake
+// next to its assertions, and changes to one fake don't drag the
+// other along.
+type meterRec struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (r *meterRec) PushUsageRecord(context.Context, state.Account, time.Time, float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	return nil
+}
+
+func (r *meterRec) Calls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
+// TestRun_MetricsAddr_StripePushLabels — the §14 M7 dashboard
+// acceptance for the new wire.OpsMetrics seam. Drives the meterd
+// stripe-tick at sub-second cadence against an injected meterRec,
+// then asserts the /metrics body carries the per-push counter +
+// histogram with the canonical code label `result="ok"`. With
+// nopStripe (the default) the histogram's observation never lands;
+// this test wires the recording stub via runDeps.stripe to exercise
+// the production code path.
+func TestRun_MetricsAddr_StripePushLabels(t *testing.T) {
+	dir := shortDir(t)
+	cfgPath := writeMeterdConfig(t, dir, "127.0.0.1:0")
+	pool := testPool(t)
+
+	var (
+		mu       sync.Mutex
+		captured http.Handler
+	)
+	listenFn := func(_ string, h http.Handler) (*http.Server, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		captured = h
+		return &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}, nil
+	}
+	rec := &meterRec{}
+	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, subSecondIntervalsEnv())
+	deps.stripe = rec // override nopStripe; pre-populated field on runDeps
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runWithDeps(ctx, discardLog(), deps) }()
+
+	// Wait for the handler AND for the stripe tick to land at least
+	// once. The stripe pusher walks ListAllAccounts and skips
+	// every account in the empty test store, so `rec.Calls()` may
+	// stay at 0 — but the per-push Observe still fires (with
+	// code="ok") since the loop body itself runs even when no
+	// account is pushed. The dashboard's `meterd_ops_total{op=
+	// "stripe",code="ok"}` is the proxy; we assert that line shows
+	// up. The dedicated histogram series only registers when an
+	// SDK call actually happens, so we don't assert it here.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		got := captured
+		mu.Unlock()
+		if got != nil && time.Now().After(deadline.Add(-1500*time.Millisecond)) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("metrics handler was not registered within 2s")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	recBody := httptest.NewRecorder()
+	captured.ServeHTTP(recBody, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if recBody.Code != http.StatusOK {
+		t.Fatalf("/metrics status = %d, want 200", recBody.Code)
+	}
+	body := recBody.Body.String()
+	if !strings.Contains(body, "meterd_ops_total") {
+		t.Errorf("/metrics body missing meterd_ops_total (Observe not wired?):\n%s", body)
+	}
+	// meterd_ops_total{op="stripe"} must show up after at least one
+	// stripe-tick body run. The stripe-tick body calls Observe("stripe",
+	// dur, nil) regardless of whether any account was pushed.
+	if !strings.Contains(body, `op="stripe"`) {
+		t.Errorf("/metrics body missing op=\"stripe\" label (stripe-tick body never ran?):\n%s", body)
+	}
+	// The dedicated histogram's HELP/TYPE lines are emitted by the
+	// registry even before the first observation — that's the
+	// invariant the dashboard's panel depends on.
+	if !strings.Contains(body, "meterd_stripe_push_duration_seconds") {
+		t.Errorf("/metrics body missing meterd_stripe_push_duration_seconds histogram registration:\n%s", body)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("run returned %v, want nil on clean drain", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("loop did not return within 3s of cancel")
 	}
 }

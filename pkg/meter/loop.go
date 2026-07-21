@@ -75,7 +75,7 @@ func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif 
 // the daemon; only a context cancel returns cleanly.
 func (l *Loop) Run(ctx context.Context) error {
 	sampler := NewSampler(l.store, l.now)
-	pusher := NewPusher(l.store, l.stripe, l.log, l.now)
+	pusher := NewPusher(l.store, l.stripe, l.log, l.now, l.ops)
 	errc := make(chan error, 4)
 	go func() {
 		errc <- l.runTicks(ctx, l.cfg.SampleInterval, func(c context.Context) error {

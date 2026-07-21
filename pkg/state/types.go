@@ -247,6 +247,33 @@ type Cron struct {
 	LastFiredAt time.Time // zero until first fire; updated by MarkCronFired
 }
 
+// GdprAction enumerates the GDPR self-service actions recorded in
+// the gdpr_requests ledger. The DB CHECK constraint enforces these
+// three values; exporting the constants avoids typo bugs in apid +
+// schedd callers.
+type GdprAction string
+
+const (
+	GdprActionExport  GdprAction = "export"
+	GdprActionDelete  GdprAction = "delete"
+	GdprActionRestore GdprAction = "restore"
+)
+
+// GdprRequest is one row of the gdpr_requests ledger. Inserted on
+// the customer-facing path; completed_at is stamped after the
+// downstream action (export bundle returned, DeleteAccount fired,
+// restore succeeded). The ledger is INSERT-only from the application
+// side; the table survives the account's DeleteAccount so a DPO can
+// audit completed erasure against an email + timestamp.
+type GdprRequest struct {
+	ID           string
+	AccountID    string
+	AccountEmail string
+	Action       GdprAction
+	RequestedAt  time.Time
+	CompletedAt  time.Time // zero until the downstream action completes
+}
+
 // Instance mirrors the instances row; schedd is the sole writer (spec §6).
 type Instance struct {
 	ID            string
@@ -363,6 +390,18 @@ type SnapshotForGC struct {
 type LoginToken struct {
 	TokenHash  []byte
 	AccountID  string
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
+}
+
+// CliAuthCode is one row of the cli_auth_codes table (spec §2.2
+// device-code flow). AccountID is empty between mint and claim; the
+// claim statement fills it in atomically. The 4-byte entropy + 5-min
+// TTL + per-IP rate limit means brute-force on the code space is not
+// realistic, so we don't bump the byte length here.
+type CliAuthCode struct {
+	TokenHash  []byte
+	AccountID  string // empty until ClaimCliAuthCode
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
 }

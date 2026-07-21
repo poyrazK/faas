@@ -159,9 +159,22 @@ func TestDeriveName_UsesCWD(t *testing.T) {
 
 // --- cmdLogin ---------------------------------------------------------------
 
+// TestCmdLogin_NoToken exercises the post-interactive-flow default:
+// no flags → enter the device-code path. We can't let it run the
+// full flow in a unit test (it would block on stdin), so we point
+// FAAS_API at an unreachable port and assert the mint error path
+// returns non-zero. This is the "server unreachable" sub-case of the
+// interactive flow — see TestCmdLogin_ServerUnreachable for the
+// positive assertion.
 func TestCmdLogin_NoToken(t *testing.T) {
-	if code := cmdLogin(nil); code != 1 {
-		t.Errorf("cmdLogin(nil) = %d, want 1", code)
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("FAAS_API", "http://127.0.0.1:1")
+	t.Setenv("FAAS_TOKEN", "")
+
+	if code := cmdLogin(nil); code == 0 {
+		t.Error("cmdLogin(nil) with unreachable server = 0, want non-zero")
 	}
 }
 

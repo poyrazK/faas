@@ -108,6 +108,25 @@ type Store interface {
 	// deletion_requested_at untouched (it carries the original grace
 	// deadline). RestoreAccount zeroes deletion_requested_at.
 	DeleteAccount(ctx context.Context, id string) error
+	// AppendGdprRequest records a single GDPR self-service action
+	// (export, delete, restore) against the account email at the
+	// moment it lands. Append-only by contract; the gdpr_requests
+	// table outlives DeleteAccount so a customer (or a DPO) can be
+	// shown the proof of erasure against an email + timestamp. The
+	// Completed field is set when the action has run to its end
+	// (export = on insert, delete = after pg/grace hard-delete fires,
+	// restore = on insert since restore is itself the endpoint).
+	AppendGdprRequest(ctx context.Context, req GdprRequest) error
+	// ListGdprRequestsForAccount returns the ledger rows for an
+	// account in requested_at desc order, bounded by limit. Used by
+	// the GDPR export bundle's audit slice so the customer sees their
+	// own actions reflected in the same JSON.
+	ListGdprRequestsForAccount(ctx context.Context, accountID string, limit int) ([]GdprRequest, error)
+	// CompleteGdprRequest stamps completed_at on the most recent
+	// un-completed row of (account_id, action). Called by pkg/grace
+	// after DeleteAccount succeeds so the delete row in the ledger
+	// carries the actual hard-delete timestamp.
+	CompleteGdprRequest(ctx context.Context, accountID, action string) error
 	ListBuildsForAccount(ctx context.Context, accountID string) ([]Build, error)
 	ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error)
 	// UsageByAccount aggregates every per-minute usage_minutes row that
@@ -160,6 +179,25 @@ type Store interface {
 	IssueLoginToken(ctx context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error
 	ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error)
 	DeleteOldLoginTokens(ctx context.Context, before time.Time) (int64, error)
+
+	// CLI auth codes (spec §2.2 device-code flow). The mint + peek +
+	// claim + consume cycle mirrors the magic-link primitives but with
+	// a nullable account_id — the binding to a customer happens at
+	// claim time (dashboard POST /cli-auth), not at mint time
+	// (anonymous POST /v1/cli-auth/code).
+	//
+	// IssueCliAuthCode persists a freshly-minted code's SHA-256 hash
+	// with no account (account_id NULL). PeekCliAuthCode returns the
+	// row's status without mutating it (the dashboard render uses
+	// this). ClaimCliAuthCode atomically transitions pending →
+	// consumed and binds account_id in one statement; a racing second
+	// claim returns ErrConflict. ConsumeCliAuthCode is the CLI's poll
+	// path: returns (status, account_id, err) so the CLI can mint the
+	// API key once it sees "consumed".
+	IssueCliAuthCode(ctx context.Context, tokenHash []byte, expiresAt time.Time) error
+	PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error)
+	ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error
+	ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error)
 
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)

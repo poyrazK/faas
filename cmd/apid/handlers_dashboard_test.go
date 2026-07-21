@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -168,7 +170,55 @@ func TestDashboardHandler_OtherPages(t *testing.T) {
 	}
 }
 
-// TestDashboardHandler_RecoversFromPanic confirms a panicking handler
+// TestDashboardAccountDPA_RendersMarkdown confirms the new
+// session-authed DPA route (PR follow-up) renders the configured
+// template inside the dashboard chrome. Sets a tmp DPA file via
+// dpaPath on the server so the test does NOT depend on the production
+// /etc/faas layout. The dashboard must surface the markdown text
+// body (between <pre class="dpa">…</pre>) and the back-link to
+// /dashboard/account. This regresses the "support@DOMAIN" gap —
+// the dashboard now has a real link, not a placeholder.
+func TestDashboardAccountDPA_RendersMarkdown(t *testing.T) {
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(t.Context(), "dpa@example.com", "free")
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	cookie, err := mgr.Issue(acct.ID)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	tmp := t.TempDir()
+	dpaPath := filepath.Join(tmp, "DPA.md")
+	if err := os.WriteFile(dpaPath, []byte("# DPA\n\nThe operator processes your data for X."), 0o644); err != nil {
+		t.Fatalf("write DPA: %v", err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := newServerWithDeps(store, log, "example.com", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, mgr, nil, 15*60_000_000_000, dpaPath)
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/dashboard/account/dpa", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cookie})
+	srv.handler().ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "<pre class=\"dpa\">") {
+		t.Errorf("body missing <pre class=\"dpa\">; got %s", body)
+	}
+	if !strings.Contains(body, "# DPA") {
+		t.Errorf("body missing the markdown text\n--- body ---\n%s", body)
+	}
+	if !strings.Contains(body, "/dashboard/account") {
+		t.Errorf("body missing back-link to /dashboard/account\n%s", body)
+	}
+}
+
 // is caught by Recovery middleware and rendered as a 500 RFC 7807
 // problem. This intentionally uses a raw panicHandler — it does NOT
 // hit the dashboard route, so no session cookie is required; it

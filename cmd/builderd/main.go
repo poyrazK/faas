@@ -38,10 +38,11 @@ func main() {
 // runDeps is the DI seam for run. Production uses the defaults; tests swap
 // fields to drive run without Postgres or vmmd.
 type runDeps struct {
-	configPath string
-	openDB     func(context.Context, string) (*pgxpool.Pool, error)
-	migrate    func(context.Context, *pgxpool.Pool) error
-	newDriver  func(ctx context.Context, target string, tlsCfg *tls.Config, builderBase, driveDir, exportDir string) (builderdpkg.VM, error)
+	configPath       string
+	openDB           func(context.Context, string) (*pgxpool.Pool, error)
+	migrate          func(context.Context, *pgxpool.Pool) error
+	newDriver        func(ctx context.Context, target string, tlsCfg *tls.Config, builderBase, driveDir, exportDir string) (builderdpkg.VM, error)
+	newResidentProbe func(ctx context.Context, url string) builderdpkg.ResidencyProbe
 }
 
 func defaultDeps() runDeps {
@@ -66,6 +67,11 @@ func defaultDeps() runDeps {
 		newDriver: func(ctx context.Context, target string, tlsCfg *tls.Config, builderBase, driveDir, exportDir string) (builderdpkg.VM, error) {
 			return builderdpkg.NewVMMDriverContext(ctx, target, tlsCfg, builderBase, driveDir, exportDir)
 		},
+		// newResidentProbe wires the 2nd-slot gate (spec §4.5, §13). The
+		// default polls schedd's /metrics endpoint on cfg.ScheddMetricsURL;
+		// tests can inject a fixed probe to drive slot decisions without
+		// standing up schedd.
+		newResidentProbe: builderdpkg.NewMetricsResident,
 	}
 }
 
@@ -118,7 +124,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	store := state.NewPgStore(pool)
 	notif := dbNotifier{pool: pool}
-	b := builderdpkg.New(store, notif, driver, nil, nil, nil, builderdpkg.Config{
+	resid := deps.newResidentProbe(ctx, cfg.ScheddMetricsURL)
+	b := builderdpkg.New(store, notif, driver, nil, nil, resid, builderdpkg.Config{
 		CacheDir:    cfg.CacheDir,
 		MetricsAddr: cfg.MetricsAddr,
 	}, log)
