@@ -197,20 +197,50 @@ func (c Config) NftCommands() [][]string {
 	// Accept reply traffic first (mirrors the v4 chain above) so a published
 	// request's IPv6 reply isn't dropped by the lateral-movement deny.
 	add("add", "rule", "ip6", "faas", "forward", "ct", "state", "established,related", "accept")
+	// §7 cap mirrored on the v6 chain: spec mandates one per-instance budget
+	// without distinguishing v4 vs v6 entries. Without this sibling a guest
+	// could flood only IPv6 to exhaust the conntrack table separately. Placed
+	// AFTER the established/related accept and BEFORE the ip6 daddr deny,
+	// mirroring the v4 placement. Same named counter — the v4 rule's
+	// faas_cap and this rule's faas_cap are independent counters (nft named
+	// counters are scoped per chain/table); PR-C will need to sum them when
+	// it reads cap-hit telemetry. See comments on forwardConnlimitRule.
+	if rule := c.forwardConnlimitRule6(nft); rule != nil {
+		cmds = append(cmds, rule)
+	}
 	add("add", "rule", "ip6", "faas", "forward", "iifname", c.Tap, "ip6", "daddr", "{", "fe80::/10,", "fc00::/7,", "ff00::/8,", "::1/128,", "::/128", "}", "drop")
 	return cmds
 }
 
 // forwardConnlimitRule emits a single-element argv (or nothing when the
-// cap is disabled) for the §7 per-instance conntrack cap. Factored out
-// from NftCommands so the disabled/zero branch is unit-testable without
-// forking the entire ruleset, and so the "stringly-quoted counter name"
-// stays in one place. See Config.ConntrackCap for the rule's contract.
+// cap is disabled) for the §7 per-instance conntrack cap on the IPv4
+// forward chain. Factored out from NftCommands so the disabled/zero
+// branch is unit-testable without forking the entire ruleset, and so
+// the "stringly-quoted counter name" stays in one place. See Config.
+// ConntrackCap for the rule's contract.
+//
+// Internal to NftCommands — do not invoke from anywhere else.
 func (c Config) forwardConnlimitRule(nft func(...string) []string) []string {
 	if c.ConntrackCap <= 0 {
 		return nil
 	}
 	return nft("add", "rule", "ip", "faas", "forward", "ct", "count", "over",
+		fmt.Sprintf("%d", c.ConntrackCap), "counter", "name", `"faas_cap"`, "drop")
+}
+
+// forwardConnlimitRule6 is the IPv6 sibling of forwardConnlimitRule.
+// Same ConntrackCap value, table family switched to `ip6`. Both
+// counters are named "faas_cap" — nft scopes named counters per
+// chain/table family, so the v4 and v6 counters don't collide even
+// though they share the name. PR-C reads both via `nft list
+// counters` and sums them.
+//
+// Internal to NftCommands — do not invoke from anywhere else.
+func (c Config) forwardConnlimitRule6(nft func(...string) []string) []string {
+	if c.ConntrackCap <= 0 {
+		return nil
+	}
+	return nft("add", "rule", "ip6", "faas", "forward", "ct", "count", "over",
 		fmt.Sprintf("%d", c.ConntrackCap), "counter", "name", `"faas_cap"`, "drop")
 }
 

@@ -893,22 +893,34 @@ func TestSetupNetworkEmitsConntrackCapRule(t *testing.T) {
 	if _, err := m.ColdBoot(context.Background(), req("cap-rule")); err != nil {
 		t.Fatalf("cold boot: %v", err)
 	}
-	cap := indexOfArgv(run.commands, "ct count over 4096")
-	established := indexOfArgv(run.commands, "ct state established,related accept")
+	capV4 := indexOfArgv(run.commands, "nft add rule ip faas forward ct count over 4096")
+	capV6 := indexOfArgv(run.commands, "nft add rule ip6 faas forward ct count over 4096")
+	establishedV4 := indexOfArgv(run.commands, "nft add rule ip faas forward ct state established,related accept")
+	establishedV6 := indexOfArgv(run.commands, "nft add rule ip6 faas forward ct state established,related accept")
 	smtpDrop := indexOfArgv(run.commands, "tcp dport {")
-	daddrDrop := indexOfArgv(run.commands, "ip daddr {")
-	if cap < 0 || established < 0 || smtpDrop < 0 || daddrDrop < 0 {
-		t.Fatalf("missing one or more rules in argv list: cap=%d established=%d smtp=%d daddr=%d\n%s",
-			cap, established, smtpDrop, daddrDrop, flattenForTest(run.commands))
+	daddrDropV4 := indexOfArgv(run.commands, "ip daddr { 10.0.0.0/8")
+	daddrDropV6 := indexOfArgv(run.commands, "ip6 daddr { fe80::/10")
+	if capV4 < 0 || capV6 < 0 || establishedV4 < 0 || establishedV6 < 0 || daddrDropV4 < 0 || daddrDropV6 < 0 || smtpDrop < 0 {
+		t.Fatalf("missing one or more rules in argv list: capV4=%d capV6=%d establishedV4=%d establishedV6=%d smtp=%d daddrV4=%d daddrV6=%d\n%s",
+			capV4, capV6, establishedV4, establishedV6, smtpDrop, daddrDropV4, daddrDropV6, flattenForTest(run.commands))
 	}
-	if !(established < cap) {
-		t.Errorf("established,related accept (idx %d) must come BEFORE the cap rule (idx %d)", established, cap)
+	// IPv4 forward chain: established/related accept < cap < SMTP drop < daddr drop.
+	if establishedV4 >= capV4 {
+		t.Errorf("[v4] established,related accept (idx %d) must come BEFORE the cap rule (idx %d)", establishedV4, capV4)
 	}
-	if !(cap < smtpDrop) {
-		t.Errorf("cap rule (idx %d) must come BEFORE the SMTP drop (idx %d)", cap, smtpDrop)
+	if capV4 >= smtpDrop {
+		t.Errorf("[v4] cap rule (idx %d) must come BEFORE the SMTP drop (idx %d)", capV4, smtpDrop)
 	}
-	if !(cap < daddrDrop) {
-		t.Errorf("cap rule (idx %d) must come BEFORE the daddr lateral-movement drop (idx %d)", cap, daddrDrop)
+	if capV4 >= daddrDropV4 {
+		t.Errorf("[v4] cap rule (idx %d) must come BEFORE the daddr lateral-movement drop (idx %d)", capV4, daddrDropV4)
+	}
+	// IPv6 forward chain: established/related accept < cap < daddr drop.
+	// (No SMTP drop on v6.)
+	if establishedV6 >= capV6 {
+		t.Errorf("[v6] established,related accept (idx %d) must come BEFORE the cap rule (idx %d)", establishedV6, capV6)
+	}
+	if capV6 >= daddrDropV6 {
+		t.Errorf("[v6] cap rule (idx %d) must come BEFORE the daddr lateral-movement drop (idx %d)", capV6, daddrDropV6)
 	}
 }
 
