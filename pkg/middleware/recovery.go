@@ -24,11 +24,18 @@ func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 			defer func() {
 				if rec := recover(); rec != nil {
 					rid := RequestIDFrom(r)
+					// CodeQL go/log-injection (CWE-117): `rec` is the
+					// interface{} returned by recover(). Whatever a
+					// handler panicked with (string, error, custom
+					// type, anything) routes through logsanitize.FieldAny
+					// so a hostile panic payload cannot inject CR/LF
+					// and forge a new log line. The stack trace is
+					// internal-only (runtime/debug output) and safe.
 					log.Error("panic recovered",
 						"request_id", rid,
 						"method", logsanitize.Field(r.Method),
 						"path", logsanitize.Field(r.URL.Path),
-						"panic", rec,
+						"panic", logsanitize.FieldAny(rec),
 						"stack", string(debug.Stack()),
 					)
 					// The response writer may already be partially written;
