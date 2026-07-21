@@ -325,22 +325,36 @@ type bootInput struct {
 	spec      AppSpec
 }
 
-// bestEffortDestroy issues a vmm.Destroy with a hard timeout using a
+// timedDestroy issues a vmm.Destroy with a hard timeout using a
 // detached context. We deliberately use context.Background() rather
-// than the caller's ctx so a shutting-down caller (cancelled ctx) still
-// gets its destroy cleanup — the destroy is best-effort but must not
-// be skipped. The lint exemption lives once, here, instead of at every
-// call site; contextcheck considers the use-site a violation regardless
-// of comment placement.
+// than the caller's ctx so a shutting-down caller (cancelled ctx)
+// still gets its destroy cleanup — the destroy is best-effort but
+// must not be skipped. The lint exemption lives once, here; every
+// caller goes through this helper so future destroy paths can't
+// accidentally fall back to the caller's ctx.
 //
 // The ctx parameter is accepted to satisfy the contextcheck linter's
 // expectation that context-using functions take a parent context. We
 // deliberately discard it — see the Background() justification above.
-func (e *Engine) bestEffortDestroy(ctx context.Context, instanceID string) {
+// The timeout parameter lets callers pick the deadline (most use
+// DestroyTimeout; KillStuck uses a tighter 5s so a wedged Firecracker
+// can't pin the watchdog goroutine).
+//
+// Returns the underlying vmmd error so callers can decide whether
+// to log, surface, or discard; the timeout itself is not surfaced.
+func (e *Engine) timedDestroy(ctx context.Context, instanceID string, timeout time.Duration) error {
 	_ = ctx // see comment above
-	destroyCtx, cancel := context.WithTimeout(context.Background(), DestroyTimeout)
+	destroyCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	_ = e.vmm.Destroy(destroyCtx, instanceID) //nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
+	return e.vmm.Destroy(destroyCtx, instanceID) //nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
+}
+
+// bestEffortDestroy is the no-error-discard wrapper around
+// timedDestroy at the standard DestroyTimeout, used by Phase 4 /
+// Prime error paths where the destroy failure is observation-only
+// and the row is already doomed.
+func (e *Engine) bestEffortDestroy(ctx context.Context, instanceID string) {
+	_ = e.timedDestroy(ctx, instanceID, DestroyTimeout)
 }
 
 // Prime boots a freshly-built deployment once, snapshots it, and parks it —
@@ -447,9 +461,7 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 	// detached context for the same reason as the Wake/Prime error
 	// paths: a shutting-down reaper should still get its destroy
 	// cleanup.
-	destroyCtx, cancel := context.WithTimeout(context.Background(), DestroyTimeout)
-	defer cancel()
-	if err := e.vmm.Destroy(destroyCtx, instanceID); err != nil { //nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
+	if err := e.timedDestroy(ctx, instanceID, DestroyTimeout); err != nil {
 		return fmt.Errorf("sched: evict: destroy %s: %w", instanceID, err)
 	}
 	e.ledger.Release(instanceID)
@@ -727,9 +739,7 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 	// Best-effort destroy. A wedged Firecracker can't pin the
 	// watchdog goroutine past the 5s ceiling. Use Background so a
 	// cancelled tick ctx doesn't cause us to skip the destroy.
-	destroyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := e.vmm.Destroy(destroyCtx, instanceID); err != nil { //nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
+	if err := e.timedDestroy(ctx, instanceID, 5*time.Second); err != nil {
 		e.log.Warn("watchdog: destroy failed (best-effort)", "instance", instanceID, "reason", reason, "err", err)
 	}
 
