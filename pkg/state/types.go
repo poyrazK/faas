@@ -260,6 +260,15 @@ type Instance struct {
 	StartedAt     time.Time
 	LastRequestAt time.Time
 	ParkedAt      time.Time
+	// TerminalAt is stamped by Engine.transition on the same UPDATE that
+	// writes state = 'stopped' or 'failed' (PR #74, spec §17 follow-up).
+	// It is the dedicated retention anchor: started_at means "row
+	// creation" and parked_at is overloaded (also means "entered
+	// PARKED"). A STOPPED row whose vmmd boot succeeded 25 days ago
+	// has a stale started_at; terminal_at is the only correct age.
+	// The retention sweep (pkg/sched.Retention) DELETEs rows where
+	// state ∈ {STOPPED, FAILED} AND terminal_at < now-30d.
+	TerminalAt *time.Time
 }
 
 // InstanceTouch is one entry in a last_request_at flush batch (spec §4.1). The
@@ -317,6 +326,28 @@ type UpdateAppParams struct {
 type Snapshot struct {
 	ID           string
 	DeploymentID string
+	FCVersion    string
+	MemBytes     int64
+	DiskBytes    int64
+	Path         string
+	Stale        bool
+	CreatedAt    time.Time
+}
+
+// SnapshotForGC is the join-projection used by the imaged nightly GC
+// (spec §4.6: keep current + previous deployment's snapshots per app;
+// fleet budget pressure evicts from biggest-over-quota accounts first).
+// It denormalises snapshot → deployment → app → account into one row so
+// the GC algorithm doesn't have to round-trip per row.
+//
+// Snapshots for soft-deleted apps (apps.status = 'deleted') are filtered
+// at the SQL layer; they have no in-flight wake target and keeping them
+// would leak the 452 GB budget indefinitely.
+type SnapshotForGC struct {
+	ID           string
+	DeploymentID string
+	AppID        string
+	AccountID    string
 	FCVersion    string
 	MemBytes     int64
 	DiskBytes    int64

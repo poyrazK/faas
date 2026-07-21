@@ -124,7 +124,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 		LvFcUsedPct: fcvm.DefaultLvFcUsedPct(api.LvFcName),
 	})
-	engine := sched.NewEngine(store, ledger, vmm, sched.PoolNotifier{Pool: pool}, fcVersion, log)
+	engine := sched.NewEngine(store, ledger, vmm, sched.PoolNotifier{Pool: pool}, fcVersion, log).
+		WithOpsMetrics(ops)
 
 	// Rebuild admission accounting from any instances still live from a prior
 	// run before we start admitting new wakes.
@@ -170,7 +171,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		"fc_version", fcVersion)
 
 	loop := sched.NewLoop(pool, engine, log).
-		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{}))
+		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
+		WithWatchdog(sched.NewWatchdog(store, engine, log)).
+		// PR #74: §17 retention sweep — DELETEs STOPPED/FAILED rows older
+		// than cfg.RetentionDuration (defaults to api.DefaultInstanceRetention
+		// when zero). Ticker fires at api.DefaultRetentionInterval (1h).
+		WithRetention(sched.NewRetention(store, log).WithRetention(time.Duration(cfg.RetentionDuration)))
 	// Cron dispatch path: route synthetic requests through gatewayd's
 	// internal unix socket so metering + rate limits apply identically
 	// to user traffic (spec §4.4, M7). A failure to dial is logged but

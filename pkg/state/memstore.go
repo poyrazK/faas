@@ -356,6 +356,50 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	return app, nil
 }
 
+// CreateAppIfUnderQuota is the MemStore mirror of PgStore.CreateAppIfUnderQuota.
+// The TOCTOU is impossible here because every mutation holds m.mu for
+// the full check + insert — two goroutines serialize on the same lock,
+// so a Free account that already holds 1 app always sees observed=1 on
+// the second call. The handler's CreateApp call site becomes store-
+// agnostic.
+func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.Limits) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[app.AccountID]; !ok {
+		return App{}, ErrNotFound
+	}
+	// 1. Authoritative count under the same lock. Mirrors the predicate
+	//    PgStore uses against the apps table.
+	observed := 0
+	for _, a := range m.apps {
+		if a.AccountID == app.AccountID && (a.Status == AppActive || a.Status == AppEvictedCold) {
+			observed++
+		}
+	}
+	if observed >= limits.DeployedApps {
+		return App{}, &QuotaError{Limit: limits.DeployedApps, Observed: observed}
+	}
+	// 2. Conditional insert. Slug uniqueness is enforced by the same
+	//    loop CreateApp uses; returning ErrConflict keeps the wire
+	//    contract identical to PgStore's apps.slug unique-index path.
+	for _, a := range m.apps {
+		if a.Slug == app.Slug && a.Status != AppDeleted {
+			return App{}, ErrConflict
+		}
+	}
+	if app.ID == "" {
+		app.ID = newID()
+	}
+	if app.CreatedAt.IsZero() {
+		app.CreatedAt = time.Now()
+	}
+	if app.Status == "" {
+		app.Status = AppActive
+	}
+	m.apps[app.ID] = app
+	return app, nil
+}
+
 func (m *MemStore) AppByID(_ context.Context, id string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -645,9 +689,15 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (
 	return latest, nil
 }
 
+// ListDeploymentsForApp mirrors PgStore.ListDeploymentsForApp: `limit <= 0`
+// means "no row cap" (every remaining row after offset). F-10: see PgStore
+// doc for the asymmetry that this version already conformed to.
 func (m *MemStore) ListDeploymentsForApp(_ context.Context, appID string, limit, offset int) ([]Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if offset < 0 {
+		offset = 0
+	}
 	var all []Deployment
 	for _, d := range m.deployments {
 		if d.AppID == appID {
@@ -972,9 +1022,20 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state string, ramMB int) (Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ins := Instance{ID: newID(), AppID: appID, DeploymentID: deploymentID, State: state, RAMMB: ramMB}
-	if state == "running" {
-		ins.StartedAt = time.Now()
+	// Stamp started_at on creation for every state (commit 3, mirrors
+	// the Postgres trigger in migration 00015). The MemStore previously
+	// only stamped it on "running" rows, which left watchdog tests
+	// fishing for NULLs on WAKING/COLD_BOOTING fixtures. Keeping that
+	// late stamp behaviour would force every fixture to call
+	// SetInstanceRuntime first, which makes the watchdog tests
+	// describe a state-machine shape that no production code reaches.
+	ins := Instance{
+		ID:           newID(),
+		AppID:        appID,
+		DeploymentID: deploymentID,
+		State:        state,
+		RAMMB:        ramMB,
+		StartedAt:    time.Now(),
 	}
 	m.instances[ins.ID] = ins
 	return ins, nil
@@ -1084,6 +1145,110 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 	return nil
 }
 
+// UpdateInstanceStateWithTimestamp mirrors PgStore's variant. Mirrors
+// the §6.1 watchdog's need to know "time of entry into current
+// state" for SNAPSHOTTING rows; parked_at is the column the watchdog
+// reads on that state.
+func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state string, parkedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return ErrNotFound
+	}
+	ins.State = state
+	ins.ParkedAt = parkedAt
+	m.instances[id] = ins
+	return nil
+}
+
+// UpdateInstanceStateToTerminal mirrors PgStore's variant. Writes the
+// new state AND stamps terminal_at on the same locked read-modify-write
+// (PR #74). Engine.transition routes here for {STOPPED, FAILED}; today
+// no caller writes a different timestamp column for those states.
+func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state string, terminalAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return ErrNotFound
+	}
+	ins.State = state
+	ts := terminalAt
+	ins.TerminalAt = &ts
+	m.instances[id] = ins
+	return nil
+}
+
+// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
+// lookup (PR #74). Mirrors ListInstancesByStatesOlderThan but reads
+// terminal_at instead of the state-aware started_at/parked_at pair.
+func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wanted := make(map[State]bool, len(states))
+	for _, s := range states {
+		wanted[s] = true
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if !wanted[State(ins.State)] {
+			continue
+		}
+		if ins.TerminalAt == nil {
+			continue
+		}
+		if !ins.TerminalAt.Before(threshold) {
+			continue
+		}
+		out = append(out, ins)
+	}
+	return out, nil
+}
+
+// DeleteInstance removes an instance row unconditionally (PR #74).
+// Returns ErrNotFound when the row is already gone — the retention
+// sweep swallows that case for redelivery. There are no FK cascades;
+// events.subject and usage_minutes.instance_id carry no FK today.
+func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.instances[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m.instances, id)
+	return nil
+}
+
+// ListInstancesByStatesOlderThan is the watchdog's lookup (commit 3,
+// spec §6.1). Mirrors PgStore: coalesce started_at / parked_at on the
+// age comparison.
+func (m *MemStore) ListInstancesByStatesOlderThan(_ context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wanted := make(map[State]bool, len(states))
+	for _, s := range states {
+		wanted[s] = true
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if !wanted[State(ins.State)] {
+			continue
+		}
+		age := ins.StartedAt
+		if State(ins.State) == StateSnapshotting {
+			age = ins.ParkedAt
+		}
+		if age.IsZero() {
+			continue
+		}
+		if age.Before(threshold) {
+			out = append(out, ins)
+		}
+	}
+	return out, nil
+}
+
 func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP string, guestUID int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1191,14 +1356,187 @@ func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error
 	return ErrNotFound
 }
 
+// ListSnapshotsForGC joins snapshots → deployments → apps in-memory and
+// filters out snapshots belonging to soft-deleted apps (apps.status='deleted').
+// MemStore doesn't index the join; the O(N×M) scan is fine for the test
+// harness, which seeds at most a few dozen rows. The slice is sorted
+// newest-first to match PgStore.
+func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	appByID := make(map[string]App, len(m.apps))
+	for _, a := range m.apps {
+		appByID[a.ID] = a
+	}
+	depByID := make(map[string]Deployment, len(m.deployments))
+	for _, d := range m.deployments {
+		depByID[d.ID] = d
+	}
+	var out []SnapshotForGC
+	for _, s := range m.snapshots {
+		if s.Stale {
+			continue
+		}
+		dep, ok := depByID[s.DeploymentID]
+		if !ok {
+			continue
+		}
+		app, ok := appByID[dep.AppID]
+		if !ok || app.Status == AppDeleted {
+			continue
+		}
+		out = append(out, SnapshotForGC{
+			ID:           s.ID,
+			DeploymentID: s.DeploymentID,
+			AppID:        app.ID,
+			AccountID:    app.AccountID,
+			FCVersion:    s.FCVersion,
+			MemBytes:     s.MemBytes,
+			DiskBytes:    s.DiskBytes,
+			Path:         s.Path,
+			Stale:        s.Stale,
+			CreatedAt:    s.CreatedAt,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+// DeleteSnapshotsByID removes the named snapshot rows in-place. Returns
+// the number of rows actually removed; a second call with the same ids
+// returns 0. Never deletes the last live snapshot of a non-deleted app
+// — that invariant would break the "always have a cold-bootable or
+// snapshot-restoreable deployment" rule (spec §6.2-3). MemStore is
+// permissive here because it's test-only; PgStore is authoritative.
+func (m *MemStore) DeleteSnapshotsByID(_ context.Context, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	idSet := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		idSet[id] = struct{}{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.snapshots[:0]
+	var removed int64
+	for _, s := range m.snapshots {
+		if _, drop := idSet[s.ID]; drop {
+			removed++
+			continue
+		}
+		kept = append(kept, s)
+	}
+	m.snapshots = append([]Snapshot(nil), kept...)
+	return removed, nil
+}
+
+// MarkAllSnapshotsStaleByFCVersion mirrors the SQL UPDATE: every non-stale
+// row whose fc_version != currentVersion is flipped. ADR-005.
+func (m *MemStore) MarkAllSnapshotsStaleByFCVersion(_ context.Context, currentVersion string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for i := range m.snapshots {
+		if !m.snapshots[i].Stale && m.snapshots[i].FCVersion != currentVersion {
+			m.snapshots[i].Stale = true
+			n++
+		}
+	}
+	return n, nil
+}
+
+// MarkOldSnapshotsStale flips the given IDs to stale=true (no-op if absent).
+// Used by the per-app "current + previous" enforcement in the GC.
+func (m *MemStore) MarkOldSnapshotsStale(_ context.Context, beforeSnapshotIDs []string) (int64, error) {
+	if len(beforeSnapshotIDs) == 0 {
+		return 0, nil
+	}
+	idSet := make(map[string]struct{}, len(beforeSnapshotIDs))
+	for _, id := range beforeSnapshotIDs {
+		idSet[id] = struct{}{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for i := range m.snapshots {
+		if _, ok := idSet[m.snapshots[i].ID]; ok {
+			m.snapshots[i].Stale = true
+			n++
+		}
+	}
+	return n, nil
+}
+
+// DeleteSnapshotsStaleOlderThan mirrors the SQL DELETE … WHERE stale=true
+// AND created_at < now()-retention. MemStore uses time.Now for the cutoff
+// (deterministic tests pass a future/injected CreatedAt at seed time).
+func (m *MemStore) DeleteSnapshotsStaleOlderThan(_ context.Context, retention time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-retention)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	kept := m.snapshots[:0]
+	for i := range m.snapshots {
+		if m.snapshots[i].Stale && m.snapshots[i].CreatedAt.Before(cutoff) {
+			n++
+			continue
+		}
+		kept = append(kept, m.snapshots[i])
+	}
+	m.snapshots = append([]Snapshot(nil), kept...)
+	return n, nil
+}
+
 // --- Audit ------------------------------------------------------------------
 
+// parseSubjectID accepts either a canonical UUID (with hyphens) or the
+// 32-char hex form that MemStore's newID() emits, and returns the
+// canonical *uuid.UUID either way. Returns nil on any parse failure so
+// callers can treat "unparseable" the same as "no subject" (which is
+// what the audit-log filter expects: no row would have produced a
+// garbage ID). The fix for the silent-drop bug surfaced by the audit-log
+// PR's tests: engine.go hands us hex IDs (newID output) and uuid.Parse
+// rejects them, so Subject stayed nil even though we said we set it.
+func parseSubjectID(s string) *uuid.UUID {
+	if s == "" {
+		return nil
+	}
+	if u, err := uuid.Parse(s); err == nil {
+		return &u
+	}
+	if len(s) == 32 {
+		if b, err := hex.DecodeString(s); err == nil {
+			u := uuid.UUID(b)
+			return &u
+		}
+	}
+	return nil
+}
+
+// AppendEvent (commit 4) fixes two pre-existing bugs that the audit-log
+// PR surfaced. Before: the row's Subject pointer was dropped on the
+// floor (line 1226-1227 had a dead type-assertion placeholder and
+// the Event literal never set Subject), so ListEvents could never
+// filter by subject. After: parse the string into a *uuid.UUID and
+// copy Data so a caller can reuse the byte slice. The hex form is
+// accepted too (see parseSubjectID).
 func (m *MemStore) AppendEvent(_ context.Context, actor, kind string, subject *string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var subj *interface{ ID() string }
-	_ = subj
-	e := Event{At: time.Now(), Actor: actor, Kind: kind, Data: append([]byte(nil), data...)}
+	var subj *uuid.UUID
+	if subject != nil {
+		subj = parseSubjectID(*subject)
+	}
+	e := Event{
+		At:      time.Now(),
+		Actor:   actor,
+		Kind:    kind,
+		Subject: subj,
+		Data:    append([]byte(nil), data...),
+	}
 	m.events = append(m.events, e)
 	return nil
 }
@@ -1206,10 +1544,22 @@ func (m *MemStore) AppendEvent(_ context.Context, actor, kind string, subject *s
 func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var subj *uuid.UUID
+	if subject != "" {
+		subj = parseSubjectID(subject)
+		if subj == nil {
+			// Unparseable filter — no row would have produced it,
+			// return empty rather than silently matching everything.
+			return nil, nil
+		}
+	}
 	var out []Event
 	for i := len(m.events) - 1; i >= 0 && (limit <= 0 || len(out) < limit); i-- {
 		e := m.events[i]
-		if subject == "" || (e.Subject != nil && false) {
+		// Match either: no subject filter, OR the row's Subject
+		// pointer is non-nil and equals the filter. The pre-fix
+		// && false made this branch dead; tests caught it.
+		if subj == nil || (e.Subject != nil && *e.Subject == *subj) {
 			out = append(out, e)
 		}
 	}
@@ -1218,20 +1568,21 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 
 // --- Usage ------------------------------------------------------------------
 
-// AppendUsage upserts one (instance, minute) usage row and updates the
+// AppendUsage writes one (instance, minute) usage row and updates the
 // per-(account, app, month) aggregate so UsageByMonth keeps returning the
-// spec §10 shape without re-scanning the per-minute rows. Mirrors the
-// production INSERT … ON CONFLICT (instance_id, minute) DO UPDATE semantics:
-// multiple writes for the same minute accumulate mb_seconds + requests.
+// spec §10 shape without re-scanning the per-minute rows. Idempotent on
+// (instance_id, minute): a redelivered minute is a no-op (first write
+// wins). Mirrors the production INSERT … ON CONFLICT (instance_id, minute)
+// DO NOTHING semantics in pgstore.go — see M7 hardening PR
+// feat/m7-beta-hardening for the audit that surfaced this contract change.
 func (m *MemStore) AppendUsage(_ context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := minute.UTC().Truncate(time.Minute)
 	for i := range m.usage {
 		if m.usage[i].InstanceID == instanceID && m.usage[i].Minute.Equal(key) {
-			m.usage[i].MBSeconds += mbSeconds
-			m.usage[i].Requests += requests
-			m.recomputeMonthLocked(accountID, appID, key)
+			// Idempotent: redelivered minute is a no-op. The first tick
+			// wins; restart-driven redelivery does not inflate billing.
 			return nil
 		}
 	}
@@ -1922,3 +2273,45 @@ func (m *MemStore) SetPastDueAtForTest(id string, at time.Time) error {
 
 // compile-time check that MemStore satisfies Store.
 var _ Store = (*MemStore)(nil)
+
+// BackdateForTest rewinds the row's started_at to the supplied
+// absolute timestamp. Used by the §6.1 watchdog tests in pkg/sched
+// to fabricate a stuck-WAKING/COLD_BOOTING row whose age exceeds
+// the budget. Production wiring does not need this — Postgres
+// timestamps are real.
+func (m *MemStore) BackdateForTest(id string, startedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ins.StartedAt = startedAt
+		m.instances[id] = ins
+	}
+}
+
+// SetParkedAtForTest stamps the row's parked_at. Used by the
+// watchdog tests to fabricate a stuck-SNAPSHOTTING row — the
+// watchdog anchors SNAPSHOTTING age on parked_at, not started_at,
+// because started_at is creation time.
+func (m *MemStore) SetParkedAtForTest(id string, parkedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ins.ParkedAt = parkedAt
+		m.instances[id] = ins
+	}
+}
+
+// SetTerminalAtForTest stamps the row's terminal_at. Used by the §17
+// retention sweep tests in pkg/sched to fabricate terminal rows
+// (STOPPED / FAILED) whose age exceeds the configured retention
+// window. Production wiring does not need this — Engine.transition
+// stamps terminal_at atomically via UpdateInstanceStateToTerminal.
+func (m *MemStore) SetTerminalAtForTest(id string, terminalAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ts := terminalAt
+		ins.TerminalAt = &ts
+		m.instances[id] = ins
+	}
+}

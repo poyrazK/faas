@@ -10,7 +10,10 @@
 // review (spec §Conventions).
 package api
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Plan is a customer subscription tier. The zero value is intentionally invalid
 // so an unset plan never silently reads as Free.
@@ -184,6 +187,19 @@ const (
 	// Snapshots / disk (spec §1, §8).
 	FleetSnapshotAvgTargetMB = 130 // business metric; alert >160 warn, >200 page
 	SnapshotBudgetGB         = 452
+	// SnapshotBudgetAlarmPct is the lv-fc percentage at which the nightly
+	// imaged GC switches from per-app retention (keep current+previous
+	// deployments per app) to fleet budget pressure (evict from the
+	// biggest-over-quota accounts first). Matches spec §12. NaN lv-fc
+	// readings (lvs missing on dev/macOS) short-circuit the pressure branch.
+	SnapshotBudgetAlarmPct = 90.0
+	// SnapshotStaleRetention is how long a snapshot lives in stale state
+	// after the F2 FC-version sweep marks it before imaged evicts it
+	// (F-07). Spec §4.4 + ADR-005: stale snapshots must remain
+	// restore-able for a brief window so an operator rollback across a
+	// firecracker upgrade doesn't pay an extra cold boot. 7 days is the
+	// v1 box's typical reset cycle.
+	SnapshotStaleRetention = 7 * 24 * time.Hour
 	// LvFcName is the LVM logical volume apps + snapshots live on (spec §8).
 	// Schedd's dashboard gauge shells out to `lvs -o data_percent <LvFcName>`
 	// to populate `fcvm_lv_fc_used_pct`. Empty on dev/macOS — the
@@ -208,6 +224,29 @@ const (
 
 	// Free-tier disk reaper (spec §4.3): zero requests this long => EVICTED_COLD.
 	FreeTierColdEvictDays = 14
+
+	// Instance retention (spec §17 follow-up, PR #74): STOPPED/FAILED
+	// rows are DELETED by pkg/sched.Retention this long after entering
+	// the terminal state. Tunable in cmd/schedd config; this default is
+	// the spec baseline (30 days). Retention only touches terminal
+	// instances — it never affects quota/RAM/concurrency counts because
+	// those only sum non-terminal rows (state/machine.go CountsFor*).
+	DefaultInstanceRetention = 30 * 24 * time.Hour
+	// DefaultRetentionInterval is how often the retention sweep actually
+	// runs. Once per hour is plenty — the sweep itself reads now-30d, so
+	// hourly cadence means a row that just crossed 30d is deleted within
+	// the next hour.
+	DefaultRetentionInterval = 1 * time.Hour
+
+	// DefaultConntrackCap is the spec §7 per-instance conntrack cap
+	// (docs/faas_implementation_spec.md:344). One platform-wide number;
+	// not per-plan tiered — every tenant sees the same cap because the
+	// failure mode (host conntrack exhaustion) is a single shared
+	// resource. ADR-018 deferred the enforcement to this PR; the value
+	// is the spec literal. vmmd wires it into netns.Config at every
+	// Wake (pkg/fcvm/manager.go:236) and the nft rule that consumes
+	// it lives in pkg/netns/config.go::NftCommands.
+	DefaultConntrackCap = 4096
 )
 
 // LimitsFor returns the limits for a plan and whether the plan is known. Callers
@@ -262,7 +301,17 @@ func (p Plan) MinInstancesAllowed() bool {
 // AdmissionMB is the RAM an instance charges against the admission ceiling and
 // tenant slice: its plan RAM plus the fixed per-VM overhead (spec §4.3, §6.2-2).
 func (l Limits) AdmissionMB() int {
-	return l.RAMMB + PerVMOverheadMB
+	return BillableRAMMB(l.RAMMB)
+}
+
+// BillableRAMMB returns the RAM one instance charges against both the admission
+// ceiling (schedd's ledger, invariant §6.2-2) and the metering ledger (meterd's
+// sampler, spec §4.7): the customer's configured ram_mb plus the fixed per-VM
+// overhead. Single source of truth — every site that previously inlined
+// `ram_mb + PerVMOverheadMB` now goes through this helper so a future change
+// to the overhead constant updates exactly one place.
+func BillableRAMMB(ramMB int) int {
+	return ramMB + PerVMOverheadMB
 }
 
 // IdleTimeoutBounds returns the [floor, ceiling] seconds a customer may configure

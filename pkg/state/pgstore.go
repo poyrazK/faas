@@ -258,6 +258,79 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	return scanApp(row)
 }
 
+// CreateAppIfUnderQuota inserts an app iff the account currently holds
+// fewer than limits.DeployedApps live apps (active + evicted_cold). The
+// count + insert run inside a single transaction that SELECT … FOR UPDATE
+// locks the parent accounts row, so two concurrent calls on a metered
+// plan cannot both pass the cap check (closes the TOCTOU in the handler).
+//
+// Returns:
+//   - (App, nil) on success
+//   - (App{}, *QuotaError) when the cap is reached
+//   - (App{}, ErrConflict) on slug collision (apps.slug unique index)
+//   - (App{}, ErrNotFound) when the account row is gone
+//
+// The lock is on the single accounts row — the request blocks behind any
+// other createApp for the same account only. Cross-account inserts don't
+// contend, so the one-box stays well under its max_concurrency ceiling.
+func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return App{}, fmt.Errorf("state: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	// 1. Lock the parent accounts row. SELECT 1 + FOR UPDATE keeps the
+	//    lock acquisition in one round-trip; the FOR UPDATE blocks any
+	//    concurrent createApp for the same account until COMMIT/ROLLBACK.
+	//    apps_account_idx (account_id, status) exists from migration 00001
+	//    so the lock search is an index hit.
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, app.AccountID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return App{}, ErrNotFound
+		}
+		return App{}, fmt.Errorf("state: lock account %s: %w", app.AccountID, err)
+	}
+
+	// 2. Authoritative count under the lock. Same predicate as
+	//    CountDeployedApps — matches the MemStore shape so handlers
+	//    don't have to know which store is in use.
+	var observed int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from apps where account_id = $1 and status in ('active','evicted_cold')`,
+		app.AccountID).Scan(&observed); err != nil {
+		return App{}, fmt.Errorf("state: count apps for account %s: %w", app.AccountID, err)
+	}
+	if observed >= limits.DeployedApps {
+		return App{}, &QuotaError{Limit: limits.DeployedApps, Observed: observed}
+	}
+
+	// 3. Conditional insert. The slug unique index surfaces a collision
+	//    as a pgx unique-violation SQLSTATE; mapErr wraps it in ErrConflict.
+	manifest := app.Manifest
+	if manifest.Entrypoint == nil && manifest.Env == nil {
+		manifest = AppManifest{}
+	}
+	manifestBytes, _ := json.Marshal(manifest)
+	runtime := nullString(app.Runtime)
+	idle := nullableInt(app.IdleTimeoutS)
+	row := tx.QueryRow(ctx,
+		`insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances)
+		 values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9)
+		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
+		           max_concurrency, status, manifest, created_at, min_instances`,
+		app.AccountID, app.Slug, string(app.Type), runtime, app.RAMMB, idle, app.MaxConcurrency, manifestBytes, app.MinInstances)
+	created, err := scanApp(row)
+	if err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: commit create app: %w", err)
+	}
+	return created, nil
+}
+
 func (s *PgStore) AppByID(ctx context.Context, id string) (App, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
@@ -500,13 +573,47 @@ func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID string) 
 	return scanDeployment(row)
 }
 
+// ListDeploymentsForApp returns deployments for an app, ordered DESC by
+// created_at. limit <= 0 means "no row cap" (every remaining row after
+// offset) — same semantics as MemStore. F-10: the prior version forwarded
+// `limit=0` to Postgres which treats LIMIT 0 as "0 rows"; the imaged
+// caller (cleanupAppFiles → pkg/imaged/handler.go:932) walked an empty
+// slice and silently kept every appsRoot/<slug>/ directory across an app
+// delete. Now both backends return the full tail when limit<=0.
+//
+// Cursor note: callers that want page-by-page behaviour should pass an
+// explicit positive limit (apids dashboard does — limit=25). The no-cap
+// shape exists for the "iterate over every deployment we own" use case
+// (imaged hard-delete on app change, code migrations, audit dumps). At
+// v1 scale the per-app deployment count is O(deploy rate × app lifetime),
+// bounded by spec §4.2 (DeployedApps ≤ plan_max). The index on
+// (app_id, created_at desc) added in migration 00007 keeps this scan cheap.
 func (s *PgStore) ListDeploymentsForApp(ctx context.Context, appID string, limit, offset int) ([]Deployment, error) {
-	rows, err := s.pool.Query(ctx,
-		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
-		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-		        status, coalesce(error,''), created_at
-		 from deployments where app_id = $1 order by created_at desc limit $2 offset $3`,
-		appID, limit, offset)
+	if offset < 0 {
+		offset = 0
+	}
+	// F-10: branch on limit rather than passing LIMIT 0 / LIMIT NULL to
+	// Postgres; both yield 0 rows on the bare version, which is the bug
+	// we're closing.
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if limit > 0 {
+		rows, err = s.pool.Query(ctx,
+			`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
+			        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
+			        status, coalesce(error,''), created_at
+			 from deployments where app_id = $1 order by created_at desc limit $2 offset $3`,
+			appID, limit, offset)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
+			        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
+			        status, coalesce(error,''), created_at
+			 from deployments where app_id = $1 order by created_at desc offset $2`,
+			appID, offset)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -793,8 +900,14 @@ func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 // --- instances --------------------------------------------------------------
 
 func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error) {
+	// started_at is stamped explicitly here in addition to the
+	// BEFORE INSERT trigger from migration 00015. The trigger is the
+	// belt; this is the braces. Either alone works; both together
+	// make the contract obvious to anyone reading PgStore and prevent
+	// a future trigger drop from silently regressing the watchdog
+	// (commit 3, spec §6.1).
 	row := s.pool.QueryRow(ctx,
-		`insert into instances (app_id, deployment_id, state, ram_mb) values ($1, $2, $3, $4)
+		`insert into instances (app_id, deployment_id, state, ram_mb, started_at) values ($1, $2, $3, $4, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at`,
 		appID, deploymentID, state, ramMB)
@@ -912,6 +1025,118 @@ func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) err
 	return nil
 }
 
+// UpdateInstanceStateWithTimestamp stamps parked_at on the same
+// statement that writes the new state. schedd's snapshotAndPark calls
+// this when transitioning into SNAPSHOTTING — the §6.1 watchdog reads
+// parked_at on SNAPSHOTTING rows to compute "age of state", distinct
+// from started_at which is now stamped on creation (migration 00015).
+func (s *PgStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances set state = $2, parked_at = $3 where id = $1`,
+		id, state, parkedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateInstanceStateToTerminal writes state AND stamps terminal_at on
+// the same UPDATE (PR #74). Engine.transition routes here for
+// {STOPPED, FAILED}; terminal_at is the dedicated retention anchor the
+// §17 sweep reads (started_at means "row creation"; parked_at is
+// overloaded). One statement, atomic — same RowAffected/ErrNotFound
+// shape as UpdateInstanceState.
+func (s *PgStore) UpdateInstanceStateToTerminal(ctx context.Context, id, state string, terminalAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances set state = $2, terminal_at = $3 where id = $1`,
+		id, state, terminalAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListInstancesByStatesOlderThan is the watchdog's lookup (spec §6.1).
+// Filters on state ∈ states and a state-aware "age" column:
+// started_at for WAKING / COLD_BOOTING (stamped on creation by the
+// trigger in migration 00015), parked_at for SNAPSHOTTING (stamped on
+// entry into SNAPSHOTTING by UpdateInstanceStateWithTimestamp).
+//
+// The CASE shape is load-bearing — the original coalesce(started_at,
+// parked_at) predicate silently used parked_at for any row with NULL
+// started_at, which is true for every row that existed before
+// migration 00015 shipped. Such a row would compare against its
+// historical parked_at (often weeks old) and look stuck even though
+// it's normal. The partial index
+// instances_watchdog_state_idx (migration 00016) covers the state
+// predicate; the CASE comparison runs on the row payload.
+func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	stateStrs := make([]string, len(states))
+	for i, s := range states {
+		stateStrs[i] = string(s)
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
+		 from instances
+		 where state = any($1)
+		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
+		stateStrs, threshold)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
+// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
+// lookup (PR #74). Reads the dedicated terminal_at column — distinct
+// from the watchdog's state-aware started_at/parked_at comparison.
+// Today only {STOPPED, FAILED} are terminal; we still parameterize
+// states to keep the door open if a future state earns the same
+// treatment. Migration 00017's partial index
+// `instances_terminal_at_idx` covers this query.
+func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	stateStrs := make([]string, len(states))
+	for i, s := range states {
+		stateStrs[i] = string(s)
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, terminal_at
+		 from instances
+		 where state = any($1)
+		   and terminal_at is not null
+		   and terminal_at < $2`,
+		stateStrs, threshold)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstancesWithTerminal(rows)
+}
+
+// DeleteInstance removes one instance row unconditionally (PR #74).
+// Returns ErrNotFound when the row is gone (the sweep swallows that
+// case for redelivery). No FK cascade — events.subject and
+// usage_minutes.instance_id carry no FK today.
+func (s *PgStore) DeleteInstance(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `delete from instances where id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error {
 	tag, err := s.pool.Exec(ctx,
 		`update instances set netns = $2, host_ip = $3::inet, guest_uid = $4, started_at = now()
@@ -1002,6 +1227,109 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ListSnapshotsForGC returns every non-stale snapshot joined with its
+// deployment + app + account, ordered newest-first. The SQL filter on
+// apps.status='deleted' is what implements "soft-deleted apps' snapshots
+// are GC-eligible" — the row delete cascade in DeleteAccount only touches
+// rows, not on-disk files, so imaged still has to scrub them.
+//
+// The JOIN is bounded by snapshotDashboardCap (10k) for the same reason
+// ListLiveSnapshotStats is: the GC algorithm is O(N) per tick and a 10k
+// fleet is plenty for the v1 box (the 452 GB budget fires well before that).
+// Raise this when we go multi-box.
+func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error) {
+	rows, err := s.pool.Query(ctx,
+		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text,
+		        s.fc_version, s.mem_bytes, s.disk_bytes, s.path, s.stale, s.created_at
+		   from snapshots s
+		   join deployments d on d.id = s.deployment_id
+		   join apps a       on a.id = d.app_id
+		  where s.stale = false
+		    and a.status <> 'deleted'
+		  order by s.created_at desc
+		  limit 10000`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SnapshotForGC
+	for rows.Next() {
+		var r SnapshotForGC
+		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID,
+			&r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.Path, &r.Stale, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DeleteSnapshotsByID bulk-removes the named rows. No cascade; schedd's
+// runtime accounting (instances table) doesn't reference snapshots, so a
+// snapshot can be deleted without affecting live wakes — ADR-005 says
+// "cold boot must always work" precisely so this can be done in any
+// state. Idempotent: a second call returns 0 and nil.
+func (s *PgStore) DeleteSnapshotsByID(ctx context.Context, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `delete from snapshots where id = any($1::uuid[])`, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// MarkAllSnapshotsStaleByFCVersion flips every non-stale row whose
+// fc_version != currentVersion stale (ADR-005). Idempotent. Returns
+// the number of rows affected; a 0-row result on a stable box is the
+// expected steady state.
+func (s *PgStore) MarkAllSnapshotsStaleByFCVersion(ctx context.Context, currentVersion string) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`update snapshots set stale = true where stale = false and fc_version <> $1`,
+		currentVersion)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// MarkOldSnapshotsStale marks the given snapshot IDs stale. Used by the
+// imaged GC's per-app "current + previous" enforcement: the per-app walk
+// identifies the IDs to drop, marks them stale first (so a concurrent
+// wake's "is this usable?" check refuses them safely), and then calls
+// DeleteSnapshotsByID. Marking stale first instead of deleting directly
+// lets schedd's per-row freshness check remain the source of truth in
+// the brief window between mark and delete.
+func (s *PgStore) MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs []string) (int64, error) {
+	if len(beforeSnapshotIDs) == 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx,
+		`update snapshots set stale = true where id = any($1::uuid[])`, beforeSnapshotIDs)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeleteSnapshotsStaleOlderThan removes stale snapshots past the
+// retention window. Used by imaged's F2 startup sweep after the
+// mark-stale step — keeps stale rows restorable for a grace period
+// (typically 7 days per api.SnapshotStaleRetention) so an operator
+// rollback across an FC upgrade doesn't pay an extra cold boot.
+// F-07 closes the gap where the prior sweep only flipped stale=true
+// and stale rows accumulated indefinitely.
+func (s *PgStore) DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`delete from snapshots where stale = true and created_at < now() - $1::interval`,
+		fmt.Sprintf("%d seconds", int64(retention.Seconds())))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // ListLiveSnapshotStats returns mem_bytes + disk_bytes for every non-stale
@@ -1096,12 +1424,15 @@ func (s *PgStore) ListEvents(ctx context.Context, subject string, limit int) ([]
 // --- usage -------------------------------------------------------------------
 
 func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error {
+	// Idempotent on (instance_id, minute). Mirrors the sqlc source in
+	// queries.sql::AppendUsage — make sqlc-check verifies these stay in
+	// lockstep. The first write wins; a redelivered minute is a no-op so a
+	// meterd restart / network blip / two meterd instances cannot inflate
+	// billing. M7 hardening, PR feat/m7-beta-hardening.
 	_, err := s.pool.Exec(ctx,
 		`insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests)
 		 values ($1, $2, $3, $4, $5, $6)
-		 on conflict (instance_id, minute) do update
-		   set mb_seconds = usage_minutes.mb_seconds + excluded.mb_seconds,
-		       requests = usage_minutes.requests + excluded.requests`,
+		 on conflict (instance_id, minute) do nothing`,
 		accountID, appID, instanceID, minute, mbSeconds, requests)
 	return err
 }
@@ -1483,6 +1814,38 @@ func scanInstanceCols(scan func(...any) error) (Instance, error) {
 		ins.ParkedAt = *parked
 	}
 	return ins, nil
+}
+
+// scanInstancesWithTerminal is the 12-column variant of scanInstanceCols
+// that also lifts terminal_at (PR #74). Used only by
+// ListInstancesInTerminalStatesOlderThan — the rest of the codebase reads
+// 11-column instances rows and doesn't need terminal_at, so threading it
+// into scanInstanceCols would force every SELECT to expose it for no
+// reason.
+func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
+	var out []Instance
+	for rows.Next() {
+		ins := Instance{}
+		var started, lastReq, parked, terminal *time.Time
+		if err := rows.Scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
+			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &terminal); err != nil {
+			return nil, err
+		}
+		if started != nil {
+			ins.StartedAt = *started
+		}
+		if lastReq != nil {
+			ins.LastRequestAt = *lastReq
+		}
+		if parked != nil {
+			ins.ParkedAt = *parked
+		}
+		if terminal != nil {
+			ins.TerminalAt = terminal
+		}
+		out = append(out, ins)
+	}
+	return out, rows.Err()
 }
 
 func scanSnapshot(row pgx.Row) (Snapshot, error) {

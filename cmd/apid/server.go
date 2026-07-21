@@ -197,21 +197,6 @@ type noopMailer struct{}
 
 func (noopMailer) Send(_ context.Context, _ Message) error { return nil }
 
-// newLogMailer returns a Mailer that writes every message to slog. Used
-// until gap G4 (Postmark/Resend) lands; cmd/apid wires this on startup.
-func newLogMailer(log *slog.Logger) Mailer {
-	return &logMailer{log: log}
-}
-
-type logMailer struct{ log *slog.Logger }
-
-func (l *logMailer) Send(_ context.Context, msg Message) error {
-	l.log.Info("mail.send",
-		"to", msg.To, "subject", msg.Subject,
-		"has_html", msg.HTMLBody != "", "text_bytes", len(msg.TextBody))
-	return nil
-}
-
 // noopNotifier is the test/dev default; production wires pkg/db.Notify.
 type noopNotifier struct{}
 
@@ -358,7 +343,27 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /status", s.statusHandler)
 	mux.HandleFunc("GET /status/slo.json", s.statusJSONHandler)
 
+	// Loopback infra probe (issue #85). gatewayd forwards /healthz to
+	// apid through the apidProxy chain, so this is what the
+	// deploy/digitalocean CD smoke test and deploy/digitalocean/
+	// bootstrap.sh health check actually hit on the public listener.
+	// No auth, no DB call — the daemon process being up is what we're
+	// asserting; richer readiness semantics (DB ping, etc.) belong
+	// in /readyz later. Mirrors pkg/gateway/control.go::ControlMux.
+	mux.HandleFunc("GET /healthz", s.healthz)
+
 	return mux
+}
+
+// healthz is the loopback-friendly liveness probe. Returns 200 with
+// a tiny JSON body so CD pipelines can assert the response shape.
+// Intentionally cheap — no DB, no auth — so a healthy /healthz does
+// not imply the daemon is ready to serve traffic. See /readyz (TODO)
+// for that.
+func (s *server) healthz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
 // dashboardChain wraps a dashboard handler in the §11 middleware

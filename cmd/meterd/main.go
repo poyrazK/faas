@@ -19,9 +19,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"time"
 
@@ -84,6 +87,14 @@ type runDeps struct {
 	// knob is honored (default: log). Tests can inject a noop.
 	mailer mail.Sender
 	now    func() time.Time
+	// metricsListenAndServe returns a fully-built *http.Server bound to a
+	// fresh net.Listener on addr (or the error from net.Listen). The caller
+	// invokes `srv.Serve(ln)` on a goroutine and `srv.Shutdown(stopCtx)`
+	// during graceful drain — the same server owns both halves, so the
+	// pair stays in lockstep (no possibility of one server's Serve
+	// outliving another's Shutdown). Mirrors cmd/schedd/main.go:151-158.
+	// Tests inject a stub that returns a nop server (without binding).
+	metricsListenAndServe func(addr string, h http.Handler) (*http.Server, error)
 }
 
 func defaultDeps() runDeps {
@@ -105,6 +116,26 @@ func defaultDeps() runDeps {
 		},
 		mailer: nil, // populated lazily in runWithDeps via mail.SenderFromEnv
 		now:    time.Now,
+		metricsListenAndServe: func(addr string, h http.Handler) (*http.Server, error) {
+			ln, err := net.Listen("tcp", addr)
+			if err != nil {
+				return nil, err
+			}
+			srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
+			// Serve in a goroutine; the daemon keeps `srv` and calls
+			// Shutdown on it during drain. Pairing Serve/Shutdown on the
+			// same *http.Server avoids the dual-server asymmetry the
+			// factory's previous shape allowed (PR #75 review finding).
+			// Errors are logged via the package-level slog.Default here
+			// because defaultDeps is built before runWithDeps wires the
+			// daemon's *slog.Logger.
+			go func() {
+				if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					slog.Default().Error("meterd: metrics http", "err", err)
+				}
+			}()
+			return srv, nil
+		},
 	}
 }
 
@@ -213,12 +244,55 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Log:    log,
 	})
 
+	// Per-daemon Prometheus registry (ADR-015) — built unconditionally
+	// so the Loop has it from the first tick. meter.NewLoop accepts nil
+	// and coerces to a fresh test registry; here we hand it the real one.
+	ops := wire.NewOpsMetrics("meterd")
+
 	// The four timers run in goroutines; the cancel-watcher below picks
 	// up the first error and returns. meterd has no inbound gRPC — the
 	// public listener is gatewayd's (spec §Component ownership).
-	loop := meter.NewLoop(store, parker, stripe, pn, dunning, deps.now, log, mc)
+	loop := meter.NewLoop(store, parker, stripe, pn, dunning, deps.now, log, mc, ops)
 	errc := make(chan error, 1)
 	go func() { errc <- loop.Run(ctx) }()
+
+	// Metrics + healthz listener. Mirrors cmd/schedd/main.go:143-158 —
+	// per-daemon Prometheus registry (ADR-015), mux at /metrics +
+	// /healthz, 5s graceful shutdown on drain. Empty cfg.MetricsAddr
+	// disables both endpoints (the production default in
+	// deploy/etc/meterd.toml.example).
+	const metricsPath = "/metrics"
+	var metricsSrv *http.Server
+	if cfg.MetricsAddr != "" {
+		if deps.metricsListenAndServe == nil {
+			return fmt.Errorf("meterd: nil metricsListenAndServe (refusing to start with MetricsAddr set)")
+		}
+		mux := http.NewServeMux()
+		mux.Handle(metricsPath, ops.Handler())
+		// /healthz — 200 when every tracked timer (sample / quota /
+		// stripe / dunning) has fired within
+		// meter.StaleAfterMultiplier × its interval (spec §14 M7,
+		// "meterd healthy iff sampled within 3 minutes"); 503 with a
+		// JSON body listing the stale tick names otherwise. The body
+		// always includes a per-tick last-fire wall clock so an
+		// operator can diagnose without grepping journald.
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			status := loop.Health(time.Now())
+			w.Header().Set("Content-Type", "application/json")
+			code := http.StatusOK
+			if !status.Healthy {
+				code = http.StatusServiceUnavailable
+			}
+			w.WriteHeader(code)
+			_ = json.NewEncoder(w).Encode(status)
+		})
+		srv, err := deps.metricsListenAndServe(cfg.MetricsAddr, mux)
+		if err != nil {
+			return fmt.Errorf("meterd: metrics listen %q: %w", cfg.MetricsAddr, err)
+		}
+		metricsSrv = srv
+		log.Info("meterd metrics listening", "addr", cfg.MetricsAddr)
+	}
 
 	select {
 	case <-ctx.Done():
@@ -227,6 +301,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if err != nil && !errors.Is(err, context.Canceled) {
 			return err
 		}
+	}
+
+	// Graceful shutdown: detach a context from the already-cancelled caller
+	// ctx (net/http Shutdown requires a non-Done parent). 5s matches the
+	// schedd/vmmd/builderd shutdown deadline.
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if metricsSrv != nil {
+		//nolint:contextcheck // shutdown ctx must outlive the already-cancelled caller ctx per net/http contract.
+		_ = metricsSrv.Shutdown(stopCtx)
 	}
 	return nil
 }

@@ -1,0 +1,8 @@
+# DO dev deployment — meterd config.
+schedd_socket = "/run/faas/schedd.sock"
+metrics_addr = "127.0.0.1:9106"
+
+[meter]
+sample_interval = "60s"
+quota_interval = "60s"
+stripe_interval = "3600s"

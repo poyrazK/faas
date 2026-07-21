@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -43,15 +44,24 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
-	// Deployed-app count quota (needs the store, so not in ValidateAppConfig).
-	if n, _ := s.store.CountDeployedApps(ctx(r), acct.ID); n >= limits.DeployedApps {
-		api.WriteProblem(w, api.ErrPlanLimitApps(limits, n))
-		return
-	}
-	created, err := s.store.CreateApp(ctx(r), app)
+	// Deployed-app count quota + insert happen in the same critical
+	// section inside the store (PgStore: SELECT … FOR UPDATE on the
+	// parent accounts row; MemStore: m.mu). This closes the TOCTOU the
+	// previous CountDeployedApps + CreateApp pair exposed on Free/Hobby
+	// accounts under concurrency (spec §4.2).
+	created, err := s.store.CreateAppIfUnderQuota(ctx(r), app, limits)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-			"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
+		var qe *state.QuotaError
+		switch {
+		case errors.As(err, &qe):
+			api.WriteProblem(w, api.ErrPlanLimitApps(limits, qe.Observed))
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
+		default:
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
+				"Capacity", "could not create app"))
+		}
 		return
 	}
 	// codeql[go/log-injection] false-positive: created.ID and acct.ID are server-generated UUIDs (pkg/state newID); created.Slug is regex-validated to ^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$ by validSlug before persist.
@@ -143,7 +153,18 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
 		return
 	}
-	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged, `{"kind":"image","app_id":"`+app.ID+`","to":"`+d.ID+`"}`)
+	// F-03: deployment_changed emits now carry status + deployment_id.
+	// status="pending" tells listeners this row is still in-flight (builderd
+	// will eventually stamp rootfs_path → imaged converts to ext4); later
+	// transitions re-emit with status="live"|"failed"|"superseded".
+	// deployment_id==to here, but imaged switches on deployment_id in
+	// handleDeployment. Apid does not synthesise every transition — the
+	// state machine walks pending→building→imaging→snapshotting→live and
+	// each row write is followed by a NotifyDeploymentChanged. The image
+	// branch below covers the first hop (submitted); later hops land in
+	// cmd/apid/deploy_steps.go.
+	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged,
+		fmt.Sprintf(`{"kind":"image","status":"pending","app_id":"%s","deployment_id":"%s","to":"%s"}`, app.ID, d.ID, d.ID))
 	// Sanitize req.Image at the log sink — CodeQL go/log-injection (CWE-117).
 	// isDigestPinned already rejects malformed refs with 400 before this line,
 	// but a future field/wrapper change would break that invariant. Sanitizing

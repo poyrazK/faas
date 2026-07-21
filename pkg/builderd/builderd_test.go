@@ -123,16 +123,16 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 	if build.Status != state.BuildSucceeded {
 		t.Errorf("build status = %s, want succeeded", build.Status)
 	}
-	primeFound := false
+	bootFound := false
 	for _, c := range notif.calls {
-		if c.channel == db.NotifySnapshotPrime &&
+		if c.channel == db.NotifySnapshotBoot &&
 			contains(c.payload, appID) &&
 			contains(c.payload, depID) {
-			primeFound = true
+			bootFound = true
 		}
 	}
-	if !primeFound {
-		t.Errorf("expected snapshot_prime notification; got %v", notif.calls)
+	if !bootFound {
+		t.Errorf("expected snapshot_boot notification; got %v", notif.calls)
 	}
 }
 

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -10,6 +11,29 @@ import (
 
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
+
+// ErrQuotaExceeded is returned by CreateAppIfUnderQuota when the
+// account already holds limits.DeployedApps live apps. The error wraps
+// the observed count so apid can include it in the 403 envelope via
+// api.ErrPlanLimitApps without re-running the count.
+type QuotaError struct {
+	Limit    int // limits.DeployedApps at the time of the call
+	Observed int // count(*) of live apps observed inside the same critical section
+}
+
+func (e *QuotaError) Error() string {
+	return fmt.Sprintf("state: deployed-app quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
+}
+
+// Is allows errors.Is(err, ErrQuotaExceeded) to match any *QuotaError.
+// Behaviour parity with ErrNotFound / ErrConflict.
+func (e *QuotaError) Is(target error) bool {
+	return target == ErrQuotaExceeded
+}
+
+// ErrQuotaExceeded is the sentinel callers compare against via errors.Is.
+// Concrete instances are *QuotaError so handlers can read limit/observed.
+var ErrQuotaExceeded = errors.New("state: deployed-app quota exceeded")
 
 // MaxDeploymentLogPage caps the per-call row count for
 // ListDeploymentLogs. Both implementations clamp the caller's
@@ -139,6 +163,26 @@ type Store interface {
 
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)
+	// CreateAppIfUnderQuota inserts app iff the account currently holds
+	// fewer than limits.DeployedApps live apps (active + evicted_cold).
+	// The count + insert happen under a single critical section — PgStore
+	// opens a transaction that SELECT … FOR UPDATE locks the parent
+	// accounts row, MemStore holds m.mu — so two concurrent createApp
+	// calls on a Free account cannot both pass the cap check (spec §4.2,
+	// PR fix for the TOCTOU in handlers.go::createApp).
+	//
+	// Returns:
+	//   - (App, nil) on success
+	//   - (App{}, *QuotaError) when the cap is reached — handlers map
+	//     this to 403 CodePlanLimitApps with limit + observed
+	//   - (App{}, ErrConflict) when app.Slug is already taken
+	//   - (App{}, ErrNotFound) when the account row is gone
+	//   - (App{}, other) on transport / SQL errors
+	//
+	// limits.DeployedApps is the per-plan cap (api.MustLimitsFor(plan)).
+	// Implementations enforce it authoritatively; callers MUST NOT also
+	// call CountDeployedApps before this method (that's the bug).
+	CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error)
 	AppByID(ctx context.Context, id string) (App, error)
 	AppBySlug(ctx context.Context, slug string) (App, error)
 	ListApps(ctx context.Context, accountID string) ([]App, error)
@@ -195,6 +239,12 @@ type Store interface {
 	// rootfs — never neither, invariant §6.2-3).
 	LiveDeployment(ctx context.Context, appID string) (Deployment, error)
 	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
+	// ListDeploymentsForApp returns deployments for an app, ordered DESC by
+	// created_at. limit <= 0 means "no row cap" (return every remaining row
+	// after offset). MemStore and PgStore both honour this contract — F-10
+	// closed the prior silent asymmetry where Postgres' `LIMIT 0` returned
+	// zero rows and MemStore returned all rows. NaN `offset` (= negative
+	// value) is treated as 0 by both backends.
 	ListDeploymentsForApp(ctx context.Context, appID string, limit, offset int) ([]Deployment, error)
 	// ListDeploymentsForAccount returns deployments across every app the
 	// account owns, cursor-paginated by created_at DESC. before is the
@@ -287,6 +337,54 @@ type Store interface {
 	// run on the minute boundary.
 	ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error)
 	UpdateInstanceState(ctx context.Context, id, state string) error
+	// UpdateInstanceStateWithTimestamp is the same write but stamps
+	// parked_at to the supplied time on the same statement. Used by
+	// schedd's snapshotAndPark (commit 3) when transitioning into
+	// SNAPSHOTTING — the §6.1 watchdog reads parked_at for
+	// SNAPSHOTTING rows (started_at means "row creation", not "time
+	// entered current state"), so the engine must stamp it on entry.
+	// Non-SNAPSHOTTING transitions should still use UpdateInstanceState.
+	UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error
+	// UpdateInstanceStateToTerminal writes state AND stamps terminal_at
+	// on the same UPDATE (PR #74, spec §17 follow-up). terminal_at is
+	// the dedicated retention anchor the daily sweep (pkg/sched.Retention)
+	// reads; started_at means "row creation" and parked_at is overloaded
+	// (also means "entered PARKED"), so neither is correct for a STOPPED
+	// row whose vmmd boot succeeded days earlier. Engine.transition
+	// routes here when the target state is STOPPED or FAILED; every other
+	// transition still uses UpdateInstanceState / UpdateInstanceStateWithTimestamp.
+	UpdateInstanceStateToTerminal(ctx context.Context, id, state string, terminalAt time.Time) error
+	// ListInstancesByStatesOlderThan is the §6.1 watchdog's lookup.
+	// Returns rows currently in any of the given states whose
+	// "age timestamp" is strictly older than threshold. The age
+	// column is state-aware: started_at for WAKING/COLD_BOOTING
+	// (stamped on creation by migration 00015), parked_at for
+	// SNAPSHOTTING (stamped on entry into that state by
+	// UpdateInstanceStateWithTimestamp). Implementations must NOT
+	// coalesce the two columns — pre-migration 00015 rows have
+	// NULL started_at, and coalesce would silently use the stale
+	// parked_at. PgStore relies on migration 00016's partial index
+	// for the state predicate.
+	ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
+	// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
+	// lookup (PR #74). Returns rows currently in any of the given states
+	// (today: {STOPPED, FAILED}) whose terminal_at is strictly older than
+	// threshold. Order is implementation-defined. Reads the dedicated
+	// terminal_at column — distinct from ListInstancesByStatesOlderThan,
+	// which uses the state-aware started_at/parked_at comparison and is
+	// the wrong tool for retention aging (a STOPPED row that booted
+	// successfully has a stale started_at). PgStore relies on migration
+	// 00017's partial index for the state predicate.
+	ListInstancesInTerminalStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
+	// DeleteInstance removes a single instance row unconditionally
+	// (PR #74). Returns ErrNotFound when the row is already gone — the
+	// retention sweep swallows that case for redelivery. There are NO
+	// foreign-key cascades: events.subject and usage_minutes.instance_id
+	// carry no FK to instances today (audit log is append-only by spec
+	// §6.1; usage is reconciled by account hard-delete). Adding a FK
+	// in a future migration would silently break this sweep — review
+	// PR-#74's readme when touching either table.
+	DeleteInstance(ctx context.Context, id string) error
 	// SetInstanceRuntime records the per-instance identity vmmd allocated on
 	// wake (netns, routable host IP, jail uid) and stamps started_at=now. schedd
 	// calls this between a successful vmmd boot and the RUNNING transition so the
@@ -307,11 +405,41 @@ type Store interface {
 	LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error)
 	MarkSnapshotStale(ctx context.Context, snapshotID string) error
 
+	// Snapshot GC (imaged nightly + on FC upgrade, spec §4.6 + §4.4).
+	//
+	// ListSnapshotsForGC returns every non-stale snapshot joined with its
+	// deployment + app + account. Soft-deleted apps (status='deleted') are
+	// excluded; their snapshots have no in-flight wake target.
+	ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error)
+	// DeleteSnapshotsByID bulk-removes the named snapshot rows (no cascade).
+	// Returns the number of rows deleted; a second call with the same ids
+	// returns 0 and no error.
+	DeleteSnapshotsByID(ctx context.Context, ids []string) (int64, error)
+	// MarkAllSnapshotsStaleByFCVersion flips every non-stale row whose
+	// fc_version != currentVersion stale (ADR-005: snapshots are pinned to
+	// the Firecracker version that made them). Returns the number of rows
+	// affected. Idempotent.
+	MarkAllSnapshotsStaleByFCVersion(ctx context.Context, currentVersion string) (int64, error)
+	// MarkOldSnapshotsStale marks the given snapshot IDs stale (per-app
+	// "current + previous" enforcement, run before DeleteSnapshotsByID).
+	MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs []string) (int64, error)
+	// DeleteSnapshotsStaleOlderThan removes rows where stale=true AND
+	// created_at < now()-retention. Used by imaged's F2 startup sweep
+	// after the mark-stale step: old snapshots stay restorable for a
+	// retention window (typically 7 days per api.SnapshotStaleRetention)
+	// so a firecracker downgrade or operator rollback doesn't pay an
+	// extra cold boot. After the window they go away. Returns the row
+	// count. Idempotent.
+	DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error)
+
 	// Audit (append-only, spec §6.1).
 	AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error
 	ListEvents(ctx context.Context, subject string, limit int) ([]Event, error)
 
 	// Usage (apid reads for GET /v1/usage; meterd writes in production).
+	// AppendUsage is idempotent on (instance_id, minute): the first write
+	// wins, a redelivered minute is a no-op. This prevents silent
+	// double-billing under any meterd restart (M7 hardening).
 	AppendUsage(ctx context.Context, accountID, appID, instanceID string, minute time.Time, mbSeconds, requests int64) error
 	UsageByMonth(ctx context.Context, accountID string, month time.Time) ([]Usage, error)
 	// UsageByHour returns the per-app usage rows whose minute ∈ [start,

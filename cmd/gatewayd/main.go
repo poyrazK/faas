@@ -107,6 +107,11 @@ type runDeps struct {
 	// + the resolved listener so two tests in the same package don't race
 	// for the hard-coded production port.
 	controlAddr string
+	// apidLoopback is the operator-configured upstream URL the apidProxy
+	// forwards to (cfg.APIDLoopback / deploy/digitalocean/config/
+	// gatewayd.toml `apid_loopback`). Empty in tests; run() populates it
+	// from cfg before invoking runWithDeps.
+	apidLoopback string
 }
 
 func defaultDeps() runDeps {
@@ -218,6 +223,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// Public listener now binds :443, not :8080.
 		listenAddr = ":443"
 	}
+	// Forward the operator-configured apid loopback URL through the
+	// test seam so runWithDeps can stay TOML-free (issue #85).
+	deps.apidLoopback = cfg.APIDLoopback
 	return runWithDeps(ctx, log, deps)
 }
 
@@ -272,16 +280,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}()
 
 	// Public listener: customer traffic (spec §4.1). The handler is
-	// wrapped in a dashboardProxy (M7.5, ADR-011) so /dashboard/* and
-	// /oauth/* reverse-proxy to apid's loopback listener while
-	// everything else falls through to gateway.Handler's wake/proxy
-	// flow. Slice 7 adds /webhooks/github to the same shape (with
-	// HMAC edge-verification in front of the proxy hop).
-	apidTarget := os.Getenv("FAAS_APID_LOOPBACK")
+	// wrapped in an apidProxy (M7.5, ADR-011, broadened in issue #85)
+	// so the full apid public surface — /dashboard/*, /oauth/*,
+	// /v1/*, /login*, /auth/verify, /logout, /status*, /healthz —
+	// reverse-proxies to apid's loopback listener. Everything else
+	// falls through to gateway.Handler's wake/proxy flow.
+	//
+	// Target resolution (issue #85): the TOML-loaded
+	// cfg.APIDLoopback (threaded via deps.apidLoopback) wins;
+	// FAAS_APID_LOOPBACK env is kept as a fallback so the e2e
+	// harness (no TOML) keeps working.
+	apidTarget := deps.apidLoopback
+	if apidTarget == "" {
+		apidTarget = os.Getenv("FAAS_APID_LOOPBACK")
+	}
 	if apidTarget == "" {
 		apidTarget = "http://127.0.0.1:8081"
 	}
-	dashboardHandler := newDashboardProxy(apidTarget, handler, log)
+	apidHandler := newApidProxy(apidTarget, handler, log)
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-
@@ -294,7 +310,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		githubdTarget = "http://127.0.0.1:8083"
 	}
 	githubdSecret := loadGithubWebhookSecret(osGetenv)
-	publicHandler := newGithubdProxy(githubdTarget, githubdSecret, dashboardHandler, log)
+	publicHandler := newGithubdProxy(githubdTarget, githubdSecret, apidHandler, log)
 
 	// Private listener: control plane only — never authenticated (it's on a
 	// private bind), never reachable from the public-internet path.

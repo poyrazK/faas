@@ -55,7 +55,18 @@ func cmdLogin(args []string) int {
 	if err := saveToken(*token); err != nil {
 		return printErr("Could not save token", err)
 	}
-	fmt.Printf("✓ Logged in as %s (%s plan)\n", acct.Email, acct.Plan)
+	_, _ = fmt.Fprintf(osStdout, "✓ Logged in as %s (%s plan)\n", acct.Email, acct.Plan)
+
+	// First-run quickstart (UX §8, issue #65 D4). If the account has
+	// no apps yet, drop a 3-line pointer to the two deploy paths.
+	// A failing ListApps is silent — login must not be blocked by
+	// transient API issues.
+	if apps, err := client.ListApps(context.Background()); err == nil && len(apps) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "")
+		_, _ = fmt.Fprintln(osStdout, "You're in. Next step — deploy your first app:")
+		_, _ = fmt.Fprintln(osStdout, "  faas deploy --template hello-node    # start from an embedded template")
+		_, _ = fmt.Fprintln(osStdout, "  faas deploy --tarball <path.tar.gz>  # or ship your own source")
+	}
 	return 0
 }
 
@@ -96,7 +107,8 @@ func cmdApps() int {
 		return jsonOut(writeNDJSON(apps))
 	}
 	if len(apps) == 0 {
-		fmt.Println("No apps yet. Deploy one: faas deploy --image <ref>")
+		_, _ = fmt.Fprintln(osStdout, "No apps yet.")
+		_, _ = fmt.Fprintln(osStdout, "Deploy one: `faas deploy --template hello-node` (or `faas deploy --tarball path/to/source.tar.gz`).")
 		return 0
 	}
 	for _, a := range apps {

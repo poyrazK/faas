@@ -1,7 +1,8 @@
 //go:build metal
 
 // deploy_wake_metal_test.go — M5 §14 acceptance: faas deploy → parked → first
-// request wakes.
+// request wakes; plus the §14 V2 / spec §6.3 wake-latency 100-cycle p50/p95
+// loop (closes STATUS.md:201-204 "loop driver doesn't exist").
 //
 // End-to-end through the real wire: apid → imaged (pull from fake OCI
 // registry on loopback) → schedd → vmmd → firecracker, then a real HTTP
@@ -24,8 +25,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/gateway/testhist"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -44,14 +44,16 @@ import (
 // wrapping on the wire.
 const helloBody = "hello from faas"
 
-// TestDeployWakeMetal runs the four-subtest acceptance:
+// TestDeployWakeMetal runs the five-subtest acceptance:
 //
-//  1. deploy-then-parked       — apid → imaged → schedd → vmmd → parked
-//  2. first-request-wakes      — gatewayd request triggers a wake from snapshot
-//  3. idle-park                — schedd reaper parks the live instance
-//  4. second-request-wakes     — fresh wake from the same snapshot, asserts a new instance id
+//  1. deploy-then-parked              — apid → imaged → schedd → vmmd → parked
+//  2. first-request-wakes             — gatewayd request triggers a wake from snapshot
+//  3. wake-latency-p50p95-100cycles   — §14 V2 / spec §6.3 SLO gate (p50 ≤ 350 ms,
+//     p95 ≤ 800 ms over 100 park→wake cycles)
+//  4. idle-park                       — schedd reaper parks the live instance
+//  5. second-request-wakes            — fresh wake from the same snapshot, asserts a new instance id
 //
-// All four share one Harness + one PG schema + one app — they tell the
+// All five share one Harness + one PG schema + one app — they tell the
 // deploy→parked→wake→park→wake story sequentially. They run on t.Run
 // without t.Parallel because they share state.
 func TestDeployWakeMetal(t *testing.T) {
@@ -190,36 +192,59 @@ func TestDeployWakeMetal(t *testing.T) {
 		// Scraping /metrics from the loopback control listener asserts the
 		// metric shape end-to-end through the daemon, not just at the unit
 		// level.
-		assertWakeLatencyObserved(t, h.GatewayControlURL, appID)
+		assertWakeLatencyObserved(t, h.GatewayControlURL)
 	})
 
-	// -- 2b. wake-latency p50 over 10 cycles ----------------------------------
-	t.Run("wake-latency-p50", func(t *testing.T) {
-		// Park the app, wake 10 times in a row, and assert that the median
-		// cold-wake observation (gatewayd's gateway_wake_latency_seconds
-		// histogram — request-received → first upstream byte, per Part A) is
-		// within the spec §6.3 budget of 350 ms. We scrape /metrics deltas
-		// rather than timing the request from the test side: the histogram
-		// is the load-bearing SLO signal and this test is the one that asserts
-		// it backs the budget on the real wire.
+	// -- 3. wake-latency-p50p95-100cycles ------------------------------------
+	t.Run("wake-latency-p50p95-100cycles", func(t *testing.T) {
+		// §14 V2 / spec §6.3 / Appendix D V2 gate: 100 park→wake cycles,
+		// p50 ≤ 350 ms, p95 ≤ 800 ms over the gateway_wake_latency_seconds
+		// histogram (request-received → first upstream byte, per Part A).
+		//
+		// The histogram is the load-bearing SLO signal; this test is the one
+		// that asserts the on-the-wire number backs the dashboard's p50/p95
+		// panels (deploy/grafana/faas-fleet.json:10-41). We compute quantiles
+		// from the cumulative bucket counts using pkg/gateway/testhist
+		// (standard PromQL histogram_quantile() interpolation) and assert
+		// both p50 and p95 against the §6.3 budget.
+		//
+		// Wall-clock math: per cycle we wait `idle_timeout (10s) + reaper_tick
+		// (10s) ≈ 20s` for park, then ~350ms for wake, then ~5ms state wait
+		// for running — ~20.4s/cycle × 100 ≈ 34 min on EX44, ~50 min on Lima
+		// nested-virt. The 60m `-timeout` set in run-metal.sh has ~10-25 min
+		// of headroom.
 		if h.GatewayControlURL == "" {
 			t.Skip("gatewayd control URL not exposed by harness")
 		}
 		// Sanity: the histogram series must exist before we attempt to read it.
 		// Subtest 2 already observed at least one sample; if we can't find it
 		// here, the metric shape regressed.
-		assertWakeLatencyObserved(t, h.GatewayControlURL, appID)
-		baseCount, baseSum := scrapeWakeLatencyTotal(t, h.GatewayControlURL, appID)
+		assertWakeLatencyObserved(t, h.GatewayControlURL)
+
+		// Hobby's default idle timeout is 60 s + a 10 s reaper tick — too
+		// slow for a 100-cycle loop (would push the run past the -timeout 60m
+		// budget). Dial it down to the spec §4.3 floor (10 s) so each cycle
+		// settles into parked within one reaper tick. This is a per-app knob
+		// (PATCH /v1/apps/{slug}) and stays within api.IdleTimeoutFloorSeconds.
+		setAppIdleTimeout(t, h, key, "hello", api.IdleTimeoutFloorSeconds)
 
 		url := gatewayAppURL(h, "hello")
 		client := h.HTTPClient()
-		const cycles = 10
-		const p50BudgetMs = 350
+		const cycles = 100
+		const minObservations = 90 // allow some slack for reaper-timing edges
+		loopStart := time.Now()
 		for i := 0; i < cycles; i++ {
-			// Wait until the instance is parked again (reaper sweeps every 60 s
-			// on Hobby). We poll for parked then immediately hit the URL.
-			if _, err := e2etest.WaitForInstanceState(context.Background(), t, pool, appID, state.StateParked, 80*time.Second); err != nil {
-				t.Fatalf("cycle %d: did not park: %v", i, err)
+			// Wait until the reaper parks the instance. With idle=10s and
+			// reaper tick=10s, worst case is ~20s; allow 30s for slack.
+			parkStart := time.Now()
+			parkCtx, parkCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if _, err := e2etest.WaitForInstanceState(parkCtx, t, pool, appID, state.StateParked, 25*time.Second); err != nil {
+				parkCancel()
+				t.Fatalf("cycle %d: did not park within 25s (reaper lagging?): %v", i, err)
+			}
+			parkCancel()
+			if parkDur := time.Since(parkStart); parkDur > 15*time.Second {
+				t.Logf("cycle %d: slow park (%v > 15s) — reaper near tick boundary", i, parkDur)
 			}
 			body, status := doGetWithHost(t, client, url, "hello.apps.test.example", 30*time.Second)
 			if status != http.StatusOK {
@@ -228,46 +253,63 @@ func TestDeployWakeMetal(t *testing.T) {
 			if got := strings.TrimSpace(string(body)); got != helloBody {
 				t.Fatalf("cycle %d: body=%q want %q", i, got, helloBody)
 			}
-			// Drain the histogram between cycles so per-cycle samples are
-			// isolated — otherwise the first few cycles would shade into a
-			// running mean and ordering the median gets noisy.
-			afterCount, afterSum := scrapeWakeLatencyTotal(t, h.GatewayControlURL, appID)
-			t.Logf("cycle %d: cold-wake histogram mean = %.1fms (count=%d sum=%.3fs)",
-				i, (afterSum-baseSum)/float64(afterCount-baseCount)*1000,
-				afterCount-baseCount, afterSum-baseSum)
+			// Confirm the wake landed before the next cycle. The histogram
+			// only emits a cold-wake sample when h.backend.Target returns
+			// not-ready (handler.go:212), which is exactly the parked→wake
+			// transition we just exercised.
+			runCtx, runCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			if _, err := e2etest.WaitForInstanceState(runCtx, t, pool, appID, state.StateRunning, 10*time.Second); err != nil {
+				runCancel()
+				t.Fatalf("cycle %d: did not reach running after wake: %v", i, err)
+			}
+			runCancel()
 		}
-		finalCount, finalSum := scrapeWakeLatencyTotal(t, h.GatewayControlURL, appID)
-		if finalCount < baseCount+uint64(cycles) {
-			t.Fatalf("histogram observations over %d cycles = %d, want >=%d (some wakes not measured)",
-				cycles, finalCount-baseCount, cycles)
+		t.Logf("loop completed in %v (%d cycles)", time.Since(loopStart), cycles)
+
+		// Single scrape at the end — the histogram is a process-wide
+		// accumulator; reading 100× and diffing would only buy us running
+		// statistics (mean), not a defensible p50/p95. Pull the bucket
+		// cumulative counts and compute the quantiles via PromQL-equivalent
+		// interpolation.
+		sc, err := scrapeHistogram(t, h.GatewayControlURL, "gateway_wake_latency_seconds")
+		if err != nil {
+			t.Fatalf("scrape histogram: %v", err)
 		}
-		// Mean across all 10 cycles is a stable p50 proxy when the
-		// distribution is well-behaved (and the SLO budget is symmetric
-		// ±50ms around the median for the boutique fleet dashboard). For a
-		// sharper median we would snapshot the histogram bucket-counters per
-		// cycle; today's exporter scrape gives us mean only.
-		meanSeconds := (finalSum - baseSum) / float64(finalCount-baseCount)
-		mean := time.Duration(meanSeconds * float64(time.Second))
-		if mean > p50BudgetMs*time.Millisecond {
-			t.Errorf("cold-wake mean over %d cycles = %v, want <= %dms (spec §6.3)", cycles, mean, p50BudgetMs)
+		// Subtract the prior-cycle observations: subtests 2 + 4 each observe
+		// one cold wake (subtest 4 will observe one more in second-request-wakes,
+		// but that runs after this subtest). So we expect ≈ cycles + 1 samples.
+		// We accept ≥ minObservations to allow for occasional reaper misses
+		// where the wake landed on a still-running instance (the histogram
+		// only fires on cold path — handler.go:235).
+		if sc.SampleCount < minObservations {
+			t.Fatalf("histogram SampleCount = %d, want >= %d (some cycles hit hot instances; reaper too slow?)",
+				sc.SampleCount, minObservations)
 		}
-		t.Logf("cold-wake mean over %d cycles = %v", cycles, mean)
+		p50 := testhist.QuantileScrape(t, sc, 0.50)
+		p95 := testhist.QuantileScrape(t, sc, 0.95)
+		t.Logf("wake_latency over %d cycles: p50=%v p95=%v (samples=%d sum=%.3fs)",
+			cycles, p50, p95, sc.SampleCount, sc.SampleSum)
+
+		const p50Budget = 350 * time.Millisecond
+		const p95Budget = 800 * time.Millisecond
+		if p50 > p50Budget {
+			t.Errorf("wake_latency p50 = %v, want <= %v (spec §6.3 / Appendix D V2)", p50, p50Budget)
+		}
+		if p95 > p95Budget {
+			t.Errorf("wake_latency p95 = %v, want <= %v (spec §6.3 / Appendix D V2)", p95, p95Budget)
+		}
 	})
 
-	// -- 3. idle-park ----------------------------------------------------------
+	// -- 4. idle-park ----------------------------------------------------------
 	t.Run("idle-park", func(t *testing.T) {
-		// schedd's reaper tick is hardcoded at 10 s in the daemon binary —
-		// no env override exists. Hobby's idle timeout is 60 s, so the
-		// reaper picks up last_request_at ~60 s after the wake in subtest 2.
-		// Wait up to 75 s for the natural timeout. That's slow, but it's
-		// correct — the alternative is a fake clock which would skip the
-		// test of the real reaper path.
-		//
-		// TODO: schedd should accept FAAS_REAPER_INTERVAL_MS + a clock seam
-		// so tests don't pay this latency. Filed as a follow-up.
-		ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+		// schedd's reaper tick is hardcoded at 10 s in the daemon binary
+		// (pkg/sched/loop.go:103). Hobby's idle timeout was dialled down to
+		// api.IdleTimeoutFloorSeconds (=10s) by subtest 3 so the 100-cycle
+		// loop is bounded; this subtest still exercises the reaper path
+		// against that dialed-down value, not the original Hobby 60s.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		ins, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 70*time.Second)
+		ins, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 25*time.Second)
 		if err != nil {
 			t.Fatalf("instance did not re-park: %v", err)
 		}
@@ -279,7 +321,7 @@ func TestDeployWakeMetal(t *testing.T) {
 		}
 	})
 
-	// -- 4. second-request-wakes -----------------------------------------------
+	// -- 5. second-request-wakes -----------------------------------------------
 	t.Run("second-request-wakes", func(t *testing.T) {
 		url := gatewayAppURL(h, "hello")
 		client := h.HTTPClient()
@@ -341,18 +383,70 @@ func doGetWithHost(t *testing.T, client *http.Client, url, host string, timeout 
 	return body, resp.StatusCode
 }
 
+// setAppIdleTimeout issues PATCH /v1/apps/{slug} with the given idle
+// timeout in seconds. Used by the 100-cycle wake-latency subtest to dial
+// Hobby's 60s default down to api.IdleTimeoutFloorSeconds (10s) so the
+// reaper settles each cycle within one tick — bounded test wall-clock.
+func setAppIdleTimeout(t *testing.T, h *e2etest.Harness, key, slug string, secs int) {
+	t.Helper()
+	secsCopy := secs
+	body := api.UpdateAppRequest{IdleTimeoutS: &secsCopy}
+	raw, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug, body)
+	if status != http.StatusOK {
+		t.Fatalf("set idle timeout: status=%d body=%s", status, raw)
+	}
+}
+
 // assertWakeLatencyObserved scrapes /metrics from the gatewayd control
-// listener and asserts gateway_wake_latency_seconds emitted at least one
-// sample for appID. This is the M8 §14 regression gate for "wake latency is
-// measured end-to-end, not just at the unit level". Pre-Part-A the
-// histogram would still emit a series but with the wrong observation
-// (full body duration); post-Part-A it captures first-upstream-byte via
-// the wake_timing.go RoundTripper (see handler.go:220-235).
-func assertWakeLatencyObserved(t *testing.T, controlURL, appID string) {
+// listener and asserts the wake_latency histogram emitted at least one
+// sample. This is the M8 §14 regression gate for "wake latency is measured
+// end-to-end, not just at the unit level". Pre-Part-A the histogram would
+// still emit a series but with the wrong observation (full body duration);
+// post-Part-A it captures first-upstream-byte via the wake_timing.go
+// RoundTripper (see handler.go:220-235).
+//
+// The histogram is unlabelled (pkg/gateway/metrics.go:48-55), so the
+// assertions are on the bare series name. Pre-PR-70 the regex here looked
+// for app_id=… labels which the histogram never carried; that regex was
+// wrong and this subtest's reject path was the only thing that surfaced it.
+//
+// Single GET per call: the body is read once and passed to SnapshotFromText,
+// not fetched twice (an earlier version called scrapeHistogram after reading
+// the body, doing a second http.Get and discarding the first).
+func assertWakeLatencyObserved(t *testing.T, controlURL string) {
 	t.Helper()
 	if controlURL == "" {
 		t.Skip("gatewayd control URL not exposed by harness")
 	}
+	text := scrapeMetricsBody(t, controlURL)
+	sc, err := testhist.SnapshotFromText(text, "gateway_wake_latency_seconds")
+	if err != nil {
+		t.Fatalf("assertWakeLatencyObserved: %v\n/metrics excerpt:\n%s", err, excerpt(text))
+	}
+	if sc.SampleCount < 1 {
+		t.Fatalf("wake_latency SampleCount = %d, want >= 1", sc.SampleCount)
+	}
+	// At least one bucket must have advanced — empty histograms emit a
+	// series with no _bucket lines, which is what a buggy non-emitting
+	// histogram would look like.
+	if len(sc.BucketLE) == 0 {
+		t.Fatalf("wake_latency histogram has no _bucket lines; observation may not be first-byte (Part A regression)")
+	}
+}
+
+// scrapeHistogram fetches /metrics and parses the named histogram into a
+// *testhist.ScrapeHistogram. Used by the post-loop p50/p95 assertion.
+func scrapeHistogram(t *testing.T, controlURL, metricName string) (*testhist.ScrapeHistogram, error) {
+	t.Helper()
+	text := scrapeMetricsBody(t, controlURL)
+	return testhist.SnapshotFromText(text, metricName)
+}
+
+// scrapeMetricsBody is the single-GET helper that backs both
+// assertWakeLatencyObserved and scrapeHistogram. Returning the raw text lets
+// callers pass it to SnapshotFromText without a second fetch.
+func scrapeMetricsBody(t *testing.T, controlURL string) string {
+	t.Helper()
 	resp, err := http.Get(controlURL + "/metrics")
 	if err != nil {
 		t.Fatalf("scrape /metrics: %v", err)
@@ -360,29 +454,9 @@ func assertWakeLatencyObserved(t *testing.T, controlURL, appID string) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		t.Fatalf("/metrics status=%d body=%s", resp.StatusCode, body)
+		t.Fatalf("/metrics status=%d body=%s", resp.StatusCode, excerpt(string(body)))
 	}
-	text := string(body)
-
-	// Sample-count line for our app: gateway_wake_latency_seconds_count{app_id="<id>"} 1
-	countRe := regexp.MustCompile(`gateway_wake_latency_seconds_count\{[^}]*app_id="` +
-		regexp.QuoteMeta(appID) + `[^}]*\}\s+(\d+)`)
-	m := countRe.FindStringSubmatch(text)
-	if len(m) != 2 {
-		t.Fatalf("no gateway_wake_latency_seconds_count for app_id=%q in /metrics; got:\n%s",
-			appID, excerpt(text))
-	}
-	count, err := strconv.ParseInt(m[1], 10, 64)
-	if err != nil || count < 1 {
-		t.Fatalf("wake_latency count for app_id=%q = %q (parsed %d), want >=1", appID, m[1], count)
-	}
-
-	// At least one bucket must have advanced — empty histograms emit a
-	// series with no _bucket lines, which is what a buggy non-emitting
-	// histogram would look like.
-	if !strings.Contains(text, "gateway_wake_latency_seconds_bucket{") {
-		t.Fatalf("wake_latency histogram has no _bucket lines; observation may not be first-byte (Part A regression)")
-	}
+	return string(body)
 }
 
 // excerpt trims a /metrics body for failure logs. Prometheus exposition can
@@ -393,47 +467,4 @@ func excerpt(s string) string {
 		return s
 	}
 	return s[:max] + "…"
-}
-
-// scrapeWakeLatencyTotal reads gateway_wake_latency_seconds_{count,sum} for
-// appID from gatewayd's /metrics endpoint. The wake-p50 subtest uses the
-// delta across cycles to compute the mean first-byte wake slice — that delta
-// is what backs the spec §6.3 SLO. Returns (count, sum_seconds).
-func scrapeWakeLatencyTotal(t *testing.T, controlURL, appID string) (uint64, float64) {
-	t.Helper()
-	resp, err := http.Get(controlURL + "/metrics")
-	if err != nil {
-		t.Fatalf("scrape /metrics: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("/metrics status=%d body=%s", resp.StatusCode, body)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	text := string(body)
-
-	countRe := regexp.MustCompile(`gateway_wake_latency_seconds_count\{[^}]*app_id="` +
-		regexp.QuoteMeta(appID) + `[^}]*\}\s+(\d+)`)
-	cm := countRe.FindStringSubmatch(text)
-	if len(cm) != 2 {
-		t.Fatalf("wake_latency _count missing for app_id=%q; got:\n%s",
-			appID, excerpt(text))
-	}
-	count, err := strconv.ParseUint(cm[1], 10, 64)
-	if err != nil {
-		t.Fatalf("parse wake_latency _count: %v", err)
-	}
-
-	sumRe := regexp.MustCompile(`gateway_wake_latency_seconds_sum\{[^}]*app_id="` +
-		regexp.QuoteMeta(appID) + `[^}]*\}\s+(\S+)`)
-	sm := sumRe.FindStringSubmatch(text)
-	if len(sm) != 2 {
-		t.Fatalf("wake_latency _sum missing for app_id=%q", appID)
-	}
-	sum, err := strconv.ParseFloat(sm[1], 64)
-	if err != nil {
-		t.Fatalf("parse wake_latency _sum: %v", err)
-	}
-	return count, sum
 }
