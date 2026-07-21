@@ -24,10 +24,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -91,15 +93,20 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// never set in production. Lets the e2e tests pull from an httptest
 	// registry bound to loopback (which the egress guard denies and which
 	// serves plain HTTP, not HTTPS).
-	pullerOpts := []oci.Option{oci.WithHTTPClient(oci.NewEgressHTTPClient())}
+	pullerOpts := []oci.Option{
+		oci.WithHTTPClient(oci.NewEgressHTTPClient()),
+		oci.WithTimeout(ociPullTimeout()),
+	}
 	if os.Getenv("FAAS_OCI_INSECURE") == "1" {
 		log.Warn("FAAS_OCI_INSECURE=1 — egress guard disabled, e2e test mode only")
 		pullerOpts = []oci.Option{
 			oci.WithHTTPClient(&http.Client{}),
 			oci.WithEndpoint("http", ""),
+			oci.WithTimeout(ociPullTimeout()),
 		}
 	}
 	puller := oci.NewRegistryClient(pullerOpts...)
+	log.Info("imaged: oci puller ready", "timeout_s", int(ociPullTimeout().Seconds()))
 
 	notifier := dbNotifier{pool: pool}
 	guestInitPath := envOr("FAAS_GUEST_INIT", "./init")
@@ -129,9 +136,21 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	// FAAS_DEPLOY_BASE_REF overrides the per-runtime base ref used by
-	// aboveBaseLayers at deploy time. Test-only.
+	// aboveBaseLayers at deploy time. Operator overrides must be
+	// digest-pinned (ADR-021 D4): a tag reference like `:latest` would
+	// resolve to whatever the registry serves TODAY, not when a deploy
+	// was first queued — and a per-app build that pins against today's
+	// `latest` would suddenly change what /srv/fc/base/<runtime>.ext4
+	// contains on the next imaged restart, invalidating the per-app
+	// diff_ids above. Refusing bare tags here makes the override an
+	// explicit, reproducible operator choice.
 	if dbr := os.Getenv("FAAS_DEPLOY_BASE_REF"); dbr != "" {
+		ref, err := oci.ParseReference(dbr)
+		if err != nil || ref.Digest == "" {
+			return fmt.Errorf("imaged: FAAS_DEPLOY_BASE_REF %q must be a digest-pinned reference (e.g. registry.DOMAIN/img@sha256:...)", dbr)
+		}
 		h.WithDeployBaseRef(dbr)
+		log.Info("imaged: deploy base ref override", "ref", dbr)
 	}
 
 	// F1 + F2: stage the builder-base ext4 on startup, then hand off to the
@@ -139,6 +158,16 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// sweep. The stage is still required for cold-boot of builder microVMs
 	// (see spec §4.6 two-drive scheme).
 	baseRef := envOr("FAAS_BUILDER_BASE_REF", imaged.BaseRefBuilder)
+	if v := os.Getenv("FAAS_BUILDER_BASE_REF"); v != "" {
+		// Same digest-pinned gate as the deploy base ref above. The
+		// builder base ext4 is shared across every cold-boot and
+		// snapshot-prime — flipping it without a digest would corrupt
+		// every parked app's restore path.
+		ref, err := oci.ParseReference(v)
+		if err != nil || ref.Digest == "" {
+			return fmt.Errorf("imaged: FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference (e.g. registry.DOMAIN/img@sha256:...)", v)
+		}
+	}
 	basePath := envOr("FAAS_BUILDER_BASE_PATH", "/srv/fc/base/builder-base.ext4")
 	baseRes, err := h.EnsureBaseExt4(ctx, baseRef, basePath)
 	if err != nil {
@@ -202,4 +231,22 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// ociPullTimeout returns the per-pull HTTP timeout for the OCI puller.
+// The platform default lives at api.OCIPullTimeoutSeconds (currently 60s);
+// operators may override on the daemon with FAAS_OCI_PULL_TIMEOUT_SECONDS.
+// A non-positive or unparseable override falls back to the platform
+// default — silent adoption of a garbage value would manifest as a wake
+// that never returns.
+func ociPullTimeout() time.Duration {
+	v := os.Getenv("FAAS_OCI_PULL_TIMEOUT_SECONDS")
+	if v == "" {
+		return time.Duration(api.OCIPullTimeoutSeconds) * time.Second
+	}
+	secs, err := strconv.Atoi(v)
+	if err != nil || secs <= 0 {
+		return time.Duration(api.OCIPullTimeoutSeconds) * time.Second
+	}
+	return time.Duration(secs) * time.Second
 }

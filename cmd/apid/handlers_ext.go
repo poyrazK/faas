@@ -716,6 +716,7 @@ func (s *server) deploymentResponse(d state.Deployment) api.DeploymentResponse {
 		Kind:        string(d.Kind),
 		Status:      string(d.Status),
 		Error:       d.Error,
+		ErrorCode:   d.ErrorCode,
 		CreatedAt:   d.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }

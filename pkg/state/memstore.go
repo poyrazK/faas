@@ -740,6 +740,24 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path string, bytes
 	return nil
 }
 
+// SetDeploymentFailed mirrors PgStore.SetDeploymentFailed (ADR-021):
+// status pinned to 'failed'; error_code is the RFC 7807 code lifted
+// from pkg/api.SentinelToCode; error keeps the free-text message.
+// Returns the refreshed row.
+func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message string) (Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return Deployment{}, ErrNotFound
+	}
+	d.Status = DeployFailed
+	d.Error = message
+	d.ErrorCode = code
+	m.deployments[id] = d
+	return d, nil
+}
+
 // --- Builds -----------------------------------------------------------------
 
 func (m *MemStore) CreateBuild(_ context.Context, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {

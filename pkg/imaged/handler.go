@@ -321,7 +321,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	ref := dep.ImageDigest
 	digest, err := h.oci.PullDigest(ctx, ref)
 	if err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull failed: "+err.Error())
+		_ = h.markDeployFailed(ctx, dep.ID, err, "oci pull failed")
 		return fmt.Errorf("imaged: oci pull: %w", err)
 	}
 
@@ -331,7 +331,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 
 	imageCfg, err := h.oci.PullImageConfig(ctx, ref)
 	if err != nil {
-		_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull config: "+err.Error())
+		_ = h.markDeployFailed(ctx, dep.ID, err, "oci pull config")
 		return fmt.Errorf("imaged: pull image config: %w", err)
 	}
 
@@ -356,7 +356,13 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if mp, ok := h.oci.(oci.ManifestPuller); ok {
 		above, diffs, err := h.aboveBaseLayers(ctx, mp, dep.ImageDigest, app.Runtime, manifest)
 		if err != nil {
-			_ = h.transition(ctx, dep.ID, state.DeployFailed, "imaged: above-base: "+err.Error())
+			// aboveBaseLayers can surface any of the three puller-side
+			// sentinels (image-not-found on app manifest 404, manifest-list
+			// rejection on multi-arch images, egress-denial on a private
+			// registry) so it goes through markDeployFailed too. Non-pull
+			// failures (e.g. base mismatch) get code "" — the message
+			// preserves the upstream string.
+			_ = h.markDeployFailed(ctx, dep.ID, err, "imaged: above-base")
 			return err
 		}
 		defer func() {
@@ -388,7 +394,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// branch.
 		pulled, err := h.oci.PullLayers(ctx, ref)
 		if err != nil {
-			_ = h.transition(ctx, dep.ID, state.DeployFailed, "oci pull layers: "+err.Error())
+			_ = h.markDeployFailed(ctx, dep.ID, err, "oci pull layers")
 			return fmt.Errorf("imaged: pull layers: %w", err)
 		}
 		defer func() {
@@ -747,6 +753,29 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 func (h *Handler) transition(ctx context.Context, depID string, status state.DeploymentStatus, errMsg string) error {
 	if err := h.store.UpdateDeploymentStatus(ctx, depID, status, errMsg); err != nil {
 		return fmt.Errorf("imaged: set %s: %w", status, err)
+	}
+	return nil
+}
+
+// markDeployFailed transitions a deployment to `failed` with the given
+// RFC 7807 code (or "" if the upstream error didn't map to a sentinel)
+// and a free-text message. The code column carries the stable signal;
+// the message preserves the upstream string for debugging. Returns
+// the mark error so the caller can choose to log-and-continue or
+// bubble it up; in practice callers ignore the mark error (the
+// deployment row already reflects the failure and the original error
+// is what the caller actually wants to return).
+//
+// ADR-021: this is the single seam where puller-side sentinels get
+// lifted into a stable code on deployments.error_code. The wake
+// path reads the same column and lifts it into a Problem on the
+// failed-deployment GET response, so a customer / dashboard can
+// branch on a stable string rather than parsing the free-text
+// deployments.error.
+func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error, prefix string) error {
+	code, _ := oci.SentinelToCode(err)
+	if _, err := h.store.SetDeploymentFailed(ctx, depID, code, prefix+": "+err.Error()); err != nil {
+		return fmt.Errorf("imaged: mark failed: %w", err)
 	}
 	return nil
 }

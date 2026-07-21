@@ -3,6 +3,7 @@ package imaged
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -331,6 +332,70 @@ func TestHandleDeploymentOCIFailure(t *testing.T) {
 	}
 	if got.Error == "" {
 		t.Error("error message should be populated")
+	}
+}
+
+// TestHandleDeployment_PullDigestSentinel_PersistsErrorCode walks the three
+// puller-side sentinel surfaces and asserts deployments.error_code carries
+// the stable RFC 7807 code (ADR-021). The wake path reads this column to
+// lift the failure into a Problem, so a customer / dashboard can branch
+// on a stable string rather than parsing free-text deployments.error.
+//
+// We use failingPuller with wrapped sentinel errors so the test exercises
+// the same path production goes through (errors.As / errors.Is).
+func TestHandleDeployment_PullDigestSentinel_PersistsErrorCode(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string // expected deployments.error_code
+	}{
+		{
+			name: "registry 404 lifts to image_not_found",
+			err:  fmt.Errorf("pull failed: %w", oci.ErrImageNotFound),
+			want: api.CodeImageNotFound,
+		},
+		{
+			name: "egress denylist lifts to image_egress_denied",
+			err:  fmt.Errorf("dial failed: %w", oci.ErrImageEgressDenied),
+			want: api.CodeImageEgressDenied,
+		},
+		{
+			name: "manifest-list / parse lifts to image_manifest_invalid",
+			err:  fmt.Errorf("parse: %w", oci.ErrImageManifestInvalid),
+			want: api.CodeImageManifestInvalid,
+		},
+		{
+			name: "non-sentinel error leaves code empty (free-text only)",
+			err:  errors.New("net down"),
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+			app, _ := store.CreateApp(context.Background(), state.App{
+				AccountID: acct.ID, Slug: "bad-img-" + tc.name, RAMMB: 128, IdleTimeoutS: 30, MaxConcurrency: 1,
+			})
+			dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+				AppID: app.ID, ImageDigest: "sha256:bad", Kind: state.DeploymentKindImage,
+			})
+			h := New(store, &fakeNotifier{}, failingPuller{err: tc.err},
+				&fakeBuilder{}, "./init", t.TempDir(), silentLogger())
+			n := db.Notification{
+				Channel: db.NotifyDeploymentChanged,
+				Payload: `{"app_id":"` + app.ID + `","to":"` + dep.ID + `","kind":"image","image_digest":"sha256:bad"}`,
+			}
+			h.HandleNotification(context.Background(), n)
+			got, _ := store.DeploymentByID(context.Background(), dep.ID)
+			if got.Status != state.DeployFailed {
+				t.Errorf("status = %s, want failed", got.Status)
+			}
+			if got.ErrorCode != tc.want {
+				t.Errorf("error_code = %q, want %q (error message was %q)",
+					got.ErrorCode, tc.want, got.Error)
+			}
+		})
 	}
 }
 

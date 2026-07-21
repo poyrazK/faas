@@ -192,6 +192,7 @@ func listDeploymentsForAccountExport(ctx context.Context, st state.Store, accoun
 			ID: d.ID, AppID: d.AppID, BuildID: d.BuildID,
 			ImageDigest: d.ImageDigest, Kind: string(d.Kind),
 			Status: string(d.Status), Error: sanitizeExportString(d.Error),
+			ErrorCode: d.ErrorCode,
 			CreatedAt: d.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}

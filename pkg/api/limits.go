@@ -217,6 +217,16 @@ const (
 	WakeQueueCap        = 512              // per-app wake queue
 	WakeQueueTTLSeconds = 30
 
+	// OCI puller (spec §17 G1, ADR-021). Per-pull HTTP timeout for the
+	// registry client. cmd/imaged passes this to oci.WithTimeout; the
+	// daemon may override at boot via FAAS_OCI_PULL_TIMEOUT_SECONDS but
+	// there is no per-deployment knob — every plan shares the same
+	// ceiling so the cold-boot latency contract (§14, wake < 350 ms)
+	// stays predictable. 60s is well above the largest manifest +
+	// image-config GET and a generous safety margin over the
+	// fail-fast PullImageConfig path.
+	OCIPullTimeoutSeconds = 60
+
 	// Idle timeout tuning (spec §4.3): app-configurable down to this floor, and
 	// no higher than plan default × this multiplier.
 	IdleTimeoutFloorSeconds = 10

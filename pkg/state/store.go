@@ -202,6 +202,14 @@ type Store interface {
 	// zero rows and MemStore returned all rows. NaN `offset` (= negative
 	// value) is treated as 0 by both backends.
 	ListDeploymentsForApp(ctx context.Context, appID string, limit, offset int) ([]Deployment, error)
+	// SetDeploymentFailed is the failure-specific helper ADR-021 introduced
+	// alongside the deployments.error_code column. Status is pinned to
+	// 'failed'; code is the RFC 7807 code pkg/api.SentinelToCode lifted
+	// from the wrapping error (empty when the failure did not map to a
+	// sentinel); message is the free-text debug string. Returns the
+	// refreshed row. Idempotent — a redeploy after a fix overwrites
+	// both columns.
+	SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error)
 	// ListDeploymentsForAccount returns deployments across every app the
 	// account owns, cursor-paginated by created_at DESC. before is the
 	// inclusive upper bound — pass the previous response's NextBefore to
