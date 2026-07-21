@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -58,7 +57,7 @@ func writeMeterdConfig(t *testing.T, dir, metricsAddr string) string {
 // collaborators so runWithDeps passes its early exits without touching the
 // host. This is the meterd-side equivalent of schedd's "drains on cancel"
 // test seam.
-func stubMeterdDeps(cfgPath, metricsAddr string, pool *pgxpool.Pool, listenFn func(string, http.Handler) (net.Listener, func(context.Context) error, error)) runDeps {
+func stubMeterdDeps(cfgPath, metricsAddr string, pool *pgxpool.Pool, listenFn func(string, http.Handler) (*http.Server, error)) runDeps {
 	return runDeps{
 		configPath: cfgPath,
 		openDB: func(context.Context, string) (*pgxpool.Pool, error) {
@@ -114,9 +113,9 @@ func TestRun_MetricsAddrEmptySkipsListener(t *testing.T) {
 	pool := testPool(t)
 
 	var invocations int
-	listenFn := func(string, http.Handler) (net.Listener, func(context.Context) error, error) {
+	listenFn := func(string, http.Handler) (*http.Server, error) {
 		invocations++
-		return nil, nil, nil
+		return nil, nil
 	}
 	deps := stubMeterdDeps(cfgPath, "", pool, listenFn)
 
@@ -140,9 +139,16 @@ func TestRun_MetricsAddrEmptySkipsListener(t *testing.T) {
 }
 
 // TestRun_MetricsAddrServesEndpoints — when MetricsAddr is set, the wire-up
-// builds an http.Handler exposing /metrics and /healthz. We capture the
-// handler in a fake factory and drive it via httptest.NewRecorder (no real
-// socket binding).
+// builds an http.Handler exposing /metrics and /healthz. The test factory
+// captures the handler without binding a socket; we drive `h` directly via
+// httptest.NewRecorder.
+//
+// The factory returns a real *http.Server whose Handler is the captured mux
+// but whose Serve is never called — Shutdown on a never-Serve'd server is a
+// no-op. The follow-up PR wiring ops.Observe into the four timer ticks will
+// surface `meterd_*` series under /metrics. Today an empty CounterVec emits
+// nothing (expected Prometheus behavior); the `promhttp_metric_handler_errors_total`
+// line is the load-bearing proof that the registry is mounted.
 func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 	dir := shortDir(t)
 	cfgPath := writeMeterdConfig(t, dir, "127.0.0.1:0")
@@ -152,13 +158,11 @@ func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 		mu       sync.Mutex
 		captured http.Handler
 	)
-	listenFn := func(_ string, h http.Handler) (net.Listener, func(context.Context) error, error) {
+	listenFn := func(_ string, h http.Handler) (*http.Server, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		captured = h
-		// Return a no-op listener + shutdown — the goroutine will Serve on it
-		// but the listener is never bound, so Serve returns immediately.
-		return nopListener{}, func(context.Context) error { return nil }, nil
+		return &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}, nil
 	}
 	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn)
 
@@ -192,39 +196,19 @@ func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 	}
 
 	// /metrics — returns the meterd_ prefix per ADR-015. The ops counter
-	// starts at 0 with no series exposed; to prove the registry is
-	// correctly wired AND named with the meter prefix, render the registry
-	// directly via /metrics and assert the counter shows up after a
-	// direct Inc() through the captured registry. (Counter vecs with no
-	// observed labels are not emitted — that's expected Prometheus
-	// behavior; the test seeds one observation to surface the metric.)
+	// starts at 0 with no series exposed; Counter vecs with no observed
+	// labels are not emitted (expected Prometheus behavior). The
+	// promhttp_metric_handler_errors_total line is the load-bearing proof
+	// that the handler is mounted and is on the per-daemon registry.
 	rec = httptest.NewRecorder()
 	captured.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("/metrics status = %d, want 200", rec.Code)
 	}
-	// Empty registry returns only the promhttp internals on a fresh serve.
-	// Pin the response shape (200) and confirm the runtime registers the
-	// meterd_ namespace by parsing the body — if the handler is wrong,
-	// the body would be empty or contain only the error-counter.
 	body := rec.Body.String()
 	if !strings.Contains(body, "promhttp_metric_handler_errors_total") {
 		t.Errorf("/metrics body missing promhttp internals (handler may be unconfigured):\n%s", body)
 	}
-
-	// Verify the per-daemon registry is the meterd one: drive a known
-	// sample-loop op through it. We do this by re-mounting /metrics
-	// with a counter incremented; since we can't reach into the
-	// goroutine's ops struct, we instead assert the registry behavior
-	// through an explicit Accept header that asks for the meter
-	// namespace.
-	rec = httptest.NewRecorder()
-	captured.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	// The handler is from wire.NewOpsMetrics("meterd") — until a code
-	// path calls Observe, no `meterd_*` line appears. Acceptable for this
-	// wire-up test: we proved the handler is mounted at /metrics, returns
-	// 200, and is on a per-daemon registry. The follow-up PR will wire
-	// Observe calls into the four timer ticks.
 
 	cancel()
 	select {
@@ -245,8 +229,8 @@ func TestRun_MetricsAddrDrainsOnCancel(t *testing.T) {
 	cfgPath := writeMeterdConfig(t, dir, "127.0.0.1:0")
 	pool := testPool(t)
 
-	listenFn := func(_ string, _ http.Handler) (net.Listener, func(context.Context) error, error) {
-		return nopListener{}, func(context.Context) error { return nil }, nil
+	listenFn := func(_ string, _ http.Handler) (*http.Server, error) {
+		return &http.Server{Handler: http.NewServeMux(), ReadHeaderTimeout: 10 * time.Second}, nil
 	}
 	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn)
 
@@ -265,19 +249,3 @@ func TestRun_MetricsAddrDrainsOnCancel(t *testing.T) {
 		t.Fatal("run did not return within 6s (5s shutdown + slack) of cancel")
 	}
 }
-
-// nopListener satisfies net.Listener without binding. Used by the tests above
-// so the goroutine can Serve on a "listener" that immediately returns.
-type nopListener struct{}
-
-func (nopListener) Accept() (net.Conn, error) {
-	// Block until ctx is cancelled; Serve will return when its internal
-	// wg drains. Returning io.EOF makes Serve exit cleanly.
-	return nil, io.EOF
-}
-func (nopListener) Close() error                       { return nil }
-func (nopListener) Addr() net.Addr                      { return nopAddr{} }
-type nopAddr struct{}
-
-func (nopAddr) Network() string { return "tcp" }
-func (nopAddr) String() string  { return "127.0.0.1:0" }

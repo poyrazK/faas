@@ -1,16 +1,4 @@
-// Package ledgerparity — cross-package parity assertion that the per-VM
-// billable RAM number is computed identically by meterd (the sampler that
-// writes usage_minutes) and schedd (the ledger that enforces invariant §6.2-2).
-// Both sides used to inline `ram_mb + api.PerVMOverheadMB`; the introduction
-// of api.BillableRAMMB makes this test the load-bearing guard against drift
-// between the metering surface and the admission surface. If they ever
-// disagree by even one MB, a customer is either under-billed or over-billed
-// for the same instance — this test fails before that ships.
-//
-// Lives in its own subpackage because no other test file in the repo imports
-// both pkg/meter and pkg/sched (exploration confirmed), and Go forbids two
-// `package X` declarations in one directory.
-package ledgerparity
+package api_test
 
 import (
 	"testing"
@@ -27,7 +15,9 @@ import (
 //  2. schedd's Ledger.ResidentRAM() after one Admit (the §6.2-2 invariant).
 //
 // If the helper or any of its callers ever changes, this test fails before
-// the diff lands. No PG, no metal — pure unit test.
+// the diff lands. Lives in pkg/api (next to the constant it pins) rather
+// than in a separate subpackage — a single assertion doesn't justify a
+// dedicated test directory. PR #75 (#71 branch) review finding.
 func TestBillableRAMMB_Parity(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
