@@ -28,10 +28,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -47,6 +49,55 @@ func newCliAuthTestServer(t *testing.T) (http.Handler, *state.MemStore) {
 	srv := newServerWithDeps(store, log, "example.com", noopNotifier{}, "",
 		noopMailer{}, stubGithubdClient{}, nil, nil, 15*time.Minute, "").handler()
 	return srv, store
+}
+
+// cliAuthTestNotifier is a recording Notifier for cli-auth tests.
+// It captures every Notify call so TestPostCliAuthPage_FiresCliAuthActivatedNotify
+// (and friends) can assert on the channel + payload. Subscribe
+// returns a closed channel (matching noopNotifier's contract).
+type cliAuthTestNotifier struct {
+	mu     sync.Mutex
+	calls  []cliAuthNotifyCall
+}
+type cliAuthNotifyCall struct {
+	Channel string
+	Payload string
+}
+
+func newCliAuthTestNotifier() *cliAuthTestNotifier { return &cliAuthTestNotifier{} }
+
+func (n *cliAuthTestNotifier) Notify(_ context.Context, channel, payload string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.calls = append(n.calls, cliAuthNotifyCall{Channel: channel, Payload: payload})
+	return nil
+}
+func (n *cliAuthTestNotifier) Subscribe(_ context.Context, _ []string) (<-chan db.Notification, func(), error) {
+	ch := make(chan db.Notification)
+	close(ch)
+	return ch, func() {}, nil
+}
+
+func (n *cliAuthTestNotifier) Calls() []cliAuthNotifyCall {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]cliAuthNotifyCall, len(n.calls))
+	copy(out, n.calls)
+	return out
+}
+
+// newCliAuthTestServerWithNotifier wires a server with a recording
+// notifier instead of noopNotifier. Used by F6's notify assertion
+// and any future test that needs to inspect what the dashboard
+// path emitted over pg_notify channels.
+func newCliAuthTestServerWithNotifier(t *testing.T) (http.Handler, *state.MemStore, *cliAuthTestNotifier) {
+	t.Helper()
+	store := state.NewMemStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	notif := newCliAuthTestNotifier()
+	srv := newServerWithDeps(store, log, "example.com", notif, "",
+		noopMailer{}, stubGithubdClient{}, nil, nil, 15*time.Minute, "").handler()
+	return srv, store, notif
 }
 
 // mintCliAuthCodeForTest is a test helper that POSTs /v1/cli-auth/code
@@ -204,23 +255,25 @@ func TestClaimThenExchange_ReturnsKey(t *testing.T) {
 		t.Errorf("account email = %q, want carol@example.com", resp.Account.Email)
 	}
 
-	// The exchange endpoint is idempotent in a soft sense: a second
-	// call returns a freshly-minted key (the CLI doesn't retry, but a
-	// buggy client can't lock itself out). The "single-shot" guarantee
-	// is enforced on the dashboard /cli-auth claim side, not here.
+	// Replay must NOT mint a second key (review finding F4). The
+	// store is a CAS in the same shape as ConsumeLoginToken: the
+	// second call sees consumed_at != null and returns ErrNotFound,
+	// which the handler surfaces as 410 cli_auth_code_unavailable.
+	// This blocks a buggy / replaying CLI from accumulating API keys
+	// for the same code.
 	rec2 := httptest.NewRecorder()
 	r2 := httptest.NewRequest(http.MethodPost, "/v1/cli-auth/exchange", bytes.NewReader(body))
 	r2.Header.Set("Content-Type", "application/json")
 	srv.ServeHTTP(rec2, r2)
-	if rec2.Code != http.StatusOK {
-		t.Errorf("replay code = %d, want 200 (re-exchange yields a fresh key)", rec2.Code)
+	if rec2.Code != http.StatusGone {
+		t.Fatalf("replay code = %d, want 410\nbody = %s", rec2.Code, rec2.Body.String())
 	}
-	var resp2 api.CliAuthExchangeResponse
-	if err := json.NewDecoder(rec2.Body).Decode(&resp2); err != nil {
-		t.Fatalf("decode replay: %v", err)
+	var prob api.Problem
+	if err := json.NewDecoder(rec2.Body).Decode(&prob); err != nil {
+		t.Fatalf("decode replay problem: %v", err)
 	}
-	if resp2.Plaintext == resp.Plaintext {
-		t.Errorf("re-exchange returned the SAME plaintext — keys must differ")
+	if prob.Code != api.CodeCliAuthUnavailable {
+		t.Errorf("replay problem code = %q, want %q", prob.Code, api.CodeCliAuthUnavailable)
 	}
 }
 
@@ -264,9 +317,11 @@ func TestClaimCliAuthCode_RaceDoubleClaimReturnsConflict(t *testing.T) {
 }
 
 // TestClaimExpiredCode_ReturnsNotFound pastes an expired code into
-// the dashboard POST. The claim statement filters on expires_at >
-// now() so an expired row is treated as "not found" → ErrConflict
-// → dashboard error page.
+// the dashboard. The claim statement filters on expires_at > now()
+// so an expired row is classified as ErrNotFound (was ErrConflict
+// before review finding F5). The dashboard renders the "Code
+// expired" banner for this path, distinct from "Code already used"
+// for ErrConflict.
 func TestClaimExpiredCode_ReturnsNotFound(t *testing.T) {
 	_, store := newCliAuthTestServer(t)
 	acct, _ := store.CreateAccount(t.Context(), "old@example.com", api.PlanFree)
@@ -276,8 +331,22 @@ func TestClaimExpiredCode_ReturnsNotFound(t *testing.T) {
 	if err := store.IssueCliAuthCode(t.Context(), hash, pastExpiry); err != nil {
 		t.Fatalf("issue expired: %v", err)
 	}
-	if err := store.ClaimCliAuthCode(t.Context(), hash, acct.ID); !isConflictOrNotFound(err) {
-		t.Errorf("claim expired: err = %v, want ErrConflict or ErrNotFound", err)
+	if err := store.ClaimCliAuthCode(t.Context(), hash, acct.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("claim expired: err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestClaimUnknownCode_ReturnsNotFound covers the never-minted case
+// (review finding F5 regression test): the row doesn't exist so the
+// post-classification SELECT in PgStore returns ErrNotFound and the
+// dashboard renders "Code expired".
+func TestClaimUnknownCode_ReturnsNotFound(t *testing.T) {
+	_, store := newCliAuthTestServer(t)
+	acct, _ := store.CreateAccount(t.Context(), "never@example.com", api.PlanFree)
+
+	hash := mustHashCode(t, "DEAD-BEEF")
+	if err := store.ClaimCliAuthCode(t.Context(), hash, acct.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("claim unknown: err = %v, want ErrNotFound", err)
 	}
 }
 
@@ -368,7 +437,9 @@ func TestPostCliAuthPage_CreatesAccountOnUnknownEmail(t *testing.T) {
 	srv, store := newCliAuthTestServer(t)
 
 	minted := mintCliAuthCodeForTest(t, srv)
-	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") + "&email=brand-new@example.com"
+	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
+		"&email=brand-new@example.com" +
+		"&confirm_token=cli-auth%3Ayes" // review finding F1 (url-encoded ':')
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
@@ -407,7 +478,9 @@ func TestPostCliAuthPage_ReusesExistingAccount(t *testing.T) {
 	}
 
 	minted := mintCliAuthCodeForTest(t, srv)
-	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") + "&email=old-customer@example.com"
+	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
+		"&email=old-customer@example.com" +
+		"&confirm_token=cli-auth%3Ayes"
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
@@ -427,6 +500,83 @@ func TestPostCliAuthPage_ReusesExistingAccount(t *testing.T) {
 	}
 }
 
+// TestPostCliAuthPage_RejectsMissingCSRFToken confirms the F1 CSRF
+// guard. A POST without confirm_token (or with the wrong value)
+// renders the "Invalid form" error page, not a 302.
+func TestPostCliAuthPage_RejectsMissingCSRFToken(t *testing.T) {
+	srv, store := newCliAuthTestServer(t)
+
+	minted := mintCliAuthCodeForTest(t, srv)
+	// Submit WITHOUT confirm_token — must be rejected.
+	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
+		"&email=csrf-blocked@example.com"
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("missing-CSRF code = %d, want 200 (error page)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Invalid form") {
+		t.Errorf("body missing 'Invalid form' banner: %s", rec.Body.String())
+	}
+	// Make sure NO account was created (the row exists only if we
+	// got past the CSRF gate).
+	if _, err := store.AccountByEmail(t.Context(), "csrf-blocked@example.com"); err == nil {
+		t.Errorf("account was auto-created despite missing CSRF token")
+	}
+
+	// Now submit WITH wrong token — must also be rejected.
+	form = "code=" + strings.ReplaceAll(minted.Code, "-", "") +
+		"&email=csrf-blocked@example.com" +
+		"&confirm_token=delete%3Ayes" // wrong action
+	r = httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, r)
+	if !strings.Contains(rec.Body.String(), "Invalid form") {
+		t.Errorf("wrong-CSRF body missing 'Invalid form': %s", rec.Body.String())
+	}
+}
+
+// TestPostCliAuthPage_FiresCliAuthActivatedNotify asserts the F6
+// observability fix: the dashboard POST emits the
+// NotifyCliAuthCodeActivated channel with the code's hex hash as
+// payload. This is the first observable behavior for the deferred
+// SSE push (the producer-side wire).
+func TestPostCliAuthPage_FiresCliAuthActivatedNotify(t *testing.T) {
+	srv, _, notif := newCliAuthTestServerWithNotifier(t)
+
+	minted := mintCliAuthCodeForTest(t, srv)
+	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
+		"&email=notify@example.com" +
+		"&confirm_token=cli-auth%3Ayes"
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.ServeHTTP(rec, r)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("code = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
+	}
+
+	calls := notif.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("notif.Calls() = %d, want 1\ncalls = %+v", len(calls), calls)
+	}
+	if calls[0].Channel != db.NotifyCliAuthCodeActivated {
+		t.Errorf("channel = %q, want %q", calls[0].Channel, db.NotifyCliAuthCodeActivated)
+	}
+	// Payload embeds the hex-encoded token hash so an SSE listener
+	// (when wired) can correlate notify ↔ CLI poll without parsing
+	// the URL.
+	if !strings.Contains(calls[0].Payload, `"hash":"`) {
+		t.Errorf("payload missing hash field: %s", calls[0].Payload)
+	}
+}
+
 // mustHashCode mirrors what the server does on receipt: strip the
 // dash, hex-decode, sha256. Mirrors api.HashToken over the raw 4-byte
 // code. Used by tests that need to drive the store directly.
@@ -438,14 +588,6 @@ func mustHashCode(t *testing.T, code string) []byte {
 		t.Fatalf("decode hex %q: %v", normalized, err)
 	}
 	return api.HashToken(raw)
-}
-
-// isConflictOrNotFound is the dashboard's "code unavailable" gate —
-// either ErrConflict (race lost, already consumed) or ErrNotFound
-// (expired, never minted) renders the same error page. Uses
-// errors.Is so wrapped errors (e.g. from pgstore.mapErr) match.
-func isConflictOrNotFound(err error) bool {
-	return errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound)
 }
 
 // Compile-time check we still have context available for future

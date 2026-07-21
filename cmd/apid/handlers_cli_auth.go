@@ -183,7 +183,10 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	page := dashboard.Page{
 		Title: "Authorize CLI session",
 		Body:  "cli_auth",
-		Data:  map[string]any{"Code": raw},
+		Data: map[string]any{
+			"Code":      raw,
+			"CSRFToken": "cli-auth:yes", // mirror dashboard_delete.go literal-string CSRF (review finding F1)
+		},
 	}
 	if err := dashboard.Render(w, h.log, page); err != nil {
 		h.log.Error("cli_auth.render", "err", err)
@@ -201,6 +204,14 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	// CSRF guard (review finding F1). The hidden confirm_token field
+	// is the literal string "cli-auth:yes" rendered by renderCliAuthPage.
+	// Mirrors cmd/apid/dashboard_delete.go::confirmTokenMatches — a
+	// future HMAC refactor covers both surfaces in one PR.
+	if !confirmTokenMatches(r, "cli-auth") {
+		h.renderCliAuthError(w, "Invalid form", "Please reload the page and try again.")
 		return
 	}
 	hash, ok := normalizeCliAuthCode(r.FormValue("code"))
@@ -225,7 +236,9 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 			h.renderCliAuthError(w, "Could not sign you up", "Please try again.")
 			return
 		}
-		h.log.Info("cli_auth.auto_created_account", "account", acct.ID,
+		h.log.Info("cli_auth.auto_created_account",
+			"event", api.EventCliAuthAutoCreated,
+			"account", acct.ID,
 			"email", logsanitize.Field(email))
 	} else if err != nil {
 		h.log.Error("cli_auth.account_by_email", "err", err)

@@ -1637,38 +1637,57 @@ func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.Cli
 }
 
 // ClaimCliAuthCode atomically transitions pending → consumed and
-// binds account_id. A racing second claim returns ErrConflict; an
-// expired or already-consumed code also returns ErrConflict (the
-// dashboard maps both errors to the same user-facing error page).
+// binds account_id. Error shapes mirror PgStore (review finding F5):
+//
+//	ErrNotFound  — row missing OR expired (never minted or TTL passed)
+//	ErrConflict  — row exists but already claimed by a prior call
+//
+// The CAS-equivalent for MemStore is the m.mu serializing all
+// readers/writers; the second concurrent caller observes the
+// first's write (AccountID != "") and returns ErrConflict.
+//
+// IMPORTANT: this MUST NOT touch ConsumedAt — that field is the
+// exclusive mint-gate for ConsumeCliAuthCode. Pre-setting it here
+// would short-circuit the CAS that the CLI's exchange relies on to
+// mint exactly one API key per code (review finding F4).
 func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, accountID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	row, ok := m.cliAuthCodes[string(tokenHash)]
 	if !ok {
-		return ErrConflict
+		return ErrNotFound
 	}
 	if !row.ExpiresAt.After(time.Now()) {
+		return ErrNotFound
+	}
+	if row.AccountID != "" {
+		// A prior claim already bound the row to some account_id.
+		// Dashboard POST never re-claims, so this is either a retry
+		// (user double-clicked) or a parallel claim race. Either
+		// way the row is no longer pending → ErrConflict so the
+		// handler can render "Code already used".
 		return ErrConflict
 	}
-	if row.ConsumedAt != nil {
-		return ErrConflict
-	}
-	now := time.Now()
 	row.AccountID = accountID
-	row.ConsumedAt = &now
 	m.cliAuthCodes[string(tokenHash)] = row
 	return nil
 }
 
-// ConsumeCliAuthCode is the CLI's poll-side read. It does NOT mutate
-// state (the claim already happened in the dashboard POST handler);
-// it surfaces the current status so the CLI can mint the API key
-// after seeing "consumed".
+// ConsumeCliAuthCode is the CLI's poll-side read PLUS mint gate.
+// Atomic CAS (mirrors ConsumeLoginToken): only mutates consumed_at
+// on the FIRST call, returns the bound account_id exactly once.
+// A buggy or replaying CLI cannot mint multiple keys for the same
+// code (review finding F4).
+//
+// Filter: `account_id` must be non-empty (Claim must have run
+// first) — without it the row is still pending and the CLI should
+// keep polling, not see (Consumed,"") which would mint a key for an
+// unbound account.
 //
 // Return contract:
-//   pending   → (Pending,  "",       nil)       keep polling
-//   consumed  → (Consumed, acct_id, nil)       mint API key for acct_id
-//   expired/unknown → (Expired, "", ErrNotFound) stop with a clear error
+//   pending (or empty account_id) → (Pending,  "",       nil)        keep polling
+//   consumed (first call)        → (Consumed, acct_id,  nil)        mint API key
+//   replay / expired / unknown    → (Expired, "",        ErrNotFound)
 func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1679,9 +1698,18 @@ func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.
 	if !row.ExpiresAt.After(time.Now()) {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
-	if row.ConsumedAt == nil {
+	if row.AccountID == "" || row.ConsumedAt != nil {
+		// Either still pending (dashboard hasn't claimed yet) or
+		// already consumed (replay). The caller distinguishes via
+		// the consumed_at nil check.
+		if row.ConsumedAt != nil {
+			return api.CliAuthStatusExpired, "", ErrNotFound
+		}
 		return api.CliAuthStatusPending, "", nil
 	}
+	now := time.Now()
+	row.ConsumedAt = &now
+	m.cliAuthCodes[string(tokenHash)] = row
 	return api.CliAuthStatusConsumed, row.AccountID, nil
 }
 

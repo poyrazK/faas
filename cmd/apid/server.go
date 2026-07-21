@@ -75,6 +75,14 @@ type server struct {
 	// codes cannot starve the bearer-token auth surface OR the
 	// dashboard /login bucket.
 	cliAuthLimiter *middleware.Limiter
+	// cliAuthSubmitLimiter is the per-IP bucket for POST /cli-auth
+	// (the dashboard-side claim form). Separate from
+	// dashboardAuthLimiter so a customer retrying `faas login` from a
+	// corporate NAT does not self-DoS the magic-link /login surface —
+	// the two share the 10/min/IP budget otherwise. Eager init mirrors
+	// apiAuthLimiter + dashboardAuthLimiter (test-only nil-fallbacks
+	// live in the chain methods).
+	cliAuthSubmitLimiter *middleware.Limiter
 	// statusCache backs GET /status/slo.json (spec §12 public status
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
@@ -180,6 +188,15 @@ func newServerWithDeps(
 	// bucket so the CountEveryAttempt sentinel on /login doesn't bleed
 	// 200s into the API's 401-counter.
 	dashboardAuthLimiter := middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
+	// CLI auth surface (spec §2.2). Two buckets:
+	//   * cliAuthLimiter      — anonymous /v1/cli-auth/* (mint + exchange)
+	//   * cliAuthSubmitLimiter — POST /cli-auth from the dashboard form
+	// The submit bucket is separate from dashboardAuthLimiter so a
+	// customer retrying `faas login` from a shared NAT doesn't burn the
+	// 10/min/IP budget the magic-link /login uses (review finding S2;
+	// the same user can hit both surfaces).
+	cliAuthLimiter := middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
+	cliAuthSubmitLimiter := middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
 	return &server{
 		store:                store,
 		log:                  log,
@@ -194,6 +211,8 @@ func newServerWithDeps(
 		dpaPath:              dpaPath,
 		apiAuthLimiter:       apiAuthLimiter,
 		dashboardAuthLimiter: dashboardAuthLimiter,
+		cliAuthLimiter:       cliAuthLimiter,
+		cliAuthSubmitLimiter: cliAuthSubmitLimiter,
 	}
 }
 
@@ -356,17 +375,15 @@ func (s *server) handler() http.Handler {
 	cli := &cliAuthHandlers{srv: s, log: s.log, domain: s.domain}
 	mux.Handle("POST /v1/cli-auth/code", s.cliAuthChain(http.HandlerFunc(cli.mintCliAuthCode)))
 	mux.Handle("POST /v1/cli-auth/exchange", s.cliAuthChain(http.HandlerFunc(cli.exchangeCliAuthCode)))
-	// Dashboard-side render + consume page. Shares s.dashboardAuthLimiter
-	// (same bucket as /login + /auth/verify) — these are the human
-	// clicks that should burn the dashboard's auth budget, not the
-	// anonymous CLI's. Count every attempt so a probing bot can't
-	// hide in 200 responses.
+	// Dashboard-side GET shares the dashboard auth bucket (it renders
+	// the same form for every state, so attempts are not the
+	// brute-force surface). POST uses its own bucket
+	// (cliAuthSubmitChain) so a customer retrying `faas login` from a
+	// shared NAT doesn't burn the magic-link /login budget.
 	mux.Handle("GET "+cliAuthPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, http.HandlerFunc(cli.renderCliAuthPage)))
-	mux.Handle("POST "+cliAuthPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
-		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, http.HandlerFunc(cli.postCliAuthPage)))
+	mux.Handle("POST "+cliAuthPath, s.cliAuthSubmitChain(http.HandlerFunc(cli.postCliAuthPage)))
 
 	return mux
 }
@@ -425,13 +442,26 @@ func (s *server) dashboardAuthChain(cfg middleware.AuthLimitConfig, h http.Handl
 func (s *server) cliAuthChain(h http.Handler) http.Handler {
 	h = middleware.RequestID(h)
 	h = middleware.Recovery(s.log)(h)
-	if s.cliAuthLimiter == nil {
-		s.cliAuthLimiter = middleware.NewLimiter(middleware.AuthLimitConfig{Log: s.log})
-	}
 	h = middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
 		CountStatuses: []int{http.StatusTooManyRequests, http.StatusBadRequest},
 		Log:           s.log,
 	}, s.cliAuthLimiter)(h)
+	return h
+}
+
+// cliAuthSubmitChain wraps POST /cli-auth (dashboard-side claim
+// form). Same shape as cliAuthChain but a different bucket
+// (s.cliAuthSubmitLimiter) so the dashboard's /login bucket is not
+// burned by a customer retrying `faas login`. Counts every attempt
+// — the form is the brute-force surface (a bot can submit known
+// codes + emails without the dashboard ever rendering).
+func (s *server) cliAuthSubmitChain(h http.Handler) http.Handler {
+	h = middleware.RequestID(h)
+	h = middleware.Recovery(s.log)(h)
+	h = middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+		Log:           s.log,
+	}, s.cliAuthSubmitLimiter)(h)
 	return h
 }
 

@@ -7,6 +7,14 @@ package api
 // contract; both `cmd/apid` and `cmd/faas` import them so the two
 // sides never disagree.
 
+// EventCliAuthAutoCreated is the structured-log event name emitted
+// when POST /cli-auth creates a fresh account row (UX §2.2
+// "signup ≡ login" — review finding F2). Operators grep or
+// metric-filter on this exact event name to spot enumeration-pattern
+// abuse. The handler emits it via slog with
+// `slog.String("event", api.EventCliAuthAutoCreated)`.
+const EventCliAuthAutoCreated = "cli_auth_auto_created"
+
 // CliAuthStatus is the lifecycle state of a /v1/cli-auth/code row.
 type CliAuthStatus string
 

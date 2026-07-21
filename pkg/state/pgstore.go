@@ -57,7 +57,17 @@ func (s *PgStore) CreateAccount(ctx context.Context, email string, plan api.Plan
 	row := s.pool.QueryRow(ctx,
 		`insert into accounts (email, plan, status) values ($1, $2, 'active') returning id, email, plan, status, coalesce(stripe_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at`,
 		email, string(plan))
-	return scanAccount(row)
+	acct, err := scanAccount(row)
+	if err != nil {
+		// Funnel through mapErr so a unique-email collision surfaces as
+		// state.ErrConflict (the same shape every other insert returns).
+		// A future hardening could use `on conflict (email) do nothing
+		// returning ...` to make the race atomic; today the handler
+		// ladder AccountByEmail → CreateAccount relies on this funnel
+		// to detect the dup-key outcome.
+		return Account{}, mapErr(err)
+	}
+	return acct, nil
 }
 
 func (s *PgStore) AccountByID(ctx context.Context, id string) (Account, error) {
@@ -1763,14 +1773,25 @@ func (s *PgStore) PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.Cl
 }
 
 // ClaimCliAuthCode atomically transitions pending → consumed and binds
-// account_id in one statement. A racing second claim returns
-// ErrConflict; an expired or already-consumed code returns ErrConflict
-// too (the single "code unavailable" path). The dashboard /cli-auth
-// POST handler maps both errors to the same user-facing error page.
+// account_id in one statement. Two error shapes distinguish the
+// reasons a claim can fail (handler renders different banners):
+//
+//	ErrNotFound  — row missing OR expired (never minted or TTL passed)
+//	ErrConflict  — row exists but status != 'pending' (already used)
+//
+// IMPORTANT: this MUST NOT touch consumed_at — that field is the
+// exclusive mint-gate for ConsumeCliAuthCode. Pre-setting consumed_at
+// here would short-circuit the CAS that the CLI's exchange relies on
+// to mint exactly one API key per code (review finding F4).
+//
+// Implementation: a single UPDATE returns 0 rows on either failure;
+// a follow-up SELECT classifies which one (no TOCTOU window because
+// the UPDATE is still atomic — the post-classification SELECT only
+// affects the error we report, not the state).
 func (s *PgStore) ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error {
 	tag, err := s.pool.Exec(ctx,
 		`update cli_auth_codes
-		 set status = 'consumed', account_id = $2, consumed_at = now()
+		 set status = 'consumed', account_id = $2
 		 where token_hash = $1
 		   and status = 'pending'
 		   and expires_at > now()`,
@@ -1778,38 +1799,82 @@ func (s *PgStore) ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accoun
 	if err != nil {
 		return mapErr(err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrConflict
+	if tag.RowsAffected() != 0 {
+		return nil
 	}
-	return nil
+	// Classify the zero-rows case. If the row doesn't exist at all
+	// (never minted) or has expired, the user typed a stale code and
+	// gets the "expired" banner. If the row exists and isn't expired
+	// it must have been claimed already → ErrConflict.
+	var exists, fresh bool
+	err = s.pool.QueryRow(ctx,
+		`select true, expires_at > now()
+		 from cli_auth_codes where token_hash = $1`,
+		tokenHash,
+	).Scan(&exists, &fresh)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !fresh {
+		return ErrNotFound
+	}
+	return ErrConflict
 }
 
-// ConsumeCliAuthCode is the CLI's poll-side read. It does NOT mutate
-// state (the claim already happened in the dashboard POST handler);
-// it surfaces the current status so the CLI can mint the API key
-// after seeing "consumed". The caller issues the API-key insert.
+// ConsumeCliAuthCode is the CLI's poll-side read PLUS mint gate. It
+// is a CAS in the same shape as ConsumeLoginToken: mutates
+// `consumed_at` from NULL to NOW on the FIRST call only, returning
+// the bound account_id; every subsequent call returns ErrNotFound.
+// The handler mints the API key only when this returns success, so
+// a buggy / replaying CLI cannot mint multiple keys for the same
+// code (review finding F4).
 //
-// Return contract:
-//   pending → (Pending, "", nil)             keep polling
-//   consumed → (Consumed, account_id, nil)   mint API key for account_id
-//   expired/unknown → (Expired, "", ErrNotFound) stop with a clear error
+// Filter: `account_id IS NOT NULL` is required — without a
+// dashboard-side claim the row is still pending and the CLI should
+// keep polling, NOT see the (Consumed, "", nil) shape that
+// otherwise lets it mint a key for an unbound code (which would be
+// a useless NULL FK insert into api_keys).
+//
+// Return contract (CLI key-mints only on Consumed + non-empty acct):
+//   pending (or empty account_id) → (Pending,  "",       nil)        keep polling
+//   consumed (first call)        → (Consumed, acct_id,  nil)        mint API key
+//   consumed (replay) / expired / unknown → (Expired, "", ErrNotFound)
 func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
-	var status, accountID string
+	var accountID string
 	err := s.pool.QueryRow(ctx,
-		`select status, coalesce(account_id::text, '')
-		 from cli_auth_codes
-		 where token_hash = $1 and expires_at > now()`,
-		tokenHash).Scan(&status, &accountID)
+		`update cli_auth_codes
+		 set consumed_at = now()
+		 where token_hash = $1
+		   and status = 'consumed'
+		   and account_id is not null
+		   and consumed_at is null
+		   and expires_at > now()
+		 returning account_id`,
+		tokenHash,
+	).Scan(&accountID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// Either pending, expired, already-consumed, or never
+			// minted. Disambiguate pending vs not-found for the
+			// polling CLI: if the row exists and is still pending
+			// we tell it to keep waiting; otherwise we stop.
+			var status string
+			err2 := s.pool.QueryRow(ctx,
+				`select status from cli_auth_codes
+				 where token_hash = $1 and expires_at > now()`,
+				tokenHash,
+			).Scan(&status)
+			if err2 == nil && status == string(api.CliAuthStatusPending) {
+				return api.CliAuthStatusPending, "", nil
+			}
 			return api.CliAuthStatusExpired, "", ErrNotFound
 		}
 		return "", "", err
 	}
-	if status == string(api.CliAuthStatusPending) {
-		return api.CliAuthStatusPending, "", nil
-	}
-	return api.CliAuthStatus(status), accountID, nil
+	return api.CliAuthStatusConsumed, accountID, nil
 }
 
 // AppendDeploymentLog inserts one row and returns the seq Postgres
