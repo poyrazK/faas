@@ -240,6 +240,7 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 			h.renderCliAuthError(w, "Could not sign you up", "Please try again.")
 			return
 		}
+		// codeql[go/log-injection] false-positive: acct.ID is server-generated via newID() (hex of crypto/rand{16}); CodeQL's taint engine conservatively tracks the email argument through CreateAccount into the returned Account struct, but acct.ID itself is not user-controllable. Mirrors the precedent in cmd/apid/handlers.go:67.
 		h.log.Info("cli_auth.auto_created_account",
 			"event", api.EventCliAuthAutoCreated,
 			"account", acct.ID)
