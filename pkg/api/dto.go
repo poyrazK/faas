@@ -82,7 +82,7 @@ type DeploymentResponse struct {
 	// ErrorCode carries the RFC 7807 code ADR-021 lifted from the
 	// puller-side sentinels (image_not_found / image_egress_denied /
 	// image_manifest_invalid). Empty for every deployment created
-	// before migrations/00022 OR that is not in a failure state —
+	// before migrations/00021 OR that is not in a failure state —
 	// api/state.SerializeDeployment knows the column is a string and
 	// that "" is the canonical empty value, so the dashboard /
 	// programmatic consumer can branch on ErrorCode != "".

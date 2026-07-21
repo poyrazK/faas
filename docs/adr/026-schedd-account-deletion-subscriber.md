@@ -101,7 +101,7 @@
 
 | Path | Purpose |
 |---|---|
-| `migrations/00012_instance_evicting_state.sql` | Adds `EVICTED_ACCOUNT_DELETING` to the instances.state CHECK constraint |
+| `migrations/00020_instance_evicting_state.sql` | Adds `EVICTED_ACCOUNT_DELETING` to the instances.state CHECK constraint |
 | `pkg/sched/deletion_subscriber.go` | Subscriber loop + handler; reads `db.Subscribe` feed, walks instances, calls `sched.Stop` |
 | `pkg/sched/deletion_subscriber_test.go` | MemStore-backed unit tests with a fake notify channel |
 
