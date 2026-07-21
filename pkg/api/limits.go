@@ -270,6 +270,16 @@ const (
 )
 
 // ConntrackCapProbe returns the effective per-instance conntrack cap.
+const (
+	probeNS        = "faas-ct-probe"
+	probeTable     = "faas_ct_probe"
+	probeFamily    = "ip"
+	probeChain     = "forward"
+	probeNftCmd    = "nft"
+	probeNftAdd   = "add"
+	probeNetnsExec = "exec"
+	probeNetnsCmd  = "netns"
+)
 // Returns DefaultConntrackCap when the kernel supports the ct expression
 // inside network namespaces (CONFIG_NF_CONNTRACK_NET_NS=y); returns 0
 // when it doesn't so the ct cap rules are silently omitted (egress tc
@@ -281,31 +291,30 @@ func ConntrackCapProbe() int64 {
 	if testing.Testing() {
 		return DefaultConntrackCap
 	}
-	ns := "faas-ct-probe"
 	bail := func() int64 { return 0 }
 
 	// Clean up any stale probe namespace from a previous crash.
-	if _, err := os.Stat("/run/netns/" + ns); err == nil {
-		execCmd("ip", "netns", "del", ns) // best-effort
+	if _, err := os.Stat("/run/netns/" + probeNS); err == nil {
+		go func() { _, _ = execCmd("ip", probeNetnsCmd, "del", probeNS) }()
 	}
 
 	// Create a temporary netns for the probe.
-	if _, err := execCmd("ip", "netns", "add", ns); err != nil {
+	if _, err := execCmd("ip", probeNetnsCmd, "add", probeNS); err != nil {
 		// Cannot create netns at all (e.g. Lima nested virt). Disable.
 		return bail()
 	}
 	// Unconditional delete regardless of outcome.
-	defer execCmd("ip", "netns", "del", ns)
+	go func() { _, _ = execCmd("ip", probeNetnsCmd, "del", probeNS) }()
 
 	// Quick probe: add a table + a rule using "ct state" (simpler than
 	// "ct count over") inside the netns. If the kernel lacks conntrack
 	// netns support, nft returns "No such file or directory".
 	probe := func(expr string) bool {
 		cmds := [][]string{
-			{"ip", "netns", "exec", ns, "nft", "add", "table", "ip", "faas_ct_probe"},
-			{"ip", "netns", "exec", ns, "nft", "add", "chain", "ip", "faas_ct_probe", "forward",
-				"{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}"},
-			{"ip", "netns", "exec", ns, "nft", "add", "rule", "ip", "faas_ct_probe", "forward", expr},
+			{"ip", probeNetnsCmd, probeNetnsExec, probeNS, probeNftCmd, probeNftAdd, "table", probeFamily, probeTable},
+			{"ip", probeNetnsCmd, probeNetnsExec, probeNS, probeNftCmd, probeNftAdd, "chain", probeFamily, probeTable, probeChain,
+				"{", "type", "filter", "hook", probeChain, "priority", "filter", ";", "policy", "accept", ";", "}"},
+			{"ip", probeNetnsCmd, probeNetnsExec, probeNS, probeNftCmd, probeNftAdd, "rule", probeFamily, probeTable, probeChain, expr},
 		}
 		for _, cmd := range cmds {
 			if _, err := execCmd(cmd[0], cmd[1:]...); err != nil {
