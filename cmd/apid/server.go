@@ -69,6 +69,13 @@ type server struct {
 	// statuses (apiAuthLimiter counts 401; dashboardAuthLimiter
 	// counts every attempt on /login to defeat anti-enumeration).
 	dashboardAuthLimiter *middleware.Limiter
+	// dashboardExportLimiter caps /dashboard/account/export at
+	// 3/min/IP (PR #83 review #14). Pulling the export touches ≥7
+	// PG queries + a JSON encode; a stuck-refresh tab at a customer
+	// site can pin a CPU. AuthLimit's CountEveryAttempt sentinel
+	// turns the existing per-IP failure limiter into a generic
+	// per-IP rate limiter without dragging in x/time/rate.
+	dashboardExportLimiter *middleware.Limiter
 	// statusCache backs GET /status/slo.json (spec §12 public status
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
@@ -174,20 +181,33 @@ func newServerWithDeps(
 	// bucket so the CountEveryAttempt sentinel on /login doesn't bleed
 	// 200s into the API's 401-counter.
 	dashboardAuthLimiter := middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
+	// PR #83 review #14: /dashboard/account/export is expensive
+	// (≥7 PG queries + JSON encode) and lives behind sessionAuth,
+	// not /v1/* auth — so it needs its own per-IP bucket separate
+	// from the dashboard auth bucket. 3 / minute / IP is generous
+	// for a human customer clicking "Download"; high enough that
+	// one legitimate refresh + retry isn't 429'd.
+	dashboardExportLimiter := middleware.NewLimiter(middleware.AuthLimitConfig{
+		Log:           log,
+		Window:        time.Minute,
+		MaxFailures:   3,
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	})
 	return &server{
-		store:                store,
-		log:                  log,
-		domain:               domain,
-		notif:                notif,
-		stripeWebhookSecret:  stripeSecret,
-		mailer:               mailer,
-		githubd:              githubd,
-		events:               bcaster,
-		sessions:             sessions,
-		loginTTL:             loginTTL,
-		dpaPath:              dpaPath,
-		apiAuthLimiter:       apiAuthLimiter,
-		dashboardAuthLimiter: dashboardAuthLimiter,
+		store:                  store,
+		log:                    log,
+		domain:                 domain,
+		notif:                  notif,
+		stripeWebhookSecret:    stripeSecret,
+		mailer:                 mailer,
+		githubd:                githubd,
+		events:                 bcaster,
+		sessions:               sessions,
+		loginTTL:               loginTTL,
+		dpaPath:                dpaPath,
+		apiAuthLimiter:         apiAuthLimiter,
+		dashboardAuthLimiter:   dashboardAuthLimiter,
+		dashboardExportLimiter: dashboardExportLimiter,
 	}
 }
 
@@ -335,6 +355,34 @@ func (s *server) handler() http.Handler {
 	// notification side-effects match the REST API path bit-for-bit.
 	mux.Handle("POST /dashboard/account/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDelete))))
 	mux.Handle("POST /dashboard/account/restore", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRestore))))
+	// GET /dashboard/account/export is the session-authenticated twin
+	// of the REST /v1/account/export. The dashboard template's "Download
+	// JSON export" link points here because the REST endpoint requires
+	// a Bearer API key the dashboard never has. The handler in
+	// dashboard_delete.go reuses gatherExport so the wire shape is
+	// identical to the REST path.
+	//
+	// PR #83 review #14: cap at 3/min/IP via the dedicated
+	// dashboardExportLimiter. /v1/* routes share apiAuthLimiter
+	// (401-counter); this route lives outside /v1/* AND outside
+	// the dashboard auth surface, so it needs its own bucket —
+	// dashboardAuthLimiter counts auth-failures, not every attempt
+	// here, and using it would either under-or-over-share. The
+	// limiter sits OUTSIDE sessionAuth so a 4th hit doesn't waste
+	// a cookie round-trip; the 429 body is the same plain-text
+	// shape AuthLimit emits so dashboards handle it identically.
+	mux.Handle("GET /dashboard/account/export", s.dashboardChain(
+		middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
+			Log:           s.log,
+			Window:        time.Minute,
+			MaxFailures:   3,
+			CountStatuses: []int{middleware.CountEveryAttempt},
+		}, s.dashboardExportLimiter)(s.sessionAuth(http.HandlerFunc(s.dashboardExport)))))
+	// Session-authed twin of GET /v1/account/dpa. The dashboard chrome
+	// is the right surface when a customer reads the DPA in context
+	// (vs. the public route, which streams raw markdown for prospects
+	// and pre-signup browsing). Same file, different envelope.
+	mux.Handle("GET /dashboard/account/dpa", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDPA))))
 
 	// Status page (spec §12 public status page). Unauthenticated by
 	// design — prospects read it before sign-up, customers during

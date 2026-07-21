@@ -67,6 +67,13 @@ type MemStore struct {
 	// stripeByCustomer is the reverse-lookup index used by
 	// AccountByStripeCustomerID; keyed by Stripe `cus_…` ID.
 	stripeByCustomer map[string]string
+	// gdprRequests is the in-memory mirror of the gdpr_requests ledger
+	// row. MemStore does not auto-cascade on DeleteAccount (the
+	// production pgstore does), but AppendGdprRequest rows here are
+	// also intentionally NOT pruned — a unit test that asserts "after
+	// DeleteAccount, the GDPR ledger still has the delete row" needs
+	// them to survive.
+	gdprRequests []GdprRequest
 	// stripePushHours tracks which (account, hour) pairs the hourly
 	// Stripe pusher has already pushed; prevents double-billing on
 	// redelivery.
@@ -129,6 +136,8 @@ func NewMemStore() *MemStore {
 		// stripeByCustomer is the reverse-lookup map AccountByStripeCustomerID
 		// walks; populated by UpdateAccountStripeCustomerID.
 		stripeByCustomer: map[string]string{},
+		// gdprRequests starts empty; AppendGdprRequest appends.
+		gdprRequests: nil,
 		// stripePushHours is the per-(account, hour) dedupe set the
 		// meterd hourly pusher reads/writes.
 		stripePushHours: map[stripePushKey]struct{}{},
@@ -2182,6 +2191,59 @@ func (m *MemStore) RestoreAccount(_ context.Context, id string) error {
 	a.DeletionRequestedAt = nil
 	m.accounts[id] = a
 	return nil
+}
+
+// AppendGdprRequest records the action on the in-memory ledger. Mirrors
+// PgStore: no auto-prune on DeleteAccount (the production table also
+// outlives the account row), so a test can assert the audit row
+// against the email + timestamp after the account row is gone.
+func (m *MemStore) AppendGdprRequest(_ context.Context, r GdprRequest) error {
+	if r.ID == "" {
+		return fmt.Errorf("AppendGdprRequest: id is required")
+	}
+	if r.RequestedAt.IsZero() {
+		r.RequestedAt = time.Now().UTC()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.gdprRequests = append(m.gdprRequests, r)
+	return nil
+}
+
+// ListGdprRequestsForAccount returns the rows in requested_at desc
+// order, bounded by limit. limit <= 0 returns no rows (mirrors the
+// PgStore guard).
+func (m *MemStore) ListGdprRequestsForAccount(_ context.Context, accountID string, limit int) ([]GdprRequest, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]GdprRequest, 0)
+	for i := len(m.gdprRequests) - 1; i >= 0 && len(out) < limit; i-- {
+		if m.gdprRequests[i].AccountID == accountID {
+			out = append(out, m.gdprRequests[i])
+		}
+	}
+	return out, nil
+}
+
+// CompleteGdprRequest stamps completed_at on the most recent
+// un-completed row of (account_id, action) in the in-memory ledger.
+// Returns ErrNotFound when no matching row exists so callers can skip
+// stale ticks without logging noise.
+func (m *MemStore) CompleteGdprRequest(_ context.Context, accountID, action string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now().UTC()
+	for i := len(m.gdprRequests) - 1; i >= 0; i-- {
+		r := &m.gdprRequests[i]
+		if r.AccountID == accountID && r.Action == GdprAction(action) && r.CompletedAt.IsZero() {
+			r.CompletedAt = now
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 
 // LoadAndStampLastQuotaWarning mirrors PgStore.LoadAndStampLastQuotaWarning

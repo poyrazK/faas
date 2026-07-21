@@ -31,6 +31,7 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -2181,7 +2182,11 @@ func (s *PgStore) ListCronsForAccount(ctx context.Context, accountID string) ([]
 	var out []Cron
 	for rows.Next() {
 		c := Cron{}
-		if err := rows.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+		// crons table has no created_at column (see NOTE above); scan
+		// only the 5 selected columns. Cron.CreatedAt stays at the zero
+		// value for rows read by this query — the export bundle omits
+		// it because the GDPR surface doesn't need it.
+		if err := rows.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -2273,6 +2278,98 @@ func (s *PgStore) RestoreAccount(ctx context.Context, id string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
+	}
+	return nil
+}
+
+// AppendGdprRequest records a customer-facing GDPR action against the
+// account email captured at the moment of request. The ledger is
+// INSERT-only from the application side; PgStore does not expose an
+// UPDATE/DELETE path on this table. CompletedAt stays NULL until
+// CompleteGdprRequest stamps it.
+func (s *PgStore) AppendGdprRequest(ctx context.Context, r GdprRequest) error {
+	if r.ID == "" {
+		return fmt.Errorf("AppendGdprRequest: id is required")
+	}
+	if r.RequestedAt.IsZero() {
+		r.RequestedAt = time.Now().UTC()
+	}
+	_, err := s.pool.Exec(ctx,
+		`insert into gdpr_requests
+		   (id, account_id, account_email, action, requested_at, completed_at)
+		 values ($1, $2, $3, $4, $5, $6)`,
+		r.ID, r.AccountID, r.AccountEmail, string(r.Action),
+		r.RequestedAt.UTC(), nullableTimestamptz(r.CompletedAt))
+	return err
+}
+
+// ListGdprRequestsForAccount returns the ledger rows for an account
+// in requested_at desc order. Bounded by limit; passing 0 means "no
+// rows" (MemStore mirrors this so the call site never has to special-
+// case the zero).
+func (s *PgStore) ListGdprRequestsForAccount(ctx context.Context, accountID string, limit int) ([]GdprRequest, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, account_id, account_email, action, requested_at, completed_at
+		   from gdpr_requests
+		  where account_id = $1
+		  order by requested_at desc
+		  limit $2`, accountID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GdprRequest
+	for rows.Next() {
+		var (
+			g           GdprRequest
+			completedAt pgtype.Timestamptz
+		)
+		if err := rows.Scan(&g.ID, &g.AccountID, &g.AccountEmail,
+			&g.Action, &g.RequestedAt, &completedAt); err != nil {
+			return nil, err
+		}
+		if completedAt.Valid {
+			g.CompletedAt = completedAt.Time
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// nullableTimestamptz returns a pgx-friendly NULL when t.IsZero(), so
+// AppendGdprRequest can keep completed_at NULL while the downstream
+// action is in flight. Local helper: there's no shared equivalent in
+// pkg/state yet (other INSERTs in this file use coalesce/default
+// inside SQL, not nullable Go values).
+func nullableTimestamptz(t time.Time) pgtype.Timestamptz {
+	if t.IsZero() {
+		return pgtype.Timestamptz{Valid: false}
+	}
+	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
+}
+
+// CompleteGdprRequest stamps completed_at on the most recent
+// un-completed row of (account_id, action). Returns ErrNotFound when
+// there is no matching row, so pkg/grace after a successful
+// DeleteAccount can detect a stale tick and skip the log.
+func (s *PgStore) CompleteGdprRequest(ctx context.Context, accountID, action string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update gdpr_requests
+		   set completed_at = coalesce(completed_at, now())
+		 where id = (
+		   select id from gdpr_requests
+		    where account_id = $1 and action = $2 and completed_at is null
+		    order by requested_at desc
+		    limit 1
+		 )`, accountID, action)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

@@ -24,12 +24,20 @@ const (
 	StateStopped State = "stopped"
 	// StateFailed: crash-looped (≥3) or boot timed out; parked + operator notified.
 	StateFailed State = "failed"
+	// StateEvictingAccountDeleting: terminal state. schedd's deletion
+	// subscriber (ADR-026) drops a live instance into this state when
+	// the owning account scheduled deletion; the natural reaper
+	// collects the microVM on its next pass. NOT in the legal
+	// transitions map below on purpose — the subscriber is the only
+	// writer, and the state is not reversible from the state machine.
+	StateEvictingAccountDeleting State = "evicting_account_deleting"
 )
 
 // States lists every state (deterministic order for tests + CHECK generation).
 var States = []State{
 	StateParked, StateWaking, StateColdBooting, StateRunning,
 	StateSnapshotting, StateStopped, StateFailed,
+	StateEvictingAccountDeleting,
 }
 
 // transitions is the legal edge set of the state machine (spec §6.1).
@@ -38,12 +46,16 @@ var transitions = map[State][]State{
 	// upgrade → stale snap, or first deploy). The cold-boot branch is
 	// spec §4.4's lazy re-snapshot path.
 	StateParked:       {StateWaking, StateColdBooting},
-	StateWaking:       {StateRunning, StateColdBooting, StateFailed, StateStopped},
-	StateColdBooting:  {StateRunning, StateFailed, StateStopped},
-	StateRunning:      {StateSnapshotting, StateStopped, StateFailed},
-	StateSnapshotting: {StateParked, StateStopped},
+	StateWaking:       {StateRunning, StateColdBooting, StateFailed, StateStopped, StateEvictingAccountDeleting},
+	StateColdBooting:  {StateRunning, StateFailed, StateStopped, StateEvictingAccountDeleting},
+	StateRunning:      {StateSnapshotting, StateStopped, StateFailed, StateEvictingAccountDeleting},
+	StateSnapshotting: {StateParked, StateStopped, StateEvictingAccountDeleting},
 	StateStopped:      {StateColdBooting},
 	StateFailed:       {StateParked, StateColdBooting, StateStopped}, // manual recovery / lazy cold-boot
+	// StateEvictingAccountDeleting is terminal — only the reaper
+	// physically removes the VM; the row is then dropped by the
+	// DeleteAccount walk after the 30-day grace window lapses.
+	StateEvictingAccountDeleting: {},
 }
 
 // Valid reports whether s is a known state.
@@ -80,3 +92,14 @@ func (s State) CountsForConcurrency() bool {
 func (s State) CountsForRAM() bool {
 	return s.CountsForConcurrency() || s == StateSnapshotting
 }
+
+// IsLive reports whether the named state is a live row that the
+// scheduler should consider for work / eviction / RAM accounting.
+// Equivalent to CountsForRAM (snapshot count is included because
+// the snapshot middleware holds the VM paused but still resident).
+//
+// This is the single source of truth for "live" — schedd's
+// eviction subscriber, any future quota eviction, and the
+// MemStore-backed test helpers all read through this predicate so
+// that adding a future state to the live set is a one-line change.
+func IsLive(s string) bool { return State(s).CountsForRAM() }

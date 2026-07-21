@@ -403,3 +403,33 @@ func TestPg_DeleteAccount_OnActiveRowReturnsErrNotFound(t *testing.T) {
 		t.Errorf("AccountByID after no-op delete = %v, want nil", err)
 	}
 }
+
+// TestPg_ListCronsForAccount_ReturnsSeededRows is the regression test
+// for the cron-scan mismatch found in PR #83 review. The shipped
+// pgstore.ListCronsForAccount SELECTed 5 columns but Scan read 6
+// (incl. a non-existent c.CreatedAt), so every PG export call returned
+// a scan error that the apid export helper silently swallowed —
+// crons came back empty in every GDPR bundle. This test seeds a cron
+// via seedFullAccountWithDep and asserts the list round-trips without
+// error and contains the seeded schedule string. Skips in CI when
+// Postgres is unreachable (pgtest.Open).
+func TestPg_ListCronsForAccount_ReturnsSeededRows(t *testing.T) {
+	s, ctx := pgStore(t)
+	acctID, _, err := seedFullAccountWithDep(t, s, ctx)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rows, err := s.ListCronsForAccount(ctx, acctID)
+	if err != nil {
+		t.Fatalf("ListCronsForAccount: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d crons, want 1 (scan mismatch would have returned an empty slice)", len(rows))
+	}
+	if rows[0].Schedule != "*/5 * * * *" {
+		t.Errorf("cron schedule = %q, want %q", rows[0].Schedule, "*/5 * * * *")
+	}
+	if rows[0].Path != "/healthz" || !rows[0].Enabled {
+		t.Errorf("cron row shape = %+v", rows[0])
+	}
+}

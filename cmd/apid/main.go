@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"filippo.io/age"
@@ -199,6 +200,28 @@ func graceIntervalFromEnv(log *slog.Logger) time.Duration {
 	return d
 }
 
+// dpaPathFromEnv resolves the DPA template path. Production wires an
+// explicit FAAS_DPA_PATH pointing at the installed /etc/faas/dpa.md;
+// when that's unset, fall back to <cwd>/docs/DPA.md if that file
+// exists, so `go run ./cmd/apid` from the repo root serves the dev
+// template without a setup step. When neither is set the handler
+// returns 503 — a misconfigured production deploy is observable
+// rather than silently empty (see handlers_account.go::dpaTemplate).
+func dpaPathFromEnv(getenv func(string) string) string {
+	if p := getenv("FAAS_DPA_PATH"); p != "" {
+		return p
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	candidate := filepath.Join(cwd, "docs", "DPA.md")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+	return ""
+}
+
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	store := deps.store()
 
@@ -238,7 +261,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if sessionsWarn != "" {
 		log.Warn("session manager in dev mode; sessions reset on restart", "warning", sessionsWarn)
 	}
-	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, deps.getenv("FAAS_DPA_PATH"))
+	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv))
 
 	// Status page (spec §12 public surface). The Prometheus URL is
 	// the local box's Prometheus installed by deploy/ansible/roles/
