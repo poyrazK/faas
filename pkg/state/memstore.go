@@ -356,6 +356,50 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	return app, nil
 }
 
+// CreateAppIfUnderQuota is the MemStore mirror of PgStore.CreateAppIfUnderQuota.
+// The TOCTOU is impossible here because every mutation holds m.mu for
+// the full check + insert — two goroutines serialize on the same lock,
+// so a Free account that already holds 1 app always sees observed=1 on
+// the second call. The handler's CreateApp call site becomes store-
+// agnostic.
+func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.Limits) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[app.AccountID]; !ok {
+		return App{}, ErrNotFound
+	}
+	// 1. Authoritative count under the same lock. Mirrors the predicate
+	//    PgStore uses against the apps table.
+	observed := 0
+	for _, a := range m.apps {
+		if a.AccountID == app.AccountID && (a.Status == AppActive || a.Status == AppEvictedCold) {
+			observed++
+		}
+	}
+	if observed >= limits.DeployedApps {
+		return App{}, &QuotaError{Limit: limits.DeployedApps, Observed: observed}
+	}
+	// 2. Conditional insert. Slug uniqueness is enforced by the same
+	//    loop CreateApp uses; returning ErrConflict keeps the wire
+	//    contract identical to PgStore's apps.slug unique-index path.
+	for _, a := range m.apps {
+		if a.Slug == app.Slug && a.Status != AppDeleted {
+			return App{}, ErrConflict
+		}
+	}
+	if app.ID == "" {
+		app.ID = newID()
+	}
+	if app.CreatedAt.IsZero() {
+		app.CreatedAt = time.Now()
+	}
+	if app.Status == "" {
+		app.Status = AppActive
+	}
+	m.apps[app.ID] = app
+	return app, nil
+}
+
 func (m *MemStore) AppByID(_ context.Context, id string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

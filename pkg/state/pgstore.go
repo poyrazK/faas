@@ -258,6 +258,79 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	return scanApp(row)
 }
 
+// CreateAppIfUnderQuota inserts an app iff the account currently holds
+// fewer than limits.DeployedApps live apps (active + evicted_cold). The
+// count + insert run inside a single transaction that SELECT … FOR UPDATE
+// locks the parent accounts row, so two concurrent calls on a metered
+// plan cannot both pass the cap check (closes the TOCTOU in the handler).
+//
+// Returns:
+//   - (App, nil) on success
+//   - (App{}, *QuotaError) when the cap is reached
+//   - (App{}, ErrConflict) on slug collision (apps.slug unique index)
+//   - (App{}, ErrNotFound) when the account row is gone
+//
+// The lock is on the single accounts row — the request blocks behind any
+// other createApp for the same account only. Cross-account inserts don't
+// contend, so the one-box stays well under its max_concurrency ceiling.
+func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return App{}, fmt.Errorf("state: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	// 1. Lock the parent accounts row. SELECT 1 + FOR UPDATE keeps the
+	//    lock acquisition in one round-trip; the FOR UPDATE blocks any
+	//    concurrent createApp for the same account until COMMIT/ROLLBACK.
+	//    apps_account_idx (account_id, status) exists from migration 00001
+	//    so the lock search is an index hit.
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, app.AccountID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return App{}, ErrNotFound
+		}
+		return App{}, fmt.Errorf("state: lock account %s: %w", app.AccountID, err)
+	}
+
+	// 2. Authoritative count under the lock. Same predicate as
+	//    CountDeployedApps — matches the MemStore shape so handlers
+	//    don't have to know which store is in use.
+	var observed int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from apps where account_id = $1 and status in ('active','evicted_cold')`,
+		app.AccountID).Scan(&observed); err != nil {
+		return App{}, fmt.Errorf("state: count apps for account %s: %w", app.AccountID, err)
+	}
+	if observed >= limits.DeployedApps {
+		return App{}, &QuotaError{Limit: limits.DeployedApps, Observed: observed}
+	}
+
+	// 3. Conditional insert. The slug unique index surfaces a collision
+	//    as a pgx unique-violation SQLSTATE; mapErr wraps it in ErrConflict.
+	manifest := app.Manifest
+	if manifest.Entrypoint == nil && manifest.Env == nil {
+		manifest = AppManifest{}
+	}
+	manifestBytes, _ := json.Marshal(manifest)
+	runtime := nullString(app.Runtime)
+	idle := nullableInt(app.IdleTimeoutS)
+	row := tx.QueryRow(ctx,
+		`insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances)
+		 values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9)
+		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
+		           max_concurrency, status, manifest, created_at, min_instances`,
+		app.AccountID, app.Slug, string(app.Type), runtime, app.RAMMB, idle, app.MaxConcurrency, manifestBytes, app.MinInstances)
+	created, err := scanApp(row)
+	if err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: commit create app: %w", err)
+	}
+	return created, nil
+}
+
 func (s *PgStore) AppByID(ctx context.Context, id string) (App, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),

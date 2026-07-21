@@ -421,3 +421,104 @@ func TestPg_RenameApp_CrossAccountIsolation(t *testing.T) {
 		}
 	}
 }
+
+// TestPg_CreateAppIfUnderQuota_Concurrent is the real-Postgres mirror
+// of cmd/apid/handlers_quota_test.go::TestCreateApp_ConcurrentQuotaEnforcement_MemStore.
+// Fires N goroutines at CreateAppIfUnderQuota on a Free account
+// (DeployedApps=1). With the SELECT … FOR UPDATE lock on the parent
+// accounts row, exactly one call must commit; the rest must return
+// *QuotaError. Pre-PR this race slipped through because the handler
+// did CountDeployedApps + CreateApp as two separate statements — the
+// MemStore mutex hid it from unit tests, so only a real Postgres run
+// would surface it.
+func TestPg_CreateAppIfUnderQuota_Concurrent(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, err := s.CreateAccount(ctx, "race@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	limits := api.MustLimitsFor(acct.Plan) // DeployedApps = 1
+
+	const n = 10
+	type result struct {
+		app state.App
+		err error
+	}
+	results := make(chan result, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			app := state.App{
+				AccountID: acct.ID,
+				Slug:      "race-" + itoa(i),
+				Type:      state.AppTypeApp,
+				RAMMB:     128, MaxConcurrency: 1,
+				Status: state.AppActive,
+			}
+			<-start
+			created, err := s.CreateAppIfUnderQuota(ctx, app, limits)
+			results <- result{app: created, err: err}
+		}()
+	}
+	close(start)
+
+	var ok int
+	var quota int
+	var other int
+	for i := 0; i < n; i++ {
+		r := <-results
+		switch {
+		case r.err == nil:
+			ok++
+		case errors.Is(r.err, state.ErrQuotaExceeded):
+			quota++
+		default:
+			other++
+			t.Logf("unexpected error: %v", r.err)
+		}
+	}
+	if ok != 1 {
+		t.Errorf("expected exactly one success under cap=1, got %d", ok)
+	}
+	if quota != n-1 {
+		t.Errorf("expected %d ErrQuotaExceeded, got %d", n-1, quota)
+	}
+	if other != 0 {
+		t.Errorf("got %d unexpected errors", other)
+	}
+
+	// Ground truth: the store holds exactly one app for this account.
+	count, err := s.CountDeployedApps(ctx, acct.ID)
+	if err != nil {
+		t.Fatalf("CountDeployedApps: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("store holds %d apps, want 1", count)
+	}
+}
+
+// itoa is the smallest strconv-free int → string conversion; the
+// file already imports time + pkg/api, no need to pull strconv in for
+// one call site.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}

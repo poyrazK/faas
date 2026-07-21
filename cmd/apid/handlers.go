@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -43,15 +44,24 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
-	// Deployed-app count quota (needs the store, so not in ValidateAppConfig).
-	if n, _ := s.store.CountDeployedApps(ctx(r), acct.ID); n >= limits.DeployedApps {
-		api.WriteProblem(w, api.ErrPlanLimitApps(limits, n))
-		return
-	}
-	created, err := s.store.CreateApp(ctx(r), app)
+	// Deployed-app count quota + insert happen in the same critical
+	// section inside the store (PgStore: SELECT … FOR UPDATE on the
+	// parent accounts row; MemStore: m.mu). This closes the TOCTOU the
+	// previous CountDeployedApps + CreateApp pair exposed on Free/Hobby
+	// accounts under concurrency (spec §4.2).
+	created, err := s.store.CreateAppIfUnderQuota(ctx(r), app, limits)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-			"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
+		var qe *state.QuotaError
+		switch {
+		case errors.As(err, &qe):
+			api.WriteProblem(w, api.ErrPlanLimitApps(limits, qe.Observed))
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
+		default:
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
+				"Capacity", "could not create app"))
+		}
 		return
 	}
 	// codeql[go/log-injection] false-positive: created.ID and acct.ID are server-generated UUIDs (pkg/state newID); created.Slug is regex-validated to ^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$ by validSlug before persist.
