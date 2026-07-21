@@ -217,8 +217,8 @@ func TestFixedBackend_Delegates(t *testing.T) {
 //  1. runWithDeps enters the TLS branch (deps.tlsBundle != nil) cleanly when
 //     listeners are injected via deps.listen / deps.extraListen.
 //  2. The shutdown branch executes without panicking when ctx is cancelled
-//     (the deps.tlsBundle.Close(shutdownCtx) call inside main.go:419 is
-//     reached and returns nil for a Config==nil bundle).
+//     (the deps.tlsBundle.Close() call inside main.go is reached and
+//     returns nil for a Config==nil bundle).
 //  3. (*TLSBundle).Close is idempotent — calling it twice returns nil both
 //     times, which is the contract documented on the method.
 //
@@ -291,7 +291,7 @@ func TestRunWithDeps_TLSBundleCloseStopsRenewLoop(t *testing.T) {
 	// twice if SIGTERM lands while the cancel branch is mid-flight. Both
 	// calls must return nil (Close's "calling twice is a no-op" doc).
 	for i := 0; i < 2; i++ {
-		if err := bundle.Close(context.Background()); err != nil {
+		if err := bundle.Close(); err != nil {
 			t.Errorf("bundle.Close call #%d returned %v, want nil", i, err)
 		}
 	}

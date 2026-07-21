@@ -126,10 +126,13 @@ gatewayd control listening addr=127.0.0.1:9090
 ```
 
 The wildcard mint takes 30-60 s; the journalctl excerpt above appears
-once the cert is issued. Watch for `gateway: wildcard cert not obtained
-at startup; will retry on first request` — that means DNS-01 failed
-(probably a Hetzner token perm scope issue) and the daemon will retry
-on first inbound request rather than blocking startup.
+once the cert is issued. The wildcard is obtained lazily on the first
+inbound request via certmagic's OnDemand path (which short-circuits
+eager ManageSync when an OnDemand config is present). If DNS-01 fails
+on the first request — typically a Hetzner token perm scope issue —
+certmagic returns a 5xx and you see the error in
+`journalctl -u faas-gatewayd`; the next inbound request re-triggers
+the mint.
 
 ### 6. Validation matrix
 
@@ -186,10 +189,11 @@ sudo systemctl restart faas-gatewayd
   which one (see `pkg/gateway/tls.go::TLSConfig.Validate`).
 
 - **Wildcard mint hangs for >90 s** — likely DNS-01 propagation delay
-  on the Hetzner zone. The daemon times out, logs
-  `gateway: wildcard cert not obtained at startup; will retry on first request`,
-  and falls through to serve the next request lazily. Re-trigger by
-  hitting `https://apps.example.com/` and watching the journal.
+  on the Hetzner zone. The daemon does not block startup; the wildcard
+  is obtained lazily on the first inbound request via certmagic's
+  OnDemand path. If the first request returns a 5xx, hit
+  `https://apps.example.com/` again and watch the journal — each
+  request re-triggers the mint attempt.
 
 - **Cert-mint abuse vector test fails** (validation #6 returns a
   cert) — the allowlist isn't wired. Check

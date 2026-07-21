@@ -30,8 +30,23 @@
 #   - delegate the apex NS to Hetzner (operator action in registrar UI)
 #   - set up DNSSEC (out of scope for v1; revisit if Hetzner adds it)
 #   - mint the wildcard cert itself (that's the daemon's job on first boot)
+#
+# Dependencies: bash, curl, python3 (parses Hetzner JSON responses).
+# The script fails fast with a clear error if python3 is missing.
 
 set -euo pipefail
+
+# Required tools. python3 parses Hetzner's JSON responses (jq is an option
+# but python3 ships in the EX44 base image already, so we standardize on
+# it). Fail fast with a useful message rather than the cryptic `python3:
+# command not found` mid-script.
+for cmd in python3 curl; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "missing required command: $cmd" >&2
+        echo "(install with: apt-get install -y ${cmd/python3/python3-minimal}  # or equivalent for your distro)" >&2
+        exit 1
+    fi
+done
 
 ZONE=""
 APPS_DOMAIN=""
@@ -63,6 +78,29 @@ done
 if [[ -z "$ZONE" || -z "$APPS_DOMAIN" || -z "$EDGE_HOST" || -z "$HOST_IP" ]]; then
     echo "missing required flag (need --zone --apps-domain --edge-host --host-ip)" >&2
     usage
+fi
+
+# Validate --host-ip is a dotted-quad IPv4. We don't accept IPv6 in the
+# EX44 cut-over (Hetzner's free-tier zone records accept v4 only, and
+# the runbook assumes v4 for the A record). A typo here (e.g. "1.2.3,4")
+# would silently land a broken record and DNS would fail later with a
+# cryptic SERVFAIL.
+if ! [[ "$HOST_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    echo "--host-ip $HOST_IP is not a dotted-quad IPv4 (e.g. 1.2.3.4)" >&2
+    exit 1
+fi
+# Range-check each octet (regex above permits 0-999 per octet; tighten
+# to the legal 0-255). Done as a Python one-liner because bash doesn't
+# have a clean octet-comparison primitive and we already depend on python3.
+if ! python3 -c '
+import sys
+ip = sys.argv[1]
+parts = ip.split(".")
+if len(parts) != 4 or not all(0 <= int(p) <= 255 for p in parts):
+    sys.exit(1)
+' "$HOST_IP"; then
+    echo "--host-ip $HOST_IP has an octet outside 0-255" >&2
+    exit 1
 fi
 
 if [[ ! -r "$TOKEN_FILE" ]]; then

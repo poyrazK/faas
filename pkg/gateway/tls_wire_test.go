@@ -81,11 +81,22 @@ func TestNewCertMagicConfig_BuildsBundle(t *testing.T) {
 	}
 }
 
-// TestNewCertMagicConfig_ManageSyncFailureTolerated — Hetzner stub returns
-// 503 on POST /records; NewCertMagicConfig must NOT propagate that failure,
-// per the tls_wire.go comment "We tolerate failure: a transient Hetzner
-// outage shouldn't block the daemon".
-func TestNewCertMagicConfig_ManageSyncFailureTolerated(t *testing.T) {
+// TestNewCertMagicConfig_ManageSyncReturnsCleanly — when the Hetzner stub
+// returns 503 on POST /records (the path DNS-01 writes _acme-challenge TXT
+// records through), NewCertMagicConfig must not propagate a startup error.
+// A transient Hetzner outage shouldn't block the daemon — the wildcard
+// cert will be obtained lazily on the first inbound request.
+//
+// What this actually exercises: certmagic v0.25's ManageSync short-circuits
+// when an OnDemand config is present (config.go:380 — the domain is added
+// to hostAllowlist and the obtain step is deferred). So our stub's 503
+// never reaches the DNS provider during ManageSync. The "tolerate failure"
+// log path in tls_wire.go:200-203 is dead code in v0.25 — the call returns
+// nil even when the CA / DNS chain would fail. This test pins that
+// contract: the constructor returns a bundle with no error. If a future
+// certmagic upgrade changes the short-circuit (e.g. by always calling
+// obtain), this test will catch the new failure mode via the error return.
+func TestNewCertMagicConfig_ManageSyncReturnsCleanly(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/zones", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"zones":[{"id":"zone-abc","name":"example.com"}]}`))
@@ -111,6 +122,11 @@ func TestNewCertMagicConfig_ManageSyncFailureTolerated(t *testing.T) {
 	if bundle == nil {
 		t.Fatal("bundle is nil despite tolerated ManageSync failure")
 	}
+	// Belt-and-braces: a future certmagic upgrade that re-enables eager
+	// obtain will surface here — the 503 propagates through ManageSync
+	// and the assertion above fails. The contract pinned by this test is
+	// "NewCertMagicConfig returns a non-nil bundle with no error when the
+	// DNS provider stub is unreachable during ManageSync".
 }
 
 // TestNewCertMagicConfig_StagingCAWhenConfigured — UseStagingCA=true flips

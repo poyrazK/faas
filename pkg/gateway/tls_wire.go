@@ -193,14 +193,16 @@ func NewCertMagicConfig(ctx context.Context, cfg TLSConfig, hetznerToken string,
 		certmagic.NewACMEIssuer(magic, issuerTemplate),
 	}
 
-	// Eagerly obtain the wildcard on startup so the first request doesn't
-	// pay the 30-60 s DNS-01 propagation cost. We tolerate failure: a
-	// transient Hetzner outage shouldn't block the daemon — the wildcard
-	// will be obtained lazily on the first request.
-	if err := magic.ManageSync(ctx, []string{cfg.WildcardCertDomain}); err != nil {
-		log.Warn("gateway: wildcard cert not obtained at startup; will retry on first request",
-			"wildcard", cfg.WildcardCertDomain, "err", err)
-	}
+	// Why no ManageSync call here: certmagic v0.25's manageAll short-circuits
+	// when an OnDemand config is present (config.go:380 — the domain is added
+	// to hostAllowlist and the obtain step is deferred). We always set
+	// OnDemand above (the on-demand path is required for custom-domain
+	// certs, gated by the §11 abuse-vector allowlist), so ManageSync would
+	// be a no-op regardless. The wildcard cert is obtained lazily on the
+	// first inbound request via OnDemand; the cache absorbs subsequent
+	// requests. If a future certmagic upgrade removes the short-circuit, we
+	// need to add an eager-obtain call here — but today the lazy path is
+	// the production behavior.
 
 	// HTTPChallengeHandler lives on the *ACMEIssuer, not the *Config — pull
 	// it off the first issuer so main.go can mount it on :80.
@@ -228,13 +230,10 @@ func NewCertMagicConfig(ctx context.Context, cfg TLSConfig, hetznerToken string,
 // in a follow-up). Today Close is a marker so tests can assert a symmetric
 // Close seam and so a future certmagic upgrade can wire real shutdown
 // without changing call sites.
-//
-// ctx is reserved for that future wiring; today it's unused.
-func (b *TLSBundle) Close(ctx context.Context) error {
+func (b *TLSBundle) Close() error {
 	if b == nil || b.Config == nil {
 		return nil
 	}
-	_ = ctx // reserved for a future certmagic API
 	return nil
 }
 

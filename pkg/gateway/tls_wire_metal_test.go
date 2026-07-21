@@ -15,6 +15,9 @@
 //	export FAAS_METAL_TLS_APPS_DOMAIN=apps.example.com  # wildcard host + zone apex
 //	export FAAS_METAL_TLS_CUSTOM_DOMAIN=on-demand.example.com  # for on-demand test
 //	export FAAS_RUN_TLS_METAL=1                        # gate (tests skip without it)
+//	export FAAS_METAL_TLS_PUBLIC_HTTP_LISTENER=1       # only needed for the on-demand test
+//	export FAAS_METAL_TLS_CACHE_DIR=/tmp/faas-metal-tls  # default; reused across runs
+//	export FAAS_METAL_TLS_FRESH_ACCOUNT=1             # opt out of cache (fresh ACME account per run)
 //
 // Skip gates:
 //
@@ -22,6 +25,18 @@
 //   - HETZNER_DNS_API_TOKEN unset (the test would dial the real API without auth)
 //   - FAAS_RUN_TLS_METAL != "1" (operator opt-in — these tests mint real
 //     staging certs and consume rate-limit budget)
+//   - FAAS_METAL_TLS_PUBLIC_HTTP_LISTENER != "1" for TestMetalCertMagic_OnDemandStaging
+//     only (this test triggers an HTTP-01 challenge against the host's public
+//     IP; without a running gatewayd on :80 answering /.well-known/acme-challenge,
+//     the challenge hangs for 90 s and the test fails. The wildcard mint test
+//     uses DNS-01 and does NOT need this gate.)
+//
+// Cache reuse: the metal tests use a stable StorageDir under
+// FAAS_METAL_TLS_CACHE_DIR (default /tmp/faas-metal-tls) so subsequent runs
+// reuse the registered ACME account. Without this, every run would burn a
+// fresh staging account against the 50-accounts-per-IP-per-3h rate limit.
+// Set FAAS_METAL_TLS_FRESH_ACCOUNT=1 to opt out and use t.TempDir instead —
+// useful when asserting first-mint behavior or after rotating contact_email.
 //
 // These tests do NOT run under `make test` (no metal tag). Wire into
 // `make test-metal` via the existing target; operator opts in by exporting
@@ -64,6 +79,33 @@ func quietMetalLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 }
 
+// metalStorageDir returns a stable cache directory under
+// $FAAS_METAL_TLS_CACHE_DIR (default /tmp/faas-metal-tls) unless the
+// operator opts into a fresh account per run via FAAS_METAL_TLS_FRESH_ACCOUNT=1.
+// Using a stable dir reuses the registered ACME account across runs so we
+// don't burn through Let's Encrypt staging's 50-accounts-per-IP-per-3h
+// rate limit. When the dir is reused the issued certs are also reused
+// (skip the mint on subsequent runs unless the cert is near expiry).
+//
+// The fresh-account opt-in is the escape hatch for tests that need to
+// assert first-mint behavior, or for operators who want to clear stale
+// state (e.g. after rotating the contact_email).
+func metalStorageDir(t *testing.T) string {
+	t.Helper()
+	if os.Getenv("FAAS_METAL_TLS_FRESH_ACCOUNT") == "1" {
+		t.Log("FAAS_METAL_TLS_FRESH_ACCOUNT=1: using t.TempDir (fresh ACME account per run)")
+		return t.TempDir()
+	}
+	dir := os.Getenv("FAAS_METAL_TLS_CACHE_DIR")
+	if dir == "" {
+		dir = "/tmp/faas-metal-tls"
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("create metal TLS cache dir %q: %v", dir, err)
+	}
+	return dir
+}
+
 // TestMetalCertMagic_StagingE2E — mint the wildcard *.apps.example.com cert
 // against acme-staging-v02.api.letsencrypt.org. Asserts ManageSync returns
 // nil within 90 s — the production timeout the operator runbook budgets for.
@@ -77,7 +119,7 @@ func quietMetalLogger() *slog.Logger {
 // storage) so we don't accumulate Let's Encrypt staging accounts.
 func TestMetalCertMagic_StagingE2E(t *testing.T) {
 	token, zone, appsDomain, _ := metalTLSEnv(t)
-	storageDir := t.TempDir()
+	storageDir := metalStorageDir(t)
 	cfg := TLSConfig{
 		Disabled:           false,
 		WildcardCertDomain: appsDomain,
@@ -126,7 +168,16 @@ func TestMetalCertMagic_StagingE2E(t *testing.T) {
 //   - Stores the issued cert under cfg.StorageDir.
 func TestMetalCertMagic_OnDemandStaging(t *testing.T) {
 	token, zone, appsDomain, customDomain := metalTLSEnv(t)
-	storageDir := t.TempDir()
+	storageDir := metalStorageDir(t)
+	// HTTP-01 challenge lands on the host's public IP:80. Without a real
+	// gatewayd listener answering /.well-known/acme-challenge for
+	// customDomain, the challenge hangs for the full 90 s timeout and the
+	// test fails with a misleading context-deadline error. Gate this test
+	// separately so operators running the suite on a non-public host only
+	// exercise the DNS-01 wildcard path (TestMetalCertMagic_StagingE2E).
+	if os.Getenv("FAAS_METAL_TLS_PUBLIC_HTTP_LISTENER") != "1" {
+		t.Skip("set FAAS_METAL_TLS_PUBLIC_HTTP_LISTENER=1 to run the HTTP-01 on-demand test (requires a public :80 listener)")
+	}
 	cfg := TLSConfig{
 		Disabled:           false,
 		WildcardCertDomain: appsDomain,

@@ -427,8 +427,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			_ = s.Shutdown(shutdownCtx)
 		}
 		if deps.tlsBundle != nil {
-			//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
-			_ = deps.tlsBundle.Close(shutdownCtx)
+			_ = deps.tlsBundle.Close()
 		}
 		if deps.synth != nil {
 			//nolint:contextcheck // same shutdown-ctx contract as public.Shutdown above.
