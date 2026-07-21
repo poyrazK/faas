@@ -26,6 +26,37 @@ import (
 
 // --- sinks -----------------------------------------------------------------
 
+// requireNoAuth installs the three hermeticity knobs every
+// *RequiresLogin test in cmd/faas needs (memory
+// cmd-faas-requireslogin-hermeticity.md; origin: PR #71 fix-up):
+//
+//   - HOME → a fresh TempDir, so os.UserConfigDir on Darwin points
+//     the token loader at an empty ~/Library/Application Support
+//     instead of the developer's persisted login.
+//   - XDG_CONFIG_HOME → a fresh TempDir. On Linux, os.UserConfigDir
+//     checks XDG_CONFIG_HOME *before* HOME; on the GitHub-hosted
+//     runners this env is exported, so HOME alone leaks.
+//   - resetJSONOutput() (jsonOutput=false) + Cleanup. The package-
+//     level jsonOutput bool is set true by other tests' subtests;
+//     leak through here and printErr takes the JSON branch which
+//     returns exit 1 instead of the expected 2.
+//
+// Without these three knobs a stray host token makes authedClient()
+// succeed so the test falls into the HTTP dialer and reads back a
+// transport error (exit 1), not the no-auth short-circuit (exit 2).
+// Local logs: cmdPS/cmdAppScale returned 1, cmdDashboard returned 0
+// for exactly that reason.
+func requireNoAuth(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("FAAS_API", "http://localhost")
+	t.Setenv("FAAS_TOKEN", "")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+}
+
 // writeJSONTestStatus encodes payload as JSON with the given status
 // (defaulting to 200 if status==0). Used by multiSink to share one
 // writer across all its routes.
@@ -140,13 +171,7 @@ func TestCmdPS_RequiresArg(t *testing.T) {
 //     in the same package doesn't push printErr
 //     into the JSON branch (synth 500 problem).
 func TestCmdPS_RequiresLogin(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("FAAS_API", "http://localhost")
-	t.Setenv("FAAS_TOKEN", "")
-	t.Setenv("HOME", dir)
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	requireNoAuth(t)
 	if code := cmdPS([]string{"hello"}); code != 2 {
 		t.Errorf("cmdPS without token = %d, want 2 (auth)", code)
 	}
@@ -595,13 +620,7 @@ func TestCmdEnvPush_RejectsDirectory(t *testing.T) {
 // See TestCmdPS_RequiresLogin for the HOME + XDG_CONFIG_HOME + jsonOutput
 // hermeticity knobs.
 func TestCmdAppScale_RequiresLogin(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("FAAS_API", "http://localhost")
-	t.Setenv("FAAS_TOKEN", "")
-	t.Setenv("HOME", dir)
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	requireNoAuth(t)
 	if code := cmdAppScale("hello", []string{"--ram", "256"}); code != 2 {
 		t.Errorf("cmdAppScale without token = %d, want 2", code)
 	}
@@ -925,13 +944,7 @@ func TestCmdDashboard_RejectsExtraArgs(t *testing.T) {
 // See TestCmdPS_RequiresLogin for the HOME + XDG_CONFIG_HOME + jsonOutput
 // hermeticity knobs.
 func TestCmdDashboard_RequiresLogin(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("FAAS_API", "http://localhost")
-	t.Setenv("FAAS_TOKEN", "")
-	t.Setenv("HOME", dir)
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	requireNoAuth(t)
 	if code := cmdDashboard(nil); code != 2 {
 		t.Errorf("cmdDashboard no-auth = %d, want 2", code)
 	}
