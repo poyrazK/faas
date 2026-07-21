@@ -106,7 +106,7 @@ The free-text `error` column is preserved as before; the new
 
 ### D2. `deployments.error_code` column
 
-`migrations/00014_deployment_error_code.sql` (NEW):
+`migrations/00022_deployment_error_code.sql` (NEW):
 
 ```sql
 -- +goose Up
