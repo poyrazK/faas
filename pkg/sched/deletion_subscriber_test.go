@@ -18,6 +18,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
@@ -108,7 +109,7 @@ func TestDeletionSubscriber_ParkOnMessage(t *testing.T) {
 	}
 
 	cancel()
-	if err := <-done; err != nil && err != context.Canceled {
+	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run returned %v, want context.Canceled", err)
 	}
 }
@@ -155,7 +156,7 @@ func TestDeletionSubscriber_DuplicateMessageIsNoOp(t *testing.T) {
 	}
 
 	cancel()
-	if err := <-done; err != nil && err != context.Canceled {
+	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run returned %v", err)
 	}
 }
@@ -186,7 +187,7 @@ func TestDeletionSubscriber_BadPayloadSkipped(t *testing.T) {
 		t.Fatalf("good payload didn't evict: %v", err)
 	}
 	cancel()
-	if err := <-done; err != nil && err != context.Canceled {
+	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run returned %v", err)
 	}
 }
