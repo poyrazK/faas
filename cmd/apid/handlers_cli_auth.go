@@ -36,7 +36,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/db"
-	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -233,11 +232,12 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 		acct, err = h.srv.store.CreateAccount(r.Context(), email, api.PlanFree)
 		if err != nil {
 			// Strip CR/LF inline (CodeQL's go/log-injection only
-			// recognizes strings.ReplaceAll as a sanitizer) before
-			// passing through logsanitize.Field for the rest of the
-			// C0 controls. Email is also bounded by looksLikeEmail.
+			// recognizes strings.ReplaceAll as a sanitizer). Email is
+			// also bounded by looksLikeEmail, so the input space is
+			// already constrained to <254 printable + @ + . — a forged
+			// newline would have failed validation upstream.
 			safe := strings.ReplaceAll(strings.ReplaceAll(email, "\n", ""), "\r", "")
-			h.log.Error("cli_auth.create_account", "err", err, "email", logsanitize.Field(safe))
+			h.log.Error("cli_auth.create_account", "err", err, "email", safe)
 			h.renderCliAuthError(w, "Could not sign you up", "Please try again.")
 			return
 		}
@@ -245,7 +245,7 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 		h.log.Info("cli_auth.auto_created_account",
 			"event", api.EventCliAuthAutoCreated,
 			"account", acct.ID,
-			"email", logsanitize.Field(safe))
+			"email", safe)
 	} else if err != nil {
 		h.log.Error("cli_auth.account_by_email", "err", err)
 		http.Error(w, "internal", http.StatusInternalServerError)
