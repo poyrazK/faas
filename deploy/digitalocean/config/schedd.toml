@@ -1,0 +1,7 @@
+# DO dev deployment — schedd config.
+# vmmd_socket will fail to connect (no KVM on DO) — expected.
+socket_path = "/run/faas/schedd.sock"
+vmmd_socket = "/run/faas/vmmd.sock"
+gateway_synth_socket = "/run/faas/gatewayd-internal.sock"
+owner_user = "faas-schedd"
+metrics_addr = "127.0.0.1:9103"

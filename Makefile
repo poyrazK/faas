@@ -3,7 +3,7 @@
 
 GO      ?= go
 PKGS    := ./...
-DAEMONS := apid gatewayd schedd vmmd builderd imaged meterd faas
+DAEMONS := apid gatewayd schedd vmmd builderd imaged meterd faas githubd
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION)
 BINDIR  := bin
@@ -16,11 +16,28 @@ help: ## List targets
 	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
-build: ## Build every daemon into ./bin
+build: guest-runners ## Build every daemon + function runners into ./bin
 	@mkdir -p $(BINDIR)
 	@for d in $(DAEMONS); do \
 	  echo "building $$d"; \
 	  $(GO) build -ldflags '$(LDFLAGS)' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
+	done
+
+# Function-runner shims live in the guest at /usr/local/bin/faas-runner and
+# must be built for the guest architecture (linux/amd64, CGO off). Each
+# shim is tiny (<1 MB); imaged stitches the matching one into the per-app
+# ext4 when the deploy's runtime matches (cmd/imaged wires
+# FAAS_FUNCTION_RUNNER_NODE22 / FAAS_FUNCTION_RUNNER_PYTHON312 to the
+# resulting paths). Build matrix matches guest/init.
+GUEST_RUNNERS := node22 python312
+.PHONY: guest-runners
+guest-runners: ## Build function-runner shims into ./bin/runners/<runtime>/faas-runner
+	@mkdir -p $(BINDIR)/runners
+	@for rt in $(GUEST_RUNNERS); do \
+	  mkdir -p $(BINDIR)/runners/$$rt; \
+	  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+	    $(GO) build -trimpath -o $(BINDIR)/runners/$$rt/faas-runner \
+	      ./guest/runners/$$rt || exit 1; \
 	done
 
 # M1 gRPC codegen (ADR-013). Generated *.pb.go is COMMITTED — do not run

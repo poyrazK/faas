@@ -695,9 +695,15 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (
 	return latest, nil
 }
 
+// ListDeploymentsForApp mirrors PgStore.ListDeploymentsForApp: `limit <= 0`
+// means "no row cap" (every remaining row after offset). F-10: see PgStore
+// doc for the asymmetry that this version already conformed to.
 func (m *MemStore) ListDeploymentsForApp(_ context.Context, appID string, limit, offset int) ([]Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if offset < 0 {
+		offset = 0
+	}
 	var all []Deployment
 	for _, d := range m.deployments {
 		if d.AppID == appID {
@@ -1162,6 +1168,64 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 	return nil
 }
 
+// UpdateInstanceStateToTerminal mirrors PgStore's variant. Writes the
+// new state AND stamps terminal_at on the same locked read-modify-write
+// (PR #74). Engine.transition routes here for {STOPPED, FAILED}; today
+// no caller writes a different timestamp column for those states.
+func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state string, terminalAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return ErrNotFound
+	}
+	ins.State = state
+	ts := terminalAt
+	ins.TerminalAt = &ts
+	m.instances[id] = ins
+	return nil
+}
+
+// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
+// lookup (PR #74). Mirrors ListInstancesByStatesOlderThan but reads
+// terminal_at instead of the state-aware started_at/parked_at pair.
+func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, states []State, threshold time.Time) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wanted := make(map[State]bool, len(states))
+	for _, s := range states {
+		wanted[s] = true
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if !wanted[State(ins.State)] {
+			continue
+		}
+		if ins.TerminalAt == nil {
+			continue
+		}
+		if !ins.TerminalAt.Before(threshold) {
+			continue
+		}
+		out = append(out, ins)
+	}
+	return out, nil
+}
+
+// DeleteInstance removes an instance row unconditionally (PR #74).
+// Returns ErrNotFound when the row is already gone — the retention
+// sweep swallows that case for redelivery. There are no FK cascades;
+// events.subject and usage_minutes.instance_id carry no FK today.
+func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.instances[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m.instances, id)
+	return nil
+}
+
 // ListInstancesByStatesOlderThan is the watchdog's lookup (commit 3,
 // spec §6.1). Mirrors PgStore: coalesce started_at / parked_at on the
 // age comparison.
@@ -1296,6 +1360,140 @@ func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error
 		}
 	}
 	return ErrNotFound
+}
+
+// ListSnapshotsForGC joins snapshots → deployments → apps in-memory and
+// filters out snapshots belonging to soft-deleted apps (apps.status='deleted').
+// MemStore doesn't index the join; the O(N×M) scan is fine for the test
+// harness, which seeds at most a few dozen rows. The slice is sorted
+// newest-first to match PgStore.
+func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	appByID := make(map[string]App, len(m.apps))
+	for _, a := range m.apps {
+		appByID[a.ID] = a
+	}
+	depByID := make(map[string]Deployment, len(m.deployments))
+	for _, d := range m.deployments {
+		depByID[d.ID] = d
+	}
+	var out []SnapshotForGC
+	for _, s := range m.snapshots {
+		if s.Stale {
+			continue
+		}
+		dep, ok := depByID[s.DeploymentID]
+		if !ok {
+			continue
+		}
+		app, ok := appByID[dep.AppID]
+		if !ok || app.Status == AppDeleted {
+			continue
+		}
+		out = append(out, SnapshotForGC{
+			ID:           s.ID,
+			DeploymentID: s.DeploymentID,
+			AppID:        app.ID,
+			AccountID:    app.AccountID,
+			FCVersion:    s.FCVersion,
+			MemBytes:     s.MemBytes,
+			DiskBytes:    s.DiskBytes,
+			Path:         s.Path,
+			Stale:        s.Stale,
+			CreatedAt:    s.CreatedAt,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+// DeleteSnapshotsByID removes the named snapshot rows in-place. Returns
+// the number of rows actually removed; a second call with the same ids
+// returns 0. Never deletes the last live snapshot of a non-deleted app
+// — that invariant would break the "always have a cold-bootable or
+// snapshot-restoreable deployment" rule (spec §6.2-3). MemStore is
+// permissive here because it's test-only; PgStore is authoritative.
+func (m *MemStore) DeleteSnapshotsByID(_ context.Context, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	idSet := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		idSet[id] = struct{}{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.snapshots[:0]
+	var removed int64
+	for _, s := range m.snapshots {
+		if _, drop := idSet[s.ID]; drop {
+			removed++
+			continue
+		}
+		kept = append(kept, s)
+	}
+	m.snapshots = append([]Snapshot(nil), kept...)
+	return removed, nil
+}
+
+// MarkAllSnapshotsStaleByFCVersion mirrors the SQL UPDATE: every non-stale
+// row whose fc_version != currentVersion is flipped. ADR-005.
+func (m *MemStore) MarkAllSnapshotsStaleByFCVersion(_ context.Context, currentVersion string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for i := range m.snapshots {
+		if !m.snapshots[i].Stale && m.snapshots[i].FCVersion != currentVersion {
+			m.snapshots[i].Stale = true
+			n++
+		}
+	}
+	return n, nil
+}
+
+// MarkOldSnapshotsStale flips the given IDs to stale=true (no-op if absent).
+// Used by the per-app "current + previous" enforcement in the GC.
+func (m *MemStore) MarkOldSnapshotsStale(_ context.Context, beforeSnapshotIDs []string) (int64, error) {
+	if len(beforeSnapshotIDs) == 0 {
+		return 0, nil
+	}
+	idSet := make(map[string]struct{}, len(beforeSnapshotIDs))
+	for _, id := range beforeSnapshotIDs {
+		idSet[id] = struct{}{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for i := range m.snapshots {
+		if _, ok := idSet[m.snapshots[i].ID]; ok {
+			m.snapshots[i].Stale = true
+			n++
+		}
+	}
+	return n, nil
+}
+
+// DeleteSnapshotsStaleOlderThan mirrors the SQL DELETE … WHERE stale=true
+// AND created_at < now()-retention. MemStore uses time.Now for the cutoff
+// (deterministic tests pass a future/injected CreatedAt at seed time).
+func (m *MemStore) DeleteSnapshotsStaleOlderThan(_ context.Context, retention time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-retention)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	kept := m.snapshots[:0]
+	for i := range m.snapshots {
+		if m.snapshots[i].Stale && m.snapshots[i].CreatedAt.Before(cutoff) {
+			n++
+			continue
+		}
+		kept = append(kept, m.snapshots[i])
+	}
+	m.snapshots = append([]Snapshot(nil), kept...)
+	return n, nil
 }
 
 // --- Audit ------------------------------------------------------------------
@@ -2220,6 +2418,21 @@ func (m *MemStore) SetParkedAtForTest(id string, parkedAt time.Time) {
 	defer m.mu.Unlock()
 	if ins, ok := m.instances[id]; ok {
 		ins.ParkedAt = parkedAt
+		m.instances[id] = ins
+	}
+}
+
+// SetTerminalAtForTest stamps the row's terminal_at. Used by the §17
+// retention sweep tests in pkg/sched to fabricate terminal rows
+// (STOPPED / FAILED) whose age exceeds the configured retention
+// window. Production wiring does not need this — Engine.transition
+// stamps terminal_at atomically via UpdateInstanceStateToTerminal.
+func (m *MemStore) SetTerminalAtForTest(id string, terminalAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ins, ok := m.instances[id]; ok {
+		ts := terminalAt
+		ins.TerminalAt = &ts
 		m.instances[id] = ins
 	}
 }

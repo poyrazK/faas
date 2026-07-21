@@ -116,6 +116,12 @@ const DunningSuspendedToDeletedDuration = 21 * 24 * time.Hour
 // Run loops on Interval until ctx is cancelled. Each tick calls
 // RunOnce; per-tick errors are logged and swallowed so a transient
 // store outage doesn't kill the loop (matches pkg/grace.Run).
+//
+// Deprecated as of feat/m7-meterd-observability: Loop.runTicks is now
+// the unified ticker driver for all four meterd timers (sample / quota /
+// stripe / dunning) — it owns the per-tick Observe + lastTick stamping,
+// so dunning reuses it instead of running its own ticker. Kept here only
+// for any external caller; Loop.Run no longer invokes it.
 func (d *Dunning) Run(ctx context.Context) error {
 	t := time.NewTicker(d.p.Interval)
 	defer t.Stop()

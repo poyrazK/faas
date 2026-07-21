@@ -797,7 +797,18 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 		e.log.Error("transition: illegal edge refused", "instance", instanceID, "from", from, "to", to)
 		return
 	}
-	if err := e.store.UpdateInstanceState(ctx, instanceID, string(to)); err != nil {
+	// Terminal transitions ({STOPPED, FAILED}) stamp terminal_at on the
+	// same UPDATE so the §17 retention sweep has a correct age anchor
+	// (PR #74). started_at means "row creation" and parked_at is
+	// overloaded, so neither is right for a STOPPED row whose vmmd
+	// boot succeeded days earlier. Non-terminal transitions keep the
+	// single-column UPDATE.
+	if to == state.StateStopped || to == state.StateFailed {
+		if err := e.store.UpdateInstanceStateToTerminal(ctx, instanceID, string(to), time.Now().UTC()); err != nil {
+			e.log.Warn("transition: write terminal", "instance", instanceID, "to", to, "err", err)
+			return
+		}
+	} else if err := e.store.UpdateInstanceState(ctx, instanceID, string(to)); err != nil {
 		e.log.Warn("transition: write", "instance", instanceID, "to", to, "err", err)
 		return
 	}

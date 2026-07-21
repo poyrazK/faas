@@ -258,6 +258,12 @@ type Store interface {
 	// rootfs — never neither, invariant §6.2-3).
 	LiveDeployment(ctx context.Context, appID string) (Deployment, error)
 	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
+	// ListDeploymentsForApp returns deployments for an app, ordered DESC by
+	// created_at. limit <= 0 means "no row cap" (return every remaining row
+	// after offset). MemStore and PgStore both honour this contract — F-10
+	// closed the prior silent asymmetry where Postgres' `LIMIT 0` returned
+	// zero rows and MemStore returned all rows. NaN `offset` (= negative
+	// value) is treated as 0 by both backends.
 	ListDeploymentsForApp(ctx context.Context, appID string, limit, offset int) ([]Deployment, error)
 	// ListDeploymentsForAccount returns deployments across every app the
 	// account owns, cursor-paginated by created_at DESC. before is the
@@ -358,6 +364,15 @@ type Store interface {
 	// entered current state"), so the engine must stamp it on entry.
 	// Non-SNAPSHOTTING transitions should still use UpdateInstanceState.
 	UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error
+	// UpdateInstanceStateToTerminal writes state AND stamps terminal_at
+	// on the same UPDATE (PR #74, spec §17 follow-up). terminal_at is
+	// the dedicated retention anchor the daily sweep (pkg/sched.Retention)
+	// reads; started_at means "row creation" and parked_at is overloaded
+	// (also means "entered PARKED"), so neither is correct for a STOPPED
+	// row whose vmmd boot succeeded days earlier. Engine.transition
+	// routes here when the target state is STOPPED or FAILED; every other
+	// transition still uses UpdateInstanceState / UpdateInstanceStateWithTimestamp.
+	UpdateInstanceStateToTerminal(ctx context.Context, id, state string, terminalAt time.Time) error
 	// ListInstancesByStatesOlderThan is the §6.1 watchdog's lookup.
 	// Returns rows currently in any of the given states whose
 	// "age timestamp" is strictly older than threshold. The age
@@ -370,6 +385,25 @@ type Store interface {
 	// parked_at. PgStore relies on migration 00016's partial index
 	// for the state predicate.
 	ListInstancesByStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
+	// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
+	// lookup (PR #74). Returns rows currently in any of the given states
+	// (today: {STOPPED, FAILED}) whose terminal_at is strictly older than
+	// threshold. Order is implementation-defined. Reads the dedicated
+	// terminal_at column — distinct from ListInstancesByStatesOlderThan,
+	// which uses the state-aware started_at/parked_at comparison and is
+	// the wrong tool for retention aging (a STOPPED row that booted
+	// successfully has a stale started_at). PgStore relies on migration
+	// 00017's partial index for the state predicate.
+	ListInstancesInTerminalStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
+	// DeleteInstance removes a single instance row unconditionally
+	// (PR #74). Returns ErrNotFound when the row is already gone — the
+	// retention sweep swallows that case for redelivery. There are NO
+	// foreign-key cascades: events.subject and usage_minutes.instance_id
+	// carry no FK to instances today (audit log is append-only by spec
+	// §6.1; usage is reconciled by account hard-delete). Adding a FK
+	// in a future migration would silently break this sweep — review
+	// PR-#74's readme when touching either table.
+	DeleteInstance(ctx context.Context, id string) error
 	// SetInstanceRuntime records the per-instance identity vmmd allocated on
 	// wake (netns, routable host IP, jail uid) and stamps started_at=now. schedd
 	// calls this between a successful vmmd boot and the RUNNING transition so the
@@ -389,6 +423,33 @@ type Store interface {
 	CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, error)
 	LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error)
 	MarkSnapshotStale(ctx context.Context, snapshotID string) error
+
+	// Snapshot GC (imaged nightly + on FC upgrade, spec §4.6 + §4.4).
+	//
+	// ListSnapshotsForGC returns every non-stale snapshot joined with its
+	// deployment + app + account. Soft-deleted apps (status='deleted') are
+	// excluded; their snapshots have no in-flight wake target.
+	ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error)
+	// DeleteSnapshotsByID bulk-removes the named snapshot rows (no cascade).
+	// Returns the number of rows deleted; a second call with the same ids
+	// returns 0 and no error.
+	DeleteSnapshotsByID(ctx context.Context, ids []string) (int64, error)
+	// MarkAllSnapshotsStaleByFCVersion flips every non-stale row whose
+	// fc_version != currentVersion stale (ADR-005: snapshots are pinned to
+	// the Firecracker version that made them). Returns the number of rows
+	// affected. Idempotent.
+	MarkAllSnapshotsStaleByFCVersion(ctx context.Context, currentVersion string) (int64, error)
+	// MarkOldSnapshotsStale marks the given snapshot IDs stale (per-app
+	// "current + previous" enforcement, run before DeleteSnapshotsByID).
+	MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs []string) (int64, error)
+	// DeleteSnapshotsStaleOlderThan removes rows where stale=true AND
+	// created_at < now()-retention. Used by imaged's F2 startup sweep
+	// after the mark-stale step: old snapshots stay restorable for a
+	// retention window (typically 7 days per api.SnapshotStaleRetention)
+	// so a firecracker downgrade or operator rollback doesn't pay an
+	// extra cold boot. After the window they go away. Returns the row
+	// count. Idempotent.
+	DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error)
 
 	// Audit (append-only, spec §6.1).
 	AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error

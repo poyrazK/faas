@@ -102,13 +102,24 @@ type runDeps struct {
 	// TLS is enabled). nil in the legacy path. Tests use it to exercise
 	// the production-style dual-listener setup without binding :80.
 	extraListen func(network, addr string) (net.Listener, error)
+	// controlAddr is the loopback control-plane bind (default
+	// 127.0.0.1:9090). Tests inject a free-port value via "127.0.0.1:0"
+	// + the resolved listener so two tests in the same package don't race
+	// for the hard-coded production port.
+	controlAddr string
+	// apidLoopback is the operator-configured upstream URL the apidProxy
+	// forwards to (cfg.APIDLoopback / deploy/digitalocean/config/
+	// gatewayd.toml `apid_loopback`). Empty in tests; run() populates it
+	// from cfg before invoking runWithDeps.
+	apidLoopback string
 }
 
 func defaultDeps() runDeps {
 	return runDeps{
-		listen:  net.Listen,
-		newSrv:  defaultServer,
-		backend: unwiredBackend{},
+		listen:      net.Listen,
+		newSrv:      defaultServer,
+		backend:     unwiredBackend{},
+		controlAddr: controlAddr,
 	}
 }
 
@@ -202,7 +213,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("gatewayd: Hetzner DNS token: %w", err)
 		}
-		bundle, err := gateway.NewCertMagicConfig(ctx, resolved, tok, log)
+		bundle, err := gateway.NewCertMagicConfig(ctx, resolved, tok, log, nil)
 		if err != nil {
 			return fmt.Errorf("gatewayd: certmagic: %w", err)
 		}
@@ -212,6 +223,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// Public listener now binds :443, not :8080.
 		listenAddr = ":443"
 	}
+	// Forward the operator-configured apid loopback URL through the
+	// test seam so runWithDeps can stay TOML-free (issue #85).
+	deps.apidLoopback = cfg.APIDLoopback
 	return runWithDeps(ctx, log, deps)
 }
 
@@ -266,16 +280,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}()
 
 	// Public listener: customer traffic (spec §4.1). The handler is
-	// wrapped in a dashboardProxy (M7.5, ADR-011) so /dashboard/* and
-	// /oauth/* reverse-proxy to apid's loopback listener while
-	// everything else falls through to gateway.Handler's wake/proxy
-	// flow. Slice 7 adds /webhooks/github to the same shape (with
-	// HMAC edge-verification in front of the proxy hop).
-	apidTarget := os.Getenv("FAAS_APID_LOOPBACK")
+	// wrapped in an apidProxy (M7.5, ADR-011, broadened in issue #85)
+	// so the full apid public surface — /dashboard/*, /oauth/*,
+	// /v1/*, /login*, /auth/verify, /logout, /status*, /healthz —
+	// reverse-proxies to apid's loopback listener. Everything else
+	// falls through to gateway.Handler's wake/proxy flow.
+	//
+	// Target resolution (issue #85): the TOML-loaded
+	// cfg.APIDLoopback (threaded via deps.apidLoopback) wins;
+	// FAAS_APID_LOOPBACK env is kept as a fallback so the e2e
+	// harness (no TOML) keeps working.
+	apidTarget := deps.apidLoopback
+	if apidTarget == "" {
+		apidTarget = os.Getenv("FAAS_APID_LOOPBACK")
+	}
 	if apidTarget == "" {
 		apidTarget = "http://127.0.0.1:8081"
 	}
-	dashboardHandler := newDashboardProxy(apidTarget, handler, log)
+	apidHandler := newApidProxy(apidTarget, handler, log)
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-
@@ -288,7 +310,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		githubdTarget = "http://127.0.0.1:8083"
 	}
 	githubdSecret := loadGithubWebhookSecret(osGetenv)
-	publicHandler := newGithubdProxy(githubdTarget, githubdSecret, dashboardHandler, log)
+	publicHandler := newGithubdProxy(githubdTarget, githubdSecret, apidHandler, log)
 
 	// Private listener: control plane only — never authenticated (it's on a
 	// private bind), never reachable from the public-internet path.
@@ -384,9 +406,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}()
 	}
+	ctrlAddr := controlAddr
+	if deps.controlAddr != "" {
+		ctrlAddr = deps.controlAddr
+	}
 	go func() {
-		log.Info("gatewayd control listening", "addr", controlAddr)
-		errc <- gateway.RunControlServer(ctx, controlAddr, controlMux)
+		log.Info("gatewayd control listening", "addr", ctrlAddr)
+		errc <- gateway.RunControlServer(ctx, ctrlAddr, controlMux)
 	}()
 
 	// Internal unix-socket RPC for schedd's cron dispatch (spec §4.4,
@@ -408,11 +434,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer cancel()
 		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
 		// Best-effort shutdown of every listener we may have started.
-		// Servers track themselves in `servers`; certmagic owns its own renew
-		// loop on a separate goroutine and is intentionally NOT touched here
-		// (closing the certmagic.Config would race against in-flight mints).
+		// Servers track themselves in `servers`; certmagic owns its renew loop
+		// on a separate goroutine — we Close the bundle now that the public +
+		// ACME servers have drained. The bundle's Close is a no-op against
+		// certmagic v0.25 (no public Stop API) but the seam lets a future
+		// upgrade wire real shutdown without touching call sites.
 		for _, s := range servers {
 			_ = s.Shutdown(shutdownCtx)
+		}
+		if deps.tlsBundle != nil {
+			_ = deps.tlsBundle.Close()
 		}
 		if deps.synth != nil {
 			//nolint:contextcheck // same shutdown-ctx contract as public.Shutdown above.
