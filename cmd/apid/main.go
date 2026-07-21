@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -37,12 +38,20 @@ func seedDevAccount(ctx context.Context, store state.Store, token string) error 
 	if !api.ValidAPIKeyFormat(token) {
 		return fmt.Errorf("FAAS_DEV_TOKEN is not a valid API key (want %s… format)", api.APIKeyPrefix)
 	}
-	acct, err := store.CreateAccount(ctx, "dev@local", api.PlanFree)
-	if err != nil {
+	acct, err := store.AccountByEmail(ctx, "dev@local")
+	if errors.Is(err, state.ErrNotFound) {
+		acct, err = store.CreateAccount(ctx, "dev@local", api.PlanFree)
+		if err != nil {
+			return err
+		}
+	} else if err != nil {
 		return err
 	}
 	_, err = store.CreateAPIKey(ctx, acct.ID, api.HashAPIKey(token), "dev")
-	return err
+	if err != nil && !errors.Is(err, state.ErrConflict) {
+		return err
+	}
+	return nil
 }
 
 // envOr returns the value of env key, or fallback when unset/empty.

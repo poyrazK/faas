@@ -1,0 +1,4 @@
+# DO dev deployment — githubd config.
+# GitHub App credentials come from sealed.env.
+socket_path = "/run/faas/githubd.sock"
+http_addr = "127.0.0.1:8083"
