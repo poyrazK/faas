@@ -276,10 +276,11 @@ const (
 	probeFamily    = "ip"
 	probeChain     = "forward"
 	probeNftCmd    = "nft"
-	probeNftAdd   = "add"
+	probeNftAdd    = "add"
 	probeNetnsExec = "exec"
 	probeNetnsCmd  = "netns"
 )
+
 // Returns DefaultConntrackCap when the kernel supports the ct expression
 // inside network namespaces (CONFIG_NF_CONNTRACK_NET_NS=y); returns 0
 // when it doesn't so the ct cap rules are silently omitted (egress tc
