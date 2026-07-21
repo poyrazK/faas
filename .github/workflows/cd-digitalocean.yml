@@ -56,18 +56,26 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.DO_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Upload binaries
+      - name: Upload binaries to temporary directory
         run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            root@${{ secrets.DO_HOST }} "mkdir -p /opt/faas/bin/deploy-tmp"
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             bin/apid bin/schedd bin/gatewayd bin/imaged bin/meterd \
             bin/githubd bin/faas bin/migrate \
-            root@${{ secrets.DO_HOST }}:/opt/faas/bin/
+            root@${{ secrets.DO_HOST }}:/opt/faas/bin/deploy-tmp/
 
-      - name: Run migrations & restart services
+      - name: Install binaries, run migrations & restart services
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             root@${{ secrets.DO_HOST }} 'bash -s' << 'REMOTE'
           set -euo pipefail
+
+          # Safely overwrite running binaries using 'install' (unlinks old files)
+          for bin in apid schedd gatewayd imaged meterd githubd faas migrate; do
+            install -m 0755 /opt/faas/bin/deploy-tmp/$bin /opt/faas/bin/$bin
+          done
+          rm -rf /opt/faas/bin/deploy-tmp
 
           # Run pending migrations as faas user.
           su - faas -s /bin/bash -c \
