@@ -50,12 +50,19 @@ func WithHTTPClient(hc *http.Client) Option {
 }
 
 // WithTimeout overrides the per-request HTTP timeout. The default is
-// api.OCIPullTimeoutSeconds (60s, ADR-021). Composes with WithHTTPClient
-// in last-argument-wins order: if both options are passed, the timeout
-// applied last overrides whatever the http.Client already had. Doc note
-// for callers: prefer passing exactly one — either WithHTTPClient (when
-// you need a custom transport) or WithTimeout (when the default client
-// is fine and only the deadline differs).
+// api.OCIPullTimeoutSeconds (60s, ADR-021).
+//
+// Composition with WithHTTPClient is asymmetric on purpose: WithHTTPClient
+// replaces the underlying *http.Client outright (including its Timeout
+// field), and WithTimeout writes back into c.hc.Timeout. The ordering
+// that produces a meaningful timeout+custom-transport result is therefore
+//
+//	NewRegistryClient(WithHTTPClient(myHC), WithTimeout(d))   // → myHC.Timeout == d
+//
+// If you reverse the order (WithTimeout first, then WithHTTPClient) the
+// transport's own zero Timeout wins and the deadline is lost. Pass
+// WithTimeout last whenever you also pass WithHTTPClient. Callers that
+// only need a deadline (no custom transport) can pass WithTimeout alone.
 func WithTimeout(d time.Duration) Option {
 	return func(c *RegistryClient) {
 		if d <= 0 {

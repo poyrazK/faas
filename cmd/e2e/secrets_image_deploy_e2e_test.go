@@ -143,14 +143,15 @@ func TestSecretsImageDeployMetal(t *testing.T) {
 	defer cancel()
 	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depResp.ID, 60*time.Second); err != nil {
 		// On failure, dump the deployment row + tag a G2 ship-blocker
-		// failure explicitly. ErrNoHostKey in the deployment's error
-		// message is the unambiguous signal that Subtask 2 regressed.
+		// failure explicitly. hostKeyNotLoadedMarker in the deployment's
+		// error message is the unambiguous signal that vmmd's Manager
+		// returned pkg/fcvm.ErrNoHostKey — i.e. the host-key lifecycle
+		// wiring in cmd/vmmd/main.go regressed and the G2 ship-blocker
+		// is back.
 		if d, derr := state.NewPgStore(pool).DeploymentByID(ctx, depResp.ID); derr == nil {
 			t.Logf("deployment state at failure: status=%s error=%q code=%q",
 				d.Status, d.Error, d.ErrorCode)
-			if d.Status == state.DeployFailed &&
-				(strings.Contains(d.Error, "no host key") ||
-					strings.Contains(d.Error, "ErrNoHostKey")) {
+			if d.Status == state.DeployFailed && strings.Contains(d.Error, hostKeyNotLoadedMarker) {
 				t.Fatalf("G2 SHIP-BLOCKER REGRESSED: vmmd refused to wake — host-key lifecycle not wired: %v", err)
 			}
 		}
@@ -188,3 +189,13 @@ func preSeedHostKey(t *testing.T, keyPath, pubPath string) {
 		t.Fatalf("write pub: %v", err)
 	}
 }
+
+// hostKeyNotLoadedMarker is the substring of pkg/fcvm.ErrNoHostKey
+// ("fcvm: host identity not loaded") that surfaces in the deployment
+// row when vmmd's Manager refuses to wake a secret-bearing app. We
+// can't errors.Is here — schedd translates the wake error into the
+// row's free-text Error column before we read it — so the test pins
+// against the sentinel's message text. If the sentinel's wording
+// changes, this check will fire and force a co-located update, which
+// is the desired tripwire.
+const hostKeyNotLoadedMarker = "fcvm: host identity not loaded"
