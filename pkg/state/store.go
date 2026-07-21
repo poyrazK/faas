@@ -17,7 +17,7 @@ var ErrNotFound = errors.New("state: not found")
 // the observed count so apid can include it in the 403 envelope via
 // api.ErrPlanLimitApps without re-running the count.
 type QuotaError struct {
-	Limit  int // limits.DeployedApps at the time of the call
+	Limit    int // limits.DeployedApps at the time of the call
 	Observed int // count(*) of live apps observed inside the same critical section
 }
 
