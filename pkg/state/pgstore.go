@@ -2181,7 +2181,11 @@ func (s *PgStore) ListCronsForAccount(ctx context.Context, accountID string) ([]
 	var out []Cron
 	for rows.Next() {
 		c := Cron{}
-		if err := rows.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled, &c.CreatedAt); err != nil {
+		// crons table has no created_at column (see NOTE above); scan
+		// only the 5 selected columns. Cron.CreatedAt stays at the zero
+		// value for rows read by this query — the export bundle omits
+		// it because the GDPR surface doesn't need it.
+		if err := rows.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

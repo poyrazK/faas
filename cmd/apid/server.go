@@ -335,6 +335,13 @@ func (s *server) handler() http.Handler {
 	// notification side-effects match the REST API path bit-for-bit.
 	mux.Handle("POST /dashboard/account/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDelete))))
 	mux.Handle("POST /dashboard/account/restore", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRestore))))
+	// GET /dashboard/account/export is the session-authenticated twin
+	// of the REST /v1/account/export. The dashboard template's "Download
+	// JSON export" link points here because the REST endpoint requires
+	// a Bearer API key the dashboard never has. The handler in
+	// dashboard_delete.go reuses gatherExport so the wire shape is
+	// identical to the REST path.
+	mux.Handle("GET /dashboard/account/export", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardExport))))
 
 	// Status page (spec §12 public status page). Unauthenticated by
 	// design — prospects read it before sign-up, customers during

@@ -19,7 +19,9 @@ package main
 // account template (see pkg/dashboard/templates/account.html).
 
 import (
+	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -67,6 +69,34 @@ func (s *server) dashboardRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/dashboard/account?restored=1", http.StatusFound)
+}
+
+// dashboardExport handles GET /dashboard/account/export. The dashboard
+// template's "Download JSON export" link previously pointed at
+// /v1/account/export, which sits behind s.auth (Bearer API key) —
+// the dashboard only has the session cookie, so the link silently 401'd.
+// This handler serves the same JSON bundle from a session-authenticated
+// route, reusing gatherExport so the wire shape stays identical to the
+// REST export.
+func (s *server) dashboardExport(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Mirror the REST endpoint's ?include_secrets=false flag.
+	include := r.URL.Query().Get("include_secrets") != "false"
+	bundle, err := gatherExport(r.Context(), s, acct, include)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not assemble export"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition",
+		`attachment; filename="faas-account-`+acct.ID+`-`+
+			time.Now().UTC().Format("20060102")+`.json"`)
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(bundle)
 }
 
 // confirmTokenMatches verifies the form's confirmation token against

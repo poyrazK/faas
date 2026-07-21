@@ -11,15 +11,29 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// deletionPendingPayload is the JSON shape the account_deletion_pending
+// pg_notify channel carries. Matches the contract documented at
+// pkg/db/notify.go (account_id, scheduled_at, restore_until) so any
+// future schedd subscriber can drop live instances at the moment of
+// pending without re-deriving the grace window.
+type deletionPendingPayload struct {
+	AccountID    string `json:"account_id"`
+	ScheduledAt  string `json:"scheduled_at"`
+	RestoreUntil string `json:"restore_until"`
+}
 
 // exportAccount writes a single JSON bundle of every row tied to the
 // account. ?include_secrets=false drops the ciphertext slice (the
@@ -73,6 +87,23 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account) (stat
 			_ = s.mailer.Send(ctx, Message{
 				To: []string{fresh.Email}, Subject: subject, TextBody: body,
 			})
+			// Emit pg_notify so any subscriber (audit, schedd's
+			// live-instance evictor once it lands) can react without
+			// polling. The payload matches the contract in
+			// pkg/db/notify.go::NotifyAccountDeletionPending. Failure
+			// here is a Warn, not a 5xx — the deletion row is the
+			// source of truth and pkg/grace still reaps on schedule.
+			if s.notif != nil {
+				payload, _ := json.Marshal(deletionPendingPayload{
+					AccountID:    fresh.ID,
+					ScheduledAt:  fresh.DeletionRequestedAt.UTC().Format(time.RFC3339Nano),
+					RestoreUntil: restoreUntil.UTC().Format(time.RFC3339Nano),
+				})
+				if err := s.notif.Notify(ctx, db.NotifyAccountDeletionPending, string(payload)); err != nil {
+					s.log.Warn("apid: notify account_deletion_pending failed",
+						"account", fresh.ID, "err", err)
+				}
+			}
 		}
 		return fresh, nil
 	}
@@ -149,6 +180,12 @@ func writeDeletionEnvelope(w http.ResponseWriter, acct state.Account) {
 // store calls. The slice order is the order the bundle serializes —
 // top-level fields first so reviewers can see the envelope shape at
 // a glance.
+//
+// A failure in any per-resource list is collected and surfaced via
+// errors.Join; the handler converts that into a 500 capacity
+// envelope. Silent omission is the bug this function used to have:
+// a partial export that returned 200 left a customer thinking their
+// bundle was complete when it was not.
 func gatherExport(ctx context.Context, s *server, acct state.Account, includeSecrets bool) (api.AccountExportResponse, error) {
 	apps, err := s.store.ListApps(ctx, acct.ID)
 	if err != nil {
@@ -158,6 +195,38 @@ func gatherExport(ctx context.Context, s *server, acct state.Account, includeSec
 	for _, a := range apps {
 		appOut = append(appOut, s.appResponse(a))
 	}
+
+	// Deployments are read once and shared: buildDeploymentsForExport
+	// emits the DTO list, and listBuildsForAccountExport uses the same
+	// slice to map each build's DeploymentID back to its AppID
+	// (BuildExportResponse.AppID was previously zeroed because builds
+	// have no AppID column of their own).
+	depRows, err := s.store.ListDeploymentsForAccount(ctx, acct.ID, time.Time{}, 1000)
+	if err != nil {
+		return api.AccountExportResponse{}, err
+	}
+	depByID := make(map[string]string, len(depRows))
+	for _, d := range depRows {
+		depByID[d.ID] = d.AppID
+	}
+
+	deployments, depErr := buildDeploymentsForExport(depRows)
+	instances, insErr := listInstancesForAccountExport(ctx, s.store, acct.ID)
+	usage, useErr := listUsageForAccountExport(ctx, s.store, acct.ID)
+	domains, domErr := listDomainsForAccountExport(ctx, s.store, acct.ID)
+	crons, crnErr := listCronsForAccountExport(ctx, s.store, acct.ID)
+	keys, keyErr := listKeysForAccountExport(ctx, s.store, acct.ID)
+	builds, bldErr := listBuildsForAccountExport(ctx, s.store, acct.ID, depByID)
+	secrets, secErr := listSecretsForAccountExport(ctx, s.store, acct.ID, apps, includeSecrets)
+
+	if err := errors.Join(depErr, insErr, useErr, domErr, crnErr, keyErr, bldErr, secErr); err != nil {
+		// Log per-resource failures so an operator can correlate a
+		// customer-reported "export is missing X" with the actual DB
+		// failure. The handler returns 500; the customer retries.
+		s.log.Warn("apid: gatherExport partial failure", "account", acct.ID, "err", err)
+		return api.AccountExportResponse{}, err
+	}
+
 	return api.AccountExportResponse{
 		ExportedAt: time.Now().UTC().Format(time.RFC3339),
 		// No incoming request context here — the export is built
@@ -168,24 +237,23 @@ func gatherExport(ctx context.Context, s *server, acct state.Account, includeSec
 		//nolint:contextcheck
 		Account:     s.accountResponse(context.Background(), acct, nil),
 		Apps:        appOut,
-		Deployments: listDeploymentsForAccountExport(ctx, s.store, acct.ID),
-		Builds:      listBuildsForAccountExport(ctx, s.store, acct.ID),
-		Instances:   listInstancesForAccountExport(ctx, s.store, acct.ID),
-		Usage:       listUsageForAccountExport(ctx, s.store, acct.ID),
-		Domains:     listDomainsForAccountExport(ctx, s.store, acct.ID),
-		Crons:       listCronsForAccountExport(ctx, s.store, acct.ID),
-		APIKeys:     listKeysForAccountExport(ctx, s.store, acct.ID),
-		AppSecrets:  listSecretsForAccountExport(ctx, s.store, acct.ID, apps, includeSecrets),
+		Deployments: deployments,
+		Builds:      builds,
+		Instances:   instances,
+		Usage:       usage,
+		Domains:     domains,
+		Crons:       crons,
+		APIKeys:     keys,
+		AppSecrets:  secrets,
 	}, nil
 }
 
 // --- per-resource list helpers (each ≤50 LoC, exported for tests) -------
 
-func listDeploymentsForAccountExport(ctx context.Context, st state.Store, accountID string) []api.DeploymentResponse {
-	rows, err := st.ListDeploymentsForAccount(ctx, accountID, time.Time{}, 1000)
-	if err != nil {
-		return nil
-	}
+// buildDeploymentsForExport shapes pre-fetched deployment rows into
+// the DTO list. Reads no store — the gatherExport caller already
+// fetched them once for the deploymentID→appID map (see Bug 4 fix).
+func buildDeploymentsForExport(rows []state.Deployment) ([]api.DeploymentResponse, error) {
 	out := make([]api.DeploymentResponse, 0, len(rows))
 	for _, d := range rows {
 		out = append(out, api.DeploymentResponse{
@@ -195,30 +263,36 @@ func listDeploymentsForAccountExport(ctx context.Context, st state.Store, accoun
 			CreatedAt: d.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	return out
+	return out, nil
 }
 
-func listBuildsForAccountExport(ctx context.Context, st state.Store, accountID string) []api.BuildExportResponse {
+// listBuildsForAccountExport now accepts the deployment→app map so
+// it can populate BuildExportResponse.AppID. Falls back to "" when
+// a build's DeploymentID is not in the map (shouldn't happen, but
+// keeps the export deterministic if it ever does).
+func listBuildsForAccountExport(ctx context.Context, st state.Store, accountID string, depByID map[string]string) ([]api.BuildExportResponse, error) {
 	rows, err := st.ListBuildsForAccount(ctx, accountID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make([]api.BuildExportResponse, 0, len(rows))
 	for _, b := range rows {
 		out = append(out, api.BuildExportResponse{
-			ID: b.ID, DeploymentID: b.DeploymentID, Kind: string(b.Kind),
+			ID: b.ID, DeploymentID: b.DeploymentID,
+			AppID:  depByID[b.DeploymentID],
+			Kind:   string(b.Kind),
 			Status: string(b.Status), SourceBytes: b.SourceBytes,
 			StartedAt:  b.StartedAt.UTC().Format(time.RFC3339),
 			FinishedAt: b.FinishedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	return out
+	return out, nil
 }
 
-func listInstancesForAccountExport(ctx context.Context, st state.Store, accountID string) []api.InstanceResponse {
+func listInstancesForAccountExport(ctx context.Context, st state.Store, accountID string) ([]api.InstanceResponse, error) {
 	rows, err := st.ListInstancesForAccount(ctx, accountID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make([]api.InstanceResponse, 0, len(rows))
 	for _, ins := range rows {
@@ -230,13 +304,13 @@ func listInstancesForAccountExport(ctx context.Context, st state.Store, accountI
 			ParkedAt:      ins.ParkedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	return out
+	return out, nil
 }
 
-func listUsageForAccountExport(ctx context.Context, st state.Store, accountID string) []api.UsageExportResponse {
+func listUsageForAccountExport(ctx context.Context, st state.Store, accountID string) ([]api.UsageExportResponse, error) {
 	rows, err := st.UsageByAccount(ctx, accountID, time.Time{})
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make([]api.UsageExportResponse, 0, len(rows))
 	for _, u := range rows {
@@ -245,13 +319,13 @@ func listUsageForAccountExport(ctx context.Context, st state.Store, accountID st
 			MBSeconds: u.MBSeconds, Requests: u.Requests,
 		})
 	}
-	return out
+	return out, nil
 }
 
-func listDomainsForAccountExport(ctx context.Context, st state.Store, accountID string) []api.CustomDomainResponse {
+func listDomainsForAccountExport(ctx context.Context, st state.Store, accountID string) ([]api.CustomDomainResponse, error) {
 	rows, err := st.ListDomainsForAccount(ctx, accountID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make([]api.CustomDomainResponse, 0, len(rows))
 	for _, d := range rows {
@@ -262,13 +336,13 @@ func listDomainsForAccountExport(ctx context.Context, st state.Store, accountID 
 			VerifiedAt: formatTimeOrEmpty(d.VerifiedAt),
 		})
 	}
-	return out
+	return out, nil
 }
 
-func listCronsForAccountExport(ctx context.Context, st state.Store, accountID string) []api.CronResponse {
+func listCronsForAccountExport(ctx context.Context, st state.Store, accountID string) ([]api.CronResponse, error) {
 	rows, err := st.ListCronsForAccount(ctx, accountID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make([]api.CronResponse, 0, len(rows))
 	for _, c := range rows {
@@ -279,13 +353,13 @@ func listCronsForAccountExport(ctx context.Context, st state.Store, accountID st
 			LastFiredAt: formatTimeOrEmpty(c.LastFiredAt),
 		})
 	}
-	return out
+	return out, nil
 }
 
-func listKeysForAccountExport(ctx context.Context, st state.Store, accountID string) []api.APIKeyExportResponse {
+func listKeysForAccountExport(ctx context.Context, st state.Store, accountID string) ([]api.APIKeyExportResponse, error) {
 	rows, err := st.ListAPIKeys(ctx, accountID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make([]api.APIKeyExportResponse, 0, len(rows))
 	for _, k := range rows {
@@ -297,7 +371,7 @@ func listKeysForAccountExport(ctx context.Context, st state.Store, accountID str
 			LastUsed:  formatTimeOrEmpty(k.LastUsedAt),
 		})
 	}
-	return out
+	return out, nil
 }
 
 // listSecretsForAccountExport walks every app on the account and
@@ -305,14 +379,22 @@ func listKeysForAccountExport(ctx context.Context, st state.Store, accountID str
 // caller passed ?include_secrets=false) we drop the slice entirely
 // so the customer can fetch an export without revealing ciphertext
 // to a backup they don't control.
-func listSecretsForAccountExport(ctx context.Context, st state.Store, accountID string, apps []state.App, include bool) []api.AppSecretExportResponse {
+//
+// A per-app list failure is collected into the returned error so
+// gatherExport can convert any partial failure into a 500; we don't
+// want a backup trusted to be complete when a per-app SELECT failed.
+func listSecretsForAccountExport(ctx context.Context, st state.Store, accountID string, apps []state.App, include bool) ([]api.AppSecretExportResponse, error) {
 	if !include {
-		return nil
+		return nil, nil
 	}
-	var out []api.AppSecretExportResponse
+	var (
+		out     []api.AppSecretExportResponse
+		failure error
+	)
 	for _, a := range apps {
 		rows, err := st.ListAppSecrets(ctx, accountID, a.ID)
 		if err != nil {
+			failure = errors.Join(failure, fmt.Errorf("list secrets app=%s: %w", a.ID, err))
 			continue
 		}
 		for _, sec := range rows {
@@ -325,7 +407,7 @@ func listSecretsForAccountExport(ctx context.Context, st state.Store, accountID 
 			})
 		}
 	}
-	return out
+	return out, failure
 }
 
 // formatTimeOrEmpty renders t as RFC 3339 in UTC, or "" if zero. Used
