@@ -213,7 +213,7 @@ type Deployment struct {
 	// ErrImageManifestInvalid map via pkg/api.SentinelToCode to
 	// the stable codes that imaged writes here. Empty for every
 	// other transition (and for deployments created before the
-	// migrations/00022 column add).
+	// migrations/00021 column add).
 	ErrorCode string
 	CreatedAt time.Time
 }
