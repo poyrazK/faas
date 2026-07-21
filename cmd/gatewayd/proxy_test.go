@@ -10,10 +10,13 @@ import (
 	"testing"
 )
 
-// TestDashboardProxy_ForwardsDashboardPaths confirms a /dashboard/
-// request hits the upstream (a fake apid) and the response body
-// round-trips. The next handler is never invoked.
-func TestDashboardProxy_ForwardsDashboardPaths(t *testing.T) {
+// TestApidProxy_ForwardsApidPaths confirms requests on every prefix
+// isApidPath covers reach the upstream (a fake apid) and the
+// response body round-trips. The next handler is never invoked.
+//
+// Each prefix family gets a representative sample; together they
+// pin the full public surface that apidProxy owns per issue #85.
+func TestApidProxy_ForwardsApidPaths(t *testing.T) {
 	var upstreamHits int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamHits++
@@ -22,7 +25,7 @@ func TestDashboardProxy_ForwardsDashboardPaths(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("apid: dashboard rendered"))
+		_, _ = w.Write([]byte("apid: ok"))
 	}))
 	t.Cleanup(upstream.Close)
 
@@ -31,9 +34,28 @@ func TestDashboardProxy_ForwardsDashboardPaths(t *testing.T) {
 		t.Error("next handler invoked; should have been proxied")
 		w.WriteHeader(http.StatusTeapot)
 	})
-	handler := newDashboardProxy(upstream.URL, next, log)
+	handler := newApidProxy(upstream.URL, next, log)
 
-	for _, path := range []string{"/dashboard/", "/dashboard/apps", "/dashboard/apps/foo", "/oauth/callback"} {
+	paths := []string{
+		// /v1
+		"/v1", "/v1/", "/v1/apps", "/v1/account", "/v1/events",
+		"/v1/deployments/abc123/logs",
+		// /dashboard
+		"/dashboard", "/dashboard/", "/dashboard/apps", "/dashboard/apps/foo",
+		// /oauth
+		"/oauth/callback",
+		// /login
+		"/login", "/login/",
+		// /auth/verify
+		"/auth/verify", "/auth/verify/",
+		// /logout
+		"/logout", "/logout/",
+		// /status
+		"/status", "/status/", "/status/slo.json",
+		// /healthz (CD probe target, issue #85)
+		"/healthz",
+	}
+	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -41,20 +63,24 @@ func TestDashboardProxy_ForwardsDashboardPaths(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Errorf("code = %d, want 200", rec.Code)
 			}
-			if !strings.Contains(rec.Body.String(), "apid: dashboard rendered") {
+			if !strings.Contains(rec.Body.String(), "apid: ok") {
 				t.Errorf("body = %q, want proxied apid body", rec.Body.String())
 			}
 		})
 	}
-	if upstreamHits != 4 {
-		t.Errorf("upstream hits = %d, want 4", upstreamHits)
+	if want := len(paths); upstreamHits != want {
+		t.Errorf("upstream hits = %d, want %d", upstreamHits, want)
 	}
 }
 
-// TestDashboardProxy_PassesThroughNonDashboardPaths confirms requests
-// outside the dashboard prefix fall through to the next handler
-// (gateway.Handler's wake/proxy path) without touching apid.
-func TestDashboardProxy_PassesThroughNonDashboardPaths(t *testing.T) {
+// TestApidProxy_PassesThroughNonApidPaths confirms requests outside
+// the apid prefix set fall through to the next handler (e.g.
+// gateway.Handler's wake/proxy path) without touching apid.
+//
+// Pinning these negative cases defends the prefix discipline — bare
+// HasPrefix("/v1") would match "/v1.zip" and silently steal
+// customer-app paths. See isApidPath for the anchor.
+func TestApidProxy_PassesThroughNonApidPaths(t *testing.T) {
 	var upstreamHits int
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		upstreamHits++
@@ -67,9 +93,23 @@ func TestDashboardProxy_PassesThroughNonDashboardPaths(t *testing.T) {
 		nextHits++
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := newDashboardProxy(upstream.URL, next, log)
+	handler := newApidProxy(upstream.URL, next, log)
 
-	for _, path := range []string{"/", "/api/v1/apps", "/healthz", "/apps/jane/api", "/dashboard.zip", "/dashboards", "/dashboardx"} {
+	// /v1 shadowing regressions
+	paths := []string{
+		"/", "/api/v1/apps", "/v1.zip", "/v1x",
+		// /dashboard shadowing regressions
+		"/dashboard.zip", "/dashboards", "/dashboardx",
+		// /login, /logout, /status shadowing regressions
+		"/loginfoo", "/logoutbar", "/status.json",
+		// /auth/verify shadowing
+		"/auth/verifyother",
+		// /oauth without trailing slash (no exact /oauth route today)
+		"/oauth",
+		// /healthz shadowing
+		"/healthzz",
+	}
+	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -82,60 +122,102 @@ func TestDashboardProxy_PassesThroughNonDashboardPaths(t *testing.T) {
 	if upstreamHits != 0 {
 		t.Errorf("upstream hits = %d, want 0 (paths should fall through)", upstreamHits)
 	}
-	if nextHits != 7 {
-		t.Errorf("next hits = %d, want 7", nextHits)
+	if want := len(paths); nextHits != want {
+		t.Errorf("next hits = %d, want %d", nextHits, want)
 	}
 }
 
-// TestIsDashboardPath_TableDriven is the unit-test coverage for the
-// review finding #6 fix: bare HasPrefix("/dashboard") matched
-// "/dashboard.zip", "/dashboards", "/dashboardx" — all of which
-// would have shipped the path to apid (a 404) instead of letting
-// the wake/proxy path handle them (also a 404, but with the right
-// observability). Tighter prefix match keeps the dashboard
-// forwarding surface narrow.
-func TestIsDashboardPath_TableDriven(t *testing.T) {
+// TestIsApidPath_TableDriven is the unit-test coverage for the
+// issue #85 path-set. Pin both positive (every prefix the apid
+// public surface needs) and negative (review-finding-#6-style
+// shadowing regressions: bare HasPrefix("/v1") would match
+// "/v1.zip").
+//
+// Anchor discipline: every anchored root matches exact + the
+// "/" subtree. See hasApidPrefix.
+func TestIsApidPath_TableDriven(t *testing.T) {
 	cases := []struct {
 		path string
 		want bool
 	}{
+		// /v1
+		{"/v1", true},
+		{"/v1/", true},
+		{"/v1/apps", true},
+		{"/v1/apps/foo", true},
+		{"/v1/events", true},
+		{"/v1/deployments/abc/logs", true},
+		{"/v1.zip", false}, // shadowing regression
+		{"/v1x", false},    // shadowing regression
+		{"/api/v1/apps", false},
+
+		// /dashboard
 		{"/dashboard", true},
 		{"/dashboard/", true},
 		{"/dashboard/apps", true},
 		{"/dashboard/apps/foo", true},
-		{"/oauth/callback", true},
-		{"/oauth/", true},
-		// Negative cases — review finding #6 regression tests.
 		{"/dashboard.zip", false},
 		{"/dashboards", false},
 		{"/dashboardx", false},
 		{"/Dashboard", false}, // case-sensitive
-		{"/api/v1/dashboard", false},
+
+		// /oauth
+		{"/oauth/callback", true},
+		{"/oauth/", true},
+		{"/oauth", false}, // no exact route
+
+		// /login
+		{"/login", true},
+		{"/login/", true},
+		{"/loginfoo", false},
+
+		// /auth/verify
+		{"/auth/verify", true},
+		{"/auth/verify/", true},
+		{"/auth/verifyother", false},
+
+		// /logout
+		{"/logout", true},
+		{"/logout/", true},
+		{"/logoutbar", false},
+
+		// /status
+		{"/status", true},
+		{"/status/", true},
+		{"/status/slo.json", true},
+		{"/status.json", false}, // NOT under /status/
+
+		// /healthz (issue #85: CD probe)
+		{"/healthz", true},
+		{"/healthz/", true},
+		{"/healthzz", false},
+
+		// Generic
 		{"/", false},
 		{"", false},
 	}
 	for _, c := range cases {
 		t.Run(c.path, func(t *testing.T) {
-			if got := isDashboardPath(c.path); got != c.want {
-				t.Errorf("isDashboardPath(%q) = %v, want %v", c.path, got, c.want)
+			if got := isApidPath(c.path); got != c.want {
+				t.Errorf("isApidPath(%q) = %v, want %v", c.path, got, c.want)
 			}
 		})
 	}
 }
 
-// TestDashboardProxy_DisabledWhenTargetEmpty confirms the wrapper is
-// a no-op when target is empty — every request goes to next.
-func TestDashboardProxy_DisabledWhenTargetEmpty(t *testing.T) {
+// TestApidProxy_DisabledWhenTargetEmpty confirms the wrapper is a
+// no-op when target is empty — every request goes to next.
+func TestApidProxy_DisabledWhenTargetEmpty(t *testing.T) {
 	var nextHits int
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		nextHits++
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := newDashboardProxy("", next, log)
+	handler := newApidProxy("", next, log)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("code = %d, want 200", rec.Code)
@@ -145,10 +227,10 @@ func TestDashboardProxy_DisabledWhenTargetEmpty(t *testing.T) {
 	}
 }
 
-// TestDashboardProxy_UpstreamDown confirms a 503 RFC 7807 problem is
+// TestApidProxy_UpstreamDown confirms a 503 RFC 7807 problem is
 // emitted when apid is unreachable (instead of the stdlib's bare
 // "EOF" connection-reset text).
-func TestDashboardProxy_UpstreamDown(t *testing.T) {
+func TestApidProxy_UpstreamDown(t *testing.T) {
 	// Reserve a port we know is free, then immediately close the listener
 	// so nothing answers.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -159,12 +241,13 @@ func TestDashboardProxy_UpstreamDown(t *testing.T) {
 	_ = ln.Close()
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := newDashboardProxy(addr, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Error("next should not be called for dashboard paths")
+	handler := newApidProxy(addr, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("next should not be called for apid paths")
 	}), log)
 
+	// /healthz is the canonical public probe (issue #85).
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
@@ -175,5 +258,38 @@ func TestDashboardProxy_UpstreamDown(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "apid_unavailable") {
 		t.Errorf("body = %q, want apid_unavailable problem code", rec.Body.String())
+	}
+}
+
+// TestApidProxy_HealthzEndToEnd exercises the full path that the
+// cd-digitalocean.yml smoke test relies on (issue #85): real
+// httptest upstream serving /healthz, apidProxy in front, request
+// arrives via the public surface.
+func TestApidProxy_HealthzEndToEnd(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			t.Errorf("upstream path = %q, want /healthz", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := newApidProxy(upstream.URL, http.NewServeMux(), log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("code = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("content-type = %q, want application/json", ct)
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"ok"`) {
+		t.Errorf("body = %q, want JSON status:ok", rec.Body.String())
 	}
 }
