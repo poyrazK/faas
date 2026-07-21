@@ -124,7 +124,7 @@ func NewMemStore() *MemStore {
 		crons:          map[string]Cron{},
 		instances:      map[string]Instance{},
 		loginTokens:    map[string]LoginToken{},
-		cliAuthCodes:  map[string]CliAuthCode{},
+		cliAuthCodes:   map[string]CliAuthCode{},
 		deploymentLogs: map[string][]LogEntry{},
 		deploymentSeq:  map[string]int64{},
 		snapshots:      []Snapshot{},
@@ -1685,9 +1685,10 @@ func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, account
 // unbound account.
 //
 // Return contract:
-//   pending (or empty account_id) → (Pending,  "",       nil)        keep polling
-//   consumed (first call)        → (Consumed, acct_id,  nil)        mint API key
-//   replay / expired / unknown    → (Expired, "",        ErrNotFound)
+//
+//	pending (or empty account_id) → (Pending,  "",       nil)        keep polling
+//	consumed (first call)        → (Consumed, acct_id,  nil)        mint API key
+//	replay / expired / unknown    → (Expired, "",        ErrNotFound)
 func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

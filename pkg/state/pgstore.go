@@ -1839,9 +1839,10 @@ func (s *PgStore) ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accoun
 // a useless NULL FK insert into api_keys).
 //
 // Return contract (CLI key-mints only on Consumed + non-empty acct):
-//   pending (or empty account_id) → (Pending,  "",       nil)        keep polling
-//   consumed (first call)        → (Consumed, acct_id,  nil)        mint API key
-//   consumed (replay) / expired / unknown → (Expired, "", ErrNotFound)
+//
+//	pending (or empty account_id) → (Pending,  "",       nil)        keep polling
+//	consumed (first call)        → (Consumed, acct_id,  nil)        mint API key
+//	consumed (replay) / expired / unknown → (Expired, "", ErrNotFound)
 func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
 	var accountID string
 	err := s.pool.QueryRow(ctx,

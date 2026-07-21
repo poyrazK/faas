@@ -56,8 +56,8 @@ func newCliAuthTestServer(t *testing.T) (http.Handler, *state.MemStore) {
 // (and friends) can assert on the channel + payload. Subscribe
 // returns a closed channel (matching noopNotifier's contract).
 type cliAuthTestNotifier struct {
-	mu     sync.Mutex
-	calls  []cliAuthNotifyCall
+	mu    sync.Mutex
+	calls []cliAuthNotifyCall
 }
 type cliAuthNotifyCall struct {
 	Channel string

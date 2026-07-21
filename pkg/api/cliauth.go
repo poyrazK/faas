@@ -41,6 +41,6 @@ type CliAuthExchangeRequest struct {
 // CliAuthExchangeResponse is the only response the CLI writes to disk.
 // Plaintext is shown exactly once and never persisted server-side.
 type CliAuthExchangeResponse struct {
-	Plaintext string         `json:"plaintext"`
+	Plaintext string          `json:"plaintext"`
 	Account   AccountResponse `json:"account"`
 }
