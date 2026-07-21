@@ -282,7 +282,9 @@ func TestHandleSnapshotWritten(t *testing.T) {
 	h.HandleNotification(context.Background(), db.Notification{
 		Channel: db.NotifySnapshotWritten,
 		Payload: `{"deployment_id":"` + dep.ID + `","mem_path":"/srv/fc/snap/` + dep.ID + `/mem",` +
-			`"vmstate_path":"/srv/fc/snap/` + dep.ID + `/vmstate","mem_bytes":134217728,` +
+			`"vmstate_path":"/srv/fc/snap/` + dep.ID + `/vmstate",` +
+			`"storage_key":"snap/` + dep.ID + `/mem",` +
+			`"mem_bytes":134217728,` +
 			`"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
 	})
 
@@ -317,7 +319,7 @@ func TestHandleSnapshotWrittenIdempotent(t *testing.T) {
 	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
 	n := db.Notification{
 		Channel: db.NotifySnapshotWritten,
-		Payload: `{"deployment_id":"` + dep.ID + `","mem_path":"/m","mem_bytes":1,"fc_version":"firecracker-1.10"}`,
+		Payload: `{"deployment_id":"` + dep.ID + `","mem_path":"/m","storage_key":"snap/` + dep.ID + `/mem","mem_bytes":1,"fc_version":"firecracker-1.10"}`,
 	}
 	h.HandleNotification(context.Background(), n)
 	h.HandleNotification(context.Background(), n) // redelivery must not error out

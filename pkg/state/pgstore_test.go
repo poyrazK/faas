@@ -117,6 +117,7 @@ func TestPg_MarkSnapshotStale(t *testing.T) {
 	_, _, depID := seedLiveDeploy(t, s, ctx)
 	snap, err := s.CreateSnapshot(ctx, state.Snapshot{
 		DeploymentID: depID, FCVersion: "1.10.0", Path: "/srv/fc/snap/x", MemBytes: 1,
+		StorageKey: state.SnapMemKey(depID),
 	})
 	if err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
@@ -667,5 +668,56 @@ func TestPg_CreateAppIfUnderQuota_ConcurrentAcrossAccounts(t *testing.T) {
 	} else if got != 1 {
 		t.Errorf("count(B) = %d, want 1", got)
 
+	}
+}
+
+// TestPg_SnapshotStorageKey_RoundTrip mirrors the MemStore test of the
+// same name on the PgStore side (F-3 review finding): CreateSnapshot
+// stores the value the caller passes, LatestSnapshot reads it back
+// unchanged, and ListSnapshotsForGC exposes it on SnapshotForGC so
+// the imaged GC loop can Storage.Delete under the canonical key.
+//
+// The contract being pinned: PgStore.CreateSnapshot requires
+// StorageKey (no silent default — see pgstore.go for the rationale);
+// this test verifies both halves — the happy-path round-trip and the
+// empty-key rejection.
+func TestPg_SnapshotStorageKey_RoundTrip(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, _, depID := seedLiveDeploy(t, s, ctx)
+
+	// (1) Caller-supplied storage_key round-trips through
+	// CreateSnapshot → LatestSnapshot → ListSnapshotsForGC.
+	want := state.SnapMemKey(depID)
+	_, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: depID, FCVersion: "1.10.0", Path: "/srv/fc/snap/x", MemBytes: 1,
+		StorageKey: want,
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	got, err := s.LatestSnapshot(ctx, depID)
+	if err != nil {
+		t.Fatalf("LatestSnapshot: %v", err)
+	}
+	if got.StorageKey != want {
+		t.Errorf("LatestSnapshot StorageKey = %q, want %q", got.StorageKey, want)
+	}
+	rows, err := s.ListSnapshotsForGC(ctx)
+	if err != nil {
+		t.Fatalf("ListSnapshotsForGC: %v", err)
+	}
+	if len(rows) != 1 || rows[0].StorageKey != want {
+		t.Errorf("ListSnapshotsForGC returned %+v, want one row with StorageKey=%q", rows, want)
+	}
+
+	// (2) Empty StorageKey is rejected — this is the F-1 contract
+	// pin. A future regression that re-adds the silent default
+	// would surface here as a nil error where one is expected.
+	_, err = s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: depID, FCVersion: "1.11.0", Path: "/srv/fc/snap/y", MemBytes: 1,
+		// StorageKey deliberately omitted.
+	})
+	if err == nil {
+		t.Error("CreateSnapshot with empty StorageKey returned nil error; want explicit error per F-1 contract")
 	}
 }

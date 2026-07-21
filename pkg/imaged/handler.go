@@ -264,6 +264,11 @@ type snapshotWrittenPayload struct {
 	DeploymentID string `json:"deployment_id"`
 	MemPath      string `json:"mem_path"`
 	VMStatePath  string `json:"vmstate_path"`
+	// StorageKey is the canonical StorageBackend key (issue #96,
+	// ADR-025 axis 2). schedd populates it on the snapshot_written
+	// payload; imaged copies it onto the snapshots row so Wake can
+	// read it back without recomputing sched.SnapshotMemKey.
+	StorageKey   string `json:"storage_key"`
 	MemBytes     int64  `json:"mem_bytes"`
 	VMStateBytes int64  `json:"vmstate_bytes"`
 	FCVersion    string `json:"fc_version"`
@@ -642,6 +647,7 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 		DeploymentID: p.DeploymentID,
 		FCVersion:    p.FCVersion, // pins restore compatibility (ADR-005)
 		Path:         p.MemPath,
+		StorageKey:   p.StorageKey, // see snapshotWrittenPayload.StorageKey
 		MemBytes:     p.MemBytes,
 		DiskBytes:    p.VMStateBytes,
 	}

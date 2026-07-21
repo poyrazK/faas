@@ -1,11 +1,20 @@
 package sched
 
+import "github.com/onebox-faas/faas/pkg/state"
+
 // paths.go is the single place schedd derives the host filesystem locations of
 // an instance's boot inputs (spec §8: /srv/fc/base read-only bases, lv-fc app
 // layers + snapshots). vmmd is told these paths on the wire (ADR-014); it never
 // discovers them itself. imaged (PR3) consumes the same convention on the
 // snapshot_written handshake so a park and the next wake agree on where a
 // snapshot lives.
+//
+// SnapshotMemKey / SnapshotVMStateKey are thin wrappers over the
+// state.SnapMemKey / state.SnapVMStateKey helpers in pkg/state — the
+// canonical form lives there because pkg/state owns the
+// snapshots.storage_key column. Sched is a higher-level layer that
+// already imports pkg/state (engine.go), so the helper can be
+// re-exported without an import cycle.
 
 const (
 	// baseDir holds the shared read-only base rootfs images (spec §4.6 two-drive
@@ -88,16 +97,19 @@ func AppLayerKey(slug, deploymentID string) string {
 
 // SnapshotMemKey returns the storage key for a deployment's snapshot mem
 // blob (the RAM state at Pause). Mirrors the legacy
-// <snapDir>/<deploymentID>/mem path.
+// <snapDir>/<deploymentID>/mem path. Thin wrapper over
+// state.SnapMemKey so the canonical form lives in one place — pkg/state
+// owns the snapshots.storage_key column.
 func SnapshotMemKey(deploymentID string) string {
-	return "snap/" + deploymentID + "/mem"
+	return state.SnapMemKey(deploymentID)
 }
 
 // SnapshotVMStateKey returns the storage key for a deployment's snapshot
 // vmstate blob (Firecracker microVM state file at Pause). Mirrors
-// <snapDir>/<deploymentID>/vmstate.
+// <snapDir>/<deploymentID>/vmstate. Thin wrapper over
+// state.SnapVMStateKey (same rationale as SnapshotMemKey).
 func SnapshotVMStateKey(deploymentID string) string {
-	return "snap/" + deploymentID + "/vmstate"
+	return state.SnapVMStateKey(deploymentID)
 }
 
 // BaseKey returns the storage key for a runtime's shared drive0 base ext4

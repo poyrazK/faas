@@ -1223,11 +1223,24 @@ func (s *PgStore) TouchInstancesLastSeen(ctx context.Context, touches []Instance
 // so imaged can ignore a duplicate emission; the rest of imaged treats the
 // first successful write as truth.
 func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, error) {
+	// StorageKey is required. The migration's `NOT NULL DEFAULT ''`
+	// is a safety net for any path we miss, but the contract here is
+	// that the caller populates it explicitly (production: imaged
+	// copies it from the snapshot_written payload; tests: call
+	// sched.SnapshotMemKey(deploymentID) at the fixture's
+	// CreateSnapshot site — see pkg/sched/paths.go). An empty value
+	// used to silently default to the legacy-path form, which masked
+	// bugs in callers that forgot the field — that loophole is now
+	// closed. pkg/state can't import pkg/sched (cycle: sched →
+	// state), so the helper lives in sched and callers wire it.
+	if snap.StorageKey == "" {
+		return Snapshot{}, fmt.Errorf("state: CreateSnapshot: storage_key required (populate via sched.SnapshotMemKey at the call site)")
+	}
 	row := s.pool.QueryRow(ctx,
-		`insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, path, stale)
-		 values ($1, $2, $3, $4, $5, $6)
-		 returning id, deployment_id::text, fc_version, mem_bytes, disk_bytes, path, stale, created_at`,
-		snap.DeploymentID, snap.FCVersion, snap.MemBytes, snap.DiskBytes, snap.Path, snap.Stale)
+		`insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, path, storage_key, stale)
+		 values ($1, $2, $3, $4, $5, $6, $7)
+		 returning id, deployment_id::text, fc_version, mem_bytes, disk_bytes, path, storage_key, stale, created_at`,
+		snap.DeploymentID, snap.FCVersion, snap.MemBytes, snap.DiskBytes, snap.Path, snap.StorageKey, snap.Stale)
 	out, err := scanSnapshot(row)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -1244,7 +1257,7 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 // (ADR-005 — cold boot must always work, snapshot is cache).
 func (s *PgStore) LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, path, stale, created_at
+		`select id, deployment_id::text, fc_version, mem_bytes, disk_bytes, path, storage_key, stale, created_at
 		 from snapshots where deployment_id = $1 and stale = false
 		 order by created_at desc limit 1`, deploymentID)
 	return scanSnapshot(row)
@@ -1276,7 +1289,7 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error) {
 	rows, err := s.pool.Query(ctx,
 		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text,
-		        s.fc_version, s.mem_bytes, s.disk_bytes, s.path, s.stale, s.created_at
+		        s.fc_version, s.mem_bytes, s.disk_bytes, s.path, s.storage_key, s.stale, s.created_at
 		   from snapshots s
 		   join deployments d on d.id = s.deployment_id
 		   join apps a       on a.id = d.app_id
@@ -1292,7 +1305,7 @@ func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, erro
 	for rows.Next() {
 		var r SnapshotForGC
 		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID,
-			&r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.Path, &r.Stale, &r.CreatedAt); err != nil {
+			&r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.Path, &r.StorageKey, &r.Stale, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -1884,7 +1897,7 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 
 func scanSnapshot(row pgx.Row) (Snapshot, error) {
 	s := Snapshot{}
-	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.MemBytes, &s.DiskBytes, &s.Path, &s.Stale, &s.CreatedAt); err != nil {
+	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.MemBytes, &s.DiskBytes, &s.Path, &s.StorageKey, &s.Stale, &s.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Snapshot{}, ErrNotFound
 		}

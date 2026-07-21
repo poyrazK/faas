@@ -107,6 +107,7 @@ func seedSnapshotWithApp(t *testing.T, store *state.MemStore, memBytes, diskByte
 		DiskBytes:    diskBytes,
 		Path:         filepath.Join(sched.SnapDir(), "snap-"+app.Slug),
 		FCVersion:    "1.8.0",
+		StorageKey:   state.SnapMemKey(dep.ID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +138,8 @@ func TestGC_PerAppKeepCurrentPrevious(t *testing.T) {
 		snap, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 			Path: filepath.Join(sched.SnapDir(), "keep-"+dep.ID), FCVersion: "1.8.0",
-			CreatedAt: base.Add(time.Duration(i) * time.Minute),
+			StorageKey: state.SnapMemKey(dep.ID),
+			CreatedAt:  base.Add(time.Duration(i) * time.Minute),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -230,7 +232,8 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	heavySnap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: heavyDep.ID, MemBytes: 5 << 30, DiskBytes: 5 << 30, // 10 GB
 		Path: "/tmp/heavy.snap", FCVersion: "1.8.0",
-		CreatedAt: time.Now().Add(-3 * time.Minute),
+		StorageKey: state.SnapMemKey(heavyDep.ID),
+		CreatedAt:  time.Now().Add(-3 * time.Minute),
 	})
 	// heavyApp needs > current+previous snapshots so the per-app floor
 	// leaves at least one evictable row. With 3 snapshots and a 2-row
@@ -241,7 +244,8 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	heavySnap2, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: heavyDep2.ID, MemBytes: 5 << 30, DiskBytes: 5 << 30,
 		Path: "/tmp/heavy2.snap", FCVersion: "1.8.0",
-		CreatedAt: time.Now().Add(-2 * time.Minute),
+		StorageKey: state.SnapMemKey(heavyDep2.ID),
+		CreatedAt:  time.Now().Add(-2 * time.Minute),
 	})
 	heavyDep3, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: heavyApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:h3",
@@ -249,17 +253,20 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	heavySnap3, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: heavyDep3.ID, MemBytes: 5 << 30, DiskBytes: 5 << 30,
 		Path: "/tmp/heavy3.snap", FCVersion: "1.8.0",
-		CreatedAt: time.Now().Add(-1 * time.Minute),
+		StorageKey: state.SnapMemKey(heavyDep3.ID),
+		CreatedAt:  time.Now().Add(-1 * time.Minute),
 	})
 	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: midDep.ID, MemBytes: 3 << 30, DiskBytes: 2 << 30, // 5 GB
 		Path: "/tmp/mid.snap", FCVersion: "1.8.0",
-		CreatedAt: time.Now().Add(-time.Minute),
+		StorageKey: state.SnapMemKey(midDep.ID),
+		CreatedAt:  time.Now().Add(-time.Minute),
 	})
 	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: lightDep.ID, MemBytes: 1 << 30, DiskBytes: 1 << 30, // 2 GB
 		Path: "/tmp/light.snap", FCVersion: "1.8.0",
-		CreatedAt: time.Now(),
+		StorageKey: state.SnapMemKey(lightDep.ID),
+		CreatedAt:  time.Now(),
 	})
 
 	gcCh := make(chan time.Time, 1)
@@ -331,6 +338,7 @@ func TestGC_DeleteSnapshotsByID_BulkAndIdempotent(t *testing.T) {
 	})
 	snapB, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/b.snap", FCVersion: "1.8.0",
+		StorageKey: state.SnapMemKey(dep.ID),
 	})
 
 	n, err := store.DeleteSnapshotsByID(context.Background(), []string{snapA, snapB.ID})
@@ -378,7 +386,8 @@ func TestGC_IdenticalCreatedAt_StableSort(t *testing.T) {
 			FCVersion: "1.8.0",
 			// All snapshots share CreatedAt — tie-breaker must be the
 			// stable sort's natural secondary key (ID).
-			CreatedAt: base,
+			StorageKey: state.SnapMemKey(dep.ID),
+			CreatedAt:  base,
 		})
 		ids[i] = snap.ID
 	}
@@ -494,6 +503,7 @@ func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys(t *testing.T) {
 	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 		Path: "/tmp/x.snap", FCVersion: "1.8.0",
+		StorageKey: state.SnapMemKey(dep.ID),
 	})
 
 	appsRoot := t.TempDir()

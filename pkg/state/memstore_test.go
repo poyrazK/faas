@@ -1128,12 +1128,14 @@ func TestMemStore_ListSnapshotsForGC(t *testing.T) {
 	if _, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100,
 		Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depA.ID),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depB.ID, MemBytes: 200, DiskBytes: 200,
 		Path: "/tmp/b.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depB.ID),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1166,6 +1168,7 @@ func TestMemStore_ListSnapshotsForGC_ExcludesDeletedApp(t *testing.T) {
 	if _, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 		Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(dep.ID),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1190,9 +1193,11 @@ func TestMemStore_DeleteSnapshotsByID_BulkAndIdempotent(t *testing.T) {
 	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
 	snapA, _ := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depA.ID),
 	})
 	snapB, _ := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depB.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/b.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depB.ID),
 	})
 
 	n, err := m.DeleteSnapshotsByID(ctx, []string{snapA.ID, snapB.ID})
@@ -1223,6 +1228,7 @@ func TestMemStore_MarkAllSnapshotsStaleByFCVersion(t *testing.T) {
 		snap, _ := m.CreateSnapshot(ctx, Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 			Path: "/tmp/" + v + ".snap", FCVersion: v,
+			StorageKey: SnapMemKey(dep.ID),
 		})
 		return snap.ID
 	}
@@ -1257,9 +1263,11 @@ func TestMemStore_MarkOldSnapshotsStale(t *testing.T) {
 	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
 	snapA, _ := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depA.ID),
 	})
 	_, _ = m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depB.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/b.snap", FCVersion: "1.8.0",
+		StorageKey: SnapMemKey(depB.ID),
 	})
 
 	n, err := m.MarkOldSnapshotsStale(ctx, []string{snapA.ID})
@@ -1287,5 +1295,53 @@ func TestMemStore_MarkOldSnapshotsStale(t *testing.T) {
 	}
 	if !foundA || !foundB {
 		t.Errorf("seed snapshots missing from store: A=%v B=%v", foundA, foundB)
+	}
+}
+
+// TestMemStore_SnapshotStorageKey_RoundTrip pins the #96 / ADR-025
+// axis 2 storage_key field: CreateSnapshot stores the value the
+// caller passes, LatestSnapshot reads it back unchanged, and
+// ListSnapshotsForGC exposes it on SnapshotForGC so the imaged GC
+// can Storage.Delete under the canonical key.
+func TestMemStore_SnapshotStorageKey_RoundTrip(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, _ := m.CreateAccount(ctx, "u@example.com", "pro")
+	app, _ := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "snap-key", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 1,
+	})
+	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:k"})
+
+	// (1) Caller-supplied storage_key round-trips through CreateSnapshot → LatestSnapshot.
+	want := "snap/" + dep.ID + "/mem"
+	snap, err := m.CreateSnapshot(ctx, Snapshot{
+		DeploymentID: dep.ID, FCVersion: "1.8.0", MemBytes: 100, DiskBytes: 100,
+		Path: "/srv/fc/snap/" + dep.ID + "/mem", StorageKey: want,
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	if snap.StorageKey != want {
+		t.Errorf("CreateSnapshot returned StorageKey=%q, want %q", snap.StorageKey, want)
+	}
+	got, err := m.LatestSnapshot(ctx, dep.ID)
+	if err != nil {
+		t.Fatalf("LatestSnapshot: %v", err)
+	}
+	if got.StorageKey != want {
+		t.Errorf("LatestSnapshot returned StorageKey=%q, want %q", got.StorageKey, want)
+	}
+
+	// (2) ListSnapshotsForGC exposes the same value on SnapshotForGC
+	// so imaged's GC loop can Storage.Delete under the canonical key.
+	rows, err := m.ListSnapshotsForGC(ctx)
+	if err != nil {
+		t.Fatalf("ListSnapshotsForGC: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("ListSnapshotsForGC returned %d rows, want 1", len(rows))
+	}
+	if rows[0].StorageKey != want {
+		t.Errorf("SnapshotForGC.StorageKey = %q, want %q", rows[0].StorageKey, want)
 	}
 }
