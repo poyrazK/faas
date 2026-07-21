@@ -1113,3 +1113,179 @@ func TestMem_RenameApp_CrossAccountIsolation(t *testing.T) {
 		t.Errorf("A's alpha reassigned: %v", err)
 	}
 }
+
+// --- snapshot GC tests -----------------------------------------------------
+
+func TestMemStore_ListSnapshotsForGC(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, _ := m.CreateAccount(ctx, "u@example.com", "pro")
+	app, _ := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "snap", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	depA, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
+	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
+	if _, err := m.CreateSnapshot(ctx, Snapshot{
+		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100,
+		Path: "/tmp/a.snap", FCVersion: "1.8.0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateSnapshot(ctx, Snapshot{
+		DeploymentID: depB.ID, MemBytes: 200, DiskBytes: 200,
+		Path: "/tmp/b.snap", FCVersion: "1.8.0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := m.ListSnapshotsForGC(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("ListSnapshotsForGC returned %d, want 2", len(rows))
+	}
+	for _, r := range rows {
+		if r.AppID != app.ID {
+			t.Errorf("row AppID = %q, want %q", r.AppID, app.ID)
+		}
+		if r.AccountID != acct.ID {
+			t.Errorf("row AccountID = %q, want %q", r.AccountID, acct.ID)
+		}
+	}
+}
+
+func TestMemStore_ListSnapshotsForGC_ExcludesDeletedApp(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, _ := m.CreateAccount(ctx, "u@example.com", "pro")
+	app, _ := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "del-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
+	if _, err := m.CreateSnapshot(ctx, Snapshot{
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
+		Path: "/tmp/a.snap", FCVersion: "1.8.0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeleteApp(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, _ := m.ListSnapshotsForGC(ctx)
+	if len(rows) != 0 {
+		t.Errorf("deleted app's snapshot leaked into GC: %d rows", len(rows))
+	}
+}
+
+func TestMemStore_DeleteSnapshotsByID_BulkAndIdempotent(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, _ := m.CreateAccount(ctx, "u@example.com", "pro")
+	app, _ := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "del-snap", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	depA, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
+	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
+	snapA, _ := m.CreateSnapshot(ctx, Snapshot{
+		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/a.snap", FCVersion: "1.8.0",
+	})
+	snapB, _ := m.CreateSnapshot(ctx, Snapshot{
+		DeploymentID: depB.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/b.snap", FCVersion: "1.8.0",
+	})
+
+	n, err := m.DeleteSnapshotsByID(ctx, []string{snapA.ID, snapB.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("first delete = %d, want 2", n)
+	}
+	n2, err := m.DeleteSnapshotsByID(ctx, []string{snapA.ID, snapB.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2 != 0 {
+		t.Errorf("second delete = %d, want 0 (idempotent)", n2)
+	}
+}
+
+func TestMemStore_MarkAllSnapshotsStaleByFCVersion(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, _ := m.CreateAccount(ctx, "u@example.com", "pro")
+	app, _ := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "fc-sweep", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	insert := func(v string) string {
+		dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:" + v})
+		snap, _ := m.CreateSnapshot(ctx, Snapshot{
+			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
+			Path: "/tmp/" + v + ".snap", FCVersion: v,
+		})
+		return snap.ID
+	}
+	insert("1.7.0")
+	insert("1.8.0")
+	insert("1.9.0")
+
+	n, err := m.MarkAllSnapshotsStaleByFCVersion(ctx, "1.8.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both 1.7 and 1.9 are NOT 1.8 → marked stale. Only the current
+	// FC version's snapshots stay live.
+	if n != 2 {
+		t.Errorf("marked %d stale, want 2", n)
+	}
+	// Idempotent: a second call finds no non-stale rows to flip.
+	n2, _ := m.MarkAllSnapshotsStaleByFCVersion(ctx, "1.8.0")
+	if n2 != 0 {
+		t.Errorf("second sweep marked %d, want 0", n2)
+	}
+}
+
+func TestMemStore_MarkOldSnapshotsStale(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, _ := m.CreateAccount(ctx, "u@example.com", "pro")
+	app, _ := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "mark-old", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	depA, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
+	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
+	snapA, _ := m.CreateSnapshot(ctx, Snapshot{
+		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/a.snap", FCVersion: "1.8.0",
+	})
+	_, _ = m.CreateSnapshot(ctx, Snapshot{
+		DeploymentID: depB.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/b.snap", FCVersion: "1.8.0",
+	})
+
+	n, err := m.MarkOldSnapshotsStale(ctx, []string{snapA.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("marked %d, want 1", n)
+	}
+	// LatestSnapshot filters stale out; inspect the row directly.
+	foundA, foundB := false, false
+	for _, s := range m.snapshots {
+		if s.ID == snapA.ID {
+			foundA = true
+			if !s.Stale {
+				t.Errorf("snapA not marked stale")
+			}
+		}
+		if s.ID != snapA.ID && s.DeploymentID == depB.ID {
+			foundB = true
+			if s.Stale {
+				t.Errorf("snapB marked stale by an unrelated call")
+			}
+		}
+	}
+	if !foundA || !foundB {
+		t.Errorf("seed snapshots missing from store: A=%v B=%v", foundA, foundB)
+	}
+}

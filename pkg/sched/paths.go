@@ -14,9 +14,18 @@ const (
 	// layerDir holds per-deployment app layers (drive1). One ext4 per deployment.
 	// Default location; layerPath uses deployments.rootfs_path when set.
 	layerDir = "/srv/fc/layers"
-	// snapDir holds per-deployment snapshot blobs (mem file + vmstate).
-	snapDir = "/srv/fc/snap"
 )
+
+// snapDir is the snapshot blob directory root (spec §8). Held as a var so
+// tests in pkg/imaged can override it via SetSnapDirForTesting; production
+// never mutates it.
+var snapDir = "/srv/fc/snap"
+
+// SnapDir returns the per-deployment snapshot blob directory root. imaged
+// uses this for F5 filesystem cleanup (delete the snap dir when a deployment
+// falls out of the "current + previous" retention window or when its app
+// is soft-deleted).
+func SnapDir() string { return snapDir }
 
 // basePath returns the drive0 shared base rootfs for an app's runtime. Function
 // apps (runtime set) boot the matching runner base; plain apps boot the generic

@@ -111,15 +111,23 @@ func (l *Loop) WithFlowCounter(fc FlowCounter) *Loop {
 // Run blocks until ctx is cancelled. It owns three event sources: the LISTEN
 // subscriber, the reaper tick, and the cron tick.
 func (l *Loop) Run(ctx context.Context) error {
-	notif, cancel, err := db.Subscribe(ctx, l.pool, []string{
+	// F-11: SubscribeWithReconnect wraps Subscribe with exponential backoff
+	// (100ms → 5s cap) and re-acquires the LISTEN connection across pg
+	// restarts. The outer channel never closes on conn drop — only ctx
+	// cancel can stop this loop. Prior `notif, ok := <-` would have
+	// exited cleanly the instant the LISTEN conn died, leaving the daemon
+	// alive (systemd Restart=on-failure doesn't catch clean exits) but
+	// inert. schedd is now a long-running aware subscriber.
+	notif, err := db.SubscribeWithReconnect(ctx, l.pool, []string{
 		db.NotifyAppChanged,
 		db.NotifyDeploymentChanged,
 		db.NotifySnapshotPrime,
-	})
+	}, l.log)
 	if err != nil {
 		return err
 	}
-	defer cancel()
+	// SubscribeWithReconnect owns its own cancel via the deferred
+	// goroutine inside the wrapper; we close by ending ctx.
 
 	reaperT := time.NewTicker(10 * time.Second)
 	defer reaperT.Stop()
@@ -164,6 +172,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			return nil
 		case n, ok := <-notif:
 			if !ok {
+				// Defensive — wrapper guarantees open until ctx done.
 				return nil
 			}
 			l.handleNotification(ctx, n)

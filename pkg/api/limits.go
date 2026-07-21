@@ -187,6 +187,19 @@ const (
 	// Snapshots / disk (spec §1, §8).
 	FleetSnapshotAvgTargetMB = 130 // business metric; alert >160 warn, >200 page
 	SnapshotBudgetGB         = 452
+	// SnapshotBudgetAlarmPct is the lv-fc percentage at which the nightly
+	// imaged GC switches from per-app retention (keep current+previous
+	// deployments per app) to fleet budget pressure (evict from the
+	// biggest-over-quota accounts first). Matches spec §12. NaN lv-fc
+	// readings (lvs missing on dev/macOS) short-circuit the pressure branch.
+	SnapshotBudgetAlarmPct = 90.0
+	// SnapshotStaleRetention is how long a snapshot lives in stale state
+	// after the F2 FC-version sweep marks it before imaged evicts it
+	// (F-07). Spec §4.4 + ADR-005: stale snapshots must remain
+	// restore-able for a brief window so an operator rollback across a
+	// firecracker upgrade doesn't pay an extra cold boot. 7 days is the
+	// v1 box's typical reset cycle.
+	SnapshotStaleRetention = 7 * 24 * time.Hour
 	// LvFcName is the LVM logical volume apps + snapshots live on (spec §8).
 	// Schedd's dashboard gauge shells out to `lvs -o data_percent <LvFcName>`
 	// to populate `fcvm_lv_fc_used_pct`. Empty on dev/macOS — the

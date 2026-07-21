@@ -102,7 +102,8 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not update app"))
 		return
 	}
-	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged, `{"kind":"updated","slug":"`+app.Slug+`"}`)
+	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged,
+		fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
 	s.log.Info("app updated", "app", updated.ID, "slug", updated.Slug, "account", acct.ID)
 	writeJSON(w, http.StatusOK, s.appResponse(updated))
 }
@@ -118,7 +119,8 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not delete app"))
 		return
 	}
-	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged, `{"kind":"deleted","slug":"`+app.Slug+`"}`)
+	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged,
+		fmt.Sprintf(`{"kind":"deleted","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
 	s.log.Info("app deleted", "app", app.ID, "slug", app.Slug, "account", acct.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -168,8 +170,22 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, api.ErrCapacity("could not activate rollback target"))
 		return
 	}
+	// F-03: rollback emit now carries status="live" (the freshly-restored
+	// deployment is live) and a deployment_id for listeners that switch on
+	// the field. imaged's handleDeployment ignores this emit (the rollback
+	// target already has a prepared ext4 + snap from the prior supersede),
+	// but the symmetry lets future listeners branch on status without
+	// a decode change.
 	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged,
-		fmt.Sprintf(`{"app_id":"%s","from":"%s","to":"%s"}`, app.ID, current.ID, target.ID))
+		fmt.Sprintf(`{"kind":"rollback","status":"live","app_id":"%s","deployment_id":"%s","from":"%s","to":"%s"}`,
+			app.ID, target.ID, current.ID, target.ID))
+	// F-03: emit the supersede transition for the deployment being
+	// retired. Prior code did not announce the supersede at all, so imaged's
+	// (F5) cleanupDeploymentFiles(p.To, true /* keepSnap */) branch never
+	// fired. status="superseded" makes the transition observable.
+	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged,
+		fmt.Sprintf(`{"kind":"superseded","status":"superseded","app_id":"%s","deployment_id":"%s","to":"%s"}`,
+			app.ID, current.ID, current.ID))
 	s.log.Info("app rolled back", "app", app.ID, "from", current.ID, "to", target.ID, "account", acct.ID)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(target))
 }
@@ -186,7 +202,8 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, api.ErrCapacity("could not park app"))
 		return
 	}
-	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged, `{"kind":"parked","slug":"`+app.Slug+`"}`)
+	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged,
+		fmt.Sprintf(`{"kind":"parked","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
 	s.log.Info("app parked", "app", app.ID, "account", acct.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -202,7 +219,8 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, api.ErrCapacity("could not wake app"))
 		return
 	}
-	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged, `{"kind":"woken","slug":"`+app.Slug+`"}`)
+	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged,
+		fmt.Sprintf(`{"kind":"woken","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
 	s.log.Info("app woken", "app", app.ID, "account", acct.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -258,8 +276,14 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not rename app"))
 		return
 	}
+	// F-04: renamed emit now carries app_id. The old appsRoot/<oldSlug>/
+	// directory becomes orphan (renamed app is the new slug); the cleanup
+	// is left to imaged's GC, which removes stale snapshot rows and their
+	// files. We do NOT scrub the old slug directory on rename — that
+	// race-conditions with concurrent deploys that still reference the
+	// old slug in their deployment.app_id-to-slug lookup.
 	_ = s.notif.Notify(ctx(r), db.NotifyAppChanged,
-		fmt.Sprintf(`{"kind":"renamed","from":%q,"to":%q}`, oldSlug, req.NewSlug))
+		fmt.Sprintf(`{"kind":"renamed","app_id":"%s","from":%q,"to":%q}`, app.ID, oldSlug, req.NewSlug))
 	s.log.Info("app renamed", "app", updated.ID, "from", oldSlug, "to", req.NewSlug, "account", acct.ID)
 	writeJSON(w, http.StatusOK, s.appResponse(updated))
 }

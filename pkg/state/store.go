@@ -239,6 +239,12 @@ type Store interface {
 	// rootfs — never neither, invariant §6.2-3).
 	LiveDeployment(ctx context.Context, appID string) (Deployment, error)
 	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
+	// ListDeploymentsForApp returns deployments for an app, ordered DESC by
+	// created_at. limit <= 0 means "no row cap" (return every remaining row
+	// after offset). MemStore and PgStore both honour this contract — F-10
+	// closed the prior silent asymmetry where Postgres' `LIMIT 0` returned
+	// zero rows and MemStore returned all rows. NaN `offset` (= negative
+	// value) is treated as 0 by both backends.
 	ListDeploymentsForApp(ctx context.Context, appID string, limit, offset int) ([]Deployment, error)
 	// ListDeploymentsForAccount returns deployments across every app the
 	// account owns, cursor-paginated by created_at DESC. before is the
@@ -398,6 +404,33 @@ type Store interface {
 	CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, error)
 	LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error)
 	MarkSnapshotStale(ctx context.Context, snapshotID string) error
+
+	// Snapshot GC (imaged nightly + on FC upgrade, spec §4.6 + §4.4).
+	//
+	// ListSnapshotsForGC returns every non-stale snapshot joined with its
+	// deployment + app + account. Soft-deleted apps (status='deleted') are
+	// excluded; their snapshots have no in-flight wake target.
+	ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error)
+	// DeleteSnapshotsByID bulk-removes the named snapshot rows (no cascade).
+	// Returns the number of rows deleted; a second call with the same ids
+	// returns 0 and no error.
+	DeleteSnapshotsByID(ctx context.Context, ids []string) (int64, error)
+	// MarkAllSnapshotsStaleByFCVersion flips every non-stale row whose
+	// fc_version != currentVersion stale (ADR-005: snapshots are pinned to
+	// the Firecracker version that made them). Returns the number of rows
+	// affected. Idempotent.
+	MarkAllSnapshotsStaleByFCVersion(ctx context.Context, currentVersion string) (int64, error)
+	// MarkOldSnapshotsStale marks the given snapshot IDs stale (per-app
+	// "current + previous" enforcement, run before DeleteSnapshotsByID).
+	MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs []string) (int64, error)
+	// DeleteSnapshotsStaleOlderThan removes rows where stale=true AND
+	// created_at < now()-retention. Used by imaged's F2 startup sweep
+	// after the mark-stale step: old snapshots stay restorable for a
+	// retention window (typically 7 days per api.SnapshotStaleRetention)
+	// so a firecracker downgrade or operator rollback doesn't pay an
+	// extra cold boot. After the window they go away. Returns the row
+	// count. Idempotent.
+	DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error)
 
 	// Audit (append-only, spec §6.1).
 	AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error
