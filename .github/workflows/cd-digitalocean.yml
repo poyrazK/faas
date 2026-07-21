@@ -95,10 +95,30 @@ jobs:
 
       - name: Verify deployment
         run: |
+          echo "Waiting 5 seconds for services to settle..."
           sleep 5
+
+          echo "1. Verifying systemd service states via SSH..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@${{ secrets.DO_HOST }} '
+            failed=0
+            for svc in apid schedd gatewayd imaged meterd githubd; do
+              if systemctl is-active --quiet faas-$svc; then
+                echo "✓ faas-$svc is active and running"
+              else
+                echo "::error::faas-$svc is not running!"
+                systemctl status faas-$svc -n 20
+                failed=1
+              fi
+            done
+            exit $failed
+          '
+
+          echo "2. Verifying Control API healthz endpoint..."
           STATUS=$(curl -sf -o /dev/null -w '%{http_code}' \
-            "http://${{ secrets.DO_HOST }}:8080/healthz" || echo 000)
-          echo "Gateway healthz: HTTP ${STATUS}"
-          if [[ "${STATUS}" != "200" ]]; then
-            echo "::warning::Gateway healthz returned ${STATUS}"
+            "http://${{ secrets.DO_HOST }}:8081/healthz" || echo 000)
+          echo "Control API /healthz status code: $STATUS"
+          if [[ "$STATUS" != "200" ]]; then
+            echo "::error::Control API health check failed with status $STATUS"
+            exit 1
           fi
+          echo "✓ Control API is healthy"
