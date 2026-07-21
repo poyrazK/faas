@@ -9,6 +9,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -71,6 +72,13 @@ func run(args []string) int {
 	}
 	switch args[0] {
 	case "version", "--version", "-v":
+		// `faas version --help` prints usage + docs link; bare
+		// `faas version foo` still prints the version string (POSIX
+		// convention — git does the same).
+		if len(args) > 1 && (args[1] == "--help" || args[1] == "-h") {
+			PrintUsage(os.Stderr, "usage: faas version", "version")
+			return 0
+		}
 		fmt.Printf("faas %s\n", wire.Version)
 		return 0
 	case "help", "--help", "-h":
@@ -79,8 +87,16 @@ func run(args []string) int {
 	case "login":
 		return cmdLogin(args[1:])
 	case "logout":
+		if len(args) > 1 {
+			PrintUsage(os.Stderr, "usage: faas logout", "auth")
+			return 1
+		}
 		return cmdLogout()
 	case "whoami":
+		if len(args) > 1 {
+			PrintUsage(os.Stderr, "usage: faas whoami", "auth")
+			return 1
+		}
 		return cmdWhoami()
 	case "deploy":
 		return cmdDeployTarball(args[1:])
@@ -130,6 +146,15 @@ func run(args []string) int {
 	case "account":
 		return cmdAccount(args[1:])
 	case "usage":
+		// cmdUsage has its own --month flag and defaults to the
+		// current month — it intentionally accepts no positional args.
+		// The usage line is reached only when an extra positional arg
+		// is supplied; the per-command flag errors are handled by
+		// flag.ContinueOnError via the helper hook below.
+		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+			PrintUsage(os.Stderr, "usage: faas usage [--month YYYY-MM]", "usage")
+			return 1
+		}
 		return cmdUsage(args[1:])
 	case "logs":
 		return cmdLogs(args[1:])

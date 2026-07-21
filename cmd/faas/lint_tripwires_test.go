@@ -103,3 +103,90 @@ func isOsOpenCall(call *ast.CallExpr) bool {
 	}
 	return id.Name == "os"
 }
+
+// TestLintTripwire_NoGlyphLiteralOutsideOutput closes the UX §3.2 surface
+// the §3.2 PR opened: the leading-glyph rule is enforced by a writer-based
+// gate (output.go::PrintOK/PrintFail/PrintProgress/PrintWarn) so the
+// glyph disappears in pipes and under NO_COLOR. Any new code path that
+// prints a raw ✓/✗/→/! string literal in cmd/faas/ — outside output.go
+// and outside *_test.go — would bypass the gate, so this test fails fast
+// at `go test` time the moment someone copies an old `fmt.Println("✓ …")`
+// pattern into a new file.
+//
+// Excludes:
+//   - cmd/faas/output.go: the gate itself. By design carries all four
+//     glyphs as string literals.
+//   - cmd/faas/output_test.go and any other *_test.go: tests legitimately
+//     assert "glyph present" / "glyph absent" shapes, plus §3.3's static
+//     Error() contract test which always carries "→".
+//   - Comments: BasicLits in source comments aren't part of the AST
+//     token stream, so they're naturally excluded.
+//
+// Two intentional exceptions worth knowing:
+//   - commands5.go:504: `"Renamed %s → %s"` keeps the mid-string `→`
+//     (a semantic from-to, not a progress glyph — preserved per the
+//     §3.2 plan, follow-up to clean up separately).
+//   - commands2.go:315: `"Opening %s to bind %s → %s"` — same shape,
+//     semantic mid-string `→` for "bind X → Y". Not a progress glyph.
+//
+// Both literals are not leading-prefix glyphs so they wouldn't be matched
+// by the simple "starts with" rule below; they're listed here so a future
+// reviewer who sees a "should this be excluded?" question has the answer
+// in-tree.
+func TestLintTripwire_NoGlyphLiteralOutsideOutput(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+		name := fi.Name()
+		if strings.HasSuffix(name, "_test.go") {
+			return false
+		}
+		if strings.HasSuffix(name, ".pb.go") || strings.HasSuffix(name, "_grpc.pb.go") {
+			return false
+		}
+		return true
+	}, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse cmd/faas: %v", err)
+	}
+
+	// Leading-glyph strings we care about. The check is "starts with the
+	// glyph" because the migration spec is "leading prefix only" — mid-string
+	// `→` (semantic from-to notation) is explicitly preserved. A more
+	// aggressive "any occurrence" rule would over-trigger on legitimate
+	// cross-references and the §3.3 docs-URL line.
+	leadingGlyphs := []string{"✓", "✗", "→"}
+
+	var violations []string
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			fileName := fset.Position(file.Pos()).Filename
+			if strings.HasSuffix(fileName, "output.go") {
+				continue
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				v := lit.Value
+				for _, g := range leadingGlyphs {
+					// strconv.UnquoteChar would be more precise, but a
+					// leading-prefix check on the raw literal (including
+					// its opening quote) is enough for the patterns this
+					// PR introduces: `"✓ ", "✗ ", "→ ` (single byte UTF-8).
+					if strings.HasPrefix(v, "\""+g) || strings.HasPrefix(v, "`"+g) {
+						pos := fset.Position(lit.Pos())
+						violations = append(violations, pos.String()+": "+v)
+						break
+					}
+				}
+				return true
+			})
+		}
+	}
+
+	if len(violations) > 0 {
+		t.Fatalf("found leading ✓/✗/→ string literal outside output.go — gate every customer-facing line through PrintOK/PrintFail/PrintProgress/PrintWarn so it strips in pipes and under NO_COLOR:\n  %s\n\n(mid-string `→` is allowed; this rule matches leading prefix only. Add `// lint:allow-glyph` above the line and document the reason if you genuinely need an exception.)",
+			strings.Join(violations, "\n  "))
+	}
+}

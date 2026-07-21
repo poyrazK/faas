@@ -26,7 +26,7 @@ import (
 // cmdAccount dispatches `faas account <subcommand>`.
 func cmdAccount(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas account {export|delete|restore|status}")
+		PrintUsage(os.Stderr, "usage: faas account {export|delete|restore|status}", "account")
 		return 1
 	}
 	switch args[0] {
@@ -63,7 +63,7 @@ func cmdAccountExport(args []string) int {
 		return printErr("Export failed", err)
 	}
 	abs, _ := filepath.Abs(*out)
-	fmt.Printf("✓ Exported account data to %s\n", abs)
+	PrintOK(osStdout, "Exported account data to %s", abs)
 	return 0
 }
 
@@ -101,7 +101,7 @@ func cmdAccountDelete(args []string) int {
 	if err != nil {
 		return printErr("Delete failed", err)
 	}
-	fmt.Printf("✓ Account scheduled for deletion\n")
+	PrintOK(osStdout, "Account scheduled for deletion")
 	fmt.Printf("  status:       %s\n", resp.Status)
 	fmt.Printf("  scheduled_at: %s\n", resp.ScheduledAt)
 	fmt.Printf("  restore_until:%s\n", resp.RestoreUntil)
@@ -120,7 +120,7 @@ func cmdAccountRestore(args []string) int {
 	if err != nil {
 		return printErr("Restore failed", err)
 	}
-	fmt.Printf("✓ Account restored. Welcome back to the %s plan.\n", acct.Plan)
+	PrintOK(osStdout, "Account restored. Welcome back to the %s plan.", acct.Plan)
 	return 0
 }
 

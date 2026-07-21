@@ -69,7 +69,7 @@ func validCLISlug(s string) bool {
 // (§6) talks about them to humans — the wire value stays unchanged.
 func cmdPS(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: faas ps <app>")
+		PrintUsage(os.Stderr, "usage: faas ps <app>", "ps")
 		return 1
 	}
 	slug := args[0]
@@ -146,7 +146,7 @@ func cmdStatus(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas status [--json]")
+		PrintUsage(os.Stderr, "usage: faas status [--json]", "status")
 		return 1
 	}
 	// Use the raw Client (not authedClient) so the public endpoint
@@ -182,7 +182,7 @@ func cmdStatus(args []string) int {
 // flow as `faas secrets set`.
 func cmdEnv(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas env <pull|push> --app <slug>")
+		PrintUsage(os.Stderr, "usage: faas env <pull|push> --app <slug>", "env")
 		return 1
 	}
 	switch args[0] {
@@ -203,7 +203,7 @@ func envPull(args []string) int {
 		return 1
 	}
 	if *app == "" {
-		fmt.Fprintln(os.Stderr, "usage: faas env pull --app <slug> [-o .env]")
+		PrintUsage(os.Stderr, "usage: faas env pull --app <slug> [-o .env]", "env")
 		return 1
 	}
 	client, err := authedClient()
@@ -225,10 +225,10 @@ func envPull(args []string) int {
 		return printErr("Could not write .env", err)
 	}
 	if resp.Count == 0 {
-		_, _ = fmt.Fprintf(osStdout, "✓ Wrote empty %s (%s has no secrets)\n", *out, *app)
+		PrintOK(osStdout, "Wrote empty %s (%s has no secrets)", *out, *app)
 		return 0
 	}
-	_, _ = fmt.Fprintf(osStdout, "✓ Wrote %d key(s) to %s (values intentionally blank — fill by hand)\n",
+	PrintOK(osStdout, "Wrote %d key(s) to %s (values intentionally blank — fill by hand)",
 		resp.Count, *out)
 	return 0
 }
@@ -242,7 +242,7 @@ func envPush(args []string) int {
 		return 1
 	}
 	if *app == "" {
-		fmt.Fprintln(os.Stderr, "usage: faas env push --app <slug> [-f .env | --from-stdin]")
+		PrintUsage(os.Stderr, "usage: faas env push --app <slug> [-f .env | --from-stdin]", "env")
 		return 1
 	}
 	if *fromStdin && *in != ".env" {
@@ -250,7 +250,7 @@ func envPush(args []string) int {
 		// the default for -f is ".env", so anything else means the
 		// customer explicitly named a file. Mutually exclusive with
 		// --from-stdin so we never read both.
-		fmt.Fprintln(os.Stderr, "✗ --from-stdin and -f are mutually exclusive")
+		PrintFail(os.Stderr, "--from-stdin and -f are mutually exclusive")
 		return 1
 	}
 	type pair struct{ k, v string }
@@ -305,7 +305,7 @@ func envPush(args []string) int {
 		}
 	}
 	if len(pairs) == 0 {
-		fmt.Fprintln(os.Stderr, "✗ no KEY=VALUE pairs in input")
+		PrintFail(os.Stderr, "no KEY=VALUE pairs in input")
 		return 1
 	}
 	client, err := authedClient()
@@ -336,7 +336,7 @@ func envPush(args []string) int {
 		if err := client.SetSecret(context.Background(), *app, p.k, p.v); err != nil {
 			return printErr("Set "+p.k+" failed", err)
 		}
-		_, _ = fmt.Fprintf(osStdout, "✓ %s set\n", p.k)
+		PrintOK(osStdout, "%s set", p.k)
 	}
 	return 0
 }
@@ -456,7 +456,7 @@ func cmdAppScale(slug string, args []string) int {
 	}
 	if req.RAMMB == nil && req.MaxConcurrency == nil &&
 		req.IdleTimeoutS == nil && req.MinInstances == nil {
-		fmt.Fprintln(os.Stderr, "usage: faas app <slug> scale [--ram N] [--max-concurrency N] [--idle SEC] [--min N]")
+		PrintUsage(os.Stderr, "usage: faas app <slug> scale [--ram N] [--max-concurrency N] [--idle SEC] [--min N]", "apps")
 		return 1
 	}
 	client, err := authedClient()
@@ -467,7 +467,7 @@ func cmdAppScale(slug string, args []string) int {
 	if err != nil {
 		return printErr("Scale failed", err)
 	}
-	_, _ = fmt.Fprintln(osStdout, "✓ Updated")
+	PrintOK(osStdout, "Updated")
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure (mid-rotation token, transient
 		// API blip). The cost echo is a transparency affordance;
@@ -485,12 +485,12 @@ func cmdAppScale(slug string, args []string) int {
 // on collisions, which client.go surfaces as APIError.
 func cmdAppRename(slug, newSlug string) int {
 	if !validCLISlug(newSlug) {
-		fmt.Fprintln(os.Stderr, "✗ invalid slug (3-40 chars, lowercase letters/digits/hyphens, no leading/trailing hyphen)")
+		PrintFail(os.Stderr, "invalid slug (3-40 chars, lowercase letters/digits/hyphens, no leading/trailing hyphen)")
 		return 1
 	}
 	if newSlug == slug {
 		// Idempotent no-op so the customer can re-run safely.
-		_, _ = fmt.Fprintf(osStdout, "✓ %s already has that slug\n", slug)
+		PrintOK(osStdout, "%s already has that slug", slug)
 		return 0
 	}
 	client, err := authedClient()
@@ -501,7 +501,13 @@ func cmdAppRename(slug, newSlug string) int {
 	if err != nil {
 		return printErr("Rename failed", err)
 	}
-	_, _ = fmt.Fprintf(osStdout, "✓ Renamed %s → %s\n", slug, updated.Slug)
+	// The mid-string `→` here is a semantic from-to arrow (rename
+	// from old slug to new slug), not the §3.2 "in-progress" symbol.
+	// It stays as a literal even when stdout is not a TTY: in pipes
+	// and CI logs the arrow is still load-bearing for distinguishing
+	// "old" from "new". The leading glyph goes through PrintOK so the
+	// §3.2 NO_COLOR rule still applies to the status-indicator half.
+	PrintOK(osStdout, "Renamed %s → %s", slug, updated.Slug)
 	return 0
 }
 
@@ -511,7 +517,7 @@ func cmdAppRename(slug, newSlug string) int {
 // switch stays small.
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas app <slug> [scale|rename <new>|--ram N|--max-concurrency N|--idle SEC|--min N]")
+		PrintUsage(os.Stderr, "usage: faas app <slug> [scale|rename <new>|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -521,7 +527,7 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppScale(slug, args[2:])
 		case subRename:
 			if len(args) != 3 {
-				fmt.Fprintln(os.Stderr, "usage: faas app <slug> rename <new-slug>")
+				PrintUsage(os.Stderr, "usage: faas app <slug> rename <new-slug>", "apps")
 				return 1
 			}
 			return cmdAppRename(slug, args[2])
@@ -549,12 +555,12 @@ var planRank = map[api.Plan]int{
 // prompts for y/N on paid→downgrade transitions.
 func cmdPlan(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: faas plan <free|hobby|pro|scale>")
+		PrintUsage(os.Stderr, "usage: faas plan <free|hobby|pro|scale>", "plan")
 		return 1
 	}
 	target := api.Plan(args[0])
 	if !target.Valid() {
-		fmt.Fprintf(os.Stderr, "✗ unknown plan %q (expected: free|hobby|pro|scale)\n", args[0])
+		PrintFail(os.Stderr, "unknown plan %q (expected: free|hobby|pro|scale)", args[0])
 		return 1
 	}
 	client, err := authedClient()
@@ -580,7 +586,7 @@ func cmdPlan(args []string) int {
 	if err != nil {
 		return printErr("Plan change failed", err)
 	}
-	_, _ = fmt.Fprintf(osStdout, "✓ Plan changed to %s\n", updated.Plan)
+	PrintOK(osStdout, "Plan changed to %s", updated.Plan)
 	return 0
 }
 
@@ -599,7 +605,7 @@ func cmdPlan(args []string) int {
 // missing $DISPLAY as a hard failure, which is the wrong signal.
 func cmdDashboard(args []string) int {
 	if len(args) != 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas dashboard")
+		PrintUsage(os.Stderr, "usage: faas dashboard", "dashboard")
 		return 1
 	}
 	if _, err := authedClient(); err != nil {
@@ -608,7 +614,7 @@ func cmdDashboard(args []string) int {
 	target := dashboardAccountURL(apiBase())
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", target)
 	if err := browser.Open(target); err != nil {
-		fmt.Fprintf(os.Stderr, "✗ Could not open browser: %v\n", err)
+		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
 		return 0
 	}

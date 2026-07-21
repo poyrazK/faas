@@ -69,7 +69,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas app <slug> [--ram N] [--max-concurrency N] [--idle SEC] [--min N]")
+		PrintUsage(os.Stderr, "usage: faas app <slug> [--ram N] [--max-concurrency N] [--idle SEC] [--min N]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -142,7 +142,7 @@ func cmdApp(args []string) int {
 	if err != nil {
 		return printErr("Update failed", err)
 	}
-	_, _ = fmt.Fprintln(osStdout, "✓ Updated")
+	PrintOK(osStdout, "Updated")
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure: the customer just updated an app
 		// successfully, don't surface an unrelated auth/network blip
@@ -163,7 +163,7 @@ func cmdAppsRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: faas apps -q <slug>")
+		PrintUsage(os.Stderr, "usage: faas apps -q <slug>", "apps")
 		return 1
 	}
 	slug := fs.Arg(0)
@@ -183,7 +183,7 @@ func cmdAppsRm(args []string) int {
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
 		return printErr("Delete failed", err)
 	}
-	fmt.Printf("✓ Deleted %s\n", slug)
+	PrintOK(osStdout, "Deleted %s", slug)
 	return 0
 }
 
@@ -233,7 +233,7 @@ func cmdDeployTarball(args []string) int {
 	// unset so imaged auto-detects.
 	if *templateName != "" {
 		if !templates.Exists(*templateName) {
-			fmt.Fprintf(os.Stderr, "✗ unknown --template %q (known: %s)\n",
+			PrintFail(os.Stderr, "unknown --template %q (known: %s)",
 				*templateName, strings.Join(templates.Names, ", "))
 			return 1
 		}
@@ -260,13 +260,13 @@ func cmdDeployTarball(args []string) int {
 		// reject it explicitly so the customer isn't surprised by
 		// which one wins.
 		if *image != "" {
-			fmt.Fprintln(os.Stderr, "✗ --template and --image are mutually exclusive")
+			PrintFail(os.Stderr, "--template and --image are mutually exclusive")
 			return 1
 		}
 	}
 
 	if *image == "" && *tarball == "" {
-		fmt.Fprintln(os.Stderr, "✗ one of --image, --tarball, --repo, or --template is required.")
+		PrintFail(os.Stderr, "one of --image, --tarball, --repo, or --template is required.")
 		return 1
 	}
 
@@ -312,11 +312,14 @@ func cmdDeployRepo(slug, repoFullName string) int {
 		return printErr("Not logged in", err)
 	}
 	target := dashboardRepoPickerURL(apiBase(), slug, repoFullName)
-	fmt.Printf("Opening %s to bind %s → %s\n", target, repoFullName, slug)
+	// Mid-string `→` here is semantic (binding repo X to app Y), not the
+	// §3.2 "in-progress" symbol. The leading glyph still routes through
+	// the gate so the prefix `→ ` strips under NO_COLOR / non-TTY.
+	PrintProgress(osStdout, "Opening %s to bind %s → %s", target, repoFullName, slug)
 	if err := browser.Open(target); err != nil {
 		// Fall back to a clickable copy if the opener is missing
 		// (sandboxed CI, no DISPLAY, etc.).
-		fmt.Fprintf(os.Stderr, "✗ Could not open browser: %v\n", err)
+		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
 		return 0
 	}
@@ -326,7 +329,7 @@ func cmdDeployRepo(slug, repoFullName string) int {
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 func cmdRollback(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: faas rollback <slug>")
+		PrintUsage(os.Stderr, "usage: faas rollback <slug>", "rollback")
 		return 1
 	}
 	client, err := authedClient()
@@ -337,13 +340,13 @@ func cmdRollback(args []string) int {
 	if err != nil {
 		return printErr("Rollback failed", err)
 	}
-	fmt.Printf("✓ Rolled back to %s (%s)\n", dep.ID, dep.Status)
+	PrintOK(osStdout, "Rolled back to %s (%s)", dep.ID, dep.Status)
 	return 0
 }
 
 func cmdPark(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: faas park <slug>")
+		PrintUsage(os.Stderr, "usage: faas park <slug>", "park-wake")
 		return 1
 	}
 	client, err := authedClient()
@@ -353,13 +356,13 @@ func cmdPark(args []string) int {
 	if err := client.Park(context.Background(), args[0]); err != nil {
 		return printErr("Park failed", err)
 	}
-	fmt.Println("✓ Parked (cold)")
+	PrintOK(osStdout, "Parked (cold)")
 	return 0
 }
 
 func cmdWake(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: faas wake <slug>")
+		PrintUsage(os.Stderr, "usage: faas wake <slug>", "park-wake")
 		return 1
 	}
 	client, err := authedClient()
@@ -369,7 +372,7 @@ func cmdWake(args []string) int {
 	if err := client.Wake(context.Background(), args[0]); err != nil {
 		return printErr("Wake failed", err)
 	}
-	fmt.Println("✓ Waking…")
+	PrintOK(osStdout, "Waking…")
 	return 0
 }
 
@@ -377,7 +380,7 @@ func cmdWake(args []string) int {
 // customer must publish for verification (spec §7).
 func cmdDomains(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas domains <list|add|rm> [args]")
+		PrintUsage(os.Stderr, "usage: faas domains <list|add|rm> [args]", "domains")
 		return 1
 	}
 	switch args[0] {
@@ -409,7 +412,7 @@ func cmdDomains(args []string) int {
 			return 1
 		}
 		if *domain == "" || *slug == "" {
-			fmt.Fprintln(os.Stderr, "usage: faas domains add --domain <d> --app <slug>")
+			PrintUsage(os.Stderr, "usage: faas domains add --domain <d> --app <slug>", "domains")
 			return 1
 		}
 		client, err := authedClient()
@@ -426,7 +429,7 @@ func cmdDomains(args []string) int {
 		return 0
 	case subRm:
 		if len(args) != 2 {
-			fmt.Fprintln(os.Stderr, "usage: faas domains rm <domain>")
+			PrintUsage(os.Stderr, "usage: faas domains rm <domain>", "domains")
 			return 1
 		}
 		client, err := authedClient()
@@ -436,7 +439,7 @@ func cmdDomains(args []string) int {
 		if err := client.DeleteDomain(context.Background(), args[1]); err != nil {
 			return printErr("Delete failed", err)
 		}
-		fmt.Println("✓ Removed")
+		PrintOK(osStdout, "Removed")
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "unknown domains subcommand %q\n", args[0])
@@ -446,7 +449,7 @@ func cmdDomains(args []string) int {
 // cmdCrons: list/add/rm.
 func cmdCrons(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas crons <list|add|rm> [args]")
+		PrintUsage(os.Stderr, "usage: faas crons <list|add|rm> [args]", "crons")
 		return 1
 	}
 	switch args[0] {
@@ -457,7 +460,7 @@ func cmdCrons(args []string) int {
 			return 1
 		}
 		if *slug == "" {
-			fmt.Fprintln(os.Stderr, "usage: faas crons list --app <slug>")
+			PrintUsage(os.Stderr, "usage: faas crons list --app <slug>", "crons")
 			return 1
 		}
 		client, err := authedClient()
@@ -488,7 +491,7 @@ func cmdCrons(args []string) int {
 			return 1
 		}
 		if *slug == "" || *schedule == "" {
-			fmt.Fprintln(os.Stderr, "usage: faas crons add --app <slug> --schedule '*/5 * * * *' [--path /]")
+			PrintUsage(os.Stderr, "usage: faas crons add --app <slug> --schedule '*/5 * * * *' [--path /]", "crons")
 			return 1
 		}
 		client, err := authedClient()
@@ -501,11 +504,11 @@ func cmdCrons(args []string) int {
 		if err != nil {
 			return printErr("Create failed", err)
 		}
-		fmt.Printf("✓ Cron scheduled: %s %s\n", c.Schedule, c.Path)
+		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, c.Path)
 		return 0
 	case subRm:
 		if len(args) != 2 {
-			fmt.Fprintln(os.Stderr, "usage: faas crons rm <id>")
+			PrintUsage(os.Stderr, "usage: faas crons rm <id>", "crons")
 			return 1
 		}
 		client, err := authedClient()
@@ -515,7 +518,7 @@ func cmdCrons(args []string) int {
 		if err := client.DeleteCron(context.Background(), args[1]); err != nil {
 			return printErr("Delete failed", err)
 		}
-		fmt.Println("✓ Removed")
+		PrintOK(osStdout, "Removed")
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "unknown crons subcommand %q\n", args[0])
@@ -525,7 +528,7 @@ func cmdCrons(args []string) int {
 // cmdKeys: list/add/rm. Adding returns the plaintext token once (spec §2.2).
 func cmdKeys(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: faas keys <list|add|rm> [args]")
+		PrintUsage(os.Stderr, "usage: faas keys <list|add|rm> [args]", "keys")
 		return 1
 	}
 	switch args[0] {
@@ -547,7 +550,7 @@ func cmdKeys(args []string) int {
 		return 0
 	case subAdd:
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: faas keys add <label>")
+			PrintUsage(os.Stderr, "usage: faas keys add <label>", "keys")
 			return 1
 		}
 		client, err := authedClient()
@@ -558,11 +561,11 @@ func cmdKeys(args []string) int {
 		if err != nil {
 			return printErr("Create failed", err)
 		}
-		fmt.Printf("✓ New API key (shown ONCE):\n  %s\n", k.Plaintext)
+		PrintOK(osStdout, "New API key (shown ONCE):\n  %s", k.Plaintext)
 		return 0
 	case subRm:
 		if len(args) != 2 {
-			fmt.Fprintln(os.Stderr, "usage: faas keys rm <id>")
+			PrintUsage(os.Stderr, "usage: faas keys rm <id>", "keys")
 			return 1
 		}
 		client, err := authedClient()
@@ -572,7 +575,7 @@ func cmdKeys(args []string) int {
 		if err := client.DeleteKey(context.Background(), args[1]); err != nil {
 			return printErr("Delete failed", err)
 		}
-		fmt.Println("✓ Removed")
+		PrintOK(osStdout, "Removed")
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "unknown keys subcommand %q\n", args[0])
@@ -618,7 +621,7 @@ func boolPtr(b bool) *bool { return &b }
 // server, not the CLI's token file.
 func cmdConnect(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: faas connect github")
+		PrintUsage(os.Stderr, "usage: faas connect github", "connect")
 		return 1
 	}
 	switch args[0] {
@@ -629,13 +632,13 @@ func cmdConnect(args []string) int {
 		target := dashboardAccountURL(apiBase())
 		fmt.Printf("Opening %s to connect GitHub…\n", target)
 		if err := browser.Open(target); err != nil {
-			fmt.Fprintf(os.Stderr, "✗ Could not open browser: %v\n", err)
+			PrintFail(os.Stderr, "Could not open browser: %v", err)
 			fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
 			return 0
 		}
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "✗ unknown service %q (supported: %s)\n", args[0], svcGithub)
+		PrintFail(os.Stderr, "unknown service %q (supported: %s)", args[0], svcGithub)
 		return 1
 	}
 }
@@ -650,7 +653,7 @@ func cmdOpen(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: faas open <slug> [--dashboard]")
+		PrintUsage(os.Stderr, "usage: faas open <slug> [--dashboard]", "open")
 		return 1
 	}
 	slug := fs.Arg(0)
@@ -690,7 +693,7 @@ func cmdOpen(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", target)
 	if err := browser.Open(target); err != nil {
-		fmt.Fprintf(os.Stderr, "✗ Could not open browser: %v\n", err)
+		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
 		return 0
 	}
@@ -795,7 +798,7 @@ func cmdLogs(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: faas logs <slug> [--follow] [--deployment ID]")
+		PrintUsage(os.Stderr, "usage: faas logs <slug> [--follow] [--deployment ID]", "logs")
 		return 1
 	}
 	slug := fs.Arg(0)
@@ -822,7 +825,7 @@ func cmdLogs(args []string) int {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		var p api.Problem
 		if json.Unmarshal(data, &p) == nil && p.Code != "" {
-			fmt.Fprintln(os.Stderr, (&APIError{Problem: p}).Error())
+			renderAPIError(os.Stderr, &APIError{Problem: p})
 			return exitCodeForStatus(p.Status)
 		}
 		return printErr("Logs failed", fmt.Errorf("status %d", resp.StatusCode))
@@ -933,7 +936,7 @@ func (s *sseLineReader) fill() error {
 //
 // Issue #64 D4 — replaces the old "✓ Queued build …" and exit.
 func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
-	fmt.Printf("→ build queued for %s (deployment %s)\n", dep.AppID, dep.ID)
+	PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
 	path := "/v1/deployments/" + dep.ID + "/logs?follow=1"
 	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
@@ -951,7 +954,7 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 		if final, ok := pollDeploymentFinal(c, dep); ok {
 			return terminalExitForDeployment(final)
 		}
-		fmt.Fprintf(os.Stderr, "! stream unreachable; follow manually: faas logs --deployment %s\n", dep.ID)
+		PrintWarn(os.Stderr, "stream unreachable; follow manually: faas logs --deployment %s", dep.ID)
 		return 3
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -959,7 +962,7 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		var p api.Problem
 		if json.Unmarshal(data, &p) == nil && p.Code != "" {
-			fmt.Fprintln(os.Stderr, (&APIError{Problem: p}).Error())
+			renderAPIError(os.Stderr, &APIError{Problem: p})
 			return exitCodeForStatus(p.Status)
 		}
 		return printErr("Build log stream failed", fmt.Errorf("status %d", resp.StatusCode))
@@ -971,7 +974,7 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			fmt.Fprintf(os.Stderr, "! stream closed; follow manually: faas logs --deployment %s\n", dep.ID)
+			PrintWarn(os.Stderr, "stream closed; follow manually: faas logs --deployment %s", dep.ID)
 			return 3
 		}
 		// event:log frames — JSON LogEntry with a `line` field.
@@ -989,7 +992,7 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 		if json.Unmarshal([]byte(line), &status) == nil &&
 			(status.Status == statusLive || status.Status == "failed") {
 			if status.Status == statusLive {
-				_, _ = fmt.Fprintf(osStdout, "✓ Deployed. https://%s.apps.DOMAIN\n", dep.AppID)
+				PrintOK(osStdout, "Deployed. https://%s.apps.DOMAIN", dep.AppID)
 				printDeployColdWakeSentence()
 				return 0
 			}
@@ -1002,7 +1005,7 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 			Reason string `json:"reason"`
 		}
 		if json.Unmarshal([]byte(line), &end) == nil && end.Reason != "" {
-			fmt.Fprintf(os.Stderr, "! build log stream ended (%s); checking deployment status…\n", end.Reason)
+			PrintWarn(os.Stderr, "build log stream ended (%s); checking deployment status…", end.Reason)
 			break
 		}
 		// Unknown frame shape — print raw so the customer can see it.
@@ -1014,7 +1017,7 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 	if final, ok := pollDeploymentFinal(c, dep); ok {
 		return terminalExitForDeployment(final)
 	}
-	fmt.Fprintf(os.Stderr, "! stream ended without a terminal frame; follow manually: faas logs --deployment %s\n", dep.ID)
+	PrintWarn(os.Stderr, "stream ended without a terminal frame; follow manually: faas logs --deployment %s", dep.ID)
 	return 3
 }
 
@@ -1038,7 +1041,7 @@ func pollDeploymentFinal(c *Client, dep api.DeploymentResponse) (api.DeploymentR
 // row (which has the canonical Error string from the DB).
 func terminalExitForDeployment(d api.DeploymentResponse) int {
 	if d.Status == statusLive {
-		_, _ = fmt.Fprintf(osStdout, "✓ Deployed. https://%s.apps.DOMAIN\n", d.AppID)
+		PrintOK(osStdout, "Deployed. https://%s.apps.DOMAIN", d.AppID)
 		printDeployColdWakeSentence()
 		return 0
 	}
@@ -1058,7 +1061,7 @@ func printDeployColdWakeSentence() {
 // renderDeployFailure maps the deployment's Error string to one of the
 // four UX §2.4 copy blocks and exits 3 for infra, 1 for the rest.
 func renderDeployFailure(d api.DeploymentResponse) int {
-	fmt.Fprintf(os.Stderr, "✗ %s\n", mapFailureMessage(d.Error))
+	PrintFail(os.Stderr, "%s", mapFailureMessage(d.Error))
 	if d.Error == "infra" {
 		return 3
 	}
