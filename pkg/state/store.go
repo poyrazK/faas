@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -10,6 +11,29 @@ import (
 
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
+
+// ErrQuotaExceeded is returned by CreateAppIfUnderQuota when the
+// account already holds limits.DeployedApps live apps. The error wraps
+// the observed count so apid can include it in the 403 envelope via
+// api.ErrPlanLimitApps without re-running the count.
+type QuotaError struct {
+	Limit    int // limits.DeployedApps at the time of the call
+	Observed int // count(*) of live apps observed inside the same critical section
+}
+
+func (e *QuotaError) Error() string {
+	return fmt.Sprintf("state: deployed-app quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
+}
+
+// Is allows errors.Is(err, ErrQuotaExceeded) to match any *QuotaError.
+// Behaviour parity with ErrNotFound / ErrConflict.
+func (e *QuotaError) Is(target error) bool {
+	return target == ErrQuotaExceeded
+}
+
+// ErrQuotaExceeded is the sentinel callers compare against via errors.Is.
+// Concrete instances are *QuotaError so handlers can read limit/observed.
+var ErrQuotaExceeded = errors.New("state: deployed-app quota exceeded")
 
 // MaxDeploymentLogPage caps the per-call row count for
 // ListDeploymentLogs. Both implementations clamp the caller's
@@ -139,6 +163,26 @@ type Store interface {
 
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)
+	// CreateAppIfUnderQuota inserts app iff the account currently holds
+	// fewer than limits.DeployedApps live apps (active + evicted_cold).
+	// The count + insert happen under a single critical section — PgStore
+	// opens a transaction that SELECT … FOR UPDATE locks the parent
+	// accounts row, MemStore holds m.mu — so two concurrent createApp
+	// calls on a Free account cannot both pass the cap check (spec §4.2,
+	// PR fix for the TOCTOU in handlers.go::createApp).
+	//
+	// Returns:
+	//   - (App, nil) on success
+	//   - (App{}, *QuotaError) when the cap is reached — handlers map
+	//     this to 403 CodePlanLimitApps with limit + observed
+	//   - (App{}, ErrConflict) when app.Slug is already taken
+	//   - (App{}, ErrNotFound) when the account row is gone
+	//   - (App{}, other) on transport / SQL errors
+	//
+	// limits.DeployedApps is the per-plan cap (api.MustLimitsFor(plan)).
+	// Implementations enforce it authoritatively; callers MUST NOT also
+	// call CountDeployedApps before this method (that's the bug).
+	CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error)
 	AppByID(ctx context.Context, id string) (App, error)
 	AppBySlug(ctx context.Context, slug string) (App, error)
 	ListApps(ctx context.Context, accountID string) ([]App, error)

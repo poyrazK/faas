@@ -197,21 +197,6 @@ type noopMailer struct{}
 
 func (noopMailer) Send(_ context.Context, _ Message) error { return nil }
 
-// newLogMailer returns a Mailer that writes every message to slog. Used
-// until gap G4 (Postmark/Resend) lands; cmd/apid wires this on startup.
-func newLogMailer(log *slog.Logger) Mailer {
-	return &logMailer{log: log}
-}
-
-type logMailer struct{ log *slog.Logger }
-
-func (l *logMailer) Send(_ context.Context, msg Message) error {
-	l.log.Info("mail.send",
-		"to", msg.To, "subject", msg.Subject,
-		"has_html", msg.HTMLBody != "", "text_bytes", len(msg.TextBody))
-	return nil
-}
-
 // noopNotifier is the test/dev default; production wires pkg/db.Notify.
 type noopNotifier struct{}
 
