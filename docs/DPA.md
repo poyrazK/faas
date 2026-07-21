@@ -1,5 +1,31 @@
 # Data Processing Addendum (DPA)
 
+<!--
+  Operator-facing template notes (PR #83 review #16):
+
+  1. Placeholders use Go html/template action syntax ({{...}}).
+     The dashboard route at /dashboard/account/dpa renders this
+     file through html/template, which means the body MUST be
+     syntactically valid template input. The {{...}} placeholders
+     already in this file work because html/template treats them
+     as plain text outside any {{...}} action. Adding a real
+     {{if ...}}, {{range ...}}, or {{ $x := ... }} DIRECTIVE
+     (rather than a placeholder) will be parsed and executed at
+     render time — keep this template logic-free. Operator-only
+     Go-template-style placeholders (the {{ALL_CAPS}} shape above)
+     are fine; do not switch to {{ .Foo }} or {{ range ... }}.
+
+  2. The body is rendered inside <pre class="dpa"> (see
+     pkg/dashboard/templates/dpa.html). HTML in the body is shown
+     as text — the operator should not rely on HTML formatting;
+     markdown-style text is the right shape.
+
+  3. Keep this file small. Production deploys ship
+     FAAS_DPA_PATH pointing at /etc/faas/dpa.md; the in-repo copy
+     is the dev fallback and the source of truth the operator
+     customises.
+-->
+
 **Effective date:** {{EFFECTIVE_DATE}}
 **Customer:** {{CUSTOMER_NAME}}
 **Jurisdiction:** {{JURISDICTION}}

@@ -92,3 +92,14 @@ func (s State) CountsForConcurrency() bool {
 func (s State) CountsForRAM() bool {
 	return s.CountsForConcurrency() || s == StateSnapshotting
 }
+
+// IsLive reports whether the named state is a live row that the
+// scheduler should consider for work / eviction / RAM accounting.
+// Equivalent to CountsForRAM (snapshot count is included because
+// the snapshot middleware holds the VM paused but still resident).
+//
+// This is the single source of truth for "live" — schedd's
+// eviction subscriber, any future quota eviction, and the
+// MemStore-backed test helpers all read through this predicate so
+// that adding a future state to the live set is a one-line change.
+func IsLive(s string) bool { return State(s).CountsForRAM() }

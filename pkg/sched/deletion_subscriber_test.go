@@ -1,24 +1,23 @@
 package sched
 
 // Tests for the deletion subscriber (ADR-026). MemStore-backed, no
-// Postgres required. The subscriber's only contract that matters to
-// us here is:
+// Postgres required. The subscriber's API is purely "drain this
+// channel": tests build the channel themselves (via fakeNotify), and
+// the live / parked assertions are framed around state.IsLive so
+// the contract lives in pkg/state, not here.
 //   1. A pg_notify message with a known account_id causes every live
-//      instance owned by that account to be transitioned to a parked
-//      state via Engine.Park (the new "evicting_account_deleting"
-//      state lives on the row, but Park is the only writer in this
-//      pathway).
-//   2. A second message for the same account is a no-op (the
-//      ListInstancesForAccount call returns zero rows because Park
-//      moved them out of the live set).
+//      instance owned by that account to be transitioned to the new
+//      "evicting_account_deleting" terminal state.
+//   2. A second message for the same account is a no-op (the rows
+//      moved out of the live set).
 //   3. A malformed payload is logged and skipped — it MUST NOT block
 //      later messages on the same channel.
-//   4. A redelivered channel (the producer closed and re-opened) is
-//      handled by the same Run loop without leaking goroutines.
+//   4. A channel that closes mid-flight causes Run to return nil
+//      (the caller owns the reconnect, so "channel closed" is the
+//      happy path for a fresh producer).
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"sync"
@@ -31,38 +30,33 @@ import (
 )
 
 // fakeNotify is a producer that hands the subscriber a hand-fed
-// channel. The same channel is reused across dial attempts (matches
-// how the production pg_notify client survives a brief disconnect).
+// channel. Tests build the channel themselves, drive Run directly,
+// and close the channel when finished — the close is what Run waits
+// on to return (PR #83 review #6 removed the SubFn reconnect path
+// and the caller now owns the producer).
 type fakeNotify struct {
-	mu  sync.Mutex
-	ch  chan db.Notification
-	err error
+	mu sync.Mutex
+	ch chan db.Notification
 }
 
 func newFakeNotify(buf int) *fakeNotify {
 	return &fakeNotify{ch: make(chan db.Notification, buf)}
 }
 
-func (f *fakeNotify) Subscribe(ctx context.Context, _ []string) (<-chan db.Notification, func(), error) {
+// Channel returns the underlying channel so tests can hand it to
+// DeletionSubscriber.Run directly.
+func (f *fakeNotify) Channel() <-chan db.Notification {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.err != nil {
-		return nil, func() {}, f.err
-	}
-	return f.ch, func() {}, nil
+	return f.ch
 }
 
+// Send publishes one notification. Blocks if the channel buffer is
+// full — tests size the buffer generously so this never trips.
 func (f *fakeNotify) Send(n db.Notification) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ch <- n
-}
-
-// publishOne is a fire-and-forget helper for the tests that publish a
-// single message and don't need the channel afterwards.
-func publishOne(t *testing.T, f *fakeNotify, n db.Notification) {
-	t.Helper()
-	f.Send(n)
 }
 
 // silenceLog returns an io.Discard-backed slog.Logger so the
@@ -72,8 +66,8 @@ func silenceLog() *slog.Logger {
 }
 
 // TestDeletionSubscriber_ParkOnMessage is the primary ADR-026
-// regression: a single payload transitions every live instance of the
-// customer to the parked set, with no write to other accounts.
+// regression: a single payload transitions every live instance of
+// the customer to the parked set, with no write to other accounts.
 func TestDeletionSubscriber_ParkOnMessage(t *testing.T) {
 	store := state.NewMemStore()
 	acctA, appA, depA := seedOneAccount(t, store, "owner-a@example.com")
@@ -92,46 +86,37 @@ func TestDeletionSubscriber_ParkOnMessage(t *testing.T) {
 
 	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(4)
-
 	sub := NewDeletionSubscriber(engine, silenceLog())
-	sub.SubFn = feed.Subscribe
-	sub.ChannelIDs = []string{db.NotifyAccountDeletionPending}
-	sub.SetBackoff(0, 0) // tests should never wait
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- sub.Run(ctx) }()
+	go func() { done <- sub.Run(ctx, feed.Channel()) }()
 
-	// Hit customer A's pending; expect both A instances to be parked.
-	publishOne(t, feed, db.Notification{
+	feed.Send(db.Notification{
 		Channel: db.NotifyAccountDeletionPending,
 		Payload: `{"account_id":"` + acctA.ID + `"}`,
 	})
 
-	// Wait for the work to land. We poll the store rather than
-	// sleeping blind — MemStore updates are synchronous through the
-	// subscriber's handle path.
 	if err := waitFor(func() bool {
 		return countLive(store, acctA.ID) == 0
 	}, 2*time.Second); err != nil {
 		t.Fatalf("account A still has %d live instances after publish", countLive(store, acctA.ID))
 	}
 
-	// Customer B's instance MUST remain live.
-	liveB := countLive(store, acctB.ID)
-	if liveB != 1 {
+	if liveB := countLive(store, acctB.ID); liveB != 1 {
 		t.Errorf("account B live instances = %d, want 1 (insB=%s)", liveB, insB.ID)
 	}
 
 	cancel()
-	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+	if err := <-done; err != nil && err != context.Canceled {
 		t.Fatalf("Run returned %v, want context.Canceled", err)
 	}
 }
 
-// TestDeletionSubscriber_DuplicateMessageIsNoOp asserts the subscriber
-// can be re-published against the same account without touching
-// parked instances. Mirrors pg_notify's at-least-once delivery.
+// TestDeletionSubscriber_DuplicateMessageIsNoOp asserts the
+// subscriber can be re-published against the same account without
+// touching parked instances. Mirrors pg_notify's at-least-once
+// delivery.
 func TestDeletionSubscriber_DuplicateMessageIsNoOp(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedOneAccount(t, store, "dup@example.com")
@@ -142,42 +127,42 @@ func TestDeletionSubscriber_DuplicateMessageIsNoOp(t *testing.T) {
 	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(4)
 	sub := NewDeletionSubscriber(engine, silenceLog())
-	sub.SubFn = feed.Subscribe
-	sub.ChannelIDs = []string{db.NotifyAccountDeletionPending}
-	sub.SetBackoff(0, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- sub.Run(ctx) }()
+	go func() { done <- sub.Run(ctx, feed.Channel()) }()
 
-	publishOne(t, feed, db.Notification{Channel: db.NotifyAccountDeletionPending, Payload: `{"account_id":"` + acct.ID + `"}`})
+	feed.Send(db.Notification{Channel: db.NotifyAccountDeletionPending, Payload: `{"account_id":"` + acct.ID + `"}`})
 	if err := waitFor(func() bool {
 		return countLive(store, acct.ID) == 0
 	}, 2*time.Second); err != nil {
-		t.Fatalf("first publish didn't park: %v", err)
+		t.Fatalf("first publish didn't evict: %v", err)
 	}
-	// Second message — store has the row gone, but ListInstancesForAccount
-	// still scans by account. After Park it's no longer RUNNING, so the
-	// filter excludes it. We just assert no panic and the row's state is
-	// some parked-like value.
 	if got := countLive(store, acct.ID); got != 0 {
-		t.Errorf("after park, countLive = %d, want 0", got)
+		t.Errorf("after first evict, countLive = %d, want 0", got)
 	}
-	publishOne(t, feed, db.Notification{Channel: db.NotifyAccountDeletionPending, Payload: `{"account_id":"` + acct.ID + `"}`})
-	time.Sleep(20 * time.Millisecond)
+	// Second message — the row is already in the terminal state so
+	// the live filter excludes it. Assert no panic and no row
+	// corruption.
+	feed.Send(db.Notification{Channel: db.NotifyAccountDeletionPending, Payload: `{"account_id":"` + acct.ID + `"}`})
+	if err := waitFor(func() bool {
+		return countLive(store, acct.ID) == 0
+	}, 2*time.Second); err != nil {
+		t.Fatalf("second publish left a live instance: %v", err)
+	}
 	if got, _ := store.AccountByID(context.Background(), acct.ID); got.ID != acct.ID {
 		t.Fatalf("account vanished: got %+v", got)
 	}
 
 	cancel()
-	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+	if err := <-done; err != nil && err != context.Canceled {
 		t.Fatalf("Run returned %v", err)
 	}
 }
 
-// TestDeletionSubscriber_BadPayloadSkipped asserts a malformed payload
-// logs + skips, the channel keeps flowing, and the next good message
-// still produces action.
+// TestDeletionSubscriber_BadPayloadSkipped asserts a malformed
+// payload logs + skips, the channel keeps flowing, and the next
+// good message still produces action.
 func TestDeletionSubscriber_BadPayloadSkipped(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedOneAccount(t, store, "bad@example.com")
@@ -187,50 +172,47 @@ func TestDeletionSubscriber_BadPayloadSkipped(t *testing.T) {
 	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(4)
 	sub := NewDeletionSubscriber(engine, silenceLog())
-	sub.SubFn = feed.Subscribe
-	sub.ChannelIDs = []string{db.NotifyAccountDeletionPending}
-	sub.SetBackoff(0, 0)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- sub.Run(ctx) }()
+	go func() { done <- sub.Run(ctx, feed.Channel()) }()
 
-	publishOne(t, feed, db.Notification{Channel: db.NotifyAccountDeletionPending, Payload: "not-json"})
-	publishOne(t, feed, db.Notification{Channel: db.NotifyAccountDeletionPending, Payload: `{"account_id":""}`})
-	publishOne(t, feed, db.Notification{Channel: db.NotifyAccountDeletionPending, Payload: `{"account_id":"` + acct.ID + `"}`})
+	feed.Send(db.Notification{Channel: db.NotifyAccountDeletionPending, Payload: "not-json"})
+	feed.Send(db.Notification{Channel: db.NotifyAccountDeletionPending, Payload: `{"account_id":""}`})
+	feed.Send(db.Notification{Channel: db.NotifyAccountDeletionPending, Payload: `{"account_id":"` + acct.ID + `"}`})
 
 	if err := waitFor(func() bool {
 		return countLive(store, acct.ID) == 0
 	}, 2*time.Second); err != nil {
-		t.Fatalf("good payload didn't park: %v", err)
+		t.Fatalf("good payload didn't evict: %v", err)
 	}
 	cancel()
-	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+	if err := <-done; err != nil && err != context.Canceled {
 		t.Fatalf("Run returned %v", err)
 	}
 }
 
-// TestDeletionSubscriber_NextDelay is the bound-checking contract on
-// the backoff curve. Pure unit test.
-func TestDeletionSubscriber_NextDelay(t *testing.T) {
-	cases := []struct {
-		name           string
-		cur, max, want time.Duration
-	}{
-		// nextDelay doubles cur; a cur=0 stays at 0 because the
-		// production caller clamps SetBackoff(0,0) only for tests,
-		// and we don't want a 0 * 2 to "look like" max==30s on the
-		// first round. The test pin is the saturating case below.
-		{"zero cur", 0, 30 * time.Second, 0},
-		{"doubles at low cur", 1 * time.Second, 30 * time.Second, 2 * time.Second},
-		{"doubles just under cap", 16 * time.Second, 30 * time.Second, 30 * time.Second},
-		{"above cap clamps to max", 20 * time.Second, 30 * time.Second, 30 * time.Second},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := nextDelay(c.cur, c.max); got != c.want {
-				t.Errorf("nextDelay(%v, %v) = %v, want %v", c.cur, c.max, got, c.want)
-			}
-		})
+// TestDeletionSubscriber_ChannelCloseReturns asserts that closing the
+// feed channel causes Run to return nil. This is the load-bearing
+// signal that lets cmd/schedd's reconnect logic (the production
+// seam that owns Subscribe) tear down Run cleanly on dial failure.
+func TestDeletionSubscriber_ChannelCloseReturns(t *testing.T) {
+	store := state.NewMemStore()
+	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
+	feed := newFakeNotify(1)
+	sub := NewDeletionSubscriber(engine, silenceLog())
+
+	feed.mu.Lock()
+	close(feed.ch)
+	feed.mu.Unlock()
+
+	// Bounded: a stuck Run would block until ctx fires. 200ms is
+	// well past the channel-close wake-up but well below any human
+	// noticing on CI.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := sub.Run(ctx, feed.Channel())
+	if err != nil {
+		t.Errorf("Run after close returned %v, want nil", err)
 	}
 }
 
@@ -246,15 +228,21 @@ func seedOneAccount(t *testing.T, store *state.MemStore, email string) (state.Ac
 		t.Fatalf("CreateAccount: %v", err)
 	}
 	app, err := store.CreateApp(context.Background(), state.App{
-		AccountID: acct.ID, Slug: email + "-app", RAMMB: 128, MaxConcurrency: 2, IdleTimeoutS: 60,
-		Type: state.AppTypeApp,
+		AccountID:      acct.ID,
+		Slug:           email + "-app",
+		RAMMB:          128,
+		MaxConcurrency: 2,
+		IdleTimeoutS:   60,
+		Type:           state.AppTypeApp,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
 	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindImage,
-		ImageDigest: "sha256:abc", Status: state.DeployLive,
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "sha256:abc",
+		Status:      state.DeployLive,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -263,11 +251,12 @@ func seedOneAccount(t *testing.T, store *state.MemStore, email string) (state.Ac
 }
 
 // countLive returns the number of instances for the account whose
-// state is in PgStore's "live" set (running, waking, cold_booting,
-// snapshotting). MemStore's ListInstancesForAccount doesn't filter on
-// state, so this helper does the filtering the test wants — and
-// pins the production semantics while we're at it: ADR-026
-// transitions instances OUT of the live set when schedd evicts them.
+// state counts as "live" by the official predicate (state.IsLive).
+// MemStore's ListInstancesForAccount doesn't filter on state, so
+// the helper does the filtering the test wants — and pins the
+// production semantics: ADR-026 transitions instances OUT of the
+// live set when schedd evicts them. Future state additions land
+// through pkg/state/machine.go in one place.
 func countLive(store *state.MemStore, accountID string) int {
 	all, err := store.ListInstancesForAccount(context.Background(), accountID)
 	if err != nil {
@@ -275,8 +264,7 @@ func countLive(store *state.MemStore, accountID string) int {
 	}
 	n := 0
 	for _, ins := range all {
-		switch ins.State {
-		case "running", "waking", "cold_booting", "snapshotting":
+		if state.IsLive(ins.State) {
 			n++
 		}
 	}
@@ -291,5 +279,5 @@ func waitFor(pred func() bool, timeout time.Duration) error {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	return errors.New("timeout")
+	return context.DeadlineExceeded
 }

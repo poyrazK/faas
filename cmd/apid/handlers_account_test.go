@@ -58,12 +58,17 @@ func withAccountTestRecipient(t *testing.T) {
 
 // seedOneApp creates a single app the handler tests can hang
 // deployments + secrets + crons off.
-func seedOneApp(t *testing.T, e testEnv, slug string) {
+func seedOneApp(t *testing.T, e testEnv, slug string) state.App {
 	t.Helper()
 	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("seed app: %d %s", rec.Code, rec.Body)
 	}
+	var out state.App
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode app: %v", err)
+	}
+	return out
 }
 
 // TestExportAccount_FullBundle creates an app + a secret, then asks
@@ -532,18 +537,27 @@ func TestExportAccount_PartialFailure_Returns500(t *testing.T) {
 // once and passes it to listBuildsForAccountExport.
 func TestExportAccount_BuildAppID_Populated(t *testing.T) {
 	e := setup(t, api.PlanHobby)
-	seedOneApp(t, e, "build-appid-app")
+	app := seedOneApp(t, e, "build-appid-app")
 
-	// Drive a deploy so a build row exists with a DeploymentID.
-	// The deploy validator requires a digest-pinned image (sha256:<64hex>);
-	// apid ignores the registry portion in unit tests — the only thing
-	// the export cares about is a row in deployments/builds keyed to
-	// the seeded app.
+	// PR #83 review #10: seed the deployment + build row directly via
+	// the store so the test does NOT race the async build pipeline.
+	// The previous version of this test had no reliable way to land
+	// a build row before /export (202 + builder dispatch) and so the
+	// Bug 4 assertion iterated an empty slice — the test passed even
+	// if BuildExportResponse.AppID was never populated. Going through
+	// the store pins the deterministic state the assertion needs.
 	const digest = "sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	depRec := e.do(t, "POST", "/v1/apps/build-appid-app/deployments",
-		api.CreateDeploymentRequest{Image: "registry.example/test@" + digest}, nil)
-	if depRec.Code != http.StatusAccepted {
-		t.Fatalf("deploy: %d %s", depRec.Code, depRec.Body)
+	dep, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: digest,
+		Status:      state.DeployLive,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if _, err := e.store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindImage, 1<<20, ""); err != nil {
+		t.Fatalf("CreateBuild: %v", err)
 	}
 
 	rec := e.do(t, "GET", "/v1/account/export", nil, nil)
@@ -554,14 +568,8 @@ func TestExportAccount_BuildAppID_Populated(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	// The deployment is 202 (build is dispatched async and the build
-	// row may not yet exist when we GET /export a few ms later), so
-	// we can't reliably assert builds[] shape here. What we CAN assert:
-	// the just-created deployment is in the bundle with the seeded
-	// app's ID, AND (if a build row happens to exist) its AppID is
-	// populated, which is the Bug 4 fix.
 	if len(bundle.Deployments) == 0 {
-		t.Fatal("bundle.Deployments empty after deploy: 202")
+		t.Fatal("bundle.Deployments empty after CreateDeployment")
 	}
 	wantApp := ""
 	for _, a := range bundle.Apps {
@@ -576,10 +584,19 @@ func TestExportAccount_BuildAppID_Populated(t *testing.T) {
 	if bundle.Deployments[0].AppID != wantApp {
 		t.Errorf("Deployment.AppID = %q, want %q", bundle.Deployments[0].AppID, wantApp)
 	}
-	// Bug 4 regression: when builds exist, AppID must be populated.
+	// Bug 4 regression: with a real build row now present, AppID must be
+	// populated. The PR #83 review observed that an empty bundle.Builds
+	// could mask a regressed fix; this version seeds the row before the
+	// GET so the slice is guaranteed non-empty.
+	if len(bundle.Builds) == 0 {
+		t.Fatal("bundle.Builds empty after CreateBuild (test seed is broken — fix the seed before trusting the next assertion)")
+	}
 	for i, b := range bundle.Builds {
 		if b.AppID == "" {
 			t.Errorf("BuildExportResponse[%d].AppID empty — Bug 4 fix regressed (build=%+v)", i, b)
+		}
+		if b.AppID != wantApp {
+			t.Errorf("BuildExportResponse[%d].AppID = %q, want %q", i, b.AppID, wantApp)
 		}
 	}
 }

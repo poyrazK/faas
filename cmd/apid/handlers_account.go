@@ -48,8 +48,14 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	// GDPR audit ledger — record that an export was served. Best-
 	// effort; the ledger survives DeleteAccount so a future DPO can
-	// see the request even after the account row is gone.
-	s.recordGdprRequest(r.Context(), acct, state.GdprActionExport)
+	// see the request even after the account row is gone. PR #83
+	// review #5: a ledger INSERT failure is now surfaced as
+	// X-Audit-Logged: false so the customer can tell (in DevTools,
+	// by mtime of the bundle, etc.) that their export landed in
+	// their hands but did not make it into the audit trail.
+	if !s.recordGdprRequest(r.Context(), acct, state.GdprActionExport) {
+		w.Header().Set("X-Audit-Logged", "false")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition",
 		`attachment; filename="faas-account-`+acct.ID+`-`+
@@ -89,9 +95,17 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account) (stat
 			restoreUntil := fresh.DeletionRequestedAt.Add(state.DeletionGraceDuration())
 			subject, body := mail.AccountDeletionPendingBody(
 				fresh.Email, *fresh.DeletionRequestedAt, restoreUntil)
-			_ = s.mailer.Send(ctx, Message{
+			// Capture mailer errors explicitly (PR #83 review #4): a
+			// silent email failure is the most expensive kind — the
+			// customer gets a 200, the deletion clock is running, and
+			// they have no record. Warn-log at minimum so a future
+			// audit can correlate "missing email" with "delivery outage".
+			if err := s.mailer.Send(ctx, Message{
 				To: []string{fresh.Email}, Subject: subject, TextBody: body,
-			})
+			}); err != nil {
+				s.log.Warn("apid: pending deletion email send failed",
+					"account", fresh.ID, "err", err)
+			}
 			// Emit pg_notify so any subscriber (audit, schedd's
 			// live-instance evictor once it lands) can react without
 			// polling. The payload matches the contract in
@@ -121,13 +135,16 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account) (stat
 	return acct, nil
 }
 
-// recordGdprRequest appends a single row to the gdpr_requests ledger
-// and stamps completed_at if the action is "complete on insert"
-// (export: the bundle is in hand, restore: the row is restored).
-// Failures are logged Warn — never 5xx — so a flaky audit DB can
-// never block a customer's GDPR action. Mirrors the pg_notify
-// best-effort posture in scheduleDeletion above.
-func (s *server) recordGdprRequest(ctx context.Context, acct state.Account, action state.GdprAction) {
+// recordGdprRequest appends a single row to the gdpr_requests
+// ledger and stamps completed_at if the action is "complete on
+// insert" (export: the bundle is in hand, restore: the row is
+// restored). The bool return tells the caller whether the row
+// landed in the database so it can surface X-Audit-Logged: false
+// when it didn't. Failures are logged Warn — never 5xx — so a
+// flaky audit DB can never block a customer's GDPR action.
+// Mirrors the pg_notify best-effort posture in scheduleDeletion
+// above.
+func (s *server) recordGdprRequest(ctx context.Context, acct state.Account, action state.GdprAction) bool {
 	req := state.GdprRequest{
 		ID:           uuid.NewString(),
 		AccountID:    acct.ID,
@@ -135,8 +152,9 @@ func (s *server) recordGdprRequest(ctx context.Context, acct state.Account, acti
 		Action:       action,
 		RequestedAt:  time.Now().UTC(),
 	}
-	// Export + restore complete at insert time; delete completes when
-	// pkg/grace fires DeleteAccount and calls CompleteGdprRequest.
+	// Export + restore complete at insert time; delete completes
+	// when pkg/grace fires DeleteAccount and calls
+	// CompleteGdprRequest.
 	switch action {
 	case state.GdprActionExport, state.GdprActionRestore:
 		req.CompletedAt = req.RequestedAt
@@ -144,7 +162,9 @@ func (s *server) recordGdprRequest(ctx context.Context, acct state.Account, acti
 	if err := s.store.AppendGdprRequest(ctx, req); err != nil {
 		s.log.Warn("apid: append gdpr_requests failed",
 			"account", acct.ID, "action", string(action), "err", err)
+		return false
 	}
+	return true
 }
 
 // restoreAccount flips the account back to active iff inside the

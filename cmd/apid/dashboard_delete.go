@@ -81,6 +81,12 @@ func (s *server) dashboardRestore(w http.ResponseWriter, r *http.Request) {
 // This handler serves the same JSON bundle from a session-authenticated
 // route, reusing gatherExport so the wire shape stays identical to the
 // REST export.
+//
+// Like the REST endpoint, this is recorded in the gdpr_requests
+// audit ledger (PR #83 review #5) so a customer browsing the
+// dashboard sees the same audit trail as one using the CLI. Set
+// X-Audit-Logged: false on the response if the audit INSERT failed
+// so DevTools-flag-reading tooling can detect the degraded state.
 func (s *server) dashboardExport(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
@@ -93,6 +99,9 @@ func (s *server) dashboardExport(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not assemble export"))
 		return
+	}
+	if !s.recordGdprRequest(r.Context(), acct, state.GdprActionExport) {
+		w.Header().Set("X-Audit-Logged", "false")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition",
