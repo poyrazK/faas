@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -243,10 +244,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Log:    log,
 	})
 
+	// Per-daemon Prometheus registry (ADR-015) — built unconditionally
+	// so the Loop has it from the first tick. meter.NewLoop accepts nil
+	// and coerces to a fresh test registry; here we hand it the real one.
+	ops := wire.NewOpsMetrics("meterd")
+
 	// The four timers run in goroutines; the cancel-watcher below picks
 	// up the first error and returns. meterd has no inbound gRPC — the
 	// public listener is gatewayd's (spec §Component ownership).
-	loop := meter.NewLoop(store, parker, stripe, pn, dunning, deps.now, log, mc)
+	loop := meter.NewLoop(store, parker, stripe, pn, dunning, deps.now, log, mc, ops)
 	errc := make(chan error, 1)
 	go func() { errc <- loop.Run(ctx) }()
 
@@ -261,17 +267,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.metricsListenAndServe == nil {
 			return fmt.Errorf("meterd: nil metricsListenAndServe (refusing to start with MetricsAddr set)")
 		}
-		ops := wire.NewOpsMetrics("meterd")
 		mux := http.NewServeMux()
 		mux.Handle(metricsPath, ops.Handler())
-		// /healthz — unconditional 200 for now. Follow-up PR will cache
-		// the last successful sample / quota / stripe / dunning tick and
-		// return 503 if any is older than 3× its interval (spec §14 M7
-		// acceptance — "meterd healthy iff sampled within 3 minutes").
-		// Matches the one-liner at pkg/gateway/synth.go:115-117.
+		// /healthz — 200 when every tracked timer (sample / quota /
+		// stripe / dunning) has fired within
+		// meter.StaleAfterMultiplier × its interval (spec §14 M7,
+		// "meterd healthy iff sampled within 3 minutes"); 503 with a
+		// JSON body listing the stale tick names otherwise. The body
+		// always includes a per-tick last-fire wall clock so an
+		// operator can diagnose without grepping journald.
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("ok"))
+			status := loop.Health(time.Now())
+			w.Header().Set("Content-Type", "application/json")
+			code := http.StatusOK
+			if !status.Healthy {
+				code = http.StatusServiceUnavailable
+			}
+			w.WriteHeader(code)
+			_ = json.NewEncoder(w).Encode(status)
 		})
 		srv, err := deps.metricsListenAndServe(cfg.MetricsAddr, mux)
 		if err != nil {
