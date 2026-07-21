@@ -353,6 +353,89 @@ func TestMTLSRoundTripUntrustedServerCert(t *testing.T) {
 	}
 }
 
+// TestMTLSRoundTripRejectsHostnameMismatch locks the new contract that
+// loadClientTLSConfig relies on stdlib's SAN check (closes alert #58).
+// The server cert is issued with IPAddresses=[10.0.0.99] only, but the
+// dial target is 127.0.0.1; the stdlib verifier (via grpc-go's
+// ServerName auto-promotion from the dial :authority) must reject the
+// handshake. Without the SAN check, this test would pass silently.
+//
+// The PKI is built inline (rather than reusing newTestPKI) because the
+// helper hard-codes 127.0.0.1/localhost SANs that would mask the
+// mismatch path.
+func TestMTLSRoundTripRejectsHostnameMismatch(t *testing.T) {
+	dir := t.TempDir()
+
+	caCert, caCertPEM, caKey := mustGenSelfSigned(t, x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test-ca-mismatch"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+	})
+
+	// Leaf signed for 10.0.0.99 only — IP SAN does NOT cover 127.0.0.1.
+	serverCertPEM, serverKeyPEM := mustGenSigned(t, x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "test-server-mismatch"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("10.0.0.99")},
+	}, caCert, caKey)
+
+	clientCertPEM, clientKeyPEM := mustGenSigned(t, x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: "test-client-mismatch"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}, caCert, caKey)
+
+	caCertPath := writeTestFile(t, filepath.Join(dir, "ca.pem"), caCertPEM)
+	serverCertPath := writeTestFile(t, filepath.Join(dir, "server.crt"), serverCertPEM)
+	serverKeyPath := writeTestFile(t, filepath.Join(dir, "server.key"), serverKeyPEM)
+	clientCertPath := writeTestFile(t, filepath.Join(dir, "client.crt"), clientCertPEM)
+	clientKeyPath := writeTestFile(t, filepath.Join(dir, "client.key"), clientKeyPEM)
+
+	serverTLS, err := LoadServerTLSConfig(serverCertPath, serverKeyPath, caCertPath)
+	if err != nil {
+		t.Fatalf("LoadServerTLSConfig: %v", err)
+	}
+	clientTLS, err := LoadClientTLSConfig(clientCertPath, clientKeyPath, caCertPath)
+	if err != nil {
+		t.Fatalf("LoadClientTLSConfig: %v", err)
+	}
+
+	lis, err := Listen(context.Background(), "tcp://127.0.0.1:0", serverTLS)
+	if err != nil {
+		t.Fatalf("Listen tcp mTLS: %v", err)
+	}
+	t.Cleanup(func() { _ = lis.Close() })
+
+	srv := grpc.NewServer()
+	healthgrpc.RegisterHealthServer(srv, healthsvc.NewServer())
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(func() { srv.Stop() })
+
+	conn, err := Dial(context.Background(), "tcp://"+lis.Addr().String(), clientTLS)
+	if err != nil {
+		t.Fatalf("Dial tcp mTLS: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	cli := healthgrpc.NewHealthClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := cli.Check(ctx, &healthgrpc.HealthCheckRequest{}); err == nil {
+		t.Fatalf("Health/Check succeeded against hostname-mismatched server; stdlib SAN check is not enforcing")
+	}
+}
+
 // --- TLS loaders ----------------------------------------------------------
 
 func TestTLSLoadersAcceptNilAllEmpty(t *testing.T) {
@@ -412,17 +495,23 @@ func TestTLSLoadersRejectInvalidPEM(t *testing.T) {
 	}
 }
 
-func TestLoadClientTLSConfigSetsVerifyPeer(t *testing.T) {
+// TestLoadClientTLSConfigDefaultVerifier pins the contract that
+// loadClientTLSConfig delegates entirely to stdlib's verifier: no
+// InsecureSkipVerify, no custom VerifyPeerCertificate. grpc-go's
+// tlsCreds.ClientHandshake populates ServerName from the dial
+// :authority before tls.Client is called (see internal/credentials
+// CloneTLSConfig + assignment in credentials/tls.go).
+func TestLoadClientTLSConfigDefaultVerifier(t *testing.T) {
 	pki := newTestPKI(t)
 	cfg, err := LoadClientTLSConfig(pki.clientCert, pki.clientKey, pki.caCert)
 	if err != nil {
 		t.Fatalf("LoadClientTLSConfig: %v", err)
 	}
-	if !cfg.InsecureSkipVerify {
-		t.Fatalf("InsecureSkipVerify = false; want true (suppress hostname check, run CA verify manually)")
+	if cfg.InsecureSkipVerify {
+		t.Fatalf("InsecureSkipVerify = true; want false (stdlib verifier must run, including SAN check)")
 	}
-	if cfg.VerifyPeerCertificate == nil {
-		t.Fatalf("VerifyPeerCertificate = nil; want CA-only verify hook set")
+	if cfg.VerifyPeerCertificate != nil {
+		t.Fatalf("VerifyPeerCertificate != nil; want nil (stdlib handles chain + SAN + EKU)")
 	}
 	if cfg.MinVersion != tls.VersionTLS13 {
 		t.Fatalf("MinVersion = %x; want TLS 1.3 (%x)", cfg.MinVersion, tls.VersionTLS13)

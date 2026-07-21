@@ -29,7 +29,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -399,65 +398,28 @@ func loadClientTLSConfig(certPath, keyPath, caPath, prefix string) (*tls.Config,
 		return nil, err
 	}
 
-	cfg := &tls.Config{
+	// Default stdlib verifier. crypto/tls runs chain trust against
+	// RootCAs, SAN matching per RFC 6125, and EKU enforcement in
+	// verifyServerCertificate (handshake_client.go, handshake_client_
+	// tls13.go) — all in one pass, during the handshake itself. We
+	// rely on grpc-go's tlsCreds.ClientHandshake to populate
+	// ServerName from the dial :authority before tls.Client is
+	// called (internal/credentials clones our config so the caller's
+	// copy is never mutated). The first iteration of this loader
+	// suppressed the hostname check via InsecureSkipVerify=true and
+	// re-ran chain validation in a custom VerifyPeerCertificate
+	// hook — that approach was strictly weaker than letting stdlib
+	// do the full check, and CodeQL alert #58 flagged the literal
+	// "= true" regardless of the rationale in source comments.
+	// Production distributed deployments must issue per-daemon SANs
+	// (schedd.faas, vmmd.faas, …) — see ADR-025 §Rejected
+	// alternatives for the amendment that closes this gap.
+	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      caPool,
 		MinVersion:   tls.VersionTLS13,
 		NextProtos:   []string{"h2"},
-	}
-	verifyLeaf := func(rawCerts [][]byte) error {
-		if len(rawCerts) == 0 {
-			return errors.New("wire: server presented no certificates")
-		}
-		leaf, err := x509.ParseCertificate(rawCerts[0])
-		if err != nil {
-			return fmt.Errorf("wire: parse server leaf: %w", err)
-		}
-		intermediatePool := x509.NewCertPool()
-		for _, raw := range rawCerts[1:] {
-			if ic, err := x509.ParseCertificate(raw); err == nil {
-				intermediatePool.AddCert(ic)
-			}
-		}
-		_, err = leaf.Verify(x509.VerifyOptions{
-			Roots:         caPool,
-			Intermediates: intermediatePool,
-			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		})
-		return err
-	}
-	verifyChain := func(certs []*x509.Certificate) error {
-		if len(certs) == 0 {
-			return errors.New("wire: server presented no certificates")
-		}
-		intermediatePool := x509.NewCertPool()
-		for _, c := range certs[1:] {
-			intermediatePool.AddCert(c)
-		}
-		_, err := certs[0].Verify(x509.VerifyOptions{
-			Roots:         caPool,
-			Intermediates: intermediatePool,
-			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		})
-		return err
-	}
-	// CA-only verification per issue #95 / ADR-025 §Rejected alternatives.
-	// SAN/CN matching is explicitly out of scope for this slice. Bare
-	// InsecureSkipVerify would also disable CA chain validation, which
-	// is not what we want — InsecureSkipVerify just suppresses the
-	// stdlib's hostname check, and the two verifier hooks below run the
-	// chain validation ourselves. VerifyConnection is set alongside
-	// VerifyPeerCertificate so the verifier also runs on resumed TLS
-	// sessions (gosec G123: stdlib only calls the former on the initial
-	// handshake).
-	cfg.InsecureSkipVerify = true
-	cfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-		return verifyLeaf(rawCerts)
-	}
-	cfg.VerifyConnection = func(state tls.ConnectionState) error {
-		return verifyChain(state.PeerCertificates)
-	}
-	return cfg, nil
+	}, nil
 }
 
 // loadCAPool reads a PEM file and parses it into a fresh x509.CertPool.
