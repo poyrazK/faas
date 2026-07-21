@@ -394,6 +394,18 @@ type LoginToken struct {
 	ConsumedAt *time.Time
 }
 
+// CliAuthCode is one row of the cli_auth_codes table (spec §2.2
+// device-code flow). AccountID is empty between mint and claim; the
+// claim statement fills it in atomically. The 4-byte entropy + 5-min
+// TTL + per-IP rate limit means brute-force on the code space is not
+// realistic, so we don't bump the byte length here.
+type CliAuthCode struct {
+	TokenHash  []byte
+	AccountID  string // empty until ClaimCliAuthCode
+	ExpiresAt  time.Time
+	ConsumedAt *time.Time
+}
+
 // LogEntry is one line of build output for a deployment (slice 5).
 // The dashboard's SSE stream tails this row at seq > cursor; clients
 // use the combination (DeploymentID, Seq) to dedupe across reconnects

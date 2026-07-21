@@ -114,9 +114,11 @@ func hasApidPrefix(p, prefix string) bool {
 //
 // NOTE: this means customer apps cannot expose routes starting with
 // /v1/, /dashboard/, /oauth/, /login/, /auth/verify/, /logout/,
-// /status/, or /healthz. /v1/ in particular is a permanent API
-// reservation; customer-facing docs should call this out (issue #85
-// follow-up).
+// /status/, /healthz, or /cli-auth. /v1/ in particular is a permanent
+// API reservation; customer-facing docs should call this out (issue
+// #85 follow-up). /cli-auth is the device-code approval page
+// (spec §2.2) — same single-host reverse proxy handles it, no
+// rewrite needed.
 func isApidPath(p string) bool {
 	// Anchored roots: each matched as exact + "/" subtree.
 	for _, root := range []string{
@@ -127,6 +129,7 @@ func isApidPath(p string) bool {
 		apidRootLogout,
 		apidRootStatus,
 		apidRootHealthz,
+		apidRootCliAuth,
 	} {
 		if hasApidPrefix(p, root) {
 			return true
@@ -153,6 +156,7 @@ const (
 	apidRootLogout      = "/logout"
 	apidRootStatus      = "/status"
 	apidRootHealthz     = "/healthz"
+	apidRootCliAuth     = "/cli-auth"
 )
 
 // proxyToApid builds a one-shot httputil.ReverseProxy and serves

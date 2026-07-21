@@ -69,6 +69,20 @@ type server struct {
 	// statuses (apiAuthLimiter counts 401; dashboardAuthLimiter
 	// counts every attempt on /login to defeat anti-enumeration).
 	dashboardAuthLimiter *middleware.Limiter
+	// cliAuthLimiter is the per-IP bucket for the anonymous
+	// /v1/cli-auth/* endpoints (spec §2.2). Separate from
+	// apiAuthLimiter + dashboardAuthLimiter so a brute-force on
+	// codes cannot starve the bearer-token auth surface OR the
+	// dashboard /login bucket.
+	cliAuthLimiter *middleware.Limiter
+	// cliAuthSubmitLimiter is the per-IP bucket for POST /cli-auth
+	// (the dashboard-side claim form). Separate from
+	// dashboardAuthLimiter so a customer retrying `faas login` from a
+	// corporate NAT does not self-DoS the magic-link /login surface —
+	// the two share the 10/min/IP budget otherwise. Eager init mirrors
+	// apiAuthLimiter + dashboardAuthLimiter (test-only nil-fallbacks
+	// live in the chain methods).
+	cliAuthSubmitLimiter *middleware.Limiter
 	// dashboardExportLimiter caps /dashboard/account/export at
 	// 3/min/IP (PR #83 review #14). Pulling the export touches ≥7
 	// PG queries + a JSON encode; a stuck-refresh tab at a customer
@@ -181,6 +195,15 @@ func newServerWithDeps(
 	// bucket so the CountEveryAttempt sentinel on /login doesn't bleed
 	// 200s into the API's 401-counter.
 	dashboardAuthLimiter := middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
+	// CLI auth surface (spec §2.2). Two buckets:
+	//   * cliAuthLimiter      — anonymous /v1/cli-auth/* (mint + exchange)
+	//   * cliAuthSubmitLimiter — POST /cli-auth from the dashboard form
+	// The submit bucket is separate from dashboardAuthLimiter so a
+	// customer retrying `faas login` from a shared NAT doesn't burn the
+	// 10/min/IP budget the magic-link /login uses (review finding S2;
+	// the same user can hit both surfaces).
+	cliAuthLimiter := middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
+	cliAuthSubmitLimiter := middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
 	// PR #83 review #14: /dashboard/account/export is expensive
 	// (≥7 PG queries + JSON encode) and lives behind sessionAuth,
 	// not /v1/* auth — so it needs its own per-IP bucket separate
@@ -207,6 +230,8 @@ func newServerWithDeps(
 		dpaPath:                dpaPath,
 		apiAuthLimiter:         apiAuthLimiter,
 		dashboardAuthLimiter:   dashboardAuthLimiter,
+		cliAuthLimiter:         cliAuthLimiter,
+		cliAuthSubmitLimiter:   cliAuthSubmitLimiter,
 		dashboardExportLimiter: dashboardExportLimiter,
 	}
 }
@@ -391,6 +416,23 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /status", s.statusHandler)
 	mux.HandleFunc("GET /status/slo.json", s.statusJSONHandler)
 
+	// CLI auth device-code flow (spec §2.2). Anonymous on purpose —
+	// the CLI hasn't logged in yet. Anti-enumeration limiter is its
+	// own bucket (s.cliAuthLimiter) so brute-force on /v1/cli-auth/*
+	// doesn't burn the API-key auth budget at the top of this file.
+	cli := &cliAuthHandlers{srv: s, log: s.log, domain: s.domain}
+	mux.Handle("POST /v1/cli-auth/code", s.cliAuthChain(http.HandlerFunc(cli.mintCliAuthCode)))
+	mux.Handle("POST /v1/cli-auth/exchange", s.cliAuthChain(http.HandlerFunc(cli.exchangeCliAuthCode)))
+	// Dashboard-side GET shares the dashboard auth bucket (it renders
+	// the same form for every state, so attempts are not the
+	// brute-force surface). POST uses its own bucket
+	// (cliAuthSubmitChain) so a customer retrying `faas login` from a
+	// shared NAT doesn't burn the magic-link /login budget.
+	mux.Handle("GET "+cliAuthPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, http.HandlerFunc(cli.renderCliAuthPage)))
+	mux.Handle("POST "+cliAuthPath, s.cliAuthSubmitChain(http.HandlerFunc(cli.postCliAuthPage)))
+
 	// Loopback infra probe (issue #85). gatewayd forwards /healthz to
 	// apid through the apidProxy chain, so this is what the
 	// deploy/digitalocean CD smoke test and deploy/digitalocean/
@@ -448,6 +490,46 @@ func (s *server) dashboardAuthChain(cfg middleware.AuthLimitConfig, h http.Handl
 		s.dashboardAuthLimiter = middleware.NewLimiter(cfg)
 	}
 	h = middleware.AuthLimitWithLimiter(cfg, s.dashboardAuthLimiter)(h)
+	return h
+}
+
+// cliAuthChain wraps the anonymous /v1/cli-auth/* endpoints in the
+// §11 middleware plus an AuthLimit limiter on its own bucket
+// (s.cliAuthLimiter, separate from s.apiAuthLimiter and
+// s.dashboardAuthLimiter). The full chain is:
+//
+//	RequestID → Recovery → AuthLimit → handler
+//
+// Why a separate bucket: a brute-force on codes shouldn't lock out
+// the customer's bearer-token flow, and the dashboard's /login
+// bucket shouldn't burn from anonymous CLI traffic either. Count
+// 429 + 400 so an attacker cycling on shape-rejected bodies still
+// hits the limit. (A successful 200 mint happens once per real CLI,
+// so it would never naturally exhaust the budget; we don't need to
+// count it.)
+func (s *server) cliAuthChain(h http.Handler) http.Handler {
+	h = middleware.RequestID(h)
+	h = middleware.Recovery(s.log)(h)
+	h = middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
+		CountStatuses: []int{http.StatusTooManyRequests, http.StatusBadRequest},
+		Log:           s.log,
+	}, s.cliAuthLimiter)(h)
+	return h
+}
+
+// cliAuthSubmitChain wraps POST /cli-auth (dashboard-side claim
+// form). Same shape as cliAuthChain but a different bucket
+// (s.cliAuthSubmitLimiter) so the dashboard's /login bucket is not
+// burned by a customer retrying `faas login`. Counts every attempt
+// — the form is the brute-force surface (a bot can submit known
+// codes + emails without the dashboard ever rendering).
+func (s *server) cliAuthSubmitChain(h http.Handler) http.Handler {
+	h = middleware.RequestID(h)
+	h = middleware.Recovery(s.log)(h)
+	h = middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+		Log:           s.log,
+	}, s.cliAuthSubmitLimiter)(h)
 	return h
 }
 

@@ -48,6 +48,11 @@ type MemStore struct {
 	// raw token (so the binary []byte hash from ConsumeLoginToken
 	// matches the map key format used in MemStore everywhere else).
 	loginTokens map[string]LoginToken
+	// cliAuthCodes is keyed by the SHA-256 hash of the raw code
+	// (same key format as loginTokens). AccountID is empty until the
+	// dashboard claims the code; the claim statement fills it in
+	// atomically. See pkg/state/types.go CliAuthCode.
+	cliAuthCodes map[string]CliAuthCode
 	// deploymentLogs is keyed by deployment_id; the inner slice is
 	// append-ordered (which matches the Postgres seq order). MemStore
 	// mirrors the bigserial PK by appending + assigning a monotonic
@@ -126,6 +131,7 @@ func NewMemStore() *MemStore {
 		crons:          map[string]Cron{},
 		instances:      map[string]Instance{},
 		loginTokens:    map[string]LoginToken{},
+		cliAuthCodes:   map[string]CliAuthCode{},
 		deploymentLogs: map[string][]LogEntry{},
 		deploymentSeq:  map[string]int64{},
 		snapshots:      []Snapshot{},
@@ -1798,6 +1804,121 @@ func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (in
 		}
 	}
 	return removed, nil
+}
+
+// IssueCliAuthCode stores a freshly-minted code's SHA-256 hash with
+// no account binding (AccountID empty). The hash key format matches
+// loginTokens (the binary []byte hash used as a string key). A
+// re-issue of the same hash is a no-op overwriting the entry, which
+// matches the production on-conflict-do-nothing semantics.
+func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cliAuthCodes == nil {
+		m.cliAuthCodes = map[string]CliAuthCode{}
+	}
+	m.cliAuthCodes[string(tokenHash)] = CliAuthCode{
+		TokenHash: append([]byte(nil), tokenHash...),
+		ExpiresAt: expiresAt,
+	}
+	return nil
+}
+
+// PeekCliAuthCode returns the row's status without mutating it. Used
+// by the dashboard GET /cli-auth render to decide whether to show the
+// email-input form or the "code unavailable" error page.
+func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if row.ConsumedAt != nil {
+		return api.CliAuthStatusConsumed, row.AccountID, nil
+	}
+	return api.CliAuthStatusPending, row.AccountID, nil
+}
+
+// ClaimCliAuthCode atomically transitions pending → consumed and
+// binds account_id. Error shapes mirror PgStore (review finding F5):
+//
+//	ErrNotFound  — row missing OR expired (never minted or TTL passed)
+//	ErrConflict  — row exists but already claimed by a prior call
+//
+// The CAS-equivalent for MemStore is the m.mu serializing all
+// readers/writers; the second concurrent caller observes the
+// first's write (AccountID != "") and returns ErrConflict.
+//
+// IMPORTANT: this MUST NOT touch ConsumedAt — that field is the
+// exclusive mint-gate for ConsumeCliAuthCode. Pre-setting it here
+// would short-circuit the CAS that the CLI's exchange relies on to
+// mint exactly one API key per code (review finding F4).
+func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, accountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return ErrNotFound
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return ErrNotFound
+	}
+	if row.AccountID != "" {
+		// A prior claim already bound the row to some account_id.
+		// Dashboard POST never re-claims, so this is either a retry
+		// (user double-clicked) or a parallel claim race. Either
+		// way the row is no longer pending → ErrConflict so the
+		// handler can render "Code already used".
+		return ErrConflict
+	}
+	row.AccountID = accountID
+	m.cliAuthCodes[string(tokenHash)] = row
+	return nil
+}
+
+// ConsumeCliAuthCode is the CLI's poll-side read PLUS mint gate.
+// Atomic CAS (mirrors ConsumeLoginToken): only mutates consumed_at
+// on the FIRST call, returns the bound account_id exactly once.
+// A buggy or replaying CLI cannot mint multiple keys for the same
+// code (review finding F4).
+//
+// Filter: `account_id` must be non-empty (Claim must have run
+// first) — without it the row is still pending and the CLI should
+// keep polling, not see (Consumed,"") which would mint a key for an
+// unbound account.
+//
+// Return contract:
+//
+//	pending (or empty account_id) → (Pending,  "",       nil)        keep polling
+//	consumed (first call)        → (Consumed, acct_id,  nil)        mint API key
+//	replay / expired / unknown    → (Expired, "",        ErrNotFound)
+func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.cliAuthCodes[string(tokenHash)]
+	if !ok {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if !row.ExpiresAt.After(time.Now()) {
+		return api.CliAuthStatusExpired, "", ErrNotFound
+	}
+	if row.AccountID == "" || row.ConsumedAt != nil {
+		// Either still pending (dashboard hasn't claimed yet) or
+		// already consumed (replay). The caller distinguishes via
+		// the consumed_at nil check.
+		if row.ConsumedAt != nil {
+			return api.CliAuthStatusExpired, "", ErrNotFound
+		}
+		return api.CliAuthStatusPending, "", nil
+	}
+	now := time.Now()
+	row.ConsumedAt = &now
+	m.cliAuthCodes[string(tokenHash)] = row
+	return api.CliAuthStatusConsumed, row.AccountID, nil
 }
 
 // AppendDeploymentLog records one line of build output. Returns the

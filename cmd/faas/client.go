@@ -407,6 +407,30 @@ func (c *Client) DeleteKey(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/keys/"+id, nil, nil)
 }
 
+// CLI auth device-code flow (spec §2.2). Both endpoints are
+// anonymous — the CLI hasn't logged in yet, so the client is built
+// with token="". The mint is a single round-trip with no body; the
+// exchange is the CLI's polling endpoint.
+
+// MintCliAuthCode anonymously mints a fresh device code. The
+// returned URL is what the CLI opens in the browser; the code is
+// the human-readable fallback for paste-mode (no browser).
+func (c *Client) MintCliAuthCode(ctx context.Context) (api.CliAuthCodeResponse, error) {
+	var out api.CliAuthCodeResponse
+	return out, c.do(ctx, "POST", "/v1/cli-auth/code", struct{}{}, &out)
+}
+
+// ExchangeCliAuthCode polls the server for the user's approval. The
+// caller treats a 404 cli_auth_code_pending response as "keep
+// waiting" — the server-side helper keeps the connection short and
+// signals via stable RFC 7807 code (api.CodeCliAuthPending) so the
+// CLI can switch on it without parsing prose.
+func (c *Client) ExchangeCliAuthCode(ctx context.Context, code string) (api.CliAuthExchangeResponse, error) {
+	var out api.CliAuthExchangeResponse
+	return out, c.do(ctx, "POST", "/v1/cli-auth/exchange",
+		api.CliAuthExchangeRequest{Code: code}, &out)
+}
+
 // Secrets (spec §11/G2). Plaintext VALUE never leaves the CLI except via
 // the PUT body; the LIST response carries key names + timestamps only.
 func (c *Client) ListSecrets(ctx context.Context, slug string) (api.AppSecretListResponse, error) {
