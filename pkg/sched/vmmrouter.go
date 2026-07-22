@@ -53,6 +53,16 @@ type RoutedVMM interface {
 	CreateFromSnapshot(ctx context.Context, nodeID, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error)
 	PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey string) (SnapshotBytes, error)
 	Destroy(ctx context.Context, nodeID, instance string) error
+	// Ping is the wire-level liveness probe (issue #97 / ADR-025
+	// axis 3, PR #114). schedd's heartbeat loop calls this every
+	// HeartbeatInterval on every active compute_node; a non-error
+	// round-trip proves both gRPC socket reachability and that
+	// vmmd is responsive enough to schedule the handler. Like
+	// the other four methods, the router resolves the per-node
+	// client by nodeID first (dial-once-per-target), then
+	// forwards. Returns *api.Problem Capacity on an unknown
+	// nodeID (no target_url to dial).
+	Ping(ctx context.Context, nodeID string) (*PingOutcome, error)
 }
 
 // DialFunc is the factory VMMRouter uses to open a per-target VMM
@@ -202,6 +212,21 @@ func (r *VMMRouter) Destroy(ctx context.Context, nodeID, instance string) error 
 		return err
 	}
 	return cli.Destroy(ctx, instance)
+}
+
+// Ping implements RoutedVMM (issue #97 / ADR-025 axis 3, PR #114).
+// Forwards to the per-node VMM client via the same resolveFor path
+// the lifecycle RPCs use; dial-once-per-target semantics carry over
+// (a successful CreateColdBoot earlier means Ping reuses the same
+// connection, no extra dial). On unknown nodeID, returns the
+// router's *api.Problem Capacity — the heartbeat loop treats that
+// as "no client" and marks the row inactive.
+func (r *VMMRouter) Ping(ctx context.Context, nodeID string) (*PingOutcome, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	return cli.Ping(ctx)
 }
 
 // Compile-time assertion: VMMRouter satisfies the engine-facing

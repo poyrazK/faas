@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -200,6 +201,24 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 	}
 	resp.TotalResidentBytes = wrapperspb.Int64(total)
 	return resp, nil
+}
+
+// Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
+// PR #114). Returns the vmmd process's Firecracker version + the
+// server-side timestamp at the moment the handler ran. schedd's
+// heartbeat loop calls this on every active compute_node every
+// HeartbeatInterval (default 30s); a successful round-trip proves
+// both gRPC socket reachability and that vmmd's goroutine
+// scheduler is responsive enough to schedule this handler. Idempotent
+// + side-effect free; no backing Manager call.
+func (s *Server) Ping(_ context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
+	const op = "Ping"
+	start := time.Now()
+	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
+	return &vmmdpb.PingResponse{
+		FcVersion:  s.fcVer,
+		ServerTime: timestamppb.Now(),
+	}, nil
 }
 
 // toProblem lifts a plain error to *api.Problem if it isn't one already.

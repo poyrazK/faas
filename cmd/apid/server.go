@@ -310,6 +310,19 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/keys", s.authLimited(s.createKey))
 	mux.HandleFunc("DELETE /v1/keys/{id}", s.authLimited(s.deleteKey))
 
+	// Compute nodes (issue #97 / ADR-025 axis 3, PR #114). Operator
+	// surface — registers additional vmmd targets, surfaces fleet
+	// health (Active, LastHeartbeatAt) for dashboards. POST wraps
+	// in s.idempotent so a retried registration lands on the
+	// existing row rather than 409-ing on the unique-name
+	// constraint (the operator's "is the new node being
+	// heartbeated?" probe naturally retries). Gated on s.auth
+	// today (customer auth) — a future operator-role slice will
+	// split s.operatorAuth out of s.auth.
+	mux.HandleFunc("POST /v1/compute-nodes", s.auth(s.idempotent(s.createComputeNode)))
+	mux.HandleFunc("GET /v1/compute-nodes", s.auth(s.listComputeNodes))
+	mux.HandleFunc("GET /v1/compute-nodes/{id}", s.auth(s.getComputeNode))
+
 	// Customer secrets (spec §11/G2). Plaintext VALUE flows through PUT
 	// over TLS; sealed server-side by handlers_secrets.go.
 	mux.HandleFunc("GET /v1/apps/{slug}/secrets", s.authLimited(s.listSecrets))
