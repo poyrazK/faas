@@ -24,7 +24,7 @@ type fakeVMM struct {
 	restores          int
 	snapshots         int
 	destroys          int
-	pings             int // PR #114: counts Ping calls (heartbeat path)
+	pings             int  // PR #114: counts Ping calls (heartbeat path)
 	forceColdFallback bool // CreateFromSnapshot reports a cold-boot fallback (ADR-005)
 	wakeErr           error
 	snapErr           error
