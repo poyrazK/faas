@@ -261,9 +261,16 @@ func parseBridgeOutput(raw []byte) (*vmmdpb.ForwardHTTPResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bridge: bad status code %q", parts[1])
 	}
+	// Bound check before the int32 cast: a guest app emitting a
+	// synthetic status line with a multi-digit code (e.g.
+	// "HTTP/1.1 9999") would otherwise wrap to negative in proto's
+	// int32 and look like an Unavailable at the gateway.
+	if code < 100 || code > 599 {
+		return nil, fmt.Errorf("bridge: out-of-range status code %d", code)
+	}
 
 	resp := &vmmdpb.ForwardHTTPResponse{
-		Status: int32(code), //nolint:gosec // HTTP status codes are 3-digit; Atoi rejects anything else above.
+		Status: int32(code), //nolint:gosec // Bounded above to a valid HTTP status range.
 		Body:   body,
 	}
 	for _, h := range lines[1:] {
@@ -299,16 +306,13 @@ func (t *tempRequestFile) Cleanup() {
 	_ = removeFile(t.Path)
 }
 
-// writeTempRequest writes the body bytes to a tmpfile under /tmp and
-// returns a handle whose Cleanup removes it. The dir argument is
-// reserved for tests (overriding /tmp); production passes "" for the
-// default os.TempDir().
+// writeTempRequest writes the body bytes to a tmpfile under os.TempDir()
+// and returns a handle whose Cleanup removes it. The function takes no
+// override parameter today — tests stub the package-level `tempDir`
+// var so the production call and the test both land on the same code
+// path. Reserving a dir arg is documented as a future extension point.
 func writeTempRequest(req *vmmdpb.ForwardHTTPRequest) (*tempRequestFile, error) {
-	dir := ""
-	if dir == "" {
-		dir = os.TempDir()
-	}
-	f, err := os.CreateTemp(dir, "vmmd-fwd-*.body")
+	f, err := os.CreateTemp(tempDir(), "vmmd-fwd-*.body")
 	if err != nil {
 		return nil, fmt.Errorf("create tmp: %w", err)
 	}
@@ -330,6 +334,12 @@ func writeTempRequest(req *vmmdpb.ForwardHTTPRequest) (*tempRequestFile, error) 
 // removeFile is split out so tests can substitute a fake without
 // touching os.Remove.
 var removeFile = func(path string) error { return os.Remove(path) }
+
+// tempDir is the directory writeTempRequest creates tmpfiles in.
+// Default os.TempDir(); tests inject a stub dir to avoid /tmp on
+// constrained CI runners. Splitting it via a package var (not a
+// parameter) lets the production call site stay zero-arg.
+var tempDir = func() string { return os.TempDir() }
 
 // shellQuote wraps s in single quotes and escapes any embedded single
 // quotes. The bridge script never executes caller-controlled bytes

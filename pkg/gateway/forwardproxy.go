@@ -84,6 +84,35 @@ func stripHopByHop(h http.Header) http.Header {
 	return out
 }
 
+// safeLogField strips ASCII control characters (CR, LF, NUL, etc.) from
+// a request-supplied string before it lands in a log line. CodeQL
+// flags unsanitised user input flowing into log statements because a
+// CR/LF in the value can split log records; slog itself JSON-encodes,
+// but defence in depth costs nothing. Cap at 128 bytes — instance ids
+// are UUIDs (36 chars), so this only bites malformed input.
+func safeLogField(s string) string {
+	if len(s) <= 128 && !strings.ContainsAny(s, "\r\n\x00") {
+		return s
+	}
+	var b strings.Builder
+	n := len(s)
+	if n > 128 {
+		n = 128
+	}
+	for i := 0; i < n; i++ {
+		c := s[i]
+		if c == '\r' || c == '\n' || c == 0 {
+			continue
+		}
+		b.WriteByte(c)
+	}
+	out := b.String()
+	if len(s) > 128 {
+		out += "…"
+	}
+	return out
+}
+
 // ForwardingReverseProxy returns an http.Handler that forwards r to
 // the vmmd that owns the instance the node id routes to. It is the
 // post-#98 / ADR-028 replacement for defaultProxy: defaultProxy
@@ -156,6 +185,10 @@ func fwdOnce(w http.ResponseWriter, r *http.Request, nodes NodeClientLookup, log
 		RequestUri: r.URL.RequestURI(),
 		Body:       body,
 	}
+	// Sanitised copy for log statements: the wire value keeps the raw
+	// header (vmmd validates UUID shape), the log value strips CR/LF
+	// so a hostile instance id cannot split log lines.
+	logInstance := safeLogField(pbReq.Instance)
 	for name, vals := range stripHopByHop(r.Header) {
 		// Skip the request-id and other internal-only headers we add
 		// in the gateway; the bridge doesn't need them and the guest
@@ -177,7 +210,7 @@ func fwdOnce(w http.ResponseWriter, r *http.Request, nodes NodeClientLookup, log
 		// evict the cached target and let the next request re-wake.
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 			log.Warn("gateway: forwarder Unavailable; surfacing 503",
-				"node", nodeID, "instance", pbReq.Instance)
+				"node", nodeID, "instance", logInstance)
 			http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -188,7 +221,7 @@ func fwdOnce(w http.ResponseWriter, r *http.Request, nodes NodeClientLookup, log
 			return
 		}
 		log.Error("gateway: forwarder RPC failed",
-			"node", nodeID, "instance", pbReq.Instance,
+			"node", nodeID, "instance", logInstance,
 			"err", err.Error())
 		http.Error(w, "forwarder RPC failed", http.StatusBadGateway)
 		return
