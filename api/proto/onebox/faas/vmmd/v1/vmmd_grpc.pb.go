@@ -27,6 +27,7 @@ const (
 	Vmmd_PauseAndSnapshot_FullMethodName   = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
 	Vmmd_Destroy_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
 	Vmmd_Stats_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/Stats"
+	Vmmd_Ping_FullMethodName               = "/onebox.faas.vmmd.v1.Vmmd/Ping"
 )
 
 // VmmdClient is the client API for Vmmd service.
@@ -54,6 +55,16 @@ type VmmdClient interface {
 	// admission ledger (M4) and by Prometheus for the `vmmd_ops_total` /
 	// `vmmd_op_duration_seconds` dashboards (ADR-016).
 	Stats(ctx context.Context, in *StatsRequest, opts ...grpc.CallOption) (*StatsResponse, error)
+	// Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
+	// PR #114). Returns the vmmd process's Firecracker version + the
+	// server-side timestamp at the moment the handler ran; schedd's
+	// heartbeat loop calls this on every active compute_node every
+	// HeartbeatInterval (default 30s). A successful round-trip proves
+	// both that the gRPC socket is reachable and that vmmd's
+	// goroutine scheduler is responsive enough to schedule this
+	// handler — the two facts schedd needs to keep last_heartbeat_at
+	// fresh. Idempotent + side-effect free; no backing Manager call.
+	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 }
 
 type vmmdClient struct {
@@ -114,6 +125,16 @@ func (c *vmmdClient) Stats(ctx context.Context, in *StatsRequest, opts ...grpc.C
 	return out, nil
 }
 
+func (c *vmmdClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PingResponse)
+	err := c.cc.Invoke(ctx, Vmmd_Ping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VmmdServer is the server API for Vmmd service.
 // All implementations must embed UnimplementedVmmdServer
 // for forward compatibility.
@@ -139,6 +160,16 @@ type VmmdServer interface {
 	// admission ledger (M4) and by Prometheus for the `vmmd_ops_total` /
 	// `vmmd_op_duration_seconds` dashboards (ADR-016).
 	Stats(context.Context, *StatsRequest) (*StatsResponse, error)
+	// Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
+	// PR #114). Returns the vmmd process's Firecracker version + the
+	// server-side timestamp at the moment the handler ran; schedd's
+	// heartbeat loop calls this on every active compute_node every
+	// HeartbeatInterval (default 30s). A successful round-trip proves
+	// both that the gRPC socket is reachable and that vmmd's
+	// goroutine scheduler is responsive enough to schedule this
+	// handler — the two facts schedd needs to keep last_heartbeat_at
+	// fresh. Idempotent + side-effect free; no backing Manager call.
+	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	mustEmbedUnimplementedVmmdServer()
 }
 
@@ -163,6 +194,9 @@ func (UnimplementedVmmdServer) Destroy(context.Context, *DestroyRequest) (*Destr
 }
 func (UnimplementedVmmdServer) Stats(context.Context, *StatsRequest) (*StatsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Stats not implemented")
+}
+func (UnimplementedVmmdServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
 }
 func (UnimplementedVmmdServer) mustEmbedUnimplementedVmmdServer() {}
 func (UnimplementedVmmdServer) testEmbeddedByValue()              {}
@@ -275,6 +309,24 @@ func _Vmmd_Stats_Handler(srv interface{}, ctx context.Context, dec func(interfac
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).Ping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_Ping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).Ping(ctx, req.(*PingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Vmmd_ServiceDesc is the grpc.ServiceDesc for Vmmd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -301,6 +353,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Stats",
 			Handler:    _Vmmd_Stats_Handler,
+		},
+		{
+			MethodName: "Ping",
+			Handler:    _Vmmd_Ping_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

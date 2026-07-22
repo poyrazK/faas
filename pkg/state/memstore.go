@@ -1641,6 +1641,22 @@ func (m *MemStore) ActiveComputeNodes(_ context.Context) ([]ComputeNode, error) 
 	return out, nil
 }
 
+// ListAllComputeNodes returns every compute_node row including
+// inactive ones, ordered by name. apid's GET /v1/compute-nodes
+// operator surface (PR #114) calls this so a recently-drained
+// node stays visible for ops dashboards. The fleet is
+// single-digit for v1.0; the slice alloc is fine.
+func (m *MemStore) ListAllComputeNodes(_ context.Context) ([]ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ComputeNode, 0, len(m.computeNodes))
+	for _, n := range m.computeNodes {
+		out = append(out, n)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
 func (m *MemStore) ComputeNodeByID(_ context.Context, id string) (ComputeNode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1692,6 +1708,23 @@ func (m *MemStore) HeartbeatComputeNode(_ context.Context, nodeID string) error 
 		return ErrNotFound
 	}
 	n.LastHeartbeatAt = time.Now()
+	m.computeNodes[nodeID] = n
+	return nil
+}
+
+// MarkComputeNodeInactive flips active=false on the row (PR #114).
+// Idempotent — flipping an inactive row keeps active=false, no
+// observable change. The row is preserved so an operator can
+// re-enable it (a future admin endpoint will hit a re-activate
+// path; today nothing does).
+func (m *MemStore) MarkComputeNodeInactive(_ context.Context, nodeID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return ErrNotFound
+	}
+	n.Active = false
 	m.computeNodes[nodeID] = n
 	return nil
 }

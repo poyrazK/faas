@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -71,6 +72,13 @@ type Config struct {
 	// api.DefaultInstanceRetention (30d). The sweep itself runs at the
 	// api.DefaultRetentionInterval cadence (1h) regardless.
 	RetentionDuration int64 `toml:"retention_duration_ns"`
+
+	// HeartbeatInterval is the per-node liveness sweep cadence
+	// (issue #97 / ADR-025 axis 3, PR #114). Zero or negative reverts
+	// to sched.DefaultHeartbeatInterval (30s). Shorter is fine for
+	// dev boxes but raises Postgres write traffic — production
+	// should leave it at the default unless ops have a reason.
+	HeartbeatInterval time.Duration `toml:"heartbeat_interval"`
 }
 
 // ResolveListenTarget returns the gRPC target schedd should bind.

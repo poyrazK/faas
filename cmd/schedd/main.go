@@ -52,6 +52,10 @@ type runDeps struct {
 	// subscriber is not started (cmd/schedd's main wires the
 	// production db.Subscribe adapter; tests inject a fake).
 	subscribeDeletion func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
+	// heartbeatInterval overrides sched.DefaultHeartbeatInterval for
+	// tests that want a sub-second cadence. Zero falls back to the
+	// production default (30s).
+	heartbeatInterval time.Duration
 }
 
 func defaultDeps() runDeps {
@@ -134,6 +138,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// that the Wake / Park / KillStuck flow now plumbs through.
 	nodes, err := store.ActiveComputeNodes(ctx)
 	if err != nil {
+		// Treat ctx-cancellation as a clean shutdown — the test
+		// suite cancels during the bootstrap ActiveComputeNodes
+		// call to verify a clean drain (TestRun_DrainsOnCancel,
+		// PR #115 coverage gate). Returning the wrapped error
+		// would surface a non-nil error on what is in fact a
+		// graceful exit. Real I/O failures keep returning the
+		// wrapped error unchanged.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil
+		}
 		return fmt.Errorf("schedd: list active compute_nodes: %w", err)
 	}
 	nodeInfos := make([]sched.ComputeNodeInfo, 0, len(nodes))
@@ -289,13 +303,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
+	// PR #114 / ADR-025 axis 3: per-node liveness sweep. Every
+	// `HeartbeatInterval` (default 30s) we Ping each active
+	// compute_node via the VMMRouter (the same dial-once cache the
+	// engine uses, so no extra dial cost per tick); on success we
+	// stamp last_heartbeat_at, on failure we flip active=false so
+	// placement skips the dead node and the alertmanager rule
+	// (PR #115) fires. Production cadence is overridable via
+	// FAAS_HEARTBEAT_INTERVAL; tests inject a sub-second interval
+	// through runDeps.heartbeatInterval to exercise the wiring.
+	hb := sched.NewHeartbeat(store, vmmRouter, log)
+	hb.Interval = cfg.HeartbeatInterval
+	if deps.heartbeatInterval > 0 {
+		// Tests inject a sub-second cadence via runDeps to exercise
+		// the wiring without waiting 30s for production cadence.
+		hb.Interval = deps.heartbeatInterval
+	}
 	loop := sched.NewLoop(pool, engine, log).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
 		WithWatchdog(sched.NewWatchdog(store, engine, log)).
 		// PR #74: §17 retention sweep — DELETEs STOPPED/FAILED rows older
 		// than cfg.RetentionDuration (defaults to api.DefaultInstanceRetention
 		// when zero). Ticker fires at api.DefaultRetentionInterval (1h).
-		WithRetention(sched.NewRetention(store, log).WithRetention(time.Duration(cfg.RetentionDuration)))
+		WithRetention(sched.NewRetention(store, log).WithRetention(time.Duration(cfg.RetentionDuration))).
+		WithHeartbeat(hb)
 	// Cron dispatch path: route synthetic requests through gatewayd's
 	// internal unix socket so metering + rate limits apply identically
 	// to user traffic (spec §4.4, M7). A failure to dial is logged but

@@ -36,6 +36,7 @@ type Loop struct {
 	flowCounts FlowCounter
 	watchdog   *Watchdog  // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
 	retention  *Retention // §17 retention sweep; nil means "no retention" (tests can opt out)
+	heartbeat  *Heartbeat // issue #97 / ADR-025 axis 3 (PR #114) per-node liveness; nil opts out
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -62,6 +63,17 @@ func (l *Loop) WithWatchdog(w *Watchdog) *Loop {
 // window + interval live in pkg/api/limits.
 func (l *Loop) WithRetention(r *Retention) *Loop {
 	l.retention = r
+	return l
+}
+
+// WithHeartbeat attaches the per-node liveness sweep (issue #97 /
+// ADR-025 axis 3, PR #114). Same nil-skip semantics as the
+// watchdog + retention tickers — production cmd/schedd wires
+// sched.NewHeartbeat(store, vmmRouter, log); tests inject a fake
+// or skip. The interval lives on the Heartbeat itself
+// (DefaultHeartbeatInterval = 30s; overridable for tests).
+func (l *Loop) WithHeartbeat(h *Heartbeat) *Loop {
+	l.heartbeat = h
 	return l
 }
 
@@ -165,6 +177,24 @@ func (l *Loop) Run(ctx context.Context) error {
 		defer delay.Stop()
 		retentionFirst = delay.C
 	}
+	// Heartbeat ticker (issue #97 / ADR-025 axis 3, PR #114).
+	// Per-node liveness sweep: ping each active compute_node,
+	// stamp last_heartbeat_at on success or flip active=false
+	// on failure. Default cadence DefaultHeartbeatInterval
+	// (30s); production cmd/schedd wires NewHeartbeat with the
+	// RoutedVMM, tests inject a fake or skip via nil. The ticker
+	// fires immediately on construction — a freshly-started
+	// schedd stamps the synthetic default-local row's heartbeat
+	// without a 30s gap on cold start.
+	var heartbeatT *time.Ticker
+	if l.heartbeat != nil {
+		interval := l.heartbeat.Interval
+		if interval <= 0 {
+			interval = DefaultHeartbeatInterval
+		}
+		heartbeatT = time.NewTicker(interval)
+		defer heartbeatT.Stop()
+	}
 
 	for {
 		select {
@@ -182,6 +212,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runCronTick(ctx)
 		case <-watchdogTick(watchdogT):
 			l.runWatchdog(ctx)
+		case <-heartbeatTick(heartbeatT):
+			l.runHeartbeat(ctx)
 		case <-retentionFirst:
 			// One-shot first fire (see retentionFirstFireDelay). After
 			// this the channel is set to nil so subsequent ticks
@@ -212,6 +244,27 @@ func retentionTick(t *time.Ticker) <-chan time.Time {
 		return nil
 	}
 	return t.C
+}
+
+// heartbeatTick is the per-node liveness ticker (PR #114). Same
+// nil-safe shape as the watchdog/retention tickers: nil ticker ⇒
+// nil channel, so the select case never fires.
+func heartbeatTick(t *time.Ticker) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
+}
+
+// runHeartbeat dispatches one sweep of the per-node liveness
+// ticker. Exported as a method so tests can drive a single tick
+// without spinning up Run's goroutine. Tick errors are logged
+// inside Heartbeat.Tick — Run never returns them so a transient
+// DB blip can't tear down the loop.
+func (l *Loop) runHeartbeat(ctx context.Context) {
+	if err := l.heartbeat.Tick(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		l.log.Warn("heartbeat tick error", "err", err)
+	}
 }
 
 // runWatchdog dispatches one sweep of the §6.1 watchdog. Exported as a

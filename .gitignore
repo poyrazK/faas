@@ -32,3 +32,8 @@ vmlinux-*
 # `COPY guest-init` can stage it into builder-base). Distinct from
 # guest/init/, which is the directory holding the source.
 /guest-init
+
+# Daemon binaries built locally during dev (PR #114 added apid + schedd
+# to this list). The cmd/<daemon>/ source dirs still get committed.
+/apid
+/schedd

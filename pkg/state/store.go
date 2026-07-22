@@ -533,6 +533,27 @@ type Store interface {
 	// row with its assigned id and created_at. ErrConflict when
 	// the name is already taken (UNIQUE constraint on name).
 	CreateComputeNode(ctx context.Context, node ComputeNode) (ComputeNode, error)
+	// MarkComputeNodeInactive flips a row's active flag to false
+	// (issue #97 / ADR-025 axis 3, PR #114). schedd's heartbeat
+	// loop calls this when VMRouter.Ping fails — placement's
+	// ActiveComputeNodes filter then excludes the dead node so
+	// future wakes don't dial an unreachable target. Idempotent:
+	// flipping an already-inactive row is a no-op UPDATE. A
+	// future staleness gate (last_heartbeat_at > 2 × interval)
+	// will reuse this method; today only the heartbeat path
+	// calls it. The row is preserved (no DELETE) so an operator
+	// can flip it back via a future admin endpoint without
+	// re-provisioning the cert/target_url.
+	MarkComputeNodeInactive(ctx context.Context, nodeID string) error
+	// ListAllComputeNodes returns every compute_node row (active +
+	// inactive) ordered by name. apid's GET /v1/compute-nodes
+	// operator surface (PR #114) uses this so the operator can
+	// see recently-drained nodes — the heartbeat's flip is a soft
+	// state change, not a delete, and ops needs visibility. The
+	// partial compute_nodes_active_idx accelerates ActiveComputeNodes
+	// (placement path) but ListAllComputeNodes does a sequential
+	// scan; that's fine — the fleet is single-digit for v1.0.
+	ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error)
 
 	// Audit (append-only, spec §6.1).
 	AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error

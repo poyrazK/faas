@@ -16,6 +16,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -32,6 +33,23 @@ type VMM interface {
 	CreateFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error)
 	PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey string) (SnapshotBytes, error)
 	Destroy(ctx context.Context, instance string) error
+	// Ping is the wire-level liveness probe (issue #97 / ADR-025
+	// axis 3, PR #114). schedd's heartbeat loop calls this every
+	// HeartbeatInterval on every active compute_node; a non-error
+	// round-trip proves both gRPC socket reachability and that
+	// vmmd is responsive enough to schedule the handler. The
+	// returned FcVersion lets schedd's admin surface show
+	// per-node FC versions without a separate Stats call.
+	Ping(ctx context.Context) (*PingOutcome, error)
+}
+
+// PingOutcome is the sched-side view of vmmdpb.PingResponse.
+// Decoupled from the proto so the engine + heartbeat loop never
+// import pkg/api/proto — same shape, plain time.Time for the
+// server-stamped timestamp.
+type PingOutcome struct {
+	FcVersion  string
+	ServerTime time.Time
 }
 
 // AppSpec is the flat set of fields vmmd needs to boot an instance (ADR-014).
@@ -188,6 +206,20 @@ func (c *VMMClient) Destroy(ctx context.Context, instance string) error {
 		return liftErr(err)
 	}
 	return nil
+}
+
+// Ping implements VMM. Wire-level liveness probe (issue #97 /
+// ADR-025 axis 3, PR #114); see RoutedVMM.Ping for the contract.
+func (c *VMMClient) Ping(ctx context.Context) (*PingOutcome, error) {
+	resp, err := c.cli.Ping(ctx, &vmmdpb.PingRequest{})
+	if err != nil {
+		return nil, liftErr(err)
+	}
+	out := &PingOutcome{FcVersion: resp.GetFcVersion()}
+	if t := resp.GetServerTime(); t != nil {
+		out.ServerTime = t.AsTime()
+	}
+	return out, nil
 }
 
 func (a AppSpec) toProto() *vmmdpb.AppSpec {

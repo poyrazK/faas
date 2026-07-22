@@ -56,20 +56,33 @@ func (f *fakeRouterVMM) Destroy(_ context.Context, instance string) error {
 	f.mu.Unlock()
 	return nil
 }
+func (f *fakeRouterVMM) Ping(_ context.Context) (*PingOutcome, error) {
+	f.mu.Lock()
+	f.instanceCalls = append(f.instanceCalls, "<ping>")
+	f.mu.Unlock()
+	return &PingOutcome{FcVersion: "1.10.0"}, nil
+}
 func (f *fakeRouterVMM) Close() error { return nil }
 
 // trackingDial records every (target, tls) it sees and returns a
-// fresh fakeRouterVMM per dial. The dial closure's dials counter
-// is what tests assert against; the per-instance struct has no
-// own counter to keep the linter from flagging unused fields.
+// cached fakeRouterVMM on subsequent calls to the same target.
+// `dials` counts only fresh (cache-miss) dials — the load-bearing
+// invariant is "the per-target map has exactly one entry"; it is
+// not "the closure was called exactly once per target". Under
+// concurrency, multiple goroutines may race past the cache-check
+// gap in resolveFor() and call the dial closure; the lost-race
+// path closes the duplicate client and returns the winner. This
+// counter and the per-target map cardinality together pin both
+// halves of the load-bearing invariant (issue #97 / ADR-025 axis 3,
+// PR #113/114).
 func trackingDial(targets *map[string]*fakeRouterVMM, dials *atomic.Int32, mu *sync.Mutex) DialFunc {
 	return func(_ context.Context, target string, _ *tls.Config) (VMM, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		dials.Add(1)
 		if existing, ok := (*targets)[target]; ok {
 			return existing, nil
 		}
+		dials.Add(1)
 		f := &fakeRouterVMM{}
 		(*targets)[target] = f
 		return f, nil
@@ -189,12 +202,13 @@ func TestVMMRouter_UnknownNodeReturnsCapacity(t *testing.T) {
 	}
 }
 
-// TestVMMRouter_AllFourMethodsRoute pins that every RoutedVMM method
-// goes through resolveFor. A regression that special-cased
-// CreateColdBoot (e.g. forgetting to route Destroy through the
-// cache) would let Park / Evict dial the legacy single socket on
-// every call — fine for one node, broken for N.
-func TestVMMRouter_AllFourMethodsRoute(t *testing.T) {
+// TestVMMRouter_AllFiveMethodsRoute pins that every RoutedVMM method
+// goes through resolveFor (issue #97 / ADR-025 axis 3, PR #114:
+// Ping is the 5th method). A regression that special-cased
+// CreateColdBoot (e.g. forgetting to route Destroy or Ping through
+// the cache) would let Park / Evict / Heartbeat dial the legacy
+// single socket on every call — fine for one node, broken for N.
+func TestVMMRouter_AllFiveMethodsRoute(t *testing.T) {
 	targets := map[string]*fakeRouterVMM{}
 	var dials atomic.Int32
 	var mu sync.Mutex
@@ -215,8 +229,11 @@ func TestVMMRouter_AllFourMethodsRoute(t *testing.T) {
 	if err := r.Destroy(ctx, "n1", "i4"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := r.Ping(ctx, "n1"); err != nil {
+		t.Fatal(err)
+	}
 	if got := dials.Load(); got != 1 {
-		t.Errorf("dial count = %d, want 1 across 4 methods on the same node", got)
+		t.Errorf("dial count = %d, want 1 across 5 methods on the same node", got)
 	}
 	c := targets["unix:///n1.sock"]
 	if c == nil {
@@ -224,7 +241,7 @@ func TestVMMRouter_AllFourMethodsRoute(t *testing.T) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if got := len(c.instanceCalls); got != 4 {
+	if got := len(c.instanceCalls); got != 5 {
 		t.Errorf("node n1 received %d calls, want 4 (one per method)", got)
 	}
 }

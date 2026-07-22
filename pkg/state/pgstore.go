@@ -1473,6 +1473,33 @@ func (s *PgStore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error)
 	return out, rows.Err()
 }
 
+// ListAllComputeNodes returns every compute_node row (active +
+// inactive) ordered by name. apid's GET /v1/compute-nodes
+// operator surface (PR #114) reads this so a recently-drained
+// node is still visible. Sequential scan; the fleet is
+// single-digit for v1.0, so the missing partial index is fine.
+func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error) {
+	rows, err := s.pool.Query(ctx, `
+		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		       admission_ceiling_mb, active, last_heartbeat_at, created_at
+		  from compute_nodes
+		 order by name
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("state: list all compute_nodes: %w", err)
+	}
+	defer rows.Close()
+	var out []ComputeNode
+	for rows.Next() {
+		n, err := scanComputeNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 func (s *PgStore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
@@ -1531,6 +1558,23 @@ func (s *PgStore) HeartbeatComputeNode(ctx context.Context, nodeID string) error
 		`update compute_nodes set last_heartbeat_at = now() where id = $1`, nodeID)
 	if err != nil {
 		return fmt.Errorf("state: heartbeat compute_node %s: %w", nodeID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkComputeNodeInactive flips active=false on the row (PR #114,
+// schedd heartbeat path). Idempotent: the UPDATE matches regardless
+// of current value, so re-flipping an inactive row is a no-op. We
+// preserve the row rather than DELETE so an operator can re-enable
+// it without re-provisioning the target_url / cert.
+func (s *PgStore) MarkComputeNodeInactive(ctx context.Context, nodeID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update compute_nodes set active = false where id = $1`, nodeID)
+	if err != nil {
+		return fmt.Errorf("state: mark compute_node %s inactive: %w", nodeID, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

@@ -43,6 +43,14 @@ func (f *fakeWakeVMM) PauseAndSnapshot(_ context.Context, _, _ string, _, _ stri
 }
 func (f *fakeWakeVMM) Destroy(_ context.Context, _, _ string) error { return nil }
 
+// Ping implements RoutedVMM for the cron-loop test fake (PR #114).
+// Always succeeds with a fixed fc_version; tests that need to
+// exercise the heartbeat path use the heartbeat_test.go fake
+// instead.
+func (f *fakeWakeVMM) Ping(_ context.Context, _ string) (*PingOutcome, error) {
+	return &PingOutcome{FcVersion: "1.10.0"}, nil
+}
+
 // recordingSynth captures every synthesize call. The cron loop's
 // "post a synthetic request through gatewayd so metering applies" path
 // goes through this stub instead of dialing the unix socket.

@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"runtime"
 	"testing"
+	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -397,6 +398,51 @@ func TestToProblem_NilReturnsNil(t *testing.T) {
 	}
 	if resp == nil {
 		t.Error("response is nil")
+	}
+}
+
+// TestPing_ReturnsFcVersionAndTime pins the wire-level liveness probe
+// (issue #97 / ADR-025 axis 3, PR #114). The handler must echo the
+// server's configured fc_version verbatim and stamp a server-side
+// timestamp close to time.Now() — schedd's heartbeat loop uses the
+// round-trip success + a non-zero fc_version as its liveness signal.
+// We construct the server directly (not through newServer) so the
+// fcVersion is controllable.
+func TestPing_ReturnsFcVersionAndTime(t *testing.T) {
+	ops := wire.NewOpsMetrics("vmmd_test")
+	srv := grpc.NewServer()
+	impl := vmmdgrpc.New(&fakeVMM{}, ops, "1.10.0", nil)
+	impl.Register(srv)
+
+	lis := bufconn.Listen(1024 * 1024)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
+
+	dialer := grpc.WithContextDialer(func(_ context.Context, _ string) (net.Conn, error) {
+		return lis.Dial()
+	})
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		dialer,
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	cli := vmmdpb.NewVmmdClient(conn)
+
+	before := time.Now().Add(-2 * time.Second)
+	resp, err := cli.Ping(context.Background(), &vmmdpb.PingRequest{})
+	after := time.Now().Add(2 * time.Second)
+	if err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+	if got := resp.GetFcVersion(); got != "1.10.0" {
+		t.Errorf("FcVersion = %q, want %q", got, "1.10.0")
+	}
+	st := resp.GetServerTime().AsTime()
+	if st.Before(before) || st.After(after) {
+		t.Errorf("ServerTime = %v, want between %v and %v", st, before, after)
 	}
 }
 

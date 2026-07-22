@@ -24,10 +24,12 @@ type fakeVMM struct {
 	restores          int
 	snapshots         int
 	destroys          int
+	pings             int  // PR #114: counts Ping calls (heartbeat path)
 	forceColdFallback bool // CreateFromSnapshot reports a cold-boot fallback (ADR-005)
 	wakeErr           error
 	snapErr           error
 	destroyErr        error
+	pingErr           error // PR #114: injectable Ping failure for heartbeat tests
 	// lastSnapRef records the SnapshotRef CreateFromSnapshot was
 	// invoked with on its most recent call. F-2 review finding —
 	// Wake's storage_key plumbing deserves a test pin; storing the
@@ -163,6 +165,20 @@ func (f *fakeVMM) Destroy(ctx context.Context, _, _ string) error {
 	}
 	f.destroys++
 	return nil
+}
+
+// Ping implements RoutedVMM for the engine-test fake (issue #97 /
+// ADR-025 axis 3, PR #114). Returns a fixed fc_version + the
+// current monotonic time. Tests that need a per-call error inject
+// pingErr the same way destroyErr works.
+func (f *fakeVMM) Ping(_ context.Context, _ string) (*PingOutcome, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.pingErr != nil {
+		return nil, f.pingErr
+	}
+	f.pings++
+	return &PingOutcome{FcVersion: "1.10.0", ServerTime: time.Now()}, nil
 }
 
 // fakeNotifier records emitted pg_notify events.
