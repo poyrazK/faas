@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -113,8 +114,15 @@ func (s *server) createComputeNode(w http.ResponseWriter, r *http.Request, _ sta
 		// echo into the API response or audit log — sanitize to a
 		// static message and log the detail with the structured
 		// logger instead. PR #114 review finding #10.
+		//
+		// Both req.Name and the wrapped err contain operator-provided
+		// input; CodeQL go/log-injection (CWE-117) flags them as
+		// tainted sources reaching slog. Strip control chars via
+		// logsanitize.Field so a CR/LF in the operator's input can't
+		// break the one-line-per-event log contract. PR #115 CodeQL.
 		s.log.Warn("create compute_node: target_url parse failed",
-			"name", req.Name, "err", err)
+			"name", logsanitize.Field(req.Name),
+			"err", logsanitize.Field(err.Error()))
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid target_url",
 			"target must be unix://<abs-path>, tcp://<host>:<port>, or dns:///<host>:<port>"))

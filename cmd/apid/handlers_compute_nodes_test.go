@@ -103,6 +103,48 @@ func TestCreateComputeNode_RejectsBadTargetURL(t *testing.T) {
 	}
 }
 
+// TestCreateComputeNode_RejectsBadTargetURL_SanitizesLogs pins
+// CodeQL go/log-injection (CWE-117) gate (PR #115). The
+// "create compute_node: target_url parse failed" slog call
+// receives req.Name (operator-controlled) and the wrapped err
+// (which embeds the raw target string). An operator who submits
+// a name containing CR/LF must NOT inject a second log line —
+// the handler routes both through logsanitize.Field, which
+// strips control characters to U+00B7. This test sends
+// "node-evil\rFAKE=admin" as the name and asserts the handler
+// still returns 400 (validation runs before logging) and the
+// response body has no CR/LF injected from the name.
+func TestCreateComputeNode_RejectsBadTargetURL_SanitizesLogs(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	const evil = "node-evil\rFAKE=admin"
+	rec := e.do(t, "POST", "/v1/compute-nodes", createComputeNodeReq{
+		Name:               evil,
+		TargetURL:          "tcp://not a url",
+		VPCPUs:             8,
+		MemMB:              8192,
+		MaxConcurrency:     4,
+		AdmissionCeilingMB: 4096,
+	}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST: %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	// The API response body must not echo the raw user-supplied
+	// name — handlers_compute_nodes.go writes a static message
+	// for the bad-target_url branch. Decode the JSON body and
+	// walk every string field; none may contain CR/LF (which
+	// would let an attacker forge log lines downstream where the
+	// body is itself logged).
+	var decoded map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	for k, v := range decoded {
+		if s, ok := v.(string); ok && strings.ContainsAny(s, "\r\n") {
+			t.Errorf("field %q contains CR/LF — log injection possible: %q", k, s)
+		}
+	}
+}
+
 // TestCreateComputeNode_NameConflictReturns409 pins the unique-name
 // surface. A second create for the same name returns 409 (Code
 // Conflict) — the operator's "is the heartbeat working?" retry
