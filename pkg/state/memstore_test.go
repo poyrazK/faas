@@ -1303,6 +1303,297 @@ func TestMemStore_MarkOldSnapshotsStale(t *testing.T) {
 // caller passes, LatestSnapshot reads it back unchanged, and
 // ListSnapshotsForGC exposes it on SnapshotForGC so the imaged GC
 // can Storage.Delete under the canonical key.
+// --- Compute nodes (issue #97 / ADR-025 axis 3) -----------------------------
+//
+// The MemStore seeds a synthetic 'default-local' node on NewMemStore()
+// (memstore.go:seedDefaultLocalNodeLocked) so any caller that needs the
+// canonical default-local id can fetch it via ComputeNodeByName without
+// seeding first. Tests below rely on that — they do NOT call seedDefault.
+
+func TestMem_ComputeNodes_DefaultLocalSeededOnNewStore(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	// The seeded node is the synthetic default-local: active=true,
+	// target URL the legacy unix socket, admission ceiling the legacy
+	// 47,600 MB. The id is non-empty and the name matches
+	// DefaultLocalNodeName (the canonical name callers resolve against).
+	got, err := m.ComputeNodeByName(ctx, DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("ComputeNodeByName(default-local): %v", err)
+	}
+	if got.Name != DefaultLocalNodeName {
+		t.Errorf("Name=%q, want %q", got.Name, DefaultLocalNodeName)
+	}
+	if !got.Active {
+		t.Errorf("seeded default-local should be active, got %v", got.Active)
+	}
+	if got.AdmissionCeilingMB != 47600 {
+		t.Errorf("AdmissionCeilingMB=%d, want 47600", got.AdmissionCeilingMB)
+	}
+	if got.TargetURL != "unix:///run/faas/vmmd.sock" {
+		t.Errorf("TargetURL=%q, want %q", got.TargetURL, "unix:///run/faas/vmmd.sock")
+	}
+	if got.LastHeartbeatAt.IsZero() {
+		t.Errorf("seeded LastHeartbeatAt should be stamped at creation")
+	}
+}
+
+func TestMem_ComputeNodes_NewMemStoreSeedsDefaultLocal(t *testing.T) {
+	// Pin the seeding invariant: NewMemStore() must place the synthetic
+	// default-local row in ActiveComputeNodes immediately, NOT on first
+	// read. schedd's startup path depends on this — cmd/schedd/main.go's
+	// runHeartbeat calls ComputeNodeByName once at boot and treats a
+	// non-row result as a loud failure. A future refactor that lazily
+	// seeds on first read would silently break that contract; this test
+	// surfaces the regression before it lands.
+	m := NewMemStore()
+	nodes, err := m.ActiveComputeNodes(context.Background())
+	if err != nil {
+		t.Fatalf("ActiveComputeNodes: %v", err)
+	}
+	found := false
+	for _, n := range nodes {
+		if n.Name == DefaultLocalNodeName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		names := make([]string, 0, len(nodes))
+		for _, n := range nodes {
+			names = append(names, n.Name)
+		}
+		t.Errorf("default-local missing from ActiveComputeNodes after NewMemStore (got %v)", names)
+	}
+}
+
+func TestMem_ComputeNodes_ActiveComputeNodes_OnlyReturnsActive(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	// Create one active and one drained node.
+	active := state_computeNodeFixture("active-node", true)
+	drained := state_computeNodeFixture("drained-node", false)
+	if _, err := m.CreateComputeNode(ctx, active); err != nil {
+		t.Fatalf("CreateComputeNode(active): %v", err)
+	}
+	if _, err := m.CreateComputeNode(ctx, drained); err != nil {
+		t.Fatalf("CreateComputeNode(drained): %v", err)
+	}
+
+	// ActiveComputeNodes should return both seeded default-local AND
+	// the new active node, but skip drained. Result is sorted by name.
+	nodes, err := m.ActiveComputeNodes(ctx)
+	if err != nil {
+		t.Fatalf("ActiveComputeNodes: %v", err)
+	}
+	gotNames := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		gotNames = append(gotNames, n.Name)
+	}
+	wantNames := []string{"active-node", DefaultLocalNodeName} // alphabetical
+	if len(gotNames) != len(wantNames) {
+		t.Fatalf("ActiveComputeNodes returned %d nodes, want %d (got=%v)", len(gotNames), len(wantNames), gotNames)
+	}
+	for i := range wantNames {
+		if gotNames[i] != wantNames[i] {
+			t.Errorf("ActiveComputeNodes[%d]=%q, want %q", i, gotNames[i], wantNames[i])
+		}
+	}
+}
+
+func TestMem_ComputeNodes_ComputeNodeByID_NotFound(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	if _, err := m.ComputeNodeByID(ctx, "no-such-id"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ComputeNodeByID(unknown): want ErrNotFound, got %v", err)
+	}
+}
+
+func TestMem_ComputeNodes_ComputeNodeByName_NotFound(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	if _, err := m.ComputeNodeByName(ctx, "no-such-name"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ComputeNodeByName(unknown): want ErrNotFound, got %v", err)
+	}
+}
+
+func TestMem_ComputeNodes_Heartbeat_BumpsAndUnknownReturnsNotFound(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	// Heartbeat an unknown id → ErrNotFound.
+	if err := m.HeartbeatComputeNode(ctx, "no-such-id"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("HeartbeatComputeNode(unknown): want ErrNotFound, got %v", err)
+	}
+
+	// Create a node, capture original heartbeat, sleep briefly, heartbeat
+	// again, and assert last_heartbeat_at moved forward.
+	//
+	// Flake guard: time.Now() is monotonic-resolution on most platforms
+	// but a 2 ms sleep + a same-microsecond stamp on the goroutine can
+	// still collapse on a busy CI runner. Retry once with a longer
+	// sleep before failing. Same pattern as the PgStore test.
+	node := state_computeNodeFixture("hb-node", true)
+	created, err := m.CreateComputeNode(ctx, node)
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	if !assertMemHeartbeatAdvanced(t, m, ctx, created.ID, created.LastHeartbeatAt, 2*time.Millisecond) {
+		if !assertMemHeartbeatAdvanced(t, m, ctx, created.ID, created.LastHeartbeatAt, 10*time.Millisecond) {
+			t.Errorf("HeartbeatComputeNode did not bump LastHeartbeatAt after 2 retries")
+		}
+	}
+}
+
+func assertMemHeartbeatAdvanced(t *testing.T, m *MemStore, ctx context.Context, id string, before time.Time, sleep time.Duration) bool {
+	t.Helper()
+	time.Sleep(sleep)
+	if err := m.HeartbeatComputeNode(ctx, id); err != nil {
+		t.Fatalf("HeartbeatComputeNode: %v", err)
+		return false
+	}
+	after, err := m.ComputeNodeByID(ctx, id)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+		return false
+	}
+	return after.LastHeartbeatAt.After(before)
+}
+
+func TestMem_ComputeNodes_CreateComputeNode_AutoFillsIDAndTimestamps(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	// Caller omits ID, CreatedAt, LastHeartbeatAt — MemStore fills them.
+	in := state_computeNodeFixture("autofill", true)
+	in.ID = ""
+	in.CreatedAt = time.Time{}
+	in.LastHeartbeatAt = time.Time{}
+
+	got, err := m.CreateComputeNode(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	if got.ID == "" {
+		t.Errorf("MemStore should auto-fill ID")
+	}
+	if got.CreatedAt.IsZero() {
+		t.Errorf("MemStore should stamp CreatedAt")
+	}
+	if got.LastHeartbeatAt.IsZero() {
+		t.Errorf("MemStore should stamp LastHeartbeatAt (= CreatedAt when unset)")
+	}
+}
+
+func TestMem_ComputeNodes_CreateComputeNode_DuplicateNameIsConflict(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	// 'default-local' is seeded on NewMemStore(); a second row with the
+	// same name must ErrConflict, not overwrite the seeded row.
+	dup := state_computeNodeFixture(DefaultLocalNodeName, true)
+	if _, err := m.CreateComputeNode(ctx, dup); !errors.Is(err, ErrConflict) {
+		t.Errorf("CreateComputeNode(duplicate name): want ErrConflict, got %v", err)
+	}
+}
+
+func TestMem_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	// Create app + deployment to anchor instance rows. MemStore does
+	// NOT enforce FK to compute_nodes (see memstore.go:1089) so we can
+	// create instances on any nodeID — useful for negative-coverage tests.
+	acct, err := m.CreateAccount(ctx, "u@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "node-mb", RAMMB: 256, MaxConcurrency: 4, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	dep, err := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:k",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+
+	nodeA := "node-A"
+	nodeB := "node-B"
+
+	// nodeA: 2 waking, 1 cold_booting, 1 running, 1 stopped (not counted),
+	// 1 snapshotted (not counted). Total live = 4 × (256 + 8) = 1056 MB.
+	for _, st := range []string{"waking", "cold_booting", "running"} {
+		if _, err := m.CreateInstance(ctx, app.ID, dep.ID, st, 256, nodeA); err != nil {
+			t.Fatalf("CreateInstance(%s): %v", st, err)
+		}
+	}
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 256, nodeA); err != nil {
+		t.Fatalf("CreateInstance(running-2): %v", err)
+	}
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "stopped", 256, nodeA); err != nil {
+		t.Fatalf("CreateInstance(stopped): %v", err)
+	}
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "snapshotted", 256, nodeA); err != nil {
+		t.Fatalf("CreateInstance(snapshotted): %v", err)
+	}
+
+	// nodeB: 1 running 512 MB → 520 MB total.
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 512, nodeB); err != nil {
+		t.Fatalf("CreateInstance(nodeB): %v", err)
+	}
+
+	gotA, err := m.ComputeNodeUsedMB(ctx, nodeA)
+	if err != nil {
+		t.Fatalf("ComputeNodeUsedMB(nodeA): %v", err)
+	}
+	wantA := int64(4 * (256 + api.PerVMOverheadMB))
+	if gotA != wantA {
+		t.Errorf("ComputeNodeUsedMB(nodeA)=%d, want %d (4 live × (256+8))", gotA, wantA)
+	}
+
+	gotB, err := m.ComputeNodeUsedMB(ctx, nodeB)
+	if err != nil {
+		t.Fatalf("ComputeNodeUsedMB(nodeB): %v", err)
+	}
+	wantB := int64(512 + api.PerVMOverheadMB)
+	if gotB != wantB {
+		t.Errorf("ComputeNodeUsedMB(nodeB)=%d, want %d", gotB, wantB)
+	}
+
+	// Unknown node → 0 (no error).
+	gotU, err := m.ComputeNodeUsedMB(ctx, "no-such-node")
+	if err != nil {
+		t.Fatalf("ComputeNodeUsedMB(unknown): %v", err)
+	}
+	if gotU != 0 {
+		t.Errorf("ComputeNodeUsedMB(unknown)=%d, want 0", gotU)
+	}
+}
+
+// state_computeNodeFixture builds a valid ComputeNode for tests — a
+// fresh node with a unique name and the production-shape field set.
+// All non-name fields use the same values the production default-local
+// row carries, so positive tests assert against a known shape.
+func state_computeNodeFixture(name string, active bool) ComputeNode {
+	return ComputeNode{
+		Name:               name,
+		TargetURL:          "unix:///run/faas/vmmd.sock",
+		VPCPUs:             160,
+		MemMB:              56000,
+		MaxConcurrency:     200,
+		AdmissionCeilingMB: 47600,
+		Active:             active,
+	}
+}
+
 func TestMemStore_SnapshotStorageKey_RoundTrip(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
