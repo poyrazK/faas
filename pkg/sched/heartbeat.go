@@ -28,6 +28,7 @@ package sched
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"time"
@@ -58,9 +59,19 @@ const DefaultHeartbeatStaleness = 90 * time.Second
 // shape as Watchdog).
 type Heartbeat struct {
 	store state.Store
-	vmm   RoutedVMM
-	log   *slog.Logger
-	now   func() time.Time // injected for tests
+	// dialer is the per-tick fresh-dial path (issue #120). The
+	// heartbeat dials a fresh *VMMClient per node per tick instead
+	// of reusing the VMMRouter's cached conn, matching the
+	// pkg/overlay package-doc intent: "every heartbeat pays the
+	// dial cost and sees the truth". A cached conn could let a
+	// stale transport look healthy right when the heartbeat
+	// should be reporting failure. The dialer receives the node's
+	// target_url and the mTLS config; production wires it to a
+	// closure that calls overlay.Dial + sched.DialVMMContext.
+	dialer HeartbeatDialer
+	tls    *tls.Config
+	log    *slog.Logger
+	now    func() time.Time // injected for tests
 	// Interval is the tick cadence. Zero falls back to
 	// DefaultHeartbeatInterval; cmd/schedd's runDeps overrides
 	// for tests.
@@ -70,16 +81,47 @@ type Heartbeat struct {
 	Staleness time.Duration
 }
 
-// NewHeartbeat wires the dependencies. store + vmm must be non-nil;
-// log may be nil (slog.Default). The returned Heartbeat uses the
-// defaults — production callers (cmd/schedd) and tests that want a
-// different cadence set .Interval / .Staleness directly before
-// calling Run.
-func NewHeartbeat(store state.Store, vmm RoutedVMM, log *slog.Logger) *Heartbeat {
+// HeartbeatDialer is the per-tick fresh-dial contract. The heartbeat
+// invokes Dial once per (tick, node) — the returned client MUST be
+// short-lived; Close it before the next iteration so a per-tick
+// resource leak doesn't compound across the daemon's lifetime.
+//
+// Why a separate interface from VMM/RoutedVMM: the heartbeat's only
+// need is "open a fresh conn to this target_url and ping it". The
+// VMMRouter interface (and the VMM interface above it) carry the
+// full lifecycle surface — CreateColdBoot, CreateFromSnapshot,
+// PauseAndSnapshot, Destroy — none of which the heartbeat calls.
+// Splitting the surface keeps the heartbeat's test seam tight and
+// makes the per-tick dial cost observable in a unit test.
+type HeartbeatDialer interface {
+	Dial(ctx context.Context, targetURL string, tlsCfg *tls.Config) (VMM, error)
+}
+
+// HeartbeatDialerFunc adapts an ordinary function to the
+// HeartbeatDialer interface. It exists so cmd/schedd can pass the
+// existing deps.dialVMM closure directly (whose signature already
+// matches) without inventing a new named type or wrapper type per
+// caller; the alternative (a per-caller adapter struct) would just
+// echo this same body.
+type HeartbeatDialerFunc func(ctx context.Context, targetURL string, tlsCfg *tls.Config) (VMM, error)
+
+// Dial implements HeartbeatDialer.
+func (f HeartbeatDialerFunc) Dial(ctx context.Context, targetURL string, tlsCfg *tls.Config) (VMM, error) {
+	return f(ctx, targetURL, tlsCfg)
+}
+
+// NewHeartbeat wires the dependencies. store + dialer must be
+// non-nil; log may be nil (slog.Default). tlsCfg may be nil for
+// unix-only deployments (single-box default); tcp/dns targets
+// require a populated mTLS config (issue #95). The returned
+// Heartbeat uses the defaults — production callers (cmd/schedd)
+// and tests that want a different cadence set .Interval /
+// .Staleness directly before calling Run.
+func NewHeartbeat(store state.Store, dialer HeartbeatDialer, tlsCfg *tls.Config, log *slog.Logger) *Heartbeat {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Heartbeat{store: store, vmm: vmm, log: log, now: time.Now}
+	return &Heartbeat{store: store, dialer: dialer, tls: tlsCfg, log: log, now: time.Now}
 }
 
 // Tick runs one heartbeat sweep: enumerate active compute_nodes,
@@ -131,7 +173,7 @@ func (h *Heartbeat) Tick(ctx context.Context) error {
 			}
 			continue
 		}
-		if _, err := h.vmm.Ping(ctx, n.ID); err != nil {
+		if _, err := h.heartbeatPing(ctx, n); err != nil {
 			// A dead node gets flipped inactive so placement
 			// skips it on the next Wake. We don't fail the
 			// sweep — one bad node must not block the others.
@@ -157,6 +199,26 @@ func (h *Heartbeat) Tick(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// heartbeatPing dials a fresh *VMMClient per call (issue #120 —
+// every heartbeat pays the dial cost) and closes it before
+// returning. The dialer is the production HeartbeatDialer wired by
+// cmd/schedd (overlay.Dial → sched.DialVMMContext); tests inject a
+// counting stub so the per-tick dial cost is observable in
+// heartbeat_test.go. We do NOT pass ctx.Done into the dial — the
+// per-tick dial is bounded by ctx from the call site (Tick's ctx
+// is loop.go's loopCtx, which is cancelled on shutdown).
+func (h *Heartbeat) heartbeatPing(ctx context.Context, n state.ComputeNode) (*PingOutcome, error) {
+	if h.dialer == nil {
+		return nil, errors.New("heartbeat: dialer not configured")
+	}
+	cli, err := h.dialer.Dial(ctx, n.TargetURL, h.tls)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = cli.Close() }()
+	return cli.Ping(ctx)
 }
 
 // Run blocks until ctx is cancelled, ticking every h.Interval. It

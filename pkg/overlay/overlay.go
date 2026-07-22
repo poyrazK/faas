@@ -1,8 +1,8 @@
 // Package overlay is the cross-box dial abstraction for issue #98 /
-// ADR-028. vmmd's gRPC listener is the only thing gatewayd (or
-// schedd's heartbeat goroutine) dials over the overlay; the dial
-// itself is just a thin wrapper around pkg/wire.DialContext with the
-// per-node target resolved from the compute_nodes row.
+// ADR-028 / issue #120. vmmd's gRPC listener is the only thing
+// gatewayd (or schedd's heartbeat goroutine) dials over the overlay;
+// the dial itself is just a thin wrapper around pkg/wire.DialContext
+// with the per-node target resolved from the compute_nodes row.
 //
 // Why a separate package from pkg/wire: wire is the
 // location-transparent dial helper (issue #95 — unix/tcp/dns
@@ -14,12 +14,14 @@
 //
 // This package intentionally exposes only two things:
 //
-//   - New(targetURL, tlsCfg): wrap a target string in a typed handle
-//     callers can pass into dial loops without re-parsing.
-//   - Dial(ctx, target, tlsCfg): the dial itself, returning a
-//     *grpc.ClientConn. Returns the dial error verbatim — the
-//     heartbeat goroutine's only job is to map non-nil errors to
-//     "this node is sick" and call SetComputeNodeActive(ctx, id, false).
+//   - New(raw string) Target: wrap a target string in a typed handle
+//     callers can pass into dial loops without re-parsing. tlsCfg is
+//     NOT carried here because a Target is meant to be cacheable per
+//     node; the TLS material is dial-time.
+//   - Dial(ctx, target Target, tlsCfg *tls.Config) (*grpc.ClientConn,
+//     error): the dial itself. Returns the wire dial error verbatim
+//     — the heartbeat goroutine's only job is to map non-nil errors
+//     to "this node is sick" and call SetComputeNodeActive(ctx, id, false).
 //
 // No caching: the heartbeat goroutine pings each node on a 30s
 // cadence, and the per-node cost is dominated by mTLS + RTT (a few
@@ -30,6 +32,17 @@
 // is a different code path that DOES cache, because its hot path
 // serves every customer request and the cost trade-off is
 // different.
+//
+// Production callers (issue #120):
+//
+//   - cmd/gatewayd/nodecache.go: per-node dial closure inside
+//     NodeClientCache. The cache itself is unrelated to this
+//     package; only the underlying wire.DialContext call is swapped.
+//   - pkg/sched/vmmclient.go: DialVMMContext — schedd's per-node
+//     router dial goes through here.
+//   - pkg/sched/heartbeat.go (via cmd/schedd/heartbeat_dialer.go):
+//     heartbeat goroutine dials fresh per tick to honour the
+//     "every heartbeat pays the dial cost" design intent.
 
 package overlay
 
@@ -76,20 +89,28 @@ func (t Target) Raw() string { return t.raw }
 // "node is sick" and acts on it via state.SetComputeNodeActive.
 func Dial(ctx context.Context, t Target, tlsCfg *tls.Config) (*grpc.ClientConn, error) {
 	if t.raw == "" {
-		return nil, errEmptyTarget
+		return nil, ErrEmptyTarget
 	}
 	return wire.DialContext(ctx, t.raw, tlsCfg)
 }
 
-// errEmptyTarget is the sentinel for "Target{} constructed with no
-// raw string". Surfaced as a typed error so the heartbeat goroutine
-// can log it without re-classifying string content.
-var errEmptyTarget = &OverlayError{msg: "overlay: empty target_url"}
+// ErrEmptyTarget is the sentinel for "Target{} constructed with no
+// raw string". Exported so callers (e.g. schedd's heartbeat
+// goroutine) can `errors.Is(err, overlay.ErrEmptyTarget)` to
+// distinguish "config bug — the target URL was never set" from
+// "remote node down" without string-matching. The address is
+// stable for the lifetime of the process; package code MUST NOT
+// construct additional values of *OverlayError with the same
+// sentinel — guard at the call site, not via constructor identity.
+var ErrEmptyTarget = &OverlayError{msg: "overlay: empty target_url"}
 
-// OverlayError wraps an overlay-package-level error. Kept distinct
-// from grpc / wire errors so a `errors.Is(err, &OverlayError{})`
-// check is the heartbeat goroutine's way of distinguishing
-// "config bug" from "remote node down".
+// OverlayError wraps an overlay-package-level error. Distinct
+// from grpc / wire errors so a `errors.Is(err, overlay.ErrEmptyTarget)`
+// (or `errors.As(err, &OverlayError{})`) check is the heartbeat
+// goroutine's way of distinguishing "config bug" from "remote
+// node down". The package only ever returns one sentinel value
+// of this type (ErrEmptyTarget); future error kinds should grow
+// additional exported sentinels in this same shape.
 type OverlayError struct {
 	msg string
 }

@@ -171,3 +171,4 @@ func (stubVMM) Destroy(context.Context, string) error { return nil }
 func (stubVMM) Ping(context.Context) (*sched.PingOutcome, error) {
 	return &sched.PingOutcome{FcVersion: "1.10.0"}, nil
 }
+func (stubVMM) Close() error { return nil }
