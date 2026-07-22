@@ -107,9 +107,17 @@ func (s *server) createComputeNode(w http.ResponseWriter, r *http.Request, _ sta
 	}
 	if _, err := wire.ParseTarget(req.TargetURL); err != nil {
 		// PR #95 dial targets must parse cleanly; a malformed
-		// target_url means schedd will fail to dial later.
+		// target_url means schedd will fail to dial later. The
+		// detailed parse error can include the raw target string
+		// (URL credentials, schemes, etc.) which we DON'T want to
+		// echo into the API response or audit log — sanitize to a
+		// static message and log the detail with the structured
+		// logger instead. PR #114 review finding #10.
+		s.log.Warn("create compute_node: target_url parse failed",
+			"name", req.Name, "err", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid target_url", err.Error()))
+			"Invalid target_url",
+			"target must be unix://<abs-path>, tcp://<host>:<port>, or dns:///<host>:<port>"))
 		return
 	}
 	if req.MaxConcurrency <= 0 || req.VPCPUs <= 0 || req.MemMB <= 0 || req.AdmissionCeilingMB <= 0 {

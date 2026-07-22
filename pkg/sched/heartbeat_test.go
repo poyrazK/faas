@@ -114,7 +114,7 @@ func TestHeartbeat_DeadNodeFlipsInactive(t *testing.T) {
 	// Add a second node so we can verify the loop doesn't bail
 	// when the first node errors. CreateComputeNode is the same
 	// surface apid's POST /v1/compute-nodes calls.
-	second, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+	live, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
 		Name:               "node-b",
 		TargetURL:          "tcp://10.0.0.2:50051",
 		VPCPUs:             8,
@@ -126,23 +126,16 @@ func TestHeartbeat_DeadNodeFlipsInactive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateComputeNode: %v", err)
 	}
-	// Mark the synthetic default-local row as the dead one.
-	// MemStore exposes the ID via ActiveComputeNodes; we read it
-	// back and inject a Ping error for it.
-	active, _ := store.ActiveComputeNodes(context.Background())
-	if len(active) != 2 {
-		t.Fatalf("expected 2 active nodes, got %d", len(active))
-	}
-	deadID := active[0].ID
-	liveID := active[1].ID
-	if liveID != second.ID {
-		// Pin the assumption: ordering is by name (placement /
-		// MemStore seed), so default-local is the first row.
-		t.Fatalf("expected second.ID to be active[1], got %q / %q", liveID, second.ID)
+	// Look up the synthetic default-local row by name (PR #115
+	// review #6: was pin-by-position via the old ActiveComputeNodes
+	// list ordering, fragile against a future MemStore reorder).
+	dead, err := store.ComputeNodeByName(context.Background(), state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("ComputeNodeByName default-local: %v", err)
 	}
 
 	vmm := &heartbeatFakeVMM{
-		pingErr: map[string]error{deadID: errors.New("vmmd unreachable")},
+		pingErr: map[string]error{dead.ID: errors.New("vmmd unreachable")},
 	}
 	h := NewHeartbeat(store, vmm, nil)
 	if err := h.Tick(context.Background()); err != nil {
@@ -154,22 +147,22 @@ func TestHeartbeat_DeadNodeFlipsInactive(t *testing.T) {
 		t.Errorf("Ping calls = %d, want 2 (one per active node)", got)
 	}
 	// The dead node is now inactive.
-	dead, err := store.ComputeNodeByID(context.Background(), deadID)
+	deadAfter, err := store.ComputeNodeByID(context.Background(), dead.ID)
 	if err != nil {
 		t.Fatalf("ComputeNodeByID dead: %v", err)
 	}
-	if dead.Active {
+	if deadAfter.Active {
 		t.Error("dead node still active after Tick — MarkComputeNodeInactive didn't land")
 	}
 	// The live node is still active and its heartbeat was stamped.
-	live, err := store.ComputeNodeByID(context.Background(), liveID)
+	liveAfter, err := store.ComputeNodeByID(context.Background(), live.ID)
 	if err != nil {
 		t.Fatalf("ComputeNodeByID live: %v", err)
 	}
-	if !live.Active {
+	if !liveAfter.Active {
 		t.Error("live node flipped inactive — false positive on the healthy node")
 	}
-	if live.LastHeartbeatAt.IsZero() {
+	if liveAfter.LastHeartbeatAt.IsZero() {
 		t.Error("live node's LastHeartbeatAt still zero — heartbeat stamp didn't land")
 	}
 }
@@ -223,7 +216,7 @@ func TestHeartbeat_TableDriven(t *testing.T) {
 	})
 	t.Run("dead flips inactive", func(t *testing.T) {
 		store := state.NewMemStore()
-		_, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+		live, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
 			Name:               "node-b",
 			TargetURL:          "tcp://10.0.0.2:50051",
 			VPCPUs:             8,
@@ -235,19 +228,25 @@ func TestHeartbeat_TableDriven(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateComputeNode: %v", err)
 		}
-		active, _ := store.ActiveComputeNodes(context.Background())
+		// Look up the seeded dead node by name rather than by
+		// ActiveComputeNodes position (review #6: fragile against
+		// future MemStore reorder).
+		dead, err := store.ComputeNodeByName(context.Background(), state.DefaultLocalNodeName)
+		if err != nil {
+			t.Fatalf("ComputeNodeByName default-local: %v", err)
+		}
 		vmm := &heartbeatFakeVMM{
-			pingErr: map[string]error{active[0].ID: errors.New("dead")},
+			pingErr: map[string]error{dead.ID: errors.New("dead")},
 		}
 		h := NewHeartbeat(store, vmm, nil)
 		if err := h.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
-		dead, _ := store.ComputeNodeByID(context.Background(), active[0].ID)
-		live, _ := store.ComputeNodeByID(context.Background(), active[1].ID)
-		if dead.Active || !live.Active || live.LastHeartbeatAt.IsZero() {
+		deadAfter, _ := store.ComputeNodeByID(context.Background(), dead.ID)
+		liveAfter, _ := store.ComputeNodeByID(context.Background(), live.ID)
+		if deadAfter.Active || !liveAfter.Active || liveAfter.LastHeartbeatAt.IsZero() {
 			t.Errorf("unexpected state — dead.Active=%v live.Active=%v live.Heartbeat=%v",
-				dead.Active, live.Active, live.LastHeartbeatAt)
+				deadAfter.Active, liveAfter.Active, liveAfter.LastHeartbeatAt)
 		}
 	})
 	t.Run("no active nodes is no-op", func(t *testing.T) {

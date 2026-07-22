@@ -18,13 +18,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // createComputeNodeReq is the request shape this file encodes for
@@ -186,6 +186,53 @@ func TestGetComputeNode_UnknownIDReturns404(t *testing.T) {
 	}
 }
 
+// TestCreateComputeNode_IdempotencyKeyReplays pins the s.idempotent
+// wrapper behaviour on POST /v1/compute-nodes (PR #115 review #11).
+// The operator's "is the new node being heartbeated?" probe naturally
+// retries; without idempotency, the second POST lands on the
+// UNIQUE-name constraint and returns 409. With idempotency, the
+// second POST replays the stored 201 response. PR #114 closed this
+// loop on the route registration; this test pins the contract.
+func TestCreateComputeNode_IdempotencyKeyReplays(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	hdr := map[string]string{"Idempotency-Key": "node-b-register-abc"}
+	body := createComputeNodeReq{
+		Name:               "node-b",
+		TargetURL:          "unix:///run/faas/b.sock",
+		VPCPUs:             8,
+		MemMB:              8192,
+		MaxConcurrency:     4,
+		AdmissionCeilingMB: 4096,
+	}
+	first := e.do(t, "POST", "/v1/compute-nodes", body, hdr)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first: %d %s", first.Code, first.Body.String())
+	}
+	// Replaying the same key must NOT 409 — the idempotent
+	// middleware replays the stored 201 response.
+	second := e.do(t, "POST", "/v1/compute-nodes", body, hdr)
+	if second.Code != http.StatusCreated {
+		t.Errorf("idempotent replay should return 201, got %d %s", second.Code, second.Body.String())
+	}
+	if second.Header().Get("Idempotent-Replayed") != "true" {
+		t.Error("replay should be marked Idempotent-Replayed: true")
+	}
+	// Only one compute_node should actually exist.
+	rows, err := e.store.ListAllComputeNodes(context.Background())
+	if err != nil {
+		t.Fatalf("ListAllComputeNodes: %v", err)
+	}
+	var nodeBCount int
+	for _, n := range rows {
+		if n.Name == "node-b" {
+			nodeBCount++
+		}
+	}
+	if nodeBCount != 1 {
+		t.Errorf("node-b row count = %d, want 1 (idempotent retry must not insert again)", nodeBCount)
+	}
+}
+
 // TestCreateComputeNode_TableDriven wraps the four scenarios above
 // into the table the package convention prefers (CLAUDE.md:
 // table-driven tests). The dedicated tests above remain the
@@ -234,8 +281,3 @@ func TestCreateComputeNode_TableDriven(t *testing.T) {
 		}
 	})
 }
-
-// silence unused-import lints if state is not otherwise used.
-// (Defensive: if every other test in this file gets removed, the
-// compile should still succeed.)
-var _ = state.ComputeNode{}
