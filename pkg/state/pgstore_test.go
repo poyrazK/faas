@@ -22,7 +22,7 @@ import (
 // row from schema A, even if it carries the same name). The cache
 // is best-effort; a miss falls back to a fresh lookup.
 var (
-	defaultLocalMu      sync.Mutex
+	defaultLocalMu         sync.Mutex
 	defaultLocalIDsByStore = map[*state.PgStore]string{}
 )
 

@@ -11,7 +11,7 @@ package state
 // hard-coded sentinel — so re-applies don't race on a magic UUID
 // literal. Callers that need the UUID resolve it via
 //
-//   select id from compute_nodes where name = DefaultLocalNodeName
+//	select id from compute_nodes where name = DefaultLocalNodeName
 //
 // and cache the result. schedd's NodeLedger keeps this cached for
 // the daemon lifetime (cmd/schedd/main.go's runHeartbeat reads
