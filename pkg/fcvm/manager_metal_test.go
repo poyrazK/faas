@@ -92,7 +92,7 @@ func TestMetalBoot50Concurrent(t *testing.T) {
 			// below, so a detached ctx cannot outlive the test. Per-VM
 			// boot deadlines live inside ColdBoot itself.
 			if _, err := m.ColdBoot(context.Background(), ColdBootRequest{
-				Instance: id, BasePath: base, LayerPath: layer, VcpuCount: 2, MemSizeMiB: 128,
+				Instance: id, BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
 			}); err != nil {
 				t.Errorf("boot %s: %v", id, err)
 			}
@@ -138,7 +138,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 
 	// Prime: cold boot once, then park to produce the first snapshot.
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
-		Instance: "cycle", BasePath: base, LayerPath: layer, VcpuCount: 2, MemSizeMiB: 128,
+		Instance: "cycle", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128,
 	}); err != nil {
 		t.Fatalf("prime cold boot: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	for i := 0; i < cycles; i++ {
 		start := time.Now()
 		inst, err := m.Wake(ctx, WakeRequest{
-			Instance: "cycle", BasePath: base, LayerPath: layer, VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
+			Instance: "cycle", BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
 		})
 		if err != nil {
 			t.Fatalf("wake cycle %d: %v", i, err)
@@ -187,8 +187,8 @@ func TestMetalParkWakeCycle(t *testing.T) {
 // measure latency here — M3 owns that — only correctness: VM live,
 // VM gone, zero leaks (invariant §6.2-4/5).
 //
-// M0 exception to the two-drive scheme (spec §4.6): BasePath and
-// LayerPath point at the SAME busybox image. There is no per-app
+// M0 exception to the two-drive scheme (spec §4.6): BaseKey and
+// LayerKey point at the SAME busybox image. There is no per-app
 // layer yet (that's M2), but the chroot + driver wiring is identical
 // to the two-drive hot path — only the second drive is missing its
 // own ext4. We document this in the request via comment so future
@@ -211,8 +211,8 @@ func TestMetalHelloBoot(t *testing.T) {
 	const instance = "m0-hello"
 	_, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
-		BasePath:   busybox, // M0-only: Base == Layer, see comment above.
-		LayerPath:  busybox, // produces a single-drive VM that still hits the chroot path.
+		BaseKey:    busybox, // M0-only: Base == Layer, see comment above.
+		LayerKey:   busybox, // produces a single-drive VM that still hits the chroot path.
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 	})
@@ -263,8 +263,8 @@ func TestMetalDNATPublishedToGuestPort(t *testing.T) {
 
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "dnat",
-		BasePath:   busybox,
-		LayerPath:  busybox,
+		BaseKey:    busybox,
+		LayerKey:   busybox,
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 	})
@@ -331,8 +331,8 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	const memMB = 128
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "mem",
-		BasePath:   busybox,
-		LayerPath:  busybox,
+		BaseKey:    busybox,
+		LayerKey:   busybox,
 		VcpuCount:  2,
 		MemSizeMiB: memMB,
 	}); err != nil {
@@ -387,8 +387,8 @@ func TestMetalEgressCapEnforced(t *testing.T) {
 	const rateMbit = 25 // Hobby plan
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "egress",
-		BasePath:   busybox,
-		LayerPath:  busybox,
+		BaseKey:    busybox,
+		LayerKey:   busybox,
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 		EgressMbit: rateMbit,
@@ -460,8 +460,8 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 	// per acquire).
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "v6prime",
-		BasePath:   base,
-		LayerPath:  layer,
+		BaseKey:    base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 	}); err != nil {
@@ -525,7 +525,7 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			inst, err := m.Wake(ctx, WakeRequest{
-				Instance: name, BasePath: base, LayerPath: layer,
+				Instance: name, BaseKey: base, LayerKey: layer,
 				VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap,
 			})
 			if err != nil {

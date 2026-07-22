@@ -808,14 +808,18 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	return m.UpdateDeploymentStatus(ctx, id, DeployLive, "")
 }
 
-func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path string, bytes int64) error {
+func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, bytes int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
 	}
+	// Issue #96 / ADR-025 axis 2 (PR #116): mirror PgStore — both
+	// rootfs_path and rootfs_key are stamped on the same mutation so
+	// the in-memory store tracks Postgres' column-pair contract.
 	d.RootfsPath = path
+	d.RootfsKey = key
 	d.RootfsBytes = bytes
 	m.deployments[id] = d
 	return nil

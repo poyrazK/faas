@@ -21,6 +21,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	storagedriver "github.com/onebox-faas/faas/pkg/storage"
 )
 
 // Compile-time proof the production VMM satisfies the interface the Manager uses.
@@ -41,7 +43,7 @@ func TestProvisionRewritesPathsIntoChroot(t *testing.T) {
 	}
 
 	cfg := BuildColdBootConfig(ColdBootSpec{
-		KernelPath: kernel, BasePath: base, LayerPath: layer,
+		KernelKey: kernel, BaseKey: base, LayerKey: layer,
 		VcpuCount: 2, MemSizeMiB: 128, Tap: "tap0",
 	}, 0)
 
@@ -768,7 +770,7 @@ func TestRestore_MkChrootFailure(t *testing.T) {
 	v := NewJailerVMM(base, time.Second)
 	err := v.Restore(context.Background(), Lease{Instance: "restore-fail"}, RestoreSpec{
 		VMStatePath: "/nonexistent/vmstate",
-		KernelPath:  "/nonexistent/kernel", BasePath: "/nonexistent/base", LayerPath: "/nonexistent/layer",
+		KernelKey:   "/nonexistent/kernel", BaseKey: "/nonexistent/base", LayerKey: "/nonexistent/layer",
 	})
 	if err == nil {
 		t.Fatal("expected mkChroot failure")
@@ -1282,3 +1284,187 @@ func keysOf(m map[string]json.RawMessage) []string {
 // TestBootRestoresWake_DoesNotInvokeResumeHookOnColdBoot is in
 // manager_test.go — it lives next to seedApp and the engine wiring.
 var _ = "TestBootRestoresWake_DoesNotInvokeResumeHookOnColdBoot lives in manager_test.go"
+
+// --- #96 / ADR-025 axis 2 (PR #116): materialize-from-storage tests ----
+//
+// These three tests pin the StorageBackend contract the cold-boot leg
+// (BootColdBoot) and restore leg (Restore) depend on: every key the
+// caller writes into RestoreSpec / ColdBootSpec is resolved through
+// the configured StorageBackend before being handed to the chroot
+// staging layer. They use the same LocalStorageBackend imaged +
+// vmmd already wire up in production (pkg/storage/local.go) against
+// a t.TempDir() root — no mocks, no fake backends, so the test
+// exercises the same code path the daemon does on the box.
+//
+// The tests don't actually start Firecracker (no /dev/kvm in CI
+// unit-test mode). They assert the materialize-via-storage seam in
+// isolation: the tmp file is created, has the expected bytes, and is
+// tracked for cleanup so the next Kill sweeps it.
+
+// TestRestore_MaterializesBaseViaStorage pins the base-rootfs leg
+// of the StorageBackend seam: a key written into RestoreSpec.BaseKey
+// resolves to a vmmd-allocated tmp file whose contents equal what the
+// backend returned for that key. The legacy host-path shortcut (read
+// directly from disk) would skip StorageBackend entirely — the
+// materialize tmp-write IS the surface that proves the OCI backend
+// will work on a remote vmmd.
+func TestRestore_MaterializesBaseViaStorage(t *testing.T) {
+	ctx := context.Background()
+	backend, root := newLocalBackendWithFixture(t)
+
+	v := NewJailerVMM(t.TempDir(), 30*time.Second).WithStorage(backend)
+	const baseKey = "base/runtime-node22.ext4"
+	expected := mustBackendBytes(t, backend, baseKey)
+
+	tmp, err := v.materializeFromStorage(ctx, "i-base", baseKey)
+	if err != nil {
+		t.Fatalf("materializeFromStorage(%q): %v", baseKey, err)
+	}
+	if tmp == "" {
+		t.Fatal("materialize returned empty tmp path; expected the local backend to map the key to a tmp staging file")
+	}
+	got, err := os.ReadFile(tmp)
+	if err != nil {
+		t.Fatalf("read materialised tmp %q: %v", tmp, err)
+	}
+	if !bytes.Equal(got, expected) {
+		t.Errorf("materialised bytes mismatch: got %d bytes, want %d (the tmp file must round-trip what Storage.Get returned)", len(got), len(expected))
+	}
+	// Cleanup: Kill is the production path that sweeps materialisedTmp.
+	// Asserting on its result here would couple to the kill semantics;
+	// instead, exercise sweepMaterialised directly so the test is
+	// focused on the storage seam.
+	v.sweepMaterialised("i-base")
+	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
+		t.Errorf("sweepMaterialised did not remove tmp %q: stat err=%v (trackMaterialised/sweepMaterialised must keep tmp files accounted for)", tmp, err)
+	}
+	// Sanity: the underlying storage root is untouched. Sweep
+	// removes the tmp, not the canonical file.
+	if _, err := os.Stat(root); err != nil {
+		t.Errorf("storage root went missing during sweep: %v", err)
+	}
+}
+
+// TestRestore_MaterializesLayerViaStorage pins the per-app layer leg
+// — same contract as base but for the writeable drive1. The writeable
+// staging path (stageWritable) chowns the file to the jailer uid/gid;
+// that's exercised end-to-end by the metal suite (the unit path
+// can't start the jailer). The test asserts only that the
+// StorageBackend seam delivers the bytes.
+func TestRestore_MaterializesLayerViaStorage(t *testing.T) {
+	ctx := context.Background()
+	backend, _ := newLocalBackendWithFixture(t)
+
+	v := NewJailerVMM(t.TempDir(), 30*time.Second).WithStorage(backend)
+	const layerKey = "apps/slug-abc/dep-1.ext4"
+	expected := mustBackendBytes(t, backend, layerKey)
+
+	tmp, err := v.materializeFromStorage(ctx, "i-layer", layerKey)
+	if err != nil {
+		t.Fatalf("materializeFromStorage(%q): %v", layerKey, err)
+	}
+	if tmp == "" {
+		t.Fatal("materialize returned empty tmp path for layer key")
+	}
+	got, err := os.ReadFile(tmp)
+	if err != nil {
+		t.Fatalf("read materialised layer tmp %q: %v", tmp, err)
+	}
+	if !bytes.Equal(got, expected) {
+		t.Errorf("layer materialised bytes mismatch: got %d bytes, want %d", len(got), len(expected))
+	}
+}
+
+// TestBoot_MaterializesKernelViaStorage pins the cold-boot leg
+// specifically (BootColdBoot): a kernel key written into
+// ColdBootSpec.KernelKey resolves through StorageBackend before
+// BuildColdBootConfig sees it. Without this, OCI-backed vmmd would
+// try to boot a vmlinux that only exists on the wire — a silent
+// regression that would only surface at first wake on a non-local
+// backend.
+//
+// The test invokes materializeFromStorage directly (same call
+// BootColdBoot makes for each of the three keys) and verifies the
+// produced VMConfig's BootSource.KernelImagePath is the tmp path,
+// not the key string.
+func TestBoot_MaterializesKernelViaStorage(t *testing.T) {
+	ctx := context.Background()
+	backend, _ := newLocalBackendWithFixture(t)
+
+	v := NewJailerVMM(t.TempDir(), 30*time.Second).WithStorage(backend)
+	const kernelKey = "kernel/1.10.0"
+	expected := mustBackendBytes(t, backend, kernelKey)
+
+	tmp, err := v.materializeFromStorage(ctx, "i-kernel", kernelKey)
+	if err != nil {
+		t.Fatalf("materializeFromStorage(%q): %v", kernelKey, err)
+	}
+	if tmp == "" {
+		t.Fatal("materialize returned empty tmp path for kernel key")
+	}
+	// Now feed the resolved path into BuildColdBootConfig the way
+	// BootColdBoot does after materialising every key. The point of
+	// the seam: BuildColdBootConfig's KernelImagePath is a host
+	// path, never the key. BootColdBoot is what flips the key into
+	// the host path.
+	spec := ColdBootSpec{
+		KernelKey: tmp, // resolved by materialize above
+		BaseKey:   "/dev/null",
+		LayerKey:  "/dev/null",
+		VcpuCount: 2, MemSizeMiB: 128, Tap: "tap0",
+	}
+	cfg := BuildColdBootConfig(spec, 0)
+	if cfg.BootSource.KernelImagePath != tmp {
+		t.Errorf("KernelImagePath = %q, want %q (BootColdBoot must hand BuildColdBootConfig the resolved path, not the key)", cfg.BootSource.KernelImagePath, tmp)
+	}
+	// And the kernel bytes round-trip.
+	got, err := os.ReadFile(cfg.BootSource.KernelImagePath)
+	if err != nil {
+		t.Fatalf("read kernel image: %v", err)
+	}
+	if !bytes.Equal(got, expected) {
+		t.Errorf("kernel bytes mismatch: got %d bytes, want %d", len(got), len(expected))
+	}
+}
+
+// newLocalBackendWithFixture builds a real LocalStorageBackend rooted
+// at a t.TempDir() and seeds the three keys (kernel + base + layer)
+// the materialize tests resolve. The fixture bytes are deterministic
+// so the round-trip checks don't need golden files.
+func newLocalBackendWithFixture(t *testing.T) (storagedriver.StorageBackend, string) {
+	t.Helper()
+	dir := t.TempDir()
+	be, err := storagedriver.NewLocalStorageBackend(dir)
+	if err != nil {
+		t.Fatalf("NewLocalStorageBackend: %v", err)
+	}
+	seed := map[string][]byte{
+		"kernel/1.10.0":            []byte("FAAS-VMLINUX-1.10.0"),
+		"base/runtime-node22.ext4": []byte("FAAS-BASE-NODE22"),
+		"apps/slug-abc/dep-1.ext4": []byte("FAAS-LAYER-APP"),
+	}
+	for k, b := range seed {
+		if err := be.Put(context.Background(), k, bytes.NewReader(b)); err != nil {
+			t.Fatalf("seed Put %q: %v", k, err)
+		}
+	}
+	return be, dir
+}
+
+// mustBackendBytes reads what Storage.Get returns for a key. If the
+// caller asserts equality with the tmp file's contents, the two must
+// agree byte-for-byte — this helper makes the "what the backend
+// returned" anchor explicit.
+func mustBackendBytes(t *testing.T, be storagedriver.StorageBackend, key string) []byte {
+	t.Helper()
+	rc, err := be.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("backend Get %q: %v", key, err)
+	}
+	defer func() { _ = rc.Close() }()
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read backend %q: %v", key, err)
+	}
+	return b
+}

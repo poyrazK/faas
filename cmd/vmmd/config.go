@@ -46,8 +46,21 @@ type Config struct {
 	TLSKeyPath  string `toml:"tls_key_path"`
 	TLSCAPath   string `toml:"tls_ca_path"`
 
-	// KernelPath mirrors pkg/fcvm.Paths.Kernel. The daemon refuses to
-	// start if the file does not exist.
+	// KernelKey is the StorageBackend key for the Firecracker kernel
+	// artifact vmmd loads on cold boot (issue #96 / ADR-025 axis 2 / PR
+	// #116). The local backend's Get resolves it to the same file the
+	// legacy KernelPath config used (so single-box behaviour is
+	// preserved); the OCI backend fetches over HTTP. Derived from
+	// sched.KernelKey(fcVersion) at startup once the running FC version
+	// is detected (cmd/vmmd/main.go). Overridable via toml for tests
+	// that pin a specific kernel key.
+	KernelKey string `toml:"kernel_key"`
+	// KernelPath mirrors pkg/fcvm.Paths.Kernel. Deprecated: with #96
+	// (PR #116) the kernel flows through StorageBackend like every
+	// other artifact. Kept for source compatibility with existing
+	// vmmd.toml fixtures; main.go resolves KernelKey after FC version
+	// detection and prefers it. Startup logs both so an operator can
+	// spot drift between the two.
 	KernelPath string `toml:"kernel_path"`
 }
 
@@ -75,6 +88,10 @@ func (c *Config) LoadServerTLS() (*tls.Config, error) {
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
 		SocketPath: "/run/faas/vmmd.sock",
+		// KernelPath is the deprecated host-path default; main.go
+		// resolves KernelKey from sched.KernelKey(fcVersion) after FC
+		// detection. The default here keeps pre-#116 vmmd.toml
+		// fixtures working until operators migrate.
 		KernelPath: "/srv/fc/base/vmlinux-6.1",
 		OwnerUser:  "faas-vmmd",
 	}

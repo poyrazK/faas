@@ -318,11 +318,15 @@ type Store interface {
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
-	// SetDeploymentRootfs records the on-disk path + size of the per-app ext4
-	// layer imaged produced for this deployment (spec §4.6, drive1). The
-	// snapshot-prime handshake reads this when staging the cold boot so schedd
-	// can attach drive1 from the right path (ADR-018). Only imaged writes it.
-	SetDeploymentRootfs(ctx context.Context, id, path string, bytes int64) error
+	// SetDeploymentRootfs records the on-disk path + size + StorageBackend
+	// key of the per-app ext4 layer imaged produced for this deployment
+	// (spec §4.6, drive1). The snapshot-prime handshake reads this when
+	// staging the cold boot so schedd can attach drive1 from the right
+	// path / key (ADR-018, issue #96 / ADR-025 axis 2 — PR #116). Only
+	// imaged writes it. rootfsKey is the canonical StorageBackend key
+	// (e.g. "apps/<slug>/<depID>.ext4"); schedd carries it on the wake
+	// wire and vmmd resolves it via Storage.Get before staging the chroot.
+	SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error
 
 	// Builds (apid creates the queued row; builderd writes status, spec §9).
 	CreateBuild(ctx context.Context, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error)

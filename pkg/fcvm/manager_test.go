@@ -102,6 +102,20 @@ func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig) error {
 	return v.bootErr
 }
 
+// BootColdBoot mirrors the production flow for tests: synthesize a
+// VMConfig from the resolved ColdBootSpec and delegate to Boot. The
+// fake doesn't actually materialize from StorageBackend (no storage
+// configured); the production path in JailerVMM.BootColdBoot would
+// resolve keys through storage.Get before calling Boot. Tests that
+// care about storage semantics use TestRestore_MaterializesBaseViaStorage
+// (pkg/fcvm/vmm_test.go) with a real JailerVMM + fake StorageBackend.
+func (v *fakeVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) error {
+	if err := spec.Validate(); err != nil {
+		return err
+	}
+	return v.Boot(ctx, l, BuildColdBootConfig(spec, l.Slot))
+}
+
 func (v *fakeVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) error {
 	v.mu.Lock()
 	v.restored = append(v.restored, l.Instance)
@@ -147,8 +161,8 @@ func TestWakeColdBoot_DoesNotInvokeResumeHook(t *testing.T) {
 	mgr := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "/k"}, "1.7.0", nil, nil)
 	if _, err := mgr.Wake(context.Background(), WakeRequest{
 		Instance:   "cold-A",
-		BasePath:   "/base.ext4",
-		LayerPath:  "/layer.ext4",
+		BaseKey:    "/base.ext4",
+		LayerKey:   "/layer.ext4",
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 		// Snapshot intentionally nil — forces cold boot.
@@ -172,8 +186,8 @@ func TestWakeRestore_InvokesResumeHook(t *testing.T) {
 	mgr := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "/k"}, "1.7.0", nil, nil)
 	if _, err := mgr.Wake(context.Background(), WakeRequest{
 		Instance:   "restore-A",
-		BasePath:   "/base.ext4",
-		LayerPath:  "/layer.ext4",
+		BaseKey:    "/base.ext4",
+		LayerKey:   "/layer.ext4",
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 		Snapshot:   usableSnapshot(),
@@ -208,8 +222,8 @@ func TestWakeRestore_ResumeHookErrorFallsBackToColdBoot(t *testing.T) {
 	mgr := NewManager(&fakeRunner{}, fvmm, Paths{Kernel: "/k"}, "1.7.0", nil, nil)
 	if _, err := mgr.Wake(context.Background(), WakeRequest{
 		Instance:   "restore-fail",
-		BasePath:   "/base.ext4",
-		LayerPath:  "/layer.ext4",
+		BaseKey:    "/base.ext4",
+		LayerKey:   "/layer.ext4",
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 		Snapshot:   usableSnapshot(),
@@ -300,7 +314,7 @@ func (v *fakeVMM) killedInstance(id string) bool {
 }
 
 func req(id string) ColdBootRequest {
-	return ColdBootRequest{Instance: id, BasePath: "/b.ext4", LayerPath: "/l.ext4", VcpuCount: 2, MemSizeMiB: 128}
+	return ColdBootRequest{Instance: id, BaseKey: "/b.ext4", LayerKey: "/l.ext4", VcpuCount: 2, MemSizeMiB: 128}
 }
 
 func newTestManager(run Runner, vmm VMM) *Manager {
@@ -461,7 +475,7 @@ func TestRestoreFailsThenColdBootSucceeds(t *testing.T) {
 	m := newTestManager(run, vmm)
 
 	inst, err := m.Wake(context.Background(), WakeRequest{
-		Instance: "fb", BasePath: "/b.ext4", LayerPath: "/l.ext4",
+		Instance: "fb", BaseKey: "/b.ext4", LayerKey: "/l.ext4",
 		VcpuCount: 2, MemSizeMiB: 128,
 		Snapshot: usableSnapshot(),
 	})
@@ -493,7 +507,7 @@ func TestRestoreSucceedsUsesFastPath(t *testing.T) {
 	m := newTestManager(run, vmm)
 
 	inst, err := m.Wake(context.Background(), WakeRequest{
-		Instance: "rp", BasePath: "/b.ext4", LayerPath: "/l.ext4",
+		Instance: "rp", BaseKey: "/b.ext4", LayerKey: "/l.ext4",
 		VcpuCount: 2, MemSizeMiB: 128,
 		Snapshot: usableSnapshot(),
 	})
@@ -519,10 +533,10 @@ func TestColdBootConfigInvalid(t *testing.T) {
 		name string
 		req  ColdBootRequest
 	}{
-		{"missing base", ColdBootRequest{Instance: "x", LayerPath: "/l.ext4", VcpuCount: 1, MemSizeMiB: 128}},
-		{"missing layer", ColdBootRequest{Instance: "x", BasePath: "/b.ext4", VcpuCount: 1, MemSizeMiB: 128}},
-		{"zero vcpu", ColdBootRequest{Instance: "x", BasePath: "/b", LayerPath: "/l", VcpuCount: 0, MemSizeMiB: 128}},
-		{"zero mem", ColdBootRequest{Instance: "x", BasePath: "/b", LayerPath: "/l", VcpuCount: 1, MemSizeMiB: 0}},
+		{"missing base", ColdBootRequest{Instance: "x", LayerKey: "/l.ext4", VcpuCount: 1, MemSizeMiB: 128}},
+		{"missing layer", ColdBootRequest{Instance: "x", BaseKey: "/b.ext4", VcpuCount: 1, MemSizeMiB: 128}},
+		{"zero vcpu", ColdBootRequest{Instance: "x", BaseKey: "/b", LayerKey: "/l", VcpuCount: 0, MemSizeMiB: 128}},
+		{"zero mem", ColdBootRequest{Instance: "x", BaseKey: "/b", LayerKey: "/l", VcpuCount: 1, MemSizeMiB: 0}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

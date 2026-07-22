@@ -37,14 +37,14 @@ func TestWakeMethodFrom(t *testing.T) {
 func TestToWakeRequest_Happy(t *testing.T) {
 	req := &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "inst-1",
-		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256},
 		Snapshot: &vmmdpb.SnapshotRef{VmstatePath: "/v", FcVersion: "1.7.0", StorageKey: "snap/inst-1/mem"},
 	}
 	wr, err := toWakeRequest(req)
 	if err != nil {
 		t.Fatalf("toWakeRequest: %v", err)
 	}
-	if wr.Instance != "inst-1" || wr.BasePath != "/b" || wr.LayerPath != "/l" {
+	if wr.Instance != "inst-1" || wr.BaseKey != "/b" || wr.LayerKey != "/l" {
 		t.Errorf("flattened fields wrong: %+v", wr)
 	}
 	if wr.VcpuCount != 2 || wr.MemSizeMiB != 256 {
@@ -61,7 +61,7 @@ func TestToWakeRequest_Happy(t *testing.T) {
 func TestToWakeRequest_NoSnapshot(t *testing.T) {
 	req := &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "inst-1",
-		App:      &vmmdpb.AppSpec{BasePath: "/b"},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b"},
 	}
 	wr, err := toWakeRequest(req)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestToWakeRequest_EmptySnapshotStorageKey(t *testing.T) {
 	// meaningful when StorageKey is empty.
 	req := &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "inst-1",
-		App:      &vmmdpb.AppSpec{BasePath: "/b"},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b"},
 		Snapshot: &vmmdpb.SnapshotRef{StorageKey: ""},
 	}
 	wr, err := toWakeRequest(req)
@@ -109,7 +109,7 @@ func TestToWakeRequest_MissingApp(t *testing.T) {
 func TestToColdBootRequest_Happy(t *testing.T) {
 	req := &vmmdpb.CreateColdBootRequest{
 		Instance: "inst-2",
-		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 4, MemSizeMib: 512},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 4, MemSizeMib: 512},
 	}
 	wr, err := toColdBootRequest(req)
 	if err != nil {
@@ -198,7 +198,7 @@ func TestToWakeRequest_ForwardsSealedEnv(t *testing.T) {
 	req := &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "inst-1",
 		App: &vmmdpb.AppSpec{
-			BasePath: "/b",
+			BaseKey: "/b",
 			SealedEnv: []*vmmdpb.SealedSecret{
 				{Key: "STRIPE_KEY", Ciphertext: []byte("ciphertext-1")},
 				{Key: "DB_URL", Ciphertext: []byte("ciphertext-2")},
@@ -222,7 +222,7 @@ func TestToColdBootRequest_ForwardsSealedEnv(t *testing.T) {
 	req := &vmmdpb.CreateColdBootRequest{
 		Instance: "inst-2",
 		App: &vmmdpb.AppSpec{
-			BasePath: "/b",
+			BaseKey: "/b",
 			SealedEnv: []*vmmdpb.SealedSecret{
 				{Key: "X", Ciphertext: []byte("ct")},
 			},

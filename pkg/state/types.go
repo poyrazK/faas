@@ -203,7 +203,19 @@ type Deployment struct {
 	// RootfsPath / RootfsBytes are stamped by imaged after the per-app ext4 layer
 	// is built (spec §4.6, drive1). schedd's prime handshake reads this row so
 	// it can attach drive1 from the right path on the cold boot (ADR-018).
-	RootfsPath  string
+	RootfsPath string
+	// RootfsKey is the canonical StorageBackend key for the same layer
+	// (issue #96 / ADR-025 axis 2, PR #116). Mirror column of
+	// RootfsPath: every row carries both. schedd carries the key on the
+	// wake wire; vmmd resolves it via Storage.Get and stages into the
+	// jail chroot. Local backends map the key to the same file as
+	// RootfsPath; remote backends (OCI registry) resolve over HTTP. The
+	// key is stamped by imaged at the same time as RootfsPath (see
+	// SetDeploymentRootfs) and backfilled by migrations/00025 from the
+	// legacy path on the default apps root. Empty only on rows written
+	// before the migration landed and whose apps root was non-default;
+	// imaged re-stamps them on the next build via SetDeploymentRootfs.
+	RootfsKey   string
 	RootfsBytes int64
 	Status      DeploymentStatus
 	Error       string

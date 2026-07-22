@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -166,7 +167,7 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	}
 	if cached, ok := b.cache.Lookup(srcHash, fw); ok {
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("cache hit (%s, %d bytes) — skipping vm spawn\n", cached.Path, cached.Bytes))
-		if err := b.store.SetDeploymentRootfs(ctx, dep.ID, cached.Path, cached.Bytes); err != nil {
+		if err := b.store.SetDeploymentRootfs(ctx, dep.ID, cached.Path, sched.AppLayerKey(app.Slug, dep.ID), cached.Bytes); err != nil {
 			b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "set rootfs: "+err.Error())
 			return BuildResult{}, err
 		}
@@ -296,7 +297,7 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	// a per-app ext4 (drive1), and re-emit NotifySnapshotPrime for schedd
 	// to cold-boot + snapshot. Splitting the channel prevents schedd from
 	// trying to mount the OCI tarball as a virtio-blk drive (it would 400).
-	if err := b.store.SetDeploymentRootfs(ctx, dep.ID, out.OCIImage, out.LogTailBytes); err != nil {
+	if err := b.store.SetDeploymentRootfs(ctx, dep.ID, out.OCIImage, sched.AppLayerKey(app.Slug, dep.ID), out.LogTailBytes); err != nil {
 		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "set rootfs: "+err.Error())
 		return BuildResult{}, err
 	}

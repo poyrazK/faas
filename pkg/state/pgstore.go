@@ -549,7 +549,7 @@ func (s *PgStore) DeploymentByID(ctx context.Context, id string) (Deployment, er
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-		        coalesce(rootfs_path,''), coalesce(rootfs_bytes,0),
+		        coalesce(rootfs_path,''), coalesce(rootfs_key,''), coalesce(rootfs_bytes,0),
 		        status, coalesce(error,''), coalesce(error_code,''), created_at
 		 from deployments where id = $1`, id)
 	return scanDeploymentWithRootfs(row)
@@ -568,7 +568,7 @@ func (s *PgStore) LiveDeployment(ctx context.Context, appID string) (Deployment,
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-		        coalesce(rootfs_path,''), coalesce(rootfs_bytes,0),
+		        coalesce(rootfs_path,''), coalesce(rootfs_key,''), coalesce(rootfs_bytes,0),
 		        status, coalesce(error,''), coalesce(error_code,''), created_at
 		 from deployments where app_id = $1 and status = 'live' order by created_at desc limit 1`, appID)
 	return scanDeploymentWithRootfs(row)
@@ -690,10 +690,20 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	return s.UpdateDeploymentStatus(ctx, id, DeployLive, "")
 }
 
-func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path string, bytes int64) error {
+func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error {
+	// Issue #96 / ADR-025 axis 2 (PR #116): rootfs_key is the canonical
+	// StorageBackend key (e.g. "apps/<slug>/<depID>.ext4") schedd carries
+	// on the wake wire. Local backends map the key to the same file as
+	// rootfs_path; remote backends (OCI registry) resolve over HTTP. Both
+	// columns are stamped on the same UPDATE so a fresh imaged build
+	// always leaves the row with both fields non-empty. The legacy
+	// rootfs_path is preserved for back-compat paths (apic dump, audit
+	// logs, the `appsRoot` filesystem cleanup pass).
 	tag, err := s.pool.Exec(ctx,
-		`update deployments set rootfs_path = $2, rootfs_bytes = $3 where id = $1`,
-		id, nullString(path), bytes)
+		`update deployments
+		    set rootfs_path = $2, rootfs_key = $3, rootfs_bytes = $4
+		  where id = $1`,
+		id, nullString(path), nullString(key), bytes)
 	if err != nil {
 		return err
 	}
@@ -720,7 +730,7 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 		  where id = $1
 		  returning id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		            coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-		            coalesce(rootfs_path,''), coalesce(rootfs_bytes,0),
+		            coalesce(rootfs_path,''), coalesce(rootfs_key,''), coalesce(rootfs_bytes,0),
 		            status, coalesce(error,''), coalesce(error_code,''), created_at`,
 		id, nullString(message), nullString(code))
 	return scanDeploymentWithRootfs(row)
@@ -1920,19 +1930,24 @@ func scanDeployment(row pgx.Row) (Deployment, error) {
 }
 
 // scanDeploymentWithRootfs is the post-imaged variant that also reads the
-// rootfs_path / rootfs_bytes columns stamped by SetDeploymentRootfs. Every
-// reads-everything query (used by schedd's prime handshake, M5) uses this so
-// the snapshot_prime consumer sees the layer path.
+// rootfs_path / rootfs_key / rootfs_bytes columns stamped by
+// SetDeploymentRootfs. Every reads-everything query (used by schedd's prime
+// handshake, M5, and by the engine's Wake flow at LiveDeployment) uses this
+// so the snapshot_prime consumer sees the layer path AND schedd's wake wire
+// can carry the layer key (issue #96 / ADR-025 axis 2 / PR #116). Ordering
+// matches the SELECT projections in DeploymentByID, LiveDeployment, and
+// SetDeploymentFailed.
 func scanDeploymentWithRootfs(row pgx.Row) (Deployment, error) {
 	d := Deployment{}
-	var kind, statusStr, rootfsPath string
+	var kind, statusStr, rootfsPath, rootfsKey string
 	if err := row.Scan(&d.ID, &d.AppID, &d.BuildID, &d.ImageDigest, &kind,
 		&d.SourcePath, &d.SourceBytes, &d.Handler, &d.LogPath,
-		&rootfsPath, &d.RootfsBytes,
+		&rootfsPath, &rootfsKey, &d.RootfsBytes,
 		&statusStr, &d.Error, &d.ErrorCode, &d.CreatedAt); err != nil {
 		return Deployment{}, mapErr(err)
 	}
 	d.RootfsPath = rootfsPath
+	d.RootfsKey = rootfsKey
 	d.Kind = DeploymentKind(kind)
 	d.Status = DeploymentStatus(statusStr)
 	return d, nil

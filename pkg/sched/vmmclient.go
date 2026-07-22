@@ -55,13 +55,21 @@ type PingOutcome struct {
 // AppSpec is the flat set of fields vmmd needs to boot an instance (ADR-014).
 // schedd fills it from its Postgres view of the app + deployment.
 //
+// Issue #96 / ADR-025 axis 2 / PR #116: BaseKey / LayerKey are the
+// StorageBackend keys (not host paths) the wake wire carries. vmmd
+// resolves them locally via Storage.Get before staging the chroot.
+// The local StorageBackend's Get maps keys to the same files the
+// legacy BasePath / LayerPath fields used, so single-box behaviour is
+// preserved. BasePath / LayerPath were removed cleanly (internal-only
+// consumers, no wire-compat shim).
+//
 // SealedEnv carries the per-key ciphertext rows from `app_secrets` (spec
 // §11/G2). schedd is the only writer that can load these rows (apid writes
 // intent, schedd reads to drive wakes). Empty slice = no secrets file
 // written; vmmd treats nil and empty as equivalent.
 type AppSpec struct {
-	BasePath   string // drive0 shared read-only base rootfs (spec §4.6)
-	LayerPath  string // drive1 per-app layer
+	BaseKey    string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
+	LayerKey   string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
 	VCPUCount  int32  // 2, or 4 for Scale
 	MemSizeMiB int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
 	EgressMbit int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
@@ -231,8 +239,8 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		})
 	}
 	return &vmmdpb.AppSpec{
-		BasePath:   a.BasePath,
-		LayerPath:  a.LayerPath,
+		BaseKey:    a.BaseKey,
+		LayerKey:   a.LayerKey,
 		VcpuCount:  a.VCPUCount,
 		MemSizeMib: a.MemSizeMiB,
 		EgressMbit: a.EgressMbit,

@@ -465,7 +465,7 @@ func TestHandleBuildQueued(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Stamp the rootfs the way builderd would (a tarball path).
-	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", 4096); err != nil {
+	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 4096); err != nil {
 		t.Fatal(err)
 	}
 	notif := &fakeNotifier{}

@@ -80,10 +80,18 @@ func (WakeMethod) EnumDescriptor() ([]byte, []int) {
 // stateless about app config (ADR-014).
 type AppSpec struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// drive0 shared read-only base rootfs (spec §4.6 two-drive scheme).
-	BasePath string `protobuf:"bytes,1,opt,name=base_path,json=basePath,proto3" json:"base_path,omitempty"`
-	// drive1 per-app layer.
-	LayerPath string `protobuf:"bytes,2,opt,name=layer_path,json=layerPath,proto3" json:"layer_path,omitempty"`
+	// Issue #96 / ADR-025 axis 2 (PR #116): drive0 base + drive1 layer
+	// are referenced by StorageBackend keys, not host paths. The wire
+	// carries canonical keys (e.g. "base/runtime-node22.ext4",
+	// "apps/<slug>/<depID>.ext4"); vmmd resolves them locally via
+	// Storage.Get before staging into the jail chroot. The local
+	// StorageBackend's Get maps keys to /srv/fc/.../...ext4 the same
+	// way the legacy *_path fields did, so single-box behaviour is
+	// preserved. The OCI backend resolves keys over HTTP, which is what
+	// unblocks multi-node cold-boot on a vmmd that doesn't share
+	// /srv/fc with schedd (issue #98).
+	BaseKey  string `protobuf:"bytes,1,opt,name=base_key,json=baseKey,proto3" json:"base_key,omitempty"`
+	LayerKey string `protobuf:"bytes,2,opt,name=layer_key,json=layerKey,proto3" json:"layer_key,omitempty"`
 	// 2 for free/hobby/pro; 4 for Scale.
 	VcpuCount int32 `protobuf:"varint,3,opt,name=vcpu_count,json=vcpuCount,proto3" json:"vcpu_count,omitempty"`
 	// plan RAM in MiB (the slice fences at +8 per spec §1).
@@ -132,16 +140,16 @@ func (*AppSpec) Descriptor() ([]byte, []int) {
 	return file_onebox_faas_vmmd_v1_vmmd_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *AppSpec) GetBasePath() string {
+func (x *AppSpec) GetBaseKey() string {
 	if x != nil {
-		return x.BasePath
+		return x.BaseKey
 	}
 	return ""
 }
 
-func (x *AppSpec) GetLayerPath() string {
+func (x *AppSpec) GetLayerKey() string {
 	if x != nil {
-		return x.LayerPath
+		return x.LayerKey
 	}
 	return ""
 }
@@ -1099,11 +1107,10 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xe9\x01\n" +
-	"\aAppSpec\x12\x1b\n" +
-	"\tbase_path\x18\x01 \x01(\tR\bbasePath\x12\x1d\n" +
-	"\n" +
-	"layer_path\x18\x02 \x01(\tR\tlayerPath\x12\x1d\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xe5\x01\n" +
+	"\aAppSpec\x12\x19\n" +
+	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
+	"\tlayer_key\x18\x02 \x01(\tR\blayerKey\x12\x1d\n" +
 	"\n" +
 	"vcpu_count\x18\x03 \x01(\x05R\tvcpuCount\x12 \n" +
 	"\fmem_size_mib\x18\x04 \x01(\x05R\n" +

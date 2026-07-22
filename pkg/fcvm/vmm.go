@@ -146,8 +146,50 @@ func (v *JailerVMM) socketPath(instance string) string {
 	return filepath.Join(v.chrootRoot(instance), APISockName)
 }
 
+// BootColdBoot is the cold-boot leg of Wake (spec §4.4 / cold boot must
+// always work, ADR-005). It materializes the kernel/base/layer StorageBackend
+// keys through the configured StorageBackend, builds the VMConfig from
+// the resolved tmp paths, then delegates to Boot for chroot staging +
+// jailer start + readiness wait.
+//
+// #96 / ADR-025 axis 2 (PR #116): BootColdBoot is the seam where keys
+// become host paths the FC daemon can read. Same pattern as the
+// mem-blob materialize in Restore (line ~209 above): keys go in,
+// tmp paths come out, trackMaterialised handles cleanup so the
+// deferred Kill sweeps the tmp files alongside the chroot (which is
+// already on tmpfs, per spec §11).
+func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) (err error) {
+	if err := spec.Validate(); err != nil {
+		return fmt.Errorf("vmm: cold boot: %w", err)
+	}
+	kernelSrc, err := v.materializeFromStorage(ctx, l.Instance, spec.KernelKey)
+	if err != nil {
+		return fmt.Errorf("vmm: stage kernel: %w", err)
+	}
+	baseSrc, err := v.materializeFromStorage(ctx, l.Instance, spec.BaseKey)
+	if err != nil {
+		return fmt.Errorf("vmm: stage base: %w", err)
+	}
+	layerSrc, err := v.materializeFromStorage(ctx, l.Instance, spec.LayerKey)
+	if err != nil {
+		return fmt.Errorf("vmm: stage layer: %w", err)
+	}
+	// Build VMConfig from the resolved paths. Drive paths become the
+	// tmp paths so provision (line ~941) stages them as basenames.
+	// spec.Tap isn't used in the config — the Veth is plumbed by the
+	// caller (Manager) before Boot runs.
+	spec.KernelKey = kernelSrc
+	spec.BaseKey = baseSrc
+	spec.LayerKey = layerSrc
+	return v.Boot(ctx, l, BuildColdBootConfig(spec, l.Slot))
+}
+
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
 // and blocks until the guest is ready. On error it kills whatever it started.
+//
+// Prefer BootColdBoot for cold boots — it materializes the StorageBackend
+// keys in ColdBootSpec into host paths first, then delegates here. Boot
+// is kept for tests that already have resolved paths in hand.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig) (err error) {
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
@@ -233,16 +275,38 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// before /snapshot/load, otherwise Firecracker 400s when it tries to
 	// open the backing file. Drive 0 (base) is shared RO — hardlink; drive 1
 	// (per-app layer, RW overlay upper) is per-instance — copy + chown.
-	if spec.KernelPath == "" || spec.BasePath == "" || spec.LayerPath == "" {
+	//
+	// #96 / ADR-025 axis 2 (PR #116): kernel/base/layer keys are
+	// canonical StorageBackend keys; vmmd resolves them through the
+	// configured backend into vmmd-allocated tmp paths via
+	// materializeFromStorage (the same seam that handles the mem blob
+	// above). For the local backend the tmp path is the same file the
+	// legacy host-path helper returned (wasted I/O but functionally
+	// identical); for the OCI backend it's the streamed bytes. Tmp
+	// cleanup reuses trackMaterialised — already wired for the mem
+	// blob — so the Kill deferred above sweeps all three.
+	if spec.KernelKey == "" || spec.BaseKey == "" || spec.LayerKey == "" {
 		return fmt.Errorf("vmm: restore spec missing kernel/base/layer: %+v", spec)
 	}
-	if _, err := stageReadOnly(root, spec.KernelPath); err != nil {
+	kernelSrc, err := v.materializeFromStorage(ctx, l.Instance, spec.KernelKey)
+	if err != nil {
 		return fmt.Errorf("vmm: stage kernel: %w", err)
 	}
-	if _, err := stageReadOnly(root, spec.BasePath); err != nil {
+	baseSrc, err := v.materializeFromStorage(ctx, l.Instance, spec.BaseKey)
+	if err != nil {
 		return fmt.Errorf("vmm: stage base: %w", err)
 	}
-	if _, err := stageWritable(root, spec.LayerPath, l.UID, l.GID); err != nil {
+	layerSrc, err := v.materializeFromStorage(ctx, l.Instance, spec.LayerKey)
+	if err != nil {
+		return fmt.Errorf("vmm: stage layer: %w", err)
+	}
+	if _, err := stageReadOnly(root, kernelSrc); err != nil {
+		return fmt.Errorf("vmm: stage kernel: %w", err)
+	}
+	if _, err := stageReadOnly(root, baseSrc); err != nil {
+		return fmt.Errorf("vmm: stage base: %w", err)
+	}
+	if _, err := stageWritable(root, layerSrc, l.UID, l.GID); err != nil {
 		return fmt.Errorf("vmm: stage layer: %w", err)
 	}
 

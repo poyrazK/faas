@@ -97,10 +97,21 @@ const coldBootArgs = "console=off reboot=k panic=1 pci=off quiet " +
 
 // ColdBootSpec is everything needed to build a cold-boot VM config. RAM and vCPU
 // come from the app's plan (via pkg/api limits) — never inline them here.
+//
+// Issue #96 / ADR-025 axis 2 (PR #116): KernelKey / BaseKey / LayerKey are
+// the StorageBackend keys (e.g. "kernel/<fcVersion>",
+// "base/runtime-node22.ext4", "apps/<slug>/<depID>.ext4") that vmmd resolves
+// through Storage.Get before staging into the jail chroot. The local
+// backend's Get maps keys to /srv/fc/.../...ext4 the same way the legacy
+// *Path fields did, so single-box behaviour is preserved; the OCI backend
+// fetches over HTTP, which is what unblocks multi-node cold-boot (issue
+// #98). Field names changed from *Path → *Key to make the type-system
+// match the new semantics; the field type is still string so existing
+// call sites only need a name update.
 type ColdBootSpec struct {
-	KernelPath string // /srv/fc/base/vmlinux-6.1.x
-	BasePath   string // drive0 shared ro base rootfs
-	LayerPath  string // drive1 per-app app layer
+	KernelKey  string // StorageBackend key (e.g. "kernel/1.10.0")
+	BaseKey    string // StorageBackend key for drive0 shared ro base rootfs
+	LayerKey   string // StorageBackend key for drive1 per-app app layer
 	VcpuCount  int    // 2, or 4 for Scale
 	MemSizeMiB int    // plan RAM
 	Tap        string // netns-side tap device (always "tap0")
@@ -115,10 +126,10 @@ type ColdBootSpec struct {
 // is not yet known (test seams); production always passes the real slot.
 func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	return VMConfig{
-		BootSource: BootSource{KernelImagePath: s.KernelPath, BootArgs: coldBootArgs},
+		BootSource: BootSource{KernelImagePath: s.KernelKey, BootArgs: coldBootArgs},
 		Drives: []Drive{
-			{DriveID: DriveBase, PathOnHost: s.BasePath, IsRootDevice: true, IsReadOnly: true},
-			{DriveID: DriveLayer, PathOnHost: s.LayerPath, IsRootDevice: false, IsReadOnly: false},
+			{DriveID: DriveBase, PathOnHost: s.BaseKey, IsRootDevice: true, IsReadOnly: true},
+			{DriveID: DriveLayer, PathOnHost: s.LayerKey, IsRootDevice: false, IsReadOnly: false},
 		},
 		MachineConfig:     Machine{VcpuCount: s.VcpuCount, MemSizeMib: s.MemSizeMiB, Smt: false},
 		NetworkInterfaces: []NetIface{{IfaceID: "eth0", HostDevName: s.Tap}},
@@ -141,12 +152,12 @@ func NewVsockDevice(slot int) *VsockDevice {
 // Validate rejects a cold-boot spec that would produce a non-bootable VM.
 func (s ColdBootSpec) Validate() error {
 	switch {
-	case s.KernelPath == "":
-		return fmt.Errorf("fcvm: cold boot: empty kernel path")
-	case s.BasePath == "":
-		return fmt.Errorf("fcvm: cold boot: empty base rootfs path")
-	case s.LayerPath == "":
-		return fmt.Errorf("fcvm: cold boot: empty app-layer path")
+	case s.KernelKey == "":
+		return fmt.Errorf("fcvm: cold boot: empty kernel key")
+	case s.BaseKey == "":
+		return fmt.Errorf("fcvm: cold boot: empty base rootfs key")
+	case s.LayerKey == "":
+		return fmt.Errorf("fcvm: cold boot: empty app-layer key")
 	case s.VcpuCount < 1:
 		return fmt.Errorf("fcvm: cold boot: vcpu_count %d < 1", s.VcpuCount)
 	case s.MemSizeMiB < 1:
