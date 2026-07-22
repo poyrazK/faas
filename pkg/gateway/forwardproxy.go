@@ -27,7 +27,6 @@
 package gateway
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -358,7 +357,3 @@ func (l leaseCloser) Close() error {
 	// for the next caller as long as the row stays alive.
 	return nil
 }
-
-// _ keeps bytes imported in case future bridge shapes serialise
-// inline; the package currently uses proto types end-to-end.
-var _ = bytes.NewReader
