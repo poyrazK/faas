@@ -66,18 +66,34 @@ func TestRun_OpenDBFailurePropagates(t *testing.T) {
 	}
 }
 
-func TestRun_DialVMMFailurePropagates(t *testing.T) {
+// TestRun_PartialVMMDFailsAtBoot validates that a config with a partial
+// vmmd_tls_* cluster (only one of the three paths set) is rejected
+// during startup rather than surfacing the error on the first dial.
+// PR #113 made the dial lazy (router dials on first Wake), so the
+// eager-boot-time "dial failure" path this test used to exercise
+// no longer exists; the partial-TLS-cluster check is the equivalent
+// loud-at-boot guarantee under the lazy model.
+func TestRun_PartialVMMDFailsAtBoot(t *testing.T) {
 	pool := migratedPool(t)
-	wantErr := errors.New("vmmd unreachable")
+	dir := shortDir(t)
+	cfgPath := filepath.Join(dir, "schedd.toml")
+	// Exactly one of the three vmmd_tls_* keys is set — wire.LoadClientTLSConfigWithPrefix
+	// rejects this with an error naming the missing fields.
+	cfg := `socket_path = "` + filepath.Join(dir, "schedd.sock") + `"
+vmmd_tls_cert_path = "/some/cert"
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	deps := runDeps{
-		configPath: filepath.Join(t.TempDir(), "absent.toml"),
+		configPath: cfgPath,
 		openDB:     func(context.Context, string) (*pgxpool.Pool, error) { return pool, nil },
 		migrate:    func(context.Context, *pgxpool.Pool) error { return nil },
 		detectFC:   func(context.Context) (string, error) { return "1.10.0", nil },
-		dialVMM:    func(context.Context, string, *tls.Config) (sched.VMM, error) { return nil, wantErr },
+		dialVMM:    func(context.Context, string, *tls.Config) (sched.VMM, error) { return stubVMM{}, nil },
 	}
-	if err := runWithDeps(context.Background(), discardLog(), deps); !errors.Is(err, wantErr) {
-		t.Fatalf("err = %v, want wraps %v", err, wantErr)
+	if err := runWithDeps(context.Background(), discardLog(), deps); err == nil {
+		t.Fatal("expected partial vmmd_tls_* cluster to fail at boot")
 	}
 }
 
