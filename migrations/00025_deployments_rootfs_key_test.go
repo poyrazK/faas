@@ -182,7 +182,7 @@ func TestMigrations_00025_DeploymentsRootfsKey(t *testing.T) {
 		t.Fatalf("read off-root rootfs_key: %v", err)
 	}
 	if gotOffRootKey != "" {
-		t.Errorf("off-root backfill stamped rootfs_key = %q, want \"\" (the WHERE rootfs_path LIKE '/var/lib/faas/apps/%' must skip non-default apps roots)", gotOffRootKey)
+		t.Errorf("off-root backfill stamped rootfs_key = %q (want empty); the WHERE rootfs_path LIKE clause must skip non-default apps roots", gotOffRootKey)
 	}
 
 	// (5) Idempotent re-apply: the IF NOT EXISTS guard means a
