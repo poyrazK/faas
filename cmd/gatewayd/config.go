@@ -153,9 +153,12 @@ func (c *Config) resolveTLSConfig(allowlist gateway.OnDemandAllowlist) gateway.T
 // can map the error straight to a TOML key.
 //
 // Mirrors cmd/schedd/config.go LoadVMMTLS (issue #95). The helper
-// goes through pkg/wire so stdlib's default verifier handles chain
-// trust + SAN matching + EKU enforcement in one pass; CodeQL alert
-// #58's rejected chain-only-stub alternative does not reappear here.
+// goes through pkg/wire so stdlib's default verifier handles
+// chain trust + SAN matching + EKU enforcement in a single pass
+// — the same path cmd/schedd uses, so the [vmmd_tls] cluster has
+// identical semantics on both daemons. Any change to this
+// invariant must be reflected on both sides; partial TLS cluster
+// is start-up fatal rather than a runtime fault (spec §11).
 func (c *Config) LoadVMMDPingTLS() (*tls.Config, error) {
 	return wire.LoadClientTLSConfigWithPrefix("vmmd_", c.VMMDPingTLSCertPath, c.VMMDPingTLSKeyPath, c.VMMDPingTLSCAPath)
 }

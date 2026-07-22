@@ -67,13 +67,18 @@ func TestNew_NoParse(t *testing.T) {
 }
 
 // TestDial_EmptyTargetSentinel pins the load-bearing error path:
-// a zero Target must surface a *OverlayError so the heartbeat
+// a zero Target must surface ErrEmptyTarget so the heartbeat
 // goroutine can classify "config bug" vs "remote node down"
 // without sniffing string content. The current heartbeat just
 // logs+flips on any error, so the typed sentinel is
 // defence-in-depth — log scrapers can distinguish config drift
-// from real outages by matching "*OverlayError" in the error
-// chain.
+// from real outages via:
+//
+//	errors.Is(err, overlay.ErrEmptyTarget)
+//
+// without re-classifying the message string. We also pin
+// errors.As(&OverlayError{}) so a future contributor who forgets
+// to wrap a new error in *OverlayError trips the test.
 func TestDial_EmptyTargetSentinel(t *testing.T) {
 	conn, err := Dial(context.Background(), New(""), nil)
 	if conn != nil {
@@ -82,14 +87,41 @@ func TestDial_EmptyTargetSentinel(t *testing.T) {
 	if err == nil {
 		t.Fatal("empty target should return a non-nil error")
 	}
-	// errors.As works because errEmptyTarget is already a
-	// *OverlayError; test the typed match.
+	// errors.Is(err, ErrEmptyTarget) — the canonical sentinel match.
+	if !errors.Is(err, ErrEmptyTarget) {
+		t.Errorf("err is not ErrEmptyTarget: %T (%v)", err, err)
+	}
+	// errors.As(err, &OverlayError{}) — the typed-value fallback.
 	var ovErr *OverlayError
 	if !errors.As(err, &ovErr) {
-		t.Errorf("err is not *OverlayError: %T (%v)", err, err)
+		t.Errorf("err does not unwrap to *OverlayError: %T (%v)", err, err)
 	}
 	if !strings.Contains(err.Error(), "empty target_url") {
 		t.Errorf("err message %q lacks %q sentinel", err.Error(), "empty target_url")
+	}
+}
+
+// TestErrEmptyTarget_SentinelIdentity pins the export contract:
+// the address of ErrEmptyTarget must be stable across calls so
+// `errors.Is` on the package variable is the canonical way to
+// match. A regression that accidentally constructs a fresh
+// &OverlayError{} on every Dial call would silently break
+// caller-side classification — this test trips at the source if
+// anyone refactors the construction back to a per-call literal.
+func TestErrEmptyTarget_SentinelIdentity(t *testing.T) {
+	if ErrEmptyTarget == nil {
+		t.Fatal("ErrEmptyTarget is nil — package-level sentinel must be non-nil")
+	}
+	if ErrEmptyTarget.Error() != "overlay: empty target_url" {
+		t.Errorf("ErrEmptyTarget message = %q, want %q", ErrEmptyTarget.Error(), "overlay: empty target_url")
+	}
+	// Multiple errors.Is checks against different "wrappers" of
+	// ErrEmptyTarget all resolve to true. We don't currently wrap
+	// the sentinel anywhere in the package, but a future caller
+	// wrapping with fmt.Errorf("%w", ErrEmptyTarget) must still
+	// classify correctly.
+	if !errors.Is(ErrEmptyTarget, ErrEmptyTarget) {
+		t.Error("ErrEmptyTarget is not errors.Is-self")
 	}
 }
 

@@ -89,20 +89,28 @@ func (t Target) Raw() string { return t.raw }
 // "node is sick" and acts on it via state.SetComputeNodeActive.
 func Dial(ctx context.Context, t Target, tlsCfg *tls.Config) (*grpc.ClientConn, error) {
 	if t.raw == "" {
-		return nil, errEmptyTarget
+		return nil, ErrEmptyTarget
 	}
 	return wire.DialContext(ctx, t.raw, tlsCfg)
 }
 
-// errEmptyTarget is the sentinel for "Target{} constructed with no
-// raw string". Surfaced as a typed error so the heartbeat goroutine
-// can log it without re-classifying string content.
-var errEmptyTarget = &OverlayError{msg: "overlay: empty target_url"}
+// ErrEmptyTarget is the sentinel for "Target{} constructed with no
+// raw string". Exported so callers (e.g. schedd's heartbeat
+// goroutine) can `errors.Is(err, overlay.ErrEmptyTarget)` to
+// distinguish "config bug — the target URL was never set" from
+// "remote node down" without string-matching. The address is
+// stable for the lifetime of the process; package code MUST NOT
+// construct additional values of *OverlayError with the same
+// sentinel — guard at the call site, not via constructor identity.
+var ErrEmptyTarget = &OverlayError{msg: "overlay: empty target_url"}
 
-// OverlayError wraps an overlay-package-level error. Kept distinct
-// from grpc / wire errors so a `errors.Is(err, &OverlayError{})`
-// check is the heartbeat goroutine's way of distinguishing
-// "config bug" from "remote node down".
+// OverlayError wraps an overlay-package-level error. Distinct
+// from grpc / wire errors so a `errors.Is(err, overlay.ErrEmptyTarget)`
+// (or `errors.As(err, &OverlayError{})`) check is the heartbeat
+// goroutine's way of distinguishing "config bug" from "remote
+// node down". The package only ever returns one sentinel value
+// of this type (ErrEmptyTarget); future error kinds should grow
+// additional exported sentinels in this same shape.
 type OverlayError struct {
 	msg string
 }

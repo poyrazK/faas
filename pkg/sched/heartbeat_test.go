@@ -320,4 +320,81 @@ func TestHeartbeat_TableDriven(t *testing.T) {
 			t.Errorf("Dial calls = %d, want 0", got)
 		}
 	})
+	t.Run("dial-error flips inactive, others still pinged", func(t *testing.T) {
+		// Issue #120 review (PR #122): the heartbeat's dead-node
+		// test covers the Ping-error leg but not the Dial-error
+		// leg explicitly. A regression where Dial's error is
+		// silently swallowed (e.g. wrapped into a nil PingOutcome
+		// because the conn never came up) would let a node with a
+		// half-broken transport appear healthy. This subtest pins
+		// the contract: a node whose Dial returns an error is
+		// flipped inactive on the same tick, and the failure does
+		// NOT short-circuit the sweep — sibling nodes still get
+		// their dial + ping.
+		store := state.NewMemStore()
+		// Add a second node so we can verify "one dial error
+		// doesn't poison the rest". CreateComputeNode is the same
+		// surface apid's POST /v1/compute-nodes calls.
+		live, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+			Name:               "node-b",
+			TargetURL:          "tcp://10.0.0.2:50051",
+			VPCPUs:             8,
+			MemMB:              8192,
+			MaxConcurrency:     4,
+			AdmissionCeilingMB: 4096,
+			Active:             true,
+		})
+		if err != nil {
+			t.Fatalf("CreateComputeNode: %v", err)
+		}
+		dead, err := store.ComputeNodeByName(context.Background(), state.DefaultLocalNodeName)
+		if err != nil {
+			t.Fatalf("ComputeNodeByName default-local: %v", err)
+		}
+		dialer := &heartbeatFakeDialer{
+			// Dial fails for the dead node's target URL. The
+			// live node's Dial succeeds and Ping returns the
+			// happy-path PingOutcome.
+			dialErr: map[string]error{dead.TargetURL: errors.New("dial refused")},
+		}
+		h := NewHeartbeat(store, dialer, nil, nil)
+		if err := h.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		// Both nodes had Dial called. Dial on the dead one
+		// returned an error; Dial on the live one succeeded and
+		// Ping closed cleanly.
+		if got := len(dialer.dials); got != 2 {
+			t.Errorf("Dial calls = %d, want 2 (one per active node)", got)
+		}
+		// Dial-error path: the heartbeat never reached the Close
+		// call for the dead node (Dial returned before the VMM
+		// stub was constructed). So the closed count is 1, not 2.
+		// This is the load-bearing distinction vs TestHeartbeat_DeadNodeFlipsInactive:
+		// dial-error leaves one Close uncalled, ping-error calls
+		// Close on every successful dial. Pinning the count
+		// distinguishes the two paths.
+		if got := dialer.closed; got != 1 {
+			t.Errorf("Close calls = %d, want 1 (dial-error path skips Close on the dead node)", got)
+		}
+		// Dead node is now inactive (flipped because Dial errored).
+		deadAfter, err := store.ComputeNodeByID(context.Background(), dead.ID)
+		if err != nil {
+			t.Fatalf("ComputeNodeByID dead: %v", err)
+		}
+		if deadAfter.Active {
+			t.Error("dial-error node still active after Tick — MarkComputeNodeInactive didn't land")
+		}
+		// Live node is still active + heartbeat was stamped.
+		liveAfter, err := store.ComputeNodeByID(context.Background(), live.ID)
+		if err != nil {
+			t.Fatalf("ComputeNodeByID live: %v", err)
+		}
+		if !liveAfter.Active {
+			t.Error("live node flipped inactive — false positive on the healthy sibling")
+		}
+		if liveAfter.LastHeartbeatAt.IsZero() {
+			t.Error("live node's LastHeartbeatAt still zero — heartbeat stamp didn't land")
+		}
+	})
 }
