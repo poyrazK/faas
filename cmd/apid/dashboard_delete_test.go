@@ -133,10 +133,10 @@ func TestDashboardExport_IncludeSecretsFalse(t *testing.T) {
 // the full server — useful for the parse-error and empty-token branches.
 func TestConfirmTokenMatches_PureUnit(t *testing.T) {
 	cases := []struct {
-		name    string
-		body    string
-		action  string
-		want    bool
+		name   string
+		body   string
+		action string
+		want   bool
 	}{
 		{"happy", "confirm_token=delete%3Ayes", "delete", true},
 		{"empty token", "", "delete", false},
