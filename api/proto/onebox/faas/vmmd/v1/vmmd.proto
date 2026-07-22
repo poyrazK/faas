@@ -8,6 +8,7 @@ syntax = "proto3";
 package onebox.faas.vmmd.v1;
 
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
 
 option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1;vmmdpb";
@@ -37,6 +38,17 @@ service Vmmd {
   // admission ledger (M4) and by Prometheus for the `vmmd_ops_total` /
   // `vmmd_op_duration_seconds` dashboards (ADR-016).
   rpc Stats(StatsRequest) returns (StatsResponse);
+
+  // Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
+  // PR #114). Returns the vmmd process's Firecracker version + the
+  // server-side timestamp at the moment the handler ran; schedd's
+  // heartbeat loop calls this on every active compute_node every
+  // HeartbeatInterval (default 30s). A successful round-trip proves
+  // both that the gRPC socket is reachable and that vmmd's
+  // goroutine scheduler is responsive enough to schedule this
+  // handler — the two facts schedd needs to keep last_heartbeat_at
+  // fresh. Idempotent + side-effect free; no backing Manager call.
+  rpc Ping(PingRequest) returns (PingResponse);
 }
 
 // AppSpec flattens what the caller knows about an app. vmmd stores none of
@@ -196,4 +208,20 @@ message InstanceStats {
   int32  lease_uid = 2;
   string host_ip   = 3;
   google.protobuf.Int64Value resident_bytes = 4;
+}
+
+// PingRequest is intentionally empty. Ping is a liveness probe; the
+// request body carries nothing beyond what the gRPC method itself
+// implies. Reserved for future use (operator-supplied challenge
+// nonce, etc.) without bumping the wire version.
+message PingRequest {}
+
+// PingResponse carries the Firecracker version + server-side
+// timestamp. fc_version lets schedd's admin surface show "this node
+// runs FC 1.10.x" without a separate Stats call; server_time is
+// informational (the heartbeat loop stamps last_heartbeat_at
+// against its own clock, not this field).
+message PingResponse {
+  string fc_version = 1;
+  google.protobuf.Timestamp server_time = 2;
 }
