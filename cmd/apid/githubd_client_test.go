@@ -38,14 +38,17 @@ var _ = errors.Is
 // with Code == errGithubdNotReadyCode. Lets the per-method tests stay
 // table-readable: each row checks the error shape in one call instead of
 // the dance of "non-nil" + "non-empty" + "cast" + "compare Code".
+//
+// Uses errors.As (not a direct type assertion) so the helper stays correct
+// if a future refactor wraps the sentinel — errorlint enforces this.
 func assertGithubdNotReadyError(t *testing.T, method string, err error) {
 	t.Helper()
 	if err == nil {
 		t.Errorf("%s: err = nil, want not-ready problem", method)
 		return
 	}
-	prob, ok := err.(*api.Problem)
-	if !ok {
+	var prob *api.Problem
+	if !errors.As(err, &prob) {
 		t.Errorf("%s: err type = %T, want *api.Problem", method, err)
 		return
 	}
