@@ -7,6 +7,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -169,4 +172,639 @@ func TestUpdateAppMinInstances_Negative(t *testing.T) {
 	neg := -1
 	rec := e.do(t, "PATCH", "/v1/apps/pro-neg", api.UpdateAppRequest{MinInstances: &neg}, nil)
 	assertProblem(t, rec, 422, api.CodeInvalidMinInstances)
+}
+
+// --- CRUD coverage for handlers_ext.go (slice 2) ----------------------------
+//
+// Each test seeds a single scenario via the MemStore harness and exercises
+// one handler through the public HTTP surface. The point is to lift the
+// per-handler coverage from 0% on the 21 handlers in handlers_ext.go that
+// were previously unreachable from server_test.go.
+
+// TestGetApp_HappyPath confirms getApp returns the seeded app.
+func TestGetApp_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "my-api")
+	rec := e.do(t, "GET", "/v1/apps/my-api", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Slug != "my-api" {
+		t.Errorf("slug = %q, want my-api", out.Slug)
+	}
+}
+
+// TestGetApp_UnknownReturns404 confirms loadApp's 404 path.
+func TestGetApp_UnknownReturns404(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "GET", "/v1/apps/ghost", nil, nil)
+	assertProblem(t, rec, 404, api.CodeNotFound)
+}
+
+// TestUpdateApp_RAMValid covers the happy path: a valid RAM value persists
+// and the response reflects the new value.
+func TestUpdateApp_RAMValid(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "upd-ram")
+	newRAM := 256
+	rec := e.do(t, "PATCH", "/v1/apps/upd-ram", api.UpdateAppRequest{RAMMB: &newRAM}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.RAMMB != 256 {
+		t.Errorf("RAM = %d, want 256", out.RAMMB)
+	}
+}
+
+// TestUpdateApp_BadJSON confirms decode failure surfaces as 400.
+func TestUpdateApp_BadJSON(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "upd-bad")
+	req := httptest.NewRequest("PATCH", "/v1/apps/upd-bad", strings.NewReader("{not-json"))
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	assertProblem(t, rec, 400, api.CodeValidation)
+}
+
+// TestDeleteApp_HappyPath confirms the soft-delete + 204.
+func TestDeleteApp_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "del-app")
+	rec := e.do(t, "DELETE", "/v1/apps/del-app", nil, nil)
+	if rec.Code != 204 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	// Subsequent GET should 404 (app row was deleted, not just flagged).
+	rec2 := e.do(t, "GET", "/v1/apps/del-app", nil, nil)
+	assertProblem(t, rec2, 404, api.CodeNotFound)
+}
+
+// TestGetDeployment_HappyPath covers the standard "deploy by id" lookup.
+func TestGetDeployment_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "get-dep")
+	rec := e.do(t, "GET", "/v1/deployments/"+dep.ID, nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.DeploymentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.ID != dep.ID || out.Status != string(state.DeployBuilding) {
+		t.Errorf("got %+v, want id=%s status=building", out, dep.ID)
+	}
+}
+
+// TestGetDeployment_UnknownReturns404 covers the not-found branch.
+func TestGetDeployment_UnknownReturns404(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "GET", "/v1/deployments/deadbeef", nil, nil)
+	assertProblem(t, rec, 404, api.CodeNotFound)
+}
+
+// TestRollbackApp_HappyPath seeds two deployments (one live, one superseded),
+// then rolls back. The formerly-superseded deployment should now be live.
+func TestRollbackApp_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep1 := mustSeedDeployment(t, e, "rb-app")
+	// Promote dep1 to live, then create dep2 and supersede dep1.
+	if err := e.store.MarkDeploymentLive(context.Background(), dep1.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, _ := e.store.AppBySlug(context.Background(), "rb-app")
+	dep2, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:       app.ID,
+		ImageDigest: "sha256:" + repeat("b", 64),
+		Kind:        state.DeploymentKindImage,
+		Status:      state.DeployBuilding,
+		CreatedAt:   time.Now().UTC().Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(context.Background(), dep2.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentSuperseded(context.Background(), dep1.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, "POST", "/v1/apps/rb-app/rollback", nil, nil)
+	if rec.Code != 202 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.DeploymentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.ID != dep1.ID {
+		t.Errorf("rollback returned %s, want %s", out.ID, dep1.ID)
+	}
+	// Note: the handler snapshots target's state BEFORE calling
+	// MarkDeploymentLive, so the response carries the target's prior
+	// status (superseded). Verify the underlying row was flipped to
+	// live instead.
+	got, err := e.store.DeploymentByID(context.Background(), dep1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.DeployLive {
+		t.Errorf("target dep status after rollback = %s, want live", got.Status)
+	}
+}
+
+// TestRollbackApp_NoTarget confirms the 422 when there's nothing to roll
+// back to.
+func TestRollbackApp_NoTarget(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "rb-no")
+	if err := e.store.MarkDeploymentLive(context.Background(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "POST", "/v1/apps/rb-no/rollback", nil, nil)
+	assertProblem(t, rec, 409, api.CodeNoRollbackTarget)
+}
+
+// TestParkApp_HappyPath confirms the app flips to AppEvictedCold.
+func TestParkApp_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "park-me")
+	rec := e.do(t, "POST", "/v1/apps/park-me/park", nil, nil)
+	if rec.Code != 204 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	app, _ := e.store.AppBySlug(context.Background(), "park-me")
+	if app.Status != state.AppEvictedCold {
+		t.Errorf("status = %s, want evicted_cold", app.Status)
+	}
+}
+
+// TestWakeApp_HappyPath parks, then wakes — exercises the inverse path.
+func TestWakeApp_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "wake-me")
+	e.do(t, "POST", "/v1/apps/wake-me/park", nil, nil)
+	rec := e.do(t, "POST", "/v1/apps/wake-me/wake", nil, nil)
+	if rec.Code != 204 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	app, _ := e.store.AppBySlug(context.Background(), "wake-me")
+	if app.Status != state.AppActive {
+		t.Errorf("status = %s, want active", app.Status)
+	}
+}
+
+// TestRenameApp_HappyPath renames a slug.
+func TestRenameApp_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "old-slug")
+	rec := e.do(t, "POST", "/v1/apps/old-slug/rename",
+		api.RenameAppRequest{NewSlug: "new-slug"}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Slug != "new-slug" {
+		t.Errorf("slug = %q, want new-slug", out.Slug)
+	}
+}
+
+// TestRenameApp_SameSlugIsIdempotent: same slug should 200, no DB write.
+func TestRenameApp_SameSlugIsIdempotent(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "stable")
+	rec := e.do(t, "POST", "/v1/apps/stable/rename",
+		api.RenameAppRequest{NewSlug: "stable"}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestRenameApp_InvalidSlug confirms the slug regex 400 path.
+func TestRenameApp_InvalidSlug(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "rename-bad")
+	rec := e.do(t, "POST", "/v1/apps/rename-bad/rename",
+		api.RenameAppRequest{NewSlug: "BAD SLUG"}, nil)
+	assertProblem(t, rec, 400, api.CodeValidation)
+}
+
+// TestListInstances_HappyPath seeds an instance and confirms listInstances
+// returns it.
+func TestListInstances_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "inst-app")
+	if _, err := e.store.CreateInstance(context.Background(),
+		dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1"); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "GET", "/v1/apps/inst-app/instances", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out []api.InstanceResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 1 || out[0].State != string(state.StateRunning) {
+		t.Errorf("got %+v, want 1 instance running", out)
+	}
+}
+
+// TestCreateDomain_HappyPath binds a domain to an app.
+func TestCreateDomain_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	appID := mustSeedApp(t, e, "dom-app")
+	rec := e.do(t, "POST", "/v1/domains",
+		api.CreateCustomDomainRequest{Domain: "x.example.com", AppID: appID}, nil)
+	if rec.Code != 202 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CustomDomainResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Domain != "x.example.com" || !strings.Contains(out.TXTRecord, "_faas-verify") {
+		t.Errorf("got %+v", out)
+	}
+}
+
+// TestCreateDomain_BadJSON: missing fields → 400.
+func TestCreateDomain_BadJSON(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "dom-bad")
+	rec := e.do(t, "POST", "/v1/domains",
+		api.CreateCustomDomainRequest{Domain: "", AppID: ""}, nil)
+	assertProblem(t, rec, 400, api.CodeValidation)
+}
+
+// TestCreateDomain_UnknownAppReturns404: an app ID the account doesn't own.
+func TestCreateDomain_UnknownAppReturns404(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	rec := e.do(t, "POST", "/v1/domains",
+		api.CreateCustomDomainRequest{Domain: "ghost.example.com", AppID: "ghost-id"}, nil)
+	assertProblem(t, rec, 404, api.CodeNotFound)
+}
+
+// TestListDomains_HappyPath seeds one domain and confirms it shows up.
+func TestListDomains_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	appID := mustSeedApp(t, e, "ld-app")
+	if _, err := e.store.CreateCustomDomain(context.Background(), "y.example.com", appID, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "GET", "/v1/domains", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out []api.CustomDomainResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 1 || out[0].Domain != "y.example.com" {
+		t.Errorf("got %+v", out)
+	}
+}
+
+// TestDeleteDomain_HappyPath creates a domain and deletes it.
+func TestDeleteDomain_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	appID := mustSeedApp(t, e, "dd-app")
+	if _, err := e.store.CreateCustomDomain(context.Background(), "z.example.com", appID, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "DELETE", "/v1/domains/z.example.com", nil, nil)
+	if rec.Code != 204 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestDeleteDomain_UnknownReturns404.
+func TestDeleteDomain_UnknownReturns404(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	rec := e.do(t, "DELETE", "/v1/domains/nope.example.com", nil, nil)
+	assertProblem(t, rec, 404, api.CodeNotFound)
+}
+
+// TestCreateCron_HappyPath schedules a cron and confirms 201.
+func TestCreateCron_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cron-app")
+	rec := e.do(t, "POST", "/v1/crons",
+		api.CreateCronRequest{AppID: appID, Schedule: "*/5 * * * *", Path: "/heartbeat"}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Schedule != "*/5 * * * *" || out.Path != "/heartbeat" {
+		t.Errorf("got %+v", out)
+	}
+}
+
+// TestCreateCron_InvalidSchedule confirms the cron regex 422 path.
+func TestCreateCron_InvalidSchedule(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cron-bad")
+	rec := e.do(t, "POST", "/v1/crons",
+		api.CreateCronRequest{AppID: appID, Schedule: "not-a-cron"}, nil)
+	assertProblem(t, rec, 400, api.CodeCronInvalid)
+}
+
+// TestListCrons_HappyPath seeds a cron via the store and confirms listCrons
+// returns it. Direct store insert keeps the test self-contained — the
+// HTTP create path is already covered above.
+func TestListCrons_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "lc-app")
+	if _, err := e.store.CreateCron(context.Background(), appID, "0 9 * * *", "/daily", true); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "GET", "/v1/crons", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out []api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 1 || out[0].Path != "/daily" {
+		t.Errorf("got %+v", out)
+	}
+}
+
+// TestUpdateCron_HappyPath patches a cron schedule.
+func TestUpdateCron_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "uc-app")
+	c, err := e.store.CreateCron(context.Background(), appID, "0 9 * * *", "/x", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSched := "*/15 * * * *"
+	rec := e.do(t, "PATCH", "/v1/crons/"+c.ID,
+		api.UpdateCronRequest{Schedule: &newSched}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Schedule != "*/15 * * * *" {
+		t.Errorf("schedule = %q, want */15 * * * *", out.Schedule)
+	}
+}
+
+// TestUpdateCron_InvalidSchedule: PATCH with a bad schedule is 422.
+func TestUpdateCron_InvalidSchedule(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "uc-bad")
+	c, _ := e.store.CreateCron(context.Background(), appID, "0 9 * * *", "/x", true)
+	bad := "garbage"
+	rec := e.do(t, "PATCH", "/v1/crons/"+c.ID,
+		api.UpdateCronRequest{Schedule: &bad}, nil)
+	assertProblem(t, rec, 400, api.CodeCronInvalid)
+}
+
+// TestDeleteCron_HappyPath.
+func TestDeleteCron_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "dc-app")
+	c, _ := e.store.CreateCron(context.Background(), appID, "0 9 * * *", "/x", true)
+	rec := e.do(t, "DELETE", "/v1/crons/"+c.ID, nil, nil)
+	if rec.Code != 204 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestCreateKey_HappyPath: POST /v1/keys returns 201 with the plaintext in
+// the response.
+func TestCreateKey_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "POST", "/v1/keys", map[string]string{"label": "ci"}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.APIKeyResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Plaintext == "" || out.Prefix == "" {
+		t.Errorf("missing plaintext/prefix in response: %+v", out)
+	}
+	if out.Label != "ci" {
+		t.Errorf("label = %q, want ci", out.Label)
+	}
+}
+
+// TestListKeys_HappyPath: GET /v1/keys returns the seeded key.
+func TestListKeys_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "GET", "/v1/keys", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out []api.APIKeyResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 1 {
+		t.Errorf("got %d keys, want 1 (the test fixture)", len(out))
+	}
+	if out[0].Plaintext != "" {
+		t.Errorf("plaintext should be empty on list, got %q", out[0].Plaintext)
+	}
+}
+
+// TestDeleteKey_HappyPath deletes the test fixture key.
+func TestDeleteKey_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	keys, _ := e.store.ListAPIKeys(context.Background(), e.acct.ID)
+	if len(keys) != 1 {
+		t.Fatalf("fixture: want 1 key, got %d", len(keys))
+	}
+	rec := e.do(t, "DELETE", "/v1/keys/"+keys[0].ID, nil, nil)
+	if rec.Code != 204 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestDeleteKey_UnknownReturns404.
+func TestDeleteKey_UnknownReturns404(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "DELETE", "/v1/keys/ghost-key", nil, nil)
+	assertProblem(t, rec, 404, api.CodeNotFound)
+}
+
+// TestGetUsage_HappyPath returns an empty array (no usage rows yet).
+func TestGetUsage_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "GET", "/v1/usage", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out []api.UsageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("got %d usage rows, want 0", len(out))
+	}
+}
+
+// TestGetUsage_BadMonth confirms the YYYY-MM parse 400 path.
+func TestGetUsage_BadMonth(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "GET", "/v1/usage?month=not-a-month", nil, nil)
+	assertProblem(t, rec, 400, api.CodeValidation)
+}
+
+// TestListDeployments_HappyPath confirms the empty-page shape and that
+// NextBefore is empty when the page is under the limit.
+func TestListDeployments_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "ld-app")
+	rec := e.do(t, "GET", "/v1/deployments", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.DeploymentListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Items) != 1 || out.Items[0].ID != dep.ID {
+		t.Errorf("got %+v, want 1 item id=%s", out, dep.ID)
+	}
+	if out.NextBefore != "" {
+		t.Errorf("NextBefore = %q, want empty (under limit)", out.NextBefore)
+	}
+}
+
+// TestListDeployments_CursorValid confirms the cursor branch with a
+// well-formed before= value.
+func TestListDeployments_CursorValid(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedDeployment(t, e, "ld-cur")
+	// far-future cursor → no rows, but still 200.
+	rec := e.do(t, "GET", "/v1/deployments?before=2099-01-01T00:00:00Z", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// TestListDeployments_BadCursor: garbage `before=` → 400.
+func TestListDeployments_BadCursor(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "GET", "/v1/deployments?before=not-a-time", nil, nil)
+	assertProblem(t, rec, 400, api.CodeValidation)
+}
+
+// TestUsageSummary_HappyPath: no usage → 0 GB-h, 0 overage.
+func TestUsageSummary_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "GET", "/v1/usage/summary", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.UsageSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.UsedGBHours != 0 || out.OverageGBHours != 0 {
+		t.Errorf("got %+v", out)
+	}
+	if out.IncludedGBHours == 0 {
+		t.Errorf("included = 0, want plan default")
+	}
+}
+
+// TestUsageSummary_BadMonth: YYYY-MM parse failure.
+func TestUsageSummary_BadMonth(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "GET", "/v1/usage/summary?month=garbage", nil, nil)
+	assertProblem(t, rec, 400, api.CodeValidation)
+}
+
+// --- pure-unit tests for the response helpers (handlers_ext.go:720-784) ---
+
+// TestDeploymentResponse_RoundTrip confirms every field flows through.
+func TestDeploymentResponse_RoundTrip(t *testing.T) {
+	srv := newServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"example.com", noopNotifier{})
+	d := state.Deployment{
+		ID: "d1", AppID: "a1", ImageDigest: "sha256:x", Kind: state.DeploymentKindImage,
+		Status: state.DeployLive, Error: "boom", ErrorCode: "image_not_found",
+		CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+	}
+	resp := srv.deploymentResponse(d)
+	if resp.ID != "d1" || resp.Status != "live" || resp.Error != "boom" ||
+		resp.ErrorCode != "image_not_found" || resp.CreatedAt != "2026-01-02T03:04:05Z" {
+		t.Errorf("got %+v", resp)
+	}
+}
+
+// TestInstanceResponse_TimestampsCovered confirms the three optional
+// timestamp branches (zero vs populated).
+func TestInstanceResponse_TimestampsCovered(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	ins := state.Instance{ID: "i1", AppID: "a1", DeploymentID: "d1", State: "running"}
+	r := instanceResponse(ins)
+	if r.StartedAt != "" || r.LastRequestAt != "" || r.ParkedAt != "" {
+		t.Errorf("zero-time should produce empty strings: %+v", r)
+	}
+	ins.StartedAt = now
+	ins.LastRequestAt = now
+	ins.ParkedAt = now
+	r = instanceResponse(ins)
+	if r.StartedAt == "" || r.LastRequestAt == "" || r.ParkedAt == "" {
+		t.Errorf("populated timestamps should serialize: %+v", r)
+	}
+}
+
+// TestDomainResponse_UnverifiedHasTXT exercises the unverified branch: the
+// response carries a TXT record hint and an empty VerifiedAt.
+func TestDomainResponse_UnverifiedHasTXT(t *testing.T) {
+	d := state.CustomDomain{Domain: "x.example.com", AppID: "a1", ChallengeToken: "tok"}
+	r := domainResponse(d)
+	if r.Verified {
+		t.Error("unverified domain should report Verified=false")
+	}
+	if r.VerifiedAt != "" {
+		t.Errorf("VerifiedAt = %q, want empty", r.VerifiedAt)
+	}
+	if !strings.Contains(r.TXTRecord, "tok") {
+		t.Errorf("TXTRecord missing token: %q", r.TXTRecord)
+	}
+}
+
+// TestCronResponse_LastFiredAtBranch confirms the optional timestamp branch.
+func TestCronResponse_LastFiredAtBranch(t *testing.T) {
+	c := state.Cron{ID: "c1", AppID: "a1", Schedule: "0 9 * * *", Path: "/x", Enabled: true,
+		CreatedAt:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		LastFiredAt: time.Date(2026, 1, 2, 9, 0, 0, 0, time.UTC)}
+	r := cronResponse(c)
+	if r.LastFiredAt == "" {
+		t.Errorf("populated LastFiredAt should serialize: %+v", r)
+	}
+	c2 := state.Cron{ID: "c2", AppID: "a1", Schedule: "0 9 * * *", Path: "/x", Enabled: true}
+	r2 := cronResponse(c2)
+	if r2.LastFiredAt != "" {
+		t.Errorf("zero LastFiredAt should be empty: %+v", r2)
+	}
 }

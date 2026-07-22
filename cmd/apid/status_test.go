@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -99,5 +100,50 @@ func TestStatusCacheStaleOnError(t *testing.T) {
 	}
 	if !strings.HasPrefix(snap.Source, "degraded:") {
 		t.Errorf("source = %q, want degraded prefix", snap.Source)
+	}
+}
+
+// TestStatusHandler_ServesHTMLFile writes a fake status page to a
+// temp file, points s.statusPagePath at it, and asserts the handler
+// streams the file body with the right Content-Type.
+func TestStatusHandler_ServesHTMLFile(t *testing.T) {
+	tmp := t.TempDir()
+	page := tmp + "/index.html"
+	if err := os.WriteFile(page, []byte("<!doctype html><h1>status ok</h1>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := newServer(nil, slog.Default(), "DOMAIN", nil)
+	s.WithStatusCache("", page)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/status", nil)
+	s.statusHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("content-type = %q, want text/html", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "status ok") {
+		t.Errorf("body = %q, missing rendered content", rec.Body.String())
+	}
+}
+
+// TestStatusHandler_MissingFileFallback: with no statusPagePath set
+// AND the production default /etc/faas/statuspage/index.html missing,
+// the handler must fall back to the embedded "source unavailable"
+// page (spec §12: never 5xx just because the file is missing).
+func TestStatusHandler_MissingFileFallback(t *testing.T) {
+	s := newServer(nil, slog.Default(), "DOMAIN", nil)
+	s.WithStatusCache("", "/nonexistent/path/index.html")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/status", nil)
+	s.statusHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (fallback page)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Status source unavailable") {
+		t.Errorf("body = %q, missing fallback banner", rec.Body.String())
 	}
 }

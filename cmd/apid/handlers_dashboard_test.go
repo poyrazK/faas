@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -243,5 +245,97 @@ func TestDashboardHandler_RecoversFromPanic(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"status":500`) {
 		t.Errorf("body = %q, want 500 in RFC 7807", rec.Body.String())
+	}
+}
+
+// --- pure-unit tests for the dashboard helpers -----------------------
+
+// TestAppListItem_WithLatestInstance covers the live-instance badge path:
+// the helper should consult the latest map and render the matching
+// state badge. Without the map entry the default badge is used.
+func TestAppListItem_WithLatestInstance(t *testing.T) {
+	srv := newServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"example.com", noopNotifier{})
+	app := state.App{ID: "a1", Slug: "my-api", Status: state.AppActive}
+	latest := map[string]state.Instance{
+		"a1": {ID: "i1", AppID: "a1", State: string(state.StateRunning)},
+	}
+	item := srv.appListItem(t.Context(), app, latest, time.Now())
+	if item.StateBadgeLabel == "" {
+		t.Errorf("StateBadgeLabel empty, want a label for state=running")
+	}
+	if item.URL != "https://my-api.apps.example.com" {
+		t.Errorf("URL = %q, want apps.example.com hostname", item.URL)
+	}
+}
+
+// TestAppListItem_DefaultBadge: no latest instance → default badge.
+func TestAppListItem_DefaultBadge(t *testing.T) {
+	srv := newServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"example.com", noopNotifier{})
+	app := state.App{ID: "a1", Slug: "ghost", Status: state.AppActive}
+	item := srv.appListItem(t.Context(), app, map[string]state.Instance{}, time.Time{})
+	if item.StateBadgeLabel == "" {
+		t.Error("default badge label should not be empty")
+	}
+	if item.LastDeployed != "" {
+		t.Errorf("LastDeployed = %q, want empty for zero time", item.LastDeployed)
+	}
+}
+
+// TestRenderProblem_PureUnit exercises the standalone helper. Already
+// covered by the dashboard route tests above, but pinning the wire
+// shape here keeps it stable when the route wiring changes.
+func TestRenderProblem_PureUnit(t *testing.T) {
+	rec := httptest.NewRecorder()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	renderProblem(rec, log, errors.New("boom"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("code = %d, want 500", rec.Code)
+	}
+}
+
+// TestDashboardManifestView confirms the state→dashboard adapter.
+func TestDashboardManifestView(t *testing.T) {
+	app := state.App{
+		Manifest: state.AppManifest{
+			Entrypoint: []string{"node", "server.js"},
+			Env:        map[string]string{"FOO": "bar"},
+			WorkingDir: "/app",
+			Port:       8080,
+			Healthz:    "/healthz",
+			User:       "node",
+		},
+	}
+	v := dashboardManifestView(app)
+	if len(v.Entrypoint) != 2 || v.Entrypoint[0] != "node" || v.Port != 8080 || v.Healthz != "/healthz" {
+		t.Errorf("got %+v", v)
+	}
+	if v.Env["FOO"] != "bar" {
+		t.Errorf("env not propagated: %+v", v.Env)
+	}
+}
+
+// TestHexPrefix covers both branches: short hash returns the zero
+// sentinel; long hash renders the first 6 bytes as 12 hex chars.
+func TestHexPrefix(t *testing.T) {
+	// short hash
+	if got := hexPrefix([]byte{1, 2, 3}); got != "000000000000" {
+		t.Errorf("short hash = %q, want 000000000000", got)
+	}
+	// exactly 6 bytes
+	got := hexPrefix([]byte{0xab, 0xcd, 0xef, 0x01, 0x23, 0x45})
+	if got != "abcdef012345" {
+		t.Errorf("6-byte hash = %q, want abcdef012345", got)
+	}
+}
+
+// TestDashboardAccountView_NegativeCountClampedToZero: review finding #5
+// path — a missing count (caller passes -1) must render as 0, never
+// leak the sentinel.
+func TestDashboardAccountView_NegativeCountClampedToZero(t *testing.T) {
+	v := dashboardAccountView(state.Account{ID: "a1", Email: "x@example.com", Plan: "pro"}, -5)
+	if v.AppCount != 0 {
+		t.Errorf("AppCount = %d, want 0 (negative clamped)", v.AppCount)
 	}
 }
