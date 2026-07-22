@@ -129,8 +129,8 @@ func TestMigrations_00024_ComputeNodes(t *testing.T) {
 	}
 	var instanceID string
 	if err := pool.QueryRow(ctx, `
-		insert into instances (app_id, deployment_id, state, ram_mb, node_id, created_at)
-		values ($1, $2, 'waking', 256, $3, now())
+		insert into instances (app_id, deployment_id, state, ram_mb, node_id)
+		values ($1, $2, 'waking', 256, $3)
 		returning id
 	`, appID, deploymentID, defaultLocalID).Scan(&instanceID); err != nil {
 		t.Fatalf("seed instance: %v", err)
