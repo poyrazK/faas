@@ -328,10 +328,29 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		// fallback vmmdgrpc would apply on the wire. Keeping the
 		// branch here means the engine never asks vmmd to restore
 		// from an unkeyed snap row.
+		//
+		// #121 / ADR-025 axis 2 slice 4: populate both vmstate
+		// locators. VMStatePath is reconstructed from the
+		// deployment ID + SnapDir() so fcvm.Snapshot.Usable()
+		// continues to succeed for default-local single-box (the
+		// canonical host-path branch the engine relied on
+		// pre-#121). VMStateStorageKey is the canonical
+		// StorageBackend key — empty for default-local (the
+		// helper returns "" so vmmd's host-path branch is taken
+		// bit-for-bit), populated for remote nodes so vmmd's
+		// storage path is taken. Closing the VMStatePath
+		// reconstruction here also fixes the latent
+		// cold-boot-regression surfaced during the #121
+		// exploration (wake had been sending an empty
+		// VMStatePath since migration 23 dropped snapshots.path).
+		vmstatePath := e.vmstateHostPathFor(bootInput.depID)
+		vmstateStorageKey := e.vmstateStorageKeyFor(bootInput.nodeID, bootInput.depID)
 		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec, SnapshotRef{
-			DeploymentID: bootInput.depID,
-			FCVersion:    bootInput.snapVer,
-			StorageKey:   bootInput.snapKey,
+			DeploymentID:       bootInput.depID,
+			FCVersion:          bootInput.snapVer,
+			StorageKey:         bootInput.snapKey,
+			VMStatePath:        vmstatePath,
+			VMStateStorageKey:  vmstateStorageKey,
 		})
 	} else {
 		// Either no snap row at all (cold path), or a snap row with
@@ -732,6 +751,45 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 	return nil
 }
 
+// vmstateHostPathFor returns the deterministic host path the single-box
+// vmstate file lives at — the same value the legacy `caller-supplied
+// VMStatePath` used to be. We reconstruct it on every wake (not just
+// on park) so fcvm.Snapshot.Usable() continues to hold when vmmd's
+// VMStateStorageKey is empty (default-local branch). #121 / ADR-025
+// axis 2 slice 4; closes the cold-boot-regression that surfaced
+// during the #121 exploration (wake had been sending empty
+// VMStatePath since migration 23 dropped snapshots.path).
+func (e *Engine) vmstateHostPathFor(depID string) string {
+	return SnapDir() + "/" + depID + "/vmstate"
+}
+
+// vmstateStorageKeyFor returns the canonical StorageBackend key the
+// vmstate blob is published under, or "" when this node should
+// continue using the host-path legacy layout (default-local).
+//
+// The branch discriminator is the node identity, NOT the
+// StorageBackend's nilness: production cmd/vmmd always wires a
+// non-nil StorageBackend (cmd/vmmd/main.go:126-148), so a
+// `v.storage != nil` style guard would falsely route default-local
+// through the local backend and break the host-path behaviour the
+// engine relies on. #121 / ADR-025 axis 2 slice 4.
+//
+// Empty result for default-local means vmmd's
+// `spec.VMStateStorageKey == ""` branch lands on the legacy
+// `moveOut(spec.VMStatePath)` path. Populated result for remote
+// nodes means vmmd publishes via `storage.Put` at the canonical
+// snap/<dep>/vmstate key the OCI driver already understands
+// (pkg/storage/oci.go:272-280). defaultLocalNodeID is resolved at
+// engine construction (see NewEngine + defaultLocalNodeID lookup)
+// so the identity check here is a stable UUID compare rather than
+// a string match against the synthetic row's name.
+func (e *Engine) vmstateStorageKeyFor(nodeID, depID string) string {
+	if nodeID == e.defaultLocalNodeID || nodeID == "" {
+		return ""
+	}
+	return state.SnapVMStateKey(depID)
+}
+
 // snapshotAndPark is the unlocked park core (caller holds the app lock). It
 // walks RUNNING → SNAPSHOTTING → PARKED, writing the snapshot blob via vmmd and
 // emitting snapshot_written for imaged to record the row.
@@ -739,14 +797,24 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	// vmstate is a small JSON the FC socket writes to during pause; we
 	// give it a host path under the snap dir (the local driver maps the
 	// storage_key back to this exact location on the next restore, so
-	// the two paths must agree). F-5 of slice 3 considers moving
-	// vmstate into the StorageBackend too — out of scope for this PR.
+	// the two paths must agree).
+	//
+	// #121 / ADR-025 axis 2 slice 4 — remote nodes no longer need a
+	// host path: the engine also computes vmstateStorageKey below and
+	// threads it; vmmd chooses which carrier to use based on the
+	// field's empty/non-empty value. Default-local always sends empty
+	// vmstateStorageKey and the legacy host-path branch is taken
+	// bit-for-bit.
 	vmstate := SnapDir() + "/" + ins.DeploymentID + "/vmstate"
 	// #96 / ADR-025 axis 2: the canonical storage key under which vmmd
 	// publishes the mem blob via the StorageBackend. The local driver
 	// maps "snap/<dep>/mem" to /srv/fc/snap/<dep>/mem; the OCI driver
 	// streams the bytes over HTTP.
 	storageKey := state.SnapMemKey(ins.DeploymentID)
+	// #121 / ADR-025 axis 2 slice 4: canonical StorageBackend key for
+	// the vmstate blob when the new carrier is in scope. Empty for
+	// default-local; populated for remote nodes.
+	vmstateStorageKey := e.vmstateStorageKeyFor(ins.NodeID, ins.DeploymentID)
 	e.ledger.BeginSnapshot(ins.ID) // drops concurrency, keeps RAM (§6.2-1 excludes snapshotting)
 	// Stamp parked_at on entry into SNAPSHOTTING so the §6.1 watchdog
 	// (commit 3) has an "age of state" anchor for the row.
@@ -759,7 +827,7 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	}
 	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting)
 
-	b, err := e.vmm.PauseAndSnapshot(ctx, ins.NodeID, ins.ID, vmstate, storageKey)
+	b, err := e.vmm.PauseAndSnapshot(ctx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey)
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake
 		// cold-boots (ADR-005). The app still has a cold-bootable rootfs (§6.2-3).

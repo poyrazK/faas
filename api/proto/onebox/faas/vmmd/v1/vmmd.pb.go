@@ -254,9 +254,19 @@ type SnapshotRef struct {
 	// blob lives. The daemon resolves the bytes through the configured
 	// StorageBackend and stages them into an os.TempDir() location for
 	// the FC restore source.
-	StorageKey    string `protobuf:"bytes,5,opt,name=storage_key,json=storageKey,proto3" json:"storage_key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	StorageKey string `protobuf:"bytes,5,opt,name=storage_key,json=storageKey,proto3" json:"storage_key,omitempty"`
+	// vmstate_storage_key (issue #121, ADR-025 axis 2 slice 4) is the
+	// canonical StorageBackend key under which the vmstate blob lives.
+	// Semantically optional: empty ⇒ the daemon uses the legacy host
+	// vmstate_path; non-empty ⇒ StorageBackend is authoritative and
+	// vmstate_path is logged-only metadata. Default-local single-box
+	// always sends the empty value so the host-path behaviour is
+	// preserved bit-for-bit. Resolution mirrors storage_key via the
+	// configured backend (local at FAAS_STORAGE_ROOT/snap/<dep>/vmstate,
+	// OCI at repo snap-<dep>, tag vmstate).
+	VmstateStorageKey string `protobuf:"bytes,6,opt,name=vmstate_storage_key,json=vmstateStorageKey,proto3" json:"vmstate_storage_key,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SnapshotRef) Reset() {
@@ -313,6 +323,13 @@ func (x *SnapshotRef) GetFcVersion() string {
 func (x *SnapshotRef) GetStorageKey() string {
 	if x != nil {
 		return x.StorageKey
+	}
+	return ""
+}
+
+func (x *SnapshotRef) GetVmstateStorageKey() string {
+	if x != nil {
+		return x.VmstateStorageKey
 	}
 	return ""
 }
@@ -624,9 +641,19 @@ type PauseAndSnapshotRequest struct {
 	// stores via the configured StorageBackend; vmmstate_path is the
 	// resolved-on-host location vmmd hands the firecracker socket to
 	// while pausing, then publishes under its own StorageBackend key.
-	StorageKey    string `protobuf:"bytes,4,opt,name=storage_key,json=storageKey,proto3" json:"storage_key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	StorageKey string `protobuf:"bytes,4,opt,name=storage_key,json=storageKey,proto3" json:"storage_key,omitempty"`
+	// vmstate_storage_key (issue #121, ADR-025 axis 2 slice 4) is the
+	// canonical StorageBackend key the vmstate blob is published under
+	// after the snapshot. Semantically optional: empty ⇒ the daemon
+	// writes the snapshot to the legacy host vmstate_path (single-box
+	// / default-local behaviour, unchanged); non-empty ⇒ the daemon
+	// streams the vmstate bytes through the configured StorageBackend
+	// and vmstate_path is logged-only metadata. Resolution mirrors
+	// storage_key (local at FAAS_STORAGE_ROOT/snap/<dep>/vmstate, OCI
+	// at repo snap-<dep>, tag vmstate).
+	VmstateStorageKey string `protobuf:"bytes,5,opt,name=vmstate_storage_key,json=vmstateStorageKey,proto3" json:"vmstate_storage_key,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *PauseAndSnapshotRequest) Reset() {
@@ -676,6 +703,13 @@ func (x *PauseAndSnapshotRequest) GetVmstatePath() string {
 func (x *PauseAndSnapshotRequest) GetStorageKey() string {
 	if x != nil {
 		return x.StorageKey
+	}
+	return ""
+}
+
+func (x *PauseAndSnapshotRequest) GetVmstateStorageKey() string {
+	if x != nil {
+		return x.VmstateStorageKey
 	}
 	return ""
 }
@@ -1413,14 +1447,15 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1e\n" +
 	"\n" +
 	"ciphertext\x18\x02 \x01(\fR\n" +
-	"ciphertext\"\x9b\x01\n" +
+	"ciphertext\"\xcb\x01\n" +
 	"\vSnapshotRef\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12!\n" +
 	"\fvmstate_path\x18\x03 \x01(\tR\vvmstatePath\x12\x1d\n" +
 	"\n" +
 	"fc_version\x18\x04 \x01(\tR\tfcVersion\x12\x1f\n" +
 	"\vstorage_key\x18\x05 \x01(\tR\n" +
-	"storageKeyJ\x04\b\x02\x10\x03\"\xe8\x02\n" +
+	"storageKey\x12.\n" +
+	"\x13vmstate_storage_key\x18\x06 \x01(\tR\x11vmstateStorageKeyJ\x04\b\x02\x10\x03\"\xe8\x02\n" +
 	"\fWakeResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x12\x17\n" +
@@ -1441,12 +1476,13 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05build\x18\x03 \x01(\v2\x1e.onebox.faas.vmmd.v1.BuildSpecR\x05build\"*\n" +
 	"\tBuildSpec\x12\x1d\n" +
 	"\n" +
-	"export_dir\x18\x01 \x01(\tR\texportDir\"\x7f\n" +
+	"export_dir\x18\x01 \x01(\tR\texportDir\"\xaf\x01\n" +
 	"\x17PauseAndSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12!\n" +
 	"\fvmstate_path\x18\x03 \x01(\tR\vvmstatePath\x12\x1f\n" +
 	"\vstorage_key\x18\x04 \x01(\tR\n" +
-	"storageKeyJ\x04\b\x02\x10\x03\"T\n" +
+	"storageKey\x12.\n" +
+	"\x13vmstate_storage_key\x18\x05 \x01(\tR\x11vmstateStorageKeyJ\x04\b\x02\x10\x03\"T\n" +
 	"\x10SnapshotResponse\x12\x1b\n" +
 	"\tmem_bytes\x18\x01 \x01(\x03R\bmemBytes\x12#\n" +
 	"\rvmstate_bytes\x18\x02 \x01(\x03R\fvmstateBytes\",\n" +

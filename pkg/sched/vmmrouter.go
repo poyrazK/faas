@@ -51,7 +51,12 @@ import (
 type RoutedVMM interface {
 	CreateColdBoot(ctx context.Context, nodeID, instance string, app AppSpec) (*WakeOutcome, error)
 	CreateFromSnapshot(ctx context.Context, nodeID, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error)
-	PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey string) (SnapshotBytes, error)
+	// PauseAndSnapshot (issue #121 / ADR-025 axis 2 slice 4) takes
+	// vmstateStorageKey as a third string alongside vmstatePath and
+	// storageKey. Default-local schedd sends the empty value so vmmd's
+	// host-path branch is taken bit-for-bit; remote-node schedd sends
+	// state.SnapVMStateKey(deploymentID).
+	PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error)
 	Destroy(ctx context.Context, nodeID, instance string) error
 	// Ping is the wire-level liveness probe (issue #97 / ADR-025
 	// axis 3, PR #114). schedd's heartbeat loop calls this every
@@ -197,12 +202,12 @@ func (r *VMMRouter) CreateFromSnapshot(ctx context.Context, nodeID, instance str
 }
 
 // PauseAndSnapshot implements RoutedVMM.
-func (r *VMMRouter) PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey string) (SnapshotBytes, error) {
+func (r *VMMRouter) PauseAndSnapshot(ctx context.Context, nodeID, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error) {
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return SnapshotBytes{}, err
 	}
-	return cli.PauseAndSnapshot(ctx, instance, vmstatePath, storageKey)
+	return cli.PauseAndSnapshot(ctx, instance, vmstatePath, storageKey, vmstateStorageKey)
 }
 
 // Destroy implements RoutedVMM.

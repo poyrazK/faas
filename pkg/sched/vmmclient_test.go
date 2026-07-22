@@ -153,7 +153,7 @@ func TestVMMClient_CreateFromSnapshot_FallbackReported(t *testing.T) {
 
 func TestVMMClient_PauseAndSnapshot(t *testing.T) {
 	c := newClient(t, &fakeVMM{})
-	b, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "snap/i-1/mem")
+	b, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "snap/i-1/mem", "")
 	if err != nil {
 		t.Fatalf("PauseAndSnapshot: %v", err)
 	}
@@ -162,9 +162,15 @@ func TestVMMClient_PauseAndSnapshot(t *testing.T) {
 	}
 }
 
-func TestVMMClient_PauseAndSnapshot_MissingPaths(t *testing.T) {
+func TestVMMClient_PauseAndSnapshot_MissingStorageKey(t *testing.T) {
 	c := newClient(t, &fakeVMM{})
-	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "")
+	// #121: server validation now requires storage_key always; vmstate
+	// is acceptable via EITHER vmstate_path or vmstate_storage_key
+	// (issue #121 / ADR-025 axis 2 slice 4). Empty storage_key is
+	// still an error so mem F-1 holds; an empty storage_key combined
+	// with a populated vmstate_path keeps the legacy single-box path
+	// working out of the box (default-local).
+	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "", "snap/d-1/vmstate")
 	if err == nil {
 		t.Fatal("expected error for empty storage_key")
 	}
@@ -176,6 +182,21 @@ func TestVMMClient_PauseAndSnapshot_MissingPaths(t *testing.T) {
 	}
 	if p.Code != api.CodeValidation {
 		t.Errorf("code = %q, want %q", p.Code, api.CodeValidation)
+	}
+}
+
+func TestVMMClient_PauseAndSnapshot_AcceptsEitherVmstateLocator(t *testing.T) {
+	// #121 / ADR-025 axis 2 slice 4: PauseAndSnapshot accepts a
+	// populated vmstate_storage_key alongside an empty vmstate_path
+	// (the canonical multi-node shape) and still publishes. The
+	// legacy shape (empty vmstate_storage_key, populated
+	// vmstate_path) also still validates; this test exercises the
+	// new shape so a future regression that re-requires the legacy
+	// field trips here.
+	c := newClient(t, &fakeVMM{})
+	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "", "snap/d-1/mem", "snap/d-1/vmstate")
+	if err != nil {
+		t.Fatalf("PauseAndSnapshot with empty vmstate_path: %v", err)
 	}
 }
 
