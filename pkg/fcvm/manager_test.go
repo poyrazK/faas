@@ -109,11 +109,11 @@ func (v *fakeVMM) Boot(_ context.Context, l Lease, _ VMConfig) error {
 // resolve keys through storage.Get before calling Boot. Tests that
 // care about storage semantics use TestRestore_MaterializesBaseViaStorage
 // (pkg/fcvm/vmm_test.go) with a real JailerVMM + fake StorageBackend.
-func (v *fakeVMM) BootColdBoot(_ context.Context, l Lease, spec ColdBootSpec) error {
+func (v *fakeVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) error {
 	if err := spec.Validate(); err != nil {
 		return err
 	}
-	return v.Boot(context.Background(), l, BuildColdBootConfig(spec, l.Slot))
+	return v.Boot(ctx, l, BuildColdBootConfig(spec, l.Slot))
 }
 
 func (v *fakeVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) error {
