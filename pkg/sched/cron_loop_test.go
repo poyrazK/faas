@@ -62,7 +62,10 @@ func (r *recordingSynth) SynthesizeRequest(_ context.Context, appID, _, path str
 func makeEngine(t *testing.T, store state.Store, vmm VMM) (*Engine, *Ledger) {
 	t.Helper()
 	ledger := NewLedger()
-	eng := NewEngine(store, ledger, vmm, nil, "fc-test", slog.Default())
+	eng, err := NewEngine(context.Background(), store, ledger, vmm, nil, "fc-test", slog.Default())
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
 	return eng, ledger
 }
 

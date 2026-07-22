@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,39 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// defaultLocalIDs is a per-PgStore cache of the resolved
+// 'default-local' compute_node id. Each pgStore(t) call stands up
+// a fresh Postgres schema, so the cache must be keyed on the store
+// pointer — a single package-level string would feed the wrong UUID
+// into the second schema (the seed row in schema B is a different
+// row from schema A, even if it carries the same name). The cache
+// is best-effort; a miss falls back to a fresh lookup.
+var (
+	defaultLocalMu         sync.Mutex
+	defaultLocalIDsByStore = map[*state.PgStore]string{}
+)
+
+// resolveDefaultLocal reads the seeded compute_node id by name for
+// the given PgStore. Per-store cache avoids both the package-level
+// cross-schema contamination and the O(N) re-resolve on every test.
+func resolveDefaultLocal(t *testing.T, ctx context.Context, s *state.PgStore) string {
+	t.Helper()
+	defaultLocalMu.Lock()
+	if id, ok := defaultLocalIDsByStore[s]; ok {
+		defaultLocalMu.Unlock()
+		return id
+	}
+	defaultLocalMu.Unlock()
+	n, err := s.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("resolve default-local compute_node (run migrations/00024 first): %v", err)
+	}
+	defaultLocalMu.Lock()
+	defaultLocalIDsByStore[s] = n.ID
+	defaultLocalMu.Unlock()
+	return n.ID
+}
 
 // pgStore stands up a fresh schema, migrates it, and returns a PgStore. Skips
 // when Postgres is unreachable (pgtest.Open handles the skip). These round-trips
@@ -24,7 +58,13 @@ func pgStore(t *testing.T) (*state.PgStore, context.Context) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	return state.NewPgStore(pool), ctx
+	s := state.NewPgStore(pool)
+	// Resolve the default-local compute_node id once at boot so
+	// every CreateInstance test can pass a real FK-valid UUID.
+	// Cached per-store so the next pgStore(t) (different schema)
+	// doesn't reuse the previous schema's UUID.
+	_ = resolveDefaultLocal(t, ctx, s)
+	return s, ctx
 }
 
 // seedLiveDeploy creates account+app+live-deployment and returns their ids.
@@ -57,7 +97,7 @@ func TestPg_SetInstanceRuntimeAndRunningLookup(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, depID := seedLiveDeploy(t, s, ctx)
 
-	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512)
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, resolveDefaultLocal(t, ctx, s))
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -88,7 +128,7 @@ func TestPg_SetInstanceRuntimeAndRunningLookup(t *testing.T) {
 func TestPg_TouchInstancesLastSeen(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, depID := seedLiveDeploy(t, s, ctx)
-	ins, _ := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512)
+	ins, _ := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, resolveDefaultLocal(t, ctx, s))
 
 	when := time.Now().Add(-30 * time.Second).Truncate(time.Millisecond)
 	applied, err := s.TouchInstancesLastSeen(ctx, []state.InstanceTouch{
@@ -263,7 +303,7 @@ func TestPg_ListLatestInstancePerApp(t *testing.T) {
 	}
 
 	// Create two instances; the second started later should win.
-	old, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256)
+	old, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, resolveDefaultLocal(t, ctx, s))
 	if err != nil {
 		t.Fatalf("CreateInstance old: %v", err)
 	}
@@ -274,7 +314,7 @@ func TestPg_ListLatestInstancePerApp(t *testing.T) {
 	// Sleep briefly so the second instance has a strictly-later started_at.
 	time.Sleep(10 * time.Millisecond)
 
-	newer, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256)
+	newer, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, resolveDefaultLocal(t, ctx, s))
 	if err != nil {
 		t.Fatalf("CreateInstance newer: %v", err)
 	}

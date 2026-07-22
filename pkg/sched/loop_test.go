@@ -21,7 +21,7 @@ func TestLoopReaperParksIdleInstance(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	res, err := engine.Wake(context.Background(), app.ID)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestHandleSnapshotPrime(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 2)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 	loop := NewLoop(nil, engine, testLog())
 
 	loop.handleNotification(context.Background(), db.Notification{
@@ -73,7 +73,7 @@ func TestHandleSnapshotPrime(t *testing.T) {
 // incomplete payloads must not panic and must not act.
 func TestHandleNotificationRejectsBadInput(t *testing.T) {
 	store := state.NewMemStore()
-	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	loop := NewLoop(nil, engine, testLog())
 
 	loop.handleNotification(context.Background(), db.Notification{
@@ -117,7 +117,7 @@ func TestRunReaperPopulatesOpenConns(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	res, err := engine.Wake(context.Background(), app.ID)
 	if err != nil {
@@ -156,7 +156,7 @@ func TestRunReaperFlowCounterErrorFailsOpen(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	res, err := engine.Wake(context.Background(), app.ID)
 	if err != nil {
@@ -225,7 +225,7 @@ func TestRunReaperConsultsRealFlowcountReader(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	res, err := engine.Wake(context.Background(), app.ID)
 	if err != nil {

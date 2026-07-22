@@ -72,20 +72,20 @@ func silenceLog() *slog.Logger {
 func TestDeletionSubscriber_ParkOnMessage(t *testing.T) {
 	store := state.NewMemStore()
 	acctA, appA, depA := seedOneAccount(t, store, "owner-a@example.com")
-	if _, err := store.CreateInstance(context.Background(), appA.ID, depA.ID, "running", 128); err != nil {
+	if _, err := store.CreateInstance(context.Background(), appA.ID, depA.ID, "running", 128, state.DefaultLocalNodeName); err != nil {
 		t.Fatalf("instance A1: %v", err)
 	}
-	if _, err := store.CreateInstance(context.Background(), appA.ID, depA.ID, "waking", 128); err != nil {
+	if _, err := store.CreateInstance(context.Background(), appA.ID, depA.ID, "waking", 128, state.DefaultLocalNodeName); err != nil {
 		t.Fatalf("instance A2: %v", err)
 	}
 	// Distant account — MUST NOT be touched.
 	acctB, appB, depB := seedOneAccount(t, store, "owner-b@example.com")
-	insB, err := store.CreateInstance(context.Background(), appB.ID, depB.ID, "running", 128)
+	insB, err := store.CreateInstance(context.Background(), appB.ID, depB.ID, "running", 128, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("instance B: %v", err)
 	}
 
-	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(4)
 	sub := NewDeletionSubscriber(engine, silenceLog())
 
@@ -121,11 +121,11 @@ func TestDeletionSubscriber_ParkOnMessage(t *testing.T) {
 func TestDeletionSubscriber_DuplicateMessageIsNoOp(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedOneAccount(t, store, "dup@example.com")
-	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, "running", 128); err != nil {
+	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, "running", 128, state.DefaultLocalNodeName); err != nil {
 		t.Fatalf("instance: %v", err)
 	}
 
-	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(4)
 	sub := NewDeletionSubscriber(engine, silenceLog())
 
@@ -167,10 +167,10 @@ func TestDeletionSubscriber_DuplicateMessageIsNoOp(t *testing.T) {
 func TestDeletionSubscriber_BadPayloadSkipped(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedOneAccount(t, store, "bad@example.com")
-	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, "running", 128); err != nil {
+	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, "running", 128, state.DefaultLocalNodeName); err != nil {
 		t.Fatalf("instance: %v", err)
 	}
-	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(4)
 	sub := NewDeletionSubscriber(engine, silenceLog())
 	ctx, cancel := context.WithCancel(context.Background())
@@ -198,7 +198,7 @@ func TestDeletionSubscriber_BadPayloadSkipped(t *testing.T) {
 // seam that owns Subscribe) tear down Run cleanly on dial failure.
 func TestDeletionSubscriber_ChannelCloseReturns(t *testing.T) {
 	store := state.NewMemStore()
-	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(1)
 	sub := NewDeletionSubscriber(engine, silenceLog())
 

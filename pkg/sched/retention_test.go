@@ -50,7 +50,7 @@ func TestRetentionSweepsTerminalRows(t *testing.T) {
 	}
 	ids := make(map[string]string, len(states)*2)
 	for _, st := range states {
-		oldRow, err := store.CreateInstance(context.Background(), app.ID, dep.ID, st, 512)
+		oldRow, err := store.CreateInstance(context.Background(), app.ID, dep.ID, st, 512, state.DefaultLocalNodeName)
 		if err != nil {
 			t.Fatalf("CreateInstance(old, %s): %v", st, err)
 		}
@@ -64,7 +64,7 @@ func TestRetentionSweepsTerminalRows(t *testing.T) {
 			ms.BackdateForTest(oldRow.ID, time.Now().Add(-40*24*time.Hour))
 		}
 
-		youngRow, err := store.CreateInstance(context.Background(), app.ID, dep.ID, st, 512)
+		youngRow, err := store.CreateInstance(context.Background(), app.ID, dep.ID, st, 512, state.DefaultLocalNodeName)
 		if err != nil {
 			t.Fatalf("CreateInstance(young, %s): %v", st, err)
 		}
@@ -115,7 +115,7 @@ func TestRetentionDoubleTickIsIdempotent(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	ms := retentionMemStore(t, store)
-	old, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateStopped), 512)
+	old, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateStopped), 512, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestRetentionSkipActiveStates(t *testing.T) {
 
 	// Create a STOPPED row WITHOUT a terminal_at (engine bug or
 	// pre-migration backfill regression). Must not be swept.
-	row, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateStopped), 512)
+	row, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateStopped), 512, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -175,14 +175,14 @@ func TestLoopRunRetentionWiresThroughLoop(t *testing.T) {
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	ms := retentionMemStore(t, store)
 
-	old, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateFailed), 512)
+	old, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateFailed), 512, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 	ms.SetTerminalAtForTest(old.ID, time.Now().Add(-40*24*time.Hour))
 
 	r := NewRetention(store, slog.Default()).WithRetention(30 * 24 * time.Hour)
-	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	loop := NewLoop(nil, engine, slog.Default()).WithRetention(r)
 
 	loop.runRetention(context.Background())
@@ -200,7 +200,7 @@ func TestTransitionStampsTerminalAt(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
 	res, err := engine.Wake(context.Background(), app.ID)
 	if err != nil {

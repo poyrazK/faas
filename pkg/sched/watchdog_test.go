@@ -51,17 +51,17 @@ func TestWatchdogSweepKillsStuck(t *testing.T) {
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 
-	waking, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512)
+	waking, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("CreateInstance(WAKING): %v", err)
 	}
-	coldBoot, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateColdBooting), 512)
+	coldBoot, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateColdBooting), 512, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("CreateInstance(COLD_BOOTING): %v", err)
 	}
-	snap, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateSnapshotting), 512)
+	snap, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateSnapshotting), 512, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("CreateInstance(SNAPSHOTTING): %v", err)
 	}
@@ -134,9 +134,9 @@ func TestWatchdogSweepLeavesYoungRowsAlone(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
-	young, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateColdBooting), 512)
+	young, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateColdBooting), 512, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -162,9 +162,9 @@ func TestEngineKillStuckRaceWithCompletion(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
-	ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512)
+	ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestWatchdogSweepRejectsUnknownReason(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
 	err := engine.KillStuck(context.Background(), "any", app.ID, StuckReason("not-a-real-reason"))
 	if err == nil {
@@ -217,9 +217,9 @@ func TestLoopRunDrivesWatchdog(t *testing.T) {
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 
-	waking, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512)
+	waking, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

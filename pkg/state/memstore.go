@@ -87,6 +87,12 @@ type MemStore struct {
 	// secrets is keyed by (app_id, key) per the schema's PRIMARY KEY.
 	// Value carries account_id for the ownership check on delete.
 	secrets map[secretKey]AppSecret
+	// computeNodes mirrors the compute_nodes table; keyed by id (issue
+	// #97 / ADR-025 axis 3). The synthetic 'default-local' row is
+	// seeded by NewMemStore so tests don't have to call
+	// CreateComputeNode to exercise the single-box path. Production
+	// (PgStore) gets the same row from migrations/00024_compute_nodes.
+	computeNodes map[string]ComputeNode
 }
 
 // secretKey mirrors the app_secrets PRIMARY KEY (app_id, key). The
@@ -118,9 +124,13 @@ type usageMinute struct {
 	Requests   int64
 }
 
-// NewMemStore returns an empty in-memory store.
+// NewMemStore returns an empty in-memory store with the synthetic
+// 'default-local' compute_node row seeded (issue #97 / ADR-025 axis 3).
+// The seed mirrors migrations/00024_compute_nodes.sql so unit tests
+// don't have to call CreateComputeNode to exercise the single-box path.
+// Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
-	return &MemStore{
+	m := &MemStore{
 		accounts:       map[string]Account{},
 		keys:           map[string]APIKey{},
 		keyByHash:      map[string]string{},
@@ -149,7 +159,18 @@ func NewMemStore() *MemStore {
 		// meterd hourly pusher reads/writes.
 		stripePushHours: map[stripePushKey]struct{}{},
 		secrets:         map[secretKey]AppSecret{},
+		// computeNodes is empty here; seedDefaultLocalNodeLocked
+		// inserts the synthetic default-local row below.
+		computeNodes: map[string]ComputeNode{},
 	}
+	// Auto-seed default-local. Done after the struct literal so the
+	// seeded row carries a real id and created_at timestamp. Mirrors
+	// migrations/00024_compute_nodes.sql: the only way a test's
+	// single-box flow can fail is if the seed's contract drifts from
+	// the migration's seed (e.g., target_url mismatch); both land in
+	// the test 00024_compute_nodes_test.go.
+	m.seedDefaultLocalNodeLocked()
+	return m
 }
 
 func newID() string {
@@ -1053,7 +1074,7 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 
 // --- Instances --------------------------------------------------------------
 
-func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state string, ramMB int) (Instance, error) {
+func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state string, ramMB int, nodeID string) (Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Stamp started_at on creation for every state (commit 3, mirrors
@@ -1063,12 +1084,23 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 	// late stamp behaviour would force every fixture to call
 	// SetInstanceRuntime first, which makes the watchdog tests
 	// describe a state-machine shape that no production code reaches.
+	//
+	// nodeID is the compute_node the instance lives on
+	// (issue #97 / ADR-025 axis 3). MemStore does NOT enforce the
+	// FK to compute_nodes(id) — the production constraint lives in
+	// migrations/00024_compute_nodes. A test that passes an
+	// arbitrary nodeID here will succeed; the constraint divergence
+	// is intentional so unit tests can construct instance rows
+	// without seeding compute_nodes first. The engine's Wake flow
+	// resolves the id via ComputeNodeByName before reaching here,
+	// so production callers always have a real id.
 	ins := Instance{
 		ID:           newID(),
 		AppID:        appID,
 		DeploymentID: deploymentID,
 		State:        state,
 		RAMMB:        ramMB,
+		NodeID:       nodeID,
 		StartedAt:    time.Now(),
 	}
 	m.instances[ins.ID] = ins
@@ -1562,6 +1594,131 @@ func parseSubjectID(s string) *uuid.UUID {
 		}
 	}
 	return nil
+}
+
+// --- Compute nodes (issue #97 / ADR-025 axis 3) ---------------------------
+//
+// Mirrors the compute_nodes table. The synthetic 'default-local' row
+// is auto-seeded by NewMemStore via seedDefaultLocalNodeLocked (same
+// shape as migrations/00024_compute_nodes.sql's seed) so single-box
+// tests don't have to call CreateComputeNode. Tests exercising the
+// multi-node path add additional rows via CreateComputeNode; the
+// per-vm overhead (8 MB) is referenced from pkg/api.PerVMOverheadMB
+// — the single source of truth shared with PgStore.ComputeNodeUsedMB,
+// sched.Ledger's reservation math, and the §4.7 billing model.
+
+// seedDefaultLocalNodeLocked inserts the synthetic single-host vmmd
+// row. Called once by NewMemStore after the struct literal so the
+// seeded row carries a real id + created_at. Idempotent on a fresh
+// store; production never calls this (the migration handles it).
+func (m *MemStore) seedDefaultLocalNodeLocked() {
+	now := time.Now()
+	id := newID()
+	m.computeNodes[id] = ComputeNode{
+		ID:                 id,
+		Name:               DefaultLocalNodeName,
+		TargetURL:          "unix:///run/faas/vmmd.sock",
+		VPCPUs:             160,
+		MemMB:              56000,
+		MaxConcurrency:     200,
+		AdmissionCeilingMB: 47600,
+		Active:             true,
+		LastHeartbeatAt:    now,
+		CreatedAt:          now,
+	}
+}
+
+func (m *MemStore) ActiveComputeNodes(_ context.Context) ([]ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ComputeNode, 0, len(m.computeNodes))
+	for _, n := range m.computeNodes {
+		if n.Active {
+			out = append(out, n)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func (m *MemStore) ComputeNodeByID(_ context.Context, id string) (ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[id]
+	if !ok {
+		return ComputeNode{}, ErrNotFound
+	}
+	return n, nil
+}
+
+func (m *MemStore) ComputeNodeByName(_ context.Context, name string) (ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, n := range m.computeNodes {
+		if n.Name == name {
+			return n, nil
+		}
+	}
+	return ComputeNode{}, ErrNotFound
+}
+
+// ComputeNodeUsedMB returns the Σ(ram_mb + api.PerVMOverheadMB) for
+// live instances on the given node. Live = state ∈ {'waking',
+// 'cold_booting', 'running'} per §6.2-2 re-stated per-node. The
+// 8 MB overhead matches pkg/state/pgstore.go's aggregate query and
+// the billing model in spec §4.7 — single source of truth in
+// pkg/api.PerVMOverheadMB (F-1 in PR #112 review).
+func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var used int64
+	for _, ins := range m.instances {
+		if ins.NodeID != nodeID {
+			continue
+		}
+		switch ins.State {
+		case "waking", "cold_booting", "running":
+			used += int64(ins.RAMMB + api.PerVMOverheadMB)
+		}
+	}
+	return used, nil
+}
+
+func (m *MemStore) HeartbeatComputeNode(_ context.Context, nodeID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return ErrNotFound
+	}
+	n.LastHeartbeatAt = time.Now()
+	m.computeNodes[nodeID] = n
+	return nil
+}
+
+func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Unique-name enforcement mirrors the production UNIQUE constraint
+	// on name. The MemStore uses a name → id map lookup for the same
+	// effect — tests that pass a duplicate name get ErrConflict.
+	for _, existing := range m.computeNodes {
+		if existing.Name == node.Name {
+			return ComputeNode{}, ErrConflict
+		}
+	}
+	n := node
+	if n.ID == "" {
+		n.ID = newID()
+	}
+	if n.CreatedAt.IsZero() {
+		n.CreatedAt = time.Now()
+	}
+	if n.LastHeartbeatAt.IsZero() {
+		n.LastHeartbeatAt = n.CreatedAt
+	}
+	m.computeNodes[n.ID] = n
+	return n, nil
 }
 
 // AppendEvent (commit 4) fixes two pre-existing bugs that the audit-log

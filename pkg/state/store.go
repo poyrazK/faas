@@ -357,7 +357,15 @@ type Store interface {
 	MarkCronFired(ctx context.Context, cronID string, at time.Time) error
 
 	// Instances (schedd is sole writer, spec §6). apid reads only.
-	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error)
+	//
+	// nodeID is the compute_node the instance lives on (issue #97 /
+	// ADR-025 axis 3). schedd's Wake flow resolves it via
+	// sched.ChoosePlacement at instance creation; tests that don't
+	// exercise routing may pass DefaultLocalNodeName (or the id
+	// resolved via ComputeNodeByName) — the engine never accepts an
+	// empty node_id once CreateInstance is reached, so the legacy
+	// single-box path always passes DefaultLocalNodeName at minimum.
+	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID string) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
 	// ListLatestInstancePerApp returns the most-recently-started instance
@@ -477,6 +485,54 @@ type Store interface {
 	// extra cold boot. After the window they go away. Returns the row
 	// count. Idempotent.
 	DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error)
+
+	// Compute nodes (issue #97 / ADR-025 axis 3). schedd's Wake flow
+	// is the sole reader of these methods (single-leader CP, no
+	// consensus); apid writes via CreateComputeNode on
+	// POST /v1/compute-nodes. The synthetic 'default-local' row is
+	// seeded by migrations/00024_compute_nodes.sql so production
+	// callers never have to insert it themselves.
+	//
+	// ActiveComputeNodes returns every active compute_node for
+	// placement (Wake asks "which node has headroom?"; the partial
+	// compute_nodes_active_idx keeps inactive rows out of the read
+	// path). Order is by name (placement sorts in memory after
+	// computing used_mb per node).
+	ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error)
+	// ComputeNodeByID resolves a row by primary key. Wake calls this
+	// after placement to fetch the target URL for the dial step.
+	// Returns ErrNotFound when the id has no row.
+	ComputeNodeByID(ctx context.Context, id string) (ComputeNode, error)
+	// ComputeNodeByName resolves a row by its unique name. The
+	// engine's startup path uses this once to cache the
+	// default-local UUID (DefaultLocalNodeName → id) so subsequent
+	// Wake flows don't repeat the SELECT. Returns ErrNotFound when
+	// the name has no row — a config / migration drift that the
+	// boot path surfaces as a loud failure (don't paper over it with
+	// a default).
+	ComputeNodeByName(ctx context.Context, name string) (ComputeNode, error)
+	// ComputeNodeUsedMB returns the Σ(ram_mb + PerVMOverheadMB) for
+	// live instances on the given node. Single SQL aggregate, no
+	// client loop. Live = state IN ('waking','cold_booting',
+	// 'running') per spec §6.2-2 re-stated per-node. Atomic with
+	// the ledger; the ledger is the cache, this is the source of
+	// truth after a schedd restart. PerVMOverheadMB is the 8 MB
+	// fixed cost (spec §4.7 / billing model) added per live instance.
+	ComputeNodeUsedMB(ctx context.Context, nodeID string) (int64, error)
+	// HeartbeatComputeNode stamps last_heartbeat_at to now(). The
+	// schedd watchdog goroutine calls this every HeartbeatInterval
+	// (default 30s, env-overridable) for each registered node whose
+	// dial succeeded. Idempotent — repeated calls just bump the
+	// timestamp. A future gate will flip active=false when the
+	// timestamp ages past the staleness threshold (2× the heartbeat
+	// cadence); that policy lives in the watchdog, not here.
+	HeartbeatComputeNode(ctx context.Context, nodeID string) error
+	// CreateComputeNode inserts a new compute_node row on
+	// POST /v1/compute-nodes (operator-only admin endpoint). The id
+	// is gen_random_uuid() (column default). Returns the inserted
+	// row with its assigned id and created_at. ErrConflict when
+	// the name is already taken (UNIQUE constraint on name).
+	CreateComputeNode(ctx context.Context, node ComputeNode) (ComputeNode, error)
 
 	// Audit (append-only, spec §6.1).
 	AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error

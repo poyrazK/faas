@@ -94,16 +94,38 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+
+	// defaultLocalNodeID is the resolved UUID of the 'default-local'
+	// compute_node (issue #97 / ADR-025 axis 3). Looked up once at
+	// construction via ComputeNodeByName so every Wake / Prime
+	// call passes the FK-valid UUID to CreateInstance. PR #113
+	// evolves the Wake flow to consult ChoosePlacement for arbitrary
+	// nodes; for PR #112 the engine always uses default-local and the
+	// lookup is a one-shot bootstrap read.
+	defaultLocalNodeID string
 }
 
 // NewEngine wires the engine. notif may be nil (notifications are best-effort in
 // tests); log may be nil (slog default); ops may be nil (tests don't assert on
 // metrics).
-func NewEngine(store state.Store, ledger *Ledger, vmm VMM, notif Notifier, fcVer string, log *slog.Logger) *Engine {
+//
+// The ctx parameter scopes the constructor's ComputeNodeByName
+// bootstrap read (issue #97 / ADR-025 axis 3). Production callers
+// pass the daemon's lifecycle ctx; tests pass context.Background()
+// wrapped with a t.Deadline-derived timeout if they want a fast
+// failure on a missing seed. A lookup failure is a hard error:
+// schedd cannot admit wakes without a valid default-local node_id,
+// so the daemon refuses to start. The caller (cmd/schedd/main.go)
+// logs and exits non-zero; this avoids the silent-degradation
+// failure mode where NewEngine returned an Engine with an empty
+// defaultLocalNodeID and the next CreateInstance failed at the FK
+// with a cryptic "null value in column "node_id"" error far away
+// from the root cause (missing migration 00024).
+func NewEngine(ctx context.Context, store state.Store, ledger *Ledger, vmm VMM, notif Notifier, fcVer string, log *slog.Logger) (*Engine, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Engine{
+	e := &Engine{
 		store:  store,
 		ledger: ledger,
 		vmm:    vmm,
@@ -112,6 +134,20 @@ func NewEngine(store state.Store, ledger *Ledger, vmm VMM, notif Notifier, fcVer
 		log:    log,
 		appMu:  map[string]*sync.Mutex{},
 	}
+	// Resolve default-local. Use a bounded context so a wedged DB
+	// doesn't block the daemon's boot forever — the watchdog goroutine
+	// in cmd/schedd/main.go is the right place for retry, not here.
+	bootCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	node, err := store.ComputeNodeByName(bootCtx, state.DefaultLocalNodeName)
+	if err != nil {
+		return nil, fmt.Errorf("sched: resolve default-local compute_node %q: %w", state.DefaultLocalNodeName, err)
+	}
+	if node.ID == "" {
+		return nil, fmt.Errorf("sched: default-local compute_node %q has empty id", state.DefaultLocalNodeName)
+	}
+	e.defaultLocalNodeID = node.ID
+	return e, nil
 }
 
 // WithOpsMetrics attaches a metrics bag to the engine for the §6.1
@@ -188,7 +224,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	if haveSnap {
 		initState = state.StateWaking
 	}
-	ins, err := e.store.CreateInstance(ctx, appID, dep.ID, string(initState), app.RAMMB)
+	ins, err := e.store.CreateInstance(ctx, appID, dep.ID, string(initState), app.RAMMB, e.defaultLocalNodeID)
 	if err != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
@@ -401,7 +437,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return fmt.Errorf("sched: prime: load deployment: %w", err)
 	}
 
-	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB)
+	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, e.defaultLocalNodeID)
 	if err != nil {
 		return fmt.Errorf("sched: prime: create instance: %w", err)
 	}
