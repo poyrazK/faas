@@ -139,7 +139,7 @@ update deployments
 returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
           coalesce(source_path, ''), coalesce(source_bytes, 0),
           coalesce(handler, ''), coalesce(log_path, ''),
-          coalesce(rootfs_path, ''), coalesce(rootfs_bytes, 0),
+          coalesce(rootfs_path, ''), coalesce(rootfs_key, ''), coalesce(rootfs_bytes, 0),
           status, coalesce(error, ''), coalesce(error_code, ''), created_at;
 
 -- name: MarkDeploymentSuperseded :exec

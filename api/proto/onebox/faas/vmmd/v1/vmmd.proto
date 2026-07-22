@@ -55,10 +55,18 @@ service Vmmd {
 // it; the proto exists so each request is self-describing and vmmd stays
 // stateless about app config (ADR-014).
 message AppSpec {
-  // drive0 shared read-only base rootfs (spec §4.6 two-drive scheme).
-  string base_path   = 1;
-  // drive1 per-app layer.
-  string layer_path  = 2;
+  // Issue #96 / ADR-025 axis 2 (PR #116): drive0 base + drive1 layer
+  // are referenced by StorageBackend keys, not host paths. The wire
+  // carries canonical keys (e.g. "base/runtime-node22.ext4",
+  // "apps/<slug>/<depID>.ext4"); vmmd resolves them locally via
+  // Storage.Get before staging into the jail chroot. The local
+  // StorageBackend's Get maps keys to /srv/fc/.../...ext4 the same
+  // way the legacy *_path fields did, so single-box behaviour is
+  // preserved. The OCI backend resolves keys over HTTP, which is what
+  // unblocks multi-node cold-boot on a vmmd that doesn't share
+  // /srv/fc with schedd (issue #98).
+  string base_key   = 1;
+  string layer_key  = 2;
   // 2 for free/hobby/pro; 4 for Scale.
   int32  vcpu_count  = 3;
   // plan RAM in MiB (the slice fences at +8 per spec §1).

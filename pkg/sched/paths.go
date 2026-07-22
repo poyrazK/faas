@@ -36,9 +36,11 @@ var snapDir = "/srv/fc/snap"
 // is soft-deleted).
 func SnapDir() string { return snapDir }
 
-// basePath returns the drive0 shared base rootfs for an app's runtime. Function
-// apps (runtime set) boot the matching runner base; plain apps boot the generic
-// base image (spec §2, ADR-003 — same data plane either way).
+// basePath returns the drive0 shared base rootfs for an app's runtime as
+// a host filesystem path. Deprecated: with #96 (PR #116) the wake wire
+// carries a StorageBackend key, not a host path. Use baseKey instead.
+// Kept for back-compat in legacy tests + the metal-suite integration
+// path that pre-stages ext4 on disk before wiring.
 func basePath(runtime string) string {
 	switch runtime {
 	case "node22":
@@ -50,22 +52,53 @@ func basePath(runtime string) string {
 	}
 }
 
-// layerPath returns the drive1 per-app layer for a deployment.
+// baseKey returns the StorageBackend key for the drive0 shared base
+// rootfs for an app's runtime. Function apps (runtime set) boot the
+// matching runner base; plain apps boot the generic base image (spec
+// §2, ADR-003 — same data plane either way). Mirrors basePath's
+// switch but returns the canonical key the wake wire carries
+// (issue #96 / ADR-025 axis 2 / PR #116).
+func baseKey(runtime string) string {
+	return BaseKey(runtime)
+}
+
+// layerPath returns the drive1 per-app layer for a deployment as a
+// host filesystem path. Deprecated: with #96 (PR #116) the wake wire
+// carries a StorageBackend key, not a host path. Use layerKey instead.
+// Kept for back-compat in legacy tests + the metal-suite path.
 //
-// imaged stamps the canonical path (appsRoot/<slug>/<deploymentID>.ext4) into
-// deployments.rootfs_path after Build succeeds (pkg/imaged/handler.go);
+// imaged stamps the canonical path (appsRoot/<slug>/<deploymentID>.ext4)
+// into deployments.rootfs_path after Build succeeds (pkg/imaged/handler.go);
 // schedd trusts that row rather than recomputing. The legacy constant
-// layerDir is the fallback for rows where imaged predates the path stamp
-// (rare in practice — every new row gets a path on creation).
+// layerDir is the fallback for rows where imaged predates the path stamp.
 //
-// Two-arg signature (rootfsPath, deploymentID) keeps this helper decoupled
-// from pkg/state — sched doesn't need the full Deployment struct to derive
-// a path, and the struct's other fields aren't on this code path.
+// Two-arg signature (rootfsPath, deploymentID) keeps this helper
+// decoupled from pkg/state — sched doesn't need the full Deployment
+// struct to derive a path, and the struct's other fields aren't on
+// this code path.
 func layerPath(rootfsPath, deploymentID string) string {
 	if rootfsPath != "" {
 		return rootfsPath
 	}
 	return layerDir + "/" + deploymentID + ".ext4"
+}
+
+// layerKey returns the StorageBackend key for the drive1 per-app layer
+// for a deployment. Prefers the rootfs_key column on the deployments
+// row (populated by imaged at build time, see migration 00025). Falls
+// back to sched.LayerKey for rows where imaged predates the column
+// (rare in practice — every new row gets one on build).
+//
+// (rootfsKey, deploymentID) keeps the helper decoupled from pkg/state
+// — sched doesn't need the full Deployment struct to derive a key.
+//
+// Issue #96 / ADR-025 axis 2 / PR #116: this replaces layerPath on the
+// wake wire.
+func layerKey(rootfsKey, deploymentID string) string {
+	if rootfsKey != "" {
+		return rootfsKey
+	}
+	return LayerKey(deploymentID)
 }
 
 // --- Storage key helpers (issue #96 / ADR-025 axis 2) ---------------------

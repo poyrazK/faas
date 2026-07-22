@@ -434,7 +434,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
 			return fmt.Errorf("imaged: build app layer: %w", err)
 		}
-		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), result.ContentBytes); err != nil {
+		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
 			_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
 			return fmt.Errorf("imaged: stamp rootfs: %w", err)
 		}
@@ -467,7 +467,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			_ = h.transition(ctx, dep.ID, state.DeployFailed, "build app layer: "+err.Error())
 			return fmt.Errorf("imaged: build app layer: %w", err)
 		}
-		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), result.ContentBytes); err != nil {
+		if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
 			_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
 			return fmt.Errorf("imaged: stamp rootfs: %w", err)
 		}
@@ -552,7 +552,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build function layer: "+err.Error())
 		return fmt.Errorf("imaged: build function layer: %w", err)
 	}
-	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), result.ContentBytes); err != nil {
+	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
 		return fmt.Errorf("imaged: stamp rootfs: %w", err)
 	}

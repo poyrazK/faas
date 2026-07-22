@@ -30,8 +30,8 @@ func toWakeRequest(req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, err
 	snap := req.GetSnapshot()
 	wr := fcvm.WakeRequest{
 		Instance:         req.GetInstance(),
-		BasePath:         app.GetBasePath(),
-		LayerPath:        app.GetLayerPath(),
+		BaseKey:          app.GetBaseKey(),
+		LayerKey:         app.GetLayerKey(),
 		VcpuCount:        int(app.GetVcpuCount()),
 		MemSizeMiB:       int(app.GetMemSizeMib()),
 		EgressMbit:       int(app.GetEgressMbit()),
@@ -73,8 +73,8 @@ func toColdBootRequest(req *vmmdpb.CreateColdBootRequest) (fcvm.WakeRequest, err
 	}
 	return fcvm.WakeRequest{
 		Instance:         req.GetInstance(),
-		BasePath:         app.GetBasePath(),
-		LayerPath:        app.GetLayerPath(),
+		BaseKey:          app.GetBaseKey(),
+		LayerKey:         app.GetLayerKey(),
 		VcpuCount:        int(app.GetVcpuCount()),
 		MemSizeMiB:       int(app.GetMemSizeMib()),
 		EgressMbit:       int(app.GetEgressMbit()),

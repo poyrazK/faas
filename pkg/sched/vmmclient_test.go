@@ -110,7 +110,7 @@ func newClient(t *testing.T, fake *fakeVMM) *sched.VMMClient {
 func TestVMMClient_CreateColdBoot(t *testing.T) {
 	c := newClient(t, &fakeVMM{})
 	out, err := c.CreateColdBoot(context.Background(), "i-1", sched.AppSpec{
-		BasePath: "/srv/fc/base", LayerPath: "/srv/fc/layer", VCPUCount: 2, MemSizeMiB: 256,
+		BaseKey: "/srv/fc/base", LayerKey: "/srv/fc/layer", VCPUCount: 2, MemSizeMiB: 256,
 	})
 	if err != nil {
 		t.Fatalf("CreateColdBoot: %v", err)
@@ -131,7 +131,7 @@ func TestVMMClient_CreateFromSnapshot_FallbackReported(t *testing.T) {
 	// but RequestedMethod=RESTORE (ADR-005 fallback surfaced to schedd).
 	c := newClient(t, &fakeVMM{})
 	out, err := c.CreateFromSnapshot(context.Background(), "i-2",
-		sched.AppSpec{BasePath: "/b", LayerPath: "/l", VCPUCount: 2, MemSizeMiB: 256},
+		sched.AppSpec{BaseKey: "/b", LayerKey: "/l", VCPUCount: 2, MemSizeMiB: 256},
 		sched.SnapshotRef{DeploymentID: "d-1", VMStatePath: "/v", FCVersion: "1.10.0", StorageKey: "snap/d-1/mem"},
 	)
 	if err != nil {
@@ -189,7 +189,7 @@ func TestVMMClient_Wake_ErrorLiftsToProblem(t *testing.T) {
 		},
 	})
 	_, err := c.CreateColdBoot(context.Background(), "i-x",
-		sched.AppSpec{BasePath: "/b", LayerPath: "/l", VCPUCount: 2, MemSizeMiB: 256})
+		sched.AppSpec{BaseKey: "/b", LayerKey: "/l", VCPUCount: 2, MemSizeMiB: 256})
 	if err == nil {
 		t.Fatal("expected capacity error")
 	}

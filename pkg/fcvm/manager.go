@@ -34,6 +34,12 @@ type VMM interface {
 	// Boot spawns jailer→firecracker with cfg and returns once the guest passes
 	// readiness. It must clean up its own chroot/process if it returns an error.
 	Boot(ctx context.Context, l Lease, cfg VMConfig) error
+	// BootColdBoot is the cold-boot entry point (issue #96 / ADR-025 axis 2
+	// / PR #116): it materializes the StorageBackend keys in spec through
+	// the configured backend into vmmd-allocated tmp paths, then delegates
+	// to Boot. Manager.Wake prefers BootColdBoot over Boot; tests that
+	// already have resolved paths in hand can keep using Boot directly.
+	BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) error
 	// Restore loads a snapshot into a fresh jailed firecracker and resumes it,
 	// returning once the guest is ready. On error it cleans up its own process.
 	Restore(ctx context.Context, l Lease, spec RestoreSpec) error
@@ -166,11 +172,18 @@ func (m *Manager) stageSecretsEnv(instance string, jsonBlob []byte) error {
 // WakeRequest brings an app up for a request or cron (spec §6.1). If Snapshot is
 // usable on the running Firecracker version it is restored (fast path); otherwise,
 // or if restore fails, the instance cold boots from rootfs (ADR-005: cold boot
-// always works). BasePath/LayerPath are required for the cold path.
+// always works). BaseKey/LayerKey are required for the cold path.
+//
+// Issue #96 / ADR-025 axis 2 (PR #116): BaseKey / LayerKey are the
+// StorageBackend keys schedd sends on the wake wire (not host paths).
+// vmmd resolves them via Storage.Get before staging the chroot. The
+// local backend's Get maps the same keys to the same files the legacy
+// *Path fields used, so single-box behaviour is preserved. Field
+// names changed from *Path → *Key to match the new semantics.
 type WakeRequest struct {
 	Instance   string
-	BasePath   string // drive0 shared ro base rootfs for the app's runtime
-	LayerPath  string // drive1 per-app layer
+	BaseKey    string // StorageBackend key for drive0 shared ro base rootfs for the app's runtime
+	LayerKey   string // StorageBackend key for drive1 per-app layer
 	VcpuCount  int
 	MemSizeMiB int
 	EgressMbit int       // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
@@ -206,10 +219,14 @@ type SealedEnvEntry struct {
 
 // ColdBootRequest is the deploy-pipeline prime path: a first boot with no
 // snapshot yet (spec §9.6).
+//
+// Issue #96 / ADR-025 axis 2 (PR #116): BaseKey / LayerKey are the
+// StorageBackend keys schedd sends on the wake wire (not host paths).
+// Same semantics as WakeRequest.
 type ColdBootRequest struct {
 	Instance   string
-	BasePath   string
-	LayerPath  string
+	BaseKey    string
+	LayerKey   string
 	VcpuCount  int
 	MemSizeMiB int
 	EgressMbit int // per-plan tc cap; 0 = no cap (legacy / disabled)
@@ -224,7 +241,7 @@ type ColdBootRequest struct {
 // snapshot.
 func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance, error) {
 	return m.Wake(ctx, WakeRequest{
-		Instance: req.Instance, BasePath: req.BasePath, LayerPath: req.LayerPath,
+		Instance: req.Instance, BaseKey: req.BaseKey, LayerKey: req.LayerKey,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		EgressMbit: req.EgressMbit, Snapshot: nil,
 		ExportDir: req.ExportDir, SealedEnvEntries: req.SealedEnvEntries,
@@ -344,9 +361,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// The restored VM re-reads kernel + drives under the chroot
 			// basenames; Park→Kill erased the previous chroot, so hand the
 			// Manager.ColdBoot equivalents back to the VMM to re-stage.
-			KernelPath: m.paths.Kernel,
-			BasePath:   req.BasePath,
-			LayerPath:  req.LayerPath,
+			KernelKey:  m.paths.Kernel,
+			BaseKey:    req.BaseKey,
+			LayerKey:   req.LayerKey,
 			// ADR-022: same vsock device the cold-boot path attaches, derived
 			// from the lease's slot so the guest's listener is reachable at a
 			// globally unique guest_cid.
@@ -369,17 +386,14 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	}
 
 	spec := ColdBootSpec{
-		KernelPath: m.paths.Kernel,
-		BasePath:   req.BasePath,
-		LayerPath:  req.LayerPath,
+		KernelKey:  m.paths.Kernel,
+		BaseKey:    req.BaseKey,
+		LayerKey:   req.LayerKey,
 		VcpuCount:  req.VcpuCount,
 		MemSizeMiB: req.MemSizeMiB,
 		Tap:        nc.Tap,
 	}
-	if err := spec.Validate(); err != nil {
-		return WakeColdBoot, fmt.Errorf("wake %s: %w", req.Instance, err)
-	}
-	if err := m.vmm.Boot(ctx, lease, BuildColdBootConfig(spec, lease.Slot)); err != nil {
+	if err := m.vmm.BootColdBoot(ctx, lease, spec); err != nil {
 		return WakeColdBoot, fmt.Errorf("wake %s: cold boot: %w", req.Instance, err)
 	}
 	return WakeColdBoot, nil

@@ -269,8 +269,14 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	// AppSpec is built under the lock and treated as immutable below.
 	// The boot call uses the same spec — the vmmd side reads it
 	// thread-safely without us touching it again.
+	// Issue #96 / ADR-025 axis 2 / PR #116: the wake wire carries
+	// StorageBackend keys for the base + layer ext4. vmmd resolves
+	// them locally via Storage.Get before staging the chroot. The
+	// local backend's Get maps the same keys to the same files the
+	// legacy *_path fields used, so single-box behaviour is
+	// preserved. See pkg/sched/paths.go baseKey / layerKey.
 	spec := AppSpec{
-		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep.RootfsPath, dep.ID),
+		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
 		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),
@@ -546,8 +552,14 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return err
 	}
 
+	// Issue #96 / ADR-025 axis 2 / PR #116: the wake wire carries
+	// StorageBackend keys for the base + layer ext4. vmmd resolves
+	// them locally via Storage.Get before staging the chroot. The
+	// local backend's Get maps the same keys to the same files the
+	// legacy *_path fields used, so single-box behaviour is
+	// preserved. See pkg/sched/paths.go baseKey / layerKey.
 	spec := AppSpec{
-		BasePath: basePath(app.Runtime), LayerPath: layerPath(dep.RootfsPath, dep.ID),
+		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
 		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),

@@ -7,7 +7,7 @@ import (
 )
 
 func wakeReq(id string, snap *Snapshot) WakeRequest {
-	return WakeRequest{Instance: id, BasePath: "/b.ext4", LayerPath: "/l.ext4", VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap}
+	return WakeRequest{Instance: id, BaseKey: "/b.ext4", LayerKey: "/l.ext4", VcpuCount: 2, MemSizeMiB: 128, Snapshot: snap}
 }
 
 func TestWakeRestoresUsableSnapshot(t *testing.T) {

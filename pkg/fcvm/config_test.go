@@ -8,9 +8,9 @@ import (
 
 func validColdSpec() ColdBootSpec {
 	return ColdBootSpec{
-		KernelPath: "/srv/fc/base/vmlinux-6.1",
-		BasePath:   "/srv/fc/base/runner-node22.ext4",
-		LayerPath:  "/srv/fc/apps/app/layer-1.ext4",
+		KernelKey: "/srv/fc/base/vmlinux-6.1",
+		BaseKey:   "/srv/fc/base/runner-node22.ext4",
+		LayerKey:  "/srv/fc/apps/app/layer-1.ext4",
 		VcpuCount:  2,
 		MemSizeMiB: 256,
 		Tap:        "tap0",
@@ -81,9 +81,9 @@ func TestColdSpecValidate(t *testing.T) {
 		t.Fatalf("valid spec rejected: %v", err)
 	}
 	tests := map[string]func(*ColdBootSpec){
-		"no kernel": func(s *ColdBootSpec) { s.KernelPath = "" },
-		"no base":   func(s *ColdBootSpec) { s.BasePath = "" },
-		"no layer":  func(s *ColdBootSpec) { s.LayerPath = "" },
+		"no kernel": func(s *ColdBootSpec) { s.KernelKey = "" },
+		"no base":   func(s *ColdBootSpec) { s.BaseKey = "" },
+		"no layer":  func(s *ColdBootSpec) { s.LayerKey = "" },
 		"zero vcpu": func(s *ColdBootSpec) { s.VcpuCount = 0 },
 		"zero mem":  func(s *ColdBootSpec) { s.MemSizeMiB = 0 },
 		"no tap":    func(s *ColdBootSpec) { s.Tap = "" },

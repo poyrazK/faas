@@ -24,6 +24,7 @@ import (
 	"filippo.io/age"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
@@ -83,7 +84,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	listenTarget := cfg.ResolveListenTarget()
-	log.Info("config", "listen_addr", listenTarget, "socket", cfg.SocketPath, "kernel", cfg.KernelPath,
+	log.Info("config", "listen_addr", listenTarget, "socket", cfg.SocketPath, "kernel_key", cfg.KernelKey,
+		"kernel_path_legacy", cfg.KernelPath,
 		"metrics_addr", cfg.MetricsAddr)
 
 	// Fill in host-key defaults if a test passed a zero-value runDeps
@@ -106,6 +108,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	fcVersion, err := deps.detectFC(ctx)
 	if err != nil {
 		log.Warn("could not detect firecracker version; treating all snapshots as stale", "err", err)
+	}
+	// Issue #96 / ADR-025 axis 2 (PR #116): derive the canonical
+	// StorageBackend key for the kernel artifact from the detected
+	// FC version. Operators may pin a specific key via vmmd.toml
+	// (cfg.KernelKey); when unset we fall back to the version-keyed
+	// form sched.KernelKey(fcVersion). The deprecated cfg.KernelPath
+	// still flows into the log line so an operator can spot drift
+	// between the two during the migration window.
+	//
+	// When fcVersion is empty (the FC-detect-failure warning path
+	// pinned by TestRun_FCDetectFailureIsWarning), we leave cfg.KernelKey
+	// empty and let the rest of startup proceed — every snapshot will
+	// be marked stale and every wake will cold-boot, which is the
+	// correct cold-boot-always-works behaviour (ADR-005).
+	if cfg.KernelKey == "" && fcVersion != "" {
+		cfg.KernelKey = sched.KernelKey(fcVersion)
 	}
 
 	// Host-key lifecycle (ADR-020 / spec §11 G2). Without this, the
@@ -142,7 +160,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	mgr := fcvm.NewManager(
 		wire.ExecRunner{},
 		fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).WithStorage(storageBackend),
-		fcvm.Paths{Kernel: cfg.KernelPath},
+		fcvm.Paths{Kernel: cfg.KernelKey},
 		fcVersion,
 		log,
 		cbm,

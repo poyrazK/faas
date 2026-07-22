@@ -141,7 +141,7 @@ func TestCreateColdBoot_Success(t *testing.T) {
 	cli, _ := newServer(t, f)
 	resp, err := cli.CreateColdBoot(context.Background(), &vmmdpb.CreateColdBootRequest{
 		Instance: "i-1",
-		App:      &vmmdpb.AppSpec{BasePath: "/srv/fc/b", LayerPath: "/srv/fc/l", VcpuCount: 2, MemSizeMib: 256},
+		App:      &vmmdpb.AppSpec{BaseKey: "/srv/fc/b", LayerKey: "/srv/fc/l", VcpuCount: 2, MemSizeMib: 256},
 	})
 	if err != nil {
 		t.Fatalf("CreateColdBoot: %v", err)
@@ -161,7 +161,7 @@ func TestCreateColdBoot_RejectsMissingInstance(t *testing.T) {
 	f := &fakeVMM{}
 	cli, _ := newServer(t, f)
 	_, err := cli.CreateColdBoot(context.Background(), &vmmdpb.CreateColdBootRequest{
-		App: &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 128},
+		App: &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 128},
 	})
 	if err == nil {
 		t.Fatalf("expected error for missing instance")
@@ -176,7 +176,7 @@ func TestCreateFromSnapshot_FallsBackWhenMissing(t *testing.T) {
 	cli, _ := newServer(t, f)
 	resp, err := cli.CreateFromSnapshot(context.Background(), &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "i-restore",
-		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256},
 		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "", VmstatePath: ""}, // empty ref
 	})
 	if err != nil {
@@ -290,7 +290,7 @@ func TestCreateFromSnapshot_WakeError(t *testing.T) {
 	cli, _ := newServer(t, f)
 	_, err := cli.CreateFromSnapshot(context.Background(), &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "boom",
-		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256},
 		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/boom/mem", VmstatePath: "/v", FcVersion: "1.7.0"},
 	})
 	if err == nil {
@@ -308,7 +308,7 @@ func TestCreateFromSnapshot_InvalidRequest(t *testing.T) {
 	cli, _ := newServer(t, &fakeVMM{})
 	// No instance — toWakeRequest will fail.
 	_, err := cli.CreateFromSnapshot(context.Background(), &vmmdpb.CreateFromSnapshotRequest{
-		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256},
 		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/noinst/mem", VmstatePath: "/v", FcVersion: "1.7.0"},
 	})
 	if err == nil {
@@ -391,7 +391,7 @@ func TestToProblem_NilReturnsNil(t *testing.T) {
 	cli, _ := newServer(t, f)
 	resp, err := cli.CreateColdBoot(context.Background(), &vmmdpb.CreateColdBootRequest{
 		Instance: "ok",
-		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256},
 	})
 	if err != nil {
 		t.Fatalf("CreateColdBoot: %v", err)

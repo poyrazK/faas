@@ -91,9 +91,16 @@ func PlanWake(snap *Snapshot, currentFCVersion string) WakeMethod {
 type RestoreSpec struct {
 	VMStatePath string
 	Tap         string
-	KernelPath  string // /srv/fc/base/vmlinux-6.1.x — re-staged as basename in chroot
-	BasePath    string // drive0 shared ro base rootfs
-	LayerPath   string // drive1 per-app layer (overlay upper)
+	// Issue #96 / ADR-025 axis 2 (PR #116): KernelKey / BaseKey /
+	// LayerKey are the StorageBackend keys that the restore path
+	// materializes via Storage.Get before re-staging as basenames
+	// under the new jail chroot (the previous chroot was erased by
+	// Park→Kill). Names changed from *Path → *Key to match the new
+	// semantics; type stays string so call sites only need a name
+	// update.
+	KernelKey string
+	BaseKey   string
+	LayerKey  string
 	VsockDevice *VsockDevice
 	// StorageKey is the prefix-matched key under which the mem blob lives
 	// (e.g. "snap/<deploymentID>/mem"). Restore resolves it via

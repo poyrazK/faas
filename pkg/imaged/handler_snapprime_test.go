@@ -15,6 +15,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -110,7 +111,7 @@ func TestFunctionLayer_Node22_BuildsWithRunner(t *testing.T) {
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/src.tgz",
 	})
-	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", 1024); err != nil {
+	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 1024); err != nil {
 		t.Fatal(err)
 	}
 	notif := &fakeNotifier{}
@@ -140,7 +141,7 @@ func TestFunctionLayer_EmptyRunnerPath_FailsLoud(t *testing.T) {
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/src.tgz",
 	})
-	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", 1024); err != nil {
+	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 1024); err != nil {
 		t.Fatal(err)
 	}
 	err := h.handleSnapshotBoot(context.Background(), snapshotBootPayload{
@@ -175,7 +176,7 @@ func TestFunctionLayer_ImageApp_DoesNotReadRunner(t *testing.T) {
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 	})
-	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", 1024); err != nil {
+	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 1024); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.handleSnapshotBoot(context.Background(), snapshotBootPayload{
@@ -213,7 +214,7 @@ func TestHandleSnapshotBoot_BuildsAndPrimesForTarball(t *testing.T) {
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/x.tgz",
 	})
-	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", 4096); err != nil {
+	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 4096); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.handleSnapshotBoot(context.Background(), snapshotBootPayload{
@@ -256,7 +257,7 @@ func TestHandleSnapshotBoot_RedeliverySafe(t *testing.T) {
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 	})
-	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", 1024); err != nil {
+	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 1024); err != nil {
 		t.Fatal(err)
 	}
 	// First call: progresses to snapshotting.
