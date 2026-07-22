@@ -138,6 +138,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// that the Wake / Park / KillStuck flow now plumbs through.
 	nodes, err := store.ActiveComputeNodes(ctx)
 	if err != nil {
+		// Treat ctx-cancellation as a clean shutdown — the test
+		// suite cancels during the bootstrap ActiveComputeNodes
+		// call to verify a clean drain (TestRun_DrainsOnCancel,
+		// PR #115 coverage gate). Returning the wrapped error
+		// would surface a non-nil error on what is in fact a
+		// graceful exit. Real I/O failures keep returning the
+		// wrapped error unchanged.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil
+		}
 		return fmt.Errorf("schedd: list active compute_nodes: %w", err)
 	}
 	nodeInfos := make([]sched.ComputeNodeInfo, 0, len(nodes))
