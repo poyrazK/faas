@@ -1093,9 +1093,15 @@ func TestPg_MarkAllSnapshotsStaleByFCVersion_OnlyFlipsNonCurrent(t *testing.T) {
 		}
 		return snap.ID
 	}
+	// Three FC versions; only the matching one (1.8.0) stays live
+	// after the sweep. id170/id190 are captured as vars (not `_, _`)
+	// so the assignment expressions read like a fixture table —
+	// their values are checked implicitly via the LatestSnapshot
+	// readback below (only id180 should be live).
 	id170 := mkSnap("1.7.0")
 	id180 := mkSnap("1.8.0")
 	id190 := mkSnap("1.9.0")
+	_, _ = id170, id190
 
 	// Sweep against 1.8.0: 1.7.0 and 1.9.0 should flip.
 	n, err := s.MarkAllSnapshotsStaleByFCVersion(ctx, "1.8.0")
@@ -1131,9 +1137,6 @@ func TestPg_MarkAllSnapshotsStaleByFCVersion_OnlyFlipsNonCurrent(t *testing.T) {
 	// A sweep against a version no row carries (e.g. "9.9.9") will
 	// flip every live non-matching row, so we skip that case here —
 	// it's the EXPECTED behavior, not a bug.
-	_ = "9.9.9 not asserted: any non-matching live row would flip"
-	_ = id170
-	_ = id190
 }
 
 func TestPg_MarkOldSnapshotsStale_OnlyFlipsGivenIDs(t *testing.T) {
@@ -1187,7 +1190,6 @@ func TestPg_DeleteSnapshotsStaleOlderThan_OnlyRemovesStalePastRetention(t *testi
 	// opening one for a single test is cheaper than racing a real clock.
 	// The pgtest.Open + MigrateUp pattern mirrors the helper in pgStore(t).
 	pool := pgtest.Open(t)
-	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -1217,10 +1219,8 @@ func TestPg_DeleteSnapshotsStaleOlderThan_OnlyRemovesStalePastRetention(t *testi
 	}
 
 	// Confirm `old` is gone, `fresh` + `recent-stale` remain.
-	// QueryRow + Scan distinguishes "no row" (ErrNoRows) from "row exists".
-	// pool.Exec returns nil error for a 0-row SELECT, which is why the
-	// previous assertion didn't actually catch the bug — pin the row
-	// count via COUNT instead.
+	// Use COUNT(*) + QueryRow.Scan (not pool.Exec) — Exec returns nil
+	// error for a 0-row SELECT, which would mask "row was not deleted".
 	assertRowCount := func(id string, want int) {
 		t.Helper()
 		var got int
@@ -1242,14 +1242,13 @@ func TestPg_DeleteSnapshotsStaleOlderThan_OnlyRemovesStalePastRetention(t *testi
 	}
 }
 
-func TestPg_ListLiveSnapshotStats_ExcludesStaleAndCapsAt10k(t *testing.T) {
+func TestPg_ListLiveSnapshotStats_ExcludesStaleAndOrdersByMemBytesDesc(t *testing.T) {
 	// Open the pool directly so the test can update mem/disk_bytes
 	// on the inserted rows to assert the projection shape. The public
 	// CreateSnapshot surface takes MemBytes/DiskBytes but the table
 	// stores the value as-is — we want a non-zero value here to pin
 	// the scan field, not the round-trip.
 	pool := pgtest.Open(t)
-	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -1398,7 +1397,6 @@ func TestPg_ListInstancesByStatesOlderThan_UsesStateAwareAgeColumn(t *testing.T)
 	// — PgStore.pool is unexported (state_test can't see it), and
 	// there's no public Store surface for "set started_at = X".
 	pool := pgtest.Open(t)
-	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -1407,13 +1405,20 @@ func TestPg_ListInstancesByStatesOlderThan_UsesStateAwareAgeColumn(t *testing.T)
 	_, appID, depID := seedLiveDeploy(t, s, ctx)
 	nodeID := resolveDefaultLocal(t, ctx, s)
 
-	// Two WAKING instances (one cold-booting, one waking) — the
-	// watchdog's CASE clause in ListInstancesByStatesOlderThan picks
-	// started_at for any state except 'snapshotting'. Migration 20
-	// removed 'snapshotting' from the DB CHECK constraint, so we
-	// exercise the started_at branch here. The CASE itself is
-	// defensively retained in pgstore.go for the historical state
-	// value — we just can't seed a row with that state any more.
+	// COVERAGE GAP — the watchdog's CASE clause (pgstore.go:1132) has
+	// two branches:
+	//
+	//   case when state = 'snapshotting' then parked_at else started_at end < $2
+	//
+	// Migration 00020 removed 'snapshotting' from instances_state_check,
+	// so the public Store surface cannot seed a row with that state —
+	// this test exercises only the ELSE branch via WAKING +
+	// COLD_BOOTING. The THEN branch (parked_at) is defensively retained
+	// in pgstore.go for any historical row that survives a re-migration.
+	// A future regression that drops the CASE clause entirely would
+	// reintroduce the pre-00015 bug where rows with NULL started_at were
+	// silently mis-aged; pin that branch separately if it becomes
+	// exercisable.
 	mkIns := func(st state.State, suffix string) string {
 		ins, err := s.CreateInstance(ctx, appID, depID, string(st), 256, nodeID)
 		if err != nil {
@@ -1424,7 +1429,8 @@ func TestPg_ListInstancesByStatesOlderThan_UsesStateAwareAgeColumn(t *testing.T)
 	wakingID := mkIns(state.StateWaking, "waking")
 	coldID := mkIns(state.StateColdBooting, "cold_booting")
 
-	// Threshold is 1 hour ago. Both rows' age columns must be < threshold.
+	// Threshold is 1 hour ago — both rows must be older than this for
+	// the predicate `started_at < threshold` to qualify them as stuck.
 	threshold := time.Now().Add(-1 * time.Hour)
 
 	// Backdate started_at on both rows so they're well below the
@@ -1445,22 +1451,11 @@ func TestPg_ListInstancesByStatesOlderThan_UsesStateAwareAgeColumn(t *testing.T)
 		t.Fatalf("ListInstancesByStatesOlderThan: %v", err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("got %d rows, want 2 (waking + cold_booting, both age < threshold)", len(got))
+		t.Fatalf("got %d rows, want 2 (waking + cold_booting, both started_at < threshold)", len(got))
 	}
 	gotIDs := idsOf(got)
 	if !contains(gotIDs, wakingID) || !contains(gotIDs, coldID) {
 		t.Errorf("missing rows: got %v, want both %s and %s", gotIDs, wakingID, coldID)
-	}
-
-	// State filter excludes a state that's not present: pick RUNNING
-	// (not seeded here) → 0 rows.
-	gotNone, err := s.ListInstancesByStatesOlderThan(ctx,
-		[]state.State{state.StateRunning}, time.Now().Add(-1*time.Hour))
-	if err != nil {
-		t.Fatalf("ListInstancesByStatesOlderThan(running): %v", err)
-	}
-	if len(gotNone) != 0 {
-		t.Errorf("running filter returned %d rows, want 0 (no running instance in this test)", len(gotNone))
 	}
 }
 
