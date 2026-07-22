@@ -140,7 +140,20 @@ func TestMigrations_00024_ComputeNodes(t *testing.T) {
 	// prove the backfill UPDATE skips already-populated rows. The
 	// WHERE node_id is null clause is what makes the backfill total
 	// but non-destructive on a re-apply; this test pins that.
-	otherUUID := "11111111-1111-1111-1111-111111111111"
+	//
+	// The flip target must reference a real compute_nodes row — the
+	// instances.node_id FK (added in 00024) rejects any UUID not in
+	// the parent table. Insert a second 'other' node and capture
+	// its gen_random_uuid() id, mirroring the same INSERT ...
+	// RETURNING pattern as the rest of the test.
+	var otherUUID string
+	if err := pool.QueryRow(ctx, `
+		insert into compute_nodes (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb)
+		values ('other-node', 'unix:///run/faas/other.sock', 160, 56000, 200, 47600)
+		returning id
+	`).Scan(&otherUUID); err != nil {
+		t.Fatalf("seed other-node compute_node: %v", err)
+	}
 	if _, err := pool.Exec(ctx,
 		`update instances set node_id = $1 where id = $2`,
 		otherUUID, instanceID,
