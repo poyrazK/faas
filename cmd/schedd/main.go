@@ -123,13 +123,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("schedd: load vmmd TLS: %w", err)
 	}
-	vmm, err := deps.dialVMM(ctx, vmmTarget, vmmTLS)
-	if err != nil {
-		return fmt.Errorf("schedd: dial vmmd %s: %w", vmmTarget, err)
-	}
-
 	store := state.NewPgStore(pool)
-	ledger := sched.NewLedger()
+
+	// Issue #97 / ADR-025 axis 3: enumerate the active compute_nodes
+	// once at startup and build a VMMRouter that dials vmmd per target
+	// URL on demand. The legacy single-box fleet has exactly one row
+	// (the synthetic 'default-local' seeded by migration 00024) so
+	// the router degenerates to "dial that one vmmd.sock on first
+	// RPC" — same behaviour as pre-#97, just behind a per-node lookup
+	// that the Wake / Park / KillStuck flow now plumbs through.
+	nodes, err := store.ActiveComputeNodes(ctx)
+	if err != nil {
+		return fmt.Errorf("schedd: list active compute_nodes: %w", err)
+	}
+	nodeInfos := make([]sched.ComputeNodeInfo, 0, len(nodes))
+	for _, n := range nodes {
+		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
+	}
+	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS)
+
+	ledger := sched.NewNodeLedger()
 	ops := wire.NewOpsMetrics("schedd")
 	// Dashboard gauges (spec §12): schedd owns the snapshots table and the
 	// admission ledger, so the four fcvm_* gauges live here, not in vmmd.
@@ -154,7 +167,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 		LvFcUsedPct: fcvm.DefaultLvFcUsedPct(api.LvFcName),
 	})
-	engine, err := sched.NewEngine(ctx, store, ledger, vmm, sched.PoolNotifier{Pool: pool}, fcVersion, log)
+	engine, err := sched.NewEngine(ctx, store, ledger, vmmRouter, sched.PoolNotifier{Pool: pool}, fcVersion, log)
 	if err != nil {
 		// A bootstrap failure caused by a cancelled ctx is the
 		// normal "test cancelled runWithDeps before startup

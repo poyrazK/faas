@@ -30,6 +30,14 @@ type InstanceInfo struct {
 	LastRequest  time.Time
 	Started      time.Time
 	IdleTimeoutS int // app-configured; 0 => plan default
+	// NodeID is the compute_node the instance lives on
+	// (issue #97 / ADR-025 axis 3). Informational today: the
+	// reaper's selectors (ReapIdle, SelectEvictions) work on the
+	// global instance set and don't split by node. The field is
+	// here so the loop's eviction log line can name the node and
+	// so a future per-node reaper slice (e.g. drain a single node
+	// before maintenance) can route without a Store round-trip.
+	NodeID string
 	// OpenConns is the count of TCP flows in ESTABLISHED or RELATED state
 	// from this instance (spec §17 G7). An app with open flows is
 	// considered active regardless of LastRequest staleness — this stops

@@ -46,8 +46,8 @@ func TestBillableRAMMB_Parity(t *testing.T) {
 				t.Fatalf("meter mismatch: helper=%d meter=%d (mbSec=%d)", gotHelper, gotMeter, mbSec)
 			}
 
-			// (2) schedd: Ledger.ResidentRAM() after one Admit == helper.
-			ledger := sched.NewLedger()
+			// (2) schedd: NodeLedger.ResidentRAM() after one Admit == helper.
+			ledger := sched.NewNodeLedger()
 			if err := ledger.Admit(sched.Request{
 				Instance: "i-1",
 				AppID:    "a-1",
