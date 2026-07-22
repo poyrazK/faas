@@ -16,9 +16,6 @@ import "github.com/onebox-faas/faas/pkg/state"
 // already imports pkg/state (engine.go), so the helper can be
 // re-exported without an import cycle.
 
-const (
-)
-
 // snapDir is the snapshot blob directory root (spec §8). Held as a var so
 // tests in pkg/imaged can override it via SetSnapDirForTesting; production
 // never mutates it.

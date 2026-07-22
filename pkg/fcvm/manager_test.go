@@ -161,8 +161,8 @@ func TestWakeColdBoot_DoesNotInvokeResumeHook(t *testing.T) {
 	mgr := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "/k"}, "1.7.0", nil, nil)
 	if _, err := mgr.Wake(context.Background(), WakeRequest{
 		Instance:   "cold-A",
-		BaseKey:   "/base.ext4",
-		LayerKey:  "/layer.ext4",
+		BaseKey:    "/base.ext4",
+		LayerKey:   "/layer.ext4",
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 		// Snapshot intentionally nil — forces cold boot.
@@ -186,8 +186,8 @@ func TestWakeRestore_InvokesResumeHook(t *testing.T) {
 	mgr := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "/k"}, "1.7.0", nil, nil)
 	if _, err := mgr.Wake(context.Background(), WakeRequest{
 		Instance:   "restore-A",
-		BaseKey:   "/base.ext4",
-		LayerKey:  "/layer.ext4",
+		BaseKey:    "/base.ext4",
+		LayerKey:   "/layer.ext4",
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 		Snapshot:   usableSnapshot(),
@@ -222,8 +222,8 @@ func TestWakeRestore_ResumeHookErrorFallsBackToColdBoot(t *testing.T) {
 	mgr := NewManager(&fakeRunner{}, fvmm, Paths{Kernel: "/k"}, "1.7.0", nil, nil)
 	if _, err := mgr.Wake(context.Background(), WakeRequest{
 		Instance:   "restore-fail",
-		BaseKey:   "/base.ext4",
-		LayerKey:  "/layer.ext4",
+		BaseKey:    "/base.ext4",
+		LayerKey:   "/layer.ext4",
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 		Snapshot:   usableSnapshot(),
