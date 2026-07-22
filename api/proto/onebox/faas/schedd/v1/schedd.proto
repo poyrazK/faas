@@ -60,9 +60,17 @@ enum WakeMethod {
 message WakeResponse {
   // instance_id is the instances.id row schedd created (or reused).
   string instance_id = 1;
-  // addr is host:port the gateway proxies to — the instance's routable
-  // identity (host_ip:8080, spec §7). Empty only on the error path.
-  string addr        = 2;
+  // node_id is the compute_node.id (uuid) the instance lives on
+  // (issue #98 / ADR-028). The gateway looks up the node's per-node
+  // gRPC client via its routing cache and forwards the request via the
+  // vmmd ForwardHTTP RPC. Empty only on the error path.
+  //
+  // Renamed from the legacy `addr` field (PR #116-era was host_ip:8080,
+  // an inner-netns placeholder unreachable from gatewayd on a remote
+  // host). Dual semantics were deliberately not preserved — leaving
+  // both fields risks a caller picking the wrong one and regressing
+  // the hot path silently. The new shape is the only contract.
+  string node_id     = 2;
   // method reports what actually happened (a restore that fell back to cold
   // boot per ADR-005 reads WAKE_COLD_BOOT).
   WakeMethod method  = 3;

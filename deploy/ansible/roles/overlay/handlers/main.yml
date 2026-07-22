@@ -1,0 +1,18 @@
+---
+# Issue #98 / ADR-028: overlay service handlers. Daemon-reload +
+# restart on every template change so a re-bootstrap picks up a
+# freshly-rendered authkey path without manual intervention.
+
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: restart faas-overlay
+  ansible.builtin.systemd:
+    name: faas-overlay
+    state: restarted
+
+- name: reload nftables
+  ansible.builtin.systemd:
+    name: nftables
+    state: reloaded

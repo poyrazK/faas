@@ -21,8 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
-	"strconv"
 	"sync"
 	"time"
 
@@ -32,7 +30,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fcvm"
-	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -161,11 +158,21 @@ func (e *Engine) WithOpsMetrics(ops *wire.OpsMetrics) *Engine {
 	return e
 }
 
-// WakeResult is what the gateway needs back from a wake: which instance serves
-// the app and at what address.
+// WakeResult is what the gateway needs back from a wake: which instance
+// serves the app and which compute_node it lives on
+// (issue #98 / ADR-028). The gateway uses NodeID to look up the
+// per-node gRPC client in its routing cache and forward via the vmmd
+// ForwardHTTP RPC.
+//
+// The previous shape carried `Addr = host_ip:8080`, an inner-netns
+// placeholder reachable only from gatewayd on the local box. Remote
+// nodes return `host_ip` from inside a different jailer's netns and
+// the gateway cannot dial it. The new shape carries the routable
+// identity (the compute_node.id), with the dial target chosen on
+// the gateway side from that.
 type WakeResult struct {
 	InstanceID string
-	Addr       string // host_ip:8080, empty only on error
+	NodeID     string // compute_nodes.id (uuid), empty only on error
 	Method     vmmdpb.WakeMethod
 }
 
@@ -206,7 +213,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	release := e.lockApp(appID)
 	if ins, err := e.store.RunningInstanceForApp(ctx, appID); err == nil {
 		release()
-		return WakeResult{InstanceID: ins.ID, Addr: instanceAddr(ins.HostIP), Method: vmmdpb.WakeMethod_WAKE_RESTORE}, nil
+		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE}, nil
 	} else if !errors.Is(err, state.ErrNotFound) {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: running lookup: %w", err)
@@ -396,7 +403,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	}
 	e.transition(ctx, bootInput.insID, bootInput.appID, state.StateRunning)
 
-	return WakeResult{InstanceID: bootInput.insID, Addr: instanceAddr(out.HostIP), Method: out.Method}, nil
+	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method}, nil
 }
 
 // bootInput is the immutable bundle of values needed across the
@@ -1067,13 +1074,6 @@ func (e *Engine) appMutex(appID string) *sync.Mutex {
 		e.appMu[appID] = mu
 	}
 	return mu
-}
-
-func instanceAddr(hostIP string) string {
-	if hostIP == "" {
-		return ""
-	}
-	return net.JoinHostPort(hostIP, strconv.Itoa(netns.AppPort))
 }
 
 // Ledger exposes the engine's admission ledger for the reaper's resident-RAM

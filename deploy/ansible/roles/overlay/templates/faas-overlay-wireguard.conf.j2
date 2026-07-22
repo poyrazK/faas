@@ -1,0 +1,25 @@
+# {{ ansible_managed }}
+# Operator-owned Wireguard config (issue #98 / ADR-028). The
+# role does NOT mint keys or peers; the [Interface] private key
+# is operator-vaulted and dropped in by a separate ansible-vault
+# task before this template renders. The [Peer] list comes from
+# faas_overlay_peers (defaults/main.yml), which operators populate
+# per-deployment.
+[Interface]
+Address = {{ faas_overlay_address | default('10.100.0.1/24') }}
+# PrivateKey must be supplied out-of-band; see role doc.
+PrivateKey = {{ faas_overlay_private_key | default('PLACEHOLDER') }}
+ListenPort = {{ faas_overlay_wg_port | default(51820) }}
+
+{% for peer in faas_overlay_peers | default([]) %}
+[Peer]
+# {{ peer.name }}
+PublicKey = {{ peer.public_key }}
+AllowedIPs = {{ peer.allowed_ips | join(', ') }}
+{% if peer.endpoint is defined %}
+Endpoint = {{ peer.endpoint }}
+{% endif %}
+{% if peer.persistent_keepalive is defined %}
+PersistentKeepalive = {{ peer.persistent_keepalive }}
+{% endif %}
+{% endfor %}

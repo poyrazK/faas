@@ -65,17 +65,19 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-// Wake asks schedd to bring up an instance for appID and returns which instance
-// serves it and the address it should be proxied to (host_ip:8080). The instance
-// id lets the gateway attribute last_request_at touches (ADR-018). Admission
-// denials arrive as an *api.Problem so gateway.writeWakeError maps them straight
-// to the right RFC 7807 status. Satisfies gateway.Scheduler.
+// Wake asks schedd to bring up an instance for appID and returns the
+// instance id + the compute_node.id the instance lives on
+// (issue #98 / ADR-028). The instance id lets the gateway attribute
+// last_request_at touches (ADR-018); the node id lets it look up the
+// per-node vmmd gRPC client in its routing cache. Admission denials
+// arrive as an *api.Problem so gateway.writeWakeError maps them
+// straight to the right RFC 7807 status. Satisfies gateway.Scheduler.
 func (c *Client) Wake(ctx context.Context, appID string) (string, string, error) {
 	resp, err := c.cli.Wake(ctx, &scheddpb.WakeRequest{AppId: appID})
 	if err != nil {
 		return "", "", liftErr(err)
 	}
-	return resp.GetInstanceId(), resp.GetAddr(), nil
+	return resp.GetInstanceId(), resp.GetNodeId(), nil
 }
 
 // ReportActivity flushes a batch of last_request_at touches to schedd. Returns

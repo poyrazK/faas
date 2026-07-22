@@ -22,10 +22,13 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/jackc/pgx/v5/pgxpool"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -45,6 +48,15 @@ type runDeps struct {
 	configPath string                                                                                                // defaults to /etc/faas/vmmd.toml
 	detectFC   func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
 	listen     func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
+	// openDB / openStore: only invoked when [compute_node].name is set;
+	// the legacy default-local path skips the DB entirely (no upsert).
+	openDB    func(context.Context, string) (*pgxpool.Pool, error)
+	openStore func(*pgxpool.Pool) *state.PgStore
+	// detectOverlayIP — best-effort, default shelles out to
+	// `tailscale ip -4`. nil means "skip overlay detection"
+	// (WireGuard-mode operators set [compute_node].overlay_ip
+	// explicitly and don't need this hook).
+	detectOverlayIP func(context.Context) (string, error)
 	// hostKey plumbing — function-typed so tests can drive first-boot
 	// (LoadHostKey returns ErrHostKeyNotFound → GenerateAndSaveHostKey)
 	// and restart (LoadHostKey returns id) paths without touching disk.
@@ -55,12 +67,15 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath:     envOr("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
-		detectFC:       fcvm.DetectFirecrackerVersion,
-		listen:         wire.ListenAs,
-		loadHostKey:    secretbox.LoadHostKey,
-		genAndSaveKey:  secretbox.GenerateAndSaveHostKey,
-		writeRecipient: secretbox.WriteRecipientFile,
+		configPath:      envOr("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
+		detectFC:        fcvm.DetectFirecrackerVersion,
+		listen:          wire.ListenAs,
+		openDB:          db.Open,
+		openStore:       state.NewPgStore,
+		detectOverlayIP: defaultDetectOverlayIP,
+		loadHostKey:     secretbox.LoadHostKey,
+		genAndSaveKey:   secretbox.GenerateAndSaveHostKey,
+		writeRecipient:  secretbox.WriteRecipientFile,
 	}
 }
 
@@ -140,6 +155,32 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	)
 	if err != nil {
 		return err
+	}
+
+	// Issue #98 / ADR-028: vmmd self-registers in compute_nodes
+	// before the gRPC listener binds. Fail-closed: if the upsert
+	// fails (Postgres down, schema drift), vmmd exits rather than
+	// serving traffic with no identity. The legacy default-local
+	// path (NodeName empty) skips the DB entirely — no migration
+	// is required on a fresh single-box dev install beyond what
+	// already exists.
+	if cfg.ComputeNode.NodeName != "" {
+		dbURL := cfg.DBURL
+		if dbURL == "" {
+			dbURL = envOr("FAAS_VMMD_DBURL", "")
+		}
+		if dbURL == "" {
+			return errors.New("vmmd: [compute_node].name set but [db_url] (or FAAS_VMMD_DBURL) is empty")
+		}
+		pool, err := deps.openDB(ctx, dbURL)
+		if err != nil {
+			return fmt.Errorf("vmmd: open db for self-registration: %w", err)
+		}
+		defer pool.Close()
+		store := deps.openStore(pool)
+		if _, err := registerComputeNode(ctx, store, cfg.ComputeNode, listenTarget, deps.detectOverlayIP, log); err != nil {
+			return err
+		}
 	}
 
 	cbm := fcvm.NewColdBootMetrics()

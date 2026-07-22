@@ -1,0 +1,13 @@
+[Unit]
+Description=faas overlay (wireguard on {{ faas_overlay_iface }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/wg-quick up {{ faas_overlay_iface }}
+ExecStop=/usr/bin/wg-quick down {{ faas_overlay_iface }}
+
+[Install]
+WantedBy=multi-user.target

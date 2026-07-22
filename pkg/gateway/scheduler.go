@@ -37,12 +37,14 @@ import (
 //   - return an *api.Problem-shaped error so the gateway can map it to the
 //     right RFC 7807 status without re-classifying strings.
 type Scheduler interface {
-	// Wake ensures an instance for appID is running and returns which instance
-	// serves it and at what address. The instance id lets the gateway attribute
-	// last_request_at touches back to the right row (spec §4.1, ADR-018). The
-	// error wraps an *api.Problem so the gateway's writeWakeError can map it
-	// directly.
-	Wake(ctx context.Context, appID string) (instanceID, addr string, err error)
+	// Wake ensures an instance for appID is running and returns the
+	// instance id + compute_node.id it lives on (issue #98 / ADR-028).
+	// The instance id lets the gateway attribute last_request_at touches
+	// back to the right row (spec §4.1, ADR-018). The node id lets the
+	// gateway look up the per-node vmmd gRPC client in its routing cache
+	// and forward via the vmmd ForwardHTTP RPC. The error wraps an
+	// *api.Problem so the gateway's writeWakeError can map it directly.
+	Wake(ctx context.Context, appID string) (instanceID, nodeID string, err error)
 }
 
 // ErrSchedulerUnconfigured is returned by NoopScheduler.Wake.
@@ -58,13 +60,16 @@ func (NoopScheduler) Wake(context.Context, string) (string, string, error) {
 }
 
 // FakeScheduler is the in-process scheduler used by handler/cmd/gatewayd
-// tests. It records every Wake call and returns a stable fake address per
-// app; configurable LatencyMs simulates a cold wake.
+// tests. It records every Wake call and returns a stable fake node id
+// per app; configurable LatencyMs simulates a cold wake. The "fake
+// addr" name is retained as the parameter name for call-site compat
+// with older tests — the value flows back through Wake as if it were
+// the compute_node id (in tests anything string-shaped works).
 type FakeScheduler struct {
 	mu         sync.Mutex
 	calls      int
 	latencyMs  int
-	addr       string
+	addr       string // reused as the synthetic node id in tests
 	instanceID string
 	errOnWake  error
 
@@ -74,7 +79,7 @@ type FakeScheduler struct {
 
 func NewFakeScheduler(addr string) *FakeScheduler {
 	if addr == "" {
-		addr = "127.0.0.1:18080"
+		addr = "node-fake"
 	}
 	return &FakeScheduler{
 		addr:       addr,

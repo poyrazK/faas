@@ -10,11 +10,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// fakeResolver maps addr -> instance id for the sink under test.
+// fakeResolver maps node id -> instance id for the sink under test.
+// Issue #98 / ADR-028: the dial key is now the compute_node.id the
+// handler forwarded to via the vmmd ForwardHTTP RPC, not the host:port
+// addr.
 type fakeResolver map[string]string
 
-func (f fakeResolver) InstanceIDForAddr(addr string) (string, bool) {
-	id, ok := f[addr]
+func (f fakeResolver) InstanceIDForNodeID(nodeID string) (string, bool) {
+	id, ok := f[nodeID]
 	return id, ok
 }
 

@@ -1,24 +1,28 @@
-// heartbeat.go is schedd's per-node liveness loop (issue #97 /
-// ADR-025 axis 3, PR #114). Loop.Run drives Heartbeat on a fixed
-// cadence (DefaultHeartbeatInterval = 30s); each tick does two
-// state-mutating operations per active compute_node:
+// Package sched — heartbeat goroutine (issue #97 #98 / ADR-025 axis 3
+// + ADR-028).
 //
-//   1. router.Ping(ctx, nodeID)  — wire-level liveness probe.
-//      A successful round-trip proves both gRPC socket reachability
-//      and that vmmd's goroutine scheduler is responsive enough to
-//      schedule the handler. The dial-once-per-target cache (PR #113's
-//      VMMRouter) means this reuses the connection lifecycle RPCs
-//      already opened, so the heartbeat adds no per-tick dial cost.
-//   2. On success: store.HeartbeatComputeNode stamps last_heartbeat_at
-//      to now(). On failure: store.MarkComputeNodeInactive flips
-//      active=false — placement's ActiveComputeNodes filter then
-//      skips the dead node so future wakes don't dial an unreachable
-//      target.
+// schedd is the authority on "is this compute_node still alive?".
+// schedd pings each registered vmmd on a tick (default 30s), and:
+//   - on success, calls HeartbeatComputeNode to stamp
+//     last_heartbeat_at = now()
+//   - on failure, flips active=false once the timestamp ages past
+//     the staleness window (default 90s = 3× the 30s tick)
 //
-// One dead node must not stall the rest of the loop: a per-node
-// Ping error is logged + the row is flipped, then we move on to the
-// next node. ctx cancellation unwinds the loop cleanly; in-flight
-// Pings honour the deadline via gRPC's own ctx plumbing.
+// Wire primitive: router.Ping (PR #114) — proven the socket is
+// reachable AND vmmd's goroutine scheduler is responsive enough to
+// schedule a handler. A successful round-trip is the only signal
+// schedd needs to keep last_heartbeat_at fresh.
+//
+// Direction was chosen to invert the vmmd-pushes design. schedd is
+// the admission authority and shouldn't trust inbound traffic from a
+// box it may have already drained; outbound probing means schedd
+// detects failure on its own clock, not on the box's.
+//
+// The goroutine owns its own ticker (not the §6.1 1s watchdog
+// ticker) because the cadence is fundamentally different — 30s for
+// heartbeat vs 1s for state-stuck detection — and conflating them
+// would force schedd's hot loop to do a per-row DB read 30× more
+// often than needed.
 
 package sched
 
@@ -41,6 +45,13 @@ import (
 // runDeps seam for tests that want a sub-second cadence.
 const DefaultHeartbeatInterval = 30 * time.Second
 
+// DefaultHeartbeatStaleness is the age threshold at which a stale
+// last_heartbeat_at flips active=false. 90s = 3× the 30s tick; the
+// ratio gives one retry a chance before deactivation kicks in
+// (issue #98 / ADR-028 acceptance: "Watchdog marks a node
+// active=false after 90s of missed pings").
+const DefaultHeartbeatStaleness = 90 * time.Second
+
 // Heartbeat owns one tick of the per-node liveness sweep. It is
 // stateless across ticks — each tick queries the store fresh —
 // so a panicking tick does not corrupt subsequent ticks (same
@@ -54,13 +65,16 @@ type Heartbeat struct {
 	// DefaultHeartbeatInterval; cmd/schedd's runDeps overrides
 	// for tests.
 	Interval time.Duration
+	// Staleness is the age threshold for deactivation. Zero
+	// falls back to DefaultHeartbeatStaleness.
+	Staleness time.Duration
 }
 
 // NewHeartbeat wires the dependencies. store + vmm must be non-nil;
-// log may be nil (slog.Default). The returned Heartbeat uses
-// DefaultHeartbeatInterval — production callers (cmd/schedd) and
-// tests that want a different cadence set .Interval directly
-// before calling Run.
+// log may be nil (slog.Default). The returned Heartbeat uses the
+// defaults — production callers (cmd/schedd) and tests that want a
+// different cadence set .Interval / .Staleness directly before
+// calling Run.
 func NewHeartbeat(store state.Store, vmm RoutedVMM, log *slog.Logger) *Heartbeat {
 	if log == nil {
 		log = slog.Default()
@@ -69,12 +83,24 @@ func NewHeartbeat(store state.Store, vmm RoutedVMM, log *slog.Logger) *Heartbeat
 }
 
 // Tick runs one heartbeat sweep: enumerate active compute_nodes,
-// Ping each, and stamp or flip accordingly. Exposed so loop.go can
-// call it directly from a select case (no goroutine boundary in
-// the heartbeat itself; the goroutine that owns the select is
-// Loop.Run, same as the watchdog/retention tickers). One Ping
-// error must not abort the sweep — we log + flip and move on.
+// ping each via router.Ping, and stamp or flip accordingly. Exposed
+// so loop.go can call it directly from a select case (no goroutine
+// boundary in the heartbeat itself; the goroutine that owns the
+// select is Loop.Run, same as the watchdog/retention tickers). One
+// Ping error must not abort the sweep — we log + flip and move on.
+//
+// Tick honours the staleness gate (issue #98 / ADR-028): a row
+// whose last_heartbeat_at has aged past h.Staleness is flipped
+// inactive even if Ping just succeeded (defence-in-depth — Ping
+// racing with a half-shut vmmd might return OK once after the box
+// was already dead). Re-activation happens on the next successful
+// ping post-recovery, same as PR #114's pre-#98 behaviour.
 func (h *Heartbeat) Tick(ctx context.Context) error {
+	staleness := h.Staleness
+	if staleness <= 0 {
+		staleness = DefaultHeartbeatStaleness
+	}
+	now := h.now()
 	nodes, err := h.store.ActiveComputeNodes(ctx)
 	if err != nil {
 		// A transient DB error must not crash schedd. Log + return;
@@ -89,6 +115,21 @@ func (h *Heartbeat) Tick(ctx context.Context) error {
 		// shutting down.
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		// Staleness gate (issue #98): even if Ping below succeeds,
+		// a node whose last_heartbeat_at is older than the
+		// threshold is stale and gets flipped inactive. The ping
+		// then continues on the next tick, post-deactivation.
+		if !n.LastHeartbeatAt.IsZero() && now.Sub(n.LastHeartbeatAt) > staleness {
+			h.log.Info("heartbeat: node stale, deactivating",
+				"node_id", n.ID, "node_name", n.Name,
+				"last_seen", n.LastHeartbeatAt.Format(time.RFC3339),
+				"staleness", staleness.String())
+			if mErr := h.store.MarkComputeNodeInactive(ctx, n.ID); mErr != nil && !errors.Is(mErr, state.ErrNotFound) {
+				h.log.Warn("heartbeat: mark-inactive failed",
+					"node_id", n.ID, "err", mErr)
+			}
+			continue
 		}
 		if _, err := h.vmm.Ping(ctx, n.ID); err != nil {
 			// A dead node gets flipped inactive so placement

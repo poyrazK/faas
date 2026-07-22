@@ -79,6 +79,16 @@ type Config struct {
 	// dev boxes but raises Postgres write traffic — production
 	// should leave it at the default unless ops have a reason.
 	HeartbeatInterval time.Duration `toml:"heartbeat_interval"`
+
+	// HeartbeatStaleness is the age threshold at which a stale
+	// last_heartbeat_at flips active=false (issue #98 / ADR-028
+	// acceptance: "Watchdog marks a node active=false after 90s of
+	// missed pings"). Zero or negative reverts to
+	// sched.DefaultHeartbeatStaleness (90s). The invariant
+	// HeartbeatInterval < HeartbeatStaleness prevents a single
+	// missed tick from deactivating a healthy node — keep at
+	// least 2 × Interval.
+	HeartbeatStaleness time.Duration `toml:"heartbeat_staleness"`
 }
 
 // ResolveListenTarget returns the gRPC target schedd should bind.

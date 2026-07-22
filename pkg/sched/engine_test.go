@@ -255,8 +255,8 @@ func TestEngineWake_ColdBoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
-	if res.Addr != "10.100.0.2:8080" {
-		t.Errorf("addr = %q, want 10.100.0.2:8080", res.Addr)
+	if res.NodeID == "" {
+		t.Errorf("NodeID = empty, want compute_node id (issue #98 / ADR-028)")
 	}
 	if vmm.coldBoots != 1 || vmm.restores != 0 {
 		t.Errorf("coldBoots=%d restores=%d, want 1/0", vmm.coldBoots, vmm.restores)

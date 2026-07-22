@@ -40,21 +40,21 @@ func newClient(t *testing.T, eng scheddgrpc.SchedAPI) *scheddgrpc.Client {
 	return c
 }
 
-func TestClientWake_ReturnsAddr(t *testing.T) {
+func TestClientWake_ReturnsNodeID(t *testing.T) {
 	c := newClient(t, &fakeEngine{
 		wakeFn: func(_ context.Context, appID string) (sched.WakeResult, error) {
 			if appID != "app-1" {
 				t.Errorf("appID = %q", appID)
 			}
-			return sched.WakeResult{InstanceID: "i-1", Addr: "10.100.0.2:8080", Method: vmmdpb.WakeMethod_WAKE_RESTORE}, nil
+			return sched.WakeResult{InstanceID: "i-1", NodeID: "node-test-1", Method: vmmdpb.WakeMethod_WAKE_RESTORE}, nil
 		},
 	})
-	instanceID, addr, err := c.Wake(context.Background(), "app-1")
+	instanceID, nodeID, err := c.Wake(context.Background(), "app-1")
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
-	if addr != "10.100.0.2:8080" {
-		t.Errorf("addr = %q", addr)
+	if nodeID != "node-test-1" {
+		t.Errorf("nodeID = %q", nodeID)
 	}
 	if instanceID != "i-1" {
 		t.Errorf("instanceID = %q, want i-1", instanceID)

@@ -314,6 +314,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// through runDeps.heartbeatInterval to exercise the wiring.
 	hb := sched.NewHeartbeat(store, vmmRouter, log)
 	hb.Interval = cfg.HeartbeatInterval
+	hb.Staleness = cfg.HeartbeatStaleness
 	if deps.heartbeatInterval > 0 {
 		// Tests inject a sub-second cadence via runDeps to exercise
 		// the wiring without waiting 30s for production cadence.

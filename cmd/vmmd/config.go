@@ -62,6 +62,33 @@ type Config struct {
 	// detection and prefers it. Startup logs both so an operator can
 	// spot drift between the two.
 	KernelPath string `toml:"kernel_path"`
+
+	// ComputeNode is the vmmd self-registration block (issue #98 /
+	// ADR-028). vmmd Upserts its own row in compute_nodes at startup
+	// so schedd knows it exists without an operator POST. Empty
+	// NodeName = "no self-registration" (legacy single-box dev path
+	// that relies on the default-local seed from migration 00024).
+	ComputeNode ComputeNodeConfig `toml:"compute_node"`
+
+	// DBURL is the Postgres DSN vmmd uses for the
+	// compute_nodes self-registration upsert at startup. Required
+	// when [compute_node].name is set; optional when NodeName is
+	// empty (the legacy default-local path doesn't need DB access).
+	// Default empty; FAAS_VMMD_DBURL env var overrides for the
+	// containerised deployments that prefer env-only config.
+	DBURL string `toml:"db_url"`
+}
+
+// ComputeNodeConfig is the [compute_node] TOML section. Field naming
+// tracks pkg/state.ComputeNode 1:1; values flow into the upsert
+// after the resource sizing checks (VPCPUs > 0, MemMB > 0, etc.).
+type ComputeNodeConfig struct {
+	NodeName           string `toml:"name"`                 // defaults to short hostname when empty
+	VPCPUs             int    `toml:"vpcpus"`               // total vCPUs this box offers
+	MemMB              int    `toml:"mem_mb"`               // total RAM in MiB
+	MaxConcurrency     int    `toml:"max_concurrency"`      // parallel live instances
+	AdmissionCeilingMB int    `toml:"admission_ceiling_mb"` // Σ(ram_mb + 8) cap
+	OverlayIP          string `toml:"overlay_ip"`           // Tailscale/Wireguard IP; auto-detected when empty
 }
 
 // ResolveListenTarget returns the gRPC target the server should bind.
@@ -94,6 +121,17 @@ func LoadConfig(path string) (*Config, error) {
 		// fixtures working until operators migrate.
 		KernelPath: "/srv/fc/base/vmlinux-6.1",
 		OwnerUser:  "faas-vmmd",
+		ComputeNode: ComputeNodeConfig{
+			// Defaults match the synthetic default-local row seeded
+			// by migration 00024 so single-box dev (no overlay)
+			// still has a coherent self-registration on first boot.
+			// Operators scaling beyond one box override every
+			// [compute_node] field explicitly via vmmd.toml.
+			VPCPUs:             160,
+			MemMB:              56000,
+			MaxConcurrency:     200,
+			AdmissionCeilingMB: 47600,
+		},
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

@@ -1,0 +1,58 @@
+# Wireguard stub (issue #98 / ADR-028).
+#
+# This is the operator-driven path. The role:
+#   1. Installs the kernel module + userspace tools.
+#   2. Renders a wg-quick-style config from defaults.
+#   3. Writes the systemd unit that brings the interface up.
+#
+# It does NOT:
+#   - Mint keys. Operators use `wg genkey` themselves; the
+#     resulting private key is operator-vaulted and passed via
+#     the wg config file (NOT in defaults — that's why this
+#     role is a stub).
+#   - Manage peer lists. Operators add peers per-box; the role
+#     template includes the standard [Peer] sections from
+#     faas_overlay_peers, which defaults to [].
+#
+# Why this is a stub and not the default: tailscale is one
+# operator action (paste authkey). Wireguard is N operator
+# actions (mint, exchange, store, repeat per peer). The Tailscale
+# path ships first; this stub is here so the wiring exists when
+# an operator wants it.
+
+- name: wireguard — install tools
+  ansible.builtin.apt:
+    name:
+      - wireguard-tools
+      - linux-headers-{{ ansible_kernel }}
+    state: present
+    update_cache: true
+  when: ansible_kernel is defined
+
+- name: wireguard — render config
+  ansible.builtin.template:
+    src: faas-overlay-wireguard.conf.j2
+    dest: /etc/wireguard/{{ faas_overlay_iface }}.conf
+    owner: root
+    group: root
+    mode: "0600"
+  notify:
+    - restart faas-overlay
+
+- name: wireguard — render systemd unit
+  ansible.builtin.template:
+    src: faas-overlay-wireguard.service.j2
+    dest: /etc/systemd/system/faas-overlay.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart faas-overlay
+
+- name: wireguard — enable + start service
+  ansible.builtin.systemd:
+    name: faas-overlay
+    enabled: true
+    state: started
+    daemon_reload: true
