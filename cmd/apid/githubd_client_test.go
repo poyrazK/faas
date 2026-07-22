@@ -14,10 +14,14 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // errGithubdNotReadyCode is the stable code returned by every stub
-// method. Pinned here so a future refactor doesn't silently rename it.
+// method. Pinned here AND asserted against in TestStubGithubdClient_EveryMethodReturnsNotReady
+// so a future refactor that renames the code (or stops returning an
+// *api.Problem) is caught by CI.
 const errGithubdNotReadyCode = "githubd_not_ready"
 
 // Compile-time check that the package-level sentinel is still an
@@ -29,6 +33,26 @@ var _ = errGithubdNotReady
 // in a refactor, this line fails to compile and tells the author to
 // update both sides.
 var _ = errors.Is
+
+// assertGithubdNotReadyError fails the test if err is not an *api.Problem
+// with Code == errGithubdNotReadyCode. Lets the per-method tests stay
+// table-readable: each row checks the error shape in one call instead of
+// the dance of "non-nil" + "non-empty" + "cast" + "compare Code".
+func assertGithubdNotReadyError(t *testing.T, method string, err error) {
+	t.Helper()
+	if err == nil {
+		t.Errorf("%s: err = nil, want not-ready problem", method)
+		return
+	}
+	prob, ok := err.(*api.Problem)
+	if !ok {
+		t.Errorf("%s: err type = %T, want *api.Problem", method, err)
+		return
+	}
+	if prob.Code != errGithubdNotReadyCode {
+		t.Errorf("%s: code = %q, want %q", method, prob.Code, errGithubdNotReadyCode)
+	}
+}
 
 // TestNewGithubdClient_EmptySocketReturnsStub confirms the slice-1
 // default: no socket configured → stub. The constructor must NEVER
@@ -79,9 +103,10 @@ func TestLiveClient_CloseNilSafe(t *testing.T) {
 }
 
 // TestStubGithubdClient_EveryMethodReturnsNotReady: a sweep that calls
-// every stub method and confirms each returns a non-nil problem. A
-// future refactor that returns a real value from any of these would
-// break the "GitHub not connected" UX, so pin the surface.
+// every stub method and confirms each returns an *api.Problem with
+// Code == errGithubdNotReadyCode. A future refactor that returns a
+// real value, or returns the problem from a different source, would
+// break the "GitHub not connected" UX — so pin the surface.
 func TestStubGithubdClient_EveryMethodReturnsNotReady(t *testing.T) {
 	var s stubGithubdClient
 	ctx := context.Background()
@@ -89,9 +114,7 @@ func TestStubGithubdClient_EveryMethodReturnsNotReady(t *testing.T) {
 	// (install, token, login, err) — install must be the unspecified
 	// sentinel because the dashboard branches on it.
 	inst, tok, login, err := s.GetInstallState(ctx, "a")
-	if err == nil {
-		t.Errorf("GetInstallState: err = nil, want not-ready")
-	}
+	assertGithubdNotReadyError(t, "GetInstallState", err)
 	if inst != InstallStateUnspecified {
 		t.Errorf("GetInstallState: inst = %v, want unspecified", inst)
 	}
@@ -99,30 +122,22 @@ func TestStubGithubdClient_EveryMethodReturnsNotReady(t *testing.T) {
 		t.Errorf("GetInstallState: token=%q login=%q, want empty", tok, login)
 	}
 
-	if _, err := s.ExchangeOAuthCode(ctx, "a", "c", "s"); err == nil {
-		t.Errorf("ExchangeOAuthCode: err = nil")
-	}
-	if _, err := s.ListInstallableRepos(ctx, "a"); err == nil {
-		t.Errorf("ListInstallableRepos: err = nil")
-	}
-	if _, err := s.BindAppRepo(ctx, "app", "a", "r", "main"); err == nil {
-		t.Errorf("BindAppRepo: err = nil")
-	}
-	if err := s.UnbindAppRepo(ctx, "app", "a"); err == nil {
-		t.Errorf("UnbindAppRepo: err = nil")
-	}
-	if _, err := s.GetAppBinding(ctx, "app", "a"); err == nil {
-		t.Errorf("GetAppBinding: err = nil")
-	}
-	if _, _, err := s.CreateDeploymentFromPush(ctx, "r", "ref", "sha", "pusher"); err == nil {
-		t.Errorf("CreateDeploymentFromPush: err = nil")
-	}
-	if err := s.WriteCheck(ctx, "r", "sha", CheckPhaseBuilding, "url", "summary"); err == nil {
-		t.Errorf("WriteCheck: err = nil")
-	}
-	if _, _, err := s.VerifyInstallation(ctx, 123); err == nil {
-		t.Errorf("VerifyInstallation: err = nil")
-	}
+	_, err = s.ExchangeOAuthCode(ctx, "a", "c", "s")
+	assertGithubdNotReadyError(t, "ExchangeOAuthCode", err)
+	_, err = s.ListInstallableRepos(ctx, "a")
+	assertGithubdNotReadyError(t, "ListInstallableRepos", err)
+	_, err = s.BindAppRepo(ctx, "app", "a", "r", "main")
+	assertGithubdNotReadyError(t, "BindAppRepo", err)
+	err = s.UnbindAppRepo(ctx, "app", "a")
+	assertGithubdNotReadyError(t, "UnbindAppRepo", err)
+	_, err = s.GetAppBinding(ctx, "app", "a")
+	assertGithubdNotReadyError(t, "GetAppBinding", err)
+	_, _, err = s.CreateDeploymentFromPush(ctx, "r", "ref", "sha", "pusher")
+	assertGithubdNotReadyError(t, "CreateDeploymentFromPush", err)
+	err = s.WriteCheck(ctx, "r", "sha", CheckPhaseBuilding, "url", "summary")
+	assertGithubdNotReadyError(t, "WriteCheck", err)
+	_, _, err = s.VerifyInstallation(ctx, 123)
+	assertGithubdNotReadyError(t, "VerifyInstallation", err)
 	if err := s.Close(); err != nil {
 		t.Errorf("Close: err = %v, want nil (stub is no-op)", err)
 	}

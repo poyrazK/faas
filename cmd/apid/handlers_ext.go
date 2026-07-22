@@ -170,6 +170,14 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, api.ErrCapacity("could not activate rollback target"))
 		return
 	}
+	// Re-read target so the response carries post-promotion status=Live,
+	// not the pre-promotion Superseded we snapshotted into the local
+	// struct above. Listeners downstream branch on this field — fix
+	// surfaced by PR #117 review (finding F3).
+	fresh, err := s.store.DeploymentByID(ctx(r), target.ID)
+	if err == nil {
+		target = fresh
+	}
 	// F-03: rollback emit now carries status="live" (the freshly-restored
 	// deployment is live) and a deployment_id for listeners that switch on
 	// the field. imaged's handleDeployment ignores this emit (the rollback

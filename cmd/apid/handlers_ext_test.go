@@ -272,8 +272,14 @@ func TestGetDeployment_UnknownReturns404(t *testing.T) {
 	assertProblem(t, rec, 404, api.CodeNotFound)
 }
 
-// TestRollbackApp_HappyPath seeds two deployments (one live, one superseded),
-// then rolls back. The formerly-superseded deployment should now be live.
+// TestRollbackApp_HappyPath seeds two deployments (one live, one
+// superseded), then rolls back. Confirms the response shape (it carries
+// the previously-superseded deployment's id) AND that the underlying
+// row was flipped to live AND that the response itself reports the
+// post-promotion status. The third assertion (response status) is the
+// F3 fix-up: the handler used to snapshot the target BEFORE calling
+// MarkDeploymentLive and return status="superseded" — the test now
+// pins the correct post-promotion state in the API response.
 func TestRollbackApp_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	dep1 := mustSeedDeployment(t, e, "rb-app")
@@ -308,18 +314,11 @@ func TestRollbackApp_HappyPath(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if out.ID != dep1.ID {
-		t.Errorf("rollback returned %s, want %s", out.ID, dep1.ID)
+		t.Errorf("rollback returned id=%s, want %s (the superseded target)", out.ID, dep1.ID)
 	}
-	// Note: the handler snapshots target's state BEFORE calling
-	// MarkDeploymentLive, so the response carries the target's prior
-	// status (superseded). Verify the underlying row was flipped to
-	// live instead.
-	got, err := e.store.DeploymentByID(context.Background(), dep1.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Status != state.DeployLive {
-		t.Errorf("target dep status after rollback = %s, want live", got.Status)
+	if out.Status != string(state.DeployLive) {
+		t.Errorf("rollback response status = %q, want %q (post-promotion; was %q pre-F3 fix)",
+			out.Status, state.DeployLive, state.DeploySuperseded)
 	}
 }
 
@@ -517,7 +516,8 @@ func TestCreateCron_HappyPath(t *testing.T) {
 	}
 }
 
-// TestCreateCron_InvalidSchedule confirms the cron regex 422 path.
+// TestCreateCron_InvalidSchedule confirms the cron regex 400 path
+// (ErrCronInvalid is http.StatusBadRequest, Code=CodeCronInvalid).
 func TestCreateCron_InvalidSchedule(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "cron-bad")
@@ -571,7 +571,8 @@ func TestUpdateCron_HappyPath(t *testing.T) {
 	}
 }
 
-// TestUpdateCron_InvalidSchedule: PATCH with a bad schedule is 422.
+// TestUpdateCron_InvalidSchedule: PATCH with a bad schedule is 400
+// (matches ErrCronInvalid in pkg/api/errors.go).
 func TestUpdateCron_InvalidSchedule(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "uc-bad")
