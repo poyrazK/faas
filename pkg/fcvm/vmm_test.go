@@ -770,7 +770,7 @@ func TestRestore_MkChrootFailure(t *testing.T) {
 	v := NewJailerVMM(base, time.Second)
 	err := v.Restore(context.Background(), Lease{Instance: "restore-fail"}, RestoreSpec{
 		VMStatePath: "/nonexistent/vmstate",
-		KernelKey:  "/nonexistent/kernel", BaseKey: "/nonexistent/base", LayerKey: "/nonexistent/layer",
+		KernelKey:   "/nonexistent/kernel", BaseKey: "/nonexistent/base", LayerKey: "/nonexistent/layer",
 	})
 	if err == nil {
 		t.Fatal("expected mkChroot failure")
@@ -1439,8 +1439,8 @@ func newLocalBackendWithFixture(t *testing.T) (storagedriver.StorageBackend, str
 		t.Fatalf("NewLocalStorageBackend: %v", err)
 	}
 	seed := map[string][]byte{
-		"kernel/1.10.0":             []byte("FAAS-VMLINUX-1.10.0"),
-		"base/runtime-node22.ext4":  []byte("FAAS-BASE-NODE22"),
+		"kernel/1.10.0":            []byte("FAAS-VMLINUX-1.10.0"),
+		"base/runtime-node22.ext4": []byte("FAAS-BASE-NODE22"),
 		"apps/slug-abc/dep-1.ext4": []byte("FAAS-LAYER-APP"),
 	}
 	for k, b := range seed {

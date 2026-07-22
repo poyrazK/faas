@@ -44,8 +44,8 @@ import (
 
 // containsEmptyStringDefault reports whether the catalog's
 // column_default expression for rootfs_key represents the empty
-// string literal. Postgres renders DEFAULT '' as "''::text" (or
-// "''" depending on version); we accept any rendering whose only
+// string literal. Postgres renders DEFAULT ” as "”::text" (or
+// "”" depending on version); we accept any rendering whose only
 // non-whitespace content is two single quotes, since that's the
 // canonical empty-string literal across PG 12+.
 func containsEmptyStringDefault(s string) bool {

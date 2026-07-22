@@ -8,9 +8,9 @@ import (
 
 func validColdSpec() ColdBootSpec {
 	return ColdBootSpec{
-		KernelKey: "/srv/fc/base/vmlinux-6.1",
-		BaseKey:   "/srv/fc/base/runner-node22.ext4",
-		LayerKey:  "/srv/fc/apps/app/layer-1.ext4",
+		KernelKey:  "/srv/fc/base/vmlinux-6.1",
+		BaseKey:    "/srv/fc/base/runner-node22.ext4",
+		LayerKey:   "/srv/fc/apps/app/layer-1.ext4",
 		VcpuCount:  2,
 		MemSizeMiB: 256,
 		Tap:        "tap0",

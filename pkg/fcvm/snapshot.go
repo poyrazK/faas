@@ -98,9 +98,9 @@ type RestoreSpec struct {
 	// Park→Kill). Names changed from *Path → *Key to match the new
 	// semantics; type stays string so call sites only need a name
 	// update.
-	KernelKey string
-	BaseKey   string
-	LayerKey  string
+	KernelKey   string
+	BaseKey     string
+	LayerKey    string
 	VsockDevice *VsockDevice
 	// StorageKey is the prefix-matched key under which the mem blob lives
 	// (e.g. "snap/<deploymentID>/mem"). Restore resolves it via

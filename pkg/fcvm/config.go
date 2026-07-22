@@ -109,12 +109,12 @@ const coldBootArgs = "console=off reboot=k panic=1 pci=off quiet " +
 // match the new semantics; the field type is still string so existing
 // call sites only need a name update.
 type ColdBootSpec struct {
-	KernelKey string // StorageBackend key (e.g. "kernel/1.10.0")
-	BaseKey   string // StorageBackend key for drive0 shared ro base rootfs
-	LayerKey  string // StorageBackend key for drive1 per-app app layer
-	VcpuCount int    // 2, or 4 for Scale
-	MemSizeMiB int   // plan RAM
-	Tap       string // netns-side tap device (always "tap0")
+	KernelKey  string // StorageBackend key (e.g. "kernel/1.10.0")
+	BaseKey    string // StorageBackend key for drive0 shared ro base rootfs
+	LayerKey   string // StorageBackend key for drive1 per-app app layer
+	VcpuCount  int    // 2, or 4 for Scale
+	MemSizeMiB int    // plan RAM
+	Tap        string // netns-side tap device (always "tap0")
 }
 
 // BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS and

@@ -361,9 +361,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// The restored VM re-reads kernel + drives under the chroot
 			// basenames; Park→Kill erased the previous chroot, so hand the
 			// Manager.ColdBoot equivalents back to the VMM to re-stage.
-			KernelKey:  m.paths.Kernel,
-			BaseKey:    req.BaseKey,
-			LayerKey:   req.LayerKey,
+			KernelKey: m.paths.Kernel,
+			BaseKey:   req.BaseKey,
+			LayerKey:  req.LayerKey,
 			// ADR-022: same vsock device the cold-boot path attaches, derived
 			// from the lease's slot so the guest's listener is reachable at a
 			// globally unique guest_cid.

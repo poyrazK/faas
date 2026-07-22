@@ -211,8 +211,8 @@ func TestMetalHelloBoot(t *testing.T) {
 	const instance = "m0-hello"
 	_, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   instance,
-		BaseKey:   busybox, // M0-only: Base == Layer, see comment above.
-		LayerKey:  busybox, // produces a single-drive VM that still hits the chroot path.
+		BaseKey:    busybox, // M0-only: Base == Layer, see comment above.
+		LayerKey:   busybox, // produces a single-drive VM that still hits the chroot path.
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 	})
@@ -263,8 +263,8 @@ func TestMetalDNATPublishedToGuestPort(t *testing.T) {
 
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "dnat",
-		BaseKey:   busybox,
-		LayerKey:  busybox,
+		BaseKey:    busybox,
+		LayerKey:   busybox,
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 	})
@@ -331,8 +331,8 @@ func TestMetalMemoryMaxFenceEnforced(t *testing.T) {
 	const memMB = 128
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "mem",
-		BaseKey:   busybox,
-		LayerKey:  busybox,
+		BaseKey:    busybox,
+		LayerKey:   busybox,
 		VcpuCount:  2,
 		MemSizeMiB: memMB,
 	}); err != nil {
@@ -387,8 +387,8 @@ func TestMetalEgressCapEnforced(t *testing.T) {
 	const rateMbit = 25 // Hobby plan
 	inst, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "egress",
-		BaseKey:   busybox,
-		LayerKey:  busybox,
+		BaseKey:    busybox,
+		LayerKey:   busybox,
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 		EgressMbit: rateMbit,
@@ -460,8 +460,8 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 	// per acquire).
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance:   "v6prime",
-		BaseKey:   base,
-		LayerKey:  layer,
+		BaseKey:    base,
+		LayerKey:   layer,
 		VcpuCount:  2,
 		MemSizeMiB: 128,
 	}); err != nil {
