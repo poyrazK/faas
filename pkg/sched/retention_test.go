@@ -182,7 +182,7 @@ func TestLoopRunRetentionWiresThroughLoop(t *testing.T) {
 	ms.SetTerminalAtForTest(old.ID, time.Now().Add(-40*24*time.Hour))
 
 	r := NewRetention(store, slog.Default()).WithRetention(30 * 24 * time.Hour)
-	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	loop := NewLoop(nil, engine, slog.Default()).WithRetention(r)
 
 	loop.runRetention(context.Background())
@@ -200,7 +200,7 @@ func TestTransitionStampsTerminalAt(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
 	res, err := engine.Wake(context.Background(), app.ID)
 	if err != nil {

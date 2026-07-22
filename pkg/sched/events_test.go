@@ -46,7 +46,7 @@ func TestEngineTransition_AppendsEvent(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
 	res, err := engine.Wake(context.Background(), app.ID)
 	if err != nil {
@@ -102,7 +102,7 @@ func TestEngineTransition_EventWriteFailureDoesNotRollback(t *testing.T) {
 	wrapped := &failingEventStore{Store: inner}
 	vmm := &fakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
-	engine := newEngine(wrapped, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	engine := newEngine(t, wrapped, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 
 	res, err := engine.Wake(context.Background(), app.ID)
 	if err != nil {
@@ -126,7 +126,7 @@ func TestEngineKillStuck_AppendsEvent(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
 	ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName)
 	if err != nil {
@@ -172,7 +172,7 @@ func TestEngineWake_FailedBoot_AppendsWakeBootError(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{wakeErr: errBoom}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
 	_, err := engine.Wake(context.Background(), app.ID)
 	if err == nil {
@@ -217,7 +217,7 @@ func TestEnginePark_SnapshotFail_AppendsParkSnapshotError(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{snapErr: errBoom}
-	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
 	res, err := engine.Wake(context.Background(), app.ID)
 	if err != nil {

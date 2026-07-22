@@ -154,8 +154,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 		LvFcUsedPct: fcvm.DefaultLvFcUsedPct(api.LvFcName),
 	})
-	engine := sched.NewEngine(ctx, store, ledger, vmm, sched.PoolNotifier{Pool: pool}, fcVersion, log).
-		WithOpsMetrics(ops)
+	engine, err := sched.NewEngine(ctx, store, ledger, vmm, sched.PoolNotifier{Pool: pool}, fcVersion, log)
+	if err != nil {
+		return fmt.Errorf("schedd: init engine: %w", err)
+	}
+	engine.WithOpsMetrics(ops)
 
 	// Rebuild admission accounting from any instances still live from a prior
 	// run before we start admitting new wakes.

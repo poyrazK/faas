@@ -85,7 +85,7 @@ func TestDeletionSubscriber_ParkOnMessage(t *testing.T) {
 		t.Fatalf("instance B: %v", err)
 	}
 
-	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(4)
 	sub := NewDeletionSubscriber(engine, silenceLog())
 
@@ -125,7 +125,7 @@ func TestDeletionSubscriber_DuplicateMessageIsNoOp(t *testing.T) {
 		t.Fatalf("instance: %v", err)
 	}
 
-	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(4)
 	sub := NewDeletionSubscriber(engine, silenceLog())
 
@@ -170,7 +170,7 @@ func TestDeletionSubscriber_BadPayloadSkipped(t *testing.T) {
 	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, "running", 128, state.DefaultLocalNodeName); err != nil {
 		t.Fatalf("instance: %v", err)
 	}
-	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(4)
 	sub := NewDeletionSubscriber(engine, silenceLog())
 	ctx, cancel := context.WithCancel(context.Background())
@@ -198,7 +198,7 @@ func TestDeletionSubscriber_BadPayloadSkipped(t *testing.T) {
 // seam that owns Subscribe) tear down Run cleanly on dial failure.
 func TestDeletionSubscriber_ChannelCloseReturns(t *testing.T) {
 	store := state.NewMemStore()
-	engine := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "")
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(1)
 	sub := NewDeletionSubscriber(engine, silenceLog())
 

@@ -1435,15 +1435,10 @@ type SnapshotSize struct {
 // schedd is the sole reader (single-leader CP); apid is the sole writer
 // (POST /v1/compute-nodes admin endpoint). The synthetic 'default-local'
 // row is seeded by migrations/00024_compute_nodes.sql — production never
-// inserts it. The 8 MB per-vm overhead is hard-coded here to match the
-// billing model (spec §4.7 / api.PerInstanceOverheadMB if that constant
-// exists; the literal mirrors pkg/sched/admission.go's reservation math).
-// Keeping the literal local avoids a pkg/api → pkg/state import cycle.
-
-// PerInstanceOverheadMB is the fixed cost added per live instance on the
-// node (spec §6.2-2 / §4.7 billing model). 8 MB covers the per-vm struct
-// overhead Firecracker charges regardless of the configured RAM.
-const PerInstanceOverheadMB = 8
+// inserts it. The per-vm overhead (8 MB) used by ComputeNodeUsedMB is
+// referenced from pkg/api.PerVMOverheadMB — the single source of truth
+// for the per-vm fixed cost (spec §4.7 / §6.2-2). Importing pkg/api here
+// is safe: pkg/api has no outbound dependency on pkg/state, so no cycle.
 
 func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 	n := ComputeNode{}
@@ -1506,12 +1501,17 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 	return n, nil
 }
 
-// ComputeNodeUsedMB returns the Σ(ram_mb + PerInstanceOverheadMB) for live
+// ComputeNodeUsedMB returns the Σ(ram_mb + api.PerVMOverheadMB) for live
 // instances on the given node. Mirrors the §6.2-2 invariant re-stated
 // per-node: Σ ≤ admission_ceiling_mb per active node. Live = state ∈
 // ('waking','cold_booting','running'); SNAPSHOTTING is excluded because
 // the watchdog considers a snapshotting instance parked-from-RAM (its
 // resident memory is being flushed to disk, not held for requests).
+// The 8 MB per-vm constant lives in pkg/api (pkg/api.PerVMOverheadMB)
+// — the single source of truth shared with sched.Ledger's reservation
+// math and the §4.7 billing model. Reading from pkg/api rather than a
+// local duplicate keeps ledger + aggregate in lockstep (F-1 in the
+// PR #112 review).
 func (s *PgStore) ComputeNodeUsedMB(ctx context.Context, nodeID string) (int64, error) {
 	var used int64
 	err := s.pool.QueryRow(ctx, `
@@ -1519,7 +1519,7 @@ func (s *PgStore) ComputeNodeUsedMB(ctx context.Context, nodeID string) (int64, 
 		  from instances
 		 where node_id = $1
 		   and state in ('waking','cold_booting','running')
-	`, nodeID, PerInstanceOverheadMB).Scan(&used)
+	`, nodeID, api.PerVMOverheadMB).Scan(&used)
 	if err != nil {
 		return 0, fmt.Errorf("state: compute_node %s used_mb: %w", nodeID, err)
 	}

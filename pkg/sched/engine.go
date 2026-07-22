@@ -113,12 +113,15 @@ type Engine struct {
 // bootstrap read (issue #97 / ADR-025 axis 3). Production callers
 // pass the daemon's lifecycle ctx; tests pass context.Background()
 // wrapped with a t.Deadline-derived timeout if they want a fast
-// failure on a missing seed. A lookup failure is logged and the
-// engine boots with an empty defaultLocalNodeID — the next
-// CreateInstance call will fail at the FK constraint and surface
-// the misconfiguration loudly rather than silently fall back to a
-// phantom id.
-func NewEngine(ctx context.Context, store state.Store, ledger *Ledger, vmm VMM, notif Notifier, fcVer string, log *slog.Logger) *Engine {
+// failure on a missing seed. A lookup failure is a hard error:
+// schedd cannot admit wakes without a valid default-local node_id,
+// so the daemon refuses to start. The caller (cmd/schedd/main.go)
+// logs and exits non-zero; this avoids the silent-degradation
+// failure mode where NewEngine returned an Engine with an empty
+// defaultLocalNodeID and the next CreateInstance failed at the FK
+// with a cryptic "null value in column "node_id"" error far away
+// from the root cause (missing migration 00024).
+func NewEngine(ctx context.Context, store state.Store, ledger *Ledger, vmm VMM, notif Notifier, fcVer string, log *slog.Logger) (*Engine, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -138,12 +141,13 @@ func NewEngine(ctx context.Context, store state.Store, ledger *Ledger, vmm VMM, 
 	defer cancel()
 	node, err := store.ComputeNodeByName(bootCtx, state.DefaultLocalNodeName)
 	if err != nil {
-		log.Warn("sched: default-local compute_node not found; Wake will fail until migrations/00024 is applied",
-			"err", err, "expected_name", state.DefaultLocalNodeName)
-		return e
+		return nil, fmt.Errorf("sched: resolve default-local compute_node %q: %w", state.DefaultLocalNodeName, err)
+	}
+	if node.ID == "" {
+		return nil, fmt.Errorf("sched: default-local compute_node %q has empty id", state.DefaultLocalNodeName)
 	}
 	e.defaultLocalNodeID = node.ID
-	return e
+	return e, nil
 }
 
 // WithOpsMetrics attaches a metrics bag to the engine for the §6.1

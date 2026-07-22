@@ -1603,8 +1603,9 @@ func parseSubjectID(s string) *uuid.UUID {
 // shape as migrations/00024_compute_nodes.sql's seed) so single-box
 // tests don't have to call CreateComputeNode. Tests exercising the
 // multi-node path add additional rows via CreateComputeNode; the
-// 8 MB per-vm overhead is hard-coded here to match pkg/state/pgstore.go's
-// PerInstanceOverheadMB constant.
+// per-vm overhead (8 MB) is referenced from pkg/api.PerVMOverheadMB
+// — the single source of truth shared with PgStore.ComputeNodeUsedMB,
+// sched.Ledger's reservation math, and the §4.7 billing model.
 
 // seedDefaultLocalNodeLocked inserts the synthetic single-host vmmd
 // row. Called once by NewMemStore after the struct literal so the
@@ -1661,11 +1662,12 @@ func (m *MemStore) ComputeNodeByName(_ context.Context, name string) (ComputeNod
 	return ComputeNode{}, ErrNotFound
 }
 
-// ComputeNodeUsedMB returns the Σ(ram_mb + PerInstanceOverheadMB) for
+// ComputeNodeUsedMB returns the Σ(ram_mb + api.PerVMOverheadMB) for
 // live instances on the given node. Live = state ∈ {'waking',
 // 'cold_booting', 'running'} per §6.2-2 re-stated per-node. The
-// 8 MB overhead matches the production literal in pgstore.go and
-// the billing model in spec §4.7.
+// 8 MB overhead matches pkg/state/pgstore.go's aggregate query and
+// the billing model in spec §4.7 — single source of truth in
+// pkg/api.PerVMOverheadMB (F-1 in PR #112 review).
 func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1676,7 +1678,7 @@ func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, e
 		}
 		switch ins.State {
 		case "waking", "cold_booting", "running":
-			used += int64(ins.RAMMB + PerInstanceOverheadMB)
+			used += int64(ins.RAMMB + api.PerVMOverheadMB)
 		}
 	}
 	return used, nil

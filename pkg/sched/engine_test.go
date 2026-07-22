@@ -218,8 +218,13 @@ func seedApp(t *testing.T, store state.Store, plan api.Plan, ramMB, maxConc int)
 	return acct, app, dep
 }
 
-func newEngine(store state.Store, vmm VMM, notif Notifier, fcVer string) *Engine {
-	return NewEngine(context.Background(), store, NewLedger(), vmm, notif, fcVer, testLog())
+func newEngine(t *testing.T, store state.Store, vmm VMM, notif Notifier, fcVer string) *Engine {
+	t.Helper()
+	e, err := NewEngine(context.Background(), store, NewLedger(), vmm, notif, fcVer, testLog())
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	return e
 }
 
 func TestEngineWake_ColdBoot(t *testing.T) {
@@ -227,7 +232,7 @@ func TestEngineWake_ColdBoot(t *testing.T) {
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
 	notif := &fakeNotifier{}
-	e := newEngine(store, vmm, notif, "1.10.0")
+	e := newEngine(t, store, vmm, notif, "1.10.0")
 
 	res, err := e.Wake(context.Background(), app.ID)
 	if err != nil {
@@ -256,7 +261,7 @@ func TestEngineWake_Idempotent(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	first, err := e.Wake(context.Background(), app.ID)
 	if err != nil {
@@ -285,7 +290,7 @@ func TestEngineWake_RestoreFromSnapshot(t *testing.T) {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
 	vmm := &fakeVMM{}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	res, err := e.Wake(context.Background(), app.ID)
 	if err != nil {
@@ -319,7 +324,7 @@ func TestEngineWake_StorageKey_ForwardedFromRow(t *testing.T) {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
 	vmm := &fakeVMM{}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	if _, err := e.Wake(context.Background(), app.ID); err != nil {
 		t.Fatalf("Wake: %v", err)
@@ -356,7 +361,7 @@ func TestEngineWake_RequiresStorageKey(t *testing.T) {
 	store.SetSnapshotStorageKeyForTest(dep.ID, "")
 
 	vmm := &fakeVMM{}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 	if _, err := e.Wake(context.Background(), app.ID); err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
@@ -393,7 +398,7 @@ func TestEngineWake_ForwardsSealedEnv(t *testing.T) {
 	}
 
 	vmm := &fakeVMM{}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 	if _, err := e.Wake(context.Background(), app.ID); err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
@@ -421,7 +426,7 @@ func TestEngineWake_NoSecrets_EmptySealedEnv(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	if _, err := e.Wake(context.Background(), app.ID); err != nil {
 		t.Fatalf("Wake: %v", err)
@@ -442,7 +447,7 @@ func TestEngineWake_StaleFcVersionColdBoots(t *testing.T) {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
 	vmm := &fakeVMM{}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	if _, err := e.Wake(context.Background(), app.ID); err != nil {
 		t.Fatalf("Wake: %v", err)
@@ -460,7 +465,7 @@ func TestEngineWake_RestoreFallbackMarksSnapshotStale(t *testing.T) {
 		StorageKey: SnapshotMemKey(dep.ID),
 	})
 	vmm := &fakeVMM{forceColdFallback: true}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	res, err := e.Wake(context.Background(), app.ID)
 	if err != nil {
@@ -481,7 +486,7 @@ func TestEngineWake_AdmissionDeniedReturnsProblem(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanFree, 128, 1)
 	vmm := &fakeVMM{}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	// Fill the ledger to the ceiling so the wake is refused for capacity.
 	e.Ledger().residentRAM = api.RAMAdmissionCeilingMB
@@ -508,7 +513,7 @@ func TestEngineWake_BootErrorFails(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{wakeErr: errors.New("firecracker boom")}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	if _, err := e.Wake(context.Background(), app.ID); err == nil {
 		t.Fatal("expected boot error")
@@ -528,7 +533,7 @@ func TestEnginePrime_BootsSnapshotsParks(t *testing.T) {
 	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 2)
 	vmm := &fakeVMM{}
 	notif := &fakeNotifier{}
-	e := newEngine(store, vmm, notif, "1.10.0")
+	e := newEngine(t, store, vmm, notif, "1.10.0")
 
 	if err := e.Prime(context.Background(), app.ID, dep.ID); err != nil {
 		t.Fatalf("Prime: %v", err)
@@ -554,7 +559,7 @@ func TestEnginePark_SnapshotFailureStops(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	res, err := e.Wake(context.Background(), app.ID)
 	if err != nil {
@@ -577,7 +582,7 @@ func TestEngineEvict_Destroys(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	res, err := e.Wake(context.Background(), app.ID)
 	if err != nil {
@@ -601,7 +606,7 @@ func TestEngineEvict_Destroys(t *testing.T) {
 func TestEngineReportActivity(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
-	e := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	res, _ := e.Wake(context.Background(), app.ID)
 
 	now := time.Now()
@@ -628,7 +633,7 @@ func TestEngineSeedLedger(t *testing.T) {
 	ins, _ := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName)
 	_ = ins
 
-	e := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	if err := e.SeedLedger(context.Background()); err != nil {
 		t.Fatalf("SeedLedger: %v", err)
 	}
@@ -652,7 +657,7 @@ func TestEngineWake_VMMDColdBootDeadlineEnforced(t *testing.T) {
 	// so we set 5× and rely on the test wall-clock to bound the
 	// failure mode.
 	vmm := &fakeVMM{sleepFor: 2 * ColdBootTimeout}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	start := time.Now()
 	_, err := e.Wake(context.Background(), app.ID)
@@ -685,7 +690,7 @@ func TestEnginePrime_VMMDDeadlineEnforced(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 2)
 	vmm := &fakeVMM{sleepFor: 2 * ColdBootTimeout}
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	err := e.Prime(context.Background(), app.ID, dep.ID)
 	if err == nil {
@@ -726,7 +731,7 @@ func TestEngineWake_LockReleasedDuringBoot(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm, bootStarted, bootRelease := bootSignalVMM()
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	aResult := make(chan error, 1)
 	aDone := make(chan struct{})
@@ -817,7 +822,7 @@ func TestEngineWake_PostVMMDAbortOnStolenState(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm, bootStarted, bootRelease := bootSignalVMM()
-	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
 	type result struct {
 		id  string
