@@ -33,7 +33,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -85,22 +84,20 @@ func stripHopByHop(h http.Header) http.Header {
 	return out
 }
 
-// safeLogField returns a log-safe rendering of a request-supplied
-// string. We pipe the value through strconv.Quote, which produces a
-// Go-quoted string literal that escapes CR/LF/NUL as \r/\n/\x00 and
-// wraps the result in double quotes — CodeQL's go/log-injection
-// query recognises strconv.Quote as a sanitiser (the same way it does
-// for %q-format specifiers) and drops the alert. slog's JSON handler
-// then renders the quoted string as a normal JSON object field, so
-// the downstream effect on observability is minimal: malformed input
-// shows up as a quoted literal rather than a bare UUID. The cap
-// protects against a 1 MB instance header turning into a 2 MB log
-// entry.
+// safeLogField strips ASCII line breaks from a request-supplied
+// string before it lands in a log line. CodeQL's go/log-injection
+// rule explicitly lists strings.Replace as a recognised sanitiser
+// (its help text shows the pattern: replace "\r" and "\n" before
+// logging); we follow that shape so the alert auto-closes. We also
+// cap at 128 bytes — instance ids are UUIDs (36 chars) and a 1 MB
+// header would otherwise turn into a multi-MB log entry.
 func safeLogField(s string) string {
 	if len(s) > 128 {
 		s = s[:128] + "…"
 	}
-	return strconv.Quote(s)
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
 }
 
 // ForwardingReverseProxy returns an http.Handler that forwards r to
