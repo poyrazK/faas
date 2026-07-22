@@ -67,8 +67,8 @@ func TestMigrations_00022_SnapshotsStorageKey_Backfill(t *testing.T) {
 	// backfill UPDATE target it. A fresh row stamped at now() would
 	// be skipped by the fence, defeating the test.
 	if _, err := pool.Exec(ctx, `
-		insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, path, storage_key, created_at)
-		values ($1, '1.8.0', 100, 100, '/srv/fc/snap/x/mem', '', now() - interval '1 minute')
+		insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, storage_key, created_at)
+		values ($1, '1.8.0', 100, 100, '', now() - interval '1 minute')
 	`, depID); err != nil {
 		t.Fatalf("seed snapshot: %v", err)
 	}
@@ -113,8 +113,8 @@ func TestMigrations_00022_SnapshotsStorageKey_Backfill(t *testing.T) {
 	}
 	var def string
 	if err := pool.QueryRow(ctx, `
-		insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes, path)
-		values ('22222222-2222-2222-2222-222222222222', '1.8.0', 1, 1, '/p')
+		insert into snapshots (deployment_id, fc_version, mem_bytes, disk_bytes)
+		values ('22222222-2222-2222-2222-222222222222', '1.8.0', 1, 1)
 		returning storage_key
 	`).Scan(&def); err != nil {
 		t.Fatalf("insert default-storage_key row: %v", err)

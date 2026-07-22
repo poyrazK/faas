@@ -132,7 +132,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	snapDir := t.TempDir()
 	snap := &Snapshot{
 		FCVersion:   fcVersion,
-		MemPath:     snapDir + "/mem",
+		StorageKey:  "snap/cycle/mem",
 		VMStatePath: snapDir + "/vmstate",
 	}
 
@@ -142,7 +142,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("prime cold boot: %v", err)
 	}
-	if _, err := m.Park(ctx, "cycle", SnapshotSpec{MemPath: snap.MemPath, VMStatePath: snap.VMStatePath}); err != nil {
+	if _, err := m.Park(ctx, "cycle", SnapshotSpec{VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey}); err != nil {
 		t.Fatalf("prime park: %v", err)
 	}
 
@@ -160,7 +160,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 		if inst.Method != WakeRestore {
 			t.Errorf("cycle %d fell back to %s — snapshot restore regressed", i, inst.Method)
 		}
-		if _, err := m.Park(ctx, "cycle", SnapshotSpec{MemPath: snap.MemPath, VMStatePath: snap.VMStatePath}); err != nil {
+		if _, err := m.Park(ctx, "cycle", SnapshotSpec{VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey}); err != nil {
 			t.Fatalf("park cycle %d: %v", i, err)
 		}
 	}
@@ -494,10 +494,10 @@ func TestMetalTwoRestoresDistinctUUID(t *testing.T) {
 	snapDir := t.TempDir()
 	snap := &Snapshot{
 		FCVersion:   os.Getenv("FAAS_TEST_FC_VERSION"),
-		MemPath:     snapDir + "/mem",
+		StorageKey:  "snap/v6prime/mem",
 		VMStatePath: snapDir + "/vmstate",
 	}
-	if _, err := m.Park(ctx, "v6prime", SnapshotSpec{MemPath: snap.MemPath, VMStatePath: snap.VMStatePath}); err != nil {
+	if _, err := m.Park(ctx, "v6prime", SnapshotSpec{VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey}); err != nil {
 		t.Fatalf("V6 prime park: %v", err)
 	}
 

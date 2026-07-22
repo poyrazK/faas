@@ -8,28 +8,32 @@ package fcvm
 // and is the fallback for a missing, stale, or version-mismatched snapshot.
 
 // Snapshot is the metadata for one parked deployment's snapshot (mirrors the
-// `snapshots` table, spec §5). Paths point at the file-backed memory + vmstate on
-// NVMe (spec §8).
+// `snapshots` table, spec §5). StorageKey is the canonical key the mem and
+// vmstate blobs live under in the StorageBackend; vmmd resolves it to local
+// staging paths before loading. After #96 slice 3, this struct no longer
+// carries per-instance local paths — those are vmmd-internal concerns
+// populated from Storage.Get and never leave the daemon.
 type Snapshot struct {
 	DeploymentID string
 	FCVersion    string // the Firecracker version that made it; load only on a match
-	MemPath      string // memory file
-	VMStatePath  string // vmstate file
+	VMStatePath  string // vmstate file (caller-supplied legacy field; survives until #91 follow-up)
 	// StorageKey (issue #96 / ADR-025 axis 2) is the canonical key the
-	// mem blob lives under in the StorageBackend. Empty keeps the
-	// MemPath-only workflow intact.
+	// mem blob lives under in the StorageBackend. Required since #96
+	// slice 3 (F-1 contract on CreateSnapshot).
 	StorageKey string
 	MemBytes   int64
 	Stale      bool // set true on FC upgrade or a failed restore
 }
 
 // Usable reports whether snap can be loaded by the given running Firecracker
-// version: it must be non-nil, not stale, have both files, and match the version.
+// version: it must be non-nil, not stale, have a storage key, and match the
+// version. ADR-005 + #96 slice 3: cold-boot fallback always works, so a snap
+// whose StorageKey is empty is not "usable" but also not a fault here.
 func (snap *Snapshot) Usable(currentFCVersion string) bool {
 	if snap == nil || snap.Stale {
 		return false
 	}
-	if snap.MemPath == "" || snap.VMStatePath == "" {
+	if snap.StorageKey == "" || snap.VMStatePath == "" {
 		return false
 	}
 	return snap.FCVersion == currentFCVersion
@@ -78,15 +82,13 @@ func PlanWake(snap *Snapshot, currentFCVersion string) WakeMethod {
 // guest's post-restore resume hook (spec §4.8, §11 V6, ADR-022). nil is
 // tolerated (test seam) but production always sets it.
 //
-// #96 (ADR-025 axis 2) — the StorageBackend seam: StorageKey is the
-// canonical key under sched.SnapshotMemKey / sched.SnapshotVMStateKey the
-// VMM should pull from. When StorageKey is set, the VMM resolves the bytes
-// to a local tmp file and writes the absolute path into MemPath /
-// VMStatePath before staging. The two-field shape (MemPath + StorageKey)
-// preserves the pre-#96 contract for one release — the migration slice
-// (future) flips it to a single StorageKey field.
+// #96 (ADR-025 axis 2) — StorageKey is the canonical key the mem blob
+// lives under in the StorageBackend. The VMM resolves it via Storage.Get
+// into a tmp file whose absolute path is then used as the FC restore
+// source. The local driver on the production box maps "snap/" to
+// /srv/fc/snap and the resolution is essentially a stat; the OCI driver
+// streams the bytes over HTTP.
 type RestoreSpec struct {
-	MemPath     string
 	VMStatePath string
 	Tap         string
 	KernelPath  string // /srv/fc/base/vmlinux-6.1.x — re-staged as basename in chroot
@@ -94,27 +96,24 @@ type RestoreSpec struct {
 	LayerPath   string // drive1 per-app layer (overlay upper)
 	VsockDevice *VsockDevice
 	// StorageKey is the prefix-matched key under which the mem blob lives
-	// (e.g. "snap/<deploymentID>/mem"). When set, Restore resolves it via
-	// Storage.Get into a tmp file whose absolute path is written into
-	// MemPath. The local driver on the production box maps "snap/" to
-	// /srv/fc/snap and the resolution is essentially a stat; a future OCI
-	// driver would actually stream the bytes. Empty keeps the legacy
-	// MemPath workflow intact.
+	// (e.g. "snap/<deploymentID>/mem"). Restore resolves it via
+	// Storage.Get into a tmp file used as the FC restore source.
 	StorageKey string
 }
 
 // SnapshotSpec is where to write a new snapshot's files (spec §4.4).
 //
-// StorageKey is the optional storage key the mem blob will be Put under.
-// The VMM streams the tmp mem file into the storage backend and removes
-// the tmp after a successful Put. MemPath is still required for the
-// legacy in-place move; one-release deprecation window per ADR-025.
+// StorageKey is the canonical key the mem blob will be Put under. The
+// VMM allocates StageMemPath under os.TempDir(), stages the FC-paused
+// mem file there, streams the file into the configured StorageBackend
+// at StorageKey, and removes the tmp after a successful Put.
+// StageMemPath is therefore vmmd-internal and never round-trips across
+// the wire (after #96 slice 3 removed the mem_path proto field).
 type SnapshotSpec struct {
-	MemPath     string
-	VMStatePath string
+	StageMemPath string // vmmd-allocated; never caller-supplied post-#96 slice 3
+	VMStatePath  string // host location vmmd hands to the FC socket during pause
 	// StorageKey (mem only) is the storage key the mem blob is published
-	// under post-snapshot. Empty keeps the legacy MemPath workflow
-	// intact.
+	// under post-snapshot.
 	StorageKey string
 }
 

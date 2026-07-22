@@ -130,7 +130,7 @@ func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, instance string, app A
 	return f.outcome(instance, method, vmmdpb.WakeMethod_WAKE_RESTORE), nil
 }
 
-func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _, _ string) (SnapshotBytes, error) {
+func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _ string) (SnapshotBytes, error) {
 	if d := f.sleepFor; d > 0 {
 		select {
 		case <-time.After(d):
@@ -279,7 +279,7 @@ func TestEngineWake_RestoreFromSnapshot(t *testing.T) {
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	// A fresh, version-matched snapshot makes wake a restore.
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
-		DeploymentID: dep.ID, FCVersion: "1.10.0", Path: "/srv/fc/snap/x", MemBytes: 1,
+		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 1,
 		StorageKey: SnapshotMemKey(dep.ID),
 	}); err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
@@ -313,7 +313,7 @@ func TestEngineWake_StorageKey_ForwardedFromRow(t *testing.T) {
 	// must see.
 	customKey := "snap/" + dep.ID + "/mem" // canonical today
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
-		DeploymentID: dep.ID, FCVersion: "1.10.0", Path: "/srv/fc/snap/x", MemBytes: 1,
+		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 1,
 		StorageKey: customKey,
 	}); err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
@@ -332,35 +332,43 @@ func TestEngineWake_StorageKey_ForwardedFromRow(t *testing.T) {
 	}
 }
 
-// TestEngineWake_StorageKey_FallbackOnEmpty pins the F-2 deprecation
-// seam: a row whose StorageKey is "" (a pre-migration row that
-// imaged stamped before #96 landed) still wakes — Wake falls back to
-// the computed SnapshotMemKey(depID) form. After one milestone of
-// deprecation, this fallback becomes dead code; the test ensures the
-// dead branch behaves correctly while it's still load-bearing.
-//
-// Setup: MemStore's CreateSnapshot rejects empty StorageKey (the
-// F-1 contract), so we insert a valid row first and then call
-// SetSnapshotStorageKeyForTest to clear the value back to ”.
-func TestEngineWake_StorageKey_FallbackOnEmpty(t *testing.T) {
+// TestEngineWake_RequiresStorageKey pins the slice-3 readiness
+// invariant: a Wake whose app has a snapshot row must always carry the
+// row's StorageKey on the wire. The engine itself must NOT synthesise
+// a key from the dep id — the deprecation-window fallback is gone. If
+// a snap row exists but its StorageKey is empty (F-1 contract
+// violation), the engine falls back to a real cold boot (ADR-005:
+// snapshots are cache, not truth) rather than calling vmmd with a
+// wire snapshot that lacks a backend locator.
+func TestEngineWake_RequiresStorageKey(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
-		DeploymentID: dep.ID, FCVersion: "1.10.0", Path: "/srv/fc/snap/x", MemBytes: 1,
-		StorageKey: SnapshotMemKey(dep.ID),
+		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 1,
+		StorageKey: state.SnapMemKey(dep.ID),
 	}); err != nil {
 		t.Fatalf("CreateSnapshot (seed): %v", err)
 	}
+	// Simulate a buggy inserter that stamped a row with an empty
+	// StorageKey, post F-1 contract — the only way this could exist is
+	// via SetSnapshotStorageKeyForTest (the MemStore's own CreateSnapshot
+	// rejects empty).
 	store.SetSnapshotStorageKeyForTest(dep.ID, "")
 
 	vmm := &fakeVMM{}
 	e := newEngine(store, vmm, &fakeNotifier{}, "1.10.0")
 	if _, err := e.Wake(context.Background(), app.ID); err != nil {
-		t.Fatalf("Wake (empty StorageKey): %v", err)
+		t.Fatalf("Wake: %v", err)
 	}
-	want := SnapshotMemKey(dep.ID)
-	if vmm.lastSnapRef.StorageKey != want {
-		t.Errorf("Wake fallback StorageKey = %q, want %q (computed SnapshotMemKey form)", vmm.lastSnapRef.StorageKey, want)
+	// Empty StorageKey → engine takes the cold-boot branch
+	// (haveSnap is true but snapKey is empty, so the Phase 3 gate
+	// drops to e.vmm.CreateColdBoot). fakeVMM records coldBoots=1,
+	// restores=0.
+	if vmm.restores != 0 {
+		t.Errorf("restores = %d, want 0 — empty StorageKey must NOT synthesise a key", vmm.restores)
+	}
+	if vmm.coldBoots != 1 {
+		t.Errorf("coldBoots = %d, want 1 — empty StorageKey must fall back to cold boot (ADR-005)", vmm.coldBoots)
 	}
 }
 
@@ -428,7 +436,7 @@ func TestEngineWake_StaleFcVersionColdBoots(t *testing.T) {
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	// Snapshot made by an older FC; must not be restored (ADR-005 pinning).
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
-		DeploymentID: dep.ID, FCVersion: "1.7.0", Path: "/srv/fc/snap/x", MemBytes: 1,
+		DeploymentID: dep.ID, FCVersion: "1.7.0", MemBytes: 1,
 		StorageKey: SnapshotMemKey(dep.ID),
 	}); err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
@@ -448,7 +456,7 @@ func TestEngineWake_RestoreFallbackMarksSnapshotStale(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	snap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
-		DeploymentID: dep.ID, FCVersion: "1.10.0", Path: "/srv/fc/snap/x", MemBytes: 1,
+		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 1,
 		StorageKey: SnapshotMemKey(dep.ID),
 	})
 	vmm := &fakeVMM{forceColdFallback: true}

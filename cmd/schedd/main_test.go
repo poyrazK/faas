@@ -148,7 +148,7 @@ func (stubVMM) CreateColdBoot(context.Context, string, sched.AppSpec) (*sched.Wa
 func (stubVMM) CreateFromSnapshot(context.Context, string, sched.AppSpec, sched.SnapshotRef) (*sched.WakeOutcome, error) {
 	return &sched.WakeOutcome{}, nil
 }
-func (stubVMM) PauseAndSnapshot(context.Context, string, string, string, string) (sched.SnapshotBytes, error) {
+func (stubVMM) PauseAndSnapshot(context.Context, string, string, string) (sched.SnapshotBytes, error) {
 	return sched.SnapshotBytes{}, nil
 }
 func (stubVMM) Destroy(context.Context, string) error { return nil }

@@ -74,8 +74,8 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	NotifySnapshotPrime     {"app_id":uuid, "deployment_id":uuid}
 //	                         imaged → schedd: layer is built, cold-boot once and
 //	                         snapshot it (spec §5 step 6, ADR-018).
-//	NotifySnapshotWritten   {"deployment_id":uuid, "mem_path":"...",
-//	                         "vmstate_path":"...", "mem_bytes":int,
+//	NotifySnapshotWritten   {"deployment_id":uuid, "vmstate_path":"...",
+//	                         "storage_key":"...", "mem_bytes":int,
 //	                         "vmstate_bytes":int, "fc_version":"..."}
 //	                         schedd → imaged: a park wrote a snapshot blob;
 //	                         imaged records the row (it is the sole writer to the

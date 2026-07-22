@@ -262,12 +262,11 @@ type buildQueuedPayload struct {
 // imaged is the sole writer to the snapshots table, so it records the row.
 type snapshotWrittenPayload struct {
 	DeploymentID string `json:"deployment_id"`
-	MemPath      string `json:"mem_path"`
 	VMStatePath  string `json:"vmstate_path"`
 	// StorageKey is the canonical StorageBackend key (issue #96,
 	// ADR-025 axis 2). schedd populates it on the snapshot_written
 	// payload; imaged copies it onto the snapshots row so Wake can
-	// read it back without recomputing sched.SnapshotMemKey.
+	// read it back without recomputing the canonical form.
 	StorageKey   string `json:"storage_key"`
 	MemBytes     int64  `json:"mem_bytes"`
 	VMStateBytes int64  `json:"vmstate_bytes"`
@@ -645,8 +644,7 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 
 	snap := state.Snapshot{
 		DeploymentID: p.DeploymentID,
-		FCVersion:    p.FCVersion, // pins restore compatibility (ADR-005)
-		Path:         p.MemPath,
+		FCVersion:    p.FCVersion,  // pins restore compatibility (ADR-005)
 		StorageKey:   p.StorageKey, // see snapshotWrittenPayload.StorageKey
 		MemBytes:     p.MemBytes,
 		DiskBytes:    p.VMStateBytes,
@@ -989,8 +987,8 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 		h.log.Warn("imaged: cleanup ext4", "key", appsKey, "err", err)
 	}
 	if !keepSnap {
-		memKey := sched.SnapshotMemKey(dep.ID)
-		vmKey := sched.SnapshotVMStateKey(dep.ID)
+		memKey := state.SnapMemKey(dep.ID)
+		vmKey := state.SnapVMStateKey(dep.ID)
 		if err := h.storageFor().Delete(ctx, memKey); err != nil {
 			h.log.Warn("imaged: cleanup snap mem", "key", memKey, "err", err)
 		}
@@ -1028,8 +1026,8 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 		if err := be.Delete(ctx, appsKey); err != nil {
 			h.log.Warn("imaged: app cleanup ext4", "key", appsKey, "err", err)
 		}
-		memKey := sched.SnapshotMemKey(d.ID)
-		vmKey := sched.SnapshotVMStateKey(d.ID)
+		memKey := state.SnapMemKey(d.ID)
+		vmKey := state.SnapVMStateKey(d.ID)
 		if err := be.Delete(ctx, memKey); err != nil {
 			h.log.Warn("imaged: app cleanup snap mem", "key", memKey, "err", err)
 		}

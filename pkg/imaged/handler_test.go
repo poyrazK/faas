@@ -281,7 +281,7 @@ func TestHandleSnapshotWritten(t *testing.T) {
 
 	h.HandleNotification(context.Background(), db.Notification{
 		Channel: db.NotifySnapshotWritten,
-		Payload: `{"deployment_id":"` + dep.ID + `","mem_path":"/srv/fc/snap/` + dep.ID + `/mem",` +
+		Payload: `{"deployment_id":"` + dep.ID + `",` +
 			`"vmstate_path":"/srv/fc/snap/` + dep.ID + `/vmstate",` +
 			`"storage_key":"snap/` + dep.ID + `/mem",` +
 			`"mem_bytes":134217728,` +
@@ -299,7 +299,7 @@ func TestHandleSnapshotWritten(t *testing.T) {
 	if snap.FCVersion != "firecracker-1.10" {
 		t.Errorf("FCVersion = %q, want firecracker-1.10", snap.FCVersion)
 	}
-	if snap.MemBytes != 134217728 || snap.Path != "/srv/fc/snap/"+dep.ID+"/mem" {
+	if snap.MemBytes != 134217728 || snap.StorageKey != state.SnapMemKey(dep.ID) {
 		t.Errorf("snapshot row wrong: %+v", snap)
 	}
 	if findNotify(notif, db.NotifyDeploymentChanged) == nil {
@@ -319,7 +319,7 @@ func TestHandleSnapshotWrittenIdempotent(t *testing.T) {
 	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
 	n := db.Notification{
 		Channel: db.NotifySnapshotWritten,
-		Payload: `{"deployment_id":"` + dep.ID + `","mem_path":"/m","storage_key":"snap/` + dep.ID + `/mem","mem_bytes":1,"fc_version":"firecracker-1.10"}`,
+		Payload: `{"deployment_id":"` + dep.ID + `","storage_key":"snap/` + dep.ID + `/mem","mem_bytes":1,"fc_version":"firecracker-1.10"}`,
 	}
 	h.HandleNotification(context.Background(), n)
 	h.HandleNotification(context.Background(), n) // redelivery must not error out

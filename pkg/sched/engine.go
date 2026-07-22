@@ -229,9 +229,10 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		haveSnap:  haveSnap,
 		snapID:    snap.ID,
 		snapVer:   snap.FCVersion,
-		// #96: snap row's canonical StorageBackend key (empty on
-		// cold-boot paths and pre-migration rows — Phase 3 handles
-		// both with a fallback).
+		// #96: snap row's canonical StorageBackend key. F-1 on
+		// CreateSnapshot guarantees non-empty; an empty value here
+		// means a buggy inserter slipped a row past the contract and
+		// Phase 3 will fall back to cold boot.
 		snapKey: snap.StorageKey,
 		spec:    spec,
 	}
@@ -241,23 +242,28 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	var out *WakeOutcome
 	bootCtx, cancel := context.WithTimeout(ctx, bootTimeout(bootInput.initState))
 	defer cancel()
-	if bootInput.haveSnap {
+	if bootInput.haveSnap && bootInput.snapKey != "" {
 		// #96 / ADR-025 axis 2: read the storage key the snap row
 		// carries (imaged stamps it from the snapshot_written
-		// payload). Falling back to the computed legacy form keeps
-		// the deprecation-window seam — a pre-migration row whose
-		// storage_key is the empty string still wakes via the
-		// on-disk path under /srv/fc/snap/<dep>/{mem,vmstate}.
-		storageKey := bootInput.snapKey
-		if storageKey == "" {
-			storageKey = SnapshotMemKey(bootInput.depID)
-		}
-		mem, vmstate := snapshotPaths(bootInput.depID)
+		// payload). The deprecation-window fallback is gone after
+		// #96 slice 3: F-1 contract on CreateSnapshot makes an empty
+		// StorageKey an error, so by the time a row is reachable
+		// here its key is set. If a row ever shows up empty here
+		// (e.g. a buggy inserter that bypassed the F-1 contract),
+		// the Wake below drops to cold-boot — the same ADR-005
+		// fallback vmmdgrpc would apply on the wire. Keeping the
+		// branch here means the engine never asks vmmd to restore
+		// from an unkeyed snap row.
 		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.insID, bootInput.spec, SnapshotRef{
-			DeploymentID: bootInput.depID, MemPath: mem, VMStatePath: vmstate, FCVersion: bootInput.snapVer,
-			StorageKey: storageKey,
+			DeploymentID: bootInput.depID,
+			FCVersion:    bootInput.snapVer,
+			StorageKey:   bootInput.snapKey,
 		})
 	} else {
+		// Either no snap row at all (cold path), or a snap row with
+		// an empty StorageKey (F-1 contract violation — fall back to
+		// a real cold boot per ADR-005: snapshots are cache, not
+		// truth; wake must never depend on a snapshot existing).
 		out, err = e.vmm.CreateColdBoot(bootCtx, bootInput.insID, bootInput.spec)
 	}
 	if err != nil {
@@ -568,11 +574,17 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 // walks RUNNING → SNAPSHOTTING → PARKED, writing the snapshot blob via vmmd and
 // emitting snapshot_written for imaged to record the row.
 func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error {
-	mem, vmstate := snapshotPaths(ins.DeploymentID)
+	// vmstate is a small JSON the FC socket writes to during pause; we
+	// give it a host path under the snap dir (the local driver maps the
+	// storage_key back to this exact location on the next restore, so
+	// the two paths must agree). F-5 of slice 3 considers moving
+	// vmstate into the StorageBackend too — out of scope for this PR.
+	vmstate := SnapDir() + "/" + ins.DeploymentID + "/vmstate"
 	// #96 / ADR-025 axis 2: the canonical storage key under which vmmd
-	// publishes the mem blob via the StorageBackend. Empty string keeps
-	// the legacy mem-path-only workflow intact (one-release window).
-	storageKey := SnapshotMemKey(ins.DeploymentID)
+	// publishes the mem blob via the StorageBackend. The local driver
+	// maps "snap/<dep>/mem" to /srv/fc/snap/<dep>/mem; the OCI driver
+	// streams the bytes over HTTP.
+	storageKey := state.SnapMemKey(ins.DeploymentID)
 	e.ledger.BeginSnapshot(ins.ID) // drops concurrency, keeps RAM (§6.2-1 excludes snapshotting)
 	// Stamp parked_at on entry into SNAPSHOTTING so the §6.1 watchdog
 	// (commit 3) has an "age of state" anchor for the row.
@@ -585,7 +597,7 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	}
 	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting)
 
-	b, err := e.vmm.PauseAndSnapshot(ctx, ins.ID, mem, vmstate, storageKey)
+	b, err := e.vmm.PauseAndSnapshot(ctx, ins.ID, vmstate, storageKey)
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake
 		// cold-boots (ADR-005). The app still has a cold-bootable rootfs (§6.2-3).
@@ -597,7 +609,7 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	}
 	e.ledger.Release(ins.ID)
 	e.transition(ctx, ins.ID, ins.AppID, state.StateParked)
-	e.emitSnapshotWritten(ctx, ins.DeploymentID, mem, vmstate, b)
+	e.emitSnapshotWritten(ctx, ins.DeploymentID, vmstate, b)
 	return nil
 }
 
@@ -863,15 +875,14 @@ func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID stri
 	}
 }
 
-func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, memPath, vmstatePath string, b SnapshotBytes) {
+func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, vmstatePath string, b SnapshotBytes) {
 	if e.notif == nil {
 		return
 	}
 	payload, _ := json.Marshal(map[string]any{
 		"deployment_id": deploymentID,
-		"mem_path":      memPath,
 		"vmstate_path":  vmstatePath,
-		"storage_key":   SnapshotMemKey(deploymentID),
+		"storage_key":   state.SnapMemKey(deploymentID),
 		"mem_bytes":     b.MemBytes,
 		"vmstate_bytes": b.VMStateBytes,
 		"fc_version":    e.fcVer,

@@ -335,7 +335,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest) (WakeMethod, error) {
 	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore {
 		rs := RestoreSpec{
-			MemPath: req.Snapshot.MemPath, VMStatePath: req.Snapshot.VMStatePath,
+			VMStatePath: req.Snapshot.VMStatePath,
 			// #96 / ADR-025 axis 2: thread the canonical storage key the
 			// scheduler populated into WakeRequest.Snapshot. The VMM
 			// resolves it through the StorageBackend before staging.

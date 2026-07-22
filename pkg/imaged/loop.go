@@ -292,10 +292,10 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 	for _, t := range ts {
 		// snap blobs: delete both files; the storage backend swallows
 		// missing keys so a transient race with restore is harmless.
-		if err := be.Delete(ctx, sched.SnapshotMemKey(t.DeploymentID)); err != nil {
+		if err := be.Delete(ctx, state.SnapMemKey(t.DeploymentID)); err != nil {
 			l.log.Warn("imaged: gc remove snap mem", "deployment", t.DeploymentID, "err", err)
 		}
-		if err := be.Delete(ctx, sched.SnapshotVMStateKey(t.DeploymentID)); err != nil {
+		if err := be.Delete(ctx, state.SnapVMStateKey(t.DeploymentID)); err != nil {
 			l.log.Warn("imaged: gc remove snap vmstate", "deployment", t.DeploymentID, "err", err)
 		}
 		// Per-app ext4 (drive1) — derive the key the same way buildImageLayer

@@ -116,7 +116,7 @@ func TestPg_MarkSnapshotStale(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, _, depID := seedLiveDeploy(t, s, ctx)
 	snap, err := s.CreateSnapshot(ctx, state.Snapshot{
-		DeploymentID: depID, FCVersion: "1.10.0", Path: "/srv/fc/snap/x", MemBytes: 1,
+		DeploymentID: depID, FCVersion: "1.10.0", MemBytes: 1,
 		StorageKey: state.SnapMemKey(depID),
 	})
 	if err != nil {
@@ -689,7 +689,7 @@ func TestPg_SnapshotStorageKey_RoundTrip(t *testing.T) {
 	// CreateSnapshot → LatestSnapshot → ListSnapshotsForGC.
 	want := state.SnapMemKey(depID)
 	_, err := s.CreateSnapshot(ctx, state.Snapshot{
-		DeploymentID: depID, FCVersion: "1.10.0", Path: "/srv/fc/snap/x", MemBytes: 1,
+		DeploymentID: depID, FCVersion: "1.10.0", MemBytes: 1,
 		StorageKey: want,
 	})
 	if err != nil {
@@ -714,7 +714,7 @@ func TestPg_SnapshotStorageKey_RoundTrip(t *testing.T) {
 	// pin. A future regression that re-adds the silent default
 	// would surface here as a nil error where one is expected.
 	_, err = s.CreateSnapshot(ctx, state.Snapshot{
-		DeploymentID: depID, FCVersion: "1.11.0", Path: "/srv/fc/snap/y", MemBytes: 1,
+		DeploymentID: depID, FCVersion: "1.11.0", MemBytes: 1,
 		// StorageKey deliberately omitted.
 	})
 	if err == nil {

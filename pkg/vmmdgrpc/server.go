@@ -104,26 +104,29 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 	return wakeResponseFromInstance(req.GetInstance(), wr, inst, vmmdpb.WakeMethod_WAKE_COLD_BOOT), nil
 }
 
-// PauseAndSnapshot parks an instance, writing its full snapshot to the
-// requested files. Destroy happens inside Manager.Park.
+// PauseAndSnapshot parks an instance, writing its full snapshot. Destroy
+// happens inside Manager.Park.
+//
+// #96 / ADR-025 axis 2 (slice 3): mem_path is gone from the wire. vmmd
+// allocates the staging tmp internally (SnapshotSpec.StageMemPath), the
+// StorageBackend at StorageKey receives the mem blob, and the vmstate
+// file lands at the caller-supplied VMStatePath. VMStatePath is still
+// host-supplied because the small JSON is read straight back into a
+// fresh chroot by the Restore path's `stageReadOnly(root, VMStatePath)`
+// — moving it into storage is planned but not in this slice.
 func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnapshotRequest) (*vmmdpb.SnapshotResponse, error) {
 	const op = "PauseAndSnapshot"
 	start := time.Now()
-	if req.GetMemPath() == "" || req.GetVmstatePath() == "" {
+	if req.GetVmstatePath() == "" || req.GetStorageKey() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
-			"Missing paths", "mem_path and vmstate_path are required").
+			"Missing paths", "vmstate_path and storage_key are required").
 			WithDocs("https://docs/DOMAIN/vmmd#pause")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
 	info, err := s.vmm.Park(ctx, req.GetInstance(), fcvm.SnapshotSpec{
-		MemPath:     req.GetMemPath(),
 		VMStatePath: req.GetVmstatePath(),
-		// #96 / ADR-025 axis 2: when set, vmmd publishes the mem blob
-		// under this StorageBackend key alongside the legacy in-place
-		// move. Empty keeps the mem-path-only workflow intact for one
-		// release — the migration slice flips the contract.
-		StorageKey: req.GetStorageKey(),
+		StorageKey:  req.GetStorageKey(),
 	})
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {

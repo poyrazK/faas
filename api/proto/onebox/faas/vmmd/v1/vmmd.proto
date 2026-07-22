@@ -72,20 +72,22 @@ message SealedSecret {
   bytes  ciphertext = 2;
 }
 
-// SnapshotRef points at the snapshot files a caller wants to restore from.
-// Both paths must exist on the host's /srv/fc/ filesystem.
+// SnapshotRef points at the snapshot a caller wants to restore from. The
+// bytes live under the canonical StorageBackend key (issue #96, ADR-025
+// axis 2); vmmd allocates its own staging tmp via Storage.Get before
+// firing the firecracker restore. fc_version + storage_key together pin
+// the artifact and the Firecracker binary that produced it (ADR-005).
 message SnapshotRef {
   string deployment_id = 1;
-  string mem_path      = 2;
+  reserved 2; // formerly mem_path — torn out after #96 slice 3.
   string vmstate_path  = 3;
   // The Firecracker version the snapshot was made with (ADR-005: pinned).
   // If empty, the daemon uses the running fcVersion (current behaviour).
   string fc_version    = 4;
-  // storage_key is the canonical StorageBackend key (issue #96, ADR-025
-  // axis 2) under which the mem blob lives. When set, the daemon resolves
-  // the bytes through the configured StorageBackend before staging.
-  // Empty keeps the legacy mem_path-only workflow intact (one-release
-  // deprecation window).
+  // storage_key is the canonical StorageBackend key under which the mem
+  // blob lives. The daemon resolves the bytes through the configured
+  // StorageBackend and stages them into an os.TempDir() location for
+  // the FC restore source.
   string storage_key   = 5;
 }
 
@@ -150,13 +152,13 @@ message BuildSpec {
 
 message PauseAndSnapshotRequest {
   string instance    = 1;
-  string mem_path    = 2;
+  reserved 2; // formerly mem_path — torn out after #96 slice 3.
   string vmstate_path = 3;
   // storage_key (issue #96, ADR-025 axis 2) is the canonical StorageBackend
-  // key the mem blob is published under after the snapshot. When set, the
-  // daemon stores via the configured StorageBackend alongside the legacy
-  // in-place move; one-release deprecation window before mem_path / vmstate_path
-  // become fully derived. Same shape for SnapshotRef above.
+  // key the mem blob is published under after the snapshot. The daemon
+  // stores via the configured StorageBackend; vmmstate_path is the
+  // resolved-on-host location vmmd hands the firecracker socket to
+  // while pausing, then publishes under its own StorageBackend key.
   string storage_key = 4;
 }
 

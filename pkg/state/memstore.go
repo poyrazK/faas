@@ -1337,8 +1337,10 @@ func (m *MemStore) TouchInstancesLastSeen(_ context.Context, touches []InstanceT
 // --- snapshots --------------------------------------------------------------
 //
 // MemStore's snapshot table mirrors the Postgres semantics: First row wins,
-// subsequent inserts for the same (deployment_id, fc_version, path) collide
-// as ErrConflict so imaged's idempotent retry is silent.
+// subsequent inserts for the same (deployment_id, fc_version, storage_key)
+// collide as ErrConflict so imaged's idempotent retry is silent. The legacy
+// `path` uniqueness key was dropped with #96 slice 3 (storage_key is the
+// only blob locator and uniqueness is implicit on its value).
 
 func (m *MemStore) CreateSnapshot(_ context.Context, snap Snapshot) (Snapshot, error) {
 	m.mu.Lock()
@@ -1359,7 +1361,7 @@ func (m *MemStore) CreateSnapshot(_ context.Context, snap Snapshot) (Snapshot, e
 		snap.CreatedAt = time.Now()
 	}
 	for _, existing := range m.snapshots {
-		if existing.DeploymentID == snap.DeploymentID && existing.FCVersion == snap.FCVersion && existing.Path == snap.Path {
+		if existing.DeploymentID == snap.DeploymentID && existing.FCVersion == snap.FCVersion && existing.StorageKey == snap.StorageKey {
 			return Snapshot{}, ErrConflict
 		}
 	}
@@ -1436,7 +1438,6 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			FCVersion:    s.FCVersion,
 			MemBytes:     s.MemBytes,
 			DiskBytes:    s.DiskBytes,
-			Path:         s.Path,
 			// #96 / ADR-025 axis 2: forward the canonical storage
 			// key so imaged's GC loop can Storage.Delete under it
 			// without a second hop through Snapshot.

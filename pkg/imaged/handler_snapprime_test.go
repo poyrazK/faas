@@ -35,7 +35,7 @@ func TestFCSweep_MarksStaleOnlyOlderVersion(t *testing.T) {
 		})
 		if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
-			Path: "/tmp/x.snap", FCVersion: v,
+			FCVersion:  v,
 			StorageKey: state.SnapMemKey(dep.ID),
 		}); err != nil {
 			t.Fatal(err)
@@ -77,7 +77,7 @@ func TestFCSweep_IdempotentSecondStart(t *testing.T) {
 	})
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
-		Path: "/tmp/x.snap", FCVersion: "1.7.0",
+		FCVersion:  "1.7.0",
 		StorageKey: state.SnapMemKey(dep.ID),
 	}); err != nil {
 		t.Fatal(err)

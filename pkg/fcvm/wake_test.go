@@ -120,7 +120,7 @@ func TestParkSnapshotsAndReleases(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := m.Park(context.Background(), "i1", SnapshotSpec{MemPath: "/snap/mem", VMStatePath: "/snap/state"})
+	info, err := m.Park(context.Background(), "i1", SnapshotSpec{VMStatePath: "/snap/state", StorageKey: "snap/i1/mem"})
 	if err != nil {
 		t.Fatalf("park: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestParkSnapshotFailureDestroysAndReleases(t *testing.T) {
 	if _, err := m.Wake(context.Background(), wakeReq("i1", nil)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Park(context.Background(), "i1", SnapshotSpec{MemPath: "/m", VMStatePath: "/s"}); err == nil {
+	if _, err := m.Park(context.Background(), "i1", SnapshotSpec{VMStatePath: "/s", StorageKey: "snap/i1/mem"}); err == nil {
 		t.Fatal("park should surface the snapshot error")
 	}
 	// Even on snapshot failure the instance is destroyed (rootfs keeps it
@@ -158,7 +158,7 @@ func TestParkSnapshotFailureDestroysAndReleases(t *testing.T) {
 
 func TestParkUnknownInstanceErrors(t *testing.T) {
 	m := newTestManager(&fakeRunner{}, &fakeVMM{})
-	if _, err := m.Park(context.Background(), "ghost", SnapshotSpec{MemPath: "/m", VMStatePath: "/s"}); err == nil {
+	if _, err := m.Park(context.Background(), "ghost", SnapshotSpec{VMStatePath: "/s", StorageKey: "snap/ghost/mem"}); err == nil {
 		t.Error("parking an unknown instance should error")
 	}
 }
