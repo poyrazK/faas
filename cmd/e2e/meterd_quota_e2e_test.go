@@ -59,6 +59,15 @@ func TestQuotaBreach_ParkInstanceWithinOneTick(t *testing.T) {
 		[]string{"FAAS_QUOTA_INTERVAL=" + quotaInterval.String()})
 
 	store := state.NewPgStore(pool)
+	// Resolve the default-local compute_node id once at boot so the
+	// FK on instances.node_id has a real target. Issue #97 / ADR-025
+	// axis 3; the migration is applied above (db.MigrateUp runs the
+	// full set).
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("resolve default-local compute_node: %v", err)
+	}
+	defaultLocalNodeID := node.ID
 
 	acct, err := store.CreateAccount(ctx, "free-breach@example.com", api.PlanFree)
 	if err != nil {
@@ -86,7 +95,7 @@ func TestQuotaBreach_ParkInstanceWithinOneTick(t *testing.T) {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
 
-	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128)
+	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, defaultLocalNodeID)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

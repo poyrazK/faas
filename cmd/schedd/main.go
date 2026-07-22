@@ -154,7 +154,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		},
 		LvFcUsedPct: fcvm.DefaultLvFcUsedPct(api.LvFcName),
 	})
-	engine := sched.NewEngine(store, ledger, vmm, sched.PoolNotifier{Pool: pool}, fcVersion, log).
+	engine := sched.NewEngine(ctx, store, ledger, vmm, sched.PoolNotifier{Pool: pool}, fcVersion, log).
 		WithOpsMetrics(ops)
 
 	// Rebuild admission accounting from any instances still live from a prior

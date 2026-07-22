@@ -13,6 +13,30 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// defaultLocalID is the UUID the migrations/00024 seed row carries.
+// Tests resolve it once via pgStore's migrated schema and use the
+// value as the node_id arg to CreateInstance (the FK enforces a
+// real compute_nodes reference). Per-test resolution would be O(N)
+// redundant reads; caching the lookup in this package-level helper
+// keeps the test surface flat.
+var defaultLocalID string
+
+// resolveDefaultLocal reads the seeded compute_node id by name.
+// Called by pgStore so the first test that needs an instance row
+// gets a real UUID. Mirrors sched.Engine's constructor resolve.
+func resolveDefaultLocal(t *testing.T, ctx context.Context, s *state.PgStore) string {
+	t.Helper()
+	if defaultLocalID != "" {
+		return defaultLocalID
+	}
+	n, err := s.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("resolve default-local compute_node (run migrations/00024 first): %v", err)
+	}
+	defaultLocalID = n.ID
+	return defaultLocalID
+}
+
 // pgStore stands up a fresh schema, migrates it, and returns a PgStore. Skips
 // when Postgres is unreachable (pgtest.Open handles the skip). These round-trips
 // lock the hand-written SQL in pgstore.go against a real cluster (ADR-017) —
@@ -24,7 +48,13 @@ func pgStore(t *testing.T) (*state.PgStore, context.Context) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	return state.NewPgStore(pool), ctx
+	s := state.NewPgStore(pool)
+	// Resolve the default-local compute_node id once at boot so
+	// every CreateInstance test can pass a real FK-valid UUID.
+	// The lookup is cheap (one row by unique index); caching in
+	// defaultLocalID keeps subsequent tests O(1).
+	_ = resolveDefaultLocal(t, ctx, s)
+	return s, ctx
 }
 
 // seedLiveDeploy creates account+app+live-deployment and returns their ids.
@@ -57,7 +87,7 @@ func TestPg_SetInstanceRuntimeAndRunningLookup(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, depID := seedLiveDeploy(t, s, ctx)
 
-	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512)
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, defaultLocalID)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -88,7 +118,7 @@ func TestPg_SetInstanceRuntimeAndRunningLookup(t *testing.T) {
 func TestPg_TouchInstancesLastSeen(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, depID := seedLiveDeploy(t, s, ctx)
-	ins, _ := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512)
+	ins, _ := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, defaultLocalID)
 
 	when := time.Now().Add(-30 * time.Second).Truncate(time.Millisecond)
 	applied, err := s.TouchInstancesLastSeen(ctx, []state.InstanceTouch{
@@ -263,7 +293,7 @@ func TestPg_ListLatestInstancePerApp(t *testing.T) {
 	}
 
 	// Create two instances; the second started later should win.
-	old, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256)
+	old, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, defaultLocalID)
 	if err != nil {
 		t.Fatalf("CreateInstance old: %v", err)
 	}
@@ -274,7 +304,7 @@ func TestPg_ListLatestInstancePerApp(t *testing.T) {
 	// Sleep briefly so the second instance has a strictly-later started_at.
 	time.Sleep(10 * time.Millisecond)
 
-	newer, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256)
+	newer, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, defaultLocalID)
 	if err != nil {
 		t.Fatalf("CreateInstance newer: %v", err)
 	}

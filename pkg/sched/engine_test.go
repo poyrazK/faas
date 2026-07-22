@@ -219,7 +219,7 @@ func seedApp(t *testing.T, store state.Store, plan api.Plan, ramMB, maxConc int)
 }
 
 func newEngine(store state.Store, vmm VMM, notif Notifier, fcVer string) *Engine {
-	return NewEngine(store, NewLedger(), vmm, notif, fcVer, testLog())
+	return NewEngine(context.Background(), store, NewLedger(), vmm, notif, fcVer, testLog())
 }
 
 func TestEngineWake_ColdBoot(t *testing.T) {
@@ -625,7 +625,7 @@ func TestEngineSeedLedger(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	// A running instance survived a schedd restart.
-	ins, _ := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 512)
+	ins, _ := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName)
 	_ = ins
 
 	e := newEngine(store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")

@@ -128,7 +128,7 @@ func TestEngineKillStuck_AppendsEvent(t *testing.T) {
 	vmm := &fakeVMM{}
 	engine := newEngine(store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
-	ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512)
+	ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestEnginePark_SnapshotFail_AppendsParkSnapshotError(t *testing.T) {
 // exact subject string.
 func TestMemStoreAppendEvent_HexSubjectRoundTrips(t *testing.T) {
 	store := state.NewMemStore()
-	ins, err := store.CreateInstance(context.Background(), "app", "dep", string(state.StateWaking), 256)
+	ins, err := store.CreateInstance(context.Background(), "app", "dep", string(state.StateWaking), 256, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

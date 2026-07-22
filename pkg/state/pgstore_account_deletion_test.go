@@ -88,7 +88,7 @@ func seedFullAccountWithDep(t *testing.T, s *state.PgStore, ctx context.Context)
 	if _, err := s.CreateBuild(ctx, dep.ID, state.DeploymentKindDockerfile, 4096, "/tmp/log"); err != nil {
 		return "", "", err
 	}
-	if _, err := s.CreateInstance(ctx, app.ID, dep.ID, "running", 256); err != nil {
+	if _, err := s.CreateInstance(ctx, app.ID, dep.ID, "running", 256, defaultLocalID); err != nil {
 		return "", "", err
 	}
 	if _, err := s.CreateCustomDomain(ctx, fmt.Sprintf("g6-%s.example.com", t.Name()), app.ID, "tok"); err != nil {
@@ -271,7 +271,7 @@ func TestPg_UsageByAccount_AggregatesByMonth(t *testing.T) {
 		t.Fatalf("ListApps: %v", err)
 	}
 	app := apps[0]
-	ins, err := s.CreateInstance(ctx, app.ID, depID, "running", 256)
+	ins, err := s.CreateInstance(ctx, app.ID, depID, "running", 256, defaultLocalID)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

@@ -304,6 +304,39 @@ type Instance struct {
 	// The retention sweep (pkg/sched.Retention) DELETEs rows where
 	// state ∈ {STOPPED, FAILED} AND terminal_at < now-30d.
 	TerminalAt *time.Time
+	// NodeID is the compute_node the instance lives on
+	// (issue #97 / ADR-025 axis 3). Set by Engine.Wake via
+	// sched.ChoosePlacement at instance creation; read by Park /
+	// snapshotAndPark to route the vmmd RPC through the right
+	// target URL. NOT NULL enforced by migrations/00024_compute_nodes;
+	// pre-existing rows were backfilled to DefaultLocalNodeID.
+	// Empty in test fixtures only when the fixture is exercising a
+	// pre-#97 code path that predates the column add.
+	NodeID string
+}
+
+// ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis
+// 3). schedd's single-leader CP owns placement across N rows; the
+// legacy single-host deployment has exactly one row (the synthetic
+// 'default-local' seeded by migrations/00024_compute_nodes.sql).
+// Operators register additional nodes via cmd/apid's
+// POST /v1/compute-nodes admin endpoint; the heartbeat loop in
+// cmd/schedd/main.go keeps LastHeartbeatAt fresh on a tick.
+//
+// The struct's field names track the SQL columns 1:1; Active == false
+// is a runtime "drained" flag (placement skips), distinct from a row
+// delete (re-registration is idempotent on conflict).
+type ComputeNode struct {
+	ID                 string
+	Name               string
+	TargetURL          string // wire.ParseTarget-compatible
+	VPCPUs             int
+	MemMB              int
+	MaxConcurrency     int
+	AdmissionCeilingMB int
+	Active             bool
+	LastHeartbeatAt    time.Time
+	CreatedAt          time.Time
 }
 
 // InstanceTouch is one entry in a last_request_at flush batch (spec §4.1). The

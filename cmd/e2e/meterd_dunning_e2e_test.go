@@ -57,6 +57,15 @@ func TestDunning_PastDue7d_AdvancesToSuspended(t *testing.T) {
 		[]string{"FAAS_DUNNING_INTERVAL=" + dunningInterval.String()})
 
 	store := state.NewPgStore(pool)
+	// Resolve the default-local compute_node id once at boot so the
+	// FK on instances.node_id has a real target. Issue #97 / ADR-025
+	// axis 3; the migration is applied above (db.MigrateUp runs the
+	// full set).
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("resolve default-local compute_node: %v", err)
+	}
+	defaultLocalNodeID := node.ID
 
 	acct, err := store.CreateAccount(ctx, "dunning7d@example.com", api.PlanHobby)
 	if err != nil {
@@ -76,7 +85,7 @@ func TestDunning_PastDue7d_AdvancesToSuspended(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256)
+	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, defaultLocalNodeID)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

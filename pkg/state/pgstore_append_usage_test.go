@@ -17,7 +17,7 @@ import (
 func TestPg_AppendUsage_IdempotentSameMinute(t *testing.T) {
 	s, ctx := pgStore(t)
 	acctID, appID, depID := seedLiveDeploy(t, s, ctx)
-	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512)
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, defaultLocalID)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestPg_AppendUsage_IdempotentSameMinute(t *testing.T) {
 func TestPg_AppendUsage_AccumulatesAcrossMinutes(t *testing.T) {
 	s, ctx := pgStore(t)
 	acctID, appID, depID := seedLiveDeploy(t, s, ctx)
-	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256)
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, defaultLocalID)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestPg_AppendUsage_AccumulatesAcrossMinutes(t *testing.T) {
 func TestPg_AppendUsage_NoUniqueViolationReturned(t *testing.T) {
 	s, ctx := pgStore(t)
 	acctID, appID, depID := seedLiveDeploy(t, s, ctx)
-	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 128)
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 128, defaultLocalID)
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

@@ -933,25 +933,34 @@ func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 
 // --- instances --------------------------------------------------------------
 
-func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int) (Instance, error) {
+func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID string) (Instance, error) {
 	// started_at is stamped explicitly here in addition to the
 	// BEFORE INSERT trigger from migration 00015. The trigger is the
 	// belt; this is the braces. Either alone works; both together
 	// make the contract obvious to anyone reading PgStore and prevent
 	// a future trigger drop from silently regressing the watchdog
 	// (commit 3, spec §6.1).
+	//
+	// nodeID is the compute_node the instance lives on
+	// (issue #97 / ADR-025 axis 3). The NOT NULL constraint added
+	// by migrations/00024_compute_nodes enforces non-null at the
+	// schema layer; passing an empty string here would surface as a
+	// Postgres error from the INSERT. schedd's Wake flow resolves
+	// the id via sched.ChoosePlacement before reaching this point;
+	// tests that don't exercise routing pass DefaultLocalNodeName's
+	// resolved UUID (or the name itself if the table isn't seeded).
 	row := s.pool.QueryRow(ctx,
-		`insert into instances (app_id, deployment_id, state, ram_mb, started_at) values ($1, $2, $3, $4, now())
+		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, started_at) values ($1, $2, $3, $4, $5, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at`,
-		appID, deploymentID, state, ramMB)
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id`,
+		appID, deploymentID, state, ramMB, nodeID)
 	return scanInstance(row)
 }
 
 func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
 		 from instances where id = $1`, id)
 	return scanInstance(row)
 }
@@ -959,7 +968,7 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
 		 from instances where app_id = $1 order by started_at desc`, appID)
 	if err != nil {
 		return nil, err
@@ -977,7 +986,7 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
 		 from instances
 		 where state in ('running','waking','cold_booting','snapshotting')
 		 order by started_at desc`)
@@ -997,7 +1006,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 func (s *PgStore) ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -1028,7 +1037,7 @@ func (s *PgStore) ListLatestInstancePerApp(ctx context.Context, accountID string
 	rows, err := s.pool.Query(ctx,
 		`select distinct on (i.app_id)
 		        i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -1117,7 +1126,7 @@ func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []S
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
 		 from instances
 		 where state = any($1)
 		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
@@ -1143,7 +1152,7 @@ func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, st
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, terminal_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, terminal_at
 		 from instances
 		 where state = any($1)
 		   and terminal_at is not null
@@ -1187,7 +1196,7 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
 		 from instances where app_id = $1 and state = 'running'
 		 order by started_at desc nulls last limit 1`, appID)
 	return scanInstance(row)
@@ -1419,6 +1428,130 @@ func (s *PgStore) ListLiveSnapshotStats(ctx context.Context) ([]SnapshotSize, er
 type SnapshotSize struct {
 	MemBytes  int64
 	DiskBytes int64
+}
+
+// --- compute nodes (issue #97 / ADR-025 axis 3) -----------------------------
+//
+// schedd is the sole reader (single-leader CP); apid is the sole writer
+// (POST /v1/compute-nodes admin endpoint). The synthetic 'default-local'
+// row is seeded by migrations/00024_compute_nodes.sql — production never
+// inserts it. The 8 MB per-vm overhead is hard-coded here to match the
+// billing model (spec §4.7 / api.PerInstanceOverheadMB if that constant
+// exists; the literal mirrors pkg/sched/admission.go's reservation math).
+// Keeping the literal local avoids a pkg/api → pkg/state import cycle.
+
+// PerInstanceOverheadMB is the fixed cost added per live instance on the
+// node (spec §6.2-2 / §4.7 billing model). 8 MB covers the per-vm struct
+// overhead Firecracker charges regardless of the configured RAM.
+const PerInstanceOverheadMB = 8
+
+func scanComputeNode(row pgx.Row) (ComputeNode, error) {
+	n := ComputeNode{}
+	if err := row.Scan(&n.ID, &n.Name, &n.TargetURL, &n.VPCPUs, &n.MemMB,
+		&n.MaxConcurrency, &n.AdmissionCeilingMB, &n.Active,
+		&n.LastHeartbeatAt, &n.CreatedAt); err != nil {
+		return ComputeNode{}, mapErr(err)
+	}
+	return n, nil
+}
+
+func (s *PgStore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error) {
+	rows, err := s.pool.Query(ctx, `
+		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		       admission_ceiling_mb, active, last_heartbeat_at, created_at
+		  from compute_nodes
+		 where active = true
+		 order by name
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("state: list active compute_nodes: %w", err)
+	}
+	defer rows.Close()
+	var out []ComputeNode
+	for rows.Next() {
+		n, err := scanComputeNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+func (s *PgStore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, error) {
+	row := s.pool.QueryRow(ctx, `
+		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		       admission_ceiling_mb, active, last_heartbeat_at, created_at
+		  from compute_nodes
+		 where id = $1
+	`, id)
+	n, err := scanComputeNode(row)
+	if err != nil {
+		return ComputeNode{}, err
+	}
+	return n, nil
+}
+
+func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNode, error) {
+	row := s.pool.QueryRow(ctx, `
+		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		       admission_ceiling_mb, active, last_heartbeat_at, created_at
+		  from compute_nodes
+		 where name = $1
+	`, name)
+	n, err := scanComputeNode(row)
+	if err != nil {
+		return ComputeNode{}, err
+	}
+	return n, nil
+}
+
+// ComputeNodeUsedMB returns the Σ(ram_mb + PerInstanceOverheadMB) for live
+// instances on the given node. Mirrors the §6.2-2 invariant re-stated
+// per-node: Σ ≤ admission_ceiling_mb per active node. Live = state ∈
+// ('waking','cold_booting','running'); SNAPSHOTTING is excluded because
+// the watchdog considers a snapshotting instance parked-from-RAM (its
+// resident memory is being flushed to disk, not held for requests).
+func (s *PgStore) ComputeNodeUsedMB(ctx context.Context, nodeID string) (int64, error) {
+	var used int64
+	err := s.pool.QueryRow(ctx, `
+		select coalesce(sum(ram_mb + $2), 0)::bigint
+		  from instances
+		 where node_id = $1
+		   and state in ('waking','cold_booting','running')
+	`, nodeID, PerInstanceOverheadMB).Scan(&used)
+	if err != nil {
+		return 0, fmt.Errorf("state: compute_node %s used_mb: %w", nodeID, err)
+	}
+	return used, nil
+}
+
+func (s *PgStore) HeartbeatComputeNode(ctx context.Context, nodeID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update compute_nodes set last_heartbeat_at = now() where id = $1`, nodeID)
+	if err != nil {
+		return fmt.Errorf("state: heartbeat compute_node %s: %w", nodeID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (ComputeNode, error) {
+	// Caller supplies zero id for "use the column default
+	// (gen_random_uuid)"; we surface whatever Postgres picked in the
+	// RETURNING so the caller can persist it. A pre-set id is rare —
+	// only useful for restoring a backup or testing.
+	row := s.pool.QueryRow(ctx, `
+		insert into compute_nodes
+		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, active)
+		values ($1, $2, $3, $4, $5, $6, $7)
+		returning id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		          admission_ceiling_mb, active, last_heartbeat_at, created_at
+	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
+		node.AdmissionCeilingMB, node.Active)
+	return scanComputeNode(row)
 }
 
 // --- events ------------------------------------------------------------------
@@ -1844,11 +1977,16 @@ func scanInstances(rows pgx.Rows) ([]Instance, error) {
 // scanInstanceCols scans one instances row. started_at, last_request_at, and
 // parked_at are nullable (a cold_booting instance has none yet), so they scan
 // through *time.Time intermediates and stay the zero Time when NULL.
+// node_id is the 12th column (issue #97 / ADR-025 axis 3) — NOT NULL since
+// migrations/00024_compute_nodes but scanned into a string so a future
+// regression that re-allows NULL surfaces as an empty string in Go rather
+// than a scan error (the SELECT column list pins the contract; a divergence
+// from there is a louder failure than a Scan error).
 func scanInstanceCols(scan func(...any) error) (Instance, error) {
 	ins := Instance{}
 	var started, lastReq, parked *time.Time
 	if err := scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
-		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked); err != nil {
+		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID); err != nil {
 		return Instance{}, err
 	}
 	if started != nil {
@@ -1863,19 +2001,23 @@ func scanInstanceCols(scan func(...any) error) (Instance, error) {
 	return ins, nil
 }
 
-// scanInstancesWithTerminal is the 12-column variant of scanInstanceCols
-// that also lifts terminal_at (PR #74). Used only by
-// ListInstancesInTerminalStatesOlderThan — the rest of the codebase reads
-// 11-column instances rows and doesn't need terminal_at, so threading it
-// into scanInstanceCols would force every SELECT to expose it for no
-// reason.
+// scanInstancesWithTerminal is the 13-column variant of scanInstanceCols
+// that also lifts terminal_at (PR #74) and node_id (issue #97). Used only
+// by ListInstancesInTerminalStatesOlderThan — the rest of the codebase
+// reads 12-column instances rows (incl. node_id) and doesn't need
+// terminal_at, so threading it into scanInstanceCols would force every
+// SELECT to expose it for no reason. node_id is included here so the
+// retention sweep's row carries the same node info as a live row — the
+// GC delete later (DeleteInstance) doesn't need it, but a future
+// per-node retention policy might, and surfacing it now keeps the row
+// shape uniform across the read paths.
 func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 	var out []Instance
 	for rows.Next() {
 		ins := Instance{}
 		var started, lastReq, parked, terminal *time.Time
 		if err := rows.Scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
-			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &terminal); err != nil {
+			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &terminal); err != nil {
 			return nil, err
 		}
 		if started != nil {
