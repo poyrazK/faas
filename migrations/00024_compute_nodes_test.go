@@ -98,38 +98,41 @@ func TestMigrations_00024_ComputeNodes(t *testing.T) {
 	// Approach mirrors 00022_backfill_test.go's idempotency check:
 	// flip the seeded instance's node_id to a non-default value,
 	// re-run the UPDATE, assert the non-default value survived.
-	if _, err := pool.Exec(ctx, `
-		insert into accounts (id, email, plan, created_at)
-		values ('00000000-0000-0000-0000-00000000c0de-acc', 'compute-nodes@example.com', 'hobby', now())
-		on conflict (id) do nothing
-	`); err != nil {
+	//
+	// All UUIDs come from gen_random_uuid() (column default) — using
+	// hand-crafted 36-char strings like '...c0de-acc' trips Postgres
+	// 15's strict uuid input parser (32 hex digits + 4 hyphens only;
+	// any extra suffix is invalid). Capturing the returned ids into
+	// vars keeps each subsequent insert consistent without pinning
+	// magic literals in the test source.
+	var accountID, appID, deploymentID string
+	if err := pool.QueryRow(ctx, `
+		insert into accounts (email, plan, created_at)
+		values ('compute-nodes@example.com', 'hobby', now())
+		returning id
+	`).Scan(&accountID); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
-		insert into apps (id, account_id, slug, ram_mb, max_concurrency, idle_timeout_s, status, created_at)
-		values ('00000000-0000-0000-0000-00000000c0de-app',
-		        '00000000-0000-0000-0000-00000000c0de-acc',
-		        'compute-nodes-app', 256, 1, 30, 'active', now())
-		on conflict (id) do nothing
-	`); err != nil {
+	if err := pool.QueryRow(ctx, `
+		insert into apps (account_id, slug, ram_mb, max_concurrency, idle_timeout_s, status, created_at)
+		values ($1, 'compute-nodes-app', 256, 1, 30, 'active', now())
+		returning id
+	`, accountID).Scan(&appID); err != nil {
 		t.Fatalf("seed app: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
-		insert into deployments (id, app_id, kind, image_digest, status, created_at)
-		values ('00000000-0000-0000-0000-00000000c0de-dep',
-		        '00000000-0000-0000-0000-00000000c0de-app',
-		        'image', 'sha256:seed', 'live', now())
-	`); err != nil {
+	if err := pool.QueryRow(ctx, `
+		insert into deployments (app_id, kind, image_digest, status, created_at)
+		values ($1, 'image', 'sha256:seed', 'live', now())
+		returning id
+	`, appID).Scan(&deploymentID); err != nil {
 		t.Fatalf("seed deployment: %v", err)
 	}
-	instanceID := "00000000-0000-0000-0000-00000000c0de-ins"
-	if _, err := pool.Exec(ctx, `
-		insert into instances (id, app_id, deployment_id, state, ram_mb, node_id, created_at)
-		values ($1,
-		        '00000000-0000-0000-0000-00000000c0de-app',
-		        '00000000-0000-0000-0000-00000000c0de-dep',
-		        'waking', 256, $2, now())
-	`, instanceID, defaultLocalID); err != nil {
+	var instanceID string
+	if err := pool.QueryRow(ctx, `
+		insert into instances (app_id, deployment_id, state, ram_mb, node_id, created_at)
+		values ($1, $2, 'waking', 256, $3, now())
+		returning id
+	`, appID, deploymentID, defaultLocalID).Scan(&instanceID); err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
 
