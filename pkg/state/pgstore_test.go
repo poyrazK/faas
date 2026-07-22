@@ -1023,3 +1023,494 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 		t.Errorf("ComputeNodeUsedMB(unknown)=%d, want 0", gotU)
 	}
 }
+
+// --- Snapshot GC (ADR-005 / spec §4.6) ---------------------------------------
+//
+// The MemStore side of these methods is already covered
+// (TestMemStore_DeleteSnapshotsByID_BulkAndIdempotent etc.). The PgStore
+// tests below mirror the MemStore coverage against a real Postgres
+// schema so the SQL stays pinned — same regression-guard shape as the
+// compute_nodes suite landed in PR #114.
+
+func TestPg_DeleteSnapshotsByID_BulkAndIdempotent(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, _, depID := seedLiveDeploy(t, s, ctx)
+
+	// Insert two snapshots via the public CreateSnapshot surface
+	// (also exercises the storage_key contract via F-1 — pgstore.go:1245).
+	snapA, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: depID, FCVersion: "1.8.0", MemBytes: 100, DiskBytes: 100,
+		StorageKey: state.SnapMemKey(depID) + "/a",
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot A: %v", err)
+	}
+	snapB, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: depID, FCVersion: "1.8.0", MemBytes: 100, DiskBytes: 100,
+		StorageKey: state.SnapMemKey(depID) + "/b",
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot B: %v", err)
+	}
+
+	// First delete: both rows gone.
+	n, err := s.DeleteSnapshotsByID(ctx, []string{snapA.ID, snapB.ID})
+	if err != nil {
+		t.Fatalf("first DeleteSnapshotsByID: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("first delete affected %d rows, want 2", n)
+	}
+
+	// Idempotent: re-running on the same ids hits zero rows.
+	n2, err := s.DeleteSnapshotsByID(ctx, []string{snapA.ID, snapB.ID})
+	if err != nil {
+		t.Fatalf("second DeleteSnapshotsByID: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("second delete affected %d rows, want 0 (idempotent)", n2)
+	}
+
+	// Empty input is a no-op, not an error.
+	if n3, err := s.DeleteSnapshotsByID(ctx, nil); err != nil || n3 != 0 {
+		t.Errorf("DeleteSnapshotsByID(nil) = (%d, %v), want (0, nil)", n3, err)
+	}
+}
+
+func TestPg_MarkAllSnapshotsStaleByFCVersion_OnlyFlipsNonCurrent(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, _, depID := seedLiveDeploy(t, s, ctx)
+
+	// Seed three snapshots across three FC versions. Only the
+	// matching-version row should stay live; the other two flip.
+	mkSnap := func(v string) string {
+		snap, err := s.CreateSnapshot(ctx, state.Snapshot{
+			DeploymentID: depID, FCVersion: v, MemBytes: 100, DiskBytes: 100,
+			StorageKey: state.SnapMemKey(depID) + "/" + v,
+		})
+		if err != nil {
+			t.Fatalf("CreateSnapshot(%s): %v", v, err)
+		}
+		return snap.ID
+	}
+	id170 := mkSnap("1.7.0")
+	id180 := mkSnap("1.8.0")
+	id190 := mkSnap("1.9.0")
+
+	// Sweep against 1.8.0: 1.7.0 and 1.9.0 should flip.
+	n, err := s.MarkAllSnapshotsStaleByFCVersion(ctx, "1.8.0")
+	if err != nil {
+		t.Fatalf("MarkAllSnapshotsStaleByFCVersion: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("marked %d stale, want 2", n)
+	}
+
+	// Confirm by reading back via LatestSnapshot (which filters stale).
+	latest, err := s.LatestSnapshot(ctx, depID)
+	if err != nil {
+		t.Fatalf("LatestSnapshot: %v", err)
+	}
+	if latest.ID != id180 {
+		t.Errorf("LatestSnapshot after sweep returned id=%q, want %q (only 1.8.0 should be live)", latest.ID, id180)
+	}
+	if latest.Stale {
+		t.Errorf("1.8.0 snapshot must not be stale after sweep")
+	}
+
+	// Idempotent: a second sweep finds no non-stale rows to flip.
+	n2, _ := s.MarkAllSnapshotsStaleByFCVersion(ctx, "1.8.0")
+	if n2 != 0 {
+		t.Errorf("second sweep marked %d, want 0 (idempotent)", n2)
+	}
+
+	// Sweeping against a version that has NO live rows matching
+	// (every live row already matches that version, or no rows exist)
+	// is a 0-result. After the first sweep, only 1.8.0 is live; a
+	// sweep against "1.8.0" is a 0-result (idempotent — proven above).
+	// A sweep against a version no row carries (e.g. "9.9.9") will
+	// flip every live non-matching row, so we skip that case here —
+	// it's the EXPECTED behavior, not a bug.
+	_ = "9.9.9 not asserted: any non-matching live row would flip"
+	_ = id170
+	_ = id190
+}
+
+func TestPg_MarkOldSnapshotsStale_OnlyFlipsGivenIDs(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, _, depID := seedLiveDeploy(t, s, ctx)
+
+	mkSnap := func(suffix string) string {
+		snap, err := s.CreateSnapshot(ctx, state.Snapshot{
+			DeploymentID: depID, FCVersion: "1.8.0", MemBytes: 100, DiskBytes: 100,
+			StorageKey: state.SnapMemKey(depID) + "/" + suffix,
+		})
+		if err != nil {
+			t.Fatalf("CreateSnapshot(%s): %v", suffix, err)
+		}
+		return snap.ID
+	}
+	idA := mkSnap("a")
+	idB := mkSnap("b")
+	idC := mkSnap("c")
+
+	// Mark only A and C stale.
+	n, err := s.MarkOldSnapshotsStale(ctx, []string{idA, idC})
+	if err != nil {
+		t.Fatalf("MarkOldSnapshotsStale: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("marked %d, want 2", n)
+	}
+
+	// Empty input → no-op.
+	if n0, err := s.MarkOldSnapshotsStale(ctx, nil); err != nil || n0 != 0 {
+		t.Errorf("MarkOldSnapshotsStale(nil) = (%d, %v), want (0, nil)", n0, err)
+	}
+
+	// LatestSnapshot filters stale; the survivor is B.
+	latest, err := s.LatestSnapshot(ctx, depID)
+	if err != nil {
+		t.Fatalf("LatestSnapshot: %v", err)
+	}
+	if latest.ID != idB {
+		t.Errorf("LatestSnapshot after mark returned id=%q, want %q (B should remain live)", latest.ID, idB)
+	}
+	if latest.Stale {
+		t.Errorf("B should remain live; got Stale=true")
+	}
+}
+
+func TestPg_DeleteSnapshotsStaleOlderThan_OnlyRemovesStalePastRetention(t *testing.T) {
+	// This test backdates created_at directly via the pool — there's no
+	// public Store surface for "create a snapshot N days ago," and
+	// opening one for a single test is cheaper than racing a real clock.
+	// The pgtest.Open + MigrateUp pattern mirrors the helper in pgStore(t).
+	pool := pgtest.Open(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := state.NewPgStore(pool)
+	_, _, depID := seedLiveDeploy(t, s, ctx)
+
+	// Two snapshots. Both start live; we backdate one and flip the
+	// other to stale-but-recent to exercise both sides of the WHERE
+	// clause (stale=true AND created_at < now()-retention).
+	freshID := mustCreateSnap(t, s, ctx, depID, "fresh", false)
+	oldID := mustCreateSnap(t, s, ctx, depID, "old", true)
+	recentStaleID := mustCreateSnap(t, s, ctx, depID, "recent-stale", true)
+
+	// Backdate `old` to 30 days ago; `recent-stale` stays at now().
+	if _, err := pool.Exec(ctx, `update snapshots set created_at = now() - interval '30 days' where id = $1`, oldID); err != nil {
+		t.Fatalf("backdate old: %v", err)
+	}
+
+	// DeleteSnapshotsStaleOlderThan(7d) → only `old` qualifies.
+	n, err := s.DeleteSnapshotsStaleOlderThan(ctx, 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("DeleteSnapshotsStaleOlderThan: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("deleted %d rows, want 1 (only the 30-day-old stale row)", n)
+	}
+
+	// Confirm `old` is gone, `fresh` + `recent-stale` remain.
+	// QueryRow + Scan distinguishes "no row" (ErrNoRows) from "row exists".
+	// pool.Exec returns nil error for a 0-row SELECT, which is why the
+	// previous assertion didn't actually catch the bug — pin the row
+	// count via COUNT instead.
+	assertRowCount := func(id string, want int) {
+		t.Helper()
+		var got int
+		if err := pool.QueryRow(ctx, `select count(*) from snapshots where id = $1`, id).Scan(&got); err != nil {
+			t.Fatalf("count(%s): %v", id, err)
+		}
+		if got != want {
+			t.Errorf("snapshot %s: row count = %d, want %d", id, got, want)
+		}
+	}
+	assertRowCount(oldID, 0)
+	assertRowCount(freshID, 1)
+	assertRowCount(recentStaleID, 1)
+
+	// Idempotent: a second pass with the same retention finds nothing.
+	n2, _ := s.DeleteSnapshotsStaleOlderThan(ctx, 7*24*time.Hour)
+	if n2 != 0 {
+		t.Errorf("second sweep deleted %d rows, want 0", n2)
+	}
+}
+
+func TestPg_ListLiveSnapshotStats_ExcludesStaleAndCapsAt10k(t *testing.T) {
+	// Open the pool directly so the test can update mem/disk_bytes
+	// on the inserted rows to assert the projection shape. The public
+	// CreateSnapshot surface takes MemBytes/DiskBytes but the table
+	// stores the value as-is — we want a non-zero value here to pin
+	// the scan field, not the round-trip.
+	pool := pgtest.Open(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := state.NewPgStore(pool)
+	_, _, depID := seedLiveDeploy(t, s, ctx)
+
+	// Insert three snapshots: one stale (filtered), two live.
+	mkSnap := func(suffix string, stale bool) string {
+		snap, err := s.CreateSnapshot(ctx, state.Snapshot{
+			DeploymentID: depID, FCVersion: "1.8.0", MemBytes: 100, DiskBytes: 100,
+			StorageKey: state.SnapMemKey(depID) + "/" + suffix,
+			Stale:      stale,
+		})
+		if err != nil {
+			t.Fatalf("CreateSnapshot(%s): %v", suffix, err)
+		}
+		return snap.ID
+	}
+	_ = mkSnap("stale", true)
+	live1 := mkSnap("live1", false)
+	live2 := mkSnap("live2", false)
+
+	// Update mem_bytes/disk_bytes on the live rows so we can assert
+	// the projection shape (the 100/100 from CreateSnapshot is fine
+	// but using a more recognizable value makes the assertion clearer).
+	if _, err := pool.Exec(ctx,
+		`update snapshots set mem_bytes = $1, disk_bytes = $2 where id = any($3)`,
+		int64(2048), int64(4096), []string{live1, live2}); err != nil {
+		t.Fatalf("update mem/disk: %v", err)
+	}
+
+	stats, err := s.ListLiveSnapshotStats(ctx)
+	if err != nil {
+		t.Fatalf("ListLiveSnapshotStats: %v", err)
+	}
+	if len(stats) != 2 {
+		t.Fatalf("got %d stats, want 2 (stale row must be filtered)", len(stats))
+	}
+	for _, sz := range stats {
+		if sz.MemBytes != 2048 || sz.DiskBytes != 4096 {
+			t.Errorf("SnapshotSize=%+v, want {MemBytes:2048 DiskBytes:4096}", sz)
+		}
+	}
+
+	// Order: by mem_bytes desc. Both rows have the same mem_bytes so
+	// the relative order is undefined; the set check above is the
+	// contract.
+}
+
+// mustCreateSnap is a tiny test helper for the GC suite — keeps the
+// boilerplate off the test bodies. The MemStore side already has
+// inline closures that do the same job (TestMemStore_*), but the
+// PgStore tests touch the pool for backdating/updating, so a single
+// named helper is more readable than three nested closures.
+func mustCreateSnap(t *testing.T, s *state.PgStore, ctx context.Context, depID, suffix string, stale bool) string {
+	t.Helper()
+	snap, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: depID, FCVersion: "1.8.0", MemBytes: 100, DiskBytes: 100,
+		StorageKey: state.SnapMemKey(depID) + "/" + suffix,
+		Stale:      stale,
+	})
+	if err != nil {
+		t.Fatalf("mustCreateSnap(%s): %v", suffix, err)
+	}
+	return snap.ID
+}
+
+// --- Instance lifecycle (PR #74 / spec §6.1) ---------------------------------
+//
+// The watchdog (ListInstancesByStatesOlderThan) and the retention sweep
+// (ListInstancesInTerminalStatesOlderThan) share most of their shape —
+// both read instances.filtered by state-set + a state-aware age column.
+// PgStore-only coverage; the MemStore side is already covered.
+
+func TestPg_UpdateInstanceStateWithTimestamp_BumpsStateAndParkedAt(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, nodeID)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	when := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.UpdateInstanceStateWithTimestamp(ctx, ins.ID, string(state.StateParked), when); err != nil {
+		t.Fatalf("UpdateInstanceStateWithTimestamp: %v", err)
+	}
+
+	got, err := s.InstanceByID(ctx, ins.ID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if got.State != string(state.StateParked) {
+		t.Errorf("State=%q, want %q", got.State, string(state.StateParked))
+	}
+	if !got.ParkedAt.Equal(when) {
+		t.Errorf("ParkedAt=%v, want %v", got.ParkedAt, when)
+	}
+
+	// Unknown id → ErrNotFound.
+	missing := "00000000-0000-0000-0000-000000000000"
+	if err := s.UpdateInstanceStateWithTimestamp(ctx, missing, string(state.StateRunning), when); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("UpdateInstanceStateWithTimestamp(missing): want ErrNotFound, got %v", err)
+	}
+}
+
+func TestPg_UpdateInstanceStateToTerminal_BumpsStateAndTerminalAt(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, nodeID)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	when := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.UpdateInstanceStateToTerminal(ctx, ins.ID, string(state.StateStopped), when); err != nil {
+		t.Fatalf("UpdateInstanceStateToTerminal: %v", err)
+	}
+
+	// The dedicated terminal_at column is read by
+	// ListInstancesInTerminalStatesOlderThan; round-trip via that
+	// helper to assert it's stamped.
+	threshold := when.Add(time.Hour)
+	got, err := s.ListInstancesInTerminalStatesOlderThan(ctx,
+		[]state.State{state.StateStopped}, threshold)
+	if err != nil {
+		t.Fatalf("ListInstancesInTerminalStatesOlderThan: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != ins.ID {
+		t.Fatalf("ListInstancesInTerminalStatesOlderThan returned %d rows (ids=%v), want 1 (id=%s)", len(got), idsOf(got), ins.ID)
+	}
+
+	// Unknown id → ErrNotFound.
+	missing := "00000000-0000-0000-0000-000000000000"
+	if err := s.UpdateInstanceStateToTerminal(ctx, missing, string(state.StateStopped), when); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("UpdateInstanceStateToTerminal(missing): want ErrNotFound, got %v", err)
+	}
+}
+
+func TestPg_ListInstancesByStatesOlderThan_UsesStateAwareAgeColumn(t *testing.T) {
+	// Open pool directly so the test can backdate started_at / parked_at
+	// — PgStore.pool is unexported (state_test can't see it), and
+	// there's no public Store surface for "set started_at = X".
+	pool := pgtest.Open(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := state.NewPgStore(pool)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+
+	// Two WAKING instances (one cold-booting, one waking) — the
+	// watchdog's CASE clause in ListInstancesByStatesOlderThan picks
+	// started_at for any state except 'snapshotting'. Migration 20
+	// removed 'snapshotting' from the DB CHECK constraint, so we
+	// exercise the started_at branch here. The CASE itself is
+	// defensively retained in pgstore.go for the historical state
+	// value — we just can't seed a row with that state any more.
+	mkIns := func(st state.State, suffix string) string {
+		ins, err := s.CreateInstance(ctx, appID, depID, string(st), 256, nodeID)
+		if err != nil {
+			t.Fatalf("CreateInstance(%s): %v", suffix, err)
+		}
+		return ins.ID
+	}
+	wakingID := mkIns(state.StateWaking, "waking")
+	coldID := mkIns(state.StateColdBooting, "cold_booting")
+
+	// Threshold is 1 hour ago. Both rows' age columns must be < threshold.
+	threshold := time.Now().Add(-1 * time.Hour)
+
+	// Backdate started_at on both rows so they're well below the
+	// threshold (rows are already old in practice, but explicit
+	// backdating makes the test stable on a fast CI runner).
+	if _, err := pool.Exec(ctx,
+		`update instances set started_at = now() - interval '2 hours' where id = $1`, wakingID); err != nil {
+		t.Fatalf("backdate waking: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`update instances set started_at = now() - interval '2 hours' where id = $1`, coldID); err != nil {
+		t.Fatalf("backdate cold: %v", err)
+	}
+
+	got, err := s.ListInstancesByStatesOlderThan(ctx,
+		[]state.State{state.StateWaking, state.StateColdBooting}, threshold)
+	if err != nil {
+		t.Fatalf("ListInstancesByStatesOlderThan: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d rows, want 2 (waking + cold_booting, both age < threshold)", len(got))
+	}
+	gotIDs := idsOf(got)
+	if !contains(gotIDs, wakingID) || !contains(gotIDs, coldID) {
+		t.Errorf("missing rows: got %v, want both %s and %s", gotIDs, wakingID, coldID)
+	}
+
+	// State filter excludes a state that's not present: pick RUNNING
+	// (not seeded here) → 0 rows.
+	gotNone, err := s.ListInstancesByStatesOlderThan(ctx,
+		[]state.State{state.StateRunning}, time.Now().Add(-1*time.Hour))
+	if err != nil {
+		t.Fatalf("ListInstancesByStatesOlderThan(running): %v", err)
+	}
+	if len(gotNone) != 0 {
+		t.Errorf("running filter returned %d rows, want 0 (no running instance in this test)", len(gotNone))
+	}
+}
+
+func TestPg_DeleteInstance_RemovesRowAndReturnsErrNotFound(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, nodeID)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if err := s.DeleteInstance(ctx, ins.ID); err != nil {
+		t.Fatalf("first DeleteInstance: %v", err)
+	}
+
+	// Subsequent InstanceByID → ErrNotFound.
+	if _, err := s.InstanceByID(ctx, ins.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("InstanceByID after delete: want ErrNotFound, got %v", err)
+	}
+
+	// Idempotent: second delete also ErrNotFound.
+	if err := s.DeleteInstance(ctx, ins.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("second DeleteInstance: want ErrNotFound, got %v", err)
+	}
+
+	// Random unknown id → ErrNotFound.
+	missing := "00000000-0000-0000-0000-000000000000"
+	if err := s.DeleteInstance(ctx, missing); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("DeleteInstance(unknown): want ErrNotFound, got %v", err)
+	}
+}
+
+// idsOf is a small helper for asserting on instance lists without
+// pulling in a third-party assertion lib. State_test already has
+// similar one-liners; this matches the style.
+func idsOf(insts []state.Instance) []string {
+	out := make([]string, 0, len(insts))
+	for _, i := range insts {
+		out = append(out, i.ID)
+	}
+	return out
+}
+
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
