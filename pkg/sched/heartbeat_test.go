@@ -87,7 +87,7 @@ func (h *heartbeatFakeVMM) CreateColdBoot(context.Context, string, AppSpec) (*Wa
 func (h *heartbeatFakeVMM) CreateFromSnapshot(context.Context, string, AppSpec, SnapshotRef) (*WakeOutcome, error) {
 	return &WakeOutcome{}, nil
 }
-func (h *heartbeatFakeVMM) PauseAndSnapshot(context.Context, string, string, string) (SnapshotBytes, error) {
+func (h *heartbeatFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string) (SnapshotBytes, error) {
 	return SnapshotBytes{}, nil
 }
 func (h *heartbeatFakeVMM) Destroy(context.Context, string) error { return nil }

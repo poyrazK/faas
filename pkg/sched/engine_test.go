@@ -926,3 +926,65 @@ func TestEngineWake_PostVMMDAbortOnStolenState(t *testing.T) {
 		t.Errorf("resident = %d, want 0 (reservation released)", got)
 	}
 }
+
+// TestEngineVmstateHelpers pins the two helpers #121 / ADR-025 axis 2
+// slice 4 added on the Engine — vmstateHostPathFor (always returns the
+// deterministic host path) and vmstateStorageKeyFor (returns "" for
+// default-local, the canonical key for remote nodes). Without this test
+// a future refactor of the helper could route default-local through the
+// StorageBackend (breaking the single-box contract) or construct the
+// storage key with the wrong prefix (breaking the OCI driver), and no
+// CI test would fail.
+func TestEngineVmstateHelpers(t *testing.T) {
+	const (
+		depID = "d-1"
+		// The default-local node UUID is whatever the seed migration
+		// picks; the helper compares against it for the "" short
+		// circuit, so the literal here MUST match the engine's
+		// defaultLocalNodeID for the "default-local" case to
+		// short-circuit.
+		defaultLocalID = "00000000-0000-0000-0000-000000000001"
+		remoteID       = "00000000-0000-0000-0000-000000000002"
+	)
+	e := &Engine{defaultLocalNodeID: defaultLocalID}
+
+	// vmstateHostPathFor is a pure function of depID — invariant under
+	// node identity.
+	hostTests := []struct {
+		name string
+		dep  string
+		want string
+	}{
+		{"standard dep", "d-1", "/srv/fc/snap/d-1/vmstate"},
+		{"uuid-shaped dep", "9c2b6d8a-1f3e", "/srv/fc/snap/9c2b6d8a-1f3e/vmstate"},
+	}
+	for _, tt := range hostTests {
+		t.Run("host/"+tt.name, func(t *testing.T) {
+			if got := e.vmstateHostPathFor(tt.dep); got != tt.want {
+				t.Errorf("vmstateHostPathFor(%q) = %q, want %q", tt.dep, got, tt.want)
+			}
+		})
+	}
+
+	keyTests := []struct {
+		name   string
+		nodeID string
+		dep    string
+		want   string
+	}{
+		{"default-local returns empty", defaultLocalID, depID, ""},
+		// Empty nodeID short-circuits to "" as well; the engine
+		// can't route an unknown node and falling back to ""
+		// preserves default-local behaviour rather than failing the
+		// wake outright.
+		{"empty nodeID returns empty", "", depID, ""},
+		{"remote node returns canonical key", remoteID, depID, "snap/" + depID + "/vmstate"},
+	}
+	for _, tt := range keyTests {
+		t.Run("key/"+tt.name, func(t *testing.T) {
+			if got := e.vmstateStorageKeyFor(tt.nodeID, tt.dep); got != tt.want {
+				t.Errorf("vmstateStorageKeyFor(%q, %q) = %q, want %q", tt.nodeID, tt.dep, got, tt.want)
+			}
+		})
+	}
+}

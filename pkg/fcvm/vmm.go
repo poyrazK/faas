@@ -290,6 +290,12 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		if stateTmp != "" {
 			stateSrc = stateTmp
 		}
+		// Defensive: a nil-error, empty-result from materializeFromStorage
+		// means the backend didn't surface a file for this key (e.g. the
+		// materialise helper's "no entry" return code). Falling through to
+		// spec.VMStatePath below keeps Restore advancing when a legacy
+		// host-path file is still around; the next branch's empty-stateSrc
+		// check is the hard error when neither locator has bytes.
 	}
 	if stateSrc == "" {
 		return fmt.Errorf("vmm: restore spec missing vmstate source (vmstate_storage_key=%q vmstate_path=%q)",

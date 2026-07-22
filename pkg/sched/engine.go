@@ -784,7 +784,20 @@ func (e *Engine) vmstateHostPathFor(depID string) string {
 // so the identity check here is a stable UUID compare rather than
 // a string match against the synthetic row's name.
 func (e *Engine) vmstateStorageKeyFor(nodeID, depID string) string {
-	if nodeID == e.defaultLocalNodeID || nodeID == "" {
+	if nodeID == "" {
+		// Defensive: an empty nodeID here is a misroute, not default-local
+		// (those have a real UUID resolved at construction). Falling
+		// through to "" routes the wake to vmmd's legacy host-path
+		// branch, which preserves single-box semantics but masks the
+		// upstream bug. Surfacing a Warn here so dev / staging catches
+		// placement decisions that omit node_id at the source.
+		if e.log != nil {
+			e.log.Warn("engine: vmstateStorageKeyFor called with empty nodeID; routing to host-path fallback",
+				"deployment_id", depID)
+		}
+		return ""
+	}
+	if nodeID == e.defaultLocalNodeID {
 		return ""
 	}
 	return state.SnapVMStateKey(depID)
