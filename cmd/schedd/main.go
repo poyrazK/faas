@@ -156,6 +156,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	})
 	engine, err := sched.NewEngine(ctx, store, ledger, vmm, sched.PoolNotifier{Pool: pool}, fcVersion, log)
 	if err != nil {
+		// A bootstrap failure caused by a cancelled ctx is the
+		// normal "test cancelled runWithDeps before startup
+		// completed" path; not an error worth reporting. Anything
+		// else (missing migration 00024, dropped Postgres
+		// connection, etc.) is the loud failure F-2 added.
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return nil
+		}
 		return fmt.Errorf("schedd: init engine: %w", err)
 	}
 	engine.WithOpsMetrics(ops)
