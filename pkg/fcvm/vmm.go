@@ -206,19 +206,25 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}()
 
-	// #96 / ADR-025 axis 2 — when the caller supplied a StorageKey, pull
-	// the bytes through the StorageBackend into a tmp file and substitute
-	// the absolute path into MemPath. The chroot staging steps below
-	// continue to consume host paths. Tmp cleanup happens in the
-	// deferred Kill (root lives on tmpfs and disappears with it).
+	// #96 / ADR-025 axis 2 — materialise the mem blob from the configured
+	// StorageBackend into a vmmd-allocated tmp file. After slice 3 the
+	// staging tmp path is purely internal: no caller-supplied MemPath is
+	// honoured. The local driver on the production box maps "snap/" to
+	// /srv/fc/snap and the resolution is essentially a stat; the OCI
+	// driver streams the bytes over HTTP. Tmp cleanup happens via the
+	// deferred Kill (chroot lives on tmpfs and disappears with it).
+	memSrc := spec.VMStatePath
 	if spec.StorageKey != "" && v.storage != nil {
 		memTmp, gerr := v.materializeFromStorage(ctx, l.Instance, spec.StorageKey)
 		if gerr != nil {
 			return gerr
 		}
 		if memTmp != "" {
-			spec.MemPath = memTmp
+			memSrc = memTmp
 		}
+	}
+	if memSrc == "" {
+		return fmt.Errorf("vmm: restore spec missing mem source (storage_key=%q)", spec.StorageKey)
 	}
 
 	// Re-stage everything the snapshot's recorded VM state still references.
@@ -243,7 +249,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// Snapshot files are read-only inputs shared across the N instances a single
 	// snapshot may restore (invariant §6.2-5): hardlink them in and widen for read
 	// rather than chown, which would rewrite the shared inode owner.
-	memName, err := stageReadOnly(root, spec.MemPath)
+	memName, err := stageReadOnly(root, memSrc)
 	if err != nil {
 		return fmt.Errorf("vmm: stage mem file: %w", err)
 	}
@@ -524,7 +530,23 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 		return SnapshotInfo{}, fmt.Errorf("vmm: create snapshot: %w", err)
 	}
 
-	memBytes, err := moveOut(filepath.Join(root, memName), spec.MemPath)
+	// #96 / ADR-025 axis 2 — after slice 3 the mem destination is
+	// vmmd-allocated. Firecracker dumps the paused mem at <chroot>/mem;
+	// moveOut copies it into a tmp and we stream that into the
+	// configured StorageBackend at the StorageKey. The vmstate file
+	// stays at the caller-supplied VMStatePath (it's a small JSON, and
+	// the planned StorageBackend key for vmstate lands in slice 4 once
+	// the per-deployment blob is broken out — slice 3 only handles the
+	// mem half).
+	memTmp, err := os.CreateTemp("", "faas-snap-*.mem")
+	if err != nil {
+		return SnapshotInfo{}, fmt.Errorf("vmm: alloc snapshot mem tmp: %w", err)
+	}
+	memTmpPath := memTmp.Name()
+	_ = memTmp.Close()
+	defer func() { _ = os.Remove(memTmpPath) }()
+
+	memBytes, err := moveOut(filepath.Join(root, memName), memTmpPath)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: export mem: %w", err)
 	}
@@ -534,16 +556,11 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 	}
 
 	if spec.StorageKey != "" && v.storage != nil {
-		// nolint:forbidigo // spec.MemPath is the host path this very
-		// Snapshot call wrote via moveOut from a vetted chroot root
-		// (chrootBase/fcName/<instance>); vmmd is the sole writer and
-		// the openCustomerFile guard does not apply to daemons opening
-		// paths they just wrote themselves.
-		f, oerr := os.Open(spec.MemPath)
+		// nolint:forbidigo // memTmpPath is a vmmd-allocated tmp under
+		// os.TempDir(); not a customer-supplied location, so the
+		// openCustomerFile guard does not apply.
+		f, oerr := os.Open(memTmpPath)
 		if oerr != nil {
-			// Best-effort: leave MemPath populated so the legacy
-			// caller still has the bytes. Log so an operator sees
-			// the missing Put.
 			slog.Default().Warn("vmm: snapshot storage open failed",
 				"key", spec.StorageKey, "err", oerr)
 		} else {

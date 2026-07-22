@@ -1127,14 +1127,14 @@ func TestMemStore_ListSnapshotsForGC(t *testing.T) {
 	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
 	if _, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100,
-		Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		FCVersion:  "1.8.0",
 		StorageKey: SnapMemKey(depA.ID),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depB.ID, MemBytes: 200, DiskBytes: 200,
-		Path: "/tmp/b.snap", FCVersion: "1.8.0",
+		FCVersion:  "1.8.0",
 		StorageKey: SnapMemKey(depB.ID),
 	}); err != nil {
 		t.Fatal(err)
@@ -1167,7 +1167,7 @@ func TestMemStore_ListSnapshotsForGC_ExcludesDeletedApp(t *testing.T) {
 	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
 	if _, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
-		Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		FCVersion:  "1.8.0",
 		StorageKey: SnapMemKey(dep.ID),
 	}); err != nil {
 		t.Fatal(err)
@@ -1192,11 +1192,11 @@ func TestMemStore_DeleteSnapshotsByID_BulkAndIdempotent(t *testing.T) {
 	depA, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
 	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
 	snapA, _ := m.CreateSnapshot(ctx, Snapshot{
-		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0",
 		StorageKey: SnapMemKey(depA.ID),
 	})
 	snapB, _ := m.CreateSnapshot(ctx, Snapshot{
-		DeploymentID: depB.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/b.snap", FCVersion: "1.8.0",
+		DeploymentID: depB.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0",
 		StorageKey: SnapMemKey(depB.ID),
 	})
 
@@ -1227,7 +1227,7 @@ func TestMemStore_MarkAllSnapshotsStaleByFCVersion(t *testing.T) {
 		dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:" + v})
 		snap, _ := m.CreateSnapshot(ctx, Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
-			Path: "/tmp/" + v + ".snap", FCVersion: v,
+			FCVersion:  v,
 			StorageKey: SnapMemKey(dep.ID),
 		})
 		return snap.ID
@@ -1262,11 +1262,11 @@ func TestMemStore_MarkOldSnapshotsStale(t *testing.T) {
 	depA, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
 	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
 	snapA, _ := m.CreateSnapshot(ctx, Snapshot{
-		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/a.snap", FCVersion: "1.8.0",
+		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0",
 		StorageKey: SnapMemKey(depA.ID),
 	})
 	_, _ = m.CreateSnapshot(ctx, Snapshot{
-		DeploymentID: depB.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/b.snap", FCVersion: "1.8.0",
+		DeploymentID: depB.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0",
 		StorageKey: SnapMemKey(depB.ID),
 	})
 
@@ -1316,7 +1316,7 @@ func TestMemStore_SnapshotStorageKey_RoundTrip(t *testing.T) {
 	want := "snap/" + dep.ID + "/mem"
 	snap, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.8.0", MemBytes: 100, DiskBytes: 100,
-		Path: "/srv/fc/snap/" + dep.ID + "/mem", StorageKey: want,
+		StorageKey: want,
 	})
 	if err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)

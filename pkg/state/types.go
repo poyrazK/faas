@@ -364,21 +364,15 @@ type Snapshot struct {
 	FCVersion    string
 	MemBytes     int64
 	DiskBytes    int64
-	// Path is the legacy on-disk location of the mem blob. The
-	// canonical reference is StorageKey; Path is kept for one
-	// milestone as a deprecation seam and dropped in the slice 2
-	// follow-up (issue #96 deprecation window).
-	Path string
 	// StorageKey is the canonical StorageBackend key for the mem
 	// blob (issue #96, ADR-025 axis 2). Local backends resolve it
 	// to a file under /srv/fc; remote backends (OCI registry)
 	// resolve it to a manifest tag. Always populated by the
 	// production write path (imaged copies it from the
 	// snapshot_written payload); empty only on rows written by
-	// test fixtures that bypass the storage contract, or pre-
-	// migration on rows stamped before the column existed. Wake
-	// has a fallback for the latter case that computes the
-	// canonical form from the deployment id.
+	// test fixtures that bypass the storage contract. Wake sends
+	// StorageKey on the wire; vmmd resolves it through the
+	// configured StorageBackend.
 	StorageKey string
 	Stale      bool
 	CreatedAt  time.Time
@@ -401,7 +395,6 @@ type SnapshotForGC struct {
 	FCVersion    string
 	MemBytes     int64
 	DiskBytes    int64
-	Path         string
 	// StorageKey mirrors Snapshot.StorageKey; populated from the
 	// join so imaged's snapshot GC can Storage.Delete under the
 	// canonical key (issue #96, ADR-025 axis 2 final slice).

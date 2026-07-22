@@ -68,14 +68,6 @@ func layerPath(rootfsPath, deploymentID string) string {
 	return layerDir + "/" + deploymentID + ".ext4"
 }
 
-// snapshotPaths returns the mem file and vmstate file for a deployment's
-// snapshot. vmmd writes both on PauseAndSnapshot and reads both on restore; the
-// snapshot row imaged records (PR3) stores snapDir/<deployment> as its Path.
-func snapshotPaths(deploymentID string) (memPath, vmstatePath string) {
-	dir := snapDir + "/" + deploymentID
-	return dir + "/mem", dir + "/vmstate"
-}
-
 // --- Storage key helpers (issue #96 / ADR-025 axis 2) ---------------------
 //
 // Each helper returns a StorageBackend key (see pkg/storage) instead of

@@ -132,7 +132,7 @@ func TestVMMClient_CreateFromSnapshot_FallbackReported(t *testing.T) {
 	c := newClient(t, &fakeVMM{})
 	out, err := c.CreateFromSnapshot(context.Background(), "i-2",
 		sched.AppSpec{BasePath: "/b", LayerPath: "/l", VCPUCount: 2, MemSizeMiB: 256},
-		sched.SnapshotRef{DeploymentID: "d-1", MemPath: "/m", VMStatePath: "/v", FCVersion: "1.10.0"},
+		sched.SnapshotRef{DeploymentID: "d-1", VMStatePath: "/v", FCVersion: "1.10.0", StorageKey: "snap/d-1/mem"},
 	)
 	if err != nil {
 		t.Fatalf("CreateFromSnapshot: %v", err)
@@ -147,7 +147,7 @@ func TestVMMClient_CreateFromSnapshot_FallbackReported(t *testing.T) {
 
 func TestVMMClient_PauseAndSnapshot(t *testing.T) {
 	c := newClient(t, &fakeVMM{})
-	b, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/mem", "/snap/vmstate", "snap/i-1/mem")
+	b, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "snap/i-1/mem")
 	if err != nil {
 		t.Fatalf("PauseAndSnapshot: %v", err)
 	}
@@ -158,9 +158,9 @@ func TestVMMClient_PauseAndSnapshot(t *testing.T) {
 
 func TestVMMClient_PauseAndSnapshot_MissingPaths(t *testing.T) {
 	c := newClient(t, &fakeVMM{})
-	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "", "/snap/vmstate", "snap/i-1/mem")
+	_, err := c.PauseAndSnapshot(context.Background(), "i-1", "/snap/vmstate", "")
 	if err == nil {
-		t.Fatal("expected error for empty mem_path")
+		t.Fatal("expected error for empty storage_key")
 	}
 	// The server rejects with a *api.Problem (CodeValidation); liftErr must
 	// re-hydrate it so schedd sees a Problem, not an opaque status.

@@ -285,7 +285,7 @@ func (v *fakeVMM) boots() int {
 const testFCVersion = "1.7.0"
 
 func usableSnapshot() *Snapshot {
-	return &Snapshot{DeploymentID: "d1", FCVersion: testFCVersion, MemPath: "/snap/mem", VMStatePath: "/snap/state"}
+	return &Snapshot{DeploymentID: "d1", FCVersion: testFCVersion, StorageKey: "snap/d1/mem", VMStatePath: "/snap/state"}
 }
 
 func (v *fakeVMM) killedInstance(id string) bool {
@@ -599,7 +599,7 @@ func TestParkSnapshotFailureDestroysInstance(t *testing.T) {
 	}
 	_ = inst
 
-	_, err = m.Park(context.Background(), "park-fail", SnapshotSpec{MemPath: "/m", VMStatePath: "/s"})
+	_, err = m.Park(context.Background(), "park-fail", SnapshotSpec{VMStatePath: "/s", StorageKey: "snap/park-fail/mem"})
 	if err == nil {
 		t.Fatal("expected snapshot error")
 	}

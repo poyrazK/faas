@@ -30,7 +30,7 @@ import (
 type VMM interface {
 	CreateColdBoot(ctx context.Context, instance string, app AppSpec) (*WakeOutcome, error)
 	CreateFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error)
-	PauseAndSnapshot(ctx context.Context, instance, memPath, vmstatePath, storageKey string) (SnapshotBytes, error)
+	PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey string) (SnapshotBytes, error)
 	Destroy(ctx context.Context, instance string) error
 }
 
@@ -50,18 +50,16 @@ type AppSpec struct {
 	SealedEnv  []fcvm.SealedEnvEntry
 }
 
-// SnapshotRef points at the snapshot files to restore from and the Firecracker
-// version they were made with (ADR-005 pinning). An empty ref means cold boot.
+// SnapshotRef points at the snapshot to restore from and the Firecracker
+// version it was made with (ADR-005 pinning). An empty ref means cold boot.
 //
 // #96 / ADR-025 axis 2: StorageKey is the canonical storage key the VMM
-// should pull the mem blob from (e.g. "snap/<deploymentID>/mem"). When
-// set, vmmd's StorageBackend resolves the bytes into the chroot staging
-// step. MemPath is kept for one release as a transitional field; once
-// the storage_key proto / wire transition lands (issue #57), MemPath
-// becomes fully derived from StorageKey.
+// pulls the mem blob from (e.g. "snap/<deploymentID>/mem"). vmmd's
+// StorageBackend resolves the bytes through the configured driver into a
+// tmp staging path before firing the FC restore. MemPath is gone — the
+// deprecation window expired with #96 slice 3.
 type SnapshotRef struct {
 	DeploymentID string
-	MemPath      string
 	VMStatePath  string
 	FCVersion    string
 	StorageKey   string
@@ -162,7 +160,6 @@ func (c *VMMClient) CreateFromSnapshot(ctx context.Context, instance string, app
 		App:      app.toProto(),
 		Snapshot: &vmmdpb.SnapshotRef{
 			DeploymentId: snap.DeploymentID,
-			MemPath:      snap.MemPath,
 			VmstatePath:  snap.VMStatePath,
 			FcVersion:    snap.FCVersion,
 			StorageKey:   snap.StorageKey,
@@ -174,10 +171,9 @@ func (c *VMMClient) CreateFromSnapshot(ctx context.Context, instance string, app
 	return outcomeFromProto(resp), nil
 }
 
-func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, memPath, vmstatePath, storageKey string) (SnapshotBytes, error) {
+func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey string) (SnapshotBytes, error) {
 	resp, err := c.cli.PauseAndSnapshot(ctx, &vmmdpb.PauseAndSnapshotRequest{
 		Instance:    instance,
-		MemPath:     memPath,
 		VmstatePath: vmstatePath,
 		StorageKey:  storageKey,
 	})

@@ -176,7 +176,7 @@ func TestCreateFromSnapshot_FallsBackWhenMissing(t *testing.T) {
 	resp, err := cli.CreateFromSnapshot(context.Background(), &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "i-restore",
 		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
-		Snapshot: &vmmdpb.SnapshotRef{MemPath: "", VmstatePath: ""}, // empty ref
+		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "", VmstatePath: ""}, // empty ref
 	})
 	if err != nil {
 		t.Fatalf("CreateFromSnapshot: %v", err)
@@ -196,11 +196,10 @@ func TestPauseAndSnapshot_RequiresPaths(t *testing.T) {
 	cli, _ := newServer(t, f)
 	_, err := cli.PauseAndSnapshot(context.Background(), &vmmdpb.PauseAndSnapshotRequest{
 		Instance:    "live-1",
-		MemPath:     "",
 		VmstatePath: "/snap/vmstate",
 	})
 	if err == nil {
-		t.Fatalf("expected error for missing mem_path")
+		t.Fatalf("expected error for missing storage_key")
 	}
 	if code := status.Code(err); code != codes.InvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument", code)
@@ -212,7 +211,7 @@ func TestPauseAndSnapshot_Success(t *testing.T) {
 	cli, _ := newServer(t, f)
 	resp, err := cli.PauseAndSnapshot(context.Background(), &vmmdpb.PauseAndSnapshotRequest{
 		Instance:    "live-1",
-		MemPath:     "/snap/mem",
+		StorageKey:  "snap/live-1/mem",
 		VmstatePath: "/snap/vmstate",
 	})
 	if err != nil {
@@ -228,7 +227,7 @@ func TestPauseAndSnapshot_NotLive(t *testing.T) {
 	cli, _ := newServer(t, f)
 	_, err := cli.PauseAndSnapshot(context.Background(), &vmmdpb.PauseAndSnapshotRequest{
 		Instance:    "ghost",
-		MemPath:     "/snap/mem",
+		StorageKey:  "snap/ghost/mem",
 		VmstatePath: "/snap/vmstate",
 	})
 	if err == nil {
@@ -291,7 +290,7 @@ func TestCreateFromSnapshot_WakeError(t *testing.T) {
 	_, err := cli.CreateFromSnapshot(context.Background(), &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "boom",
 		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
-		Snapshot: &vmmdpb.SnapshotRef{MemPath: "/m", VmstatePath: "/v", FcVersion: "1.7.0"},
+		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/boom/mem", VmstatePath: "/v", FcVersion: "1.7.0"},
 	})
 	if err == nil {
 		t.Fatal("expected error from CreateFromSnapshot")
@@ -309,7 +308,7 @@ func TestCreateFromSnapshot_InvalidRequest(t *testing.T) {
 	// No instance — toWakeRequest will fail.
 	_, err := cli.CreateFromSnapshot(context.Background(), &vmmdpb.CreateFromSnapshotRequest{
 		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
-		Snapshot: &vmmdpb.SnapshotRef{MemPath: "/m", VmstatePath: "/v", FcVersion: "1.7.0"},
+		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/noinst/mem", VmstatePath: "/v", FcVersion: "1.7.0"},
 	})
 	if err == nil {
 		t.Fatal("expected error for missing instance")

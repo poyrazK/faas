@@ -38,7 +38,7 @@ func TestToWakeRequest_Happy(t *testing.T) {
 	req := &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "inst-1",
 		App:      &vmmdpb.AppSpec{BasePath: "/b", LayerPath: "/l", VcpuCount: 2, MemSizeMib: 256},
-		Snapshot: &vmmdpb.SnapshotRef{MemPath: "/m", VmstatePath: "/v", FcVersion: "1.7.0"},
+		Snapshot: &vmmdpb.SnapshotRef{VmstatePath: "/v", FcVersion: "1.7.0", StorageKey: "snap/inst-1/mem"},
 	}
 	wr, err := toWakeRequest(req)
 	if err != nil {
@@ -53,7 +53,7 @@ func TestToWakeRequest_Happy(t *testing.T) {
 	if wr.Snapshot == nil {
 		t.Fatal("Snapshot should be set")
 	}
-	if wr.Snapshot.MemPath != "/m" || wr.Snapshot.VMStatePath != "/v" || wr.Snapshot.FCVersion != "1.7.0" {
+	if wr.Snapshot.VMStatePath != "/v" || wr.Snapshot.FCVersion != "1.7.0" || wr.Snapshot.StorageKey != "snap/inst-1/mem" {
 		t.Errorf("snapshot fields wrong: %+v", wr.Snapshot)
 	}
 }
@@ -72,18 +72,23 @@ func TestToWakeRequest_NoSnapshot(t *testing.T) {
 	}
 }
 
-func TestToWakeRequest_EmptySnapshotMemPath(t *testing.T) {
+func TestToWakeRequest_EmptySnapshotStorageKey(t *testing.T) {
+	// #96 slice 3 — mem_path is gone from the wire. The empty-storage-key
+	// case now signals a snapshot-with-no-blob-locator and the proto
+	// decoder drops the Snapshot ref so the Manager's cold-boot branch
+	// fires (ADR-005). Bumping FCVersion here is the only thing still
+	// meaningful when StorageKey is empty.
 	req := &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "inst-1",
 		App:      &vmmdpb.AppSpec{BasePath: "/b"},
-		Snapshot: &vmmdpb.SnapshotRef{MemPath: ""},
+		Snapshot: &vmmdpb.SnapshotRef{StorageKey: ""},
 	}
 	wr, err := toWakeRequest(req)
 	if err != nil {
 		t.Fatalf("toWakeRequest: %v", err)
 	}
 	if wr.Snapshot != nil {
-		t.Errorf("Snapshot must be nil when MemPath empty, got %+v", wr.Snapshot)
+		t.Errorf("Snapshot must be nil when storage_key empty, got %+v", wr.Snapshot)
 	}
 }
 
@@ -199,7 +204,7 @@ func TestToWakeRequest_ForwardsSealedEnv(t *testing.T) {
 				{Key: "DB_URL", Ciphertext: []byte("ciphertext-2")},
 			},
 		},
-		Snapshot: &vmmdpb.SnapshotRef{MemPath: "/m"},
+		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/inst-1/mem"},
 	}
 	wr, err := toWakeRequest(req)
 	if err != nil {

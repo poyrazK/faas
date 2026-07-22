@@ -229,21 +229,22 @@ func (x *SealedSecret) GetCiphertext() []byte {
 	return nil
 }
 
-// SnapshotRef points at the snapshot files a caller wants to restore from.
-// Both paths must exist on the host's /srv/fc/ filesystem.
+// SnapshotRef points at the snapshot a caller wants to restore from. The
+// bytes live under the canonical StorageBackend key (issue #96, ADR-025
+// axis 2); vmmd allocates its own staging tmp via Storage.Get before
+// firing the firecracker restore. fc_version + storage_key together pin
+// the artifact and the Firecracker binary that produced it (ADR-005).
 type SnapshotRef struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	DeploymentId string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
-	MemPath      string                 `protobuf:"bytes,2,opt,name=mem_path,json=memPath,proto3" json:"mem_path,omitempty"`
 	VmstatePath  string                 `protobuf:"bytes,3,opt,name=vmstate_path,json=vmstatePath,proto3" json:"vmstate_path,omitempty"`
 	// The Firecracker version the snapshot was made with (ADR-005: pinned).
 	// If empty, the daemon uses the running fcVersion (current behaviour).
 	FcVersion string `protobuf:"bytes,4,opt,name=fc_version,json=fcVersion,proto3" json:"fc_version,omitempty"`
-	// storage_key is the canonical StorageBackend key (issue #96, ADR-025
-	// axis 2) under which the mem blob lives. When set, the daemon resolves
-	// the bytes through the configured StorageBackend before staging.
-	// Empty keeps the legacy mem_path-only workflow intact (one-release
-	// deprecation window).
+	// storage_key is the canonical StorageBackend key under which the mem
+	// blob lives. The daemon resolves the bytes through the configured
+	// StorageBackend and stages them into an os.TempDir() location for
+	// the FC restore source.
 	StorageKey    string `protobuf:"bytes,5,opt,name=storage_key,json=storageKey,proto3" json:"storage_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -282,13 +283,6 @@ func (*SnapshotRef) Descriptor() ([]byte, []int) {
 func (x *SnapshotRef) GetDeploymentId() string {
 	if x != nil {
 		return x.DeploymentId
-	}
-	return ""
-}
-
-func (x *SnapshotRef) GetMemPath() string {
-	if x != nil {
-		return x.MemPath
 	}
 	return ""
 }
@@ -615,13 +609,12 @@ func (x *BuildSpec) GetExportDir() string {
 type PauseAndSnapshotRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Instance    string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
-	MemPath     string                 `protobuf:"bytes,2,opt,name=mem_path,json=memPath,proto3" json:"mem_path,omitempty"`
 	VmstatePath string                 `protobuf:"bytes,3,opt,name=vmstate_path,json=vmstatePath,proto3" json:"vmstate_path,omitempty"`
 	// storage_key (issue #96, ADR-025 axis 2) is the canonical StorageBackend
-	// key the mem blob is published under after the snapshot. When set, the
-	// daemon stores via the configured StorageBackend alongside the legacy
-	// in-place move; one-release deprecation window before mem_path / vmstate_path
-	// become fully derived. Same shape for SnapshotRef above.
+	// key the mem blob is published under after the snapshot. The daemon
+	// stores via the configured StorageBackend; vmmstate_path is the
+	// resolved-on-host location vmmd hands the firecracker socket to
+	// while pausing, then publishes under its own StorageBackend key.
 	StorageKey    string `protobuf:"bytes,4,opt,name=storage_key,json=storageKey,proto3" json:"storage_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -660,13 +653,6 @@ func (*PauseAndSnapshotRequest) Descriptor() ([]byte, []int) {
 func (x *PauseAndSnapshotRequest) GetInstance() string {
 	if x != nil {
 		return x.Instance
-	}
-	return ""
-}
-
-func (x *PauseAndSnapshotRequest) GetMemPath() string {
-	if x != nil {
-		return x.MemPath
 	}
 	return ""
 }
@@ -1032,15 +1018,14 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1e\n" +
 	"\n" +
 	"ciphertext\x18\x02 \x01(\fR\n" +
-	"ciphertext\"\xb0\x01\n" +
+	"ciphertext\"\x9b\x01\n" +
 	"\vSnapshotRef\x12#\n" +
-	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x19\n" +
-	"\bmem_path\x18\x02 \x01(\tR\amemPath\x12!\n" +
+	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12!\n" +
 	"\fvmstate_path\x18\x03 \x01(\tR\vvmstatePath\x12\x1d\n" +
 	"\n" +
 	"fc_version\x18\x04 \x01(\tR\tfcVersion\x12\x1f\n" +
 	"\vstorage_key\x18\x05 \x01(\tR\n" +
-	"storageKey\"\xe8\x02\n" +
+	"storageKeyJ\x04\b\x02\x10\x03\"\xe8\x02\n" +
 	"\fWakeResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x12\x17\n" +
@@ -1061,13 +1046,12 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05build\x18\x03 \x01(\v2\x1e.onebox.faas.vmmd.v1.BuildSpecR\x05build\"*\n" +
 	"\tBuildSpec\x12\x1d\n" +
 	"\n" +
-	"export_dir\x18\x01 \x01(\tR\texportDir\"\x94\x01\n" +
+	"export_dir\x18\x01 \x01(\tR\texportDir\"\x7f\n" +
 	"\x17PauseAndSnapshotRequest\x12\x1a\n" +
-	"\binstance\x18\x01 \x01(\tR\binstance\x12\x19\n" +
-	"\bmem_path\x18\x02 \x01(\tR\amemPath\x12!\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\x12!\n" +
 	"\fvmstate_path\x18\x03 \x01(\tR\vvmstatePath\x12\x1f\n" +
 	"\vstorage_key\x18\x04 \x01(\tR\n" +
-	"storageKey\"T\n" +
+	"storageKeyJ\x04\b\x02\x10\x03\"T\n" +
 	"\x10SnapshotResponse\x12\x1b\n" +
 	"\tmem_bytes\x18\x01 \x01(\x03R\bmemBytes\x12#\n" +
 	"\rvmstate_bytes\x18\x02 \x01(\x03R\fvmstateBytes\",\n" +

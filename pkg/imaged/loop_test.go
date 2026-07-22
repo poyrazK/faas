@@ -14,7 +14,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -105,7 +104,6 @@ func seedSnapshotWithApp(t *testing.T, store *state.MemStore, memBytes, diskByte
 		DeploymentID: dep.ID,
 		MemBytes:     memBytes,
 		DiskBytes:    diskBytes,
-		Path:         filepath.Join(sched.SnapDir(), "snap-"+app.Slug),
 		FCVersion:    "1.8.0",
 		StorageKey:   state.SnapMemKey(dep.ID),
 	})
@@ -137,7 +135,7 @@ func TestGC_PerAppKeepCurrentPrevious(t *testing.T) {
 		}
 		snap, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
-			Path: filepath.Join(sched.SnapDir(), "keep-"+dep.ID), FCVersion: "1.8.0",
+			FCVersion:  "1.8.0",
 			StorageKey: state.SnapMemKey(dep.ID),
 			CreatedAt:  base.Add(time.Duration(i) * time.Minute),
 		})
@@ -231,7 +229,7 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 
 	heavySnap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: heavyDep.ID, MemBytes: 5 << 30, DiskBytes: 5 << 30, // 10 GB
-		Path: "/tmp/heavy.snap", FCVersion: "1.8.0",
+		FCVersion:  "1.8.0",
 		StorageKey: state.SnapMemKey(heavyDep.ID),
 		CreatedAt:  time.Now().Add(-3 * time.Minute),
 	})
@@ -243,7 +241,7 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	})
 	heavySnap2, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: heavyDep2.ID, MemBytes: 5 << 30, DiskBytes: 5 << 30,
-		Path: "/tmp/heavy2.snap", FCVersion: "1.8.0",
+		FCVersion:  "1.8.0",
 		StorageKey: state.SnapMemKey(heavyDep2.ID),
 		CreatedAt:  time.Now().Add(-2 * time.Minute),
 	})
@@ -252,19 +250,19 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	})
 	heavySnap3, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: heavyDep3.ID, MemBytes: 5 << 30, DiskBytes: 5 << 30,
-		Path: "/tmp/heavy3.snap", FCVersion: "1.8.0",
+		FCVersion:  "1.8.0",
 		StorageKey: state.SnapMemKey(heavyDep3.ID),
 		CreatedAt:  time.Now().Add(-1 * time.Minute),
 	})
 	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: midDep.ID, MemBytes: 3 << 30, DiskBytes: 2 << 30, // 5 GB
-		Path: "/tmp/mid.snap", FCVersion: "1.8.0",
+		FCVersion:  "1.8.0",
 		StorageKey: state.SnapMemKey(midDep.ID),
 		CreatedAt:  time.Now().Add(-time.Minute),
 	})
 	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: lightDep.ID, MemBytes: 1 << 30, DiskBytes: 1 << 30, // 2 GB
-		Path: "/tmp/light.snap", FCVersion: "1.8.0",
+		FCVersion:  "1.8.0",
 		StorageKey: state.SnapMemKey(lightDep.ID),
 		CreatedAt:  time.Now(),
 	})
@@ -337,7 +335,7 @@ func TestGC_DeleteSnapshotsByID_BulkAndIdempotent(t *testing.T) {
 		Kind:  state.DeploymentKindImage, ImageDigest: "sha256:x",
 	})
 	snapB, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
-		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, Path: "/tmp/b.snap", FCVersion: "1.8.0",
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0",
 		StorageKey: state.SnapMemKey(dep.ID),
 	})
 
@@ -382,7 +380,6 @@ func TestGC_IdenticalCreatedAt_StableSort(t *testing.T) {
 		})
 		snap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
-			Path:      filepath.Join(sched.SnapDir(), "stable-"+dep.ID),
 			FCVersion: "1.8.0",
 			// All snapshots share CreatedAt — tie-breaker must be the
 			// stable sort's natural secondary key (ID).
@@ -502,7 +499,7 @@ func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys(t *testing.T) {
 	})
 	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
-		Path: "/tmp/x.snap", FCVersion: "1.8.0",
+		FCVersion:  "1.8.0",
 		StorageKey: state.SnapMemKey(dep.ID),
 	})
 

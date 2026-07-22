@@ -63,7 +63,7 @@ func TestMetalFunctionWakeP95(t *testing.T) {
 	snapDir := t.TempDir()
 	snap := &Snapshot{
 		FCVersion:   fcVer,
-		MemPath:     snapDir + "/mem",
+		StorageKey:  "snap/" + instance + "/mem",
 		VMStatePath: snapDir + "/vmstate",
 	}
 
@@ -77,7 +77,7 @@ func TestMetalFunctionWakeP95(t *testing.T) {
 		t.Fatalf("prime cold boot: %v", err)
 	}
 	if _, err := m.Park(ctx, instance, SnapshotSpec{
-		MemPath: snap.MemPath, VMStatePath: snap.VMStatePath,
+		VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey,
 	}); err != nil {
 		t.Fatalf("prime park: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestMetalFunctionWakeP95(t *testing.T) {
 			t.Fatalf("cycle %d fell back to %s — snapshot restore regressed", i, inst.Method)
 		}
 		if _, err := m.Park(ctx, instance, SnapshotSpec{
-			MemPath: snap.MemPath, VMStatePath: snap.VMStatePath,
+			VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey,
 		}); err != nil {
 			t.Fatalf("park cycle %d: %v", i, err)
 		}
