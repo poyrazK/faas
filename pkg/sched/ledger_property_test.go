@@ -54,7 +54,7 @@ func FuzzLedgerInvariants(f *testing.F) {
 	f.Add(make([]byte, 256)) // 256 admits of the same (free) instance → dedup + churn
 
 	f.Fuzz(func(t *testing.T, ops []byte) {
-		l := NewLedger()
+		l := NewNodeLedger()
 		for i, b := range ops {
 			applyOp(l, b)
 			checkLedgerInvariants(t, l, i)
@@ -68,7 +68,7 @@ func FuzzLedgerInvariants(f *testing.F) {
 //	bit 0-1: action (0,3 = Admit; 1 = BeginSnapshot; 2 = Release)
 //	bit 2-3: app index into propApps
 //	bit 4-6: instance index within the app (0..7)
-func applyOp(l *Ledger, b byte) {
+func applyOp(l *NodeLedger, b byte) {
 	app := propApps[(b>>2)&0x03]
 	inst := fmt.Sprintf("%s-%d", app.id, int(b>>4)%instancesPerApp)
 	switch b & 0x03 {
@@ -88,29 +88,64 @@ func applyOp(l *Ledger, b byte) {
 	}
 }
 
-// checkLedgerInvariants recomputes ground truth from l.entries and asserts the
-// cached aggregates match, then checks the hard invariants. Single-goroutine
-// test, so reading unexported fields without the mutex is safe.
-func checkLedgerInvariants(t *testing.T, l *Ledger, step int) {
+// checkLedgerInvariants recomputes ground truth from l.entries and
+// the per-node resident map, asserts the cached aggregates match,
+// then checks the hard invariants. Single-goroutine test, so
+// reading unexported fields without the mutex is safe.
+//
+// PR #113 reshaped the ledger: resident RAM and vCPU live per-node
+// in l.resident (map[node_id]*nodeReservation). The recomputation
+// walks both l.entries (truth source for everything that lives on
+// a reservation) and l.resident (truth source for the per-node
+// sums). The hard invariants stay box-wide: §6.2-2 is Σ over all
+// nodes, each capped at api.RAMAdmissionCeilingMB by default; on
+// the property test's single-node fleet, the sum equals the
+// ceiling so the original invariant still pins.
+//
+// Per-app concurrency (§6.2-1) stays global — it's per-app, not
+// per-node — so the perApp map keeps its single-counter shape.
+func checkLedgerInvariants(t *testing.T, l *NodeLedger, step int) {
 	t.Helper()
 
 	var wantRAM, wantVCPU int
 	wantConc := map[string]int{}
+	wantPerNodeRAM := map[string]int{}
+	wantPerNodeVCPU := map[string]int{}
 	for _, e := range l.entries {
 		wantRAM += e.admissionMB
 		wantVCPU += e.vcpu
+		wantPerNodeRAM[e.nodeID] += e.admissionMB
+		wantPerNodeVCPU[e.nodeID] += e.vcpu
 		if e.countsConc {
 			wantConc[e.appID]++
 		}
 	}
 
-	// Cached aggregates must equal the recomputed truth (no drift on any path).
-	if l.residentRAM != wantRAM {
-		t.Fatalf("step %d: residentRAM=%d, recomputed=%d", step, l.residentRAM, wantRAM)
+	// Cached per-node aggregates must equal the recomputed truth (no drift).
+	for nodeID, node := range l.resident {
+		if node.residentRAM != wantPerNodeRAM[nodeID] {
+			t.Fatalf("step %d: resident[%q].residentRAM=%d, recomputed=%d",
+				step, nodeID, node.residentRAM, wantPerNodeRAM[nodeID])
+		}
+		if node.usedVCPU != wantPerNodeVCPU[nodeID] {
+			t.Fatalf("step %d: resident[%q].usedVCPU=%d, recomputed=%d",
+				step, nodeID, node.usedVCPU, wantPerNodeVCPU[nodeID])
+		}
 	}
-	if l.usedVCPU != wantVCPU {
-		t.Fatalf("step %d: usedVCPU=%d, recomputed=%d", step, l.usedVCPU, wantVCPU)
+	for nodeID, want := range wantPerNodeRAM {
+		if _, ok := l.resident[nodeID]; !ok {
+			t.Fatalf("step %d: resident map missing node %q (want RAM=%d)", step, nodeID, want)
+		}
 	}
+
+	// Global aggregates (used by ResidentRAM / UsedVCPU public API).
+	if got := l.ResidentRAM(); got != wantRAM {
+		t.Fatalf("step %d: ResidentRAM()=%d, recomputed=%d", step, got, wantRAM)
+	}
+	if got := l.UsedVCPU(); got != wantVCPU {
+		t.Fatalf("step %d: UsedVCPU()=%d, recomputed=%d", step, got, wantVCPU)
+	}
+
 	// perApp must have no stale/zero/negative entries and match the truth.
 	for app, c := range l.perApp {
 		if c <= 0 {
@@ -127,15 +162,22 @@ func checkLedgerInvariants(t *testing.T, l *Ledger, step int) {
 	}
 
 	// Hard invariants — these are the product.
-	if l.residentRAM < 0 || l.usedVCPU < 0 {
-		t.Fatalf("step %d: negative accounting: ram=%d vcpu=%d", step, l.residentRAM, l.usedVCPU)
+	residentRAM := l.ResidentRAM()
+	usedVCPU := l.UsedVCPU()
+	if residentRAM < 0 || usedVCPU < 0 {
+		t.Fatalf("step %d: negative accounting: ram=%d vcpu=%d", step, residentRAM, usedVCPU)
 	}
-	if l.residentRAM > api.RAMAdmissionCeilingMB { // §6.2-2
+	// Single-node fleet: each node ceiling is api.RAMAdmissionCeilingMB;
+	// on a per-node fleet a multi-node sum would also be bounded by
+	// the same per-node sum, but the property test stays single-node
+	// because the bounded universe (4 apps × 8 instances) can't span
+	// multiple nodes without making the test fixtures brittle.
+	if residentRAM > api.RAMAdmissionCeilingMB { // §6.2-2
 		t.Fatalf("step %d: residentRAM=%d breached admission ceiling %d",
-			step, l.residentRAM, api.RAMAdmissionCeilingMB)
+			step, residentRAM, api.RAMAdmissionCeilingMB)
 	}
-	if l.usedVCPU > api.VCPUSlots {
-		t.Fatalf("step %d: usedVCPU=%d exceeded %d vCPU slots", step, l.usedVCPU, api.VCPUSlots)
+	if usedVCPU > api.VCPUSlots {
+		t.Fatalf("step %d: usedVCPU=%d exceeded %d vCPU slots", step, usedVCPU, api.VCPUSlots)
 	}
 	for _, app := range propApps { // §6.2-1
 		if got := l.perApp[app.id]; got > app.conc {

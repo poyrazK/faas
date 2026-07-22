@@ -85,8 +85,8 @@ type Notifier interface {
 // Park for the same app never race the ledger or the state machine.
 type Engine struct {
 	store  state.Store
-	ledger *Ledger
-	vmm    VMM
+	ledger *NodeLedger
+	vmm    RoutedVMM
 	notif  Notifier
 	fcVer  string // running Firecracker version — snapshots load only on a match (ADR-005)
 	log    *slog.Logger
@@ -97,11 +97,14 @@ type Engine struct {
 
 	// defaultLocalNodeID is the resolved UUID of the 'default-local'
 	// compute_node (issue #97 / ADR-025 axis 3). Looked up once at
-	// construction via ComputeNodeByName so every Wake / Prime
-	// call passes the FK-valid UUID to CreateInstance. PR #113
-	// evolves the Wake flow to consult ChoosePlacement for arbitrary
-	// nodes; for PR #112 the engine always uses default-local and the
-	// lookup is a one-shot bootstrap read.
+	// construction via ComputeNodeByName so the router can resolve
+	// target URLs without re-asking the store on every wake. The
+	// Router also gets the full active set at startup, but the engine
+	// keeps a separate copy because (a) Park / KillStuck need the
+	// default-local id without a Store round-trip on the destroy
+	// path, and (b) test fixtures that construct the engine without
+	// a router still have a usable default-local UUID for cold-boot
+	// single-box paths.
 	defaultLocalNodeID string
 }
 
@@ -121,7 +124,7 @@ type Engine struct {
 // defaultLocalNodeID and the next CreateInstance failed at the FK
 // with a cryptic "null value in column "node_id"" error far away
 // from the root cause (missing migration 00024).
-func NewEngine(ctx context.Context, store state.Store, ledger *Ledger, vmm VMM, notif Notifier, fcVer string, log *slog.Logger) (*Engine, error) {
+func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm RoutedVMM, notif Notifier, fcVer string, log *slog.Logger) (*Engine, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -224,7 +227,24 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	if haveSnap {
 		initState = state.StateWaking
 	}
-	ins, err := e.store.CreateInstance(ctx, appID, dep.ID, string(initState), app.RAMMB, e.defaultLocalNodeID)
+
+	// Multi-node placement (issue #97 / ADR-025 axis 3): pick the
+	// compute_node that has the most free headroom and still fits
+	// this wake. Single-box fleets degenerate to "always
+	// default-local" because the synthetic row carries the legacy
+	// 47,600 MB ceiling and there's no other active node to win
+	// the tie-break. The chooser is invoked under appMu so a
+	// concurrent wake for the same app sees a coherent (fleet,
+	// per-node used_mb) view.
+	placement, err := e.choosePlacementLocked(ctx, Request{
+		AppID: appID, Plan: acct.Plan,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+	})
+	if err != nil {
+		release()
+		return WakeResult{}, err // *api.Problem from chooser
+	}
+	ins, err := e.store.CreateInstance(ctx, appID, dep.ID, string(initState), app.RAMMB, placement.NodeID)
 	if err != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
@@ -234,6 +254,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		NodeID: placement.NodeID,
 	}); err != nil {
 		// Admit failed (capacity / concurrency). Lock the row to
 		// FAILED before releasing: a concurrent reader must see a
@@ -270,7 +291,11 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		// means a buggy inserter slipped a row past the contract and
 		// Phase 3 will fall back to cold boot.
 		snapKey: snap.StorageKey,
-		spec:    spec,
+		// nodeID is the chosen compute_node from Phase 2. Phase 3
+		// threads it through every vmmd RPC so the router dials
+		// the right per-target client.
+		nodeID: placement.NodeID,
+		spec:   spec,
 	}
 	release()
 
@@ -290,7 +315,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		// fallback vmmdgrpc would apply on the wire. Keeping the
 		// branch here means the engine never asks vmmd to restore
 		// from an unkeyed snap row.
-		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.insID, bootInput.spec, SnapshotRef{
+		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec, SnapshotRef{
 			DeploymentID: bootInput.depID,
 			FCVersion:    bootInput.snapVer,
 			StorageKey:   bootInput.snapKey,
@@ -300,7 +325,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		// an empty StorageKey (F-1 contract violation — fall back to
 		// a real cold boot per ADR-005: snapshots are cache, not
 		// truth; wake must never depend on a snapshot existing).
-		out, err = e.vmm.CreateColdBoot(bootCtx, bootInput.insID, bootInput.spec)
+		out, err = e.vmm.CreateColdBoot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec)
 	}
 	if err != nil {
 		// Boot error path. Release the reservation, transition to
@@ -342,12 +367,12 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		// row must already be gone too (otherwise re-read wouldn't
 		// fail).
 		e.ledger.Release(bootInput.insID)
-		e.bestEffortDestroy(ctx, bootInput.insID)
+		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
 		return WakeResult{}, fmt.Errorf("sched: wake: re-read instance %s: %w", bootInput.insID, fresErr)
 	}
 	if fresh.State != string(bootInput.initState) {
 		e.ledger.Release(bootInput.insID)
-		e.bestEffortDestroy(ctx, bootInput.insID)
+		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
 		e.log.Warn("wake: state stolen during boot, aborting",
 			"app", bootInput.appID, "instance", bootInput.insID,
 			"expected", bootInput.initState, "got", fresh.State)
@@ -358,7 +383,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		// Booted but unrecordable — destroy to avoid a resource leak,
 		// then fail. Best-effort with a hard ceiling: a hung
 		// Firecracker can't pin the Wake goroutine forever.
-		e.bestEffortDestroy(ctx, bootInput.insID)
+		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
 		e.ledger.Release(bootInput.insID)
 		e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
 		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", err)
@@ -384,7 +409,14 @@ type bootInput struct {
 	// Phase 2; consumed by Phase 3 to set SnapshotRef.StorageKey.
 	// Empty when haveSnap is false.
 	snapKey string
-	spec    AppSpec
+	// nodeID is the chosen compute_node for this wake (issue #97 /
+	// ADR-025 axis 3). Captured under the Phase 2 lock alongside
+	// the rest of bootInput so the unlocked Phase 3 vmmd call can
+	// route through the right per-target client. Read by Phase 4's
+	// best-effort-destroy path on error so the destroy hits the
+	// same vmmd instance the boot landed on.
+	nodeID string
+	spec   AppSpec
 }
 
 // timedDestroy issues a vmm.Destroy bounded by `timeout` and the
@@ -394,6 +426,12 @@ type bootInput struct {
 // continuing against a cancelled parent. The timeout is the upper
 // bound: a wedged Firecracker can't pin the caller past `timeout`.
 //
+// nodeID is the compute_node the instance lives on; the router
+// forwards to the right per-target vmmd connection. Park / Evict /
+// KillStuck read ins.NodeID from the locked row before calling; an
+// empty nodeID is treated as "default-local" so legacy test
+// fixtures that pre-date PR #113 still work.
+//
 // KillStuck uses a tighter 5s so a wedged Firecracker can't pin the
 // watchdog goroutine. All other callers use DestroyTimeout.
 //
@@ -401,18 +439,62 @@ type bootInput struct {
 // (rare — today, none of the callers do this), route it through a
 // dedicated cleanup goroutine in cmd/schedd instead of lying about
 // the context here.
-func (e *Engine) timedDestroy(ctx context.Context, instanceID string, timeout time.Duration) error {
+func (e *Engine) timedDestroy(ctx context.Context, nodeID, instanceID string, timeout time.Duration) error {
 	destroyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return e.vmm.Destroy(destroyCtx, instanceID)
+	return e.vmm.Destroy(destroyCtx, e.nodeForRoute(nodeID), instanceID)
+}
+
+// nodeForRoute returns the node ID the router should dial. Empty
+// nodeID (legacy test seam) falls back to the engine's
+// defaultLocalNodeID so the single-box path stays routable even
+// when callers haven't threaded the placement decision through.
+// Production callers always pass a non-empty nodeID (Wake / Prime
+// via ChoosePlacement; Park / Evict / snapshotAndPark via
+// ins.NodeID).
+func (e *Engine) nodeForRoute(nodeID string) string {
+	if nodeID != "" {
+		return nodeID
+	}
+	return e.defaultLocalNodeID
 }
 
 // bestEffortDestroy is the no-error-discard wrapper around
 // timedDestroy at the standard DestroyTimeout, used by Phase 4 /
 // Prime error paths where the destroy failure is observation-only
 // and the row is already doomed.
-func (e *Engine) bestEffortDestroy(ctx context.Context, instanceID string) {
-	_ = e.timedDestroy(ctx, instanceID, DestroyTimeout)
+func (e *Engine) bestEffortDestroy(ctx context.Context, nodeID, instanceID string) {
+	_ = e.timedDestroy(ctx, nodeID, instanceID, DestroyTimeout)
+}
+
+// choosePlacement picks a compute_node for the next wake using the
+// pure ChoosePlacement chooser (placement.go). It loads the live
+// fleet from the store and the per-node used_mb aggregate, both
+// inside the per-app lock so a concurrent wake for the same app
+// sees a coherent view. Returns the placement (with TargetURL so
+// the wake loop doesn't need a second lookup) or a *api.Problem
+// from the chooser when no node has headroom.
+func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placement, error) {
+	nodes, err := e.store.ActiveComputeNodes(ctx)
+	if err != nil {
+		return Placement{}, fmt.Errorf("sched: placement: list active compute_nodes: %w", err)
+	}
+	usedMB := make(map[string]int64, len(nodes))
+	for _, n := range nodes {
+		used, err := e.store.ComputeNodeUsedMB(ctx, n.ID)
+		if err != nil {
+			// A single node's transient store error must not
+			// block placement; treat as zero headroom and let
+			// the chooser skip or include based on its ceiling.
+			// The next wake re-reads; a permanent failure surfaces
+			// there as well.
+			e.log.Warn("sched: placement: compute node used_mb read failed",
+				"node_id", n.ID, "node_name", n.Name, "err", err)
+			used = 0
+		}
+		usedMB[n.ID] = used
+	}
+	return ChoosePlacement(nodes, usedMB, r)
 }
 
 // Prime boots a freshly-built deployment once, snapshots it, and parks it —
@@ -437,7 +519,19 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return fmt.Errorf("sched: prime: load deployment: %w", err)
 	}
 
-	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, e.defaultLocalNodeID)
+	// Multi-node placement (issue #97 / ADR-025 axis 3): pick the
+	// compute_node for this prime. Prime takes the same placement
+	// path as Wake — single-box fleets degenerate to
+	// "default-local" because the synthetic row carries the legacy
+	// ceiling and there's no other active node.
+	placement, err := e.choosePlacementLocked(ctx, Request{
+		AppID: appID, Plan: acct.Plan,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+	})
+	if err != nil {
+		return err // *api.Problem from chooser
+	}
+	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID)
 	if err != nil {
 		return fmt.Errorf("sched: prime: create instance: %w", err)
 	}
@@ -446,6 +540,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		NodeID: placement.NodeID,
 	}); err != nil {
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_admit_denied")
 		return err
@@ -463,7 +558,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// imaged's pipeline, not wait for a hung Firecracker.
 	bootCtx, pcancel := context.WithTimeout(ctx, bootTimeout(state.StateColdBooting))
 	defer pcancel()
-	out, err := e.vmm.CreateColdBoot(bootCtx, ins.ID, spec)
+	out, err := e.vmm.CreateColdBoot(bootCtx, placement.NodeID, ins.ID, spec)
 	if err != nil {
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
@@ -474,7 +569,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// detached context so a cancelled caller ctx doesn't make the
 		// destroy fire-and-forget (it would still need its own
 		// timeout).
-		e.bestEffortDestroy(ctx, ins.ID)
+		e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_record_runtime_failed")
 		return fmt.Errorf("sched: prime: record runtime: %w", err)
@@ -528,7 +623,7 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 	// detached context for the same reason as the Wake/Prime error
 	// paths: a shutting-down reaper should still get its destroy
 	// cleanup.
-	if err := e.timedDestroy(ctx, instanceID, DestroyTimeout); err != nil {
+	if err := e.timedDestroy(ctx, ins.NodeID, instanceID, DestroyTimeout); err != nil {
 		return fmt.Errorf("sched: evict: destroy %s: %w", instanceID, err)
 	}
 	e.ledger.Release(instanceID)
@@ -568,6 +663,13 @@ func (e *Engine) ReportActivity(ctx context.Context, touches []state.InstanceTou
 // SeedLedger rebuilds the admission ledger from live instance rows at startup so
 // the RAM/concurrency accounting survives a schedd restart (spec §4.3). Called
 // once by cmd/schedd before the loop starts serving.
+//
+// Per-node accounting (issue #97 / ADR-025 axis 3): each instance row
+// carries its compute_node.id (PR #112). SeedLedger threads that into
+// the Admit request so the per-node resident counter on every node is
+// rebuilt correctly. A row whose node_id is empty (pre-#97 fixture)
+// falls back to the default-local node id so legacy tests still
+// rebuild.
 func (e *Engine) SeedLedger(ctx context.Context) error {
 	apps, err := e.store.ListAllApps(ctx)
 	if err != nil {
@@ -590,9 +692,14 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			if !state.State(ins.State).CountsForRAM() {
 				continue
 			}
+			nodeID := ins.NodeID
+			if nodeID == "" {
+				nodeID = e.defaultLocalNodeID
+			}
 			if err := e.ledger.Admit(Request{
 				Instance: ins.ID, AppID: app.ID, Plan: acct.Plan,
 				RAMMB: ins.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+				NodeID: nodeID,
 			}); err != nil {
 				e.log.Warn("seed ledger: admit", "instance", ins.ID, "err", err)
 				continue
@@ -633,7 +740,7 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	}
 	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting)
 
-	b, err := e.vmm.PauseAndSnapshot(ctx, ins.ID, vmstate, storageKey)
+	b, err := e.vmm.PauseAndSnapshot(ctx, ins.NodeID, ins.ID, vmstate, storageKey)
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake
 		// cold-boots (ADR-005). The app still has a cold-bootable rootfs (§6.2-3).
@@ -816,7 +923,7 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 	// Best-effort destroy. A wedged Firecracker can't pin the
 	// watchdog goroutine past the 5s ceiling. Use Background so a
 	// cancelled tick ctx doesn't cause us to skip the destroy.
-	if err := e.timedDestroy(ctx, instanceID, 5*time.Second); err != nil {
+	if err := e.timedDestroy(ctx, fresh.NodeID, instanceID, 5*time.Second); err != nil {
 		e.log.Warn("watchdog: destroy failed (best-effort)", "instance", instanceID, "reason", reason, "err", err)
 	}
 
@@ -959,7 +1066,7 @@ func instanceAddr(hostIP string) string {
 
 // Ledger exposes the engine's admission ledger for the reaper's resident-RAM
 // read and for daemon heartbeat logging.
-func (e *Engine) Ledger() *Ledger { return e.ledger }
+func (e *Engine) Ledger() *NodeLedger { return e.ledger }
 
 // Store exposes the engine's Store so the Loop can build the reaper's
 // read-only instance snapshot and read crons.

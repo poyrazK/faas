@@ -21,7 +21,7 @@ type fakeWakeVMM struct {
 	lastApp atomic.Value // last wake's app_id
 }
 
-func (f *fakeWakeVMM) CreateColdBoot(_ context.Context, instanceID string, _ AppSpec) (*WakeOutcome, error) {
+func (f *fakeWakeVMM) CreateColdBoot(_ context.Context, _, instanceID string, _ AppSpec) (*WakeOutcome, error) {
 	f.calls.Add(1)
 	f.lastApp.Store(instanceID)
 	// 10.0.0.2 is the inner guest IP from ADR-009 (the spec values "every
@@ -35,13 +35,13 @@ func (f *fakeWakeVMM) CreateColdBoot(_ context.Context, instanceID string, _ App
 	}, nil
 }
 
-func (f *fakeWakeVMM) CreateFromSnapshot(_ context.Context, _ string, _ AppSpec, _ SnapshotRef) (*WakeOutcome, error) {
+func (f *fakeWakeVMM) CreateFromSnapshot(_ context.Context, _, _ string, _ AppSpec, _ SnapshotRef) (*WakeOutcome, error) {
 	return nil, errors.New("snapshot not available in test")
 }
-func (f *fakeWakeVMM) PauseAndSnapshot(_ context.Context, _ string, _, _ string) (SnapshotBytes, error) {
+func (f *fakeWakeVMM) PauseAndSnapshot(_ context.Context, _, _ string, _, _ string) (SnapshotBytes, error) {
 	return SnapshotBytes{}, nil
 }
-func (f *fakeWakeVMM) Destroy(_ context.Context, _ string) error { return nil }
+func (f *fakeWakeVMM) Destroy(_ context.Context, _, _ string) error { return nil }
 
 // recordingSynth captures every synthesize call. The cron loop's
 // "post a synthetic request through gatewayd so metering applies" path
@@ -58,10 +58,10 @@ func (r *recordingSynth) SynthesizeRequest(_ context.Context, appID, _, path str
 }
 
 // makeEngine builds a sched.Engine backed by a MemStore and the fake
-// VMM. ledger is the in-memory admission ledger (re-built by NewLedger).
-func makeEngine(t *testing.T, store state.Store, vmm VMM) (*Engine, *Ledger) {
+// VMM. ledger is the in-memory admission ledger (re-built by NewNodeLedger).
+func makeEngine(t *testing.T, store state.Store, vmm RoutedVMM) (*Engine, *NodeLedger) {
 	t.Helper()
-	ledger := NewLedger()
+	ledger := NewNodeLedger()
 	eng, err := NewEngine(context.Background(), store, ledger, vmm, nil, "fc-test", slog.Default())
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)

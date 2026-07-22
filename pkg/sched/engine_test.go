@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -67,7 +68,7 @@ func (f *fakeVMM) outcome(instance string, method vmmdpb.WakeMethod, requested v
 	}
 }
 
-func (f *fakeVMM) CreateColdBoot(ctx context.Context, instance string, app AppSpec) (*WakeOutcome, error) {
+func (f *fakeVMM) CreateColdBoot(ctx context.Context, _, instance string, app AppSpec) (*WakeOutcome, error) {
 	if d := f.sleepFor; d > 0 {
 		select {
 		case <-time.After(d):
@@ -96,7 +97,7 @@ func (f *fakeVMM) CreateColdBoot(ctx context.Context, instance string, app AppSp
 	return f.outcome(instance, vmmdpb.WakeMethod_WAKE_COLD_BOOT, vmmdpb.WakeMethod_WAKE_COLD_BOOT), nil
 }
 
-func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, instance string, app AppSpec, ref SnapshotRef) (*WakeOutcome, error) {
+func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, _, instance string, app AppSpec, ref SnapshotRef) (*WakeOutcome, error) {
 	if d := f.sleepFor; d > 0 {
 		select {
 		case <-time.After(d):
@@ -130,7 +131,7 @@ func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, instance string, app A
 	return f.outcome(instance, method, vmmdpb.WakeMethod_WAKE_RESTORE), nil
 }
 
-func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _ string) (SnapshotBytes, error) {
+func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _, _ string) (SnapshotBytes, error) {
 	if d := f.sleepFor; d > 0 {
 		select {
 		case <-time.After(d):
@@ -147,7 +148,7 @@ func (f *fakeVMM) PauseAndSnapshot(ctx context.Context, _, _, _ string) (Snapsho
 	return SnapshotBytes{MemBytes: 130 * 1024 * 1024, VMStateBytes: 4096}, nil
 }
 
-func (f *fakeVMM) Destroy(ctx context.Context, _ string) error {
+func (f *fakeVMM) Destroy(ctx context.Context, _, _ string) error {
 	if d := f.sleepFor; d > 0 {
 		select {
 		case <-time.After(d):
@@ -218,9 +219,9 @@ func seedApp(t *testing.T, store state.Store, plan api.Plan, ramMB, maxConc int)
 	return acct, app, dep
 }
 
-func newEngine(t *testing.T, store state.Store, vmm VMM, notif Notifier, fcVer string) *Engine {
+func newEngine(t *testing.T, store state.Store, vmm RoutedVMM, notif Notifier, fcVer string) *Engine {
 	t.Helper()
-	e, err := NewEngine(context.Background(), store, NewLedger(), vmm, notif, fcVer, testLog())
+	e, err := NewEngine(context.Background(), store, NewNodeLedger(), vmm, notif, fcVer, testLog())
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -488,8 +489,26 @@ func TestEngineWake_AdmissionDeniedReturnsProblem(t *testing.T) {
 	vmm := &fakeVMM{}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
-	// Fill the ledger to the ceiling so the wake is refused for capacity.
-	e.Ledger().residentRAM = api.RAMAdmissionCeilingMB
+	// Fill the ledger to the ceiling so the wake is refused for
+	// capacity. PR #113 moved the resident counter to a per-node
+	// map; the test seeds one fake instance per admit slot until
+	// the global Σ hits api.RAMAdmissionCeilingMB. Each admit goes
+	// through the public API so the per-node accounting stays
+	// consistent (same path the production Wake flow takes).
+	billable := api.BillableRAMMB(128)
+	for i := 0; ; i++ {
+		err := e.Ledger().Admit(Request{
+			Instance: "filler-" + strconv.Itoa(i),
+			AppID:    "filler-app-" + strconv.Itoa(i), // distinct appIDs avoid the per-app concurrency gate
+			Plan:     api.PlanFree,
+			RAMMB:    128, VCPU: 1, MaxConcurrency: 1,
+			NodeID: e.defaultLocalNodeID,
+		})
+		if err != nil {
+			break // refused — ceiling reached
+		}
+		_ = billable
+	}
 
 	_, err := e.Wake(context.Background(), app.ID)
 	if err == nil {

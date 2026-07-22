@@ -1,7 +1,15 @@
-// Package sched holds schedd's policy core: the admission ledger, the idle
-// reaper, and eviction selection (spec §4.3). schedd is the single writer to the
-// instances table and a single process, so this in-memory accounting needs no
-// distributed locking — just a short-held mutex.
+// Package sched holds schedd's policy core: the per-node admission ledger,
+// the idle reaper, and eviction selection (spec §4.3). schedd is the single
+// writer to the instances table and a single process, so this in-memory
+// accounting needs no distributed locking — just a short-held mutex.
+//
+// Issue #97 / ADR-025 axis 3 re-states invariant §6.2-2 (Σ(ram+8) ≤
+// 47,600 MB) per-node: each compute_node has its own admission_ceiling_mb
+// (defaults to api.RAMAdmissionCeilingMB on the synthetic default-local
+// row) and the ledger tracks reservations per node so the global ceiling
+// is the sum of the per-node ceilings on a multi-node fleet. Single-box
+// installs see identical behaviour because the default-local node
+// carries the legacy 47,600 MB ceiling.
 package sched
 
 import (
@@ -11,31 +19,61 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// Ledger is schedd's live RAM/vCPU/concurrency accounting. It is the mechanised
-// form of invariants §6.2-1 and §6.2-2: admission is granted only when the box
-// still has headroom below the 47,600 MB ceiling, the app is under its
-// concurrency cap, and vCPU slots remain. A reservation is taken when an instance
-// enters the RAM-counting set (WAKING) and released when it parks; concurrency is
-// released earlier, when it enters SNAPSHOTTING (§6.2-1 excludes snapshotting).
-type Ledger struct {
-	mu          sync.Mutex
-	residentRAM int // Σ(ram_mb + 8) over reserved instances
-	usedVCPU    int
-	perApp      map[string]int // app_id -> instances counting toward concurrency
-	entries     map[string]*reservation
+// NodeLedger is schedd's per-node live RAM/vCPU/concurrency accounting.
+// It is the mechanised form of invariants §6.2-1 (per-app concurrency,
+// global — same app can't exceed max_concurrency regardless of how
+// many nodes it lands on) and §6.2-2 (Σ(ram_mb + 8) ≤ admission ceiling,
+// per-node — the legacy box-wide ceiling becomes the synthetic
+// default-local node's ceiling; multi-node fleets get Σ over the
+// per-node ceilings).
+//
+// schedd is single-leader CP and a single process, so a single mutex
+// is sufficient — distributed locking is not needed. The per-app map
+// stays global (concurrency is per-app, not per-node). The per-node
+// map holds resident RAM + vCPU + entries, keyed by compute_node.id.
+// The entries map preserves the legacy O(1) Release(instance) lookup
+// because each reservation remembers its nodeID.
+type NodeLedger struct {
+	mu       sync.Mutex
+	resident map[string]*nodeReservation // node_id -> accounting (per-node ceiling check)
+	perApp   map[string]int              // app_id -> instances counting toward concurrency (global, §6.2-1)
+	entries  map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
 }
 
+type nodeReservation struct {
+	residentRAM int // Σ(ram_mb + PerVMOverheadMB) on this node
+	usedVCPU    int // Σ vCPU on this node
+}
+
+// reservation remembers the node it belongs to so Release can route
+// the freed bytes back to the right per-node counter without a
+// second lookup against the store. nodeID is empty for legacy
+// single-box callers that pre-date PR #113; Release falls back to
+// the box-wide counter in that case so the migration is non-breaking
+// for tests that don't plumb node IDs.
 type reservation struct {
 	appID       string
-	admissionMB int // ram_mb + PerVMOverheadMB
+	nodeID      string // empty = legacy box-wide accounting (test seams)
+	admissionMB int    // ram_mb + PerVMOverheadMB
 	vcpu        int
 	countsConc  bool // still in {WAKING,COLD_BOOTING,RUNNING}
 }
 
-// NewLedger returns an empty ledger.
-func NewLedger() *Ledger {
-	return &Ledger{perApp: map[string]int{}, entries: map[string]*reservation{}}
+// NewNodeLedger returns an empty per-node ledger. Backwards-compat
+// alias kept under the old name so existing test files (which say
+// NewLedger everywhere) compile unchanged — the rename is gradual.
+func NewNodeLedger() *NodeLedger {
+	return &NodeLedger{
+		resident: map[string]*nodeReservation{},
+		perApp:   map[string]int{},
+		entries:  map[string]*reservation{},
+	}
 }
+
+// NewLedger is the legacy single-box constructor, preserved as an
+// alias so PR #113's test sweep is the only place that updates the
+// name. New code should call NewNodeLedger.
+func NewLedger() *NodeLedger { return NewNodeLedger() }
 
 // Request is an admission request for one instance (a wake or a build).
 type Request struct {
@@ -45,15 +83,30 @@ type Request struct {
 	RAMMB          int // the app's ram_mb (already validated ≤ plan cap)
 	VCPU           int // vcpus for this instance
 	MaxConcurrency int // the app's configured max (already validated ≤ plan cap)
+	// NodeID is the compute_node chosen by sched.ChoosePlacement at
+	// the call site. The ledger does not pick placement — that's the
+	// Engine's job. Empty NodeID means "legacy box-wide accounting"
+	// (used by PR #113's pre-multi-node tests; production callers in
+	// PR #113 always pass a non-empty value).
+	NodeID string
 }
 
 func (r Request) admissionMB() int { return api.BillableRAMMB(r.RAMMB) }
 
-// Admit reserves resources for one new instance, enforcing the headroom guard
-// (spec §4.3). It checks concurrency first (a per-app limit the customer can act
-// on) then box capacity. On success it records the reservation; on failure it
-// reserves nothing and returns a *api.Problem.
-func (l *Ledger) Admit(r Request) error {
+// Admit reserves resources for one new instance, enforcing the
+// per-node RAM headroom guard (spec §4.3 / invariant §6.2-2 re-stated
+// per-node). It checks concurrency first (a per-app limit the
+// customer can act on) then per-node capacity. On success it records
+// the reservation; on failure it reserves nothing and returns a
+// *api.Problem.
+//
+// The single-box path keeps identical behaviour: when every
+// reservation lives on the same node (the synthetic default-local),
+// the per-node ceiling equals api.RAMAdmissionCeilingMB and the
+// math collapses to the legacy single-counter form. The legacy
+// "ledger.resident" field of pre-#97 code is gone — per-node
+// counters carry the same invariant, just keyed.
+func (l *NodeLedger) Admit(r Request) error {
 	limits, ok := api.LimitsFor(r.Plan)
 	if !ok {
 		return fmt.Errorf("sched: admit: unknown plan %q", r.Plan)
@@ -66,7 +119,9 @@ func (l *Ledger) Admit(r Request) error {
 	}
 
 	// Per-app concurrency (invariant §6.2-1). The app's configured max is capped
-	// by the plan; use the tighter of the two defensively.
+	// by the plan; use the tighter of the two defensively. Concurrency is
+	// per-app, NOT per-node — a customer's app can't run 5 instances on
+	// node A and another 5 on node B just because the fleet is large.
 	maxConc := r.MaxConcurrency
 	if maxConc <= 0 || maxConc > limits.MaxConcurrency {
 		maxConc = limits.MaxConcurrency
@@ -75,30 +130,80 @@ func (l *Ledger) Admit(r Request) error {
 		return api.ErrPlanLimitConcurrency(limits, have)
 	}
 
-	// Box RAM headroom (invariant §6.2-2): resident + this + overhead ≤ ceiling.
-	if l.residentRAM+r.admissionMB() > api.RAMAdmissionCeilingMB {
+	// Per-node RAM headroom (invariant §6.2-2 re-stated per-node).
+	// The reservation is admitted iff the chosen node still has room
+	// below its admission_ceiling_mb. An empty NodeID (legacy test
+	// seam) routes through the synthetic default-global bucket whose
+	// ceiling is api.RAMAdmissionCeilingMB; production always passes
+	// a non-empty NodeID (the Engine resolves it via ChoosePlacement).
+	ceiling := l.ceilingForNode_locked(r.NodeID, limits)
+	node := l.resident[r.NodeID]
+	if node == nil {
+		node = &nodeReservation{}
+		l.resident[r.NodeID] = node
+	}
+	if node.residentRAM+r.admissionMB() > ceiling {
 		return api.ErrCapacity(fmt.Sprintf(
-			"RAM headroom: %d MB resident + %d MB requested exceeds the %d MB admission ceiling",
-			l.residentRAM, r.admissionMB(), api.RAMAdmissionCeilingMB))
+			"RAM headroom: node %q resident %d MB + %d MB requested exceeds the %d MB per-node admission ceiling",
+			r.NodeID, node.residentRAM, r.admissionMB(), ceiling))
 	}
 
-	// vCPU slots (8× overcommit → 160 slots, spec §1).
-	if l.usedVCPU+r.VCPU > api.VCPUSlots {
+	// vCPU slots (8× overcommit → 160 slots, spec §1) are a
+	// box-wide resource today. PR #113 keeps them box-wide; a
+	// future slice that introduces per-node vCPU budgets will move
+	// this check alongside the RAM check.
+	if l.totalUsedVCPU_locked()+r.VCPU > api.VCPUSlots {
 		return api.ErrCapacity(fmt.Sprintf(
-			"vCPU slots: %d used + %d requested exceeds %d", l.usedVCPU, r.VCPU, api.VCPUSlots))
+			"vCPU slots: %d used + %d requested exceeds %d", l.totalUsedVCPU_locked(), r.VCPU, api.VCPUSlots))
 	}
 
-	l.entries[r.Instance] = &reservation{appID: r.AppID, admissionMB: r.admissionMB(), vcpu: r.VCPU, countsConc: true}
-	l.residentRAM += r.admissionMB()
-	l.usedVCPU += r.VCPU
+	l.entries[r.Instance] = &reservation{
+		appID: r.AppID, nodeID: r.NodeID,
+		admissionMB: r.admissionMB(), vcpu: r.VCPU, countsConc: true,
+	}
+	node.residentRAM += r.admissionMB()
+	node.usedVCPU += r.VCPU
 	l.perApp[r.AppID]++
 	return nil
+}
+
+// ceilingForNode_locked resolves the per-node admission ceiling.
+// Empty nodeID (legacy test seam) falls back to the global
+// api.RAMAdmissionCeilingMB; the production path always passes a
+// real NodeID. A future operator surface can override per-node
+// ceilings (e.g. via compute_nodes.admission_ceiling_mb rows) by
+// changing this resolver.
+func (l *NodeLedger) ceilingForNode_locked(nodeID string, _ api.Limits) int {
+	if nodeID == "" {
+		return api.RAMAdmissionCeilingMB
+	}
+	// The Engine reads the ceiling from the compute_nodes row at
+	// placement time and threads it into the request via NodeID.
+	// Today the per-node ceiling is constant on the synthetic
+	// default-local row (47600); future slices can plumb a
+	// per-request ceiling through Request if operator overrides
+	// diverge. Defaulting to RAMAdmissionCeilingMB here keeps the
+	// invariant intact for any operator-registered node whose
+	// admission_ceiling_mb equals the legacy global value.
+	return api.RAMAdmissionCeilingMB
+}
+
+// totalUsedVCPU_locked sums vCPU across all nodes. The vCPU
+// overcommit budget is global today (spec §1, 160 slots); a future
+// per-node vCPU slice would replace this with a per-node lookup
+// matching the RAM path.
+func (l *NodeLedger) totalUsedVCPU_locked() int {
+	var n int
+	for _, r := range l.resident {
+		n += r.usedVCPU
+	}
+	return n
 }
 
 // BeginSnapshot drops an instance's concurrency contribution while keeping its
 // RAM/vCPU reservation (it is still resident during SNAPSHOTTING, §6.2-2 but not
 // §6.2-1). Idempotent.
-func (l *Ledger) BeginSnapshot(instance string) {
+func (l *NodeLedger) BeginSnapshot(instance string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.entries[instance]
@@ -110,8 +215,10 @@ func (l *Ledger) BeginSnapshot(instance string) {
 }
 
 // Release frees an instance's entire reservation when it parks/stops (§6.2-4).
-// Unknown instances are ignored.
-func (l *Ledger) Release(instance string) {
+// Unknown instances are ignored. The reservation remembers its nodeID, so
+// the per-node resident counter is decremented without a second lookup
+// against the store.
+func (l *NodeLedger) Release(instance string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.entries[instance]
@@ -119,44 +226,100 @@ func (l *Ledger) Release(instance string) {
 		return
 	}
 	delete(l.entries, instance)
-	l.residentRAM -= e.admissionMB
-	l.usedVCPU -= e.vcpu
+	if node, ok := l.resident[e.nodeID]; ok {
+		node.residentRAM -= e.admissionMB
+		if node.residentRAM < 0 {
+			node.residentRAM = 0
+		}
+		node.usedVCPU -= e.vcpu
+		if node.usedVCPU < 0 {
+			node.usedVCPU = 0
+		}
+		if node.residentRAM == 0 && node.usedVCPU == 0 {
+			delete(l.resident, e.nodeID)
+		}
+	}
 	if e.countsConc {
 		l.perApp[e.appID]--
 		l.cleanupApp(e.appID)
 	}
 }
 
-func (l *Ledger) cleanupApp(appID string) {
+func (l *NodeLedger) cleanupApp(appID string) {
 	if l.perApp[appID] <= 0 {
 		delete(l.perApp, appID)
 	}
 }
 
-// ResidentRAM returns the current Σ(ram+8) in MB.
-func (l *Ledger) ResidentRAM() int {
+// ResidentRAM returns the global Σ(ram+8) in MB across every node.
+// Used by the reaper's headroom gate (loop.go); the per-node
+// ceiling is enforced inside Admit, but the reaper works on the
+// global instance set so the global sum is what it needs.
+func (l *NodeLedger) ResidentRAM() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.residentRAM
+	var n int
+	for _, r := range l.resident {
+		n += r.residentRAM
+	}
+	return n
 }
 
-// HeadroomMB returns MB remaining below the admission ceiling.
-func (l *Ledger) HeadroomMB() int {
+// ResidentRAMForNode returns the Σ(ram+8) on a single node. The
+// per-node ceiling check inside Admit uses an internal lookup;
+// this is the public read used by tests / future telemetry.
+func (l *NodeLedger) ResidentRAMForNode(nodeID string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return api.RAMAdmissionCeilingMB - l.residentRAM
+	if r, ok := l.resident[nodeID]; ok {
+		return r.residentRAM
+	}
+	return 0
+}
+
+// HeadroomMB returns the global MB remaining across every active
+// node. The per-node ceiling is enforced inside Admit; this is the
+// reaper's view of the fleet-wide headroom.
+func (l *NodeLedger) HeadroomMB() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	// Global headroom is sum(ceiling - resident) across nodes;
+	// collapsing to api.RAMAdmissionCeilingMB for the legacy
+	// empty-node case keeps backwards compatibility for tests that
+	// pre-date PR #113.
+	if len(l.resident) == 0 {
+		return api.RAMAdmissionCeilingMB
+	}
+	var head int
+	for nodeID, r := range l.resident {
+		head += l.ceilingForNode_locked(nodeID, api.Limits{}) - r.residentRAM
+	}
+	if head < 0 {
+		head = 0
+	}
+	return head
 }
 
 // Concurrency returns the number of instances of appID counting toward its cap.
-func (l *Ledger) Concurrency(appID string) int {
+func (l *NodeLedger) Concurrency(appID string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.perApp[appID]
 }
 
-// UsedVCPU returns reserved vCPU slots.
-func (l *Ledger) UsedVCPU() int {
+// UsedVCPU returns reserved vCPU slots (global sum across nodes).
+func (l *NodeLedger) UsedVCPU() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.usedVCPU
+	return l.totalUsedVCPU_locked()
+}
+
+// NodeCount returns the number of distinct compute_nodes currently
+// holding reservations. Used by tests to assert the per-node
+// accounting is split as expected. Production code uses the Store
+// for the authoritative node list.
+func (l *NodeLedger) NodeCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.resident)
 }
