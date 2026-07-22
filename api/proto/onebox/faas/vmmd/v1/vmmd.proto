@@ -89,6 +89,16 @@ message SnapshotRef {
   // StorageBackend and stages them into an os.TempDir() location for
   // the FC restore source.
   string storage_key   = 5;
+  // vmstate_storage_key (issue #121, ADR-025 axis 2 slice 4) is the
+  // canonical StorageBackend key under which the vmstate blob lives.
+  // Semantically optional: empty ⇒ the daemon uses the legacy host
+  // vmstate_path; non-empty ⇒ StorageBackend is authoritative and
+  // vmstate_path is logged-only metadata. Default-local single-box
+  // always sends the empty value so the host-path behaviour is
+  // preserved bit-for-bit. Resolution mirrors storage_key via the
+  // configured backend (local at FAAS_STORAGE_ROOT/snap/<dep>/vmstate,
+  // OCI at repo snap-<dep>, tag vmstate).
+  string vmstate_storage_key = 6;
 }
 
 // WakeResponse is the common return shape of CreateFromSnapshot and
@@ -160,6 +170,16 @@ message PauseAndSnapshotRequest {
   // resolved-on-host location vmmd hands the firecracker socket to
   // while pausing, then publishes under its own StorageBackend key.
   string storage_key = 4;
+  // vmstate_storage_key (issue #121, ADR-025 axis 2 slice 4) is the
+  // canonical StorageBackend key the vmstate blob is published under
+  // after the snapshot. Semantically optional: empty ⇒ the daemon
+  // writes the snapshot to the legacy host vmstate_path (single-box
+  // / default-local behaviour, unchanged); non-empty ⇒ the daemon
+  // streams the vmstate bytes through the configured StorageBackend
+  // and vmstate_path is logged-only metadata. Resolution mirrors
+  // storage_key (local at FAAS_STORAGE_ROOT/snap/<dep>/vmstate, OCI
+  // at repo snap-<dep>, tag vmstate).
+  string vmstate_storage_key = 5;
 }
 
 message SnapshotResponse {

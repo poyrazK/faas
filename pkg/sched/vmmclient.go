@@ -30,7 +30,12 @@ import (
 type VMM interface {
 	CreateColdBoot(ctx context.Context, instance string, app AppSpec) (*WakeOutcome, error)
 	CreateFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error)
-	PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey string) (SnapshotBytes, error)
+	// PauseAndSnapshot (issue #121 / ADR-025 axis 2 slice 4) takes
+	// the vmstate_storage_key as a third string alongside vmstatePath
+	// and storageKey. The empty string means "single-box default-local
+	// uses the legacy host vmstate_path"; a populated value means
+	// "vmmd publishes via the configured StorageBackend".
+	PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error)
 	Destroy(ctx context.Context, instance string) error
 }
 
@@ -58,11 +63,26 @@ type AppSpec struct {
 // StorageBackend resolves the bytes through the configured driver into a
 // tmp staging path before firing the FC restore. MemPath is gone — the
 // deprecation window expired with #96 slice 3.
+//
+// #121 / ADR-025 axis 2 slice 4: VMStateStorageKey is the canonical
+// storage key the VMM pulls the vmstate blob from
+// (e.g. "snap/<deploymentID>/vmstate"). When non-empty, vmmd's
+// StorageBackend resolves the bytes through the configured driver;
+// when empty (default-local), the VMM falls back to VMStatePath (the
+// legacy host-path branch the engine reconstructs deterministically on
+// wake). The two locators are inclusive in principle but the engine
+// only populates one for a given wake: empty for default-local, the
+// canonical key for remote nodes. Cold-boot-fallback still requires
+// StorageKey (mem F-1 contract).
 type SnapshotRef struct {
 	DeploymentID string
 	VMStatePath  string
 	FCVersion    string
 	StorageKey   string
+	// VMStateStorageKey is the canonical StorageBackend key for the
+	// vmstate blob (issue #121 / ADR-025 axis 2 slice 4). Empty on
+	// default-local; populated on remote compute nodes.
+	VMStateStorageKey string
 }
 
 // SnapshotBytes is the size accounting returned by PauseAndSnapshot; schedd
@@ -159,10 +179,11 @@ func (c *VMMClient) CreateFromSnapshot(ctx context.Context, instance string, app
 		Instance: instance,
 		App:      app.toProto(),
 		Snapshot: &vmmdpb.SnapshotRef{
-			DeploymentId: snap.DeploymentID,
-			VmstatePath:  snap.VMStatePath,
-			FcVersion:    snap.FCVersion,
-			StorageKey:   snap.StorageKey,
+			DeploymentId:       snap.DeploymentID,
+			VmstatePath:        snap.VMStatePath,
+			FcVersion:          snap.FCVersion,
+			StorageKey:         snap.StorageKey,
+			VmstateStorageKey:  snap.VMStateStorageKey,
 		},
 	})
 	if err != nil {
@@ -171,11 +192,12 @@ func (c *VMMClient) CreateFromSnapshot(ctx context.Context, instance string, app
 	return outcomeFromProto(resp), nil
 }
 
-func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey string) (SnapshotBytes, error) {
+func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error) {
 	resp, err := c.cli.PauseAndSnapshot(ctx, &vmmdpb.PauseAndSnapshotRequest{
-		Instance:    instance,
-		VmstatePath: vmstatePath,
-		StorageKey:  storageKey,
+		Instance:           instance,
+		VmstatePath:        vmstatePath,
+		StorageKey:         storageKey,
+		VmstateStorageKey:  vmstateStorageKey,
 	})
 	if err != nil {
 		return SnapshotBytes{}, liftErr(err)

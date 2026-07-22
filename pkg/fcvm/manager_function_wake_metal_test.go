@@ -62,9 +62,10 @@ func TestMetalFunctionWakeP95(t *testing.T) {
 	defer cancel()
 
 	snapDir := t.TempDir()
+	const depID = "m7-func-dep"
 	snap := &Snapshot{
 		FCVersion:   fcVer,
-		StorageKey:  "snap/" + instance + "/mem",
+		StorageKey:  "snap/" + depID + "/mem",
 		VMStatePath: snapDir + "/vmstate",
 	}
 

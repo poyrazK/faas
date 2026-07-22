@@ -227,6 +227,33 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return fmt.Errorf("vmm: restore spec missing mem source (storage_key=%q)", spec.StorageKey)
 	}
 
+	// #121 / ADR-025 axis 2 slice 4 — materialise the vmstate blob
+	// independently of mem. The branch selector is the new VMStateStorageKey
+	// field's emptiness, NOT v.storage != nil: production default-local
+	// wires a non-nil LocalStorageBackend (cmd/vmmd/main.go) so a
+	// storage-nil gate would route vmstate through the local backend
+	// even on default-local and break the host-path branch the engine
+	// relies on for single-box wakes (the documented "every wake pays
+	// the dial cost" model only ships vmstate via storage on remote
+	// nodes). When the key is non-empty the configured backend is the
+	// authoritative carrier and spec.VMStatePath is logged-only metadata.
+	// When the key is empty we fall back to spec.VMStatePath byte-for-bit
+	// (the existing single-box behaviour).
+	stateSrc := spec.VMStatePath
+	if spec.VMStateStorageKey != "" && v.storage != nil {
+		stateTmp, gerr := v.materializeFromStorage(ctx, l.Instance, spec.VMStateStorageKey)
+		if gerr != nil {
+			return gerr
+		}
+		if stateTmp != "" {
+			stateSrc = stateTmp
+		}
+	}
+	if stateSrc == "" {
+		return fmt.Errorf("vmm: restore spec missing vmstate source (vmstate_storage_key=%q vmstate_path=%q)",
+			spec.VMStateStorageKey, spec.VMStatePath)
+	}
+
 	// Re-stage everything the snapshot's recorded VM state still references.
 	// Park→Kill (vmm.Kill) wiped the prior chroot, so the chroot-relative
 	// basenames in the snapshot (kernel + drive backings) must be restored
@@ -253,7 +280,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err != nil {
 		return fmt.Errorf("vmm: stage mem file: %w", err)
 	}
-	stateName, err := stageReadOnly(root, spec.VMStatePath)
+	stateName, err := stageReadOnly(root, stateSrc)
 	if err != nil {
 		return fmt.Errorf("vmm: stage vmstate: %w", err)
 	}
@@ -533,11 +560,17 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 	// #96 / ADR-025 axis 2 — after slice 3 the mem destination is
 	// vmmd-allocated. Firecracker dumps the paused mem at <chroot>/mem;
 	// moveOut copies it into a tmp and we stream that into the
-	// configured StorageBackend at the StorageKey. The vmstate file
-	// stays at the caller-supplied VMStatePath (it's a small JSON, and
-	// the planned StorageBackend key for vmstate lands in slice 4 once
-	// the per-deployment blob is broken out — slice 3 only handles the
-	// mem half).
+	// configured StorageBackend at the StorageKey.
+	//
+	// #121 / ADR-025 axis 2 slice 4 — vmstate parallels mem. When
+	// VMStateStorageKey is non-empty the configured StorageBackend is
+	// authoritative and we stream the vmstate bytes straight from the
+	// chroot-resident file (no moveOut, no host-path allocation).
+	// When the key is empty we keep the legacy moveOut(spec.VMStatePath)
+	// behaviour byte-for-bit so single-box / default-local is
+	// unaffected. As with mem, Put failure is Warn-level (best-effort
+	// durability in this slice; later slices may tighten) so a
+	// transient backend hiccup doesn't fail a successful pause.
 	memTmp, err := os.CreateTemp("", "faas-snap-*.mem")
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: alloc snapshot mem tmp: %w", err)
@@ -550,9 +583,41 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: export mem: %w", err)
 	}
-	stateBytes, err := moveOut(filepath.Join(root, stateName), spec.VMStatePath)
-	if err != nil {
-		return SnapshotInfo{}, fmt.Errorf("vmm: export vmstate: %w", err)
+	// Vmstate publication branches on VMStateStorageKey exactly like mem
+	// does on StorageKey. Same predicate shape (key + non-nil storage);
+	// the value selector is the new field's emptiness, not storage nil,
+	// so default-local still wires a LocalStorageBackend and routes
+	// vmstate through the legacy path because the key is empty.
+	var stateBytes int64
+	vmstateSrcInChroot := filepath.Join(root, stateName)
+	if spec.VMStateStorageKey != "" && v.storage != nil {
+		// nolint:forbidigo // vmstateSrcInChroot is the chroot-resident
+		// tmp Firecracker just wrote; not a customer-supplied location,
+		// so the openCustomerFile guard does not apply.
+		f, oerr := os.Open(vmstateSrcInChroot)
+		if oerr != nil {
+			slog.Default().Warn("vmm: snapshot vmstate storage open failed",
+				"key", spec.VMStateStorageKey, "err", oerr)
+		} else {
+			if perr := v.storage.Put(ctx, spec.VMStateStorageKey, f); perr != nil {
+				slog.Default().Warn("vmm: snapshot vmstate storage put failed",
+					"key", spec.VMStateStorageKey, "err", perr)
+			}
+			_ = f.Close()
+		}
+		// stateBytes still needs the chroot file size for telemetry;
+		// the bytes were published via storage rather than copied to a
+		// host path, so we stat the chroot-resident original.
+		if fi, serr := os.Stat(vmstateSrcInChroot); serr == nil {
+			stateBytes = fi.Size()
+		}
+	} else {
+		// Legacy host-path branch (default-local / single-box):
+		// moveOut from chroot to the caller-supplied VMStatePath.
+		stateBytes, err = moveOut(vmstateSrcInChroot, spec.VMStatePath)
+		if err != nil {
+			return SnapshotInfo{}, fmt.Errorf("vmm: export vmstate: %w", err)
+		}
 	}
 
 	if spec.StorageKey != "" && v.storage != nil {
