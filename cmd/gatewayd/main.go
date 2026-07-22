@@ -230,14 +230,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// Forward the operator-configured apid loopback URL through the
 	// test seam so runWithDeps can stay TOML-free (issue #85).
 	deps.apidLoopback = cfg.APIDLoopback
-	// Issue #98 / ADR-028: per-node vmmd client cache. The vmmd TLS
-	// material is not yet wired into gatewayd's config — for unix
-	// targets (single-box dev) wire.DialContext accepts nil TLS; for
-	// tcp targets the operator must add a [vmmd_tls] cluster to
-	// gatewayd.toml. That config addition is a follow-up slice; the
-	// cache + dial wiring here is ready for it. Subscribing to
-	// compute_node_changed runs in a goroutine that dies with ctx.
-	deps.nodeCache = newNodeCache(pgStore, nil /* vmmd TLS: see comment */, log)
+	// Issue #98 / ADR-028, plumbed via issue #120: per-node vmmd
+	// client cache. The dial closure routes through pkg/overlay so the
+	// cross-box dial primitive lives in one place; mTLS material is
+	// loaded from the [vmmd_tls_*] TOML keys (mirroring schedd's
+	// cmd/schedd/config.go LoadVMMTLS). For single-box deployments
+	// all three paths are empty and LoadVMMDPingTLS returns nil,
+	// which overlay.Dial (and the underlying wire.DialContext)
+	// accepts on unix targets. Subscribing to compute_node_changed
+	// runs in a goroutine that dies with ctx.
+	vmmdTLS, err := cfg.LoadVMMDPingTLS()
+	if err != nil {
+		return fmt.Errorf("gatewayd: load vmmd TLS: %w", err)
+	}
+	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log)
 	go deps.nodeCache.WatchEvictions(ctx, pool)
 	return runWithDeps(ctx, log, deps)
 }

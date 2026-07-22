@@ -21,7 +21,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
-	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/overlay"
 	"google.golang.org/grpc"
 )
 
@@ -41,6 +41,10 @@ type VMM interface {
 	// returned FcVersion lets schedd's admin surface show
 	// per-node FC versions without a separate Stats call.
 	Ping(ctx context.Context) (*PingOutcome, error)
+	// Close releases the underlying transport. Issue #120: the
+	// heartbeat goroutine dials fresh per tick and relies on this
+	// to keep its conn churn bounded (no goroutine/conn leak).
+	Close() error
 }
 
 // PingOutcome is the sched-side view of vmmdpb.PingResponse.
@@ -144,12 +148,15 @@ func DialVMM(socketPath string) (*VMMClient, error) {
 
 // DialVMMContext opens a lazy gRPC connection to vmmd. tlsCfg is
 // required for tcp/dns targets (issue #95); nil tlsCfg is fine for the
-// single-box unix default. Wire layer performs the mTLS gating.
+// single-box unix default. Issue #120: the dial routes through
+// pkg/overlay so the cross-box dial primitive lives in one place.
+// wire.DialContext is still the underlying transport; overlay.Dial
+// is the per-compute-node wrapper that ADR-025 axis 3 promises.
 func DialVMMContext(ctx context.Context, target string, tlsCfg *tls.Config) (*VMMClient, error) {
 	if target == "" {
 		return nil, errors.New("sched: empty vmmd target")
 	}
-	conn, err := wire.DialContext(ctx, target, tlsCfg)
+	conn, err := overlay.Dial(ctx, overlay.New(target), tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("sched: dial vmmd %q: %w", target, err)
 	}

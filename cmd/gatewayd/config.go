@@ -12,6 +12,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // Config is the on-disk representation of the daemon's TOML config.
@@ -62,6 +64,18 @@ type Config struct {
 	// When Disabled=false the public listener binds :443 with certmagic,
 	// and gatewayd additionally binds :80 for the ACME mux + redirect.
 	TLS TOMLTLSConfig `toml:"tls"`
+
+	// VMMDPingTLS is the mTLS material gatewayd uses to dial vmmd on
+	// remote compute nodes (issue #98 / ADR-028, plumbed via issue
+	// #120). All three paths empty => no client TLS; all three set =>
+	// stdlib default mTLS verification (chain + SAN). Partial cluster
+	// is rejected at startup with the vmmd_tls_* field names so an
+	// operator can map the error straight to a TOML key. Single-box
+	// deployments keep all three empty and continue to dial the unix
+	// socket with nil TLS, which wire.DialContext accepts.
+	VMMDPingTLSCertPath string `toml:"vmmd_tls_cert_path"`
+	VMMDPingTLSKeyPath  string `toml:"vmmd_tls_key_path"`
+	VMMDPingTLSCAPath   string `toml:"vmmd_tls_ca_path"`
 }
 
 // TOMLTLSConfig is the on-disk TLS subset. Function pointers and derived
@@ -129,4 +143,19 @@ func (c *Config) resolveTLSConfig(allowlist gateway.OnDemandAllowlist) gateway.T
 		UseStagingCA:            c.TLS.UseStagingCA,
 		OnDemandHTTP01Allowlist: allowlist,
 	}
+}
+
+// LoadVMMDPingTLS returns the client mTLS config gatewayd uses to dial
+// vmmd (issue #98 / ADR-028, plumbed via issue #120). Empty cluster
+// returns (nil, nil) — single-box default; wire.DialContext accepts nil
+// TLS on unix targets. Partial cluster is rejected at startup with
+// the vmmd_tls_* field names (not the generic tls_*) so an operator
+// can map the error straight to a TOML key.
+//
+// Mirrors cmd/schedd/config.go LoadVMMTLS (issue #95). The helper
+// goes through pkg/wire so stdlib's default verifier handles chain
+// trust + SAN matching + EKU enforcement in one pass; CodeQL alert
+// #58's rejected chain-only-stub alternative does not reappear here.
+func (c *Config) LoadVMMDPingTLS() (*tls.Config, error) {
+	return wire.LoadClientTLSConfigWithPrefix("vmmd_", c.VMMDPingTLSCertPath, c.VMMDPingTLSKeyPath, c.VMMDPingTLSCAPath)
 }

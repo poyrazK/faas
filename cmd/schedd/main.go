@@ -304,15 +304,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	// PR #114 / ADR-025 axis 3: per-node liveness sweep. Every
-	// `HeartbeatInterval` (default 30s) we Ping each active
-	// compute_node via the VMMRouter (the same dial-once cache the
-	// engine uses, so no extra dial cost per tick); on success we
-	// stamp last_heartbeat_at, on failure we flip active=false so
+	// `HeartbeatInterval` (default 30s) the heartbeat goroutine
+	// dials a fresh *VMMClient per active node via deps.dialVMM
+	// (issue #120), calls Ping, then Close — bypassing the
+	// VMMRouter cache so every heartbeat pays the dial cost and
+	// sees a fresh transport. deps.dialVMM already routes through
+	// sched.DialVMMContext → pkg/overlay (issue #120), so the
+	// heartbeat dial shares the same cross-box dial primitive as
+	// the engine without an extra adapter. On success we stamp
+	// last_heartbeat_at, on failure we flip active=false so
 	// placement skips the dead node and the alertmanager rule
 	// (PR #115) fires. Production cadence is overridable via
 	// FAAS_HEARTBEAT_INTERVAL; tests inject a sub-second interval
 	// through runDeps.heartbeatInterval to exercise the wiring.
-	hb := sched.NewHeartbeat(store, vmmRouter, log)
+	hb := sched.NewHeartbeat(store, sched.HeartbeatDialerFunc(deps.dialVMM), vmmTLS, log)
 	hb.Interval = cfg.HeartbeatInterval
 	hb.Staleness = cfg.HeartbeatStaleness
 	if deps.heartbeatInterval > 0 {

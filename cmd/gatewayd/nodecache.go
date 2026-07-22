@@ -34,8 +34,8 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/overlay"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 )
 
@@ -77,7 +77,10 @@ func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger) *
 	})
 	cache := gateway.NewNodeClientCache(
 		func(ctx context.Context, target string) (*grpc.ClientConn, error) {
-			return wire.DialContext(ctx, target, vmmdTLS)
+			// Issue #120: route through pkg/overlay so the cross-box
+			// dial primitive lives in one place. The cache above is
+			// unrelated; only the underlying wire dial is swapped.
+			return overlay.Dial(ctx, overlay.New(target), vmmdTLS)
 		},
 		log,
 	)
