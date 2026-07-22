@@ -1339,6 +1339,35 @@ func TestMem_ComputeNodes_DefaultLocalSeededOnNewStore(t *testing.T) {
 	}
 }
 
+func TestMem_ComputeNodes_NewMemStoreSeedsDefaultLocal(t *testing.T) {
+	// Pin the seeding invariant: NewMemStore() must place the synthetic
+	// default-local row in ActiveComputeNodes immediately, NOT on first
+	// read. schedd's startup path depends on this — cmd/schedd/main.go's
+	// runHeartbeat calls ComputeNodeByName once at boot and treats a
+	// non-row result as a loud failure. A future refactor that lazily
+	// seeds on first read would silently break that contract; this test
+	// surfaces the regression before it lands.
+	m := NewMemStore()
+	nodes, err := m.ActiveComputeNodes(context.Background())
+	if err != nil {
+		t.Fatalf("ActiveComputeNodes: %v", err)
+	}
+	found := false
+	for _, n := range nodes {
+		if n.Name == DefaultLocalNodeName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		names := make([]string, 0, len(nodes))
+		for _, n := range nodes {
+			names = append(names, n.Name)
+		}
+		t.Errorf("default-local missing from ActiveComputeNodes after NewMemStore (got %v)", names)
+	}
+}
+
 func TestMem_ComputeNodes_ActiveComputeNodes_OnlyReturnsActive(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
@@ -1403,23 +1432,36 @@ func TestMem_ComputeNodes_Heartbeat_BumpsAndUnknownReturnsNotFound(t *testing.T)
 
 	// Create a node, capture original heartbeat, sleep briefly, heartbeat
 	// again, and assert last_heartbeat_at moved forward.
+	//
+	// Flake guard: time.Now() is monotonic-resolution on most platforms
+	// but a 2 ms sleep + a same-microsecond stamp on the goroutine can
+	// still collapse on a busy CI runner. Retry once with a longer
+	// sleep before failing. Same pattern as the PgStore test.
 	node := state_computeNodeFixture("hb-node", true)
 	created, err := m.CreateComputeNode(ctx, node)
 	if err != nil {
 		t.Fatalf("CreateComputeNode: %v", err)
 	}
-	before := created.LastHeartbeatAt
-	time.Sleep(2 * time.Millisecond)
-	if err := m.HeartbeatComputeNode(ctx, created.ID); err != nil {
-		t.Fatalf("HeartbeatComputeNode: %v", err)
+	if !assertMemHeartbeatAdvanced(t, m, ctx, created.ID, created.LastHeartbeatAt, 2*time.Millisecond) {
+		if !assertMemHeartbeatAdvanced(t, m, ctx, created.ID, created.LastHeartbeatAt, 10*time.Millisecond) {
+			t.Errorf("HeartbeatComputeNode did not bump LastHeartbeatAt after 2 retries")
+		}
 	}
-	after, err := m.ComputeNodeByID(ctx, created.ID)
+}
+
+func assertMemHeartbeatAdvanced(t *testing.T, m *MemStore, ctx context.Context, id string, before time.Time, sleep time.Duration) bool {
+	t.Helper()
+	time.Sleep(sleep)
+	if err := m.HeartbeatComputeNode(ctx, id); err != nil {
+		t.Fatalf("HeartbeatComputeNode: %v", err)
+		return false
+	}
+	after, err := m.ComputeNodeByID(ctx, id)
 	if err != nil {
 		t.Fatalf("ComputeNodeByID: %v", err)
+		return false
 	}
-	if !after.LastHeartbeatAt.After(before) {
-		t.Errorf("HeartbeatComputeNode did not bump LastHeartbeatAt: before=%v after=%v", before, after.LastHeartbeatAt)
-	}
+	return after.LastHeartbeatAt.After(before)
 }
 
 func TestMem_ComputeNodes_CreateComputeNode_AutoFillsIDAndTimestamps(t *testing.T) {

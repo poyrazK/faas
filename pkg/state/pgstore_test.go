@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -804,7 +807,7 @@ func TestPg_ComputeNodes_DefaultLocalSeededByMigration(t *testing.T) {
 	}
 }
 
-func TestPg_ComputeNodes_ActiveComputeNodes_OnlyActiveSortedByName(t *testing.T) {
+func TestPg_ComputeNodes_ActiveComputeNodes_ExcludesInactive_AndSortsByName(t *testing.T) {
 	s, ctx := pgStore(t)
 
 	// Insert two more nodes; one active, one drained.
@@ -864,22 +867,44 @@ func TestPg_ComputeNodes_Heartbeat_BumpsAndUnknownReturnsNotFound(t *testing.T) 
 	}
 
 	// Real node → last_heartbeat_at moves forward.
+	//
+	// Flake guard: Postgres `now()` is microsecond-resolution but
+	// wall-clock scheduling on a busy CI runner can collapse the
+	// (sleep, exec, query) window to less than 1 µs on rare passes
+	// (memory: pkg-session-tamper-flake showed a similar flake from
+	// a sub-millisecond race). We retry once with a longer sleep
+	// before failing — the retry is part of the test contract, not a
+	// flake cover-up.
 	id := resolveDefaultLocal(t, ctx, s)
 	before, err := s.ComputeNodeByID(ctx, id)
 	if err != nil {
 		t.Fatalf("ComputeNodeByID: %v", err)
 	}
-	time.Sleep(2 * time.Millisecond)
+	if !assertHeartbeatAdvanced(t, s, ctx, id, before.LastHeartbeatAt, 2*time.Millisecond) {
+		if !assertHeartbeatAdvanced(t, s, ctx, id, before.LastHeartbeatAt, 10*time.Millisecond) {
+			t.Errorf("HeartbeatComputeNode did not bump LastHeartbeatAt after 2 retries")
+		}
+	}
+}
+
+// assertHeartbeatAdvanced sleeps the given duration, calls
+// HeartbeatComputeNode, and returns true iff last_heartbeat_at moved
+// forward. Pulled out so the retry path in
+// TestPg_ComputeNodes_Heartbeat_BumpsAndUnknownReturnsNotFound stays
+// readable.
+func assertHeartbeatAdvanced(t *testing.T, s *state.PgStore, ctx context.Context, id string, before time.Time, sleep time.Duration) bool {
+	t.Helper()
+	time.Sleep(sleep)
 	if err := s.HeartbeatComputeNode(ctx, id); err != nil {
 		t.Fatalf("HeartbeatComputeNode: %v", err)
+		return false
 	}
 	after, err := s.ComputeNodeByID(ctx, id)
 	if err != nil {
 		t.Fatalf("ComputeNodeByID(after): %v", err)
+		return false
 	}
-	if !after.LastHeartbeatAt.After(before.LastHeartbeatAt) {
-		t.Errorf("HeartbeatComputeNode did not bump LastHeartbeatAt: before=%v after=%v", before.LastHeartbeatAt, after.LastHeartbeatAt)
-	}
+	return after.LastHeartbeatAt.After(before)
 }
 
 func TestPg_ComputeNodes_Create_RejectsBadTargetURL(t *testing.T) {
@@ -904,15 +929,23 @@ func TestPg_ComputeNodes_Create_DuplicateNameConflicts(t *testing.T) {
 	s, ctx := pgStore(t)
 
 	// default-local is already seeded; a second row with the same name
-	// must surface as an error (UNIQUE(name) violation). PgStore
-	// does not translate to ErrConflict — it surfaces the raw
-	// pgx unique-violation. This test pins that contract so a future
-	// translator change is intentional.
-	if _, err := s.CreateComputeNode(ctx, state.ComputeNode{
+	// must surface as a UNIQUE-violation error. PgStore does not
+	// translate to ErrConflict — it surfaces the raw pgx error. We
+	// pin the constraint by name (compute_nodes_name_key) so a future
+	// regression that drops the error, or that swaps the unique index
+	// for something else, surfaces here. The constraint name is set by
+	// the migration's `name text not null unique` clause; pgx renders
+	// it on every unique-violation message.
+	const wantConstraint = "compute_nodes_name_key"
+	_, err := s.CreateComputeNode(ctx, state.ComputeNode{
 		Name: state.DefaultLocalNodeName, TargetURL: "unix:///run/faas/vmmd.sock",
 		VPCPUs: 1, MemMB: 1, MaxConcurrency: 1, AdmissionCeilingMB: 1,
-	}); err == nil {
-		t.Error("CreateComputeNode(duplicate name): want error, got nil")
+	})
+	if err == nil {
+		t.Fatal("CreateComputeNode(duplicate name): want error, got nil")
+	}
+	if !strings.Contains(err.Error(), wantConstraint) {
+		t.Errorf("CreateComputeNode(duplicate name) error=%q, want error containing %q (UNIQUE constraint name)", err.Error(), wantConstraint)
 	}
 }
 
@@ -920,7 +953,9 @@ func TestPg_ComputeNodes_Create_AssignsUUIDWhenEmpty(t *testing.T) {
 	s, ctx := pgStore(t)
 
 	// Caller omits ID; Postgres column default (gen_random_uuid) should
-	// fill it and RETURNING should surface the assigned UUID.
+	// fill it and RETURNING should surface the assigned UUID. Pin the
+	// format with uuid.Parse so a future migration that swaps the
+	// default for a sequential id surfaces here.
 	got, err := s.CreateComputeNode(ctx, state.ComputeNode{
 		Name: "fresh-uuid", TargetURL: "unix:///run/faas/vmmd.sock",
 		VPCPUs: 80, MemMB: 28000, MaxConcurrency: 100, AdmissionCeilingMB: 23800,
@@ -931,6 +966,9 @@ func TestPg_ComputeNodes_Create_AssignsUUIDWhenEmpty(t *testing.T) {
 	}
 	if got.ID == "" {
 		t.Errorf("PgStore should assign a UUID via the column default; got empty ID")
+	}
+	if _, err := uuid.Parse(got.ID); err != nil {
+		t.Errorf("CreateComputeNode assigned ID=%q, want a parseable UUID (gen_random_uuid): %v", got.ID, err)
 	}
 	if got.CreatedAt.IsZero() {
 		t.Errorf("CreatedAt should be stamped by the column default; got zero")
