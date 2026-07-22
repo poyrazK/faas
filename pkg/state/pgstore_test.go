@@ -761,3 +761,227 @@ func TestPg_SnapshotStorageKey_RoundTrip(t *testing.T) {
 		t.Error("CreateSnapshot with empty StorageKey returned nil error; want explicit error per F-1 contract")
 	}
 }
+
+// --- Compute nodes (issue #97 / ADR-025 axis 3) -----------------------------
+//
+// Migrations/00024_compute_nodes.sql seeds one synthetic 'default-local'
+// row. Tests below use the canonical helper resolveDefaultLocal to fetch
+// that id when they need a valid FK target; new-node tests insert their
+// own via CreateComputeNode (which lets Postgres mint the uuid via the
+// column default and returns it in the RETURNING clause).
+
+func TestPg_ComputeNodes_DefaultLocalSeededByMigration(t *testing.T) {
+	s, ctx := pgStore(t)
+
+	// The seeded default-local row carries the production shape:
+	// unix:///run/faas/vmmd.sock target, 160 vCPU, 56 GB mem, 200 max
+	// concurrency, 47,600 MB admission ceiling. Pin all four so a
+	// future migration drift surfaces here, not at first wake.
+	got, err := s.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("ComputeNodeByName(default-local): %v", err)
+	}
+	if got.Name != state.DefaultLocalNodeName {
+		t.Errorf("Name=%q, want %q", got.Name, state.DefaultLocalNodeName)
+	}
+	if !got.Active {
+		t.Errorf("seeded default-local should be active")
+	}
+	if got.AdmissionCeilingMB != 47600 {
+		t.Errorf("AdmissionCeilingMB=%d, want 47600", got.AdmissionCeilingMB)
+	}
+	if got.MemMB != 56000 {
+		t.Errorf("MemMB=%d, want 56000", got.MemMB)
+	}
+	if got.MaxConcurrency != 200 {
+		t.Errorf("MaxConcurrency=%d, want 200", got.MaxConcurrency)
+	}
+	if got.TargetURL != "unix:///run/faas/vmmd.sock" {
+		t.Errorf("TargetURL=%q, want unix:///run/faas/vmmd.sock", got.TargetURL)
+	}
+	if got.LastHeartbeatAt.IsZero() {
+		t.Errorf("seeded LastHeartbeatAt should be stamped at migration apply")
+	}
+}
+
+func TestPg_ComputeNodes_ActiveComputeNodes_OnlyActiveSortedByName(t *testing.T) {
+	s, ctx := pgStore(t)
+
+	// Insert two more nodes; one active, one drained.
+	if _, err := s.CreateComputeNode(ctx, state.ComputeNode{
+		Name: "alpha-node", TargetURL: "unix:///run/faas/vmmd.sock",
+		VPCPUs: 80, MemMB: 28000, MaxConcurrency: 100, AdmissionCeilingMB: 23800,
+		Active: true,
+	}); err != nil {
+		t.Fatalf("CreateComputeNode(alpha): %v", err)
+	}
+	if _, err := s.CreateComputeNode(ctx, state.ComputeNode{
+		Name: "zulu-drained", TargetURL: "tcp://10.0.0.10:50051",
+		VPCPUs: 80, MemMB: 28000, MaxConcurrency: 100, AdmissionCeilingMB: 23800,
+		Active: false,
+	}); err != nil {
+		t.Fatalf("CreateComputeNode(zulu): %v", err)
+	}
+
+	nodes, err := s.ActiveComputeNodes(ctx)
+	if err != nil {
+		t.Fatalf("ActiveComputeNodes: %v", err)
+	}
+	// Expected: alpha-node + default-local (alphabetical). Drained
+	// 'zulu-drained' must NOT appear even though its name sorts last.
+	wantNames := []string{"alpha-node", state.DefaultLocalNodeName}
+	if len(nodes) != len(wantNames) {
+		names := make([]string, 0, len(nodes))
+		for _, n := range nodes {
+			names = append(names, n.Name)
+		}
+		t.Fatalf("ActiveComputeNodes returned %d nodes (%v), want %d (%v)", len(nodes), names, len(wantNames), wantNames)
+	}
+	for i := range wantNames {
+		if nodes[i].Name != wantNames[i] {
+			t.Errorf("ActiveComputeNodes[%d].Name=%q, want %q", i, nodes[i].Name, wantNames[i])
+		}
+	}
+}
+
+func TestPg_ComputeNodes_ByID_NotFoundAndByName_NotFound(t *testing.T) {
+	s, ctx := pgStore(t)
+
+	if _, err := s.ComputeNodeByID(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("ComputeNodeByID(unknown): want ErrNotFound, got %v", err)
+	}
+	if _, err := s.ComputeNodeByName(ctx, "no-such-name"); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("ComputeNodeByName(unknown): want ErrNotFound, got %v", err)
+	}
+}
+
+func TestPg_ComputeNodes_Heartbeat_BumpsAndUnknownReturnsNotFound(t *testing.T) {
+	s, ctx := pgStore(t)
+
+	// Unknown id → ErrNotFound (RowsAffected==0 path).
+	if err := s.HeartbeatComputeNode(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("HeartbeatComputeNode(unknown): want ErrNotFound, got %v", err)
+	}
+
+	// Real node → last_heartbeat_at moves forward.
+	id := resolveDefaultLocal(t, ctx, s)
+	before, err := s.ComputeNodeByID(ctx, id)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := s.HeartbeatComputeNode(ctx, id); err != nil {
+		t.Fatalf("HeartbeatComputeNode: %v", err)
+	}
+	after, err := s.ComputeNodeByID(ctx, id)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID(after): %v", err)
+	}
+	if !after.LastHeartbeatAt.After(before.LastHeartbeatAt) {
+		t.Errorf("HeartbeatComputeNode did not bump LastHeartbeatAt: before=%v after=%v", before.LastHeartbeatAt, after.LastHeartbeatAt)
+	}
+}
+
+func TestPg_ComputeNodes_Create_RejectsBadTargetURL(t *testing.T) {
+	s, ctx := pgStore(t)
+
+	// CHECK constraint enforces ^(unix|tcp|dns)://. http:// and an
+	// empty string both fail; a future regression that loosens the
+	// regex would surface here.
+	cases := []string{"http://example.com", "", "ftp://example.com"}
+	for _, bad := range cases {
+		_, err := s.CreateComputeNode(ctx, state.ComputeNode{
+			Name: "bad-" + bad, TargetURL: bad,
+			VPCPUs: 1, MemMB: 1, MaxConcurrency: 1, AdmissionCeilingMB: 1,
+		})
+		if err == nil {
+			t.Errorf("CreateComputeNode(target_url=%q) returned nil error; CHECK should reject", bad)
+		}
+	}
+}
+
+func TestPg_ComputeNodes_Create_DuplicateNameConflicts(t *testing.T) {
+	s, ctx := pgStore(t)
+
+	// default-local is already seeded; a second row with the same name
+	// must surface as an error (UNIQUE(name) violation). PgStore
+	// does not translate to ErrConflict — it surfaces the raw
+	// pgx unique-violation. This test pins that contract so a future
+	// translator change is intentional.
+	if _, err := s.CreateComputeNode(ctx, state.ComputeNode{
+		Name: state.DefaultLocalNodeName, TargetURL: "unix:///run/faas/vmmd.sock",
+		VPCPUs: 1, MemMB: 1, MaxConcurrency: 1, AdmissionCeilingMB: 1,
+	}); err == nil {
+		t.Error("CreateComputeNode(duplicate name): want error, got nil")
+	}
+}
+
+func TestPg_ComputeNodes_Create_AssignsUUIDWhenEmpty(t *testing.T) {
+	s, ctx := pgStore(t)
+
+	// Caller omits ID; Postgres column default (gen_random_uuid) should
+	// fill it and RETURNING should surface the assigned UUID.
+	got, err := s.CreateComputeNode(ctx, state.ComputeNode{
+		Name: "fresh-uuid", TargetURL: "unix:///run/faas/vmmd.sock",
+		VPCPUs: 80, MemMB: 28000, MaxConcurrency: 100, AdmissionCeilingMB: 23800,
+		Active: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	if got.ID == "" {
+		t.Errorf("PgStore should assign a UUID via the column default; got empty ID")
+	}
+	if got.CreatedAt.IsZero() {
+		t.Errorf("CreatedAt should be stamped by the column default; got zero")
+	}
+}
+
+func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+
+	// Create 2 waking, 1 cold_booting, 2 running, 1 stopped, 1 parked.
+	// Total live = 5 × (256 + api.PerVMOverheadMB) MB.
+	for _, st := range []string{
+		string(state.StateWaking),
+		string(state.StateWaking),
+		string(state.StateColdBooting),
+		string(state.StateRunning),
+		string(state.StateRunning),
+	} {
+		if _, err := s.CreateInstance(ctx, appID, depID, st, 256, nodeID); err != nil {
+			t.Fatalf("CreateInstance(%s): %v", st, err)
+		}
+	}
+	// Non-live states (not in the SELECT's WHERE clause): must NOT
+	// contribute to the aggregate. The DB CHECK (migrations/00020)
+	// pins the state set to {pending, cold_booting, waking, running,
+	// parked, stopped, evicting_account_deleting}; parked + stopped
+	// are the two non-live writes the engine emits in practice.
+	if _, err := s.CreateInstance(ctx, appID, depID, string(state.StateStopped), 256, nodeID); err != nil {
+		t.Fatalf("CreateInstance(stopped): %v", err)
+	}
+	if _, err := s.CreateInstance(ctx, appID, depID, string(state.StateParked), 256, nodeID); err != nil {
+		t.Fatalf("CreateInstance(parked): %v", err)
+	}
+
+	got, err := s.ComputeNodeUsedMB(ctx, nodeID)
+	if err != nil {
+		t.Fatalf("ComputeNodeUsedMB: %v", err)
+	}
+	want := int64(5 * (256 + api.PerVMOverheadMB))
+	if got != want {
+		t.Errorf("ComputeNodeUsedMB=%d, want %d (5 live × (256+%d))", got, want, api.PerVMOverheadMB)
+	}
+
+	// Unknown node → 0 (COALESCE wraps the aggregate in the SELECT).
+	gotU, err := s.ComputeNodeUsedMB(ctx, "00000000-0000-0000-0000-000000000000")
+	if err != nil {
+		t.Fatalf("ComputeNodeUsedMB(unknown): %v", err)
+	}
+	if gotU != 0 {
+		t.Errorf("ComputeNodeUsedMB(unknown)=%d, want 0", gotU)
+	}
+}
