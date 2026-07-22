@@ -68,15 +68,15 @@ func newServer(t *testing.T, eng scheddgrpc.SchedAPI) scheddpb.ScheddClient {
 func TestWake_Success(t *testing.T) {
 	cli := newServer(t, &fakeEngine{
 		wakeFn: func(context.Context, string) (sched.WakeResult, error) {
-			return sched.WakeResult{InstanceID: "i-1", Addr: "10.100.0.2:8080", Method: vmmdpb.WakeMethod_WAKE_RESTORE}, nil
+			return sched.WakeResult{InstanceID: "i-1", NodeID: "node-test-1", Method: vmmdpb.WakeMethod_WAKE_RESTORE}, nil
 		},
 	})
 	resp, err := cli.Wake(context.Background(), &scheddpb.WakeRequest{AppId: "app-1"})
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
-	if resp.GetAddr() != "10.100.0.2:8080" {
-		t.Errorf("addr = %q", resp.GetAddr())
+	if resp.GetNodeId() != "node-test-1" {
+		t.Errorf("node_id = %q", resp.GetNodeId())
 	}
 	if resp.GetMethod() != scheddpb.WakeMethod_WAKE_RESTORE {
 		t.Errorf("method = %v, want WAKE_RESTORE", resp.GetMethod())

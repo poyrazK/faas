@@ -112,6 +112,10 @@ type runDeps struct {
 	// gatewayd.toml `apid_loopback`). Empty in tests; run() populates it
 	// from cfg before invoking runWithDeps.
 	apidLoopback string
+	// nodeCache holds the per-node *grpc.ClientConn cache plus the
+	// compute_node_changed pg_notify subscriber (issue #98 / ADR-028).
+	// nil in tests; production wires it after pgStore opens.
+	nodeCache *nodeCache
 }
 
 func defaultDeps() runDeps {
@@ -226,6 +230,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// Forward the operator-configured apid loopback URL through the
 	// test seam so runWithDeps can stay TOML-free (issue #85).
 	deps.apidLoopback = cfg.APIDLoopback
+	// Issue #98 / ADR-028: per-node vmmd client cache. The vmmd TLS
+	// material is not yet wired into gatewayd's config — for unix
+	// targets (single-box dev) wire.DialContext accepts nil TLS; for
+	// tcp targets the operator must add a [vmmd_tls] cluster to
+	// gatewayd.toml. That config addition is a follow-up slice; the
+	// cache + dial wiring here is ready for it. Subscribing to
+	// compute_node_changed runs in a goroutine that dies with ctx.
+	deps.nodeCache = newNodeCache(pgStore, nil /* vmmd TLS: see comment */, log)
+	go deps.nodeCache.WatchEvictions(ctx, pool)
 	return runWithDeps(ctx, log, deps)
 }
 
@@ -245,6 +258,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	handler := gateway.NewHandlerWith(deps.backend, gateway.NewMetrics(), log)
 	handler.SetWakeGateHook()
+
+	// Issue #98 / ADR-028: install the per-node HTTP→gRPC forwarder.
+	// Backend.Target returns a compute_node.id (string-typed for
+	// backwards compat); the forwarder dereferences it via the
+	// per-node vmmd client cache and bridges HTTP bytes to the
+	// instance netns through vmmd's ForwardHTTP RPC. nil cache =
+	// legacy addr-based path (tests + e2e harness without vmmd
+	// overlay).
+	if deps.nodeCache != nil {
+		handler.WithForwarding(deps.nodeCache.Forwarding())
+	}
 
 	// Per-instance last_request_at flush loop (spec §4.1). Present in production;
 	// nil in tests. FlushEvery stops with ctx; drain its error channel so a flaky
@@ -448,6 +472,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.synth != nil {
 			//nolint:contextcheck // same shutdown-ctx contract as public.Shutdown above.
 			_ = deps.synth.Stop(shutdownCtx)
+		}
+		if deps.nodeCache != nil {
+			// Closing every cached *grpc.ClientConn here means
+			// in-flight ForwardHTTP RPCs see a "transport closing"
+			// error → handler maps it to 502; the listener is
+			// already draining so no new requests land.
+			_ = deps.nodeCache.Close()
 		}
 		return nil
 	}

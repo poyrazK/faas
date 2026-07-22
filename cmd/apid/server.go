@@ -90,6 +90,10 @@ type server struct {
 	// turns the existing per-IP failure limiter into a generic
 	// per-IP rate limiter without dragging in x/time/rate.
 	dashboardExportLimiter *middleware.Limiter
+	// adminAllowlist is the email allowlist gating /v1/compute-nodes
+	// (issue #98 / ADR-028). nil = no admin access (every route
+	// 403s); populated by WithAdminAllowlist from FAAS_ADMIN_EMAILS.
+	adminAllowlist *adminAllowlist
 	// statusCache backs GET /status/slo.json (spec §12 public status
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
@@ -310,19 +314,6 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/keys", s.authLimited(s.createKey))
 	mux.HandleFunc("DELETE /v1/keys/{id}", s.authLimited(s.deleteKey))
 
-	// Compute nodes (issue #97 / ADR-025 axis 3, PR #114). Operator
-	// surface — registers additional vmmd targets, surfaces fleet
-	// health (Active, LastHeartbeatAt) for dashboards. POST wraps
-	// in s.idempotent so a retried registration lands on the
-	// existing row rather than 409-ing on the unique-name
-	// constraint (the operator's "is the new node being
-	// heartbeated?" probe naturally retries). Gated on s.auth
-	// today (customer auth) — a future operator-role slice will
-	// split s.operatorAuth out of s.auth.
-	mux.HandleFunc("POST /v1/compute-nodes", s.auth(s.idempotent(s.createComputeNode)))
-	mux.HandleFunc("GET /v1/compute-nodes", s.auth(s.listComputeNodes))
-	mux.HandleFunc("GET /v1/compute-nodes/{id}", s.auth(s.getComputeNode))
-
 	// Customer secrets (spec §11/G2). Plaintext VALUE flows through PUT
 	// over TLS; sealed server-side by handlers_secrets.go.
 	mux.HandleFunc("GET /v1/apps/{slug}/secrets", s.authLimited(s.listSecrets))
@@ -339,6 +330,17 @@ func (s *server) handler() http.Handler {
 	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept
 	// unsigned and trust the network boundary; ADR-007 hardening later).
 	mux.HandleFunc("POST /v1/webhooks/stripe", s.stripeWebhook)
+
+	// Operator admin surface (issue #98 / ADR-028). Auth lives in
+	// s.adminAllows (email allowlist via FAAS_ADMIN_EMAILS); handlers
+	// 403 every request when the allowlist is empty. authLimited
+	// wraps the per-IP bucket so the routes share the spec §11
+	// 10/min/IP budget with the rest of /v1/* — a brute-force on
+	// admin routes costs the attacker the same budget they'd burn
+	// trying customer keys.
+	mux.HandleFunc("GET /v1/compute-nodes", s.authLimited(s.listComputeNodes))
+	mux.HandleFunc("POST /v1/compute-nodes", s.authLimited(s.idempotent(s.createOrUpdateComputeNode)))
+	mux.HandleFunc("DELETE /v1/compute-nodes/{name}", s.authLimited(s.deleteComputeNode))
 
 	// M7.5 SSE live-update (ADR-011). Handles session-cookie OR
 	// API-key auth itself — the cookie path is for the dashboard,

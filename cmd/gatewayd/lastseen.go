@@ -12,10 +12,12 @@ import (
 // schedd (spec §4.1: flush last_request_at every 15 s, not per request).
 const lastSeenFlushInterval = 15 * time.Second
 
-// instanceResolver maps a proxied addr back to the instance schedd woke it as.
-// gateway.PGBackend satisfies it (from the wake response).
+// instanceResolver maps a dial key (now: the compute_node.id the
+// gateway forwarded to via vmmd ForwardHTTP; was: the host:port addr
+// pre-#98) back to the instance schedd woke it as. gateway.PGBackend
+// satisfies it (from the wake response).
 type instanceResolver interface {
-	InstanceIDForAddr(addr string) (string, bool)
+	InstanceIDForNodeID(nodeID string) (string, bool)
 }
 
 // activityReporter flushes a batch of last_request_at touches. scheddgrpc.Client
@@ -92,8 +94,8 @@ func (s *schedFlushSink) Flush(ctx context.Context) error {
 	s.mu.Unlock()
 
 	touches := make([]state.InstanceTouch, 0, len(batch))
-	for addr, t := range batch {
-		id, ok := s.resolve.InstanceIDForAddr(addr)
+	for nodeID, t := range batch {
+		id, ok := s.resolve.InstanceIDForNodeID(nodeID)
 		if !ok {
 			continue
 		}

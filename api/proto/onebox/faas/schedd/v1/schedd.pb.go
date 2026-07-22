@@ -129,9 +129,17 @@ type WakeResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// instance_id is the instances.id row schedd created (or reused).
 	InstanceId string `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
-	// addr is host:port the gateway proxies to — the instance's routable
-	// identity (host_ip:8080, spec §7). Empty only on the error path.
-	Addr string `protobuf:"bytes,2,opt,name=addr,proto3" json:"addr,omitempty"`
+	// node_id is the compute_node.id (uuid) the instance lives on
+	// (issue #98 / ADR-028). The gateway looks up the node's per-node
+	// gRPC client via its routing cache and forwards the request via the
+	// vmmd ForwardHTTP RPC. Empty only on the error path.
+	//
+	// Renamed from the legacy `addr` field (PR #116-era was host_ip:8080,
+	// an inner-netns placeholder unreachable from gatewayd on a remote
+	// host). Dual semantics were deliberately not preserved — leaving
+	// both fields risks a caller picking the wrong one and regressing
+	// the hot path silently. The new shape is the only contract.
+	NodeId string `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	// method reports what actually happened (a restore that fell back to cold
 	// boot per ADR-005 reads WAKE_COLD_BOOT).
 	Method WakeMethod `protobuf:"varint,3,opt,name=method,proto3,enum=onebox.faas.schedd.v1.WakeMethod" json:"method,omitempty"`
@@ -180,9 +188,9 @@ func (x *WakeResponse) GetInstanceId() string {
 	return ""
 }
 
-func (x *WakeResponse) GetAddr() string {
+func (x *WakeResponse) GetNodeId() string {
 	if x != nil {
-		return x.Addr
+		return x.NodeId
 	}
 	return ""
 }
@@ -451,11 +459,11 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\n" +
 	"\"onebox/faas/schedd/v1/schedd.proto\x12\x15onebox.faas.schedd.v1\x1a\x1cgoogle/protobuf/struct.proto\"$\n" +
 	"\vWakeRequest\x12\x15\n" +
-	"\x06app_id\x18\x01 \x01(\tR\x05appId\"\xb1\x01\n" +
+	"\x06app_id\x18\x01 \x01(\tR\x05appId\"\xb6\x01\n" +
 	"\fWakeResponse\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
-	"instanceId\x12\x12\n" +
-	"\x04addr\x18\x02 \x01(\tR\x04addr\x129\n" +
+	"instanceId\x12\x17\n" +
+	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x129\n" +
 	"\x06method\x18\x03 \x01(\x0e2!.onebox.faas.schedd.v1.WakeMethodR\x06method\x121\n" +
 	"\aproblem\x18\x04 \x01(\v2\x17.google.protobuf.StructR\aproblem\"A\n" +
 	"\x05Touch\x12\x1f\n" +

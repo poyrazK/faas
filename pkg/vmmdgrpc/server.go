@@ -36,6 +36,12 @@ type VmmdAPI interface {
 	DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error)
 	LiveCount() int
 	LeasedCount() int
+	// NetnsFor is the issue #98 / ADR-028 bridge: the ForwardHTTP
+	// handler needs the per-instance netns name (fc-<instance>) to
+	// nsenter before dialing netns.GuestIP:netns.AppPort. Defined here
+	// (not in pkg/vmmdgrpc/forward.go) so the Server struct's
+	// interface check catches a Manager wiring gap at compile time.
+	NetnsFor(instance string) (string, bool)
 }
 
 // Server implements vmmdpb.VmmdServer.
@@ -168,6 +174,20 @@ func (s *Server) exportDirFor(instance string) string {
 		return getter.ExportDirFor(instance)
 	}
 	return ""
+}
+
+// Heartbeat answers the presence ping from schedd's heartbeat
+// goroutine (issue #98 / ADR-028). The direction is reversed from
+// the vmmd-pushes design because schedd is the admission authority
+// and shouldn't trust inbound traffic from a box it may have already
+// drained — the heartbeat lives on the schedd side and just proves
+// "this vmmd is reachable over the overlay right now". Returning a
+// non-Unavailable gRPC code is what schedd counts as liveness.
+func (s *Server) Heartbeat(ctx context.Context, _ *vmmdpb.HeartbeatRequest) (*vmmdpb.HeartbeatResponse, error) {
+	const op = "Heartbeat"
+	start := time.Now()
+	s.ops.Observe(op, time.Since(start), nil)
+	return &vmmdpb.HeartbeatResponse{}, nil
 }
 
 // Stats returns Manager's view: live/leased counts and per-instance

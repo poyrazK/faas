@@ -104,6 +104,7 @@ Each component: single Go binary, own systemd unit, structured logs (JSON, `slog
 - Records `last_request_at[instance]` (in-memory, flushed to PG every 15 s) — this drives idle parking.
 - Rate limits (token bucket, per app): Free 5 rps burst 20; Hobby 20 rps burst 100; Pro 100 rps burst 500; Scale 500 rps burst 2000. Over-limit → `429`.
 - Request/response size caps: 25 MB body either direction. Timeouts: 60 s upstream response start, 300 s total.
+- **Multi-node forwarding (ADR-028):** When schedd has placed an instance on a remote compute_node, gatewayd dials the per-node vmmd over the overlay (Tailscale or Wireguard; see §10 below) and bridges the HTTP bytes via vmmd's `ForwardHTTP` RPC. The cache layer is `NodeClientCache`: one `*grpc.ClientConn` per `compute_node.id`, evicted on every `compute_node_changed` pg_notify. Hop-by-hop headers (RFC 7230 §6.1) are stripped before the bridge. Body cap is 25 MiB; the bridge refuses larger payloads with `ResourceExhausted` before any bytes leave the gateway. The default-local node (one-box dev) skips the bridge and uses the existing direct reverse-proxy path.
 - Emits: `gateway_requests_total{app,code}`, `gateway_wake_latency_seconds` (histogram), `gateway_queue_depth`.
 
 ### 4.2 `apid` — control API
@@ -314,6 +315,8 @@ Conventions: every state column has a CHECK constraint; every table with `accoun
 
 Timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FAILED; SNAPSHOTTING ≤ 20 s then STOPPED. Every transition is an `events` row.
 
+**Compute-node heartbeat (ADR-028):** schedd pings every active `compute_node` on a 30 s tick via `pkg/sched.Heartbeat`. The goroutine dials each row's `target_url` (Tailscale/Wireguard overlay in production; unix:///run/faas/vmmd.sock for default-local) and stamps `last_heartbeat_at = now()` on success. A row whose `last_heartbeat_at` ages past 90 s gets `active=false` via `SetComputeNodeActive`. The pg_notify `compute_node_changed` (migration 00026) fires on the UPDATE so gatewayd's `NodeClientCache` evicts the cached conn without polling. Re-activation is automatic on the next successful ping. Direction was chosen to invert vmmd-pushes: schedd is the admission authority and shouldn't trust inbound traffic from a box it may have already drained; outbound probing means schedd detects failure on its own clock.
+
 ### 6.2 Invariants (test these, they are the product)
 
 1. At most `max_concurrency(plan)` instances of one app in {WAKING, COLD_BOOTING, RUNNING}.
@@ -341,6 +344,7 @@ Measured end-to-end as `gateway_wake_latency_seconds`. Regression gate in CI-on-
 
 - Public: gatewayd binds :80/:443 on the host IP. Nothing else listens publicly. SSH on a non-standard port, key-only, fail2ban.
 - Per instance: netns `fc-{instance}`; inside it `tap0` ↔ firecracker; guest always `10.0.0.2/30`, host side `10.0.0.1` (ADR-009 — identical inner world so any snapshot restores anywhere). A veth pair `ve-{instance}` bridges the netns to `br-tenants`; the veth's host address `10.100.x.y/16` is the instance's routable identity; nftables DNATs `host_ip:ephemeral → 10.0.0.2:8080` within the netns.
+- **Cross-box overlay (ADR-028):** gatewayd reaches remote vmmd hosts via a Tailscale (default) or Wireguard (operator) overlay. The dial leg is plain TCP through the overlay interface (Tailscale: `tailscale0`; Wireguard: operator-named). vmmd's gRPC server binds the overlay port (default 50051) and refuses to serve the public listener. Operators provision via `deploy/ansible/roles/overlay/`. Authkey / peer list management is operator-owned; the role consumes vaulted secrets and renders systemd units.
 - Egress (tenant): default-allow TCP 80/443/53 + UDP 53; **deny 25, 465, 587** (spam = Hetzner abuse desk = existential, founding doc R6); deny RFC1918 + link-local + metadata ranges (no lateral movement into the control plane); per-instance conntrack cap 4,096; egress bandwidth per plan via `tc`: 10 / 25 / 100 / 250 Mbit.
 - Egress (builder VMs): allow 443/80/53 to package registries only via a squid allowlist in v1.1; v1 = same as tenant policy. Deny everything inbound always.
 - DNS names: `{slug}.apps.DOMAIN` wildcard A record → host IP. Custom domains: customer CNAMEs to `edge.DOMAIN`, apid verifies via TXT `_faas-verify.{domain}` before gatewayd will mint a cert.

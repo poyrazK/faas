@@ -39,7 +39,7 @@ service Vmmd {
   // `vmmd_op_duration_seconds` dashboards (ADR-016).
   rpc Stats(StatsRequest) returns (StatsResponse);
 
-  // Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
+// Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
   // PR #114). Returns the vmmd process's Firecracker version + the
   // server-side timestamp at the moment the handler ran; schedd's
   // heartbeat loop calls this on every active compute_node every
@@ -49,6 +49,25 @@ service Vmmd {
   // handler — the two facts schedd needs to keep last_heartbeat_at
   // fresh. Idempotent + side-effect free; no backing Manager call.
   rpc Ping(PingRequest) returns (PingResponse);
+
+  // ForwardHTTP bridges one HTTP request from gatewayd into a live
+  // instance's netns. Issue #98 / ADR-028: the gatewayd hot path speaks
+  // HTTP to vmmd over the Tailscale/Wireguard overlay (no second
+  // transport), and vmmd nsenter's the per-instance netns and dials
+  // netns.GuestIP:netns.AppPort. Body is capped at 25 MiB; response
+  // headers carry a 60s deadline; errors map to Unavailable so the
+  // gateway retries the wake on the next hop. The handler is
+  // additive — single-node deployments never call it.
+  rpc ForwardHTTP(ForwardHTTPRequest) returns (ForwardHTTPResponse);
+
+  // Heartbeat lets schedd ping vmmd over the overlay. The reverse
+  // direction (vmmd-pushes) was rejected because schedd is the
+  // admission authority and shouldn't trust inbound traffic from a
+  // box it may have already drained. Empty request, empty response:
+  // success is "did it return Unavailable" and the timestamp comes
+  // from the caller. See pkg/overlay.DialContext and schedd's
+  // heartbeat goroutine (issue #98).
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 }
 
 // AppSpec flattens what the caller knows about an app. vmmd stores none of
@@ -233,3 +252,61 @@ message PingResponse {
   string fc_version = 1;
   google.protobuf.Timestamp server_time = 2;
 }
+
+// ForwardHTTPRequest is gatewayd→vmmd for one HTTP request. The wire
+// shape mirrors a request line + headers + body. Headers are
+// repeated for natural grpc compatibility (headers can repeat in
+// HTTP/1.1). The body is bounded by ForwardMaxBodyBytes (25 MiB) —
+// gatewayd refuses upstream bodies larger than that before sending.
+message ForwardHTTPRequest {
+  // The compute_node-relative instance id (instances.id, scoped to a
+  // node). vmmd resolves the netns from this.
+  string instance     = 1;
+  // HTTP method: GET, POST, HEAD, PUT, DELETE, OPTIONS, PATCH.
+  string method       = 2;
+  // Request-target — path?query, e.g. "/api/v1/items?id=42".
+  string request_uri  = 3;
+  // Headers, in order. Each entry is one header line. Multi-valued
+  // headers are repeated (HTTP/1.1 allows). Gatewayd MUST drop
+  // hop-by-hop headers (Connection, Transfer-Encoding, etc.) before
+  // sending — see pkg/gateway/forwardproxy.go's stripHopByHop.
+  repeated Header headers = 4;
+  // Request body. Capped at ForwardMaxBodyBytes. vmmd treats an empty
+  // body as zero-length, not missing.
+  bytes  body         = 5;
+}
+
+// Header is one (name, value) HTTP header line. Both fields are
+// bytes-rather-than-string so non-ASCII values survive the round
+// trip without proto-text round-trip surprises.
+message Header {
+  string name  = 1;
+  string value = 2;
+}
+
+// ForwardHTTPResponse is what vmmd returns. Status carries the
+// numeric HTTP status code; headers are the upstream response
+// headers; body is the response body (also capped). On a vmmd-side
+// failure (cannot reach guest, guest 500, nsenter EIO) the handler
+// returns a gRPC status instead — the proto envelope here is the
+// success path only.
+message ForwardHTTPResponse {
+  int32 status   = 1;
+  repeated Header headers = 2;
+  bytes body     = 3;
+}
+
+// ForwardMaxBodyBytes is the per-request body cap (25 MiB). It matches
+// the gatewayd upstream cap (spec §13 / pkg/api.Limits.HTTPRequestMax).
+// proto3 has no top-level constants, so this is documented inline;
+// the constant lives in Go at vmmdgrpc.ForwardMaxBodyBytes.
+
+// HeartbeatRequest and HeartbeatResponse are intentionally empty:
+// the heartbeat is a presence-only ping. Schedd measures the round
+// trip itself; vmmd reports nothing. We keep the envelopes
+// (vs. reusing google.protobuf.Empty) so future fields — e.g. a
+// "what's your RAM headroom right now" piggyback — can be added
+// without a wire version bump on a hot path.
+message HeartbeatRequest {}
+
+message HeartbeatResponse {}

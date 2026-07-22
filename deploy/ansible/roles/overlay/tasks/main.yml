@@ -1,0 +1,66 @@
+# Issue #98 / ADR-028: install + start the overlay daemon on each
+# faas host. Split per-provider so an operator that already runs
+# tailscale doesn't accidentally re-install it (the include_tasks
+# below is gated on faas_overlay_provider).
+#
+# Cross-provider behaviour:
+#   - Both providers install one systemd unit (faas-overlay.service)
+#     that brings the tunnel up on boot. The unit is templated per
+#     provider so the ExecStart= command matches the binary on PATH.
+#   - Both providers write /etc/faas/overlay.env with the authkey
+#     path + hostname, so daemons that need the overlay state
+#     (gatewayd, schedd) can read it without shell-out to
+#     `tailscale status`.
+#   - The role does NOT mint keys or join a tailnet. Operators own
+#     the authkey flow; the role only consumes the authkey file
+#     once the operator has placed it.
+#
+# Idempotency: ansible `package:` and `service:` modules are
+# idempotent in their core semantics; the role re-asserts the
+# desired state on every run, so a re-bootstrap after a host rebuild
+# converges without manual intervention.
+
+- name: overlay — install tailscale (provider=tailscale)
+  ansible.builtin.include_tasks: tailscale.yml
+  when: faas_overlay_provider == "tailscale"
+
+- name: overlay — install wireguard (provider=wireguard)
+  ansible.builtin.include_tasks: wireguard.yml
+  when: faas_overlay_provider == "wireguard"
+
+# Cross-provider firewall rule: open the vmmd gRPC port on the
+# overlay interface only. Tailscale ACLs handle auth; this rule
+# is the kernel-level allow-list so the daemon port never binds on
+# the public interface. Operators on dedicated boxes can drop this
+# in favour of a tailscale ACL only; for the one-box prod shape
+# both layers stay defensive.
+- name: overlay — open vmmd port on overlay interface (nftables)
+  ansible.builtin.copy:
+    dest: /etc/nftables.d/faas-overlay.nft
+    owner: root
+    group: root
+    mode: "0640"
+    content: |
+      table inet faas-overlay {
+          chain input {
+              type filter hook input priority 0; policy accept;
+              iifname "{{ faas_overlay_iface }}" tcp dport {{ faas_overlay_vmmd_port }} accept comment "faas vmmd on overlay"
+          }
+      }
+  notify: reload nftables
+
+# The /etc/faas/overlay.env file is the read-only seam daemons
+# use to find the overlay state. Today this just exposes the
+# hostname; future fields (tag, owner email) join the same file
+# so daemons read one path.
+- name: overlay — write /etc/faas/overlay.env
+  ansible.builtin.copy:
+    dest: /etc/faas/overlay.env
+    owner: root
+    group: root
+    mode: "0640"
+    content: |
+      FAAS_OVERLAY_PROVIDER={{ faas_overlay_provider }}
+      FAAS_OVERLAY_IFACE={{ faas_overlay_iface }}
+      FAAS_OVERLAY_HOSTNAME={{ faas_overlay_hostname }}
+      FAAS_OVERLAY_VMMD_PORT={{ faas_overlay_vmmd_port }}

@@ -1,0 +1,50 @@
+# Issue #98 / ADR-028: cross-box overlay (Tailscale / Wireguard).
+#
+# The overlay is the dial layer gatewayd uses to reach remote vmmd
+# boxes. Without it, a multi-node FaaS is impossible: gatewayd
+# would have to reach the vmmd host's bridge IP, which is bound to
+# the jailer netns inside that host.
+#
+# Operator choice via faas_overlay_provider:
+#   tailscale  — easiest; authkey-based join to a tailnet. Default
+#                for the slice because it cuts a one-line setup.
+#   wireguard  — kernel-native mesh; operators manage their own
+#                peer list (Ansible-vault'd). Same env-var pattern
+#                once the keys exist; today the role writes the
+#                template + opens the firewall, but does NOT mint
+#                keys automatically — operator workflow.
+#
+# Why this lives in deploy/ansible/ rather than as a pkg/ piece:
+# the overlay is OS-level state (systemd unit + kernel module +
+# firewall rules). It runs once per box, not per request; pkg/wire
+# owns the per-request dial. The two layers meet at vmmd's listen
+# target (cfg.listen_addr in cmd/vmmd/config.go).
+
+faas_overlay_provider: tailscale
+# Interface the operator wants the role to manage. Tailscale uses
+# tailscale0 by convention; wireguard uses a free name (we don't
+# pin one so multi-tenant boxes don't collide on a host-level
+# naming policy).
+faas_overlay_iface: tailscale0
+# Authkey for the tailscale path. Read from /etc/faas/secrets/
+# tailscale.authkey by default; operators paste the value there
+# from their tailnet admin console. Production deploys vault
+# the file; the role never logs the contents.
+faas_overlay_authkey_path: /etc/faas/secrets/tailscale.authkey
+# Hostname the box advertises in the tailnet. Distinct from
+# /etc/hostname because tailnet admin console shows the value
+# operators use to identify boxes. Default = inventory_hostname
+# but operators override per-environment (prod-east-1 vs
+# staging-east-1, for example).
+faas_overlay_hostname: "{{ inventory_hostname }}"
+# Extra --tags the box joins with. The tailnet ACL admin can use
+# these to scope per-node firewall rules (e.g. tag:cp for control
+# plane, tag:compute for vmmd hosts).
+faas_overlay_tags: "tag:faas"
+# Acceptance routes: gatewayd needs to reach vmmd on the overlay.
+# Both providers route the vmmd gRPC port over the overlay
+# interface via systemd's BindToInterface= directive — see
+# templates/faas-vmmd.service.j2. The port is fixed (50051)
+# because gatewayd's NodeClientCache derives it from the
+# compute_nodes row at dial time.
+faas_overlay_vmmd_port: 50051

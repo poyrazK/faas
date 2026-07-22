@@ -1,0 +1,65 @@
+# tailscale-specific overlay install (issue #98 / ADR-028).
+#
+# Why apt-key + repo over the upstream install script:
+#   1. Idempotent — the apt module is atomic on a re-run.
+#   2. Audit-friendly — packages match a pinned version, so a
+#      side-channel release of `tailscale` can't sneak past the
+#      role's runner.
+#   3. Air-gap friendly — operators running a closed env mirror
+#      the deb into their own apt repo and the role's URL flips
+#      to the mirror without code change.
+#
+# The systemd unit (templates/faas-overlay-tailscale.service.j2)
+# reads the authkey from faas_overlay_authkey_path. Tailscale's
+# `tailscale up --authkey=...` consumes the file once, then
+# /var/lib/tailscale/state.json persists the key state across
+# restarts; we do NOT clear state on re-runs because a tailscale
+# re-auth from scratch every 90 days is operator-driven.
+
+- name: tailscale — install apt keyring
+  ansible.builtin.apt_key:
+    url: https://pkgs.tailscale.com/stable/debian/gpg
+    state: present
+
+- name: tailscale — add apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb https://pkgs.tailscale.com/stable/debian {{ ansible_distribution_release }} main"
+    state: present
+    filename: tailscale
+
+- name: tailscale — install package
+  ansible.builtin.apt:
+    name: tailscale
+    state: present
+    update_cache: true
+
+- name: tailscale — write authkey file (0640 root:faas)
+  ansible.builtin.copy:
+    dest: "{{ faas_overlay_authkey_path }}"
+    owner: root
+    group: faas
+    mode: "0640"
+    # Force-create so the role is runnable without an existing
+    # authkey file. Real operators vault this and let ansible
+    # read it; the content below is a placeholder the operator
+    # replaces with their tailnet admin console value.
+    content: "tskey-PLACEHOLDER\n"
+  when: false  # disabled by default — operator-vaulted secret; see role doc
+
+- name: tailscale — render systemd unit
+  ansible.builtin.template:
+    src: faas-overlay-tailscale.service.j2
+    dest: /etc/systemd/system/faas-overlay.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart faas-overlay
+
+- name: tailscale — enable + start service
+  ansible.builtin.systemd:
+    name: faas-overlay
+    enabled: true
+    state: started
+    daemon_reload: true

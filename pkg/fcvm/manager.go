@@ -500,6 +500,25 @@ func (m *Manager) ExportDirFor(instance string) string {
 	return m.exportDirs[instance]
 }
 
+// NetnsFor returns the network namespace name (fc-<instance>) the
+// Manager bound to this instance at Wake time, plus a boolean that
+// reports whether the instance is currently live. Empty string +
+// false for unknown instances. The vmmd ForwardHTTP handler
+// (pkg/vmmdgrpc/forward.go, issue #98 / ADR-028) uses this to nsenter
+// the per-instance netns and dial netns.GuestIP:netns.AppPort on the
+// inner side. The boolean is the only race-free liveness signal:
+// callers should not try to look the instance up in `m.live`
+// directly because Destroy removes the entry.
+func (m *Manager) NetnsFor(instance string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok {
+		return "", false
+	}
+	return inst.Lease.Netns, true
+}
+
 // setupNetwork realises the per-instance topology (veth/tap/addressing), applies
 // the per-plan tc egress cap on the host-side veth, and then loads the
 // nftables ruleset that publishes the guest and enforces the egress policy

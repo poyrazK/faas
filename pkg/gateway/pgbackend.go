@@ -28,11 +28,18 @@ type Router interface {
 //   - routes/apps: host→app_id (RouteCache, spec §4.1 10k LRU) and app_id→App
 //     (plan). Filled on a Lookup miss via Router; wholesale-reset on an
 //     app/domain change (Reset / FlushRoutes).
-//   - targets: app_id→instance addr. Filled ONLY by a successful Wake (which
-//     carries the addr schedd just brought up) and evicted on any
-//     instance_changed notification. Target() is the ctx-less hot path, so it
-//     must be a pure in-memory read — hence a cache the notify loop keeps fresh
-//     rather than a per-request DB hit.
+//   - targets: app_id → compute_node.id. Filled ONLY by a successful Wake
+//     (which carries the node_id schedd chose via placement, issue #98 /
+//     ADR-028) and evicted on any instance_changed notification. Target() is
+//     the ctx-less hot path, so it must be a pure in-memory read — hence a
+//     cache the notify loop keeps fresh rather than a per-request DB hit.
+//
+// Note: the second value's TYPE is still a string for the existing
+// Backend.Target signature; the SEMANTIC is now compute_node.id (a uuid).
+// The legacy addr-based hot path lives on in handler.go's
+// ForwardingReverseProxy, which dereferences the node id via the
+// per-node vmmd client cache and forwards the HTTP bytes over the
+// overlay using the vmmd ForwardHTTP RPC.
 type PGBackend struct {
 	router Router
 	sched  Scheduler
@@ -44,12 +51,16 @@ type PGBackend struct {
 	apps   map[string]App // app_id -> App (plan)
 
 	tgtMu sync.RWMutex
-	// targets is the hot-path app_id -> instance addr (host:port) cache.
+	// targets is the hot-path app_id → compute_node.id cache. The string
+	// type is preserved (was host_ip:8080 in the legacy contract);
+	// gatewayd's handler looks up the per-node vmmd client from this id.
 	targets map[string]string
-	// addrInstance reverses addr -> instance_id so the last_request_at flush can
-	// attribute a touch (keyed by the addr the handler proxied to) back to the
-	// instance row schedd owns (spec §4.1, ADR-018).
-	addrInstance map[string]string
+	// nodeInstance reverses node_id → instance_id so the
+	// last_request_at flush can attribute a touch (keyed by the node id
+	// the handler proxied to) back to the instance row schedd owns
+	// (spec §4.1, ADR-018). Replaces the legacy addrInstance
+	// (addr → instance_id) which is no longer routable from a remote box.
+	nodeInstance map[string]string
 }
 
 // compile-time assertion PGBackend satisfies the edge seam.
@@ -67,7 +78,7 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		routes:       NewRouteCache(RouteCacheCap),
 		apps:         map[string]App{},
 		targets:      map[string]string{},
-		addrInstance: map[string]string{},
+		nodeInstance: map[string]string{},
 	}
 }
 
@@ -97,56 +108,64 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	return app, true
 }
 
-// Target returns the cached instance address for appID, or ("", false) when no
-// wake has populated it yet (the handler then blocks on Wake). This is the hot
-// path: a pure in-memory read, no ctx, no DB.
+// Target returns the cached compute_node.id for appID, or ("", false)
+// when no wake has populated it yet (the handler then blocks on Wake).
+// This is the hot path: a pure in-memory read, no ctx, no DB. The
+// returned string's SEMANTIC is now compute_node.id (was host_ip:8080
+// before #98); the handler dereferences it via the per-node vmmd
+// client cache.
 func (b *PGBackend) Target(appID string) (string, bool) {
 	b.tgtMu.RLock()
-	addr, ok := b.targets[appID]
+	nodeID, ok := b.targets[appID]
 	b.tgtMu.RUnlock()
-	return addr, ok && addr != ""
+	return nodeID, ok && nodeID != ""
 }
 
 // Wake blocks while schedd admits + dispatches an instance (restore or cold
-// boot) and caches the address it returns so the handler's follow-up Target
-// hits without waiting for the instance_changed notification round-trip. The
-// error preserves schedd's *api.Problem so writeWakeError maps it directly.
+// boot) and caches the node id it returns so the handler's follow-up
+// Target hits without waiting for the instance_changed notification
+// round-trip. The error preserves schedd's *api.Problem so
+// writeWakeError maps it directly.
 func (b *PGBackend) Wake(ctx context.Context, appID string) error {
-	instanceID, addr, err := b.sched.Wake(ctx, appID)
+	instanceID, nodeID, err := b.sched.Wake(ctx, appID)
 	if err != nil {
 		return err
 	}
-	if addr != "" {
+	if nodeID != "" {
 		b.tgtMu.Lock()
-		b.targets[appID] = addr
+		b.targets[appID] = nodeID
 		if instanceID != "" {
-			b.addrInstance[addr] = instanceID
+			b.nodeInstance[nodeID] = instanceID
 		}
 		b.tgtMu.Unlock()
 	}
 	return nil
 }
 
-// EvictTarget drops the cached address for appID. gatewayd calls this on every
-// instance_changed notification (running or parked): a parked/destroyed
-// instance must never be proxied to, and a state change means the next request
-// should re-resolve via an idempotent Wake (which re-seeds the cache). At
-// one-box scale the extra Wake round-trip is negligible.
+// EvictTarget drops the cached node id for appID. gatewayd calls this
+// on every instance_changed notification (running or parked): a
+// parked/destroyed instance must never be proxied to, and a state
+// change means the next request should re-resolve via an idempotent
+// Wake (which re-seeds the cache).
 func (b *PGBackend) EvictTarget(appID string) {
 	b.tgtMu.Lock()
-	if addr, ok := b.targets[appID]; ok {
-		delete(b.addrInstance, addr)
+	if nodeID, ok := b.targets[appID]; ok {
+		delete(b.nodeInstance, nodeID)
 	}
 	delete(b.targets, appID)
 	b.tgtMu.Unlock()
 }
 
-// InstanceIDForAddr resolves the instance an addr was last woken as, so the
-// last_request_at flush can attribute touches (spec §4.1). Returns ok=false once
-// the target has been evicted (the instance parked); the flush drops those.
-func (b *PGBackend) InstanceIDForAddr(addr string) (string, bool) {
+// InstanceIDForNodeID resolves the instance a node was last woken as,
+// so the last_request_at flush can attribute touches (spec §4.1).
+// Returns ok=false once the target has been evicted (the instance
+// parked); the flush drops those. Replaces the legacy
+// InstanceIDForAddr; the addr-based lookup is no longer routable
+// from a remote box, so this lookup keeps the per-node attribution
+// on the gateway side.
+func (b *PGBackend) InstanceIDForNodeID(nodeID string) (string, bool) {
 	b.tgtMu.RLock()
-	id, ok := b.addrInstance[addr]
+	id, ok := b.nodeInstance[nodeID]
 	b.tgtMu.RUnlock()
 	return id, ok
 }

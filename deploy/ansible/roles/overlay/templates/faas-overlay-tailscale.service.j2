@@ -1,0 +1,23 @@
+[Unit]
+Description=faas overlay (tailscale)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=FAAS_OVERLAY_AUTHKEY_FILE={{ faas_overlay_authkey_path }}
+# tailscale up reads the authkey from disk via --authkey=file:.
+# Using file: rather than inlining the value keeps systemd's
+# environment from logging the secret on failure (env vars with
+# sensitive values are visible in `systemctl show`).
+ExecStart=/usr/sbin/tailscaled
+ExecStartPost=/usr/bin/tailscale up \
+    --authkey=file:{{ faas_overlay_authkey_path }} \
+    --hostname={{ faas_overlay_hostname }} \
+    --accept-routes \
+    --advertise-tags={{ faas_overlay_tags }}
+ExecStop=/usr/bin/tailscale down
+
+[Install]
+WantedBy=multi-user.target

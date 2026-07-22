@@ -1758,6 +1758,93 @@ func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (Compu
 	return n, nil
 }
 
+// UpsertComputeNode mirrors pgstore's INSERT ... ON CONFLICT DO UPDATE
+// (issue #98 / ADR-028). vmmd's self-registration calls this at startup
+// — a node that has already been registered has its capacity refreshed
+// and is reactivated (active=true), even if an operator had previously
+// drained it. The loop-then-store mirrors a write-then-map in the
+// MemStore: cheaper than a SELECT-then-UPDATE for tests that hammer the
+// path. CreatedAt stays monotonic on conflict.
+func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var existing *ComputeNode
+	for id, current := range m.computeNodes {
+		if current.Name == node.Name {
+			current := current
+			existing = &current
+			delete(m.computeNodes, id)
+			break
+		}
+	}
+	n := node
+	if existing != nil {
+		n.ID = existing.ID
+		n.CreatedAt = existing.CreatedAt
+	} else if n.ID == "" {
+		n.ID = newID()
+	}
+	if n.CreatedAt.IsZero() {
+		n.CreatedAt = time.Now()
+	}
+	if n.LastHeartbeatAt.IsZero() {
+		n.LastHeartbeatAt = n.CreatedAt
+	}
+	n.Active = true
+	m.computeNodes[n.ID] = n
+	return n, nil
+}
+
+// SetComputeNodeActive flips active on a row by id (issue #98 /
+// ADR-028). The watchdog drains a stale node to false; the heartbeat
+// goroutine reanimates a drained node to true on the next successful
+// dial. MemStore flips the flag in place; production also flips but
+// additionally fires the compute_node_changed pg_notify trigger so
+// gatewayd sees the change without polling.
+func (m *MemStore) SetComputeNodeActive(_ context.Context, id string, active bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[id]
+	if !ok {
+		return ErrNotFound
+	}
+	n.Active = active
+	m.computeNodes[id] = n
+	return nil
+}
+
+// ListComputeNodes returns every row in name order (issue #98 /
+// ADR-028). When includeInactive is false, drained rows are filtered
+// out — placement-equivalent semantics, backed by the partial
+// compute_nodes_active_idx on the production side.
+func (m *MemStore) ListComputeNodes(_ context.Context, includeInactive bool) ([]ComputeNode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ComputeNode, 0, len(m.computeNodes))
+	for _, n := range m.computeNodes {
+		if !includeInactive && !n.Active {
+			continue
+		}
+		out = append(out, n)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// DeleteComputeNode hard-deletes a row by id (issue #98 / ADR-028).
+// Mirrors pgstore's semantics: ErrNotFound when no row matches. The
+// caller (apid's DELETE ?hard=1) is responsible for refusing on the
+// synthetic default-local row — see cmd/apid/compute_nodes.go.
+func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.computeNodes[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m.computeNodes, id)
+	return nil
+}
+
 // AppendEvent (commit 4) fixes two pre-existing bugs that the audit-log
 // PR surfaced. Before: the row's Subject pointer was dropped on the
 // floor (line 1226-1227 had a dead type-assertion placeholder and

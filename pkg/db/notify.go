@@ -146,6 +146,14 @@ const (
 	// no listener is wired. Add the listener when §11 introduces
 	// the public-listener SSE channel design.
 	NotifyCliAuthCodeActivated = "cli_auth_code_activated"
+	// NotifyComputeNodeChanged {"node_id":uuid, "active":bool}
+	// schedd (SetComputeNodeActive + UpsertComputeNode) →
+	// gatewayd (NodeClientCache.Evict). gatewayd's per-node
+	// *grpc.ClientConn must drop on every UPSERT (admin UPDATE)
+	// and every active=false (heartbeat watchdog), so a future
+	// request to the same node re-dials against the fresh row.
+	// Issue #98 / ADR-028.
+	NotifyComputeNodeChanged = "compute_node_changed"
 )
 
 // Subscribe holds a dedicated connection on the pool in LISTEN state for the

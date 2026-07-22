@@ -263,6 +263,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv))
 
+	// Issue #98 / ADR-028: admin allowlist for /v1/compute-nodes.
+	// Empty in dev = all admin routes 403 with code admin_required;
+	// production sets FAAS_ADMIN_EMAILS to the operator team's
+	// comma-separated addresses. The allowlist is read at startup,
+	// so a config change requires a restart — acceptable for the
+	// tiny operator surface that exists today.
+	srv.WithAdminAllowlist(deps.getenv("FAAS_ADMIN_EMAILS"))
+
 	// Status page (spec §12 public surface). The Prometheus URL is
 	// the local box's Prometheus installed by deploy/ansible/roles/
 	// prometheus (default :9090 on the bridge). The HTML path defaults

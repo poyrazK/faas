@@ -33,8 +33,12 @@ type fakeVMM struct {
 	destroy           func(ctx context.Context, instance string) error
 	destroyWithExport func(ctx context.Context, instance, exportDir string) (int, error)
 	exportDirFn       func(instance string) string
-	live              int
-	leased            int
+	// netnsFn lets the ForwardHTTP tests decide what netns the fake
+	// reports for an instance. nil returns ("", false) — the default
+	// success path (every Wake results in a known netns) is wired below.
+	netnsFn func(instance string) (string, bool)
+	live    int
+	leased  int
 }
 
 func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
@@ -101,6 +105,17 @@ func (f *fakeVMM) ExportDirFor(instance string) string {
 
 func (f *fakeVMM) LiveCount() int   { return f.live }
 func (f *fakeVMM) LeasedCount() int { return f.leased }
+func (f *fakeVMM) NetnsFor(instance string) (string, bool) {
+	if f.netnsFn != nil {
+		return f.netnsFn(instance)
+	}
+	// Default: instance is live iff it's been Woken at least once.
+	// Tests that need finer control wire netnsFn directly.
+	if instance == "" {
+		return "", false
+	}
+	return "fc-" + instance, true
+}
 
 // errNotLive is a sentinel for the Manager-equivalent "not live" error.
 type stringErr string

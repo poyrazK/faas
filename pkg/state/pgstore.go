@@ -1608,6 +1608,112 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 	return scanComputeNode(row)
 }
 
+// UpsertComputeNode inserts or updates a row by name (issue #98 /
+// ADR-028). vmmd's self-registration calls this at startup; a node
+// rebooting brings itself back without operator intervention. The ON
+// CONFLICT branch re-applies operator-tunable capacity and re-activates
+// a row that an operator had previously drained (active=false → true).
+// last_heartbeat_at and created_at are not touched on conflict: the
+// former is the watchdog's heartbeat stamp (next task); the latter is
+// the row's creation time and stays monotonic.
+func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (ComputeNode, error) {
+	row := s.pool.QueryRow(ctx, `
+		insert into compute_nodes
+		    (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, active)
+		values ($1, $2, $3, $4, $5, $6, true)
+		on conflict (name) do update
+		  set target_url          = excluded.target_url,
+		      vpcpus              = excluded.vpcpus,
+		      mem_mb              = excluded.mem_mb,
+		      max_concurrency     = excluded.max_concurrency,
+		      admission_ceiling_mb = excluded.admission_ceiling_mb,
+		      active              = true
+		returning id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		          admission_ceiling_mb, active, last_heartbeat_at, created_at
+	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
+		node.AdmissionCeilingMB)
+	n, err := scanComputeNode(row)
+	if err != nil {
+		return ComputeNode{}, fmt.Errorf("state: upsert compute_node %q: %w", node.Name, err)
+	}
+	return n, nil
+}
+
+// SetComputeNodeActive flips active on a row by id (issue #98 /
+// ADR-028). The watchdog uses this to mark a row drained when
+// last_heartbeat_at ages past 90s, and the heartbeat goroutine uses it
+// again to reactivate a drained row on the next successful dial. The
+// pg_notify trigger on compute_nodes (operator-visible via
+// pkg/db/notify.NotifyComputeNodeChanged) fires on the UPDATE so
+// gatewayd's per-node client cache can drop/add entries without
+// restart.
+func (s *PgStore) SetComputeNodeActive(ctx context.Context, id string, active bool) error {
+	tag, err := s.pool.Exec(ctx,
+		`update compute_nodes set active = $2 where id = $1`, id, active)
+	if err != nil {
+		return fmt.Errorf("state: set active compute_node %s = %v: %w", id, active, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListComputeNodes returns every compute_node in name order. The
+// optional includeInactive flag controls whether drained rows are
+// visible; apid's GET /v1/compute-nodes passes true so operators can
+// audit drained rows. Backed by compute_nodes_active_idx (the partial
+// index on active=true used by placement; this method is admin-only
+// and so pays the full-table scan cost only on operator dashboards).
+func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([]ComputeNode, error) {
+	q := `
+		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		       admission_ceiling_mb, active, last_heartbeat_at, created_at
+		  from compute_nodes
+	`
+	if !includeInactive {
+		q += ` where active = true`
+	}
+	q += ` order by name`
+	rows, err := s.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("state: list compute_nodes (inactive=%t): %w", includeInactive, err)
+	}
+	defer rows.Close()
+	var out []ComputeNode
+	for rows.Next() {
+		n, err := scanComputeNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// DeleteComputeNode hard-deletes a compute_nodes row by id (issue #98 /
+// ADR-028). apid's DELETE /v1/compute-nodes/{name}?hard=1 is the only
+// caller; soft-delete via SetComputeNodeActive(false) is the routine
+// operator path. Returns ErrNotFound when the id is unknown so the
+// caller can surface a 404.
+//
+// Note: callers should NOT delete the synthetic default-local row
+// (state.DefaultLocalNodeName) — every legacy instance row from
+// migration 00024's backfill references it via FK. The handler in
+// cmd/apid/compute_nodes.go rejects the request before reaching this
+// method; we leave the safety check at the seam so the state layer
+// stays a thin SQL wrapper.
+func (s *PgStore) DeleteComputeNode(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `delete from compute_nodes where id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("state: delete compute_node %s: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // --- events ------------------------------------------------------------------
 
 func (s *PgStore) AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error {

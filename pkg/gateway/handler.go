@@ -52,6 +52,14 @@ type Handler struct {
 	// proxyFor builds the reverse proxy for an upstream address; overridable in
 	// tests.
 	proxyFor func(addr string) http.Handler
+	// proxyByNode builds the reverse proxy for a compute_node.id (issue
+	// #98 / ADR-028). When non-nil, the handler dispatches every
+	// request through it instead of proxyFor — the string returned by
+	// Backend.Target is interpreted as a node id and dereferenced via
+	// the per-node vmmd client cache. nil = legacy addr-based path
+	// (default for tests and the e2e harness; production wires
+	// ForwardingReverseProxy in cmd/gatewayd/main.go).
+	proxyByNode func(nodeID string) http.Handler
 	// lastSeen records per-instance last_request_at (spec §4.1). nil-safe.
 	lastSeen LastSeenSink
 }
@@ -106,6 +114,16 @@ func (h *Handler) WithLastSeenSink(sink LastSeenSink) *Handler {
 // as a test-only seam; do NOT expose it as a config knob.
 func (h *Handler) WithLimiter(l *Limiter) *Handler {
 	h.limiter = l
+	return h
+}
+
+// WithForwarding installs the per-node HTTP→gRPC forwarder built by
+// pkg/gateway/forwardproxy.go (issue #98 / ADR-028). When set, every
+// request dispatches through fn(nodeID) where nodeID is the value
+// Backend.Target returned. nil-safe: pass nil to revert to the legacy
+// addr-based proxy path (used by tests and the e2e harness).
+func (h *Handler) WithForwarding(fn func(nodeID string) http.Handler) *Handler {
+	h.proxyByNode = fn
 	return h
 }
 
@@ -216,7 +234,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Cold-wake transparency (UX spec §6): let developers see the penalty.
 		w.Header().Set("x-faas-wake", "cold")
 	}
-	h.proxyFor(addr).ServeHTTP(w, r)
+	if h.proxyByNode != nil {
+		// Issue #98 / ADR-028: addr is a compute_node.id; the
+		// forwarder dials the per-node vmmd over the overlay and
+		// bridges the HTTP bytes through the instance netns via the
+		// ForwardHTTP RPC. addr stays in scope for the metrics
+		// labels and observe() last-seen hook below.
+		h.proxyByNode(addr).ServeHTTP(w, r)
+	} else {
+		h.proxyFor(addr).ServeHTTP(w, r)
+	}
 	h.observe(r, rec.status, app.ID, string(app.Plan), cold, addr)
 	if cold && h.metrics != nil {
 		// Wake latency is "request-received to first upstream byte". The

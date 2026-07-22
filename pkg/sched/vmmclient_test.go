@@ -84,6 +84,12 @@ func (f *fakeVMM) ExportDirFor(instance string) string { return "" }
 func (f *fakeVMM) LiveCount() int   { return 0 }
 func (f *fakeVMM) LeasedCount() int { return 0 }
 
+// NetnsFor is the issue #98 / ADR-028 bridge to vmmd's
+// ForwardHTTP handler. The sched test rig never invokes
+// ForwardHTTP, so we return the not-live (false) default — any
+// test that needs the bridge will wire netnsFn itself.
+func (f *fakeVMM) NetnsFor(instance string) (string, bool) { return "", false }
+
 // newClient stands up a vmmdgrpc.Server on bufconn and returns a sched.VMMClient
 // dialed to it.
 func newClient(t *testing.T, fake *fakeVMM) *sched.VMMClient {

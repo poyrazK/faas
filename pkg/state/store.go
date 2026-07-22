@@ -549,15 +549,38 @@ type Store interface {
 	// can flip it back via a future admin endpoint without
 	// re-provisioning the cert/target_url.
 	MarkComputeNodeInactive(ctx context.Context, nodeID string) error
-	// ListAllComputeNodes returns every compute_node row (active +
-	// inactive) ordered by name. apid's GET /v1/compute-nodes
-	// operator surface (PR #114) uses this so the operator can
-	// see recently-drained nodes — the heartbeat's flip is a soft
-	// state change, not a delete, and ops needs visibility. The
-	// partial compute_nodes_active_idx accelerates ActiveComputeNodes
-	// (placement path) but ListAllComputeNodes does a sequential
-	// scan; that's fine — the fleet is single-digit for v1.0.
-	ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error)
+	// UpsertComputeNode inserts or updates a row by name. The
+	// vmmd self-registration path calls this on startup
+	// (issue #98 / ADR-028): a node rebooting should bring itself
+	// back without operator intervention. ON CONFLICT (name) DO
+	// UPDATE SET target_url, vpcpus, mem_mb, max_concurrency,
+	// admission_ceiling_mb, active=true — re-applies operator
+	// config and re-activates a previously drained row in one
+	// round-trip. Returns the row (id, timestamps refreshed).
+	// ErrConflict is reserved for a future partial-cluster failure;
+	// the upsert path doesn't currently fail.
+	UpsertComputeNode(ctx context.Context, node ComputeNode) (ComputeNode, error)
+	// SetComputeNodeActive flips the active flag on a row by id.
+	// The schedd heartbeat staleness gate (issue #98) calls this
+	// to mark a node active=false when last_heartbeat_at ages past
+	// 90s, and again active=true when a heartbeat succeeds for a
+	// previously-drained node. Emits compute_node_changed via the
+	// pg_notify listener (pkg/db/notify.NotifyComputeNodeChanged) so
+	// gatewayd can add or drop its per-node client without a
+	// restart. ErrNotFound when the id has no row.
+	SetComputeNodeActive(ctx context.Context, id string, active bool) error
+	// ListComputeNodes returns every compute_node in name order.
+	// includeInactive=false (default) returns only active rows
+	// (placement-equivalent); apid's GET /v1/compute-nodes handler
+	// passes true so operators can drain visibility. Backed by the
+	// existing compute_nodes_active_idx partial index.
+	ListComputeNodes(ctx context.Context, includeInactive bool) ([]ComputeNode, error)
+	// DeleteComputeNode hard-deletes a row by id. apid's
+	// DELETE /v1/compute-nodes/{name}?hard=1 is the only caller;
+	// soft-delete via SetComputeNodeActive(false) is the default
+	// for the routine operator workflow. Returns ErrNotFound if
+	// the id is unknown.
+	DeleteComputeNode(ctx context.Context, id string) error
 
 	// Audit (append-only, spec §6.1).
 	AppendEvent(ctx context.Context, actor, kind string, subject *string, data []byte) error
