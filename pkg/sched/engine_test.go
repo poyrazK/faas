@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -665,7 +666,7 @@ func TestEngineSeedLedger(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	// A running instance survived a schedd restart.
-	ins, _ := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName)
+	ins, _ := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
 	_ = ins
 
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
@@ -986,5 +987,190 @@ func TestEngineVmstateHelpers(t *testing.T) {
 				t.Errorf("vmstateStorageKeyFor(%q, %q) = %q, want %q", tt.nodeID, tt.dep, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestEngineWake_MintsFreshWakeIDPerWake asserts that schedd mints a new
+// wake_id on each Wake() call. Two consecutive wakes of the same parked
+// app must yield distinct IDs even though the underlying instance row
+// (ins.ID) may be reused after a park→wake cycle. This is the contract
+// that lets operators correlate x-faas-wake-id headers against a single
+// wake attempt without confusing it with prior wakes.
+func TestEngineWake_MintsFreshWakeIDPerWake(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	notif := &fakeNotifier{}
+	e := newEngine(t, store, vmm, notif, "1.10.0")
+
+	// First wake — must produce a non-empty UUIDv7-shaped wake_id.
+	res1, err := e.Wake(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("first Wake: %v", err)
+	}
+	if res1.WakeID == "" {
+		t.Fatal("WakeID empty on first wake (must be minted at CreateInstance)")
+	}
+	if _, err := uuid.Parse(res1.WakeID); err != nil {
+		t.Errorf("WakeID %q is not a valid UUID: %v", res1.WakeID, err)
+	}
+
+	// Park the instance we just woke so the second wake is a fresh
+	// cycle. The contract being asserted is "each Wake() mints a new
+	// wake_id", so we have to actually take the app back to parked
+	// before the second call.
+	if err := e.Park(context.Background(), res1.InstanceID); err != nil {
+		t.Fatalf("Park: %v", err)
+	}
+
+	// Second wake — distinct wake_id even though the app (and likely the
+	// instance row) is the same.
+	res2, err := e.Wake(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("second Wake: %v", err)
+	}
+	if res2.WakeID == "" {
+		t.Fatal("WakeID empty on second wake")
+	}
+	if res1.WakeID == res2.WakeID {
+		t.Errorf("WakeID = %q on both wakes; expected distinct UUIDv7 per wake", res1.WakeID)
+	}
+	// The stored instance's WakeID must equal what Wake returned —
+	// consumers reading from the DB see the same value the gateway
+	// header carries.
+	ins, err := store.RunningInstanceForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("RunningInstanceForApp: %v", err)
+	}
+	if ins.WakeID != res2.WakeID {
+		t.Errorf("stored WakeID = %q, want %q (the value Wake returned)", ins.WakeID, res2.WakeID)
+	}
+}
+
+// TestEngineWake_Phase1FastPathReturnsExistingWakeID pins the contract
+// added in the gaps analysis 2026-07-23 review (finding #1): a second
+// Wake for an app that is already RUNNING must surface the wake_id
+// stamped on the row, not an empty string. Without this contract a
+// warm request gets no x-faas-wake-id header, which loses the
+// correlation handle for the request that originally brought the
+// instance up.
+func TestEngineWake_Phase1FastPathReturnsExistingWakeID(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	notif := &fakeNotifier{}
+	e := newEngine(t, store, vmm, notif, "1.10.0")
+
+	// First wake → cold boot → row carries a fresh wake_id.
+	res1, err := e.Wake(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("first Wake: %v", err)
+	}
+	if res1.WakeID == "" {
+		t.Fatal("first Wake produced empty wake_id")
+	}
+
+	// Second Wake on the already-RUNNING app → Phase 1 fast path.
+	// WakeID must equal the row's existing value, NOT be empty.
+	res2, err := e.Wake(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("second Wake (fast path): %v", err)
+	}
+	if res2.WakeID == "" {
+		t.Fatal("Phase 1 fast path returned empty wake_id; should surface the row's existing value")
+	}
+	if res2.WakeID != res1.WakeID {
+		t.Errorf("Phase 1 wake_id = %q, want %q (row's existing value)", res2.WakeID, res1.WakeID)
+	}
+	// Fast-path Wake must not have triggered a new boot.
+	if vmm.coldBoots != 1 {
+		t.Errorf("coldBoots = %d after fast-path Wake, want 1 (no new boot)", vmm.coldBoots)
+	}
+}
+
+// TestEnginePrime_MintsWakeID asserts that Prime() — the pre-warm
+// cold-boot flow at deploy time — also mints a wake_id. Prime is a
+// wake-shape event (gaps analysis 2026-07-23): the instance is being
+// created for the first time as part of a fresh deploy, so it earns
+// its own UUIDv7 just like Wake does. Without this test, a future
+// refactor could quietly drop wake_id from Prime's CreateInstance call
+// and the dashboard "Recent wakes" view would render an empty wake_id
+// for the boot that primed an app.
+func TestEnginePrime_MintsWakeID(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 2)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	if err := e.Prime(context.Background(), app.ID, dep.ID); err != nil {
+		t.Fatalf("Prime: %v", err)
+	}
+	rows, err := store.ListInstancesForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ListInstancesForApp: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].WakeID == "" {
+		t.Errorf("primed instance wake_id empty; Prime must mint a UUIDv7 like Wake does")
+	}
+	if _, err := uuid.Parse(rows[0].WakeID); err != nil {
+		t.Errorf("primed wake_id %q is not a valid UUID: %v", rows[0].WakeID, err)
+	}
+}
+
+// TestTransitionWithKind_EmitsRowWakeID asserts that subsequent
+// state transitions emitted via emitInstanceChanged (the audit-log
+// path, NOT the Wake/Prime path) carry the row's wake_id in the
+// pg_notify payload. Without the row-load before emit (review
+// finding #3, gaps analysis 2026-07-23), the SSE payload went out
+// with wake_id="" for every non-wake transition, so a dashboard
+// subscribed to instance_changed saw the column go empty as soon as
+// the instance entered RUNNING — breaking correlation. This test
+// pins the fix: the wake_id in the payload equals the row's.
+func TestTransitionWithKind_EmitsRowWakeID(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	notif := &fakeNotifier{}
+	e := newEngine(t, store, vmm, notif, "1.10.0")
+
+	// Create an instance manually with a known wake_id and drive a
+	// state transition through the engine's transition helper, which
+	// is what emitInstanceChanged's audit path ultimately calls. The
+	// cleanest seam is to park a freshly-woken app and assert the
+	// snapshotting→parked transition carries the row's wake_id.
+	res, err := e.Wake(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	// Snapshot transitions go through snapshotAndPark which already
+	// loaded the row; the test covers the transitionWithKind seam
+	// directly via a Park (which calls transition → parked).
+	if err := e.Park(context.Background(), res.InstanceID); err != nil {
+		t.Fatalf("Park: %v", err)
+	}
+	// Find the parked-state instance_changed payload and parse the
+	// wake_id out of it. The Wake() boot itself emits a waking →
+	// running transition, then Park emits snapshotting → parked.
+	var parkedPayload string
+	for _, ev := range notif.events {
+		if ev.channel != "instance_changed" {
+			continue
+		}
+		// Cheap substring check to find the parked-state event —
+		// the engine emits events in time order so the parked one
+		// is last for this app.
+		if strings.Contains(ev.payload, `"state":"parked"`) {
+			parkedPayload = ev.payload
+		}
+	}
+	if parkedPayload == "" {
+		t.Fatalf("no instance_changed payload with state=parked; events=%+v", notif.events)
+	}
+	// The JSON must carry wake_id matching the row.
+	if !strings.Contains(parkedPayload, `"wake_id":"`+res.WakeID+`"`) {
+		t.Errorf("parked payload missing row wake_id %q; got %s", res.WakeID, parkedPayload)
 	}
 }

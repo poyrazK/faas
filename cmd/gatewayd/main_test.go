@@ -33,10 +33,10 @@ func (f *fixedBackend) Lookup(_ context.Context, name string) (gateway.App, bool
 func (f *fixedBackend) Target(name string) (string, bool) {
 	return f.target, f.targetOK
 }
-func (f *fixedBackend) Wake(ctx context.Context, name string) error {
+func (f *fixedBackend) Wake(ctx context.Context, name string) (string, error) {
 	f.wakeCalled++
 	f.wakeName = name
-	return f.wakeErr
+	return "", f.wakeErr
 }
 
 func discardLogger() *slog.Logger {
@@ -51,7 +51,7 @@ func TestUnwiredBackendReturnsNotFound(t *testing.T) {
 	if _, ok := b.Target("any"); ok {
 		t.Error("Target should report not-found")
 	}
-	if err := b.Wake(context.Background(), "any"); err != nil {
+	if _, err := b.Wake(context.Background(), "any"); err != nil {
 		t.Errorf("Wake should be no-op: %v", err)
 	}
 }
@@ -198,7 +198,7 @@ func TestFixedBackend_Delegates(t *testing.T) {
 	if tgt, ok := b.Target("a"); !ok || tgt != "10.0.0.2:8080" {
 		t.Errorf("Target = %q,%v", tgt, ok)
 	}
-	if err := b.Wake(context.Background(), "x"); err == nil || err.Error() != "upstream" {
+	if _, err := b.Wake(context.Background(), "x"); err == nil || err.Error() != "upstream" {
 		t.Errorf("Wake err = %v", err)
 	}
 	if b.wakeCalled != 1 || b.wakeName != "x" {

@@ -1167,7 +1167,13 @@ components:
         deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         state: { type: string }
         host_ip: { type: [string, "null"] }
-        ram_mb: { type: integer , example: 256}
+        ram_mb: { type: integer, example: 256 }
+        # wake_id is a UUIDv7 (time-ordered) minted by schedd at WAKING.
+        # Stable across the lifetime of one wake attempt; a PARK → WAKE
+        # cycle mints a new one. Surfaced as the x-faas-wake-id header.
+        wake_id:
+          type: string
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
         started_at: { type: [string, "null"], format: date-time }
         last_request_at: { type: [string, "null"], format: date-time }
         parked_at: { type: [string, "null"], format: date-time }

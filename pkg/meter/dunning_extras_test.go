@@ -160,11 +160,11 @@ func TestDunning_ParkAll_ParksOnlyLiveInstances(t *testing.T) {
 
 	acct := localSeedAccount(t, ctx, store)
 	app := localSeedApp(t, ctx, store, acct.ID)
-	running, err := store.CreateInstance(ctx, app.ID, "deployment-test", string(state.StateRunning), 256, state.DefaultLocalNodeName)
+	running, err := store.CreateInstance(ctx, app.ID, "deployment-test", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("create running instance: %v", err)
 	}
-	parked, err := store.CreateInstance(ctx, app.ID, "deployment-test", string(state.StateParked), 256, state.DefaultLocalNodeName)
+	parked, err := store.CreateInstance(ctx, app.ID, "deployment-test", string(state.StateParked), 256, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("create parked instance: %v", err)
 	}

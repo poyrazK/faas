@@ -53,15 +53,15 @@ func TestWatchdogSweepKillsStuck(t *testing.T) {
 	ops := wire.NewOpsMetrics("schedd")
 	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 
-	waking, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName)
+	waking, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("CreateInstance(WAKING): %v", err)
 	}
-	coldBoot, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateColdBooting), 512, state.DefaultLocalNodeName)
+	coldBoot, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateColdBooting), 512, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("CreateInstance(COLD_BOOTING): %v", err)
 	}
-	snap, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateSnapshotting), 512, state.DefaultLocalNodeName)
+	snap, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateSnapshotting), 512, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("CreateInstance(SNAPSHOTTING): %v", err)
 	}
@@ -136,7 +136,7 @@ func TestWatchdogSweepLeavesYoungRowsAlone(t *testing.T) {
 	vmm := &fakeVMM{}
 	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
-	young, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateColdBooting), 512, state.DefaultLocalNodeName)
+	young, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateColdBooting), 512, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestEngineKillStuckRaceWithCompletion(t *testing.T) {
 	vmm := &fakeVMM{}
 	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
-	ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName)
+	ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestLoopRunDrivesWatchdog(t *testing.T) {
 	ops := wire.NewOpsMetrics("schedd")
 	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 
-	waking, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName)
+	waking, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

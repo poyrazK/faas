@@ -89,6 +89,34 @@
         <p>No deployments yet.</p>
       {{end}}
 
+      <h2>Recent wakes</h2>
+      {{if .Data.RecentInstances}}
+        <p>
+          Each row is one wake of this app. <code>wake_id</code> is the
+          UUIDv7 schedd minted at wake time — paste it from the
+          <code>x-faas-wake-id</code> response header to correlate the
+          gateway request that woke the app with the operator log line
+          (<code>journalctl -u faas-schedd</code>) and the request that
+          followed.
+        </p>
+        <table>
+          <thead><tr><th>Started</th><th>State</th><th>Last request</th><th>Instance</th><th>Wake ID</th></tr></thead>
+          <tbody>
+            {{range .Data.RecentInstances}}
+              <tr>
+                <td>{{.StartedAt}}</td>
+                <td>{{.State}}</td>
+                <td>{{.LastRequestAt}}</td>
+                <td><code>{{.ID}}</code></td>
+                <td><code>{{.WakeID}}</code></td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p>No wakes yet — this app has not run since the last cold boot.</p>
+      {{end}}
+
       <h2>Crons</h2>
       {{if .Data.Crons}}
         <table>

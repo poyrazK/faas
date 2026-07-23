@@ -837,6 +837,7 @@ func instanceResponse(ins state.Instance) api.InstanceResponse {
 		State:        ins.State,
 		HostIP:       ins.HostIP,
 		RAMMB:        ins.RAMMB,
+		WakeID:       ins.WakeID,
 	}
 	if !ins.StartedAt.IsZero() {
 		r.StartedAt = ins.StartedAt.UTC().Format(time.RFC3339)

@@ -77,6 +77,7 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 		InstanceId: res.InstanceID,
 		NodeId:     res.NodeID,
 		Method:     mapMethod(res.Method),
+		WakeId:     res.WakeID,
 	}, nil
 }
 

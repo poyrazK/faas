@@ -78,6 +78,17 @@ message WakeResponse {
   // google.rpc.Status via google.golang.org/grpc/status; see pkg/grpcerr. This
   // field mirrors vmmd's WakeResponse and stays unset on success.
   google.protobuf.Struct problem = 4;
+  // wake_id is the per-wake-attempt correlation handle (gaps analysis
+  // 2026-07-23). UUIDv7 minted by schedd at Wake() Phase 2; the
+  // gateway propagates it to the client as x-faas-wake-id and the
+  // dashboard / CLI surface it. Distinct from instance_id
+  // (instances.id row PK) — instance_id is per-row and stable across
+  // PARKED → WAKE cycles; wake_id is per-Wake-attempt and fresh on
+  // every call (one row can carry many wake_ids). Empty on the
+  // Phase-1 fast-path return where the existing RUNNING instance was
+  // minted by an earlier wake — gateway can resolve it via
+  // PGBackend.InstanceIDForNodeID if needed.
+  string wake_id     = 5;
 }
 
 // Touch is one instance's most-recent request time.

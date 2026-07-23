@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -174,6 +175,19 @@ type WakeResult struct {
 	InstanceID string
 	NodeID     string // compute_nodes.id (uuid), empty only on error
 	Method     vmmdpb.WakeMethod
+	// WakeID is the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23). UUIDv7 minted at Phase 2 before CreateInstance;
+	// gatewayd propagates it back to the client as x-faas-wake-id and
+	// operators see it on schedule/wake slog calls. On the Phase-1
+	// fast path (a second Wake for an already-RUNNING app) this is
+	// the wake_id of the wake that brought the instance up — surfaced
+	// from the existing row so the gateway's response header carries
+	// the same value a cold-wake response would have. On every other
+	// path it's the UUIDv7 minted in Phase 2 (gaps analysis
+	// 2026-07-23 review finding #1: previous behaviour left the
+	// header unset on the fast path, which lost the correlation
+	// handle for warm requests).
+	WakeID string
 }
 
 // Wake ensures a running instance for appID and returns its address (spec §4.3
@@ -213,7 +227,13 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	release := e.lockApp(appID)
 	if ins, err := e.store.RunningInstanceForApp(ctx, appID); err == nil {
 		release()
-		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE}, nil
+		// Surface the existing row's wake_id so a Phase-1 fast-path
+		// response carries x-faas-wake-id just like a cold-wake
+		// response would. The correlation handle is the wake that
+		// brought the instance up; an operator tailing a warm request
+		// can still pin it back to the schedd slog line that stamped
+		// it (gaps analysis 2026-07-23 review finding #1).
+		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID}, nil
 	} else if !errors.Is(err, state.ErrNotFound) {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: running lookup: %w", err)
@@ -225,6 +245,36 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		release()
 		return WakeResult{}, err
 	}
+
+	// Mint the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23). UUIDv7 is time-ordered so the dashboard's "recent
+	// wakes for this app" scan can use the partial index
+	// (instances_wake_id_app_idx) without a separate sort. UUIDv7
+	// also bakes the unix-ms timestamp into the first 48 bits, which
+	// makes operator log scans human-friendly. Minted HERE under the
+	// lock so the value threads cleanly through every code path that
+	// runs under appMu (Phase 2 INSERT, the bootInput bundle used by
+	// Phase 3 / Phase 4, and the final WakeResult). uuid.NewV7
+	// returns (uuid.UUID, error); crypto/rand failure is impossible
+	// in practice but the code carries the surface — on the
+	// essentially-zero error path we fall back to a v4 so a wake is
+	// never refused for ID-generation reasons.
+	wakeUUID, err := uuid.NewV7()
+	if err != nil {
+		// crypto/rand failure should be impossible in practice but
+		// the surface exists; fall back to v4 so a wake is never
+		// refused for ID-generation reasons. v4 breaks the
+		// time-ordering invariant the partial index is built on, so
+		// log + counter (review finding #6, gaps analysis
+		// 2026-07-23). Any non-zero rate is an alertable condition.
+		wakeUUID = uuid.New()
+		if e.ops != nil {
+			e.ops.WakeIDV4Fallback().Inc()
+		}
+		e.log.Warn("wake: uuid.NewV7 failed, fell back to v4 — partial index time-ordering broken",
+			"app", appID, "err", err)
+	}
+	wakeID := wakeUUID.String()
 
 	// Restore iff a fresh, version-matched snapshot exists; else cold boot
 	// (ADR-005: cold boot always works, snapshot is cache).
@@ -251,12 +301,12 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		release()
 		return WakeResult{}, err // *api.Problem from chooser
 	}
-	ins, err := e.store.CreateInstance(ctx, appID, dep.ID, string(initState), app.RAMMB, placement.NodeID)
+	ins, err := e.store.CreateInstance(ctx, appID, dep.ID, string(initState), app.RAMMB, placement.NodeID, wakeID)
 	if err != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
 	}
-	e.emitInstanceChanged(ctx, ins.ID, appID, initState)
+	e.emitInstanceChanged(ctx, ins.ID, appID, initState, wakeID)
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, Plan: acct.Plan,
@@ -309,6 +359,13 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		// the right per-target client.
 		nodeID: placement.NodeID,
 		spec:   spec,
+		// wakeID is the per-wake-attempt correlation handle (gaps
+		// analysis 2026-07-23). Carried across the unlocked Phase 3
+		// window so the vmmd-failure log path, the state-stolen abort
+		// path, and the Phase 4 commit's WakeResult all surface the
+		// same value. The row already carries wake_id (CreateInstance
+		// stamped it); this is the value the caller observes.
+		wakeID: wakeID,
 	}
 	release()
 
@@ -379,9 +436,9 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	// treatment from snapshotAndPark).
 	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		if err := e.store.MarkSnapshotStale(ctx, bootInput.snapID); err != nil {
-			e.log.Warn("wake: mark snapshot stale", "snapshot", bootInput.snapID, "err", err)
+			e.log.Warn("wake: mark snapshot stale", "snapshot", bootInput.snapID, "wake_id", bootInput.wakeID, "err", err)
 		}
-		e.log.Info("wake: restore fell back to cold boot", "app", bootInput.appID, "instance", bootInput.insID)
+		e.log.Info("wake: restore fell back to cold boot", "app", bootInput.appID, "instance", bootInput.insID, "wake_id", bootInput.wakeID)
 	}
 
 	// ── Phase 4: re-acquire the lock for the post-vmmd commit ────
@@ -406,7 +463,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		e.ledger.Release(bootInput.insID)
 		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
 		e.log.Warn("wake: state stolen during boot, aborting",
-			"app", bootInput.appID, "instance", bootInput.insID,
+			"app", bootInput.appID, "instance", bootInput.insID, "wake_id", bootInput.wakeID,
 			"expected", bootInput.initState, "got", fresh.State)
 		return WakeResult{}, fmt.Errorf("sched: wake: state stolen by another transition: was %s, now %s", bootInput.initState, fresh.State)
 	}
@@ -422,7 +479,7 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	}
 	e.transition(ctx, bootInput.insID, bootInput.appID, state.StateRunning)
 
-	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method}, nil
+	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID}, nil
 }
 
 // bootInput is the immutable bundle of values needed across the
@@ -449,6 +506,14 @@ type bootInput struct {
 	// same vmmd instance the boot landed on.
 	nodeID string
 	spec   AppSpec
+	// wakeID is the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23). UUIDv7 minted at Phase 2 under the lock, persisted
+	// on the instances row in CreateInstance, and carried across the
+	// unlocked Phase 3 window so the slog calls + WakeResult surface
+	// the same value. Fresh on every Wake() — the same instance row
+	// can carry many wake_ids over its lifetime as the app parks and
+	// wakes again.
+	wakeID string
 }
 
 // timedDestroy issues a vmm.Destroy bounded by `timeout` and the
@@ -563,11 +628,27 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if err != nil {
 		return err // *api.Problem from chooser
 	}
-	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID)
+	// Prime is a wake-shape event (gaps analysis 2026-07-23): the
+	// instance is being created for the first time as part of a fresh
+	// deploy, so it earns its own wake_id just like Engine.Wake
+	// does. UUIDv7 time-orders it with the deploy timestamp. Same
+	// fallback-to-v4 contract as Wake() above.
+	primeWakeUUID, err := uuid.NewV7()
+	if err != nil {
+		// Same fallback contract as Wake() above. Review finding #6.
+		primeWakeUUID = uuid.New()
+		if e.ops != nil {
+			e.ops.WakeIDV4Fallback().Inc()
+		}
+		e.log.Warn("prime: uuid.NewV7 failed, fell back to v4 — partial index time-ordering broken",
+			"app", appID, "err", err)
+	}
+	primeWakeID := primeWakeUUID.String()
+	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, primeWakeID)
 	if err != nil {
 		return fmt.Errorf("sched: prime: create instance: %w", err)
 	}
-	e.emitInstanceChanged(ctx, ins.ID, appID, state.StateColdBooting)
+	e.emitInstanceChanged(ctx, ins.ID, appID, state.StateColdBooting, primeWakeID)
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, Plan: acct.Plan,
@@ -838,7 +919,7 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 		// anchor being lost is recoverable (it'll trip after
 		// started_at + 20s, slightly inflating the budget).
 	}
-	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting)
+	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting, ins.WakeID)
 
 	b, err := e.vmm.PauseAndSnapshot(ctx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey)
 	if err != nil {
@@ -1091,7 +1172,15 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 		e.log.Warn("transition: write", "instance", instanceID, "to", to, "err", err)
 		return
 	}
-	e.emitInstanceChanged(ctx, instanceID, appID, to)
+	// Surface the row's wake_id in the SSE payload. The audit-log
+	// caller loaded `ins` at the top of this function precisely to
+	// validate the from→to edge, so reusing it here avoids an extra
+	// round-trip — wake_id is on the row already. Review finding #3
+	// (gaps analysis 2026-07-23): previously the payload carried
+	// wake_id="" for every transition, which meant dashboards
+	// subscribed to instance_changed saw the column go empty as
+	// soon as the instance entered RUNNING.
+	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
 
 	// Audit-log emission (spec §6.1). Best-effort: a failure logs
 	// and counts, never rolls back the transition. The state row is
@@ -1108,13 +1197,24 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 	}
 }
 
-func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID string, st state.State) {
+func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID string, st state.State, wakeID string) {
 	if e.notif == nil {
 		return
 	}
-	payload, _ := json.Marshal(map[string]any{"instance_id": instanceID, "app_id": appID, "state": string(st)})
+	// wakeID is the per-wake correlation handle. transitionWithKind
+	// (the audit-log caller) loads it from the row before emitting so
+	// every state-transition event carries the same wake_id the row
+	// currently has. Wake/Prime pass the value they just minted at
+	// Phase 2; snapshotAndPark passes ins.WakeID from the loaded
+	// instance. The JSON key is always present (even when empty for
+	// legacy callers) so SSE subscribers can use a fixed parse path.
+	// produced the row, while the wake / prime callers always do. Empty
+	// string keeps the JSON key present so the SSE subscriber can use
+	// a fixed parse path; dashboard queries can read wake_id back off
+	// the instances row when needed.
+	payload, _ := json.Marshal(map[string]any{"instance_id": instanceID, "app_id": appID, "state": string(st), "wake_id": wakeID})
 	if err := e.notif.Notify(ctx, db.NotifyInstanceChanged, string(payload)); err != nil {
-		e.log.Warn("emit instance_changed", "instance", instanceID, "err", err)
+		e.log.Warn("emit instance_changed", "instance", instanceID, "wake_id", wakeID, "err", err)
 	}
 }
 

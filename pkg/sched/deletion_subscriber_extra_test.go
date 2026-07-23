@@ -99,10 +99,10 @@ func TestEvictAccount_NoLiveInstances(t *testing.T) {
 func TestEvictAccount_SkipsTerminalInstances(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedOneAccount(t, store, "mixed-account@example.com")
-	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 128, state.DefaultLocalNodeName); err != nil {
+	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("create RUNNING instance: %v", err)
 	}
-	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateParked), 128, state.DefaultLocalNodeName); err != nil {
+	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateParked), 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("create PARKED instance: %v", err)
 	}
 

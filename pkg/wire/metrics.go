@@ -50,6 +50,15 @@ type OpsMetrics struct {
 	// ≈ 5 s, p99.9 ≈ 30 s); the 60 s ceiling is the documented API
 	// timeout.
 	stripePushDur *prometheus.HistogramVec
+	// wakeIDV4Fallback: introduced in feat/wake-id review followup
+	// (gaps analysis 2026-07-23, finding #6). Increments when schedd
+	// mints a wake_id and uuid.NewV7 returns an error — the engine
+	// falls back to uuid.New (v4) in that case so a wake is never
+	// refused for ID-generation reasons, but a v4 wake_id breaks the
+	// time-ordering invariant the partial index is built on. Any
+	// non-zero rate indicates a broken crypto/rand subsystem and
+	// should alert. Unlabelled: one counter, no cardinality.
+	wakeIDV4Fallback prometheus.Counter
 	// buildDur / buildQueueWait: introduced in ADR-030 for builderd's
 	// build lifecycle. Distinct from the dur histogram (which tops out
 	// at 5 s — sub-millisecond control-plane sizing) because a build runs
@@ -126,6 +135,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// Sized to the §12 alert thresholds: healthy < 60 s, page at > 300 s.
 		Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600},
 	})
+	wakeIDV4Fallback := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_wake_id_v4_fallback_total",
+		Help: "Count of wake_id mints where uuid.NewV7 returned an error and the engine fell back to uuid.New (v4). Any non-zero rate indicates a broken crypto/rand subsystem and breaks the time-ordering invariant the instances_wake_id_app_idx partial index is built on. Should never increment in production.",
+	})
 	imagedOCIPull := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_oci_pull_duration_seconds",
 		Help: "Latency of imaged's OCI registry pulls (manifest, config, blob, above-base), in seconds. Sized to api.OCIPullTimeoutSeconds (60 s).",
@@ -133,7 +146,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// multi-second for big layers; 60 s ceiling = OCIPullTimeoutSeconds.
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60},
 	}, []string{"op", "result"})
-	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, stripePushDur, buildDur, buildQueueWait, imagedOCIPull)
+	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, stripePushDur, buildDur, buildQueueWait, wakeIDV4Fallback, imagedOCIPull)
 	// Pre-instantiate the closed (op,result) set for the OCI-pull
 	// histogram so its HELP/TYPE and zero-valued buckets surface in
 	// /metrics from the moment the daemon boots — same precedent as
@@ -158,15 +171,16 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		stripePushDur.WithLabelValues(label)
 	}
 	return &OpsMetrics{
-		registry:        reg,
-		ops:             ops,
-		dur:             dur,
-		watchdogKills:   watchdogKills,
-		eventsWriteFail: eventsWriteFail,
-		stripePushDur:   stripePushDur,
-		buildDur:        buildDur,
-		buildQueueWait:  buildQueueWait,
-		imagedOCIPull:   imagedOCIPull,
+		registry:         reg,
+		ops:              ops,
+		dur:              dur,
+		watchdogKills:    watchdogKills,
+		eventsWriteFail:  eventsWriteFail,
+		stripePushDur:    stripePushDur,
+		buildDur:         buildDur,
+		buildQueueWait:   buildQueueWait,
+		wakeIDV4Fallback: wakeIDV4Fallback,
+		imagedOCIPull:    imagedOCIPull,
 	}
 }
 
@@ -183,6 +197,15 @@ func (m *OpsMetrics) WatchdogKills(fromState, toState string) prometheus.Counter
 // only signals observability debt. See also commit 4.
 func (m *OpsMetrics) EventsWriteFailures() prometheus.Counter {
 	return m.eventsWriteFail
+}
+
+// WakeIDV4Fallback returns the unlabelled counter the wake_id mint
+// path increments when uuid.NewV7 fails and the engine falls back to
+// uuid.New (v4). Review finding #6 (gaps analysis 2026-07-23): any
+// non-zero rate indicates a broken crypto/rand subsystem and silently
+// breaks the time-ordering invariant the partial index is built on.
+func (m *OpsMetrics) WakeIDV4Fallback() prometheus.Counter {
+	return m.wakeIDV4Fallback
 }
 
 // Registry returns the underlying registry — pass to promhttp.HandlerFor

@@ -60,7 +60,7 @@ func seedMemStoreFullAccount(t *testing.T, m *MemStore) (acctID string) {
 	if _, err := m.CreateBuild(ctx, dep.ID, DeploymentKindDockerfile, 4096, "/tmp/log"); err != nil {
 		t.Fatalf("CreateBuild: %v", err)
 	}
-	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 256, "default-local"); err != nil {
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 256, "default-local", ""); err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 	if _, err := m.CreateCustomDomain(ctx, fmt.Sprintf("mem-cascade-%s.example.com", t.Name()), app.ID, "tok"); err != nil {

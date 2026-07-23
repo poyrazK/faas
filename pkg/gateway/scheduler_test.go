@@ -7,8 +7,8 @@ import (
 )
 
 func TestFakeSchedulerReturnsAddress(t *testing.T) {
-	s := NewFakeScheduler("1.2.3.4:8080").WithInstanceID("i-7")
-	instanceID, addr, err := s.Wake(context.Background(), "app-1")
+	s := NewFakeScheduler("1.2.3.4:8080").WithInstanceID("i-7").WithWakeID("w-9")
+	instanceID, addr, wakeID, err := s.Wake(context.Background(), "app-1")
 	if err != nil {
 		t.Fatalf("Wake err = %v", err)
 	}
@@ -17,6 +17,9 @@ func TestFakeSchedulerReturnsAddress(t *testing.T) {
 	}
 	if instanceID != "i-7" {
 		t.Errorf("instanceID = %q, want i-7", instanceID)
+	}
+	if wakeID != "w-9" {
+		t.Errorf("wakeID = %q, want w-9", wakeID)
 	}
 	if got := s.Calls(); got != 1 {
 		t.Errorf("Calls = %d, want 1", got)
@@ -29,14 +32,14 @@ func TestFakeSchedulerReturnsAddress(t *testing.T) {
 func TestFakeSchedulerWithErr(t *testing.T) {
 	want := errors.New("boom")
 	s := NewFakeScheduler("addr").WithErr(want)
-	_, _, err := s.Wake(context.Background(), "app-1")
+	_, _, _, err := s.Wake(context.Background(), "app-1")
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
 	}
 }
 
 func TestNoopSchedulerReturnsUnconfigured(t *testing.T) {
-	_, _, err := NoopScheduler{}.Wake(context.Background(), "app-1")
+	_, _, _, err := NoopScheduler{}.Wake(context.Background(), "app-1")
 	if !errors.Is(err, ErrSchedulerUnconfigured) {
 		t.Errorf("err = %v, want ErrSchedulerUnconfigured", err)
 	}
