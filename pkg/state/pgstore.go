@@ -2854,6 +2854,14 @@ func nullableTimestamptz(t time.Time) pgtype.Timestamptz {
 // there is no matching row, so pkg/grace after a successful
 // DeleteAccount can detect a stale tick and skip the log.
 func (s *PgStore) CompleteGdprRequest(ctx context.Context, accountID, action string) error {
+	// empty accountID can't bind to a uuid column; better to return
+	// the contract-level ErrNotFound than the raw SQLSTATE 22P02 a
+	// caller would otherwise see. Mirrors the MemStore branch, which
+	// already does the empty-input short-circuit implicitly via the
+	// loop's "no match" path.
+	if accountID == "" || action == "" {
+		return ErrNotFound
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update gdpr_requests
 		   set completed_at = coalesce(completed_at, now())
