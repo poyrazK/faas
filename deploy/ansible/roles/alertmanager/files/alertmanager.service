@@ -1,0 +1,35 @@
+[Unit]
+Description=Alertmanager for faas Prometheus
+Documentation=https://github.com/poyrazK/faas
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=alertmanager
+Group=alertmanager
+Type=simple
+ExecStart=/usr/local/bin/alertmanager \
+    --config.file=/etc/alertmanager/alertmanager.yml \
+    --storage.path=/var/lib/alertmanager \
+    --web.listen-address=127.0.0.1:9093
+Restart=on-failure
+RestartSec=10s
+
+# Hardening (mirrors prometheus.service).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/alertmanager
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

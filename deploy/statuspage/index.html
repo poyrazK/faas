@@ -53,6 +53,23 @@
   }
   .bar.warn > span { background: var(--yellow); }
   .bar.bad > span { background: var(--red); }
+  /* Degraded pill: visible only when s.degraded is true. The pill
+     surfaces the same page/warn-severity alerts the operator's pager
+     sees (cmd/apid/status.go sets Degraded via PromQL
+     count(ALERTS{alertstate="firing",severity=~"page|warn"}) > 0). */
+  .pill {
+    display: inline-block;
+    background: var(--red);
+    color: #fff;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 999px;
+    margin-bottom: 16px;
+  }
+  .pill.hidden { display: none; }
   .foot { color: var(--muted); font-size: 12px; margin-top: 24px; text-align: right; }
   a { color: var(--fg); }
 </style>
@@ -61,6 +78,13 @@
 <div class="wrap">
   <h1>faas status</h1>
   <div class="sub" id="sub">Loading…</div>
+  <!-- Degraded pill: hidden by default; the JS polling block in
+       <script> toggles `.hidden` based on s.degraded from
+       /status/slo.json. The pill surfaces page/warn-severity alerts
+       that are currently firing on the local Prometheus. -->
+  <div id="degraded-pill" class="pill hidden" role="status" aria-live="polite">
+    Service degraded
+  </div>
 
   <div class="row">
     <div class="label">
@@ -129,6 +153,7 @@ function setBar(barId, valueId, pct, formatted, lowerIsBetter) {
 
 async function refresh() {
   const sub = document.getElementById('sub');
+  const pill = document.getElementById('degraded-pill');
   try {
     const r = await fetch('/status/slo.json', {cache: 'no-store'});
     if (!r.ok) throw new Error('http ' + r.status);
@@ -138,6 +163,15 @@ async function refresh() {
     const ageLabel = age < 60 ? `${age}s ago` : `${Math.round(age/60)}m ago`;
     sub.textContent = `Updated ${ageLabel}. Source: ${s.source || 'unknown'}.`;
 
+    // Toggle the degraded pill off when no alerts are firing. The
+    // pill must hide as well as show — a transient firing that has
+    // since cleared should not leave the page red.
+    if (s.degraded) {
+      pill.classList.remove('hidden');
+    } else {
+      pill.classList.add('hidden');
+    }
+
     setBar('api-bar', 'api-v', s.api_availability_pct || 0,
       (s.api_availability_pct || 0).toFixed(2) + '%', false);
     setBar('wake-bar', 'wake-v', s.wake_p95_ms || 0,
@@ -146,6 +180,9 @@ async function refresh() {
       (s.build_success_pct || 0).toFixed(2) + '%', false);
   } catch (e) {
     sub.textContent = 'Status source unavailable: ' + e.message;
+    // If we can't reach the JSON endpoint at all, hide the pill —
+    // we can't claim degraded without evidence.
+    pill.classList.add('hidden');
   }
 }
 

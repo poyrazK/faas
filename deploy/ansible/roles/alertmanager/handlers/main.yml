@@ -1,0 +1,21 @@
+---
+# alertmanager — handlers (mirrors prometheus/handlers/main.yml).
+
+- name: reload alertmanager
+  ansible.builtin.uri:
+    url: "http://{{ am_listen_addr }}/-/reload"
+    method: POST
+    status_code: 200
+  failed_when: false
+  listen: reload alertmanager
+
+- name: restart alertmanager
+  ansible.builtin.systemd:
+    name: alertmanager
+    state: restarted
+  listen: restart alertmanager
+
+- name: daemon-reload
+  ansible.builtin.systemd:
+    daemon_reload: true
+  listen: daemon-reload

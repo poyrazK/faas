@@ -43,4 +43,5 @@
     - role: vmmd_service     # drop systemd unit + example TOML; does NOT enable
     - role: gatewayd_service # drop systemd unit + example TOML + cert storage dir
     - role: node_exporter    # host-level telemetry for §12 dashboard
+    - role: alertmanager     # §12 notification path; prometheus.service After= this
     - role: prometheus       # scrape config + service for §12 dashboard

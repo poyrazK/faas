@@ -130,9 +130,18 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		log.Info("imaged: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
 			"apps_root", appsRoot)
 	}
+	// One per-daemon Prometheus registry, shared by the handler
+	// (OCI-pull observations inside aboveBaseLayers + buildImageLayer)
+	// and the /metrics listener below. PR #132 constructed two
+	// separate registries — the handler recorded into one, the listener
+	// served an empty one, so /metrics never showed observed series.
+	// (Fixup for PR #132: rules in deploy/ansible/roles/prometheus/
+	// files/faas.rules.yml depend on imaged_oci_pull_duration_seconds
+	// being live, not empty.)
+	ops := wire.NewOpsMetrics("imaged")
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
 		WithStorage(storageBackend).
-		WithOpsMetrics(wire.NewOpsMetrics("imaged"))
+		WithOpsMetrics(ops)
 
 	// F3: function runner wiring. cmd/imaged refuses to come up if either
 	// env var is set but the path doesn't exist on disk — silent omission
@@ -235,7 +244,6 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// don't want a port reserved).
 	metricsAddr := envOr("FAAS_IMAGED_METRICS_ADDR", "127.0.0.1:9102")
 	if metricsAddr != "" {
-		ops := wire.NewOpsMetrics("imaged")
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", ops.Handler())
 		msrv := &http.Server{

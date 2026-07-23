@@ -1,0 +1,240 @@
+# Prometheus alert rules — spec §12 SLO thresholds (faas_implementation_spec.md:412-424).
+#
+# Severity convention:
+#   info  → no notify; surfaces in Prometheus UI / Grafana only.
+#   warn  → ticket-only email via the alertmanager `faas-warn` route.
+#   page  → operator email + Pushover via the `faas-page` route.
+#
+# Runbook URLs point at docs/runbooks/<AlertName>.md. Each runbook is a
+# stub today (symptom / verify / silence steps) — the URLs satisfy
+# `runbook_url:` even when the runbook content is a TODO. A follow-up
+# PR fills the runbooks with concrete triage commands.
+#
+# Metric names are the ones the daemons actually emit (verified against
+# pkg/wire/metrics.go, pkg/gateway/metrics.go, pkg/fcvm/metrics.go,
+# pkg/builderd/builderd.go after PR #124 + PR #132). Do not rename
+# series here without updating the dashboards / status page first.
+#
+# Op labels: vmmd emits PascalCase (`op="CreateFromSnapshot"`,
+# `op="CreateColdBoot"`) — see pkg/vmmdgrpc/server.go:80,98 and
+# pkg/wire/metrics_test.go:46. PromQL label regex matchers are
+# implicitly anchored, so the regex MUST match the case exactly.
+
+groups:
+  - name: faas_slo
+    interval: 30s
+    rules:
+
+      # ─────────────────────────────────────────────────────────────────
+      # Resident RAM pressure (vmmd / fcvm gauges — schedd /metrics/fcvm)
+      # Spec §12 row: "resident_ram_pct ≤ 100 target, > 80 warn, > 92 page".
+      # family=resident_ram so the alertmanager inhibit rule can suppress
+      # the warn-tier email when the page-tier fires (alertnames differ).
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasHighResidentRamPct
+        expr: max(fcvm_resident_ram_pct) > 92
+        for: 5m
+        labels:
+          severity: page
+          component: vmmd
+          family: resident_ram
+        annotations:
+          summary: "Resident RAM > 92% of tenant budget"
+          description: "Σ(ram_mb + 8) over live instances has exceeded 92% of the 47,600 MB ceiling for 5m. New wakes will start failing admission."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
+
+      - alert: FaasHighResidentRamPctWarn
+        expr: max(fcvm_resident_ram_pct) > 80 and max(fcvm_resident_ram_pct) <= 92
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: resident_ram
+        annotations:
+          summary: "Resident RAM > 80% of tenant budget"
+          description: "Resident RAM between 80% and 92% of budget for 10m. Watch FaasHighResidentRamPct for the page-tier crossing."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Snapshot fleet average size (vmmd / fcvm — schedd /metrics/fcvm)
+      # Spec §12 row: "snapshot_fleet_avg_mb 130 plan, > 160 warn, > 200 page".
+      # §12 does NOT govern the p95 series; the V1 acceptance p95 ≤ 300 MB
+      # is a separate experiment threshold, not an alert.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasSnapshotFleetAvgHighPage
+        expr: max(fcvm_snapshot_fleet_avg_bytes) / 1024 / 1024 > 200
+        for: 10m
+        labels:
+          severity: page
+          component: vmmd
+          family: snapshot_fleet
+        annotations:
+          summary: "Snapshot fleet avg > 200 MB"
+          description: "Average snapshot size has exceeded 200 MB for 10m. The fleet is past the §12 page threshold; /srv allocation will start pressuring tenant disk quotas."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotFleetHigh.md"
+
+      - alert: FaasSnapshotFleetAvgHighWarn
+        expr: max(fcvm_snapshot_fleet_avg_bytes) / 1024 / 1024 > 160 and max(fcvm_snapshot_fleet_avg_bytes) / 1024 / 1024 <= 200
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: snapshot_fleet
+        annotations:
+          summary: "Snapshot fleet avg > 160 MB"
+          description: "Average snapshot size between 160 MB and 200 MB for 15m. Page-tier crossing likely on the next deploy wave if cold-boot fallback rate is also elevated."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotFleetHigh.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # LV-fc usage (vmmd — schedd /metrics/fcvm)
+      # Spec §12 row: "lv_fc_used_pct > 80 warn, > 90 page".
+      # Note: §8 (line 365) says imaged refuses > 90% and pages at 80%;
+      # §12 says warn at 80, page at 90. This rule uses §12 verbatim.
+      # The §8 / §12 contradiction is an ADR-worthy spec drift surfaced
+      # in the §17 lean list.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasLvFcUsageHighPage
+        expr: max(fcvm_lv_fc_used_pct) > 90
+        for: 5m
+        labels:
+          severity: page
+          component: vmmd
+          family: lv_fc
+        annotations:
+          summary: "lv-fc usage > 90%"
+          description: "The fc logical volume is past 90% used for 5m. imaged will start refusing new deploys; tenant snapshots can no longer be parked."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
+
+      - alert: FaasLvFcUsageHighWarn
+        expr: max(fcvm_lv_fc_used_pct) > 80 and max(fcvm_lv_fc_used_pct) <= 90
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: lv_fc
+        annotations:
+          summary: "lv-fc usage > 80%"
+          description: "lv-fc usage between 80% and 90% for 10m. Schedule the next LV-resize runbook before the page-tier crossing."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Build queue wait p95 (builderd)
+      # Spec §12 row: "build_queue_wait_p95 < 60s target, > 300s warn".
+      # No page threshold per spec (builds are not customer-blocking).
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasBuildQueueBacklog
+        expr: histogram_quantile(0.95, sum(rate(builderd_build_queue_wait_seconds_bucket[5m])) by (le)) > 300
+        for: 10m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue
+        annotations:
+          summary: "Build queue p95 wait > 5m"
+          description: "Builds are queueing > 300s at p95. The 2nd opportunistic builder slot may be blocked, or apid is emitting faster than builderd drains."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Gateway wake latency p95 (gatewayd)
+      # Spec §12 row: "gateway_wake_latency_seconds p95 ≤ 0.8s target, > 1.5s warn".
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasWakeLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) > 1.5
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd
+          family: wake_latency
+        annotations:
+          summary: "Gateway wake p95 > 1.5s"
+          description: "End-to-end cold-wake latency has exceeded the §12 page threshold (1.5s) at p95 for 10m. Cross-check FaasColdBootFallbackHigh — snapshot rot is the most likely cause."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWakeLatencyHigh.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Cold-boot fallback rate (vmmd / vmmd_cold_boot_fallback_total)
+      # Spec §12 row: "cold_boot_fallback_pct < 2% target, > 10% warn".
+      # Denominator = Σ(vmmd_ops_total{op="CreateFromSnapshot","CreateColdBoot"}).
+      # The op labels are PascalCase (pkg/vmmdgrpc/server.go:80,98) — the
+      # earlier lowercase regex matched nothing and the alert never fired.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasColdBootFallbackHigh
+        expr: |
+          rate(vmmd_cold_boot_fallback_total[5m])
+            /
+          sum(rate(vmmd_ops_total{op=~"CreateFromSnapshot|CreateColdBoot"}[5m]))
+            > 0.10
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: cold_boot_fallback
+        annotations:
+          summary: "Cold-boot fallback > 10% of wakes"
+          description: "More than 10% of wakes have fallen back from snapshot restore to cold-boot for 15m. Snapshot rot (FC version mismatch, rootfs drift) is the canonical cause; cf. ADR-005."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasColdBootFallbackHigh.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Public SLOs from spec §12 (status page row).
+      # Spec: "API availability 99.5% monthly, wake p95 < 1s,
+      #        build success (non-user_error) 99% — error budgets,
+      #        not promises."
+      # 5m rolling used to match the status-page cache; spec calls these
+      # monthly but PromQL recursion is out of scope here. Status page
+      # already surfaces the rolling-5m numbers.
+      #
+      # `sum(rate(...[5m])) > 0` guards the denominator so an idle box
+      # (no traffic yet) produces `false < 0.995` rather than `NaN < 0.995`
+      # (which is false too but masks a real breach window if the rate
+      # resets mid-window).
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasApiAvailabilityLow
+        expr: |
+          (sum(rate(gateway_requests_total{code=~"2.."}[5m]))
+            /
+          sum(rate(gateway_requests_total[5m])))
+            < 0.995
+        for: 10m
+        labels:
+          severity: page
+          component: gatewayd
+          family: api_availability
+        annotations:
+          summary: "API availability < 99.5% (rolling 5m)"
+          description: "The 2xx ratio over the last 5 minutes has been below the §12 public SLO (99.5%) for 10m. This is rolling, not monthly — the alert is intentionally more sensitive than the customer-facing SLO. Status page /status/slo.json shows the same metric."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
+
+      - alert: FaasBuildSuccessLow
+        expr: |
+          (sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m]))
+            /
+          sum(rate(builderd_ops_total{op="build"}[5m])))
+            < 0.99
+        for: 15m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_success
+        annotations:
+          summary: "Build success (non-user_error) < 99%"
+          description: "Build success excluding user_error has been below the §12 public SLO (99%) for 15m. Status page /status/slo.json shows the same metric."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildSuccessLow.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Daemon liveness — every scrape target should be up.
+      # 2m is tight: a single scrape miss (15s) does not trip it; a
+      # crashed daemon trips it within one evaluation cycle after restart.
+      # alertmanager is included because the page-route notification
+      # path depends on it being reachable from Prometheus on loopback;
+      # a dead alertmanager means alerts evaluate but never page anyone.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasDaemonDown
+        expr: up{job=~"apid|gatewayd|schedd|vmmd|imaged|builderd|meterd|githubd|alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: page
+          component: platform
+          family: daemon_liveness
+        annotations:
+          summary: "Daemon {{ $labels.job }} is down"
+          description: "Prometheus has been unable to scrape {{ $labels.job }} for 2m. Check systemd status + recent logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonDown.md"

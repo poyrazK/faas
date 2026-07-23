@@ -144,13 +144,13 @@ func (c *statusCache) Get(ctx context.Context) (StatusPage, error) {
 	return snap, nil
 }
 
-// fetch runs the three PromQL queries against the local Prometheus
+// fetch runs the four PromQL queries against the local Prometheus
 // and assembles a StatusPage. Each query has its own short timeout;
 // per-field failures are logged but DO NOT overwrite the previous
 // value (graceful degradation — the operator's view stays at the
 // last good number during a transient Prometheus hiccup). If every
-// query fails the function returns a non-nil error so the caller
-// can fall back to the last cached snapshot.
+// primary query fails the function returns a non-nil error so the
+// caller can fall back to the last cached snapshot.
 //
 // We track per-query success instead of inferring failure from
 // "all values are zero" — a freshly-booted idle box legitimately
@@ -205,9 +205,27 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 		}
 	}
 
-	// If no query succeeded, surface the first error so the caller can
-	// serve the stale cache. Otherwise the snapshot is real data even
-	// if some fields happen to be 0 (idle-box case).
+	// 4. Degraded flag: at least one warn- or page-severity alert is
+	// firing on the local Prometheus. Counted across all alert groups
+	// and components. A PromQL error here is logged but treated as
+	// "no firing alerts" — the flag is intentionally conservative so
+	// a transient ALERTS{} hiccup doesn't poison the public snapshot.
+	// The full-pipeline failure (Prometheus unreachable) still
+	// surfaces via Source = "degraded: <error>" because the primary
+	// three queries would have failed first.
+	alertQ := `count(ALERTS{alertstate="firing",severity=~"page|warn"}) > 0`
+	if v, err := c.queryScalar(ctx, alertQ); err == nil {
+		if v > 0 {
+			snap.Degraded = true
+			snap.Source = "degraded: firing alerts"
+		}
+	} else {
+		c.log.Warn("status: alert query failed (treating as not-degraded)", "err", err)
+	}
+
+	// If no primary query succeeded, surface the first error so the
+	// caller can serve the stale cache. Otherwise the snapshot is real
+	// data even if some fields happen to be 0 (idle-box case).
 	if okCount == 0 {
 		return snap, firstErr
 	}
@@ -217,6 +235,19 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 // queryScalar runs a PromQL `query` against the local Prometheus and
 // returns the first scalar. Returns an error on transport failure,
 // non-2xx response, parse error, or empty result.
+//
+// PromQL has three result shapes; only "scalar" and "vector" can
+// appear here, and they're encoded differently in the JSON envelope:
+//   - vector → {"resultType":"vector",  "result":[{"value":[ts,"x"]}, ...]}
+//   - scalar → {"resultType":"scalar",  "result":[{"value":[ts,"x"]}]}
+//   - matrix → {"resultType":"matrix",  "result":[{"values":[[ts,"x"],...]}], ...}
+//
+// We must support both vector and scalar because e.g.
+// `count(ALERTS{alertstate="firing"}) > 0` returns a scalar — the
+// alert-state PromQL expression the §12 degraded flag depends on.
+// Without this branch the alert query always errors "no data for query"
+// and the degraded pill never flips on. The `Value[0]` is a timestamp
+// in both shapes; the parsed scalar lives at `Value[1]`.
 func (c *statusCache) queryScalar(ctx context.Context, query string) (float64, error) {
 	qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -244,6 +275,9 @@ func (c *statusCache) queryScalar(ctx context.Context, query string) (float64, e
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
 		return 0, err
+	}
+	if pr.Data.ResultType != "vector" && pr.Data.ResultType != "scalar" {
+		return 0, fmt.Errorf("unsupported resultType %q for query %q", pr.Data.ResultType, query)
 	}
 	if len(pr.Data.Result) == 0 {
 		return 0, fmt.Errorf("no data for query %q", query)
