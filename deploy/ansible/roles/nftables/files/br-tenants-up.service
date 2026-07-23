@@ -1,0 +1,32 @@
+[Unit]
+Description=faas tenant bridge (br-tenants) up — bridge + 10.100.0.1/16
+Documentation=https://docs.DOMAIN/ops/network
+# Order BEFORE nftables.service so the host firewall's forward chain (which
+# uses `iifname "br-tenants"`) loads against an interface that exists.
+# Order BEFORE vmmd.service so vmmd's per-instance netns creation (which
+# attemps to enslave the host-side veth to br-tenants) doesn't race with
+# the bridge coming up. faas-cp.slice exists on every EX44; the
+# dependency makes the bridge a hard prerequisite of the control plane.
+After=network-pre.target
+Wants=network-pre.target
+Before=nftables.service vmmd.service faas-cp.slice
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# `ip link add … type bridge` exits non-zero when the bridge already exists
+# (cold-boot's second start, re-run of `make bootstrap`); `ip addr add … dev
+# …` exits non-zero with "File exists" when the address is already present;
+# `ip link set … up` is idempotent and exit-0. systemd's Type=oneshot with
+# RemainAfterExit=yes treats the unit as "active" once the FIRST ExecStart
+# that returns 0 has run; later re-runs that hit the already-active path
+# succeed. Tested on Ubuntu 22.04 (the EX44 target) and the Lima guest.
+ExecStart=/usr/sbin/ip link add br-tenants type bridge
+ExecStart=/usr/sbin/ip addr add 10.100.0.1/16 dev br-tenants
+ExecStart=/usr/sbin/ip link set br-tenants up
+# Do NOT add a [Restart] section: a per-ExecStart failure here indicates a
+# genuinely broken network stack (e.g. the iproute2 module isn't loaded)
+# and should NOT silently retry; the operator must triage.
+
+[Install]
+WantedBy=multi-user.target

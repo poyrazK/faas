@@ -1,6 +1,7 @@
 package netns
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestHostPolicyRenderHasFlushAndShebang(t *testing.T) {
 // old `faas-tenant-bridge` that exists in the pre-#27 ansible template.
 func TestHostPolicyRenderForwardsViaBridge(t *testing.T) {
 	out := DefaultHostPolicy.Render()
-	want := `iif "br-tenants" oifname "eth0" accept`
+	want := `iifname "br-tenants" oifname "eth0" accept`
 	if !strings.Contains(out, want) {
 		t.Errorf("forward allow rule missing or wrong; want %q in:\n%s", want, out)
 	}
@@ -138,7 +139,7 @@ func TestHostPolicyRenderBridgeNameParam(t *testing.T) {
 	if !strings.Contains(out, `iifname "custom-bridge" accept`) {
 		t.Error("input chain did not pick up the BridgeName substitution")
 	}
-	if !strings.Contains(out, `iif "custom-bridge" oifname "eth0" accept`) {
+	if !strings.Contains(out, `iifname "custom-bridge" oifname "eth0" accept`) {
 		t.Error("forward chain did not pick up the BridgeName substitution")
 	}
 	if strings.Contains(out, "br-tenants") {
@@ -153,6 +154,7 @@ func TestHostPolicyRenderPanicsOnEmptyRequiredField(t *testing.T) {
 	for _, mut := range []func(*HostPolicy){
 		func(p *HostPolicy) { p.BridgeName = "" },
 		func(p *HostPolicy) { p.PublicIface = "" },
+		func(p *HostPolicy) { p.MasqueradeCIDR = "" },
 	} {
 		p := DefaultHostPolicy
 		mut(&p)
@@ -191,7 +193,7 @@ func TestHostPolicyForwardDeniesComeBeforeBroadAllow(t *testing.T) {
 	if firstRule != "ct state established,related accept" {
 		t.Errorf("first forward rule must be `ct state established,related accept`, got %q\nchain:\n%s", firstRule, forward)
 	}
-	broadAllow := `iif "br-tenants" oifname "eth0" accept`
+	broadAllow := `iifname "br-tenants" oifname "eth0" accept`
 	broadIdx := strings.Index(forward, broadAllow)
 	if broadIdx < 0 {
 		t.Fatalf("forward chain missing broad allow %q\nchain:\n%s", broadAllow, forward)
@@ -285,5 +287,129 @@ func TestHostPolicyForwardIPv6ImmediatelyFollowsIPv4(t *testing.T) {
 	after := strings.SplitN(between, "\n", 2)[1]
 	if strings.TrimSpace(after) != "" {
 		t.Errorf("v4 daddr and v6 daddr are not adjacent; between them:\n%q", between)
+	}
+}
+
+// TestHostPolicyMasqueradeChainIsAppended locks the tier-1 host egress
+// fix: the host `table inet faas` gets a fourth chain `postrouting`
+// of type nat that MASQUERADEs tenant source addresses to the host's
+// public IP on their way out PublicIface. Without this, the per-netns
+// SNAT translates the guest source to 10.100.x.y, but no root-ns
+// rule rewrites that to the public IP — replies can't route back and
+// every bidirectional flow dies.
+//
+// Asserts:
+//   - exactly one host chain has `type nat hook postrouting priority
+//     srcnat`;
+//   - the rule body contains `ip saddr <MasqueradeCIDR> oifname
+//     "<PublicIface>" masquerade` (uses %q so the quoted form is
+//     pinned);
+//   - the rule is SOURCE-SCOPED (the `ip saddr` selector is present);
+//     a bare `oifname "eth0" masquerade` would incorrectly NAT
+//     unrelated host traffic.
+//
+// Uses extractChain so `chain postrouting {` is matched at chain depth
+// and not against a future `ip saddr` somewhere in a comment or
+// unrelated rule.
+func TestHostPolicyMasqueradeChainIsAppended(t *testing.T) {
+	out := DefaultHostPolicy.Render()
+	// Exactly one nat postrouting chain.
+	wantMeta := "type nat hook postrouting priority srcnat"
+	if got := strings.Count(out, wantMeta); got != 1 {
+		t.Fatalf("expected exactly 1 %q in render, got %d:\n%s", wantMeta, got, out)
+	}
+	post := extractChain(t, out, "postrouting")
+	// The rule body must be the exact MASQUERADE selector.
+	wantRule := fmt.Sprintf("ip saddr %s oifname %q masquerade",
+		DefaultHostPolicy.MasqueradeCIDR, DefaultHostPolicy.PublicIface)
+	if !strings.Contains(post, wantRule) {
+		t.Errorf("postrouting chain missing rule %q; chain:\n%s", wantRule, post)
+	}
+	// Defense-in-depth: must NOT be a bare `oifname "..." masquerade`
+	// without `ip saddr`. A missing source CIDR would masquerade every
+	// outbound packet (including vmmd's own) to the tenant bridge
+	// range — a security regression.
+	if strings.Contains(post, "masquerade\n") && !strings.Contains(post, "ip saddr ") {
+		t.Errorf("postrouting chain must SOURCE-SCOPE the MASQUERADE via `ip saddr`; chain:\n%s", post)
+	}
+}
+
+// TestHostPolicyPostroutingIsLastChain locks the topology: the
+// postrouting nat chain MUST come after input, forward, AND output.
+// nftables evaluates chains in declaration order inside a table; the
+// firewall chains (input/forward/output) must set the drop/accept
+// verdict first so a future MASQUERADE rule does not have to be
+// coordinated with filtering. extractChain-based: count chain
+// headers in render order; the LAST chain listed must be
+// "postrouting".
+func TestHostPolicyPostroutingIsLastChain(t *testing.T) {
+	out := DefaultHostPolicy.Render()
+	wantOrder := []string{"chain input {", "chain forward {", "chain output {", "chain postrouting {"}
+	last := -1
+	for _, w := range wantOrder {
+		idx := strings.Index(out, w)
+		if idx < 0 {
+			t.Fatalf("missing chain header %q in render:\n%s", w, out)
+		}
+		if idx <= last {
+			t.Errorf("chain %q (idx %d) must come after previous chain (idx %d)", w, idx, last)
+		}
+		last = idx
+	}
+	// Also: no chain header after `chain postrouting {`. Scans for any
+	// additional `chain <name> {` to catch a future regression where
+	// someone adds `chain postnat-flush {` or similar after it.
+	postIdx := strings.Index(out, "chain postrouting {")
+	rest := out[postIdx:]
+	if next := strings.Index(rest, "\n  chain "); next >= 0 {
+		t.Errorf("chain `postrouting` must be the LAST chain; found another chain header at offset %d after it:\n%s",
+			postIdx+next, out)
+	}
+}
+
+// TestHostPolicyForwardUsesIifname pins the nft keyword `iifname` on
+// the forward chain. nftables.service is `Before=network-pre.target`
+// on Debian/Ubuntu, so it can load BEFORE the tenant bridge is up
+// (e.g. on first boot, when `br-tenants-up.service` runs after
+// nftables start). `iif` resolves to an interface INDEX at load time
+// and fails if the interface doesn't exist; `iifname` matches by
+// name and survives a deleted-and-recreated interface with the same
+// name. The forward chain is the one that admits bridged tenant
+// traffic to the host — losing it on first boot means every tenant
+// gets ENETUNREACH. The input chain at policy.go:174 already uses
+// `iifname`; this test keeps forward consistent.
+//
+// Anti-regression: if anyone writes `iif "br-tenants"` again, the
+// test fails immediately.
+func TestHostPolicyForwardUsesIifname(t *testing.T) {
+	out := DefaultHostPolicy.Render()
+	forward := extractChain(t, out, "forward")
+	want := fmt.Sprintf("iifname %q oifname %q accept",
+		DefaultHostPolicy.BridgeName, DefaultHostPolicy.PublicIface)
+	if !strings.Contains(forward, want) {
+		t.Errorf("forward chain must use %q; chain:\n%s", want, forward)
+	}
+	bad := fmt.Sprintf("iif %q oifname %q accept",
+		DefaultHostPolicy.BridgeName, DefaultHostPolicy.PublicIface)
+	if strings.Contains(forward, bad) {
+		t.Errorf("forward chain regressed to `iif \"...\"` (ifindex-resolved) keyword — use `iifname` so nftables.service loads survive a missing bridge on first boot:\n%s", forward)
+	}
+}
+
+// TestHostPolicyMasqueradeSubstitutesCIDRAndIface is the substitution
+// test for the new field. A regression that hard-codes
+// "10.100.0.0/16" or "eth0" inside Render — bypassing the field —
+// would silently lock the production deployment. Vary both fields
+// and assert both make it into the rendered rule.
+func TestHostPolicyMasqueradeSubstitutesCIDRAndIface(t *testing.T) {
+	p := DefaultHostPolicy
+	p.MasqueradeCIDR = "172.31.99.0/24"
+	p.PublicIface = "ens3"
+	out := p.Render()
+	if !strings.Contains(out, "ip saddr 172.31.99.0/24 oifname \"ens3\" masquerade") {
+		t.Errorf("rendered rule did not pick up MasqueradeCIDR/PublicIface substitution:\n%s", out)
+	}
+	if strings.Contains(out, "10.100.0.0/16") || strings.Contains(out, `oifname "eth0"`) {
+		t.Errorf("rendered output retained the production defaults when test varied them:\n%s", out)
 	}
 }

@@ -62,6 +62,19 @@ type HostPolicy struct {
 	// 22 (sshd ops), 80 (CertMagic HTTP-01 for Pro), 443 (HTTPS). Everything
 	// else on the public IFace is dropped by the input chain's `policy drop`.
 	InputAllowTCPPorts []int
+
+	// MasqueradeCIDR is the source-address set the postrouting nat chain
+	// MASQUERADEs to the host's public IP on its way out PublicIface. Must be
+	// the NETWORK form of HostBridgeCIDR (e.g. "10.100.0.0/16", not the host
+	// IP ".1" form) — every bridged tenant VM's source falls in this range
+	// because pkg/fcvm/alloc.go hands out 10.100.0.2+, never .1 (the
+	// allocator reserves slot 0 for the bridge itself). Without this rule
+	// the per-netns SNAT translates the guest source to 10.100.x.y, but no
+	// root-ns rule rewrites that to the public IP — the public internet
+	// has no route back to 10.100.x.y, so every bidirectional flow (TCP /
+	// HTTPS / DNS replies) dies at the first SYN-ACK or A-record.
+	// Tier-1 of the network roadmap.
+	MasqueradeCIDR string
 }
 
 // DefaultHostPolicy is the platform-wide host nftables policy. Source of
@@ -98,6 +111,14 @@ var DefaultHostPolicy = HostPolicy{
 	ForwardDenyTCPPorts: []int{25, 465, 587},
 
 	InputAllowTCPPorts: []int{22, 80, 443},
+
+	// Tenant source CIDR the postrouting nat chain MASQUERADEs. Network
+	// form of HostBridgeCIDR — every bridged tenant VM's host-side IP
+	// (10.100.x.y, x.y ≥ 0.2) falls in this range; the bridge IP (.1) is
+	// ruled out by the allocator in pkg/fcvm/alloc.go, so this CIDR
+	// exactly matches "tenant-originated, not the host" once routed out
+	// PublicIface. See HostPolicy.MasqueradeCIDR doc for why this exists.
+	MasqueradeCIDR: "10.100.0.0/16",
 }
 
 // Render produces the full /etc/nftables.conf body, including the shebang
@@ -123,11 +144,13 @@ var DefaultHostPolicy = HostPolicy{
 // otherwise hit the new RFC1918 drop. v4 deny must stay directly above
 // v6 deny — see ADR-023.
 func (h HostPolicy) Render() string {
-	if h.BridgeName == "" || h.PublicIface == "" {
+	if h.BridgeName == "" || h.PublicIface == "" || h.MasqueradeCIDR == "" {
 		// Hard fail rather than render a broken ruleset — a forward chain
 		// without iif/oif or an input chain with no allowlist would silently
-		// drop everything.
-		panic("netns: HostPolicy.Render: BridgeName and PublicIface are required")
+		// drop everything, and a postrouting nat chain with no source CIDR
+		// would MASQUERADE every outbound packet (including vmmd's own) to
+		// the tenant bridge range, which would be a security regression.
+		panic("netns: HostPolicy.Render: BridgeName, PublicIface, and MasqueradeCIDR are required")
 	}
 
 	denyCIDRs := strings.Join(h.ForwardDenyCIDRs, " ")
@@ -163,11 +186,16 @@ func (h HostPolicy) Render() string {
 	fmt.Fprintf(&b, "    tcp dport { %s } drop\n", denyPorts)
 	fmt.Fprintf(&b, "    ip daddr { %s } drop\n", denyCIDRs)
 	fmt.Fprintf(&b, "    ip6 daddr { %s } drop\n", denyIPv6CIDRs)
-	fmt.Fprintf(&b, "    iif %q oifname %q accept\n", h.BridgeName, h.PublicIface)
+	fmt.Fprintf(&b, "    iifname %q oifname %q accept\n", h.BridgeName, h.PublicIface)
 	b.WriteString("  }\n")
 	b.WriteString("\n")
 	b.WriteString("  chain output {\n")
 	b.WriteString("    type filter hook output priority 0; policy accept;\n")
+	b.WriteString("  }\n")
+	b.WriteString("\n")
+	b.WriteString("  chain postrouting {\n")
+	b.WriteString("    type nat hook postrouting priority srcnat; policy accept;\n")
+	fmt.Fprintf(&b, "    ip saddr %s oifname %q masquerade\n", h.MasqueradeCIDR, h.PublicIface)
 	b.WriteString("  }\n")
 	b.WriteString("}\n")
 	return b.String()
