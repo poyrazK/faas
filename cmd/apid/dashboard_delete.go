@@ -50,7 +50,12 @@ func (s *server) dashboardDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := middleware.VerifyAuthenticated(s.sessions, r, "delete", acct.ID); err != nil {
-		http.Error(w, "invalid confirmation token", http.StatusBadRequest)
+		// Surface an RFC 7807 problem so the response shape matches
+		// the rest of apid. The helper wraps ErrCSRFInvalid on every
+		// failure path, so the message is intentionally generic —
+		// "invalid" doesn't tell the caller which check tripped.
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
 	if _, prob := s.scheduleDeletion(r.Context(), acct); prob != nil {
@@ -70,7 +75,8 @@ func (s *server) dashboardRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := middleware.VerifyAuthenticated(s.sessions, r, "restore", acct.ID); err != nil {
-		http.Error(w, "invalid confirmation token", http.StatusBadRequest)
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
 	if _, prob := s.cancelDeletion(r.Context(), acct); prob != nil {

@@ -38,9 +38,14 @@ check "/etc/faas/secrets/session.key exists with mode 0400 root:root" bash -c '
 
 # 2. sealed.env MUST NOT carry FAAS_SESSION_KEY any more — that
 #    was the A4 leak. Operators migrating from a pre-A4 bootstrap
-#    need to re-run bootstrap.sh to scrub the file.
+#    need to re-run bootstrap.sh to scrub the file. Note: the file's
+#    existence is asserted first so a fresh host that hasn't
+#    bootstrapped at all reports red ✗ rather than silently passing
+#    on a missing-file grep (grep -q exits 2 on a missing file,
+#    which `!` would otherwise flip to a false-positive 0).
 check "sealed.env does NOT contain FAAS_SESSION_KEY" bash -c '
-  ! grep -q "^FAAS_SESSION_KEY=" /etc/faas/sealed.env 2>/dev/null
+  [[ -f /etc/faas/sealed.env ]] \
+    && ! grep -q "^FAAS_SESSION_KEY=" /etc/faas/sealed.env
 '
 
 # 3. faas-apid's environment carries FAAS_SESSION_KEY (systemd

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -145,6 +146,25 @@ func TestCSRFBlob_DoesNotVerifyAsSessionCookie(t *testing.T) {
 	// domain-separation AAD must make this fail.
 	if _, err := m.Verify(tok); err == nil {
 		t.Fatal("CSRF blob unexpectedly verified as a session cookie — domain separation broken")
+	}
+}
+
+func TestSessionCookie_DoesNotVerifyAsCSRF(t *testing.T) {
+	m := newTestManager(t)
+	sid, err := m.Issue("acct-1")
+	if err != nil {
+		t.Fatalf("Issue session: %v", err)
+	}
+	// Try opening the session cookie as a CSRF blob. Symmetric to
+	// TestCSRFBlob_DoesNotVerifyAsSessionCookie: the AAD on the
+	// session-cookie path is nil, so a CSRF seal with the
+	// csrfDomainSep AAD must not authenticate.
+	raw, err := base64.RawURLEncoding.DecodeString(sid)
+	if err != nil {
+		t.Fatalf("decode session cookie: %v", err)
+	}
+	if _, err := m.OpenForCSRF(raw); err == nil {
+		t.Fatal("session cookie unexpectedly verified as a CSRF blob — domain separation broken")
 	}
 }
 
