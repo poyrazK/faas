@@ -18,13 +18,17 @@
 //
 // To skip locally: export FAAS_SKIP_PG_TESTS=1.
 
-package e2e
+package e2e_test
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -205,4 +209,131 @@ func TestDunning_Suspended21d_AdvancesToDeletedPending(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// TestE2E_FreeTierHardDelete_FlowsThroughGrace is the M7 §14
+// completion test that lands next to the dunning tail: once
+// `deletion_requested_at` is more than DeletionGraceDuration
+// (30 days, pkg/state/memstore.go:2498) in the past, the apid
+// grace tick (driven via FAAS_GRACE_INTERVAL=300ms for the same
+// reason `TestE2E_GraceExpiry_HardDelete` accelerates it —
+// account_e2e_test.go:50) hard-deletes the account row, and the
+// customer-facing endpoints (GET /v1/account/export) and the
+// store-side accessor (AccountByID) both observe the disappearance.
+//
+// The signal ladder is layered: apid's grace loop walks
+// `pkg/grace.RunOnce` (RunOnce walks `deleted_pending` past grace
+// and calls `Store.DeleteAccount`). Verify both:
+//
+//   - store.AccountByID(acct.ID) returns state.ErrNotFound
+//     (the *internal* row-gone signal; proves the SQL DELETE
+//     landed, not just that the API key was cleared).
+//   - GET /v1/account/export returns 401
+//     (the *external* row-gone signal — same one
+//     TestE2E_GraceExpiry_HardDelete pins).
+//
+// The two assertions cover different failure modes: a bug that
+// clears the API key without deleting the row would pass the
+// 401-only check but fail the AccountByID check; a bug that
+// deletes the row but leaves a stale JWT in cache would pass
+// the AccountByID check but fail the 401 check.
+//
+// We boot APID only — no need for meterd/schedd here, just the
+// grace tick — and we skip the FAQ-flavoured "Free tier" line
+// (it's a property of the dunning pipeline, not the grace
+// pipeline; the grace tick fires on every plan equally).
+func TestE2E_FreeTierHardDelete_FlowsThroughGrace(t *testing.T) {
+	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
+		t.Skip("FAAS_SKIP_PG_TESTS set")
+	}
+	pool := pgtest.Open(t)
+	if pool == nil {
+		return
+	}
+	ctx := context.Background()
+
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("MigrateUp: %v", err)
+	}
+	pgtest.WaitForMigration(t, pool, 13, 10*time.Second)
+
+	const graceInterval = 300 * time.Millisecond
+	h := e2etest.StartWithEnv(t, pool, e2etest.APID, []string{
+		"FAAS_GRACE_INTERVAL=" + graceInterval.String(),
+	})
+	// SeedAccount labels via variadic — the label becomes part of the
+	// email so each subtest gets its own row in the shared pgtest
+	// schema. "hard-delete-flow" is unique to this test.
+	key := h.SeedAccount(ctx, api.PlanFree, "hard-delete-flow")
+
+	// Schedule deletion through the apid API rather than the store
+	// directly — exercises the full customer-facing DELETE /v1/account
+	// wire (handlers_account.go:87 calls MarkAccountDeletionPending).
+	if body, status := doReq(t, h, key, http.MethodDelete, "/v1/account", nil); status != http.StatusOK {
+		t.Fatalf("delete-account: %d %s", status, body)
+	}
+
+	// Fast-forward deletion_requested_at to 31 days ago so the next
+	// grace tick sees the row as overdue. WHERE on id — the test
+	// owns one account end-to-end, so the bare id is unambiguous
+	// without an email tiebreaker.
+	acctID := accountIDForPlanLabel(t, h.Pool, api.PlanFree, "hard-delete-flow")
+	if _, err := pool.Exec(ctx,
+		`update accounts set deletion_requested_at = now() - interval '31 days' where id = $1`,
+		acctID); err != nil {
+		t.Fatalf("backdate deletion_requested_at: %v", err)
+	}
+
+	store := state.NewPgStore(pool)
+
+	// Internal signal — AccountByID returns ErrNotFound once the
+	// row is hard-deleted. Bounded to a generous deadline (30+ grace
+	// intervals + slack for boot/handshake and the
+	// pgx → apid → grace tick handshake).
+	internalDeadline := time.Now().Add(graceInterval*30 + 5*time.Second)
+	for {
+		_, err := store.AccountByID(ctx, acctID)
+		if errors.Is(err, state.ErrNotFound) {
+			break
+		}
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("AccountByID returned unexpected err = %v", err)
+		}
+		if time.Now().After(internalDeadline) {
+			t.Fatalf("AccountByID did not return ErrNotFound within %v (grace tick did not hard-delete)",
+				graceInterval*30+5*time.Second)
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+
+	// External signal — /v1/account/export now 401s because the API
+	// key was deleted along with the account row. We can't reuse the
+	// original `key` (the row it pointed at is gone), so we issue
+	// the request with whatever was carried in the test — a 401
+	// either way proves the row is gone.
+	externalDeadline := time.Now().Add(2 * time.Second)
+	for {
+		_, status := doReq(t, h, key, http.MethodGet, "/v1/account/export", nil)
+		if status == http.StatusUnauthorized {
+			return
+		}
+		if time.Now().After(externalDeadline) {
+			t.Fatalf("GET /v1/account/export = %d after row hard-delete (want 401)", status)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// accountIDForEmail resolves an account id from a unique email. Each
+// subtest gets its own pgtest schema, so the WHERE is unambiguous
+// without needing a timestamp tiebreaker.
+func accountIDForPlanLabel(t *testing.T, pool *pgxpool.Pool, plan api.Plan, label string) string {
+	t.Helper()
+	email := "e2e+" + string(plan) + "+" + label + "@test.example"
+	var id string
+	if err := pool.QueryRow(context.Background(),
+		`select id from accounts where email = $1`, email).Scan(&id); err != nil {
+		t.Fatalf("resolve account id for %s: %v", email, err)
+	}
+	return id
 }
