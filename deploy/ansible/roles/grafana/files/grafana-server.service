@@ -1,0 +1,41 @@
+[Unit]
+Description=Grafana for faas Prometheus
+Documentation=https://github.com/poyrazK/faas
+After=network-online.target prometheus.service
+Wants=network-online.target
+
+[Service]
+User=grafana
+Group=grafana
+Type=simple
+Environment=GF_SECURITY_ADMIN_PASSWORD__FILE=/etc/grafana/secrets/admin_password
+ExecStart=/usr/sbin/grafana-server \
+    --homepath=/usr/share/grafana \
+    --config=/etc/grafana/grafana.ini \
+    cfg:default.server.http_addr=10.0.0.1 \
+    cfg:default.server.http_port=3000
+Restart=on-failure
+RestartSec=10s
+
+# Hardening (mirrors alertmanager.service + prometheus.service).
+# Grafana runs unprivileged with the same lockdown as the rest of
+# the §12 stack — no new privileges, kernel tunables locked down,
+# namespaces restricted. ReadWritePaths covers the dirs Grafana
+# mutates at runtime (data + logs + provisioning reload staging).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/grafana /var/log/grafana /etc/grafana
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

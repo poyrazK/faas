@@ -1,0 +1,212 @@
+---
+# grafana role — install + provision + systemd-enable.
+#
+# Mirrors deploy/ansible/roles/alertmanager/tasks/main.yml so the role
+# shape stays uniform. Three differences worth surfacing:
+#   1. SHA-256 pin (gv_release_sha256) is asserted against the INSTALLED
+#      /usr/sbin/grafana-server binary, not against the downloaded
+#      tarball (apt is the install path, not a tarball drop). Same
+#      defence-in-depth principle as the alertmanager role's assert.
+#   2. Admin password is read at process start by Grafana via the
+#      GF_SECURITY_ADMIN_PASSWORD__FILE env var (see
+#      files/grafana-server.service). The role only asserts the file
+#      exists with mode 0400 owned by grafana:grafana — nothing is
+#      slurped, base64-decoded, or templated into grafana.ini. Same
+#      precedent as the alertmanager *_file secrets (gap G2 lean §17,
+#      sealed at rest).
+#   3. Bind addr must be loopback (127/8) or management-bridge
+#      (10.0.0.0/24) on port 3000. Off-box public binds would expose
+#      the admin surface (basic auth + provisioning write API) over
+#      plaintext. Asserted at task time, mirror of the prometheus
+#      role's alertmanager-URL loopback regex.
+
+- name: grafana — assert SHA-256 pin was supplied
+  ansible.builtin.assert:
+    that:
+      - gv_release_sha256 is defined
+      - gv_release_sha256 | length == 64
+    fail_msg: >-
+      gv_release_sha256 is not set. Pass `-e gv_release_sha256=<sha256>`
+      (compute with `sha256sum /usr/sbin/grafana-server` on the
+      provisioning host) from the apt-installed binary. The role
+      fails-closed rather than installing an unverified binary.
+
+# Bind discipline (CLAUDE.md §Component ownership). Grafana must
+# not be reachable off-box — the admin surface (basic auth +
+# provisioning write API) would leak operational metadata over
+# plaintext. Catches a typo'd inventory override here, not after a
+# week of silent exposure. Asserts v4 loopback (127/8) AND the
+# management-bridge (10.0.0.0/24) on port 3000.
+- name: grafana — assert listen addr is loopback or management bridge
+  ansible.builtin.assert:
+    that:
+      - gv_listen_addr is regex('^(127\.[0-9]+\.[0-9]+\.[0-9]+|10\.0\.0\.[0-9]+):(3000)$')
+    fail_msg: >-
+      gv_listen_addr={{ gv_listen_addr }} is not a private bind (127/8
+      or 10.0.0.0/24 on port 3000). Off-box public binds would expose
+      the Grafana admin surface; override only via ansible-vault.
+
+- name: grafana — install apt dependencies for HTTPS repo
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - gnupg
+    state: present
+    update_cache: true
+
+- name: grafana — add Grafana GPG key
+  ansible.builtin.apt_key:
+    url: https://apt.grafana.com/gpg.key
+    state: present
+
+- name: grafana — add Grafana apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb https://apt.grafana.com stable main"
+    state: present
+    update_cache: true
+
+- name: grafana — pin installed version via /etc/apt/preferences.d
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/grafana-pref
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Package: grafana
+      Pin: version {{ gv_version }}*
+      Pin-Priority: 700
+
+- name: grafana — apt install grafana-server
+  ansible.builtin.apt:
+    name: "grafana={{ gv_version }}"
+    state: present
+    update_cache: true
+
+- name: grafana — assert installed binary SHA-256 matches pin
+  ansible.builtin.command: sha256sum /usr/sbin/grafana-server
+  register: gv_sum
+  changed_when: false
+  check_mode: false
+
+- name: grafana — verify pin matches installed
+  ansible.builtin.assert:
+    that:
+      - "gv_release_sha256 in gv_sum.stdout"
+    fail_msg: "Installed Grafana binary SHA-256 mismatch — supply chain check failed."
+
+- name: grafana — create system user
+  ansible.builtin.user:
+    name: grafana
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ gv_data_dir }}"
+    create_home: false
+
+- name: grafana — create directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: grafana
+    group: grafana
+    mode: "0750"
+  loop:
+    - "{{ gv_data_dir }}"
+    - "{{ gv_data_dir }}/dashboards"
+    - /etc/grafana
+    - /etc/grafana/provisioning
+    - /etc/grafana/provisioning/datasources
+    - /etc/grafana/provisioning/dashboards
+    - /etc/grafana/secrets
+    - /var/log/grafana
+
+# Secret file: assert existence + perms before systemd enable. We do NOT
+# slurp or template the secret bytes — Grafana reads it at start via
+# GF_SECURITY_ADMIN_PASSWORD__FILE (see files/grafana-server.service).
+# dev_mode: skip the assert so dev / CI hosts without secrets still
+# bootstrap (and Grafana isn't enabled in that case — see below).
+- name: grafana — assert admin password file perms (production)
+  ansible.builtin.stat:
+    path: "{{ gv_admin_password_file }}"
+  register: gv_secret_stat
+  failed_when:
+    - not gv_dev_mode | bool
+    - gv_admin_password_file | length > 0
+    - not gv_secret_stat.stat.exists
+  when:
+    - not gv_dev_mode | bool
+    - gv_admin_password_file | length > 0
+  no_log: true   # paths flow through stat; defensive even though they're not the bytes
+
+- name: grafana — render grafana.ini
+  ansible.builtin.template:
+    src: grafana.ini.j2
+    dest: "{{ gv_config_path }}"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify: restart grafana-server
+
+- name: grafana — render datasource provisioning
+  ansible.builtin.template:
+    src: provisioning-datasources.yml.j2
+    dest: "{{ gv_provisioning_dir }}/datasources/prometheus.yml"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
+- name: grafana — render dashboard provider
+  ansible.builtin.template:
+    src: provisioning-dashboards.yml.j2
+    dest: "{{ gv_provisioning_dir }}/dashboards/faas.yml"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
+- name: grafana — drop faas-fleet dashboard JSON
+  ansible.builtin.copy:
+    src: faas-fleet.json
+    dest: "{{ gv_dashboards_dir }}/faas-fleet.json"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
+- name: grafana — install systemd unit
+  ansible.builtin.copy:
+    src: grafana-server.service
+    dest: /etc/systemd/system/grafana-server.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - daemon-reload
+    - restart grafana-server
+
+# dev_mode: drop the unit but do not enable — production hosts that
+# forget to set the admin password won't accidentally start a broken
+# Grafana admin surface.
+- name: grafana — enable + start service (production only)
+  ansible.builtin.service:
+    name: grafana-server
+    enabled: true
+    state: started
+  register: gv_svc
+  when: not gv_dev_mode | bool
+
+- name: grafana — dev mode: skip service start
+  ansible.builtin.debug:
+    msg: >-
+      gv_dev_mode=true; grafana-server.service NOT enabled. Run with
+      -e gv_dev_mode=false and an operator-provisioned admin password
+      file (gv_admin_password_file, mode 0400, owner grafana) to
+      enable production.
+  when: gv_dev_mode | bool

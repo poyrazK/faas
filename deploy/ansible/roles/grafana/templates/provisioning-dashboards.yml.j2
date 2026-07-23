@@ -1,0 +1,20 @@
+# Dashboard file provisioning. The file provider scans
+# {{ gv_dashboards_dir }} every 30s for changes; the role's
+# `reload grafana provisioning` handler POSTs the explicit reload
+# endpoint on every JSON copy so a fresh deploy doesn't wait the full
+# poll window. Folder: faas puts the §12 fleet dashboard in its own
+# folder (no mixing with operator-imported dashboards). disableDeletion
+# guards against an operator accidentally nuking the canonical panel
+# set; re-import is a `make bootstrap` away.
+apiVersion: 1
+
+providers:
+  - name: faas-fleet
+    folder: faas
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: {{ gv_dashboards_dir }}
+      foldersFromFilesStructure: false

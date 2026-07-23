@@ -1,0 +1,57 @@
+# grafana — defaults (spec §12 SLO dashboard pipeline, ADR-031).
+#
+# Mirrors deploy/ansible/roles/prometheus/defaults/main.yml shape:
+# version + checksum pin the binary so a supply-chain compromise
+# produces a fail-fast assert, not a silent swap.
+#
+# Why install Grafana here, given the spec line 410 historically said
+# "Grafana Cloud free tier": the box already self-hosts Prometheus +
+# Alertmanager. A third-party account on a managed service breaks the
+# "one box" architectural commitment (CLAUDE.md §11 + §Component
+# ownership) and creates a credential surface the rest of the role set
+# doesn't have. ADR-031 makes this an explicit, accepted deviation
+# rather than a silent architecture change.
+#
+# Install path: apt from packages.grafana.com. Ubuntu 24.04's apt
+# repository lags Grafana by ~6 months (same precedent as the
+# Prometheus role's tarball install); the official apt repo is the
+# canonical, in-distro path. apt's GPG chain authenticates the
+# repository + .deb; the SHA-256 assert on the installed binary is
+# defence-in-depth — it catches a compromised mirror even with valid
+# apt signatures. The role fails closed if gv_release_sha256 is the
+# placeholder, same pattern as prom_release_sha256.
+#
+# Bind discipline: gv_listen_addr must be a loopback (127/8) or
+# management-bridge (10.0.0.0/24) address on port 3000. Off-box
+# public binds would expose the admin surface (Grafana basic auth
+# + provisioning write API) over plaintext. Asserted at task time.
+
+gv_version: "11.3.1"
+# SHA-256 of grafana-<version>.linux-amd64.tar.gz (or of the
+# installed /usr/sbin/grafana-server binary after apt install).
+# Compute with: `sha256sum /usr/sbin/grafana-server` on the
+# provisioning host. The role asserts against this value before
+# any templates render.
+gv_release_sha256: "REPLACE_WITH_SHA256_OF_v11.3.1_GRAFANA_SERVER"
+gv_listen_addr: "10.0.0.1:3000"
+gv_data_dir: /var/lib/grafana
+gv_config_path: /etc/grafana/grafana.ini
+gv_provisioning_dir: /etc/grafana/provisioning
+gv_dashboards_dir: /var/lib/grafana/dashboards
+
+# Admin password is read from a file (Grafana's native `*_FILE`
+# indirection via GF_SECURITY_ADMIN_PASSWORD__FILE) so the secret
+# never enters Ansible vars or the rendered config. Same precedent as
+# the alertmanager secret files (gap G2 lean §17, sealed at rest).
+# Mode 0400, owner grafana:grafana — asserted before systemd enable.
+gv_admin_password_file: ""
+
+# Internal Prometheus address Grafana queries. Defaults to the local
+# bridge bind (same one the operator dials to reach Prometheus) so the
+# datasource target stays inside the management plane.
+gv_prom_url: "http://10.0.0.1:9090"
+
+# When true, the role skips the admin-password-file permission assert
+# and the systemd service start. dev/CI hosts set this to true so
+# `make bootstrap` completes without operator-provisioned secrets.
+gv_dev_mode: false

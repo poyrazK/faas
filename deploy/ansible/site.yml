@@ -45,3 +45,4 @@
     - role: node_exporter    # host-level telemetry for §12 dashboard
     - role: alertmanager     # §12 notification path; prometheus.service After= this
     - role: prometheus       # scrape config + service for §12 dashboard
+    - role: grafana          # §12 dashboard surface (ADR-031; grafana.service After= prometheus)
