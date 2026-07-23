@@ -8,8 +8,11 @@
   - `builderd_ops_total{op="build",code}` — the reused ADR-015 counter.
     `code ∈ {ok, cache_hit, oom, timeout, user_error, infra}` (the last
     four are the `state.FailureClass` string values verbatim).
-  - `builderd_build_duration_seconds` — a new **unlabelled** histogram,
-    buckets `{5, 15, 30, 60, 120, 240, 360, 480, 600}` (seconds).
+  - `builderd_build_duration_seconds` — a new histogram labelled by
+    `outcome ∈ {cache_hit, ok, failed}`, buckets `{5, 15, 30, 60, 120, 240,
+    360, 480, 600}` (seconds). The label lets the §12 panels slice out
+    cache hits (< 1 s) from real-build latency — without it the fleet
+    p50/p95 is dominated by cache noise.
   - `builderd_build_queue_wait_seconds` — a new **unlabelled** histogram,
     buckets `{1, 5, 15, 30, 60, 120, 300, 600}` (seconds).
 
@@ -33,10 +36,13 @@
   - `ProcessOne` observes queue-wait once (right after mark-running, so
     only builds that actually dequeued count) and build duration via a
     `defer` (covering every terminal return — success, cache hit, failure
-    — exactly once). The `ops_total{op="build",code}` counter is
-    incremented inside the `markSucceeded`/`markFailed` funnels, which are
-    the single choke points for every terminal path; `markSucceeded` grew
-    a `code` arg to distinguish `ok` from `cache_hit`.
+    — exactly once). The deferred observe reads a `durationOutcome`
+    variable set by the `markSucceeded`/`markFailed` funnels (the
+    single choke points for every terminal path): `markSucceeded` sets it
+    to the same `code` it passes to the counter (`ok` or `cache_hit`);
+    `markFailed` sets it to `"failed"`. The `ops_total{op="build",code}`
+    counter is incremented in the same funnels. `markSucceeded` grew a
+    `code` arg to distinguish `ok` from `cache_hit`.
   - All observer methods (`ObserveBuildCount`, `ObserveBuildDuration`,
     `ObserveBuildQueueWait`) are **nil-safe** so the many builderd unit
     tests that call `New(...)` without metrics keep working unchanged.
@@ -57,7 +63,10 @@
   - **Label the duration/queue-wait histograms by framework or plan.**
     Multiplies cardinality without making the §12 panels (which aggregate
     fleet-wide) more actionable. The counter's `code` label already
-    carries the only cut the SLO needs.
+    carries the only cut the SLO needs. (We DID add a 3-value `outcome`
+    label on the duration histogram — see below — because cache hits run
+    sub-second and would otherwise drown real-build latency in the p95
+    panel. Cardinality stays bounded at 3 × 9 buckets = 27 series.)
   - **Keep the vmmd cold-boot proxy for the SLO.** It measures wake
     success, not build success — a category error on a public status page.
   - **New frozen metric names `builderd_build_total{result}`.** Rejected
@@ -70,7 +79,7 @@
 | Name | Type | Labels |
 |---|---|---|
 | `builderd_ops_total` | counter | `op="build"`, `code ∈ {ok, cache_hit, oom, timeout, user_error, infra}` |
-| `builderd_build_duration_seconds` | histogram | none |
+| `builderd_build_duration_seconds` | histogram | `outcome ∈ {cache_hit, ok, failed}` |
 | `builderd_build_queue_wait_seconds` | histogram | none |
 
 ## Cross-reference

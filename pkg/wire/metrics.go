@@ -57,9 +57,12 @@ type OpsMetrics struct {
 	// on the single guaranteed builder slot. Same precedent as
 	// stripePushDur (ADR-027): control-plane buckets are wrong for these
 	// multi-second/multi-minute ops. Success/failure classification stays
-	// on the shared ops counter as ops_total{op="build",code}; these two
-	// only carry the timing distribution.
-	buildDur       prometheus.Histogram
+	// on the shared ops counter as ops_total{op="build",code}; the duration
+	// histogram carries an `outcome` label ({cache_hit,ok,failed}) so the
+	// §12 panels can slice cleanly — cache hits run <1 s and would
+	// otherwise drown the real-build p50/p95 in cache-hit noise. The queue-
+	// wait histogram is unlabelled (every observation has the same shape).
+	buildDur       *prometheus.HistogramVec
 	buildQueueWait prometheus.Histogram
 }
 
@@ -99,13 +102,19 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// 60 s ceiling = documented API timeout.
 		Buckets: []float64{0.5, 1, 2, 5, 10, 20, 30, 45, 60},
 	}, []string{"result"})
-	buildDur := prometheus.NewHistogram(prometheus.HistogramOpts{
+	buildDur := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_build_duration_seconds",
-		Help: "Wall-clock duration of a builder-VM build, in seconds (ADR-030). Covers every terminal path incl. cache hits; success/failure classification lives on ops_total{op=\"build\",code}.",
+		Help: "Wall-clock duration of a builder-VM build, in seconds (ADR-030). Labelled by outcome {cache_hit,ok,failed} so the §12 panels can slice out cache-hit noise (<1 s); success/failure classification lives on ops_total{op=\"build\",code}.",
 		// Sized for the build envelope: cache hits land in seconds, real
 		// builds run up to the 10-min (600 s) BuildTimeoutSeconds cap.
 		Buckets: []float64{5, 15, 30, 60, 120, 240, 360, 480, 600},
-	})
+	}, []string{"outcome"})
+	// Pre-instantiate every outcome label so the histogram's HELP/TYPE and
+	// zero-valued buckets surface in /metrics from boot (ADR-030, same
+	// precedent as the stripe-push histogram pre-instantiation above).
+	for _, outcome := range []string{"cache_hit", "ok", "failed"} {
+		buildDur.WithLabelValues(outcome)
+	}
 	buildQueueWait := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: prefix + "_build_queue_wait_seconds",
 		Help: "Seconds a build waited between enqueue (apid) and dequeue (builderd start), spec §12 target < 60 s, warn > 300 s (ADR-030).",
@@ -211,15 +220,15 @@ func (m *OpsMetrics) ObserveBuildCount(code string) {
 }
 
 // ObserveBuildDuration records one build's wall-clock duration in the
-// build-sized <daemon>_build_duration_seconds histogram (ADR-030).
-// Deliberately NOT ObserveCode: that also feeds the control-plane dur
-// histogram whose 5 s ceiling is wrong for a 10-min build. Safe on a nil
-// receiver.
-func (m *OpsMetrics) ObserveBuildDuration(dur time.Duration) {
+// build-sized <daemon>_build_duration_seconds histogram (ADR-030),
+// labelled by outcome ∈ {cache_hit,ok,failed}. Deliberately NOT ObserveCode:
+// that also feeds the control-plane dur histogram whose 5 s ceiling is
+// wrong for a 10-min build. Safe on a nil receiver.
+func (m *OpsMetrics) ObserveBuildDuration(outcome string, dur time.Duration) {
 	if m == nil {
 		return
 	}
-	m.buildDur.Observe(dur.Seconds())
+	m.buildDur.WithLabelValues(outcome).Observe(dur.Seconds())
 }
 
 // ObserveBuildQueueWait records how long a build sat between enqueue

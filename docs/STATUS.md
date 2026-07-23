@@ -169,7 +169,7 @@ spinner) and PR #51 (the closeout batch):
   `deploy/ansible/roles/prometheus/templates/prometheus.yml.j2`.
   Grafana dashboard export at `deploy/grafana/faas-fleet.json`.
   **Build metrics (ADR-030):** `builderd_ops_total{op="build",code}`,
-  `builderd_build_duration_seconds`, `builderd_build_queue_wait_seconds`
+  `builderd_build_duration_seconds{outcome}`, `builderd_build_queue_wait_seconds`
   now emit from the build lifecycle, and `apid /status` computes the
   build-success SLO from real build data instead of the old vmmd
   cold-boot proxy (which measured wake, not build).

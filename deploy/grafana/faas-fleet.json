@@ -241,6 +241,44 @@
           }
         }
       }
+    },
+    {
+      "type": "timeseries",
+      "title": "Build duration p95 (by outcome)",
+      "id": 10,
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Per-outcome p95 build wall-clock time. cache_hit should stay <5s; ok is the real-build latency up to the 600s BuildTimeoutSeconds cap; failed mixes vm-spawn-fail + spawn-ok-but-vm-failed.",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(builderd_build_duration_seconds_bucket{outcome=\"ok\"}[5m])) by (le))",
+          "legendFormat": "ok",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(builderd_build_duration_seconds_bucket{outcome=\"cache_hit\"}[5m])) by (le))",
+          "legendFormat": "cache_hit",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(builderd_build_duration_seconds_bucket{outcome=\"failed\"}[5m])) by (le))",
+          "legendFormat": "failed",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 60},
+              {"color": "red", "value": 300}
+            ]
+          }
+        }
+      }
     }
   ],
   "refresh": "30s",

@@ -31,6 +31,7 @@ the bridge IP. No remote source — the dashboard is single-box.
 | Wake rate | `gateway_requests_total` | — (operator sanity) |
 | Build success rate (non-user_error) | `builderd_ops_total{op="build"}` | build success |
 | Build queue wait p95 | `builderd_build_queue_wait_seconds` | build queue wait p95 |
+| Build duration p95 (by outcome) | `builderd_build_duration_seconds` | per-outcome wall-clock |
 
 ## Deferred rows
 
