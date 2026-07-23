@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -58,11 +59,19 @@ type QuotaAction struct {
 // `invoice.payment_succeeded` updates accounts.status to `active` already
 // (apid handler), so meterd's job on Free is to keep RAM off the box until
 // the customer pays — i.e. suspend and stay suspended.
+//
+// TODO(M7-followup): collapse this 9-positional signature into a
+// QuotaParams struct when adding the next collaborator. The first
+// follow-up to land already pushed past 7 args; the next one shouldn't
+// have to thread a 10th positional through six call sites in
+// pkg/meter/meter_test.go + pkg/meter/loop.go. DunningParams / RunParams
+// are the precedent.
 func EnforceQuota(
 	ctx context.Context,
 	store state.Store,
 	notif Notifier,
 	schedd ScheddParker,
+	mailer DunningSender, // shared local interface (mirrors dunning.go)
 	log *slog.Logger,
 	account state.Account,
 	usedGB float64,
@@ -126,6 +135,21 @@ func EnforceQuota(
 		})
 		if err := notif.Notify(ctx, db.NotifyQuotaWarning, string(payload)); err != nil {
 			log.Warn("meter: notify quota_warning", "err", err)
+		}
+		// Customer-facing mail (spec §171 "dunning + quota mails
+		// reference email"). The dedupe stamp above guards both
+		// the pg_notify and the email — same-day re-tick produces
+		// zero of each. Send errors are warn-logged but never
+		// surfaced as a quota-loop error: a transient SMTP failure
+		// shouldn't fail the loop tick and re-fire the rest of the
+		// account sweep.
+		subject, body := mail.QuotaWarningBody(account.Email, string(account.Plan),
+			usedGB, res.QuotaGB, today)
+		if err := mailer.Send(ctx, mail.Message{
+			To: []string{account.Email}, Subject: subject, TextBody: body,
+		}); err != nil {
+			log.Warn("meter: quota warning mail",
+				"account", account.ID, "err", err)
 		}
 		log.Info("meter: paid-tier quota warning", "account", account.ID, "used_gb", usedGB, "quota_gb", res.QuotaGB)
 	}

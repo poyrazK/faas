@@ -202,6 +202,7 @@ func newHealthFixture(t *testing.T, withDunning bool) (*meter.Loop, *meter.Confi
 		&fakeParker{},
 		nil,
 		&fakeNotifier{},
+		nil, // mailer — nil coerces to noopDunningSender in NewLoop
 		dunning,
 		func() time.Time { return now },
 		discardLog(),

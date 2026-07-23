@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -62,6 +63,29 @@ func (p *fakeParker) ParkInstance(_ context.Context, instanceID, reason string) 
 	defer p.mu.Unlock()
 	p.parked = append(p.parked, parkedCall{InstanceID: instanceID, Reason: reason})
 	return p.parkErr
+}
+
+// fakeMailer records every Send call so quota tests can assert on the
+// customer-facing email surface (dedupe gate, body shape). Mirrors
+// fakeNotifier/fakeParker; satisfies meter.DunningSender's local
+// interface (Send(ctx, mail.Message) error).
+type fakeMailer struct {
+	mu      sync.Mutex
+	sent    []mail.Message
+	sendErr error
+}
+
+func (m *fakeMailer) Send(_ context.Context, msg mail.Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sent = append(m.sent, msg)
+	return m.sendErr
+}
+
+func (m *fakeMailer) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.sent)
 }
 
 // makeAccount returns an active account with the given plan. MemStore
@@ -311,6 +335,7 @@ func TestFreeHardStop(t *testing.T) {
 
 	notif := &fakeNotifier{}
 	parker := &fakeParker{}
+	mailer := &fakeMailer{}
 
 	usages, err := s.UsageByMonth(ctx, acct.ID, month)
 	if err != nil {
@@ -320,7 +345,7 @@ func TestFreeHardStop(t *testing.T) {
 	if usedGB < float64(api.PlanFree.PlanIncludedGBHours()) {
 		t.Fatalf("usedGB = %.4f, want ≥ 5.0", usedGB)
 	}
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, discardLog(), acct, usedGB, now); err != nil {
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, discardLog(), acct, usedGB, now); err != nil {
 		t.Fatalf("enforce: %v", err)
 	}
 
@@ -376,7 +401,8 @@ func TestPaidOverageNoStop(t *testing.T) {
 
 	notif := &fakeNotifier{}
 	parker := &fakeParker{}
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, discardLog(), acct, usedGB, now); err != nil {
+	mailer := &fakeMailer{}
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, discardLog(), acct, usedGB, now); err != nil {
 		t.Fatalf("enforce: %v", err)
 	}
 
@@ -424,30 +450,40 @@ func TestPaidOverageDedupesPerDay(t *testing.T) {
 
 	notif := &fakeNotifier{}
 	parker := &fakeParker{}
+	mailer := &fakeMailer{}
 	log := discardLog()
 
 	// Tick 1: first warning of the day.
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day1Hour1); err != nil {
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, log, acct, usedGB, day1Hour1); err != nil {
 		t.Fatalf("tick 1: %v", err)
 	}
 	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 1 {
 		t.Fatalf("tick 1: quota_warning = %d, want 1", len(warns))
 	}
+	if n := mailer.count(); n != 1 {
+		t.Fatalf("tick 1: mailer.sent = %d, want 1 (first day warning must email)", n)
+	}
 
 	// Tick 2: same UTC day — must NOT emit a second warning.
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day1Hour2); err != nil {
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, log, acct, usedGB, day1Hour2); err != nil {
 		t.Fatalf("tick 2: %v", err)
 	}
 	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 1 {
 		t.Fatalf("tick 2: quota_warning = %d, want 1 (same-day repeat must dedupe)", len(warns))
 	}
+	if n := mailer.count(); n != 1 {
+		t.Errorf("tick 2: mailer.sent = %d, want 1 (same-day repeat must dedupe)", n)
+	}
 
 	// Tick 3: next UTC day — fresh warning.
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day2Hour1); err != nil {
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, log, acct, usedGB, day2Hour1); err != nil {
 		t.Fatalf("tick 3: %v", err)
 	}
 	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 2 {
 		t.Fatalf("tick 3: quota_warning = %d, want 2 (next-day must emit a fresh warning)", len(warns))
+	}
+	if n := mailer.count(); n != 2 {
+		t.Errorf("tick 3: mailer.sent = %d, want 2 (next-day must email)", n)
 	}
 
 	// ClearQuotaWarning (apid's payment_succeeded hook) lets the next
@@ -456,11 +492,14 @@ func TestPaidOverageDedupesPerDay(t *testing.T) {
 	if err := s.ClearQuotaWarning(ctx, acct.ID); err != nil {
 		t.Fatalf("ClearQuotaWarning: %v", err)
 	}
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day2Hour1); err != nil {
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, log, acct, usedGB, day2Hour1); err != nil {
 		t.Fatalf("tick 4: %v", err)
 	}
 	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 3 {
 		t.Fatalf("tick 4 (post-Clear): quota_warning = %d, want 3", len(warns))
+	}
+	if n := mailer.count(); n != 3 {
+		t.Errorf("tick 4 (post-Clear): mailer.sent = %d, want 3", n)
 	}
 }
 
