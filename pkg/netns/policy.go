@@ -62,6 +62,19 @@ type HostPolicy struct {
 	// 22 (sshd ops), 80 (CertMagic HTTP-01 for Pro), 443 (HTTPS). Everything
 	// else on the public IFace is dropped by the input chain's `policy drop`.
 	InputAllowTCPPorts []int
+
+	// MasqueradeCIDR is the source-address set the postrouting nat chain
+	// MASQUERADEs to the host's public IP on its way out PublicIface. Must be
+	// the NETWORK form of HostBridgeCIDR (e.g. "10.100.0.0/16", not the host
+	// IP ".1" form) — every bridged tenant VM's source falls in this range
+	// because pkg/fcvm/alloc.go hands out 10.100.0.2+, never .1 (the
+	// allocator reserves slot 0 for the bridge itself). Without this rule
+	// the per-netns SNAT translates the guest source to 10.100.x.y, but no
+	// root-ns rule rewrites that to the public IP — the public internet
+	// has no route back to 10.100.x.y, so every bidirectional flow (TCP /
+	// HTTPS / DNS replies) dies at the first SYN-ACK or A-record.
+	// Tier-1 of the network roadmap.
+	MasqueradeCIDR string
 }
 
 // DefaultHostPolicy is the platform-wide host nftables policy. Source of
@@ -98,6 +111,14 @@ var DefaultHostPolicy = HostPolicy{
 	ForwardDenyTCPPorts: []int{25, 465, 587},
 
 	InputAllowTCPPorts: []int{22, 80, 443},
+
+	// Tenant source CIDR the postrouting nat chain MASQUERADEs. Network
+	// form of HostBridgeCIDR — every bridged tenant VM's host-side IP
+	// (10.100.x.y, x.y ≥ 0.2) falls in this range; the bridge IP (.1) is
+	// ruled out by the allocator in pkg/fcvm/alloc.go, so this CIDR
+	// exactly matches "tenant-originated, not the host" once routed out
+	// PublicIface. See HostPolicy.MasqueradeCIDR doc for why this exists.
+	MasqueradeCIDR: "10.100.0.0/16",
 }
 
 // Render produces the full /etc/nftables.conf body, including the shebang
@@ -111,7 +132,7 @@ var DefaultHostPolicy = HostPolicy{
 // for vmmd's own outbound).
 //
 // Order matters in `forward`: the §11 denylist MUST come BEFORE the
-// `iif BridgeName oifname PublicIface accept` allow, otherwise bridged
+// `iifname BridgeName oifname PublicIface accept` allow, otherwise bridged
 // tenant traffic matches the broad allow on its first rule and never
 // reaches the SMTP / RFC1918 / IPv6 drops (nftables is first-match).
 // The per-netns chain (`pkg/netns/config.go::NftCommands`) is the primary
@@ -123,15 +144,19 @@ var DefaultHostPolicy = HostPolicy{
 // otherwise hit the new RFC1918 drop. v4 deny must stay directly above
 // v6 deny — see ADR-023.
 func (h HostPolicy) Render() string {
-	if h.BridgeName == "" || h.PublicIface == "" {
-		// Hard fail rather than render a broken ruleset — a forward chain
-		// without iif/oif or an input chain with no allowlist would silently
-		// drop everything.
-		panic("netns: HostPolicy.Render: BridgeName and PublicIface are required")
+	if h.BridgeName == "" || h.PublicIface == "" || h.MasqueradeCIDR == "" {
+		// Hard fail rather than render a broken ruleset. Concretely, an
+		// empty MasqueradeCIDR would emit `ip saddr  oifname "eth0"
+		// masquerade` — invalid nft(8) syntax (`saddr` requires an
+		// argument) that `nft -f` rejects outright. The ruleset would
+		// never load; we'd ship a box that fails open at the egress
+		// layer. The forward/input empty-field paths silently drop
+		// everything once loaded — equally broken, also panic-worthy.
+		panic("netns: HostPolicy.Render: BridgeName, PublicIface, and MasqueradeCIDR are required")
 	}
 
-	denyCIDRs := strings.Join(h.ForwardDenyCIDRs, " ")
-	denyIPv6CIDRs := strings.Join(h.ForwardDenyIPv6CIDRs, " ")
+	denyCIDRs := strings.Join(h.ForwardDenyCIDRs, ",")
+	denyIPv6CIDRs := strings.Join(h.ForwardDenyIPv6CIDRs, ",")
 	denyPorts := joinInts(h.ForwardDenyTCPPorts, ",")
 	allowPorts := joinInts(h.InputAllowTCPPorts, ",")
 
@@ -163,11 +188,16 @@ func (h HostPolicy) Render() string {
 	fmt.Fprintf(&b, "    tcp dport { %s } drop\n", denyPorts)
 	fmt.Fprintf(&b, "    ip daddr { %s } drop\n", denyCIDRs)
 	fmt.Fprintf(&b, "    ip6 daddr { %s } drop\n", denyIPv6CIDRs)
-	fmt.Fprintf(&b, "    iif %q oifname %q accept\n", h.BridgeName, h.PublicIface)
+	fmt.Fprintf(&b, "    iifname %q oifname %q accept\n", h.BridgeName, h.PublicIface)
 	b.WriteString("  }\n")
 	b.WriteString("\n")
 	b.WriteString("  chain output {\n")
 	b.WriteString("    type filter hook output priority 0; policy accept;\n")
+	b.WriteString("  }\n")
+	b.WriteString("\n")
+	b.WriteString("  chain postrouting {\n")
+	b.WriteString("    type nat hook postrouting priority srcnat; policy accept;\n")
+	fmt.Fprintf(&b, "    ip saddr %s oifname %q masquerade\n", h.MasqueradeCIDR, h.PublicIface)
 	b.WriteString("  }\n")
 	b.WriteString("}\n")
 	return b.String()

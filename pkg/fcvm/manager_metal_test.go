@@ -688,3 +688,115 @@ func (m *Manager) liveInstances() []*Instance {
 	}
 	return out
 }
+
+// TestMetalGuestEgressToPublicViaMASQUERADE is the tier-1 of the network
+// roadmap regression: a guest, running inside Firecracker and routed out
+// the bridged-tenant path, must reach the public internet. The host MASQUERADE
+// in pkg/netns/policy.go's table inet faas postrouting chain is the move
+// that closes this path end-to-end; this test fails immediately if it
+// regresses (or any of {ip_forward, persistent bridge, host ruleset load}
+// shipped in this PR).
+//
+// Why not just `ip netns exec <ns> curl …`: that probe enters the *host*
+// net namespace, not the guest OS. It proves the host's per-netns SNAT
+// plus default route, but skips tap0 entirely and never hits the per-netns
+// `iifname tap0` deny rules. Only a guest-OS probe exercises the full
+// path a tenant app will use. See egress_ext4_metal_test.go's package
+// doc for the full reasoning.
+//
+// Fixture: ensureEgressGuestExt4 builds a one-off busybox rootfs whose
+// /init is a shell script that (1) writes the guest's default route,
+// (2) optionally fetches $FAAS_TEST_EGRESS_URL, (3) attempts SMTP to
+// 8.8.8.8:25 (must time out), then (4) `exec busybox httpd -f -p 8080 -h
+// /var/www` so the host test can fetch the three result files through
+// the existing DNAT path (TestMetalDNATPublishedToGuestPort already
+// proves the DNAT publishes :8080 from the guest to the host identity).
+//
+// Cleanup contract: t.Cleanup runs Destroy under a fresh context
+// (NOT the test ctx, which is cancelled on test failure) so a t.Fatal
+// mid-assertion still tears down netns/jail/cgroup. Mirrors the
+// "manager_metal_test.go:292-295" teardown pattern.
+func TestMetalGuestEgressToPublicViaMASQUERADE(t *testing.T) {
+	kernel, _, _ := metalImages(t)
+	m := newMetalManager(t, kernel)
+	withCgroupRootAt(t, "/sys/fs/cgroup")
+	egressImg := ensureEgressGuestExt4(t, t.TempDir())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	inst, err := m.ColdBoot(ctx, ColdBootRequest{
+		Instance:   "egress",
+		BaseKey:    egressImg,
+		LayerKey:   egressImg,
+		VcpuCount:  2,
+		MemSizeMiB: 128,
+	})
+	if err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	// Register Destroy under a fresh, non-cancelled context. t.Cleanup
+	// runs after test goroutines return AND after Fatalf, so even when
+	// the assertions below panic-fire, the netns/jail/cgroup still drop.
+	// Using context.Background (not ctx) is the load-bearing detail — `ctx`
+	// is already past its 45s deadline by the time we get here if e.g.
+	// the public wget blocks.
+	t.Cleanup(func() {
+		teardownCtx, teardownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer teardownCancel()
+		if err := m.Destroy(teardownCtx, "egress"); err != nil {
+			t.Errorf("destroy cleanup: %v", err)
+		}
+		leakcheck.AssertZero(t)
+	})
+
+	hostIP := inst.Lease.HostIP.String()
+
+	// Probe 1: the guest's own default route. Must point at the inner-
+	// tenant gateway (10.0.0.1), NOT the host bridge (10.100.0.1) — the
+	// guest doesn't know about the bridge; that's the per-netns's job.
+	route := fetchEgressResult(t, hostIP, "result/route")
+	wantRoute := "default via 10.0.0.1 dev eth0"
+	if !strings.Contains(route, wantRoute) {
+		t.Errorf("guest default route: got %q, want substring %q", route, wantRoute)
+	}
+	if strings.Contains(route, "no-ip") {
+		t.Fatalf("busybox `ip` applet missing — this build can't run the egress regression. Install busybox-static (full) on the runner.")
+	}
+
+	// Probe 2: public HTTP egress via the bridged-tenant path. Skipped
+	// when FAAS_TEST_EGRESS_URL is unset so hermetic dev (Lima/airgapped)
+	// still runs the route + SMTP probes. A sensible URL (stable, plain-
+	// text HTTP, no TLS, no DNS) is the operator's responsibility — see
+	// the PR description for one such URL. The load-bearing assertion is
+	// `wget rc=0`: a full TCP handshake + headers + body round-trip
+	// through the bridged-tenant + host MASQUERADE + ip_forward path.
+	// Body presence is a sanity check; we do NOT pin a literal `HTTP/`
+	// prefix because busybox httpd's response line has that, but a real
+	// public server's HTML response does not.
+	if egressURL := os.Getenv("FAAS_TEST_EGRESS_URL"); egressURL != "" {
+		publicExit := fetchEgressResult(t, hostIP, "result/public-exit")
+		if !strings.Contains(publicExit, "rc=0") {
+			t.Errorf("wget exited non-zero (%q) — host MASQUERADE or ip_forward likely regressed", publicExit)
+		}
+		public := fetchEgressResult(t, hostIP, "result/public")
+		if strings.TrimSpace(public) == "" {
+			t.Errorf("public egress body is empty; fetch produced no body")
+		}
+	} else {
+		t.Logf("FAAS_TEST_EGRESS_URL unset — skipping public egress probe (runbook smoke only). Set to a stable plain-text HTTP URL for full coverage.")
+	}
+
+	// Probe 3: SMTP egress must be dropped. The §11 denylist is enforced
+	// at TWO layers — per-netns (iifname tap0) and host (forward chain).
+	// This test exercises the guest origin so we hit the per-netns drop
+	// first. The result body is the literal string "smtp-dropped",
+	// captured by `set +e` + busybox echo on nc's nonzero exit.
+	smtp := fetchEgressResult(t, hostIP, "result/smtp")
+	if !strings.Contains(smtp, "smtp-dropped") {
+		t.Errorf("SMTP to 8.8.8.8:25 not dropped at guest origin; body: %q (want contains `smtp-dropped`)", smtp)
+	}
+	if strings.Contains(smtp, "smtp-ok") {
+		t.Fatalf("§11 SMTP drop regression — guest reached 8.8.8.8:25 (per-netns layer should have dropped)")
+	}
+}

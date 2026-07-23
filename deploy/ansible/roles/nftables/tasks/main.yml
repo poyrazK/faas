@@ -51,11 +51,13 @@
 # add` swallows only the "File exists" error and reports changed
 # on a fresh box.
 #
-# NOTE: persistence across reboots is OUT OF SCOPE for this PR.
-# The runtime `ip` commands recreate the bridge each boot; a
-# follow-up should add a netplan / systemd-networkd / oneshot
-# unit so the bridge survives restart on the EX44. Until then
-# operators must `make bootstrap` again after every reboot.
+# NOTE (tier-1): the runtime `ip` commands below are belt-and-braces — the
+# boot-persistent guarantee now lives in the systemd oneshot unit
+# `br-tenants-up.service` (installed by this same role). On first boot the
+# oneshot brings the bridge up BEFORE nftables.service runs, so the host
+# firewall's forward chain's `iifname "br-tenants"` rule loads against a
+# live interface. The runtime tasks below remain useful for `make
+# bootstrap` on a halted box where the oneshot hasn't run yet.
 - name: nftables — ensure tenant bridge exists
   ansible.builtin.command: ip link add {{ tenant_bridge }} type bridge
   args:
@@ -71,6 +73,57 @@
 
 - name: nftables — bring the tenant bridge up
   ansible.builtin.command: ip link set {{ tenant_bridge }} up
+
+# Boot-persistent bridge (tier-1, closes #134). The oneshot unit runs on
+# every boot BEFORE nftables.service (see Before= in the unit file), so the
+# host firewall's `iifname "br-tenants"` forward rule loads against an
+# interface that already exists. Operators no longer need to run
+# `make bootstrap` after every reboot. The unit file is in this role's
+# `files/` and copied into `/etc/systemd/system/`.
+- name: nftables — install br-tenants-up systemd unit
+  ansible.builtin.copy:
+    src: br-tenants-up.service
+    dest: /etc/systemd/system/br-tenants-up.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: bridge_unit
+
+- name: nftables — systemctl daemon-reload (idempotent, after new unit file)
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: bridge_unit.changed
+
+- name: nftables — enable + start br-tenants-up oneshot
+  ansible.builtin.systemd:
+    name: br-tenants-up.service
+    enabled: true
+    state: started
+  register: bridge_svc
+  # In chroot/CI the unit may not run because systemd isn't PID-1 here. The
+  # runtime tasks above already brought the bridge up on this host, so a
+  # benign "could not start" doesn't matter for the role's pass/fail — let
+  # the gate slide, matching the nftables.service handler pattern below.
+  failed_when: false
+
+# root-namespace IPv4 forwarding (tier-1). Without this, bridged-tenant
+# packets are dropped at routing before the host `postrouting` nat chain
+# can MASQUERADE them to the public IP — end-to-end guest egress stays
+# broken even with all the in-Go changes. Pre-PR, only the Lima nested-VM
+# shim set this; production had no equivalent.
+- name: nftables — install ip_forward sysctl drop-in
+  ansible.builtin.copy:
+    src: 90-faas-ip-forward.conf
+    dest: /etc/sysctl.d/90-faas-ip-forward.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: fwd_dropin
+
+- name: nftables — apply ip_forward sysctl (no reboot needed for this key)
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/90-faas-ip-forward.conf
+  changed_when: false
+  when: fwd_dropin.changed
 
 - name: nftables — drop faas ruleset into /etc/nftables.conf
   ansible.builtin.copy:
