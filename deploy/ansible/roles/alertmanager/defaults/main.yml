@@ -1,0 +1,32 @@
+# alertmanager — defaults (spec §12 alert notification path).
+#
+# Mirrors deploy/ansible/roles/prometheus/defaults/main.yml shape:
+# version + checksum pin the binary so a supply-chain compromise
+# produces a fail-fast assert, not a silent swap.
+#
+# Why Alertmanager and not Grafana alerting: spec §12 says
+# "alerting via Grafana → email + Pushover", but the repo has no
+# Grafana provisioning role (deploy/grafana/ has only the dashboard
+# JSON + README). Alertmanager is the canonical Prometheus-side
+# notification path; the same email+Pushover route is what Grafana
+# would call. A future PR can move notification to Grafana-managed
+# once provisioning lands.
+#
+# Receiver secrets (SMTP password, Pushover token) are loaded via
+# `_FILE` indirection from disk paths, not env vars. Same precedent
+# as FAAS_HOST_AGE_RECIPIENT_PATH (gap G2 lean §17 — sealed at rest).
+# Operator provisions these files; the role logs a clear error and
+# `failed_when: false` on the service start so dev/CI hosts that
+# don't page still complete bootstrap.
+
+am_version: "0.27.0"
+am_listen_addr: "127.0.0.1:9093"
+am_data_dir: /var/lib/alertmanager
+am_config_path: /etc/alertmanager/alertmanager.yml
+am_rules_dir: /etc/prometheus
+am_smtp_password_file: ""   # operator must set; reads am_smtp_password_file content into smtp_password
+am_pushover_token_file: ""  # operator must set; reads am_pushover_token_file content into pushover_token
+am_email_from: "alertmanager@{{ ansible_domain | default('onebox.local') }}"
+am_email_to_warn: "ops-tickets@{{ ansible_domain | default('onebox.local') }}"
+am_email_to_page: "ops-pager@{{ ansible_domain | default('onebox.local') }}"
+am_pushover_user: ""        # operator must set
