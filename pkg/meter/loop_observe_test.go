@@ -37,6 +37,7 @@ func runLoopBrief(t *testing.T, store state.Store, dunning *meter.Dunning) (*met
 		nil, // StripePusher — nil; the pusher returns nil, error "pusher not configured"
 		&fakeNotifier{},
 		dunning,
+		nil, // residency — nil; the gauge emit is exercised by residency_test.go
 		func() time.Time { return time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC) },
 		discardLog(),
 		cfg,
