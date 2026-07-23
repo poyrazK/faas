@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -476,10 +477,19 @@ func (s *server) handler() http.Handler {
 	// in /readyz later. Mirrors pkg/gateway/control.go::ControlMux.
 	mux.HandleFunc("GET /healthz", s.healthz)
 
+	// Spec hosting (anonymous; see pkg/apid/openapi_handler.go).
+	// /v1/openapi.yaml and /v1/openapi.json let SDK codegen and
+	// `curl` reach the same spec the repo CI gate (make spec-check)
+	// keeps the code aligned to.
+	mux.HandleFunc("GET /v1/openapi.yaml", apid.ServeOpenAPISpec)
+	mux.HandleFunc("GET /v1/openapi.json", apid.ServeOpenAPISpecJSON)
+
 	// observeWrap (the outermost layer) feeds apid_ops_total +
 	// apid_op_duration_seconds. It's last so it sees the final
 	// status code from every chain (auth → idempotent → handler).
-	// Nil s.ops (no metrics wired) = no-op passthrough.
+	// Nil s.ops (no metrics wired) = no-op passthrough. Includes
+	// the spec routes above so SDK codegen hits show up on the
+	// §12 dashboard's per-route latency panel.
 	return s.observeWrap(mux)
 }
 

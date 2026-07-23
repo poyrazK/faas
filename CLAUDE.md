@@ -50,7 +50,7 @@ EX44 or a cloud KVM box.
 
 ```
 cmd/{apid,gatewayd,schedd,vmmd,builderd,imaged,meterd,faas}   daemons + CLI (Go)
-pkg/{api,state,fcvm,netns,oci,rootfs,meter,stripex,wire}      shared libs
+pkg/{api,state,fcvm,netns,oci,rootfs,meter,stripex,wire,apid}   shared libs
 pkg/api/limits.go     EVERY plan quota/limit lives in this one table — never inline a limit
 guest/init            static Go PID1 inside every microVM
 guest/runners/{node22,python312}                              function runner shims
