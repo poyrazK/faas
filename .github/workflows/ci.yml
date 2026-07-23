@@ -102,6 +102,25 @@ jobs:
       - name: build
         run: make build
 
+      # promtool check rules — gate for spec §12 alert rules. Downloads
+      # the same Prometheus tarball the ansible role pins
+      # (deploy/ansible/roles/prometheus/defaults/main.yml:prom_version)
+      # so the CI version is the production version. A broken rule
+      # (typo in metric label, bad histogram_quantile, dangling
+      # matcher) breaks the alert at boot, so we lint at PR time
+      # instead of letting the operator find out via a 5 a.m. page
+      # that never fires.
+      - name: promtool check rules
+        run: |
+          set -euo pipefail
+          PROM_VERSION="2.54.1"
+          PROM_TARBALL="prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
+          curl -fsSL -o "/tmp/${PROM_TARBALL}" \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${PROM_TARBALL}"
+          tar -xzf "/tmp/${PROM_TARBALL}" -C /tmp "prometheus-${PROM_VERSION}.linux-amd64/promtool"
+          sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+
       # Daemon smoke: every cmd/<daemon>/main.go is a one-box binary that wires
       # through pkg/wire.Daemon. `--help` must exit 0 with non-empty usage text
       # (a silent success here usually means init() truncated on a bad flag

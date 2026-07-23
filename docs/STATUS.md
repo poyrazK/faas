@@ -182,9 +182,11 @@ spinner) and PR #51 (the closeout batch):
   cold-boot proxy (which measured wake, not build).
 - **§12 public status page** — `apid` serves `GET /status` (static
   HTML, `deploy/statuspage/index.html`) and `GET /status/slo.json`
-  (3 PromQL queries against the local Prometheus with a 30 s
+  (4 PromQL queries against the local Prometheus with a 30 s
   in-process cache and graceful degradation on transient failures;
-  never 5xx the route).
+  never 5xx the route). The fourth query drives the `degraded` flag
+  surfaced by the alert pipeline — see
+  [M8 — alert pipeline](#m8--alert-pipeline--this-pr) below.
 - **§14 restore drill wired** —
   `deploy/scripts/faas-m8-restore-drill.sh` plus WAL-archiving
   knobs in the postgres ansible role. A timed EX44 run (PG + one
@@ -194,6 +196,73 @@ spinner) and PR #51 (the closeout batch):
   constraint.
 
 The §14 M8 gates still on the board are listed in [What's next](#whats-next).
+
+### M8 — alert pipeline. ✅ (this PR)
+
+The §12 dashboard pipeline is wired end-to-end:
+
+- **Alert rules** at `deploy/ansible/roles/prometheus/files/faas.rules.yml`
+  encode the §12 thresholds verbatim — twelve rules under a single
+  `faas_slo` group, three severity tiers (`info` / `warn` / `page`),
+  every annotation carries a `runbook_url:` pointing at the
+  `docs/runbooks/<AlertName>.md` stub index below.
+- **Alertmanager role** at `deploy/ansible/roles/alertmanager/` mirrors
+  the prometheus role's shape (defaults / tasks / templates / handlers /
+  systemd unit), SHA-256-pins the 0.27.0 tarball, and binds 127.0.0.1:9093
+  on loopback only. Secret material (SMTP password, Pushover token)
+  loads via `_FILE` indirection from operator-provisioned files —
+  same precedent as `FAAS_HOST_AGE_RECIPIENT_PATH` (gap G2 lean §17,
+  sealed at rest).
+- **Severity routing:** `info` → no notification (suppressed);
+  `warn` → ticket-only email via `faas-warn` (4 h repeat);
+  `page` → operator email + Pushover via `faas-page` (1 h repeat,
+  `priority: 2` to bypass device quiet hours).
+- **Scrape-config corrections** — PR #132's bind-address defaults
+  (apid 9101, imaged 9102, schedd 9103, vmmd 9104, meterd 9106) plus
+  the sibling-path overrides (`vmmd /metrics/fallback`,
+  `schedd /metrics/fcvm`) so the alert rules' data sources are
+  actually scraped. New jobs added: `builderd 9105`, `githubd 8083`.
+- **Status page degraded flag** — `cmd/apid/status.go::fetch` runs a
+  fourth PromQL
+  `count(ALERTS{alertstate="firing",severity=~"page|warn"}) > 0`
+  alongside the existing three. The boolean lands on
+  `pkg/api.StatusPage.Degraded` and `deploy/statuspage/index.html`
+  renders a red "Service degraded" pill driven by it. The public page
+  now shows prospects and customers the same picture the operator's
+  pager sees.
+
+#### Status page degraded-flag contract
+
+- `Source = "prometheus"` — clean snapshot, no degraded pill.
+- `Source = "degraded: firing alerts"` — at least one warn- or
+  page-severity alert is currently firing; the pill is visible.
+- `Source = "degraded: <error>"` — the full Prometheus pipeline is
+  unreachable; the handler returns the last cached snapshot with the
+  error stringified. Pre-existing graceful-degradation contract from
+  PR #51 (status page must never 5xx during a transient Prometheus
+  hiccup).
+- The alert query failing in isolation (Prometheus reachable but
+  `ALERTS{}` not yet populated, e.g. on a freshly-reloaded Prometheus)
+  is treated as "no firing alerts" rather than poisoning the snapshot
+  — the flag is intentionally conservative.
+
+#### Runbook index
+
+| Alert | Runbook | Severity |
+|---|---|---|
+| `FaasHighResidentRam`, `FaasHighResidentRamWarn` | [HighResidentRam](runbooks/FaasHighResidentRam.md) | page / warn |
+| `FaasSnapshotFleetAvgHighPage`, `…Warn` | [SnapshotFleetHigh](runbooks/FaasSnapshotFleetHigh.md) | page / warn |
+| `FaasLvFcUsageHighPage`, `…Warn` | [LvFcUsageHigh](runbooks/FaasLvFcUsageHigh.md) | page / warn |
+| `FaasBuildQueueBacklog` | [BuildQueueBacklog](runbooks/FaasBuildQueueBacklog.md) | warn |
+| `FaasWakeLatencyHigh` | [WakeLatencyHigh](runbooks/FaasWakeLatencyHigh.md) | warn |
+| `FaasColdBootFallbackHigh` | [ColdBootFallbackHigh](runbooks/FaasColdBootFallbackHigh.md) | warn |
+| `FaasApiAvailabilityLow` | [ApiAvailabilityLow](runbooks/FaasApiAvailabilityLow.md) | page |
+| `FaasBuildSuccessLow` | [BuildSuccessLow](runbooks/FaasBuildSuccessLow.md) | warn |
+| `FaasDaemonDown` | [DaemonDown](runbooks/FaasDaemonDown.md) | page |
+
+CI gate: `promtool check rules` runs in `lint + tests + build` against
+the same tarball the production ansible role pins (`prom_version: "2.54.1"`),
+catching malformed PromQL or dangling matchers at PR time.
 
 ---
 
