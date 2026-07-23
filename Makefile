@@ -216,7 +216,7 @@ migrate-up: ## Apply all pending migrations against $DATABASE_URL (idempotent)
 # The copy is checked in so the binary is self-contained at build time;
 # `make spec-check` regenerates it AND asserts the working tree is clean
 # so a missed copy fails CI rather than silently shipping stale bytes.
-VACUUM     := $(GOBIN)/vacuum
+VACUUM     := $(or $(GOBIN),$(shell go env GOPATH)/bin)/vacuum
 VACUUM_VER := v0.29.10
 SPEC       := api/openapi.yaml
 SPEC_EMBED := pkg/apid/openapi.yaml
@@ -225,7 +225,7 @@ VACUUM_RULES := api/vacuum.yaml
 .PHONY: spec-install
 spec-install: ## Install vacuum at the pinned version (idempotent)
 	@command -v $(VACUUM) >/dev/null 2>&1 && $(VACUUM) version 2>&1 | grep -q $(VACUUM_VER) && echo "vacuum $(VACUUM_VER) installed" && exit 0
-	GOFLAGS='' go install github.com/daveshanley/vacuum@$(VACUUM_VER)
+	GOFLAGS='' GOBIN=$(dir $(VACUUM)) go install github.com/daveshanley/vacuum@$(VACUUM_VER)
 
 .PHONY: spec-sync
 spec-sync: ## Sync the //go:embed copy of the spec from api/openapi.yaml
