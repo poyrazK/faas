@@ -213,17 +213,28 @@ func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {
 // (the developer sees "POST /v1/apps/{slug}/x → SDK method PostAppsSlugX"
 // instead of "unknown"). Not authoritative; methodRouteMap is.
 func deriveMethodName(method, path string) string {
-	method = strings.Title(strings.ToLower(method))
+	method = titleCase(strings.ToLower(method))
 	// Strip /v1/ prefix and {} placeholders; title-case each segment.
 	cleaned := strings.TrimPrefix(path, "/v1/")
 	cleaned = strings.ReplaceAll(cleaned, "{", "")
 	cleaned = strings.ReplaceAll(cleaned, "}", "")
 	segments := strings.Split(cleaned, "/")
 	for i, s := range segments {
-		segments[i] = strings.Title(s)
+		segments[i] = titleCase(s)
 	}
 	res := strings.Join(segments, "")
 	return method + res
+}
+
+// titleCase upper-cases the first byte and leaves the rest unchanged.
+// Avoids importing golang.org/x/text/cases for a fallback-only helper
+// that the drift gate never reaches at runtime (every spec route is
+// in methodRouteMap).
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func findRepoRoot() (string, error) {
@@ -309,7 +320,7 @@ func loadClientMethods(dir string) (map[string]bool, error) {
 	for _, file := range pkg.Files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			fd, ok := n.(*ast.FuncDecl)
-			if !ok || fd.Recv == nil || fd.Name.IsExported() == false {
+			if !ok || fd.Recv == nil || !fd.Name.IsExported() {
 				return true
 			}
 			// Filter to methods on *Client only.

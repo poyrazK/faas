@@ -829,13 +829,6 @@ func cmdLogs(args []string) int {
 	}
 }
 
-func boolStr(b bool) string {
-	if b {
-		return "1"
-	}
-	return "0"
-}
-
 // sseLineReader peels "data: <line>\n\n" off a text/event-stream.
 type sseLineReader struct {
 	r   io.Reader
