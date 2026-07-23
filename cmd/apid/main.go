@@ -367,6 +367,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
 		_ = httpSrv.Shutdown(shutdownCtx)
 		if metricsSrv != nil {
+			//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
 			_ = metricsSrv.Shutdown(shutdownCtx)
 		}
 		return nil
