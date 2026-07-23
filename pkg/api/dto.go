@@ -191,6 +191,14 @@ type InstanceResponse struct {
 	StartedAt     string `json:"started_at,omitempty"`
 	LastRequestAt string `json:"last_request_at,omitempty"`
 	ParkedAt      string `json:"parked_at,omitempty"`
+	// WakeID is the per-wake stable identifier minted by schedd at
+	// CreateInstance time (UUIDv7). Distinct from `id` (the row PK):
+	// one row can carry many WakeIDs over its lifetime as the app is
+	// parked and re-woken. Surfaced on `faas ps` and the dashboard
+	// detail page so operators can correlate the request that woke
+	// the app against gateway logs and slog entries (which also
+	// carry this field).
+	WakeID string `json:"wake_id,omitempty"`
 }
 
 // UsageResponse is one app's monthly usage slice (spec §10).

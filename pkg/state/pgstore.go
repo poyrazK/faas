@@ -1053,7 +1053,7 @@ func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 
 // --- instances --------------------------------------------------------------
 
-func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID string) (Instance, error) {
+func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
 	// started_at is stamped explicitly here in addition to the
 	// BEFORE INSERT trigger from migration 00015. The trigger is the
 	// belt; this is the braces. Either alone works; both together
@@ -1069,18 +1069,30 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// the id via sched.ChoosePlacement before reaching this point;
 	// tests that don't exercise routing pass DefaultLocalNodeName's
 	// resolved UUID (or the name itself if the table isn't seeded).
+	//
+	// wakeID is the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23). Passing an empty string lets the column default
+	// gen_random_uuid() fire — safe for ad-hoc INSERTs in backfill
+	// scripts. schedd mints a UUIDv7 Go-side before reaching here so
+	// production traffic always lands the explicit value. The RETURNING
+	// clause is widened to surface wake_id for the engine and dashboard.
+	// COALESCE on the SELECT guards against any pre-migration-00027
+	// path that left the column NULL — though migration 00027 enforces
+	// NOT NULL post-apply, the COALESCE keeps scanInstance round-tripping
+	// a non-empty string even on half-migrated test DBs.
 	row := s.pool.QueryRow(ctx,
-		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, started_at) values ($1, $2, $3, $4, $5, now())
+		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at)
+		 values ($1, $2, $3, $4, $5, coalesce(nullif($6, ''), gen_random_uuid()), now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id`,
-		appID, deploymentID, state, ramMB, nodeID)
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id`,
+		appID, deploymentID, state, ramMB, nodeID, wakeID)
 	return scanInstance(row)
 }
 
 func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id
 		 from instances where id = $1`, id)
 	return scanInstance(row)
 }
@@ -1088,7 +1100,7 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id
 		 from instances where app_id = $1 order by started_at desc`, appID)
 	if err != nil {
 		return nil, err
@@ -1106,7 +1118,7 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id
 		 from instances
 		 where state in ('running','waking','cold_booting','snapshotting')
 		 order by started_at desc`)
@@ -1126,7 +1138,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 func (s *PgStore) ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -1157,7 +1169,7 @@ func (s *PgStore) ListLatestInstancePerApp(ctx context.Context, accountID string
 	rows, err := s.pool.Query(ctx,
 		`select distinct on (i.app_id)
 		        i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -1246,7 +1258,7 @@ func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []S
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id
 		 from instances
 		 where state = any($1)
 		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
@@ -1272,7 +1284,7 @@ func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, st
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, terminal_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, terminal_at
 		 from instances
 		 where state = any($1)
 		   and terminal_at is not null
@@ -2260,8 +2272,13 @@ func scanInstances(rows pgx.Rows) ([]Instance, error) {
 func scanInstanceCols(scan func(...any) error) (Instance, error) {
 	ins := Instance{}
 	var started, lastReq, parked *time.Time
+	// wake_id is the 13th column (migration 00027). It's NOT NULL post-
+	// 00027 but scanned into a string so any pre-migration-00027 row that
+	// somehow surfaced surfaces as "" rather than a NULL scan error — the
+	// SELECT column list is the contract that prevents column-order drift
+	// from silently swallowing wake_id into an unrelated field.
 	if err := scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
-		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID); err != nil {
+		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID); err != nil {
 		return Instance{}, err
 	}
 	if started != nil {
@@ -2291,8 +2308,11 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 	for rows.Next() {
 		ins := Instance{}
 		var started, lastReq, parked, terminal *time.Time
+		// Column order matches ListInstancesInTerminalStatesOlderThan's
+		// SELECT (now 14 columns after migration 00027 added wake_id
+		// before terminal_at).
 		if err := rows.Scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
-			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &terminal); err != nil {
+			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID, &terminal); err != nil {
 			return nil, err
 		}
 		if started != nil {

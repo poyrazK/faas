@@ -384,7 +384,16 @@ type Store interface {
 	// resolved via ComputeNodeByName) — the engine never accepts an
 	// empty node_id once CreateInstance is reached, so the legacy
 	// single-box path always passes DefaultLocalNodeName at minimum.
-	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID string) (Instance, error)
+	//
+	// wakeID is the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23); schedd mints this UUIDv7 in Engine.Wake Phase 2 right
+	// before the INSERT so every row created by Wake carries a unique
+	// wake_id. An empty wakeID triggers the column default
+	// (gen_random_uuid()) which is the safe behavior for any caller that
+	// hasn't been updated yet (test fixtures, ad-hoc backfill scripts).
+	// Migration 00027 enforces NOT NULL going forward, so passing empty
+	// is fine — the row still has a non-NULL wake_id after the write.
+	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
 	// ListLatestInstancePerApp returns the most-recently-started instance

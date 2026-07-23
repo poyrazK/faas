@@ -38,13 +38,22 @@ import (
 //     right RFC 7807 status without re-classifying strings.
 type Scheduler interface {
 	// Wake ensures an instance for appID is running and returns the
-	// instance id + compute_node.id it lives on (issue #98 / ADR-028).
-	// The instance id lets the gateway attribute last_request_at touches
-	// back to the right row (spec §4.1, ADR-018). The node id lets the
-	// gateway look up the per-node vmmd gRPC client in its routing cache
-	// and forward via the vmmd ForwardHTTP RPC. The error wraps an
-	// *api.Problem so the gateway's writeWakeError can map it directly.
-	Wake(ctx context.Context, appID string) (instanceID, nodeID string, err error)
+	// instance id + compute_node.id it lives on (issue #98 / ADR-028)
+	// + the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23).
+	//
+	//   - instanceID lets the gateway attribute last_request_at
+	//     touches back to the right row (spec §4.1, ADR-018).
+	//   - nodeID lets the gateway look up the per-node vmmd gRPC
+	//     client in its routing cache and forward via the vmmd
+	//     ForwardHTTP RPC.
+	//   - wakeID is propagated to the client as x-faas-wake-id. Empty
+	//     on the Phase-1 fast-path return where the existing RUNNING
+	//     instance was brought up by an earlier wake.
+	//
+	// The error wraps an *api.Problem so the gateway's writeWakeError
+	// can map it directly.
+	Wake(ctx context.Context, appID string) (instanceID, nodeID, wakeID string, err error)
 }
 
 // ErrSchedulerUnconfigured is returned by NoopScheduler.Wake.
@@ -55,8 +64,8 @@ var ErrSchedulerUnconfigured = errors.New("gateway: scheduler not configured (M5
 // path.
 type NoopScheduler struct{}
 
-func (NoopScheduler) Wake(context.Context, string) (string, string, error) {
-	return "", "", ErrSchedulerUnconfigured
+func (NoopScheduler) Wake(context.Context, string) (string, string, string, error) {
+	return "", "", "", ErrSchedulerUnconfigured
 }
 
 // FakeScheduler is the in-process scheduler used by handler/cmd/gatewayd
@@ -71,6 +80,7 @@ type FakeScheduler struct {
 	latencyMs  int
 	addr       string // reused as the synthetic node id in tests
 	instanceID string
+	wakeID     string
 	errOnWake  error
 
 	// wakesByApp tracks per-app wake counts; useful for the wake-coalesce tests.
@@ -84,6 +94,7 @@ func NewFakeScheduler(addr string) *FakeScheduler {
 	return &FakeScheduler{
 		addr:       addr,
 		instanceID: "i-fake",
+		wakeID:     "wake-fake",
 		wakesByApp: map[string]int{},
 	}
 }
@@ -91,6 +102,12 @@ func NewFakeScheduler(addr string) *FakeScheduler {
 // WithInstanceID sets the instance id Wake returns (default "i-fake").
 func (f *FakeScheduler) WithInstanceID(id string) *FakeScheduler {
 	f.instanceID = id
+	return f
+}
+
+// WithWakeID sets the wake id Wake returns (default "wake-fake").
+func (f *FakeScheduler) WithWakeID(id string) *FakeScheduler {
+	f.wakeID = id
 	return f
 }
 
@@ -120,7 +137,7 @@ func (f *FakeScheduler) WakesFor(appID string) int {
 	return f.wakesByApp[appID]
 }
 
-func (f *FakeScheduler) Wake(ctx context.Context, appID string) (string, string, error) {
+func (f *FakeScheduler) Wake(ctx context.Context, appID string) (string, string, string, error) {
 	f.mu.Lock()
 	f.calls++
 	f.wakesByApp[appID]++
@@ -128,14 +145,15 @@ func (f *FakeScheduler) Wake(ctx context.Context, appID string) (string, string,
 	err := f.errOnWake
 	addr := f.addr
 	instanceID := f.instanceID
+	wakeID := f.wakeID
 	f.mu.Unlock()
 
 	if latency > 0 {
 		select {
 		case <-time.After(latency):
 		case <-ctx.Done():
-			return "", "", ctx.Err()
+			return "", "", "", ctx.Err()
 		}
 	}
-	return instanceID, addr, err
+	return instanceID, addr, wakeID, err
 }

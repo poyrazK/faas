@@ -16,6 +16,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -214,6 +215,36 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		log.Warn("dashboard renderAppDetail: latest instance per app", "account_id", acct.ID, "err", err)
 		latest = nil
 	}
+	// Recent wakes for this app: capped at 10 newest rows so an
+	// operator can paste the wake_id from a gateway response header
+	// (x-faas-wake-id) and find which scheduled wake produced it.
+	// Failure is non-fatal — the section silently renders empty.
+	recentInstances, err := s.store.ListInstancesForApp(ctx, app.ID)
+	if err != nil {
+		log.Warn("dashboard renderAppDetail: list instances", "account_id", acct.ID, "app_id", app.ID, "err", err)
+		recentInstances = nil
+	}
+	sort.Slice(recentInstances, func(i, j int) bool {
+		return recentInstances[i].StartedAt.After(recentInstances[j].StartedAt)
+	})
+	if len(recentInstances) > 10 {
+		recentInstances = recentInstances[:10]
+	}
+	recentItems := make([]dashboard.RecentInstanceItem, 0, len(recentInstances))
+	for _, ins := range recentInstances {
+		item := dashboard.RecentInstanceItem{
+			ID:     ins.ID,
+			WakeID: ins.WakeID,
+			State:  ins.State,
+		}
+		if !ins.StartedAt.IsZero() {
+			item.StartedAt = ins.StartedAt.UTC().Format(time.RFC3339)
+		}
+		if !ins.LastRequestAt.IsZero() {
+			item.LastRequestAt = ins.LastRequestAt.UTC().Format(time.RFC3339)
+		}
+		recentItems = append(recentItems, item)
+	}
 	view, _ := AccountFrom(ctx)
 	appCount, err := s.store.CountDeployedApps(ctx, acct.ID)
 	if err != nil {
@@ -221,10 +252,11 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		appCount = 0
 	}
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
-		App:         s.appListItem(ctx, app, latest, time.Time{}),
-		Manifest:    dashboardManifestView(app),
-		Deployments: deps,
-		Crons:       cronItems,
+		App:             s.appListItem(ctx, app, latest, time.Time{}),
+		Manifest:        dashboardManifestView(app),
+		Deployments:     deps,
+		Crons:           cronItems,
+		RecentInstances: recentItems,
 	}}
 	if err := dashboard.Render(w, log, page); err != nil {
 		renderProblem(w, log, err)

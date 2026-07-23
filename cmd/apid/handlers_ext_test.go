@@ -411,7 +411,7 @@ func TestListInstances_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	dep := mustSeedDeployment(t, e, "inst-app")
 	if _, err := e.store.CreateInstance(context.Background(),
-		dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1"); err != nil {
+		dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1", ""); err != nil {
 		t.Fatal(err)
 	}
 	rec := e.do(t, "GET", "/v1/apps/inst-app/instances", nil, nil)

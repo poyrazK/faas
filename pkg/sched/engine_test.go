@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -665,7 +666,7 @@ func TestEngineSeedLedger(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
 	// A running instance survived a schedd restart.
-	ins, _ := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName)
+	ins, _ := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
 	_ = ins
 
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
@@ -986,5 +987,62 @@ func TestEngineVmstateHelpers(t *testing.T) {
 				t.Errorf("vmstateStorageKeyFor(%q, %q) = %q, want %q", tt.nodeID, tt.dep, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestEngineWake_MintsFreshWakeIDPerWake asserts that schedd mints a new
+// wake_id on each Wake() call. Two consecutive wakes of the same parked
+// app must yield distinct IDs even though the underlying instance row
+// (ins.ID) may be reused after a park→wake cycle. This is the contract
+// that lets operators correlate x-faas-wake-id headers against a single
+// wake attempt without confusing it with prior wakes.
+func TestEngineWake_MintsFreshWakeIDPerWake(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	notif := &fakeNotifier{}
+	e := newEngine(t, store, vmm, notif, "1.10.0")
+
+	// First wake — must produce a non-empty UUIDv7-shaped wake_id.
+	res1, err := e.Wake(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("first Wake: %v", err)
+	}
+	if res1.WakeID == "" {
+		t.Fatal("WakeID empty on first wake (must be minted at CreateInstance)")
+	}
+	if _, err := uuid.Parse(res1.WakeID); err != nil {
+		t.Errorf("WakeID %q is not a valid UUID: %v", res1.WakeID, err)
+	}
+
+	// Park the instance we just woke so the second wake is a fresh
+	// cycle. The contract being asserted is "each Wake() mints a new
+	// wake_id", so we have to actually take the app back to parked
+	// before the second call.
+	if err := e.Park(context.Background(), res1.InstanceID); err != nil {
+		t.Fatalf("Park: %v", err)
+	}
+
+	// Second wake — distinct wake_id even though the app (and likely the
+	// instance row) is the same.
+	res2, err := e.Wake(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("second Wake: %v", err)
+	}
+	if res2.WakeID == "" {
+		t.Fatal("WakeID empty on second wake")
+	}
+	if res1.WakeID == res2.WakeID {
+		t.Errorf("WakeID = %q on both wakes; expected distinct UUIDv7 per wake", res1.WakeID)
+	}
+	// The stored instance's WakeID must equal what Wake returned —
+	// consumers reading from the DB see the same value the gateway
+	// header carries.
+	ins, err := store.RunningInstanceForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("RunningInstanceForApp: %v", err)
+	}
+	if ins.WakeID != res2.WakeID {
+		t.Errorf("stored WakeID = %q, want %q (the value Wake returned)", ins.WakeID, res2.WakeID)
 	}
 }

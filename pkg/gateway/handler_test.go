@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -21,13 +22,14 @@ import (
 
 // fakeBackend simulates routing + a parked app that wakes on demand.
 type fakeBackend struct {
-	mu       sync.Mutex
-	app      App
-	host     string
-	upstream string // set once "woken"
-	running  bool
-	wakeErr  error
-	wakes    int32
+	mu        sync.Mutex
+	app       App
+	host      string
+	upstream  string // set once "woken"
+	running   bool
+	wakeErr   error
+	wakes     int32
+	wakeIDOut string // value Wake() returns; empty → "fake-wake-id"
 }
 
 func (b *fakeBackend) Lookup(_ context.Context, host string) (App, bool) {
@@ -46,15 +48,18 @@ func (b *fakeBackend) Target(string) (string, bool) {
 	return "", false
 }
 
-func (b *fakeBackend) Wake(_ context.Context, _ string) error {
+func (b *fakeBackend) Wake(_ context.Context, _ string) (string, error) {
 	atomic.AddInt32(&b.wakes, 1)
 	if b.wakeErr != nil {
-		return b.wakeErr
+		return "", b.wakeErr
 	}
 	b.mu.Lock()
 	b.running = true // now Target will succeed
 	b.mu.Unlock()
-	return nil
+	if b.wakeIDOut != "" {
+		return b.wakeIDOut, nil
+	}
+	return "fake-wake-id", nil
 }
 
 func newTestHandler(t *testing.T) (*Handler, *fakeBackend, *httptest.Server) {
@@ -90,6 +95,14 @@ func TestColdWakeReturns200AndHeader(t *testing.T) {
 	if rec.Header().Get("x-faas-wake") != "cold" {
 		t.Error("first request after park should carry x-faas-wake: cold (UX §6)")
 	}
+	// Per-wake stable ID flows from schedd's Wake() through the gateway
+	// handler onto the response. fakeBackend's Wake returns the literal
+	// "fake-wake-id" so this assertion locks down the wiring contract:
+	// the response header must mirror what schedd returned, not be
+	// regenerated or omitted by the gateway.
+	if got := rec.Header().Get("x-faas-wake-id"); got != "fake-wake-id" {
+		t.Errorf("x-faas-wake-id = %q, want fake-wake-id", got)
+	}
 	if atomic.LoadInt32(&b.wakes) != 1 {
 		t.Errorf("expected exactly 1 wake, got %d", b.wakes)
 	}
@@ -109,8 +122,37 @@ func TestHotPathDoesNotWakeOrTagCold(t *testing.T) {
 	if rec.Header().Get("x-faas-wake") != "" {
 		t.Error("warm request must not carry the cold header")
 	}
+	if got := rec.Header().Get("x-faas-wake-id"); got != "" {
+		t.Errorf("warm request must not carry x-faas-wake-id, got %q", got)
+	}
 	if atomic.LoadInt32(&b.wakes) != 0 {
 		t.Error("hot path must not trigger a wake")
+	}
+}
+
+// TestColdWakePropagatesUUIDv7WakeID asserts the response header matches
+// the value the scheduler returned byte-for-byte. In production schedd
+// mints a UUIDv7 (via google/uuid), so the contract is: header == whatever
+// Wake returned, header is non-empty, header is a valid UUID. Catching
+// drift between the gateway and the scheduler — e.g. if gatewayd starts
+// regenerating IDs locally — is the whole point of this test.
+func TestColdWakePropagatesUUIDv7WakeID(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.wakeIDOut = "0193f7c0-1234-7abc-9def-0123456789ab"
+
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	got := rec.Header().Get("x-faas-wake-id")
+	if got != b.wakeIDOut {
+		t.Errorf("x-faas-wake-id = %q, want %q (scheduler value must flow through verbatim)", got, b.wakeIDOut)
+	}
+	if _, err := uuid.Parse(got); err != nil {
+		t.Errorf("x-faas-wake-id %q is not a valid UUID: %v", got, err)
 	}
 }
 

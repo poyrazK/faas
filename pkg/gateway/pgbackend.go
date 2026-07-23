@@ -124,12 +124,15 @@ func (b *PGBackend) Target(appID string) (string, bool) {
 // Wake blocks while schedd admits + dispatches an instance (restore or cold
 // boot) and caches the node id it returns so the handler's follow-up
 // Target hits without waiting for the instance_changed notification
-// round-trip. The error preserves schedd's *api.Problem so
-// writeWakeError maps it directly.
-func (b *PGBackend) Wake(ctx context.Context, appID string) error {
-	instanceID, nodeID, err := b.sched.Wake(ctx, appID)
+// round-trip. Returns the per-wake correlation handle (gaps analysis
+// 2026-07-23) — non-empty on a fresh wake, empty on a Phase-1 fast-path
+// return. The handler surfaces this on the response as x-faas-wake-id.
+// The error preserves schedd's *api.Problem so writeWakeError maps it
+// directly.
+func (b *PGBackend) Wake(ctx context.Context, appID string) (string, error) {
+	instanceID, nodeID, wakeID, err := b.sched.Wake(ctx, appID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if nodeID != "" {
 		b.tgtMu.Lock()
@@ -139,7 +142,7 @@ func (b *PGBackend) Wake(ctx context.Context, appID string) error {
 		}
 		b.tgtMu.Unlock()
 	}
-	return nil
+	return wakeID, nil
 }
 
 // EvictTarget drops the cached node id for appID. gatewayd calls this

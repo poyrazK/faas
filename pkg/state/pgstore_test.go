@@ -100,7 +100,7 @@ func TestPg_SetInstanceRuntimeAndRunningLookup(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, depID := seedLiveDeploy(t, s, ctx)
 
-	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, resolveDefaultLocal(t, ctx, s))
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, resolveDefaultLocal(t, ctx, s), "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestPg_SetInstanceRuntimeAndRunningLookup(t *testing.T) {
 func TestPg_TouchInstancesLastSeen(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, depID := seedLiveDeploy(t, s, ctx)
-	ins, _ := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, resolveDefaultLocal(t, ctx, s))
+	ins, _ := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, resolveDefaultLocal(t, ctx, s), "")
 
 	when := time.Now().Add(-30 * time.Second).Truncate(time.Millisecond)
 	applied, err := s.TouchInstancesLastSeen(ctx, []state.InstanceTouch{
@@ -306,7 +306,7 @@ func TestPg_ListLatestInstancePerApp(t *testing.T) {
 	}
 
 	// Create two instances; the second started later should win.
-	old, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, resolveDefaultLocal(t, ctx, s))
+	old, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, resolveDefaultLocal(t, ctx, s), "")
 	if err != nil {
 		t.Fatalf("CreateInstance old: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestPg_ListLatestInstancePerApp(t *testing.T) {
 	// Sleep briefly so the second instance has a strictly-later started_at.
 	time.Sleep(10 * time.Millisecond)
 
-	newer, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, resolveDefaultLocal(t, ctx, s))
+	newer, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, resolveDefaultLocal(t, ctx, s), "")
 	if err != nil {
 		t.Fatalf("CreateInstance newer: %v", err)
 	}
@@ -989,7 +989,7 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 		string(state.StateRunning),
 		string(state.StateRunning),
 	} {
-		if _, err := s.CreateInstance(ctx, appID, depID, st, 256, nodeID); err != nil {
+		if _, err := s.CreateInstance(ctx, appID, depID, st, 256, nodeID, ""); err != nil {
 			t.Fatalf("CreateInstance(%s): %v", st, err)
 		}
 	}
@@ -998,10 +998,10 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 	// pins the state set to {pending, cold_booting, waking, running,
 	// parked, stopped, evicting_account_deleting}; parked + stopped
 	// are the two non-live writes the engine emits in practice.
-	if _, err := s.CreateInstance(ctx, appID, depID, string(state.StateStopped), 256, nodeID); err != nil {
+	if _, err := s.CreateInstance(ctx, appID, depID, string(state.StateStopped), 256, nodeID, ""); err != nil {
 		t.Fatalf("CreateInstance(stopped): %v", err)
 	}
-	if _, err := s.CreateInstance(ctx, appID, depID, string(state.StateParked), 256, nodeID); err != nil {
+	if _, err := s.CreateInstance(ctx, appID, depID, string(state.StateParked), 256, nodeID, ""); err != nil {
 		t.Fatalf("CreateInstance(parked): %v", err)
 	}
 
@@ -1329,7 +1329,7 @@ func TestPg_UpdateInstanceStateWithTimestamp_BumpsStateAndParkedAt(t *testing.T)
 	_, appID, depID := seedLiveDeploy(t, s, ctx)
 	nodeID := resolveDefaultLocal(t, ctx, s)
 
-	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, nodeID)
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, nodeID, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -1362,7 +1362,7 @@ func TestPg_UpdateInstanceStateToTerminal_BumpsStateAndTerminalAt(t *testing.T) 
 	_, appID, depID := seedLiveDeploy(t, s, ctx)
 	nodeID := resolveDefaultLocal(t, ctx, s)
 
-	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, nodeID)
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, nodeID, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -1420,7 +1420,7 @@ func TestPg_ListInstancesByStatesOlderThan_UsesStateAwareAgeColumn(t *testing.T)
 	// silently mis-aged; pin that branch separately if it becomes
 	// exercisable.
 	mkIns := func(st state.State, suffix string) string {
-		ins, err := s.CreateInstance(ctx, appID, depID, string(st), 256, nodeID)
+		ins, err := s.CreateInstance(ctx, appID, depID, string(st), 256, nodeID, "")
 		if err != nil {
 			t.Fatalf("CreateInstance(%s): %v", suffix, err)
 		}
@@ -1464,7 +1464,7 @@ func TestPg_DeleteInstance_RemovesRowAndReturnsErrNotFound(t *testing.T) {
 	_, appID, depID := seedLiveDeploy(t, s, ctx)
 	nodeID := resolveDefaultLocal(t, ctx, s)
 
-	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, nodeID)
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, nodeID, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -1697,5 +1697,57 @@ func TestPg_ClaimQueuedBuild(t *testing.T) {
 	_, err = s.ClaimQueuedBuild(ctx, "00000000-0000-0000-0000-000000000000")
 	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("unknown id err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestPg_CreateInstance_DefaultWakeIDRoundTrip asserts that when the
+// caller passes an empty wake_id (the common path — schedd mints the
+// ID and we backfill at the DB), the row stores a non-empty UUID and
+// the value round-trips through every read path schedd uses
+// (RunningInstanceForApp here; ListInstancesForApp is exercised in
+// the dashboard handler tests). The migration's `default
+// gen_random_uuid()` is what populates the column when the caller
+// passes ”, so this test also doubles as a regression on the
+// migration: drop the default and this test breaks.
+func TestPg_CreateInstance_DefaultWakeIDRoundTrip(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, resolveDefaultLocal(t, ctx, s), "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if ins.WakeID == "" {
+		t.Fatal("WakeID empty after CreateInstance; default should populate via gen_random_uuid()")
+	}
+	if _, err := uuid.Parse(ins.WakeID); err != nil {
+		t.Errorf("WakeID %q is not a valid UUID: %v", ins.WakeID, err)
+	}
+
+	got, err := s.RunningInstanceForApp(ctx, appID)
+	if err != nil {
+		t.Fatalf("RunningInstanceForApp: %v", err)
+	}
+	if got.WakeID != ins.WakeID {
+		t.Errorf("WakeID round-trip lost: stored=%q read=%q", ins.WakeID, got.WakeID)
+	}
+}
+
+// TestPg_CreateInstance_ExplicitWakeIDRoundTrip asserts that when the
+// caller passes an explicit wake_id (the path schedd uses in production
+// after PR #wake-id lands), the row stores that exact string. This
+// pins down the contract schedd relies on: "if I tell the store which
+// wake_id to use, the row carries the value I gave it".
+func TestPg_CreateInstance_ExplicitWakeIDRoundTrip(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+	want := "0193f7c0-1234-7abc-9def-0123456789ab"
+
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, resolveDefaultLocal(t, ctx, s), want)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if ins.WakeID != want {
+		t.Errorf("WakeID = %q, want %q", ins.WakeID, want)
 	}
 }

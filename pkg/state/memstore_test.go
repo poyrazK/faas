@@ -1531,22 +1531,22 @@ func TestMem_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 	// nodeA: 2 waking, 1 cold_booting, 1 running, 1 stopped (not counted),
 	// 1 snapshotted (not counted). Total live = 4 × (256 + 8) = 1056 MB.
 	for _, st := range []string{"waking", "cold_booting", "running"} {
-		if _, err := m.CreateInstance(ctx, app.ID, dep.ID, st, 256, nodeA); err != nil {
+		if _, err := m.CreateInstance(ctx, app.ID, dep.ID, st, 256, nodeA, ""); err != nil {
 			t.Fatalf("CreateInstance(%s): %v", st, err)
 		}
 	}
-	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 256, nodeA); err != nil {
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 256, nodeA, ""); err != nil {
 		t.Fatalf("CreateInstance(running-2): %v", err)
 	}
-	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "stopped", 256, nodeA); err != nil {
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "stopped", 256, nodeA, ""); err != nil {
 		t.Fatalf("CreateInstance(stopped): %v", err)
 	}
-	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "snapshotted", 256, nodeA); err != nil {
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "snapshotted", 256, nodeA, ""); err != nil {
 		t.Fatalf("CreateInstance(snapshotted): %v", err)
 	}
 
 	// nodeB: 1 running 512 MB → 520 MB total.
-	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 512, nodeB); err != nil {
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 512, nodeB, ""); err != nil {
 		t.Fatalf("CreateInstance(nodeB): %v", err)
 	}
 

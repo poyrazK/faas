@@ -90,11 +90,11 @@ func cmdPS(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%s: no instances (app is parked)\n", slug)
 		return 0
 	}
-	_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %6s %-20s %-20s\n", "ID", "STATE", "RAM_MB", "STARTED", "LAST_REQUEST")
+	_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %6s %-20s %-20s %-36s\n", "ID", "STATE", "RAM_MB", "STARTED", "LAST_REQUEST", "WAKE_ID")
 	for _, i := range ins {
-		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %6d %-20s %-20s\n",
+		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %6d %-20s %-20s %-36s\n",
 			i.ID, humanizeInstanceState(i.State), i.RAMMB,
-			i.StartedAt, i.LastRequestAt)
+			i.StartedAt, i.LastRequestAt, i.WakeID)
 	}
 	return 0
 }

@@ -104,7 +104,7 @@ func makeAccount(t *testing.T, ctx context.Context, s *state.MemStore, plan api.
 // machine and just mutate the slice via CreateInstance.
 func makeLiveInstance(t *testing.T, ctx context.Context, s *state.MemStore, appID, accountID string, ramMB int) state.Instance {
 	t.Helper()
-	ins, err := s.CreateInstance(ctx, appID, "deployment-test", string(state.StateRunning), ramMB, state.DefaultLocalNodeName)
+	ins, err := s.CreateInstance(ctx, appID, "deployment-test", string(state.StateRunning), ramMB, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("create instance: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestSampler_SkipsParkedInstances(t *testing.T) {
 
 	acct := makeAccount(t, ctx, s, api.PlanHobby)
 	app := newApp(t, ctx, s, acct.ID)
-	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateParked), 256, state.DefaultLocalNodeName)
+	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateParked), 256, state.DefaultLocalNodeName, "")
 
 	rows, err := meter.NewSampler(s, func() time.Time { return now }).SampleAndRoll(ctx)
 	if err != nil {
@@ -262,7 +262,7 @@ func TestInvoiceShadow24h(t *testing.T) {
 
 	acct := makeAccount(t, ctx, s, api.PlanHobby)
 	app := newApp(t, ctx, s, acct.ID)
-	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 256, state.DefaultLocalNodeName)
+	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
 
 	sampler := meter.NewSampler(s, clock)
 	const minutesIn24h = 24 * 60
@@ -386,7 +386,7 @@ func TestPaidOverageNoStop(t *testing.T) {
 
 	acct := makeAccount(t, ctx, s, api.PlanPro)
 	app := newApp(t, ctx, s, acct.ID)
-	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 512, state.DefaultLocalNodeName)
+	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
 
 	// Plant usage equal to one Hobby quota so CheckQuota at Pro's 250 GB-h
 	// threshold still trips. (5 GB-h * 1024 * 3600 = 18_432_000.)
@@ -436,7 +436,7 @@ func TestPaidOverageDedupesPerDay(t *testing.T) {
 
 	acct := makeAccount(t, ctx, s, api.PlanPro)
 	app := newApp(t, ctx, s, acct.ID)
-	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 512, state.DefaultLocalNodeName)
+	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
 	// Plant usage equal to one Hobby quota so CheckQuota at Pro's
 	// 250 GB-h threshold trips.
 	if err := s.AppendUsage(ctx, acct.ID, app.ID, "inst1", day1Hour1, 18_432_000*100, 0); err != nil {

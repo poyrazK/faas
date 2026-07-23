@@ -1126,7 +1126,7 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 
 // --- Instances --------------------------------------------------------------
 
-func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state string, ramMB int, nodeID string) (Instance, error) {
+func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Stamp started_at on creation for every state (commit 3, mirrors
@@ -1146,6 +1146,13 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 	// without seeding compute_nodes first. The engine's Wake flow
 	// resolves the id via ComputeNodeByName before reaching here,
 	// so production callers always have a real id.
+	//
+	// wakeID is the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23). An empty wakeID triggers the MemStore's own default
+	// — newID() — mirroring PgStore's coalesce(...gen_random_uuid()) so
+	// ad-hoc test fixtures that don't thread wake_id through still get
+	// a non-empty value. Production callers (schedd's Wake) supply a
+	// UUIDv7 minted Go-side for time-ordered values.
 	ins := Instance{
 		ID:           newID(),
 		AppID:        appID,
@@ -1154,6 +1161,11 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 		RAMMB:        ramMB,
 		NodeID:       nodeID,
 		StartedAt:    time.Now(),
+	}
+	if wakeID != "" {
+		ins.WakeID = wakeID
+	} else {
+		ins.WakeID = newID()
 	}
 	m.instances[ins.ID] = ins
 	return ins, nil

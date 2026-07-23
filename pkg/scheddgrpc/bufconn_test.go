@@ -139,3 +139,29 @@ func TestReportActivity(t *testing.T) {
 		t.Errorf("touch time round-trip lost: %v", got[0].LastRequest)
 	}
 }
+
+// TestWake_PropagatesWakeID asserts the per-wake stable identifier
+// minted by schedd's engine reaches the gRPC response verbatim. The
+// gatewayd client reads resp.GetWakeId() and sets it as the
+// x-faas-wake-id response header — if this contract breaks, downstream
+// logs and dashboards lose their correlation key.
+func TestWake_PropagatesWakeID(t *testing.T) {
+	const wantWakeID = "0193f7c0-1234-7abc-9def-0123456789ab"
+	cli := newServer(t, &fakeEngine{
+		wakeFn: func(context.Context, string) (sched.WakeResult, error) {
+			return sched.WakeResult{
+				InstanceID: "i-1",
+				NodeID:     "node-test-1",
+				Method:     vmmdpb.WakeMethod_WAKE_RESTORE,
+				WakeID:     wantWakeID,
+			}, nil
+		},
+	})
+	resp, err := cli.Wake(context.Background(), &scheddpb.WakeRequest{AppId: "app-1"})
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if got := resp.GetWakeId(); got != wantWakeID {
+		t.Errorf("wake_id = %q, want %q", got, wantWakeID)
+	}
+}

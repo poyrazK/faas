@@ -89,7 +89,7 @@ func TestDunning_PastDue7d_AdvancesToSuspended(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, defaultLocalNodeID)
+	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, defaultLocalNodeID, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

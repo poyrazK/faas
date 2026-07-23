@@ -49,7 +49,7 @@ func TestClientWake_ReturnsNodeID(t *testing.T) {
 			return sched.WakeResult{InstanceID: "i-1", NodeID: "node-test-1", Method: vmmdpb.WakeMethod_WAKE_RESTORE}, nil
 		},
 	})
-	instanceID, nodeID, err := c.Wake(context.Background(), "app-1")
+	instanceID, nodeID, wakeID, err := c.Wake(context.Background(), "app-1")
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
@@ -59,6 +59,14 @@ func TestClientWake_ReturnsNodeID(t *testing.T) {
 	if instanceID != "i-1" {
 		t.Errorf("instanceID = %q, want i-1", instanceID)
 	}
+	if wakeID == "" {
+		// Phase 1 fast path returns empty wake_id (the existing
+		// RUNNING instance was minted by an earlier wake). The fake
+		// engine returns WAKE_RESTORE which is a fast-path return,
+		// so wake_id stays unset here. The dedicated wake_id
+		// propagation is covered by TestClientWake_PropagatesWakeID.
+		t.Logf("wakeID empty on fast-path return (expected); no assertion")
+	}
 }
 
 func TestClientWake_CapacityLiftsToProblem(t *testing.T) {
@@ -67,7 +75,7 @@ func TestClientWake_CapacityLiftsToProblem(t *testing.T) {
 			return sched.WakeResult{}, api.ErrCapacity("no RAM headroom")
 		},
 	})
-	_, _, err := c.Wake(context.Background(), "app-1")
+	_, _, _, err := c.Wake(context.Background(), "app-1")
 	if err == nil {
 		t.Fatal("expected capacity denial")
 	}

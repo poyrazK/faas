@@ -29,8 +29,14 @@ type Backend interface {
 	// Target returns a ready instance address (host:port) for the app, or false
 	// when none is running and a wake is needed (the hot path returns true here).
 	Target(appID string) (string, bool)
-	// Wake ensures an instance is running via schedd admission + vmmd restore.
-	Wake(ctx context.Context, appID string) error
+	// Wake ensures an instance is running via schedd admission + vmmd
+	// restore. The wake_id is the per-wake-attempt correlation handle
+	// (gaps analysis 2026-07-23) schedd minted at Wake() Phase 2;
+	// non-empty on a fresh cold boot / restore, empty on the Phase-1
+	// fast path where an existing RUNNING instance was reused.
+	// Empty + nil error means "wake was unnecessary" (Target already
+	// had a ready address).
+	Wake(ctx context.Context, appID string) (wakeID string, err error)
 }
 
 // Handler is gatewayd's HTTP entrypoint: route → rate-limit → (wake-block if
@@ -216,9 +222,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	firstByteRec := &firstByteRecorder{}
 	//nolint:contextcheck // WithFirstByteRecorder wraps context.WithValue on r.Context(); lint can't trace through the function call.
 	r = r.WithContext(WithFirstByteRecorder(r.Context(), firstByteRec))
+	// wakeID is the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23). Set on the response as x-faas-wake-id next to
+	// x-faas-wake below — operators can grep for the value to find the
+	// row in instances, the wake_boot_error event in the audit log, the
+	// schedd slog call, and the customer's own log line. Non-empty only
+	// on a fresh wake (cold boot or restore); the Phase-1 fast path
+	// (Target already had a ready address) leaves it empty, in which
+	// case the existing header stays unset.
+	var wakeID string
 	if !ready {
-		if err := h.wake(r.Context(), app.ID); err != nil { //nolint:contextcheck // request ctx at handler boundary.
-			writeWakeError(w, err)
+		var werr error
+		wakeID, werr = h.wake(r.Context(), app.ID) //nolint:contextcheck // request ctx at handler boundary.
+		if werr != nil {
+			writeWakeError(w, werr)
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, "")
 			return
 		}
@@ -233,6 +250,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if cold {
 		// Cold-wake transparency (UX spec §6): let developers see the penalty.
 		w.Header().Set("x-faas-wake", "cold")
+	}
+	if wakeID != "" {
+		// Per-wake correlation handle (gaps analysis 2026-07-23). Sits
+		// next to x-faas-wake so the two are co-located on every
+		// response, and never set on a Phase-1 fast-path response.
+		w.Header().Set("x-faas-wake-id", wakeID)
 	}
 	if h.proxyByNode != nil {
 		// Issue #98 / ADR-028: addr is a compute_node.id; the
@@ -328,16 +351,26 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // shouldWake predicate runs under the gate lock the moment a caller wins the
 // leader election, so if a peer's wake has just observed a ready instance we
 // don't fire a redundant restore.
-func (h *Handler) wake(ctx context.Context, appID string) error {
-	return h.gate.Wait(ctx, appID,
+//
+// Returns the wake_id minted by schedd (gaps analysis 2026-07-23) —
+// non-empty on a fresh cold boot / restore, empty when the existing
+// RUNNING instance was reused and no fresh wake_id was minted. The
+// handler surfaces this on the response as x-faas-wake-id so the
+// client can correlate logs with the platform's wake event.
+func (h *Handler) wake(ctx context.Context, appID string) (string, error) {
+	var wakeID string
+	err := h.gate.Wait(ctx, appID,
 		func() bool {
 			_, ready := h.backend.Target(appID)
 			return !ready
 		},
 		func(ctx context.Context) error {
-			return h.backend.Wake(ctx, appID)
+			var werr error
+			wakeID, werr = h.backend.Wake(ctx, appID)
+			return werr
 		},
 	)
+	return wakeID, err
 }
 
 func writeWakeError(w http.ResponseWriter, err error) {
