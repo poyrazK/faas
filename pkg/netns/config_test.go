@@ -86,6 +86,10 @@ func TestSetupCreatesTapAndAddressing(t *testing.T) {
 		"addr add 10.100.0.9/16 dev " + c.VethPeer, // host identity on the peer
 		"link set " + c.VethHost + " master " + TenantBridge,
 		"net.ipv4.ip_forward=1",
+		// Netns default route via the bridge IP (HostBridgeCIDR). Without
+		// this argv guest packets to public destinations hit ENETUNREACH —
+		// was the silent tenant-egress P0.
+		"route add default via 10.100.0.1 dev " + c.VethPeer,
 	}
 	for _, w := range wants {
 		if !strings.Contains(setup, w) {
@@ -113,6 +117,59 @@ func TestVethPeerMovedIntoNetnsBeforeAddressing(t *testing.T) {
 	}
 	if moveIdx > addrIdx {
 		t.Errorf("peer addressed (idx %d) before being moved into netns (idx %d)", addrIdx, moveIdx)
+	}
+}
+
+// TestSetupInstallsNetnsDefaultRouteViaBridge locks the tenant-egress P0
+// fix: SetupCommands must add a netns default route via the bridge IP
+// (10.100.0.1, reserved by pkg/fcvm/alloc.go so the allocator never hands
+// out .1). Without this argv, a guest packet to e.g. 8.8.8.8 matches no
+// connected route inside the netns and the kernel returns ENETUNREACH.
+func TestSetupInstallsNetnsDefaultRouteViaBridge(t *testing.T) {
+	c := testConfig()
+	found := -1
+	for i, cmd := range c.SetupCommands() {
+		line := strings.Join(cmd, " ")
+		if strings.Contains(line, "ip route add default via 10.100.0.1") {
+			found = i
+			// Must be ip-netns-exec'd (the inNetns helper), not root-ns.
+			if !strings.HasPrefix(line, "ip netns exec "+c.Netns+" ip route") {
+				t.Errorf("default-route argv not in-netns: %q", line)
+			}
+			// Must reference the per-instance peer, not a hard-coded name.
+			if !strings.Contains(line, "dev "+c.VethPeer) {
+				t.Errorf("default-route argv missing dev %q: %q", c.VethPeer, line)
+			}
+		}
+	}
+	if found < 0 {
+		t.Fatalf("SetupCommands missing `ip route add default via 10.100.0.1 ...`; got:\n%s", flatten(c.SetupCommands()))
+	}
+}
+
+// TestSetupInstallsDefaultRouteAfterAddressing locks the per-instance
+// peer-up ordering: the default route must reference a peer that is
+// already up, otherwise the route installs but the kernel returns
+// `RTNETLINK answers: Network is unreachable` on the first packet.
+// Mirrors the TestVethPeerMovedIntoNetnsBeforeAddressing pattern.
+func TestSetupInstallsDefaultRouteAfterAddressing(t *testing.T) {
+	cmds := testConfig().SetupCommands()
+	c := testConfig()
+	peerUp, route := -1, -1
+	for i, cmd := range cmds {
+		line := strings.Join(cmd, " ")
+		if strings.Contains(line, "link set "+c.VethPeer+" up") {
+			peerUp = i
+		}
+	if strings.Contains(line, "route add default via 10.100.0.1") {
+			route = i
+		}
+	}
+	if peerUp < 0 || route < 0 {
+		t.Fatalf("expected both peer-up and default-route (peerUp=%d route=%d)", peerUp, route)
+	}
+	if route < peerUp {
+		t.Errorf("default-route (idx %d) must be installed AFTER peer-up (idx %d)", route, peerUp)
 	}
 }
 
@@ -359,6 +416,19 @@ func TestNftResetCommandsPrependsDeleteTable(t *testing.T) {
 	if first[6] != "table" || first[7] != "ip" || first[8] != "faas" {
 		t.Errorf("reset argv[6..8] = %q, want [table ip faas]; full: %v",
 			first[6:9], first)
+	}
+	// Mirror the IPv6 reset (ADR-023 split). Without it, a snapshot-restore
+	// Wake's `add table ip6 faas` collides on the existing table.
+	if len(reset) < 2 {
+		t.Fatalf("NftResetCommands must reset both ip and ip6 tables; got %d argvs", len(reset))
+	}
+	v6 := reset[1]
+	if len(v6) < 9 {
+		t.Fatalf("ipv6 reset argv too short: %v", v6)
+	}
+	if v6[5] != "delete" || v6[6] != "table" || v6[7] != "ip6" || v6[8] != "faas" {
+		t.Errorf("second argv[5..8] = %q, want [delete table ip6 faas]; full: %v",
+			v6[5:9], v6)
 	}
 }
 

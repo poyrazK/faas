@@ -166,3 +166,58 @@ func TestHostPolicyRenderPanicsOnEmptyRequiredField(t *testing.T) {
 		}()
 	}
 }
+
+// TestHostPolicyForwardDeniesComeBeforeBroadAllow locks the section-11 fix
+// from PR-#122: nftables is first-match, so the broad bridged-tenant
+// allow (`iif "br-tenants" oifname "eth0" accept`) MUST sit AFTER the
+// SMTP / RFC1918 / IPv6 drops, otherwise the denylist is theater for
+// bridged tenant traffic -- every allowed packet matches the broad
+// rule first and never reaches the drops. Asserted per-rule (not
+// block) so a future reorder within the denylist cannot sneak a deny
+// line behind the broad allow.
+func TestHostPolicyForwardDeniesComeBeforeBroadAllow(t *testing.T) {
+	out := DefaultHostPolicy.Render()
+	broadAllow := `iif "br-tenants" oifname "eth0" accept`
+	broadIdx := strings.Index(out, broadAllow)
+	if broadIdx < 0 {
+		t.Fatalf("forward chain missing broad allow %q", broadAllow)
+	}
+	denies := []string{
+		"tcp dport { 25,465,587 } drop",
+		"ip daddr { 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 } drop",
+		"ip6 daddr { fe80::/10 fc00::/7 ff00::/8 ::1/128 ::/128 } drop",
+	}
+	for _, d := range denies {
+		idx := strings.Index(out, d)
+		if idx < 0 {
+			t.Errorf("deny line missing: %q", d)
+			continue
+		}
+		if idx > broadIdx {
+			t.Errorf("deny %q (idx %d) must precede broad allow (idx %d)", d, idx, broadIdx)
+		}
+	}
+}
+
+// TestHostPolicyForwardIPv6ImmediatelyFollowsIPv4 locks ADR-023's
+// v4/v6 adjacency in the HOST renderer (the per-netns adjacency is
+// already covered by the per-netns renderer -- this is the host-side
+// pin). Reordering the v4 and v6 lines, or inserting any rule
+// between them, breaks the "next to each other" mandate.
+func TestHostPolicyForwardIPv6ImmediatelyFollowsIPv4(t *testing.T) {
+	out := DefaultHostPolicy.Render()
+	v4Idx := strings.Index(out, "ip daddr {")
+	v6Idx := strings.Index(out, "ip6 daddr {")
+	if v4Idx < 0 || v6Idx < 0 {
+		t.Fatalf("missing one of v4/v6 daddr lines (v4=%d v6=%d)", v4Idx, v6Idx)
+	}
+	if v6Idx <= v4Idx {
+		t.Errorf("ip6 daddr line (idx %d) must come AFTER ip daddr line (idx %d) -- ADR-023 adjacency", v6Idx, v4Idx)
+	}
+	// Adjacency = only whitespace and the `}` between the two lines.
+	between := out[v4Idx:v6Idx]
+	after := strings.SplitN(between, "\n", 2)[1]
+	if strings.TrimSpace(after) != "" {
+		t.Errorf("v4 daddr and v6 daddr are not adjacent; between them:\n%q", between)
+	}
+}

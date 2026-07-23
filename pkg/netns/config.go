@@ -93,6 +93,17 @@ func (c Config) SetupCommands() [][]string {
 		inNetns("ip", "link", "set", c.Tap, "up"),
 		// Route guest traffic; enable forwarding inside the netns only.
 		inNetns("sysctl", "-w", "net.ipv4.ip_forward=1"),
+		// Netns default route via the bridge IP (HostBridgeCIDR). Without
+		// this, the kernel only knows two connected subnets inside the netns
+		// — 10.0.0.0/30 on tap0 and 10.100.0.0/16 on VethPeer — so a guest
+		// packet to e.g. 8.8.8.8 has no matching route and the kernel returns
+		// ENETUNREACH (was the silent tenant-egress P0: outbound HTTP from
+		// any guest never worked on the production EX44; only the Lima
+		// nested-VM shim happened to also bridge 10.100.0.0/16 into a
+		// host-side default, so the dev loop masked it). The bridge IP is
+		// reserved by pkg/fcvm/alloc.go (allocator hands out 10.100.0.2+,
+		// never .1), so no slot-0 collision is possible.
+		inNetns("ip", "route", "add", "default", "via", "10.100.0.1", "dev", c.VethPeer),
 	}
 }
 
@@ -274,6 +285,12 @@ func (c Config) NftResetCommands() [][]string {
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
 	return [][]string{
 		nft("delete", "table", "ip", "faas"),
+		// Mirror the IPv6 table reset (ADR-023 split). On a snapshot-restore
+		// Wake the netns outlives the VM and the v6 table is already present;
+		// without this reset the subsequent NftCommands' `add table ip6 faas`
+		// collides. Best-effort like the v4 entry — the caller logs and
+		// continues when the table is absent.
+		nft("delete", "table", "ip6", "faas"),
 	}
 }
 
