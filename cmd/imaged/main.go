@@ -200,15 +200,17 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	loop := imaged.NewLoop(imaged.LoopConfig{
-		Handler:   h,
-		Store:     store,
-		Pool:      pool,
-		Log:       log,
-		Now:       d.now,
-		LvUsedPct: d.lvUsedPct,
-		DetectFC:  d.detectFC,
-		AppsRoot:  appsRoot,
-		GCEvery:   envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
+		Handler:            h,
+		Store:              store,
+		Pool:               pool,
+		Log:                log,
+		Now:                d.now,
+		LvUsedPct:          d.lvUsedPct,
+		DetectFC:           d.detectFC,
+		AppsRoot:           appsRoot,
+		GCEvery:            envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
+		ReapBuildEvery:     envDuration("FAAS_REAP_INTERVAL", 30*time.Second),
+		BuildReapThreshold: envDuration("FAAS_REAP_THRESHOLD", 30*time.Second),
 	})
 
 	log.Info("imaged ready",

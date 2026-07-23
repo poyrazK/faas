@@ -46,6 +46,13 @@ func spoolRoot() string {
 //	dockerfile bool  — present if the tarball root contains a Dockerfile.
 //	runtime   string — node22|python312 for function deploys.
 //	handler   string — handler path, required when runtime is set.
+//
+// DeployedApps is enforced at app-create time via
+// store.CreateAppIfUnderQuota — the deploy path cannot bypass it because
+// the parent apps row must already exist. The active-app gate that
+// prevents an orphan deployment row pointing at a soft-deleted app
+// lives inside store.CreateDeployment (PR-A: SELECT 1 FROM apps
+// WHERE id=$1 AND status='active' FOR UPDATE).
 func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) {
 	limits := api.MustLimitsFor(acct.Plan)
 
@@ -222,7 +229,8 @@ func validateAndSpool(part *multipart.Part, limits api.Limits) (string, int64, *
 }
 
 // validateTarballShape opens the spooled tarball and verifies the §9
-// invariants: ≤10k files, no symlink escapes, no absolute paths.
+// invariants: ≤10k files, no symlink/hardlink escapes, no absolute
+// paths, no `..` entries.
 //
 //nolint:forbidigo // path is the tmp file apid just wrote via os.Create in validateAndSpool above with a fresh random id; apid OWNS the parent directory AND the inode, customer never touched them — symlink-attack impossible. Tarball-shape validation re-reads the bytes to enforce spec §9.
 func validateTarballShape(path string) *api.Problem {
@@ -245,6 +253,20 @@ func validateTarballShape(path string) *api.Problem {
 		}
 		if err != nil {
 			return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad tar", err.Error())
+		}
+		// PR-A: reject symlink/hardlink entries whose target points
+		// outside the unpack root BEFORE counting the entry. The
+		// `hdr.Name` check above already catches `..` / absolute paths
+		// on the entry itself, but a regular-file entry like
+		// "evil.txt" can carry Linkname="/etc/passwd" under
+		// Typeflag=TypeLink and escape the build sandbox when builderd
+		// unpacks. Same predicate applied to Linkname as to Name so
+		// the wire contract is uniform: a tarball that escapes is
+		// rejected on the first offending entry.
+		if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
+			if strings.HasPrefix(hdr.Linkname, "/") || strings.Contains(hdr.Linkname, "..") {
+				return api.ErrSourceInvalid("symlink/hardlink with absolute or '..' target rejected")
+			}
 		}
 		count++
 		if count > maxSourceFiles {

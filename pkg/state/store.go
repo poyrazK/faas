@@ -333,6 +333,15 @@ type Store interface {
 	BuildByID(ctx context.Context, id string) (Build, error)
 	BuildByDeployment(ctx context.Context, deploymentID string) (Build, error)
 	UpdateBuildStatus(ctx context.Context, id string, status BuildStatus, fc FailureClass, started, finished bool) error
+	// ListStaleQueuedBuilds returns builds still in BuildQueued whose
+	// enqueued_at is older than threshold. The imaged reaper (PR-A)
+	// walks this set on a tick and re-emits db.NotifyBuildQueued for
+	// each, recovering from a missed pg_notify at the apid write path
+	// (e.g. transient Postgres blip between INSERT and NOTIFY).
+	// Builds is bounded by spec §9 (shallow queue), so a full scan is
+	// cheap; if pressure emerges, add a partial index on
+	// (status, enqueued_at) WHERE status='queued'.
+	ListStaleQueuedBuilds(ctx context.Context, threshold time.Duration) ([]Build, error)
 
 	// Custom domains (apid is sole writer).
 	CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error)

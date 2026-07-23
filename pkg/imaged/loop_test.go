@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -594,4 +595,75 @@ func TestMemStore_ListDeploymentsForApp_LimitZero(t *testing.T) {
 func nan() float64 {
 	var z float64
 	return z / z // 0/0 → NaN, deterministic, no math import
+}
+
+// fakeNotifier captures every Notify call so the reaper test can
+// assert on the on-wire payload without spinning up Postgres.
+// Reuses the existing fakeNotifier in handler_test.go (same package)
+// — only this test reads it without going through HandleNotification,
+// so the existing non-thread-safe shape is fine; this test runs
+// single-goroutine.
+func TestLoop_BuildReapTick(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "reap@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "reap-app",
+		RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball,
+	})
+	if _, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 100, ""); err != nil {
+		t.Fatalf("CreateBuild: %v", err)
+	}
+
+	// The MemStore sets EnqueuedAt = time.Now() on CreateBuild. We
+	// can't backdate via the public surface (no setter), so exercise
+	// the 0-threshold branch where every queued row qualifies.
+	notif := &fakeNotifier{}
+	loop := &Loop{
+		store:         store,
+		log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:           func() time.Time { return time.Unix(0, 0) },
+		reapEvery:     time.Second,
+		reapThreshold: 0, // every queued row qualifies
+		reapCh:        make(chan time.Time, 1),
+		handler: &Handler{
+			store: store,
+			log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+			notif: notif,
+		},
+	}
+
+	loop.runBuildReapTick(context.Background(), time.Now())
+
+	if len(notif.calls) == 0 {
+		t.Fatal("reaper emitted zero notifications; want at least one per stale row")
+	}
+	for _, c := range notif.calls {
+		if c.channel != db.NotifyBuildQueued {
+			t.Errorf("reaper emitted on %q, want %q", c.channel, db.NotifyBuildQueued)
+		}
+		// Payload shape must match buildQueuedPayload: build, deployment,
+		// app, kind. imaged's handler decodes this verbatim — if the
+		// payload shape drifts, every reap-emitted build would silently
+		// no-op.
+		if !strings.Contains(c.payload, `"deployment":"`+dep.ID+`"`) {
+			t.Errorf("reaper payload missing deployment id: %q", c.payload)
+		}
+		if !strings.Contains(c.payload, `"app":"`+app.ID+`"`) {
+			t.Errorf("reaper payload missing app id: %q", c.payload)
+		}
+	}
+
+	// Idempotency: a second tick with the same threshold + same rows
+	// emits again (we don't dedupe in-memory; Postgres-level dedup
+	// happens via UpdateBuildStatus flipping status out of queued
+	// when builderd picks it up). Acceptable — the cost of a duplicate
+	// notify is bounded by imaged's handleBuildQueued idempotency.
+	prev := len(notif.calls)
+	loop.runBuildReapTick(context.Background(), time.Now())
+	if len(notif.calls) <= prev {
+		t.Errorf("second tick should re-emit (no in-mem dedupe), got %d calls (was %d)", len(notif.calls), prev)
+	}
 }

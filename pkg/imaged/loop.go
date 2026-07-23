@@ -35,13 +35,22 @@ type Loop struct {
 	now       func() time.Time
 	lvUsedPct func(ctx context.Context) (float64, error)
 	gcEvery   time.Duration // default 24h; tests shrink to ms
-	detectFC  func(ctx context.Context) (string, error)
-	appsRoot  string
+	reapEvery time.Duration // default 30s; tests shrink to ms (PR-A)
+	// reapThreshold is the enqueued_at age beyond which a BuildQueued
+	// row gets its build_queued notification re-emitted (PR-A). Default
+	// 30s — long enough to absorb routine Postgres latency, short enough
+	// that a customer never waits more than reapEvery+reapThreshold for
+	// a missed notify to recover.
+	reapThreshold time.Duration
+	detectFC      func(ctx context.Context) (string, error)
+	appsRoot      string
 
 	// Injected channels so tests never block on time.Sleep. Defaults are
-	// built in NewLoop and can be overridden by WithGCChannel/WithFCSweepCh.
-	gcCh <-chan time.Time
-	fcCh <-chan struct{}
+	// built in NewLoop and can be overridden by WithGCChannel/WithFCSweepCh
+	// /WithBuildReapChannel.
+	gcCh   <-chan time.Time
+	fcCh   <-chan struct{}
+	reapCh <-chan time.Time
 }
 
 // LoopConfig bundles the dependencies NewLoop needs. Kept as a struct so
@@ -57,6 +66,11 @@ type LoopConfig struct {
 	DetectFC  func(ctx context.Context) (string, error)
 	AppsRoot  string
 	GCEvery   time.Duration
+	// ReapBuildEvery + BuildReapThreshold configure the build-queue
+	// reaper (PR-A). Zero values fall back to 30s + 30s, well within
+	// the deploy's UX envelope.
+	ReapBuildEvery     time.Duration
+	BuildReapThreshold time.Duration
 }
 
 // NewLoop returns a Loop wired with sane defaults. The caller (cmd/imaged)
@@ -71,16 +85,24 @@ func NewLoop(cfg LoopConfig) *Loop {
 	if cfg.GCEvery == 0 {
 		cfg.GCEvery = 24 * time.Hour
 	}
+	if cfg.ReapBuildEvery == 0 {
+		cfg.ReapBuildEvery = 30 * time.Second
+	}
+	if cfg.BuildReapThreshold == 0 {
+		cfg.BuildReapThreshold = 30 * time.Second
+	}
 	return &Loop{
-		handler:   cfg.Handler,
-		store:     cfg.Store,
-		pool:      cfg.Pool,
-		log:       cfg.Log,
-		now:       cfg.Now,
-		lvUsedPct: cfg.LvUsedPct,
-		detectFC:  cfg.DetectFC,
-		appsRoot:  cfg.AppsRoot,
-		gcEvery:   cfg.GCEvery,
+		handler:       cfg.Handler,
+		store:         cfg.Store,
+		pool:          cfg.Pool,
+		log:           cfg.Log,
+		now:           cfg.Now,
+		lvUsedPct:     cfg.LvUsedPct,
+		detectFC:      cfg.DetectFC,
+		appsRoot:      cfg.AppsRoot,
+		gcEvery:       cfg.GCEvery,
+		reapEvery:     cfg.ReapBuildEvery,
+		reapThreshold: cfg.BuildReapThreshold,
 	}
 }
 
@@ -98,6 +120,16 @@ func (l *Loop) WithGCChannel(ch <-chan time.Time) *Loop {
 func (l *Loop) WithFCSweepCh(ch <-chan struct{}) *Loop {
 	if ch != nil {
 		l.fcCh = ch
+	}
+	return l
+}
+
+// WithBuildReapChannel swaps the build-reap tick channel. Tests send
+// on this channel to fire runBuildReapTick deterministically without
+// time.Sleep (PR-A).
+func (l *Loop) WithBuildReapChannel(ch <-chan time.Time) *Loop {
+	if ch != nil {
+		l.reapCh = ch
 	}
 	return l
 }
@@ -121,6 +153,13 @@ func (l *Loop) Run(ctx context.Context) error {
 		once := make(chan struct{}, 1)
 		once <- struct{}{}
 		l.fcCh = once
+	}
+	if l.reapCh == nil {
+		// PR-A: build-queue reaper. Default cadence 30s; configurable
+		// via LoopConfig.ReapBuildEvery for tests + future tuning.
+		t := time.NewTicker(l.reapEvery)
+		defer t.Stop()
+		l.reapCh = t.C
 	}
 
 	var notif <-chan db.Notification
@@ -164,6 +203,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			if l.runFCSweep(ctx) {
 				l.fcCh = nil
 			}
+		case <-l.reapCh:
+			l.runBuildReapTick(ctx, l.now())
 		}
 	}
 }
@@ -255,6 +296,61 @@ func (l *Loop) runFCSweep(ctx context.Context) bool {
 	l.log.Info("imaged: fc sweep done",
 		"fc_version", ver, "marked_stale", n, "evicted", evicted)
 	return true
+}
+
+// runBuildReapTick is the PR-A build-queue reaper. It scans
+// ListStaleQueuedBuilds (rows still in BuildQueued whose enqueued_at
+// is older than l.reapThreshold) and re-emits db.NotifyBuildQueued
+// for each. Recovers from a missed pg_notify at the apid write path
+// (a transient Postgres blip between CreateBuild INSERT and the
+// following Notify call) without any manual operator action.
+//
+// Idempotent: handleBuildQueued (handler.go:691) updates status to
+// BuildRunning; a second reap-tick emit against a row that's already
+// been picked up by builderd is harmless — UpdateBuildStatus stamps
+// started_at and the handler exits early when rootfs_path isn't
+// stamped yet. Worst case is one duplicate processBuild cycle which
+// builderd's dequeue logic already tolerates (the queued row is the
+// only thing the reaper touches; builderd's UpdateBuildStatus flips
+// it out of BuildQueued on its first attempt).
+//
+// `now` is unused here (the reaper relies on enqueued_at + the
+// threshold, not the current time) but is kept in the signature to
+// match runGCTick's shape — saves a future caller from guessing
+// whether the reaper needs the clock.
+func (l *Loop) runBuildReapTick(ctx context.Context, _ time.Time) {
+	rows, err := l.store.ListStaleQueuedBuilds(ctx, l.reapThreshold)
+	if err != nil {
+		l.log.Warn("imaged: build reap list", "err", err)
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+	if l.handler == nil || l.handler.notif == nil {
+		l.log.Warn("imaged: build reap: notifier unwired; skipping", "stale", len(rows))
+		return
+	}
+	for _, b := range rows {
+		// Look up the deployment so we can resolve the parent app id
+		// for the on-wire payload (build_queued's `{app}` field is what
+		// imaged's existing buildQueuedPayload decodes — handler.go:253).
+		dep, derr := l.store.DeploymentByID(ctx, b.DeploymentID)
+		if derr != nil {
+			l.log.Warn("imaged: build reap resolve deployment",
+				"build", b.ID, "deployment", b.DeploymentID, "err", derr)
+			continue
+		}
+		payload := fmt.Sprintf(`{"build":"%s","deployment":"%s","app":"%s","kind":"%s"}`,
+			b.ID, b.DeploymentID, dep.AppID, string(b.Kind))
+		if err := l.handler.notif.Notify(ctx, db.NotifyBuildQueued, payload); err != nil {
+			l.log.Warn("imaged: build reap notify",
+				"build", b.ID, "deployment", b.DeploymentID, "err", err)
+			continue
+		}
+		l.log.Info("imaged: build reap re-emitted",
+			"build", b.ID, "deployment", b.DeploymentID, "kind", string(b.Kind))
+	}
 }
 
 // deleteSnapshotsAndFiles is the shared cleanup helper. Takes the tuples

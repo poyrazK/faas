@@ -1636,3 +1636,93 @@ func TestMemStore_SnapshotStorageKey_RoundTrip(t *testing.T) {
 		t.Errorf("SnapshotForGC.StorageKey = %q, want %q", rows[0].StorageKey, want)
 	}
 }
+
+// TestMemStore_ListStaleQueuedBuilds covers the imaged-reaper
+// surface (PR-A). Two queued builds — one old (5min), one fresh
+// (now) — plus one build already in BuildRunning. The threshold
+// (1min) should filter to just the old queued row. The non-queued
+// row must not appear regardless of age. MemStore keeps EnqueuedAt
+// private so we mutate the map directly under m.mu.
+func TestMemStore_ListStaleQueuedBuilds(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "reap@example.com", "pro")
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "reap-app", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	oldDep, _ := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployPending,
+	})
+	freshDep, _ := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployPending,
+	})
+	runningDep, _ := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployBuilding,
+	})
+
+	oldBuild, err := m.CreateBuild(ctx, oldDep.ID, DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild old: %v", err)
+	}
+	freshBuild, err := m.CreateBuild(ctx, freshDep.ID, DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild fresh: %v", err)
+	}
+	runningBuild, err := m.CreateBuild(ctx, runningDep.ID, DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild running: %v", err)
+	}
+
+	// Backdate the old build's EnqueuedAt 5min into the past; flip
+	// the running build to BuildRunning + backdate similarly (it
+	// must NOT appear regardless of age).
+	m.mu.Lock()
+	old := m.builds[oldBuild.ID]
+	old.EnqueuedAt = time.Now().Add(-5 * time.Minute)
+	m.builds[oldBuild.ID] = old
+	run := m.builds[runningBuild.ID]
+	run.Status = BuildRunning
+	run.EnqueuedAt = time.Now().Add(-5 * time.Minute)
+	m.builds[runningBuild.ID] = run
+	m.mu.Unlock()
+
+	// Threshold = 1 minute: only the backdated queued row qualifies.
+	out, err := m.ListStaleQueuedBuilds(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("ListStaleQueuedBuilds: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d stale builds, want 1", len(out))
+	}
+	if out[0].ID != oldBuild.ID {
+		t.Errorf("stale id = %q, want %q", out[0].ID, oldBuild.ID)
+	}
+	if out[0].ID == freshBuild.ID {
+		t.Errorf("fresh build leaked into stale list")
+	}
+	if out[0].ID == runningBuild.ID {
+		t.Errorf("non-queued build leaked into stale list")
+	}
+
+	// Threshold = 0 → the predicate becomes `enqueued_at < now()`. Both
+	// queued rows have EnqueuedAt <= now, so both qualify. This pins the
+	// reaper's "threshold is inclusive of zero" semantics — a caller that
+	// wants to suppress every row should pass time.Duration(-1) (which
+	// flips the predicate to `enqueued_at > now()` → none). Mirrors the
+	// PgStore behaviour exactly so the two impls stay in lockstep.
+	out2, err := m.ListStaleQueuedBuilds(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListStaleQueuedBuilds(0): %v", err)
+	}
+	if len(out2) != 2 {
+		t.Errorf("threshold=0 returned %d rows, want 2 (predicate is `enqueued_at < now()`)", len(out2))
+	}
+}
