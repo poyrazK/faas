@@ -136,7 +136,10 @@ type BuildResult struct {
 // ProcessOne claims the next queued build (or processes the buildID passed in
 // by the pg_notify handler) and runs it end-to-end:
 //
-//  1. Mark running (started=true, finished=false).
+//  1. ClaimQueuedBuild — atomic queued → running CAS. Returns
+//     ErrNotFound when the row is missing or already running/succeeded/
+//     failed; we drop duplicate build_queued notifications (apid write
+//     path + imaged reaper, PR-A) silently.
 //  2. Detect framework from the source tarball.
 //  3. Cache lookup — if hit, skip the VM spawn entirely.
 //  4. Allocate a slot (gate against tenant residency if 2nd).
@@ -147,9 +150,14 @@ type BuildResult struct {
 //
 // The caller (cmd/builderd's loop) is the only writer to the build row.
 func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult, error) {
-	build, err := b.store.BuildByID(ctx, buildID)
+	build, err := b.store.ClaimQueuedBuild(ctx, buildID)
 	if err != nil {
-		return BuildResult{}, fmt.Errorf("builderd: load build %s: %w", buildID, err)
+		if errors.Is(err, state.ErrNotFound) {
+			// Already claimed (duplicate notify) or terminal. Drop
+			// silently — the other claimant owns it.
+			return BuildResult{}, nil
+		}
+		return BuildResult{}, fmt.Errorf("builderd: claim build %s: %w", buildID, err)
 	}
 	dep, err := b.store.DeploymentByID(ctx, build.DeploymentID)
 	if err != nil {
@@ -160,9 +168,9 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		return BuildResult{}, fmt.Errorf("builderd: load app: %w", err)
 	}
 
-	if err := b.store.UpdateBuildStatus(ctx, build.ID, state.BuildRunning, "", true, false); err != nil {
-		return BuildResult{}, fmt.Errorf("builderd: mark running: %w", err)
-	}
+	// started_at was set by ClaimQueuedBuild; the legacy UpdateBuildStatus
+	// call here would clobber it, so we skip it. (Previously this line
+	// started_at = now() via UpdateBuildStatus; the CAS covers that.)
 	defer b.emitBuildLog(ctx, build.ID, "build started\n")
 
 	// Build telemetry (ADR-030). Queue wait = time the build sat between

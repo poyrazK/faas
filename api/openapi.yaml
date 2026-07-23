@@ -1310,7 +1310,9 @@ components:
         RFC 7807 problem+json envelope. The `code` field is the stable
         machine-readable identifier; clients branch on it. `limit` and
         `observed` are populated on quota errors. `docs_url` points the
-        user at the next action.
+        user at the next action. `billing_portal_url` is populated on
+        `code: payment_required` so the dashboard can deep-link the
+        customer to the Stripe-hosted billing portal (issue #142).
       example:
         type: "https://docs.DOMAIN/errors/validation_failed"
         title: Validation failed
@@ -1329,6 +1331,7 @@ components:
         limit: { type: [integer, "null"] }
         observed: { type: [integer, "null"] }
         docs_url: { type: string, format: uri }
+        billing_portal_url: { type: string, format: uri }
 
     RateLimitPlain:
       type: string

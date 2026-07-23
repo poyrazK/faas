@@ -1509,3 +1509,193 @@ func contains(xs []string, want string) bool {
 	}
 	return false
 }
+
+// TestPg_CreateDeployment_RejectsDeletedApp is the PR-A SQL pin for
+// the active-app gate inside CreateDeployment. Mirrors the wire-level
+// test in cmd/apid/deploy_to_active_app_test.go. The handler-level
+// test catches the wire contract; this test catches the SQL:
+// SELECT 1 FROM apps … FOR UPDATE returns 0 rows for a soft-deleted
+// app, so the tx rolls back without INSERT'ing a deployments row.
+//
+// Skips without Postgres (pgtest.Open handles the skip).
+func TestPg_CreateDeployment_RejectsDeletedApp(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx)
+
+	// PR-A review fix: seedLiveDeploy inserts one deployment for the
+	// app already, so a "no rows exist after the failed CreateDeployment"
+	// check is wrong. Capture the pre-delete count and assert it does
+	// NOT GROW across the rejected insert. The original gate's contract
+	// (no new deployment row for a deleted app) is what this pins.
+	pre, err := s.ListDeploymentsForApp(ctx, appID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForApp (pre): %v", err)
+	}
+
+	// Soft-delete the app via the public Store surface.
+	if err := s.DeleteApp(ctx, appID); err != nil {
+		t.Fatalf("DeleteApp: %v", err)
+	}
+
+	// Now CreateDeployment must return ErrNotFound (the active-app
+	// gate's contract). The handler maps ErrNotFound to 404.
+	_, err = s.CreateDeployment(ctx, state.Deployment{
+		AppID:       appID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "registry.example.com/x@sha256:" + strings.Repeat("d", 64),
+		Status:      state.DeployPending,
+	})
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("CreateDeployment against deleted app: err = %v, want ErrNotFound", err)
+	}
+
+	// Ground truth: no new deployment row was inserted for the deleted
+	// app — the count must equal the pre-delete baseline.
+	post, err := s.ListDeploymentsForApp(ctx, appID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForApp (post): %v", err)
+	}
+	if len(post) != len(pre) {
+		t.Errorf("deployments count grew from %d to %d after rejected CreateDeployment on deleted app", len(pre), len(post))
+	}
+
+	// Sanity: an active app on a different account still accepts
+	// deployments. This pins the gate's WHERE clause down to the
+	// specific app id (not account-wide).
+	otherAcct, _ := s.CreateAccount(ctx, "other@example.com", api.PlanPro)
+	otherApp, _ := s.CreateApp(ctx, state.App{
+		AccountID: otherAcct.ID, Slug: "active-app",
+		Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+	})
+	if _, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID:       otherApp.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "registry.example.com/y@sha256:" + strings.Repeat("e", 64),
+		Status:      state.DeployPending,
+	}); err != nil {
+		t.Errorf("active app must accept deployments, got %v", err)
+	}
+}
+
+// TestPg_ListStaleQueuedBuilds is the PR-A SQL pin for the imaged
+// reaper's read surface. Mirrors TestMemStore_ListStaleQueuedBuilds.
+// The schema layer is migrations/00027 which adds enqueued_at
+// timestamptz; the index ordering doesn't matter for this scan (the
+// queue is bounded per spec §9).
+//
+// Skips without Postgres (pgtest.Open handles the skip).
+func TestPg_ListStaleQueuedBuilds(t *testing.T) {
+	pool := pgtest.Open(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := state.NewPgStore(pool)
+	_, _, depID := seedLiveDeploy(t, s, ctx)
+
+	// Three builds on the same deployment row: one queued 2 min ago,
+	// one queued now, one BuildRunning (also backdated). The predicate
+	// is `status='queued' AND enqueued_at < now() - threshold`; with
+	// threshold=1min, only the first qualifies.
+	oldBuild, err := s.CreateBuild(ctx, depID, state.DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild old: %v", err)
+	}
+	freshBuild, err := s.CreateBuild(ctx, depID, state.DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild fresh: %v", err)
+	}
+	runningBuild, err := s.CreateBuild(ctx, depID, state.DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild running: %v", err)
+	}
+
+	// Backdate old to 2 minutes ago; flip running to BuildRunning
+	// and backdate it too. The status filter must exclude running
+	// regardless of age.
+	if _, err := pool.Exec(ctx,
+		`update builds set enqueued_at = now() - interval '2 minutes' where id = $1`,
+		oldBuild.ID); err != nil {
+		t.Fatalf("backdate old: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`update builds set status = 'running', enqueued_at = now() - interval '2 minutes' where id = $1`,
+		runningBuild.ID); err != nil {
+		t.Fatalf("flip running: %v", err)
+	}
+
+	out, err := s.ListStaleQueuedBuilds(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("ListStaleQueuedBuilds(1m): %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d stale builds, want 1 (only the backdated queued row)", len(out))
+	}
+	if out[0].ID != oldBuild.ID {
+		t.Errorf("stale id = %q, want %q", out[0].ID, oldBuild.ID)
+	}
+
+	// Threshold = 0 → predicate becomes `enqueued_at < now()`. Every
+	// queued row qualifies (the fresh row's enqueued_at was stamped at
+	// CreateBuild, a few ms before this call). The running row stays
+	// filtered by status.
+	out2, err := s.ListStaleQueuedBuilds(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListStaleQueuedBuilds(0): %v", err)
+	}
+	gotIDs := make([]string, len(out2))
+	for i, b := range out2 {
+		gotIDs[i] = b.ID
+	}
+	if !contains(gotIDs, oldBuild.ID) || !contains(gotIDs, freshBuild.ID) {
+		t.Errorf("threshold=0 missing queued rows; got %v", gotIDs)
+	}
+	if contains(gotIDs, runningBuild.ID) {
+		t.Errorf("threshold=0 leaked the running row; got %v", gotIDs)
+	}
+}
+
+// TestPg_ClaimQueuedBuild pins the atomic queued → running transition
+// that closes the apid/reaper double-emit race (PR-A review). First
+// claim wins; subsequent claims return ErrNotFound. started_at must be
+// set on the winner.
+func TestPg_ClaimQueuedBuild(t *testing.T) {
+	pool := pgtest.Open(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := state.NewPgStore(pool)
+	_, _, depID := seedLiveDeploy(t, s, ctx)
+
+	b, err := s.CreateBuild(ctx, depID, state.DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild: %v", err)
+	}
+
+	// First claim wins; row flips to running and started_at is set.
+	won, err := s.ClaimQueuedBuild(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("first ClaimQueuedBuild: %v", err)
+	}
+	if won.Status != state.BuildRunning {
+		t.Errorf("first claim status = %q, want running", won.Status)
+	}
+	if won.StartedAt.IsZero() {
+		t.Errorf("first claim started_at is zero")
+	}
+
+	// Second claim loses — row is no longer queued.
+	_, err = s.ClaimQueuedBuild(ctx, b.ID)
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("second claim err = %v, want ErrNotFound", err)
+	}
+
+	// Unknown id loses the same way. Use a valid UUID literal —
+	// the column is uuid-typed and rejects bare hex strings like
+	// "deadbeef" with a syntax error rather than ErrNotFound.
+	_, err = s.ClaimQueuedBuild(ctx, "00000000-0000-0000-0000-000000000000")
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("unknown id err = %v, want ErrNotFound", err)
+	}
+}
