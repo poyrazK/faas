@@ -156,3 +156,36 @@ covers ~90% of what codegen would, with zero rework risk during M8.
   `https://docs.DOMAIN/...` for the rendered HTML home. When that
   lands, point a Redoc/Starlight build at `/v1/openapi.json` instead
   of maintaining a separate HTML description.
+
+## How to extend the spec
+
+The gate is strict — it fails any PR where the spec and the code
+drift apart. That includes every PR that adds a new route, a new
+DTO field, or a new `Code*` constant. Quick checklist for changes
+that touch the API surface:
+
+1. **Adding a new route** — wire `mux.HandleFunc("METHOD /path", ...)`
+   in `cmd/apid/server.go`'s `handler()` method. Run `make spec-check`;
+   expect a failure `route parity failed: missing in spec: METHOD /path`.
+   Add the path under the appropriate tag in `api/openapi.yaml` with
+   the existing `Problem`-shared responses (`Unauthorized`,
+   `ValidationFailed`, `TooManyRequests`, ...). Re-run; gate passes.
+2. **Adding a new DTO field** — add the field to the struct in
+   `pkg/api/dto.go` (or the relevant DTO file). The gate will fail
+   `schema parity: missing properties in spec`. Add the property to
+   the matching schema in `api/openapi.yaml`. Re-run; gate passes.
+3. **Adding a new `Code*` constant** — add it to `pkg/api/errors.go`
+   and the `StatusForCode` switch. The gate will fail if the new
+   status code's response shape isn't in the spec. Add either a new
+   per-operation response OR a `components.responses.*` entry shared
+   via `$ref`. If the code is intentionally not customer-facing
+   (e.g. inside the CLI auth flow), add it to `codeExclude` at the
+   top of `cmd/apid/spec_compliance_test.go`. Document the choice in
+   this file's §"What's intentionally excluded".
+4. **Always commit `pkg/apid/openapi.yaml` alongside the source
+   change.** The `//go:embed`-ed copy is what `apid` ships at
+   runtime; `make spec-check` keeps it synced via `spec-sync`.
+
+If `make spec-check` fails with `git diff ... openapi.yaml`, that's
+a sign you forgot to refresh the embed copy. The drift is caught
+deliberately — a stale embed is worse than an explicit failure.

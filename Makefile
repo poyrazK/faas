@@ -238,7 +238,9 @@ spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
 
 .PHONY: spec-check
 spec-check: spec-install spec-lint spec-sync ## CI gate: vacuum lint + AST parity + git clean (runs in PR CI)
-	@$(GO) test -race -count=1 -run TestSpecCompliance ./cmd/apid/...
+	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
+	# would double the wall time without adding signal.
+	@$(GO) test -count=1 -run TestSpecCompliance ./cmd/apid/...
 	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) || \
 	  (echo "spec-check: spec drift — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"

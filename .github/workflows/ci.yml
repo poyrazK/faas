@@ -135,7 +135,7 @@ jobs:
       - name: proto-check
         run: make proto-check
 
-      # OpenAPI spec gate (PR #TODO). The spec is the source of truth for
+      # OpenAPI spec gate (PR #129). The spec is the source of truth for
       # documentation; the code is the source of truth for behavior; this
       # gate is the bridge. Same regenerate-and-diff pattern as proto-check /
       # sqlc-check / egress-check: vacuum lint + AST parity + git clean.

@@ -77,6 +77,15 @@ var dtoExclude = map[string]bool{
 	"StatusPage":              true, // GET /status/slo.json (public status)
 }
 
+// codeExclude lists Code* constants that are intentionally not in the
+// public OpenAPI spec. These are real code values used inside the
+// CLI auth flow (which is anonymous on purpose), not part of the
+// customer /v1/* API.
+var codeExclude = map[string]bool{
+	"CodeCliAuthPending":     true, // /v1/cli-auth/* (anonymous)
+	"CodeCliAuthUnavailable": true, // /v1/cli-auth/* (anonymous)
+}
+
 // schemaSpecOnly lists schemas that exist in the spec but have no Go DTO.
 // Either inline anonymous structs in handlers, or pure-documentation shapes
 // (error envelopes that don't directly mirror a Go type).
@@ -146,8 +155,13 @@ type specDoc struct {
 	// Schemas: schema name -> { properties: {field: ...} }
 	Schemas map[string]map[string]any
 	// Responses: status -> {media-type present: true}
-	// Merged from per-operation responses + global components.responses.
+	// Merged from per-operation responses + global components.responses
+	// (resolved via $ref).
 	Responses map[string]map[string]bool
+	// componentsResponses: name -> raw response object. Used by
+	// Methods() to resolve per-operation $ref entries into the
+	// correct media-type list under Responses[status].
+	componentsResponses map[string]any
 }
 
 func loadSpec(path string) (*specDoc, error) {
@@ -163,12 +177,24 @@ func loadSpec(path string) (*specDoc, error) {
 	}
 
 	d := &specDoc{
-		Paths:     map[string]map[string]map[string]any{},
-		Schemas:   map[string]map[string]any{},
-		Responses: map[string]map[string]bool{},
+		Paths:               map[string]map[string]map[string]any{},
+		Schemas:             map[string]map[string]any{},
+		Responses:           map[string]map[string]bool{},
+		componentsResponses: map[string]any{},
 	}
 
-	// paths: {path: {method: {responses: {...}, ...}}}
+	// Pass 1: collect components.responses so per-operation $ref
+	// resolution can use them.
+	if comps, ok := raw["components"].(map[string]any); ok {
+		if responses, ok := comps["responses"].(map[string]any); ok {
+			for name, body := range responses {
+				d.componentsResponses[name] = body
+			}
+		}
+	}
+
+	// Pass 2: walk paths and resolve $refs against the now-populated
+	// componentsResponses map.
 	if paths, ok := raw["paths"].(map[string]any); ok {
 		for p, methods := range paths {
 			mop, ok := methods.(map[string]any)
@@ -179,19 +205,12 @@ func loadSpec(path string) (*specDoc, error) {
 		}
 	}
 
-	// components.schemas + components.responses
+	// Pass 3: schemas (used by Schemas parity).
 	if comps, ok := raw["components"].(map[string]any); ok {
 		if schemas, ok := comps["schemas"].(map[string]any); ok {
 			for name, body := range schemas {
 				if m, ok := body.(map[string]any); ok {
 					d.Schemas[name] = m
-				}
-			}
-		}
-		if responses, ok := comps["responses"].(map[string]any); ok {
-			for _, body := range responses {
-				if m, ok := body.(map[string]any); ok {
-					collectContentTypes(m, d.Responses)
 				}
 			}
 		}
@@ -201,6 +220,12 @@ func loadSpec(path string) (*specDoc, error) {
 }
 
 // wire methods into Paths and collect responses into Responses.
+// Per-operation $ref entries are resolved through components.responses
+// so we record the resolved content media types under the numeric
+// status key (e.g. Responses["400"]). Without this resolution the
+// parity test would only see literal responses, not the named
+// ValidationFailed / NotFound / Unauthorized reuse the spec actually
+// relies on, and CI would drown in false "no response" errors.
 func (d *specDoc) Methods(path string, methods map[string]any) {
 	opmap := map[string]map[string]any{}
 	for m, op := range methods {
@@ -210,32 +235,58 @@ func (d *specDoc) Methods(path string, methods map[string]any) {
 		}
 		opmap[m] = mm
 		if resp, ok := mm["responses"].(map[string]any); ok {
-			collectContentTypes(resp, d.Responses)
+			for status, val := range resp {
+				collectResponse(status, val, d)
+			}
 		}
 	}
 	d.Paths[path] = opmap
 }
 
-func collectContentTypes(resp map[string]any, into map[string]map[string]bool) {
-	for status, val := range resp {
-		// Coerce integer status codes to string for uniform lookup.
-		s := fmt.Sprintf("%v", status)
-		mp, ok := val.(map[string]any)
+// collectResponse records the media types for a single per-operation
+// response object under d.Responses[status]. The OpenAPI shape is
+//
+//	'400': { $ref: '#/components/responses/ValidationFailed' }
+//
+// or inline:
+//
+//	'200': { content: { 'application/json': {schema: ...} } }
+//
+// We resolve the $ref against d.componentsResponses so the media
+// types get recorded under the numeric status key.
+func collectResponse(status string, val any, d *specDoc) {
+	mp, ok := val.(map[string]any)
+	if !ok {
+		return
+	}
+	if content, ok := mp["content"].(map[string]any); ok {
+		recordMedia(status, content, d.Responses)
+		return
+	}
+	if ref, ok := mp["$ref"].(string); ok {
+		const prefix = "#/components/responses/"
+		if !strings.HasPrefix(ref, prefix) {
+			return
+		}
+		name := ref[len(prefix):]
+		body, ok := d.componentsResponses[name].(map[string]any)
 		if !ok {
-			continue
+			return
 		}
-		content, ok := mp["content"].(map[string]any)
-		if !ok {
-			continue
+		if content, ok := body["content"].(map[string]any); ok {
+			recordMedia(status, content, d.Responses)
 		}
-		ct, ok := into[s]
-		if !ok {
-			ct = map[string]bool{}
-			into[s] = ct
-		}
-		for media := range content {
-			ct[media] = true
-		}
+	}
+}
+
+func recordMedia(status string, content map[string]any, into map[string]map[string]bool) {
+	ct, ok := into[status]
+	if !ok {
+		ct = map[string]bool{}
+		into[status] = ct
+	}
+	for media := range content {
+		ct[media] = true
 	}
 }
 
@@ -562,6 +613,8 @@ func testErrorCodesParity(t *testing.T, root string, spec *specDoc) {
 	// Every code in code must have a corresponding response in spec
 	// whose status is StatusForCode(code) AND whose content includes
 	// application/problem+json (with the exception of plain-text 429s).
+	// codes is pre-filtered by scanErrorCodes against codeExclude so
+	// non-public codes (CLI auth) never reach this loop.
 	var missing []string
 	for code, status := range codes {
 		media, ok := spec.Responses[fmt.Sprintf("%d", status)]
@@ -594,8 +647,14 @@ func testErrorCodesParity(t *testing.T, root string, spec *specDoc) {
 	}
 }
 
-// scanErrorCodes parses errors.go for Code* constants and StatusForCode
-// switch cases. Returns code -> status.
+// scanErrorCodes parses errors.go for Code* constants and the
+// StatusForCode function's switch cases. Returns code -> status.
+//
+// Anchored on the StatusForCode FuncDecl name rather than structural
+// pattern matching, so a refactor that replaces the switch with a
+// map[string]int (or any other shape) fails loudly here with a clear
+// message instead of silently producing an empty statusFor and
+// surfacing as "no response in spec" for every code in CI.
 func scanErrorCodes(path string) (map[string]int, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
@@ -630,60 +689,168 @@ func scanErrorCodes(path string) (map[string]int, error) {
 		return true
 	})
 
-	// 2. Walk StatusForCode switch.
-	statusFor := map[string]int{} // string-code -> int
-	ast.Inspect(f, func(n ast.Node) bool {
-		sw, ok := n.(*ast.SwitchStmt)
+	// 2. Find the StatusForCode function and walk its body's switch.
+	// Anchoring by name (instead of structural pattern matching any
+	// switch with Code* cases) means a refactor that replaces the
+	// switch — e.g. with a map[string]int lookup or a table-driven
+	// function — fails here with a clear message rather than
+	// silently producing an empty statusFor.
+	statusFor, err := walkStatusForCode(f, codes)
+	if err != nil {
+		return nil, err
+	}
+
+	// Sanity: if we found Code* constants but no status mappings, the
+	// walker almost certainly lost the function — fail loudly with a
+	// pointed message instead of letting CI drown in false positives.
+	if len(codes) > 0 && len(statusFor) == 0 {
+		return nil, fmt.Errorf(
+			"scanErrorCodes: found %d Code* constants but no status mappings — "+
+				"StatusForCode(refactor) shape may have changed. Update %s accordingly",
+			len(codes), path)
+	}
+
+	// Filter out codes that are intentionally not in the customer spec
+	// (CLI auth flow). The walker returns all Code* -> status pairs;
+	// the parity test sees only the ones we want documented.
+	filtered := map[string]int{}
+	for stringCode, status := range statusFor {
+		if isExcludedCode(stringCode, codes) {
+			continue
+		}
+		filtered[stringCode] = status
+	}
+	return filtered, nil
+}
+
+// isExcludedCode reports whether a string-code value comes from a
+// Code* constant in codeExclude. codes is the raw constant-name ->
+// string-code map produced by the walker.
+func isExcludedCode(stringCode string, codes map[string]string) bool {
+	for constName, codeValue := range codes {
+		if codeValue != stringCode {
+			continue
+		}
+		if codeExclude[constName] {
+			return true
+		}
+	}
+	return false
+}
+
+// walkStatusForCode finds the FuncDecl named "StatusForCode" and walks
+// the case clauses of its body's (Type)SwitchStmt. Each clause may
+// contain both Code* Idents and an http.StatusXxx call; the call
+// supplies the status and the Idents supply the codes.
+func walkStatusForCode(f *ast.File, codes map[string]string) (map[string]int, error) {
+	statusFor := map[string]int{}
+
+	var fn *ast.FuncDecl
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		if gd.Name.Name == "StatusForCode" {
+			fn = gd
+			break
+		}
+	}
+	if fn == nil {
+		return nil, fmt.Errorf("StatusForCode function not found in errors.go")
+	}
+	body := fn.Body
+	if body == nil {
+		return nil, fmt.Errorf("StatusForCode has no body (abstract or build-tagged-out? check //go:build tags)")
+	}
+
+	// Find the (Type)SwitchStmt. We accept both forms — current
+	// implementation is a *ast.SwitchStmt (switch code { ... }) but
+	// tolerate a TypeSwitchStmt too in case a future refactor lands.
+	var sw ast.Stmt
+	for _, stmt := range body.List {
+		if _, ok := stmt.(*ast.SwitchStmt); ok {
+			sw = stmt
+			break
+		}
+		if _, ok := stmt.(*ast.TypeSwitchStmt); ok {
+			sw = stmt
+			break
+		}
+	}
+	if sw == nil {
+		return nil, fmt.Errorf("StatusForCode body has no (Type)SwitchStmt — refactor may have replaced it; update spec_compliance_test.go")
+	}
+
+	// Pick the body of whichever kind we found.
+	var cases []ast.Stmt
+	switch s := sw.(type) {
+	case *ast.SwitchStmt:
+		cases = s.Body.List
+	case *ast.TypeSwitchStmt:
+		// TypeSwitchStmt assigns the tag to an implicit variable; not
+		// the current shape. Returned empty to be safe.
+		_ = s
+		return statusFor, nil
+	}
+
+	for _, stmt := range cases {
+		cc, ok := stmt.(*ast.CaseClause)
+		if !ok {
+			continue
+		}
+		// Case labels: collect Code* Ident references (= the codes
+		// that map to this case's status).
+		var codesHere []string
+		for _, expr := range cc.List {
+			id, ok := expr.(*ast.Ident)
+			if !ok || !strings.HasPrefix(id.Name, "Code") {
+				continue
+			}
+			if v, ok := codes[id.Name]; ok {
+				codesHere = append(codesHere, v)
+			}
+		}
+		// Case body: look for `return http.StatusXxx` and grab the
+		// status. The current shape is `case X, Y: return http.StatusZ`
+		// but we tolerate `return foo(http.StatusZ)` or an assignment
+		// to a status variable — any function call to http.StatusXxx
+		// in the case body counts.
+		status, hasStatus := extractStatusFromCaseBody(cc.Body)
+		if hasStatus {
+			for _, c := range codesHere {
+				statusFor[c] = status
+			}
+		}
+	}
+	return statusFor, nil
+}
+
+// extractStatusFromCaseBody walks an AST case-clause body looking for an
+// http.StatusXxx identifier — either as a direct return value or as
+// an argument to a function call (e.g. return NewProblem(
+// http.StatusForbidden, ...)). The first match wins; if none is found,
+// returns hasStatus=false so the case is treated as a fall-through and
+// the caller doesn't assign codes to it.
+func extractStatusFromCaseBody(body []ast.Stmt) (int, bool) {
+	var found int
+	var seen bool
+	ast.Inspect(&ast.BlockStmt{List: body}, func(n ast.Node) bool {
+		if seen {
+			return false
+		}
+		id, ok := n.(*ast.Ident)
 		if !ok {
 			return true
 		}
-		// Matching by name is awkward; do a simple structural scan: any
-		// switch with case clauses that include Code* constants.
-		for _, stmt := range sw.Body.List {
-			cc, ok := stmt.(*ast.CaseClause)
-			if !ok {
-				continue
-			}
-			var status int
-			hasStatus := false
-			var codesHere []string
-			for _, expr := range cc.List {
-				if id, ok := expr.(*ast.Ident); ok && strings.HasPrefix(id.Name, "Code") {
-					if v, ok := codes[id.Name]; ok {
-						codesHere = append(codesHere, v)
-					}
-				}
-				cl, ok := expr.(*ast.CallExpr)
-				if !ok {
-					continue
-				}
-				sel, ok := cl.Fun.(*ast.SelectorExpr)
-				if !ok || sel.Sel.Name != "Status" {
-					continue
-				}
-				// StatusXxx constant from net/http
-				if len(cl.Args) != 1 {
-					continue
-				}
-				id, ok := cl.Args[0].(*ast.Ident)
-				if !ok {
-					continue
-				}
-				if s, ok := httpStatusByIdent[id.Name]; ok {
-					status = s
-					hasStatus = true
-				}
-			}
-			if hasStatus {
-				for _, c := range codesHere {
-					statusFor[c] = status
-				}
-			}
+		if s, ok := httpStatusByIdent[id.Name]; ok {
+			found = s
+			seen = true
+			return false
 		}
 		return true
 	})
-
-	return statusFor, nil
+	return found, seen
 }
 
 // httpStatusByIdent maps net/http status identifiers to their numeric value.

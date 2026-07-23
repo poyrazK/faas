@@ -14,6 +14,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"net/http"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -32,6 +33,39 @@ var openapiYAML []byte
 // listener).
 func OpenAPIYAML() []byte { return openapiYAML }
 
+// openapiJSON is the embedded spec re-emitted as JSON, computed once at
+// process start. The endpoint is anonymous (no s.auth, no rate-limit) and
+// amplifiable — SDK generators and curl users hit it freely — so we
+// avoid paying YAML→map→JSON cost per request. spec_compliance_test.go
+// catches a malformed YAML before deploy, so reaching the error path
+// here is a build-time invariant violation.
+var (
+	openapiJSONOnce sync.Once
+	openapiJSON     []byte
+)
+
+func init() {
+	openapiJSONOnce.Do(func() {
+		openapiJSON = mustMarshalJSON(openapiYAML)
+	})
+}
+
+func mustMarshalJSON(yamlBytes []byte) []byte {
+	var doc any
+	if err := yaml.Unmarshal(yamlBytes, &doc); err != nil {
+		// Should be caught at PR time by `make spec-check` (vacuum
+		// parse + AST gate). If we land here the spec is malformed;
+		// fall back to a structured error envelope so the runtime
+		// surfaces it rather than panicking on nil.
+		return []byte(`{"error":"openapi spec is malformed at build time"}`)
+	}
+	body, err := json.Marshal(doc)
+	if err != nil {
+		return []byte(`{"error":"openapi spec is malformed at build time"}`)
+	}
+	return body
+}
+
 // ServeOpenAPISpec handles GET /v1/openapi.yaml. Anonymous; emits
 // application/yaml with a short Cache-Control so SDK codegen caches
 // don't pin a stale spec.
@@ -42,31 +76,19 @@ func ServeOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(openapiYAML)
 }
 
-// ServeOpenAPISpecJSON handles GET /v1/openapi.json. Parses the
-// embedded YAML and re-emits as JSON. Anonymous; SDK generators
-// (`openapi-generator`, `oapi-codegen`) that prefer JSON don't need
-// to ship a YAML parser.
+// ServeOpenAPISpecJSON handles GET /v1/openapi.json. Anonymous; serves
+// the pre-marshalled JSON bytes computed in init(). SDK generators
+// (`openapi-generator`, `oapi-codegen`) prefer JSON, and the endpoint
+// is amplifiable, so caching the body matters.
 //
 // The JSON response is deterministic for a given spec — `yaml.v3`
 // decodes into `map[string]any` / `[]any`, which json.Marshal renders
 // with sorted keys (Go spec). Equivalent specs always produce
-// equivalent JSON.
+// equivalent JSON. See openapi_handler_test.go for the locked-in
+// round-trip property.
 func ServeOpenAPISpecJSON(w http.ResponseWriter, _ *http.Request) {
-	var doc any
-	if err := yaml.Unmarshal(openapiYAML, &doc); err != nil {
-		// Spec is malformed — this should be caught at PR time by
-		// make spec-check. If we reach here, surface as a plain 500
-		// with no leakage of internal error shape.
-		http.Error(w, "openapi spec is malformed", http.StatusInternalServerError)
-		return
-	}
-	body, err := json.Marshal(doc)
-	if err != nil {
-		http.Error(w, "openapi spec is malformed", http.StatusInternalServerError)
-		return
-	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	_, _ = w.Write(openapiJSON)
 }
