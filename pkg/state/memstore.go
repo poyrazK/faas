@@ -851,7 +851,7 @@ func (m *MemStore) CreateBuild(_ context.Context, deploymentID string, kind Depl
 	if _, ok := m.deployments[deploymentID]; !ok {
 		return Build{}, fmt.Errorf("state: build for unknown deployment %q", deploymentID)
 	}
-	b := Build{ID: newID(), DeploymentID: deploymentID, Kind: kind, SourceBytes: sourceBytes, Status: BuildQueued, LogPath: logPath}
+	b := Build{ID: newID(), DeploymentID: deploymentID, Kind: kind, SourceBytes: sourceBytes, Status: BuildQueued, LogPath: logPath, EnqueuedAt: time.Now()}
 	m.builds[b.ID] = b
 	return b, nil
 }
