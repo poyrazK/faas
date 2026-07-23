@@ -496,6 +496,13 @@ func (s *server) handler() http.Handler {
 // code label is "ok" on 2xx / 3xx and "err" on anything else;
 // 4xx quota/auth codes are the dominant traffic and the §12
 // dashboard's "rejected traffic" panel reads this column.
+//
+// Unmatched routes (r.Pattern == "" — the 404 path a URL scanner
+// hits, e.g. "/wp-login.php", "/.env") are recorded under a single
+// fixed op="unmatched" label. Recording under r.URL.Path would let
+// a scanner explode the label set unbounded (review finding #2 on
+// PR #132); the unmatched bucket still surfaces scanner traffic as
+// one series per code so the §12 dashboard can alert on it.
 func (s *server) observeWrap(h http.Handler) http.Handler {
 	if s.ops == nil {
 		return h
@@ -504,14 +511,9 @@ func (s *server) observeWrap(h http.Handler) http.Handler {
 		start := time.Now()
 		rec := &observeWriter{ResponseWriter: w, status: http.StatusOK}
 		h.ServeHTTP(rec, r)
-		// r.Pattern is the route template Go 1.22's mux matched
-		// against (e.g. "GET /v1/apps/{slug}"). Set by ServeMux;
-		// empty string when no pattern matched, which we record as
-		// the literal URL path so a /metrics request surfaces as
-		// its own op.
 		op := r.Pattern
 		if op == "" {
-			op = r.URL.Path
+			op = "unmatched"
 		}
 		s.ops.Observe(op, time.Since(start), observeErrFromStatus(rec.status))
 	})

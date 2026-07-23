@@ -246,3 +246,33 @@ func TestWebhook_MetricsEndpointMounted(t *testing.T) {
 		t.Errorf("/metrics body has no githubd_test_ series:\n%s", got)
 	}
 }
+
+// When Ops is nil (e.g. a future caller that forgets WithOpsMetrics
+// — review finding #3 on PR #132), the webhook handler must still
+// serve its contract: 405 for non-POST, 401 for bad signature, etc.
+// A nil-deref at the first inbound webhook would take the daemon
+// down in production; this test pins down the nil-safe path so a
+// future cleanup that drops the nil-check breaks the test loudly.
+func TestHandleWebhookPush_NilOpsIsNoOp(t *testing.T) {
+	svc := newRecording(t)
+	// Ops left nil on purpose — this is the misconfigured-caller case.
+	s := &Server{Service: svc, Log: svc.Log}
+
+	// 405 path.
+	req := httptest.NewRequest(http.MethodGet, "/webhooks/github", nil)
+	rr := httptest.NewRecorder()
+	s.handleWebhookPush(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET status = %d, want 405", rr.Code)
+	}
+
+	// 401 path (no secret in slice 7 → daemon-side verify rejects).
+	body := []byte(`{"ref":"refs/heads/main","after":"abc","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	req = httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	s.handleWebhookPush(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("POST status = %d, want 401", rr.Code)
+	}
+}

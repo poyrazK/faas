@@ -221,16 +221,27 @@ func (s *Server) WebhookLoopbackHandler() http.Handler {
 func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 	const op = "webhook_push"
 	start := time.Now()
+	// observe is the nil-safe observe closure: when Ops isn't wired
+	// (a unit test that builds a Server directly), every exit below
+	// becomes a no-op instead of a nil-deref panic. Captures `s` and
+	// `start` by reference so the per-call start time stays correct.
+	// Same pattern as apid's observeWrap nil-safety (review finding
+	// #3 on PR #132).
+	observe := func(err error) {
+		if s.Ops != nil {
+			s.Ops.Observe(op, time.Since(start), err)
+		}
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		s.Ops.Observe(op, time.Since(start), errors.New("githubd: webhook method not allowed"))
+		observe(errors.New("githubd: webhook method not allowed"))
 		return
 	}
 	body, err := readBody(w, r)
 	if err != nil {
 		s.Log.Warn("githubd webhook body read", "err", err)
 		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
-		s.Ops.Observe(op, time.Since(start), err)
+		observe(err)
 		return
 	}
 	// Re-verify the HMAC. The gatewayd proxy already did this,
@@ -240,7 +251,7 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 	secret := webhookSecretFromHeader(r)
 	if secret == nil || !verifyOrLog(s, body, sig, secret) {
 		http.Error(w, "signature verification failed", http.StatusUnauthorized)
-		s.Ops.Observe(op, time.Since(start), errors.New("githubd: webhook signature invalid"))
+		observe(errors.New("githubd: webhook signature invalid"))
 		return
 	}
 	depID, err := s.Service.HandlePushRequest(r.Context(), body)
@@ -255,12 +266,12 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"status":"ignored","reason":"no_binding"}`))
-			s.Ops.Observe(op, time.Since(start), nil)
+			observe(nil)
 			return
 		}
 		s.Log.Error("githubd webhook handle", "err", err)
 		http.Error(w, "internal", http.StatusInternalServerError)
-		s.Ops.Observe(op, time.Since(start), err)
+		observe(err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -274,7 +285,7 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 		DeploymentID string `json:"deployment_id"`
 	}{Status: statusQueued, DeploymentID: depID})
 	_, _ = w.Write(respBody)
-	s.Ops.Observe(op, time.Since(start), nil)
+	observe(nil)
 }
 
 // readBody is split out so the 413 path can fail fast without

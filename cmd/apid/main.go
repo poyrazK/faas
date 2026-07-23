@@ -71,9 +71,15 @@ var listenAddr = envOr("FAAS_APID_LISTEN", "127.0.0.1:8081")
 
 // metricsAddr is the bind address for the apid /metrics listener
 // (separate from the main listener so a port collision can't take the
-// daemon down). Empty = disabled (unit tests, low-surface prod).
+// daemon down). Defaults to 127.0.0.1:9101 so an operator typo (or
+// a missing env var in prod) can't accidentally expose the internal
+// registry to the public network — series like apid_ops_total{op,code}
+// leak auth-rejection rates and per-route traffic shape (review
+// finding #1 on PR #132). Loopback bind is safe because the local
+// Prometheus scrapes from the box itself. Set FAAS_APID_METRICS_ADDR=
+// to disable the listener (unit tests that don't want a port reserved).
 // Mirrors cmd/builderd/main.go's MetricsAddr pattern (PR #124).
-var metricsAddr = envOr("FAAS_APID_METRICS_ADDR", "")
+var metricsAddr = envOr("FAAS_APID_METRICS_ADDR", "127.0.0.1:9101")
 
 // runDeps is the DI seam for run — same pattern as vmmd / gatewayd so we can
 // exercise the listener lifecycle without binding :8081 from tests.

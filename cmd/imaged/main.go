@@ -223,10 +223,15 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 
 	// Optional /metrics listener (this PR). Mirrors cmd/apid/main.go
 	// and cmd/builderd/main.go:146-157 — separate bind so a port
-	// collision can't take the daemon down. Empty FAAS_IMAGED_METRICS_ADDR
-	// (default) = no listener; the registry is still wired into the
-	// handler so a future scrape endpoint flip doesn't need a refactor.
-	metricsAddr := envOr("FAAS_IMAGED_METRICS_ADDR", "")
+	// collision can't take the daemon down. Defaults to 127.0.0.1:9102
+	// so an operator typo (or a missing env var in prod) can't accidentally
+	// expose the internal registry to the public network — series like
+	// imaged_oci_pull_duration_seconds{op,result} leak per-deploy timing
+	// shape (review finding #1 on PR #132). Loopback bind is safe because
+	// the local Prometheus scrapes from the box itself. Set
+	// FAAS_IMAGED_METRICS_ADDR= to disable the listener (unit tests that
+	// don't want a port reserved).
+	metricsAddr := envOr("FAAS_IMAGED_METRICS_ADDR", "127.0.0.1:9102")
 	if metricsAddr != "" {
 		ops := wire.NewOpsMetrics("imaged")
 		mux := http.NewServeMux()

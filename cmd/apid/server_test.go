@@ -399,3 +399,48 @@ func TestObserveWrap_AuthFailure(t *testing.T) {
 		t.Errorf("metrics body missing 401-counted series:\n%s", body)
 	}
 }
+
+// Unmatched routes (r.Pattern == "" — 404s a URL scanner hits) must
+// be observed under the fixed op="unmatched" label, NOT the literal
+// URL path. Recording under the path would let a scanner explode the
+// label set unbounded (review finding #2 on PR #132); the fixed
+// bucket keeps scanner traffic as one series per code.
+func TestObserveWrap_UnmatchedRoute(t *testing.T) {
+	e := setup(t, api.PlanFree)
+
+	// Two distinct scanner paths → both should land on the same
+	// op="unmatched" series (count = 2), proving we did NOT record
+	// under r.URL.Path.
+	for _, path := range []string{"/wp-login.php", "/.env"} {
+		req := httptest.NewRequest("GET", path, nil)
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s status = %d, want 404", path, rec.Code)
+		}
+	}
+
+	srv := httptest.NewServer(e.ops.Handler())
+	t.Cleanup(srv.Close)
+	resp, _ := http.Get(srv.URL)
+	defer func() { _ = resp.Body.Close() }()
+	bodyB, _ := io.ReadAll(resp.Body)
+	body := string(bodyB)
+
+	want := []string{
+		`apid_test_ops_total{code="err",op="unmatched"} 2`,
+		`apid_test_op_duration_seconds_count{op="unmatched"} 2`,
+	}
+	for _, w := range want {
+		if !strings.Contains(body, w) {
+			t.Errorf("metrics body missing %q:\n%s", w, body)
+		}
+	}
+	// Defense against a regression to the old "op = r.URL.Path" shape:
+	// the literal path must NOT surface as its own op label.
+	for _, banned := range []string{`op="/wp-login.php"`, `op="/.env"`} {
+		if strings.Contains(body, banned) {
+			t.Errorf("metrics body leaked scanner URL as op label %q:\n%s", banned, body)
+		}
+	}
+}
