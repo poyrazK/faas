@@ -235,6 +235,18 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 // queryScalar runs a PromQL `query` against the local Prometheus and
 // returns the first scalar. Returns an error on transport failure,
 // non-2xx response, parse error, or empty result.
+//
+// PromQL has three result shapes; only "scalar" and "vector" can
+// appear here, and they're encoded differently in the JSON envelope:
+//   - vector → {"resultType":"vector",  "result":[{"value":[ts,"x"]}, ...]}
+//   - scalar → {"resultType":"scalar",  "result":[{"value":[ts,"x"]}]}
+//   - matrix → {"resultType":"matrix",  "result":[{"values":[[ts,"x"],...]}], ...}
+// We must support both vector and scalar because e.g.
+// `count(ALERTS{alertstate="firing"}) > 0` returns a scalar — the
+// alert-state PromQL expression the §12 degraded flag depends on.
+// Without this branch the alert query always errors "no data for query"
+// and the degraded pill never flips on. The `Value[0]` is a timestamp
+// in both shapes; the parsed scalar lives at `Value[1]`.
 func (c *statusCache) queryScalar(ctx context.Context, query string) (float64, error) {
 	qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -262,6 +274,9 @@ func (c *statusCache) queryScalar(ctx context.Context, query string) (float64, e
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
 		return 0, err
+	}
+	if pr.Data.ResultType != "vector" && pr.Data.ResultType != "scalar" {
+		return 0, fmt.Errorf("unsupported resultType %q for query %q", pr.Data.ResultType, query)
 	}
 	if len(pr.Data.Result) == 0 {
 		return 0, fmt.Errorf("no data for query %q", query)
