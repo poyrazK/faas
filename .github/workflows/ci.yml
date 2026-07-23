@@ -141,6 +141,15 @@ jobs:
       # sqlc-check / egress-check: vacuum lint + AST parity + git clean.
       # Fails the PR if a route / DTO / Code* constant drifts without a
       # matching spec change.
+      #
+      # vacuum is installed in its own step (instead of via the
+      # Makefile's idempotent `make spec-install` guard) because CI runs
+      # bash with `set -e` and the make guard's first-time-install
+      # branch is a compound test under errexit, which trips on the
+      # `command -v` return-1 the first time. A bare `go install` step
+      # is unconditionally idempotent under -e.
+      - name: install vacuum
+        run: go install github.com/daveshanley/vacuum@v0.29.10
       - name: spec-check
         run: make spec-check
 

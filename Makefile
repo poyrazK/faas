@@ -224,7 +224,14 @@ VACUUM_RULES := api/vacuum.yaml
 
 .PHONY: spec-install
 spec-install: ## Install vacuum at the pinned version (idempotent)
-	@command -v $(VACUUM) >/dev/null 2>&1 && $(VACUUM) version 2>&1 | grep -q $(VACUUM_VER) && echo "vacuum $(VACUUM_VER) installed" && exit 0
+	# Each line is its own shell statement so this guard stays bash -e safe
+	# (a single `&&` chain trips on the first `command -v` returning 1 when
+	# vacuum isn't installed yet — CI runs `set -e`, the make recipe inherits
+	# it). CI installs vacuum in its own workflow step (ci.yml); this target
+	# stays here for local `make spec-lint` / `make spec-check` first-run use.
+	@if command -v $(VACUUM) >/dev/null 2>&1; then \
+	  $(VACUUM) version 2>&1 | grep -q $(VACUUM_VER) && { echo "vacuum $(VACUUM_VER) installed"; exit 0; }; \
+	fi; \
 	GOFLAGS='' GOBIN=$(dir $(VACUUM)) go install github.com/daveshanley/vacuum@$(VACUUM_VER)
 
 .PHONY: spec-sync
