@@ -72,7 +72,7 @@ paths:
       description: Returns the calling account, its plan, and quota limits.
       responses:
         '200':
-          description: Whoami (200 OK).
+          description: "The calling account: id, plan, limits snapshot, current-month usage, and total app count."
           content:
             application/json:
               schema:
@@ -121,7 +121,7 @@ paths:
               example: {"plan":"pro"}
       responses:
         '200':
-          description: Change billing plan (200 OK).
+          description: The updated account profile after the plan change.
           content:
             application/json:
               schema:
@@ -152,7 +152,7 @@ paths:
           description: If true (default), include the sealed-secret envelopes.
       responses:
         '200':
-          description: Export full account data (GDPR) (200 OK).
+          description: "A bundled JSON document: the account itself plus every owned app, deployment, build, instance, usage record, domain, cron, API key, sealed-secret envelope, and the audit trail."
           headers:
             Content-Disposition:
               schema: { type: string }
@@ -190,12 +190,14 @@ paths:
       summary: List apps on the account.
       responses:
         '200':
-          description: List apps on the account (200 OK).
+          description: Apps on the account.
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/AppResponse' }
+              example:
+                - {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","ram_mb":256,"max_concurrency":2,"min_instances":0,"status":"active","url":"https://hello-world.example.com","manifest":{"entrypoint":["node","server.js"]},"created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
@@ -214,7 +216,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
-          description: Created app (201).
+          description: The new app.
           content:
             application/json:
               schema:
@@ -235,7 +237,7 @@ paths:
       summary: Fetch one app.
       responses:
         '200':
-          description: Fetch one app (200 OK).
+          description: The app.
           content:
             application/json:
               schema:
@@ -258,7 +260,7 @@ paths:
               example: {"ram_mb":512,"max_concurrency":3,"idle_timeout_s":120,"min_instances":1}
       responses:
         '200':
-          description: Partial-update an app (200 OK).
+          description: The updated app.
           content:
             application/json:
               schema:
@@ -275,7 +277,7 @@ paths:
       operationId: deleteApp
       summary: Delete an app.
       responses:
-        '204': { description: Resource deleted (204). }
+        '204': { description: No body. The resource was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -294,6 +296,7 @@ paths:
         Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
       requestBody:
         required: true
+        description: "Either a prebuilt OCI image reference (`application/json`) or a source tarball upload (`multipart/form-data`). See the operation description for plan size caps."
         content:
           application/json:
             schema:
@@ -319,7 +322,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
-          description: Accepted deployment build (202).
+          description: The deployment whose build has been accepted and queued.
           content:
             application/json:
               schema:
@@ -343,7 +346,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
-          description: Accepted rollback (202).
+          description: The deployment that was created by rolling back to the previous version.
           content:
             application/json:
               schema:
@@ -399,7 +402,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
-          description: Rename an app (200 OK).
+          description: The renamed app.
           content:
             application/json:
               schema:
@@ -418,7 +421,7 @@ paths:
       summary: Read-only instance list for an app.
       responses:
         '200':
-          description: Read-only instance list for an app (200 OK).
+          description: Instances belonging to the app.
           content:
             application/json:
               schema:
@@ -448,7 +451,7 @@ paths:
           description: If 1, hold the connection open and stream new entries.
       responses:
         '200':
-          description: Stream app logs (SSE) (200 OK).
+          description: A text/event-stream of structured log lines, terminated by an empty SSE frame when the connection closes.
           content:
             text/event-stream: {}
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -464,7 +467,7 @@ paths:
       summary: List sealed secrets on an app.
       responses:
         '200':
-          description: List sealed secrets on an app (200 OK).
+          description: Sealed-secret envelopes on the app (plaintext never returned).
           content:
             application/json:
               schema:
@@ -495,7 +498,7 @@ paths:
               example: {"key":"DATABASE_URL","value":"postgres://..."}
       responses:
         '200':
-          description: Set a sealed secret (200 OK).
+          description: The stored sealed-secret envelope.
           content:
             application/json:
               schema:
@@ -511,7 +514,7 @@ paths:
       operationId: deleteSecret
       summary: Delete a sealed secret.
       responses:
-        '204': { description: Secret deleted (204). }
+        '204': { description: No body. The sealed-secret envelope was removed. }
         '400': { $ref: '#/components/responses/SecretNotFound' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -539,7 +542,7 @@ paths:
           description: RFC3339Nano cursor from a previous response's `next_before`.
       responses:
         '200':
-          description: List deployments across all apps on the account (200 OK).
+          description: A paginated list of deployments.
           content:
             application/json:
               schema:
@@ -557,7 +560,7 @@ paths:
       summary: Fetch one deployment.
       responses:
         '200':
-          description: Fetch one deployment (200 OK).
+          description: The deployment.
           content:
             application/json:
               schema:
@@ -592,7 +595,7 @@ paths:
           description: If 1, hold the connection open and stream new build log entries as they arrive.
       responses:
         '200':
-          description: Stream build logs (SSE) (200 OK).
+          description: A text/event-stream of build log entries, terminated by an empty SSE frame when the build finishes.
           content:
             text/event-stream: {}
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -608,12 +611,14 @@ paths:
       summary: List custom domain bindings.
       responses:
         '200':
-          description: List custom domain bindings (200 OK).
+          description: Custom-domain bindings on the account.
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/CustomDomainResponse' }
+              example:
+                - {"id":"0123456789abcdef0123456789abcdef","domain":"app.example.com","app_id":"0123456789abcdef0123456789abcdef","verified":true,"tls_state":"active","created_at":"2026-07-23T11:25:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
@@ -632,7 +637,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
-          description: Created domain (201).
+          description: The new custom-domain binding.
           content:
             application/json:
               schema:
@@ -655,7 +660,7 @@ paths:
       operationId: deleteDomain
       summary: Remove a custom domain binding.
       responses:
-        '204': { description: Domain deleted (204). }
+        '204': { description: No body. The binding was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -669,12 +674,14 @@ paths:
       summary: List cron triggers.
       responses:
         '200':
-          description: List cron triggers (200 OK).
+          description: Cron triggers on the account.
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/CronResponse' }
+              example:
+                - {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","schedule":"*/5 * * * *","path":"/cron","enabled":true,"created_at":"2026-07-23T11:25:00Z","last_fired_at":"2026-07-23T11:20:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
@@ -693,7 +700,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
-          description: Created cron (201).
+          description: The new cron trigger.
           content:
             application/json:
               schema:
@@ -720,7 +727,7 @@ paths:
               example: {"enabled":false,"schedule":"0 * * * *"}
       responses:
         '200':
-          description: Partial-update a cron (200 OK).
+          description: The updated cron trigger.
           content:
             application/json:
               schema:
@@ -735,7 +742,7 @@ paths:
       operationId: deleteCron
       summary: Delete a cron.
       responses:
-        '204': { description: Cron deleted (204). }
+        '204': { description: No body. The cron trigger was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -749,12 +756,14 @@ paths:
       summary: List API keys (no plaintext).
       responses:
         '200':
-          description: List API keys (no plaintext) (200 OK).
+          description: API key metadata on the account. Plaintext is never returned.
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/APIKeyResponse' }
+              example:
+                - {"id":"0123456789abcdef0123456789abcdef","prefix":"fp_live_ab","label":"ci-deploy","created_at":"2026-07-23T11:25:00Z","last_used_at":"2026-07-23T11:25:00Z","requests":42}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
@@ -774,7 +783,7 @@ paths:
               example: {"label":"ci-deploy"}
       responses:
         '201':
-          description: Created API key (201).
+          description: The new API key. **The plaintext is returned exactly once** — every subsequent GET returns only the prefix.
           content:
             application/json:
               schema:
@@ -791,7 +800,7 @@ paths:
       operationId: deleteKey
       summary: Revoke an API key.
       responses:
-        '204': { description: Key revoked (204). }
+        '204': { description: No body. The key was revoked. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -810,7 +819,7 @@ paths:
           description: Billing month in `YYYY-MM` form (UTC). Defaults to the current month.
       responses:
         '200':
-          description: Per-app monthly usage (200 OK).
+          description: Per-app usage rows for the month.
           content:
             application/json:
               schema:
@@ -833,7 +842,7 @@ paths:
           description: Billing month in `YYYY-MM` form (UTC). Defaults to the current month for the roll-up.
       responses:
         '200':
-          description: Monthly roll-up with overage math (200 OK).
+          description: The monthly roll-up with overage math.
           content:
             application/json:
               schema:
@@ -860,7 +869,7 @@ paths:
       security: []
       responses:
         '200':
-          description: This spec, as YAML (200 OK).
+          description: The OpenAPI 3.1 document for this API.
           headers:
             Cache-Control:
               schema: { type: string, example: 'public, max-age=300' }
@@ -879,7 +888,7 @@ paths:
       security: []
       responses:
         '200':
-          description: This spec, as JSON (200 OK).
+          description: The OpenAPI 3.1 document for this API, as JSON.
           headers:
             Cache-Control:
               schema: { type: string, example: 'public, max-age=300' }
@@ -1055,7 +1064,7 @@ components:
       required: [id, slug, type, ram_mb, max_concurrency, min_instances, status, url, manifest]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
-        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38, example: "hello-world"})[a-z0-9]$' }
+        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
         runtime: { type: string, enum: [node22, python312], description: "Runtime for `type: function` apps. Omit for `type: app` (the default)." }
         ram_mb: { type: integer , example: 256}
@@ -1071,7 +1080,7 @@ components:
       type: object
       required: [slug]
       properties:
-        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38, example: "hello-world"})[a-z0-9]$', minLength: 3, maxLength: 40 }
+        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
         runtime: { type: string, enum: [node22, python312] }
         ram_mb: { type: integer , example: 256}
@@ -1092,7 +1101,7 @@ components:
       type: object
       required: [new_slug]
       properties:
-        new_slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38, example: "hello-world-v2"})[a-z0-9]$', minLength: 3, maxLength: 40 }
+        new_slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world-v2" }
 
     AppManifest:
       description: "App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag (§ux 6.3)."
@@ -1297,20 +1306,20 @@ components:
     Problem:
       type: object
       required: [title, status, code]
+      description: |
+        RFC 7807 problem+json envelope. The `code` field is the stable
+        machine-readable identifier; clients branch on it. `limit` and
+        `observed` are populated on quota errors. `docs_url` points the
+        user at the next action.
       example:
-        type: https://docs.DOMAIN/errors/validation_failed
+        type: "https://docs.DOMAIN/errors/validation_failed"
         title: Validation failed
         status: 422
         code: validation_failed
         detail: "ram_mb must be one of [128, 256, 512, 1024, 2048]"
         limit: null
         observed: null
-        docs_url: https://docs.DOMAIN/errors/validation_failed
-      description: |
-        RFC 7807 problem+json envelope. The `code` field is the stable
-        machine-readable identifier; clients branch on it. `limit` and
-        `observed` are populated on quota errors. `docs_url` points the
-        user at the next action.
+        docs_url: "https://docs.DOMAIN/errors/validation_failed"
       properties:
         type: { type: string, format: uri , example: "https://docs.DOMAIN/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
