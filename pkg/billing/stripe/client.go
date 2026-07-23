@@ -1,6 +1,7 @@
 package stripe
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -222,9 +223,10 @@ func (c *Client) VerifyWebhook(payload []byte, headers map[string]string, tolera
 	if c.secret == "" {
 		return billing.Event{}, fmt.Errorf("stripe: %w: empty webhook secret", billing.ErrBadSignature)
 	}
-	// Headers map is case-insensitive in net/http's internal handling,
-	// but the map we receive is just a snapshot — do the lookup
-	// defensively in both cases.
+	// The headers argument is a plain map[string]string, not net/http's
+	// canonicalizing Header type, so the lookup is case-sensitive. We
+	// check both casings defensively because real-world callers vary on
+	// whether they pre-canonicalize before handing us the map.
 	sigHeader := headers["Stripe-Signature"]
 	if sigHeader == "" {
 		sigHeader = headers["stripe-signature"]
@@ -255,7 +257,7 @@ func (c *Client) VerifyWebhook(payload []byte, headers map[string]string, tolera
 		CustomerID:     ev.Data.Object.Customer,
 		PlanID:         ev.Data.Object.Plan,
 		SubscriptionID: ev.Data.Object.Subscription,
-		Raw:            append([]byte(nil), payload...),
+		Raw:            bytes.Clone(payload),
 	}, nil
 }
 

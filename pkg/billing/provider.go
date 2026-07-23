@@ -43,10 +43,10 @@ type Provider interface {
 	EnsurePlanProducts(ctx context.Context) error
 
 	// CreateCustomer maps a state.Account to the provider's customer
-	// handle and writes the ID back via
-	// state.Store.UpdateAccountStripeCustomerID. The column name is
-	// intentionally stale (the stripe-only era) — a column rename is
-	// a separate, smaller migration PR and out of scope for ADR-025.
+	// handle and writes the ID back onto the account row. The column
+	// the ID lands in is named after the Stripe-only era today; a
+	// column rename is out of scope for ADR-025 (separate, smaller
+	// migration PR).
 	CreateCustomer(ctx context.Context, acct state.Account) (string, error)
 
 	// PushUsageRecord is the meterd pusher. Stripe: per-hour metered
@@ -58,7 +58,7 @@ type Provider interface {
 	// Signature is symmetric so meterd's loop is implementation-agnostic.
 	// The dedupe contract (a redelivered hour is a no-op) is the
 	// implementation's responsibility — implementations should
-	// idempotency-key every external call against (accountID, hour-or-month).
+	// idempotency-key every external call against (acct.ID, hour-or-month).
 	PushUsageRecord(ctx context.Context, acct state.Account, hour time.Time, mbSeconds int64) error
 
 	// VerifyWebhook checks a provider-shaped signature header against
