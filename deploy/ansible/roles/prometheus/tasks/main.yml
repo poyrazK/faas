@@ -13,9 +13,39 @@
 #   - The bootstrap playbook runs once per box; tarball download cost
 #     is amortized.
 
+- name: prometheus — assert SHA-256 pin was supplied
+  ansible.builtin.assert:
+    that:
+      - prom_release_sha256 is defined
+      - prom_release_sha256 | length == 64
+    fail_msg: >-
+      prom_release_sha256 is not set. Pass
+      `-e prom_release_sha256=<sha256>` from the Prometheus release
+      page
+      (https://github.com/prometheus/prometheus/releases/tag/v{{ prom_version }}).
+      The role fails-closed rather than installing an unverified
+      binary (same precedent as firecracker + alertmanager roles).
+
 - name: prometheus — read defaults for visibility
   ansible.builtin.debug:
     var: prom_version
+
+# Loopback bind discipline (CLAUDE.md §Component ownership). The
+# alertmanager target must not be reachable off-box: alert payloads
+# contain operational labels (component, family, severity) that the
+# dashboard pipeline shouldn't leak over plaintext HTTP. Catch a
+# typo'd inventory override here, not after a week of silent pages.
+# Asserts both v4 (127.0.0.0/8) and v6 (::1) loopback; alertmanager
+# listens only on v4 today but the assertion is forward-compatible.
+- name: prometheus — assert alertmanager URL is loopback
+  ansible.builtin.assert:
+    that:
+      - prom_alertmanager_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?(/.*)?$')
+    fail_msg: >-
+      prom_alertmanager_url={{ prom_alertmanager_url }} is not a loopback
+      address. Alertmanager must bind 127.0.0.1:9093; off-box alert
+      routing leaks operational metadata over plaintext. Override the
+      variable only via ansible-vault or remove the override entirely.
 
 - name: prometheus — mkdir /etc/prometheus and data dir
   ansible.builtin.file:

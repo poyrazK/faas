@@ -8,12 +8,24 @@
 # the public iface (the input chain policy `drop` would block it).
 
 prom_version: "2.54.1"
+# SHA-256 of prometheus-<version>.linux-amd64.tar.gz. Required at the
+# call site (same pattern as node_exporter_release_sha256 and
+# am_release_sha256). The role's `assert` task at the top of
+# tasks/main.yml fails closed if this is missing or malformed; the
+# CI `promtool check rules` step reads it from this file so the
+# downloaded tarball is bit-identical to the one shipped to the EX44.
+# Pin from https://github.com/prometheus/prometheus/releases/tag/v{{ prom_version }}
+# and bump both the version and the hash together.
+# prom_release_sha256: "REPLACE_WITH_SHA256_OF_v{{ prom_version }}_TARBALL"
 prom_listen_addr: "10.0.0.1:9090"
 prom_retention_days: 15
 prom_data_dir: /var/lib/prometheus
 
 # Alertmanager — loopback-only (operator dials the bridge to reach it).
-# Wired into prometheus.yml.j2 via the `alerting:` block.
+# Wired into prometheus.yml.j2 via the `alerting:` block. The role
+# asserts at template time that the parsed host is loopback (127/8 or
+# ::1) so an inventory mistake routing alert payloads off-box is caught
+# here, not after the operator's pager has been silent for a week.
 prom_alertmanager_url: "http://127.0.0.1:9093"
 
 # faas daemon metrics endpoints. Each daemon exposes /metrics on its
@@ -75,6 +87,9 @@ prom_targets:
   - job: meterd
     host: 127.0.0.1
     port: 9106
+  - job: alertmanager
+    host: 127.0.0.1
+    port: 9093
   - job: node
     host: 127.0.0.1
     port: 9100
