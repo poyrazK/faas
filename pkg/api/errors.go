@@ -150,7 +150,7 @@ const (
 	//     CIDRs than your plan caps" (Pro/Scale but the slice is
 	//     too long; not a billing failure).
 	CodePlanEgressAllowlistNotAllowed = "plan_egress_allowlist_not_allowed"
-	CodeEgressAllowlistTooLong         = "egress_allowlist_too_long"
+	CodeEgressAllowlistTooLong        = "egress_allowlist_too_long"
 	// CodeInvalidEgressAllowlist is a 400 for shape violations:
 	// an entry that doesn't ParsePrefix, or a v6 CIDR (v1 is v4
 	// only; v6 mirror is a separate ADR).

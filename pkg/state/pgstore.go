@@ -2378,7 +2378,7 @@ func nullAppStatus(p *AppStatus) any {
 // cidrPrefixesToArray renders a Go []netip.Prefix as a pgx driver value
 // for a cidr[] column. Empty/nil renders as a literal `'{}'` string so
 // Postgres casts it to an empty array (matches the column default of
-// '{}' from migration 00028). Non-empty renders as a Postgres array
+// '{}' from migration 00029). Non-empty renders as a Postgres array
 // literal: '{1.2.3.0/24,8.8.8.0/24}'. Bypasses pgx's array codec
 // because it doesn't have a clean cidr[] element type by default and
 // building the literal here keeps the cidr parse surface on the Go

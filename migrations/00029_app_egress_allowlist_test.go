@@ -1,15 +1,26 @@
 //go:build !no_pg
 
-// Migration-apply test for 00028 (apps.egress_allowlist cidr[]).
+// Migration-apply test for 00029 (apps.egress_allowlist cidr[]).
 // Pins the load-bearing contract from ADR-031 (M8 tier-2 network
 // roadmap):
 //
-//   1. The migration set applies cleanly through 00028.
+//   1. The migration set applies cleanly through 00029.
 //   2. The egress_allowlist column exists with default '{}'.
 //   3. UPDATE apps SET egress_allowlist = ARRAY['1.2.3.0/24'::cidr]
 //      round-trips; read-back via pgstore returns the same array.
 //   4. The CHECK constraint rejects v6 entries (the v4-only v1
 //      contract — v6 mirror is deferred per ADR-031 "v4 only in v1").
+//
+// Slot note: this PR initially shipped as 00028 (CI run 30029100342
+// failed with `duplicate migration prefix 00028` because PR #153
+// had already merged `00028_instances_wake_id.sql` to main). Per
+// `docs/adr/README.md` "migrations are append-only and contiguous"
+// + the precedent set by PR #153 itself (commit fe97bb1:
+// `fix(migrations): renumber wake_id migration 00027 → 00028`),
+// renumbered to the next free slot without rebasing — same shape,
+// same rationale. No SQL changes; the migration is slot-agnostic
+// (no RENAME that depends on the prefix), only the test name and
+// the human-readable seed UUIDs change.
 //
 // Build tag matches the rest of the migration tests; set
 // FAAS_SKIP_PG_TESTS=1 to skip locally (see migrations/README.md).
@@ -25,7 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// TestMigrations_00028_AppEgressAllowlist pins the column + CHECK.
+// TestMigrations_00029_AppEgressAllowlist pins the column + CHECK.
 //
 // Three named scenarios:
 //
@@ -37,16 +48,16 @@ import (
 //   - RejectsV6: an UPDATE that tries to set a v6 entry fails the
 //     CHECK constraint with the SQLSTATE Postgres uses for
 //     check_violation.
-func TestMigrations_00028_AppEgressAllowlist(t *testing.T) {
+func TestMigrations_00029_AppEgressAllowlist(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 
-	// (1) Apply the full migration set; 00028 is the new tail. A
-	// regression that drops a slot between 1 and 28 surfaces here
+	// (1) Apply the full migration set; 00029 is the new tail. A
+	// regression that drops a slot between 1 and 29 surfaces here
 	// before we get to the per-assertion pins (mirrors the 00024
 	// pattern at migrations/00024_compute_nodes_test.go:46).
 	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("db.MigrateUp: %v (regression: missing migration slot between 1 and 28)", err)
+		t.Fatalf("db.MigrateUp: %v (regression: missing migration slot between 1 and 29)", err)
 	}
 
 	// (2) Seed an account + apps row to carry the column. The
@@ -54,7 +65,7 @@ func TestMigrations_00028_AppEgressAllowlist(t *testing.T) {
 	// across reruns so the seed is idempotent.
 	if _, err := pool.Exec(ctx, `
 		insert into accounts (id, email, plan, created_at)
-		values ('00000000-0000-0000-0000-000000000028',
+		values ('00000000-0000-0000-0000-000000000029',
 		        'allowlist-test@example.com', 'pro', now())
 		on conflict (id) do nothing
 	`); err != nil {
@@ -62,8 +73,8 @@ func TestMigrations_00028_AppEgressAllowlist(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		insert into apps (id, account_id, slug, ram_mb, max_concurrency, idle_timeout_s, status, created_at)
-		values ('00000000-0000-0000-0000-000000000028',
-		        '00000000-0000-0000-0000-000000000028',
+		values ('00000000-0000-0000-0000-000000000029',
+		        '00000000-0000-0000-0000-000000000029',
 		        'allowlist-test', 256, 1, 30, 'active', now())
 		on conflict (id) do nothing
 	`); err != nil {
@@ -75,7 +86,7 @@ func TestMigrations_00028_AppEgressAllowlist(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		select egress_allowlist::text
 		  from apps
-		 where id = '00000000-0000-0000-0000-000000000028'
+		 where id = '00000000-0000-0000-0000-000000000029'
 	`).Scan(&asText); err != nil {
 		t.Fatalf("read apps.egress_allowlist after migrate: %v", err)
 	}
@@ -88,14 +99,14 @@ func TestMigrations_00028_AppEgressAllowlist(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		update apps
 		   set egress_allowlist = array['1.2.3.0/24'::cidr, '8.8.8.0/24'::cidr]
-		 where id = '00000000-0000-0000-0000-000000000028'
+		 where id = '00000000-0000-0000-0000-000000000029'
 	`); err != nil {
 		t.Fatalf("update v4 egress_allowlist: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `
 		select egress_allowlist::text
 		  from apps
-		 where id = '00000000-0000-0000-0000-000000000028'
+		 where id = '00000000-0000-0000-0000-000000000029'
 	`).Scan(&asText); err != nil {
 		t.Fatalf("read updated egress_allowlist: %v", err)
 	}
@@ -116,7 +127,7 @@ func TestMigrations_00028_AppEgressAllowlist(t *testing.T) {
 	_, err := pool.Exec(ctx, `
 		update apps
 		   set egress_allowlist = array['fe80::/10'::cidr]
-		 where id = '00000000-0000-0000-0000-000000000028'
+		 where id = '00000000-0000-0000-0000-000000000029'
 	`)
 	if err == nil {
 		t.Fatalf("UPDATE with v6 CIDR unexpectedly succeeded; apps_egress_allowlist_v4_only CHECK did not fire")

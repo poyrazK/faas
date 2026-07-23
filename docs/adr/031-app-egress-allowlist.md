@@ -80,14 +80,18 @@ Position in the chain (per `pkg/netns/config.go::NftCommands`):
 3. iifname "tap0" tcp dport { 25,465,587 } drop    ← SMTP deny
 4. iifname "tap0" ip daddr { RFC1918... } drop     ← lateral-movement deny
 5. iifname "tap0" ip daddr { <allowlist> } accept  ← NEW, only when list non-empty
-6. ; policy accept ;
+6. chain policy: accept (empty) | drop (allowlist set)
 ```
 
 The allowlist sits AFTER every deny → deny wins on overlap. An
 operator who typo's `10.0.0.0/8` into the list still gets dropped
-by the lateral-movement deny. It sits BEFORE the chain's default
-accept → un-listed destinations fall through to `policy accept`
-when no allowlist is set, OR to drop when one is set.
+by the lateral-movement deny. The chain's POLICY word switches to
+`drop` whenever the allowlist is set (`pkg/netns.forwardChainPolicy`),
+so un-listed destinations are dropped — pinning this is what closed
+PR #159 review F1 (an earlier draft left `; policy accept ;`
+unconditional which made the allowlist a no-op on un-listed targets).
+Empty allowlist keeps the historical `policy accept` so behaviour is
+unchanged for apps that never PATCH.
 
 ### Live-instance drift
 
@@ -161,7 +165,7 @@ is factored to make the v6 mirror a one-line `nft(..., "ip6", ...)`.
 
 ## Consequences
 
-- New surface: `apps.egress_allowlist cidr[]` (migration 00028).
+- New surface: `apps.egress_allowlist cidr[]` (migration 00029).
 - New API field: `UpdateAppRequest.EgressAllowlist *[]string`.
 - New plan quotas: `Limits.EgressAllowlistAllowed`,
   `Limits.EgressAllowlistMaxSize` per plan (4 default rows).
@@ -208,4 +212,4 @@ is factored to make the v6 mirror a one-line `nft(..., "ip6", ...)`.
   — gated `//go:build metal` install test.
 - `pkg/api/limits.go::Limits` — per-plan gate.
 - `cmd/apid/handlers_ext.go::updateApp` — RFC 7807 surface.
-- `migrations/00028_app_egress_allowlist.sql` — schema + CHECK.
+- `migrations/00029_app_egress_allowlist.sql` — schema + CHECK.

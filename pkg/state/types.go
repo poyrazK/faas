@@ -411,7 +411,7 @@ type UpdateAppParams struct {
 	// A nil pointer when SetEgressAllowlist is false leaves the
 	// column unchanged; a non-nil empty slice with
 	// SetEgressAllowlist true replaces the stored array with '{}'
-	// (the default — see migration 00028).
+	// (the default — see migration 00029).
 	EgressAllowlist    *[]netip.Prefix
 	SetEgressAllowlist bool
 	Status             *AppStatus

@@ -25,7 +25,7 @@ import (
 //
 // Like the MinInstances hermetic suite, MemStore is enough here —
 // pgstore_test.go:247 already mirrors this for the PG round-trip,
-// and the e2e migration test at migrations/00028_app_egress_allowlist_
+// and the e2e migration test at migrations/00029_app_egress_allowlist_
 // test.go pins the column shape + CHECK.
 func TestUpdateApp_WithEgressAllowlist(t *testing.T) {
 	ctx := context.Background()
@@ -53,7 +53,7 @@ func TestUpdateApp_WithEgressAllowlist(t *testing.T) {
 		netip.MustParsePrefix("9.9.9.0/24"),
 	}
 	updated, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{
-		EgressAllowlist:   &three,
+		EgressAllowlist:    &three,
 		SetEgressAllowlist: true,
 	})
 	if err != nil {
@@ -86,7 +86,7 @@ func TestUpdateApp_WithEgressAllowlist(t *testing.T) {
 	// not a no-op.
 	empty := []netip.Prefix{}
 	updated, err = store.UpdateApp(ctx, app.ID, UpdateAppParams{
-		EgressAllowlist:   &empty,
+		EgressAllowlist:    &empty,
 		SetEgressAllowlist: true,
 	})
 	if err != nil {
