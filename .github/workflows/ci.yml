@@ -104,19 +104,29 @@ jobs:
 
       # promtool check rules — gate for spec §12 alert rules. Downloads
       # the same Prometheus tarball the ansible role pins
-      # (deploy/ansible/roles/prometheus/defaults/main.yml:prom_version)
-      # so the CI version is the production version. A broken rule
+      # (deploy/ansible/roles/prometheus/defaults/main.yml:prom_version +
+      # prom_release_sha256) so the CI version is the production version
+      # AND the SHA-256 is the one production ships with — supply-chain
+      # hardening at PR time, not just at bootstrap. A broken rule
       # (typo in metric label, bad histogram_quantile, dangling
       # matcher) breaks the alert at boot, so we lint at PR time
       # instead of letting the operator find out via a 5 a.m. page
-      # that never fires.
+      # that never fires. The pin is read from the role defaults so
+      # CI and the box can never drift apart.
       - name: promtool check rules
         run: |
           set -euo pipefail
           PROM_VERSION="2.54.1"
           PROM_TARBALL="prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
+          PROM_SHA256="$(awk -F': *' '/^prom_release_sha256:/{gsub(/^ +| +$/,"",$2); print $2}' \
+            deploy/ansible/roles/prometheus/defaults/main.yml)"
+          if [ -z "${PROM_SHA256}" ] || [ "${#PROM_SHA256}" -ne 64 ]; then
+            echo "::error::prom_release_sha256 missing or malformed in prometheus/defaults/main.yml"
+            exit 1
+          fi
           curl -fsSL -o "/tmp/${PROM_TARBALL}" \
             "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${PROM_TARBALL}"
+          echo "${PROM_SHA256}  /tmp/${PROM_TARBALL}" | sha256sum -c -
           tar -xzf "/tmp/${PROM_TARBALL}" -C /tmp "prometheus-${PROM_VERSION}.linux-amd64/promtool"
           sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
           promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
