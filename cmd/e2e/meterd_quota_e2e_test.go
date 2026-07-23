@@ -85,7 +85,7 @@ func TestQuotaBreach_ParkInstanceWithinOneTick(t *testing.T) {
 		t.Fatalf("CreateApp: %v", err)
 	}
 
-	dep, err := store.CreateDeployment(ctx, state.Deployment{
+	dep, _, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID:       app.ID,
 		Status:      state.DeployLive,
 		Kind:        state.DeploymentKindImage,

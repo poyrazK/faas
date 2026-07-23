@@ -547,7 +547,7 @@ func TestExportAccount_BuildAppID_Populated(t *testing.T) {
 	// if BuildExportResponse.AppID was never populated. Going through
 	// the store pins the deterministic state the assertion needs.
 	const digest = "sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	dep, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _, err := e.store.CreateDeployment(context.Background(), state.Deployment{
 		AppID:       app.ID,
 		Kind:        state.DeploymentKindImage,
 		ImageDigest: digest,

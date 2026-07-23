@@ -651,13 +651,54 @@ func (m *MemStore) InstallationIDForRepo(_ context.Context, repoFullName string)
 // missing apps with ErrNotFound — apid's s.notFound relies on this
 // to return 404. The mutex already serialises the check + insert
 // together, so the gate is race-free here without a tx.
-func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
+//
+// PR-B: the prior-deployment supersede is folded into the same
+// critical section as the INSERT, mirroring PgStore's tx-wrapped
+// shape. We walk m.deployments for the most-recent row whose status
+// is in the "current world" set (pending/live/building/imaging/
+// snapshotting), flip it to 'superseded' in the map, then insert
+// the new row. The race-free supersede closes the same TOCTOU the
+// image: branch had before, and gives the tarball branch the parity
+// it has always lacked.
+func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
-		return Deployment{}, ErrNotFound
+		return Deployment{}, Deployment{}, ErrNotFound
 	}
+
+	// Find the most-recent non-terminal deployment row for this app.
+	// O(N) over the map is fine at one-box scale; spec §6 keeps the
+	// rows-per-app bounded by the build cadence.
+	var (
+		priorID  string
+		prior    Deployment
+		hasPrior bool
+	)
+	var maxCreated time.Time
+	for id, existing := range m.deployments {
+		if existing.AppID != d.AppID {
+			continue
+		}
+		switch existing.Status {
+		case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting, DeployLive:
+			// current world
+		default:
+			continue
+		}
+		if !hasPrior || existing.CreatedAt.After(maxCreated) {
+			priorID = id
+			prior = existing
+			maxCreated = existing.CreatedAt
+			hasPrior = true
+		}
+	}
+	if hasPrior {
+		prior.Status = DeploySuperseded
+		m.deployments[priorID] = prior
+	}
+
 	if d.ID == "" {
 		d.ID = newID()
 	}
@@ -671,7 +712,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.Kind = DeploymentKindImage
 	}
 	m.deployments[d.ID] = d
-	return d, nil
+	return d, prior, nil
 }
 
 func (m *MemStore) DeploymentByID(_ context.Context, id string) (Deployment, error) {
@@ -925,6 +966,58 @@ func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error)
 	b.StartedAt = time.Now()
 	m.builds[id] = b
 	return b, nil
+}
+
+// ClaimNextQueuedBuild mirrors PgStore.ClaimNextQueuedBuild (PR-B). The
+// MemStore mutex is the equivalent of FOR UPDATE SKIP LOCKED here:
+// only one claimer exists in-process, but the shape mirrors Postgres
+// 1:1 so unit tests catch logic bugs without races. Picks the earliest
+// EnqueuedAt row whose status is BuildQueued, flips to BuildRunning,
+// sets StartedAt = now(). Returns ErrNotFound when the queue is empty.
+func (m *MemStore) ClaimNextQueuedBuild(_ context.Context) (Build, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var (
+		pick     string
+		earliest time.Time
+		found    bool
+	)
+	for id, b := range m.builds {
+		if b.Status != BuildQueued {
+			continue
+		}
+		if !found || b.EnqueuedAt.Before(earliest) {
+			pick = id
+			earliest = b.EnqueuedAt
+			found = true
+		}
+	}
+	if !found {
+		return Build{}, ErrNotFound
+	}
+	b := m.builds[pick]
+	b.Status = BuildRunning
+	b.StartedAt = time.Now()
+	m.builds[pick] = b
+	return b, nil
+}
+
+// RequeueBuild resets a running build row back to queued with
+// enqueued_at untouched (PR-B). Mirrors PgStore.RequeueBuild.
+func (m *MemStore) RequeueBuild(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.builds[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if b.Status != BuildRunning {
+		return ErrNotFound
+	}
+	b.Status = BuildQueued
+	b.StartedAt = time.Time{}
+	m.builds[id] = b
+	return nil
 }
 
 // ListStaleQueuedBuilds mirrors PgStore.ListStaleQueuedBuilds (PR-A).

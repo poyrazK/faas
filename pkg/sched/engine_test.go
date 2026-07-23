@@ -227,7 +227,7 @@ func seedApp(t *testing.T, store state.Store, plan api.Plan, ramMB, maxConc int)
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	dep, err := store.CreateDeployment(ctx, state.Deployment{
+	dep, _, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc", Status: state.DeployLive,
 	})
 	if err != nil {

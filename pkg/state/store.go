@@ -268,7 +268,22 @@ type Store interface {
 	InstallationIDForRepo(ctx context.Context, repoFullName string) (int64, error)
 
 	// Deployments.
-	CreateDeployment(ctx context.Context, d Deployment) (Deployment, error)
+	// CreateDeployment atomically inserts a new pending deployment row
+	// for the given app. When the app already has a non-superseded,
+	// non-failed deployment row, the SAME transaction flips that prior
+	// row's status to 'superseded' before INSERTing the new one. The
+	// returned `prior` value is the just-superseded row (zero-valued
+	// Deployment when no prior row existed). A reader therefore never
+	// observes the prior row as superseded without the new row being
+	// committed in the same instant. PR-B closes the prior
+	// supersede-before-create race that previously orphaned a live
+	// deployment when the new INSERT failed.
+	//
+	// AppDeleted apps must accept neither deployments nor supersedes;
+	// the parent-app gate is the same FOR UPDATE as PR-A's
+	// CreateAppIfUnderQuota pattern. The 404 s.notFound path at the
+	// apid call site is unchanged.
+	CreateDeployment(ctx context.Context, d Deployment) (new Deployment, prior Deployment, err error)
 	DeploymentByID(ctx context.Context, id string) (Deployment, error)
 	LatestDeployment(ctx context.Context, appID string) (Deployment, error)
 	// LiveDeployment returns the app's current live deployment (status='live').
@@ -338,6 +353,22 @@ type Store interface {
 	// use the second case to drop duplicate notifications from the apid
 	// write path and the imaged reaper (PR-A). started_at is set to now.
 	ClaimQueuedBuild(ctx context.Context, id string) (Build, error)
+	// ClaimNextQueuedBuild is the durability-net worker surface (PR-B).
+	// Atomically picks the next queued row in enqueued_at ASC order using
+	// SELECT … FOR UPDATE SKIP LOCKED, flips it to running, sets
+	// started_at = now(). Returns ErrNotFound when the queue is empty so
+	// the worker can sleep without surfacing an error. SKIP LOCKED is
+	// what keeps a future second builderd process (or pg_cron) from
+	// starving the in-process worker — both compete cleanly for the
+	// head of the queue without ever observing the same row.
+	ClaimNextQueuedBuild(ctx context.Context) (Build, error)
+	// RequeueBuild resets a running build back to queued with enqueued_at
+	// untouched (preserving FIFO order) when the builder slot allocator
+	// (DecideSlot) rules the row out (builderd worker PR-B). started_at
+	// is cleared. Returns ErrNotFound when the row is missing. The
+	// caller (builderd worker) decides whether to requeue or fail;
+	// RequeueBuild itself is unconditional.
+	RequeueBuild(ctx context.Context, id string) error
 	UpdateBuildStatus(ctx context.Context, id string, status BuildStatus, fc FailureClass, started, finished bool) error
 	// ListStaleQueuedBuilds returns builds still in BuildQueued whose
 	// enqueued_at is older than threshold. The imaged reaper (PR-A)

@@ -82,7 +82,7 @@ func TestDunning_PastDue7d_AdvancesToSuspended(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	dep, err := store.CreateDeployment(ctx, state.Deployment{
+	dep, _, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Status: state.DeployLive, Kind: state.DeploymentKindImage,
 		ImageDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 	})

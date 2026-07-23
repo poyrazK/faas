@@ -81,7 +81,7 @@ func seedDeploymentWithPlan(t *testing.T, store state.Store, source, plan string
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID:       app.ID,
 		Kind:        state.DeploymentKindTarball,
 		SourcePath:  source,
@@ -115,7 +115,7 @@ func seedDeploymentWithSlug(t *testing.T, store state.Store, source, slug string
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID:       app.ID,
 		Kind:        state.DeploymentKindTarball,
 		SourcePath:  source,
@@ -747,5 +747,161 @@ func assertCodes(t *testing.T, ops *wire.OpsMetrics, wantCode, wantOutcome strin
 	wantDur := `builderd_build_duration_seconds_count{outcome="` + wantOutcome + `"} 1`
 	if !strings.Contains(body, wantDur) {
 		t.Errorf("missing duration outcome %q in:\n%s", wantDur, body)
+	}
+}
+
+// ----------------------------------------------------------------------
+// PR-B: ProcessNext (durable worker surface) + ErrNoSlot requeue
+// ----------------------------------------------------------------------
+
+// TestProcessNext_EmptyQueueReturnsErrNotFound pins the durably-empty
+// idle path: ClaimNextQueuedBuild returns ErrNotFound, ProcessNext
+// surfaces it without touching the row, and the build store stays
+// empty. workerLoop in cmd/builderd translates this into a no-op tick.
+func TestProcessNext_EmptyQueueReturnsErrNotFound(t *testing.T) {
+	store := state.NewMemStore()
+	b := New(store, &fakeNotifier{}, nil, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	_, err := b.ProcessNext(context.Background())
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("ProcessNext empty queue: got %v, want state.ErrNotFound", err)
+	}
+}
+
+// TestProcessNext_ClaimsQueuedRowAndRuns is the happy path: a row sits
+// in queued, ProcessNext CAS-claims it via SKIP LOCKED-equivalent logic
+// and runs the build to success. Verifies the new surface shares the
+// pipeline with ProcessOne 1:1 — same VM spawn count, same terminal
+// status, same cache stamp.
+func TestProcessNext_ClaimsQueuedRowAndRuns(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+
+	buildID, depID, _ := seedDeployment(t, store, src)
+
+	out := filepath.Join(t.TempDir(), "produced.ext4")
+	if err := os.WriteFile(out, []byte("produced layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: out, ExitCode: 0, LogTailBytes: 14}}
+	notif := &fakeNotifier{}
+	b := New(store, notif, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, err := b.ProcessNext(context.Background()); err != nil {
+		t.Fatalf("ProcessNext: %v", err)
+	}
+	if fvm.spawnCalls != 1 {
+		t.Errorf("VM spawn was called %d times, want 1", fvm.spawnCalls)
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.RootfsPath == "" {
+		t.Error("rootfs_path not stamped on deployment")
+	}
+	build, _ := store.BuildByID(context.Background(), buildID)
+	if build.Status != state.BuildSucceeded {
+		t.Errorf("build status = %s, want succeeded", build.Status)
+	}
+}
+
+// TestProcessNext_NoSlotRequeuesRowAndReturnsErrNoSlot pins PR-B §B.5:
+// DecideSlot returning !Allowed must RequeueBuild (NOT markFailed) so
+// the build row stays in queued for the next worker tick. We swap in a
+// deny-all decider via WithSlotDecider so we don't have to thread a
+// ResidencyProbe through. The deployment row stays "building" — no
+// false DeployFailed flip.
+func TestProcessNext_NoSlotRequeuesRowAndReturnsErrNoSlot(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+
+	buildID, depID, _ := seedDeployment(t, store, src)
+
+	fvm := &fakeVM{} // would panic if called — proves no spawn.
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithSlotDecider(func(_ ResidencyProbe, _ int) SlotDecision {
+			return SlotDecision{Allowed: false, Label: "denied", Reason: "test-injected denial"}
+		})
+
+	_, err := b.ProcessNext(context.Background())
+	if !errors.Is(err, ErrNoSlot) {
+		t.Fatalf("ProcessNext no-slot: got %v, want ErrNoSlot", err)
+	}
+	if fvm.spawnCalls != 0 {
+		t.Errorf("VM spawn was called %d times, want 0 (denied before spawn)", fvm.spawnCalls)
+	}
+	build, _ := store.BuildByID(context.Background(), buildID)
+	if build.Status != state.BuildQueued {
+		t.Errorf("build status = %s, want queued (requeued)", build.Status)
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.Status == state.DeployFailed {
+		t.Errorf("deployment flipped to failed on no-slot; want unchanged (was %s)", dep.Status)
+	}
+}
+
+// TestProcessNext_NoSlotPreservesEnqueuedAt pins the FIFO-survival
+// contract: after a no-slot requeue the build's enqueued_at is
+// unchanged so the next ProcessNext claim doesn't reshuffle the queue.
+// Without this, a wake-surge holding the slot would let a build
+// submitted later jump the line.
+func TestProcessNext_NoSlotPreservesEnqueuedAt(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+
+	buildID, _, _ := seedDeployment(t, store, src)
+	originalEnq, _ := store.BuildByID(context.Background(), buildID)
+	if originalEnq.EnqueuedAt.IsZero() {
+		t.Fatal("seedDeployment: enqueued_at is zero; can't pin FIFO")
+	}
+
+	b := New(store, &fakeNotifier{}, &fakeVM{}, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithSlotDecider(func(_ ResidencyProbe, _ int) SlotDecision {
+			return SlotDecision{Allowed: false, Label: "denied", Reason: "test-injected denial"}
+		})
+
+	// Tick once: claim → deny → requeue.
+	if _, err := b.ProcessNext(context.Background()); !errors.Is(err, ErrNoSlot) {
+		t.Fatalf("tick 1: got %v, want ErrNoSlot", err)
+	}
+	afterTick, _ := store.BuildByID(context.Background(), buildID)
+	if !afterTick.EnqueuedAt.Equal(originalEnq.EnqueuedAt) {
+		t.Errorf("enqueued_at shifted: was %s, now %s", originalEnq.EnqueuedAt, afterTick.EnqueuedAt)
+	}
+	if afterTick.StartedAt != (time.Time{}) {
+		t.Errorf("started_at not cleared on requeue: %s", afterTick.StartedAt)
+	}
+}
+
+// TestProcessOne_NoSlotDoesNotMarkFailed pins the parity between the
+// LISTEN surface (ProcessOne) and the poll surface (ProcessNext) for
+// the no-slot path. PR-B unified the requeue inside
+// processClaimedBuild so a missed-notify redeploy cannot end up
+// marked failed when slots open up later.
+func TestProcessOne_NoSlotDoesNotMarkFailed(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+
+	buildID, depID, _ := seedDeployment(t, store, src)
+
+	fvm := &fakeVM{}
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithSlotDecider(func(_ ResidencyProbe, _ int) SlotDecision {
+			return SlotDecision{Allowed: false, Label: "denied", Reason: "test-injected denial"}
+		})
+
+	// ProcessOne accepts a buildID; pass through the same code path.
+	if _, err := b.ProcessOne(context.Background(), buildID); !errors.Is(err, ErrNoSlot) {
+		t.Fatalf("ProcessOne no-slot: got %v, want ErrNoSlot", err)
+	}
+	build, _ := store.BuildByID(context.Background(), buildID)
+	if build.Status != state.BuildQueued {
+		t.Errorf("build status = %s, want queued", build.Status)
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	if dep.Status == state.DeployFailed {
+		t.Errorf("deployment flipped to failed on no-slot; want unchanged")
 	}
 }

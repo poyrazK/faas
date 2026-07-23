@@ -239,7 +239,7 @@ func seedOneAccount(t *testing.T, store *state.MemStore, email string) (state.Ac
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID:       app.ID,
 		Kind:        state.DeploymentKindImage,
 		ImageDigest: "sha256:abc",

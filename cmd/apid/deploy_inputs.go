@@ -140,7 +140,15 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	deploymentID := ""
 	buildLog := ""
 	if sourcePath != "" {
-		d, err := s.store.CreateDeployment(ctx(r), state.Deployment{
+		// PR-B: the prior-deployment supersede is folded into
+		// store.CreateDeployment's tx (pkg/state/pgstore.go). The tarball
+		// branch picks up the parity the image: branch used to lack —
+		// every successful source deploy now atomically supersedes the
+		// prior non-terminal row. The second NotifyDeploymentChanged
+		// for `prev` (further down) lets imaged F5-cleanup the prior
+		// snapshot. No call-site change was needed to gain this; the
+		// in-tx ordering is invisible above the Store seam.
+		d, prev, err := s.store.CreateDeployment(ctx(r), state.Deployment{
 			AppID:       app.ID,
 			Kind:        kind,
 			SourcePath:  sourcePath,
@@ -174,6 +182,14 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		_ = s.notif.Notify(ctx(r), db.NotifyBuildQueued,
 			fmt.Sprintf(`{"build":"%s","deployment":"%s","app":"%s","kind":"%s"}`,
 				build.ID, d.ID, app.ID, kind))
+		// PR-B parity: if a prior row was just superseded inside the
+		// same tx, fire a second NotifyDeploymentChanged so imaged's F5
+		// cleanup handler drops the prior snapshot. Skipped on first
+		// deploy (no prev).
+		if prev.ID != "" {
+			_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged,
+				fmt.Sprintf(`{"kind":"image","status":"superseded","app_id":"%s","deployment_id":"%s","to":"%s"}`, app.ID, prev.ID, prev.ID))
+		}
 		s.log.Info("source deploy queued", "deployment", d.ID, "app", app.ID, "kind", kind, "build", build.ID)
 		writeJSON(w, http.StatusAccepted, s.deploymentResponse(d))
 		return

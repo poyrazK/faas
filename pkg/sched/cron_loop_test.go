@@ -90,7 +90,7 @@ func newAppAndCron(t *testing.T, store state.Store, accountID string, enabled bo
 	// Wake needs a live deployment; seed one so the engine's resolveApp
 	// can return it. Otherwise the dispatch path's Wake call 404s on
 	// `LiveDeployment` and the cron never reaches the synth step.
-	if _, err := store.CreateDeployment(ctx, state.Deployment{
+	if _, _, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Status: state.DeployLive, Kind: state.DeploymentKindImage,
 	}); err != nil {
 		t.Fatalf("create deployment: %v", err)

@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -158,7 +159,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	log.Info("builderd ready",
 		"vmmd_target", vmmTarget,
-		"cache_dir", cfg.CacheDir)
+		"cache_dir", cfg.CacheDir,
+		"poll_interval", cfg.PollInterval)
+
+	// PR-B: durable worker. LISTEN/NOTIFY above is the fast path
+	// (apid emits on build_queued immediately after CreateBuild); this
+	// worker is the recovery net for missed notify / apid crashed
+	// mid-deploy / Postgres-restart windows. It polls the queue with
+	// SELECT … FOR UPDATE SKIP LOCKED via store.ClaimNextQueuedBuild
+	// (the same SQL the LISTEN path eventually runs when the
+	// notification reaches us, so an apid-emit + a worker-poll both
+	// racing the same row is CAS-safe — one wins, the other gets
+	// ErrNotFound and sleeps).
+	pollInterval := cfg.PollInterval
+	if pollInterval <= 0 {
+		pollInterval = 2 * time.Second
+	}
+	go workerLoop(ctx, b, pollInterval, log)
 
 	for {
 		select {
@@ -186,6 +203,52 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Warn("builderd: process", "build", p.Build, "err", err)
 			}
 		}
+	}
+}
+
+// workerLoop is the durable build-queue worker (PR-B). On each tick it
+// calls store.ClaimNextQueuedBuild (SELECT … FOR UPDATE SKIP LOCKED
+// inside the store). On hit it invokes ProcessNext and re-queues the
+// build row on ErrNoSlot so the row preserves its FIFO position
+// until a builder slot opens. Empty queue (ErrNotFound) is the
+// expected idle state — no log noise. Errors get logged at WARN and
+// the next tick retries; ctx cancel exits cleanly.
+//
+// Cadence is set by the caller (FAAS_BUILDER_POLL_INTERVAL, default
+// 2 s); we hand-roll time.NewTicker rather than re-using imaged's
+// WithGCChannel seam because the worker is short and the seam
+// doesn't pay for itself here.
+func workerLoop(ctx context.Context, b *builderdpkg.Builderd, interval time.Duration, log *slog.Logger) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		_, err := b.ProcessNext(ctx)
+		if err == nil {
+			continue
+		}
+		// Empty queue is the expected idle state. Log only at debug
+		// so we don't drown the logs on a quiet box.
+		if errors.Is(err, state.ErrNotFound) {
+			log.Debug("builderd: worker tick — queue empty")
+			continue
+		}
+		// ErrNoSlot means ProcessNext claimed the row, hit
+		// DecideSlot's denial, marked it failed, and returned
+		// ErrNoSlot. Wait — ProcessOne still calls markFailed on
+		// no-slot. The worker cannot rely on the row staying queued
+		// unless we requeue here BEFORE ProcessNext fails it. The
+		// actual requeue lives in ProcessNext's no-slot path via
+		// store.RequeueBuild (see the PR-B doc-comment there).
+		if errors.Is(err, builderdpkg.ErrNoSlot) {
+			log.Debug("builderd: worker tick — no slot, row requeued")
+			continue
+		}
+		log.Warn("builderd: worker tick — process next", "err", err)
 	}
 }
 

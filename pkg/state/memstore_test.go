@@ -384,11 +384,11 @@ func TestCreateAndLatestDeployment(t *testing.T) {
 	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "dep-app"})
 
 	// Unknown app must fail.
-	if _, err := m.CreateDeployment(ctx, Deployment{AppID: "no-such-app"}); err == nil {
+	if _, _, err := m.CreateDeployment(ctx, Deployment{AppID: "no-such-app"}); err == nil {
 		t.Error("CreateDeployment for unknown app must error")
 	}
 
-	d1, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:1"})
+	d1, _, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:1"})
 	if err != nil {
 		t.Fatalf("CreateDeployment d1: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestCreateAndLatestDeployment(t *testing.T) {
 		t.Errorf("d1 fields not initialized: %+v", d1)
 	}
 	// Force a later CreatedAt on d2 so Latest is unambiguous.
-	d2, err := m.CreateDeployment(ctx, Deployment{
+	d2, _, err := m.CreateDeployment(ctx, Deployment{
 		AppID: app.ID, ImageDigest: "sha256:2",
 		CreatedAt: time.Now().Add(time.Second),
 	})
@@ -420,7 +420,7 @@ func TestCreateDeploymentPreservesCallerFields(t *testing.T) {
 	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "preserve"})
 	set := time.Date(2025, 6, 7, 8, 9, 10, 0, time.UTC)
 
-	d, err := m.CreateDeployment(ctx, Deployment{
+	d, _, err := m.CreateDeployment(ctx, Deployment{
 		AppID: app.ID, ImageDigest: "sha256:x",
 		ID: "client-id", CreatedAt: set,
 	})
@@ -1123,8 +1123,8 @@ func TestMemStore_ListSnapshotsForGC(t *testing.T) {
 	app, _ := m.CreateApp(ctx, App{
 		AccountID: acct.ID, Slug: "snap", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	depA, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
-	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
+	depA, _, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
+	depB, _, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
 	if _, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100,
 		FCVersion:  "1.8.0",
@@ -1164,7 +1164,7 @@ func TestMemStore_ListSnapshotsForGC_ExcludesDeletedApp(t *testing.T) {
 	app, _ := m.CreateApp(ctx, App{
 		AccountID: acct.ID, Slug: "del-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
+	dep, _, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
 	if _, err := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 		FCVersion:  "1.8.0",
@@ -1189,8 +1189,8 @@ func TestMemStore_DeleteSnapshotsByID_BulkAndIdempotent(t *testing.T) {
 	app, _ := m.CreateApp(ctx, App{
 		AccountID: acct.ID, Slug: "del-snap", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	depA, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
-	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
+	depA, _, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
+	depB, _, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
 	snapA, _ := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0",
 		StorageKey: SnapMemKey(depA.ID),
@@ -1224,7 +1224,7 @@ func TestMemStore_MarkAllSnapshotsStaleByFCVersion(t *testing.T) {
 		AccountID: acct.ID, Slug: "fc-sweep", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
 	insert := func(v string) string {
-		dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:" + v})
+		dep, _, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:" + v})
 		snap, _ := m.CreateSnapshot(ctx, Snapshot{
 			DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100,
 			FCVersion:  v,
@@ -1259,8 +1259,8 @@ func TestMemStore_MarkOldSnapshotsStale(t *testing.T) {
 	app, _ := m.CreateApp(ctx, App{
 		AccountID: acct.ID, Slug: "mark-old", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	depA, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
-	depB, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
+	depA, _, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:a"})
+	depB, _, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:b"})
 	snapA, _ := m.CreateSnapshot(ctx, Snapshot{
 		DeploymentID: depA.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0",
 		StorageKey: SnapMemKey(depA.ID),
@@ -1518,7 +1518,7 @@ func TestMem_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	dep, err := m.CreateDeployment(ctx, Deployment{
+	dep, _, err := m.CreateDeployment(ctx, Deployment{
 		AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:k",
 	})
 	if err != nil {
@@ -1601,7 +1601,7 @@ func TestMemStore_SnapshotStorageKey_RoundTrip(t *testing.T) {
 	app, _ := m.CreateApp(ctx, App{
 		AccountID: acct.ID, Slug: "snap-key", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 1,
 	})
-	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:k"})
+	dep, _, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:k"})
 
 	// (1) Caller-supplied storage_key round-trips through CreateSnapshot → LatestSnapshot.
 	want := "snap/" + dep.ID + "/mem"
@@ -1658,13 +1658,13 @@ func TestMemStore_ListStaleQueuedBuilds(t *testing.T) {
 		t.Fatalf("CreateApp: %v", err)
 	}
 
-	oldDep, _ := m.CreateDeployment(ctx, Deployment{
+	oldDep, _, _ := m.CreateDeployment(ctx, Deployment{
 		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployPending,
 	})
-	freshDep, _ := m.CreateDeployment(ctx, Deployment{
+	freshDep, _, _ := m.CreateDeployment(ctx, Deployment{
 		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployPending,
 	})
-	runningDep, _ := m.CreateDeployment(ctx, Deployment{
+	runningDep, _, _ := m.CreateDeployment(ctx, Deployment{
 		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployBuilding,
 	})
 
@@ -1745,7 +1745,7 @@ func TestMemStore_ClaimQueuedBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	dep, err := m.CreateDeployment(ctx, Deployment{
+	dep, _, err := m.CreateDeployment(ctx, Deployment{
 		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployPending,
 	})
 	if err != nil {

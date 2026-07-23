@@ -11,16 +11,13 @@ package imaged
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -97,7 +94,7 @@ func seedSnapshotWithApp(t *testing.T, store *state.MemStore, memBytes, diskByte
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 	})
 	if err != nil {
@@ -130,7 +127,7 @@ func TestGC_PerAppKeepCurrentPrevious(t *testing.T) {
 	})
 	base := time.Now().Add(-time.Hour)
 	for i := 0; i < 3; i++ {
-		dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 		})
 		if err != nil {
@@ -220,13 +217,13 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 		AccountID: lightAcct.ID, Slug: "light", RAMMB: 1024, IdleTimeoutS: 600, MaxConcurrency: 20,
 	})
 
-	heavyDep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	heavyDep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: heavyApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:h",
 	})
-	midDep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	midDep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: midApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:m",
 	})
-	lightDep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	lightDep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: lightApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:l",
 	})
 
@@ -239,7 +236,7 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	// heavyApp needs > current+previous snapshots so the per-app floor
 	// leaves at least one evictable row. With 3 snapshots and a 2-row
 	// floor, the oldest is a valid eviction target.
-	heavyDep2, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	heavyDep2, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: heavyApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:h2",
 	})
 	heavySnap2, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
@@ -248,7 +245,7 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 		StorageKey: state.SnapMemKey(heavyDep2.ID),
 		CreatedAt:  time.Now().Add(-2 * time.Minute),
 	})
-	heavyDep3, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	heavyDep3, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: heavyApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:h3",
 	})
 	heavySnap3, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
@@ -333,7 +330,7 @@ func TestGC_DeleteSnapshotsByID_BulkAndIdempotent(t *testing.T) {
 	})
 	_ = app // not reachable via store API; use the existing seed path instead.
 
-	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: "00000000-0000-0000-0000-000000000000",
 		Kind:  state.DeploymentKindImage, ImageDigest: "sha256:x",
 	})
@@ -378,7 +375,7 @@ func TestGC_IdenticalCreatedAt_StableSort(t *testing.T) {
 	base := time.Now().Add(-time.Hour)
 	ids := make([]string, 5)
 	for i := 0; i < 5; i++ {
-		dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:s" + string(rune('a'+i)),
 		})
 		snap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
@@ -497,7 +494,7 @@ func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys(t *testing.T) {
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "gc-target", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:gc",
 	})
 	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
@@ -559,7 +556,7 @@ func TestMemStore_ListDeploymentsForApp_LimitZero(t *testing.T) {
 		AccountID: acct.ID, Slug: "limit-test", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
 	for i := 0; i < 5; i++ {
-		dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:l" + string(rune('a'+i)),
 		})
 		if err != nil {
@@ -599,171 +596,26 @@ func nan() float64 {
 	return z / z // 0/0 → NaN, deterministic, no math import
 }
 
-// fakeNotifier captures every Notify call so the reaper test can
-// assert on the on-wire payload without spinning up Postgres.
-// Reuses the existing fakeNotifier in handler_test.go (same package)
-// — only this test reads it without going through HandleNotification,
-// so the existing non-thread-safe shape is fine; this test runs
-// single-goroutine.
-func TestLoop_BuildReapTick(t *testing.T) {
-	store := state.NewMemStore()
-	acct, _ := store.CreateAccount(context.Background(), "reap@example.com", "pro")
-	app, _ := store.CreateApp(context.Background(), state.App{
-		AccountID: acct.ID, Slug: "reap-app",
-		RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+// TestLoop_ConstructionNoReaper is a sanity test confirming imaged no
+// longer carries the PR-A reaper channel/config (PR-B). builderd
+// owns the build-queue durability surface now; imaged reacts to
+// deployment_changed + snapshot_boot signals only.
+func TestLoop_ConstructionNoReaper(t *testing.T) {
+	loop := NewLoop(LoopConfig{
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
-	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindTarball,
-	})
-	if _, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 100, ""); err != nil {
-		t.Fatalf("CreateBuild: %v", err)
+	// gcCh is set lazily inside Run (not NewLoop). Constructor
+	// success — minimal field wiring returning a usable Loop — is
+	// the assertion; PR-A's reapCh / ReapBuildEvery / WithBuildReapChannel
+	// must be gone, and they are.
+	if loop.handler != nil {
+		t.Error("NewLoop should leave handler nil until caller wires it")
 	}
-
-	// The MemStore sets EnqueuedAt = time.Now() on CreateBuild. We
-	// can't backdate via the public surface (no setter), so exercise
-	// the 0-threshold branch where every queued row qualifies.
-	notif := &fakeNotifier{}
-	loop := &Loop{
-		store:         store,
-		log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
-		now:           func() time.Time { return time.Unix(0, 0) },
-		reapEvery:     time.Second,
-		reapThreshold: 0, // every queued row qualifies
-		reapCh:        make(chan time.Time, 1),
-		handler: &Handler{
-			store: store,
-			log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-			notif: notif,
-		},
-	}
-
-	loop.runBuildReapTick(context.Background(), time.Now())
-
-	if len(notif.calls) == 0 {
-		t.Fatal("reaper emitted zero notifications; want at least one per stale row")
-	}
-	for _, c := range notif.calls {
-		if c.channel != db.NotifyBuildQueued {
-			t.Errorf("reaper emitted on %q, want %q", c.channel, db.NotifyBuildQueued)
-		}
-		// PR-A review: decode via db.BuildQueuedPayload so this test
-		// catches any drift in the four-field shape. Substring checks
-		// missed a missing/renamed key entirely.
-		var p db.BuildQueuedPayload
-		if err := json.Unmarshal([]byte(c.payload), &p); err != nil {
-			t.Fatalf("reaper payload not valid BuildQueuedPayload JSON: %v (payload=%q)", err, c.payload)
-		}
-		if p.DeploymentID != dep.ID {
-			t.Errorf("deployment = %q, want %q", p.DeploymentID, dep.ID)
-		}
-		if p.AppID != app.ID {
-			t.Errorf("app = %q, want %q", p.AppID, app.ID)
-		}
-		if p.BuildID == "" {
-			t.Errorf("build id empty in payload %q", c.payload)
-		}
-		if p.Kind != string(state.DeploymentKindTarball) {
-			t.Errorf("kind = %q, want %q", p.Kind, state.DeploymentKindTarball)
-		}
-	}
-
-	// Duplicate emit is harmless because builderd's ClaimQueuedBuild
-	// (PR-A review CAS) drops the loser of the queued → running race.
-	prev := len(notif.calls)
-	loop.runBuildReapTick(context.Background(), time.Now())
-	if len(notif.calls) <= prev {
-		t.Errorf("second tick should re-emit (no in-mem dedupe), got %d calls (was %d)", len(notif.calls), prev)
-	}
-}
-
-// threadsafeNotifier wraps the package-private fakeNotifier (which is
-// not safe for concurrent access) with a mutex. The PR-A wiring test
-// reads fakeNotifier.calls from the test goroutine while Run writes
-// from its own goroutine; -race flags this on the package fake.
-// Defined here rather than touching the shared fake to keep blast
-// radius small.
-type threadsafeNotifier struct {
-	mu    sync.Mutex
-	calls []notifyCall
-}
-
-func (t *threadsafeNotifier) Notify(_ context.Context, channel, payload string) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.calls = append(t.calls, notifyCall{channel, payload})
-	return nil
-}
-
-func (t *threadsafeNotifier) Calls() []notifyCall {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return append([]notifyCall(nil), t.calls...)
-}
-
-// TestLoop_BuildReapChannel_WiresThroughRun covers the PR-A review
-// "loop test bypasses Run + reapCh" finding. Spins up Loop.Run on a
-// cancellable context, sends one tick on WithBuildReapChannel, and
-// asserts the reaper fires through the actual select arm rather than
-// by calling runBuildReapTick directly.
-func TestLoop_BuildReapChannel_WiresThroughRun(t *testing.T) {
-	store := state.NewMemStore()
-	acct, _ := store.CreateAccount(context.Background(), "wire@example.com", "pro")
-	app, _ := store.CreateApp(context.Background(), state.App{
-		AccountID: acct.ID, Slug: "wire-app",
-		RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
-	})
-	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindTarball,
-	})
-	if _, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 100, ""); err != nil {
-		t.Fatalf("CreateBuild: %v", err)
-	}
-
-	notif := &threadsafeNotifier{}
-	reapCh := make(chan time.Time, 1)
-	// gcCh and fcCh are nil — Run()'s select should still spin and pick
-	// up the reap tick. Pass nil-safe lvUsedPct so any probe path that
-	// ever fires doesn't NPE. gcEvery/reapEvery MUST be > 0 because
-	// Run() falls back to time.NewTicker when the channel is nil and
-	// NewTicker panics on non-positive durations.
-	loop := &Loop{
-		store:         store,
-		log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
-		now:           func() time.Time { return time.Unix(0, 0) },
-		gcEvery:       time.Hour,
-		reapCh:        reapCh,
-		reapEvery:     time.Hour, // unused: we drive via reapCh send.
-		reapThreshold: 0,
-		handler: &Handler{
-			store: store,
-			log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-			notif: notif,
-		},
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		loop.Run(ctx) //nolint:errcheck // Run exits on ctx cancel; err unused
-	}()
-	defer func() {
-		cancel()
-		<-done
-	}()
-
-	// Send one reap tick through the wiring under test.
-	reapCh <- time.Now()
-
-	// Poll briefly for the notify — Run is on its own goroutine.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if len(notif.Calls()) > 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if len(notif.Calls()) == 0 {
-		t.Fatal("Run + reapCh wiring did not produce a notify within 1s")
-	}
+	// The reap channel/config must be gone (no public surface on
+	// LoopConfig, no fields on Loop). Construction with the bare
+	// config returning a usable Loop is the assertion — any future
+	// re-introduction of reapCh / ReapBuildEvery will surface via a
+	// unused-but-still-public interface in code review, and the
+	// reference to Loop.gcCh above is the only knob tests should
+	// ever need to drive the loop.
 }

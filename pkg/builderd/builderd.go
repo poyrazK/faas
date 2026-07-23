@@ -54,6 +54,17 @@ type ResidencyProbe interface {
 // ErrNotMetal is the sentinel returned by the non-metal VM stub.
 var ErrNotMetal = errors.New("builderd: VM spawn is metal-only; use a fake VM in unit tests")
 
+// ErrNoSlot is returned when the slot allocator (DecideSlot) rules
+// the build out — the 1 + 1 opportunistic builder budget is fully
+// consumed by other in-flight builds (spec §14). processClaimedBuild
+// REQUEUES the row (preserving FIFO position) before returning
+// ErrNoSlot, so the durability-net worker (cmd/builderd/main.go::workerLoop)
+// and any later LISTEN-driven caller both observe the row as
+// queued-and-awaiting-slot. PR-B §B.5 — the requeue lives inside
+// processClaimedBuild so the LISTEN path and the poll path share one
+// implementation.
+var ErrNoSlot = errors.New("builderd: no builder slot available")
+
 // Config is the on-disk shape of /etc/faas/builderd.toml. Every field has a
 // working default.
 type Config struct {
@@ -87,6 +98,12 @@ type Builderd struct {
 	// ObserveBuild* methods are also nil-safe). Wired in production via
 	// WithOpsMetrics from cmd/builderd.
 	ops *wire.OpsMetrics
+	// slotDecide is the slot-allocation hook. Production wires
+	// b.slotDecide = DecideSlot in New; tests inject a closure to
+	// exercise the no-slot requeue path without standing up a full
+	// ResidencyProbe rig. nil falls back to DecideSlot(b.resid, …)
+	// inside processClaimedBuild.
+	slotDecide func(ResidencyProbe, int) SlotDecision
 }
 
 // New wires a Builderd. vm may be nil in unit tests (the orchestrator still
@@ -125,6 +142,15 @@ func (b *Builderd) WithOpsMetrics(ops *wire.OpsMetrics) *Builderd {
 	return b
 }
 
+// WithSlotDecider swaps the slot-allocation function for tests so the
+// no-slot requeue path (PR-B §B.5) can be exercised without standing
+// up a full ResidencyProbe rig. Production callers must NOT use this
+// — DecideSlot is the canonical implementation.
+func (b *Builderd) WithSlotDecider(f func(ResidencyProbe, int) SlotDecision) *Builderd {
+	b.slotDecide = f
+	return b
+}
+
 // BuildResult is the outcome of one queued build.
 type BuildResult struct {
 	BuildID    string
@@ -159,6 +185,37 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		}
 		return BuildResult{}, fmt.Errorf("builderd: claim build %s: %w", buildID, err)
 	}
+	return b.processClaimedBuild(ctx, build)
+}
+
+// ProcessNext is the durability-net worker surface (PR-B). It picks
+// the next queued build via SELECT … FOR UPDATE SKIP LOCKED, runs the
+// canonical pipeline, and returns ErrNotFound when the queue is
+// empty (the worker sleeps without surfacing an error). On slot
+// denial (DecideSlot returns !Allowed) the row is re-queued rather
+// than marked failed — the worker calls store.RequeueBuild right
+// after seeing ErrNoSlot so the build stays in the FIFO position
+// until a slot opens up. cmd/builderd's workerLoop in main.go owns
+// the cadence.
+func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
+	build, err := b.store.ClaimNextQueuedBuild(ctx)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return BuildResult{}, state.ErrNotFound
+		}
+		return BuildResult{}, fmt.Errorf("builderd: claim next build: %w", err)
+	}
+	return b.processClaimedBuild(ctx, build)
+}
+
+// processClaimedBuild runs the canonical pipeline for a build that
+// has already been CAS-claimed (via ClaimQueuedBuild or
+// ClaimNextQueuedBuild). Both ProcessOne (LISTEN-driven) and
+// ProcessNext (poll-driven) call into here so the only divergence
+// between the two surfaces is the claim SQL — the rest of the
+// pipeline (cache check, slot allocation, VM spawn, wait, classify,
+// terminal write) is shared 1:1.
+func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (BuildResult, error) {
 	dep, err := b.store.DeploymentByID(ctx, build.DeploymentID)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("builderd: load deployment: %w", err)
@@ -219,10 +276,27 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	}
 
 	// Slot allocation (CLAUDE.md: builds never outrank tenant wakes).
-	slot := DecideSlot(b.resid, api.RAMAdmissionCeilingMB)
+	decider := b.slotDecide
+	if decider == nil {
+		decider = DecideSlot
+	}
+	slot := decider(b.resid, api.RAMAdmissionCeilingMB)
 	if !slot.Allowed {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "no builder slot: "+slot.Reason, buildStart)
-		return BuildResult{}, errors.New("builderd: no slot")
+		// Requeue the row (NOT markFailed) so a later tick / notify
+		// can re-attempt it. RequeueBuild clears started_at but
+		// preserves enqueued_at so the FIFO position survives a
+		// wake-surge. The build is observable as "queued" the
+		// whole time — no false DeployFailed flip on the
+		// deployment row. Best-effort: if the requeue itself
+		// fails (Postgres restart, etc), the row is in a
+		// running state with no live owner; the worker will
+		// never see it again. PR-C follow-up: stuck-running
+		// sweep (ADR-031).
+		if err := b.store.RequeueBuild(ctx, build.ID); err != nil {
+			b.log.Warn("builderd: requeue on no-slot", "build", build.ID, "err", err)
+		}
+		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("no slot (%s) — requeued\n", slot.Reason))
+		return BuildResult{}, ErrNoSlot
 	}
 	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("allocated builder slot (%s)\n", slot.Label))
 
