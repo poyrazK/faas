@@ -50,6 +50,25 @@ type OpsMetrics struct {
 	// ≈ 5 s, p99.9 ≈ 30 s); the 60 s ceiling is the documented API
 	// timeout.
 	stripePushDur *prometheus.HistogramVec
+	// buildDur / buildQueueWait: introduced in ADR-030 for builderd's
+	// build lifecycle. Distinct from the dur histogram (which tops out
+	// at 5 s — sub-millisecond control-plane sizing) because a build runs
+	// up to the 10-min BuildTimeoutSeconds cap and a queued build can wait
+	// on the single guaranteed builder slot. Same precedent as
+	// stripePushDur (ADR-027): control-plane buckets are wrong for these
+	// multi-second/multi-minute ops. Success/failure classification stays
+	// on the shared ops counter as ops_total{op="build",code}; the duration
+	// histogram carries an `outcome` label ({cache_hit,ok,failed}) so the
+	// §12 panels can slice cleanly — cache hits run <1 s and would
+	// otherwise drown the real-build p50/p95 in cache-hit noise. The queue-
+	// wait histogram is unlabelled (every observation has the same shape).
+	buildDur       *prometheus.HistogramVec
+	buildQueueWait prometheus.Histogram
+	// imagedOCIPull: per-call latency of imaged's OCI registry pulls
+	// (manifest, config, blob, above-base). Sized to api.OCIPullTimeoutSeconds
+	// (60 s); the 5 s control-plane bucket is wrong for the multi-second
+	// blob downloads.
+	imagedOCIPull *prometheus.HistogramVec
 }
 
 // NewOpsMetrics builds an OpsMetrics keyed on the per-daemon prefix — e.g.
@@ -88,7 +107,44 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// 60 s ceiling = documented API timeout.
 		Buckets: []float64{0.5, 1, 2, 5, 10, 20, 30, 45, 60},
 	}, []string{"result"})
-	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, stripePushDur)
+	buildDur := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: prefix + "_build_duration_seconds",
+		Help: "Wall-clock duration of a builder-VM build, in seconds (ADR-030). Labelled by outcome {cache_hit,ok,failed} so the §12 panels can slice out cache-hit noise (<1 s); success/failure classification lives on ops_total{op=\"build\",code}.",
+		// Sized for the build envelope: cache hits land in seconds, real
+		// builds run up to the 10-min (600 s) BuildTimeoutSeconds cap.
+		Buckets: []float64{5, 15, 30, 60, 120, 240, 360, 480, 600},
+	}, []string{"outcome"})
+	// Pre-instantiate every outcome label so the histogram's HELP/TYPE and
+	// zero-valued buckets surface in /metrics from boot (ADR-030, same
+	// precedent as the stripe-push histogram pre-instantiation above).
+	for _, outcome := range []string{"cache_hit", "ok", "failed"} {
+		buildDur.WithLabelValues(outcome)
+	}
+	buildQueueWait := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name: prefix + "_build_queue_wait_seconds",
+		Help: "Seconds a build waited between enqueue (apid) and dequeue (builderd start), spec §12 target < 60 s, warn > 300 s (ADR-030).",
+		// Sized to the §12 alert thresholds: healthy < 60 s, page at > 300 s.
+		Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600},
+	})
+	imagedOCIPull := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: prefix + "_oci_pull_duration_seconds",
+		Help: "Latency of imaged's OCI registry pulls (manifest, config, blob, above-base), in seconds. Sized to api.OCIPullTimeoutSeconds (60 s).",
+		// OCI manifest/config are fast (10–500 ms); blob downloads can run
+		// multi-second for big layers; 60 s ceiling = OCIPullTimeoutSeconds.
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60},
+	}, []string{"op", "result"})
+	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, stripePushDur, buildDur, buildQueueWait, imagedOCIPull)
+	// Pre-instantiate the closed (op,result) set for the OCI-pull
+	// histogram so its HELP/TYPE and zero-valued buckets surface in
+	// /metrics from the moment the daemon boots — same precedent as
+	// the buildDuration and stripePush pre-instantiation above. The
+	// canonical op label set lives next to the observer; if you add
+	// a new op there, extend this loop too.
+	for _, op := range []string{"manifest", "config", "blob", "above_base"} {
+		for _, result := range []string{"ok", "err"} {
+			imagedOCIPull.WithLabelValues(op, result)
+		}
+	}
 	// Pre-instantiate every label in the closed result set so the
 	// histogram's HELP/TYPE and zero-valued buckets surface in
 	// `/metrics` from the moment the daemon boots — even before the
@@ -108,6 +164,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		watchdogKills:   watchdogKills,
 		eventsWriteFail: eventsWriteFail,
 		stripePushDur:   stripePushDur,
+		buildDur:        buildDur,
+		buildQueueWait:  buildQueueWait,
+		imagedOCIPull:   imagedOCIPull,
 	}
 }
 
@@ -166,6 +225,57 @@ func (m *OpsMetrics) ObserveCode(op, code string, dur time.Duration) {
 // to cache; the underlying HistogramVec is shared across labels.
 func (m *OpsMetrics) StripePushDuration(result string) prometheus.Observer {
 	return m.stripePushDur.WithLabelValues(result)
+}
+
+// ObserveBuildCount increments <daemon>_ops_total{op="build",code} by one
+// (ADR-030). code is "ok" on success, "cache_hit" for the cache
+// short-circuit, or a state.FailureClass string (oom/timeout/user_error/
+// infra) on failure — the §12 "build success (non-user_error)" ratio is
+// computed off this label. Deliberately separate from the timing
+// histograms: the counter is emitted at the point where the outcome is
+// known (the mark-succeeded/failed funnels), while duration is emitted
+// once per build. Safe on a nil receiver so builderd unit tests without
+// metrics keep working.
+func (m *OpsMetrics) ObserveBuildCount(code string) {
+	if m == nil {
+		return
+	}
+	m.ops.WithLabelValues("build", code).Inc()
+}
+
+// ObserveBuildDuration records one build's wall-clock duration in the
+// build-sized <daemon>_build_duration_seconds histogram (ADR-030),
+// labelled by outcome ∈ {cache_hit,ok,failed}. Deliberately NOT ObserveCode:
+// that also feeds the control-plane dur histogram whose 5 s ceiling is
+// wrong for a 10-min build. Safe on a nil receiver.
+func (m *OpsMetrics) ObserveBuildDuration(outcome string, dur time.Duration) {
+	if m == nil {
+		return
+	}
+	m.buildDur.WithLabelValues(outcome).Observe(dur.Seconds())
+}
+
+// ObserveBuildQueueWait records how long a build sat between enqueue
+// (apid CreateBuild) and dequeue (builderd start), feeding the
+// <daemon>_build_queue_wait_seconds histogram (spec §12, ADR-030). Safe
+// on a nil receiver.
+func (m *OpsMetrics) ObserveBuildQueueWait(dur time.Duration) {
+	if m == nil {
+		return
+	}
+	m.buildQueueWait.Observe(dur.Seconds())
+}
+
+// ObserveImagedOCIPull records one OCI registry pull into the per-domain
+// <daemon>_oci_pull_duration_seconds histogram. op ∈ {manifest, config,
+// blob, above_base}, result ∈ {ok, err}. Sized to api.OCIPullTimeoutSeconds
+// (60 s) — distinct from the 5 s control-plane dur histogram because
+// blob downloads can run multi-second. Safe on a nil receiver.
+func (m *OpsMetrics) ObserveImagedOCIPull(op, result string, dur time.Duration) {
+	if m == nil {
+		return
+	}
+	m.imagedOCIPull.WithLabelValues(op, result).Observe(dur.Seconds())
 }
 
 // Handler returns an http.Handler that serves the registry's metrics.

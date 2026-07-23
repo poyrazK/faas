@@ -357,7 +357,13 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// scheduler populated into WakeRequest.Snapshot. The VMM
 			// resolves it through the StorageBackend before staging.
 			StorageKey: req.Snapshot.StorageKey,
-			Tap:        nc.Tap,
+			// #121 / ADR-025 axis 2 slice 4: thread the canonical
+			// vmstate storage key when the engine populated it (remote
+			// nodes). Default-local single-box leaves this empty so
+			// the VMM falls back to RestoreSpec.VMStatePath above,
+			// preserving the legacy host-path branch.
+			VMStateStorageKey: req.Snapshot.VMStateStorageKey,
+			Tap:               nc.Tap,
 			// The restored VM re-reads kernel + drives under the chroot
 			// basenames; Park→Kill erased the previous chroot, so hand the
 			// Manager.ColdBoot equivalents back to the VMM to re-stage.

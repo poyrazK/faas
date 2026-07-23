@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -130,7 +131,8 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			"apps_root", appsRoot)
 	}
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
-		WithStorage(storageBackend)
+		WithStorage(storageBackend).
+		WithOpsMetrics(wire.NewOpsMetrics("imaged"))
 
 	// F3: function runner wiring. cmd/imaged refuses to come up if either
 	// env var is set but the path doesn't exist on disk — silent omission
@@ -200,15 +202,17 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	loop := imaged.NewLoop(imaged.LoopConfig{
-		Handler:   h,
-		Store:     store,
-		Pool:      pool,
-		Log:       log,
-		Now:       d.now,
-		LvUsedPct: d.lvUsedPct,
-		DetectFC:  d.detectFC,
-		AppsRoot:  appsRoot,
-		GCEvery:   envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
+		Handler:            h,
+		Store:              store,
+		Pool:               pool,
+		Log:                log,
+		Now:                d.now,
+		LvUsedPct:          d.lvUsedPct,
+		DetectFC:           d.detectFC,
+		AppsRoot:           appsRoot,
+		GCEvery:            envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
+		ReapBuildEvery:     envDuration("FAAS_REAP_INTERVAL", 30*time.Second),
+		BuildReapThreshold: envDuration("FAAS_REAP_THRESHOLD", 30*time.Second),
 	})
 
 	log.Info("imaged ready",
@@ -218,6 +222,45 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		"builder_base_digest", baseRes.ConfigDigest,
 		"builder_base_skipped", baseRes.Skipped,
 	)
+
+	// Optional /metrics listener (this PR). Mirrors cmd/apid/main.go
+	// and cmd/builderd/main.go:146-157 — separate bind so a port
+	// collision can't take the daemon down. Defaults to 127.0.0.1:9102
+	// so an operator typo (or a missing env var in prod) can't accidentally
+	// expose the internal registry to the public network — series like
+	// imaged_oci_pull_duration_seconds{op,result} leak per-deploy timing
+	// shape (review finding #1 on PR #132). Loopback bind is safe because
+	// the local Prometheus scrapes from the box itself. Set
+	// FAAS_IMAGED_METRICS_ADDR= to disable the listener (unit tests that
+	// don't want a port reserved).
+	metricsAddr := envOr("FAAS_IMAGED_METRICS_ADDR", "127.0.0.1:9102")
+	if metricsAddr != "" {
+		ops := wire.NewOpsMetrics("imaged")
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", ops.Handler())
+		msrv := &http.Server{
+			Addr:              metricsAddr,
+			Handler:           mux,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		mlis, err := net.Listen("tcp", metricsAddr)
+		if err != nil {
+			return fmt.Errorf("imaged: metrics listen %q: %w", metricsAddr, err)
+		}
+		go func() {
+			log.Info("imaged /metrics listening", "addr", metricsAddr)
+			if err := msrv.Serve(mlis); err != nil && err != http.ErrServerClosed {
+				log.Error("imaged /metrics serve", "err", err)
+			}
+		}()
+		//nolint:contextcheck // shutdown ctx must outlive request ctx.
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = msrv.Shutdown(shutdownCtx)
+		}()
+	}
+
 	return loop.Run(ctx)
 }
 

@@ -46,6 +46,13 @@ func spoolRoot() string {
 //	dockerfile bool  — present if the tarball root contains a Dockerfile.
 //	runtime   string — node22|python312 for function deploys.
 //	handler   string — handler path, required when runtime is set.
+//
+// DeployedApps is enforced at app-create time via
+// store.CreateAppIfUnderQuota — the deploy path cannot bypass it because
+// the parent apps row must already exist. The active-app gate that
+// prevents an orphan deployment row pointing at a soft-deleted app
+// lives inside store.CreateDeployment (PR-A: SELECT 1 FROM apps
+// WHERE id=$1 AND status='active' FOR UPDATE).
 func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) {
 	limits := api.MustLimitsFor(acct.Plan)
 
@@ -222,7 +229,8 @@ func validateAndSpool(part *multipart.Part, limits api.Limits) (string, int64, *
 }
 
 // validateTarballShape opens the spooled tarball and verifies the §9
-// invariants: ≤10k files, no symlink escapes, no absolute paths.
+// invariants: ≤10k files, no symlink/hardlink escapes, no absolute
+// paths, no `..` entries.
 //
 //nolint:forbidigo // path is the tmp file apid just wrote via os.Create in validateAndSpool above with a fresh random id; apid OWNS the parent directory AND the inode, customer never touched them — symlink-attack impossible. Tarball-shape validation re-reads the bytes to enforce spec §9.
 func validateTarballShape(path string) *api.Problem {
@@ -246,15 +254,51 @@ func validateTarballShape(path string) *api.Problem {
 		if err != nil {
 			return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad tar", err.Error())
 		}
+		// PR-A: every name-based escape check runs BEFORE count++ so a
+		// tarball mixing 10k valid entries with one escaping symlink
+		// trips the escape check first, not the file-count cap
+		// (review ordering pin).
+		if escapesArchiveRoot(hdr.Name) {
+			return api.ErrSourceInvalid("absolute paths or '..' entries are rejected")
+		}
+		if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
+			// Symlink/hardlink target uses the same predicate as the
+			// entry name. tar's tar.Reader doesn't resolve targets —
+			// builderd's unpack does — so we just reject anything that
+			// could escape when resolved relative to the entry's parent.
+			if escapesArchiveRoot(hdr.Linkname) {
+				return api.ErrSourceInvalid("symlink/hardlink with absolute or '..' target rejected")
+			}
+		}
 		count++
 		if count > maxSourceFiles {
 			return api.ErrSourceInvalid(fmt.Sprintf("too many files (>%d)", maxSourceFiles))
 		}
-		if strings.HasPrefix(hdr.Name, "/") || strings.Contains(hdr.Name, "..") {
-			return api.ErrSourceInvalid("absolute paths or '..' entries are rejected")
-		}
 	}
 	return nil
+}
+
+// escapesArchiveRoot reports whether p would, when cleaned and joined
+// under an archive root, walk above that root. Catches absolute paths
+// and any path component equal to "..". PR-A review: the prior
+// strings.Contains("..") rejected safe names like "file..txt" —
+// splitting on the path separator and checking each component is the
+// tightest predicate that still closes the escape.
+func escapesArchiveRoot(p string) bool {
+	if p == "" {
+		return false
+	}
+	if strings.HasPrefix(p, "/") {
+		return true
+	}
+	// filepath.SplitList won't help; split manually so we don't pull in
+	// OS semantics (tar paths are always forward-slash on the wire).
+	for _, part := range strings.Split(p, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // isFlagSet reads a small multipart field and reports whether it carries a

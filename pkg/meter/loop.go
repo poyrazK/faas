@@ -28,10 +28,16 @@ import (
 // coerces nil to a fresh test registry / slog.Default so callers don't
 // have to special-case the zero value (mirrors scheddgrpc/server.go:54-56).
 type Loop struct {
-	store   state.Store
-	parker  ScheddParker
-	stripe  StripePusher
-	notif   Notifier
+	store  state.Store
+	parker ScheddParker
+	stripe StripePusher
+	notif  Notifier
+	// mailer is the customer-facing email sender (spec §171 "dunning +
+	// quota mails reference email"). Shared with the dunning timer —
+	// both loops hand off the same Sender via DunningSender's local
+	// interface shape. nil falls back to a no-op sender in NewLoop so
+	// tests don't have to thread a stub.
+	mailer  DunningSender
 	dunning *Dunning
 	now     func() time.Time
 	log     *slog.Logger
@@ -51,8 +57,11 @@ type Loop struct {
 // daemon (cmd/meterd) can substitute test doubles without importing the
 // concrete packages (scheddgrpc, stripex). dunning may be nil; tests
 // that don't exercise dunning pass nil and the fourth goroutine is
-// skipped. ops and log likewise may be nil — see the Loop doc comment.
-func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif Notifier, dunning *Dunning, now func() time.Time, log *slog.Logger, cfg *Config, ops *wire.OpsMetrics) *Loop {
+// skipped. mailer may be nil; NewLoop coerces nil to noopDunningSender
+// so callers don't have to special-case the zero value (mirrors
+// ops/log coercion above). ops and log likewise may be nil — see the
+// Loop doc comment.
+func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif Notifier, mailer DunningSender, dunning *Dunning, now func() time.Time, log *slog.Logger, cfg *Config, ops *wire.OpsMetrics) *Loop {
 	if now == nil {
 		now = time.Now
 	}
@@ -62,9 +71,12 @@ func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif 
 	if ops == nil {
 		ops = wire.NewOpsMetrics("meter_test")
 	}
+	if mailer == nil {
+		mailer = noopDunningSender{}
+	}
 	return &Loop{
 		store: store, parker: parker, stripe: stripe, notif: notif,
-		dunning: dunning, now: now, log: log, cfg: cfg, ops: ops,
+		mailer: mailer, dunning: dunning, now: now, log: log, cfg: cfg, ops: ops,
 		lastTick: make(map[string]time.Time),
 	}
 }
@@ -175,7 +187,7 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			continue
 		}
 		used := MonthlyUsageGB(usages)
-		if _, err := EnforceQuota(ctx, l.store, l.notif, l.parker, l.log, acct, used, now); err != nil {
+		if _, err := EnforceQuota(ctx, l.store, l.notif, l.parker, l.mailer, l.log, acct, used, now); err != nil {
 			// EnforceQuota already logged + skipped parked-instance failures;
 			// only status/structural errors reach here.
 			if errors.Is(err, state.ErrNotFound) {

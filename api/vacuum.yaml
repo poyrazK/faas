@@ -1,0 +1,16 @@
+extends: [spectral:oas]
+
+rules:
+  # Hard shape rules — fail CI.
+  operation-tag-defined: error
+  oas3-valid-media-example: error
+  no-eval-in-markdown: error
+
+  # Description prose — warn on day 1, promote to error after polishing.
+  operation-description: warn
+  tag-description: warn
+  info-contact: warn
+  info-license: warn
+
+  # Disable single-box cloud-irrelevant rules.
+  oas3-api-servers: off

@@ -39,19 +39,27 @@ func toWakeRequest(req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, err
 	}
 	if snap != nil {
 		// #96 / ADR-025 axis 2 (slice 3) — mem_path is gone from the
-		// proto. The StorageBackend is the only carrier; if a caller
-		// hands us a SnapshotRef with an empty StorageKey, fall back
-		// to cold-boot (the createcoldboot branch) by leaving
-		// wr.Snapshot = nil. The Manager treats nil Snapshot as
-		// cold-boot, which is exactly the cold-boot-must-always-work
-		// guarantee (ADR-005).
+		// proto. The StorageBackend is the only carrier for the mem
+		// blob; if a caller hands us a SnapshotRef with an empty
+		// StorageKey, fall back to cold-boot (the createcoldboot
+		// branch) by leaving wr.Snapshot = nil. The Manager treats
+		// nil Snapshot as cold-boot, which is exactly the
+		// cold-boot-must-always-work guarantee (ADR-005).
+		//
+		// #121 / ADR-025 axis 2 slice 4 — vmstate_storage_key is the
+		// canonical key the vmstate blob lives under when the new
+		// StorageBackend carrier is used; vmstate_path is the legacy
+		// host-path fallback (default-local single-box). Both flow
+		// through unchanged so fcvm.Snapshot.Usable() can accept
+		// either locator and pick the right resume path.
 		if snap.GetStorageKey() == "" {
 			return wr, nil
 		}
 		wr.Snapshot = &fcvm.Snapshot{
-			VMStatePath: snap.GetVmstatePath(),
-			FCVersion:   snap.GetFcVersion(),
-			StorageKey:  snap.GetStorageKey(),
+			VMStatePath:       snap.GetVmstatePath(),
+			FCVersion:         snap.GetFcVersion(),
+			StorageKey:        snap.GetStorageKey(),
+			VMStateStorageKey: snap.GetVmstateStorageKey(),
 		}
 	}
 	return wr, nil

@@ -4,17 +4,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // server is apid's HTTP service: the public REST API and the only writer to
@@ -109,6 +112,23 @@ type server struct {
 	// domain-only URL until the customer's id is wired in. Empty
 	// means the 402 still goes out but BillingPortalURL is omitted.
 	billingPortalURL string
+	// ops holds the per-daemon Prometheus registry. Wired via
+	// WithOpsMetrics so callers (cmd/apid) control the registry
+	// lifecycle. A dedicated metric observer middleware sits atop
+	// the route mux so every handler emits apid_ops_total +
+	// apid_op_duration_seconds without each one wrapping itself.
+	// Nil = observation disabled (unit tests).
+	ops *wire.OpsMetrics
+}
+
+// WithOpsMetrics attaches the daemon-wide Prometheus registry. The
+// handler-level observe call in observeHandler hits ops; the chain
+// methods stay untouched. Mirrors pkg/builderd/builderd.go's
+// WithOpsMetrics (PR #124, ADR-030) and pkg/githubd/server.go's
+// WithOpsMetrics (this PR).
+func (s *server) WithOpsMetrics(ops *wire.OpsMetrics) *server {
+	s.ops = ops
+	return s
 }
 
 // WithStatusCache wires the status-page Prometheus query cache.
@@ -484,7 +504,80 @@ func (s *server) handler() http.Handler {
 	// in /readyz later. Mirrors pkg/gateway/control.go::ControlMux.
 	mux.HandleFunc("GET /healthz", s.healthz)
 
-	return mux
+	// Spec hosting (anonymous; see pkg/apid/openapi_handler.go).
+	// /v1/openapi.yaml and /v1/openapi.json let SDK codegen and
+	// `curl` reach the same spec the repo CI gate (make spec-check)
+	// keeps the code aligned to.
+	mux.HandleFunc("GET /v1/openapi.yaml", apid.ServeOpenAPISpec)
+	mux.HandleFunc("GET /v1/openapi.json", apid.ServeOpenAPISpecJSON)
+
+	// observeWrap (the outermost layer) feeds apid_ops_total +
+	// apid_op_duration_seconds. It's last so it sees the final
+	// status code from every chain (auth → idempotent → handler).
+	// Nil s.ops (no metrics wired) = no-op passthrough. Includes
+	// the spec routes above so SDK codegen hits show up on the
+	// §12 dashboard's per-route latency panel.
+	return s.observeWrap(mux)
+}
+
+// observeWrap returns the mux wrapped in an observe middleware that
+// records apid_ops_total{op,code} and apid_op_duration_seconds{op}
+// per request. nil-safe — returns the inner handler untouched when
+// s.ops is nil (unit tests that don't care about metrics).
+//
+// op label = the route template (e.g. "GET /v1/apps/{slug}"), the
+// same shape Go's http.ServeMux uses for the route pattern, so
+// cardinality stays bounded by the route table (not by parameter
+// values — that would explode the label set).
+//
+// code label is "ok" on 2xx / 3xx and "err" on anything else;
+// 4xx quota/auth codes are the dominant traffic and the §12
+// dashboard's "rejected traffic" panel reads this column.
+//
+// Unmatched routes (r.Pattern == "" — the 404 path a URL scanner
+// hits, e.g. "/wp-login.php", "/.env") are recorded under a single
+// fixed op="unmatched" label. Recording under r.URL.Path would let
+// a scanner explode the label set unbounded (review finding #2 on
+// PR #132); the unmatched bucket still surfaces scanner traffic as
+// one series per code so the §12 dashboard can alert on it.
+func (s *server) observeWrap(h http.Handler) http.Handler {
+	if s.ops == nil {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &observeWriter{ResponseWriter: w, status: http.StatusOK}
+		h.ServeHTTP(rec, r)
+		op := r.Pattern
+		if op == "" {
+			op = "unmatched"
+		}
+		s.ops.Observe(op, time.Since(start), observeErrFromStatus(rec.status))
+	})
+}
+
+// observeWriter tees the response so observeWrap can read the final
+// status after the chain finishes. WriteHeader is called by every
+// handler in the project (no implicit-200 paths), so capturing it is
+// sufficient.
+type observeWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (o *observeWriter) WriteHeader(s int) {
+	o.status = s
+	o.ResponseWriter.WriteHeader(s)
+}
+
+// observeErrFromStatus maps a route's terminal status code to an
+// error sentinel. observeWrap uses the non-nil sentinel to drive
+// apid_ops_total{code="err"}; the sentinel's text isn't on the wire.
+func observeErrFromStatus(status int) error {
+	if status >= 200 && status < 400 {
+		return nil
+	}
+	return errors.New("apid: http " + http.StatusText(status))
 }
 
 // healthz is the loopback-friendly liveness probe. Returns 200 with

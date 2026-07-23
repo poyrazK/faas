@@ -533,8 +533,45 @@ func (s *PgStore) InstallationIDForRepo(ctx context.Context, repoFullName string
 
 // --- deployments -------------------------------------------------------------
 
+// CreateDeployment writes a pending deployment row only if the parent app is
+// currently active. The active-app gate is the PR-A fix for the TOCTOU race
+// where apid's AppBySlug could return a row whose status was flipped to
+// `deleted` between the read and the INSERT — the previous shape silently
+// stranded an orphan deployments row pointing at a soft-deleted app.
+//
+// Shape mirrors CreateAppIfUnderQuota (lines 287-343 above): a tx-scoped
+// SELECT 1 FROM apps … FOR UPDATE serialises with concurrent updates to
+// apps.status, and ErrNotFound on a 0-row result so apid's existing
+// s.notFound path returns 404 without any change at the call site.
+//
+// AppDeleted apps must NOT accept new deployments; subsequent UpdateApp
+// calls (PATCH /v1/apps/{slug}) reject status flips back to active for
+// already-deleted rows anyway, so the invariant "an app either accepts
+// deploys OR is deleted" is one-directional here.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	// 1. Lock the parent apps row. SELECT 1 + FOR UPDATE keeps lock
+	//    acquisition in one round-trip; apps.status flips are blocked
+	//    behind this lock until COMMIT/ROLLBACK. apps_pkey is the
+	//    primary key on id, so the lock search is an index hit.
+	var locked int
+	if err := tx.QueryRow(ctx,
+		`select 1 from apps where id = $1 and status = 'active' for update`,
+		d.AppID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Deployment{}, ErrNotFound
+		}
+		return Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
+	}
+
+	// 2. Insert under the lock. The FOR UPDATE above guarantees the app
+	//    cannot transition to AppDeleted between this point and COMMIT.
+	row := tx.QueryRow(ctx,
 		`insert into deployments (app_id, image_digest, kind, source_path, source_bytes, handler, log_path, status)
 		 values ($1, $2, $3, $4, $5, $6, $7, 'pending')
 		 returning id, app_id, coalesce(build_id::text,''), image_digest, kind,
@@ -542,7 +579,14 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		           status, coalesce(error,''), coalesce(error_code,''), created_at`,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), d.SourceBytes,
 		nullString(d.Handler), nullString(d.LogPath))
-	return scanDeployment(row)
+	created, err := scanDeployment(row)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, fmt.Errorf("state: commit create deployment: %w", err)
+	}
+	return created, nil
 }
 
 func (s *PgStore) DeploymentByID(ctx context.Context, id string) (Deployment, error) {
@@ -743,7 +787,7 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 		`insert into builds (deployment_id, kind, source_bytes, status, log_path)
 		 values ($1, $2, $3, 'queued', $4)
 		 returning id, deployment_id, kind, source_bytes, status,
-		           coalesce(failure_class,''), coalesce(log_path,''), started_at, finished_at`,
+		           coalesce(failure_class,''), coalesce(log_path,''), started_at, finished_at, enqueued_at`,
 		deploymentID, string(kind), sourceBytes, nullString(logPath))
 	return scanBuild(row)
 }
@@ -751,14 +795,14 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 func (s *PgStore) BuildByID(ctx context.Context, id string) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
-		        started_at, finished_at from builds where id = $1`, id)
+		        started_at, finished_at, enqueued_at from builds where id = $1`, id)
 	return scanBuild(row)
 }
 
 func (s *PgStore) BuildByDeployment(ctx context.Context, deploymentID string) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
-		        started_at, finished_at from builds where deployment_id = $1
+		        started_at, finished_at, enqueued_at from builds where deployment_id = $1
 		 order by started_at desc nulls last limit 1`, deploymentID)
 	return scanBuild(row)
 }
@@ -779,6 +823,72 @@ func (s *PgStore) UpdateBuildStatus(ctx context.Context, id string, status Build
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ClaimQueuedBuild atomically transitions queued → running via a single
+// UPDATE … RETURNING and sets started_at = now(). Returns ErrNotFound
+// when the row is missing OR already in another status — that second
+// case is what lets builderd drop duplicate build_queued notifications
+// (apid write path + imaged reaper) without spawning two builder VMs.
+// Equivalent to a compare-and-swap at the row level.
+func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error) {
+	row := s.pool.QueryRow(ctx,
+		`update builds
+		   set status = 'running', started_at = now()
+		 where id = $1 and status = 'queued'
+		 returning id, deployment_id, kind, source_bytes, status,
+		           coalesce(failure_class,''), coalesce(log_path,''),
+		           started_at, finished_at, enqueued_at`,
+		id)
+	b, err := scanBuild(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Build{}, ErrNotFound
+		}
+		return Build{}, fmt.Errorf("state: claim queued build %s: %w", id, err)
+	}
+	return b, nil
+}
+
+// ListStaleQueuedBuilds is the imaged reaper's read surface (PR-A).
+// Returns every row still in BuildQueued whose enqueued_at is older
+// than `now() - threshold`. Uses the index on (status, enqueued_at)
+// implicitly via the WHERE predicate; the builds table is bounded by
+// in-flight builds (spec §9 keeps the queue shallow) so a full scan
+// stays cheap. If the queue depth grows we should add a partial index
+// on (status, enqueued_at) WHERE status='queued' — pinned as a
+// follow-up.
+//
+// Builds is on the critical wake path: when apid emits
+// db.NotifyBuildQueued right after CreateBuild (deploy_inputs.go:167),
+// a transient Postgres blip between INSERT and NOTIFY can drop the
+// notification. The reaper scans this set on a tick and re-emits
+// the notify, recovering without a manual operator action.
+func (s *PgStore) ListStaleQueuedBuilds(ctx context.Context, threshold time.Duration) ([]Build, error) {
+	rows, err := s.pool.Query(ctx,
+		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
+		        started_at, finished_at, enqueued_at
+		   from builds
+		  where status = 'queued'
+		    and enqueued_at < now() - $1::interval
+		  order by enqueued_at asc`,
+		threshold)
+	if err != nil {
+		return nil, fmt.Errorf("state: list stale queued builds: %w", err)
+	}
+	defer rows.Close()
+	var out []Build
+	for rows.Next() {
+		b, err := scanBuild(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list stale queued builds iterate: %w", err)
+	}
+	return out, nil
 }
 
 // --- custom domains ---------------------------------------------------------
@@ -2080,7 +2190,7 @@ func scanBuild(row pgx.Row) (Build, error) {
 	b := Build{}
 	var kind, statusStr, fc string
 	var startedAt, finishedAt *time.Time
-	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt); err != nil {
+	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt); err != nil {
 		return Build{}, mapErr(err)
 	}
 	if startedAt != nil {
@@ -2854,6 +2964,14 @@ func nullableTimestamptz(t time.Time) pgtype.Timestamptz {
 // there is no matching row, so pkg/grace after a successful
 // DeleteAccount can detect a stale tick and skip the log.
 func (s *PgStore) CompleteGdprRequest(ctx context.Context, accountID, action string) error {
+	// empty accountID can't bind to a uuid column; better to return
+	// the contract-level ErrNotFound than the raw SQLSTATE 22P02 a
+	// caller would otherwise see. Mirrors the MemStore branch, which
+	// already does the empty-input short-circuit implicitly via the
+	// loop's "no match" path.
+	if accountID == "" || action == "" {
+		return ErrNotFound
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update gdpr_requests
 		   set completed_at = coalesce(completed_at, now())

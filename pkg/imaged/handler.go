@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -21,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // Notifier is the minimal interface imaged needs from pkg/db. The real
@@ -74,6 +76,13 @@ type Handler struct {
 	// to a per-app LocalStorageBackend rooted at appsRoot so legacy
 	// callers keep working without rewiring New(...).
 	storage storage.StorageBackend
+	// ops holds the per-daemon Prometheus registry (this PR). Wired
+	// via WithOpsMetrics; nil = observation no-op (unit tests).
+	// Records imaged_op_duration_seconds / imaged_ops_total at the
+	// OCI pull sites inside aboveBaseLayers + the legacy
+	// PullLayers path, plus imaged_oci_pull_duration_seconds
+	// per-pull op{manifest,config,blob,above_base}.
+	ops *wire.OpsMetrics
 }
 
 // New returns a Handler. The OCI puller is injected so tests can substitute
@@ -128,6 +137,16 @@ func (h *Handler) WithDeployBaseRef(ref string) *Handler {
 // override and falls back to the appsRoot-derived default.
 func (h *Handler) WithStorage(s storage.StorageBackend) *Handler {
 	h.storage = s
+	return h
+}
+
+// WithOpsMetrics attaches the daemon-wide Prometheus registry. The
+// OCI-pull observer reads from it inside aboveBaseLayers +
+// PullLayers. Nil-safe (Observe* is no-op on a nil receiver).
+// Mirrors pkg/builderd/builderd.go's WithOpsMetrics (PR #124,
+// ADR-030) and cmd/apid/server.go's WithOpsMetrics (this PR).
+func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
+	h.ops = ops
 	return h
 }
 
@@ -444,8 +463,13 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	} else {
 		// M5 fallback: stream all layers as-is. Used by fakes that only
 		// implement oci.Puller — the existing unit tests exercise this
-		// branch.
+		// branch. Observed under op="blob" so the §12 dashboard sees
+		// one series per legacy fallback's stream (it's pull-then-
+		// decode-and-stitch in the legacy path; for the dashboard it's
+		// just a slower blob pull).
+		start := time.Now()
 		pulled, err := h.oci.PullLayers(ctx, ref)
+		h.ops.ObserveImagedOCIPull("blob", pullResult(err), time.Since(start))
 		if err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, "oci pull layers")
 			return fmt.Errorf("imaged: pull layers: %w", err)
@@ -859,7 +883,9 @@ func (h *Handler) aboveBaseLayers(ctx context.Context, mp oci.ManifestPuller,
 	if appRepo == "" {
 		return aboveBaseStream{}, nil, fmt.Errorf("imaged: cannot derive repo from %q", appRef)
 	}
+	start := time.Now()
 	appManifest, err := mp.PullManifest(ctx, appRef)
+	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
 	if err != nil {
 		return aboveBaseStream{}, nil, fmt.Errorf("manifest: %w", err)
 	}
@@ -875,7 +901,9 @@ func (h *Handler) aboveBaseLayers(ctx context.Context, mp oci.ManifestPuller,
 	if baseRepo == "" {
 		return aboveBaseStream{}, nil, fmt.Errorf("imaged: cannot derive repo from base %q", baseRef)
 	}
+	start = time.Now()
 	baseManifest, err := mp.PullManifest(ctx, baseRef)
+	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
 	if err != nil {
 		return aboveBaseStream{}, nil, fmt.Errorf("base manifest: %w", err)
 	}
@@ -910,7 +938,9 @@ func (h *Handler) aboveBaseLayers(ctx context.Context, mp oci.ManifestPuller,
 			}
 			return aboveBaseStream{}, nil, fmt.Errorf("imaged: missing blob for diff %s", diffID)
 		}
+		start = time.Now()
 		rc, err := mp.PullBlob(ctx, appRepo, desc.Digest)
+		h.ops.ObserveImagedOCIPull("blob", pullResult(err), time.Since(start))
 		if err != nil {
 			for _, c := range closers {
 				_ = c.Close()
@@ -920,19 +950,41 @@ func (h *Handler) aboveBaseLayers(ctx context.Context, mp oci.ManifestPuller,
 		closers = append(closers, rc)
 		readers = append(readers, rc)
 	}
+	// One observation per above-base resolution completing — feeds the
+	// "above_base" bucket of the histogram (the §12 dashboard's
+	// "above-base resolved" panel). Result is "ok" when at least one
+	// layer was streamed; an empty above (zero new layers) still counts
+	// as "ok" — that's the steady-state case where the deploy matches
+	// the base exactly.
+	h.ops.ObserveImagedOCIPull("above_base", "ok", time.Since(start))
 	return aboveBaseStream{readers: readers, closers: closers}, above, nil
+}
+
+// pullResult maps a non-nil error to "err"; nil to "ok". The histogram
+// takes a closed label set {"ok","err"}; anything else becomes a new
+// series Prometheus doesn't know about (and silently drops).
+func pullResult(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	return "err"
 }
 
 // pullConfig fetches and parses the OCI image config referenced by a manifest.
 // The config carries the env/entrypoint (run by guest-init) AND the
 // rootfs.diff_ids that drive the two-drive math.
 func (h *Handler) pullConfig(ctx context.Context, mp oci.ManifestPuller, repo, digest string) (oci.Config, error) {
+	start := time.Now()
 	r, err := mp.PullBlob(ctx, repo, digest)
 	if err != nil {
+		h.ops.ObserveImagedOCIPull("config", "err", time.Since(start))
 		return oci.Config{}, err
 	}
 	defer func() { _ = r.Close() }()
-	return oci.ParseConfig(r)
+	cfg, perr := oci.ParseConfig(r)
+	res := pullResult(perr)
+	h.ops.ObserveImagedOCIPull("config", res, time.Since(start))
+	return cfg, perr
 }
 
 // repoWithHost returns "host/repo" for a parsed reference, or just "repo" when

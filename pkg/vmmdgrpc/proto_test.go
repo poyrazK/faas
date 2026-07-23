@@ -38,7 +38,12 @@ func TestToWakeRequest_Happy(t *testing.T) {
 	req := &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "inst-1",
 		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256},
-		Snapshot: &vmmdpb.SnapshotRef{VmstatePath: "/v", FcVersion: "1.7.0", StorageKey: "snap/inst-1/mem"},
+		Snapshot: &vmmdpb.SnapshotRef{
+			VmstatePath:       "/v",
+			VmstateStorageKey: "snap/inst-1/vmstate",
+			FcVersion:         "1.7.0",
+			StorageKey:        "snap/inst-1/mem",
+		},
 	}
 	wr, err := toWakeRequest(req)
 	if err != nil {
@@ -53,7 +58,16 @@ func TestToWakeRequest_Happy(t *testing.T) {
 	if wr.Snapshot == nil {
 		t.Fatal("Snapshot should be set")
 	}
-	if wr.Snapshot.VMStatePath != "/v" || wr.Snapshot.FCVersion != "1.7.0" || wr.Snapshot.StorageKey != "snap/inst-1/mem" {
+	// #121: both vmstate locators flow through to fcvm.Snapshot so a
+	// future regression that drops VmstateStorageKey (e.g. a rename that
+	// leaves the proto getter ignored) trips here.
+	if wr.Snapshot.VMStatePath != "/v" {
+		t.Errorf("vmstate path lost: %+v", wr.Snapshot)
+	}
+	if wr.Snapshot.VMStateStorageKey != "snap/inst-1/vmstate" {
+		t.Errorf("vmstate storage key lost: %+v", wr.Snapshot)
+	}
+	if wr.Snapshot.FCVersion != "1.7.0" || wr.Snapshot.StorageKey != "snap/inst-1/mem" {
 		t.Errorf("snapshot fields wrong: %+v", wr.Snapshot)
 	}
 }
@@ -89,6 +103,41 @@ func TestToWakeRequest_EmptySnapshotStorageKey(t *testing.T) {
 	}
 	if wr.Snapshot != nil {
 		t.Errorf("Snapshot must be nil when storage_key empty, got %+v", wr.Snapshot)
+	}
+}
+
+// TestToWakeRequest_RemoteVmstateShape pins the canonical multi-node shape
+// (#121 / ADR-025 axis 2 slice 4): a CreateFromSnapshotRequest with the new
+// VmstateStorageKey field populated and the legacy VmstatePath left empty.
+// The decoded Snapshot must carry VMStateStorageKey verbatim so vmmd's
+// Storage.Get branch is the one taken — default-local sends empty here.
+// A regression that drops the conversion (or filters empty paths) trips.
+func TestToWakeRequest_RemoteVmstateShape(t *testing.T) {
+	const wantKey = "snap/inst-1/vmstate"
+	req := &vmmdpb.CreateFromSnapshotRequest{
+		Instance: "inst-1",
+		App:      &vmmdpb.AppSpec{BaseKey: "/b"},
+		Snapshot: &vmmdpb.SnapshotRef{
+			VmstateStorageKey: wantKey,
+			FcVersion:         "1.7.0",
+			StorageKey:        "snap/inst-1/mem",
+		},
+	}
+	wr, err := toWakeRequest(req)
+	if err != nil {
+		t.Fatalf("toWakeRequest: %v", err)
+	}
+	if wr.Snapshot == nil {
+		t.Fatal("Snapshot should be set")
+	}
+	if wr.Snapshot.VMStateStorageKey != wantKey {
+		t.Errorf("VMStateStorageKey = %q, want %q", wr.Snapshot.VMStateStorageKey, wantKey)
+	}
+	if wr.Snapshot.VMStatePath != "" {
+		t.Errorf("VMStatePath should be empty for the remote shape, got %q", wr.Snapshot.VMStatePath)
+	}
+	if !wr.Snapshot.Usable("1.7.0") {
+		t.Error("decoded remote shape should be Usable — predicate regression")
 	}
 }
 

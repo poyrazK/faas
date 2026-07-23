@@ -121,7 +121,7 @@ func (nopParker) ParkInstance(context.Context, string, string) error { return ni
 
 type nopStripe struct{}
 
-func (nopStripe) PushUsageRecord(context.Context, state.Account, time.Time, float64) error {
+func (nopStripe) PushUsageRecordSum(context.Context, state.Account, time.Time, int64) error {
 	return nil
 }
 
@@ -445,9 +445,9 @@ func TestRun_Healthz_StaleReturns503(t *testing.T) {
 // Renamed from `recordingStripe` because it deliberately differs from
 // the pkg/meter-side recordingStripe in pusher_shadow_test.go:
 //
-//   - pkg/meter's fake records full (acct, hour, gb) tuples because
-//     TestPushHour_Shadow24h asserts the GB-h math against a synthetic
-//     dataset.
+//   - pkg/meter's fake records full (acct, hour, mb_seconds) tuples
+//     because TestPushHour_Shadow24h asserts the integer-mb-seconds
+//     math against a synthetic dataset.
 //   - cmd/meterd's fake only counts calls because
 //     TestRun_MetricsAddr_StripePushLabels asserts the /metrics scrape
 //     shape, not the push math.
@@ -462,7 +462,7 @@ type meterRec struct {
 	calls int
 }
 
-func (r *meterRec) PushUsageRecord(context.Context, state.Account, time.Time, float64) error {
+func (r *meterRec) PushUsageRecordSum(context.Context, state.Account, time.Time, int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls++

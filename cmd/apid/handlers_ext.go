@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/stripex"
 )
@@ -739,6 +740,26 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 			} else {
 				s.log.Warn("apid: payment_failed MarkDunningStep", "account", acct.ID, "err", err)
 			}
+		} else {
+			// First delivery — the CAS flip succeeded and past_due_at
+			// was stamped. Send the entry-point email per spec §171
+			// "All transitions emailed". Stripe redelivery is naturally
+			// silent here: MarkDunningStep returns ErrNotFound on a
+			// second delivery (status already past_due), which routes
+			// through the if branch above and skips the mail.
+			//
+			// Mail errors are warn-logged but never undo the status
+			// flip — Stripe told us about a real payment failure and
+			// the customer needs to be marked past_due regardless of
+			// whether our SMTP relay is healthy. The meterd 7-day
+			// timer is the safety net for the customer-facing notice.
+			subject, body := mail.PaymentFailedBody(acct.Email, time.Now().UTC())
+			if err := s.mailer.Send(r.Context(), Message{
+				To: []string{acct.Email}, Subject: subject, TextBody: body,
+			}); err != nil {
+				s.log.Warn("apid: payment_failed mail",
+					"account", acct.ID, "err", err)
+			}
 		}
 	case "invoice.payment_succeeded":
 		// Restore the account if it was past_due. meterd will refresh
@@ -748,8 +769,30 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		// fresh warning — otherwise the stamp from the previous day
 		// would suppress it (spec §4.7).
 		if acct.Status == state.AccountPastDue {
-			_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountActive)
+			if err := s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountActive); err != nil {
+				s.log.Warn("apid: payment_succeeded restore",
+					"account", acct.ID, "err", err)
+			} else {
+				// Status just flipped back to active. Send the
+				// recovery email (spec §171 "All transitions emailed").
+				// payment_succeeded is naturally idempotent — the
+				// status guard above ensures we only fire on a real
+				// past_due → active transition, never on a no-op
+				// redelivery.
+				subject, body := mail.AccountRestoredBody(acct.Email, time.Now().UTC())
+				if err := s.mailer.Send(r.Context(), Message{
+					To: []string{acct.Email}, Subject: subject, TextBody: body,
+				}); err != nil {
+					s.log.Warn("apid: payment_succeeded mail",
+						"account", acct.ID, "err", err)
+				}
+			}
 		}
+		// Clear the dedupe stamp on every payment_succeeded, not just
+		// past_due → active flips: a fresh signup's first Stripe
+		// confirmation shouldn't wait until the next UTC midnight to
+		// hear about a quota they crossed during the trial, and the
+		// Cost of an extra pg_notify on a no-op event is nil.
 		_ = s.store.ClearQuotaWarning(r.Context(), acct.ID)
 	case "customer.subscription.updated":
 		if ev.Data.Object.Plan != "" {

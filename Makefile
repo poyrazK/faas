@@ -103,6 +103,12 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root
 leakcheck: ## Assert zero leaked netns/TAPs/jail uids/cgroups after tests
 	@bash deploy/scripts/leakcheck.sh
 
+.PHONY: e2e
+e2e: ## End-to-end tests in cmd/e2e (needs Postgres reachable; metal subset via test-metal). Issue M7.
+	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e needs DATABASE_URL set to a reachable Postgres" ; exit 1)
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set; set it to a reachable Postgres to run e2e" ; exit 1)
+	$(GO) test -race -count=1 -timeout=15m ./cmd/e2e/...
+
 .PHONY: metal-lima
 metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see deploy/lima/README.md)
 	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false
@@ -201,3 +207,53 @@ migrate-up: ## Apply all pending migrations against $DATABASE_URL (idempotent)
 	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH"; exit 1)
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set"; exit 1)
 	@go run ./cmd/migrate
+
+# OpenAPI spec gate. The spec is the source of truth for documentation;
+# the code is the source of truth for behavior. The gate is the bridge —
+# `make spec-check` fails the PR if anything drifts.
+#
+# Mirrors the `proto-check` / `sqlc-check` / `egress-check` pattern: a
+# checked-in artifact + a regenerate-and-diff verification. The vacuum
+# binary is pinned via `go install …@v0.29.10` (same pattern as
+# `protoc-gen-go@v1.36.11` and `sqlc@v1.27.0`).
+#
+# `pkg/apid/openapi.yaml` is a generated copy of `api/openapi.yaml` used
+# by `//go:embed` (go:embed only resolves inside the package directory).
+# The copy is checked in so the binary is self-contained at build time;
+# `make spec-check` regenerates it AND asserts the working tree is clean
+# so a missed copy fails CI rather than silently shipping stale bytes.
+VACUUM     := $(or $(GOBIN),$(shell go env GOPATH)/bin)/vacuum
+VACUUM_VER := v0.29.10
+SPEC       := api/openapi.yaml
+SPEC_EMBED := pkg/apid/openapi.yaml
+VACUUM_RULES := api/vacuum.yaml
+
+.PHONY: spec-install
+spec-install: ## Install vacuum at the pinned version (idempotent)
+	# Each line is its own shell statement so this guard stays bash -e safe
+	# (a single `&&` chain trips on the first `command -v` returning 1 when
+	# vacuum isn't installed yet — CI runs `set -e`, the make recipe inherits
+	# it). CI installs vacuum in its own workflow step (ci.yml); this target
+	# stays here for local `make spec-lint` / `make spec-check` first-run use.
+	@if command -v $(VACUUM) >/dev/null 2>&1; then \
+	  $(VACUUM) version 2>&1 | grep -q $(VACUUM_VER) && { echo "vacuum $(VACUUM_VER) installed"; exit 0; }; \
+	fi; \
+	GOFLAGS='' GOBIN=$(dir $(VACUUM)) go install github.com/daveshanley/vacuum@$(VACUUM_VER)
+
+.PHONY: spec-sync
+spec-sync: ## Sync the //go:embed copy of the spec from api/openapi.yaml
+	@cmp -s $(SPEC) $(SPEC_EMBED) || cp $(SPEC) $(SPEC_EMBED)
+	@echo "spec-sync: $(SPEC_EMBED) matches $(SPEC)"
+
+.PHONY: spec-lint
+spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
+	@$(VACUUM) lint -r $(VACUUM_RULES) $(SPEC)
+
+.PHONY: spec-check
+spec-check: spec-install spec-lint spec-sync ## CI gate: vacuum lint + AST parity + git clean (runs in PR CI)
+	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
+	# would double the wall time without adding signal.
+	@$(GO) test -count=1 -run TestSpecCompliance ./cmd/apid/...
+	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) || \
+	  (echo "spec-check: spec drift — re-run 'make spec-check' or hand-fix to match"; exit 1)
+	@echo "spec-check: OK"

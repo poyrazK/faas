@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // mustLocalStorage builds a LocalStorageBackend rooted at the temp dir.
@@ -1009,6 +1012,66 @@ func TestRepoWithHost(t *testing.T) {
 	for _, in := range []string{"", "@sha256:" + strings.Repeat("a", 64)} {
 		if got := repoWithHost(in); got != "" {
 			t.Errorf("repoWithHost(%q) = %q, want \"\"", in, got)
+		}
+	}
+}
+
+// Drive the happy-path pull through the M5 legacy fallback (no
+// ManifestPuller) and assert the imaged_oci_pull histogram surfaces
+// the observation under op="blob",result="ok". The pre-instantiated
+// tuples cover the unused arms at zero counts so the §12 dashboard
+// doesn't show "no data" before the first scrape.
+//
+// The failing-puller arms are exercised by imaged's other tests
+// (TestHandleDeployment_PullLayersError); this test focuses on the
+// metric wiring specifically.
+func TestOCIPullMetrics_LegacyFallback(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", api.PlanPro)
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "metric-app", RAMMB: 512, IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage,
+	})
+
+	// Success path: drive a deployment through the legacy PullLayers
+	// branch and assert imaged_oci_pull_duration_seconds_count{op="blob",
+	// result="ok"} reaches 1.
+	notif := &fakeNotifier{}
+	ops := wire.NewOpsMetrics("imaged_test")
+	h := New(store, notif,
+		fakePuller{digest: "sha256:abc", cfg: oci.ImageConfig{Cmd: []string{"./app"}}},
+		&fakeBuilder{}, "./init", t.TempDir(), silentLogger()).
+		WithOpsMetrics(ops)
+	h.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifyDeploymentChanged,
+		Payload: `{"app_id":"` + app.ID + `","to":"` + dep.ID + `","kind":"image","image_digest":"sha256:abc"}`,
+	})
+
+	srv := httptest.NewServer(ops.Handler())
+	t.Cleanup(srv.Close)
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get /metrics: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	bodyB, _ := io.ReadAll(resp.Body)
+	body := string(bodyB)
+
+	for _, want := range []string{
+		// Legacy PullLayers observes a single "blob" call.
+		`imaged_test_oci_pull_duration_seconds_count{op="blob",result="ok"} 1`,
+		// Pre-instantiated tuples the legacy path never touches surface at 0.
+		`imaged_test_oci_pull_duration_seconds_count{op="config",result="ok"} 0`,
+		`imaged_test_oci_pull_duration_seconds_count{op="manifest",result="ok"} 0`,
+		// above_base is only emitted from the M6 aboveBaseLayers path,
+		// which this fake (no ManifestPuller) doesn't exercise. Pre-
+		// instantiated so it surfaces as 0 here.
+		`imaged_test_oci_pull_duration_seconds_count{op="above_base",result="ok"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics body missing %q:\n%s", want, body)
 		}
 	}
 }

@@ -114,26 +114,38 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 // PauseAndSnapshot parks an instance, writing its full snapshot. Destroy
 // happens inside Manager.Park.
 //
-// #96 / ADR-025 axis 2 (slice 3): mem_path is gone from the wire. vmmd
-// allocates the staging tmp internally (SnapshotSpec.StageMemPath), the
-// StorageBackend at StorageKey receives the mem blob, and the vmstate
-// file lands at the caller-supplied VMStatePath. VMStatePath is still
-// host-supplied because the small JSON is read straight back into a
-// fresh chroot by the Restore path's `stageReadOnly(root, VMStatePath)`
-// — moving it into storage is planned but not in this slice.
+// #96 / ADR-025 axis 2: mem + vmstate are both routed through the
+// configured StorageBackend. vmmd allocates staging tmps internally
+// (SnapshotSpec.StageMemPath), the mem blob is published at the
+// canonical StorageKey, and the vmstate blob is published at the
+// canonical VMStateStorageKey when one is supplied. Either vmstate
+// locator (legacy VMStatePath or new VMStateStorageKey) is acceptable
+// to keep default-local single-box behaviour bit-for-bit: the engine
+// (pkg/sched/engine.go) sends the empty key for default-local so the
+// legacy host-path branch is taken. The two locators are NOT mutually
+// exclusive — a remote caller may populate both and the storage key
+// is authoritative; VmstatePath is logged-only metadata when the
+// storage key is non-empty.
 func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnapshotRequest) (*vmmdpb.SnapshotResponse, error) {
 	const op = "PauseAndSnapshot"
 	start := time.Now()
-	if req.GetVmstatePath() == "" || req.GetStorageKey() == "" {
+	// Mem storage_key stays required (F-1 contract, #96 slice 3). Vmstate
+	// is acceptable via either vmstate_storage_key (new, ADR-025 axis 2
+	// slice 4) or vmstate_path (legacy host path, single-box default).
+	// Neither vmstate field set together is rejected so an operator who
+	// forgets both gets a clear error naming both field names.
+	if req.GetStorageKey() == "" || (req.GetVmstateStorageKey() == "" && req.GetVmstatePath() == "") {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
-			"Missing paths", "vmstate_path and storage_key are required").
+			"Missing paths",
+			"storage_key is required; at least one of vmstate_storage_key or vmstate_path must be set").
 			WithDocs("https://docs/DOMAIN/vmmd#pause")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
 	info, err := s.vmm.Park(ctx, req.GetInstance(), fcvm.SnapshotSpec{
-		VMStatePath: req.GetVmstatePath(),
-		StorageKey:  req.GetStorageKey(),
+		VMStatePath:       req.GetVmstatePath(),
+		StorageKey:        req.GetStorageKey(),
+		VMStateStorageKey: req.GetVmstateStorageKey(),
 	})
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {

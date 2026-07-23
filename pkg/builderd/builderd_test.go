@@ -3,15 +3,20 @@ package builderd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // fakeNotifier records every Notify call. Used to assert build_log fan-out
@@ -72,6 +77,40 @@ func seedDeploymentWithPlan(t *testing.T, store state.Store, source, plan string
 	}
 	app, err := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "src-app", RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindTarball,
+		SourcePath:  source,
+		SourceBytes: 100,
+		LogPath:     filepath.Join(t.TempDir(), "build.log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 100, dep.LogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return build.ID, dep.ID, app.ID
+}
+
+// seedDeploymentWithSlug is the per-test-call variant for the cache_hit
+// subtest (seedBuildForCachePrime). MemStore rejects duplicate account
+// emails; vary the slug (and the email) so two consecutive seeds in
+// the same test don't collide.
+func seedDeploymentWithSlug(t *testing.T, store state.Store, source, slug string) (string, string, string) {
+	t.Helper()
+	email := fmt.Sprintf("%s@example.com", slug)
+	acct, err := store.CreateAccount(context.Background(), email, api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: slug, RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 5,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -531,4 +570,182 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// scrapeMetrics renders the daemon's /metrics body via the OpsMetrics
+// handler so build-metric assertions match the real exposition format.
+func scrapeMetrics(t *testing.T, ops *wire.OpsMetrics) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	ops.Handler().ServeHTTP(rec, req)
+	return rec.Body.String()
+}
+
+func TestProcessOne_EmitsBuildMetrics(t *testing.T) {
+	// A fresh successful build increments ops_total{op="build",code="ok"}
+	// and observes both build histograms exactly once (ADR-030).
+	store := state.NewMemStore()
+	srcTar := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, srcTar, []string{"package.json", "index.js"})
+	buildID, _, _ := seedDeployment(t, store, srcTar)
+
+	out := filepath.Join(t.TempDir(), "produced.ext4")
+	if err := os.WriteFile(out, []byte("produced layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: out, ExitCode: 0, LogTailBytes: 14}}
+	ops := wire.NewOpsMetrics("builderd")
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	body := scrapeMetrics(t, ops)
+	for _, want := range []string{
+		`builderd_ops_total{code="ok",op="build"} 1`,
+		`builderd_build_duration_seconds_count{outcome="ok"} 1`,
+		`builderd_build_duration_seconds_count{outcome="cache_hit"} 0`,
+		`builderd_build_duration_seconds_count{outcome="failed"} 0`,
+		`builderd_build_queue_wait_seconds_count 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in metrics:\n%s", want, body)
+		}
+	}
+}
+
+func TestProcessOne_BuildMetricCodeByOutcome(t *testing.T) {
+	// The ops_total code label must match the terminal outcome so the §12
+	// build-success ratio (code!="user_error") is computed off real data,
+	// AND the duration histogram's outcome label must match the funnel
+	// (markSucceeded sets ok|cache_hit, markFailed sets failed). Coverage
+	// for all four terminal classes lives here so a refactor that drops
+	// either the code arg or the durationOutcome assignment is caught.
+	srcTar := func(t *testing.T) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "src.tar.gz")
+		makeTarballWithName(t, p, []string{"package.json"})
+		return p
+	}
+	outPath := func(t *testing.T) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "produced.ext4")
+		if err := os.WriteFile(p, []byte("produced"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	// detector that always errors — exercises the framework-detect → user_error path.
+	// We point the deployment at a missing path so Detector.Detect returns an error
+	// (FrameworkUnknown + "detect: open: …") and ProcessOne routes to
+	// markFailed(FailureUserError, "framework detect: …").
+	failingDetector := func() *Detector { return NewDetector() }
+
+	t.Run("ok", func(t *testing.T) {
+		store := state.NewMemStore()
+		fvm := &fakeVM{out: BuildOutcome{OCIImage: outPath(t), ExitCode: 0, LogTailBytes: 9}}
+		ops := wire.NewOpsMetrics("builderd")
+		b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
+		_, _ = b.ProcessOne(context.Background(), mustSeed(t, store, srcTar(t)))
+		assertCodes(t, ops, "ok", "ok")
+	})
+
+	t.Run("cache_hit", func(t *testing.T) {
+		// Prime the cache so the second ProcessOne short-circuits via markSucceeded("cache_hit").
+		store := state.NewMemStore()
+		fvm := &fakeVM{out: BuildOutcome{OCIImage: outPath(t), ExitCode: 0, LogTailBytes: 9}}
+		ops := wire.NewOpsMetrics("builderd")
+		b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
+		// mustSeed creates an account+app+deployment+build. MemStore's
+		// CreateAccount rejects duplicate emails, so vary the slug per
+		// call (and indirectly the account id via the slug→app→dep
+		// chain). The cache key is the SOURCE content hash — both
+		// builds point at the same `src` so the second hits.
+		src := srcTar(t)
+		primeID := seedBuildForCachePrime(t, store, src)
+		if _, err := b.ProcessOne(context.Background(), primeID); err != nil {
+			t.Fatalf("first ProcessOne (cache prime): %v", err)
+		}
+		hitID := seedBuildForCachePrime(t, store, src)
+		_, _ = b.ProcessOne(context.Background(), hitID)
+		assertCodes(t, ops, "cache_hit", "cache_hit")
+	})
+
+	t.Run("user_error", func(t *testing.T) {
+		// Failing detector → markFailed(FailureUserError, ...). §12 excludes this from success.
+		// Point the deployment at a missing tarball so Detector.Detect errors out
+		// ("detect: open: …") and ProcessOne routes to markFailed(FailureUserError).
+		store := state.NewMemStore()
+		fvm := &fakeVM{out: BuildOutcome{OCIImage: outPath(t), ExitCode: 0, LogTailBytes: 9}}
+		ops := wire.NewOpsMetrics("builderd")
+		b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), failingDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
+		_, _ = b.ProcessOne(context.Background(), mustSeed(t, store, filepath.Join(t.TempDir(), "does-not-exist.tar.gz")))
+		assertCodes(t, ops, "user_error", "failed")
+	})
+
+	t.Run("infra", func(t *testing.T) {
+		// nil vm driver → markFailed(FailureInfra, "vm driver not wired (metal only)").
+		store := state.NewMemStore()
+		ops := wire.NewOpsMetrics("builderd")
+		b := New(store, &fakeNotifier{}, nil, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
+		_, _ = b.ProcessOne(context.Background(), mustSeed(t, store, srcTar(t)))
+		assertCodes(t, ops, "infra", "failed")
+	})
+
+	t.Run("oom", func(t *testing.T) {
+		store := state.NewMemStore()
+		fvm := &fakeVM{out: BuildOutcome{OCIImage: "/dev/null", ExitCode: 137, FailureClass: "FailureOOM"}}
+		ops := wire.NewOpsMetrics("builderd")
+		b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
+		_, _ = b.ProcessOne(context.Background(), mustSeed(t, store, srcTar(t)))
+		assertCodes(t, ops, "oom", "failed")
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		store := state.NewMemStore()
+		fvm := &fakeVM{out: BuildOutcome{OCIImage: "/dev/null", ExitCode: 124, FailureClass: "FailureTimeout"}}
+		ops := wire.NewOpsMetrics("builderd")
+		b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
+		_, _ = b.ProcessOne(context.Background(), mustSeed(t, store, srcTar(t)))
+		assertCodes(t, ops, "timeout", "failed")
+	})
+}
+
+// mustSeed creates a fresh queued build row and returns its ID.
+func mustSeed(t *testing.T, store state.Store, src string) string {
+	t.Helper()
+	id, _, _ := seedDeployment(t, store, src)
+	return id
+}
+
+// seedBuildForCachePrime is a per-test-call helper for the cache_hit
+// subtest. mustSeed routes through seedDeployment which hardcodes the
+// email "u@example.com"; the MemStore rejects duplicate emails, so the
+// cache_hit subtest (which seeds twice) needs unique accounts per
+// call. Slug carries the test-scoped uniqueness; the rest of the chain
+// falls out automatically.
+func seedBuildForCachePrime(t *testing.T, store state.Store, src string) string {
+	t.Helper()
+	slug := fmt.Sprintf("prime-%d", time.Now().UnixNano())
+	id, _, _ := seedDeploymentWithSlug(t, store, src, slug)
+	return id
+}
+
+// assertCodes verifies the build counter's code label and the duration
+// histogram's outcome label both surface in the /metrics body for the
+// expected terminal class. ADR-030: counter is ops_total{op="build",code=…};
+// duration histogram is build_duration_seconds{outcome=…}.
+func assertCodes(t *testing.T, ops *wire.OpsMetrics, wantCode, wantOutcome string) {
+	t.Helper()
+	body := scrapeMetrics(t, ops)
+	wantCounter := `builderd_ops_total{code="` + wantCode + `",op="build"} 1`
+	if !strings.Contains(body, wantCounter) {
+		t.Errorf("missing counter %q in:\n%s", wantCounter, body)
+	}
+	wantDur := `builderd_build_duration_seconds_count{outcome="` + wantOutcome + `"} 1`
+	if !strings.Contains(body, wantDur) {
+		t.Errorf("missing duration outcome %q in:\n%s", wantDur, body)
+	}
 }

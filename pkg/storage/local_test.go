@@ -117,6 +117,39 @@ func TestLocalBackendNestedCreatesParentDirs(t *testing.T) {
 	mustReadAll(t, be, "snap/dep/mem")
 }
 
+// TestLocalBackendVmstateKeyRoundtrip pins the round-trip contract for
+// the issue #121 / ADR-025 axis 2 slice 4 vmstate blob: the canonical
+// StorageBackend key `snap/<dep>/vmstate` (sibling of the existing mem
+// key) MUST Put + Get bytes with no off-by-one slash, no uppercase
+// drift, no file lost on subsequent reads. Default-local wired with
+// mem+vmstate under the same backend shares the same nested-create
+// guarantee as the mem path.
+func TestLocalBackendVmstateKeyRoundtrip(t *testing.T) {
+	be := newTestBackend(t)
+	const (
+		key = "snap/dep-1/vmstate"
+		// Realistic vmstate bytes are a small JSON blob (~4 KiB
+		// per TestMetalParkWakeCycle telemetry); the test only
+		// needs non-empty to exercise the round-trip.
+		payload = `{"firecracker":"1.7.0","snapshot":"full","kernel":"vmlinux-6.1.128"}`
+	)
+	if err := be.Put(context.Background(), key, strings.NewReader(payload)); err != nil {
+		t.Fatalf("put vmstate key: %v", err)
+	}
+	rc, err := be.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("get vmstate key: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read vmstate body: %v", err)
+	}
+	if string(got) != payload {
+		t.Errorf("vmstate body mismatch: got %q, want %q", string(got), payload)
+	}
+}
+
 // TestLocalBackendInvalidKeysRejected is the parameterised invalid-
 // key suite. The table format lets us add new rules without adding a
 // new test function — every key rule documented on the package

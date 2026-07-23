@@ -1,0 +1,6 @@
+---
+# nftables role defaults — mirror pkg/netns constants so ansible tasks
+# can reference them by name. Keep these in lockstep with the Go source
+# of truth (pkg/netns/config.go: TenantBridge, HostBridgeCIDR).
+tenant_bridge: br-tenants
+bridge_cidr: 10.100.0.1/16

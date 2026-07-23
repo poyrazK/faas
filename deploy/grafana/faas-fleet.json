@@ -185,6 +185,100 @@
         }
       ],
       "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "type": "gauge",
+      "title": "Build success rate (non-user_error, 5m)",
+      "id": 8,
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(builderd_ops_total{op=\"build\",code!=\"user_error\"}[5m])) / sum(rate(builderd_ops_total{op=\"build\"}[5m])) * 100",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 95},
+              {"color": "green", "value": 99}
+            ]
+          }
+        }
+      },
+      "options": {"showThresholdLabels": false, "showThresholdMarkers": true}
+    },
+    {
+      "type": "timeseries",
+      "title": "Build queue wait p95",
+      "id": 9,
+      "gridPos": {"h": 8, "w": 16, "x": 8, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(builderd_build_queue_wait_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 60},
+              {"color": "red", "value": 300}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Build duration p95 (by outcome)",
+      "id": 10,
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Per-outcome p95 build wall-clock time. cache_hit should stay <5s; ok is the real-build latency up to the 600s BuildTimeoutSeconds cap; failed mixes vm-spawn-fail + spawn-ok-but-vm-failed.",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(builderd_build_duration_seconds_bucket{outcome=\"ok\"}[5m])) by (le))",
+          "legendFormat": "ok",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(builderd_build_duration_seconds_bucket{outcome=\"cache_hit\"}[5m])) by (le))",
+          "legendFormat": "cache_hit",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(builderd_build_duration_seconds_bucket{outcome=\"failed\"}[5m])) by (le))",
+          "legendFormat": "failed",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 60},
+              {"color": "red", "value": 300}
+            ]
+          }
+        }
+      }
     }
   ],
   "refresh": "30s",

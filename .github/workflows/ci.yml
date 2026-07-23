@@ -135,6 +135,24 @@ jobs:
       - name: proto-check
         run: make proto-check
 
+      # OpenAPI spec gate (PR #129). The spec is the source of truth for
+      # documentation; the code is the source of truth for behavior; this
+      # gate is the bridge. Same regenerate-and-diff pattern as proto-check /
+      # sqlc-check / egress-check: vacuum lint + AST parity + git clean.
+      # Fails the PR if a route / DTO / Code* constant drifts without a
+      # matching spec change.
+      #
+      # vacuum is installed in its own step (instead of via the
+      # Makefile's idempotent `make spec-install` guard) because CI runs
+      # bash with `set -e` and the make guard's first-time-install
+      # branch is a compound test under errexit, which trips on the
+      # `command -v` return-1 the first time. A bare `go install` step
+      # is unconditionally idempotent under -e.
+      - name: install vacuum
+        run: go install github.com/daveshanley/vacuum@v0.29.10
+      - name: spec-check
+        run: make spec-check
+
       # M5+: pgx-backed Store. Tests that need Postgres are skipped when
       # DATABASE_URL is unset, so the suite stays green on local dev too.
       - name: pg integration tests
@@ -289,3 +307,52 @@ jobs:
       # here because their package has no build tag.
       - name: migrations apply-and-walk
         run: go test -race -count=1 -v -run TestMigrationsApplyAndWalk ./migrations/...
+
+  e2e:
+    # cmd/e2e harness — boots real daemons (apid + schedd + meterd) as
+    # subprocesses and drives them through the production wire (HTTP/
+    # gRPC/pg_notify). PR #135 wired the `make e2e` target into the
+    # Makefile; this job runs it on PR + push-to-main. Decoupled from
+    # `test` because cmd/e2e takes ~5-10 min (cold boot subprocesses)
+    # and would lengthen the developer feedback loop. Metal subset
+    # stays on `make test-metal` + `make metal-lima` — see the `metal`
+    # job above. `pg_isready` is `psql` package-supplied; install it
+    # explicitly because the Makefile preflight `command -v psql`
+    # would otherwise fail.
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      # cmd/e2e respects these; absent env defaults are fine but
+      # setting them explicitly keeps the wiring self-documenting.
+      FAAS_SKIP_PG_TESTS: ""
+    name: e2e (cmd/e2e, no metal)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+      # `make e2e` requires `psql` on PATH (preflight guard). Ubuntu
+      # runners don't ship postgresql-client by default — install it.
+      # apt-get needs sudo on GitHub-hosted runners (unprivileged user
+      # by default; see https://docs.github.com/actions/hosting-your-runners).
+      - name: install postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: make e2e
+        run: make e2e
