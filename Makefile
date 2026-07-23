@@ -201,3 +201,44 @@ migrate-up: ## Apply all pending migrations against $DATABASE_URL (idempotent)
 	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH"; exit 1)
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set"; exit 1)
 	@go run ./cmd/migrate
+
+# OpenAPI spec gate. The spec is the source of truth for documentation;
+# the code is the source of truth for behavior. The gate is the bridge —
+# `make spec-check` fails the PR if anything drifts.
+#
+# Mirrors the `proto-check` / `sqlc-check` / `egress-check` pattern: a
+# checked-in artifact + a regenerate-and-diff verification. The vacuum
+# binary is pinned via `go install …@v0.29.10` (same pattern as
+# `protoc-gen-go@v1.36.11` and `sqlc@v1.27.0`).
+#
+# `pkg/apid/openapi.yaml` is a generated copy of `api/openapi.yaml` used
+# by `//go:embed` (go:embed only resolves inside the package directory).
+# The copy is checked in so the binary is self-contained at build time;
+# `make spec-check` regenerates it AND asserts the working tree is clean
+# so a missed copy fails CI rather than silently shipping stale bytes.
+VACUUM     := $(GOBIN)/vacuum
+VACUUM_VER := v0.29.10
+SPEC       := api/openapi.yaml
+SPEC_EMBED := pkg/apid/openapi.yaml
+VACUUM_RULES := api/vacuum.yaml
+
+.PHONY: spec-install
+spec-install: ## Install vacuum at the pinned version (idempotent)
+	@command -v $(VACUUM) >/dev/null 2>&1 && $(VACUUM) version 2>&1 | grep -q $(VACUUM_VER) && echo "vacuum $(VACUUM_VER) installed" && exit 0
+	GOFLAGS='' go install github.com/daveshanley/vacuum@$(VACUUM_VER)
+
+.PHONY: spec-sync
+spec-sync: ## Sync the //go:embed copy of the spec from api/openapi.yaml
+	@cmp -s $(SPEC) $(SPEC_EMBED) || cp $(SPEC) $(SPEC_EMBED)
+	@echo "spec-sync: $(SPEC_EMBED) matches $(SPEC)"
+
+.PHONY: spec-lint
+spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
+	@$(VACUUM) lint -r $(VACUUM_RULES) $(SPEC)
+
+.PHONY: spec-check
+spec-check: spec-install spec-lint spec-sync ## CI gate: vacuum lint + AST parity + git clean (runs in PR CI)
+	@$(GO) test -race -count=1 -run TestSpecCompliance ./cmd/apid/...
+	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) || \
+	  (echo "spec-check: spec drift — re-run 'make spec-check' or hand-fix to match"; exit 1)
+	@echo "spec-check: OK"

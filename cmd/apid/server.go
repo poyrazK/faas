@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -456,6 +457,13 @@ func (s *server) handler() http.Handler {
 	// asserting; richer readiness semantics (DB ping, etc.) belong
 	// in /readyz later. Mirrors pkg/gateway/control.go::ControlMux.
 	mux.HandleFunc("GET /healthz", s.healthz)
+
+	// Spec hosting (anonymous; see pkg/apid/openapi_handler.go).
+	// /v1/openapi.yaml and /v1/openapi.json let SDK codegen and
+	// `curl` reach the same spec the repo CI gate (make spec-check)
+	// keeps the code aligned to.
+	mux.HandleFunc("GET /v1/openapi.yaml", apid.ServeOpenAPISpec)
+	mux.HandleFunc("GET /v1/openapi.json", apid.ServeOpenAPISpecJSON)
 
 	return mux
 }
