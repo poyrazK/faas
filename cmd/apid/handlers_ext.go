@@ -752,6 +752,11 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		// Clear the dedupe stamp on every payment_succeeded, not just
+		// past_due → active flips: a fresh signup's first Stripe
+		// confirmation shouldn't wait until the next UTC midnight to
+		// hear about a quota they crossed during the trial, and the
+		// Cost of an extra pg_notify on a no-op event is nil.
 		_ = s.store.ClearQuotaWarning(r.Context(), acct.ID)
 	case "customer.subscription.updated":
 		if ev.Data.Object.Plan != "" {

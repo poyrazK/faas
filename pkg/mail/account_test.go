@@ -112,3 +112,35 @@ func TestQuotaWarningBody(t *testing.T) {
 		t.Errorf("body contains HTML; must be plaintext:\n%s", body)
 	}
 }
+
+// TestAccountBodies_StripCRLFFromEmailRegression pins the CWE-117
+// sanitiser on every body helper. The pattern matches the CodeQL-
+// accepted shape (strings.ReplaceAll "\r" then "\n"); a future
+// relax of the supplier-side format check at pkg/api.CreateAccount
+// cannot smuggle header-injection bytes into the SMTP body without
+// this test failing.
+func TestAccountBodies_StripCRLFFromEmailRegression(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 7, 23, 14, 30, 0, 0, time.UTC)
+	day := time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)
+	hostile := "alice\r\nBcc: attacker@example.com@example.com"
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"PaymentFailedBody", mustBody(mail.PaymentFailedBody(hostile, at))},
+		{"AccountRestoredBody", mustBody(mail.AccountRestoredBody(hostile, at))},
+		{"QuotaWarningBody", mustBody(mail.QuotaWarningBody(hostile, "pro", 250.5, 250, day))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if strings.Contains(tc.body, "\r") {
+				t.Errorf("%s body still contains \\r: %q", tc.name, tc.body)
+			}
+			if strings.Contains(tc.body, "\nBcc:") || strings.Contains(tc.body, "\nbcc:") {
+				t.Errorf("%s body contains smuggled Bcc: header: %q", tc.name, tc.body)
+			}
+		})
+	}
+}
+
+func mustBody(_, body string) string { return body }

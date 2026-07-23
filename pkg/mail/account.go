@@ -10,8 +10,29 @@ package mail
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
+
+// safeRecipient strips CR/LF from a customer-controlled email address
+// before it is interpolated into a mail body. CR/LF in an SMTP body
+// (or anywhere downstream of the producer's output) is the canonical
+// go/log-injection seam (CWE-117) — CodeQL flags
+// strings.ReplaceAll("\r","")+strings.ReplaceAll("\n","") as a
+// recognised sanitiser and we follow the same shape that PR #119 /
+// pkg/gateway/forwardproxy.go::safeLogField uses. Email addresses
+// that legitimately contain CR/LF don't exist on the public internet,
+// so strip-not-replace is correct here.
+//
+// This guards the outbound SMTP body. The slog transport has its own
+// sanitiser for the log line (pkg/logsanitize.Field on msg.To), so
+// the two surfaces stay defended independently — the same email
+// value can land safely in both.
+func safeRecipient(email string) string {
+	email = strings.ReplaceAll(email, "\r", "")
+	email = strings.ReplaceAll(email, "\n", "")
+	return email
+}
 
 // AccountDeletionPendingBody renders the "your account will be deleted
 // in 30 days" email. ScheduledAt is the moment the customer hit
@@ -108,6 +129,7 @@ If this charge is unexpected, contact support@DOMAIN.
 // The 7-day deadline is rendered as a UTC date so the customer doesn't
 // have to do timezone arithmetic against the timestamp we stamped.
 func PaymentFailedBody(email string, pastDueAt time.Time) (subject, body string) {
+	email = safeRecipient(email)
 	atStr := pastDueAt.UTC().Format("2006-01-02 15:04 UTC")
 	deadline := pastDueAt.UTC().Add(7 * 24 * time.Hour).Format("2006-01-02")
 	subject = "Your faas payment failed — action needed within 7 days"
@@ -145,6 +167,7 @@ If this charge is unexpected, contact support@DOMAIN.
 // from the suspended / deletion emails so the customer can tell what
 // happened at a glance.
 func AccountRestoredBody(email string, restoredAt time.Time) (subject, body string) {
+	email = safeRecipient(email)
 	atStr := restoredAt.UTC().Format("2006-01-02 15:04 UTC")
 	subject = "Your faas account is back in good standing"
 	body = fmt.Sprintf(`Hi,
@@ -180,6 +203,7 @@ sort it out.
 // pure int64). The email is the one place customers see the numbers,
 // and a one-decimal display is what customers expect.
 func QuotaWarningBody(email string, plan string, usedGB float64, quotaGB int, day time.Time) (subject, body string) {
+	email = safeRecipient(email)
 	dayStr := day.UTC().Format("2006-01-02")
 	subject = fmt.Sprintf("Your faas account is over its %s plan quota", plan)
 	body = fmt.Sprintf(`Hi,

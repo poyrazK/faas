@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1071,5 +1072,85 @@ func TestStripePaymentSucceeded_NoEmailOnAlreadyActive(t *testing.T) {
 	}
 	if n := len(mailer.snapshot()); n != 0 {
 		t.Errorf("already-active payment_succeeded sent %d emails, want 0", n)
+	}
+}
+
+// TestStripePaymentFailed_MailErrDoesNotUndoStatus pins the load-
+// bearing invariant the comments make: the mail is best-effort and
+// must NEVER undo the status flip Stripe told us about. A regression
+// that promoted Send's error to a 500 response (or rolled back the
+// CAS) would silently break the dunning state machine for any
+// customer whose SMTP relay is degraded.
+func TestStripePaymentFailed_MailErrDoesNotUndoStatus(t *testing.T) {
+	e, mailer := stripeWebhookHarness(t, api.PlanHobby)
+	mailer.sendErr = errors.New("smtp relay temporarily unavailable")
+
+	rec := postStripeEvent(t, e.h, "invoice.payment_failed", "cus_test_123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, want 200 even when mailer errors: %s", rec.Code, rec.Body)
+	}
+
+	// Status still flipped — the cas committed BEFORE the send.
+	got, err := e.store.AccountByID(context.Background(), e.acct.ID)
+	if err != nil {
+		t.Fatalf("AccountByID: %v", err)
+	}
+	if got.Status != state.AccountPastDue {
+		t.Fatalf("status = %s, want past_due (mail error must not roll back)", got.Status)
+	}
+	if n := len(mailer.snapshot()); n != 1 {
+		t.Errorf("mailer was called %d times, want exactly 1 (the failing attempt)", n)
+	}
+}
+
+// TestStripePaymentSucceeded_MailErrDoesNotUndoStatus mirrors the
+// payment_failed closure: a failed recovery mail must not roll the
+// account back to past_due.
+func TestStripePaymentSucceeded_MailErrDoesNotUndoStatus(t *testing.T) {
+	e, mailer := stripeWebhookHarness(t, api.PlanHobby)
+	if err := e.store.UpdateAccountStatus(context.Background(), e.acct.ID, state.AccountPastDue); err != nil {
+		t.Fatalf("seed past_due: %v", err)
+	}
+	mailer.sendErr = errors.New("smtp relay temporarily unavailable")
+
+	rec := postStripeEvent(t, e.h, "invoice.payment_succeeded", "cus_test_123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, want 200 even when mailer errors: %s", rec.Code, rec.Body)
+	}
+
+	got, _ := e.store.AccountByID(context.Background(), e.acct.ID)
+	if got.Status != state.AccountActive {
+		t.Fatalf("status = %s, want active (mail error must not roll back)", got.Status)
+	}
+	if n := len(mailer.snapshot()); n != 1 {
+		t.Errorf("mailer was called %d times, want exactly 1 (the failing attempt)", n)
+	}
+}
+
+// TestStripePaymentFailed_SuspendedIsNoOp pins the inverted guard:
+// MarkDunningStep rejects every status other than the expected
+// `from` with ErrNotFound, so a payment_failed event landing on an
+// already-suspended account is silently ignored. The meterd 7-day
+// timer is the source of truth for "apps already parked" — the
+// webhook seeing a failure for a suspended customer is a Stripe
+// stale-delivery or a duplicate subscription and should never
+// re-fire any mail.
+func TestStripePaymentFailed_SuspendedIsNoOp(t *testing.T) {
+	e, mailer := stripeWebhookHarness(t, api.PlanHobby)
+	if err := e.store.UpdateAccountStatus(context.Background(), e.acct.ID, state.AccountSuspended); err != nil {
+		t.Fatalf("seed suspended: %v", err)
+	}
+
+	rec := postStripeEvent(t, e.h, "invoice.payment_failed", "cus_test_123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, want 200 (silent no-op): %s", rec.Code, rec.Body)
+	}
+
+	got, _ := e.store.AccountByID(context.Background(), e.acct.ID)
+	if got.Status != state.AccountSuspended {
+		t.Fatalf("status = %s, want suspended (must not flip back to past_due)", got.Status)
+	}
+	if n := len(mailer.snapshot()); n != 0 {
+		t.Errorf("mailer.snapshot() = %d, want 0 (suspended accounts must not receive PaymentFailedBody)", n)
 	}
 }

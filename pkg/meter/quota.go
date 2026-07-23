@@ -60,10 +60,12 @@ type QuotaAction struct {
 // (apid handler), so meterd's job on Free is to keep RAM off the box until
 // the customer pays — i.e. suspend and stay suspended.
 //
-// TODO(M7-followup): refactor EnforceQuota to take a QuotaParams struct
-// once a third collaborator is needed. The 7-positional-arg signature is
-// at the edge of comfortable today and will get worse with each new
-// dependency — DunningParams / RunParams are the precedent.
+// TODO(M7-followup): collapse this 9-positional signature into a
+// QuotaParams struct when adding the next collaborator. The first
+// follow-up to land already pushed past 7 args; the next one shouldn't
+// have to thread a 10th positional through six call sites in
+// pkg/meter/meter_test.go + pkg/meter/loop.go. DunningParams / RunParams
+// are the precedent.
 func EnforceQuota(
 	ctx context.Context,
 	store state.Store,
