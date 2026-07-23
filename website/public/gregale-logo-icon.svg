@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 140" width="100%" height="100%">
+  <defs>
+    <linearGradient id="gregale-icon-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#107C41" />
+      <stop offset="100%" stop-color="#0E6B37" />
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Circle Ring -->
+  <circle cx="70" cy="70" r="62" fill="none" stroke="#107C41" stroke-width="6" stroke-linecap="round"/>
+  
+  <!-- Main Crest Wave -->
+  <path d="M 18,74 C 38,72 50,56 68,48 C 82,42 98,46 112,58 C 122,66 128,74 130,76 C 118,84 104,82 92,72 C 80,62 68,64 54,74 C 42,82 28,86 18,74 Z" fill="#107C41"/>
+  
+  <!-- Secondary Lower Wave 1 -->
+  <path d="M 14,88 C 32,84 46,92 62,94 C 80,96 98,86 114,84 C 122,83 126,86 126,86 C 116,98 96,106 74,104 C 52,102 34,94 14,88 Z" fill="#107C41" opacity="0.85"/>
+  
+  <!-- Secondary Lower Wave 2 -->
+  <path d="M 22,106 C 38,102 52,108 68,110 C 84,112 98,106 110,104 C 104,114 88,122 68,120 C 48,118 32,112 22,106 Z" fill="#107C41" opacity="0.7"/>
+  
+  <!-- Water Grass / Detail strokes at base -->
+  <path d="M 52,126 L 54,120 M 60,127 L 62,118 M 68,127 L 70,121 M 76,126 L 77,120" stroke="#107C41" stroke-width="3" stroke-linecap="round"/>
+</svg>
