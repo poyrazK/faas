@@ -15,7 +15,7 @@
     password: "{{ lookup('ansible.builtin.file', gv_admin_password_file) }}"
     force_basic_auth: true
     status_code: 200
-    validate_certs: false   # plaintext bridge bind; no TLS
+    validate_certs: false   # noqa: insecure — plaintext bridge bind; no TLS (admin-only)
   failed_when: false        # dev_mode + missing password file => 401; carry on
   listen: reload grafana provisioning
 

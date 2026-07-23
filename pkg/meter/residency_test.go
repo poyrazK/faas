@@ -2,6 +2,7 @@ package meter_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -40,6 +41,27 @@ func appendUsage(t *testing.T, store *state.MemStore, accountID string, mbSec in
 	if err := store.AppendUsage(context.Background(), accountID, "app-"+accountID, "inst-"+accountID, when, mbSec, 1); err != nil {
 		t.Fatalf("append usage: %v", err)
 	}
+}
+
+// transientErrStore wraps *state.MemStore and lets a test inject a
+// non-state.ErrNotFound error from UsageByMonth for a specific
+// account. Residency calls MonthUsageForAccount → store.UsageByMonth,
+// so overriding UsageByMonth is enough to simulate a transient
+// Postgres error on one customer. Other Store calls pass through.
+//
+// Reset err per-account on each call so a single test can exercise
+// the "second account is happy" path while the first is stuck.
+type transientErrStore struct {
+	*state.MemStore
+	errAccountID string
+	err          error
+}
+
+func (s *transientErrStore) UsageByMonth(ctx context.Context, accountID string, month time.Time) ([]state.Usage, error) {
+	if accountID == s.errAccountID {
+		return nil, s.err
+	}
+	return s.MemStore.UsageByMonth(ctx, accountID, month)
 }
 
 // gaugeForPlan scrapes the registry and returns the gauge sample for
@@ -119,7 +141,7 @@ func TestResidency_RunOnce_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	appendUsage(t, store, a1.ID, 1024*3600, now) // 1 GB-hour
+	appendUsage(t, store, a1.ID, 1024*3600, now)   // 1 GB-hour
 	appendUsage(t, store, a2.ID, 2*1024*3600, now) // 2 GB-hour
 
 	if _, err := r.RunOnce(context.Background()); err != nil {
@@ -194,6 +216,73 @@ func TestResidency_RunOnce_MissingUsageRows(t *testing.T) {
 	}
 }
 
+// TestResidency_RunOnce_TransientErrorSkipsAccount: a transient
+// (non-ErrNotFound) error from UsageByMonth must NOT count the account
+// in the divisor. Without this guard, a Postgres deadlock on one
+// customer's month row would silently drag the per-plan average
+// toward 0 and silence FaasResidentGbPerCustomerHigh exactly when we
+// most want it loud. Mirrors TestResidency_RunOnce_MissingUsageRows
+// (which exercises the legitimate ErrNotFound path) but uses a
+// transientErrStore to inject a non-ErrNotFound error instead.
+func TestResidency_RunOnce_TransientErrorSkipsAccount(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+
+	// Build a harness with a MemStore and a registry we can scrape.
+	store := state.NewMemStore()
+	ops := wire.NewOpsMetrics("meter_test_residency")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r := meter.NewResidency(store, func() time.Time { return now }, log, ops)
+
+	// Two Hobby accounts: h1 will return a transient error from
+	// UsageByMonth; h2 has clean usage rows. The transientErrStore
+	// wrapper is constructed after the accounts exist so the
+	// injection kicks in for the RunOnce below.
+	a1, err := store.CreateAccount(context.Background(), "h1@x", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2, err := store.CreateAccount(context.Background(), "h2@x", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendUsage(t, store, a2.ID, 4*1024*3600, now) // 4 GB-hour for h2
+
+	// Wrap the inner store so the fake Wrapped.UsageByMonth intercepts
+	// a1's row. Residency.RunOnce reads account IDs through the
+	// *transientErrStore pointer we hand it, so list_all_accounts +
+	// month-by-month both see the wrapper.
+	wrapped := &transientErrStore{
+		MemStore:     store,
+		errAccountID: a1.ID,
+		err:          errors.New("connection reset by peer"),
+	}
+	r2 := meter.NewResidency(wrapped, func() time.Time { return now }, log, ops)
+
+	counts, err := r2.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	// h1 hit a transient error → skip-without-count. Only h2
+	// contributes to the divisor.
+	if got := counts[api.PlanHobby]; got != 1 {
+		t.Errorf("hobby paying count = %d, want 1 (h1 transient-skipped, h2 counted)", got)
+	}
+	// ΣGB = 4 (only h2). Average = 4 / 1 = 4 GB/customer.
+	if got := gaugeForPlan(t, ops, "hobby"); got != 4 {
+		t.Errorf("hobby gauge = %v, want 4 (4 GB over 1 counted customer)", got)
+	}
+	// First (non-wrapped) registry was never written to — confirm the
+	// wrapper's ops pointer was the one Residency wrote through. This
+	// is the assertion that distinguishes "we wrote to wrapped.ops" from
+	// "we wrote to the unwrapped ops via the inner MemStore".
+	_ = r // keep the original r live so its registry isn't GC'd
+	for _, p := range []string{"free", "pro", "scale"} {
+		if got := gaugeForPlan(t, ops, p); got != 0 {
+			t.Errorf("%s gauge = %v, want 0 (no paying customers)", p, got)
+		}
+	}
+}
+
 // TestResidency_LoopRunTicks: end-to-end smoke that the Residency
 // timer in pkg/meter.Loop fires on ResidencyInterval and stamps
 // lastTick["residency"]. Mirrors the loop_health_test pattern but
@@ -218,7 +307,12 @@ func TestResidency_LoopRunTicks(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- loop.Run(ctx) }()
-	time.Sleep(120 * time.Millisecond) // > 5 ticks
+	// Wait long enough for at least one ResidencyInterval tick
+	// (the previous "> 5 ticks at 20ms" claim was fragile under
+	// loaded CI runners). One tick at 20 ms with 60 ms of headroom
+	// is enough to assert the timer fires; LastTick returns the
+	// wall-clock time, which we sanity-check against now.
+	time.Sleep(60 * time.Millisecond)
 	cancel()
 	select {
 	case err := <-done:

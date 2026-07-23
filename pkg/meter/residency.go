@@ -34,6 +34,14 @@ import (
 // GB-RAM-hours they consume are real platform cost we want the metric
 // to reflect.
 //
+// Per-plan emission contract: a plan with N=0 paying customers emits
+// 0 (not raw ΣGB), so the metric name "resident GB per paying customer"
+// is honoured even at zero customers. Otherwise a churned customer's
+// stale usage rows could keep the gauge non-zero after they've left,
+// and FaasResidentGbPerCustomerHigh would false-positive on the
+// historical ΣGB. The dashboard and alert rule both treat 0 as
+// "no signal" — see the per-plan loop in RunOnce.
+//
 // Cadence: cfg.ResidencyInterval (default 60 s). Per the §12 alert
 // rule's `for: 1h`, the gauge can be wrong for 1 hour before the
 // page fires; 60 s is enough resolution without wasted DB scans.
@@ -77,11 +85,24 @@ func Paying(a state.Account) bool {
 // "active + past_due counted, suspended counted, deleted_pending
 // excluded" without re-querying the Store.
 //
-// On a Store error the function logs and returns the partial map —
-// the gauge series stay at their last value (Prometheus semantics),
-// which is the right behaviour during a transient Postgres hiccup:
-// stale numbers beat missing numbers on the §12 dashboard. A follow-up
-// daemon-restart is the recovery path for a fully-stuck Store.
+// Error handling has two distinct branches inside the per-account
+// loop:
+//   - state.ErrNotFound from MonthUsageForAccount (no usage row for
+//     the current month): the account is billable but has no recorded
+//     consumption yet (just signed up, never woken an instance). Count
+//     it in the divisor and contribute 0 GB to the numerator — the
+//     average stays meaningful and NaN-free.
+//   - any OTHER error (Postgres deadlock, connection reset mid-query):
+//     a transient backend hiccup. Skip-without-count: do NOT increment
+//     the divisor. Counting the account on a partial-failure would
+//     drag the per-plan average toward 0 and silence
+//     FaasResidentGbPerCustomerHigh exactly when we want it loud. The
+//     gauge series stays at its last value (Prometheus semantics) and
+//     the next tick re-tries.
+//
+// On a Store.ListAllAccounts error the function returns (nil, err) so
+// the loop can stop and inspect — recovery is a daemon restart for a
+// fully-stuck Store, which is heavy enough to warrant the call.
 func (r *Residency) RunOnce(ctx context.Context) (map[api.Plan]int, error) {
 	accounts, err := r.store.ListAllAccounts(ctx)
 	if err != nil {
@@ -97,13 +118,17 @@ func (r *Residency) RunOnce(ctx context.Context) (map[api.Plan]int, error) {
 		}
 		usages, err := MonthUsageForAccount(ctx, r.store, acct.ID, now)
 		if err != nil {
-			// Tolerate transient missing-month rows. A no-usage account
-			// (just signed up, never woken an instance) is the common
-			// case; the quota loop has the same skip-log pattern.
 			if errors.Is(err, state.ErrNotFound) {
+				// No usage rows for the current month — billable
+				// customer with zero consumption. Count in the divisor,
+				// contribute 0 GB. NaN-free.
 				count[acct.Plan]++
 				continue
 			}
+			// Transient Store error. Skip-without-count: do NOT
+			// increment count[acct.Plan]. Otherwise the per-plan average
+			// drops on partial failures and FaasResidentGbPerCustomerHigh
+			// false-negatives.
 			r.log.Warn("meter: residency usage_by_month", "account", acct.ID, "err", err)
 			continue
 		}
@@ -111,18 +136,15 @@ func (r *Residency) RunOnce(ctx context.Context) (map[api.Plan]int, error) {
 		count[acct.Plan]++
 	}
 
-	// Emit one gauge sample per plan, including the zero-customer case
-	// so the dashboard renders a stable row instead of dropping the
-	// series. Plan with N=0 paying customers gets the raw ΣGB (no
-	// divide-by-zero NaN) — interpretable as "fleet has no paying
-	// customers in this plan, but historical monthly GB is X".
+	// Emit one gauge sample per plan, including zero-customer plans.
+	// N=0 paying customers emits 0 (NOT raw ΣGB) so the metric name
+	// "resident GB per paying customer" is honoured when the plan
+	// segment is empty. The dashboard and alert rule both treat 0 as
+	// "no signal" — see the type doc comment above.
 	for _, plan := range api.Plans {
-		n := count[plan]
 		var avg float64
-		if n > 0 {
+		if n := count[plan]; n > 0 {
 			avg = totalGB[plan] / float64(n)
-		} else {
-			avg = totalGB[plan]
 		}
 		r.ops.SetResidentGBPerCustomer(string(plan), avg)
 	}
