@@ -393,9 +393,15 @@ func (p Plan) IsPaid() bool {
 // stamps StripeSubscriptionItem on the account record before the plan
 // change, so the same handler that rejects free → pro for an
 // API-key-only call accepts free → pro when the Stripe item is set.
+//
+// Fail-closed on unknown plans: an unknown `from` (e.g. a future
+// enterprise tier added without updating this switch) returns true so
+// the 402 gate fires — a missing case must never silently let a
+// customer upgrade without billing. Reviewers: keep this default in
+// place if you extend the switch above.
 func (p Plan) RequiresStripeUpgradeTo(next Plan) bool {
 	if !next.Valid() {
-		return false
+		return false // caller's plan.Valid() check already covers this
 	}
 	switch p {
 	case PlanFree:
@@ -406,8 +412,9 @@ func (p Plan) RequiresStripeUpgradeTo(next Plan) bool {
 		return next == PlanScale
 	case PlanScale:
 		return false
+	default:
+		return true // unknown source plan: require Stripe, do not silently allow
 	}
-	return false
 }
 
 // MinInstancesAllowed reports whether the plan may set the per-app

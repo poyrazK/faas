@@ -277,6 +277,10 @@ func TestPlanIsPaidAndRequiresStripeUpgradeTo(t *testing.T) {
 		{api.PlanScale, api.PlanScale, false},
 		// Unknown target is always false (defense).
 		{api.PlanFree, api.Plan("platinum"), false},
+		// Unknown source plan: fail-closed — require Stripe so a future
+		// tier added without updating the switch cannot silently let
+		// the customer upgrade without billing (issue #142 review).
+		{api.Plan("enterprise"), api.PlanPro, true},
 	} {
 		t.Run(fmt.Sprintf("%s→%s", r.from, r.to), func(t *testing.T) {
 			if got := r.from.RequiresStripeUpgradeTo(r.to); got != r.want {

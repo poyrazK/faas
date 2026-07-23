@@ -620,6 +620,16 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	// same-tier moves always pass; the free → hobby M5 path is the
 	// only free → paid direct upgrade.
 	if acct.Plan.RequiresStripeUpgradeTo(plan) && acct.StripeSubscriptionItem == "" {
+		// CodeQL go/log-injection (CWE-117): plan was enum-validated
+		// against the 4 Plan constants (free|hobby|pro|scale) by
+		// plan.Valid() in this handler, but CodeQL's taint engine
+		// doesn't model that branch. Wrap so a future relax of
+		// plan.Valid() cannot smuggle CR/LF into the audit line.
+		s.log.Info("plan change blocked",
+			"account", acct.ID,
+			"from", logsanitize.Field(string(acct.Plan)),
+			"to", logsanitize.Field(string(plan)),
+		)
 		api.WriteProblem(w, &api.Problem{
 			Status:           http.StatusPaymentRequired,
 			Code:             api.CodePayment,
