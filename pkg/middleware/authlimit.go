@@ -297,7 +297,7 @@ func defaultClientIP(r *http.Request) string {
 		// exactly one value (see function comment).
 		if v := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); v != "" &&
 			!strings.Contains(v, ",") {
-			if ip := strings.TrimSpace(v); ip != "" && isLoopbackHost(ip) == false &&
+			if ip := strings.TrimSpace(v); ip != "" && !isLoopbackHost(ip) &&
 				net.ParseIP(ip) != nil {
 				return ip
 			}
