@@ -12,21 +12,45 @@
 # would call. A future PR can move notification to Grafana-managed
 # once provisioning lands.
 #
-# Receiver secrets (SMTP password, Pushover token) are loaded via
-# `_FILE` indirection from disk paths, not env vars. Same precedent
-# as FAAS_HOST_AGE_RECIPIENT_PATH (gap G2 lean §17 — sealed at rest).
-# Operator provisions these files; the role logs a clear error and
-# `failed_when: false` on the service start so dev/CI hosts that
-# don't page still complete bootstrap.
+# Receiver secrets are loaded via Alertmanager's native `*_file`
+# indirection (not env vars, not template substitution). Same
+# precedent as FAAS_HOST_AGE_RECIPIENT_PATH (gap G2 lean §17 — sealed
+# at rest). The rendered alertmanager.yml contains file PATHS only;
+# the secret bytes never enter Ansible vars or the rendered file.
+# tasks/main.yml asserts the file perms (0400, alertmanager:alertmanager)
+# before systemd unit enable.
 
 am_version: "0.27.0"
 am_listen_addr: "127.0.0.1:9093"
 am_data_dir: /var/lib/alertmanager
 am_config_path: /etc/alertmanager/alertmanager.yml
 am_rules_dir: /etc/prometheus
-am_smtp_password_file: ""   # operator must set; reads am_smtp_password_file content into smtp_password
-am_pushover_token_file: ""  # operator must set; reads am_pushover_token_file content into pushover_token
+
+# Receiver secrets. The role asserts these files exist with mode 0400
+# owned by alertmanager:alertmanager before systemd unit enable.
+# On dev/CI hosts that don't page, leave these empty AND set
+# am_dev_mode: true — the role skips the receiver-enable tasks but
+# still renders a syntactically valid alertmanager.yml that points at
+# (non-existent) files, so the prod path is never silently different
+# from dev.
+am_smtp_password_file: ""
+am_smtp_auth_username: "alertmanager"          # SMTP AUTH identity, not a secret
+am_smtp_require_tls: false                     # operator sets true when relay advertises STARTTLS
+am_smtp_smarthost: ""                          # e.g. "smtp.sendgrid.net:587"; empty → use local 127.0.0.1:25
+am_pushover_token_file: ""
+am_pushover_user_key_file: ""
+
 am_email_from: "alertmanager@{{ ansible_domain | default('onebox.local') }}"
 am_email_to_warn: "ops-tickets@{{ ansible_domain | default('onebox.local') }}"
 am_email_to_page: "ops-pager@{{ ansible_domain | default('onebox.local') }}"
-am_pushover_user: ""        # operator must set
+
+# URL embedded in Pushover notifications. Default points at the local
+# Prometheus alerts UI on the management bridge (10.0.0.1) or loopback;
+# operator overrides via -e am_alerts_url=... for a public dashboard.
+am_alerts_url: "http://127.0.0.1:9090/alerts"
+
+# When true, the role skips the receiver-secret permission asserts and
+# the systemd service start (the alertmanager unit is NOT enabled).
+# Production hosts MUST leave this unset / false. Dev/CI boxes that
+# don't page set it to true so make bootstrap completes.
+am_dev_mode: false

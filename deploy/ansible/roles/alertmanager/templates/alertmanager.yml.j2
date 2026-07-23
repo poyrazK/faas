@@ -2,15 +2,34 @@
 #
 # Severity → notification mapping (locked to deploy/ansible/roles/prometheus/files/faas.rules.yml):
 #   info  → suppressed (no receiver; surfaces in Prometheus / Grafana only).
-#   warn  → email ticket-only via faas-warn receiver.
+#   warn  → ticket-only email via faas-warn receiver.
 #   page  → operator email + Pushover via faas-page receiver.
 #
 # Grouping: by alertname + component so a single fault (e.g. apid down)
 # doesn't fan out into per-route email storms; group_wait 30s gives the
 # first wave of firing alerts time to coalesce.
+#
+# Secret handling: secrets are read from operator-provisioned files via
+# Alertmanager's native `*_file` support (`auth_password_file`, `token_file`,
+# `user_key_file`). They NEVER appear in this rendered file — gap G2 lean §17
+# (sealed at rest), and the rendered file can safely be logged at debug verbosity
+# without leaking credentials. Operator provisions:
+#   /etc/alertmanager/secrets/smtp-password      (mode 0400, alertmanager:alertmanager)
+#   /etc/alertmanager/secrets/pushover-token    (mode 0400, alertmanager:alertmanager)
+#   /etc/alertmanager/secrets/pushover-user-key (mode 0400, alertmanager:alertmanager)
+# The tasks/main.yml loader asserts the file permissions before systemd unit
+# enable. Empty paths (dev/CI hosts) are tolerated by the role but yield a
+# config Alertmanager refuses to start — see am_dev_mode below.
 
+{% if am_smtp_smarthost is defined %}
 global:
   resolve_timeout: 5m
+  smtp_smarthost: "{{ am_smtp_smarthost }}"
+  smtp_from: "{{ am_email_from }}"
+{% else %}
+global:
+  resolve_timeout: 5m
+{% endif %}
 
 route:
   receiver: faas-page
@@ -40,33 +59,33 @@ receivers:
   - name: faas-page
     email_configs:
       - to: "{{ am_email_to_page }}"
-        from: "{{ am_email_from }}"
-        smarthost: "127.0.0.1:25"
-        # smtp_password loaded from am_smtp_password_file by the
-        # tasks/main.yml loader. Secret material is never templated
-        # into this file directly (gap G2 lean §17 — sealed at rest).
-        smtp_auth_username: "{{ am_email_from }}"
-        smtp_require_tls: false
+        # smtp_smarthost / smtp_from default to global.* — operator may override
+        # am_smtp_smarthost via -e to point at an external relay. Per-receiver
+        # auth_username is the alertmanager-side identity, not a secret.
+        auth_username: "{{ am_smtp_auth_username }}"
+        auth_password_file: "{{ am_smtp_password_file }}"
+        require_tls: {{ am_smtp_require_tls | default(false) | string | lower }}
         send_resolved: true
         headers:
           X-Faas-Alert: "page"
     pushover_configs:
-      # token loaded from am_pushover_token_file by tasks/main.yml loader.
-      - user_key: "{{ am_pushover_user }}"
+      # token + user_key both via _file indirection. Alertmanager reads the
+      # file at send time, so the secrets are never in this rendered YAML.
+      - token_file: "{{ am_pushover_token_file }}"
+        user_key_file: "{{ am_pushover_user_key_file }}"
         send_resolved: true
-        priority: 2   # emergency: bypass quiet hours on the device
-        retry: 60
-        expire: 3600
+        priority: 2          # emergency: bypass quiet hours on the device
+        retry: 1m            # Alertmanager <duration> field — unit required
+        expire: 1h           # ditto; integer would fail amtool check-config
         title: "faas page"
-        url: "{{ ansible_default_ipv4.address | default('onebox') }}:9090/alerts"
+        url: "{{ am_alerts_url | default('http://127.0.0.1:9090/alerts') }}"
 
   - name: faas-warn
     email_configs:
       - to: "{{ am_email_to_warn }}"
-        from: "{{ am_email_from }}"
-        smarthost: "127.0.0.1:25"
-        smtp_auth_username: "{{ am_email_from }}"
-        smtp_require_tls: false
+        auth_username: "{{ am_smtp_auth_username }}"
+        auth_password_file: "{{ am_smtp_password_file }}"
+        require_tls: {{ am_smtp_require_tls | default(false) | string | lower }}
         send_resolved: true
         headers:
           X-Faas-Alert: "warn"
@@ -77,11 +96,15 @@ receivers:
     # Prometheus / Grafana but never page anyone.
 
 inhibit_rules:
-  # A page supersedes a warn on the same alertname+component. Keeps
-  # the inbox from getting two emails (one ticket, one page) for the
-  # same fault when the warn-tier crosses the page-tier threshold.
+  # A page supersedes a warn on the same (alertname, component, family).
+  # The `family` label is the load-bearing change vs. the naïve
+  # alertname-only design: each threshold has page + warn siblings with
+  # different alertnames (FaasHighResidentRamPct vs ...Warn), so
+  # grouping on alertname alone would never suppress the warn when the
+  # page fires. Each rule in faas.rules.yml sets `family: <threshold>`
+  # alongside `severity:`, and we inhibit on it.
   - source_matchers:
       - severity = "page"
     target_matchers:
       - severity = "warn"
-    equal: [alertname, component]
+    equal: [family, component]

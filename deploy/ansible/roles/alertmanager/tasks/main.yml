@@ -5,15 +5,34 @@
 # shape stays uniform. Three differences worth surfacing:
 #   1. SHA-256 pin is required at the call site (am_release_sha256);
 #      the prometheus role has the same pattern (prom_release_sha256).
-#   2. Secret material (SMTP password, Pushover token) is loaded from
-#      operator-provisioned files via _FILE indirection — never templated
-#      into the rendered alertmanager.yml. Same precedent as
-#      FAAS_HOST_AGE_RECIPIENT_PATH (gap G2 lean §17, sealed at rest).
-#      On hosts without secrets provisioned the role still runs through
-#      (failed_when: false on the service-start step) so dev / CI boxes
-#      that don't page still complete bootstrap.
-#   3. Alertmanager runs on loopback only; the only caller is Prometheus
-#      on the same host. Bind addr defaults to 127.0.0.1:9093.
+#      The role fails loud if the operator did not pass
+#      `-e am_release_sha256=<hex>` at the call site, with a clear
+#      message that points at the readme + Prometheus release page.
+#      Production hosts MUST set this; the `am_release_sha256 is not
+#      defined` early-exit is the safety belt.
+#   2. Secret material (SMTP password, Pushover token, Pushover user
+#      key) is read at notification time by Alertmanager via its
+#      native `*_file` indirection. The role only asserts the files
+#      exist with mode 0400 owned by alertmanager:alertmanager —
+#      nothing is slurped, b64decoded, or templated. Same precedent
+#      as FAAS_HOST_AGE_RECIPIENT_PATH (gap G2 lean §17, sealed at
+#      rest). On hosts without secrets provisioned, set am_dev_mode:
+#      true to skip the secret-file existence asserts and the
+#      systemd enable; otherwise the role fails loud.
+#   3. Alertmanager runs on loopback only; the only caller is
+#      Prometheus on the same host. Bind addr defaults to
+#      127.0.0.1:9093.
+
+- name: alertmanager — assert SHA-256 pin was supplied
+  ansible.builtin.assert:
+    that:
+      - am_release_sha256 is defined
+      - am_release_sha256 | length == 64
+    fail_msg: >-
+      am_release_sha256 is not set. Pass `-e am_release_sha256=<sha256>`
+      from the Alertmanager release page
+      (https://github.com/prometheus/alertmanager/releases/tag/v{{ am_version }}).
+      The role fails-closed rather than installing an unverified binary.
 
 - name: alertmanager — create system user
   ansible.builtin.user:
@@ -33,6 +52,7 @@
   loop:
     - "{{ am_data_dir }}"
     - /etc/alertmanager
+    - /etc/alertmanager/secrets
 
 - name: alertmanager — download release tarball
   ansible.builtin.get_url:
@@ -42,13 +62,13 @@
     mode: "0644"
   register: am_tarball
 
-- name: alertmanager — assert tarball checksum
+- name: alertmanager — verify pin matches downloaded (defence-in-depth)
   ansible.builtin.command: sha256sum /tmp/alertmanager-{{ am_version }}.tar.gz
   register: am_sum
   changed_when: false
   check_mode: false
 
-- name: alertmanager — verify pin matches downloaded
+- name: alertmanager — assert pin matches downloaded
   ansible.builtin.assert:
     that:
       - "am_release_sha256 in am_sum.stdout"
@@ -79,17 +99,29 @@
     mode: "0755"
     remote_src: true
 
-- name: alertmanager — read SMTP password from file (sealed at rest)
-  ansible.builtin.slurp:
-    src: "{{ am_smtp_password_file }}"
-  register: am_smtp_password_b64
-  when: am_smtp_password_file | length > 0
-
-- name: alertmanager — read Pushover token from file (sealed at rest)
-  ansible.builtin.slurp:
-    src: "{{ am_pushover_token_file }}"
-  register: am_pushover_token_b64
-  when: am_pushover_token_file | length > 0
+# Secret files: assert existence + perms before systemd enable. We do NOT
+# slurp or template the secret bytes — Alertmanager reads them at send
+# time. The path strings alone flow into the rendered alertmanager.yml.
+# dev_mode: skip the asserts so dev / CI hosts without secrets still
+# bootstrap (and Alertmanager isn't enabled in that case — see below).
+- name: alertmanager — assert secret file perms (production)
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: am_secret_stat
+  loop:
+    - "{{ am_smtp_password_file }}"
+    - "{{ am_pushover_token_file }}"
+    - "{{ am_pushover_user_key_file }}"
+  failed_when:
+    - not am_dev_mode | bool
+    - item | length > 0
+    - not am_secret_stat.stat.exists
+  loop_control:
+    label: "{{ item | basename | default('(unset)') }}"
+  when:
+    - not am_dev_mode | bool
+    - item | length > 0
+  no_log: true   # paths flow through ansible.builtin.stat, defensive even though they're not the secret bytes
 
 - name: alertmanager — render config
   ansible.builtin.template:
@@ -98,10 +130,15 @@
     owner: alertmanager
     group: alertmanager
     mode: "0640"
-  vars:
-    am_smtp_password: "{{ am_smtp_password_b64.content | b64decode | trim if am_smtp_password_file | length > 0 else '' }}"
-    am_pushover_token: "{{ am_pushover_token_b64.content | b64decode | trim if am_pushover_token_file | length > 0 else '' }}"
   notify: reload alertmanager
+  no_log: true   # amtool --diff output otherwise reveals rendered paths; paths are not secret but defence-in-depth
+
+- name: alertmanager — verify rendered config parses
+  ansible.builtin.command: /usr/local/bin/amtool check-config {{ am_config_path }}
+  register: am_config_check
+  changed_when: false
+  failed_when: am_config_check.rc != 0
+  when: not am_dev_mode | bool
 
 - name: alertmanager — install systemd unit
   ansible.builtin.copy:
@@ -114,22 +151,24 @@
     - daemon-reload
     - restart alertmanager
 
-- name: alertmanager — enable + start service
+# dev_mode: drop the unit but do not enable — production hosts that
+# forget to set the secrets won't accidentally start a broken Alertmanager.
+- name: alertmanager — enable + start service (production only)
   ansible.builtin.service:
     name: alertmanager
     enabled: true
     state: started
   register: am_svc
-  failed_when: false  # dev/CI hosts without SMTP / Pushover can still bootstrap.
+  when: not am_dev_mode | bool
 
-- name: alertmanager — report service status
+- name: alertmanager — dev mode: skip service start
   ansible.builtin.debug:
     msg: >-
-      alertmanager.service state={{ am_svc.state | default('unknown') }}.
-      If state is not 'started', check that am_smtp_password_file and
-      am_pushover_token_file point at operator-provisioned secret files
-      and that 127.0.0.1:9093 is not bound by another process.
-  when: am_svc is defined
+      am_dev_mode=true; alertmanager.service NOT enabled. Run with
+      -e am_dev_mode=false and operator-provisioned secret files
+      (am_smtp_password_file, am_pushover_token_file,
+      am_pushover_user_key_file) to enable production notifications.
+  when: am_dev_mode | bool
 
 - name: alertmanager — remove downloaded tarball
   ansible.builtin.file:
