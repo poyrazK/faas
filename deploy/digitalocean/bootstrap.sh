@@ -33,6 +33,7 @@ SERVICE_USERS=(faas-apid faas-schedd faas-imaged faas-meterd)
 step() { echo -e "\n\033[1;36m▸ $1\033[0m"; }
 ok()   { echo -e "  \033[1;32m✓ $1\033[0m"; }
 warn() { echo -e "  \033[1;33m⚠ $1\033[0m"; }
+die()  { echo -e "  \033[1;31m✗ $1\033[0m" >&2; exit 1; }
 
 # ─── Detect IP ────────────────────────────────────────────────────────────────
 if [[ -z "${DROPLET_IP:-}" ]]; then
@@ -202,19 +203,36 @@ for f in "${DO_CONFIG_SRC}/config/"*.toml; do
 done
 
 # sealed.env
-SESSION_KEY=$(openssl rand -hex 32)
 # Dev API token — 24 random bytes → 48 hex chars, prefixed with `fp_live_` to
 # match the fp_live_<48-hex> format enforced by api.ValidAPIKeyFormat
 # (pkg/api/apikey.go:17-19, apiKeyRandomBytes=24). Generated per-bootstrap so
 # no committed secret ever leaves the repo (issue #85, PR 2).
 DEV_TOKEN="fp_live_$(openssl rand -hex 24)"
+# Security review A4: FAAS_SESSION_KEY is no longer written to
+# sealed.env. The 32-byte hex key is written to
+# /etc/faas/secrets/session.key with mode 0400 root:root, and apid
+# reads it via systemd LoadCredential= + Environment= (see
+# deploy/digitalocean/systemd/faas-apid.service). The other five
+# control-plane daemons load sealed.env but don't read the key, so
+# scoping it to apid-only closes the leak without code changes.
+SESS_KEY_PATH="${SECRETS_DIR}/session.key"
+mkdir -p "${SECRETS_DIR}"
+openssl rand -hex 32 > "${SESS_KEY_PATH}"
+chown root:root "${SESS_KEY_PATH}"
+chmod 0400 "${SESS_KEY_PATH}"
+# Fail-loud precondition: refuse to continue if the perms drifted.
+SESS_KEY_MODE=$(stat -c '%a' "${SESS_KEY_PATH}")
+SESS_KEY_OWNER=$(stat -c '%U:%G' "${SESS_KEY_PATH}")
+if [[ "${SESS_KEY_MODE}" != "400" || "${SESS_KEY_OWNER}" != "root:root" ]]; then
+  die "session key perms drifted: mode=${SESS_KEY_MODE} owner=${SESS_KEY_OWNER} (want 400 root:root)"
+fi
+ok "session key written to ${SESS_KEY_PATH} (0400 root:root)"
 sed -e "s/__DROPLET_IP__/${DROPLET_IP}/g" \
-    -e "s/__SESSION_KEY__/${SESSION_KEY}/g" \
     -e "s|__DEV_TOKEN__|${DEV_TOKEN}|g" \
     "${DO_CONFIG_SRC}/sealed.env.example" > "${SEALED_ENV}"
 chown root:faas "${SEALED_ENV}"
 chmod 0640 "${SEALED_ENV}"
-ok "sealed.env created (session key + dev token generated)"
+ok "sealed.env created (dev token generated; session key is in /etc/faas/secrets/session.key)"
 
 # Operator-facing credentials file. Mode 0600 / root:root so the dev token
 # never ends up in stdout (which systemd-journal captures), in agent logs,

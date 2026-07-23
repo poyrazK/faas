@@ -78,3 +78,20 @@
       start without FAAS_SCHEDD_ADDR per issue #52's strict-exit rule) and
       the binaries are installed at
       /usr/local/bin/{apid,schedd,imaged,meterd}.
+
+# Security review A4: scope FAAS_SESSION_KEY to apid via systemd
+# LoadCredential. The role does NOT create the secret file — the
+# operator provisions it once via `openssl rand -hex 32 >
+# /etc/faas/secrets/session.key` (mode 0400, root:root). The role
+# asserts perms before daemon_reload so a drift fails the playbook
+# rather than silently exporting the key to every daemon that reads
+# sealed.env. Mirrors the fail-loud shape of pkg/secretbox/hostkey.go:138.
+- name: control_plane_service — assert session key file mode is 0400 (A4)
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/session.key
+  register: faas_session_key_stat
+  failed_when:
+    - not faas_session_key_stat.stat.exists
+    or faas_session_key_stat.stat.mode != "0400"
+    or faas_session_key_stat.stat.pw_name != "root"
+    or faas_session_key_stat.stat.gr_name != "root"

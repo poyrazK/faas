@@ -24,6 +24,13 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 # DATABASE_URL carries the Postgres DSN; secrets live in /etc/faas/sealed.env
 # (gap G2 — sealed at rest, dec only by systemd EnvironmentFile).
 EnvironmentFile=/etc/faas/sealed.env
+# Session signing key (security review A4). LoadCredential surfaces
+# /etc/faas/secrets/session.key inside the unit's credentials dir;
+# Environment reads it back into FAAS_SESSION_KEY so apid's existing
+# os.Getenv("FAAS_SESSION_KEY") loader path is unchanged. Scoped to
+# apid only — the other five daemons don't read FAAS_SESSION_KEY.
+LoadCredential=faas_session_key:/etc/faas/secrets/session.key
+Environment=FAAS_SESSION_KEY=%d/faas_session_key
 
 # Hardening baseline.
 NoNewPrivileges=yes

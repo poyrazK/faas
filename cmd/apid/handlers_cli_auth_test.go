@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -34,6 +35,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -116,6 +118,59 @@ func mintCliAuthCodeForTest(t *testing.T, srv http.Handler) api.CliAuthCodeRespo
 		t.Fatalf("decode mint response: %v", err)
 	}
 	return resp
+}
+
+// renderCliAuthForTest GETs /cli-auth?code=… and returns the csrf
+// cookie + form-token pair that renderCliAuthPage produces. Tests
+// use this instead of hand-coding `confirm_token=cli-auth:yes` so the
+// helper exercises the full Issue → render → Set-Cookie wire.
+//
+// On error the test fails loudly — these helpers are convenience
+// shims for the happy path; rejection paths drive the renderer
+// directly.
+func renderCliAuthForTest(t *testing.T, srv http.Handler, code string) (cookieValue, formValue string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/cli-auth?code="+code, nil)
+	srv.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("render /cli-auth: code = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == middleware.CookieNameAnonymous {
+			cookieValue = c.Value
+		}
+	}
+	if cookieValue == "" {
+		t.Fatalf("render /cli-auth: missing %s cookie in Set-Cookie: %v",
+			middleware.CookieNameAnonymous, rec.Header().Get("Set-Cookie"))
+	}
+	re := regexp.MustCompile(`name="csrf_token"\s+value="([^"]+)"`)
+	m := re.FindStringSubmatch(rec.Body.String())
+	if len(m) != 2 {
+		t.Fatalf("render /cli-auth: body missing csrf_token field: %s", rec.Body.String())
+	}
+	formValue = m[1]
+	if formValue == "" {
+		t.Fatal("render /cli-auth: csrf_token value is empty")
+	}
+	return cookieValue, formValue
+}
+
+// postCliAuthForTest wraps the cookie + form into a single POST body
+// matching what the browser submits. email is appended after csrf
+// so the call sites read top-to-bottom ("email + code + token").
+func postCliAuthForTest(t *testing.T, srv http.Handler, code, email, cookieValue, formValue string) *httptest.ResponseRecorder {
+	t.Helper()
+	form := "code=" + strings.ReplaceAll(code, "-", "") +
+		"&email=" + email +
+		"&" + middleware.FormFieldName + "=" + formValue
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: middleware.CookieNameAnonymous, Value: cookieValue})
+	srv.ServeHTTP(rec, r)
+	return rec
 }
 
 // TestMintCliAuthCode_ReturnsCodeAndURL exercises the happy path of
@@ -437,14 +492,8 @@ func TestPostCliAuthPage_CreatesAccountOnUnknownEmail(t *testing.T) {
 	srv, store := newCliAuthTestServer(t)
 
 	minted := mintCliAuthCodeForTest(t, srv)
-	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
-		"&email=brand-new@example.com" +
-		"&confirm_token=cli-auth%3Ayes" // review finding F1 (url-encoded ':')
-
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.ServeHTTP(rec, r)
+	cookieValue, formValue := renderCliAuthForTest(t, srv, minted.Code)
+	rec := postCliAuthForTest(t, srv, minted.Code, "brand-new@example.com", cookieValue, formValue)
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("code = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
@@ -478,17 +527,11 @@ func TestPostCliAuthPage_ReusesExistingAccount(t *testing.T) {
 	}
 
 	minted := mintCliAuthCodeForTest(t, srv)
-	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
-		"&email=old-customer@example.com" +
-		"&confirm_token=cli-auth%3Ayes"
-
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.ServeHTTP(rec, r)
+	cookieValue, formValue := renderCliAuthForTest(t, srv, minted.Code)
+	rec := postCliAuthForTest(t, srv, minted.Code, "old-customer@example.com", cookieValue, formValue)
 
 	if rec.Code != http.StatusFound {
-		t.Fatalf("code = %d, want 302", rec.Code)
+		t.Fatalf("code = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
 	}
 	// Re-lookup; the id must match the pre-existing row.
 	got, err := store.AccountByEmail(t.Context(), "old-customer@example.com")
@@ -500,44 +543,71 @@ func TestPostCliAuthPage_ReusesExistingAccount(t *testing.T) {
 	}
 }
 
-// TestPostCliAuthPage_RejectsMissingCSRFToken confirms the F1 CSRF
-// guard. A POST without confirm_token (or with the wrong value)
-// renders the "Invalid form" error page, not a 302.
+// TestPostCliAuthPage_RejectsMissingCSRFToken confirms the A1 CSRF
+// guard. A POST without the cli-auth-pre cookie, or with a forged
+// token, must render the "Invalid form" error page — not 302. This
+// is the regression test for the static-literal-token bug.
 func TestPostCliAuthPage_RejectsMissingCSRFToken(t *testing.T) {
 	srv, store := newCliAuthTestServer(t)
 
 	minted := mintCliAuthCodeForTest(t, srv)
-	// Submit WITHOUT confirm_token — must be rejected.
-	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
-		"&email=csrf-blocked@example.com"
+	normalized := strings.ReplaceAll(strings.ToUpper(minted.Code), "-", "")
 
+	// (1) Submit WITHOUT the pre-session cookie AND without the
+	//     csrf_token form field — must be rejected. A cross-site
+	//     attacker cannot send the cookie.
+	form := "code=" + normalized + "&email=csrf-blocked@example.com"
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("missing-CSRF code = %d, want 200 (error page)", rec.Code)
+		t.Fatalf("missing-cookie code = %d, want 200 (error page)\nbody = %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "Invalid form") {
 		t.Errorf("body missing 'Invalid form' banner: %s", rec.Body.String())
 	}
-	// Make sure NO account was created (the row exists only if we
-	// got past the CSRF gate).
 	if _, err := store.AccountByEmail(t.Context(), "csrf-blocked@example.com"); err == nil {
-		t.Errorf("account was auto-created despite missing CSRF token")
+		t.Errorf("account was auto-created despite missing CSRF cookie")
 	}
 
-	// Now submit WITH wrong token — must also be rejected.
-	form = "code=" + strings.ReplaceAll(minted.Code, "-", "") +
+	// (2) Submit WITH the cookie but WITH a forged token. The cookie
+	//     carries the sealed envelope; the form value must equal it.
+	//     A static literal like "cli-auth:yes" no longer works.
+	goodCookie, goodForm := renderCliAuthForTest(t, srv, minted.Code)
+	form = "code=" + normalized +
 		"&email=csrf-blocked@example.com" +
-		"&confirm_token=delete%3Ayes" // wrong action
+		"&" + middleware.FormFieldName + "=forged-value"
+	rec = httptest.NewRecorder()
 	r = httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec = httptest.NewRecorder()
+	r.AddCookie(&http.Cookie{Name: middleware.CookieNameAnonymous, Value: goodCookie})
 	srv.ServeHTTP(rec, r)
 	if !strings.Contains(rec.Body.String(), "Invalid form") {
-		t.Errorf("wrong-CSRF body missing 'Invalid form': %s", rec.Body.String())
+		t.Errorf("forged-token body missing 'Invalid form': %s", rec.Body.String())
+	}
+	if _, err := store.AccountByEmail(t.Context(), "csrf-blocked@example.com"); err == nil {
+		t.Errorf("account was auto-created despite forged CSRF token")
+	}
+
+	// (3) Submit WITH the right cookie but the form value flipped by
+	//     one byte — must also fail. Mirrors the cookie/form
+	//     constant-time cross-check.
+	flipped := goodForm[:len(goodForm)-1] + "X"
+	if flipped == goodForm {
+		flipped = goodForm[:len(goodForm)-2] + "XX"
+	}
+	form = "code=" + normalized +
+		"&email=csrf-blocked@example.com" +
+		"&" + middleware.FormFieldName + "=" + flipped
+	rec = httptest.NewRecorder()
+	r = httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: middleware.CookieNameAnonymous, Value: goodCookie})
+	srv.ServeHTTP(rec, r)
+	if !strings.Contains(rec.Body.String(), "Invalid form") {
+		t.Errorf("flipped-token body missing 'Invalid form': %s", rec.Body.String())
 	}
 }
 
@@ -557,13 +627,8 @@ func TestPostCliAuthPage_AlreadyClaimed(t *testing.T) {
 		t.Fatalf("pre-claim: %v", err)
 	}
 
-	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
-		"&email=someone-else@example.com" +
-		"&confirm_token=cli-auth%3Ayes"
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.ServeHTTP(rec, r)
+	cookieValue, formValue := renderCliAuthForTest(t, srv, minted.Code)
+	rec := postCliAuthForTest(t, srv, minted.Code, "someone-else@example.com", cookieValue, formValue)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (error banner)\nbody = %s", rec.Code, rec.Body.String())
@@ -579,12 +644,14 @@ func TestPostCliAuthPage_MissingEmail(t *testing.T) {
 	srv, _ := newCliAuthTestServer(t)
 
 	minted := mintCliAuthCodeForTest(t, srv)
+	cookieValue, formValue := renderCliAuthForTest(t, srv, minted.Code)
 	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
 		"&email=" +
-		"&confirm_token=cli-auth%3Ayes"
+		"&" + middleware.FormFieldName + "=" + formValue
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: middleware.CookieNameAnonymous, Value: cookieValue})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusOK {
@@ -600,10 +667,15 @@ func TestPostCliAuthPage_MissingEmail(t *testing.T) {
 func TestPostCliAuthPage_MissingCode(t *testing.T) {
 	srv, _ := newCliAuthTestServer(t)
 
-	form := "email=x@example.com&confirm_token=cli-auth%3Ayes"
+	// We need a valid cookie even though the body is missing the code.
+	// Mint a code so renderCliAuthForTest can produce a token.
+	minted := mintCliAuthCodeForTest(t, srv)
+	cookieValue, formValue := renderCliAuthForTest(t, srv, minted.Code)
+	form := "email=x@example.com&" + middleware.FormFieldName + "=" + formValue
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: middleware.CookieNameAnonymous, Value: cookieValue})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusOK {
@@ -623,14 +695,8 @@ func TestPostCliAuthPage_FiresCliAuthActivatedNotify(t *testing.T) {
 	srv, _, notif := newCliAuthTestServerWithNotifier(t)
 
 	minted := mintCliAuthCodeForTest(t, srv)
-	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
-		"&email=notify@example.com" +
-		"&confirm_token=cli-auth%3Ayes"
-
-	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.ServeHTTP(rec, r)
+	cookieValue, formValue := renderCliAuthForTest(t, srv, minted.Code)
+	rec := postCliAuthForTest(t, srv, minted.Code, "notify@example.com", cookieValue, formValue)
 	if rec.Code != http.StatusFound {
 		t.Fatalf("code = %d, want 302\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -647,6 +713,49 @@ func TestPostCliAuthPage_FiresCliAuthActivatedNotify(t *testing.T) {
 	// the URL.
 	if !strings.Contains(calls[0].Payload, `"hash":"`) {
 		t.Errorf("payload missing hash field: %s", calls[0].Payload)
+	}
+}
+
+// TestRenderCliAuthPage_IssuesAnonymousCSRFCookie asserts the new
+// (review finding A1) side-channel: GET /cli-auth?code=… must set
+// the cli-auth-pre cookie and render the matching csrf_token form
+// field. This is the producer side of the gate that closes the
+// static-literal CSRF token.
+func TestRenderCliAuthPage_IssuesAnonymousCSRFCookie(t *testing.T) {
+	srv, _ := newCliAuthTestServer(t)
+
+	minted := mintCliAuthCodeForTest(t, srv)
+	cookieValue, formValue := renderCliAuthForTest(t, srv, minted.Code)
+	if cookieValue == "" {
+		t.Fatal("cli-auth-pre cookie value is empty")
+	}
+	if formValue == "" {
+		t.Fatal("csrf_token form value is empty")
+	}
+	// Cookie value and form value must be byte-equal — that's the
+	// whole point of the design.
+	if cookieValue != formValue {
+		t.Fatalf("cookie != form value\ncookie=%q\nform  =%q", cookieValue, formValue)
+	}
+}
+
+// TestPostCliAuthPage_AcceptsFreshPreCookie is the explicit
+// happy-path assertion that the new A1 gate admits a freshly
+// rendered pair (cookie + form) on the same request. This is the
+// "the seal doesn't accidentally reject legit callers" check.
+func TestPostCliAuthPage_AcceptsFreshPreCookie(t *testing.T) {
+	srv, _ := newCliAuthTestServer(t)
+
+	minted := mintCliAuthCodeForTest(t, srv)
+	cookieValue, formValue := renderCliAuthForTest(t, srv, minted.Code)
+	rec := postCliAuthForTest(t, srv, minted.Code, "fresh@example.com", cookieValue, formValue)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("fresh cookie should be accepted, code = %d (want 302)\nbody = %s",
+			rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/dashboard/account" {
+		t.Errorf("redirect = %q, want /dashboard/account", loc)
 	}
 }
 

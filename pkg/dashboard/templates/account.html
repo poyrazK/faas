@@ -94,7 +94,7 @@
             <hr>
             <p><strong>Delete account</strong> &mdash; schedules permanent deletion in 30 days. You can cancel within the grace period by clicking "Restore" below or running <code>faas account restore</code>.</p>
             <form method="POST" action="/dashboard/account/delete">
-              <input type="hidden" name="confirm_token" value="{{.Data.DeleteConfirmToken}}">
+              <input type="hidden" name="csrf_token" value="{{.Data.DeleteConfirmToken}}">
               <button type="submit" class="btn-danger"
                 onclick="return confirm('Schedule your account for permanent deletion in 30 days?')">
                 Delete account
@@ -106,7 +106,7 @@
             <hr>
             <p><strong>Restore account</strong> &mdash; cancel the scheduled deletion. The grace window lapses on <code>{{.Data.RestoreUntil}}</code>.</p>
             <form method="POST" action="/dashboard/account/restore">
-              <input type="hidden" name="confirm_token" value="{{.Data.RestoreConfirmToken}}">
+              <input type="hidden" name="csrf_token" value="{{.Data.RestoreConfirmToken}}">
               <button type="submit" class="btn">Restore account</button>
             </form>
           {{end}}

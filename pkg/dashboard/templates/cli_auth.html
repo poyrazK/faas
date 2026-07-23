@@ -30,11 +30,13 @@
       <p>Your terminal opened this page from <code>faas login</code>. Confirm the email below to log in your CLI.</p>
       <form method="POST" action="/cli-auth">
         <input type="hidden" name="code" value="{{index .Data "Code"}}">
-        {{/* CSRF guard (review finding F1). The handler-side check uses
-            the literal-string pattern from cmd/apid/dashboard_delete.go
-            (see confirmTokenMatches). Future HMAC refactor covers this
-            and the dashboard delete/restore forms in one PR. */}}
-        <input type="hidden" name="confirm_token" value="{{index .Data "CSRFToken"}}">
+        {{/* CSRF guard (review finding A1). The csrf_token value is a
+            sealed envelope bound to (action="cli-auth", subject=<raw code>);
+            the cli-auth-pre cookie carries the same value, and
+            cmd/apid/handlers_cli_auth.go::postCliAuthPage verifies both
+            via middleware.VerifyAnonymous. A cross-site POST lacks the
+            cookie and is rejected before any account lookup. */}}
+        <input type="hidden" name="csrf_token" value="{{index .Data "CSRFToken"}}">
         <label for="email">Email</label>
         <input id="email" name="email" type="email" required autocomplete="email">
         <button type="submit">Sign in</button>

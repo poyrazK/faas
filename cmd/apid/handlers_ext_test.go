@@ -5,10 +5,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/stripex"
 )
 
 // TestDeploymentLogsSSE_Pagination confirms the initial page of a
@@ -807,5 +810,103 @@ func TestCronResponse_LastFiredAtBranch(t *testing.T) {
 	r2 := cronResponse(c2)
 	if r2.LastFiredAt != "" {
 		t.Errorf("zero LastFiredAt should be empty: %+v", r2)
+	}
+}
+
+// newStripeServer wires a server with a fixed Stripe webhook secret
+// for the A2 fail-closed tests. Everything else (memstore, noop
+// notifier, noop mailer, stub githubd, default sessions) mirrors
+// the helper used elsewhere in this package.
+func newStripeServer(t *testing.T, secret string) http.Handler {
+	t.Helper()
+	store := state.NewMemStore()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return newServerWithDeps(store, log, "example.com", noopNotifier{}, secret,
+		noopMailer{}, stubGithubdClient{}, nil, nil, 15*time.Minute, "").handler()
+}
+
+// TestStripeWebhook_RefusesEmptySecret is the A2 regression test:
+// when STRIPE_WEBHOOK_SECRET is unset, the handler must return 503
+// rather than processing unsigned events. Previously the empty-
+// secret branch in handlers_ext.go let an unauthenticated POST
+// suspend any account by claiming customer.subscription.deleted.
+func TestStripeWebhook_RefusesEmptySecret(t *testing.T) {
+	srv := newStripeServer(t, "")
+	body := `{"type":"customer.subscription.deleted","data":{"object":{"customer":"cus_anything"}}}`
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/webhooks/stripe", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	srv.ServeHTTP(rec, r)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (fail-closed)\nbody = %s", rec.Code, rec.Body.String())
+	}
+	var prob api.Problem
+	if err := json.NewDecoder(rec.Body).Decode(&prob); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if prob.Code != api.CodeCapacity {
+		t.Errorf("problem code = %q, want %q", prob.Code, api.CodeCapacity)
+	}
+}
+
+// TestStripeWebhook_AcceptsSigned fires a properly signed event and
+// asserts the handler returns 200 (Stripe expects 2xx for everything
+// it didn't recognize — the handler emits 200 with no side effect on
+// an unknown customer ID).
+func TestStripeWebhook_AcceptsSigned(t *testing.T) {
+	const secret = "whsec_test_signing_secret"
+	srv := newStripeServer(t, secret)
+	body := []byte(`{"type":"invoice.payment_succeeded","data":{"object":{"customer":"cus_unknown"}}}`)
+	header := stripex.SignForTest(body, secret, time.Now())
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/webhooks/stripe", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Stripe-Signature", header)
+	srv.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("signed event: status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestStripeWebhook_RejectsTampered asserts the handler rejects an
+// event whose body is altered after signing.
+func TestStripeWebhook_RejectsTampered(t *testing.T) {
+	const secret = "whsec_test_signing_secret"
+	srv := newStripeServer(t, secret)
+	body := []byte(`{"type":"customer.subscription.deleted","data":{"object":{"customer":"cus_evil"}}}`)
+	header := stripex.SignForTest(body, secret, time.Now())
+	// Tamper: flip one byte in the body.
+	tampered := append([]byte{}, body...)
+	tampered[len(tampered)-1] ^= 1
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/webhooks/stripe", bytes.NewReader(tampered))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Stripe-Signature", header)
+	srv.ServeHTTP(rec, r)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("tampered event: status = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
+	}
+	var prob api.Problem
+	if err := json.NewDecoder(rec.Body).Decode(&prob); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if prob.Code != api.CodeValidation {
+		t.Errorf("problem code = %q, want %q", prob.Code, api.CodeValidation)
+	}
+}
+
+// TestStripeWebhook_RejectsWrongSecret asserts an event signed with
+// the wrong secret is rejected with 400.
+func TestStripeWebhook_RejectsWrongSecret(t *testing.T) {
+	srv := newStripeServer(t, "whsec_test_correct_secret")
+	body := []byte(`{"type":"customer.subscription.deleted","data":{"object":{"customer":"cus_x"}}}`)
+	header := stripex.SignForTest(body, "whsec_test_WRONG_secret", time.Now())
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/webhooks/stripe", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Stripe-Signature", header)
+	srv.ServeHTTP(rec, r)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("wrong-secret event: status = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
 	}
 }

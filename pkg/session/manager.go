@@ -173,3 +173,45 @@ func (m *Manager) Verify(value string) (Envelope, error) {
 	}
 	return env, nil
 }
+
+// csrfDomainSep is the AAD byte the CSRF seal/open path uses. It
+// separates the CSRF nonce space from the session-cookie nonce space:
+// even if the same nonce bytes ever appeared on both sides, the AEAD
+// tag would not verify because the AAD differs. Defence in depth on
+// top of crypto/rand's nonce uniqueness.
+var csrfDomainSep = []byte("faas-csrf-v1")
+
+// SealForCSRF seals arbitrary plaintext into a base64url nonce||ct
+// blob. Unlike Issue/Verify (which carry the structured Envelope
+// JSON), this is a raw seal intended for the CSRF helper that needs
+// to seal its own JSON envelope with action + subject + expires. The
+// caller is responsible for choosing the plaintext shape and TTL;
+// the Manager only owns the cryptography.
+//
+// Output: base64url(nonce || ciphertext). AEAD tag authenticates
+// against the csrfDomainSep AAD, so a CSRF blob cannot be replayed
+// as a session cookie even if a nonce were reused.
+func (m *Manager) SealForCSRF(plaintext []byte) (string, error) {
+	nonce := make([]byte, m.gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", fmt.Errorf("session: csrf random nonce: %w", err)
+	}
+	sealed := m.gcm.Seal(nonce, nonce, plaintext, csrfDomainSep)
+	return base64.RawURLEncoding.EncodeToString(sealed), nil
+}
+
+// OpenForCSRF is the inverse of SealForCSRF. Returns ErrInvalid on
+// any tag / AAD / shape mismatch so callers can wrap into their own
+// sentinel.
+func (m *Manager) OpenForCSRF(raw []byte) ([]byte, error) {
+	ns := m.gcm.NonceSize()
+	if len(raw) < ns {
+		return nil, ErrInvalid
+	}
+	nonce, sealed := raw[:ns], raw[ns:]
+	plaintext, err := m.gcm.Open(nil, nonce, sealed, csrfDomainSep)
+	if err != nil {
+		return nil, ErrInvalid
+	}
+	return plaintext, nil
+}
