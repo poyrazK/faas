@@ -53,7 +53,7 @@ update instances
 -- above populated every row, so the constraint add is metadata-only
 -- too. Not guarded by IF NOT EXISTS — Postgres has no such clause
 -- for SET NOT NULL; the post-state is pinned by the test in
--- migrations/00027_instances_wake_id_test.go.
+-- migrations/00028_instances_wake_id_test.go.
 alter table instances alter column wake_id set not null;
 
 -- Partial index supporting the dashboard's per-app recent-wakes

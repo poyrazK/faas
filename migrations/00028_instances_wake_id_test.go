@@ -1,10 +1,10 @@
 //go:build !no_pg
 
-// Migration-apply test for 00027 (instances.wake_id). Pins the
+// Migration-apply test for 00028 (instances.wake_id). Pins the
 // load-bearing contract from the per-wake stable ID follow-up
 // to gaps analysis 2026-07-23:
 //
-//   1. The migration set applies cleanly through 00027.
+//   1. The migration set applies cleanly through 00028.
 //   2. The wake_id column is NOT NULL after the migration runs.
 //   3. The column default fills wake_id on INSERT — any future
 //      code path that bypasses schedd's explicit wake_id arg
@@ -32,7 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// TestMigrations_00027_InstancesWakeID pins the schema-level invariants
+// TestMigrations_00028_InstancesWakeID pins the schema-level invariants
 // the platform relies on:
 //
 //   - wake_id exists on instances
@@ -41,7 +41,7 @@ import (
 //     that doesn't supply an explicit value)
 //   - The partial index supports (app_id, wake_id) scans and is
 //     scoped to live states only.
-func TestMigrations_00027_InstancesWakeID(t *testing.T) {
+func TestMigrations_00028_InstancesWakeID(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
