@@ -396,8 +396,11 @@ func TestSec11_UnixSocketOnlyDSN(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	// Cast client_addr to text so pgx returns a string instead of an
+	// inet type that pgx v5 reports in binary format. We only care
+	// whether the value is NULL (unix socket) or non-NULL (TCP).
 	rows, err := pool.Query(context.Background(),
-		`SELECT client_addr FROM pg_stat_activity
+		`SELECT client_addr::text FROM pg_stat_activity
 		 WHERE datname = current_database() AND usename = current_user`)
 	if err != nil {
 		t.Fatalf("query pg_stat_activity: %v", err)
@@ -443,7 +446,7 @@ func TestSec11_HostKey0400_Required(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GenerateX25519Identity: %v", err)
 		}
-		if err := os.WriteFile(pub, []byte(id.Recipient().String()), 0o444); err != nil {
+		if err := writeWithPerm(t, pub, []byte(id.Recipient().String()), 0o444); err != nil {
 			t.Fatalf("write pub: %v", err)
 		}
 		addr, _ := startAPIDWithEnv(t, append(envForAPID(poolDSN(pool)),
@@ -468,8 +471,24 @@ func TestSec11_HostKey0400_Required(t *testing.T) {
 		}
 		// 0664 — group write bit is set → LoadRecipient rejects (its
 		// allowedPerm mask is 0o644 = r/w for owner, r for group/other).
-		if err := os.WriteFile(pub, []byte(id.Recipient().String()), 0o664); err != nil {
+		// Use writeWithPerm, not os.WriteFile, because the GH runner
+		// (umask 0002) lets the requested bits land on disk as written
+		// while macOS dev (umask 0022) strips g/o-write and the test
+		// would pass-vacuous. writeWithPerm Opens with O_CREATE then
+		// Chmods to the exact requested mode.
+		if err := writeWithPerm(t, pub, []byte(id.Recipient().String()), 0o664); err != nil {
 			t.Fatalf("write pub: %v", err)
+		}
+		// Sanity-check the file landed on disk with the requested bits
+		// before we boot apid — if the umask stripped group-write we
+		// want to fail loudly with a useful message rather than mask
+		// the bug.
+		fi, lerr := os.Stat(pub)
+		if lerr != nil {
+			t.Fatalf("stat pub: %v", lerr)
+		}
+		if fi.Mode().Perm()&0o020 == 0 {
+			t.Fatalf("test setup failed: file is %04o, writeWithPerm did not preserve group-write bit", fi.Mode().Perm())
 		}
 		out, err := startAPIDAndExpectFail(t, append(envForAPID(poolDSN(pool)),
 			"FAAS_HOST_AGE_RECIPIENT_PATH="+pub), 5*time.Second)
@@ -485,6 +504,29 @@ func TestSec11_HostKey0400_Required(t *testing.T) {
 			t.Errorf("apid stderr did not mention insecure perms; output:\n%s", out)
 		}
 	})
+}
+
+// writeWithPerm writes data to path with the exact requested mode,
+// bypassing the process umask. The umask matters here because the GH
+// runner uses 0002 (test umask) while macOS dev defaults to 0022;
+// os.WriteFile silently strips the unwanted bits so the test's intent
+// (load a file LoadRecipient MUST reject) would pass-vacuous on macOS.
+// This is the same shape pkg/secretbox.GenerateAndSaveHostKey uses (it
+// does umask-strip-tolerant Chmod by re-applying bits).
+func writeWithPerm(t *testing.T, path string, data []byte, perm os.FileMode) error {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(path, perm)
 }
 
 // --- TestSec11_NftablesArtifactGate moved to sec11_host_linux_test.go ---
