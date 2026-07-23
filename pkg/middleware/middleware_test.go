@@ -521,3 +521,61 @@ func TestAuthLimit_ClientIPFromLoopbackHop_MultipleXForwardedForFallsBack(t *tes
 		t.Fatalf("third: code = %d, want 429 (multi-hop chain must not be trusted)", c)
 	}
 }
+
+// TestAuthLimit_ClientIPFromLoopbackHop_XForwardedFor_IPv6 closes
+// the IPv6 coverage gap in the issue #89 test set. The three
+// load-bearing tests above use IPv4 RemoteAddr (127.0.0.1:<port>),
+// but isLoopbackHost uses net.IP.IsLoopback() which handles ::1
+// identically. A future regression that broke the IPv6 branch —
+// e.g. someone hand-rolling a string prefix check instead of
+// net.ParseIP — would silently break IPv6-loopback deployments
+// (future dual-stack) without failing any existing test. This
+// test pins that the predicate's IPv4/V6 symmetry actually holds.
+//
+// Shape mirrors TestAuthLimit_ClientIPFromLoopbackHop_XForwardedFor:
+// two distinct IPv6 XFFs on the same loopback hop must land in
+// separate buckets; the 3rd attempt from customer A must trip A's
+// bucket (proving the XFF was trusted, not the loopback host).
+func TestAuthLimit_ClientIPFromLoopbackHop_XForwardedFor_IPv6(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cfg := middleware.AuthLimitConfig{
+		Window:      time.Minute,
+		MaxFailures: 2,
+		Now:         func() time.Time { return now },
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	gate := func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "nope", http.StatusUnauthorized) }
+	h := middleware.AuthLimit(cfg)(http.HandlerFunc(gate))
+
+	// Two IPv6 customers via the loopback hop, distinct real IPs,
+	// distinct buckets.
+	fire := func(xff string) int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/auth/verify", nil)
+		r.RemoteAddr = "[::1]:55555"
+		r.Header.Set("X-Forwarded-For", xff)
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	// Customer A: 2 failures land in A's bucket (still < MaxFailures).
+	if c := fire("2001:db8::1"); c != http.StatusUnauthorized {
+		t.Fatalf("A first: code = %d, want 401", c)
+	}
+	if c := fire("2001:db8::1"); c != http.StatusUnauthorized {
+		t.Fatalf("A second: code = %d, want 401", c)
+	}
+	// Customer B: starts a fresh bucket. If the bug regressed for
+	// IPv6 specifically, B's first request would land in A's
+	// already-full bucket and 429.
+	if c := fire("2001:db8::2"); c != http.StatusUnauthorized {
+		t.Fatalf("B first: code = %d, want 401 (would be 429 if IPv6 loopback ignored)", c)
+	}
+	// Customer A: 3rd attempt trips A's bucket (now 3 >= MaxFailures).
+	if c := fire("2001:db8::1"); c != http.StatusTooManyRequests {
+		t.Fatalf("A third: code = %d, want 429", c)
+	}
+	// Customer B: still has 1 failure, must NOT be limited yet.
+	if c := fire("2001:db8::2"); c != http.StatusUnauthorized {
+		t.Fatalf("B second: code = %d, want 401 (still under threshold)", c)
+	}
+}

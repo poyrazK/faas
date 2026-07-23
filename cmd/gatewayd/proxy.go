@@ -163,26 +163,22 @@ const (
 // proxyToApid builds a one-shot httputil.ReverseProxy and serves
 // the request through it.
 //
-// Header policy:
+// Header policy lives entirely inside the Rewrite callback so all
+// per-hop mutation is co-located:
+//
 //   - We strip X-Forwarded-Proto and X-Forwarded-Host (apid binds
 //     loopback; protocol headers would mislead scheme detection).
 //   - We pin X-Forwarded-For to the real client IP from
-//     r.RemoteAddr's host (gatewayd is the single public listener,
-//     so r.RemoteAddr here is the originating customer). apid
-//     trusts X-Forwarded-For only when its own RemoteAddr is
-//     loopback, so a customer-injected X-Forwarded-For cannot
-//     reach apid in a position to be trusted — issue #89.
-//   - We ensure x-faas-request-id is present (gateway.Handler does
-//     this for the wake path; the apid proxy bypasses it, so we
-//     mint one here).
+//     pr.In.RemoteAddr's host (gatewayd is the single public
+//     listener, so pr.In.RemoteAddr here is the originating
+//     customer). apid trusts X-Forwarded-For only when its own
+//     RemoteAddr is loopback, so a customer-injected X-Forwarded-For
+//     cannot reach apid in a position to be trusted — issue #89.
+//   - We mint x-faas-request-id (gateway.Handler does this for the
+//     wake path; the apid proxy bypasses it, so we mint here).
 func (a *apidProxy) proxyToApid(w http.ResponseWriter, r *http.Request) {
-	// Pin X-Forwarded-For / strip X-Forwarded-Proto / -Host happens in
-	// the Rewrite hook below (after stdlib strips them). Here we only
-	// mint the request id and rebind Host to the upstream target —
-	// Director-level work that doesn't fight stdlib's append path.
-	if r.Header.Get("x-faas-request-id") == "" {
-		r.Header.Set("x-faas-request-id", middleware.NewRequestID())
-	}
+	// Rebind Host to the upstream target — must happen before
+	// stdlib's hop. Director-level work, not per-hop mutation.
 	r.Host = a.target.Host
 
 	pxy := &httputil.ReverseProxy{
@@ -210,6 +206,9 @@ func (a *apidProxy) proxyToApid(w http.ResponseWriter, r *http.Request) {
 		// outbound request").
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(a.target)
+			// Strip X-Forwarded-For / -Proto / -Host. We rewrite
+			// them ourselves below; the Del calls are belt-and-braces
+			// in case the inbound request already had them set.
 			pr.Out.Header.Del("X-Forwarded-For")
 			pr.Out.Header.Del("X-Forwarded-Proto")
 			pr.Out.Header.Del("X-Forwarded-Host")
@@ -218,9 +217,16 @@ func (a *apidProxy) proxyToApid(w http.ResponseWriter, r *http.Request) {
 			// customer's IP before the loopback hop. We
 			// overwrite (rather than append) so apid sees
 			// exactly one value, the contract its
-			// defaultClientIP predicate relies on.
+			// defaultClientIP predicate relies on (issue #89).
 			if host, _, err := net.SplitHostPort(pr.In.RemoteAddr); err == nil && host != "" {
 				pr.Out.Header.Set("X-Forwarded-For", host)
+			}
+			// Mint x-faas-request-id (gateway.Handler does this
+			// for the wake path; the apid proxy bypasses it, so
+			// we mint here). Co-located with the other header
+			// mutations so all per-hop writes live in one place.
+			if pr.Out.Header.Get("x-faas-request-id") == "" {
+				pr.Out.Header.Set("x-faas-request-id", middleware.NewRequestID())
 			}
 		},
 	}
