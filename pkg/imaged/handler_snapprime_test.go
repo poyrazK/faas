@@ -31,7 +31,7 @@ func TestFCSweep_MarksStaleOnlyOlderVersion(t *testing.T) {
 		app, _ := store.CreateApp(context.Background(), state.App{
 			AccountID: acct.ID, Slug: "snap-" + v, RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 		})
-		dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 		})
 		if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
@@ -73,7 +73,7 @@ func TestFCSweep_IdempotentSecondStart(t *testing.T) {
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "idem", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 	})
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
@@ -108,7 +108,7 @@ func TestFunctionLayer_Node22_BuildsWithRunner(t *testing.T) {
 		AccountID: acct.ID, Slug: "node", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 		Runtime: RuntimeNode22,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/src.tgz",
 	})
 	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 1024); err != nil {
@@ -138,7 +138,7 @@ func TestFunctionLayer_EmptyRunnerPath_FailsLoud(t *testing.T) {
 		AccountID: acct.ID, Slug: "no-runner", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 		Runtime: RuntimeNode22,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/src.tgz",
 	})
 	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 1024); err != nil {
@@ -173,7 +173,7 @@ func TestFunctionLayer_ImageApp_DoesNotReadRunner(t *testing.T) {
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "image-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 	})
 	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 1024); err != nil {
@@ -211,7 +211,7 @@ func TestHandleSnapshotBoot_BuildsAndPrimesForTarball(t *testing.T) {
 		AccountID: acct.ID, Slug: "boot-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 		Runtime: RuntimeNode22,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/x.tgz",
 	})
 	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 4096); err != nil {
@@ -254,7 +254,7 @@ func TestHandleSnapshotBoot_RedeliverySafe(t *testing.T) {
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "redel", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 	})
 	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 1024); err != nil {
@@ -293,7 +293,7 @@ func TestHandleSnapshotBoot_EmptyRootfsPath_NoOp(t *testing.T) {
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: "acct", Slug: "missing-tar", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball,
 		// RootfsPath intentionally empty.
 	})

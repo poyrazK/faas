@@ -150,7 +150,7 @@ func seedQueuedBuild(t *testing.T, store *state.MemStore) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID:       app.ID,
 		Kind:        state.DeploymentKindTarball,
 		SourcePath:  src,

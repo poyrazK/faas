@@ -147,11 +147,12 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// store.CreateDeployment's tx (pkg/state/pgstore.go). apid no longer
 	// holds a "supersede then create" two-step — the in-tx ordering
 	// guarantees the previous live deployment is NEVER observed
-	// superseded without the new pending row also being visible. The
-	// returned `prev` is the just-superseded row (zero-valued when no
-	// prior row existed); we notify the superseded transition so
-	// imaged's F5 cleanup of the prior snapshot still fires.
-	d, prev, err := s.store.CreateDeployment(ctx(r), state.Deployment{
+	// superseded without the new pending row also being visible. We
+	// read the prior row BEFORE the call via LatestDeployment so the
+	// supersede-notify can carry its id; this keeps the return shape
+	// 2-tuple and backward-compatible with pre-PR-B call sites.
+	prev, _ := s.store.LatestDeployment(ctx(r), app.ID)
+	d, err := s.store.CreateDeployment(ctx(r), state.Deployment{
 		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
 	})
 	if err != nil {

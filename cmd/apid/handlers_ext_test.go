@@ -93,7 +93,7 @@ func mustSeedDeployment(t *testing.T, e testEnv, slug string) state.Deployment {
 	if err != nil {
 		t.Fatalf("seed app %s: %v", slug, err)
 	}
-	d, _, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+	d, err := e.store.CreateDeployment(context.Background(), state.Deployment{
 		AppID:       app.ID,
 		ImageDigest: "sha256:deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef",
 		Kind:        state.DeploymentKindImage,
@@ -292,7 +292,7 @@ func TestRollbackApp_HappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	app, _ := e.store.AppBySlug(context.Background(), "rb-app")
-	dep2, _, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+	dep2, err := e.store.CreateDeployment(context.Background(), state.Deployment{
 		AppID:       app.ID,
 		ImageDigest: "sha256:" + repeat("b", 64),
 		Kind:        state.DeploymentKindImage,

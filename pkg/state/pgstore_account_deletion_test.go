@@ -78,7 +78,7 @@ func seedFullAccountWithDep(t *testing.T, s *state.PgStore, ctx context.Context)
 	if err != nil {
 		return "", "", err
 	}
-	dep, _, err := s.CreateDeployment(ctx, state.Deployment{
+	dep, err := s.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage,
 		ImageDigest: "sha256:abc", Status: state.DeployLive,
 	})

@@ -84,7 +84,7 @@ func seedLiveDeploy(t *testing.T, s *state.PgStore, ctx context.Context) (acctID
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	dep, _, err := s.CreateDeployment(ctx, state.Deployment{
+	dep, err := s.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc", Status: state.DeployPending,
 	})
 	if err != nil {
@@ -1539,7 +1539,7 @@ func TestPg_CreateDeployment_RejectsDeletedApp(t *testing.T) {
 
 	// Now CreateDeployment must return ErrNotFound (the active-app
 	// gate's contract). The handler maps ErrNotFound to 404.
-	_, _, err = s.CreateDeployment(ctx, state.Deployment{
+	_, err = s.CreateDeployment(ctx, state.Deployment{
 		AppID:       appID,
 		Kind:        state.DeploymentKindImage,
 		ImageDigest: "registry.example.com/x@sha256:" + strings.Repeat("d", 64),
@@ -1567,7 +1567,7 @@ func TestPg_CreateDeployment_RejectsDeletedApp(t *testing.T) {
 		AccountID: otherAcct.ID, Slug: "active-app",
 		Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
 	})
-	if _, _, err := s.CreateDeployment(ctx, state.Deployment{
+	if _, err := s.CreateDeployment(ctx, state.Deployment{
 		AppID:       otherApp.ID,
 		Kind:        state.DeploymentKindImage,
 		ImageDigest: "registry.example.com/y@sha256:" + strings.Repeat("e", 64),

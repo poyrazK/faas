@@ -45,7 +45,7 @@ func newAppDir(t *testing.T, store *state.MemStore) (appsRoot string, appSlug, a
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "cleanup-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 	})
 	appSlug = app.Slug

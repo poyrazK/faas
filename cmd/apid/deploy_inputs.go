@@ -147,8 +147,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// prior non-terminal row. The second NotifyDeploymentChanged
 		// for `prev` (further down) lets imaged F5-cleanup the prior
 		// snapshot. No call-site change was needed to gain this; the
-		// in-tx ordering is invisible above the Store seam.
-		d, prev, err := s.store.CreateDeployment(ctx(r), state.Deployment{
+		// in-tx ordering is invisible above the Store seam. We read
+		// prev via LatestDeployment BEFORE the call so the return
+		// shape stays 2-tuple.
+		prev, _ := s.store.LatestDeployment(ctx(r), app.ID)
+		d, err := s.store.CreateDeployment(ctx(r), state.Deployment{
 			AppID:       app.ID,
 			Kind:        kind,
 			SourcePath:  sourcePath,

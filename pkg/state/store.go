@@ -278,19 +278,19 @@ type Store interface {
 	// creates a parallel row, and schedd's watchdog reaps the loser
 	// on the next idle window.
 	//
-	// The returned `prior` value is the just-superseded row
-	// (zero-valued Deployment when no prior row existed, AND when the
-	// only previous row was building/imaging/snapshotting). A reader
-	// therefore never observes the prior row as superseded without
-	// the new row being committed in the same instant. PR-B closes
-	// the prior supersede-before-create race that previously
-	// orphaned a live deployment when the new INSERT failed.
+	// Callers that need to surface a NotifyDeploymentChanged for the
+	// just-superseded row use LatestDeployment(ctx, appID) AFTER
+	// CreateDeployment returns — the in-tx supersede means the prior
+	// row is already visible as 'superseded' to the next read. The
+	// two-step read avoids turning CreateDeployment into a 3-return
+	// signature that breaks every pre-PR-B call site (notably the
+	// slice-3 cascade test on main).
 	//
 	// AppDeleted apps must accept neither deployments nor supersedes;
 	// the parent-app gate is the same FOR UPDATE as PR-A's
 	// CreateAppIfUnderQuota pattern. The 404 s.notFound path at the
 	// apid call site is unchanged.
-	CreateDeployment(ctx context.Context, d Deployment) (new Deployment, prior Deployment, err error)
+	CreateDeployment(ctx context.Context, d Deployment) (Deployment, error)
 	DeploymentByID(ctx context.Context, id string) (Deployment, error)
 	LatestDeployment(ctx context.Context, appID string) (Deployment, error)
 	// LiveDeployment returns the app's current live deployment (status='live').

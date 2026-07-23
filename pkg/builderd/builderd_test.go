@@ -81,7 +81,7 @@ func seedDeploymentWithPlan(t *testing.T, store state.Store, source, plan string
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID:       app.ID,
 		Kind:        state.DeploymentKindTarball,
 		SourcePath:  source,
@@ -115,7 +115,7 @@ func seedDeploymentWithSlug(t *testing.T, store state.Store, source, slug string
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID:       app.ID,
 		Kind:        state.DeploymentKindTarball,
 		SourcePath:  source,

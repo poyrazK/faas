@@ -94,7 +94,7 @@ func seedSnapshotWithApp(t *testing.T, store *state.MemStore, memBytes, diskByte
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 	})
 	if err != nil {
@@ -127,7 +127,7 @@ func TestGC_PerAppKeepCurrentPrevious(t *testing.T) {
 	})
 	base := time.Now().Add(-time.Hour)
 	for i := 0; i < 3; i++ {
-		dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
+		dep, err := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 		})
 		if err != nil {
@@ -217,13 +217,13 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 		AccountID: lightAcct.ID, Slug: "light", RAMMB: 1024, IdleTimeoutS: 600, MaxConcurrency: 20,
 	})
 
-	heavyDep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	heavyDep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: heavyApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:h",
 	})
-	midDep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	midDep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: midApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:m",
 	})
-	lightDep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	lightDep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: lightApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:l",
 	})
 
@@ -236,7 +236,7 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 	// heavyApp needs > current+previous snapshots so the per-app floor
 	// leaves at least one evictable row. With 3 snapshots and a 2-row
 	// floor, the oldest is a valid eviction target.
-	heavyDep2, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	heavyDep2, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: heavyApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:h2",
 	})
 	heavySnap2, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
@@ -245,7 +245,7 @@ func TestGC_PressureMode_EvictsFromHeaviestAccount(t *testing.T) {
 		StorageKey: state.SnapMemKey(heavyDep2.ID),
 		CreatedAt:  time.Now().Add(-2 * time.Minute),
 	})
-	heavyDep3, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	heavyDep3, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: heavyApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:h3",
 	})
 	heavySnap3, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
@@ -330,7 +330,7 @@ func TestGC_DeleteSnapshotsByID_BulkAndIdempotent(t *testing.T) {
 	})
 	_ = app // not reachable via store API; use the existing seed path instead.
 
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: "00000000-0000-0000-0000-000000000000",
 		Kind:  state.DeploymentKindImage, ImageDigest: "sha256:x",
 	})
@@ -375,7 +375,7 @@ func TestGC_IdenticalCreatedAt_StableSort(t *testing.T) {
 	base := time.Now().Add(-time.Hour)
 	ids := make([]string, 5)
 	for i := 0; i < 5; i++ {
-		dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:s" + string(rune('a'+i)),
 		})
 		snap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
@@ -494,7 +494,7 @@ func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys(t *testing.T) {
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "gc-target", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:gc",
 	})
 	_, _ = store.CreateSnapshot(context.Background(), state.Snapshot{
@@ -556,7 +556,7 @@ func TestMemStore_ListDeploymentsForApp_LimitZero(t *testing.T) {
 		AccountID: acct.ID, Slug: "limit-test", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
 	for i := 0; i < 5; i++ {
-		dep, _, err := store.CreateDeployment(context.Background(), state.Deployment{
+		dep, err := store.CreateDeployment(context.Background(), state.Deployment{
 			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:l" + string(rune('a'+i)),
 		})
 		if err != nil {

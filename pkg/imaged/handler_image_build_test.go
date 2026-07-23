@@ -167,7 +167,7 @@ func TestHandleDeployment_RealBuildPath(t *testing.T) {
 		AccountID: acct.ID, Slug: "img-app", RAMMB: 512, Runtime: "node22",
 		IdleTimeoutS: 60, MaxConcurrency: 5,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, ImageDigest: "ghcr.io/org/app:v1", Kind: state.DeploymentKindImage,
 	})
 
@@ -242,7 +242,7 @@ func TestHandleDeployment_RealBuild_BaseMismatchErrors(t *testing.T) {
 		AccountID: acct.ID, Slug: "img-app", RAMMB: 512, Runtime: "node22",
 		IdleTimeoutS: 60, MaxConcurrency: 5,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, ImageDigest: "ghcr.io/org/app:v1", Kind: state.DeploymentKindImage,
 	})
 

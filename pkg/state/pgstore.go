@@ -559,10 +559,10 @@ func (s *PgStore) InstallationIDForRepo(ctx context.Context, repoFullName string
 // concurrent CreateDeployment against the same app serialises behind
 // the row lock (Step 2.5 below); if our subsequent INSERT fails the
 // defer tx.Rollback reverts both writes together.
-func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, Deployment, error) {
+func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return Deployment{}, Deployment{}, fmt.Errorf("state: begin tx: %w", err)
+		return Deployment{}, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
@@ -575,9 +575,9 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		`select 1 from apps where id = $1 and status = 'active' for update`,
 		d.AppID).Scan(&locked); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Deployment{}, Deployment{}, ErrNotFound
+			return Deployment{}, ErrNotFound
 		}
-		return Deployment{}, Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
+		return Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
 	}
 
 	// 2. Lock + supersede the prior live/pending row, if any. PR-B: the
@@ -600,11 +600,15 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	//
 	//    We exclude 'failed' explicitly per PR-A's
 	//    LatestSupersededDeployment: failure history stays observable.
-	var (
-		priorID  string
-		prior    Deployment
-		hasPrior bool
-	)
+	//
+	//    Callers that need the just-superseded row (apid's
+	//    NotifyDeploymentChanged fan-out) read it BEFORE the call via
+	//    LatestDeployment(ctx, appID) — by the time this tx commits,
+	//    that row is already visible as 'superseded' to the next read.
+	//    The 2-return shape keeps the signature backward-compatible
+	//    with pre-PR-B call sites (the slice-3 cascade test on main
+	//    relies on `dep, err :=` form).
+	var priorID string
 	if err := tx.QueryRow(ctx,
 		`select id from deployments
 		  where app_id = $1
@@ -614,31 +618,14 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		  for update`,
 		d.AppID).Scan(&priorID); err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
-			return Deployment{}, Deployment{}, fmt.Errorf("state: lock prior deployment: %w", err)
+			return Deployment{}, fmt.Errorf("state: lock prior deployment: %w", err)
 		}
-		// pgx.ErrNoRows → no prior; hasPrior stays false.
+		// pgx.ErrNoRows → no prior; that's fine. Move on.
 	} else {
-		hasPrior = true
-	}
-	if hasPrior {
 		if _, err := tx.Exec(ctx,
 			`update deployments set status = 'superseded' where id = $1`,
 			priorID); err != nil {
-			return Deployment{}, Deployment{}, fmt.Errorf("state: supersede prior %s: %w", priorID, err)
-		}
-		// Read the just-superseded row before commit so the caller
-		// (apid) can fire a second NotifyDeploymentChanged with the
-		// fresh superseded payload. Use scanDeploymentWithRootfs to
-		// mirror DeploymentByID's payload shape.
-		pRow := tx.QueryRow(ctx,
-			`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
-			        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-			        coalesce(rootfs_path,''), coalesce(rootfs_key,''), coalesce(rootfs_bytes,0),
-			        status, coalesce(error,''), coalesce(error_code,''), created_at
-			   from deployments where id = $1`, priorID)
-		prior, err = scanDeploymentWithRootfs(pRow)
-		if err != nil {
-			return Deployment{}, Deployment{}, fmt.Errorf("state: read prior %s: %w", priorID, err)
+			return Deployment{}, fmt.Errorf("state: supersede prior %s: %w", priorID, err)
 		}
 	}
 
@@ -656,12 +643,12 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		nullString(d.Handler), nullString(d.LogPath))
 	created, err := scanDeployment(row)
 	if err != nil {
-		return Deployment{}, Deployment{}, err
+		return Deployment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Deployment{}, Deployment{}, fmt.Errorf("state: commit create deployment: %w", err)
+		return Deployment{}, fmt.Errorf("state: commit create deployment: %w", err)
 	}
-	return created, prior, nil
+	return created, nil
 }
 
 func (s *PgStore) DeploymentByID(ctx context.Context, id string) (Deployment, error) {

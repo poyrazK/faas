@@ -210,7 +210,7 @@ func newTestHarness(t *testing.T, kind state.DeploymentKind, plan api.Plan,
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	dep, _, err := s.CreateDeployment(context.Background(), state.Deployment{
+	dep, err := s.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:abc",
 		Kind: kind, Handler: handler,
 	})
@@ -234,7 +234,7 @@ func TestHandleDeploymentPrimesNotLive(t *testing.T) {
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "img-app", RAMMB: 512, IdleTimeoutS: 60, MaxConcurrency: 5,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage,
 	})
 	notif := &fakeNotifier{}
@@ -274,7 +274,7 @@ func TestHandleSnapshotWritten(t *testing.T) {
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "img-app", RAMMB: 512, IdleTimeoutS: 60, MaxConcurrency: 5,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage,
 	})
 	_ = store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, "")
@@ -315,7 +315,7 @@ func TestHandleSnapshotWrittenIdempotent(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{AccountID: acct.ID, Slug: "dup", RAMMB: 256})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage,
 	})
 	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
@@ -340,7 +340,7 @@ func TestHandleDeploymentTarballIgnored(t *testing.T) {
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "tar-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/x.tgz",
 	})
 	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
@@ -363,7 +363,7 @@ func TestHandleDeploymentOCIFailure(t *testing.T) {
 	app, _ := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "bad-img", RAMMB: 128, IdleTimeoutS: 30, MaxConcurrency: 1,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:bad", Kind: state.DeploymentKindImage,
 	})
 	h := New(store, &fakeNotifier{}, failingPuller{err: errors.New("net down")},
@@ -424,7 +424,7 @@ func TestHandleDeployment_PullDigestSentinel_PersistsErrorCode(t *testing.T) {
 			app, _ := store.CreateApp(context.Background(), state.App{
 				AccountID: acct.ID, Slug: "bad-img-" + tc.name, RAMMB: 128, IdleTimeoutS: 30, MaxConcurrency: 1,
 			})
-			dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+			dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 				AppID: app.ID, ImageDigest: "sha256:bad", Kind: state.DeploymentKindImage,
 			})
 			h := New(store, &fakeNotifier{}, failingPuller{err: tc.err},
@@ -470,7 +470,7 @@ func TestHandleNotification_AppChanged_Deleted_CarriesAppID(t *testing.T) {
 		AccountID: acct.ID, Slug: "soon-gone", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
 		Runtime: RuntimeNode22,
 	})
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
 	})
 	appsRoot := t.TempDir()
@@ -516,7 +516,7 @@ func TestHandleNotification_Supersede_KeepsSnapBlob_EndToEnd(t *testing.T) {
 		Runtime: RuntimeNode22,
 	})
 	// Live deployment that's about to be superseded.
-	dep, _, _ := store.CreateDeployment(context.Background(), state.Deployment{
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:v1",
 	})
 	appsRoot := t.TempDir()

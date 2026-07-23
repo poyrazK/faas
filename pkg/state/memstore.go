@@ -660,12 +660,12 @@ func (m *MemStore) InstallationIDForRepo(_ context.Context, repoFullName string)
 // the new row. The race-free supersede closes the same TOCTOU the
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
-func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, Deployment, error) {
+func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
-		return Deployment{}, Deployment{}, ErrNotFound
+		return Deployment{}, ErrNotFound
 	}
 
 	// Find the most-recent non-terminal deployment row for this app.
@@ -673,7 +673,6 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	// rows-per-app bounded by the build cadence.
 	var (
 		priorID  string
-		prior    Deployment
 		hasPrior bool
 	)
 	var maxCreated time.Time
@@ -695,12 +694,15 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		}
 		if !hasPrior || existing.CreatedAt.After(maxCreated) {
 			priorID = id
-			prior = existing
 			maxCreated = existing.CreatedAt
 			hasPrior = true
 		}
 	}
 	if hasPrior {
+		// Match PgStore exactly: mutate the stored prior in-place so
+		// subsequent LatestDeployment / DeploymentByID readers see
+		// the supersede immediately, under m.mu.
+		prior := m.deployments[priorID]
 		prior.Status = DeploySuperseded
 		m.deployments[priorID] = prior
 	}
@@ -718,7 +720,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.Kind = DeploymentKindImage
 	}
 	m.deployments[d.ID] = d
-	return d, prior, nil
+	return d, nil
 }
 
 func (m *MemStore) DeploymentByID(_ context.Context, id string) (Deployment, error) {
