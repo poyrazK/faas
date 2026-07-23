@@ -298,3 +298,25 @@ func TestListApps_RequiresAuth(t *testing.T) {
 		t.Errorf("status = %d, want 401", rec.Code)
 	}
 }
+
+// TestHealthz confirms the loopback liveness probe returns 200 with
+// the canonical {"status":"ok"} body. No auth, no DB — issue #85 said
+// the gatewayd forwards this path verbatim and a 5xx would cascade
+// into the control plane.
+func TestHealthz(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	// Deliberately no Authorization header — /healthz is unauth.
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("content-type = %q, want application/json", ct)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"status":"ok"`) {
+		t.Errorf("body = %q, want status:ok", body)
+	}
+}

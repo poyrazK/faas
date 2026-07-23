@@ -541,6 +541,79 @@ func TestPostCliAuthPage_RejectsMissingCSRFToken(t *testing.T) {
 	}
 }
 
+// TestPostCliAuthPage_AlreadyClaimed returns "Code already used". The
+// first POST claims the code; the second POST with the same code must
+// hit the ErrConflict branch in postCliAuthPage and render the error
+// banner instead of 302-redirecting.
+func TestPostCliAuthPage_AlreadyClaimed(t *testing.T) {
+	srv, store := newCliAuthTestServer(t)
+
+	acct, err := store.CreateAccount(t.Context(), "claimer@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	minted := mintCliAuthCodeForTest(t, srv)
+	if err := store.ClaimCliAuthCode(t.Context(), mustHashCode(t, minted.Code), acct.ID); err != nil {
+		t.Fatalf("pre-claim: %v", err)
+	}
+
+	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
+		"&email=someone-else@example.com" +
+		"&confirm_token=cli-auth%3Ayes"
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (error banner)\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Code already used") {
+		t.Errorf("body missing 'Code already used' banner:\n%s", rec.Body.String())
+	}
+}
+
+// TestPostCliAuthPage_MissingEmail: an empty email must surface the
+// "Missing fields" error page (postCliAuthPage:222).
+func TestPostCliAuthPage_MissingEmail(t *testing.T) {
+	srv, _ := newCliAuthTestServer(t)
+
+	minted := mintCliAuthCodeForTest(t, srv)
+	form := "code=" + strings.ReplaceAll(minted.Code, "-", "") +
+		"&email=" +
+		"&confirm_token=cli-auth%3Ayes"
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (error page)\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Missing fields") {
+		t.Errorf("body missing 'Missing fields' banner:\n%s", rec.Body.String())
+	}
+}
+
+// TestPostCliAuthPage_MissingCode: a missing `code` form field must
+// surface "Missing fields" via normalizeCliAuthCode's ok=false branch.
+func TestPostCliAuthPage_MissingCode(t *testing.T) {
+	srv, _ := newCliAuthTestServer(t)
+
+	form := "email=x@example.com&confirm_token=cli-auth%3Ayes"
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Missing fields") {
+		t.Errorf("body missing 'Missing fields' banner:\n%s", rec.Body.String())
+	}
+}
+
 // TestPostCliAuthPage_FiresCliAuthActivatedNotify asserts the F6
 // observability fix: the dashboard POST emits the
 // NotifyCliAuthCodeActivated channel with the code's hex hash as
