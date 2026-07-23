@@ -15,8 +15,10 @@ prom_version: "2.54.1"
 # CI `promtool check rules` step reads it from this file so the
 # downloaded tarball is bit-identical to the one shipped to the EX44.
 # Pin from https://github.com/prometheus/prometheus/releases/tag/v{{ prom_version }}
-# and bump both the version and the hash together.
-# prom_release_sha256: "REPLACE_WITH_SHA256_OF_v{{ prom_version }}_TARBALL"
+# and bump both the version and the hash together. Default is the
+# firecracker-style placeholder; the role + CI both fail loud if it
+# is still the placeholder at apply time.
+prom_release_sha256: "REPLACE_WITH_SHA256_OF_v2.54.1_LINUX_AMD64_TARBALL"
 prom_listen_addr: "10.0.0.1:9090"
 prom_retention_days: 15
 prom_data_dir: /var/lib/prometheus
