@@ -43,6 +43,11 @@ type Problem struct {
 	Observed *int64 `json:"observed,omitempty"`
 	// DocsURL points the user at the single next action.
 	DocsURL string `json:"docs_url,omitempty"`
+	// BillingPortalURL is set on payment_required (CodePayment) errors:
+	// the operator-controlled billing portal URL with the account id
+	// substituted. Optional; omitempty keeps the existing API shape
+	// unchanged for every other error code.
+	BillingPortalURL string `json:"billing_portal_url,omitempty"`
 }
 
 // Error implements the error interface so a Problem can flow through %w chains.
@@ -105,6 +110,15 @@ const (
 	CodeImageRequired     = "image_required"
 	CodeDeployFailed      = "deploy_failed"
 	CodeNoRollbackTarget  = "no_rollback_target"
+
+	// CodePayment is the 402 response when an API-only plan change requires
+	// a Stripe subscription the customer does not have (issue #142 / PR).
+	// The Problem carries a BillingPortalURL extension so the dashboard
+	// renders an actionable upsell button without a separate /v1/billing
+	// endpoint. Distinct from CodeBillingPastDue because the failure mode
+	// is "you cannot upgrade via API" rather than "your account is past
+	// due" — the dashboard renders different copy for each.
+	CodePayment = "payment_required"
 
 	// Customer secrets (spec §11/G2). Plaintext VALUES never enter logs;
 	// these codes are returned for quota / shape / size violations only.
@@ -209,6 +223,8 @@ func StatusForCode(code string) int {
 		return http.StatusUnprocessableEntity
 	case CodeImageEgressDenied:
 		return http.StatusForbidden
+	case CodePayment:
+		return http.StatusPaymentRequired
 	case CodePlanLimitSecrets:
 		return http.StatusForbidden
 	case CodeSecretInvalidKey, CodeSecretNotFound:

@@ -585,11 +585,23 @@ func (s *server) getUsage(w http.ResponseWriter, r *http.Request, acct state.Acc
 
 // --- plan changes ----------------------------------------------------------
 
-// changePlan implements PATCH /v1/account/plan. Only the Free → Hobby upgrade
-// is permitted via the dashboard in M5; everything else flows through
-// Stripe (the webhook hits POST /v1/webhooks/stripe and calls into here with
-// the network-trusted plan). M5 keeps this minimal — the table is wired,
-// full dunning flow lands with M7 + meterd.
+// changePlan implements PATCH /v1/account/plan. Only the Free → Hobby
+// upgrade is permitted via the dashboard in M5; everything else flows
+// through Stripe (the webhook hits POST /v1/webhooks/stripe and calls
+// into here with the network-trusted plan). M5 keeps this minimal —
+// the table is wired, full dunning flow lands with M7 + meterd.
+//
+// Issue #142: also gate every paid upgrade on the account having a
+// Stripe subscription item. Previously the handler accepted any valid
+// plan from any authenticated bearer token, which let a Free account
+// self-upgrade to Pro/Scale via API key alone — getting 1024 MB RAM,
+// 25 deployments, 5 concurrent instances, with no Stripe subscription
+// to invoice. meterd's quota tick skips customers with empty
+// StripeSubscriptionItem so the overage was silently absorbed. The
+// gate below 402s with a billing portal URL pointing at the Stripe
+// checkout path; the Stripe webhook remains the legitimate way to
+// land on a paid plan (it stamps StripeSubscriptionItem on the way
+// through).
 func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req struct {
 		Plan string `json:"plan"`
@@ -602,6 +614,30 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	if !plan.Valid() {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad plan", "plan must be free|hobby|pro|scale"))
+		return
+	}
+	// Issue #142 gate: any paid upgrade that does not have a Stripe
+	// subscription item on the account is blocked. Downgrades and
+	// same-tier moves always pass; the free → hobby M5 path is the
+	// only free → paid direct upgrade.
+	if acct.Plan.RequiresStripeUpgradeTo(plan) && acct.StripeSubscriptionItem == "" {
+		// CodeQL go/log-injection (CWE-117): plan was enum-validated
+		// against the 4 Plan constants (free|hobby|pro|scale) by
+		// plan.Valid() in this handler, but CodeQL's taint engine
+		// doesn't model that branch. Wrap so a future relax of
+		// plan.Valid() cannot smuggle CR/LF into the audit line.
+		s.log.Info("plan change blocked",
+			"account", acct.ID,
+			"from", logsanitize.Field(string(acct.Plan)),
+			"to", logsanitize.Field(string(plan)),
+		)
+		api.WriteProblem(w, &api.Problem{
+			Status:           http.StatusPaymentRequired,
+			Code:             api.CodePayment,
+			Title:            "Stripe subscription required",
+			Detail:           "plan upgrades to " + string(plan) + " require an active Stripe subscription; use the billing portal to upgrade",
+			BillingPortalURL: s.billingPortalURLFor(acct),
+		})
 		return
 	}
 	if err := s.store.UpdateAccountPlan(ctx(r), acct.ID, plan); err != nil {
