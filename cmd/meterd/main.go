@@ -269,7 +269,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The four timers run in goroutines; the cancel-watcher below picks
 	// up the first error and returns. meterd has no inbound gRPC — the
 	// public listener is gatewayd's (spec §Component ownership).
-	loop := meter.NewLoop(store, parker, stripe, pn, dunning, deps.now, log, mc, ops)
+	loop := meter.NewLoop(store, parker, stripe, pn, mailer, dunning, deps.now, log, mc, ops)
 	errc := make(chan error, 1)
 	go func() { errc <- loop.Run(ctx) }()
 

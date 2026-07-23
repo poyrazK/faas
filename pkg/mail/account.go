@@ -96,3 +96,108 @@ If this charge is unexpected, contact support@DOMAIN.
 `, email, atStr, atStr)
 	return
 }
+
+// PaymentFailedBody is the entry-point email sent the moment a Stripe
+// `invoice.payment_failed` event flips an account from active to
+// past_due (spec §4.7, §17 dunning state machine, §171 "All transitions
+// emailed"). The 7-day grace clock starts at pastDueAt — telling the
+// customer the deadline here is the load-bearing piece; without this
+// email a customer first hears about the failure 7 days later when
+// their apps are already parked.
+//
+// The 7-day deadline is rendered as a UTC date so the customer doesn't
+// have to do timezone arithmetic against the timestamp we stamped.
+func PaymentFailedBody(email string, pastDueAt time.Time) (subject, body string) {
+	atStr := pastDueAt.UTC().Format("2006-01-02 15:04 UTC")
+	deadline := pastDueAt.UTC().Add(7 * 24 * time.Hour).Format("2006-01-02")
+	subject = "Your faas payment failed — action needed within 7 days"
+	body = fmt.Sprintf(`Hi,
+
+The most recent charge to your faas account (%s) failed at %s.
+
+Your apps are still serving and you can still query usage, but new
+deploys are blocked while the charge is unpaid. If we don't see a
+successful payment by %s (7 days from now), every running instance
+will be parked. If the payment still hasn't arrived 21 days from the
+original failure, your account will be scheduled for permanent
+deletion.
+
+To fix this:
+
+  1. Update your payment method in the dashboard, or
+  2. Run:    faas billing retry
+
+Once Stripe confirms the payment, meterd will resume your apps on the
+next quota tick (within 60 s) and send you a confirmation email.
+
+If this charge is unexpected, contact support@DOMAIN.
+
+— onebox faas
+`, email, atStr, deadline)
+	return
+}
+
+// AccountRestoredBody is the recovery email sent on Stripe
+// `invoice.payment_succeeded` after a past_due → active flip. Light
+// tone: it acknowledges the customer fixed the problem, tells them what
+// happened while they were gone (apps were parked at the 7-day mark),
+// and notes that the next quota tick resumes them. Distinct subject
+// from the suspended / deletion emails so the customer can tell what
+// happened at a glance.
+func AccountRestoredBody(email string, restoredAt time.Time) (subject, body string) {
+	atStr := restoredAt.UTC().Format("2006-01-02 15:04 UTC")
+	subject = "Your faas account is back in good standing"
+	body = fmt.Sprintf(`Hi,
+
+Stripe confirmed a successful payment for your faas account (%s) at %s.
+Your account is now active again.
+
+If your apps had been parked during the grace period (after 7 days of
+non-payment), meterd will resume them on the next quota tick — within
+60 seconds. New deploys are unblocked.
+
+If you don't see your apps come back within a minute, run:
+
+    faas status
+
+If that doesn't show them resuming, contact support@DOMAIN and we'll
+sort it out.
+
+— onebox faas
+`, email, atStr)
+	return
+}
+
+// QuotaWarningBody is the paid-tier overage notice (spec §4.7). Sent
+// at most once per UTC day via the LoadAndStampLastQuotaWarning dedupe
+// gate (migration 00013). Distinct subject from the dunning emails so
+// a customer over their quota but paying normally doesn't confuse the
+// two states.
+//
+// The used/quota figures are formatted to 2 dp — billing math is in
+// float only at this presentation seam (the wire-quantity path is
+// integer-arithmetic — pkg/meter/quota.go calls pkg/stripex which uses
+// pure int64). The email is the one place customers see the numbers,
+// and a one-decimal display is what customers expect.
+func QuotaWarningBody(email string, plan string, usedGB float64, quotaGB int, day time.Time) (subject, body string) {
+	dayStr := day.UTC().Format("2006-01-02")
+	subject = fmt.Sprintf("Your faas account is over its %s plan quota", plan)
+	body = fmt.Sprintf(`Hi,
+
+Your faas account (%s) crossed 100 %% of its %s plan quota on %s.
+You're now accruing overage at the rates listed in the dashboard.
+
+  Used:   %.2f GB-h
+  Quota:  %d GB-h
+
+Overage is billed on the next invoice via Stripe's metered subscription
+item. To stop the overage, either upgrade your plan or reduce the
+running instances on your account.
+
+This is the only quota warning you'll get today; the next one arrives
+tomorrow if usage is still over the quota.
+
+— onebox faas
+`, email, plan, dayStr, usedGB, quotaGB)
+	return
+}

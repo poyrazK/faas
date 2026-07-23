@@ -230,6 +230,23 @@ and open an issue if you want it.
   (`qty = mbSeconds * 1000 / 1024 / 3600`).
 - **Idempotent billing + meterd `/metrics` + `/healthz`** —
   PR #71 (`feat/m7-beta-hardening`).
+- **Customer-facing email coverage of billing transitions** — spec
+  §171 "All transitions emailed". The two missing entries on the
+  dunning state machine (`payment_failed → past_due` entry-point
+  email, `payment_succeeded → active` recovery email) plus the paid
+  overage `quota_warning` mail are now wired. apid's webhook handler
+  fires `pkg/mail.PaymentFailedBody` / `pkg/mail.AccountRestoredBody`
+  on the success branch of `MarkDunningStep` (Stripe redelivery is
+  naturally silent via `state.ErrNotFound`); meterd's quota loop
+  fires `pkg/mail.QuotaWarningBody` alongside `db.NotifyQuotaWarning`
+  on the first warning of each UTC day (dedupe gate at
+  `accounts.last_quota_warning_at`). All three new bodies are in
+  `pkg/mail/account.go` and pinned by `pkg/mail/account_test.go` +
+  `cmd/apid/handlers_ext_test.go` (4 webhook tests covering first
+  delivery + redelivery + already-active no-op) +
+  `pkg/meter/meter_test.go::TestPaidOverageDedupesPerDay` (mailer
+  count assertions across the day rollover + post-`ClearQuotaWarning`
+  re-tick).
 
 ### M8
 

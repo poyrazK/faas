@@ -910,3 +910,166 @@ func TestStripeWebhook_RejectsWrongSecret(t *testing.T) {
 		t.Fatalf("wrong-secret event: status = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// --- Stripe webhook email coverage (spec §171 "All transitions emailed") ---
+
+// stripeWebhookHarness wires the production server with a recordingMailer
+// so we can assert the customer-facing email surface. The webhook secret is
+// intentionally empty — same dev-mode disable the route has in production
+// when STRIPE_WEBHOOK_SECRET is unset.
+func stripeWebhookHarness(t *testing.T, plan api.Plan) (testEnv, *recordingMailer) {
+	t.Helper()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(context.Background(), "alice@example.com", plan)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := store.UpdateAccountStripeCustomerID(context.Background(), acct.ID, "cus_test_123"); err != nil {
+		t.Fatalf("UpdateAccountStripeCustomerID: %v", err)
+	}
+	mailer := &recordingMailer{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// Wire a real signing secret — main's A2 fail-closed behavior
+	// (handlers_ext.go) returns 503 on empty secret, so the harness
+	// must sign events to exercise the dunning state machine.
+	srv := newServerWithDeps(store, log, "example.com", noopNotifier{},
+		stripeWebhookSecretForTest, mailer,
+		stubGithubdClient{}, nil, nil, 0, "")
+	return testEnv{h: srv.handler(), store: store, acct: acct}, mailer
+}
+
+// stripeWebhookSecretForTest is the shared signing secret the
+// stripeWebhookHarness + postStripeEvent pair use. Constant so
+// handoffs are deterministic; main's TestStripeWebhook_AcceptsSigned
+// uses the same value.
+const stripeWebhookSecretForTest = "whsec_test_signing_secret"
+
+// postStripeEvent sends a signed Stripe event JSON to the webhook
+// route. Signature matches stripeWebhookSecretForTest so the route's
+// HMAC verification passes.
+func postStripeEvent(t *testing.T, h http.Handler, eventType, customer string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"type": eventType,
+		"data": map[string]any{
+			"object": map[string]any{"customer": customer},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/stripe", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Stripe-Signature", stripex.SignForTest(body, stripeWebhookSecretForTest, time.Now()))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestStripePaymentFailed_EmailsOnFirstDelivery is the spec §171 closure:
+// first delivery of invoice.payment_failed flips status → past_due AND
+// sends the PaymentFailedBody entry-point email. A regression that drops
+// the s.mailer.Send call (or moves it outside the success branch) would
+// leave the customer silent for 7 days.
+func TestStripePaymentFailed_EmailsOnFirstDelivery(t *testing.T) {
+	e, mailer := stripeWebhookHarness(t, api.PlanHobby)
+
+	rec := postStripeEvent(t, e.h, "invoice.payment_failed", "cus_test_123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+
+	// Status flipped.
+	got, err := e.store.AccountByID(context.Background(), e.acct.ID)
+	if err != nil {
+		t.Fatalf("AccountByID: %v", err)
+	}
+	if got.Status != state.AccountPastDue {
+		t.Fatalf("status = %s, want past_due", got.Status)
+	}
+
+	// Exactly one email went out, with PaymentFailedBody's subject.
+	msgs := mailer.snapshot()
+	if len(msgs) != 1 {
+		t.Fatalf("mailer.snapshot() = %d, want 1: %+v", len(msgs), msgs)
+	}
+	if !strings.Contains(msgs[0].Subject, "payment failed") {
+		t.Errorf("subject = %q, want it to mention payment failed", msgs[0].Subject)
+	}
+	if len(msgs[0].To) != 1 || msgs[0].To[0] != e.acct.Email {
+		t.Errorf("To = %v, want [%s]", msgs[0].To, e.acct.Email)
+	}
+	if !strings.Contains(msgs[0].TextBody, "7 days") {
+		t.Errorf("body missing 7-day window:\n%s", msgs[0].TextBody)
+	}
+}
+
+// TestStripePaymentFailed_RedeliveryNoEmail is the idempotency closure:
+// a Stripe redelivery on an already-past_due account must produce ZERO
+// additional emails. MarkDunningStep returns state.ErrNotFound on
+// redelivery, the handler logs it at Debug, and the success-branch
+// (which fires the mail) is skipped entirely.
+func TestStripePaymentFailed_RedeliveryNoEmail(t *testing.T) {
+	e, mailer := stripeWebhookHarness(t, api.PlanHobby)
+
+	// First delivery: flips to past_due, sends 1 email.
+	postStripeEvent(t, e.h, "invoice.payment_failed", "cus_test_123")
+	if n := len(mailer.snapshot()); n != 1 {
+		t.Fatalf("after first delivery: %d emails, want 1", n)
+	}
+
+	// Stripe redelivers the same event — status is already past_due so
+	// MarkDunningStep short-circuits.
+	rec := postStripeEvent(t, e.h, "invoice.payment_failed", "cus_test_123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("redelivery status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if n := len(mailer.snapshot()); n != 1 {
+		t.Errorf("after redelivery: %d emails, want 1 (zero additional)", n)
+	}
+}
+
+// TestStripePaymentSucceeded_RestoresAndEmails is the recovery closure:
+// invoice.payment_succeeded on a past_due account flips status → active
+// AND sends the AccountRestoredBody recovery email. No-op on an already-
+// active account (the acct.Status == AccountPastDue guard).
+func TestStripePaymentSucceeded_RestoresAndEmails(t *testing.T) {
+	e, mailer := stripeWebhookHarness(t, api.PlanHobby)
+
+	// Drive the account into past_due.
+	if err := e.store.UpdateAccountStatus(context.Background(), e.acct.ID, state.AccountPastDue); err != nil {
+		t.Fatalf("seed past_due: %v", err)
+	}
+
+	rec := postStripeEvent(t, e.h, "invoice.payment_succeeded", "cus_test_123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+
+	got, _ := e.store.AccountByID(context.Background(), e.acct.ID)
+	if got.Status != state.AccountActive {
+		t.Fatalf("status = %s, want active", got.Status)
+	}
+
+	msgs := mailer.snapshot()
+	if len(msgs) != 1 {
+		t.Fatalf("mailer.snapshot() = %d, want 1: %+v", len(msgs), msgs)
+	}
+	if !strings.Contains(msgs[0].Subject, "good standing") {
+		t.Errorf("subject = %q, want it to mention good standing", msgs[0].Subject)
+	}
+}
+
+// TestStripePaymentSucceeded_NoEmailOnAlreadyActive is the no-op closure:
+// payment_succeeded on an account that was never past_due must not email.
+// Without the acct.Status == AccountPastDue guard, every fresh signup
+// would receive a recovery email the first time Stripe confirmed their
+// card.
+func TestStripePaymentSucceeded_NoEmailOnAlreadyActive(t *testing.T) {
+	e, mailer := stripeWebhookHarness(t, api.PlanHobby)
+
+	rec := postStripeEvent(t, e.h, "invoice.payment_succeeded", "cus_test_123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if n := len(mailer.snapshot()); n != 0 {
+		t.Errorf("already-active payment_succeeded sent %d emails, want 0", n)
+	}
+}
