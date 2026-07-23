@@ -89,6 +89,25 @@ by the lateral-movement deny. It sits BEFORE the chain's default
 accept → un-listed destinations fall through to `policy accept`
 when no allowlist is set, OR to drop when one is set.
 
+### Live-instance drift
+
+Live running instances are **not** hot-patched when the operator
+changes `apps.egress_allowlist`. The new allowlist is rendered into
+the per-netns forward chain at Wake time only. An app whose live
+instances were booted with `egress_allowlist = []` continues to
+serve traffic under the historical `policy accept` for those
+instances even after a PATCH that pins a non-empty list; the new
+gate only takes effect on the next wake (cold-boot path) or the
+next restore. Matches the precedent set by `RAMMB`,
+`MaxConcurrency`, and `ConntrackCap` — all cold-wake-only knobs.
+
+This is deliberate. Hot-patching a running netns would require a
+`nft replace rule` against an in-flight chain; the operation is
+not idempotent across replays, races with the inbound DNAT, and
+opens a window where a packet is matched against a partially-
+replaced rule set. A future "live reconfigure" feature is a
+separate ADR (rejected below).
+
 ### Wire path
 
 The full chain matches the precedent of `pkg/fcvm.Manager.ConntrackCap`:

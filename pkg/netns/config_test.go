@@ -852,3 +852,77 @@ func TestAllowlistAndConnlimitCoexist(t *testing.T) {
 		t.Errorf("cap (rule %d) must come BEFORE allowlist (rule %d) so a denied flow never spuriously overrides the cap", capIdx, allowIdx)
 	}
 }
+
+// TestForwardChainPolicyHelper pins the policy-decision table. Empty
+// EgressAllowlist keeps the historical accept (no behaviour change
+// from before ADR-031); non-empty flips to drop so the allowlist
+// accept rule is the only egress path. The renderer for v4 and v6
+// both read this value, so changing one side of the chain implies
+// the other — no future asymmetric policy is reachable by editing
+// just one of the two `add chain` lines.
+func TestForwardChainPolicyHelper(t *testing.T) {
+	// Empty → accept.
+	if got := testConfig().forwardChainPolicy(); got != "accept" {
+		t.Errorf("empty allowlist: policy = %q, want accept", got)
+	}
+	// Single entry → drop.
+	one := testConfig()
+	one.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
+	if got := one.forwardChainPolicy(); got != "drop" {
+		t.Errorf("one-entry allowlist: policy = %q, want drop", got)
+	}
+	// An explicit nil-slice or zero-len slice is len == 0 and so
+	// returns "accept" — the documented "clear" wire message
+	// (pkg/state/app_egress_allowlist_test.go mirrors this) which
+	// rewinds to no-allowlist, current-behaviour. The helper is
+	// an LEN check; not a presence check. Pin the equivalence so
+	// a future migration to "is the field set?" semantics can't
+	// quietly disagree with the persistence layer.
+	empty := testConfig()
+	empty.EgressAllowlist = []netip.Prefix{}
+	if got := empty.forwardChainPolicy(); got != "accept" {
+		t.Errorf("explicit-empty (len 0): policy = %q, want accept (len check, presence is the caller's)", got)
+	}
+}
+
+// TestNftCommandsChainPolicySwitchesWithAllowlist pins the argv-shape
+// claim that unlisted destinations actually drop on a populated
+// allowlist (PR #159 review F1). Without this switch the chain
+// defaulted to `policy accept` and the accept rule on top of an
+// already-permissive default was a no-op on unlisted destinations —
+// the renderer fix in NftCommands (config.go:195 / :258) is what
+// actually delivers deny-by-default behaviour. Both chains (v4 + v6)
+// must switch in lock-step.
+func TestNftCommandsChainPolicySwitchesWithAllowlist(t *testing.T) {
+	// Empty case: BOTH chains use policy accept.
+	empty := flatten(testConfig().NftCommands())
+	if got := strings.Count(empty, "policy accept"); got != 2 {
+		t.Errorf("empty allowlist: expected 2 `policy accept` occurrences (v4 + v6), found %d:\n%s", got, empty)
+	}
+	if strings.Contains(empty, "policy drop") {
+		t.Errorf("empty allowlist: ruleset must NOT contain `policy drop`:\n%s", empty)
+	}
+
+	// Populated case: BOTH chains use policy drop, and exactly one
+	// allowlist accept rule is on the v4 chain (the v6 sibling is a
+	// separate ADR — no accept rule on ip6 yet).
+	pop := testConfig()
+	pop.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
+	ruleset := flatten(pop.NftCommands())
+	// Both chains `policy drop`: the literal appears in the chain-create argv.
+	if !strings.Contains(ruleset, "add chain ip faas forward") || !strings.Contains(ruleset, "policy drop ;") {
+		t.Errorf("populated allowlist: v4 chain must be `policy drop`:\n%s", ruleset)
+	}
+	if !strings.Contains(ruleset, "add chain ip6 faas forward") {
+		t.Errorf("populated allowlist: v6 chain-create argv missing:\n%s", ruleset)
+	}
+	// Two `policy drop` occurrences (v4 + v6 chain-create), zero
+	// `policy accept` (both chains flipped). Asserting the count
+	// catches a future regression that flips only one chain.
+	if got := strings.Count(ruleset, "policy drop"); got != 2 {
+		t.Errorf("populated allowlist: expected 2 `policy drop` (v4 + v6), found %d:\n%s", got, ruleset)
+	}
+	if got := strings.Count(ruleset, "policy accept"); got != 0 {
+		t.Errorf("populated allowlist: expected 0 `policy accept`, found %d:\n%s", got, ruleset)
+	}
+}

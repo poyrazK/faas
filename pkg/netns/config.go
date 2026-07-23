@@ -19,6 +19,11 @@ const (
 	AppPort        = 8080          // the :8080 contract (spec §2)
 	TenantBridge   = "br-tenants"  // root-ns bridge the veth host-side enslaves to
 	HostBridgeCIDR = "10.100.0.1/16"
+	// nft chain-policy words (ADR-031). Forwarded as the `policy`
+	// value in the per-netns forward-chain argv, so goconst demands
+	// the literals live in named constants.
+	nftPolicyAccept = "accept"
+	nftPolicyDrop   = "drop"
 )
 
 // Config is the per-instance network plan. All uniqueness (Netns name, veth
@@ -183,6 +188,16 @@ func (c Config) NftCommands() [][]string {
 	cmds := make([][]string, 0, 16)
 	add := func(argv ...string) { cmds = append(cmds, nft(argv...)) }
 	add("add", "table", "ip", "faas")
+	// Chain policy (ADR-031). Empty EgressAllowlist → keep the
+	// historical `policy accept` (every non-deny-listed destination
+	// reaches the public internet, same as today). Non-empty → flip
+	// to `policy drop` so the allowlist accept rule becomes the only
+	// egress path; the explicit deny rules (lateral movement + SMTP)
+	// still run BEFORE the accept rule so deny > allow on overlap.
+	// Forwarding the policy word through a helper keeps the v4 and
+	// v6 chains in lock-step — a future change to the policy
+	// decision lives in one place.
+	forwardPolicy := c.forwardChainPolicy()
 	// Counter object for the §7 conntrack cap rule (faas_cap). Must be
 	// declared before the rule that references it; nftables requires a
 	// named counter to be defined as a table-level object first, then
@@ -198,7 +213,7 @@ func (c Config) NftCommands() [][]string {
 	add("add", "chain", "ip", "faas", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
 	add("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade")
 	// Egress filter (§11): default-accept, deny from the guest side only.
-	add("add", "chain", "ip", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}")
+	add("add", "chain", "ip", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", forwardPolicy, ";", "}")
 	// Accept reply traffic first. The inbound DNAT'd request is published from
 	// the host identity (10.100.x.y ∈ 10.100.0.0/16), so the guest's reply
 	// leaves iifname tap0 with daddr in that range — which is ALSO inside the
@@ -245,7 +260,7 @@ func (c Config) NftCommands() [][]string {
 	if c.ConntrackCap > 0 {
 		add("add", "counter", "ip6", "faas", "faas_cap", "{}")
 	}
-	add("add", "chain", "ip6", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}")
+	add("add", "chain", "ip6", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", forwardPolicy, ";", "}")
 	// Accept reply traffic first (mirrors the v4 chain above) so a published
 	// request's IPv6 reply isn't dropped by the lateral-movement deny.
 	add("add", "rule", "ip6", "faas", "forward", "ct", "state", "established,related", "accept")
@@ -294,6 +309,32 @@ func (c Config) forwardConnlimitRule6(nft func(...string) []string) []string {
 	}
 	return nft("add", "rule", "ip6", "faas", "forward", "ct", "count", "over",
 		fmt.Sprintf("%d", c.ConntrackCap), "counter", "name", `"faas_cap"`, "drop")
+}
+
+// forwardChainPolicy returns the nft `policy` word for the per-netns
+// forward chain (shared between the v4 and v6 sibling chains so the
+// two stay in lock-step). Empty EgressAllowlist keeps the historical
+// `accept` default — every non-deny-listed destination reaches the
+// public internet, unchanged from before ADR-031. Non-empty flips
+// to `drop`: the allowlist accept rule becomes the only egress path,
+// the explicit deny rules (lateral movement + SMTP) still run BEFORE
+// the accept rule (deny > allow on overlap), and unlisted
+// destinations fall through to the chain policy and are dropped.
+//
+// Why not keep `policy accept` always and append a terminal
+// `iifname "tap0" drop`? Two reasons: (1) the operator's intent —
+// "I pinned an allowlist" — is expressed most clearly by an actual
+// change of policy, not by a *new* drop rule that's easy to miss in
+// argv sub-list reasoning; (2) the chain-policy word is the same
+// concept across both v4 and v6 chains and stays in one helper
+// instead of being duplicated in two argv builders.
+//
+// Internal to NftCommands — do not invoke from anywhere else.
+func (c Config) forwardChainPolicy() string {
+	if len(c.EgressAllowlist) == 0 {
+		return nftPolicyAccept
+	}
+	return nftPolicyDrop
 }
 
 // forwardAllowlistRule (ADR-031) emits the per-app outbound IP

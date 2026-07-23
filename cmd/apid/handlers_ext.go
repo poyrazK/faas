@@ -48,10 +48,10 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 // the second tier-locked knob. Same gate shape — only Pro/Scale may
 // patch it (403 plan_egress_allowlist_not_allowed). Distinct
 // failure modes warrant distinct codes so the CLI can branch:
-//   * 403 plan_egress_allowlist_not_allowed  → Free/Hobby PATCH
-//   * 400 egress_allowlist_too_long          → Pro/Scale but > cap
-//   * 400 invalid_egress_allowlist           → a CIDR didn't parse,
-//                                              or v6 (v1 is v4 only)
+//   - 403 plan_egress_allowlist_not_allowed  → Free/Hobby PATCH
+//   - 400 egress_allowlist_too_long          → Pro/Scale but > cap
+//   - 400 invalid_egress_allowlist           → a CIDR didn't parse,
+//     or v6 (v1 is v4 only)
 //
 // The plan gate runs first (403 supersedes 400) so a Free account
 // PATCHing a 64-entry list sees the plan error, not the size error.
@@ -155,13 +155,13 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		allowPrefixes = &out
 	}
 	updated, err := s.store.UpdateApp(ctx(r), app.ID, state.UpdateAppParams{
-		RAMMB:             req.RAMMB,
-		IdleTimeoutS:      req.IdleTimeoutS,
-		SetIdleTimeout:    req.IdleTimeoutS != nil,
-		MaxConcurrency:    req.MaxConcurrency,
-		MinInstances:      req.MinInstances,
-		SetMinInstances:   req.MinInstances != nil,
-		EgressAllowlist:   allowPrefixes,
+		RAMMB:              req.RAMMB,
+		IdleTimeoutS:       req.IdleTimeoutS,
+		SetIdleTimeout:     req.IdleTimeoutS != nil,
+		MaxConcurrency:     req.MaxConcurrency,
+		MinInstances:       req.MinInstances,
+		SetMinInstances:    req.MinInstances != nil,
+		EgressAllowlist:    allowPrefixes,
 		SetEgressAllowlist: req.EgressAllowlist != nil,
 	})
 	if err != nil {

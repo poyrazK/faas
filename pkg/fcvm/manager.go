@@ -271,6 +271,19 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	if err != nil {
 		return nil, fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err)
 	}
+	// Any failure from this point — wire-side allowlist validation
+	// included — must fully clean up. Registering the cleanup BEFORE
+	// the validation loop is load-bearing: the lease is acquired, so
+	// fail-closed early-return paths otherwise leak the slot. The
+	// validator (cidr parse + v4/non-/0 checks) sits AFTER the defer
+	// on purpose; see ADR-031 + PR #159 review F3.
+	defer func() {
+		if err != nil {
+			m.cleanup(context.WithoutCancel(ctx), lease, netns.NewConfig(
+				lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP,
+			))
+		}
+	}()
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 	nc.EgressMbit = req.EgressMbit
 	// Spec §7 conntrack cap (ADR-018 deferral). Platform-wide constant;
@@ -285,24 +298,28 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// input and the apps.egress_allowlist cidr[] CHECK rejected any v6,
 	// so a parse failure at this layer means the wire contract is
 	// violated — fail fast rather than silently emit a half-formed
-	// ruleset (a single bad CIDR would otherwise crash nft).
+	// ruleset (a single bad CIDR would otherwise crash nft). Defence
+	// in depth: wire-side v6 reject here too, so a wire-bypass (e.g.
+	// a vmmd that forgets to re-validate) cannot smuggle a v6 prefix
+	// into the per-netns `ip faas forward` chain (nft rejects v6 in
+	// an `ip`-family chain with a parse error and aborts the whole
+	// add-rule sequence, so the instance would fail to wake closed).
+	// Bits()==0 mirrors the apid gate so a wire-bypass cannot land a
+	// /0 either. On reject the named-return `err` triggers the
+	// cleanup defer registered above (release the slot).
 	if len(req.EgressAllowlist) > 0 {
 		nc.EgressAllowlist = make([]netip.Prefix, 0, len(req.EgressAllowlist))
 		for _, c := range req.EgressAllowlist {
-			prefix, err := netip.ParsePrefix(c)
-			if err != nil {
-				return nil, fmt.Errorf("wake %s: egress allowlist: invalid CIDR %q: %w", req.Instance, c, err)
+			prefix, perr := netip.ParsePrefix(c)
+			if perr != nil {
+				return nil, fmt.Errorf("wake %s: egress allowlist: invalid CIDR %q: %w", req.Instance, c, perr)
+			}
+			if !prefix.Addr().Is4() || prefix.Bits() == 0 {
+				return nil, fmt.Errorf("wake %s: egress allowlist: rejected %q (v4 only, non-/0; ADR-031 v1)", req.Instance, c)
 			}
 			nc.EgressAllowlist = append(nc.EgressAllowlist, prefix)
 		}
 	}
-
-	// Any failure past this point must fully clean up.
-	defer func() {
-		if err != nil {
-			m.cleanup(context.WithoutCancel(ctx), lease, nc)
-		}
-	}()
 
 	if err = m.setupNetwork(ctx, nc); err != nil {
 		return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
