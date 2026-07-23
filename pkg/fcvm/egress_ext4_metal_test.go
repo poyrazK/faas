@@ -35,12 +35,19 @@
 //      — verified against the manager_metal_test.go:292-295 pattern.
 //
 // Skip semantics:
-//   - If FAAS_TEST_EGRESS_URL is empty (default), the public probe
-//     is skipped (so a hermetic dev loop with no public connectivity
-//     still exercises the SMTP-drop + route assertions, both of
-//     which only need host egress).
-//   - Default URL points at the GitHub raw IP (no DNS, no TLS), so
-//     the guest doesn't need a CA bundle or resolv.conf.
+//   - The guest probe script reads $FAAS_TEST_EGRESS_URL at runtime;
+//     the URL must be present in the test process's environment before
+//     the guest rootfs is built (the fixture uses the host env at
+//     fixture-build time, not at assertion time). The host test then
+//     reads `/var/www/result/public` and `/var/www/result/public-exit`
+//     via httpd.
+//   - When FAAS_TEST_EGRESS_URL is unset (the default), the public
+//     probe is skipped — so a hermetic dev loop with no public
+//     connectivity still exercises the SMTP-drop + route assertions,
+//     both of which only need host egress. To exercise the public
+//     probe on a runner with internet, set it to a stable plain-text
+//     HTTP URL (no TLS — the guest has no CA bundle; an IP literal is
+//     also fine to skip DNS).
 //
 // This file is the test FIXTURE (the guest rootfs builder); the test
 // itself is in pkg/fcvm/manager_metal_test.go (egress_metal_test.go
@@ -71,13 +78,16 @@ const egressFixtureName = "egress-guest.ext4"
 // respawns this line verbatim. We use sh -c so the three probes run
 // sequentially with their results captured via stdin/stdout files.
 //
-// IMPORTANT: this assumes busybox sh is on PATH (it is; the
-// existing busybox_ext4_metal_test.go:151-160 symlinks /bin/sh ->
-// /bin/busybox). The `set +e` is load-bearing — busybox sh would
-// otherwise abort on the first failing probe and never write the
-// remaining result files. After each probe we write the result (NOT
-// the exit code as the body) so a failing wget still produces a body
-// for the host to read.
+// IMPORTANT: this assumes a busybox build with both `sh` and `ip`
+// applets compiled in. Debian/Ubuntu's `busybox-static` (full) ships
+// with `ip`; `busybox-static-minimal` and Alpine slim builds may NOT
+// compile `ip` in. If the guest's busybox lacks `ip`, probe 1 writes
+// the literal "no-ip" body, and the test's `t.Fatalf` on that body
+// points the operator at the missing applet. The `set +e` is
+// load-bearing — busybox sh would otherwise abort on the first
+// failing probe and never write the remaining result files. After
+// each probe we write the result (NOT the exit code as the body) so
+// a failing wget still produces a body for the host to read.
 //
 // The trailing `exec busybox httpd -f -p 8080 -h /var/www` shifts
 // the guest's lifespan: it serves until killed. The host test fetches
@@ -156,7 +166,10 @@ func ensureEgressGuestExt4(t *testing.T, dir string) string {
 	}
 
 	// /etc/inittab routes through busybox's init → /bin/sh → script.
-	inittab := "::respawn:/bin/sh /etc/egress-probe.sh\n"
+	// `::once:` rather than `::respawn:` because the script ends in
+	// `exec busybox httpd -f` — it never exits, so respawn is dead
+	// config and `once` reads truthfully.
+	inittab := "::once:/bin/sh /etc/egress-probe.sh\n"
 	if err := os.WriteFile(filepath.Join(work, "etc/inittab"), []byte(inittab), 0o644); err != nil {
 		t.Fatalf("inittab: %v", err)
 	}

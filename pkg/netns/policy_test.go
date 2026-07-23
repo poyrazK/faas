@@ -2,6 +2,10 @@ package netns
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -328,9 +332,18 @@ func TestHostPolicyMasqueradeChainIsAppended(t *testing.T) {
 	// Defense-in-depth: must NOT be a bare `oifname "..." masquerade`
 	// without `ip saddr`. A missing source CIDR would masquerade every
 	// outbound packet (including vmmd's own) to the tenant bridge
-	// range — a security regression.
-	if strings.Contains(post, "masquerade\n") && !strings.Contains(post, "ip saddr ") {
-		t.Errorf("postrouting chain must SOURCE-SCOPE the MASQUERADE via `ip saddr`; chain:\n%s", post)
+	// range — a security regression. Scanned per-line so a future
+	// `log prefix "..."` or trailing comment on the masquerade line
+	// cannot fool a literal-substring check.
+	var bareMasquerade []string
+	for _, ln := range strings.Split(post, "\n") {
+		if strings.Contains(ln, "masquerade") && !strings.Contains(ln, "ip saddr ") {
+			bareMasquerade = append(bareMasquerade, ln)
+		}
+	}
+	if len(bareMasquerade) > 0 {
+		t.Errorf("postrouting chain must SOURCE-SCOPE the MASQUERADE via `ip saddr`; bare lines: %q\nchain:\n%s",
+			bareMasquerade, post)
 	}
 }
 
@@ -359,11 +372,14 @@ func TestHostPolicyPostroutingIsLastChain(t *testing.T) {
 	// Also: no chain header after `chain postrouting {`. Scans for any
 	// additional `chain <name> {` to catch a future regression where
 	// someone adds `chain postnat-flush {` or similar after it.
+	// Regex over `\n\s*chain\s+<name>\s*\{` so we survive a future
+	// indentation tweak (e.g. formatter walks the ruleset).
 	postIdx := strings.Index(out, "chain postrouting {")
 	rest := out[postIdx:]
-	if next := strings.Index(rest, "\n  chain "); next >= 0 {
+	chainHeaderRe := regexp.MustCompile(`\n\s*chain\s+\S+\s*\{`)
+	if loc := chainHeaderRe.FindStringIndex(rest); loc != nil {
 		t.Errorf("chain `postrouting` must be the LAST chain; found another chain header at offset %d after it:\n%s",
-			postIdx+next, out)
+			postIdx+loc[0], out)
 	}
 }
 
@@ -411,5 +427,42 @@ func TestHostPolicyMasqueradeSubstitutesCIDRAndIface(t *testing.T) {
 	}
 	if strings.Contains(out, "10.100.0.0/16") || strings.Contains(out, `oifname "eth0"`) {
 		t.Errorf("rendered output retained the production defaults when test varied them:\n%s", out)
+	}
+}
+
+// TestHostPolicyRenderNftSyntaxCheck is the local equivalent of the
+// ansible role's `nft -c -f /etc/nftables.conf` step. CI gates this via
+// `make egress-check` (regenerates + byte-compares the artifact), but on
+// macOS devs without a Linux CI loop, having nft locally
+// (`brew install nftables`) gets the same nft(8)-side syntax gate as CI.
+//
+// Why this matters: the regex/substring checks above assert that the
+// render LOOKS right. `nft -c -f` asserts that nft(8) ACCEPTS it — a
+// different class of bug (typo in a keyword, missing semicolon, wrong
+// hook) only nft itself can catch. Skipping silently when nft isn't on
+// PATH keeps the test non-fatal on dev hosts that don't have it.
+//
+// Note: `nft -c -f` parses WITHOUT touching the live kernel's
+// ruleset, so this is safe to run on any host that has nft available.
+// On a host with a running firewall, the ruleset's `flush ruleset`
+// directive is NOT executed because `-c` skips the apply phase.
+func TestHostPolicyRenderNftSyntaxCheck(t *testing.T) {
+	nft, err := exec.LookPath("nft")
+	if err != nil {
+		t.Skipf("nft not on PATH; skipping syntax check (install via `apt install nftables` or `brew install nftables` to enable locally): %v", err)
+	}
+	out := DefaultHostPolicy.Render()
+
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "nftables.conf")
+	if err := os.WriteFile(conf, []byte(out), 0o644); err != nil {
+		t.Fatalf("write rendered ruleset to %s: %v", conf, err)
+	}
+
+	cmd := exec.Command(nft, "-c", "-f", conf)
+	stderr := &strings.Builder{}
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("nft -c -f rejected the rendered ruleset (raw `nft` error below); ruleset:\n%s\n--- nft stderr ---\n%s", out, stderr.String())
 	}
 }

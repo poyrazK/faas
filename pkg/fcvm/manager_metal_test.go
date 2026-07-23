@@ -766,18 +766,25 @@ func TestMetalGuestEgressToPublicViaMASQUERADE(t *testing.T) {
 
 	// Probe 2: public HTTP egress via the bridged-tenant path. Skipped
 	// when FAAS_TEST_EGRESS_URL is unset so hermetic dev (Lima/airgapped)
-	// still runs the route + SMTP probes.
+	// still runs the route + SMTP probes. A sensible URL (stable, plain-
+	// text HTTP, no TLS, no DNS) is the operator's responsibility — see
+	// the PR description for one such URL. The load-bearing assertion is
+	// `wget rc=0`: a full TCP handshake + headers + body round-trip
+	// through the bridged-tenant + host MASQUERADE + ip_forward path.
+	// Body presence is a sanity check; we do NOT pin a literal `HTTP/`
+	// prefix because busybox httpd's response line has that, but a real
+	// public server's HTML response does not.
 	if egressURL := os.Getenv("FAAS_TEST_EGRESS_URL"); egressURL != "" {
-		public := fetchEgressResult(t, hostIP, "result/public")
-		if !strings.HasPrefix(public, "HTTP/") {
-			t.Errorf("public egress body does not look like an HTTP response; first line: %q", strings.SplitN(public, "\n", 2)[0])
-		}
 		publicExit := fetchEgressResult(t, hostIP, "result/public-exit")
 		if !strings.Contains(publicExit, "rc=0") {
 			t.Errorf("wget exited non-zero (%q) — host MASQUERADE or ip_forward likely regressed", publicExit)
 		}
+		public := fetchEgressResult(t, hostIP, "result/public")
+		if strings.TrimSpace(public) == "" {
+			t.Errorf("public egress body is empty; fetch produced no body")
+		}
 	} else {
-		t.Logf("FAAS_TEST_EGRESS_URL unset — skipping public egress probe (runbook smoke only). Set to e.g. http://140.82.121.3/raw/poyrazK/faas/main/README.md for full coverage.")
+		t.Logf("FAAS_TEST_EGRESS_URL unset — skipping public egress probe (runbook smoke only). Set to a stable plain-text HTTP URL for full coverage.")
 	}
 
 	// Probe 3: SMTP egress must be dropped. The §11 denylist is enforced

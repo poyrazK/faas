@@ -132,7 +132,7 @@ var DefaultHostPolicy = HostPolicy{
 // for vmmd's own outbound).
 //
 // Order matters in `forward`: the §11 denylist MUST come BEFORE the
-// `iif BridgeName oifname PublicIface accept` allow, otherwise bridged
+// `iifname BridgeName oifname PublicIface accept` allow, otherwise bridged
 // tenant traffic matches the broad allow on its first rule and never
 // reaches the SMTP / RFC1918 / IPv6 drops (nftables is first-match).
 // The per-netns chain (`pkg/netns/config.go::NftCommands`) is the primary
@@ -145,11 +145,13 @@ var DefaultHostPolicy = HostPolicy{
 // v6 deny — see ADR-023.
 func (h HostPolicy) Render() string {
 	if h.BridgeName == "" || h.PublicIface == "" || h.MasqueradeCIDR == "" {
-		// Hard fail rather than render a broken ruleset — a forward chain
-		// without iif/oif or an input chain with no allowlist would silently
-		// drop everything, and a postrouting nat chain with no source CIDR
-		// would MASQUERADE every outbound packet (including vmmd's own) to
-		// the tenant bridge range, which would be a security regression.
+		// Hard fail rather than render a broken ruleset. Concretely, an
+		// empty MasqueradeCIDR would emit `ip saddr  oifname "eth0"
+		// masquerade` — invalid nft(8) syntax (`saddr` requires an
+		// argument) that `nft -f` rejects outright. The ruleset would
+		// never load; we'd ship a box that fails open at the egress
+		// layer. The forward/input empty-field paths silently drop
+		// everything once loaded — equally broken, also panic-worthy.
 		panic("netns: HostPolicy.Render: BridgeName, PublicIface, and MasqueradeCIDR are required")
 	}
 
