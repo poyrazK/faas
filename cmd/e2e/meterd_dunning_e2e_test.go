@@ -277,7 +277,7 @@ func TestE2E_FreeTierHardDelete_FlowsThroughGrace(t *testing.T) {
 	// grace tick sees the row as overdue. WHERE on id — the test
 	// owns one account end-to-end, so the bare id is unambiguous
 	// without an email tiebreaker.
-	acctID := accountIDForPlanLabel(t, h.Pool, api.PlanFree, "hard-delete-flow")
+	acctID := accountIDByEmail(t, h.Pool, "e2e+"+string(api.PlanFree)+"+hard-delete-flow@test.example")
 	if _, err := pool.Exec(ctx,
 		`update accounts set deletion_requested_at = now() - interval '31 days' where id = $1`,
 		acctID); err != nil {
@@ -324,12 +324,11 @@ func TestE2E_FreeTierHardDelete_FlowsThroughGrace(t *testing.T) {
 	}
 }
 
-// accountIDForEmail resolves an account id from a unique email. Each
+// accountIDByEmail resolves an account id from a unique email. Each
 // subtest gets its own pgtest schema, so the WHERE is unambiguous
 // without needing a timestamp tiebreaker.
-func accountIDForPlanLabel(t *testing.T, pool *pgxpool.Pool, plan api.Plan, label string) string {
+func accountIDByEmail(t *testing.T, pool *pgxpool.Pool, email string) string {
 	t.Helper()
-	email := "e2e+" + string(plan) + "+" + label + "@test.example"
 	var id string
 	if err := pool.QueryRow(context.Background(),
 		`select id from accounts where email = $1`, email).Scan(&id); err != nil {

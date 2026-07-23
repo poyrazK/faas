@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -91,7 +92,14 @@ func TestFaasCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
-			<-r.Context().Done()
+			// Bound the block on client disconnect — if cmdDeployTarball
+			// ever returns without closing the SSE stream, this handler
+			// would otherwise leak a goroutine for the httptest server's
+			// lifetime. 2s gives the real CLI plenty of slack.
+			select {
+			case <-r.Context().Done():
+			case <-time.After(2 * time.Second):
+			}
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

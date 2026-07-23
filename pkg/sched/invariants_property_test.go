@@ -202,10 +202,11 @@ func TestProperty_EngineWake_DropsLockAroundBootRPC(t *testing.T) {
 		_, appBErr = e.Wake(context.Background(), appB.ID)
 	}()
 
-	// Give app B a moment to enter Phase 2 admission (not blocked on
-	// bootRelease). Then release app A's boot. If app B is proceeding
-	// in parallel, both cold boots succeed and wall time < 5*delay.
-	time.Sleep(5 * time.Millisecond) // let app B race through Phase 2
+	// Release app A's boot WITHOUT a fixed sleep on app B — close(bootRelease)
+	// releases both boots simultaneously (the channel is unbuffered, so both
+	// receivers fire at the same instant). A CI-loaded host where app B
+	// hasn't reached its bootRPC yet by the 5ms mark would flap the test;
+	// simultaneous release makes the assertion independent of scheduling.
 	close(bootRelease)
 
 	// Wait for both goroutines to finish. Bound to a generous deadline.
