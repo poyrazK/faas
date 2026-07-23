@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // recordingService (intentionally omitted — slice 7 uses the
@@ -50,7 +51,11 @@ func newRecording(t *testing.T) *Service {
 // integration tests, not here.
 func newServerUnderTest(t *testing.T, svc *Service) *Server {
 	t.Helper()
-	return &Server{Service: svc, Log: svc.Log}
+	return &Server{
+		Service: svc,
+		Log:     svc.Log,
+		Ops:     wire.NewOpsMetrics("githubd_test"),
+	}
 }
 
 func TestServerWebhook_HappyPath(t *testing.T) {
@@ -145,4 +150,99 @@ func TestServerWebhook_IgnoredResponseShape(t *testing.T) {
 		}
 	}
 	_ = strings.HasPrefix // keep imports stable for downstream slices
+}
+
+// scrape returns the /metrics body served by s.Ops (the per-test
+// registry, prefix "githubd_test"). Mirrors the scrapeMetrics helper in
+// pkg/builderd/builderd_test.go.
+func scrape(t *testing.T, s *Server) string {
+	t.Helper()
+	srv := httptest.NewServer(s.WebhookLoopbackHandler())
+	t.Cleanup(srv.Close)
+	resp, err := http.Get(srv.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("get metrics: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return string(body)
+}
+
+// The inbound webhook observer is the highest-signal missing metric
+// for githubd: a spike in 401s is a misconfigured proxy or a forged
+// payload, and a spike in 405s is someone scanning the loopback endpoint.
+// Drive one reject of each kind and assert the counter labelled correctly.
+func TestWebhookPush_Metrics(t *testing.T) {
+	svc := newRecording(t)
+	s := newServerUnderTest(t, svc)
+
+	// 401: signed path with no secret configured (slice 7's
+	// webhookSecretFromHeader returns nil → daemon-side verify
+	// always rejects, defense in depth).
+	body := []byte(`{"ref":"refs/heads/main","after":"abc","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.WebhookLoopbackHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("first status = %d, want 401", rr.Code)
+	}
+
+	// 405: wrong method.
+	req = httptest.NewRequest(http.MethodGet, "/webhooks/github", nil)
+	rr = httptest.NewRecorder()
+	s.WebhookLoopbackHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("second status = %d, want 405", rr.Code)
+	}
+
+	got := scrape(t, s)
+	// The githubd_test prefix (used by newServerUnderTest) means the
+	// emitted series carries githubd_test_ops_total{...}. The webhook
+	// observer fires twice (401, then 405); Prometheus only writes the
+	// cumulative total, so the assertion is the post-firing value (2) and
+	// the matching histogram count for the same 2 observations. We don't
+	// assert on the `code="ok"` counter line because CounterVec has no
+	// pre-instantiation loop — it's only emitted once observed.
+	want := []string{
+		`githubd_test_ops_total{code="err",op="webhook_push"} 2`,
+		`githubd_test_op_duration_seconds_count{op="webhook_push"} 2`,
+	}
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("metrics body missing %q:\n%s", w, got)
+		}
+	}
+}
+
+// The /metrics endpoint lives on the same loopback mux as
+// POST /webhooks/github. Locked in here so a future cleanup that
+// strips it out can't quietly delete the scrape endpoint.
+func TestWebhook_MetricsEndpointMounted(t *testing.T) {
+	svc := newRecording(t)
+	s := newServerUnderTest(t, svc)
+
+	srv := httptest.NewServer(s.WebhookLoopbackHandler())
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("get metrics: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("/metrics status = %d, want 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	got := string(body)
+	// /metrics must expose the daemon's series, not a stranger's.
+	if !strings.Contains(got, "githubd_test_") {
+		t.Errorf("/metrics body has no githubd_test_ series:\n%s", got)
+	}
 }
