@@ -6,11 +6,19 @@ rules:
   oas3-valid-media-example: error
   no-eval-in-markdown: error
 
-  # Description prose — warn on day 1, promote to error after polishing.
+  # Description prose — promoted to error after the 47 mechanical
+  # additions in PR (TBD): 31 schemas, 9 requestBodies, 6 inline
+  # parameters. Each description is a 1-line phrase sourced from the
+  # matching Go struct doc-comment. operation-description stays at
+  # warn — the operation's `summary:` field is sufficient context for
+  # OpenAPI consumers and the existing 10 ops have one already.
   operation-description: warn
   tag-description: warn
   info-contact: warn
   info-license: warn
+  component-description: error
+  description-duplication: error
+  oas3-parameter-description: error
 
   # Disable single-box cloud-irrelevant rules.
   oas3-api-servers: off
