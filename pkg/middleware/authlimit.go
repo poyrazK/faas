@@ -262,6 +262,26 @@ func (l *authLimiter) isLimited(ip string, now time.Time) bool {
 // defaultClientIP returns the IP portion of r.RemoteAddr, falling back
 // to the literal string when no host:port split is possible (unix
 // sockets, tests).
+//
+// Issue #89: apid binds loopback-only (spec §11), so when requests
+// reach apid via the gatewayd → apid loopback hop, r.RemoteAddr is
+// 127.0.0.1:<ephemeral> for every customer and the per-IP bucket
+// collapses to one. gatewayd pins X-Forwarded-For to the real client
+// IP on every /v1/* forward (cmd/gatewayd/proxy.go::proxyToApid). We
+// trust the header only when:
+//
+//   - r.RemoteAddr is loopback (127.0.0.0/8 or ::1) — the connection
+//     came from this host, so the only way X-Forwarded-For is set
+//     is by a trusted local proxy (gatewayd). A customer on the
+//     public internet cannot reach a loopback hop directly.
+//   - the header carries exactly one IP — gatewayd always sets one
+//     value; a chain ("a, b") means an upstream proxy is already in
+//     the path and we cannot trust any link in it.
+//
+// In every other case (no header, multi-hop chain, non-loopback hop,
+// malformed value) we fall back to r.RemoteAddr's host, which is the
+// safe default — the bucket may over-merge, but a customer can never
+// reach a position where they can spoof the header to bypass it.
 func defaultClientIP(r *http.Request) string {
 	if r.RemoteAddr == "" {
 		return "unknown"
@@ -271,5 +291,28 @@ func defaultClientIP(r *http.Request) string {
 		// RemoteAddr may already be a bare IP (rare); accept it.
 		return strings.TrimSpace(r.RemoteAddr)
 	}
+	if isLoopbackHost(host) {
+		// Loopback hop — try to recover the real client IP from
+		// gatewayd's pin. Only trust the header when it carries
+		// exactly one value (see function comment).
+		if v := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); v != "" &&
+			!strings.Contains(v, ",") {
+			if ip := strings.TrimSpace(v); ip != "" && !isLoopbackHost(ip) &&
+				net.ParseIP(ip) != nil {
+				return ip
+			}
+		}
+	}
 	return host
+}
+
+// isLoopbackHost reports whether s is an IPv4 127.0.0.0/8 address or
+// IPv6 ::1. Returns false on unparseable input (untrusted callers
+// default to the RemoteAddr fallback above).
+func isLoopbackHost(s string) bool {
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback()
 }
