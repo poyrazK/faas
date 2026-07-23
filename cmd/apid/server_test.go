@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type testEnv struct {
@@ -21,6 +22,7 @@ type testEnv struct {
 	store *state.MemStore
 	key   string
 	acct  state.Account
+	ops   *wire.OpsMetrics
 }
 
 func setup(t *testing.T, plan api.Plan) testEnv {
@@ -34,8 +36,9 @@ func setup(t *testing.T, plan api.Plan) testEnv {
 	if _, err := store.CreateAPIKey(context.Background(), acct.ID, hash, "test"); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "example.com", noopNotifier{})
-	return testEnv{h: srv.handler(), store: store, key: pt, acct: acct}
+	ops := wire.NewOpsMetrics("apid_test")
+	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "example.com", noopNotifier{}).WithOpsMetrics(ops)
+	return testEnv{h: srv.handler(), store: store, key: pt, acct: acct, ops: ops}
 }
 
 func (e testEnv) do(t *testing.T, method, path string, body any, hdrs map[string]string) *httptest.ResponseRecorder {
@@ -318,5 +321,81 @@ func TestHealthz(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `"status":"ok"`) {
 		t.Errorf("body = %q, want status:ok", body)
+	}
+}
+
+// observeWrap is the outermost middleware on every route; assert
+// it tags successes as code="ok" and 4xx as code="err", and uses
+// the route template (not the URL) for the op label so cardinality
+// stays bounded.
+func TestObserveWrap_OKAndErrRoutes(t *testing.T) {
+	e := setup(t, api.PlanPro)
+
+	// 200 path: GET /v1/account.
+	rec := e.do(t, "GET", "/v1/account", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/v1/account status = %d, want 200", rec.Code)
+	}
+
+	// 4xx path: POST /v1/apps with a duplicate slug.
+	if dup := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dup"}, nil); dup.Code != 201 {
+		t.Fatalf("seed create status = %d, want 201", dup.Code)
+	}
+	rec = e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "dup"}, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("dup status = %d, want 409", rec.Code)
+	}
+
+	srv := httptest.NewServer(e.ops.Handler())
+	t.Cleanup(srv.Close)
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get /metrics: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	bodyB, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	body := string(bodyB)
+
+	// r.Pattern for Go 1.22 mux uses the registered pattern; we
+	// assert the labels that show up regardless of which concrete
+	// routes are observed. route templates — the observeWrap uses
+	// r.Pattern (e.g. "GET /v1/account", "POST /v1/apps").
+	want := []string{
+		`apid_test_ops_total{code="ok",op="GET /v1/account"} 1`,
+		`apid_test_ops_total{code="err",op="POST /v1/apps"} 1`,
+		`apid_test_op_duration_seconds_count{op="GET /v1/account"} 1`,
+		`apid_test_op_duration_seconds_count{op="POST /v1/apps"} 2`,
+	}
+	for _, w := range want {
+		if !strings.Contains(body, w) {
+			t.Errorf("metrics body missing %q:\n%s", w, body)
+		}
+	}
+}
+
+// Auth-failure path (401) must also be observed by the wrap: the §12
+// dashboard needs a rejected-traffic panel separate from a
+// server-err panel so a misconfigured customer key spikes correctly.
+func TestObserveWrap_AuthFailure(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	req := httptest.NewRequest("GET", "/v1/account", nil)
+	req.Header.Set("Authorization", "Bearer fp_live_deadbeef")
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("bad key status = %d, want 401", rec.Code)
+	}
+
+	srv := httptest.NewServer(e.ops.Handler())
+	t.Cleanup(srv.Close)
+	resp, _ := http.Get(srv.URL)
+	defer func() { _ = resp.Body.Close() }()
+	bodyB, _ := io.ReadAll(resp.Body)
+	body := string(bodyB)
+	if !strings.Contains(body, `apid_test_ops_total{code="err",op="GET /v1/account"} 1`) {
+		t.Errorf("metrics body missing 401-counted series:\n%s", body)
 	}
 }

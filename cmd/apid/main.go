@@ -69,6 +69,12 @@ func envOr(key, fallback string) string {
 // free port without colliding with a dev daemon on 8081.
 var listenAddr = envOr("FAAS_APID_LISTEN", "127.0.0.1:8081")
 
+// metricsAddr is the bind address for the apid /metrics listener
+// (separate from the main listener so a port collision can't take the
+// daemon down). Empty = disabled (unit tests, low-surface prod).
+// Mirrors cmd/builderd/main.go's MetricsAddr pattern (PR #124).
+var metricsAddr = envOr("FAAS_APID_METRICS_ADDR", "")
+
 // runDeps is the DI seam for run — same pattern as vmmd / gatewayd so we can
 // exercise the listener lifecycle without binding :8081 from tests.
 type runDeps struct {
@@ -271,6 +277,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// tiny operator surface that exists today.
 	srv.WithAdminAllowlist(deps.getenv("FAAS_ADMIN_EMAILS"))
 
+	// Prometheus registry + ops observer middleware (this PR).
+	// Built unconditionally so /metrics works even with FAAS_APID_METRICS_ADDR
+	// unset (the daemon stays up; only the listener is skipped below).
+	ops := wire.NewOpsMetrics("apid")
+	srv.WithOpsMetrics(ops)
+
 	// Status page (spec §12 public surface). The Prometheus URL is
 	// the local box's Prometheus installed by deploy/ansible/roles/
 	// prometheus (default :9090 on the bridge). The HTML path defaults
@@ -313,6 +325,32 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+
+	// Optional /metrics listener (this PR). Sits on its own bind
+	// address so a port collision can't take the daemon down. Empty
+	// FAAS_APID_METRICS_ADDR = no listener (the scrape observer is
+	// still wired into the main mux via observeWrap; only the
+	// listener is skipped). Mirrors cmd/builderd/main.go:146-157.
+	var metricsSrv *http.Server
+	if metricsAddr != "" {
+		metricsSrv = &http.Server{
+			Addr:              metricsAddr,
+			Handler:           ops.Handler(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		mLis, err := net.Listen("tcp", metricsAddr)
+		if err != nil {
+			_ = l.Close()
+			return fmt.Errorf("apid: metrics listen %q: %w", metricsAddr, err)
+		}
+		go func() {
+			log.Info("apid /metrics listening", "addr", metricsAddr)
+			if err := metricsSrv.Serve(mLis); err != nil && err != http.ErrServerClosed {
+				log.Error("apid /metrics serve", "err", err)
+			}
+		}()
+	}
+
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenAddr)
@@ -327,7 +365,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
-		return httpSrv.Shutdown(shutdownCtx)
+		_ = httpSrv.Shutdown(shutdownCtx)
+		if metricsSrv != nil {
+			_ = metricsSrv.Shutdown(shutdownCtx)
+		}
+		return nil
 	}
 }
 

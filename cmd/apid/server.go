@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // server is apid's HTTP service: the public REST API and the only writer to
@@ -101,6 +103,23 @@ type server struct {
 	// statusPagePath is the on-disk path of the static HTML served
 	// at GET /status. Empty uses /etc/faas/statuspage/index.html.
 	statusPagePath string
+	// ops holds the per-daemon Prometheus registry. Wired via
+	// WithOpsMetrics so callers (cmd/apid) control the registry
+	// lifecycle. A dedicated metric observer middleware sits atop
+	// the route mux so every handler emits apid_ops_total +
+	// apid_op_duration_seconds without each one wrapping itself.
+	// Nil = observation disabled (unit tests).
+	ops *wire.OpsMetrics
+}
+
+// WithOpsMetrics attaches the daemon-wide Prometheus registry. The
+// handler-level observe call in observeHandler hits ops; the chain
+// methods stay untouched. Mirrors pkg/builderd/builderd.go's
+// WithOpsMetrics (PR #124, ADR-030) and pkg/githubd/server.go's
+// WithOpsMetrics (this PR).
+func (s *server) WithOpsMetrics(ops *wire.OpsMetrics) *server {
+	s.ops = ops
+	return s
 }
 
 // WithStatusCache wires the status-page Prometheus query cache.
@@ -457,7 +476,69 @@ func (s *server) handler() http.Handler {
 	// in /readyz later. Mirrors pkg/gateway/control.go::ControlMux.
 	mux.HandleFunc("GET /healthz", s.healthz)
 
-	return mux
+	// observeWrap (the outermost layer) feeds apid_ops_total +
+	// apid_op_duration_seconds. It's last so it sees the final
+	// status code from every chain (auth → idempotent → handler).
+	// Nil s.ops (no metrics wired) = no-op passthrough.
+	return s.observeWrap(mux)
+}
+
+// observeWrap returns the mux wrapped in an observe middleware that
+// records apid_ops_total{op,code} and apid_op_duration_seconds{op}
+// per request. nil-safe — returns the inner handler untouched when
+// s.ops is nil (unit tests that don't care about metrics).
+//
+// op label = the route template (e.g. "GET /v1/apps/{slug}"), the
+// same shape Go's http.ServeMux uses for the route pattern, so
+// cardinality stays bounded by the route table (not by parameter
+// values — that would explode the label set).
+//
+// code label is "ok" on 2xx / 3xx and "err" on anything else;
+// 4xx quota/auth codes are the dominant traffic and the §12
+// dashboard's "rejected traffic" panel reads this column.
+func (s *server) observeWrap(h http.Handler) http.Handler {
+	if s.ops == nil {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &observeWriter{ResponseWriter: w, status: http.StatusOK}
+		h.ServeHTTP(rec, r)
+		// r.Pattern is the route template Go 1.22's mux matched
+		// against (e.g. "GET /v1/apps/{slug}"). Set by ServeMux;
+		// empty string when no pattern matched, which we record as
+		// the literal URL path so a /metrics request surfaces as
+		// its own op.
+		op := r.Pattern
+		if op == "" {
+			op = r.URL.Path
+		}
+		s.ops.Observe(op, time.Since(start), observeErrFromStatus(rec.status))
+	})
+}
+
+// observeWriter tees the response so observeWrap can read the final
+// status after the chain finishes. WriteHeader is called by every
+// handler in the project (no implicit-200 paths), so capturing it is
+// sufficient.
+type observeWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (o *observeWriter) WriteHeader(s int) {
+	o.status = s
+	o.ResponseWriter.WriteHeader(s)
+}
+
+// observeErrFromStatus maps a route's terminal status code to an
+// error sentinel. observeWrap uses the non-nil sentinel to drive
+// apid_ops_total{code="err"}; the sentinel's text isn't on the wire.
+func observeErrFromStatus(status int) error {
+	if status >= 200 && status < 400 {
+		return nil
+	}
+	return errors.New("apid: http " + http.StatusText(status))
 }
 
 // healthz is the loopback-friendly liveness probe. Returns 200 with
