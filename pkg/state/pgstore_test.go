@@ -1670,18 +1670,31 @@ func TestPg_CreateDeployment_SupersedesPriorLive(t *testing.T) {
 // non-deterministic, and a genuine orphan.
 func TestPg_CreateDeployment_LeavesBuildingRowAlone(t *testing.T) {
 	s, ctx := pgStore(t)
-	acctID, appID, _ := seedLiveDeploy(t, s, ctx)
+	acct, err := s.CreateAccount(ctx, "u@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := s.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "pg-app", Type: state.AppTypeApp,
+		RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
 
-	// Flip the existing row to `building` (simulating: apid set it
-	// after CreateDeployment; builderd hasn't returned yet).
-	priorDepID := mustCreateImageDeployment(t, s, ctx, appID)
+	// The app starts with exactly one 'building' deployment row
+	// (simulating: builderd is mid-pipeline). Note we do NOT use
+	// seedLiveDeploy here — that creates a 'live' row that
+	// CreateDeployment would correctly supersede, defeating the
+	// M-1 invariant under test.
+	priorDepID := mustCreateImageDeployment(t, s, ctx, app.ID)
 	if err := s.UpdateDeploymentStatus(ctx, priorDepID, state.DeployBuilding, ""); err != nil {
 		t.Fatalf("UpdateDeploymentStatus(building): %v", err)
 	}
 
 	// Second deploy — must NOT supersede the building row.
 	created, err := s.CreateDeployment(ctx, state.Deployment{
-		AppID: appID, Kind: state.DeploymentKindImage,
+		AppID: app.ID, Kind: state.DeploymentKindImage,
 		ImageDigest: "registry.example.com/v3@sha256:" + strings.Repeat("b", 64),
 		Status:      state.DeployPending,
 	})
@@ -1701,15 +1714,15 @@ func TestPg_CreateDeployment_LeavesBuildingRowAlone(t *testing.T) {
 		t.Errorf("building row Status = %q, want building (untouched)", got.Status)
 	}
 
-	// Sanity: both rows are visible to the app's history.
-	all, err := s.ListDeploymentsForApp(ctx, appID, 0, 0)
+	// Sanity: both rows are visible to the app's history — the
+	// building row stays building, the new one is pending.
+	all, err := s.ListDeploymentsForApp(ctx, app.ID, 0, 0)
 	if err != nil {
 		t.Fatalf("ListDeploymentsForApp: %v", err)
 	}
 	if len(all) != 2 {
 		t.Errorf("len(ListDeploymentsForApp) = %d, want 2 (building + pending)", len(all))
 	}
-	_ = acctID
 }
 
 // mustCreateImageDeployment creates a fresh deployment row on appID
