@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"sync"
 
 	"filippo.io/age"
@@ -207,6 +208,17 @@ type WakeRequest struct {
 	// Manager is the unseal-and-forget boundary. It is never logged, never
 	// persisted, never returned to any caller.
 	SealedEnvEntries []SealedEnvEntry
+	// EgressAllowlist (ADR-031, tier-2 of the network roadmap): per-app
+	// outbound IPv4 allowlist. Each entry is a CIDR string (e.g.
+	// "1.2.3.0/24"); empty slice = current behaviour (no allowlist rule
+	// emitted, every non-deny destination is reachable). When non-empty,
+	// the per-netns forward chain gains a single
+	//   `iifname "tap0" ip daddr { <CIDRs> } accept`
+	// rule after the lateral-movement deny + SMTP drops; deny > allow on
+	// overlap, so a typoed RFC1918 CIDR still gets dropped. Plan-gated
+	// upstream — Free/Hobby never get here; Pro ≤ 16; Scale ≤ 64. The
+	// caller (apid) is responsible for size + per-plan gating.
+	EgressAllowlist []string
 }
 
 // SealedEnvEntry is one (key, ciphertext) pair as stored in app_secrets. The
@@ -235,6 +247,8 @@ type ColdBootRequest struct {
 	// SealedEnvEntries is forwarded to WakeRequest for staging onto drive1
 	// (spec §11/G2). Empty slice = no secrets file written.
 	SealedEnvEntries []SealedEnvEntry
+	// EgressAllowlist (ADR-031) — same shape as WakeRequest.
+	EgressAllowlist []string
 }
 
 // ColdBoot boots an instance from rootfs with no snapshot. It is Wake with a nil
@@ -245,6 +259,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		EgressMbit: req.EgressMbit, Snapshot: nil,
 		ExportDir: req.ExportDir, SealedEnvEntries: req.SealedEnvEntries,
+		EgressAllowlist: req.EgressAllowlist,
 	})
 }
 
@@ -264,6 +279,23 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// netns.Config omits the rule when ConntrackCap <= 0 so a vmmd that
 	// hasn't been rebuilt still wakes cleanly.
 	nc.ConntrackCap = m.conntrackCap
+	// ADR-031 — translate the wire-level CIDR strings into netip.Prefix
+	// once, here, so the nft renderer never touches stringly-typed
+	// addresses. apid's PATCH handler already ParsePrefix'd these on
+	// input and the apps.egress_allowlist cidr[] CHECK rejected any v6,
+	// so a parse failure at this layer means the wire contract is
+	// violated — fail fast rather than silently emit a half-formed
+	// ruleset (a single bad CIDR would otherwise crash nft).
+	if len(req.EgressAllowlist) > 0 {
+		nc.EgressAllowlist = make([]netip.Prefix, 0, len(req.EgressAllowlist))
+		for _, c := range req.EgressAllowlist {
+			prefix, err := netip.ParsePrefix(c)
+			if err != nil {
+				return nil, fmt.Errorf("wake %s: egress allowlist: invalid CIDR %q: %w", req.Instance, c, err)
+			}
+			nc.EgressAllowlist = append(nc.EgressAllowlist, prefix)
+		}
+	}
 
 	// Any failure past this point must fully clean up.
 	defer func() {

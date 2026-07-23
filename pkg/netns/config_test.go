@@ -686,3 +686,169 @@ func TestTcCommandsValidRate(t *testing.T) {
 		}
 	}
 }
+
+// TestForwardAllowlistRuleHelper pins the unit-tested branch in
+// isolation. Empty EgressAllowlist must return nil (no rule shape at
+// all) — the renderer chooses NOT to fabricate "ip daddr {} accept"
+// on empty, because chain-policy accept handles the no-list case.
+// A populated list must produce exactly one argv of shape:
+//
+//	nft add rule ip faas forward iifname "tap0" ip daddr { CIDRs… } accept
+//
+// with comma-joined values (the modern-nft comma-required regression
+// gate at pkg/netns/policy.go::TestHostPolicyRenderNftSyntaxCheck is
+// what we are mirroring here — the test would catch a re-introduction
+// of space-separated nft sets).
+//
+// Plan source: ADR-031 ("tier-2 of the network roadmap"). The
+// post-deny/pre-default-accept placement is asserted separately
+// (TestNftCommandsAllowlistRuleRunsAfterDenies) because the helper
+// itself doesn't know its position in the chain.
+func TestForwardAllowlistRuleHelper(t *testing.T) {
+	nx := []string{"ip", "netns", "exec", "fc-test", "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+
+	// Empty: nothing emitted.
+	empty := testConfig() // zero-value EgressAllowlist
+	if got := empty.forwardAllowlistRule(nft); got != nil {
+		t.Errorf("empty EgressAllowlist: helper returned %v, want nil", got)
+	}
+
+	// Single CIDR: single argv with the expected shape.
+	one := testConfig()
+	one.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
+	wantOne := `ip netns exec fc-test nft add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } accept`
+	if got := strings.Join(one.forwardAllowlistRule(nft), " "); got != wantOne {
+		t.Errorf("single CIDR:\n got  %s\n want %s", got, wantOne)
+	}
+
+	// Multiple CIDRs: comma-joined set, NO trailing whitespace.
+	many := testConfig()
+	many.EgressAllowlist = []netip.Prefix{
+		netip.MustParsePrefix("1.2.3.0/24"),
+		netip.MustParsePrefix("8.8.8.0/24"),
+		netip.MustParsePrefix("9.9.9.0/24"),
+	}
+	wantMany := `ip netns exec fc-test nft add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24,8.8.8.0/24,9.9.9.0/24 } accept`
+	if got := strings.Join(many.forwardAllowlistRule(nft), " "); got != wantMany {
+		t.Errorf("multiple CIDRs:\n got  %s\n want %s", got, wantMany)
+	}
+}
+
+// TestNftCommandsEmitsAllowlistRule asserts the FULL-RULESET path:
+// when EgressAllowlist is non-empty, NftCommands emits exactly ONE
+// allowlist rule inside the IPv4 forward chain. Mirrors the
+// ConntrackCap test style.
+//
+// Note: the allowlist is a v4-only v1 surface (ADR-031); the
+// IPv6-mirror ADR is out of scope. We deliberately DO NOT assert a
+// v6 sibling — adding one later needs its own ADR.
+func TestNftCommandsEmitsAllowlistRule(t *testing.T) {
+	c := testConfig()
+	c.EgressAllowlist = []netip.Prefix{
+		netip.MustParsePrefix("1.2.3.0/24"),
+		netip.MustParsePrefix("8.8.8.0/24"),
+	}
+	cmds := c.NftCommands()
+	want := `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24,8.8.8.0/24 } accept`
+	count := 0
+	for _, cmd := range cmds {
+		line := strings.Join(cmd, " ")
+		if strings.Contains(line, "ip daddr {") && strings.Contains(line, "accept") && !strings.Contains(line, "drop") {
+			count++
+			if !strings.Contains(line, want) {
+				t.Errorf("allowlist rule mismatch:\n got  %s\n want-substr %s", line, want)
+			}
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 allowlist rule in NftCommands, found %d:\n%s", count, flatten(cmds))
+	}
+}
+
+// TestNftCommandsOmitsAllowlistRule_WhenEmpty: an empty allowlist
+// must NOT emit the rule, even when other knobs (ConntrackCap,
+// EgressMbit) are populated. Empty allowlist is the default-accept
+// case — adding a "daddr { } accept" rule would be cosmetic at best,
+// wrong at worst (a future nft syntax check might reject the empty
+// set). Pinning the omission here makes that asymmetry explicit.
+func TestNftCommandsOmitsAllowlistRule_WhenEmpty(t *testing.T) {
+	c := testConfig()
+	c.ConntrackCap = 4096
+	c.EgressMbit = 100
+	for i, cmd := range c.NftCommands() {
+		line := strings.Join(cmd, " ")
+		if strings.Contains(line, "ip daddr {") && strings.Contains(line, "accept") {
+			t.Errorf("rule %d contains allowlist-shape `daddr { … } accept` but EgressAllowlist is empty:\n%s", i, line)
+		}
+	}
+}
+
+// TestNftCommandsAllowlistRuleRunsAfterDenies asserts the placement
+// the ADR-031 comment promises: AFTER the SMTP drop + lateral-
+// movement deny (so deny > allow on overlap) and AFTER the
+// established/related accept (so reply packets on existing flows
+// keep flowing regardless of the allowlist). The chain-policy accept
+// would be reached if the rule didn't exist, but with allowlist
+// enabled the rule itself is the last meaningful gate.
+func TestNftCommandsAllowlistRuleRunsAfterDenies(t *testing.T) {
+	c := testConfig()
+	c.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
+	cmds := c.NftCommands()
+	var established, smtpDrop, daddrDrop, allowlist = -1, -1, -1, -1
+	for i, cmd := range cmds {
+		line := strings.Join(cmd, " ")
+		if !strings.Contains(line, "ip faas") {
+			continue
+		}
+		switch {
+		case established < 0 && strings.Contains(line, "ct state established,related accept"):
+			established = i
+		case smtpDrop < 0 && strings.Contains(line, "tcp dport") && strings.Contains(line, "drop"):
+			smtpDrop = i
+		case daddrDrop < 0 && strings.Contains(line, "daddr") && strings.Contains(line, "drop"):
+			daddrDrop = i
+		case allowlist < 0 && strings.Contains(line, "daddr") && strings.Contains(line, "accept"):
+			allowlist = i
+		}
+	}
+	if established < 0 || smtpDrop < 0 || daddrDrop < 0 || allowlist < 0 {
+		t.Fatalf("missing rule: established=%d smtp=%d daddr=%d allowlist=%d\n%s",
+			established, smtpDrop, daddrDrop, allowlist, flatten(cmds))
+	}
+	if established >= allowlist || smtpDrop >= allowlist || daddrDrop >= allowlist {
+		t.Errorf("allowlist (rule %d) must come AFTER established=%d smtpDrop=%d daddrDrop=%d",
+			allowlist, established, smtpDrop, daddrDrop)
+	}
+}
+
+// TestAllowlistAndConnlimitCoexist: a Config with both knobs enabled
+// emits both rules. Order: cap (after established, before deny),
+// then deny, then allowlist (after deny). Pin that both rules land.
+func TestAllowlistAndConnlimitCoexist(t *testing.T) {
+	c := testConfig()
+	c.ConntrackCap = 4096
+	c.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
+	cmds := c.NftCommands()
+	v4Cap := `add rule ip faas forward ct count over 4096 counter name "faas_cap" drop`
+	v4Allow := `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } accept`
+	var capIdx, allowIdx = -1, -1
+	for i, cmd := range cmds {
+		line := strings.Join(cmd, " ")
+		switch {
+		case capIdx < 0 && strings.Contains(line, v4Cap):
+			capIdx = i
+		case allowIdx < 0 && strings.Contains(line, v4Allow):
+			allowIdx = i
+		}
+	}
+	if capIdx < 0 {
+		t.Errorf("v4 conntrack cap rule missing")
+	}
+	if allowIdx < 0 {
+		t.Errorf("v4 allowlist rule missing")
+	}
+	if capIdx < 0 || allowIdx < 0 || capIdx >= allowIdx {
+		t.Errorf("cap (rule %d) must come BEFORE allowlist (rule %d) so a denied flow never spuriously overrides the cap", capIdx, allowIdx)
+	}
+}

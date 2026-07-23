@@ -32,6 +32,15 @@ type UpdateAppRequest struct {
 	// 403 plan_min_instances_not_allowed (apid gate). Must be <=
 	// plan MaxConcurrency (422 invalid_min_instances).
 	MinInstances *int `json:"min_instances,omitempty"`
+	// EgressAllowlist (ADR-031, tier-2 of the network roadmap) is
+	// the per-app outbound IPv4 allowlist. Each entry is a CIDR
+	// string ("1.2.3.0/24"); the slice replaces the full list
+	// (atomic full-overwrite at the apps row). Plan-gated upstream
+	// (Free/Hobby return 403 plan_egress_allowlist_not_allowed);
+	// size-capped at plan.EgressAllowlistMaxSize() (Pro 16, Scale 64).
+	// Empty slice / nil pointer = clear the allowlist (back to the
+	// default-accept chain policy).
+	EgressAllowlist *[]string `json:"egress_allowlist,omitempty"`
 }
 
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).

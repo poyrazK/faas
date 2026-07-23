@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -43,19 +44,64 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 // Plan tier: only Pro/Scale may set MinInstances > 0 (403).
 // Bounds: must be in [0, MaxConcurrency] (422).
 //
+// ADR-031 (tier-2 of the network roadmap): the egress allowlist is
+// the second tier-locked knob. Same gate shape — only Pro/Scale may
+// patch it (403 plan_egress_allowlist_not_allowed). Distinct
+// failure modes warrant distinct codes so the CLI can branch:
+//   * 403 plan_egress_allowlist_not_allowed  → Free/Hobby PATCH
+//   * 400 egress_allowlist_too_long          → Pro/Scale but > cap
+//   * 400 invalid_egress_allowlist           → a CIDR didn't parse,
+//                                              or v6 (v1 is v4 only)
+//
+// The plan gate runs first (403 supersedes 400) so a Free account
+// PATCHing a 64-entry list sees the plan error, not the size error.
+//
 // Returns *api.Problem instead of error to mirror cmd/apid/handlers.go
 // buildApp, the established helper signature in this package.
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits) *api.Problem {
 	if req.MinInstances == nil {
-		return nil
+		// fall through to the egress allowlist branch
+	} else {
+		if !acct.Plan.MinInstancesAllowed() {
+			return api.ErrPlanMinInstancesNotAllowed(acct.Plan)
+		}
+		if *req.MinInstances < 0 || *req.MinInstances > limits.MaxConcurrency {
+			return api.ErrInvalidMinInstances(*req.MinInstances, limits.MaxConcurrency)
+		}
 	}
-	if !acct.Plan.MinInstancesAllowed() {
-		return api.ErrPlanMinInstancesNotAllowed(acct.Plan)
-	}
-	if *req.MinInstances < 0 || *req.MinInstances > limits.MaxConcurrency {
-		return api.ErrInvalidMinInstances(*req.MinInstances, limits.MaxConcurrency)
+	if req.EgressAllowlist != nil {
+		// Plan tier first: a Free/Hobby PATCH must surface 403 even
+		// if the request would otherwise be a malformed 400.
+		if !acct.Plan.EgressAllowlistAllowed() {
+			return api.ErrPlanEgressAllowlistNotAllowed(acct.Plan)
+		}
+		maxSize := acct.Plan.EgressAllowlistMaxSize()
+		if len(*req.EgressAllowlist) > maxSize {
+			return api.ErrEgressAllowlistTooLong(len(*req.EgressAllowlist), maxSize)
+		}
+		// Per-entry shape: every CIDR must ParsePrefix as a v4 with a
+		// non-zero host-bits prefix. The Postgres cidr[] CHECK rejects
+		// v6 at write time — catching it here just gives a more
+		// operator-friendly error message naming the bad entry.
+		for _, raw := range *req.EgressAllowlist {
+			prefix, err := netip.ParsePrefix(raw)
+			if err != nil || !prefix.Addr().Is4() || prefix.Bits() == 0 {
+				return api.ErrInvalidEgressAllowlist(raw, errOrZero("parse failed", err))
+			}
+		}
 	}
 	return nil
+}
+
+// errOrZero shapes the error message in api.ErrInvalidEgressAllowlist.
+// When ParsePrefix fails err is non-nil; the v4 / zero-bits branches
+// fire without one, so we synthesise a stable suffix instead of
+// relying on a nil-stringer that prints "<nil>".
+func errOrZero(msg string, err error) error {
+	if err != nil {
+		return err
+	}
+	return errors.New(msg)
 }
 
 // updateApp is the PATCH /v1/apps/{slug} handler. User-tunable:
@@ -91,13 +137,32 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	// SetMinInstances: nil pointer means "don't touch"; non-nil
 	// (even pointing at 0) means "explicit set" → scale to zero.
+	//
+	// ADR-031: EgressAllowlist follows the same convention — nil
+	// pointer = "don't touch the column", non-nil = "atomic
+	// full-overwrite of the list" (including the empty slice, which
+	// clears the allowlist back to chain-default-accept). Validation
+	// already proved the list is plan-sized and every CIDR is a
+	// valid v4, so the state layer is a straightforward delegate.
+	var allowPrefixes *[]netip.Prefix
+	if req.EgressAllowlist != nil {
+		in := *req.EgressAllowlist
+		out := make([]netip.Prefix, len(in))
+		for i, s := range in {
+			// already validated by validateUpdateApp
+			out[i], _ = netip.ParsePrefix(s)
+		}
+		allowPrefixes = &out
+	}
 	updated, err := s.store.UpdateApp(ctx(r), app.ID, state.UpdateAppParams{
-		RAMMB:           req.RAMMB,
-		IdleTimeoutS:    req.IdleTimeoutS,
-		SetIdleTimeout:  req.IdleTimeoutS != nil,
-		MaxConcurrency:  req.MaxConcurrency,
-		MinInstances:    req.MinInstances,
-		SetMinInstances: req.MinInstances != nil,
+		RAMMB:             req.RAMMB,
+		IdleTimeoutS:      req.IdleTimeoutS,
+		SetIdleTimeout:    req.IdleTimeoutS != nil,
+		MaxConcurrency:    req.MaxConcurrency,
+		MinInstances:      req.MinInstances,
+		SetMinInstances:   req.MinInstances != nil,
+		EgressAllowlist:   allowPrefixes,
+		SetEgressAllowlist: req.EgressAllowlist != nil,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update app"))

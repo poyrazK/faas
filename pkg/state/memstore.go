@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
@@ -520,6 +521,18 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	}
 	if p.SetMinInstances {
 		a.MinInstances = derefInt(p.MinInstances)
+	}
+	if p.SetEgressAllowlist {
+		// ADR-031: nil-with-Set is treated as "clear to default
+		// (empty)" so the API can express "drop the allowlist back to
+		// no-list" via a PATCH with egress_allowlist:[] ; non-nil is
+		// copied verbatim. The slice is intentionally reallocated so
+		// the caller can't mutate the stored value through the slice
+		// header it holds after the call returns.
+		src := derefPrefixes(p.EgressAllowlist)
+		dst := make([]netip.Prefix, len(src))
+		copy(dst, src)
+		a.EgressAllowlist = dst
 	}
 	m.apps[id] = a
 	return a, nil
@@ -2895,4 +2908,16 @@ func (m *MemStore) SetSnapshotStorageKeyForTest(deploymentID, storageKey string)
 			return
 		}
 	}
+}
+
+// derefPrefixes is the []netip.Prefix sibling of derefInt (ADR-031).
+// Returns the underlying slice or nil so callers see a uniform shape
+// for both branches of `SetEgressAllowlist`. Mirrors pgstore's
+// copy; the duplication is intentional — pgstore dereferences for
+// SQL params, memstore dereferences for in-memory copy.
+func derefPrefixes(p *[]netip.Prefix) []netip.Prefix {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
