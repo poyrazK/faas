@@ -125,9 +125,22 @@ func FuzzParseImageDigest(f *testing.F) {
 
 func FuzzIsDigestPinned(f *testing.F) {
 	// isDigestPinned is the input-validation surface (per handlers.go:284
-	// doc) — fuzz it independently so a future refactor that adds a
-	// cheaper pre-check (and accepts a wider set than the parser) gets
-	// caught.
+	// doc). FuzzParseImageDigest above already enforces the invariant
+	// `parseImageDigest.ok == isDigestPinned(ref)`, so re-running the
+	// parser inside this fuzzer would not cover new paths. Instead this
+	// target fuzzes isDigestPinned directly against an independent,
+	// pre-computed regex (digestShapePinned) so a future refactor that
+	// moves parseImageDigest's logic or adds a cheaper pre-check (and
+	// accepts a wider set than the parser) gets caught with a clear
+	// failure message.
+	//
+	// digestShapePinned mirrors `accept+pin` semantics: the substring
+	// after the LAST "@" must be `sha256:` + 64 lowercase hex. (We
+	// intentionally re-derive this shape from spec language rather than
+	// calling parseImageDigest here — otherwise the cross-check would
+	// be tautological.)
+	var digestShapePinned = regexp.MustCompile(`sha256:[0-9a-f]{64}\z`)
+
 	f.Add("foo/bar@sha256:" + strings.Repeat("a", 64))
 	f.Add("foo/bar")
 	f.Add("")
@@ -136,11 +149,20 @@ func FuzzIsDigestPinned(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, ref string) {
 		defer recoverPanic(t)
-		// isDigestPinned must agree with parseImageDigest.ok — the parser
-		// is the truth source (it's what the deploy-input handler calls).
-		_, ok := parseImageDigest(ref)
-		if got := isDigestPinned(ref); got != ok {
-			t.Errorf("isDigestPinned(%q)=%v but parseImageDigest.ok=%v", ref, got, ok)
+		// Independent check: if isDigestPinned accepts, the substring
+		// after the last "@" must look like a pinned sha256 digest.
+		got := isDigestPinned(ref)
+		if !got {
+			return
+		}
+		idx := strings.LastIndex(ref, "@")
+		if idx < 0 {
+			t.Errorf("isDigestPinned(%q)=true but no '@' present", ref)
+			return
+		}
+		tail := ref[idx+1:]
+		if !digestShapePinned.MatchString(tail) {
+			t.Errorf("isDigestPinned(%q)=true but tail=%q does not match sha256+64hex", ref, tail)
 		}
 	})
 }

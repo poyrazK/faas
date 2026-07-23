@@ -24,6 +24,8 @@ import (
 	"context"
 	"errors"
 	"filippo.io/age"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -42,13 +44,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/secretbox"
-	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // openSchemaPG opens pgtest, runs migrations to the current head, and
-// returns a per-test pool plus the harness tmpdir. Mirrors the opening
-// dance in quota_e2e_test.go / secrets_e2e_test.go.
-func openSchemaPG(t *testing.T) (*pgxpool.Pool, string) {
+// returns a per-test pool. Mirrors the opening dance in
+// quota_e2e_test.go / secrets_e2e_test.go.
+func openSchemaPG(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	pool := pgtest.Open(t)
 	if pool == nil {
@@ -57,7 +58,7 @@ func openSchemaPG(t *testing.T) (*pgxpool.Pool, string) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("MigrateUp: %v", err)
 	}
-	return pool, t.TempDir()
+	return pool
 }
 
 // freeTCPAddr asks the kernel for a free localhost port. We don't bind
@@ -105,58 +106,52 @@ func waitTCP(t *testing.T, addr string, d time.Duration) {
 	t.Fatalf("waitTCP: %s not listening within %s", addr, d)
 }
 
-// repoRoot walks up from cwd to the module root (the dir holding
-// go.mod). The test binary's cwd varies by setup (sometimes the package
-// dir, sometimes t.TempDir()), so absolute resolution is the only
-// reliable approach.
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	wd, err := os.Getwd()
+// TestMain builds a single apid binary into a package-level tmpdir
+// before any test runs, so the per-test helpers don't pay the `go
+// build` cost 5x. Each test still gets its own apid subprocess (each
+// needs its own /etc/faas/secrets/host.age.pub fixture and its own
+// FAAS_APID_LISTEN) — only the BINARY is shared, not the process.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "faas-sec11-bin-*")
 	if err != nil {
-		t.Fatalf("Getwd: %v", err)
+		fmt.Fprintf(os.Stderr, "sec11_test: mkdir tmp: %v\n", err)
+		os.Exit(2)
 	}
-	dir := wd
+	bin := filepath.Join(dir, "apid")
+
+	// The test binary's cwd is the package directory; resolve to the
+	// module root so `go build ./cmd/apid` finds the package.
+	wd, _ := os.Getwd()
+	root := wd
 	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
 			break
 		}
-		dir = parent
+		parent := filepath.Dir(root)
+		if parent == root {
+			fmt.Fprintf(os.Stderr, "sec11_test: cannot find module root from %s\n", wd)
+			os.Exit(2)
+		}
+		root = parent
 	}
-	t.Fatalf("could not find repo root from %s", wd)
-	return ""
-}
 
-// buildAPIDOnce compiles the apid binary into tmpdir/bin/apid. We
-// rebuild per-test rather than reusing a shared binary because each
-// subtest wants its own tmpdir (for the host.age.pub fixture) and a
-// fresh pool/schema; the Go build cache makes this fast in CI.
-func buildAPIDOnce(t *testing.T, tmpDir string) string {
-	t.Helper()
-	bin := filepath.Join(tmpDir, "bin", "apid")
-	if _, err := os.Stat(bin); err == nil {
-		return bin
-	}
-	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
-		t.Fatalf("mkdir bin: %v", err)
-	}
-	// Use `go build` rather than importing cmd/apid's main package so the
-	// test binary doesn't double-link the package (would force a main
-	// symbol collision on Linux). The Makefile's e2etest harness does the
-	// same.
 	cmd := exec.Command("go", "build", "-o", bin, "./cmd/apid")
-	cmd.Dir = repoRoot(t)
+	cmd.Dir = root
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("go build apid: %v\n%s", err, buf.String())
+		fmt.Fprintf(os.Stderr, "sec11_test: go build apid: %v\n%s", err, buf.String())
+		os.Exit(2)
 	}
-	return bin
+	apidBinary = bin
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
+
+// apidBinary is set once in TestMain; every test uses this path.
+var apidBinary string
 
 // envForAPID returns the base env slice every apid subprocess needs,
 // WITHOUT FAAS_APID_LISTEN (startAPIDWithEnv / startAPIDAndExpectFail
@@ -176,21 +171,16 @@ func envForAPID(dbURL string, extra ...string) []string {
 
 // startAPIDWithEnv boots apid with extra env and registers a t.Cleanup
 // that SIGTERMs and waits up to 5s before SIGKILL. Returns the listen
-// address, the process, and a function to read its stdout/stderr buffer.
-// The listen address is allocated inside (matching pkg/e2etest harness
-// pattern at harness.go:475-484) and threaded into FAAS_APID_LISTEN.
-func startAPIDWithEnv(t *testing.T, bin string, extraEnv ...string) (string, *exec.Cmd, func() string) {
+// address and the process (the buffer is logged on Cleanup so a CI
+// failure has apid's last words). The listen address is allocated
+// inside (matching pkg/e2etest harness pattern at harness.go:475-484)
+// and threaded into FAAS_APID_LISTEN.
+func startAPIDWithEnv(t *testing.T, extraEnv ...string) (string, *exec.Cmd) {
 	t.Helper()
 	addr := freeTCPAddr(t)
 	env := append(extraEnv, "FAAS_APID_LISTEN="+addr)
-	proc := startProc(t, bin, env)
+	proc := startProc(t, apidBinary, env)
 	waitTCP(t, addr, 10*time.Second)
-	readBuf := func() string {
-		if buf, ok := proc.Stdout.(*bytes.Buffer); ok {
-			return buf.String()
-		}
-		return ""
-	}
 	t.Cleanup(func() {
 		if proc.Process == nil {
 			return
@@ -205,18 +195,18 @@ func startAPIDWithEnv(t *testing.T, bin string, extraEnv ...string) (string, *ex
 			<-done
 		}
 	})
-	return addr, proc, readBuf
+	return addr, proc
 }
 
 // startAPIDAndExpectFail boots apid (NO t.Cleanup) and asserts it exits
 // non-zero within `expectFailWithin`. Used by the negative host-key
 // subtest where e2etest.StartWithEnv would t.Fatalf on the boot failure
 // and mask the assertion.
-func startAPIDAndExpectFail(t *testing.T, bin string, env []string, expectFailWithin time.Duration) (string, error) {
+func startAPIDAndExpectFail(t *testing.T, env []string, expectFailWithin time.Duration) (string, error) {
 	t.Helper()
 	addr := freeTCPAddr(t)
 	fullEnv := append(env, "FAAS_APID_LISTEN="+addr)
-	proc := startProc(t, bin, fullEnv)
+	proc := startProc(t, apidBinary, fullEnv)
 	doneCh := make(chan error, 1)
 	go func() { doneCh <- proc.Wait() }()
 	select {
@@ -248,15 +238,21 @@ func startAPIDAndExpectFail(t *testing.T, bin string, env []string, expectFailWi
 // want to pin that one bucket serves every /v1/* route.
 
 func TestSec11_AuthLimitPerIP_CrossProcess(t *testing.T) {
-	pool, tmpDir := openSchemaPG(t)
-	bin := buildAPIDOnce(t, tmpDir)
-	addr, _, _ := startAPIDWithEnv(t, bin, envForAPID(poolDSN(pool))...)
+	pool := openSchemaPG(t)
+	addr, _ := startAPIDWithEnv(t, envForAPID(poolDSN(pool))...)
 	client := &http.Client{Timeout: 10 * time.Second}
 
-	// 10× bogus bearer — all 401.
+	// Phase 1: same IP, 10× bogus bearer — all 401. 11th — 429.
+	//
+	// The X-Forwarded-For header forces apid's middleware to key on the
+	// supplied client IP rather than the loopback peer; the bucket is
+	// per-IP in memory, so two distinct XFF values must NOT share a
+	// counter (per the §11 "10/min/IP" wording).
+	const sameIP = "198.51.100.7"
 	for i := 0; i < 10; i++ {
 		req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/v1/apps", nil)
 		req.Header.Set("Authorization", "Bearer fp_live_bogus_"+strconv.Itoa(i))
+		req.Header.Set("X-Forwarded-For", sameIP)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("attempt %d: %v", i+1, err)
@@ -269,16 +265,37 @@ func TestSec11_AuthLimitPerIP_CrossProcess(t *testing.T) {
 	// 11th must be 429 (auth-limited).
 	req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/v1/apps", nil)
 	req.Header.Set("Authorization", "Bearer fp_live_bogus_11")
+	req.Header.Set("X-Forwarded-For", sameIP)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("attempt 11: %v", err)
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("attempt 11: status=%d want 429 (auth-limited)", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("attempt 11: status=%d want 429 (auth-limited) — body=%s", resp.StatusCode, body)
 	}
 	if ra := resp.Header.Get("Retry-After"); ra == "" {
+		resp.Body.Close()
 		t.Errorf("attempt 11: missing Retry-After header on 429")
+	}
+	resp.Body.Close()
+
+	// Phase 2: per-IP isolation. A second X-Forwarded-For must NOT be
+	// in the same bucket as the first. We expect 401 (bogus bearer),
+	// NOT 429 — this is what catches a future regression to
+	// AuthLimit(cfg) per-route (memory: shared-bucket regression).
+	const otherIP = "203.0.113.42"
+	req, _ = http.NewRequest(http.MethodGet, "http://"+addr+"/v1/apps", nil)
+	req.Header.Set("Authorization", "Bearer fp_live_bogus_otherip")
+	req.Header.Set("X-Forwarded-For", otherIP)
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("other-ip attempt: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("other-IP attempt: status=%d want 401 (per-IP bucket leaked across XFFs)", resp.StatusCode)
 	}
 }
 
@@ -289,17 +306,16 @@ func TestSec11_AuthLimitPerIP_CrossProcess(t *testing.T) {
 // sha256(bearer) and never contains the plaintext.
 
 func TestSec11_ApiKeyHashedAtRest(t *testing.T) {
-	pool, tmpDir := openSchemaPG(t)
-	bin := buildAPIDOnce(t, tmpDir)
-	addr, _, _ := startAPIDWithEnv(t, bin, envForAPID(poolDSN(pool))...)
-	apidURL := "http://" + addr
-	_ = apidURL
+	pool := openSchemaPG(t)
+	// startAPIDWithEnv ensures the apid subprocess is alive so the
+	// read-side test (no listener needed) inherits a working schema.
+	addr, _ := startAPIDWithEnv(t, envForAPID(poolDSN(pool))...)
+	_ = addr
 
-	// Seed an account via the harness (same dance the other e2e tests
-	// use) and capture the bearer. We don't need apidURL here — the
-	// seed runs directly against the test pool, then we read the row
-	// shape.
-	bearer := seedBearerViaPool(t, pool, api.PlanHobby, "sec11")
+	// Seed an account via the harness; we don't need the HTTP loop
+	// here, but the bearer is the round-trip target.
+	h := &e2etest.Harness{T: t, Pool: pool}
+	bearer := h.SeedAccount(context.Background(), api.PlanHobby, "sec11")
 	wantHash := api.HashAPIKey(bearer)
 
 	var gotHash []byte
@@ -323,51 +339,34 @@ func TestSec11_ApiKeyHashedAtRest(t *testing.T) {
 	}
 }
 
-// seedBearerViaPool is the same dance e2etest.Harness.SeedAccount runs,
-// inlined so this file doesn't need a Harness for the table-read tests.
-func seedBearerViaPool(t *testing.T, pool *pgxpool.Pool, plan api.Plan, label string) string {
-	t.Helper()
-	store := state.NewPgStore(pool)
-	email := "e2e+" + string(plan) + "+" + label + "@test.example"
-	acct, err := store.CreateAccount(context.Background(), email, plan)
-	if err != nil {
-		// account already seeded → look up
-		acct, lerr := store.AccountByEmail(context.Background(), email)
-		if lerr != nil {
-			t.Fatalf("seed account %s (initial=%v, lookup=%v)", plan, err, lerr)
-		}
-		pt, hash, gerr := api.GenerateAPIKey()
-		if gerr != nil {
-			t.Fatalf("GenerateAPIKey: %v", gerr)
-		}
-		if _, err := store.CreateAPIKey(context.Background(), acct.ID, hash, "e2e"); err != nil {
-			t.Logf("CreateAPIKey (already exists, ignoring): %v", err)
-		}
-		return pt
-	}
-	pt, hash, err := api.GenerateAPIKey()
-	if err != nil {
-		t.Fatalf("GenerateAPIKey: %v", err)
-	}
-	if _, err := store.CreateAPIKey(context.Background(), acct.ID, hash, "e2e"); err != nil {
-		t.Fatalf("CreateAPIKey: %v", err)
-	}
-	return pt
-}
-
-// poolDSN returns the DSN apid should connect with. It mirrors pgtest's
-// default (postgres:///faas?host=/run/postgresql&user=faas) but
-// respects $DATABASE_URL so CI's postgres service is honored.
+// poolDSN returns the DSN apid should connect with. It mirrors
+// pkg/e2etest.startAPID (harness.go:148-154): take $DATABASE_URL when
+// set, otherwise fall back to the local unix-socket default, then
+// inject search_path=<schema>,public so the daemon subprocess writes
+// into the same schema the test seeded rows in. Without the injection
+// the daemon's pool targets `public` and every "where is the seeded
+// account?" lookup in the test reads from the empty schema.
 func poolDSN(pool *pgxpool.Pool) string {
-	if v := os.Getenv("DATABASE_URL"); v != "" {
-		return v
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres:///faas?host=/run/postgresql&user=faas"
 	}
-	cfg := pool.Config()
-	if cfg != nil && cfg.ConnConfig != nil {
-		// reconstruct a usable DSN from the parsed config
-		return cfg.ConnConfig.ConnString()
+	if schema := pgtest.SchemaOf(pool); schema != "" {
+		const key = "search_path="
+		if i := strings.Index(dbURL, key); i >= 0 {
+			end := strings.IndexByte(dbURL[i+len(key):], '&')
+			if end < 0 {
+				return dbURL[:i] + key + schema
+			}
+			return dbURL[:i] + key + schema + dbURL[i+len(key)+end:]
+		}
+		sep := "?"
+		if strings.Contains(dbURL, "?") {
+			sep = "&"
+		}
+		return dbURL + sep + key + schema
 	}
-	return "postgres:///faas?host=/run/postgresql&user=faas"
+	return dbURL
 }
 
 // --- TestSec11_UnixSocketOnlyDSN -----------------------------------------
@@ -378,12 +377,24 @@ func poolDSN(pool *pgxpool.Pool) string {
 // refactor that defaults to localhost would fail here.
 
 func TestSec11_UnixSocketOnlyDSN(t *testing.T) {
-	pool, tmpDir := openSchemaPG(t)
-	bin := buildAPIDOnce(t, tmpDir)
-	addr, _, _ := startAPIDWithEnv(t, bin, envForAPID(poolDSN(pool))...)
+	pool := openSchemaPG(t)
+	addr, _ := startAPIDWithEnv(t, envForAPID(poolDSN(pool))...)
 	_ = addr
-	// Give apid's pool a beat to register with pg_stat_activity.
-	time.Sleep(200 * time.Millisecond)
+
+	// Poll pg_stat_activity until apid's pool has registered a session.
+	// This avoids the 200ms-sleep window where apid is still in
+	// db.Ping and the "no rows" branch would mis-fail the test.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM pg_stat_activity
+			 WHERE datname = current_database() AND usename = current_user`,
+		).Scan(&n); err == nil && n > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 
 	rows, err := pool.Query(context.Background(),
 		`SELECT client_addr FROM pg_stat_activity
@@ -423,8 +434,7 @@ func TestSec11_UnixSocketOnlyDSN(t *testing.T) {
 // ErrRecipientInsecurePerms sentinel substring.
 
 func TestSec11_HostKey0400_Required(t *testing.T) {
-	pool, tmpDir := openSchemaPG(t)
-	bin := buildAPIDOnce(t, tmpDir)
+	pool := openSchemaPG(t)
 
 	t.Run("accepts_allowed_perms", func(t *testing.T) {
 		dir := t.TempDir()
@@ -436,7 +446,7 @@ func TestSec11_HostKey0400_Required(t *testing.T) {
 		if err := os.WriteFile(pub, []byte(id.Recipient().String()), 0o444); err != nil {
 			t.Fatalf("write pub: %v", err)
 		}
-		addr, _, _ := startAPIDWithEnv(t, bin, append(envForAPID(poolDSN(pool)),
+		addr, _ := startAPIDWithEnv(t, append(envForAPID(poolDSN(pool)),
 			"FAAS_HOST_AGE_RECIPIENT_PATH="+pub)...)
 		// /healthz is a cheap loopback probe — no auth, no DB work.
 		resp, err := http.Get("http://" + addr + "/healthz")
@@ -461,7 +471,7 @@ func TestSec11_HostKey0400_Required(t *testing.T) {
 		if err := os.WriteFile(pub, []byte(id.Recipient().String()), 0o664); err != nil {
 			t.Fatalf("write pub: %v", err)
 		}
-		out, err := startAPIDAndExpectFail(t, bin, append(envForAPID(poolDSN(pool)),
+		out, err := startAPIDAndExpectFail(t, append(envForAPID(poolDSN(pool)),
 			"FAAS_HOST_AGE_RECIPIENT_PATH="+pub), 5*time.Second)
 		if err != nil {
 			t.Fatalf("apid should have exited non-zero with 0664 perms: %v\n%s", err, out)
@@ -477,33 +487,12 @@ func TestSec11_HostKey0400_Required(t *testing.T) {
 	})
 }
 
-// --- TestSec11_NftablesArtifactGate --------------------------------------
+// --- TestSec11_NftablesArtifactGate moved to sec11_host_linux_test.go ---
 //
-// §11 "nftables default-drop inbound" — pinned at the artifact layer.
-// make egress-check is the canonical gate (Makefile:147-174). This test
-// shells out to it so a coding agent can re-run the gate programmatically.
-// The pkg/netns unit tests already cover the rendered text; this is the
-// "did someone forget to commit the latest render" tripwire.
-
-func TestSec11_NftablesArtifactGate(t *testing.T) {
-	if _, err := exec.LookPath("make"); err != nil {
-		t.Skipf("make not on PATH: %v", err)
-	}
-	cmd := exec.Command("make", "egress-check")
-	cmd.Dir = repoRoot(t)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	err := cmd.Run()
-	if err != nil {
-		t.Errorf("make egress-check failed: %v\n%s", err, buf.String())
-	}
-}
-
-// Compile-time guards so this file's import set stays stable as the
-// project evolves. Removing these breaks compilation loudly rather than
-// silently dropping imports.
-var (
-	_ = e2etest.APID
-	_ = e2etest.Which(0)
-)
+// §11 "nftables default-drop inbound" needed CAP_NET_ADMIN and a host
+// kernel to be exercised live, so it lives in the linux-only file.
+// sec11_host_linux_test.go::TestSec11_NftablesPolicyIsArtifactInSync
+// byte-compares the rendered output of pkg/netns.DefaultHostPolicy()
+// against the committed deploy/ansible/roles/nftables/files/* artifact
+// — the same gate `make egress-check` enforces, without the per-test
+// `go run ./cmd/faas-nft-render` shell-out.
