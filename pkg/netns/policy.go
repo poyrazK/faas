@@ -110,10 +110,18 @@ var DefaultHostPolicy = HostPolicy{
 // (the host itself reaches anywhere; egress policy is FOR the tenant VMs, not
 // for vmmd's own outbound).
 //
-// Order matters in `forward`: the allow (`iif BridgeName oifname PublicIface
-// accept`) MUST come before the drops, otherwise tenant traffic is dropped
-// even on allowed destinations. The existing ansible template had this right
-// (allow at line 62, drops at lines 65-72) and we preserve that order here.
+// Order matters in `forward`: the §11 denylist MUST come BEFORE the
+// `iif BridgeName oifname PublicIface accept` allow, otherwise bridged
+// tenant traffic matches the broad allow on its first rule and never
+// reaches the SMTP / RFC1918 / IPv6 drops (nftables is first-match).
+// The per-netns chain (`pkg/netns/config.go::NftCommands`) is the primary
+// block at the guest-originated layer; this host-side ordering is
+// defense-in-depth so a misconfigured or bypassed netns chain still
+// fails closed at the host layer. `ct state established,related accept`
+// stays first so replies on published connections survive — a reply on
+// a published connection's daddr ∈ 10.100.0.0/16 ⊂ 10.0.0.0/8 would
+// otherwise hit the new RFC1918 drop. v4 deny must stay directly above
+// v6 deny — see ADR-023.
 func (h HostPolicy) Render() string {
 	if h.BridgeName == "" || h.PublicIface == "" {
 		// Hard fail rather than render a broken ruleset — a forward chain
@@ -147,12 +155,15 @@ func (h HostPolicy) Render() string {
 	b.WriteString("  chain forward {\n")
 	b.WriteString("    type filter hook forward priority 0; policy drop;\n")
 	b.WriteString("    ct state established,related accept\n")
-	fmt.Fprintf(&b, "    iif %q oifname %q accept\n", h.BridgeName, h.PublicIface)
 	b.WriteString("\n")
-	b.WriteString("    # spec §11 denylist\n")
+	b.WriteString("    # spec §11 denylist — evaluated BEFORE the bridged-tenant broad allow\n")
+	b.WriteString("    # so tenant traffic to RFC1918 / SMTP / link-local is actually dropped at\n")
+	b.WriteString("    # the host layer; the per-netns chain is the primary block, this is defense\n")
+	b.WriteString("    # in depth.\n")
 	fmt.Fprintf(&b, "    tcp dport { %s } drop\n", denyPorts)
 	fmt.Fprintf(&b, "    ip daddr { %s } drop\n", denyCIDRs)
 	fmt.Fprintf(&b, "    ip6 daddr { %s } drop\n", denyIPv6CIDRs)
+	fmt.Fprintf(&b, "    iif %q oifname %q accept\n", h.BridgeName, h.PublicIface)
 	b.WriteString("  }\n")
 	b.WriteString("\n")
 	b.WriteString("  chain output {\n")

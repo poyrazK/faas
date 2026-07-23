@@ -166,3 +166,124 @@ func TestHostPolicyRenderPanicsOnEmptyRequiredField(t *testing.T) {
 		}()
 	}
 }
+
+// TestHostPolicyForwardDeniesComeBeforeBroadAllow locks the section-11 fix
+// from PR-#122: nftables is first-match, so the broad bridged-tenant
+// allow (`iif "br-tenants" oifname "eth0" accept`) MUST sit AFTER the
+// SMTP / RFC1918 / IPv6 drops, otherwise the denylist is theater for
+// bridged tenant traffic -- every allowed packet matches the broad
+// rule first and never reaches the drops. Asserted per-rule (not
+// block) on the isolated forward chain so a future reorder within the
+// denylist cannot sneak a deny line behind the broad allow, AND so the
+// established,related accept stays first (its daddr ∊ 10.100.0.0/16 ⊆
+// 10.0.0.0/8 would otherwise hit the new RFC1918 drop and break reply
+// traffic on published connections).
+func TestHostPolicyForwardDeniesComeBeforeBroadAllow(t *testing.T) {
+	out := DefaultHostPolicy.Render()
+	forward := extractChain(t, out, "forward")
+	// Pin the established/related accept at the top. Replies to inbound
+	// DNAT'd connections carry daddr ∊ 10.100.0.0/16 which is a subset of
+	// the new 10.0.0.0/8 RFC1918 drop -- they MUST survive the chain.
+	// `extractChain` returns the body that follows `chain forward {`,
+	// which starts with "\n    type filter hook forward ..." -- the
+	// first non-empty, non-metadata rule is what we want.
+	firstRule := firstRuleLine(forward)
+	if firstRule != "ct state established,related accept" {
+		t.Errorf("first forward rule must be `ct state established,related accept`, got %q\nchain:\n%s", firstRule, forward)
+	}
+	broadAllow := `iif "br-tenants" oifname "eth0" accept`
+	broadIdx := strings.Index(forward, broadAllow)
+	if broadIdx < 0 {
+		t.Fatalf("forward chain missing broad allow %q\nchain:\n%s", broadAllow, forward)
+	}
+	denies := []string{
+		"tcp dport { 25,465,587 } drop",
+		"ip daddr { 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 } drop",
+		"ip6 daddr { fe80::/10 fc00::/7 ff00::/8 ::1/128 ::/128 } drop",
+	}
+	for _, d := range denies {
+		idx := strings.Index(forward, d)
+		if idx < 0 {
+			t.Errorf("deny line missing in forward chain: %q", d)
+			continue
+		}
+		if idx > broadIdx {
+			t.Errorf("deny %q (idx %d) must precede broad allow (idx %d)\nchain:\n%s", d, idx, broadIdx, forward)
+		}
+	}
+}
+
+// extractChain returns the body of the named filter chain (the lines
+// between `chain <name> {` and its matching depth-zero `}`). Used by
+// tests that need to assert per-rule ordering WITHOUT scanning other
+// chains for incidental matches or being fooled by the `}` inside
+// port set syntax like `{ 25,465,587 } drop`. nftables Render emits
+// `chain <name> {` on one line and the closer `  }` (two leading
+// spaces) at depth zero, so we walk the body tracking brace depth and
+// return everything strictly between depth-1 and depth-0.
+func extractChain(t *testing.T, rendered, name string) string {
+	t.Helper()
+	openTag := "chain " + name + " {"
+	start := strings.Index(rendered, openTag)
+	if start < 0 {
+		t.Fatalf("chain %q not found in rendered ruleset:\n%s", name, rendered)
+	}
+	body := rendered[start+len(openTag):]
+	depth := 1
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return body[:i]
+			}
+		}
+	}
+	t.Fatalf("chain %q has no depth-zero `}`:\n%s", name, body)
+	return ""
+}
+
+// firstRuleLine returns the first non-blank, non-`type filter hook ...;
+// policy drop;` metadata line of a chain body. The metadata header is
+// emitted before any rule and counts as chain config, not a rule.
+func firstRuleLine(chainBody string) string {
+	for _, ln := range strings.Split(chainBody, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "type filter hook") && strings.Contains(trimmed, "policy drop") {
+			continue
+		}
+		return trimmed
+	}
+	return ""
+}
+
+// TestHostPolicyForwardIPv6ImmediatelyFollowsIPv4 locks ADR-023's
+// v4/v6 adjacency in the HOST renderer (the per-netns adjacency is
+// already covered by the per-netns renderer -- this is the host-side
+// pin). Scoped to the forward chain via extractChain so a future
+// `ip daddr` line in some unrelated context cannot accidentally
+// satisfy the assertion. Reordering the v4 and v6 lines, or inserting
+// any rule between them, breaks the "next to each other" mandate.
+func TestHostPolicyForwardIPv6ImmediatelyFollowsIPv4(t *testing.T) {
+	out := DefaultHostPolicy.Render()
+	forward := extractChain(t, out, "forward")
+	v4Idx := strings.Index(forward, "ip daddr {")
+	v6Idx := strings.Index(forward, "ip6 daddr {")
+	if v4Idx < 0 || v6Idx < 0 {
+		t.Fatalf("missing one of v4/v6 daddr lines (v4=%d v6=%d) in forward chain:\n%s", v4Idx, v6Idx, forward)
+	}
+	if v6Idx <= v4Idx {
+		t.Errorf("ip6 daddr line (idx %d) must come AFTER ip daddr line (idx %d) -- ADR-023 adjacency", v6Idx, v4Idx)
+	}
+	// Adjacency = only whitespace and the `}` between the two lines.
+	between := forward[v4Idx:v6Idx]
+	after := strings.SplitN(between, "\n", 2)[1]
+	if strings.TrimSpace(after) != "" {
+		t.Errorf("v4 daddr and v6 daddr are not adjacent; between them:\n%q", between)
+	}
+}
