@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gregale — MicroVM Scale-to-Zero Engine &amp; Console</title>
+  <meta name="description" content="Gregale is an ultra-fast Functions-as-a-Service engine powered by Firecracker microVMs. Apps park as snapshots on disk and wake in <350ms with zero idle cost.">
+  
+  <!-- Logo Icon -->
+  <link rel="icon" type="image/png" href="gregale-logo-green-trans.png">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Ambient Wireframe Grid -->
+  <div class="axiom-bg-grid"></div>
+
+  <!-- Navbar Header -->
+  <header>
+    <nav class="navbar">
+      <div class="container">
+        <a href="#" class="nav-brand" id="brand-home-link">
+          <img src="gregale-logo-green-trans.png" alt="Gregale" class="nav-brand-logo-img">
+        </a>
+
+        <ul class="nav-links">
+          <li><a href="#code" class="nav-link" id="nav-link-landing">Landing</a></li>
+          <li><a href="#architecture" class="nav-link" id="nav-link-arch">Architecture</a></li>
+          <li><a href="#benchmark" class="nav-link" id="nav-link-bench">Benchmark</a></li>
+          <li><a href="#pricing" class="nav-link" id="nav-link-pricing">Pricing</a></li>
+          <li><a href="#console" class="nav-link" id="nav-link-console-tab" style="color: var(--gregale-green); font-weight: 700;">Console</a></li>
+        </ul>
+
+        <div>
+          <button class="btn btn-gregale" id="open-console-btn">Open Console</button>
+        </div>
+      </div>
+    </nav>
+  </header>
+
+  <!-- ==========================================================================
+       VIEW MODE 1: LANDING PAGE
+       ========================================================================== -->
+  <div class="view-mode-panel" id="landing-view-panel">
+    <!-- Hero Section -->
+    <section class="axiom-hero">
+      <div class="container">
+        <h1 class="hero-title">
+          MicroVM scale-to-zero <span class="bottle-highlight">without the cold-start penalty.</span>
+        </h1>
+
+        <p class="hero-subtitle">
+          Gregale runs serverless applications inside isolated Firecracker microVMs. Apps park as memory snapshots on NVMe storage when inactive and unpark on request in &lt;350ms. Zero resident memory when parked.
+        </p>
+
+        <div class="hero-actions">
+          <button class="btn btn-gregale" id="hero-open-console">Launch Console</button>
+          <a href="#architecture" class="btn btn-secondary">Explore Architecture</a>
+
+          <div class="command-box">
+            <span>$</span>
+            <code>curl -fsSL https://get.gregale.dev | sh</code>
+            <button class="copy-btn" data-copy="curl -fsSL https://get.gregale.dev | sh">Copy</button>
+          </div>
+        </div>
+
+        <!-- Multi-Language Code Showcase Component -->
+        <div class="code-showcase" id="code">
+          <div class="code-header-bar">
+            <ul class="code-tabs">
+              <li><button class="code-tab-btn active" data-tab="go">Go 1.23</button></li>
+              <li><button class="code-tab-btn" data-tab="ts">TypeScript / Node</button></li>
+              <li><button class="code-tab-btn" data-tab="py">Python 3.12</button></li>
+              <li><button class="code-tab-btn" data-tab="cli">Gregale CLI</button></li>
+            </ul>
+
+            <div>
+              <button class="copy-btn" id="copy-active-code">Copy Snippet</button>
+            </div>
+          </div>
+
+          <div class="code-body">
+            <!-- Go Snippet -->
+            <pre class="code-snippet active" id="tab-go"><code><span class="syn-kw">package</span> main
+
+<span class="syn-kw">import</span> (
+    <span class="syn-str">"fmt"</span>
+    <span class="syn-str">"net/http"</span>
+)
+
+<span class="syn-cm">// Handle runs inside an isolated Firecracker MicroVM snapshot</span>
+<span class="syn-kw">func</span> <span class="syn-fn">Handle</span>(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set(<span class="syn-str">"x-gregale-wake"</span>, <span class="syn-str">"cold"</span>)
+    fmt.Fprintf(w, <span class="syn-str">"Hello from Gregale MicroVM! Execution duration: &lt;10ms\n"</span>)
+}</code></pre>
+
+            <!-- TS / Node Snippet -->
+            <pre class="code-snippet" id="tab-ts"><code><span class="syn-kw">import</span> { defineFunction } <span class="syn-kw">from</span> <span class="syn-str">"@gregale/sdk"</span>;
+
+<span class="syn-cm">// Served via snapshot unparking in &lt;350ms</span>
+<span class="syn-kw">export default</span> <span class="syn-fn">defineFunction</span>(<span class="syn-kw">async</span> (req) => {
+  <span class="syn-kw">return new</span> <span class="syn-fn">Response</span>(
+    JSON.stringify({ message: <span class="syn-str">"Hello from Gregale MicroVM!"</span>, status: <span class="syn-str">"cold-wake"</span> }),
+    { headers: { <span class="syn-str">"content-type"</span>: <span class="syn-str">"application/json"</span> } }
+  );
+});</code></pre>
+
+            <!-- Python Snippet -->
+            <pre class="code-snippet" id="tab-py"><code><span class="syn-cm"># Unparks from NVMe snapshot with 0 MB resident RAM when idle</span>
+<span class="syn-kw">def</span> <span class="syn-fn">handler</span>(event, context):
+    <span class="syn-kw">return</span> {
+        <span class="syn-str">"statusCode"</span>: <span class="syn-num">200</span>,
+        <span class="syn-str">"headers"</span>: { <span class="syn-str">"x-gregale-wake"</span>: <span class="syn-str">"cold"</span> },
+        <span class="syn-str">"body"</span>: <span class="syn-str">"Hello from Gregale MicroVM! Unparked in 184ms."</span>
+    }</code></pre>
+
+            <!-- CLI Snippet -->
+            <pre class="code-snippet" id="tab-cli"><code><span class="syn-cm"># Deploy serverless microVM function in 3 seconds</span>
+$ <span class="syn-fn">gregale</span> auth login
+$ <span class="syn-fn">gregale</span> app create my-api --ram <span class="syn-str">256MB</span>
+$ <span class="syn-fn">gregale</span> deploy --dir ./src
+
+<span class="syn-fn">✔</span> Initializing ephemeral builder microVM
+<span class="syn-fn">✔</span> Generating Firecracker snapshot overlay (128 MB)
+<span class="syn-fn">✔</span> Deployed to production: <span class="syn-str">https://my-api.gregale.app</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bento Grid Architecture -->
+    <section class="section" id="architecture">
+      <div class="container">
+        <div class="section-label">ARCHITECTURE</div>
+        <h2 class="section-title">Engineered for Hardware-Level Security</h2>
+        <p class="section-subtitle">
+          Every layer of Gregale is built on bare-metal Hetzner EX44 servers to eliminate shared state and zero resident RAM while idle.
+        </p>
+
+        <div class="bento-grid">
+          <!-- Card 1: Wide -->
+          <div class="bento-card wide">
+            <div class="bento-card-num">01 / MICROVM ISOLATION</div>
+            <h3 class="bento-card-title">Hardware MicroVM Boundaries</h3>
+            <p class="bento-card-desc">
+              No container leaks or shared host directories. Every function runs inside its own Firecracker microVM with dedicated kernel, jailed UID/GID (20000–29999), TAP interface, cgroup v2 caps, and seccomp filters.
+            </p>
+          </div>
+
+          <!-- Card 2 -->
+          <div class="bento-card">
+            <div class="bento-card-num">02 / DISK ECONOMICS</div>
+            <h3 class="bento-card-title">Two-Drive RootFS Overlay</h3>
+            <p class="bento-card-desc">
+              Drive0 contains shared read-only base images; Drive1 stores your app layer. OverlayFS in guest PID1 keeps average snapshot size to ~130 MB for rapid NVMe restores.
+            </p>
+          </div>
+
+          <!-- Card 3 -->
+          <div class="bento-card">
+            <div class="bento-card-num">03 / BILLING MATH</div>
+            <h3 class="bento-card-title">Linear €0.01 / GB-h Metering</h3>
+            <p class="bento-card-desc">
+              Billing uses configured plan RAM + 8 MB system overhead per running second. Zero charges when parked on disk.
+            </p>
+          </div>
+
+          <!-- Card 4: Wide -->
+          <div class="bento-card wide">
+            <div class="bento-card-num">04 / ZERO-CONFIG BUILD</div>
+            <h3 class="bento-card-title">Ephemeral Builder MicroVMs</h3>
+            <p class="bento-card-desc">
+              Builds run inside ephemeral builder microVMs (never host containers). Railpack auto-detects Node.js 22, Python 3.12, Go 1.23, or custom Dockerfiles safely off-host.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cold Wake Benchmark -->
+    <section class="section" id="benchmark">
+      <div class="container">
+        <div class="section-label">BENCHMARK</div>
+        <h2 class="section-title">Sub-350ms Cold Wake Benchmark</h2>
+        <p class="section-subtitle">
+          Firecracker snapshot unparking eliminates multi-second container image pulling. Test simulated HTTP wake latency below.
+        </p>
+
+        <div class="bench-card">
+          <div class="bench-header-row">
+            <div style="font-family: var(--font-mono); font-size: 0.9rem; font-weight: 600;">HTTP Request Cold-Wake Latency (p50)</div>
+            <button class="btn btn-gregale" id="run-sim-btn" style="padding: 0.4rem 0.85rem; font-size: 0.82rem;">
+              Simulate Request Trigger
+            </button>
+          </div>
+
+          <div class="bench-row">
+            <div class="bench-lbl">
+              <span style="color: var(--gregale-green);">Gregale MicroVM (Firecracker Snapshot Restore)</span>
+              <span id="sim-gregale-ms">310 ms</span>
+            </div>
+            <div class="bench-track">
+              <div class="bench-bar-gregale" id="bench-bar-gregale" style="width: 15%;">310ms</div>
+            </div>
+          </div>
+
+          <div class="bench-row">
+            <div class="bench-lbl">
+              <span style="color: var(--text-muted);">Traditional Container FaaS (Docker Cold Boot)</span>
+              <span>3,800 ms</span>
+            </div>
+            <div class="bench-track">
+              <div class="bench-bar-trad" style="width: 95%;">3,800ms</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pricing Matrix -->
+    <section class="section" id="pricing">
+      <div class="container">
+        <div class="section-label">PRICING</div>
+        <h2 class="section-title">Transparent Monthly Plans</h2>
+        <p class="section-subtitle">
+          5 GB-hours included every month on Free. Predictable linear pricing on paid plans.
+        </p>
+
+        <div class="pricing-grid">
+          <!-- Free -->
+          <div class="plan-card">
+            <div>
+              <h3 class="plan-title">Free</h3>
+              <div class="plan-price">€0 <span>/ mo</span></div>
+              <ul class="plan-specs">
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> 5 GB-hours / mo</li>
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> 1 Deployed App</li>
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> 128 MB RAM / app</li>
+              </ul>
+            </div>
+            <button class="btn btn-secondary launch-console-plan" data-plan="Free">Get Started</button>
+          </div>
+
+          <!-- Hobby -->
+          <div class="plan-card featured">
+            <div>
+              <h3 class="plan-title">Hobby</h3>
+              <div class="plan-price">€9 <span>/ mo</span></div>
+              <ul class="plan-specs">
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> 50 GB-hours / mo</li>
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> 5 Deployed Apps</li>
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> 256 MB RAM / app</li>
+              </ul>
+            </div>
+            <button class="btn btn-gregale launch-console-plan" data-plan="Hobby">Deploy Hobby Plan</button>
+          </div>
+
+          <!-- Pro -->
+          <div class="plan-card">
+            <div>
+              <h3 class="plan-title">Pro</h3>
+              <div class="plan-price">€29 <span>/ mo</span></div>
+              <ul class="plan-specs">
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> 250 GB-hours / mo</li>
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> 25 Deployed Apps</li>
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Custom Domains &amp; TLS</li>
+              </ul>
+            </div>
+            <button class="btn btn-secondary launch-console-plan" data-plan="Pro">Upgrade Pro</button>
+          </div>
+
+          <!-- Scale -->
+          <div class="plan-card">
+            <div>
+              <h3 class="plan-title">Scale</h3>
+              <div class="plan-price">€99 <span>/ mo</span></div>
+              <ul class="plan-specs">
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> 1,500 GB-hours / mo</li>
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> 100 Deployed Apps</li>
+                <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Warm Keepalive</li>
+              </ul>
+            </div>
+            <button class="btn btn-secondary launch-console-plan" data-plan="Scale">Contact Scale</button>
+          </div>
+        </div>
+
+        <!-- Estimator -->
+        <div class="calc-panel">
+          <h3 style="font-family: var(--font-mono); font-size: 1.1rem; margin-bottom: 1.25rem;">GB-Hour Usage Estimator</h3>
+
+          <div class="calc-row">
+            <div class="calc-lbl-bar">
+              <span>RAM Allocation</span>
+              <span id="calc-ram-val" style="color: var(--gregale-green);">256 MB</span>
+            </div>
+            <input type="range" id="calc-ram" min="128" max="1024" step="128" value="256">
+          </div>
+
+          <div class="calc-row">
+            <div class="calc-lbl-bar">
+              <span>Active Execution Duration</span>
+              <span id="calc-hours-val" style="color: var(--gregale-green);">300 hrs/mo</span>
+            </div>
+            <input type="range" id="calc-hours" min="10" max="720" step="10" value="300">
+          </div>
+
+          <div class="calc-footer">
+            <div>
+              <div style="font-size: 0.85rem; color: var(--text-secondary);">Calculated Consumption:</div>
+              <div style="font-size: 1.1rem; font-weight: 700;" id="calc-gbh-val">75 GB-h</div>
+              <div style="font-size: 0.8rem; color: var(--gregale-green);" id="calc-plan-val">Hobby Plan</div>
+            </div>
+
+            <div style="text-align: right;">
+              <div style="font-size: 0.85rem; color: var(--text-secondary);">Estimated Total</div>
+              <div class="calc-total" id="calc-cost-val">€9.00</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+      <div class="container">
+        <div class="footer-grid">
+          <div class="footer-brand">
+            <img src="gregale-logo-green-trans.png" alt="Gregale" style="height: 38px; width: auto; margin-bottom: 0.85rem;">
+            <p>
+              Gregale is a scale-to-zero Functions-as-a-Service platform powered by Firecracker microVMs on bare-metal Hetzner EX44 infrastructure.
+            </p>
+          </div>
+
+          <div>
+            <h4 class="footer-col-title">PLATFORM</h4>
+            <ul class="footer-col-links">
+              <li><a href="#code">Code Showcase</a></li>
+              <li><a href="#architecture">Architecture</a></li>
+              <li><a href="#benchmark">Benchmark</a></li>
+              <li><a href="#pricing">Pricing</a></li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 class="footer-col-title">CLI &amp; SPECS</h4>
+            <ul class="footer-col-links">
+              <li><a href="#">CLI Reference</a></li>
+              <li><a href="#">GitHub Push-to-Deploy</a></li>
+              <li><a href="#">Sealed Secrets</a></li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 class="footer-col-title">LEGAL</h4>
+            <ul class="footer-col-links">
+              <li><a href="#">Status Page</a></li>
+              <li><a href="#">Privacy Policy</a></li>
+              <li><a href="#">DPA</a></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="footer-bottom">
+          <div>&copy; 2026 Gregale. All rights reserved.</div>
+          <div>Scale-to-zero Firecracker microVMs</div>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- ==========================================================================
+       VIEW MODE 2: CLOUD PROVIDER MANAGEMENT CONSOLE (EXTENDED WITH GREGALE FEATURES)
+       ========================================================================== -->
+  <div class="view-mode-panel hidden" id="cloud-console-panel">
+    <div class="console-wrapper">
+      
+      <!-- Classic Left Navigation Sidebar -->
+      <aside class="console-sidebar">
+        <div>
+          <div class="sidebar-group">
+            <div class="sidebar-title">Management</div>
+            <ul class="sidebar-menu">
+              <li>
+                <button class="sidebar-btn active" data-console-tab="overview">
+                  <span style="display:flex; align-items:center; gap:0.5rem;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    Overview
+                  </span>
+                </button>
+              </li>
+              <li>
+                <button class="sidebar-btn" data-console-tab="functions">
+                  <span style="display:flex; align-items:center; gap:0.5rem;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                    Functions
+                  </span>
+                  <span class="sidebar-badge green" id="vms-count-badge">4</span>
+                </button>
+              </li>
+              <li>
+                <button class="sidebar-btn" data-console-tab="logs">
+                  <span style="display:flex; align-items:center; gap:0.5rem;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+                    Live Logs
+                  </span>
+                  <span class="sidebar-badge">Live</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          <div class="sidebar-group">
+            <div class="sidebar-title">Engine Features</div>
+            <ul class="sidebar-menu">
+              <li>
+                <button class="sidebar-btn" data-console-tab="jailer">
+                  <span style="display:flex; align-items:center; gap:0.5rem;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                    Jailer &amp; Security
+                  </span>
+                  <span class="sidebar-badge">UID 20K</span>
+                </button>
+              </li>
+              <li>
+                <button class="sidebar-btn" data-console-tab="storage">
+                  <span style="display:flex; align-items:center; gap:0.5rem;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M21 19c0 1.66-4 3-9 3s-9-1.34-9-3"></path></svg>
+                    2-Drive OverlayFS
+                  </span>
+                </button>
+              </li>
+              <li>
+                <button class="sidebar-btn" data-console-tab="builder">
+                  <span style="display:flex; align-items:center; gap:0.5rem;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                    Railpack Builder
+                  </span>
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          <div class="sidebar-group">
+            <div class="sidebar-title">Configuration</div>
+            <ul class="sidebar-menu">
+              <li>
+                <button class="sidebar-btn" data-console-tab="secrets">
+                  <span style="display:flex; align-items:center; gap:0.5rem;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+                    Sealed Secrets
+                  </span>
+                </button>
+              </li>
+              <li>
+                <button class="sidebar-btn" data-console-tab="metrics">
+                  <span style="display:flex; align-items:center; gap:0.5rem;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                    Metrics &amp; Billing
+                  </span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div style="padding-top: 1rem; border-top: 1px solid var(--border-dim);">
+          <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.35rem;">REGIONAL CLUSTER</div>
+          <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); display:flex; align-items:center; gap:0.35rem;">
+            <span style="display:inline-block; width:8px; height:8px; background:var(--accent-green); border-radius:50%;"></span>
+            hetzner-fsn1-ex44
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Workspace -->
+      <main class="console-workspace">
+        
+        <!-- Tab 1: Overview Dashboard -->
+        <div class="console-tab-content active" id="c-tab-overview">
+          <div class="console-page-header">
+            <div>
+              <h2 class="console-page-title">Cluster Overview</h2>
+              <p class="console-page-subtitle">Real-time status of your Firecracker microVM workloads on Hetzner EX44 bare-metal.</p>
+            </div>
+            <button class="btn btn-gregale" id="deploy-new-func-btn">+ New Function</button>
+          </div>
+
+          <!-- Stat Cards -->
+          <div class="stat-cards-grid">
+            <div class="stat-card">
+              <div class="stat-card-label">Active MicroVMs</div>
+              <div class="stat-card-val" style="color: var(--gregale-green);">4</div>
+              <div class="stat-card-sub">0 MB resident RAM when parked</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-card-label">p50 Cold Wake</div>
+              <div class="stat-card-val">184 ms</div>
+              <div class="stat-card-sub">&lt;350ms SLA budget</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-card-label">Monthly Metering</div>
+              <div class="stat-card-val">2.8 GB-h</div>
+              <div class="stat-card-sub">5 GB-h included on Free</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-card-label">Host Health</div>
+              <div class="stat-card-val" style="color: var(--accent-green);">100%</div>
+              <div class="stat-card-sub">UID Jails 20000–29999</div>
+            </div>
+          </div>
+
+          <!-- Functions Table -->
+          <div class="console-card-panel">
+            <div class="panel-toolbar">
+              <div style="font-weight: 700; font-size: 1rem;">Active Functions</div>
+              <button class="btn btn-secondary btn-sm" id="view-all-funcs-btn">View All Functions</button>
+            </div>
+            <table class="console-table">
+              <thead>
+                <tr>
+                  <th>Function Name</th>
+                  <th>Status</th>
+                  <th>Memory Plan</th>
+                  <th>Cold Wake</th>
+                  <th>Last Executed</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <div class="app-name-cell">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                      api-gateway
+                    </div>
+                  </td>
+                  <td><span class="status-badge parked">PARKED ON DISK</span></td>
+                  <td>256 MB</td>
+                  <td>184 ms</td>
+                  <td>2 mins ago</td>
+                  <td><button class="btn btn-secondary btn-sm run-wake-test" data-app="api-gateway">Trigger Wake</button></td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="app-name-cell">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                      auth-service
+                    </div>
+                  </td>
+                  <td><span class="status-badge restored">COLD RESTORED</span></td>
+                  <td>128 MB</td>
+                  <td>142 ms</td>
+                  <td>Just now</td>
+                  <td><button class="btn btn-secondary btn-sm run-wake-test" data-app="auth-service">Trigger Wake</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab 2: Functions Manager -->
+        <div class="console-tab-content" id="c-tab-functions">
+          <div class="console-page-header">
+            <div>
+              <h2 class="console-page-title">Functions &amp; Applications</h2>
+              <p class="console-page-subtitle">Manage deployed Firecracker microVM functions and memory snapshots.</p>
+            </div>
+            <button class="btn btn-gregale" id="deploy-new-func-btn-2">+ New Function</button>
+          </div>
+
+          <div class="console-card-panel">
+            <div class="panel-toolbar">
+              <input type="text" class="table-search-input" placeholder="Search functions by name or region..." id="func-search-input">
+              <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">
+                Showing <strong>4</strong> functions
+              </div>
+            </div>
+
+            <table class="console-table" id="functions-main-table">
+              <thead>
+                <tr>
+                  <th>Function Name</th>
+                  <th>Runtime</th>
+                  <th>Status</th>
+                  <th>Memory</th>
+                  <th>P50 Wake</th>
+                  <th>Region</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="functions-table-body">
+                <tr>
+                  <td>
+                    <div class="app-name-cell">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                      api-gateway
+                    </div>
+                  </td>
+                  <td>Go 1.23</td>
+                  <td><span class="status-badge parked">PARKED ON DISK</span></td>
+                  <td>256 MB</td>
+                  <td>184 ms</td>
+                  <td>hetzner-fsn1</td>
+                  <td>
+                    <button class="btn btn-secondary btn-sm run-wake-test" data-app="api-gateway">Trigger Wake</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="app-name-cell">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                      auth-service
+                    </div>
+                  </td>
+                  <td>Node.js 22</td>
+                  <td><span class="status-badge restored">COLD RESTORED</span></td>
+                  <td>128 MB</td>
+                  <td>142 ms</td>
+                  <td>hetzner-fsn1</td>
+                  <td>
+                    <button class="btn btn-secondary btn-sm run-wake-test" data-app="auth-service">Trigger Wake</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="app-name-cell">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                      stripe-webhook
+                    </div>
+                  </td>
+                  <td>Python 3.12</td>
+                  <td><span class="status-badge parked">PARKED ON DISK</span></td>
+                  <td>256 MB</td>
+                  <td>196 ms</td>
+                  <td>hetzner-fsn1</td>
+                  <td>
+                    <button class="btn btn-secondary btn-sm run-wake-test" data-app="stripe-webhook">Trigger Wake</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <div class="app-name-cell">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                      image-resizer
+                    </div>
+                  </td>
+                  <td>Rust 1.80</td>
+                  <td><span class="status-badge parked">PARKED ON DISK</span></td>
+                  <td>512 MB</td>
+                  <td>210 ms</td>
+                  <td>hetzner-fsn1</td>
+                  <td>
+                    <button class="btn btn-secondary btn-sm run-wake-test" data-app="image-resizer">Trigger Wake</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab 3: Live Logs Stream -->
+        <div class="console-tab-content" id="c-tab-logs">
+          <div class="console-page-header">
+            <div>
+              <h2 class="console-page-title">Live Logs &amp; Observability</h2>
+              <p class="console-page-subtitle">Real-time log stream from guest init, vmmd, and gatewayd processes.</p>
+            </div>
+          </div>
+
+          <div class="code-showcase" style="max-width: 100%;">
+            <div class="code-header-bar">
+              <div style="font-family: var(--font-mono); font-size: 0.8rem; color: #94A3B8;">
+                Stream Target: <strong>all-services</strong> • <span style="color: #4ADE80;">● TAILING</span>
+              </div>
+              <button class="copy-btn" id="clear-logs-btn">Clear Logs</button>
+            </div>
+            <div class="code-body" id="console-live-logs-stream" style="min-height: 420px; max-height: 520px; overflow-y: auto;">
+              <div class="stream-row"><span class="ts-col">20:45:01.104</span><span class="service-col">[gatewayd]</span><span class="event-col">HTTP_GET /healthz</span><span class="status-tag ok">1ms</span><span style="color:#94A3B8;">Health check OK (0ms wake penalty)</span></div>
+              <div class="stream-row"><span class="ts-col">20:45:05.412</span><span class="service-col">[vmmd]</span><span class="event-col">FC_UNPARK</span><span class="status-tag cold">COLD WAKE</span><span style="color:#94A3B8;">Firecracker snapshot restored in 184ms (UID: 20412)</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- NEW TAB: Jailer & Security Inspector -->
+        <div class="console-tab-content" id="c-tab-jailer">
+          <div class="console-page-header">
+            <div>
+              <h2 class="console-page-title">Firecracker Jailer &amp; Isolation</h2>
+              <p class="console-page-subtitle">Hardware-level microVM isolation boundary status (UID Jails 20000–29999, cgroup v2, TAP networking).</p>
+            </div>
+          </div>
+
+          <div class="stat-cards-grid">
+            <div class="stat-card">
+              <div class="stat-card-label">Jailed UID Range</div>
+              <div class="stat-card-val">20412</div>
+              <div class="stat-card-sub">Isolated non-root host user</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-card-label">TAP Interface</div>
+              <div class="stat-card-val" style="color: var(--gregale-green);">tap0</div>
+              <div class="stat-card-sub">IPv4: 172.16.0.2/24</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-card-label">Seccomp Filters</div>
+              <div class="stat-card-val" style="color: var(--accent-green);">STRICT</div>
+              <div class="stat-card-sub">12 allowed syscalls</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-card-label">Cgroup v2 Caps</div>
+              <div class="stat-card-val">256MB / 1 vCPU</div>
+              <div class="stat-card-sub">Hard quota limits</div>
+            </div>
+          </div>
+
+          <div class="console-card-panel">
+            <div class="panel-toolbar">
+              <div style="font-weight: 700; font-size: 1rem;">Active Firecracker Jailed MicroVM Instances</div>
+            </div>
+            <table class="console-table">
+              <thead>
+                <tr>
+                  <th>VM Instance ID</th>
+                  <th>Jailed UID / GID</th>
+                  <th>TAP Interface</th>
+                  <th>Cgroup v2 Limit</th>
+                  <th>Seccomp State</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code style="color: var(--gregale-green);">fc-vm-20412</code></td>
+                  <td>UID 20412 / GID 20412</td>
+                  <td>tap0 (172.16.0.2)</td>
+                  <td>256 MB RAM • 1.0 vCPU</td>
+                  <td><span class="status-badge restored">ENFORCED</span></td>
+                </tr>
+                <tr>
+                  <td><code style="color: var(--gregale-green);">fc-vm-20413</code></td>
+                  <td>UID 20413 / GID 20413</td>
+                  <td>tap1 (172.16.0.3)</td>
+                  <td>128 MB RAM • 0.5 vCPU</td>
+                  <td><span class="status-badge restored">ENFORCED</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- NEW TAB: 2-Drive OverlayFS Inspector -->
+        <div class="console-tab-content" id="c-tab-storage">
+          <div class="console-page-header">
+            <div>
+              <h2 class="console-page-title">Two-Drive RootFS Overlay Storage</h2>
+              <p class="console-page-subtitle">Drive0 base OS image sharing with Drive1 app layer for fast snapshot restores.</p>
+            </div>
+          </div>
+
+          <div class="bento-grid" style="margin-bottom: 2rem;">
+            <div class="bento-card">
+              <div class="bento-card-num">DRIVE 0 / READ-ONLY BASE</div>
+              <h3 class="bento-card-title">Shared Base RootFS</h3>
+              <p class="bento-card-desc">
+                <code>/var/lib/gregale/images/base-v1.ext4</code> (85 MB read-only image shared across all microVMs for zero disk duplication).
+              </p>
+            </div>
+
+            <div class="bento-card">
+              <div class="bento-card-num">DRIVE 1 / APP OVERLAY</div>
+              <h3 class="bento-card-title">App Layer Delta</h3>
+              <p class="bento-card-desc">
+                <code>/var/lib/gregale/apps/app-412/overlay.ext4</code> (~45 MB application delta mounted via OverlayFS in guest PID1).
+              </p>
+            </div>
+
+            <div class="bento-card">
+              <div class="bento-card-num">NVME SNAPSHOT</div>
+              <h3 class="bento-card-title">184ms Restore Pipeline</h3>
+              <p class="bento-card-desc">
+                Memory unpark: 142ms • TAP net bind: 12ms • Guest clock step: 30ms. Total cold wake: 184ms.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- NEW TAB: Railpack Ephemeral Builder -->
+        <div class="console-tab-content" id="c-tab-builder">
+          <div class="console-page-header">
+            <div>
+              <h2 class="console-page-title">Railpack Ephemeral Builder</h2>
+              <p class="console-page-subtitle">Off-host builds executed inside isolated builder microVMs.</p>
+            </div>
+          </div>
+
+          <div class="console-card-panel">
+            <div class="panel-toolbar">
+              <div style="font-weight: 700; font-size: 1rem;">Recent Build Pipelines</div>
+              <span class="status-badge restored">RAILPACK ENGINE READY</span>
+            </div>
+            <table class="console-table">
+              <thead>
+                <tr>
+                  <th>Build ID</th>
+                  <th>App Target</th>
+                  <th>Auto-Detected Runtime</th>
+                  <th>Build Time</th>
+                  <th>Snapshot Size</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>build-8821</code></td>
+                  <td>api-gateway</td>
+                  <td>Go 1.23 (Railpack Auto)</td>
+                  <td>2.4s</td>
+                  <td>128 MB</td>
+                </tr>
+                <tr>
+                  <td><code>build-8820</code></td>
+                  <td>auth-service</td>
+                  <td>Node.js 22 (TypeScript)</td>
+                  <td>4.1s</td>
+                  <td>142 MB</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab 4: Sealed Secrets Manager -->
+        <div class="console-tab-content" id="c-tab-secrets">
+          <div class="console-page-header">
+            <div>
+              <h2 class="console-page-title">Sealed Secrets &amp; Environment</h2>
+              <p class="console-page-subtitle">Encrypted environment variables injected into guest microVM PID1.</p>
+            </div>
+            <button class="btn btn-gregale" id="add-secret-btn">+ Add Secret</button>
+          </div>
+
+          <div class="console-card-panel">
+            <table class="console-table">
+              <thead>
+                <tr>
+                  <th>Secret Key</th>
+                  <th>Value</th>
+                  <th>Target Function</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="secrets-table-body">
+                <tr>
+                  <td class="secret-key-code">DATABASE_URL</td>
+                  <td class="secret-val-mask">••••••••••••••••••••••••••••</td>
+                  <td>Global (All Functions)</td>
+                  <td>
+                    <button class="btn btn-secondary btn-sm toggle-secret-val">Toggle Mask</button>
+                    <button class="btn btn-secondary btn-sm delete-secret-row" style="color: #EF4444;">Delete</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="secret-key-code">STRIPE_SECRET_KEY</td>
+                  <td class="secret-val-mask">••••••••••••••••••••••••••••</td>
+                  <td>stripe-webhook</td>
+                  <td>
+                    <button class="btn btn-secondary btn-sm toggle-secret-val">Toggle Mask</button>
+                    <button class="btn btn-secondary btn-sm delete-secret-row" style="color: #EF4444;">Delete</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="secret-key-code">JWT_SECRET</td>
+                  <td class="secret-val-mask">••••••••••••••••••••••••••••</td>
+                  <td>auth-service</td>
+                  <td>
+                    <button class="btn btn-secondary btn-sm toggle-secret-val">Toggle Mask</button>
+                    <button class="btn btn-secondary btn-sm delete-secret-row" style="color: #EF4444;">Delete</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab 5: Metrics & Billing -->
+        <div class="console-tab-content" id="c-tab-metrics">
+          <div class="console-page-header">
+            <div>
+              <h2 class="console-page-title">Metrics &amp; Metering</h2>
+              <p class="console-page-subtitle">Real-time memory GB-hour consumption and cold wake latency telemetry.</p>
+            </div>
+          </div>
+
+          <div class="stat-cards-grid">
+            <div class="stat-card">
+              <div class="stat-card-label">Current Billing Plan</div>
+              <div class="stat-card-val" style="color: var(--gregale-green);">Free Tier</div>
+              <div class="stat-card-sub">5 GB-hours included / mo</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-card-label">Usage This Month</div>
+              <div class="stat-card-val">2.8 GB-h</div>
+              <div class="stat-card-sub">56% of included tier used</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-card-label">Total Invocations</div>
+              <div class="stat-card-val">14,210</div>
+              <div class="stat-card-sub">Average runtime: 12ms</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-card-label">P99 Cold-Wake</div>
+              <div class="stat-card-val">210 ms</div>
+              <div class="stat-card-sub">&lt;350ms SLA guaranteed</div>
+            </div>
+          </div>
+
+          <!-- Benchmark Simulator Panel -->
+          <div class="bench-card" style="margin-top: 1.5rem;">
+            <h3 style="font-size: 1.1rem; margin-bottom: 1rem;">MicroVM Cold Wake Latency Telemetry</h3>
+            <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 1.5rem;">
+              Firecracker unparking latency monitored across bare-metal NVMe drives.
+            </p>
+            <div class="bench-row">
+              <div class="bench-lbl">
+                <span>p50 Restore Latency</span>
+                <span style="color: var(--gregale-green); font-weight:700;">184 ms</span>
+              </div>
+              <div class="bench-track">
+                <div class="bench-bar-gregale" style="width: 25%;">184 ms</div>
+              </div>
+            </div>
+            <div class="bench-row">
+              <div class="bench-lbl">
+                <span>p99 Restore Latency</span>
+                <span style="color: var(--gregale-green); font-weight:700;">210 ms</span>
+              </div>
+              <div class="bench-track">
+                <div class="bench-bar-gregale" style="width: 32%;">210 ms</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 1: NEW FUNCTION DEPLOYMENT MODAL
+       ========================================================================== -->
+  <div class="modal-overlay" id="modal-deploy-func">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title">Deploy New MicroVM Function</h3>
+        <button class="modal-close-btn" class="close-modal-trigger">&times;</button>
+      </div>
+      <form id="form-create-func">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Function Name</label>
+            <input type="text" class="form-control" id="input-func-name" placeholder="e.g. payment-processor" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Runtime Engine</label>
+            <select class="form-control" id="input-func-runtime">
+              <option value="Go 1.23">Go 1.23</option>
+              <option value="Node.js 22">Node.js 22 (TypeScript)</option>
+              <option value="Python 3.12">Python 3.12</option>
+              <option value="Rust 1.80">Rust 1.80</option>
+              <option value="Dockerfile">Custom Dockerfile</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">RAM Memory Plan</label>
+            <select class="form-control" id="input-func-ram">
+              <option value="128 MB">128 MB (Sub-150ms Cold Wake)</option>
+              <option value="256 MB" selected>256 MB (Recommended)</option>
+              <option value="512 MB">512 MB</option>
+              <option value="1024 MB">1024 MB (1 GB)</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary close-modal-trigger">Cancel</button>
+          <button type="submit" class="btn btn-gregale">Deploy to Production</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 2: ADD SECRET KEY MODAL
+       ========================================================================== -->
+  <div class="modal-overlay" id="modal-add-secret">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title">Add Sealed Environment Secret</h3>
+        <button class="modal-close-btn" class="close-modal-trigger">&times;</button>
+      </div>
+      <form id="form-create-secret">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Secret Key Name</label>
+            <input type="text" class="form-control" id="input-secret-key" placeholder="e.g. AWS_SECRET_ACCESS_KEY" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Secret Value</label>
+            <input type="password" class="form-control" id="input-secret-val" placeholder="Value will be encrypted on disk" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Scope / Target Function</label>
+            <select class="form-control" id="input-secret-target">
+              <option value="Global (All Functions)">Global (All Functions)</option>
+              <option value="api-gateway">api-gateway</option>
+              <option value="auth-service">auth-service</option>
+              <option value="stripe-webhook">stripe-webhook</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary close-modal-trigger">Cancel</button>
+          <button type="submit" class="btn btn-gregale">Save Encrypted Secret</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Script -->
+  <script src="app.js"></script>
+</body>
+</html>
