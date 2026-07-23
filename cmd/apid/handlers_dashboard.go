@@ -25,6 +25,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// dashboardAccountPath is the route served by renderAccount below.
+// Mirrors cliAuthDashboard in handlers_cli_auth.go but lives in this
+// file because the two packages can share neither code nor constants
+// across the cmd/apid boundary without churn, and goconst (see
+// .golangci.yml) flags a third occurrence of the literal across
+// non-test files.
+const dashboardAccountPath = "/dashboard/account"
+
 // dashboardHandler is a tiny per-path router for /dashboard/*. Each
 // page is one method — keeping the HTTP layer thin so we don't grow
 // a global switch statement that drifts from the route table.
@@ -62,7 +70,7 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderUsage(w, r, log, acct)
 		case path == "/dashboard/billing":
 			s.renderBilling(w, r, log, acct)
-		case path == "/dashboard/account":
+		case path == dashboardAccountPath:
 			s.renderAccount(w, r, log, acct)
 		default:
 			http.NotFound(w, r)
