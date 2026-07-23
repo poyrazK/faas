@@ -97,12 +97,17 @@ func (c Config) SetupCommands() [][]string {
 		// this, the kernel only knows two connected subnets inside the netns
 		// — 10.0.0.0/30 on tap0 and 10.100.0.0/16 on VethPeer — so a guest
 		// packet to e.g. 8.8.8.8 has no matching route and the kernel returns
-		// ENETUNREACH (was the silent tenant-egress P0: outbound HTTP from
-		// any guest never worked on the production EX44; only the Lima
-		// nested-VM shim happened to also bridge 10.100.0.0/16 into a
-		// host-side default, so the dev loop masked it). The bridge IP is
-		// reserved by pkg/fcvm/alloc.go (allocator hands out 10.100.0.2+,
-		// never .1), so no slot-0 collision is possible.
+		// ENETUNREUCH (was the silent tenant-egress P0: outbound HTTP from
+		// any guest never worked on the production EX44). The real reason
+		// it slipped through CI/dev: no //go:build metal test exists for
+		// guest->public egress (the only Test*Metal* in pkg/netns is a
+		// syntax check), and TestMetalHelloBoot only probes host->guest
+		// DNAT in pkg/fcvm/manager_metal_test.go. The Lima nested-VM
+		// shim also brings up br-tenants + root forwarding which masks the
+		// gap, but does not install a netns default route either, so even
+		// Lima does not exercise this code path end to end. The bridge IP
+		// is reserved by pkg/fcvm/alloc.go (allocator hands out
+		// 10.100.0.2+, never .1), so no slot-0 collision is possible.
 		inNetns("ip", "route", "add", "default", "via", "10.100.0.1", "dev", c.VethPeer),
 	}
 }
@@ -270,12 +275,16 @@ func (c Config) forwardConnlimitRule6(nft func(...string) []string) []string {
 }
 
 // NftResetCommands returns the best-effort argv list that brings the
-// per-netns nftables table to a clean slate before NftCommands runs. The
-// single `delete table` exits non-zero on a fresh netns (no table to
-// delete) — that is expected; the caller logs the failure and continues.
-// On a snapshot-restore Wake the table exists (the netns outlived the VM),
-// so the delete succeeds and the subsequent `add table` in NftCommands
-// does not collide.
+// per-netns nftables table to a clean slate before NftCommands runs.
+// Each `delete table` exits non-zero when the table is absent (first
+// boot, or just-rebuilt netns) — that is expected; the caller logs the
+// failure and continues. The reset succeeds when the table persists
+// across two back-to-back runs without an intervening TeardownCommands,
+// e.g. a re-run of NftCommands after a partial failure (add table ran,
+// rules didn't install), or a future code path that rerenders without
+// re-creating the netns. Cold boot itself does NOT hit this branch —
+// pkg/fcvm/manager.go:cleanup() always runs TeardownCommands, which
+// `ip netns del`s the netns and drops every per-netns nft table with it.
 //
 // Best-effort, not fatal — this is the only place in the per-instance
 // lifecycle where we accept nft returning non-zero. Splitting it from
@@ -285,11 +294,13 @@ func (c Config) NftResetCommands() [][]string {
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
 	return [][]string{
 		nft("delete", "table", "ip", "faas"),
-		// Mirror the IPv6 table reset (ADR-023 split). On a snapshot-restore
-		// Wake the netns outlives the VM and the v6 table is already present;
-		// without this reset the subsequent NftCommands' `add table ip6 faas`
-		// collides. Best-effort like the v4 entry — the caller logs and
-		// continues when the table is absent.
+		// Mirror the IPv6 table reset (ADR-023 split). Same best-effort
+		// shape as the v4 entry: if the table is absent (first boot, freshly
+		// created netns) the delete fails and the caller continues; if the
+		// table persists across rerun (partial-failure rerender), the
+		// delete succeeds and the subsequent `add table ip6 faas` does not
+		// collide. See NftResetCommands doc comment for why cold boot
+		// itself does not exercise this branch.
 		nft("delete", "table", "ip6", "faas"),
 	}
 }

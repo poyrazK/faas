@@ -161,7 +161,7 @@ func TestSetupInstallsDefaultRouteAfterAddressing(t *testing.T) {
 		if strings.Contains(line, "link set "+c.VethPeer+" up") {
 			peerUp = i
 		}
-	if strings.Contains(line, "route add default via 10.100.0.1") {
+		if strings.Contains(line, "route add default via 10.100.0.1") {
 			route = i
 		}
 	}
