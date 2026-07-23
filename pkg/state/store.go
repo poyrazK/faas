@@ -396,6 +396,19 @@ type Store interface {
 	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
+	// ListLatestInstancesForApp returns up to `limit` instance rows for
+	// appID ordered by started_at DESC. The dashboard's app-detail
+	// "Recent wakes" table uses this to bound the per-render scan at
+	// the SQL layer instead of fetching every row (including parked
+	// history) and sorting in Go. limit must be > 0; a value ≤ 0
+	// returns an empty slice so the caller fails closed rather than
+	// rendering an unbounded table. The supporting partial index
+	// `instances_wake_id_app_idx` (migration 00027) covers live
+	// states but not parked; the SQL still scans parked rows in the
+	// sort phase, so a future index on (app_id, started_at DESC)
+	// WHERE state = 'parked' is the right optimization if a single
+	// app accumulates enough parked history to make this slow.
+	ListLatestInstancesForApp(ctx context.Context, appID string, limit int) ([]Instance, error)
 	// ListLatestInstancePerApp returns the most-recently-started instance
 	// for each app belonging to the account. Empty map when no instance
 	// rows exist yet (a fresh deploy never woken). Used by the dashboard

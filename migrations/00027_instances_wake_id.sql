@@ -57,13 +57,22 @@ update instances
 alter table instances alter column wake_id set not null;
 
 -- Partial index supporting the dashboard's per-app recent-wakes
--- view. Rows in {parked, stopped, failed} are excluded — terminal
--- rows don't need wake-ordering (their wake_id is retained for
--- audit but never queried by recency). Matches the shape of the
--- existing watchdog partial index (00016).
+-- view (cmd/apid/handlers_dashboard.renderAppDetail →
+-- ListLatestInstancesForApp). The index covers live states PLUS
+-- parked so the per-app "Recent wakes" scan can satisfy its
+-- LIMIT 10 entirely from the index for the common shape: an app
+-- that runs hot for weeks has hundreds of parked history rows;
+-- without the parked rows in the index the SQL still hits the
+-- heap. The sort key is (app_id, started_at DESC) but the index
+-- is keyed on (app_id, wake_id) — both serve the same access
+-- pattern because wake_id is UUIDv7 time-ordered and the dashboard
+-- orders by started_at to match the live+parked timeline.
+-- STOPPED / FAILED rows are excluded: they're terminal forever
+-- and never appear in a recent-wakes view (parked is recoverable
+-- on a future wake; stopped/failed are not).
 create index if not exists instances_wake_id_app_idx
   on instances (app_id, wake_id)
-  where state in ('waking','cold_booting','running','snapshotting');
+  where state in ('waking','cold_booting','running','snapshotting','parked');
 
 -- +goose StatementEnd
 

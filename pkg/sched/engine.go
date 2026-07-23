@@ -178,12 +178,15 @@ type WakeResult struct {
 	// WakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 before CreateInstance;
 	// gatewayd propagates it back to the client as x-faas-wake-id and
-	// operators see it on schedule/wake slog calls. Empty in the
-	// Phase-1 fast-path return — the existing RUNNING instance keeps
-	// whatever wake_id was stamped on its row, so the gateway can read
-	// it back via PGBackend.InstanceIDForNodeID if it needs to surface
-	// the older value (Phase 1 fast path is "instance already running";
-	// the wake_id of the wake that brought it up is a different question).
+	// operators see it on schedule/wake slog calls. On the Phase-1
+	// fast path (a second Wake for an already-RUNNING app) this is
+	// the wake_id of the wake that brought the instance up — surfaced
+	// from the existing row so the gateway's response header carries
+	// the same value a cold-wake response would have. On every other
+	// path it's the UUIDv7 minted in Phase 2 (gaps analysis
+	// 2026-07-23 review finding #1: previous behaviour left the
+	// header unset on the fast path, which lost the correlation
+	// handle for warm requests).
 	WakeID string
 }
 
@@ -224,7 +227,13 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	release := e.lockApp(appID)
 	if ins, err := e.store.RunningInstanceForApp(ctx, appID); err == nil {
 		release()
-		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE}, nil
+		// Surface the existing row's wake_id so a Phase-1 fast-path
+		// response carries x-faas-wake-id just like a cold-wake
+		// response would. The correlation handle is the wake that
+		// brought the instance up; an operator tailing a warm request
+		// can still pin it back to the schedd slog line that stamped
+		// it (gaps analysis 2026-07-23 review finding #1).
+		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID}, nil
 	} else if !errors.Is(err, state.ErrNotFound) {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: running lookup: %w", err)
@@ -252,7 +261,18 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	// never refused for ID-generation reasons.
 	wakeUUID, err := uuid.NewV7()
 	if err != nil {
+		// crypto/rand failure should be impossible in practice but
+		// the surface exists; fall back to v4 so a wake is never
+		// refused for ID-generation reasons. v4 breaks the
+		// time-ordering invariant the partial index is built on, so
+		// log + counter (review finding #6, gaps analysis
+		// 2026-07-23). Any non-zero rate is an alertable condition.
 		wakeUUID = uuid.New()
+		if e.ops != nil {
+			e.ops.WakeIDV4Fallback().Inc()
+		}
+		e.log.Warn("wake: uuid.NewV7 failed, fell back to v4 — partial index time-ordering broken",
+			"app", appID, "err", err)
 	}
 	wakeID := wakeUUID.String()
 
@@ -615,7 +635,13 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// fallback-to-v4 contract as Wake() above.
 	primeWakeUUID, err := uuid.NewV7()
 	if err != nil {
+		// Same fallback contract as Wake() above. Review finding #6.
 		primeWakeUUID = uuid.New()
+		if e.ops != nil {
+			e.ops.WakeIDV4Fallback().Inc()
+		}
+		e.log.Warn("prime: uuid.NewV7 failed, fell back to v4 — partial index time-ordering broken",
+			"app", appID, "err", err)
 	}
 	primeWakeID := primeWakeUUID.String()
 	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, primeWakeID)
@@ -1146,7 +1172,15 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 		e.log.Warn("transition: write", "instance", instanceID, "to", to, "err", err)
 		return
 	}
-	e.emitInstanceChanged(ctx, instanceID, appID, to, "")
+	// Surface the row's wake_id in the SSE payload. The audit-log
+	// caller loaded `ins` at the top of this function precisely to
+	// validate the from→to edge, so reusing it here avoids an extra
+	// round-trip — wake_id is on the row already. Review finding #3
+	// (gaps analysis 2026-07-23): previously the payload carried
+	// wake_id="" for every transition, which meant dashboards
+	// subscribed to instance_changed saw the column go empty as
+	// soon as the instance entered RUNNING.
+	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
 
 	// Audit-log emission (spec §6.1). Best-effort: a failure logs
 	// and counts, never rolls back the transition. The state row is
@@ -1167,8 +1201,13 @@ func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID stri
 	if e.notif == nil {
 		return
 	}
-	// wakeID is optional in the broadcast payload — transitionWithKind
-	// (the audit-log caller) doesn't know the wake_id of the wake that
+	// wakeID is the per-wake correlation handle. transitionWithKind
+	// (the audit-log caller) loads it from the row before emitting so
+	// every state-transition event carries the same wake_id the row
+	// currently has. Wake/Prime pass the value they just minted at
+	// Phase 2; snapshotAndPark passes ins.WakeID from the loaded
+	// instance. The JSON key is always present (even when empty for
+	// legacy callers) so SSE subscribers can use a fixed parse path.
 	// produced the row, while the wake / prime callers always do. Empty
 	// string keeps the JSON key present so the SSE subscriber can use
 	// a fixed parse path; dashboard queries can read wake_id back off

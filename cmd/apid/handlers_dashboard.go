@@ -16,7 +16,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
@@ -218,17 +217,14 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	// Recent wakes for this app: capped at 10 newest rows so an
 	// operator can paste the wake_id from a gateway response header
 	// (x-faas-wake-id) and find which scheduled wake produced it.
-	// Failure is non-fatal — the section silently renders empty.
-	recentInstances, err := s.store.ListInstancesForApp(ctx, app.ID)
+	// Bounded at the SQL layer (LIMIT 10 in ListLatestInstancesForApp)
+	// so a long-lived app with hundreds of parked history rows doesn't
+	// pull its full history on every dashboard render. Failure is
+	// non-fatal — the section silently renders empty.
+	recentInstances, err := s.store.ListLatestInstancesForApp(ctx, app.ID, 10)
 	if err != nil {
-		log.Warn("dashboard renderAppDetail: list instances", "account_id", acct.ID, "app_id", app.ID, "err", err)
+		log.Warn("dashboard renderAppDetail: list recent instances", "account_id", acct.ID, "app_id", app.ID, "err", err)
 		recentInstances = nil
-	}
-	sort.Slice(recentInstances, func(i, j int) bool {
-		return recentInstances[i].StartedAt.After(recentInstances[j].StartedAt)
-	})
-	if len(recentInstances) > 10 {
-		recentInstances = recentInstances[:10]
 	}
 	recentItems := make([]dashboard.RecentInstanceItem, 0, len(recentInstances))
 	for _, ins := range recentInstances {

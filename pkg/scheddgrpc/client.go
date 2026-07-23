@@ -74,10 +74,11 @@ func (c *Client) Close() error {
 //     gateway attribute last_request_at touches (ADR-018).
 //   - nodeID: compute_node.id (uuid). Lets the gateway look up the
 //     per-node vmmd gRPC client in its routing cache.
-//   - wakeID: the UUIDv7 minted at schedd's Wake() Phase 2 (empty on
-//     the Phase-1 fast-path return where the existing RUNNING
-//     instance was minted by an earlier wake). Propagated to the
-//     client as x-faas-wake-id.
+//   - wakeID: the per-wake correlation handle. On the Phase-1
+//     fast-path (instance already RUNNING) this is the wake_id of
+//     the wake that brought the instance up, surfaced from the row;
+//     on every other path it's the UUIDv7 schedd minted in Phase 2.
+//     Propagated to the client as x-faas-wake-id.
 //
 // Admission denials arrive as an *api.Problem so gateway.writeWakeError
 // maps them straight to the right RFC 7807 status. Satisfies

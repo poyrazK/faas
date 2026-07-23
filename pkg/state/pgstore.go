@@ -1109,6 +1109,30 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 	return scanInstances(rows)
 }
 
+// ListLatestInstancesForApp returns up to `limit` instance rows for
+// appID, ordered by started_at DESC. Used by the dashboard's app-detail
+// "Recent wakes" table (gaps analysis 2026-07-23). The LIMIT pushdown
+// bounds the per-render scan at the SQL layer so a long-lived app with
+// hundreds of parked history rows doesn't pull its full history on
+// every dashboard render. limit ≤ 0 returns an empty slice — the
+// caller is required to pass a positive bound; a zero-bound here
+// would silently mean "all", which is the unbounded-scan footgun we
+// just escaped. See Store interface doc for the supporting-index note.
+func (s *PgStore) ListLatestInstancesForApp(ctx context.Context, appID string, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id
+		 from instances where app_id = $1 order by started_at desc limit $2`, appID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
 // ListAllInstances returns every instance in a reaper-relevant state. Used
 // by schedd's G7 conntrack warm (pkg/sched/flowcount): one bulk read feeds
 // the per-tick warm list, avoiding a per-app loop. The state filter matches

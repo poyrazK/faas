@@ -1780,3 +1780,74 @@ func TestMemStore_ClaimQueuedBuild(t *testing.T) {
 		t.Errorf("unknown id err = %v, want ErrNotFound", err)
 	}
 }
+
+// TestMemStore_ListLatestInstancesForApp_BoundedLimit asserts the
+// dashboard's "Recent wakes" path returns at most `limit` rows and
+// that limit ≤ 0 fails closed (empty slice, not unbounded). Added
+// alongside the bounded SQL path for the dashboard per gaps analysis
+// 2026-07-23 review finding #5 — the previous Go-side sort on
+// ListInstancesForApp was unbounded for long-lived apps.
+func TestMemStore_ListLatestInstancesForApp_BoundedLimit(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "listlim@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "listlim", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 5, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	dep, err := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:abc", Status: DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if err := m.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
+	}
+
+	// Seed 5 instances for this app — they all share the same
+	// started_at second so the sort order between them is stable
+	// (sorted by StartedAt after write); the bounded path must
+	// still return exactly `limit` rows.
+	for i := 0; i < 5; i++ {
+		_, err := m.CreateInstance(ctx, app.ID, dep.ID, "parked", 256, DefaultLocalNodeName, "")
+		if err != nil {
+			t.Fatalf("CreateInstance %d: %v", i, err)
+		}
+	}
+
+	// limit=3 returns exactly 3 rows.
+	rows, err := m.ListLatestInstancesForApp(ctx, app.ID, 3)
+	if err != nil {
+		t.Fatalf("ListLatestInstancesForApp(3): %v", err)
+	}
+	if len(rows) != 3 {
+		t.Errorf("rows = %d, want 3 (limit bound)", len(rows))
+	}
+
+	// limit=0 and limit=-1 fail closed.
+	for _, lim := range []int{0, -1} {
+		rows, err := m.ListLatestInstancesForApp(ctx, app.ID, lim)
+		if err != nil {
+			t.Fatalf("ListLatestInstancesForApp(%d): %v", lim, err)
+		}
+		if len(rows) != 0 {
+			t.Errorf("limit=%d returned %d rows, want 0 (fail-closed)", lim, len(rows))
+		}
+	}
+
+	// limit larger than the row count returns everything, no error.
+	rows, err = m.ListLatestInstancesForApp(ctx, app.ID, 50)
+	if err != nil {
+		t.Fatalf("ListLatestInstancesForApp(50): %v", err)
+	}
+	if len(rows) != 5 {
+		t.Errorf("rows = %d, want 5 (all)", len(rows))
+	}
+}

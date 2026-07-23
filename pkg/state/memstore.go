@@ -1165,7 +1165,14 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 	if wakeID != "" {
 		ins.WakeID = wakeID
 	} else {
-		ins.WakeID = newID()
+		// Mirror PgStore's `coalesce(nullif($6, ''), gen_random_uuid())`
+		// default with a real UUIDv4 here. newID() returns 32 hex
+		// chars (not a hyphenated UUID), which broke uuid.Parse
+		// assertions in tests exercising the wake_id contract via
+		// MemStore (gaps analysis 2026-07-23 review finding #2).
+		// Test fixtures that don't thread wake_id through still get
+		// a non-empty, parseable value.
+		ins.WakeID = uuid.NewString()
 	}
 	m.instances[ins.ID] = ins
 	return ins, nil
@@ -1192,6 +1199,27 @@ func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Insta
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
 	return out, nil
+}
+
+// ListLatestInstancesForApp returns up to `limit` rows for appID
+// ordered by started_at DESC. Mirror of the PgStore method added
+// alongside the dashboard "Recent wakes" feature (gaps analysis
+// 2026-07-23). limit ≤ 0 returns an empty slice — fail closed
+// rather than rendering an unbounded table. After the in-place sort
+// we slice to limit; the sort is O(n log n) but bounded by the
+// MemStore instance count, which is tiny in tests.
+func (m *MemStore) ListLatestInstancesForApp(ctx context.Context, appID string, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	all, err := m.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
 }
 
 // ListAllInstances returns every instance whose state is one schedd's

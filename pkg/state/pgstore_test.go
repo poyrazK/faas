@@ -1751,3 +1751,50 @@ func TestPg_CreateInstance_ExplicitWakeIDRoundTrip(t *testing.T) {
 		t.Errorf("WakeID = %q, want %q", ins.WakeID, want)
 	}
 }
+
+// TestPg_ListLatestInstancesForApp_BoundedLimit pins the SQL LIMIT
+// contract for the dashboard's "Recent wakes" path (cmd/apid/
+// handlers_dashboard.renderAppDetail). The previous unbounded
+// ListInstancesForApp + in-memory sort was a perf footgun for any
+// long-lived app — review finding #5 (gaps analysis 2026-07-23).
+func TestPg_ListLatestInstancesForApp_BoundedLimit(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+
+	// Seed 5 parked instances; the dashboard query must cap at the
+	// requested limit regardless of total row count.
+	for i := 0; i < 5; i++ {
+		if _, err := s.CreateInstance(ctx, appID, depID, string(state.StateParked), 256, resolveDefaultLocal(t, ctx, s), ""); err != nil {
+			t.Fatalf("CreateInstance %d: %v", i, err)
+		}
+	}
+
+	// limit=2 → exactly 2 rows.
+	rows, err := s.ListLatestInstancesForApp(ctx, appID, 2)
+	if err != nil {
+		t.Fatalf("ListLatestInstancesForApp(2): %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("rows = %d, want 2 (LIMIT 2 enforced)", len(rows))
+	}
+
+	// limit=0 and limit=-1 must fail closed (empty), not return everything.
+	for _, lim := range []int{0, -1} {
+		rows, err := s.ListLatestInstancesForApp(ctx, appID, lim)
+		if err != nil {
+			t.Fatalf("ListLatestInstancesForApp(%d): %v", lim, err)
+		}
+		if len(rows) != 0 {
+			t.Errorf("limit=%d returned %d rows, want 0 (fail-closed)", lim, len(rows))
+		}
+	}
+
+	// limit larger than total returns all 5.
+	rows, err = s.ListLatestInstancesForApp(ctx, appID, 50)
+	if err != nil {
+		t.Fatalf("ListLatestInstancesForApp(50): %v", err)
+	}
+	if len(rows) != 5 {
+		t.Errorf("rows = %d, want 5 (limit larger than total)", len(rows))
+	}
+}
