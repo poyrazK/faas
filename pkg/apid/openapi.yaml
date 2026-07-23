@@ -109,6 +109,7 @@ paths:
         new plan only.
       requestBody:
         required: true
+        description: "Plan change payload."
         content:
           application/json:
             schema: { $ref: '#/components/schemas/ChangePlanRequest' }
@@ -191,6 +192,7 @@ paths:
       summary: Create an app.
       requestBody:
         required: true
+        description: "App creation payload (slug, type, runtime, RAM, …). See CreateAppRequest schema."
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateAppRequest' }
@@ -230,6 +232,7 @@ paths:
       summary: Partial-update an app.
       requestBody:
         required: true
+        description: "Patch payload — every field is optional; omitted fields are unchanged. See UpdateAppRequest."
         content:
           application/json:
             schema: { $ref: '#/components/schemas/UpdateAppRequest' }
@@ -357,6 +360,7 @@ paths:
       summary: Rename an app.
       requestBody:
         required: true
+        description: "Rename payload — the new slug. See RenameAppRequest."
         content:
           application/json:
             schema: { $ref: '#/components/schemas/RenameAppRequest' }
@@ -446,6 +450,7 @@ paths:
         persists the ciphertext. The plaintext never lands in PG.
       requestBody:
         required: true
+        description: "Secret payload — key name + plaintext. Sealed at rest; plaintext never returned."
         content:
           application/json:
             schema: { $ref: '#/components/schemas/PutAppSecretRequest' }
@@ -486,6 +491,7 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Page size (1–200, default 50).
         - name: before
           in: query
           schema: { type: string, format: date-time }
@@ -530,12 +536,15 @@ paths:
         - name: before_seq
           in: query
           schema: { type: integer }
+          description: Stream cursor — return only log entries with seq strictly less than this value.
         - name: limit
           in: query
           schema: { type: integer }
+          description: Maximum number of log entries to return in the initial burst before streaming.
         - name: follow
           in: query
           schema: { type: integer, enum: [0, 1], default: 0 }
+          description: If 1, hold the connection open and stream new build log entries as they arrive.
       responses:
         '200':
           description: Stream build logs (SSE) (200 OK).
@@ -568,6 +577,7 @@ paths:
       summary: Bind a custom domain.
       requestBody:
         required: true
+        description: "Domain-bind payload — domain string + target app slug. See CreateCustomDomainRequest."
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateCustomDomainRequest' }
@@ -624,6 +634,7 @@ paths:
       summary: Create a cron trigger.
       requestBody:
         required: true
+        description: "Cron payload — schedule expression + target URL. See CreateCronRequest."
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateCronRequest' }
@@ -648,6 +659,7 @@ paths:
       summary: Partial-update a cron.
       requestBody:
         required: true
+        description: "Cron patch — every field is optional. See UpdateCronRequest."
         content:
           application/json:
             schema: { $ref: '#/components/schemas/UpdateCronRequest' }
@@ -697,6 +709,7 @@ paths:
         and cannot be retrieved; subsequent GETs return only the prefix.
       requestBody:
         required: true
+        description: "API key creation payload — label only. Plaintext is returned exactly once in the 201 response."
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateKeyRequest' }
@@ -733,6 +746,7 @@ paths:
         - name: month
           in: query
           schema: { type: string, pattern: '^\d{4}-\d{2}$', example: '2026-07' }
+          description: Billing month in `YYYY-MM` form (UTC). Defaults to the current month.
       responses:
         '200':
           description: Per-app monthly usage (200 OK).
@@ -753,6 +767,7 @@ paths:
         - name: month
           in: query
           schema: { type: string, pattern: '^\d{4}-\d{2}$' }
+          description: Billing month in `YYYY-MM` form (UTC). Defaults to the current month.
       responses:
         '200':
           description: Monthly roll-up with overage math (200 OK).
@@ -851,6 +866,7 @@ components:
     # ─── Account ──────────────────────────────────────────────────────────
 
     AccountResponse:
+      description: "Account profile: id, email, plan, status, limits snapshot, current-month usage, and total app count."
       type: object
       required: [id, email, plan, status, limits, usage_gb_hours, app_count]
       properties:
@@ -864,6 +880,7 @@ components:
         github_install_id: { type: [string, "null"] }
 
     AccountLimits:
+      description: "Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and max app-layer bytes per build."
       type: object
       required: [plan, ram_mb, max_concurrency, deployed_apps, included_gb_hours, app_layer_max_mb]
       properties:
@@ -875,12 +892,14 @@ components:
         app_layer_max_mb: { type: integer }
 
     ChangePlanRequest:
+      description: "Target plan for the change."
       type: object
       required: [plan]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] }
 
     AccountExportResponse:
+      description: "GDPR export bundle: the account itself, every owned app, deployment, build, instance, usage record, domain, cron, API key, and sealed-secret envelope, plus the audit trail."
       type: object
       required: [exported_at, account, apps, deployments, builds, instances, usage, domains, crons, api_keys, app_secrets]
       properties:
@@ -900,6 +919,7 @@ components:
           items: { $ref: '#/components/schemas/GdprAuditExportResponse' }
 
     AccountDeletionResponse:
+      description: "Result of staging account deletion: status flips to `deleted_pending` and `restore_until` marks the end of the 30-day grace window."
       type: object
       required: [status, scheduled_at, restore_until]
       properties:
@@ -908,6 +928,7 @@ components:
         restore_until: { type: string, format: date-time }
 
     BuildExportResponse:
+      description: "One build record: source artifact bytes, kind (app/function), status, and lifecycle timestamps."
       type: object
       required: [id, deployment_id, app_id, kind, status, source_bytes]
       properties:
@@ -921,6 +942,7 @@ components:
         finished_at: { type: [string, "null"], format: date-time }
 
     UsageExportResponse:
+      description: "One usage record: app id, GB-hours consumed, started/finished timestamps for the export window."
       type: object
       required: [app_id, month, mb_seconds, requests]
       properties:
@@ -930,6 +952,7 @@ components:
         requests: { type: integer, format: int64 }
 
     APIKeyExportResponse:
+      description: "One API key in export form: id, prefix (first 8 chars), label, created/last-used timestamps, and request count."
       type: object
       required: [id, prefix, created_at]
       properties:
@@ -940,6 +963,7 @@ components:
         last_used_at: { type: [string, "null"], format: date-time }
 
     GdprAuditExportResponse:
+      description: "One row of the GDPR audit trail: actor, action (`export`, `delete`, `restore`), timestamp, and IP."
       type: object
       required: [action, requested_at]
       properties:
@@ -948,6 +972,7 @@ components:
         completed_at: { type: [string, "null"], format: date-time }
 
     AppSecretExportResponse:
+      description: "One sealed secret in export form: key name, sealed ciphertext (sealed at rest per §11), version, and timestamps. Plaintext is never exported."
       type: object
       required: [app_id, key, ciphertext, created_at, updated_at]
       properties:
@@ -960,6 +985,7 @@ components:
     # ─── Apps ─────────────────────────────────────────────────────────────
 
     AppResponse:
+      description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, and last-deploy pointer."
       type: object
       required: [id, slug, type, ram_mb, max_concurrency, min_instances, status, url, manifest]
       properties:
@@ -976,6 +1002,7 @@ components:
         manifest: { $ref: '#/components/schemas/AppManifest' }
 
     CreateAppRequest:
+      description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."
       type: object
       required: [slug]
       properties:
@@ -987,6 +1014,7 @@ components:
         idle_timeout_s: { type: integer }
 
     UpdateAppRequest:
+      description: "Partial update — every field is optional; omitted fields are unchanged."
       type: object
       properties:
         ram_mb: { type: [integer, "null"] }
@@ -995,12 +1023,14 @@ components:
         min_instances: { type: [integer, "null"], minimum: 0 }
 
     RenameAppRequest:
+      description: "Rename payload: new slug. Old slug returns 404 immediately on the next request."
       type: object
       required: [new_slug]
       properties:
         new_slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
 
     AppManifest:
+      description: "App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag (§ux 6.3)."
       type: object
       required: [entrypoint]
       properties:
@@ -1019,6 +1049,7 @@ components:
     # ─── Deployments ──────────────────────────────────────────────────────
 
     DeploymentResponse:
+      description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps."
       type: object
       required: [id, app_id, image_digest, kind, status, created_at]
       properties:
@@ -1033,6 +1064,7 @@ components:
         created_at: { type: string, format: date-time }
 
     DeploymentListResponse:
+      description: "Paginated deployment list with a `next_before` cursor for backward pagination."
       type: object
       required: [items]
       properties:
@@ -1042,6 +1074,7 @@ components:
         next_before: { type: [string, "null"], format: date-time }
 
     CreateDeploymentRequest:
+      description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload."
       type: object
       properties:
         image:
@@ -1051,6 +1084,7 @@ components:
     # ─── Instances ────────────────────────────────────────────────────────
 
     InstanceResponse:
+      description: "Read-only instance view: id, deployment, state (waking/running/...), lease uid, and host-side internal endpoint (loopback only)."
       type: object
       required: [id, app_id, deployment_id, state, ram_mb]
       properties:
@@ -1067,6 +1101,7 @@ components:
     # ─── Domains ──────────────────────────────────────────────────────────
 
     CustomDomainResponse:
+      description: "A custom domain binding: domain string, target app, verification status, and TLS provisioning state."
       type: object
       required: [domain, app_id, verified]
       properties:
@@ -1078,6 +1113,7 @@ components:
         txt_record: { type: [string, "null"] }
 
     CreateCustomDomainRequest:
+      description: "Bind a custom domain to an app."
       type: object
       required: [domain, app_id]
       properties:
@@ -1087,6 +1123,7 @@ components:
     # ─── Crons ────────────────────────────────────────────────────────────
 
     CronResponse:
+      description: "A cron trigger: schedule (cron expression), target URL, last/next run timestamps, and enabled flag."
       type: object
       required: [id, app_id, schedule, path, enabled, created_at]
       properties:
@@ -1099,6 +1136,7 @@ components:
         last_fired_at: { type: [string, "null"], format: date-time }
 
     CreateCronRequest:
+      description: "Cron creation payload: schedule expression and target URL."
       type: object
       required: [app_id, schedule]
       properties:
@@ -1108,6 +1146,7 @@ components:
         enabled: { type: [boolean, "null"] }
 
     UpdateCronRequest:
+      description: "Partial cron update."
       type: object
       properties:
         schedule: { type: [string, "null"] }
@@ -1117,6 +1156,7 @@ components:
     # ─── API keys ─────────────────────────────────────────────────────────
 
     APIKeyResponse:
+      description: "API key metadata: id, prefix (first 8 chars), label, created/last-used timestamps, request count. **Plaintext is returned only on POST**."
       type: object
       required: [id, prefix, created_at]
       properties:
@@ -1130,6 +1170,7 @@ components:
           description: PRESENT ONLY on POST /v1/keys response. Never returned again.
 
     CreateKeyRequest:
+      description: "API key creation payload: label only."
       type: object
       properties:
         label: { type: string, maxLength: 100 }
@@ -1137,12 +1178,14 @@ components:
     # ─── Secrets ──────────────────────────────────────────────────────────
 
     PutAppSecretRequest:
+      description: "Set a secret: key name and plaintext (sealed at rest immediately, plaintext discarded after seal)."
       type: object
       required: [value]
       properties:
         value: { type: string, description: 'Plaintext. Sealed server-side; never persisted in plaintext.' }
 
     AppSecretResponse:
+      description: "A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps."
       type: object
       required: [key, created_at, updated_at]
       properties:
@@ -1151,6 +1194,7 @@ components:
         updated_at: { type: string, format: date-time }
 
     AppSecretListResponse:
+      description: "Paginated list of sealed-secret envelopes (no plaintext)."
       type: object
       required: [secrets, quota_max, count]
       properties:
@@ -1163,6 +1207,7 @@ components:
     # ─── Usage ────────────────────────────────────────────────────────────
 
     UsageResponse:
+      description: "Per-app usage for one month: GB-hours consumed and a `next_before` cursor for paging deployments within the window."
       type: object
       required: [app_id, mb_seconds, requests, included_gb_hours]
       properties:
@@ -1172,6 +1217,7 @@ components:
         included_gb_hours: { type: integer, format: int64 }
 
     UsageSummaryResponse:
+      description: "Account-level monthly roll-up: included GB-hours, used, overage math, and remaining balance."
       type: object
       required: [month, used_gb_hours, included_gb_hours, overage_gb_hours, overage_cents]
       properties:
