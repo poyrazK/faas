@@ -1,0 +1,142 @@
+---
+# alertmanager role — install + configure + systemd-enable.
+#
+# Mirrors deploy/ansible/roles/prometheus/tasks/main.yml so the role
+# shape stays uniform. Three differences worth surfacing:
+#   1. SHA-256 pin is required at the call site (am_release_sha256);
+#      the prometheus role has the same pattern (prom_release_sha256).
+#   2. Secret material (SMTP password, Pushover token) is loaded from
+#      operator-provisioned files via _FILE indirection — never templated
+#      into the rendered alertmanager.yml. Same precedent as
+#      FAAS_HOST_AGE_RECIPIENT_PATH (gap G2 lean §17, sealed at rest).
+#      On hosts without secrets provisioned the role still runs through
+#      (failed_when: false on the service-start step) so dev / CI boxes
+#      that don't page still complete bootstrap.
+#   3. Alertmanager runs on loopback only; the only caller is Prometheus
+#      on the same host. Bind addr defaults to 127.0.0.1:9093.
+
+- name: alertmanager — create system user
+  ansible.builtin.user:
+    name: alertmanager
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ am_data_dir }}"
+    create_home: false
+
+- name: alertmanager — create directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: alertmanager
+    group: alertmanager
+    mode: "0750"
+  loop:
+    - "{{ am_data_dir }}"
+    - /etc/alertmanager
+
+- name: alertmanager — download release tarball
+  ansible.builtin.get_url:
+    url: "https://github.com/prometheus/alertmanager/releases/download/v{{ am_version }}/alertmanager-{{ am_version }}.linux-amd64.tar.gz"
+    dest: "/tmp/alertmanager-{{ am_version }}.tar.gz"
+    checksum: "sha256:{{ am_release_sha256 }}"
+    mode: "0644"
+  register: am_tarball
+
+- name: alertmanager — assert tarball checksum
+  ansible.builtin.command: sha256sum /tmp/alertmanager-{{ am_version }}.tar.gz
+  register: am_sum
+  changed_when: false
+  check_mode: false
+
+- name: alertmanager — verify pin matches downloaded
+  ansible.builtin.assert:
+    that:
+      - "am_release_sha256 in am_sum.stdout"
+    fail_msg: "Downloaded Alertmanager tarball SHA-256 mismatch — supply chain check failed."
+
+- name: alertmanager — untar tarball into /tmp
+  ansible.builtin.unarchive:
+    src: "/tmp/alertmanager-{{ am_version }}.tar.gz"
+    dest: /tmp
+    remote_src: true
+    creates: "/tmp/alertmanager-{{ am_version }}.linux-amd64/alertmanager"
+
+- name: alertmanager — install binary
+  ansible.builtin.copy:
+    src: "/tmp/alertmanager-{{ am_version }}.linux-amd64/alertmanager"
+    dest: /usr/local/bin/alertmanager
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+
+- name: alertmanager — install amtool (used by config validation + silences)
+  ansible.builtin.copy:
+    src: "/tmp/alertmanager-{{ am_version }}.linux-amd64/amtool"
+    dest: /usr/local/bin/amtool
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+
+- name: alertmanager — read SMTP password from file (sealed at rest)
+  ansible.builtin.slurp:
+    src: "{{ am_smtp_password_file }}"
+  register: am_smtp_password_b64
+  when: am_smtp_password_file | length > 0
+
+- name: alertmanager — read Pushover token from file (sealed at rest)
+  ansible.builtin.slurp:
+    src: "{{ am_pushover_token_file }}"
+  register: am_pushover_token_b64
+  when: am_pushover_token_file | length > 0
+
+- name: alertmanager — render config
+  ansible.builtin.template:
+    src: alertmanager.yml.j2
+    dest: "{{ am_config_path }}"
+    owner: alertmanager
+    group: alertmanager
+    mode: "0640"
+  vars:
+    am_smtp_password: "{{ am_smtp_password_b64.content | b64decode | trim if am_smtp_password_file | length > 0 else '' }}"
+    am_pushover_token: "{{ am_pushover_token_b64.content | b64decode | trim if am_pushover_token_file | length > 0 else '' }}"
+  notify: reload alertmanager
+
+- name: alertmanager — install systemd unit
+  ansible.builtin.copy:
+    src: alertmanager.service
+    dest: /etc/systemd/system/alertmanager.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - daemon-reload
+    - restart alertmanager
+
+- name: alertmanager — enable + start service
+  ansible.builtin.service:
+    name: alertmanager
+    enabled: true
+    state: started
+  register: am_svc
+  failed_when: false  # dev/CI hosts without SMTP / Pushover can still bootstrap.
+
+- name: alertmanager — report service status
+  ansible.builtin.debug:
+    msg: >-
+      alertmanager.service state={{ am_svc.state | default('unknown') }}.
+      If state is not 'started', check that am_smtp_password_file and
+      am_pushover_token_file point at operator-provisioned secret files
+      and that 127.0.0.1:9093 is not bound by another process.
+  when: am_svc is defined
+
+- name: alertmanager — remove downloaded tarball
+  ansible.builtin.file:
+    path: "/tmp/alertmanager-{{ am_version }}.tar.gz"
+    state: absent
+
+- name: alertmanager — remove extracted dir
+  ansible.builtin.file:
+    path: "/tmp/alertmanager-{{ am_version }}.linux-amd64"
+    state: absent
