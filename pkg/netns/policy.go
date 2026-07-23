@@ -155,8 +155,8 @@ func (h HostPolicy) Render() string {
 		panic("netns: HostPolicy.Render: BridgeName, PublicIface, and MasqueradeCIDR are required")
 	}
 
-	denyCIDRs := strings.Join(h.ForwardDenyCIDRs, " ")
-	denyIPv6CIDRs := strings.Join(h.ForwardDenyIPv6CIDRs, " ")
+	denyCIDRs := strings.Join(h.ForwardDenyCIDRs, ",")
+	denyIPv6CIDRs := strings.Join(h.ForwardDenyIPv6CIDRs, ",")
 	denyPorts := joinInts(h.ForwardDenyTCPPorts, ",")
 	allowPorts := joinInts(h.InputAllowTCPPorts, ",")
 
