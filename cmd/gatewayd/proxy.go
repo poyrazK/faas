@@ -34,6 +34,7 @@ package main
 
 import (
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -160,20 +161,69 @@ const (
 )
 
 // proxyToApid builds a one-shot httputil.ReverseProxy and serves
-// the request through it. We strip X-Forwarded-* headers so apid
-// sees the originating client, not the gateway hop, and ensure
-// x-faas-request-id is present (gateway.Handler does this for the
-// wake path; the apid proxy bypasses it, so we mint one here).
+// the request through it.
+//
+// Header policy:
+//   - We strip X-Forwarded-Proto and X-Forwarded-Host (apid binds
+//     loopback; protocol headers would mislead scheme detection).
+//   - We pin X-Forwarded-For to the real client IP from
+//     r.RemoteAddr's host (gatewayd is the single public listener,
+//     so r.RemoteAddr here is the originating customer). apid
+//     trusts X-Forwarded-For only when its own RemoteAddr is
+//     loopback, so a customer-injected X-Forwarded-For cannot
+//     reach apid in a position to be trusted — issue #89.
+//   - We ensure x-faas-request-id is present (gateway.Handler does
+//     this for the wake path; the apid proxy bypasses it, so we
+//     mint one here).
 func (a *apidProxy) proxyToApid(w http.ResponseWriter, r *http.Request) {
-	r.Header.Del("X-Forwarded-For")
-	r.Header.Del("X-Forwarded-Proto")
-	r.Header.Del("X-Forwarded-Host")
+	// Pin X-Forwarded-For / strip X-Forwarded-Proto / -Host happens in
+	// the Rewrite hook below (after stdlib strips them). Here we only
+	// mint the request id and rebind Host to the upstream target —
+	// Director-level work that doesn't fight stdlib's append path.
 	if r.Header.Get("x-faas-request-id") == "" {
 		r.Header.Set("x-faas-request-id", middleware.NewRequestID())
 	}
 	r.Host = a.target.Host
 
-	pxy := httputil.NewSingleHostReverseProxy(a.target)
+	pxy := &httputil.ReverseProxy{
+		// Rewrite hook: stdlib's default ReverseProxy sets
+		// X-Forwarded-For from r.RemoteAddr at the bottom of its
+		// serve path and appends to any prior value, producing a
+		// multi-hop chain. apid's defaultClientIP predicate
+		// (issue #89) treats a multi-hop chain as untrusted and
+		// falls back to the loopback host, which collapses every
+		// customer's bucket. By providing a Rewrite callback,
+		// stdlib strips the four forwarding headers itself and
+		// delegates to us — the values we write here are the only
+		// ones that reach apid.
+		//
+		// We construct ReverseProxy directly (not via
+		// NewSingleHostReverseProxy) because stdlib requires
+		// exactly one of Director or Rewrite to be set — adding
+		// Rewrite on top of the Director that
+		// NewSingleHostReverseProxy wired would crash with
+		// "ReverseProxy must have exactly one of Director or
+		// Rewrite set". SetURL rewrites the outbound URL to the
+		// loopback target (httputil.NewSingleHostReverseProxy
+		// doc, "use ReverseProxy directly with a Rewrite function.
+		// The ProxyRequest SetURL method may be used to route the
+		// outbound request").
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(a.target)
+			pr.Out.Header.Del("X-Forwarded-For")
+			pr.Out.Header.Del("X-Forwarded-Proto")
+			pr.Out.Header.Del("X-Forwarded-Host")
+			// Pin X-Forwarded-For to the real client IP from
+			// pr.In's RemoteAddr — the gatewayd edge sees the
+			// customer's IP before the loopback hop. We
+			// overwrite (rather than append) so apid sees
+			// exactly one value, the contract its
+			// defaultClientIP predicate relies on.
+			if host, _, err := net.SplitHostPort(pr.In.RemoteAddr); err == nil && host != "" {
+				pr.Out.Header.Set("X-Forwarded-For", host)
+			}
+		},
+	}
 	// On upstream dial failure (apid not running yet) emit a clean
 	// 503 problem instead of the stdlib's bare "EOF".
 	pxy.ErrorHandler = func(rw http.ResponseWriter, _ *http.Request, err error) {

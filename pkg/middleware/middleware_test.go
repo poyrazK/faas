@@ -365,3 +365,159 @@ func TestAuthLimit_BlockLogStripsControlChars(t *testing.T) {
 		t.Errorf("log missing request_id field: %q", out)
 	}
 }
+
+// TestAuthLimit_ClientIPFromLoopbackHop_XForwardedFor pins the issue
+// #89 fix: when apid receives a request via the gatewayd → apid
+// loopback hop (r.RemoteAddr is loopback), it must key the bucket on
+// the X-Forwarded-For value gatewayd pinned, NOT on the loopback
+// address. Otherwise every customer's /v1/* traffic collapses to one
+// bucket and one bad actor locks out the cohort.
+//
+// Failure mode: if a future regression stops defaultClientIP from
+// trusting the loopback X-Forwarded-For, all 11 requests land in the
+// 127.0.0.1 bucket and the 11th returns 429 — same symptom as the
+// regression but inverted. This test asserts the BUCKET-WAS-CORRECT
+// condition: two requests from different real IPs (via X-Forwarded-For)
+// but the same loopback RemoteAddr land in DIFFERENT buckets (each
+// gets its own 11-strike count before 429).
+func TestAuthLimit_ClientIPFromLoopbackHop_XForwardedFor(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cfg := middleware.AuthLimitConfig{
+		Window:      time.Minute,
+		MaxFailures: 2,
+		Now:         func() time.Time { return now },
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	gate := func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "nope", http.StatusUnauthorized) }
+	h := middleware.AuthLimit(cfg)(http.HandlerFunc(gate))
+
+	// Two requests from "different customers" sharing the same
+	// gatewayd loopback hop. Each carries its real IP in
+	// X-Forwarded-For; each must land in its own bucket.
+	fire := func(xff string) int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/auth/verify", nil)
+		r.RemoteAddr = "127.0.0.1:55555"
+		r.Header.Set("X-Forwarded-For", xff)
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	// Customer A: 2 failures land in A's bucket (still < MaxFailures).
+	if c := fire("203.0.113.10"); c != http.StatusUnauthorized {
+		t.Fatalf("A first: code = %d, want 401", c)
+	}
+	if c := fire("203.0.113.10"); c != http.StatusUnauthorized {
+		t.Fatalf("A second: code = %d, want 401", c)
+	}
+	// Customer B: starts a fresh bucket. If the bug regresses, B's
+	// first request would land in A's already-full bucket and 429.
+	if c := fire("198.51.100.7"); c != http.StatusUnauthorized {
+		t.Fatalf("B first: code = %d, want 401 (would be 429 if X-Forwarded-For ignored)", c)
+	}
+	// Customer A: 3rd attempt trips A's bucket (now 3 >= MaxFailures).
+	if c := fire("203.0.113.10"); c != http.StatusTooManyRequests {
+		t.Fatalf("A third: code = %d, want 429", c)
+	}
+	// Customer B: still has 1 failure, must NOT be limited yet.
+	if c := fire("198.51.100.7"); c != http.StatusUnauthorized {
+		t.Fatalf("B second: code = %d, want 401 (still under threshold)", c)
+	}
+}
+
+// TestAuthLimit_ClientIPFromNonLoopbackHop_IgnoresXForwardedFor pins
+// the spoof-prevention claim of issue #89: a request that reaches
+// apid from a NON-loopback RemoteAddr (e.g. a future deploy where
+// apid binds a public interface, or a unit test that synthesises a
+// direct connection) MUST NOT trust X-Forwarded-For — that header is
+// trivially forgeable from any client. The bucket keys on
+// r.RemoteAddr's host, full stop.
+//
+// Failure mode: if a future regression drops the loopback guard, an
+// attacker can supply X-Forwarded-For to push their bucket key off
+// their real IP and bypass the rate limit entirely. This test catches
+// that by asserting the bucket keys on 203.0.113.99 (the RemoteAddr
+// host), not on 198.51.100.7 (the spoofed header).
+func TestAuthLimit_ClientIPFromNonLoopbackHop_IgnoresXForwardedFor(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cfg := middleware.AuthLimitConfig{
+		Window:      time.Minute,
+		MaxFailures: 2,
+		Now:         func() time.Time { return now },
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	gate := func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "nope", http.StatusUnauthorized) }
+	h := middleware.AuthLimit(cfg)(http.HandlerFunc(gate))
+
+	fire := func() int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/auth/verify", nil)
+		// Non-loopback hop: a customer hitting apid directly, or a
+		// unit test simulating one. apid must ignore X-Forwarded-For.
+		r.RemoteAddr = "203.0.113.99:55555"
+		// Attacker tries to spoof their bucket key by varying the
+		// header. Both requests should land in the SAME bucket
+		// (keyed on RemoteAddr=203.0.113.99), so the second trips
+		// the 2-failure limit.
+		r.Header.Set("X-Forwarded-For", "198.51.100.7")
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if c := fire(); c != http.StatusUnauthorized {
+		t.Fatalf("first: code = %d, want 401", c)
+	}
+	if c := fire(); c != http.StatusUnauthorized {
+		t.Fatalf("second: code = %d, want 401", c)
+	}
+	// Third attempt: if the header were trusted, this would land in
+	// the spoofed bucket (still 1 failure) and return 401. But the
+	// header is ignored on a non-loopback hop, so the real bucket
+	// (203.0.113.99) trips at 3 >= MaxFailures.
+	if c := fire(); c != http.StatusTooManyRequests {
+		t.Fatalf("third: code = %d, want 429 (header must be ignored on non-loopback hop)", c)
+	}
+}
+
+// TestAuthLimit_ClientIPFromLoopbackHop_MultipleXForwardedForFallsBack
+// pins the "exactly one value" gate of issue #89's trust predicate:
+// if X-Forwarded-For carries a multi-hop chain ("a, b") the value
+// could have been forged by anyone upstream, so apid falls back to
+// the loopback host. The customer sees the same defence-in-depth
+// posture they would on a bare loopback RemoteAddr.
+//
+// Failure mode: if a future regression drops the comma check and
+// trusts the leftmost value of a chain, an attacker can spoof by
+// prepending their chosen IP. This test asserts that no element of
+// the chain is trusted and the bucket stays on the loopback host.
+func TestAuthLimit_ClientIPFromLoopbackHop_MultipleXForwardedForFallsBack(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cfg := middleware.AuthLimitConfig{
+		Window:      time.Minute,
+		MaxFailures: 2,
+		Now:         func() time.Time { return now },
+		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	gate := func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "nope", http.StatusUnauthorized) }
+	h := middleware.AuthLimit(cfg)(http.HandlerFunc(gate))
+
+	fire := func() int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/auth/verify", nil)
+		r.RemoteAddr = "127.0.0.1:55555"
+		// Multi-hop chain — apid must NOT trust any element of it.
+		r.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.7")
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if c := fire(); c != http.StatusUnauthorized {
+		t.Fatalf("first: code = %d, want 401", c)
+	}
+	if c := fire(); c != http.StatusUnauthorized {
+		t.Fatalf("second: code = %d, want 401", c)
+	}
+	// Third attempt must trip the bucket — proving the bucket was
+	// keyed on the loopback host (127.0.0.1), not on the leftmost
+	// or rightmost element of the chain.
+	if c := fire(); c != http.StatusTooManyRequests {
+		t.Fatalf("third: code = %d, want 429 (multi-hop chain must not be trusted)", c)
+	}
+}
