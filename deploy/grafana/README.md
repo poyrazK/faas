@@ -29,6 +29,8 @@ the bridge IP. No remote source — the dashboard is single-box.
 | Resident RAM % | `fcvm_resident_ram_pct` | resident_ram_pct_of_target |
 | lv-fc used % | `fcvm_lv_fc_used_pct` | lv-fc utilisation |
 | Wake rate | `gateway_requests_total` | — (operator sanity) |
+| Build success rate (non-user_error) | `builderd_ops_total{op="build"}` | build success |
+| Build queue wait p95 | `builderd_build_queue_wait_seconds` | build queue wait p95 |
 
 ## Deferred rows
 
