@@ -14,3 +14,10 @@ rules:
 
   # Disable single-box cloud-irrelevant rules.
   oas3-api-servers: off
+  # Wire is snake_case by design — every pkg/api/*.go JSON tag, every §11
+  # metadata format, every ADR-009 / ADR-013 identifier uses snake_case.
+  # camel-case-properties is a JavaScript convention mis-applied to a
+  # Go-shaped wire API. Disabling removes 76 noise warnings; if we ever
+  # do support JS clients that prefer camelCase we can flip this back on
+  # alongside a separate camelCase-shadow spec at /v1/openapi.camel.json.
+  camel-case-properties: off

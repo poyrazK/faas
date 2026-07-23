@@ -72,7 +72,7 @@ paths:
       description: Returns the calling account, its plan, and quota limits.
       responses:
         '200':
-          description: OK
+          description: Whoami (200 OK).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AccountResponse' }
@@ -114,7 +114,7 @@ paths:
             schema: { $ref: '#/components/schemas/ChangePlanRequest' }
       responses:
         '200':
-          description: OK
+          description: Change billing plan (200 OK).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AccountResponse' }
@@ -143,7 +143,7 @@ paths:
           description: If true (default), include the sealed-secret envelopes.
       responses:
         '200':
-          description: OK
+          description: Export full account data (GDPR) (200 OK).
           headers:
             Content-Disposition:
               schema: { type: string }
@@ -177,7 +177,7 @@ paths:
       summary: List apps on the account.
       responses:
         '200':
-          description: OK
+          description: List apps on the account (200 OK).
           content:
             application/json:
               schema:
@@ -198,7 +198,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
-          description: Created.
+          description: Created app (201).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppResponse' }
@@ -217,7 +217,7 @@ paths:
       summary: Fetch one app.
       responses:
         '200':
-          description: OK
+          description: Fetch one app (200 OK).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppResponse' }
@@ -235,7 +235,7 @@ paths:
             schema: { $ref: '#/components/schemas/UpdateAppRequest' }
       responses:
         '200':
-          description: OK
+          description: Partial-update an app (200 OK).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppResponse' }
@@ -250,7 +250,7 @@ paths:
       operationId: deleteApp
       summary: Delete an app.
       responses:
-        '204': { description: Deleted. }
+        '204': { description: Resource deleted (204). }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -291,7 +291,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
-          description: Accepted.
+          description: Accepted deployment build (202).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeploymentResponse' }
@@ -313,7 +313,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
-          description: Accepted.
+          description: Accepted rollback (202).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeploymentResponse' }
@@ -364,7 +364,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
-          description: OK
+          description: Rename an app (200 OK).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppResponse' }
@@ -381,7 +381,7 @@ paths:
       summary: Read-only instance list for an app.
       responses:
         '200':
-          description: OK
+          description: Read-only instance list for an app (200 OK).
           content:
             application/json:
               schema:
@@ -409,7 +409,7 @@ paths:
           description: If 1, hold the connection open and stream new entries.
       responses:
         '200':
-          description: OK
+          description: Stream app logs (SSE) (200 OK).
           content:
             text/event-stream: {}
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -425,7 +425,7 @@ paths:
       summary: List sealed secrets on an app.
       responses:
         '200':
-          description: OK
+          description: List sealed secrets on an app (200 OK).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppSecretListResponse' }
@@ -451,7 +451,7 @@ paths:
             schema: { $ref: '#/components/schemas/PutAppSecretRequest' }
       responses:
         '200':
-          description: OK
+          description: Set a sealed secret (200 OK).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppSecretResponse' }
@@ -465,7 +465,7 @@ paths:
       operationId: deleteSecret
       summary: Delete a sealed secret.
       responses:
-        '204': { description: Deleted. }
+        '204': { description: Secret deleted (204). }
         '400': { $ref: '#/components/responses/SecretNotFound' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -492,7 +492,7 @@ paths:
           description: RFC3339Nano cursor from a previous response's `next_before`.
       responses:
         '200':
-          description: OK
+          description: List deployments across all apps on the account (200 OK).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeploymentListResponse' }
@@ -508,7 +508,7 @@ paths:
       summary: Fetch one deployment.
       responses:
         '200':
-          description: OK
+          description: Fetch one deployment (200 OK).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeploymentResponse' }
@@ -538,7 +538,7 @@ paths:
           schema: { type: integer, enum: [0, 1], default: 0 }
       responses:
         '200':
-          description: OK
+          description: Stream build logs (SSE) (200 OK).
           content:
             text/event-stream: {}
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -554,7 +554,7 @@ paths:
       summary: List custom domain bindings.
       responses:
         '200':
-          description: OK
+          description: List custom domain bindings (200 OK).
           content:
             application/json:
               schema:
@@ -575,7 +575,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
-          description: Created.
+          description: Created domain (201).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CustomDomainResponse' }
@@ -596,7 +596,7 @@ paths:
       operationId: deleteDomain
       summary: Remove a custom domain binding.
       responses:
-        '204': { description: Deleted. }
+        '204': { description: Domain deleted (204). }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -610,7 +610,7 @@ paths:
       summary: List cron triggers.
       responses:
         '200':
-          description: OK
+          description: List cron triggers (200 OK).
           content:
             application/json:
               schema:
@@ -631,7 +631,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
-          description: Created.
+          description: Created cron (201).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CronResponse' }
@@ -653,7 +653,7 @@ paths:
             schema: { $ref: '#/components/schemas/UpdateCronRequest' }
       responses:
         '200':
-          description: OK
+          description: Partial-update a cron (200 OK).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CronResponse' }
@@ -666,7 +666,7 @@ paths:
       operationId: deleteCron
       summary: Delete a cron.
       responses:
-        '204': { description: Deleted. }
+        '204': { description: Cron deleted (204). }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -680,7 +680,7 @@ paths:
       summary: List API keys (no plaintext).
       responses:
         '200':
-          description: OK
+          description: List API keys (no plaintext) (200 OK).
           content:
             application/json:
               schema:
@@ -702,7 +702,7 @@ paths:
             schema: { $ref: '#/components/schemas/CreateKeyRequest' }
       responses:
         '201':
-          description: Created.
+          description: Created API key (201).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/APIKeyResponse' }
@@ -717,7 +717,7 @@ paths:
       operationId: deleteKey
       summary: Revoke an API key.
       responses:
-        '204': { description: Deleted. }
+        '204': { description: Key revoked (204). }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -735,7 +735,7 @@ paths:
           schema: { type: string, pattern: '^\d{4}-\d{2}$', example: '2026-07' }
       responses:
         '200':
-          description: OK
+          description: Per-app monthly usage (200 OK).
           content:
             application/json:
               schema:
@@ -755,7 +755,7 @@ paths:
           schema: { type: string, pattern: '^\d{4}-\d{2}$' }
       responses:
         '200':
-          description: OK
+          description: Monthly roll-up with overage math (200 OK).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/UsageSummaryResponse' }
@@ -780,7 +780,7 @@ paths:
       security: []
       responses:
         '200':
-          description: OK
+          description: This spec, as YAML (200 OK).
           headers:
             Cache-Control:
               schema: { type: string, example: 'public, max-age=300' }
@@ -799,7 +799,7 @@ paths:
       security: []
       responses:
         '200':
-          description: OK
+          description: This spec, as JSON (200 OK).
           headers:
             Cache-Control:
               schema: { type: string, example: 'public, max-age=300' }
@@ -966,7 +966,7 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$' }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$' }
         type: { type: string, enum: [app, function] }
-        runtime: { type: [string, "null"], enum: [node22, python312] }
+        runtime: { type: string, enum: [node22, python312], description: "Runtime for `type: function` apps. Omit for `type: app` (the default)." }
         ram_mb: { type: integer }
         max_concurrency: { type: integer }
         idle_timeout_s: { type: [integer, "null"] }
