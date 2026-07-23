@@ -1,4 +1,4 @@
-package stripex
+package stripe
 
 import (
 	"context"

@@ -103,6 +103,12 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root
 leakcheck: ## Assert zero leaked netns/TAPs/jail uids/cgroups after tests
 	@bash deploy/scripts/leakcheck.sh
 
+.PHONY: e2e
+e2e: ## End-to-end tests in cmd/e2e (needs Postgres reachable; metal subset via test-metal). Issue M7.
+	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e needs DATABASE_URL set to a reachable Postgres" ; exit 1)
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set; set it to a reachable Postgres to run e2e" ; exit 1)
+	$(GO) test -race -count=1 -timeout=15m ./cmd/e2e/...
+
 .PHONY: metal-lima
 metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see deploy/lima/README.md)
 	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false

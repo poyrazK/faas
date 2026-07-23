@@ -356,3 +356,102 @@ func TestApidProxy_HealthzEndToEnd(t *testing.T) {
 		t.Errorf("body = %q, want JSON status:ok", rec.Body.String())
 	}
 }
+
+// TestApidProxy_PassesRealClientIPInXForwardedFor pins issue #89's
+// gatewayd half: every /v1/* (and /login, /auth/verify, /dashboard,
+// etc.) request the apidProxy forwards must carry an X-Forwarded-For
+// header whose value is the real client IP — the host portion of
+// r.RemoteAddr at the gatewayd edge. apid's defaultClientIP trusts
+// this header only when its own RemoteAddr is loopback (which it
+// always is on this hop), so the pin here is what restores per-IP
+// AuthLimit keying across the loopback hop.
+//
+// Failure mode: if a future regression stops pinning the header, or
+// appends instead of overwrites (creating a multi-hop chain that
+// apid's predicate rejects), every customer's bucket collapses and
+// the spec §11 "10/min/IP" guarantee is silently violated.
+func TestApidProxy_PassesRealClientIPInXForwardedFor(t *testing.T) {
+	var seenXFF string
+	var seenHeaderCount int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenXFF = r.Header.Get("X-Forwarded-For")
+		seenHeaderCount = len(r.Header.Values("X-Forwarded-For"))
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("apid: ok"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := newApidProxy(upstream.URL, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("next handler invoked; should have been proxied")
+	}), log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/account", nil)
+	// Real client IP at the gatewayd edge — what gatewayd sees in
+	// r.RemoteAddr before the loopback hop.
+	req.RemoteAddr = "203.0.113.10:55555"
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", rec.Code)
+	}
+	if seenXFF != "203.0.113.10" {
+		t.Errorf("upstream X-Forwarded-For = %q, want %q", seenXFF, "203.0.113.10")
+	}
+	if seenHeaderCount != 1 {
+		t.Errorf("upstream saw X-Forwarded-For %d times, want 1 (must overwrite, not append)", seenHeaderCount)
+	}
+}
+
+// TestApidProxy_DoesNotSetXForwardedForWhenNoRemoteAddr pins the
+// defensive side of issue #89's gatewayd half: when r.RemoteAddr is
+// empty (the proxy is unreachable, or a test synthesises a bare
+// request) the proxy must NOT inject an X-Forwarded-For — that
+// would let a request without a real client IP trick apid's
+// defaultClientIP into trusting an empty header (the header would
+// be empty, the predicate falls back, but this test still confirms
+// the gatewayd side doesn't write a bogus value).
+//
+// Failure mode: if a future regression unconditionally writes a
+// header, a request with RemoteAddr="" would carry an empty
+// X-Forwarded-For and a downstream apid's predicate would fall
+// back to r.RemoteAddr (which is empty → "unknown"). The bucket
+// still works, but the loopback-only trust predicate never had a
+// chance to fire. This test pins that gatewayd never synthesises
+// what apid might mistake for a trustable pin.
+func TestApidProxy_DoesNotSetXForwardedForWhenNoRemoteAddr(t *testing.T) {
+	var seenXFF string
+	var seenHeaderCount int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenXFF = r.Header.Get("X-Forwarded-For")
+		seenHeaderCount = len(r.Header.Values("X-Forwarded-For"))
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("apid: ok"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := newApidProxy(upstream.URL, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("next handler invoked; should have been proxied")
+	}), log)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/account", nil)
+	// Empty RemoteAddr — the degenerate case. gatewayd must not
+	// inject a header value, because there's no real IP to pin.
+	req.RemoteAddr = ""
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", rec.Code)
+	}
+	if seenXFF != "" {
+		t.Errorf("upstream X-Forwarded-For = %q, want empty (no RemoteAddr to pin from)", seenXFF)
+	}
+	if seenHeaderCount != 0 {
+		t.Errorf("upstream saw X-Forwarded-For %d times, want 0", seenHeaderCount)
+	}
+}

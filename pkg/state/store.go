@@ -332,7 +332,22 @@ type Store interface {
 	CreateBuild(ctx context.Context, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error)
 	BuildByID(ctx context.Context, id string) (Build, error)
 	BuildByDeployment(ctx context.Context, deploymentID string) (Build, error)
+	// ClaimQueuedBuild atomically transitions queued → running and returns
+	// the row. Returns ErrNotFound when the row is missing OR when its
+	// status is no longer BuildQueued — callers (builderd's ProcessOne)
+	// use the second case to drop duplicate notifications from the apid
+	// write path and the imaged reaper (PR-A). started_at is set to now.
+	ClaimQueuedBuild(ctx context.Context, id string) (Build, error)
 	UpdateBuildStatus(ctx context.Context, id string, status BuildStatus, fc FailureClass, started, finished bool) error
+	// ListStaleQueuedBuilds returns builds still in BuildQueued whose
+	// enqueued_at is older than threshold. The imaged reaper (PR-A)
+	// walks this set on a tick and re-emits db.NotifyBuildQueued for
+	// each, recovering from a missed pg_notify at the apid write path
+	// (e.g. transient Postgres blip between INSERT and NOTIFY).
+	// Builds is bounded by spec §9 (shallow queue), so a full scan is
+	// cheap; if pressure emerges, add a partial index on
+	// (status, enqueued_at) WHERE status='queued'.
+	ListStaleQueuedBuilds(ctx context.Context, threshold time.Duration) ([]Build, error)
 
 	// Custom domains (apid is sole writer).
 	CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error)
@@ -369,9 +384,31 @@ type Store interface {
 	// resolved via ComputeNodeByName) — the engine never accepts an
 	// empty node_id once CreateInstance is reached, so the legacy
 	// single-box path always passes DefaultLocalNodeName at minimum.
-	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID string) (Instance, error)
+	//
+	// wakeID is the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23); schedd mints this UUIDv7 in Engine.Wake Phase 2 right
+	// before the INSERT so every row created by Wake carries a unique
+	// wake_id. An empty wakeID triggers the column default
+	// (gen_random_uuid()) which is the safe behavior for any caller that
+	// hasn't been updated yet (test fixtures, ad-hoc backfill scripts).
+	// Migration 00028 enforces NOT NULL going forward, so passing empty
+	// is fine — the row still has a non-NULL wake_id after the write.
+	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
+	// ListLatestInstancesForApp returns up to `limit` instance rows for
+	// appID ordered by started_at DESC. The dashboard's app-detail
+	// "Recent wakes" table uses this to bound the per-render scan at
+	// the SQL layer instead of fetching every row (including parked
+	// history) and sorting in Go. limit must be > 0; a value ≤ 0
+	// returns an empty slice so the caller fails closed rather than
+	// rendering an unbounded table. The supporting partial index
+	// `instances_wake_id_app_idx` (migration 00028) covers live
+	// states but not parked; the SQL still scans parked rows in the
+	// sort phase, so a future index on (app_id, started_at DESC)
+	// WHERE state = 'parked' is the right optimization if a single
+	// app accumulates enough parked history to make this slow.
+	ListLatestInstancesForApp(ctx context.Context, appID string, limit int) ([]Instance, error)
 	// ListLatestInstancePerApp returns the most-recently-started instance
 	// for each app belonging to the account. Empty map when no instance
 	// rows exist yet (a fresh deploy never woken). Used by the dashboard
@@ -599,7 +636,7 @@ type Store interface {
 	UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]Usage, error)
 
 	// StripePushDedup is the dedupe table for hourly usage pushes. The
-	// PushDedupe interface in pkg/stripex is satisfied by both stores.
+	// PushDedupe interface in pkg/billing/stripe is satisfied by both stores.
 	HasStripePushHour(ctx context.Context, accountID string, hour time.Time) (bool, error)
 	RecordStripePushHour(ctx context.Context, accountID string, hour time.Time) error
 

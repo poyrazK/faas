@@ -511,7 +511,7 @@ func TestCommandsHaveNoShellMetacharacters(t *testing.T) {
 // The Go-side constant is the single source of truth. The host nft ruleset
 // (the artifact produced by `make egress-render` and dropped at
 // /etc/nftables.conf) MUST reference this exact name — otherwise the forward
-// chain's `iif "..." oifname "..." accept` allow rule never matches the
+// chain's `iifname "..." oifname "..." accept` allow rule never matches the
 // bridge vmmd actually creates, and every tenant→public packet is dropped
 // before the §11 denylist matters.
 //
@@ -525,7 +525,7 @@ func TestTenantBridgeMatches(t *testing.T) {
 		t.Errorf("Go renderer did not use TenantBridge=%q in input chain; got:\n%s",
 			TenantBridge, rendered)
 	}
-	if !strings.Contains(rendered, `iif "`+TenantBridge+`" oifname "`) {
+	if !strings.Contains(rendered, `iifname "`+TenantBridge+`" oifname "`) {
 		t.Errorf("Go renderer did not use TenantBridge=%q in forward chain; got:\n%s",
 			TenantBridge, rendered)
 	}
@@ -545,7 +545,7 @@ func TestTenantBridgeMatches(t *testing.T) {
 		t.Fatalf("read %s: %v", artifact, err)
 	}
 	text := string(body)
-	if !strings.Contains(text, `iif "`+TenantBridge+`" oifname "`) {
+	if !strings.Contains(text, `iifname "`+TenantBridge+`" oifname "`) {
 		t.Errorf("checked-in artifact does not reference TenantBridge=%q in forward chain; "+
 			"this is the bridge-name typo regression — see #27:\n%s",
 			TenantBridge, text)

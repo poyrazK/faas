@@ -1,4 +1,4 @@
-package stripex
+package stripe
 
 import (
 	"errors"
@@ -12,10 +12,10 @@ import (
 // panels are designed around; a new bucket requires a dashboard
 // revision, not a code change.
 //
-// The classifier is the seam between stripex (which knows about
+// The classifier is the seam between stripe (which knows about
 // *stripe.Error) and pkg/wire / pkg/meter (which only know about
-// labels). Lives in stripex so the SDK-coupled part stays there; the
-// pusher just calls stripex.ClassifyPushError(err) and observes the
+// labels). Lives in stripe so the SDK-coupled part stays there; the
+// pusher just calls stripe.ClassifyPushError(err) and observes the
 // returned string.
 //
 // Mapping table:
@@ -43,7 +43,7 @@ import (
 // "ok" is intentionally returned for nil so the pusher can write a
 // uniform:
 //
-//	code := stripex.ClassifyPushError(err)
+//	code := stripe.ClassifyPushError(err)
 //	ops.ObserveCode("stripe", code, dur)
 //	ops.StripePushDuration(code).Observe(...)
 //

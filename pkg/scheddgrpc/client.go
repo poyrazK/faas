@@ -67,17 +67,28 @@ func (c *Client) Close() error {
 
 // Wake asks schedd to bring up an instance for appID and returns the
 // instance id + the compute_node.id the instance lives on
-// (issue #98 / ADR-028). The instance id lets the gateway attribute
-// last_request_at touches (ADR-018); the node id lets it look up the
-// per-node vmmd gRPC client in its routing cache. Admission denials
-// arrive as an *api.Problem so gateway.writeWakeError maps them
-// straight to the right RFC 7807 status. Satisfies gateway.Scheduler.
-func (c *Client) Wake(ctx context.Context, appID string) (string, string, error) {
+// (issue #98 / ADR-028) + the per-wake correlation handle
+// (gaps analysis 2026-07-23).
+//
+//   - instanceID: instances.id row PK. Stable per-row; lets the
+//     gateway attribute last_request_at touches (ADR-018).
+//   - nodeID: compute_node.id (uuid). Lets the gateway look up the
+//     per-node vmmd gRPC client in its routing cache.
+//   - wakeID: the per-wake correlation handle. On the Phase-1
+//     fast-path (instance already RUNNING) this is the wake_id of
+//     the wake that brought the instance up, surfaced from the row;
+//     on every other path it's the UUIDv7 schedd minted in Phase 2.
+//     Propagated to the client as x-faas-wake-id.
+//
+// Admission denials arrive as an *api.Problem so gateway.writeWakeError
+// maps them straight to the right RFC 7807 status. Satisfies
+// gateway.Scheduler.
+func (c *Client) Wake(ctx context.Context, appID string) (instanceID, nodeID, wakeID string, err error) {
 	resp, err := c.cli.Wake(ctx, &scheddpb.WakeRequest{AppId: appID})
 	if err != nil {
-		return "", "", liftErr(err)
+		return "", "", "", liftErr(err)
 	}
-	return resp.GetInstanceId(), resp.GetNodeId(), nil
+	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetWakeId(), nil
 }
 
 // ReportActivity flushes a batch of last_request_at touches to schedd. Returns

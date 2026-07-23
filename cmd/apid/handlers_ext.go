@@ -14,11 +14,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/stripex"
 )
 
 // --- apps CRUD --------------------------------------------------------------
@@ -584,11 +585,23 @@ func (s *server) getUsage(w http.ResponseWriter, r *http.Request, acct state.Acc
 
 // --- plan changes ----------------------------------------------------------
 
-// changePlan implements PATCH /v1/account/plan. Only the Free → Hobby upgrade
-// is permitted via the dashboard in M5; everything else flows through
-// Stripe (the webhook hits POST /v1/webhooks/stripe and calls into here with
-// the network-trusted plan). M5 keeps this minimal — the table is wired,
-// full dunning flow lands with M7 + meterd.
+// changePlan implements PATCH /v1/account/plan. Only the Free → Hobby
+// upgrade is permitted via the dashboard in M5; everything else flows
+// through Stripe (the webhook hits POST /v1/webhooks/stripe and calls
+// into here with the network-trusted plan). M5 keeps this minimal —
+// the table is wired, full dunning flow lands with M7 + meterd.
+//
+// Issue #142: also gate every paid upgrade on the account having a
+// Stripe subscription item. Previously the handler accepted any valid
+// plan from any authenticated bearer token, which let a Free account
+// self-upgrade to Pro/Scale via API key alone — getting 1024 MB RAM,
+// 25 deployments, 5 concurrent instances, with no Stripe subscription
+// to invoice. meterd's quota tick skips customers with empty
+// StripeSubscriptionItem so the overage was silently absorbed. The
+// gate below 402s with a billing portal URL pointing at the Stripe
+// checkout path; the Stripe webhook remains the legitimate way to
+// land on a paid plan (it stamps StripeSubscriptionItem on the way
+// through).
 func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req struct {
 		Plan string `json:"plan"`
@@ -601,6 +614,30 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	if !plan.Valid() {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad plan", "plan must be free|hobby|pro|scale"))
+		return
+	}
+	// Issue #142 gate: any paid upgrade that does not have a Stripe
+	// subscription item on the account is blocked. Downgrades and
+	// same-tier moves always pass; the free → hobby M5 path is the
+	// only free → paid direct upgrade.
+	if acct.Plan.RequiresStripeUpgradeTo(plan) && acct.StripeSubscriptionItem == "" {
+		// CodeQL go/log-injection (CWE-117): plan was enum-validated
+		// against the 4 Plan constants (free|hobby|pro|scale) by
+		// plan.Valid() in this handler, but CodeQL's taint engine
+		// doesn't model that branch. Wrap so a future relax of
+		// plan.Valid() cannot smuggle CR/LF into the audit line.
+		s.log.Info("plan change blocked",
+			"account", acct.ID,
+			"from", logsanitize.Field(string(acct.Plan)),
+			"to", logsanitize.Field(string(plan)),
+		)
+		api.WriteProblem(w, &api.Problem{
+			Status:           http.StatusPaymentRequired,
+			Code:             api.CodePayment,
+			Title:            "Stripe subscription required",
+			Detail:           "plan upgrades to " + string(plan) + " require an active Stripe subscription; use the billing portal to upgrade",
+			BillingPortalURL: s.billingPortalURLFor(acct),
+		})
 		return
 	}
 	if err := s.store.UpdateAccountPlan(ctx(r), acct.ID, plan); err != nil {
@@ -654,7 +691,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	header := r.Header.Get("Stripe-Signature")
-	if err := stripex.VerifySignature(body, header, s.stripeWebhookSecret, 5*time.Minute); err != nil {
+	if err := stripe.VerifySignature(body, header, s.stripeWebhookSecret, 5*time.Minute); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad signature", err.Error()))
 		return
 	}
@@ -703,6 +740,26 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 			} else {
 				s.log.Warn("apid: payment_failed MarkDunningStep", "account", acct.ID, "err", err)
 			}
+		} else {
+			// First delivery — the CAS flip succeeded and past_due_at
+			// was stamped. Send the entry-point email per spec §171
+			// "All transitions emailed". Stripe redelivery is naturally
+			// silent here: MarkDunningStep returns ErrNotFound on a
+			// second delivery (status already past_due), which routes
+			// through the if branch above and skips the mail.
+			//
+			// Mail errors are warn-logged but never undo the status
+			// flip — Stripe told us about a real payment failure and
+			// the customer needs to be marked past_due regardless of
+			// whether our SMTP relay is healthy. The meterd 7-day
+			// timer is the safety net for the customer-facing notice.
+			subject, body := mail.PaymentFailedBody(acct.Email, time.Now().UTC())
+			if err := s.mailer.Send(r.Context(), Message{
+				To: []string{acct.Email}, Subject: subject, TextBody: body,
+			}); err != nil {
+				s.log.Warn("apid: payment_failed mail",
+					"account", acct.ID, "err", err)
+			}
 		}
 	case "invoice.payment_succeeded":
 		// Restore the account if it was past_due. meterd will refresh
@@ -712,8 +769,30 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		// fresh warning — otherwise the stamp from the previous day
 		// would suppress it (spec §4.7).
 		if acct.Status == state.AccountPastDue {
-			_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountActive)
+			if err := s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountActive); err != nil {
+				s.log.Warn("apid: payment_succeeded restore",
+					"account", acct.ID, "err", err)
+			} else {
+				// Status just flipped back to active. Send the
+				// recovery email (spec §171 "All transitions emailed").
+				// payment_succeeded is naturally idempotent — the
+				// status guard above ensures we only fire on a real
+				// past_due → active transition, never on a no-op
+				// redelivery.
+				subject, body := mail.AccountRestoredBody(acct.Email, time.Now().UTC())
+				if err := s.mailer.Send(r.Context(), Message{
+					To: []string{acct.Email}, Subject: subject, TextBody: body,
+				}); err != nil {
+					s.log.Warn("apid: payment_succeeded mail",
+						"account", acct.ID, "err", err)
+				}
+			}
 		}
+		// Clear the dedupe stamp on every payment_succeeded, not just
+		// past_due → active flips: a fresh signup's first Stripe
+		// confirmation shouldn't wait until the next UTC midnight to
+		// hear about a quota they crossed during the trial, and the
+		// Cost of an extra pg_notify on a no-op event is nil.
 		_ = s.store.ClearQuotaWarning(r.Context(), acct.ID)
 	case "customer.subscription.updated":
 		if ev.Data.Object.Plan != "" {
@@ -758,6 +837,7 @@ func instanceResponse(ins state.Instance) api.InstanceResponse {
 		State:        ins.State,
 		HostIP:       ins.HostIP,
 		RAMMB:        ins.RAMMB,
+		WakeID:       ins.WakeID,
 	}
 	if !ins.StartedAt.IsZero() {
 		r.StartedAt = ins.StartedAt.UTC().Format(time.RFC3339)

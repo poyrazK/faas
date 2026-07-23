@@ -11,13 +11,16 @@ package imaged
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -594,4 +597,173 @@ func TestMemStore_ListDeploymentsForApp_LimitZero(t *testing.T) {
 func nan() float64 {
 	var z float64
 	return z / z // 0/0 → NaN, deterministic, no math import
+}
+
+// fakeNotifier captures every Notify call so the reaper test can
+// assert on the on-wire payload without spinning up Postgres.
+// Reuses the existing fakeNotifier in handler_test.go (same package)
+// — only this test reads it without going through HandleNotification,
+// so the existing non-thread-safe shape is fine; this test runs
+// single-goroutine.
+func TestLoop_BuildReapTick(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "reap@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "reap-app",
+		RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball,
+	})
+	if _, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 100, ""); err != nil {
+		t.Fatalf("CreateBuild: %v", err)
+	}
+
+	// The MemStore sets EnqueuedAt = time.Now() on CreateBuild. We
+	// can't backdate via the public surface (no setter), so exercise
+	// the 0-threshold branch where every queued row qualifies.
+	notif := &fakeNotifier{}
+	loop := &Loop{
+		store:         store,
+		log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:           func() time.Time { return time.Unix(0, 0) },
+		reapEvery:     time.Second,
+		reapThreshold: 0, // every queued row qualifies
+		reapCh:        make(chan time.Time, 1),
+		handler: &Handler{
+			store: store,
+			log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+			notif: notif,
+		},
+	}
+
+	loop.runBuildReapTick(context.Background(), time.Now())
+
+	if len(notif.calls) == 0 {
+		t.Fatal("reaper emitted zero notifications; want at least one per stale row")
+	}
+	for _, c := range notif.calls {
+		if c.channel != db.NotifyBuildQueued {
+			t.Errorf("reaper emitted on %q, want %q", c.channel, db.NotifyBuildQueued)
+		}
+		// PR-A review: decode via db.BuildQueuedPayload so this test
+		// catches any drift in the four-field shape. Substring checks
+		// missed a missing/renamed key entirely.
+		var p db.BuildQueuedPayload
+		if err := json.Unmarshal([]byte(c.payload), &p); err != nil {
+			t.Fatalf("reaper payload not valid BuildQueuedPayload JSON: %v (payload=%q)", err, c.payload)
+		}
+		if p.DeploymentID != dep.ID {
+			t.Errorf("deployment = %q, want %q", p.DeploymentID, dep.ID)
+		}
+		if p.AppID != app.ID {
+			t.Errorf("app = %q, want %q", p.AppID, app.ID)
+		}
+		if p.BuildID == "" {
+			t.Errorf("build id empty in payload %q", c.payload)
+		}
+		if p.Kind != string(state.DeploymentKindTarball) {
+			t.Errorf("kind = %q, want %q", p.Kind, state.DeploymentKindTarball)
+		}
+	}
+
+	// Duplicate emit is harmless because builderd's ClaimQueuedBuild
+	// (PR-A review CAS) drops the loser of the queued → running race.
+	prev := len(notif.calls)
+	loop.runBuildReapTick(context.Background(), time.Now())
+	if len(notif.calls) <= prev {
+		t.Errorf("second tick should re-emit (no in-mem dedupe), got %d calls (was %d)", len(notif.calls), prev)
+	}
+}
+
+// threadsafeNotifier wraps the package-private fakeNotifier (which is
+// not safe for concurrent access) with a mutex. The PR-A wiring test
+// reads fakeNotifier.calls from the test goroutine while Run writes
+// from its own goroutine; -race flags this on the package fake.
+// Defined here rather than touching the shared fake to keep blast
+// radius small.
+type threadsafeNotifier struct {
+	mu    sync.Mutex
+	calls []notifyCall
+}
+
+func (t *threadsafeNotifier) Notify(_ context.Context, channel, payload string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.calls = append(t.calls, notifyCall{channel, payload})
+	return nil
+}
+
+func (t *threadsafeNotifier) Calls() []notifyCall {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]notifyCall(nil), t.calls...)
+}
+
+// TestLoop_BuildReapChannel_WiresThroughRun covers the PR-A review
+// "loop test bypasses Run + reapCh" finding. Spins up Loop.Run on a
+// cancellable context, sends one tick on WithBuildReapChannel, and
+// asserts the reaper fires through the actual select arm rather than
+// by calling runBuildReapTick directly.
+func TestLoop_BuildReapChannel_WiresThroughRun(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "wire@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "wire-app",
+		RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball,
+	})
+	if _, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 100, ""); err != nil {
+		t.Fatalf("CreateBuild: %v", err)
+	}
+
+	notif := &threadsafeNotifier{}
+	reapCh := make(chan time.Time, 1)
+	// gcCh and fcCh are nil — Run()'s select should still spin and pick
+	// up the reap tick. Pass nil-safe lvUsedPct so any probe path that
+	// ever fires doesn't NPE. gcEvery/reapEvery MUST be > 0 because
+	// Run() falls back to time.NewTicker when the channel is nil and
+	// NewTicker panics on non-positive durations.
+	loop := &Loop{
+		store:         store,
+		log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:           func() time.Time { return time.Unix(0, 0) },
+		gcEvery:       time.Hour,
+		reapCh:        reapCh,
+		reapEvery:     time.Hour, // unused: we drive via reapCh send.
+		reapThreshold: 0,
+		handler: &Handler{
+			store: store,
+			log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+			notif: notif,
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		loop.Run(ctx) //nolint:errcheck // Run exits on ctx cancel; err unused
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	// Send one reap tick through the wiring under test.
+	reapCh <- time.Now()
+
+	// Poll briefly for the notify — Run is on its own goroutine.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(notif.Calls()) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(notif.Calls()) == 0 {
+		t.Fatal("Run + reapCh wiring did not produce a notify within 1s")
+	}
 }

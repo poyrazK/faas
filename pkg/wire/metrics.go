@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/stripex"
+	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -51,6 +51,15 @@ type OpsMetrics struct {
 	// ≈ 5 s, p99.9 ≈ 30 s); the 60 s ceiling is the documented API
 	// timeout.
 	stripePushDur *prometheus.HistogramVec
+	// wakeIDV4Fallback: introduced in feat/wake-id review followup
+	// (gaps analysis 2026-07-23, finding #6). Increments when schedd
+	// mints a wake_id and uuid.NewV7 returns an error — the engine
+	// falls back to uuid.New (v4) in that case so a wake is never
+	// refused for ID-generation reasons, but a v4 wake_id breaks the
+	// time-ordering invariant the partial index is built on. Any
+	// non-zero rate indicates a broken crypto/rand subsystem and
+	// should alert. Unlabelled: one counter, no cardinality.
+	wakeIDV4Fallback prometheus.Counter
 	// buildDur / buildQueueWait: introduced in ADR-030 for builderd's
 	// build lifecycle. Distinct from the dur histogram (which tops out
 	// at 5 s — sub-millisecond control-plane sizing) because a build runs
@@ -112,7 +121,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	})
 	stripePushDur := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_stripe_push_duration_seconds",
-		Help: "Per-push latency to Stripe, labelled by terminal result code (ok on success, or a stripex.ClassifyPushError label on failure).",
+		Help: "Per-push latency to Stripe, labelled by terminal result code (ok on success, or a stripe.ClassifyPushError label on failure).",
 		// Sized for Stripe's documented SLA: p99 ≈ 5 s, p99.9 ≈ 30 s,
 		// 60 s ceiling = documented API timeout.
 		Buckets: []float64{0.5, 1, 2, 5, 10, 20, 30, 45, 60},
@@ -140,6 +149,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_resident_gb_per_customer",
 		Help: "Monthly GB-RAM-hours divided by paying-customer count, per plan (ADR-031). Spec §12 target 0.305 (≈312 MB/customer); > 0.45 warns. Emitted by meterd once per ResidencyInterval.",
 	}, []string{"plan"})
+	wakeIDV4Fallback := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_wake_id_v4_fallback_total",
+		Help: "Count of wake_id mints where uuid.NewV7 returned an error and the engine fell back to uuid.New (v4). Any non-zero rate indicates a broken crypto/rand subsystem and breaks the time-ordering invariant the instances_wake_id_app_idx partial index is built on. Should never increment in production.",
+	})
 	imagedOCIPull := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_oci_pull_duration_seconds",
 		Help: "Latency of imaged's OCI registry pulls (manifest, config, blob, above-base), in seconds. Sized to api.OCIPullTimeoutSeconds (60 s).",
@@ -147,7 +160,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// multi-second for big layers; 60 s ceiling = OCIPullTimeoutSeconds.
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60},
 	}, []string{"op", "result"})
-	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, stripePushDur, buildDur, buildQueueWait, residentGBPerCustomer, imagedOCIPull)
+	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, stripePushDur, buildDur, buildQueueWait, residentGBPerCustomer, wakeIDV4Fallback, imagedOCIPull)
 	// Pre-instantiate the closed (op,result) set for the OCI-pull
 	// histogram so its HELP/TYPE and zero-valued buckets surface in
 	// /metrics from the moment the daemon boots — same precedent as
@@ -166,9 +179,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// HistogramVec series with zero observed label tuples, which would
 	// render the dashboard's stripe-push panel as "no data" until at
 	// least one push happened (a real ops hazard). The label set is
-	// the canonical closed list from stripex.PushResultLabels —
+	// the canonical closed list from stripe.PushResultLabels —
 	// adding a label there must also extend this loop. ADR-024.
-	for _, label := range stripex.PushResultLabels() {
+	for _, label := range stripe.PushResultLabels() {
 		stripePushDur.WithLabelValues(label)
 	}
 	// Pre-instantiate the closed plan set for the residentGBPerCustomer
@@ -190,6 +203,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		buildDur:              buildDur,
 		buildQueueWait:        buildQueueWait,
 		residentGBPerCustomer: residentGBPerCustomer,
+		wakeIDV4Fallback:      wakeIDV4Fallback,
 		imagedOCIPull:         imagedOCIPull,
 	}
 }
@@ -207,6 +221,15 @@ func (m *OpsMetrics) WatchdogKills(fromState, toState string) prometheus.Counter
 // only signals observability debt. See also commit 4.
 func (m *OpsMetrics) EventsWriteFailures() prometheus.Counter {
 	return m.eventsWriteFail
+}
+
+// WakeIDV4Fallback returns the unlabelled counter the wake_id mint
+// path increments when uuid.NewV7 fails and the engine falls back to
+// uuid.New (v4). Review finding #6 (gaps analysis 2026-07-23): any
+// non-zero rate indicates a broken crypto/rand subsystem and silently
+// breaks the time-ordering invariant the partial index is built on.
+func (m *OpsMetrics) WakeIDV4Fallback() prometheus.Counter {
+	return m.wakeIDV4Fallback
 }
 
 // Registry returns the underlying registry — pass to promhttp.HandlerFor
@@ -230,7 +253,7 @@ func (m *OpsMetrics) Observe(op string, dur time.Duration, err error) {
 // alerting on (e.g. "stripe-card-decline" vs "stripe-rate-limit" rather
 // than a single "stripe-err" bucket). code="ok" is the success label;
 // any other short, stable label is the failure mode — see
-// pkg/stripex.ClassifyPushError for the canonical Stripe set.
+// pkg/billing/stripe.ClassifyPushError for the canonical Stripe set.
 //
 // The counter and histogram are incremented under the same op label as
 // Observe; only the code-label cardinality differs. Pairs with
@@ -245,7 +268,7 @@ func (m *OpsMetrics) ObserveCode(op, code string, dur time.Duration) {
 // StripePushDuration returns the per-(result) observer for the dedicated
 // <daemon>_stripe_push_duration_seconds histogram. result is the same
 // label set as ObserveCode's code arg — "ok" on success, or a
-// stripex.ClassifyPushError label on failure. Returned Observer is safe
+// stripe.ClassifyPushError label on failure. Returned Observer is safe
 // to cache; the underlying HistogramVec is shared across labels.
 func (m *OpsMetrics) StripePushDuration(result string) prometheus.Observer {
 	return m.stripePushDur.WithLabelValues(result)

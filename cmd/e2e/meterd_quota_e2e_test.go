@@ -95,7 +95,7 @@ func TestQuotaBreach_ParkInstanceWithinOneTick(t *testing.T) {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
 
-	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, defaultLocalNodeID)
+	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, defaultLocalNodeID, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

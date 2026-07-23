@@ -122,6 +122,24 @@ type AppDetailData struct {
 	Manifest    ManifestView
 	Deployments []DeploymentItem
 	Crons       []CronItem
+	// RecentInstances is the most recent N wake rows for this app
+	// (parked → waking → running → …). Each carries its WakeID so
+	// operators can paste the ID from a gateway response header
+	// (`x-faas-wake-id`) and find which run it was. The list is
+	// derived from ListInstancesForApp ordered DESC by started_at;
+	// if the store returns no rows (cold-install, fully parked),
+	// the section renders as empty and the template shows a hint.
+	RecentInstances []RecentInstanceItem
+}
+
+// RecentInstanceItem is one row of the Recent Wakes table on the
+// dashboard app-detail page.
+type RecentInstanceItem struct {
+	ID            string // instance row PK (stable across wakes)
+	WakeID        string // per-wake UUIDv7; distinct from ID
+	State         string // wire vocabulary; the template badge maps parked → sleeping
+	StartedAt     string // empty when not yet started
+	LastRequestAt string // empty when no traffic yet
 }
 
 // UsageData is the /dashboard/usage page payload.

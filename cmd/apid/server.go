@@ -104,6 +104,14 @@ type server struct {
 	// statusPagePath is the on-disk path of the static HTML served
 	// at GET /status. Empty uses /etc/faas/statuspage/index.html.
 	statusPagePath string
+	// billingPortalURL is the template URL carried on CodePayment
+	// 402 responses from changePlan (issue #142). May contain the
+	// substring `{account_id}` which the handler substitutes with
+	// acct.ID at write time; an empty template (or one with no
+	// placeholder) is returned as-is so the operator can ship a
+	// domain-only URL until the customer's id is wired in. Empty
+	// means the 402 still goes out but BillingPortalURL is omitted.
+	billingPortalURL string
 	// ops holds the per-daemon Prometheus registry. Wired via
 	// WithOpsMetrics so callers (cmd/apid) control the registry
 	// lifecycle. A dedicated metric observer middleware sits atop
@@ -131,6 +139,25 @@ func (s *server) WithStatusCache(promURL, htmlPath string) *server {
 	s.statusCache = newStatusCache(promURL, s.log)
 	s.statusPagePath = htmlPath
 	return s
+}
+
+// WithBillingPortalURL records the operator-controlled Stripe billing
+// portal template used by the changePlan handler (issue #142). The
+// template may contain `{account_id}`; the handler substitutes the
+// authenticated account id at write time. Empty is allowed (the 402
+// still goes out, just without the BillingPortalURL extension).
+func (s *server) WithBillingPortalURL(template string) *server {
+	s.billingPortalURL = template
+	return s
+}
+
+// billingPortalURLFor returns the rendered URL for the customer. Empty
+// template yields empty string so the handler can omitempty the field.
+func (s *server) billingPortalURLFor(acct state.Account) string {
+	if s.billingPortalURL == "" {
+		return ""
+	}
+	return strings.ReplaceAll(s.billingPortalURL, "{account_id}", acct.ID)
 }
 
 // Mailer is the slice of pkg/mail.Sender apid depends on. Kept as an

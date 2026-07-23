@@ -1531,22 +1531,22 @@ func TestMem_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 	// nodeA: 2 waking, 1 cold_booting, 1 running, 1 stopped (not counted),
 	// 1 snapshotted (not counted). Total live = 4 × (256 + 8) = 1056 MB.
 	for _, st := range []string{"waking", "cold_booting", "running"} {
-		if _, err := m.CreateInstance(ctx, app.ID, dep.ID, st, 256, nodeA); err != nil {
+		if _, err := m.CreateInstance(ctx, app.ID, dep.ID, st, 256, nodeA, ""); err != nil {
 			t.Fatalf("CreateInstance(%s): %v", st, err)
 		}
 	}
-	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 256, nodeA); err != nil {
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 256, nodeA, ""); err != nil {
 		t.Fatalf("CreateInstance(running-2): %v", err)
 	}
-	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "stopped", 256, nodeA); err != nil {
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "stopped", 256, nodeA, ""); err != nil {
 		t.Fatalf("CreateInstance(stopped): %v", err)
 	}
-	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "snapshotted", 256, nodeA); err != nil {
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "snapshotted", 256, nodeA, ""); err != nil {
 		t.Fatalf("CreateInstance(snapshotted): %v", err)
 	}
 
 	// nodeB: 1 running 512 MB → 520 MB total.
-	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 512, nodeB); err != nil {
+	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 512, nodeB, ""); err != nil {
 		t.Fatalf("CreateInstance(nodeB): %v", err)
 	}
 
@@ -1634,5 +1634,220 @@ func TestMemStore_SnapshotStorageKey_RoundTrip(t *testing.T) {
 	}
 	if rows[0].StorageKey != want {
 		t.Errorf("SnapshotForGC.StorageKey = %q, want %q", rows[0].StorageKey, want)
+	}
+}
+
+// TestMemStore_ListStaleQueuedBuilds covers the imaged-reaper
+// surface (PR-A). Two queued builds — one old (5min), one fresh
+// (now) — plus one build already in BuildRunning. The threshold
+// (1min) should filter to just the old queued row. The non-queued
+// row must not appear regardless of age. MemStore keeps EnqueuedAt
+// private so we mutate the map directly under m.mu.
+func TestMemStore_ListStaleQueuedBuilds(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "reap@example.com", "pro")
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "reap-app", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	oldDep, _ := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployPending,
+	})
+	freshDep, _ := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployPending,
+	})
+	runningDep, _ := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployBuilding,
+	})
+
+	oldBuild, err := m.CreateBuild(ctx, oldDep.ID, DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild old: %v", err)
+	}
+	freshBuild, err := m.CreateBuild(ctx, freshDep.ID, DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild fresh: %v", err)
+	}
+	runningBuild, err := m.CreateBuild(ctx, runningDep.ID, DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild running: %v", err)
+	}
+
+	// Backdate the old build's EnqueuedAt 5min into the past; flip
+	// the running build to BuildRunning + backdate similarly (it
+	// must NOT appear regardless of age).
+	m.mu.Lock()
+	old := m.builds[oldBuild.ID]
+	old.EnqueuedAt = time.Now().Add(-5 * time.Minute)
+	m.builds[oldBuild.ID] = old
+	run := m.builds[runningBuild.ID]
+	run.Status = BuildRunning
+	run.EnqueuedAt = time.Now().Add(-5 * time.Minute)
+	m.builds[runningBuild.ID] = run
+	m.mu.Unlock()
+
+	// Threshold = 1 minute: only the backdated queued row qualifies.
+	out, err := m.ListStaleQueuedBuilds(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("ListStaleQueuedBuilds: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d stale builds, want 1", len(out))
+	}
+	if out[0].ID != oldBuild.ID {
+		t.Errorf("stale id = %q, want %q", out[0].ID, oldBuild.ID)
+	}
+	if out[0].ID == freshBuild.ID {
+		t.Errorf("fresh build leaked into stale list")
+	}
+	if out[0].ID == runningBuild.ID {
+		t.Errorf("non-queued build leaked into stale list")
+	}
+
+	// Threshold = 0 → the predicate becomes `enqueued_at < now()`. Both
+	// queued rows have EnqueuedAt <= now, so both qualify. This pins the
+	// reaper's "threshold is inclusive of zero" semantics — a caller that
+	// wants to suppress every row should pass time.Duration(-1) (which
+	// flips the predicate to `enqueued_at > now()` → none). Mirrors the
+	// PgStore behaviour exactly so the two impls stay in lockstep.
+	out2, err := m.ListStaleQueuedBuilds(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListStaleQueuedBuilds(0): %v", err)
+	}
+	if len(out2) != 2 {
+		t.Errorf("threshold=0 returned %d rows, want 2 (predicate is `enqueued_at < now()`)", len(out2))
+	}
+}
+
+// TestMemStore_ClaimQueuedBuild pins the atomic queued → running CAS
+// that closes the apid/reaper double-emit race (PR-A review). First
+// claim wins; subsequent claims return ErrNotFound. Mirrors
+// TestPg_ClaimQueuedBuild so the two backends stay in lock-step.
+func TestMemStore_ClaimQueuedBuild(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "claim@example.com", "pro")
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "claim-app", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	dep, err := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	b, err := m.CreateBuild(ctx, dep.ID, DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild: %v", err)
+	}
+
+	// First claim wins.
+	won, err := m.ClaimQueuedBuild(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("first ClaimQueuedBuild: %v", err)
+	}
+	if won.Status != BuildRunning {
+		t.Errorf("first claim status = %q, want running", won.Status)
+	}
+	if won.StartedAt.IsZero() {
+		t.Errorf("first claim started_at is zero")
+	}
+
+	// Second claim loses — row is no longer queued.
+	_, err = m.ClaimQueuedBuild(ctx, b.ID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("second claim err = %v, want ErrNotFound", err)
+	}
+
+	// Unknown id loses the same way.
+	_, err = m.ClaimQueuedBuild(ctx, "deadbeef")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown id err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestMemStore_ListLatestInstancesForApp_BoundedLimit asserts the
+// dashboard's "Recent wakes" path returns at most `limit` rows and
+// that limit ≤ 0 fails closed (empty slice, not unbounded). Added
+// alongside the bounded SQL path for the dashboard per gaps analysis
+// 2026-07-23 review finding #5 — the previous Go-side sort on
+// ListInstancesForApp was unbounded for long-lived apps.
+func TestMemStore_ListLatestInstancesForApp_BoundedLimit(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "listlim@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "listlim", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 5, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	dep, err := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:abc", Status: DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if err := m.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
+	}
+
+	// Seed 5 instances for this app — they all share the same
+	// started_at second so the sort order between them is stable
+	// (sorted by StartedAt after write); the bounded path must
+	// still return exactly `limit` rows.
+	for i := 0; i < 5; i++ {
+		_, err := m.CreateInstance(ctx, app.ID, dep.ID, "parked", 256, DefaultLocalNodeName, "")
+		if err != nil {
+			t.Fatalf("CreateInstance %d: %v", i, err)
+		}
+	}
+
+	// limit=3 returns exactly 3 rows.
+	rows, err := m.ListLatestInstancesForApp(ctx, app.ID, 3)
+	if err != nil {
+		t.Fatalf("ListLatestInstancesForApp(3): %v", err)
+	}
+	if len(rows) != 3 {
+		t.Errorf("rows = %d, want 3 (limit bound)", len(rows))
+	}
+
+	// limit=0 and limit=-1 fail closed.
+	for _, lim := range []int{0, -1} {
+		rows, err := m.ListLatestInstancesForApp(ctx, app.ID, lim)
+		if err != nil {
+			t.Fatalf("ListLatestInstancesForApp(%d): %v", lim, err)
+		}
+		if len(rows) != 0 {
+			t.Errorf("limit=%d returned %d rows, want 0 (fail-closed)", lim, len(rows))
+		}
+	}
+
+	// limit larger than the row count returns everything, no error.
+	rows, err = m.ListLatestInstancesForApp(ctx, app.ID, 50)
+	if err != nil {
+		t.Fatalf("ListLatestInstancesForApp(50): %v", err)
+	}
+	if len(rows) != 5 {
+		t.Errorf("rows = %d, want 5 (all)", len(rows))
 	}
 }

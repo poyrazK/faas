@@ -78,7 +78,7 @@ func TestPGBackend_WakeSeedsTargetThenEvict(t *testing.T) {
 	if _, ok := b.Target("app-1"); ok {
 		t.Fatal("target present before wake")
 	}
-	if err := b.Wake(context.Background(), "app-1"); err != nil {
+	if _, err := b.Wake(context.Background(), "app-1"); err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
 	// Post-#98 / ADR-028 the cached "target" is the compute_node.id
@@ -108,7 +108,7 @@ func TestPGBackend_WakeSeedsTargetThenEvict(t *testing.T) {
 func TestPGBackend_WakeInstanceIDFromScheduler(t *testing.T) {
 	sched := gateway.NewFakeScheduler("node-fake-5").WithInstanceID("i-42")
 	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, sched, nil)
-	if err := b.Wake(context.Background(), "app-9"); err != nil {
+	if _, err := b.Wake(context.Background(), "app-9"); err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
 	if id, ok := b.InstanceIDForNodeID("node-fake-5"); !ok || id != "i-42" {
@@ -119,7 +119,7 @@ func TestPGBackend_WakeInstanceIDFromScheduler(t *testing.T) {
 func TestPGBackend_WakeErrorDoesNotSeedTarget(t *testing.T) {
 	sched := gateway.NewFakeScheduler("10.0.0.9:8080").WithErr(api.ErrCapacity("full"))
 	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, sched, nil)
-	if err := b.Wake(context.Background(), "app-1"); err == nil {
+	if _, err := b.Wake(context.Background(), "app-1"); err == nil {
 		t.Fatal("expected wake error")
 	}
 	if _, ok := b.Target("app-1"); ok {

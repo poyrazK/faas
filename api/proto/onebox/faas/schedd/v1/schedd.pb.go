@@ -146,7 +146,18 @@ type WakeResponse struct {
 	// problem carries the RFC 7807 fields on failure. The status code itself is
 	// google.rpc.Status via google.golang.org/grpc/status; see pkg/grpcerr. This
 	// field mirrors vmmd's WakeResponse and stays unset on success.
-	Problem       *structpb.Struct `protobuf:"bytes,4,opt,name=problem,proto3" json:"problem,omitempty"`
+	Problem *structpb.Struct `protobuf:"bytes,4,opt,name=problem,proto3" json:"problem,omitempty"`
+	// wake_id is the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23). UUIDv7 minted by schedd at Wake() Phase 2; the
+	// gateway propagates it to the client as x-faas-wake-id and the
+	// dashboard / CLI surface it. Distinct from instance_id
+	// (instances.id row PK) — instance_id is per-row and stable across
+	// PARKED → WAKE cycles; wake_id is per-Wake-attempt and fresh on
+	// every call (one row can carry many wake_ids). Empty on the
+	// Phase-1 fast-path return where the existing RUNNING instance was
+	// minted by an earlier wake — gateway can resolve it via
+	// PGBackend.InstanceIDForNodeID if needed.
+	WakeId        string `protobuf:"bytes,5,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -207,6 +218,13 @@ func (x *WakeResponse) GetProblem() *structpb.Struct {
 		return x.Problem
 	}
 	return nil
+}
+
+func (x *WakeResponse) GetWakeId() string {
+	if x != nil {
+		return x.WakeId
+	}
+	return ""
 }
 
 // Touch is one instance's most-recent request time.
@@ -459,13 +477,14 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\n" +
 	"\"onebox/faas/schedd/v1/schedd.proto\x12\x15onebox.faas.schedd.v1\x1a\x1cgoogle/protobuf/struct.proto\"$\n" +
 	"\vWakeRequest\x12\x15\n" +
-	"\x06app_id\x18\x01 \x01(\tR\x05appId\"\xb6\x01\n" +
+	"\x06app_id\x18\x01 \x01(\tR\x05appId\"\xcf\x01\n" +
 	"\fWakeResponse\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x129\n" +
 	"\x06method\x18\x03 \x01(\x0e2!.onebox.faas.schedd.v1.WakeMethodR\x06method\x121\n" +
-	"\aproblem\x18\x04 \x01(\v2\x17.google.protobuf.StructR\aproblem\"A\n" +
+	"\aproblem\x18\x04 \x01(\v2\x17.google.protobuf.StructR\aproblem\x12\x17\n" +
+	"\awake_id\x18\x05 \x01(\tR\x06wakeId\"A\n" +
 	"\x05Touch\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x17\n" +

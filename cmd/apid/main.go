@@ -275,6 +275,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv := newServerWithDeps(store, log, deps.getenv("FAAS_APPS_DOMAIN"), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv))
 
+	// Issue #142: Stripe billing portal URL template for the changePlan
+	// 402 response. Empty = 402 omits billing_portal_url; the dashboard
+	// renders a generic "use the billing portal" message. Production sets
+	// FAAS_BILLING_PORTAL_URL to a template containing `{account_id}`
+	// (replaced at write time) so the customer lands on a Stripe-hosted
+	// portal pre-bound to their account.
+	//
+	// SECURITY: this value is operator-controlled and rendered verbatim
+	// into every blocked-upgrade response. A misconfigured value that
+	// points at an attacker-controlled host (e.g. an env-var typo or a
+	// wrong deploy) misroutes every blocked upgrade. Set it to the
+	// operator-hosted Stripe billing portal URL, validate it before
+	// deploy, and never interpolate untrusted input.
+	srv.WithBillingPortalURL(deps.getenv("FAAS_BILLING_PORTAL_URL"))
+
 	// Issue #98 / ADR-028: admin allowlist for /v1/compute-nodes.
 	// Empty in dev = all admin routes 403 with code admin_required;
 	// production sets FAAS_ADMIN_EMAILS to the operator team's

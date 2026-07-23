@@ -52,7 +52,7 @@ func newAppWithSlug(t *testing.T, ctx context.Context, s *state.MemStore, accoun
 // err is an optional return-error knob — when set, every
 // PushUsageRecordSum returns it (wrapped or unwrapped) before recording
 // the call. The TestPushHour_RecordsStripeError test sets err to a
-// *stripe.Error so the classifier seam (stripex.ClassifyPushError) is
+// *stripe.Error so the classifier seam (stripe.ClassifyPushError) is
 // exercised through the pusher rather than directly. When err is nil
 // the fake returns nil — same behavior as the production stripex
 // Client on success.
@@ -156,7 +156,7 @@ func scrapeOpsTotal(t *testing.T, m *wire.OpsMetrics) map[string]int {
 // surfaces in the unit test before the live-sandbox job.
 //
 // The assertion is integer equality, not a percentage tolerance. The
-// integer-wire path (pkg/stripex/usage.go) is deterministic — any
+// integer-wire path (pkg/billing/stripe/usage.go) is deterministic — any
 // drift here means the meter's mb_seconds accumulator is broken.
 //
 // Sample layout: starting at T0 (top of hour) and stepping `now`
@@ -335,14 +335,14 @@ func TestPushHour_SkipsFreeAndSuspended(t *testing.T) {
 // ErrorTypeCard} on every call — the canonical "customer's card
 // declined" failure. The pusher must:
 //  1. still attempt the SDK call (recordingStripe saw the call),
-//  2. invoke stripex.ClassifyPushError on the returned error,
+//  2. invoke stripe.ClassifyPushError on the returned error,
 //  3. feed the resulting "card-error" code into ops.ObserveCode so
 //     `meterd_ops_total{op="stripe",code="card-error"}` increments.
 //
 // Why Card and not RateLimit: card-error is the most operator-
 // actionable bucket (route to customer's billing UI, not a meterd
 // backoff). The rate-limit path is structurally identical and covered
-// by the stripex unit tests at pkg/stripex/usage_test.go.
+// by the stripe unit tests at pkg/billing/stripe/usage_test.go.
 func TestPushHour_RecordsStripeError(t *testing.T) {
 	t.Parallel()
 	s := state.NewMemStore()
@@ -372,7 +372,7 @@ func TestPushHour_RecordsStripeError(t *testing.T) {
 	// window into [T0+1h, T0+2h) and find no samples.
 
 	rec := &recordingStripe{
-		err: fmt.Errorf("stripex: UsageRecords.New account %s hour %s: %w",
+		err: fmt.Errorf("stripe: UsageRecords.New account %s hour %s: %w",
 			acct.ID, now.UTC().Format(time.RFC3339),
 			&stripe.Error{Type: stripe.ErrorTypeCard, HTTPStatusCode: 402}),
 	}

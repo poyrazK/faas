@@ -6,20 +6,20 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/stripex"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// StripePusher is the slice of pkg/stripex the pusher loop uses. The
-// interface lives here so meterd can be wired against a no-op in tests
-// and the real Client (Slice 2) in production — both directions of the
-// dependency are recorded in ADR-019.
+// StripePusher is the slice of pkg/billing/stripe the pusher loop
+// uses. The interface lives here so meterd can be wired against a
+// no-op in tests and the real stripe.Client (Slice 2) in production
+// — both directions of the dependency are recorded in ADR-019.
 //
 // PushUsageRecordSum takes the integer sum of mb_seconds across the
 // billing window (a full day under the production cadence). The SDK
 // quantizes in int64 arithmetic — no float, no per-hour fractional
-// truncation loss on the wire (see pkg/stripex/usage.go).
+// truncation loss on the wire (see pkg/billing/stripe/usage.go).
 type StripePusher interface {
 	PushUsageRecordSum(ctx context.Context, account state.Account, hour time.Time, mbSeconds int64) error
 }
@@ -36,7 +36,7 @@ type StripePusher interface {
 // hands the integer sum to the SDK; the SDK converts to wire units
 // with one deterministic integer division. The historical per-hour
 // float path was retired in M7 §14 — see docs/STATUS.md and the
-// acceptance test in pkg/stripex/sandbox_test.go.
+// acceptance test in pkg/billing/stripe/sandbox_test.go.
 type Pusher struct {
 	store  state.Store
 	stripe StripePusher
@@ -82,7 +82,7 @@ func HourWindow(at time.Time) (start, end time.Time) {
 // the SDK which converts to wire units in pure int64 arithmetic.
 //
 // Each non-skip SDK call is observed under the "stripe" op with a code
-// label from stripex.ClassifyPushError — "ok" on success, a stable
+// label from stripe.ClassifyPushError — "ok" on success, a stable
 // failure-mode label (card-error, rate-limit, invalid-request, etc.)
 // on failure. The skip branches (mbSec <= 0, free plan, suspended,
 // missing usage rows) are silent so the dashboard distinguishes
@@ -120,7 +120,7 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 		}
 		pushStart := time.Now()
 		perr := p.stripe.PushUsageRecordSum(ctx, acct, start, mbSec)
-		code := stripex.ClassifyPushError(perr)
+		code := stripe.ClassifyPushError(perr)
 		dur := time.Since(pushStart)
 		p.ops.ObserveCode("stripe", code, dur)
 		p.ops.StripePushDuration(code).Observe(dur.Seconds())

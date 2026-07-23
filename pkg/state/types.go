@@ -93,7 +93,7 @@ type Account struct {
 	StripeCustomerID string
 	// StripeSubscriptionItem is the per-account `si_…` (metered
 	// subscription item) that meterd pushes hourly usage against
-	// (issue #52, §4.7). Empty until pkg/stripex::EnsureCustomer
+	// (issue #52, §4.7). Empty until pkg/billing/stripe::EnsureCustomer
 	// receives the customer.subscription.created webhook and stamps it.
 	// PushUsageRecord skips when this is blank so a customer that hasn't
 	// subscribed yet never lands on the billing dashboard.
@@ -326,6 +326,17 @@ type Instance struct {
 	// Empty in test fixtures only when the fixture is exercising a
 	// pre-#97 code path that predates the column add.
 	NodeID string
+	// WakeID is the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23). Distinct from ID (the row PK): every fresh WAKING /
+	// COLD_BOOTING transition mints a new UUIDv7 Go-side in schedd's
+	// Engine.Wake so a single instance row can carry many wake_ids over
+	// its lifetime as the app parks and wakes again. UUIDv7 (time-ordered)
+	// picked over UUIDv4 so the partial index `(app_id, wake_id)` on the
+	// dashboard's recent-wakes scan serves time-range queries without a
+	// separate sort. NOT NULL enforced by migrations/00028_instances_wake_id;
+	// pre-existing rows were backfilled to gen_random_uuid() (v4) on apply.
+	// Empty in test fixtures only when the fixture predates the column add.
+	WakeID string
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis

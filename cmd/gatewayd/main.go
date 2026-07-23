@@ -188,7 +188,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// path doesn't have without a Wake first).
 	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, &synthAdapter{
 		wake: func(ctx context.Context, appID string) error {
-			_, _, err := sched.Wake(ctx, appID)
+			// wake_id is discarded on the synth path (gaps analysis
+			// 2026-07-23): synthesized requests don't return a
+			// response header to a customer, so x-faas-wake-id has
+			// no consumer here. Wake is still called for the
+			// admit + boot side effects.
+			_, _, _, err := sched.Wake(ctx, appID)
 			return err
 		},
 	}, log)
@@ -497,8 +502,8 @@ type unwiredBackend struct{}
 func (unwiredBackend) Lookup(context.Context, string) (gateway.App, bool) {
 	return gateway.App{}, false
 }
-func (unwiredBackend) Target(string) (string, bool)       { return "", false }
-func (unwiredBackend) Wake(context.Context, string) error { return nil }
+func (unwiredBackend) Target(string) (string, bool)                 { return "", false }
+func (unwiredBackend) Wake(context.Context, string) (string, error) { return "", nil }
 
 // envOrGateway returns the value of env key, or fallback when unset/empty.
 // Named with the daemon prefix to avoid a collision if two daemons are ever

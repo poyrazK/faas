@@ -120,7 +120,7 @@ func (s *PgStore) UpdateAccountStripeCustomerID(ctx context.Context, id, stripeC
 // UpdateAccountStripeSubscriptionItem records the Stripe subscription
 // item ID (si_…) on the account row (issue #52). meterd's hourly push
 // reads this to know where to POST the UsageRecord; the value is empty
-// until pkg/stripex::EnsureCustomer receives
+// until pkg/billing/stripe::EnsureCustomer receives
 // customer.subscription.created. MemStore mirrors the column shape.
 func (s *PgStore) UpdateAccountStripeSubscriptionItem(ctx context.Context, id, subItem string) error {
 	tag, err := s.pool.Exec(ctx,
@@ -533,8 +533,45 @@ func (s *PgStore) InstallationIDForRepo(ctx context.Context, repoFullName string
 
 // --- deployments -------------------------------------------------------------
 
+// CreateDeployment writes a pending deployment row only if the parent app is
+// currently active. The active-app gate is the PR-A fix for the TOCTOU race
+// where apid's AppBySlug could return a row whose status was flipped to
+// `deleted` between the read and the INSERT — the previous shape silently
+// stranded an orphan deployments row pointing at a soft-deleted app.
+//
+// Shape mirrors CreateAppIfUnderQuota (lines 287-343 above): a tx-scoped
+// SELECT 1 FROM apps … FOR UPDATE serialises with concurrent updates to
+// apps.status, and ErrNotFound on a 0-row result so apid's existing
+// s.notFound path returns 404 without any change at the call site.
+//
+// AppDeleted apps must NOT accept new deployments; subsequent UpdateApp
+// calls (PATCH /v1/apps/{slug}) reject status flips back to active for
+// already-deleted rows anyway, so the invariant "an app either accepts
+// deploys OR is deleted" is one-directional here.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	// 1. Lock the parent apps row. SELECT 1 + FOR UPDATE keeps lock
+	//    acquisition in one round-trip; apps.status flips are blocked
+	//    behind this lock until COMMIT/ROLLBACK. apps_pkey is the
+	//    primary key on id, so the lock search is an index hit.
+	var locked int
+	if err := tx.QueryRow(ctx,
+		`select 1 from apps where id = $1 and status = 'active' for update`,
+		d.AppID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Deployment{}, ErrNotFound
+		}
+		return Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
+	}
+
+	// 2. Insert under the lock. The FOR UPDATE above guarantees the app
+	//    cannot transition to AppDeleted between this point and COMMIT.
+	row := tx.QueryRow(ctx,
 		`insert into deployments (app_id, image_digest, kind, source_path, source_bytes, handler, log_path, status)
 		 values ($1, $2, $3, $4, $5, $6, $7, 'pending')
 		 returning id, app_id, coalesce(build_id::text,''), image_digest, kind,
@@ -542,7 +579,14 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		           status, coalesce(error,''), coalesce(error_code,''), created_at`,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), d.SourceBytes,
 		nullString(d.Handler), nullString(d.LogPath))
-	return scanDeployment(row)
+	created, err := scanDeployment(row)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, fmt.Errorf("state: commit create deployment: %w", err)
+	}
+	return created, nil
 }
 
 func (s *PgStore) DeploymentByID(ctx context.Context, id string) (Deployment, error) {
@@ -781,6 +825,72 @@ func (s *PgStore) UpdateBuildStatus(ctx context.Context, id string, status Build
 	return nil
 }
 
+// ClaimQueuedBuild atomically transitions queued → running via a single
+// UPDATE … RETURNING and sets started_at = now(). Returns ErrNotFound
+// when the row is missing OR already in another status — that second
+// case is what lets builderd drop duplicate build_queued notifications
+// (apid write path + imaged reaper) without spawning two builder VMs.
+// Equivalent to a compare-and-swap at the row level.
+func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error) {
+	row := s.pool.QueryRow(ctx,
+		`update builds
+		   set status = 'running', started_at = now()
+		 where id = $1 and status = 'queued'
+		 returning id, deployment_id, kind, source_bytes, status,
+		           coalesce(failure_class,''), coalesce(log_path,''),
+		           started_at, finished_at, enqueued_at`,
+		id)
+	b, err := scanBuild(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Build{}, ErrNotFound
+		}
+		return Build{}, fmt.Errorf("state: claim queued build %s: %w", id, err)
+	}
+	return b, nil
+}
+
+// ListStaleQueuedBuilds is the imaged reaper's read surface (PR-A).
+// Returns every row still in BuildQueued whose enqueued_at is older
+// than `now() - threshold`. Uses the index on (status, enqueued_at)
+// implicitly via the WHERE predicate; the builds table is bounded by
+// in-flight builds (spec §9 keeps the queue shallow) so a full scan
+// stays cheap. If the queue depth grows we should add a partial index
+// on (status, enqueued_at) WHERE status='queued' — pinned as a
+// follow-up.
+//
+// Builds is on the critical wake path: when apid emits
+// db.NotifyBuildQueued right after CreateBuild (deploy_inputs.go:167),
+// a transient Postgres blip between INSERT and NOTIFY can drop the
+// notification. The reaper scans this set on a tick and re-emits
+// the notify, recovering without a manual operator action.
+func (s *PgStore) ListStaleQueuedBuilds(ctx context.Context, threshold time.Duration) ([]Build, error) {
+	rows, err := s.pool.Query(ctx,
+		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
+		        started_at, finished_at, enqueued_at
+		   from builds
+		  where status = 'queued'
+		    and enqueued_at < now() - $1::interval
+		  order by enqueued_at asc`,
+		threshold)
+	if err != nil {
+		return nil, fmt.Errorf("state: list stale queued builds: %w", err)
+	}
+	defer rows.Close()
+	var out []Build
+	for rows.Next() {
+		b, err := scanBuild(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list stale queued builds iterate: %w", err)
+	}
+	return out, nil
+}
+
 // --- custom domains ---------------------------------------------------------
 
 func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error) {
@@ -943,7 +1053,7 @@ func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 
 // --- instances --------------------------------------------------------------
 
-func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID string) (Instance, error) {
+func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
 	// started_at is stamped explicitly here in addition to the
 	// BEFORE INSERT trigger from migration 00015. The trigger is the
 	// belt; this is the braces. Either alone works; both together
@@ -959,18 +1069,35 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// the id via sched.ChoosePlacement before reaching this point;
 	// tests that don't exercise routing pass DefaultLocalNodeName's
 	// resolved UUID (or the name itself if the table isn't seeded).
+	//
+	// wakeID is the per-wake-attempt correlation handle (gaps analysis
+	// 2026-07-23). Passing an empty string lets the column default
+	// gen_random_uuid() fire — safe for ad-hoc INSERTs in backfill
+	// scripts. schedd mints a UUIDv7 Go-side before reaching here so
+	// production traffic always lands the explicit value. The RETURNING
+	// clause is widened to surface wake_id for the engine and dashboard.
+	// COALESCE on the SELECT guards against any pre-migration-00028
+	// path that left the column NULL — though migration 00028 enforces
+	// NOT NULL post-apply, the COALESCE keeps scanInstance round-tripping
+	// a non-empty string even on half-migrated test DBs.
+	// Cast $6 to text before the empty-string test — Postgres otherwise
+	// infers $6 as uuid from the column type and the untyped '' literal
+	// fails with "COALESCE types text and uuid cannot be matched"
+	// (SQLSTATE 42804). The CASE shape also keeps the gen_random_uuid()
+	// branch on the text path so the whole expression resolves to uuid.
 	row := s.pool.QueryRow(ctx,
-		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, started_at) values ($1, $2, $3, $4, $5, now())
+		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at)
+		 values ($1, $2, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else $6::uuid end, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id`,
-		appID, deploymentID, state, ramMB, nodeID)
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id`,
+		appID, deploymentID, state, ramMB, nodeID, wakeID)
 	return scanInstance(row)
 }
 
 func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id
 		 from instances where id = $1`, id)
 	return scanInstance(row)
 }
@@ -978,8 +1105,32 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id
 		 from instances where app_id = $1 order by started_at desc`, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
+// ListLatestInstancesForApp returns up to `limit` instance rows for
+// appID, ordered by started_at DESC. Used by the dashboard's app-detail
+// "Recent wakes" table (gaps analysis 2026-07-23). The LIMIT pushdown
+// bounds the per-render scan at the SQL layer so a long-lived app with
+// hundreds of parked history rows doesn't pull its full history on
+// every dashboard render. limit ≤ 0 returns an empty slice — the
+// caller is required to pass a positive bound; a zero-bound here
+// would silently mean "all", which is the unbounded-scan footgun we
+// just escaped. See Store interface doc for the supporting-index note.
+func (s *PgStore) ListLatestInstancesForApp(ctx context.Context, appID string, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id
+		 from instances where app_id = $1 order by started_at desc limit $2`, appID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -996,7 +1147,7 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id
 		 from instances
 		 where state in ('running','waking','cold_booting','snapshotting')
 		 order by started_at desc`)
@@ -1016,7 +1167,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 func (s *PgStore) ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -1047,7 +1198,7 @@ func (s *PgStore) ListLatestInstancePerApp(ctx context.Context, accountID string
 	rows, err := s.pool.Query(ctx,
 		`select distinct on (i.app_id)
 		        i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -1136,7 +1287,7 @@ func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []S
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id
 		 from instances
 		 where state = any($1)
 		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
@@ -1162,7 +1313,7 @@ func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, st
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, terminal_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, terminal_at
 		 from instances
 		 where state = any($1)
 		   and terminal_at is not null
@@ -1206,7 +1357,7 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id
 		 from instances where app_id = $1 and state = 'running'
 		 order by started_at desc nulls last limit 1`, appID)
 	return scanInstance(row)
@@ -2150,8 +2301,13 @@ func scanInstances(rows pgx.Rows) ([]Instance, error) {
 func scanInstanceCols(scan func(...any) error) (Instance, error) {
 	ins := Instance{}
 	var started, lastReq, parked *time.Time
+	// wake_id is the 13th column (migration 00028). It's NOT NULL post-
+	// 00028 but scanned into a string so any pre-migration-00028 row that
+	// somehow surfaced surfaces as "" rather than a NULL scan error — the
+	// SELECT column list is the contract that prevents column-order drift
+	// from silently swallowing wake_id into an unrelated field.
 	if err := scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
-		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID); err != nil {
+		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID); err != nil {
 		return Instance{}, err
 	}
 	if started != nil {
@@ -2181,8 +2337,11 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 	for rows.Next() {
 		ins := Instance{}
 		var started, lastReq, parked, terminal *time.Time
+		// Column order matches ListInstancesInTerminalStatesOlderThan's
+		// SELECT (now 14 columns after migration 00028 added wake_id
+		// before terminal_at).
 		if err := rows.Scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
-			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &terminal); err != nil {
+			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID, &terminal); err != nil {
 			return nil, err
 		}
 		if started != nil {

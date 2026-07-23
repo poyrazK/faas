@@ -106,6 +106,15 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 }
 
 func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	// DeployedApps (the per-account cap on apps) is enforced at app-create
+	// time via store.CreateAppIfUnderQuota — the deploy path cannot
+	// bypass it because the parent apps row must already exist. The
+	// active-app gate that prevents an orphan deployment row pointing
+	// at a soft-deleted app lives inside store.CreateDeployment
+	// (PR-A: SELECT 1 FROM apps WHERE id=$1 AND status='active' FOR UPDATE).
+	// If the app was deleted between this AppBySlug and the
+	// CreateDeployment INSERT, the store returns ErrNotFound and we
+	// surface the same 404 as a missing slug.
 	app, err := s.store.AppBySlug(ctx(r), r.PathValue("slug"))
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such app")

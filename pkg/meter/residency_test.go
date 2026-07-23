@@ -301,7 +301,7 @@ func TestResidency_LoopRunTicks(t *testing.T) {
 	store := state.NewMemStore()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	residency := meter.NewResidency(store, func() time.Time { return now }, log, ops)
-	loop := meter.NewLoop(store, &fakeParker{}, nil, &fakeNotifier{}, nil, residency,
+	loop := meter.NewLoop(store, &fakeParker{}, nil, &fakeNotifier{}, nil /* mailer */, nil /* dunning */, residency,
 		func() time.Time { return now }, log, cfg, ops)
 
 	ctx, cancel := context.WithCancel(context.Background())

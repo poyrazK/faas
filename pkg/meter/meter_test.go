@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -64,6 +65,29 @@ func (p *fakeParker) ParkInstance(_ context.Context, instanceID, reason string) 
 	return p.parkErr
 }
 
+// fakeMailer records every Send call so quota tests can assert on the
+// customer-facing email surface (dedupe gate, body shape). Mirrors
+// fakeNotifier/fakeParker; satisfies meter.DunningSender's local
+// interface (Send(ctx, mail.Message) error).
+type fakeMailer struct {
+	mu      sync.Mutex
+	sent    []mail.Message
+	sendErr error
+}
+
+func (m *fakeMailer) Send(_ context.Context, msg mail.Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sent = append(m.sent, msg)
+	return m.sendErr
+}
+
+func (m *fakeMailer) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.sent)
+}
+
 // makeAccount returns an active account with the given plan. MemStore
 // CreateAccount does the row write.
 func makeAccount(t *testing.T, ctx context.Context, s *state.MemStore, plan api.Plan) state.Account {
@@ -80,7 +104,7 @@ func makeAccount(t *testing.T, ctx context.Context, s *state.MemStore, plan api.
 // machine and just mutate the slice via CreateInstance.
 func makeLiveInstance(t *testing.T, ctx context.Context, s *state.MemStore, appID, accountID string, ramMB int) state.Instance {
 	t.Helper()
-	ins, err := s.CreateInstance(ctx, appID, "deployment-test", string(state.StateRunning), ramMB, state.DefaultLocalNodeName)
+	ins, err := s.CreateInstance(ctx, appID, "deployment-test", string(state.StateRunning), ramMB, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("create instance: %v", err)
 	}
@@ -214,7 +238,7 @@ func TestSampler_SkipsParkedInstances(t *testing.T) {
 
 	acct := makeAccount(t, ctx, s, api.PlanHobby)
 	app := newApp(t, ctx, s, acct.ID)
-	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateParked), 256, state.DefaultLocalNodeName)
+	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateParked), 256, state.DefaultLocalNodeName, "")
 
 	rows, err := meter.NewSampler(s, func() time.Time { return now }).SampleAndRoll(ctx)
 	if err != nil {
@@ -238,7 +262,7 @@ func TestInvoiceShadow24h(t *testing.T) {
 
 	acct := makeAccount(t, ctx, s, api.PlanHobby)
 	app := newApp(t, ctx, s, acct.ID)
-	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 256, state.DefaultLocalNodeName)
+	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
 
 	sampler := meter.NewSampler(s, clock)
 	const minutesIn24h = 24 * 60
@@ -311,6 +335,7 @@ func TestFreeHardStop(t *testing.T) {
 
 	notif := &fakeNotifier{}
 	parker := &fakeParker{}
+	mailer := &fakeMailer{}
 
 	usages, err := s.UsageByMonth(ctx, acct.ID, month)
 	if err != nil {
@@ -320,7 +345,7 @@ func TestFreeHardStop(t *testing.T) {
 	if usedGB < float64(api.PlanFree.PlanIncludedGBHours()) {
 		t.Fatalf("usedGB = %.4f, want ≥ 5.0", usedGB)
 	}
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, discardLog(), acct, usedGB, now); err != nil {
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, discardLog(), acct, usedGB, now); err != nil {
 		t.Fatalf("enforce: %v", err)
 	}
 
@@ -361,7 +386,7 @@ func TestPaidOverageNoStop(t *testing.T) {
 
 	acct := makeAccount(t, ctx, s, api.PlanPro)
 	app := newApp(t, ctx, s, acct.ID)
-	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 512, state.DefaultLocalNodeName)
+	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
 
 	// Plant usage equal to one Hobby quota so CheckQuota at Pro's 250 GB-h
 	// threshold still trips. (5 GB-h * 1024 * 3600 = 18_432_000.)
@@ -376,7 +401,8 @@ func TestPaidOverageNoStop(t *testing.T) {
 
 	notif := &fakeNotifier{}
 	parker := &fakeParker{}
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, discardLog(), acct, usedGB, now); err != nil {
+	mailer := &fakeMailer{}
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, discardLog(), acct, usedGB, now); err != nil {
 		t.Fatalf("enforce: %v", err)
 	}
 
@@ -410,7 +436,7 @@ func TestPaidOverageDedupesPerDay(t *testing.T) {
 
 	acct := makeAccount(t, ctx, s, api.PlanPro)
 	app := newApp(t, ctx, s, acct.ID)
-	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 512, state.DefaultLocalNodeName)
+	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
 	// Plant usage equal to one Hobby quota so CheckQuota at Pro's
 	// 250 GB-h threshold trips.
 	if err := s.AppendUsage(ctx, acct.ID, app.ID, "inst1", day1Hour1, 18_432_000*100, 0); err != nil {
@@ -424,30 +450,40 @@ func TestPaidOverageDedupesPerDay(t *testing.T) {
 
 	notif := &fakeNotifier{}
 	parker := &fakeParker{}
+	mailer := &fakeMailer{}
 	log := discardLog()
 
 	// Tick 1: first warning of the day.
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day1Hour1); err != nil {
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, log, acct, usedGB, day1Hour1); err != nil {
 		t.Fatalf("tick 1: %v", err)
 	}
 	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 1 {
 		t.Fatalf("tick 1: quota_warning = %d, want 1", len(warns))
 	}
+	if n := mailer.count(); n != 1 {
+		t.Fatalf("tick 1: mailer.sent = %d, want 1 (first day warning must email)", n)
+	}
 
 	// Tick 2: same UTC day — must NOT emit a second warning.
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day1Hour2); err != nil {
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, log, acct, usedGB, day1Hour2); err != nil {
 		t.Fatalf("tick 2: %v", err)
 	}
 	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 1 {
 		t.Fatalf("tick 2: quota_warning = %d, want 1 (same-day repeat must dedupe)", len(warns))
 	}
+	if n := mailer.count(); n != 1 {
+		t.Errorf("tick 2: mailer.sent = %d, want 1 (same-day repeat must dedupe)", n)
+	}
 
 	// Tick 3: next UTC day — fresh warning.
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day2Hour1); err != nil {
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, log, acct, usedGB, day2Hour1); err != nil {
 		t.Fatalf("tick 3: %v", err)
 	}
 	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 2 {
 		t.Fatalf("tick 3: quota_warning = %d, want 2 (next-day must emit a fresh warning)", len(warns))
+	}
+	if n := mailer.count(); n != 2 {
+		t.Errorf("tick 3: mailer.sent = %d, want 2 (next-day must email)", n)
 	}
 
 	// ClearQuotaWarning (apid's payment_succeeded hook) lets the next
@@ -456,11 +492,14 @@ func TestPaidOverageDedupesPerDay(t *testing.T) {
 	if err := s.ClearQuotaWarning(ctx, acct.ID); err != nil {
 		t.Fatalf("ClearQuotaWarning: %v", err)
 	}
-	if _, err := meter.EnforceQuota(ctx, s, notif, parker, log, acct, usedGB, day2Hour1); err != nil {
+	if _, err := meter.EnforceQuota(ctx, s, notif, parker, mailer, log, acct, usedGB, day2Hour1); err != nil {
 		t.Fatalf("tick 4: %v", err)
 	}
 	if warns := notif.byChannel(db.NotifyQuotaWarning); len(warns) != 3 {
 		t.Fatalf("tick 4 (post-Clear): quota_warning = %d, want 3", len(warns))
+	}
+	if n := mailer.count(); n != 3 {
+		t.Errorf("tick 4 (post-Clear): mailer.sent = %d, want 3", n)
 	}
 }
 
@@ -506,7 +545,7 @@ func TestAppendUsagePerInstanceMinute(t *testing.T) {
 }
 
 // TestAccountByStripeCustomerID_NotFound: pkg/state.Store.AccountByStripeCustomerID
-// lands in Slice 2 (pkg/stripex). When that method is added this test
+// lands in Slice 2 (pkg/billing/stripe). When that method is added this test
 // should be moved to pkg/state/memstore_test.go and extended. For now
 // we skip — the slice-2 PR adds the assertion.
 func TestAccountByStripeCustomerID_NotFound(t *testing.T) {
