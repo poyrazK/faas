@@ -646,11 +646,17 @@ func (m *MemStore) InstallationIDForRepo(_ context.Context, repoFullName string)
 
 // --- Deployments ------------------------------------------------------------
 
+// CreateDeployment mirrors PgStore.CreateDeployment's active-app gate
+// (PR-A). Both stores must reject deployments against AppDeleted or
+// missing apps with ErrNotFound — apid's s.notFound relies on this
+// to return 404. The mutex already serialises the check + insert
+// together, so the gate is race-free here without a tx.
 func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.apps[d.AppID]; !ok {
-		return Deployment{}, fmt.Errorf("state: deployment for unknown app %q", d.AppID)
+	app, ok := m.apps[d.AppID]
+	if !ok || app.Status == AppDeleted {
+		return Deployment{}, ErrNotFound
 	}
 	if d.ID == "" {
 		d.ID = newID()
@@ -902,6 +908,48 @@ func (m *MemStore) UpdateBuildStatus(_ context.Context, id string, status BuildS
 	}
 	m.builds[id] = b
 	return nil
+}
+
+// ClaimQueuedBuild atomically flips queued → running under m.mu (PR-A
+// review fix). Returns ErrNotFound if the row is missing or already
+// non-queued — the caller drops the build. Same contract as
+// PgStore.ClaimQueuedBuild.
+func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.builds[id]
+	if !ok || b.Status != BuildQueued {
+		return Build{}, ErrNotFound
+	}
+	b.Status = BuildRunning
+	b.StartedAt = time.Now()
+	m.builds[id] = b
+	return b, nil
+}
+
+// ListStaleQueuedBuilds mirrors PgStore.ListStaleQueuedBuilds (PR-A).
+// Same predicate (BuildQueued AND enqueued_at older than threshold),
+// same sort order (oldest first so the reaper drains the backlog
+// deterministically). Walks m.builds under m.mu — the queue is
+// shallow per spec §9, so an O(N) scan per tick is fine.
+func (m *MemStore) ListStaleQueuedBuilds(_ context.Context, threshold time.Duration) ([]Build, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cutoff := time.Now().Add(-threshold)
+	out := make([]Build, 0)
+	for _, b := range m.builds {
+		if b.Status != BuildQueued {
+			continue
+		}
+		if !b.EnqueuedAt.Before(cutoff) {
+			continue
+		}
+		out = append(out, b)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].EnqueuedAt.Before(out[j].EnqueuedAt)
+	})
+	return out, nil
 }
 
 // --- Custom domains ---------------------------------------------------------
