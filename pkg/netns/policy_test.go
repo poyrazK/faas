@@ -433,19 +433,29 @@ func TestHostPolicyMasqueradeSubstitutesCIDRAndIface(t *testing.T) {
 // TestHostPolicyRenderNftSyntaxCheck is the local equivalent of the
 // ansible role's `nft -c -f /etc/nftables.conf` step. CI gates this via
 // `make egress-check` (regenerates + byte-compares the artifact), but on
-// macOS devs without a Linux CI loop, having nft locally
-// (`brew install nftables`) gets the same nft(8)-side syntax gate as CI.
+// macOS devs with `brew install nftables`, this test gets the same
+// nft(8)-side syntax gate as CI.
 //
 // Why this matters: the regex/substring checks above assert that the
 // render LOOKS right. `nft -c -f` asserts that nft(8) ACCEPTS it — a
 // different class of bug (typo in a keyword, missing semicolon, wrong
-// hook) only nft itself can catch. Skipping silently when nft isn't on
-// PATH keeps the test non-fatal on dev hosts that don't have it.
+// hook) only nft itself can catch.
 //
-// Note: `nft -c -f` parses WITHOUT touching the live kernel's
-// ruleset, so this is safe to run on any host that has nft available.
-// On a host with a running firewall, the ruleset's `flush ruleset`
-// directive is NOT executed because `-c` skips the apply phase.
+// Skip conditions:
+//   - nft not on PATH (common on macOS without `brew install nftables`).
+//   - nft returns EPERM / "Operation not permitted". `nft -c -f` still
+//     instantiates transient handle state via nfnetlink; even without
+//     committing, it requires CAP_NET_ADMIN. ubuntu-latest CI runs the
+//     `lint + tests + build` step as the github-actions user (no caps),
+//     so this gate will skip in CI. Operators running the test locally
+//     with `sudo` get the full check; without sudo it skips. The
+//     production gate is `make egress-check` (root in CI), this test
+//     is for developer ergonomics.
+//
+// Note: on a host where nft DOES run, the ruleset's `flush ruleset`
+// directive IS evaluated (in dry-run mode) — a non-empty existing
+// nftables generation still triggers the operation, hence the
+// CAP_NET_ADMIN requirement.
 func TestHostPolicyRenderNftSyntaxCheck(t *testing.T) {
 	nft, err := exec.LookPath("nft")
 	if err != nil {
@@ -462,7 +472,21 @@ func TestHostPolicyRenderNftSyntaxCheck(t *testing.T) {
 	cmd := exec.Command(nft, "-c", "-f", conf)
 	stderr := &strings.Builder{}
 	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("nft -c -f rejected the rendered ruleset (raw `nft` error below); ruleset:\n%s\n--- nft stderr ---\n%s", out, stderr.String())
+	cmd.Stdout = stderr
+	err = cmd.Run()
+	if err == nil {
+		return
 	}
+	stderrStr := stderr.String()
+	// EPERM and EACCES both indicate the missing CAP_NET_ADMIN
+	// limitation described above; treat as a skip rather than a hard
+	// failure so dev boxes without sudo stay green. Any other nft
+	// error — including the "set syntax error" class we used to ship
+	// before the CIDR-comma fix — still t.Fatal().
+	if strings.Contains(stderrStr, "Operation not permitted") ||
+		strings.Contains(stderrStr, "Permission denied") ||
+		strings.Contains(stderrStr, "are you root") {
+		t.Skipf("nft -c -f requires CAP_NET_ADMIN (running as non-root user); skipping. Run with sudo or rely on `make egress-check` in CI for the production gate:\n%s", stderrStr)
+	}
+	t.Fatalf("nft -c -f rejected the rendered ruleset (raw `nft` output below); ruleset:\n%s\n--- nft stderr ---\n%s", out, stderrStr)
 }
