@@ -1,4 +1,4 @@
-package stripex
+package stripe
 
 import (
 	"context"
@@ -21,8 +21,8 @@ import (
 func TestPushUsageRecord_NoSubscriptionItemSkips(t *testing.T) {
 	store := state.NewMemStore()
 	c := NewClient(store, store, "sk_test_dummy", "whsec_dummy", slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err := c.PushUsageRecord(context.Background(), state.Account{ID: "acct_pending"}, time.Now(), 1.5); err != nil {
-		t.Fatalf("PushUsageRecord with empty subscription item returned error: %v", err)
+	if err := c.PushUsageRecordLegacy(context.Background(), state.Account{ID: "acct_pending"}, time.Now(), 1.5); err != nil {
+		t.Fatalf("PushUsageRecordLegacy with empty subscription item returned error: %v", err)
 	}
 }
 
@@ -31,8 +31,8 @@ func TestPushUsageRecord_NoSubscriptionItemSkips(t *testing.T) {
 func TestPushUsageRecord_NoCustomerSkips(t *testing.T) {
 	store := state.NewMemStore()
 	c := NewClient(store, store, "sk_test_dummy", "whsec_dummy", slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err := c.PushUsageRecord(context.Background(), state.Account{ID: "acct_no_customer"}, time.Now(), 1.5); err != nil {
-		t.Fatalf("PushUsageRecord with empty customer ID returned error: %v", err)
+	if err := c.PushUsageRecordLegacy(context.Background(), state.Account{ID: "acct_no_customer"}, time.Now(), 1.5); err != nil {
+		t.Fatalf("PushUsageRecordLegacy with empty customer ID returned error: %v", err)
 	}
 }
 
@@ -68,8 +68,8 @@ func TestPushUsageRecord_DedupeGateSkipsSecondCall(t *testing.T) {
 		t.Fatalf("seed dedupe: %v", err)
 	}
 	// Dedup hit short-circuits before the SDK call; no network needed.
-	if err := c.PushUsageRecord(context.Background(), acct, hour, 1.5); err != nil {
-		t.Fatalf("PushUsageRecord with dedupe hit returned error: %v", err)
+	if err := c.PushUsageRecordLegacy(context.Background(), acct, hour, 1.5); err != nil {
+		t.Fatalf("PushUsageRecordLegacy with dedupe hit returned error: %v", err)
 	}
 }
 
@@ -78,7 +78,7 @@ func TestPushUsageRecord_DedupeGateSkipsSecondCall(t *testing.T) {
 // exported to a real sk_test_… key AND FATEST_STRIPE_SUB_ITEM is set
 // to a sandbox subscription_item. Run locally with:
 //
-//	STRIPE_API_KEY=sk_test_... FATEST_STRIPE_SUB_ITEM=si_... go test -run PostsToStripeSandbox ./pkg/stripex/...
+//	STRIPE_API_KEY=sk_test_... FATEST_STRIPE_SUB_ITEM=si_... go test -run PostsToStripeSandbox ./pkg/billing/stripe/...
 //
 // Asserts the SDK returned a usage record with a non-empty ID prefixed
 // "mbur_" (Stripe's usage-record prefix). On CI this runs under
@@ -98,7 +98,7 @@ func TestPushUsageRecord_PostsToStripeSandbox(t *testing.T) {
 		ID:                     "acct_sandbox_" + hour.Format("2006010215"),
 		StripeCustomerID:       "cus_sandbox",
 		StripeSubscriptionItem: sub,
-	}, hour, 0.001) // 1 MB-h keeps the sandbox bill line tiny
+	}, hour, 0.001) // 1 MB-h keeps the sandbox bill line tiny (legacy float path)
 	if err != nil {
 		t.Fatalf("PushUsageRecordWithID against sandbox: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestPushUsageRecord_ValidationNegativeQuantity(t *testing.T) {
 // exercises the real errors.As path. Wrapped (not bare) because that's
 // what the pusher sees in production.
 func wrapStripeError(se *stripe.Error) error {
-	return fmt.Errorf("stripex: UsageRecords.New account %s hour %s: %w",
+	return fmt.Errorf("stripe: UsageRecords.New account %s hour %s: %w",
 		"acct_test", time.Now().UTC().Format(time.RFC3339), se)
 }
 

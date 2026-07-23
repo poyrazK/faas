@@ -1978,7 +1978,7 @@ func (m *MemStore) UsageByHour(_ context.Context, accountID string, start, end t
 	return out, nil
 }
 
-// HasStripePushHour + RecordStripePushHour implement the pkg/stripex
+// HasStripePushHour + RecordStripePushHour implement the pkg/billing/stripe
 // PushDedupe interface. The MemStore keeps a flat set keyed by
 // (account, hour); PgStore keeps a dedicated table.
 func (m *MemStore) HasStripePushHour(_ context.Context, accountID string, hour time.Time) (bool, error) {

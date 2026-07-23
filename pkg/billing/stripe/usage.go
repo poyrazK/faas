@@ -1,4 +1,4 @@
-package stripex
+package stripe
 
 import (
 	"context"
@@ -127,7 +127,7 @@ func (c *Client) pushUsageRecordSDKSumWithID(ctx context.Context, acct state.Acc
 // callers (and the legacy tests) keep their behaviour. The pusher
 // path has migrated to PushUsageRecordSum — the integer-path variant
 // — to eliminate per-hour fractional truncation loss on the wire
-// (see pkg/stripex/usage_test.go::TestPushUsageRecord_PostsToStripeSandbox
+// (see pkg/billing/stripe/usage_test.go::TestPushUsageRecord_PostsToStripeSandbox
 // for the live regression guard).
 //
 // Deprecated: use pushUsageRecordSDKSum. The float-to-int64 conversion

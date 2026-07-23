@@ -15,4 +15,4 @@
 // The package keeps the dependency on stripe-go isolated. Production
 // wires the SDK inside pushUsageRecordSDK (usage.go); tests exercise
 // the dedupe gate + webhook signature paths without the SDK.
-package stripex
+package stripe

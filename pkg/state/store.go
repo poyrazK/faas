@@ -599,7 +599,7 @@ type Store interface {
 	UsageByHour(ctx context.Context, accountID string, start, end time.Time) ([]Usage, error)
 
 	// StripePushDedup is the dedupe table for hourly usage pushes. The
-	// PushDedupe interface in pkg/stripex is satisfied by both stores.
+	// PushDedupe interface in pkg/billing/stripe is satisfied by both stores.
 	HasStripePushHour(ctx context.Context, accountID string, hour time.Time) (bool, error)
 	RecordStripePushHour(ctx context.Context, accountID string, hour time.Time) error
 

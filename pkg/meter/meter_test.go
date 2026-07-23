@@ -545,7 +545,7 @@ func TestAppendUsagePerInstanceMinute(t *testing.T) {
 }
 
 // TestAccountByStripeCustomerID_NotFound: pkg/state.Store.AccountByStripeCustomerID
-// lands in Slice 2 (pkg/stripex). When that method is added this test
+// lands in Slice 2 (pkg/billing/stripe). When that method is added this test
 // should be moved to pkg/state/memstore_test.go and extended. For now
 // we skip — the slice-2 PR adds the assertion.
 func TestAccountByStripeCustomerID_NotFound(t *testing.T) {

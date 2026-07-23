@@ -23,7 +23,7 @@ type Config struct {
 	QuotaInterval time.Duration
 	// StripeInterval is how often the Stripe pusher fires. Zero means
 	// the production default (24 h). The integer-arithmetic wire
-	// quantity (pkg/stripex/usage.go) is deterministic across the full
+	// quantity (pkg/billing/stripe/usage.go) is deterministic across the full
 	// window, so the pusher posts *one* metered usage record per
 	// account per 24h instead of one per hour — eliminates per-hour
 	// fractional truncation loss on the wire (was ~0.3 % of the bill

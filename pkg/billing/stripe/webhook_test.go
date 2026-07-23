@@ -1,4 +1,4 @@
-package stripex_test
+package stripe_test
 
 import (
 	"bytes"
@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/stripex"
 )
 
 const testSecret = "whsec_test_secret_aaaaaaaa"
@@ -26,8 +26,8 @@ func TestVerifySignature_HappyPath(t *testing.T) {
 	t.Parallel()
 	payload := []byte(`{"id":"evt_test","type":"invoice.payment_succeeded"}`)
 	ts := time.Now()
-	header := stripex.SignForTest(payload, testSecret, ts)
-	if err := stripex.VerifySignature(payload, header, testSecret, 5*time.Minute); err != nil {
+	header := stripe.SignForTest(payload, testSecret, ts)
+	if err := stripe.VerifySignature(payload, header, testSecret, 5*time.Minute); err != nil {
 		t.Fatalf("verify: %v", err)
 	}
 }
@@ -38,9 +38,9 @@ func TestVerifySignature_HappyPath(t *testing.T) {
 func TestVerifySignature_Tampered(t *testing.T) {
 	t.Parallel()
 	payload := []byte(`{"id":"evt_test","amount":100}`)
-	header := stripex.SignForTest(payload, testSecret, time.Now())
+	header := stripe.SignForTest(payload, testSecret, time.Now())
 	tampered := []byte(`{"id":"evt_test","amount":101}`)
-	if err := stripex.VerifySignature(tampered, header, testSecret, 5*time.Minute); !errors.Is(err, stripex.ErrBadSignature) {
+	if err := stripe.VerifySignature(tampered, header, testSecret, 5*time.Minute); !errors.Is(err, stripe.ErrBadSignature) {
 		t.Fatalf("err = %v, want ErrBadSignature", err)
 	}
 }
@@ -51,9 +51,9 @@ func TestVerifySignature_Expired(t *testing.T) {
 	t.Parallel()
 	payload := []byte(`{"id":"evt_test"}`)
 	ts := time.Now().Add(-10 * time.Minute)
-	header := stripex.SignForTest(payload, testSecret, ts)
-	err := stripex.VerifySignature(payload, header, testSecret, 5*time.Minute)
-	if !errors.Is(err, stripex.ErrBadSignature) {
+	header := stripe.SignForTest(payload, testSecret, ts)
+	err := stripe.VerifySignature(payload, header, testSecret, 5*time.Minute)
+	if !errors.Is(err, stripe.ErrBadSignature) {
 		t.Fatalf("err = %v, want ErrBadSignature", err)
 	}
 	if !strings.Contains(err.Error(), "tolerance") {
@@ -77,8 +77,8 @@ func TestVerifySignature_Malformed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := stripex.VerifySignature(payload, tc.header, testSecret, 5*time.Minute)
-			if !errors.Is(err, stripex.ErrBadSignature) {
+			err := stripe.VerifySignature(payload, tc.header, testSecret, 5*time.Minute)
+			if !errors.Is(err, stripe.ErrBadSignature) {
 				t.Fatalf("err = %v, want ErrBadSignature", err)
 			}
 		})
@@ -91,8 +91,8 @@ func TestVerifySignature_Malformed(t *testing.T) {
 func TestVerifySignature_EmptySecret(t *testing.T) {
 	t.Parallel()
 	payload := []byte(`{"id":"evt_test"}`)
-	header := stripex.SignForTest(payload, testSecret, time.Now())
-	if err := stripex.VerifySignature(payload, header, "", 5*time.Minute); !errors.Is(err, stripex.ErrBadSignature) {
+	header := stripe.SignForTest(payload, testSecret, time.Now())
+	if err := stripe.VerifySignature(payload, header, "", 5*time.Minute); !errors.Is(err, stripe.ErrBadSignature) {
 		t.Fatalf("err = %v, want ErrBadSignature", err)
 	}
 }
@@ -176,7 +176,7 @@ func TestAccountByStripeCustomerID_NotFound(t *testing.T) {
 func TestEnsurePlanProducts_RequiresAPIKey(t *testing.T) {
 	t.Parallel()
 	store := state.NewMemStore()
-	c := stripex.NewClient(store, store, "", "", discardLog())
+	c := stripe.NewClient(store, store, "", "", discardLog())
 	if err := c.EnsurePlanProducts(context.Background()); err == nil {
 		t.Fatal("EnsurePlanProducts with empty apiKey returned nil; want error (fast-fail)")
 	}
@@ -189,7 +189,7 @@ func TestCreateCustomer_RequiresAPIKey(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
 	acct, _ := store.CreateAccount(ctx, "cc@example.com", "hobby")
-	c := stripex.NewClient(store, store, "", "", discardLog())
+	c := stripe.NewClient(store, store, "", "", discardLog())
 	if _, err := c.CreateCustomer(ctx, acct); err == nil {
 		t.Fatal("CreateCustomer with empty apiKey returned nil; want error")
 	}
@@ -198,7 +198,7 @@ func TestCreateCustomer_RequiresAPIKey(t *testing.T) {
 // TestStripeWebhook_RejectsUnsigned is the integration test: posting
 // without a valid signature must return 400. Uses httptest because the
 // full apid handler chain is too heavy for a webhook test; this asserts
-// the stripex.VerifySignature call from apid's handler would reject.
+// the stripe.VerifySignature call from apid's handler would reject.
 // (The handler itself is exercised in cmd/apid's handler tests.)
 func TestStripeWebhook_RejectsUnsigned(t *testing.T) {
 	t.Parallel()
@@ -206,7 +206,7 @@ func TestStripeWebhook_RejectsUnsigned(t *testing.T) {
 	body := []byte(`{"id":"evt_test"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/stripe", bytes.NewReader(body))
 	// No Stripe-Signature header set.
-	if err := stripex.VerifySignature(body, req.Header.Get("Stripe-Signature"), testSecret, 5*time.Minute); !errors.Is(err, stripex.ErrBadSignature) {
+	if err := stripe.VerifySignature(body, req.Header.Get("Stripe-Signature"), testSecret, 5*time.Minute); !errors.Is(err, stripe.ErrBadSignature) {
 		t.Fatalf("err = %v, want ErrBadSignature", err)
 	}
 	_ = rec

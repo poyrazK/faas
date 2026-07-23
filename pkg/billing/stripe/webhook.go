@@ -13,7 +13,7 @@
 //
 // The package keeps the dependency on stripe-go isolated — the rest of
 // the codebase talks to the local interface (pkg/meter.StripePusher).
-package stripex
+package stripe
 
 import (
 	"crypto/hmac"
