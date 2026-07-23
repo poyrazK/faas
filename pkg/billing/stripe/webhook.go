@@ -13,23 +13,27 @@
 //
 // The package keeps the dependency on stripe-go isolated — the rest of
 // the codebase talks to the local interface (pkg/meter.StripePusher).
-package stripex
+package stripe
 
 import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/billing"
 )
 
 // ErrBadSignature is returned by VerifySignature when the header is
 // malformed, the timestamp is out of tolerance, or the v1 signature
-// doesn't match. Wrapped with operation context by callers.
-var ErrBadSignature = errors.New("stripex: bad webhook signature")
+// doesn't match. Wrapped with operation context by callers. Aliased
+// to billing.ErrBadSignature so errors.Is(err, billing.ErrBadSignature)
+// works at the apid handler boundary regardless of which Stripe code
+// path emitted the wrap.
+var ErrBadSignature = billing.ErrBadSignature
 
 // VerifySignature validates a Stripe webhook payload against the
 // Stripe-Signature header. The header format is:

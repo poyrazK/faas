@@ -1,4 +1,4 @@
-package stripex
+package stripe
 
 // Config is the stripex on-disk settings. Mirrors schedd/meterd — every
 // field has a working default so a missing or partial file still yields

@@ -199,7 +199,7 @@ sort it out.
 //
 // The used/quota figures are formatted to 2 dp — billing math is in
 // float only at this presentation seam (the wire-quantity path is
-// integer-arithmetic — pkg/meter/quota.go calls pkg/stripex which uses
+// integer-arithmetic — pkg/meter/quota.go calls pkg/billing/stripe which uses
 // pure int64). The email is the one place customers see the numbers,
 // and a one-decimal display is what customers expect.
 func QuotaWarningBody(email string, plan string, usedGB float64, quotaGB int, day time.Time) (subject, body string) {

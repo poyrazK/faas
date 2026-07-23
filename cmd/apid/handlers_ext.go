@@ -14,12 +14,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/stripex"
 )
 
 // --- apps CRUD --------------------------------------------------------------
@@ -691,7 +691,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	header := r.Header.Get("Stripe-Signature")
-	if err := stripex.VerifySignature(body, header, s.stripeWebhookSecret, 5*time.Minute); err != nil {
+	if err := stripe.VerifySignature(body, header, s.stripeWebhookSecret, 5*time.Minute); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad signature", err.Error()))
 		return
 	}

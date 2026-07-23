@@ -5,7 +5,7 @@
 // Slice 1 shipped the gRPC contract; slices 7 + 8 wire the business
 // logic. Today this package holds:
 //
-//   - webhook HMAC verify (VerifyPushSignature; pkg/stripex/webhook.go
+//   - webhook HMAC verify (VerifyPushSignature; pkg/billing/stripe/webhook.go
 //     owns the Stripe equivalent)
 //   - the PushEvent struct (slice 7)
 //   - a Service skeleton that implements the proto contract via the

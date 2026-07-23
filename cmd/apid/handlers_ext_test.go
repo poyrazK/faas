@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/stripex"
 )
 
 // TestDeploymentLogsSSE_Pagination confirms the initial page of a
@@ -858,7 +858,7 @@ func TestStripeWebhook_AcceptsSigned(t *testing.T) {
 	const secret = "whsec_test_signing_secret"
 	srv := newStripeServer(t, secret)
 	body := []byte(`{"type":"invoice.payment_succeeded","data":{"object":{"customer":"cus_unknown"}}}`)
-	header := stripex.SignForTest(body, secret, time.Now())
+	header := stripe.SignForTest(body, secret, time.Now())
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/webhooks/stripe", bytes.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
@@ -875,7 +875,7 @@ func TestStripeWebhook_RejectsTampered(t *testing.T) {
 	const secret = "whsec_test_signing_secret"
 	srv := newStripeServer(t, secret)
 	body := []byte(`{"type":"customer.subscription.deleted","data":{"object":{"customer":"cus_evil"}}}`)
-	header := stripex.SignForTest(body, secret, time.Now())
+	header := stripe.SignForTest(body, secret, time.Now())
 	// Tamper: flip one byte in the body.
 	tampered := append([]byte{}, body...)
 	tampered[len(tampered)-1] ^= 1
@@ -901,7 +901,7 @@ func TestStripeWebhook_RejectsTampered(t *testing.T) {
 func TestStripeWebhook_RejectsWrongSecret(t *testing.T) {
 	srv := newStripeServer(t, "whsec_test_correct_secret")
 	body := []byte(`{"type":"customer.subscription.deleted","data":{"object":{"customer":"cus_x"}}}`)
-	header := stripex.SignForTest(body, "whsec_test_WRONG_secret", time.Now())
+	header := stripe.SignForTest(body, "whsec_test_WRONG_secret", time.Now())
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/webhooks/stripe", bytes.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
@@ -958,7 +958,7 @@ func postStripeEvent(t *testing.T, h http.Handler, eventType, customer string) *
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/stripe", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Stripe-Signature", stripex.SignForTest(body, stripeWebhookSecretForTest, time.Now()))
+	req.Header.Set("Stripe-Signature", stripe.SignForTest(body, stripeWebhookSecretForTest, time.Now()))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec

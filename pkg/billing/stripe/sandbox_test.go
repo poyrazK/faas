@@ -1,4 +1,4 @@
-package stripex
+package stripe
 
 import (
 	"context"
@@ -27,7 +27,7 @@ import (
 // Run locally with:
 //
 //	STRIPE_API_KEY=sk_test_… FATEST_STRIPE_SUB_ITEM=si_… \
-//	  go test -v -run 'TestInvoiceShadow24h_Sandbox' ./pkg/stripex/...
+//	  go test -v -run 'TestInvoiceShadow24h_Sandbox' ./pkg/billing/stripe/...
 //
 // The test plants 24 h of billable usage via state.MemStore.AppendUsage,
 // accumulates the mb_seconds integer sum, calls
@@ -132,7 +132,7 @@ func TestInvoiceShadow24h_Sandbox(t *testing.T) {
 	}
 
 	// §14 M7 acceptance. Zero delta, integer equality. If this fails,
-	// inspect pkg/stripex/usage.go::pushUsageRecordSDKSumWithID for
+	// inspect pkg/billing/stripe/usage.go::pushUsageRecordSDKSumWithID for
 	// any drift away from the integer-arithmetic wire formula. The
 	// previous float path produced 6168 (0.315 % short); the spec's
 	// 0.1 % gate would still catch that, but exact-integer equality

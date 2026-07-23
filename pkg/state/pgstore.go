@@ -120,7 +120,7 @@ func (s *PgStore) UpdateAccountStripeCustomerID(ctx context.Context, id, stripeC
 // UpdateAccountStripeSubscriptionItem records the Stripe subscription
 // item ID (si_…) on the account row (issue #52). meterd's hourly push
 // reads this to know where to POST the UsageRecord; the value is empty
-// until pkg/stripex::EnsureCustomer receives
+// until pkg/billing/stripe::EnsureCustomer receives
 // customer.subscription.created. MemStore mirrors the column shape.
 func (s *PgStore) UpdateAccountStripeSubscriptionItem(ctx context.Context, id, subItem string) error {
 	tag, err := s.pool.Exec(ctx,
