@@ -361,10 +361,22 @@ type StatusPage struct {
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
+	// Degraded is true when at least one page- or warn-severity alert
+	// is currently firing on the local Prometheus. The public status
+	// page renders a "degraded" pill when this is true so prospects
+	// and customers see the same picture the operator's pager sees.
+	//
+	// The flag is intentionally conservative: a transient PromQL
+	// error against ALERTS{} is treated as "no firing alerts" rather
+	// than poisoning the snapshot. Prometheus being completely
+	// unreachable still surfaces via Source = "degraded: <reason>"
+	// (the pre-existing contract).
+	Degraded bool `json:"degraded"`
 	// AsOf is the UTC timestamp the snapshot was taken. The HTML
 	// renders "Updated 3 min ago" off this.
 	AsOf time.Time `json:"as_of"`
-	// Source is "prometheus" or "degraded: <reason>" so an
-	// operator tailing the JSON can tell at a glance.
+	// Source is "prometheus", "degraded: firing alerts", or
+	// "degraded: <reason>" so an operator tailing the JSON can tell
+	// at a glance why a snapshot is or isn't trustworthy.
 	Source string `json:"source"`
 }

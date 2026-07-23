@@ -144,13 +144,13 @@ func (c *statusCache) Get(ctx context.Context) (StatusPage, error) {
 	return snap, nil
 }
 
-// fetch runs the three PromQL queries against the local Prometheus
+// fetch runs the four PromQL queries against the local Prometheus
 // and assembles a StatusPage. Each query has its own short timeout;
 // per-field failures are logged but DO NOT overwrite the previous
 // value (graceful degradation — the operator's view stays at the
 // last good number during a transient Prometheus hiccup). If every
-// query fails the function returns a non-nil error so the caller
-// can fall back to the last cached snapshot.
+// primary query fails the function returns a non-nil error so the
+// caller can fall back to the last cached snapshot.
 //
 // We track per-query success instead of inferring failure from
 // "all values are zero" — a freshly-booted idle box legitimately
@@ -205,9 +205,27 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 		}
 	}
 
-	// If no query succeeded, surface the first error so the caller can
-	// serve the stale cache. Otherwise the snapshot is real data even
-	// if some fields happen to be 0 (idle-box case).
+	// 4. Degraded flag: at least one warn- or page-severity alert is
+	// firing on the local Prometheus. Counted across all alert groups
+	// and components. A PromQL error here is logged but treated as
+	// "no firing alerts" — the flag is intentionally conservative so
+	// a transient ALERTS{} hiccup doesn't poison the public snapshot.
+	// The full-pipeline failure (Prometheus unreachable) still
+	// surfaces via Source = "degraded: <error>" because the primary
+	// three queries would have failed first.
+	alertQ := `count(ALERTS{alertstate="firing",severity=~"page|warn"}) > 0`
+	if v, err := c.queryScalar(ctx, alertQ); err == nil {
+		if v > 0 {
+			snap.Degraded = true
+			snap.Source = "degraded: firing alerts"
+		}
+	} else {
+		c.log.Warn("status: alert query failed (treating as not-degraded)", "err", err)
+	}
+
+	// If no primary query succeeded, surface the first error so the
+	// caller can serve the stale cache. Otherwise the snapshot is real
+	// data even if some fields happen to be 0 (idle-box case).
 	if okCount == 0 {
 		return snap, firstErr
 	}

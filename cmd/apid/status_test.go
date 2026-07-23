@@ -35,9 +35,10 @@ func TestStatusJSONHandlerNoPrometheusURL(t *testing.T) {
 }
 
 // TestStatusCacheFreshnessFastPath: a freshly-fetched cache must not
-// re-query Prometheus within the 30s TTL. fetch() runs three PromQL
-// queries per refresh, so the first Get makes 3 server hits and the
-// second (within TTL) makes 0.
+// re-query Prometheus within the 30s TTL. fetch() runs four PromQL
+// queries per refresh (api avail, wake p95, build success, degraded
+// flag), so the first Get makes 4 server hits and the second (within
+// TTL) makes 0.
 func TestStatusCacheFreshnessFastPath(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -47,19 +48,19 @@ func TestStatusCacheFreshnessFastPath(t *testing.T) {
 	defer srv.Close()
 
 	c := newStatusCache(srv.URL, slog.Default())
-	// First Get: 3 server hits (one per PromQL query in fetch).
+	// First Get: 4 server hits (one per PromQL query in fetch).
 	if _, err := c.Get(context.Background()); err != nil {
 		t.Fatalf("first get: %v", err)
 	}
-	if calls != 3 {
-		t.Errorf("first get: server called %d times, want 3 (one per query)", calls)
+	if calls != 4 {
+		t.Errorf("first get: server called %d times, want 4 (one per query)", calls)
 	}
 	// Second Get within TTL: cache hit, 0 server hits.
 	if _, err := c.Get(context.Background()); err != nil {
 		t.Fatalf("second get: %v", err)
 	}
-	if calls != 3 {
-		t.Errorf("second get: server called %d times, want 3 (cache hit suppressed refresh)", calls)
+	if calls != 4 {
+		t.Errorf("second get: server called %d times, want 4 (cache hit suppressed refresh)", calls)
 	}
 }
 
@@ -146,4 +147,84 @@ func TestStatusHandler_MissingFileFallback(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Status source unavailable") {
 		t.Errorf("body = %q, missing fallback banner", rec.Body.String())
 	}
+}
+
+// TestStatus_DegradedFlag drives the 4th PromQL query through three
+// cases that together pin down the contract:
+//
+//  1. Firing alerts present → Degraded=true, Source="degraded: firing alerts".
+//  2. No firing alerts     → Degraded=false, Source="prometheus".
+//  3. Alert query fails    → Degraded=false, Source stays "prometheus"
+//     (graceful degradation — a PromQL hiccup on ALERTS{} must not
+//     poison the public snapshot; the pre-existing full-pipeline
+//     failure path still surfaces via Source="degraded: <error>").
+func TestStatus_DegradedFlag(t *testing.T) {
+	t.Run("firing", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
+				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"1"]}]}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.5"]}]}}`))
+		}))
+		defer srv.Close()
+
+		c := newStatusCache(srv.URL, slog.Default())
+		snap, err := c.Get(context.Background())
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if !snap.Degraded {
+			t.Errorf("Degraded = false, want true when alerts firing")
+		}
+		if snap.Source != "degraded: firing alerts" {
+			t.Errorf("Source = %q, want %q", snap.Source, "degraded: firing alerts")
+		}
+	})
+
+	t.Run("not_firing", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
+				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"0"]}]}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.5"]}]}}`))
+		}))
+		defer srv.Close()
+
+		c := newStatusCache(srv.URL, slog.Default())
+		snap, err := c.Get(context.Background())
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if snap.Degraded {
+			t.Errorf("Degraded = true, want false when no alerts firing")
+		}
+		if snap.Source != "prometheus" {
+			t.Errorf("Source = %q, want %q", snap.Source, "prometheus")
+		}
+	})
+
+	t.Run("alert_query_fails_primary_ok", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
+				http.Error(w, "no alerts metric registered", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.5"]}]}}`))
+		}))
+		defer srv.Close()
+
+		c := newStatusCache(srv.URL, slog.Default())
+		snap, err := c.Get(context.Background())
+		if err != nil {
+			t.Fatalf("get: %v (primary queries should have succeeded)", err)
+		}
+		if snap.Degraded {
+			t.Errorf("Degraded = true, want false when alert query fails (graceful degradation)")
+		}
+		if snap.Source != "prometheus" {
+			t.Errorf("Source = %q, want %q (graceful degradation)", snap.Source, "prometheus")
+		}
+	})
 }
