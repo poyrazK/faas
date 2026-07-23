@@ -391,7 +391,7 @@ type Store interface {
 	// wake_id. An empty wakeID triggers the column default
 	// (gen_random_uuid()) which is the safe behavior for any caller that
 	// hasn't been updated yet (test fixtures, ad-hoc backfill scripts).
-	// Migration 00027 enforces NOT NULL going forward, so passing empty
+	// Migration 00028 enforces NOT NULL going forward, so passing empty
 	// is fine — the row still has a non-NULL wake_id after the write.
 	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
@@ -403,7 +403,7 @@ type Store interface {
 	// history) and sorting in Go. limit must be > 0; a value ≤ 0
 	// returns an empty slice so the caller fails closed rather than
 	// rendering an unbounded table. The supporting partial index
-	// `instances_wake_id_app_idx` (migration 00027) covers live
+	// `instances_wake_id_app_idx` (migration 00028) covers live
 	// states but not parked; the SQL still scans parked rows in the
 	// sort phase, so a future index on (app_id, started_at DESC)
 	// WHERE state = 'parked' is the right optimization if a single

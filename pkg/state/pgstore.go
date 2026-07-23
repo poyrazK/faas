@@ -1076,8 +1076,8 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// scripts. schedd mints a UUIDv7 Go-side before reaching here so
 	// production traffic always lands the explicit value. The RETURNING
 	// clause is widened to surface wake_id for the engine and dashboard.
-	// COALESCE on the SELECT guards against any pre-migration-00027
-	// path that left the column NULL — though migration 00027 enforces
+	// COALESCE on the SELECT guards against any pre-migration-00028
+	// path that left the column NULL — though migration 00028 enforces
 	// NOT NULL post-apply, the COALESCE keeps scanInstance round-tripping
 	// a non-empty string even on half-migrated test DBs.
 	// Cast $6 to text before the empty-string test — Postgres otherwise
@@ -2301,8 +2301,8 @@ func scanInstances(rows pgx.Rows) ([]Instance, error) {
 func scanInstanceCols(scan func(...any) error) (Instance, error) {
 	ins := Instance{}
 	var started, lastReq, parked *time.Time
-	// wake_id is the 13th column (migration 00027). It's NOT NULL post-
-	// 00027 but scanned into a string so any pre-migration-00027 row that
+	// wake_id is the 13th column (migration 00028). It's NOT NULL post-
+	// 00028 but scanned into a string so any pre-migration-00028 row that
 	// somehow surfaced surfaces as "" rather than a NULL scan error — the
 	// SELECT column list is the contract that prevents column-order drift
 	// from silently swallowing wake_id into an unrelated field.
@@ -2338,7 +2338,7 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 		ins := Instance{}
 		var started, lastReq, parked, terminal *time.Time
 		// Column order matches ListInstancesInTerminalStatesOlderThan's
-		// SELECT (now 14 columns after migration 00027 added wake_id
+		// SELECT (now 14 columns after migration 00028 added wake_id
 		// before terminal_at).
 		if err := rows.Scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
 			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID, &terminal); err != nil {

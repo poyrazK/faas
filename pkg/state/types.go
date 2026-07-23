@@ -333,7 +333,7 @@ type Instance struct {
 	// its lifetime as the app parks and wakes again. UUIDv7 (time-ordered)
 	// picked over UUIDv4 so the partial index `(app_id, wake_id)` on the
 	// dashboard's recent-wakes scan serves time-range queries without a
-	// separate sort. NOT NULL enforced by migrations/00027_instances_wake_id;
+	// separate sort. NOT NULL enforced by migrations/00028_instances_wake_id;
 	// pre-existing rows were backfilled to gen_random_uuid() (v4) on apply.
 	// Empty in test fixtures only when the fixture predates the column add.
 	WakeID string
