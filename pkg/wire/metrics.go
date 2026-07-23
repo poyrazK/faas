@@ -64,6 +64,11 @@ type OpsMetrics struct {
 	// wait histogram is unlabelled (every observation has the same shape).
 	buildDur       *prometheus.HistogramVec
 	buildQueueWait prometheus.Histogram
+	// imagedOCIPull: per-call latency of imaged's OCI registry pulls
+	// (manifest, config, blob, above-base). Sized to api.OCIPullTimeoutSeconds
+	// (60 s); the 5 s control-plane bucket is wrong for the multi-second
+	// blob downloads.
+	imagedOCIPull *prometheus.HistogramVec
 }
 
 // NewOpsMetrics builds an OpsMetrics keyed on the per-daemon prefix — e.g.
@@ -121,7 +126,25 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// Sized to the §12 alert thresholds: healthy < 60 s, page at > 300 s.
 		Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600},
 	})
-	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, stripePushDur, buildDur, buildQueueWait)
+	imagedOCIPull := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: prefix + "_oci_pull_duration_seconds",
+		Help: "Latency of imaged's OCI registry pulls (manifest, config, blob, above-base), in seconds. Sized to api.OCIPullTimeoutSeconds (60 s).",
+		// OCI manifest/config are fast (10–500 ms); blob downloads can run
+		// multi-second for big layers; 60 s ceiling = OCIPullTimeoutSeconds.
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60},
+	}, []string{"op", "result"})
+	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, stripePushDur, buildDur, buildQueueWait, imagedOCIPull)
+	// Pre-instantiate the closed (op,result) set for the OCI-pull
+	// histogram so its HELP/TYPE and zero-valued buckets surface in
+	// /metrics from the moment the daemon boots — same precedent as
+	// the buildDuration and stripePush pre-instantiation above. The
+	// canonical op label set lives next to the observer; if you add
+	// a new op there, extend this loop too.
+	for _, op := range []string{"manifest", "config", "blob", "above_base"} {
+		for _, result := range []string{"ok", "err"} {
+			imagedOCIPull.WithLabelValues(op, result)
+		}
+	}
 	// Pre-instantiate every label in the closed result set so the
 	// histogram's HELP/TYPE and zero-valued buckets surface in
 	// `/metrics` from the moment the daemon boots — even before the
@@ -143,6 +166,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		stripePushDur:   stripePushDur,
 		buildDur:        buildDur,
 		buildQueueWait:  buildQueueWait,
+		imagedOCIPull:   imagedOCIPull,
 	}
 }
 
@@ -240,6 +264,18 @@ func (m *OpsMetrics) ObserveBuildQueueWait(dur time.Duration) {
 		return
 	}
 	m.buildQueueWait.Observe(dur.Seconds())
+}
+
+// ObserveImagedOCIPull records one OCI registry pull into the per-domain
+// <daemon>_oci_pull_duration_seconds histogram. op ∈ {manifest, config,
+// blob, above_base}, result ∈ {ok, err}. Sized to api.OCIPullTimeoutSeconds
+// (60 s) — distinct from the 5 s control-plane dur histogram because
+// blob downloads can run multi-second. Safe on a nil receiver.
+func (m *OpsMetrics) ObserveImagedOCIPull(op, result string, dur time.Duration) {
+	if m == nil {
+		return
+	}
+	m.imagedOCIPull.WithLabelValues(op, result).Observe(dur.Seconds())
 }
 
 // Handler returns an http.Handler that serves the registry's metrics.
