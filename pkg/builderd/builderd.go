@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // Notifier is the pg_notify surface builderd uses. db.Notify satisfies it.
@@ -81,6 +82,11 @@ type Builderd struct {
 	resid    ResidencyProbe
 	cfg      Config
 	log      *slog.Logger
+	// ops is the build-metrics sink (ADR-030). nil in unit tests that
+	// don't care about metrics; all observations guard on nil (the
+	// ObserveBuild* methods are also nil-safe). Wired in production via
+	// WithOpsMetrics from cmd/builderd.
+	ops *wire.OpsMetrics
 }
 
 // New wires a Builderd. vm may be nil in unit tests (the orchestrator still
@@ -108,6 +114,15 @@ func New(store state.Store, notif Notifier, vm VM, cache *Cache, det *Detector, 
 		cfg:      cfg,
 		log:      log,
 	}
+}
+
+// WithOpsMetrics attaches the build-metrics sink (ADR-030) and returns the
+// same Builderd for chaining. Mirrors pkg/sched.Engine.WithOpsMetrics.
+// cmd/builderd wires the daemon's real *wire.OpsMetrics; leaving it unset
+// (the unit-test default) makes every observation a no-op.
+func (b *Builderd) WithOpsMetrics(ops *wire.OpsMetrics) *Builderd {
+	b.ops = ops
+	return b
 }
 
 // BuildResult is the outcome of one queued build.
@@ -150,9 +165,19 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	}
 	defer b.emitBuildLog(ctx, build.ID, "build started\n")
 
+	// Build telemetry (ADR-030). Queue wait = time the build sat between
+	// apid's CreateBuild (enqueued_at) and this dequeue point; observed
+	// once here so only builds that actually started count. Build
+	// duration is observed inside markSucceeded/markFailed (the single
+	// choke points for every terminal path) using `buildStart` and the
+	// outcome they decide. All observers are nil-safe (ops may be unset
+	// in tests).
+	b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
+	buildStart := time.Now()
+
 	fw, err := b.detector.Detect(dep.SourcePath)
 	if err != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureUserError, "framework detect: "+err.Error())
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureUserError, "framework detect: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
 	b.emitBuildLog(ctx, build.ID, "detected framework: "+string(fw)+"\n")
@@ -162,13 +187,13 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	// spawn entirely (this is the ≥2× speedup gate, spec §14 M6).
 	srcHash, err := hashFile(dep.SourcePath)
 	if err != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "source hash: "+err.Error())
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "source hash: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
 	if cached, ok := b.cache.Lookup(srcHash, fw); ok {
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("cache hit (%s, %d bytes) — skipping vm spawn\n", cached.Path, cached.Bytes))
 		if err := b.store.SetDeploymentRootfs(ctx, dep.ID, cached.Path, sched.AppLayerKey(app.Slug, dep.ID), cached.Bytes); err != nil {
-			b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "set rootfs: "+err.Error())
+			b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "set rootfs: "+err.Error(), buildStart)
 			return BuildResult{}, err
 		}
 		// imaged handles the cache-hit tarball the same as a fresh build:
@@ -178,23 +203,23 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		// tries to mount a .tar as a virtio-blk drive.
 		if err := b.notif.Notify(ctx, db.NotifySnapshotBoot,
 			fmt.Sprintf(`{"app_id":"%s","deployment_id":"%s"}`, app.ID, dep.ID)); err != nil {
-			b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "notify prime: "+err.Error())
+			b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "notify prime: "+err.Error(), buildStart)
 			return BuildResult{}, err
 		}
-		b.markSucceeded(ctx, build.ID)
+		b.markSucceeded(ctx, build.ID, "cache_hit", buildStart)
 		return BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true}, nil
 	}
 
 	// Slot allocation (CLAUDE.md: builds never outrank tenant wakes).
 	slot := DecideSlot(b.resid, api.RAMAdmissionCeilingMB)
 	if !slot.Allowed {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "no builder slot: "+slot.Reason)
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "no builder slot: "+slot.Reason, buildStart)
 		return BuildResult{}, errors.New("builderd: no slot")
 	}
 	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("allocated builder slot (%s)\n", slot.Label))
 
 	if b.vm == nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "vm driver not wired (metal only)")
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "vm driver not wired (metal only)", buildStart)
 		return BuildResult{}, ErrNotMetal
 	}
 
@@ -218,7 +243,7 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		if errors.Is(err, context.DeadlineExceeded) {
 			fc = state.FailureTimeout
 		}
-		b.markFailed(ctx, dep.ID, build.ID, fc, "vm spawn: "+err.Error())
+		b.markFailed(ctx, dep.ID, build.ID, fc, "vm spawn: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
 
@@ -229,7 +254,7 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		if errors.Is(err, context.DeadlineExceeded) {
 			fc = state.FailureTimeout
 		}
-		b.markFailed(ctx, dep.ID, build.ID, fc, "vm wait: "+err.Error())
+		b.markFailed(ctx, dep.ID, build.ID, fc, "vm wait: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
 	if out.ExitCode != 0 {
@@ -256,7 +281,7 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 				fc = state.FailureTimeout
 			}
 		}
-		b.markFailed(ctx, dep.ID, build.ID, fc, fmt.Sprintf("build exited %d", out.ExitCode))
+		b.markFailed(ctx, dep.ID, build.ID, fc, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
 		return BuildResult{}, fmt.Errorf("builderd: vm exit %d", out.ExitCode)
 	}
 
@@ -269,22 +294,22 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	// in-VM build log tail).
 	st, statErr := os.Stat(out.OCIImage)
 	if statErr != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "stat produced layer: "+statErr.Error())
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "stat produced layer: "+statErr.Error(), buildStart)
 		return BuildResult{}, statErr
 	}
 	acct, acctErr := b.store.AccountByID(ctx, app.AccountID)
 	if acctErr != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "load account: "+acctErr.Error())
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "load account: "+acctErr.Error(), buildStart)
 		return BuildResult{}, acctErr
 	}
 	lim, known := api.LimitsFor(acct.Plan)
 	if !known {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "unknown plan: "+string(acct.Plan))
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "unknown plan: "+string(acct.Plan), buildStart)
 		return BuildResult{}, errors.New("builderd: unknown plan")
 	}
 	if sizeMB := (st.Size() + (1 << 20) - 1) >> 20; sizeMB > int64(lim.AppLayerMaxMB) {
 		msg := fmt.Sprintf("app layer %d MB exceeds plan cap %d MB", sizeMB, lim.AppLayerMaxMB)
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureUserError, msg)
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureUserError, msg, buildStart)
 		return BuildResult{}, errors.New("builderd: " + msg)
 	}
 
@@ -298,20 +323,27 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	// to cold-boot + snapshot. Splitting the channel prevents schedd from
 	// trying to mount the OCI tarball as a virtio-blk drive (it would 400).
 	if err := b.store.SetDeploymentRootfs(ctx, dep.ID, out.OCIImage, sched.AppLayerKey(app.Slug, dep.ID), out.LogTailBytes); err != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "set rootfs: "+err.Error())
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "set rootfs: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
 	if err := b.notif.Notify(ctx, db.NotifySnapshotBoot,
 		fmt.Sprintf(`{"app_id":"%s","deployment_id":"%s"}`, app.ID, dep.ID)); err != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "notify prime: "+err.Error())
+		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "notify prime: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
-	b.markSucceeded(ctx, build.ID)
+	b.markSucceeded(ctx, build.ID, "ok", buildStart)
 	return BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: out.LogTailBytes}, nil
 }
 
 // markSucceeded updates the build row to BuildSucceeded, finished=true.
-func (b *Builderd) markSucceeded(ctx context.Context, buildID string) {
+// code is the ops_total{op="build"} label — "ok" for a fresh build or
+// "cache_hit" for the cache short-circuit (ADR-030). Also observes the
+// build_duration_seconds histogram with the matching `outcome` label,
+// using buildStart as the wall-clock anchor (taken at ProcessOne's
+// dequeue point).
+func (b *Builderd) markSucceeded(ctx context.Context, buildID, code string, buildStart time.Time) {
+	b.ops.ObserveBuildCount(code)
+	b.ops.ObserveBuildDuration(code, time.Since(buildStart))
 	if err := b.store.UpdateBuildStatus(ctx, buildID, state.BuildSucceeded, "", false, true); err != nil {
 		b.log.Warn("builderd: mark succeeded", "build", buildID, "err", err)
 	}
@@ -321,7 +353,12 @@ func (b *Builderd) markSucceeded(ctx context.Context, buildID string) {
 // and flips the owning deployment to DeployFailed so the dashboard reflects
 // reality (instead of leaving it stuck in DeployBuilding forever).
 // The empty-string fc guard in pkg/state means a non-empty fc must be passed.
-func (b *Builderd) markFailed(ctx context.Context, depID, buildID string, fc state.FailureClass, msg string) {
+// Also observes build_duration_seconds with outcome="failed".
+func (b *Builderd) markFailed(ctx context.Context, depID, buildID string, fc state.FailureClass, msg string, buildStart time.Time) {
+	// ops_total{op="build",code=<fc>} — the §12 build-success ratio counts
+	// everything except code="user_error" as a success (ADR-030).
+	b.ops.ObserveBuildCount(string(fc))
+	b.ops.ObserveBuildDuration("failed", time.Since(buildStart))
 	b.log.Warn("builderd: build failed", "build", buildID, "deployment", depID, "failure_class", fc, "msg", msg)
 	b.emitBuildLog(ctx, buildID, "FAILED: "+msg+"\n")
 	if err := b.store.UpdateBuildStatus(ctx, buildID, state.BuildFailed, fc, false, true); err != nil {

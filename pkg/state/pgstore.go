@@ -743,7 +743,7 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 		`insert into builds (deployment_id, kind, source_bytes, status, log_path)
 		 values ($1, $2, $3, 'queued', $4)
 		 returning id, deployment_id, kind, source_bytes, status,
-		           coalesce(failure_class,''), coalesce(log_path,''), started_at, finished_at`,
+		           coalesce(failure_class,''), coalesce(log_path,''), started_at, finished_at, enqueued_at`,
 		deploymentID, string(kind), sourceBytes, nullString(logPath))
 	return scanBuild(row)
 }
@@ -751,14 +751,14 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 func (s *PgStore) BuildByID(ctx context.Context, id string) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
-		        started_at, finished_at from builds where id = $1`, id)
+		        started_at, finished_at, enqueued_at from builds where id = $1`, id)
 	return scanBuild(row)
 }
 
 func (s *PgStore) BuildByDeployment(ctx context.Context, deploymentID string) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
-		        started_at, finished_at from builds where deployment_id = $1
+		        started_at, finished_at, enqueued_at from builds where deployment_id = $1
 		 order by started_at desc nulls last limit 1`, deploymentID)
 	return scanBuild(row)
 }
@@ -2080,7 +2080,7 @@ func scanBuild(row pgx.Row) (Build, error) {
 	b := Build{}
 	var kind, statusStr, fc string
 	var startedAt, finishedAt *time.Time
-	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt); err != nil {
+	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt); err != nil {
 		return Build{}, mapErr(err)
 	}
 	if startedAt != nil {
