@@ -651,6 +651,15 @@ func (m *MemStore) InstallationIDForRepo(_ context.Context, repoFullName string)
 // missing apps with ErrNotFound — apid's s.notFound relies on this
 // to return 404. The mutex already serialises the check + insert
 // together, so the gate is race-free here without a tx.
+//
+// PR-B: the prior-deployment supersede is folded into the same
+// critical section as the INSERT, mirroring PgStore's tx-wrapped
+// shape. We walk m.deployments for the most-recent row whose status
+// is in the "current world" set (pending/live/building/imaging/
+// snapshotting), flip it to 'superseded' in the map, then insert
+// the new row. The race-free supersede closes the same TOCTOU the
+// image: branch had before, and gives the tarball branch the parity
+// it has always lacked.
 func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -658,6 +667,46 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, ErrNotFound
 	}
+
+	// Find the most-recent non-terminal deployment row for this app.
+	// O(N) over the map is fine at one-box scale; spec §6 keeps the
+	// rows-per-app bounded by the build cadence.
+	var (
+		priorID  string
+		hasPrior bool
+	)
+	var maxCreated time.Time
+	for id, existing := range m.deployments {
+		if existing.AppID != d.AppID {
+			continue
+		}
+		// Same narrow set as PgStore (PR-B): only flip pending/live
+		// rows. A building/imaging/snapshotting row represents a
+		// pipeline already running; flipping it would orphan the
+		// vmmd VM / builderd process / imaged ext4 conversion. The
+		// second deploy creates a parallel row and the schedd
+		// watchdog reaps the loser on idle.
+		switch existing.Status {
+		case DeployPending, DeployLive:
+			// current world — supersede
+		default:
+			continue
+		}
+		if !hasPrior || existing.CreatedAt.After(maxCreated) {
+			priorID = id
+			maxCreated = existing.CreatedAt
+			hasPrior = true
+		}
+	}
+	if hasPrior {
+		// Match PgStore exactly: mutate the stored prior in-place so
+		// subsequent LatestDeployment / DeploymentByID readers see
+		// the supersede immediately, under m.mu.
+		prior := m.deployments[priorID]
+		prior.Status = DeploySuperseded
+		m.deployments[priorID] = prior
+	}
+
 	if d.ID == "" {
 		d.ID = newID()
 	}
@@ -927,29 +976,56 @@ func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error)
 	return b, nil
 }
 
-// ListStaleQueuedBuilds mirrors PgStore.ListStaleQueuedBuilds (PR-A).
-// Same predicate (BuildQueued AND enqueued_at older than threshold),
-// same sort order (oldest first so the reaper drains the backlog
-// deterministically). Walks m.builds under m.mu — the queue is
-// shallow per spec §9, so an O(N) scan per tick is fine.
-func (m *MemStore) ListStaleQueuedBuilds(_ context.Context, threshold time.Duration) ([]Build, error) {
+// ClaimNextQueuedBuild mirrors PgStore.ClaimNextQueuedBuild (PR-B). The
+// MemStore mutex is the equivalent of FOR UPDATE SKIP LOCKED here:
+// only one claimer exists in-process, but the shape mirrors Postgres
+// 1:1 so unit tests catch logic bugs without races. Picks the earliest
+// EnqueuedAt row whose status is BuildQueued, flips to BuildRunning,
+// sets StartedAt = now(). Returns ErrNotFound when the queue is empty.
+func (m *MemStore) ClaimNextQueuedBuild(_ context.Context) (Build, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cutoff := time.Now().Add(-threshold)
-	out := make([]Build, 0)
-	for _, b := range m.builds {
+	var (
+		pick     string
+		earliest time.Time
+		found    bool
+	)
+	for id, b := range m.builds {
 		if b.Status != BuildQueued {
 			continue
 		}
-		if !b.EnqueuedAt.Before(cutoff) {
-			continue
+		if !found || b.EnqueuedAt.Before(earliest) {
+			pick = id
+			earliest = b.EnqueuedAt
+			found = true
 		}
-		out = append(out, b)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].EnqueuedAt.Before(out[j].EnqueuedAt)
-	})
-	return out, nil
+	if !found {
+		return Build{}, ErrNotFound
+	}
+	b := m.builds[pick]
+	b.Status = BuildRunning
+	b.StartedAt = time.Now()
+	m.builds[pick] = b
+	return b, nil
+}
+
+// RequeueBuild resets a running build row back to queued with
+// enqueued_at untouched (PR-B). Mirrors PgStore.RequeueBuild.
+func (m *MemStore) RequeueBuild(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.builds[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if b.Status != BuildRunning {
+		return ErrNotFound
+	}
+	b.Status = BuildQueued
+	b.StartedAt = time.Time{}
+	m.builds[id] = b
+	return nil
 }
 
 // --- Custom domains ---------------------------------------------------------

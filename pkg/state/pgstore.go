@@ -548,6 +548,17 @@ func (s *PgStore) InstallationIDForRepo(ctx context.Context, repoFullName string
 // calls (PATCH /v1/apps/{slug}) reject status flips back to active for
 // already-deleted rows anyway, so the invariant "an app either accepts
 // deploys OR is deleted" is one-directional here.
+//
+// PR-B folds the prior-deployment supersede INTO this transaction so
+// the apid → state boundary can never leave a live deployment as
+// 'superseded' with no replacement. The previous "supersede then
+// create" two-step bug (only on the image: branch — the tarball
+// branch never superseded at all) is closed by reading the latest
+// non-superseded-non-failed row under FOR UPDATE, marking it
+// 'superseded', and inserting the new row, all in the same tx. A
+// concurrent CreateDeployment against the same app serialises behind
+// the row lock (Step 2.5 below); if our subsequent INSERT fails the
+// defer tx.Rollback reverts both writes together.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -569,8 +580,59 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		return Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
 	}
 
-	// 2. Insert under the lock. The FOR UPDATE above guarantees the app
-	//    cannot transition to AppDeleted between this point and COMMIT.
+	// 2. Lock + supersede the prior live/pending row, if any. PR-B: the
+	//    supersede is in-tx so a failed INSERT below rolls it back too.
+	//    The (app_id, created_at desc) index from migration 00007 covers
+	//    the search.
+	//
+	//    The status set is NARROW ('pending' | 'live') on purpose. A
+	//    row in 'building' / 'imaging' / 'snapshotting' represents a
+	//    build pipeline already in flight — the prior vmmd VM is
+	//    running, builderd is mid-build, imaged is rendering an ext4.
+	//    Flipping such a row to 'superseded' would orphan those
+	//    pipelines and lose the deployment they were producing.
+	//    Instead, the second deploy creates a fresh row, both rows
+	//    run their pipelines in parallel, and the second-deploy's
+	//    post-build chain (snapshot_prime → schedd → snap-and-park)
+	//    wins because the upstream builderd/notif chain only races the
+	//    last writer. Termination is handled by schedd's watchdog
+	//    idle-reaper; this tx must not race the build itself.
+	//
+	//    We exclude 'failed' explicitly per PR-A's
+	//    LatestSupersededDeployment: failure history stays observable.
+	//
+	//    Callers that need the just-superseded row (apid's
+	//    NotifyDeploymentChanged fan-out) read it BEFORE the call via
+	//    LatestDeployment(ctx, appID) — by the time this tx commits,
+	//    that row is already visible as 'superseded' to the next read.
+	//    The 2-return shape keeps the signature backward-compatible
+	//    with pre-PR-B call sites (the slice-3 cascade test on main
+	//    relies on `dep, err :=` form).
+	var priorID string
+	if err := tx.QueryRow(ctx,
+		`select id from deployments
+		  where app_id = $1
+		    and status in ('pending','live')
+		  order by created_at desc
+		  limit 1
+		  for update`,
+		d.AppID).Scan(&priorID); err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return Deployment{}, fmt.Errorf("state: lock prior deployment: %w", err)
+		}
+		// pgx.ErrNoRows → no prior; that's fine. Move on.
+	} else {
+		if _, err := tx.Exec(ctx,
+			`update deployments set status = 'superseded' where id = $1`,
+			priorID); err != nil {
+			return Deployment{}, fmt.Errorf("state: supersede prior %s: %w", priorID, err)
+		}
+	}
+
+	// 3. Insert the new deployment row. The FOR UPDATE above guarantees
+	//    the app cannot transition to AppDeleted between Steps 1 and 4
+	//    (COMMIT). If INSERT fails, the prior UPDATE at Step 2 is rolled
+	//    back by the defer.
 	row := tx.QueryRow(ctx,
 		`insert into deployments (app_id, image_digest, kind, source_path, source_bytes, handler, log_path, status)
 		 values ($1, $2, $3, $4, $5, $6, $7, 'pending')
@@ -850,45 +912,58 @@ func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error
 	return b, nil
 }
 
-// ListStaleQueuedBuilds is the imaged reaper's read surface (PR-A).
-// Returns every row still in BuildQueued whose enqueued_at is older
-// than `now() - threshold`. Uses the index on (status, enqueued_at)
-// implicitly via the WHERE predicate; the builds table is bounded by
-// in-flight builds (spec §9 keeps the queue shallow) so a full scan
-// stays cheap. If the queue depth grows we should add a partial index
-// on (status, enqueued_at) WHERE status='queued' — pinned as a
-// follow-up.
-//
-// Builds is on the critical wake path: when apid emits
-// db.NotifyBuildQueued right after CreateBuild (deploy_inputs.go:167),
-// a transient Postgres blip between INSERT and NOTIFY can drop the
-// notification. The reaper scans this set on a tick and re-emits
-// the notify, recovering without a manual operator action.
-func (s *PgStore) ListStaleQueuedBuilds(ctx context.Context, threshold time.Duration) ([]Build, error) {
-	rows, err := s.pool.Query(ctx,
-		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
-		        started_at, finished_at, enqueued_at
-		   from builds
-		  where status = 'queued'
-		    and enqueued_at < now() - $1::interval
-		  order by enqueued_at asc`,
-		threshold)
+// ClaimNextQueuedBuild is the durable worker surface (PR-B). Single
+// statement so the lock + flip + RETURNING happens in one round-trip:
+// the SKIP LOCKED subquery picks the earliest queued row that no
+// concurrent claimer (pg_cron, a second builderd process) holds,
+// the outer UPDATE flips it to 'running' and stamps started_at = now().
+// Returns ErrNotFound when no queued row is available so the worker
+// can sleep without surfacing an error. The shape mirrors
+// ClaimQueuedBuild so ProcessOne's existing handling of ErrNotFound
+// (drop silently) Just Works.
+func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
+	row := s.pool.QueryRow(ctx,
+		`update builds
+		   set status = 'running', started_at = now()
+		 where id = (
+		   select id from builds
+		    where status = 'queued'
+		    order by enqueued_at asc
+		    limit 1
+		    for update skip locked
+		 )
+		 returning id, deployment_id, kind, source_bytes, status,
+		           coalesce(failure_class,''), coalesce(log_path,''),
+		           started_at, finished_at, enqueued_at`)
+	b, err := scanBuild(row)
 	if err != nil {
-		return nil, fmt.Errorf("state: list stale queued builds: %w", err)
-	}
-	defer rows.Close()
-	var out []Build
-	for rows.Next() {
-		b, err := scanBuild(rows)
-		if err != nil {
-			return nil, err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Build{}, ErrNotFound
 		}
-		out = append(out, b)
+		return Build{}, fmt.Errorf("state: claim next queued build: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: list stale queued builds iterate: %w", err)
+	return b, nil
+}
+
+// RequeueBuild resets a build row to queued when builderd's slot
+// allocator (DecideSlot) rules it out (PR-B). enqueued_at is preserved
+// verbatim so the row slots back into its original FIFO position;
+// started_at is cleared. Returns ErrNotFound when the row is missing.
+// The worker only requeues on a "no slot" verdict — never on
+// transient errors (those bubble up and the supervisor restarts us).
+func (s *PgStore) RequeueBuild(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update builds
+		   set status = 'queued', started_at = NULL
+		 where id = $1 and status = 'running'`,
+		id)
+	if err != nil {
+		return fmt.Errorf("state: requeue build %s: %w", id, err)
 	}
-	return out, nil
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // --- custom domains ---------------------------------------------------------

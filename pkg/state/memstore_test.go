@@ -1637,95 +1637,7 @@ func TestMemStore_SnapshotStorageKey_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestMemStore_ListStaleQueuedBuilds covers the imaged-reaper
-// surface (PR-A). Two queued builds — one old (5min), one fresh
-// (now) — plus one build already in BuildRunning. The threshold
-// (1min) should filter to just the old queued row. The non-queued
-// row must not appear regardless of age. MemStore keeps EnqueuedAt
-// private so we mutate the map directly under m.mu.
-func TestMemStore_ListStaleQueuedBuilds(t *testing.T) {
-	m := NewMemStore()
-	ctx := context.Background()
-	acct, err := m.CreateAccount(ctx, "reap@example.com", "pro")
-	if err != nil {
-		t.Fatalf("CreateAccount: %v", err)
-	}
-	app, err := m.CreateApp(ctx, App{
-		AccountID: acct.ID, Slug: "reap-app", Type: AppTypeApp,
-		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
-	})
-	if err != nil {
-		t.Fatalf("CreateApp: %v", err)
-	}
-
-	oldDep, _ := m.CreateDeployment(ctx, Deployment{
-		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployPending,
-	})
-	freshDep, _ := m.CreateDeployment(ctx, Deployment{
-		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployPending,
-	})
-	runningDep, _ := m.CreateDeployment(ctx, Deployment{
-		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployBuilding,
-	})
-
-	oldBuild, err := m.CreateBuild(ctx, oldDep.ID, DeploymentKindTarball, 100, "")
-	if err != nil {
-		t.Fatalf("CreateBuild old: %v", err)
-	}
-	freshBuild, err := m.CreateBuild(ctx, freshDep.ID, DeploymentKindTarball, 100, "")
-	if err != nil {
-		t.Fatalf("CreateBuild fresh: %v", err)
-	}
-	runningBuild, err := m.CreateBuild(ctx, runningDep.ID, DeploymentKindTarball, 100, "")
-	if err != nil {
-		t.Fatalf("CreateBuild running: %v", err)
-	}
-
-	// Backdate the old build's EnqueuedAt 5min into the past; flip
-	// the running build to BuildRunning + backdate similarly (it
-	// must NOT appear regardless of age).
-	m.mu.Lock()
-	old := m.builds[oldBuild.ID]
-	old.EnqueuedAt = time.Now().Add(-5 * time.Minute)
-	m.builds[oldBuild.ID] = old
-	run := m.builds[runningBuild.ID]
-	run.Status = BuildRunning
-	run.EnqueuedAt = time.Now().Add(-5 * time.Minute)
-	m.builds[runningBuild.ID] = run
-	m.mu.Unlock()
-
-	// Threshold = 1 minute: only the backdated queued row qualifies.
-	out, err := m.ListStaleQueuedBuilds(ctx, time.Minute)
-	if err != nil {
-		t.Fatalf("ListStaleQueuedBuilds: %v", err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("got %d stale builds, want 1", len(out))
-	}
-	if out[0].ID != oldBuild.ID {
-		t.Errorf("stale id = %q, want %q", out[0].ID, oldBuild.ID)
-	}
-	if out[0].ID == freshBuild.ID {
-		t.Errorf("fresh build leaked into stale list")
-	}
-	if out[0].ID == runningBuild.ID {
-		t.Errorf("non-queued build leaked into stale list")
-	}
-
-	// Threshold = 0 → the predicate becomes `enqueued_at < now()`. Both
-	// queued rows have EnqueuedAt <= now, so both qualify. This pins the
-	// reaper's "threshold is inclusive of zero" semantics — a caller that
-	// wants to suppress every row should pass time.Duration(-1) (which
-	// flips the predicate to `enqueued_at > now()` → none). Mirrors the
-	// PgStore behaviour exactly so the two impls stay in lockstep.
-	out2, err := m.ListStaleQueuedBuilds(ctx, 0)
-	if err != nil {
-		t.Fatalf("ListStaleQueuedBuilds(0): %v", err)
-	}
-	if len(out2) != 2 {
-		t.Errorf("threshold=0 returned %d rows, want 2 (predicate is `enqueued_at < now()`)", len(out2))
-	}
-}
+// TestMemStore_ClaimQueuedBuild pins the atomic queued → running CAS
 
 // TestMemStore_ClaimQueuedBuild pins the atomic queued → running CAS
 // that closes the apid/reaper double-emit race (PR-A review). First
@@ -1778,6 +1690,64 @@ func TestMemStore_ClaimQueuedBuild(t *testing.T) {
 	_, err = m.ClaimQueuedBuild(ctx, "deadbeef")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown id err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestMemStore_CreateDeployment_SupersedesPriorLive mirrors the
+// PgStore supersede happy-path. Two pending-style deployments go
+// through; the second must observe the prior as superseded in the
+// store map (CreateDeployment's 2-return shape carries the new row
+// only; the prior is read back via DeploymentByID to assert).
+func TestMemStore_CreateDeployment_SupersedesPriorLive(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acc, _ := m.CreateAccount(ctx, "sup@x.com", api.PlanPro)
+	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "sup-app"})
+
+	d1, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:1"})
+	if err != nil {
+		t.Fatalf("d1: %v", err)
+	}
+	d2, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:2"})
+	if err != nil {
+		t.Fatalf("d2: %v", err)
+	}
+	// Map must agree: d1 (the prior) is now DeploySuperseded.
+	if m.deployments[d1.ID].Status != DeploySuperseded {
+		t.Errorf("m.deployments[%s].Status = %q, want superseded", d1.ID, m.deployments[d1.ID].Status)
+	}
+	// And d2 is the new pending row.
+	if d2.Status != DeployPending {
+		t.Errorf("d2.Status = %q, want pending", d2.Status)
+	}
+}
+
+// TestMemStore_CreateDeployment_LeavesBuildingRowAlone pins the
+// M-1 invariant in the MemStore: a building row is NOT superseded by
+// a subsequent deploy. Mirrors pgstore_test.go's same-named test.
+func TestMemStore_CreateDeployment_LeavesBuildingRowAlone(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acc, _ := m.CreateAccount(ctx, "bld@x.com", api.PlanPro)
+	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "bld-app"})
+
+	d1, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:1"})
+	if err != nil {
+		t.Fatalf("d1: %v", err)
+	}
+	// Flip d1 to building (simulating builderd mid-pipeline).
+	d1.Status = DeployBuilding
+	m.deployments[d1.ID] = d1
+
+	d2, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:2"})
+	if err != nil {
+		t.Fatalf("d2: %v", err)
+	}
+	if d2.Status != DeployPending {
+		t.Errorf("d2.Status = %q, want pending", d2.Status)
+	}
+	if m.deployments[d1.ID].Status != DeployBuilding {
+		t.Errorf("d1.Status = %q, want building (untouched)", m.deployments[d1.ID].Status)
 	}
 }
 
