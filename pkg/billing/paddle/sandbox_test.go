@@ -138,7 +138,7 @@ func TestPushOverageTransaction_PostsToPaddleSandbox(t *testing.T) {
 		Plan:  api.PlanHobby,
 	}
 	priorMonth := time.Now().UTC().Add(-31 * 24 * time.Hour) // land safely in the prior-month bucket
-	if err := p.accumulateOverage(acct, priorMonth, 1024); err != nil {
+	if err := p.accumulateOverage(context.Background(), acct, priorMonth, 1024); err != nil {
 		t.Fatalf("accumulateOverage: %v", err)
 	}
 }

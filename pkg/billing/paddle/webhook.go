@@ -163,7 +163,7 @@ func verifyPaddleSignature(payload []byte, header, secret string, tolerance time
 
 	unix, err := strconv.ParseInt(tsStr, 10, 64)
 	if err != nil {
-		return fmt.Errorf("paddle: %w: bad ts value: %v", billing.ErrBadSignature, err)
+		return fmt.Errorf("paddle: %w: bad ts value: %q", billing.ErrBadSignature, err.Error())
 	}
 	if age := time.Since(time.Unix(unix, 0)); age > tolerance || age < -tolerance {
 		return fmt.Errorf("paddle: %w: timestamp outside tolerance (age=%s)", billing.ErrBadSignature, age)

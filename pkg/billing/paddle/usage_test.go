@@ -200,7 +200,7 @@ func TestAccumulateOverage_CrossMonthFlush(t *testing.T) {
 
 	// Jan 31 23:59 UTC.
 	jan31 := time.Date(2025, 1, 31, 23, 59, 0, 0, time.UTC)
-	if err := p.accumulateOverage(acct, jan31, 1000); err != nil {
+	if err := p.accumulateOverage(context.Background(), acct, jan31, 1000); err != nil {
 		t.Fatalf("Jan push: %v", err)
 	}
 	if calls != 0 {
@@ -210,7 +210,7 @@ func TestAccumulateOverage_CrossMonthFlush(t *testing.T) {
 	// Mar 1 00:01 UTC (skips Feb entirely; exercises the calendar
 	// math rather than adjacent-month drift).
 	mar1 := time.Date(2025, 3, 1, 0, 1, 0, 0, time.UTC)
-	if err := p.accumulateOverage(acct, mar1, 2000); err != nil {
+	if err := p.accumulateOverage(context.Background(), acct, mar1, 2000); err != nil {
 		t.Fatalf("Mar push: %v", err)
 	}
 
@@ -237,13 +237,13 @@ func TestAccumulateOverage_AdjacentMonthBoundary(t *testing.T) {
 	jan15 := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	feb1 := time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)
 
-	if err := p.accumulateOverage(acct, jan15, 500); err != nil {
+	if err := p.accumulateOverage(context.Background(), acct, jan15, 500); err != nil {
 		t.Fatalf("Jan push: %v", err)
 	}
 	if calls != 0 {
 		t.Errorf("after Jan push: calls=%d, want 0", calls)
 	}
-	if err := p.accumulateOverage(acct, feb1, 700); err != nil {
+	if err := p.accumulateOverage(context.Background(), acct, feb1, 700); err != nil {
 		t.Fatalf("Feb push: %v", err)
 	}
 	if calls != 1 {
@@ -265,13 +265,13 @@ func TestAccumulateOverage_WithinMonthDedupe(t *testing.T) {
 	acct := acctWithPlan(api.PlanHobby)
 
 	// Three pushes in the same month with hour-precision spacing.
-	if err := p.accumulateOverage(acct, time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), 100); err != nil {
+	if err := p.accumulateOverage(context.Background(), acct, time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), 100); err != nil {
 		t.Fatalf("push1: %v", err)
 	}
-	if err := p.accumulateOverage(acct, time.Date(2025, 6, 1, 0, 30, 0, 0, time.UTC), 200); err != nil {
+	if err := p.accumulateOverage(context.Background(), acct, time.Date(2025, 6, 1, 0, 30, 0, 0, time.UTC), 200); err != nil {
 		t.Fatalf("push2: %v", err)
 	}
-	if err := p.accumulateOverage(acct, time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC), 300); err != nil {
+	if err := p.accumulateOverage(context.Background(), acct, time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC), 300); err != nil {
 		t.Fatalf("push3: %v", err)
 	}
 	if calls != 0 {
@@ -279,7 +279,7 @@ func TestAccumulateOverage_WithinMonthDedupe(t *testing.T) {
 	}
 
 	// Crossing into July triggers the June flush.
-	if err := p.accumulateOverage(acct, time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC), 50); err != nil {
+	if err := p.accumulateOverage(context.Background(), acct, time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC), 50); err != nil {
 		t.Fatalf("July push: %v", err)
 	}
 	if calls != 1 {
@@ -287,7 +287,7 @@ func TestAccumulateOverage_WithinMonthDedupe(t *testing.T) {
 	}
 
 	// Another July push: same bucket, should not flush again.
-	if err := p.accumulateOverage(acct, time.Date(2025, 7, 15, 12, 0, 0, 0, time.UTC), 80); err != nil {
+	if err := p.accumulateOverage(context.Background(), acct, time.Date(2025, 7, 15, 12, 0, 0, 0, time.UTC), 80); err != nil {
 		t.Fatalf("second July push: %v", err)
 	}
 	if calls != 1 {
@@ -309,10 +309,10 @@ func TestAccumulateOverage_FlushErrorPropagates(t *testing.T) {
 	jan15 := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	feb1 := time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)
 
-	if err := p.accumulateOverage(acct, jan15, 100); err != nil {
+	if err := p.accumulateOverage(context.Background(), acct, jan15, 100); err != nil {
 		t.Fatalf("Jan push should succeed: %v", err)
 	}
-	err := p.accumulateOverage(acct, feb1, 200)
+	err := p.accumulateOverage(context.Background(), acct, feb1, 200)
 	if err == nil {
 		t.Fatal("Feb push should surface flush failure")
 	}

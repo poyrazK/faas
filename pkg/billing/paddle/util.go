@@ -2,6 +2,13 @@ package paddle
 
 import "strings"
 
+// redactedKeyMarker is the fallback string emitted by redactAPIKey
+// when the input is too short to truncate to the first 4 chars.
+// Same value pkg/mail uses for outgoing-provider redaction
+// (CLAUDE.md "never log secret values"). Pulled out as a constant
+// so the goconst linter sees one occurrence instead of three.
+const redactedKeyMarker = "***"
+
 // cloneBytes returns a defensive copy of b. The webhook parser
 // stores the raw payload on the returned Event so apid's audit
 // log can quote it later; a defensive copy prevents a downstream
@@ -27,7 +34,7 @@ func cloneBytes(b []byte) []byte {
 // test reaches the lower-case identifier directly.
 func redactAPIKey(key string) string {
 	if len(key) <= 4 {
-		return "***"
+		return redactedKeyMarker
 	}
 	return key[:4] + strings.Repeat("*", len(key)-4)
 }

@@ -135,7 +135,7 @@ func (p *Provider) ensurePlansAndPrices(ctx context.Context) error {
 // header derived from (acct.ID, prior-month) so a redelivered month-
 // rollover is a no-op — the same pattern Stripe's Idempotency-Key
 // contract translates to directly (PR #1 surface).
-func (p *Provider) PushUsageRecord(_ context.Context, acct state.Account, hour time.Time, mbSeconds int64) error {
+func (p *Provider) PushUsageRecord(ctx context.Context, acct state.Account, hour time.Time, mbSeconds int64) error {
 	if p.client == nil {
 		return fmt.Errorf("paddle: SDK not initialized")
 	}
@@ -145,7 +145,7 @@ func (p *Provider) PushUsageRecord(_ context.Context, acct state.Account, hour t
 	if mbSeconds < 0 {
 		return errors.New("paddle: PushUsageRecord rejects negative mb_seconds")
 	}
-	return p.accumulateOverage(acct, hour, mbSeconds)
+	return p.accumulateOverage(ctx, acct, hour, mbSeconds)
 }
 
 // VerifyWebhook: HMAC-SHA256 over "<unix>:<body>" with the

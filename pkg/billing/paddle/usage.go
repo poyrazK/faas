@@ -52,7 +52,7 @@ type overageAccumulator struct {
 // triggers a flush of Jan). The unit test
 // TestAccumulateOverage_CrossMonthFlush exercises a Feb→Mar boundary
 // that the original Truncate(30*24h) math got wrong in 28-/29-day months.
-func (p *Provider) accumulateOverage(acct state.Account, hour time.Time, mbSeconds int64) error {
+func (p *Provider) accumulateOverage(ctx context.Context, acct state.Account, hour time.Time, mbSeconds int64) error {
 	monthStart := calendarMonthStart(hour.UTC())
 
 	v, _ := p.pendingOverage.LoadOrStore(acct.ID, &overageAccumulator{
@@ -66,7 +66,7 @@ func (p *Provider) accumulateOverage(acct state.Account, hour time.Time, mbSecon
 	// If this mb_seconds falls into a different calendar month than
 	// the accumulator's current month, drain the prior month first.
 	if !acc.month.Equal(monthStart) && acc.mbSeconds > 0 && !acc.flushed {
-		if err := p.flushOverageLocked(context.Background(), acc); err != nil {
+		if err := p.flushOverageLocked(ctx, acc); err != nil {
 			return fmt.Errorf("paddle: flush prior-month overage account=%s: %w", acct.ID, err)
 		}
 	}
