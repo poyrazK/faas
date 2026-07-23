@@ -212,11 +212,11 @@ func (c *VMMClient) CreateFromSnapshot(ctx context.Context, instance string, app
 		Instance: instance,
 		App:      app.toProto(),
 		Snapshot: &vmmdpb.SnapshotRef{
-			DeploymentId:       snap.DeploymentID,
-			VmstatePath:        snap.VMStatePath,
-			FcVersion:          snap.FCVersion,
-			StorageKey:         snap.StorageKey,
-			VmstateStorageKey:  snap.VMStateStorageKey,
+			DeploymentId:      snap.DeploymentID,
+			VmstatePath:       snap.VMStatePath,
+			FcVersion:         snap.FCVersion,
+			StorageKey:        snap.StorageKey,
+			VmstateStorageKey: snap.VMStateStorageKey,
 		},
 	})
 	if err != nil {
@@ -227,10 +227,10 @@ func (c *VMMClient) CreateFromSnapshot(ctx context.Context, instance string, app
 
 func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath, storageKey, vmstateStorageKey string) (SnapshotBytes, error) {
 	resp, err := c.cli.PauseAndSnapshot(ctx, &vmmdpb.PauseAndSnapshotRequest{
-		Instance:           instance,
-		VmstatePath:        vmstatePath,
-		StorageKey:         storageKey,
-		VmstateStorageKey:  vmstateStorageKey,
+		Instance:          instance,
+		VmstatePath:       vmstatePath,
+		StorageKey:        storageKey,
+		VmstateStorageKey: vmstateStorageKey,
 	})
 	if err != nil {
 		return SnapshotBytes{}, liftErr(err)

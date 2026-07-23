@@ -346,11 +346,11 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		vmstatePath := e.vmstateHostPathFor(bootInput.depID)
 		vmstateStorageKey := e.vmstateStorageKeyFor(bootInput.nodeID, bootInput.depID)
 		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec, SnapshotRef{
-			DeploymentID:       bootInput.depID,
-			FCVersion:          bootInput.snapVer,
-			StorageKey:         bootInput.snapKey,
-			VMStatePath:        vmstatePath,
-			VMStateStorageKey:  vmstateStorageKey,
+			DeploymentID:      bootInput.depID,
+			FCVersion:         bootInput.snapVer,
+			StorageKey:        bootInput.snapKey,
+			VMStatePath:       vmstatePath,
+			VMStateStorageKey: vmstateStorageKey,
 		})
 	} else {
 		// Either no snap row at all (cold path), or a snap row with
