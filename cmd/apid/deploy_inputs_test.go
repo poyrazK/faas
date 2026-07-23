@@ -51,7 +51,12 @@ func buildTestTarGz(t *testing.T, entries []tar.Header, bodies map[string][]byte
 		// Body length drives hdr.Size — tar.Writer refuses writes that
 		// exceed the declared size ("write too long") and silently pads
 		// short writes, so we set Size exactly from the bodies map.
-		if hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeRegA {
+		// Match the zero Typeflag too — most callers leave it unset
+		// (the test fixtures do: `tar.Header{Name: "index.js"}`),
+		// and tar treats Typeflag == 0 as TypeReg per the spec. The
+		// prior `|| tar.TypeRegA` form worked because TypeRegA == 0,
+		// but TypeRegA is SA1019-deprecated since Go 1.11.
+		if hdr.Typeflag == tar.TypeReg || hdr.Typeflag == 0 {
 			hdr.Size = int64(len(bodies[hdr.Name]))
 		}
 		if err := tw.WriteHeader(&hdr); err != nil {

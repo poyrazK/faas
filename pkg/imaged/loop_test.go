@@ -16,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -675,6 +676,30 @@ func TestLoop_BuildReapTick(t *testing.T) {
 	}
 }
 
+// threadsafeNotifier wraps the package-private fakeNotifier (which is
+// not safe for concurrent access) with a mutex. The PR-A wiring test
+// reads fakeNotifier.calls from the test goroutine while Run writes
+// from its own goroutine; -race flags this on the package fake.
+// Defined here rather than touching the shared fake to keep blast
+// radius small.
+type threadsafeNotifier struct {
+	mu    sync.Mutex
+	calls []notifyCall
+}
+
+func (t *threadsafeNotifier) Notify(_ context.Context, channel, payload string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.calls = append(t.calls, notifyCall{channel, payload})
+	return nil
+}
+
+func (t *threadsafeNotifier) Calls() []notifyCall {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]notifyCall(nil), t.calls...)
+}
+
 // TestLoop_BuildReapChannel_WiresThroughRun covers the PR-A review
 // "loop test bypasses Run + reapCh" finding. Spins up Loop.Run on a
 // cancellable context, sends one tick on WithBuildReapChannel, and
@@ -694,7 +719,7 @@ func TestLoop_BuildReapChannel_WiresThroughRun(t *testing.T) {
 		t.Fatalf("CreateBuild: %v", err)
 	}
 
-	notif := &fakeNotifier{}
+	notif := &threadsafeNotifier{}
 	reapCh := make(chan time.Time, 1)
 	// gcCh and fcCh are nil — Run()'s select should still spin and pick
 	// up the reap tick. Pass nil-safe lvUsedPct so any probe path that
@@ -733,12 +758,12 @@ func TestLoop_BuildReapChannel_WiresThroughRun(t *testing.T) {
 	// Poll briefly for the notify — Run is on its own goroutine.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		if len(notif.calls) > 0 {
+		if len(notif.Calls()) > 0 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if len(notif.calls) == 0 {
+	if len(notif.Calls()) == 0 {
 		t.Fatal("Run + reapCh wiring did not produce a notify within 1s")
 	}
 }

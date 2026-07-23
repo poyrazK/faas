@@ -1522,6 +1522,16 @@ func TestPg_CreateDeployment_RejectsDeletedApp(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, _ := seedLiveDeploy(t, s, ctx)
 
+	// PR-A review fix: seedLiveDeploy inserts one deployment for the
+	// app already, so a "no rows exist after the failed CreateDeployment"
+	// check is wrong. Capture the pre-delete count and assert it does
+	// NOT GROW across the rejected insert. The original gate's contract
+	// (no new deployment row for a deleted app) is what this pins.
+	pre, err := s.ListDeploymentsForApp(ctx, appID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForApp (pre): %v", err)
+	}
+
 	// Soft-delete the app via the public Store surface.
 	if err := s.DeleteApp(ctx, appID); err != nil {
 		t.Fatalf("DeleteApp: %v", err)
@@ -1529,7 +1539,7 @@ func TestPg_CreateDeployment_RejectsDeletedApp(t *testing.T) {
 
 	// Now CreateDeployment must return ErrNotFound (the active-app
 	// gate's contract). The handler maps ErrNotFound to 404.
-	_, err := s.CreateDeployment(ctx, state.Deployment{
+	_, err = s.CreateDeployment(ctx, state.Deployment{
 		AppID:       appID,
 		Kind:        state.DeploymentKindImage,
 		ImageDigest: "registry.example.com/x@sha256:" + strings.Repeat("d", 64),
@@ -1539,13 +1549,14 @@ func TestPg_CreateDeployment_RejectsDeletedApp(t *testing.T) {
 		t.Fatalf("CreateDeployment against deleted app: err = %v, want ErrNotFound", err)
 	}
 
-	// Ground truth: zero deployments rows exist for this app.
-	deps, err := s.ListDeploymentsForApp(ctx, appID, 0, 0)
+	// Ground truth: no new deployment row was inserted for the deleted
+	// app — the count must equal the pre-delete baseline.
+	post, err := s.ListDeploymentsForApp(ctx, appID, 0, 0)
 	if err != nil {
-		t.Fatalf("ListDeploymentsForApp: %v", err)
+		t.Fatalf("ListDeploymentsForApp (post): %v", err)
 	}
-	if len(deps) != 0 {
-		t.Errorf("store has %d deployments for deleted app, want 0", len(deps))
+	if len(post) != len(pre) {
+		t.Errorf("deployments count grew from %d to %d after rejected CreateDeployment on deleted app", len(pre), len(post))
 	}
 
 	// Sanity: an active app on a different account still accepts
@@ -1680,8 +1691,10 @@ func TestPg_ClaimQueuedBuild(t *testing.T) {
 		t.Errorf("second claim err = %v, want ErrNotFound", err)
 	}
 
-	// Unknown id loses the same way.
-	_, err = s.ClaimQueuedBuild(ctx, "deadbeef")
+	// Unknown id loses the same way. Use a valid UUID literal —
+	// the column is uuid-typed and rejects bare hex strings like
+	// "deadbeef" with a syntax error rather than ErrNotFound.
+	_, err = s.ClaimQueuedBuild(ctx, "00000000-0000-0000-0000-000000000000")
 	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("unknown id err = %v, want ErrNotFound", err)
 	}
