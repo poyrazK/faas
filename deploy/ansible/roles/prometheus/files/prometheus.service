@@ -3,6 +3,13 @@ Description=Prometheus (faas SLO dashboard pipeline)
 Documentation=https://github.com/onebox-faas/faas
 Wants=network-online.target
 After=network-online.target
+# Alertmanager runs on loopback; Prometheus dials it for evaluate→notify.
+# `Wants=` (not `Requires=`) so a failed Alertmanager still allows Prometheus
+# to start — rules evaluate, the page-severity alerts pile up in the
+# notifier queue, and the operator sees degraded state in `promtool` /
+# the status-page degraded flag.
+Wants=alertmanager.service
+After=alertmanager.service
 
 [Service]
 User=prometheus

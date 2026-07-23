@@ -12,25 +12,69 @@ prom_listen_addr: "10.0.0.1:9090"
 prom_retention_days: 15
 prom_data_dir: /var/lib/prometheus
 
+# Alertmanager — loopback-only (operator dials the bridge to reach it).
+# Wired into prometheus.yml.j2 via the `alerting:` block.
+prom_alertmanager_url: "http://127.0.0.1:9093"
+
 # faas daemon metrics endpoints. Each daemon exposes /metrics on its
 # MetricsAddr; see cmd/<daemon>/main.go for the exact port. Keep in
 # sync with the per-daemon config.toml.
+#
+# Sibling metrics_path entries (vmmd /metrics/fallback, schedd
+# /metrics/fcvm) are required: those sub-paths host the §12 row series
+# (vmmd_cold_boot_fallback_total, fcvm_snapshot_fleet_avg_bytes,
+# fcvm_resident_ram_pct, fcvm_lv_fc_used_pct) which the alert rules
+# query. Without explicit metrics_path, Prometheus scrapes /metrics
+# which is the wrong endpoint and the rules evaluate against an
+# empty series set.
+#
+# Port notes:
+# - apid default 9101 (cmd/apid/main.go — PR #132 set the loopback
+#   bind; prometheus defaults previously had 9092, drifted from real).
+# - imaged default 9102 (cmd/imaged/main.go — PR #132).
+# - githubd shares the loopback :8083 mux (pkg/githubd/server.go —
+#   no separate metrics port; webhook + /metrics on the same listener).
+# - gatewayd default 9090 (cmd/gatewayd/config.go — Prometheus role
+#   defaults previously had 9093; drifted from real).
+# - builderd/meterd MetricsAddr is operator-supplied TOML. The ports
+#   here match the production deployment on the EX44:
+#   - meterd 9106 — deploy/digitalocean/config/meterd.toml pins it.
+#   - schedd 9103 — deploy/digitalocean/config/schedd.toml pins it;
+#     Prometheus scrapes it under metrics_path=/metrics/fcvm so the
+#     vmmd sibling-path collection doesn't collide.
+#   - builderd has no pinned port today (no deployment config). The
+#     port 9105 chosen here is the alert-rules PR's best-effort guess;
+#     production must set metrics_addr in builderd.toml to match,
+#     otherwise the builderd scrape job sits in 0/UP forever and the
+#     FaasBuildQueueBacklog + FaasBuildSuccessLow alerts can never
+#     fire. Tracked as a follow-up: write deploy/etc/builderd.toml.
 prom_targets:
   - job: apid
     host: 127.0.0.1
-    port: 9092
+    port: 9101
   - job: gatewayd
     host: 127.0.0.1
-    port: 9093
+    port: 9090
   - job: schedd
     host: 127.0.0.1
-    port: 9091
+    port: 9103
+    metrics_path: /metrics/fcvm
   - job: vmmd
     host: 127.0.0.1
     port: 9104
+    metrics_path: /metrics/fallback
   - job: imaged
     host: 127.0.0.1
-    port: 9095
+    port: 9102
+  - job: builderd
+    host: 127.0.0.1
+    port: 9105
+  - job: githubd
+    host: 127.0.0.1
+    port: 8083
+  - job: meterd
+    host: 127.0.0.1
+    port: 9106
   - job: node
     host: 127.0.0.1
     port: 9100

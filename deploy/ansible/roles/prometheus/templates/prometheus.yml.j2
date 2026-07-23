@@ -7,6 +7,24 @@ global:
   external_labels:
     box: "{{ ansible_hostname }}"
 
+# Alert rules — evaluated every 30s against the closed (daemon, severity)
+# label set declared in faas.rules.yml. Three severities map to receivers
+# via the Alertmanager role (deploy/ansible/roles/alertmanager/):
+#   info  → no notify (route suppressed)
+#   warn  → ticket-only email
+#   page  → operator email + Pushover
+# See docs/runbooks/<AlertName>.md for triage steps per alert.
+rule_files:
+  - /etc/prometheus/faas.rules.yml
+
+# Alertmanager — loopback-only, dialed from the Prometheus binary on the
+# same box. Wired here so the operator's pager sees what the dashboard
+# will eventually show.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["{{ prom_alertmanager_url | replace('http://','') | replace('https://','') }}"]
+
 scrape_configs:
 {% for tgt in prom_targets %}
   - job_name: "{{ tgt.job }}"
@@ -14,4 +32,7 @@ scrape_configs:
       - targets: ["{{ tgt.host }}:{{ tgt.port }}"]
         labels:
           job: "{{ tgt.job }}"
+{% if tgt.metrics_path is defined %}
+    metrics_path: "{{ tgt.metrics_path }}"
+{% endif %}
 {% endfor %}
