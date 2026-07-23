@@ -59,10 +59,10 @@ type parkInstanceParker interface {
 // pusher's summed usage_minutes.mb_seconds across the billing window
 // (a full day under the production cadence, cfg.StripeInterval = 24h).
 // The SDK converts to wire units in int64 arithmetic — no float, no
-// per-hour fractional truncation loss on the wire. Mirrors
-// pkg/meter.StripePusher, kept as a separate type to keep cmd/meterd
-// free of a direct import cycle on the interface (cmd imports
-// pkg/meter, but pkg/meter doesn't import cmd).
+// per-hour fractional truncation loss on the wire. Duplicated from
+// pkg/meter.StripePusher rather than imported so the test fake
+// (cmd/meterd/main_test.go::nopStripe) stays a single-method struct
+// scoped to this package.
 type stripePusher interface {
 	PushUsageRecordSum(ctx context.Context, account state.Account, hour time.Time, mbSeconds int64) error
 }

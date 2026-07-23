@@ -2,6 +2,7 @@ package stripex
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -57,12 +58,21 @@ func TestInvoiceShadow24h_Sandbox(t *testing.T) {
 	store := state.NewMemStore()
 	c := NewClient(store, store, key, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	// Anchor: a UTC day, offset by one hour so we land in *yesterday*
-	// when run late in the day. Truncating to the day boundary then
-	// subtracting 24h keeps the test idempotent across reruns within
-	// the same UTC day.
+	// Anchor: yesterday at UTC midnight. Truncating to the day
+	// boundary then subtracting 24h keeps the test idempotent across
+	// reruns within the same UTC day — the past-day hour-window is
+	// disjoint from anything a current production meterd would push.
 	startUTC := time.Now().UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
-	acctID := "acct_sandbox24h_" + startUTC.Format("20060102")
+	// Account id includes a per-run suffix so two reruns within the
+	// same UTC day never collide on the (account, hour) dedupe gate.
+	// The dedupe key here is (acctID, startUTC) — startUTC is stable
+	// across reruns (both pick "yesterday 00:00 UTC"), so acctID has
+	// to vary. The legacy TestPushUsageRecord_PostsToStripeSandbox
+	// uses hour-precision on the date because *its* hour varies per
+	// run (it picks the previous top-of-hour, not a stable anchor).
+	// Suffixing on UnixNano() is unique enough; the test never
+	// re-derives the id from anywhere else.
+	acctID := fmt.Sprintf("acct_sandbox24h_%s_%d", startUTC.Format("20060102"), time.Now().UTC().UnixNano())
 	acct := state.Account{
 		ID:                     acctID,
 		StripeCustomerID:       "cus_sandbox",

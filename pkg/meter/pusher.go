@@ -73,12 +73,13 @@ func HourWindow(at time.Time) (start, end time.Time) {
 // overage). Returns the number of accounts it pushed for so the loop
 // can log a line; errors push loop backoff decisions up to the caller.
 //
-// The function name is kept as PushHour for historical / interface
-// consistency with the loop driver (pkg/meter/loop.go); the underlying
-// billing window is HourWindow(now), which spans the past 24h under
-// the production cadence (cfg.StripeInterval = 24h). The integer
-// mb_seconds sum is handed to the SDK which converts to wire units in
-// pure int64 arithmetic.
+// TODO(M7-followup): rename to PushWindow (or similar) once
+// pkg/meter/loop.go is updated to a daily cadence. The function name
+// is kept as PushHour for historical / interface consistency with the
+// loop driver; the underlying billing window is HourWindow(now), which
+// spans the past 24h under the production cadence
+// (cfg.StripeInterval = 24h). The integer mb_seconds sum is handed to
+// the SDK which converts to wire units in pure int64 arithmetic.
 //
 // Each non-skip SDK call is observed under the "stripe" op with a code
 // label from stripex.ClassifyPushError — "ok" on success, a stable

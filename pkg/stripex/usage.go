@@ -90,12 +90,15 @@ func (c *Client) pushUsageRecordSDKSumWithID(ctx context.Context, acct state.Acc
 		// misconfiguration in the meterd log line.
 		return nil, fmt.Errorf("%w (account %s)", ErrNoAPIKey, acct.ID)
 	}
-	// Integer wire quantity — no float on the path. The order of
-	// the multiplications and divisions doesn't affect the result
-	// (1024 * 3600 = 3_686_400 divides cleanly into mbSeconds * 1000
-	// for any non-negative mbSeconds); Go's int64 arithmetic is
-	// well-defined under the assumed ranges (24h of a 1 GB instance
-	// = 3.6e10 mb_seconds, well below int64 max).
+	// Integer wire quantity — no float on the path. The formula is
+	// (mbSeconds * WireQuantityMillicentsPerGBHour) / secondsPerGBHour
+	// evaluated in Go int64 arithmetic. Range guard: the largest
+	// billable window under spec §4.7 is a 1 TB instance resident
+	// for 24 h = ~2.1e9 mb_seconds, so mbSeconds * 1000 ≈ 2.1e12,
+	// well below int64 max (~9.2e18). Truncation is by design — the
+	// sub-milliunit remainder is dropped exactly the way the spec's
+	// integer money model requires (CLAUDE.md: "Floats near money
+	// fail review").
 	qty := mbSeconds * WireQuantityMillicentsPerGBHour / secondsPerGBHour
 	if qty < 0 {
 		// Defensive: a negative quantity would silently credit the
@@ -137,15 +140,45 @@ func (c *Client) pushUsageRecordSDK(ctx context.Context, acct state.Account, hou
 }
 
 // pushUsageRecordSDKWithID is the SDK-touching legacy implementation.
-// Returns the Stripe usage record on success. The wire quantity is
-// computed in integer arithmetic from the float GB-hour input.
+// Returns the Stripe usage record on success. The wire quantity
+// mirrors the pre-M7 legacy formula exactly (`int64(gbHours * 1000)`,
+// a per-call millicents-of-GB-h value with no further division) —
+// preserved so existing callers and the legacy
+// TestPushUsageRecord_PostsToStripeSandbox regression continue to
+// produce bit-identical Stripe records. Note this is intentionally
+// *not* the new `mbSeconds * 1000 / secondsPerGBHour` path; routing
+// through mb_seconds would change the wire quantity on any input
+// whose gb_hours * 1024 * 3600 is not a whole multiple of (1024 *
+// 3600 / 1000) = 3686.4 — i.e. almost every realistic input.
 func (c *Client) pushUsageRecordSDKWithID(ctx context.Context, acct state.Account, hour time.Time, gbHours float64) (*stripe.UsageRecord, error) {
 	if acct.StripeSubscriptionItem == "" {
 		return nil, nil
 	}
-	// Convert gbHours → mbSeconds, then route through the integer path.
-	// Same per-call truncation as the legacy code; the bit-exactness is
-	// preserved for the legacy wire shape (float-in, int64-out).
-	mbSeconds := int64(gbHours * float64(secondsPerGBHour))
-	return c.pushUsageRecordSDKSumWithID(ctx, acct, hour, mbSeconds)
+	if c.api == nil {
+		// Same nil-api guard as pushUsageRecordSDKSumWithID — see
+		// that function's comment for why we'd rather surface a
+		// clear error than bounce 401s off the unauthenticated SDK.
+		return nil, fmt.Errorf("%w (account %s)", ErrNoAPIKey, acct.ID)
+	}
+	// Legacy wire formula. Truncates the sub-milliunit remainder —
+	// the very truncation the M7 fix avoids on the integer path.
+	// Keep this exactly as-is so callers on the float path see no
+	// behaviour change.
+	qty := int64(gbHours * WireQuantityMillicentsPerGBHour)
+	if qty < 0 {
+		return nil, fmt.Errorf("%w (account %s, qty %d)", ErrNegativeQuantity, acct.ID, qty)
+	}
+	idem := acct.ID + "/" + hour.UTC().Format(time.RFC3339)
+	params := &stripe.UsageRecordParams{
+		SubscriptionItem: stripe.String(acct.StripeSubscriptionItem),
+		Quantity:         stripe.Int64(qty),
+		Timestamp:        stripe.Int64(hour.UTC().Unix()),
+		Action:           stripe.String(stripe.UsageRecordActionIncrement),
+	}
+	params.IdempotencyKey = stripe.String(idem)
+	record, err := c.api.UsageRecords.New(params)
+	if err != nil {
+		return nil, fmt.Errorf("stripex: UsageRecords.New account %s hour %s: %w", acct.ID, hour.UTC().Format(time.RFC3339), err)
+	}
+	return record, nil
 }

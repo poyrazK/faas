@@ -132,6 +132,20 @@ func scrapeOpsTotal(t *testing.T, m *wire.OpsMetrics) map[string]int {
 // tuples whose summed mb_seconds matches the hand-computed
 // 264 * 60 * 60 * 24 = 22_809_600 mb_seconds exactly.
 //
+// The assertion is two-level on purpose:
+//   - per-call: each of the 24 PushHour calls hands the SDK exactly
+//     one HourWindow's worth (60 minute-rows summed). Catches a
+//     regression in the pusher's per-hour window shape — e.g. if
+//     someone refactors PushHour to read across the full 24h at once
+//     instead of walking per-hour SourceWindow, the per-call check
+//     surfaces it before the total check does.
+//   - total: the sum across the 24 calls equals the spec's 24h bill
+//     exactly. This is the M7 acceptance.
+//
+// Drop the per-call check only when the wire-quantity path stops
+// being per-hour — i.e. not before PushHour is renamed and
+// production cadence becomes daily.
+//
 // The "24 h" framing is the spec; the math is the acceptance.
 //
 // Why 24 PushHour calls instead of one: HourWindow is a one-hour
