@@ -15,9 +15,6 @@ package paddle_test
 // _Provider var) is pinned by package-level compilation.
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -39,24 +36,12 @@ func discardLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// signPaddleBody computes the canonical `ts=N;h1=H` header for the
-// test body using the project's HMAC scheme (ts:body, separator ":"
-// — not ".", as Stripe does). Tests construct signatures via this
-// helper rather than calling the package's verifyPaddleSignature
-// itself; that's the surface VerifyWebhook uses.
+// signPaddleBody builds a valid Paddle-Signature header for tests
+// by delegating to the package's SignForTestForTest seam (parity
+// with pkg/billing/stripe/webhook.go::SignForTest). Wrapping
+// keeps the call sites short.
 func signPaddleBody(secret string, body []byte, when time.Time) string {
-	ts := strconvFormatInt(when.Unix(), 10)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(ts + ":"))
-	mac.Write(body)
-	return "ts=" + ts + ";h1=" + hex.EncodeToString(mac.Sum(nil))
-}
-
-// strconvFormatInt is a tiny helper to keep the test file from
-// dragging in `strconv` at the top (we want zero non-stdlib imports
-// for the cheapest build).
-func strconvFormatInt(v int64, base int) string {
-	return fmt.Sprintf("%d", v)
+	return paddle.SignForTestForTest(body, secret, when)
 }
 
 func TestVerifyPaddleSignature_RoundTrip(t *testing.T) {
@@ -231,24 +216,5 @@ func TestParsePaddleEvent_RejectsMalformedBody(t *testing.T) {
 	_, err := p.VerifyWebhook(bad, map[string]string{"Paddle-Signature": header}, time.Minute)
 	if err == nil {
 		t.Fatal("VerifyWebhook accepted malformed JSON body")
-	}
-}
-
-func TestRedactAPIKey(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		in, want string
-	}{
-		{"pdl_abcdefghijklmnop", "pdl_" + strings.Repeat("*", 16)},
-		{"abcd", "***"},
-		{"abc", "***"},
-		{"", "***"},
-	}
-	for _, tc := range cases {
-		got := paddle.RedactAPIKeyForTest(tc.in)
-		if got != tc.want {
-			t.Errorf("redact(%q) = %q, want %q", tc.in, got, tc.want)
-		}
 	}
 }

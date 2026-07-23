@@ -2,13 +2,9 @@ package paddle
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +48,7 @@ type Provider struct {
 	// meterd's quota + dunning timers when the calendar month rolls
 	// over. Mutex serializes the per-account accumulation.
 	pendingOverage sync.Map // map[string]*overageAccumulator
+	flushFn        FlushFn  // test seam; nil → defaultFlushLocked (production)
 	now            func() time.Time
 }
 
@@ -179,45 +176,4 @@ func (p *Provider) VerifyWebhook(payload []byte, headers map[string]string, tole
 		return billing.Event{}, err
 	}
 	return parsePaddleEvent(payload)
-}
-
-// ---- internal helpers ----
-
-var paddleSigRegexp = regexp.MustCompile(`^ts=(\d+);h1=([a-f0-9]{64})$`)
-
-// verifyPaddleSignature is the standalone HMAC verifier (mirrors
-// pkg/billing/stripe/webhook.go::VerifySignature). Public-callable
-// path is Provider.VerifyWebhook so external callers don't need to
-// know the canonical-string format.
-func verifyPaddleSignature(payload []byte, header, secret string, tolerance time.Duration) error {
-	if tolerance <= 0 {
-		tolerance = 5 * time.Minute
-	}
-	matches := paddleSigRegexp.FindStringSubmatch(strings.TrimSpace(header))
-	if len(matches) != 3 {
-		return fmt.Errorf("paddle: %w: malformed Paddle-Signature (want ts=N;h1=H)", billing.ErrBadSignature)
-	}
-	tsStr := matches[1]
-	gotHex := matches[2]
-
-	unix, err := strconv.ParseInt(tsStr, 10, 64)
-	if err != nil {
-		return fmt.Errorf("paddle: %w: bad ts value: %v", billing.ErrBadSignature, err)
-	}
-	if age := time.Since(time.Unix(unix, 0)); age > tolerance || age < -tolerance {
-		return fmt.Errorf("paddle: %w: timestamp outside tolerance (age=%s)", billing.ErrBadSignature, age)
-	}
-
-	// Recompute HMAC-SHA256 over "ts:body" using the shared secret.
-	// Paddle's canonical-string separator is ':' (Stripe uses '.');
-	// mismatched separator means same Go code reading the other
-	// provider's signature will always reject. Verified against
-	// paddle-go-sdk/v5@v5.2.0 webhook_verifier.go (PR #2 review).
-	mac := hmacSHA256([]byte(secret), []byte(tsStr+string(":")))
-	mac.Write(payload)
-	expectedHex := hex.EncodeToString(mac.Sum(nil))
-	if !constantTimeEqual([]byte(expectedHex), []byte(gotHex)) {
-		return fmt.Errorf("paddle: %w: h1 mismatch", billing.ErrBadSignature)
-	}
-	return nil
 }
