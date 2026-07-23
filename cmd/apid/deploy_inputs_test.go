@@ -182,9 +182,7 @@ func TestValidateTarballShape_RejectsHardlinkAbsoluteLinkname(t *testing.T) {
 // TestValidateTarballShape_FileCountBoundary pins the maxSourceFiles
 // (10k) cap. The check is intentionally AFTER the symlink/hardlink
 // check so a 10k-entry tarball that contains one malicious symlink
-// is rejected on the symlink, not on the count — defense in depth
-// (a future regression that flips the order would surface here as
-// a different error string).
+// is rejected on the symlink, not on the count — defense in depth.
 func TestValidateTarballShape_FileCountBoundary(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FAAS_SPOOL_ROOT", dir)
@@ -218,36 +216,131 @@ func TestValidateTarballShape_FileCountBoundary(t *testing.T) {
 	}
 }
 
-// TestValidateTarballShape_ByteCapBoundary is the validateAndSpool
-// boundary: SourceTarballMaxMB × 1024 × 1024 passes, +1 byte rejects.
-// validateTarballShape itself only reads the tar stream so it doesn't
-// enforce byte caps directly — this test pins the validateAndSpool
-// gate at the right boundary by passing the exact size and one over.
-func TestValidateTarballShape_ByteCapBoundary(t *testing.T) {
+// TestValidateTarballShape_EscapeBeforeCountCap pins the ordering
+// claim from the PR-A doc-comment: the symlink/hardlink escape check
+// runs BEFORE the file-count increment. A future refactor that flips
+// the order would surface here as a "too many files" problem instead
+// of the symlink-specific one. PR-A review fix.
+func TestValidateTarballShape_EscapeBeforeCountCap(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FAAS_SPOOL_ROOT", dir)
 
-	// Pin SourceTarballMaxMB at Pro (250 MB). The validateAndSpool
-	// gate runs inside createDeploymentMultipart, so we don't drive
-	// the byte cap directly here; instead we pin validateTarballShape
-	// for "small valid tarball — accepts", which is what the byte-cap
-	// branch in validateAndSpool yields AFTER the cap passes.
-	limits := api.MustLimitsFor(api.PlanPro)
-	t.Logf("Pro.SourceTarballMaxMB = %d", limits.SourceTarballMaxMB)
-
-	entries := []tar.Header{
-		{Name: "src/index.js"},
-		{Name: "package.json"},
+	// 10,000 valid entries (just under the cap) + 1 escaping symlink
+	// as entry 10,001. The validator must reject with the
+	// symlink-specific message, NOT the file-count message.
+	entries := make([]tar.Header, 0, 10001)
+	for i := 0; i < 10000; i++ {
+		entries = append(entries, tar.Header{Name: fmt.Sprintf("file-%05d.txt", i)})
 	}
-	bodies := map[string][]byte{
-		"src/index.js": []byte("module.exports = { handler: () => 42 };\n"),
-		"package.json": []byte(`{"name":"smoke","version":"0.0.0"}`),
-	}
-	raw := buildTestTarGz(t, entries, bodies)
+	entries = append(entries, tar.Header{
+		Name:     "evil.txt",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "/etc/passwd",
+	})
+	raw := buildTestTarGz(t, entries, nil)
 	path := writeTarToSpool(t, dir, raw)
-	if prob := validateTarballShape(path); prob != nil {
-		t.Fatalf("small valid tarball should pass validateTarballShape, got %v", prob)
+
+	prob := validateTarballShape(path)
+	if prob == nil {
+		t.Fatal("expected reject, got nil problem")
 	}
+	if !strings.Contains(prob.Detail, "symlink/hardlink") {
+		t.Errorf("expected symlink-specific detail, got %q (a flipped order would surface as 'too many files')", prob.Detail)
+	}
+}
+
+// TestValidateAndSpool_ByteCapBoundary drives validateAndSpool with a
+// small injected Limits value so we can pin the byte-cap gate at the
+// boundary without allocating 250 MB. PR-A review: the previous
+// "ByteCapBoundary" test was misnamed — it only exercised
+// validateTarballShape, which doesn't enforce the cap. This one
+// drives the helper that actually does.
+//
+// Caveat: validateAndSpool's `n` is the multipart part bytes (the
+// gzipped tarball), not the uncompressed tar contents. Gzip overhead
+// is content-dependent, so we don't pin the *exact* byte boundary
+// here — instead we drive the predicate on both sides with a delta
+// large enough to outpace gzip block quantization. The exact-byte
+// predicate (`n > cap`) is already obvious from a one-line read;
+// what's worth pinning is that the cap path surfaces
+// CodeSourceTooLarge rather than CodeValidation or some other code.
+func TestValidateAndSpool_ByteCapBoundary(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FAAS_SPOOL_ROOT", dir)
+
+	// Tiny fake limits: cap = 1 MB. Only SourceTarballMaxMB is consulted
+	// by validateAndSpool; the rest are zero-fill.
+	limits := api.Limits{SourceTarballMaxMB: 1}
+	cap := int64(limits.SourceTarballMaxMB) * 1024 * 1024
+
+	// Incompressible random bytes — gzip can't shrink them, so the
+	// payload size on the wire is approximately the body size. Null
+	// bytes gzip down to a few KB and the cap test would silently
+	// pass even with the over-cap body.
+	mkBody := func(n int) []byte {
+		b := make([]byte, n)
+		x := uint64(0x9e3779b97f4a7c15)
+		for i := range b {
+			x = x*6364136223846793005 + 1442695040888963407
+			b[i] = byte(x >> 56)
+		}
+		return b
+	}
+
+	// Well under the cap: must pass.
+	bodyUnder := mkBody(int(cap) / 2)
+	entries := []tar.Header{{Name: "blob.bin", Size: int64(len(bodyUnder))}}
+	raw := buildTestTarGz(t, entries, map[string][]byte{"blob.bin": bodyUnder})
+	part, cleanup := newMultipartFilePart(t, "src.tar.gz", raw)
+	defer cleanup()
+	_, n, prob := validateAndSpool(part, limits)
+	if prob != nil {
+		t.Fatalf("under-cap payload should pass, got %v", prob)
+	}
+	if n == 0 {
+		t.Errorf("validateAndSpool n = 0; want >0 (bytes were copied)")
+	}
+
+	// Way over the cap: must reject with CodeSourceTooLarge.
+	bodyOver := mkBody(int(cap) * 2)
+	entries2 := []tar.Header{{Name: "blob.bin", Size: int64(len(bodyOver))}}
+	raw2 := buildTestTarGz(t, entries2, map[string][]byte{"blob.bin": bodyOver})
+	part2, cleanup2 := newMultipartFilePart(t, "src.tar.gz", raw2)
+	defer cleanup2()
+	_, _, prob = validateAndSpool(part2, limits)
+	if prob == nil {
+		t.Fatal("over-cap payload should reject, got nil problem")
+	}
+	if prob.Code != api.CodeSourceTooLarge {
+		t.Errorf("expected CodeSourceTooLarge, got %q (detail=%q)", prob.Code, prob.Detail)
+	}
+}
+
+// newMultipartFilePart wraps raw bytes in a multipart.Part so they can
+// be fed straight to validateAndSpool. The part is backed by an
+// in-memory bytes.Buffer; cleanup is a no-op.
+func newMultipartFilePart(t *testing.T, filename string, body []byte) (*multipart.Part, func()) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("source", filename)
+	if err != nil {
+		t.Fatalf("multipart.CreateFormFile: %v", err)
+	}
+	if _, err := fw.Write(body); err != nil {
+		t.Fatalf("multipart write: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("multipart close: %v", err)
+	}
+	// multipart.NewReader takes the bare boundary value, NOT the full
+	// Content-Type header (unlike mime.ParseMediaType which would).
+	mr := multipart.NewReader(&buf, mw.Boundary())
+	part, err := mr.NextPart()
+	if err != nil {
+		t.Fatalf("multipart.NextPart: %v", err)
+	}
+	return part, func() {}
 }
 
 // TestValidateTarballShape_HappyPath is the small valid case — guards

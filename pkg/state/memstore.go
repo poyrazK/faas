@@ -910,6 +910,23 @@ func (m *MemStore) UpdateBuildStatus(_ context.Context, id string, status BuildS
 	return nil
 }
 
+// ClaimQueuedBuild atomically flips queued → running under m.mu (PR-A
+// review fix). Returns ErrNotFound if the row is missing or already
+// non-queued — the caller drops the build. Same contract as
+// PgStore.ClaimQueuedBuild.
+func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.builds[id]
+	if !ok || b.Status != BuildQueued {
+		return Build{}, ErrNotFound
+	}
+	b.Status = BuildRunning
+	b.StartedAt = time.Now()
+	m.builds[id] = b
+	return b, nil
+}
+
 // ListStaleQueuedBuilds mirrors PgStore.ListStaleQueuedBuilds (PR-A).
 // Same predicate (BuildQueued AND enqueued_at older than threshold),
 // same sort order (oldest first so the reaper drains the backlog

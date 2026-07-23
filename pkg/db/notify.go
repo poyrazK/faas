@@ -16,6 +16,18 @@ type Notification struct {
 	Payload string
 }
 
+// BuildQueuedPayload is the wire shape on the `build_queued` channel
+// (apid emits on the write path; imaged re-emits for stale queued
+// rows — PR-A). Both producers and consumers marshal/unmarshal via
+// this struct so the four fields stay in lock-step. builderd only
+// reads BuildID; imaged reads all four (see imaged/handler.go).
+type BuildQueuedPayload struct {
+	BuildID      string `json:"build"`
+	DeploymentID string `json:"deployment"`
+	AppID        string `json:"app"`
+	Kind         string `json:"kind"`
+}
+
 // Notify publishes a payload on the given channel. Non-blocking; returns an
 // error only if the underlying pg_notify call fails. Payloads are limited to
 // ~8 KB by Postgres — caller's responsibility.

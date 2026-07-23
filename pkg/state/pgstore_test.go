@@ -1643,3 +1643,46 @@ func TestPg_ListStaleQueuedBuilds(t *testing.T) {
 		t.Errorf("threshold=0 leaked the running row; got %v", gotIDs)
 	}
 }
+
+// TestPg_ClaimQueuedBuild pins the atomic queued → running transition
+// that closes the apid/reaper double-emit race (PR-A review). First
+// claim wins; subsequent claims return ErrNotFound. started_at must be
+// set on the winner.
+func TestPg_ClaimQueuedBuild(t *testing.T) {
+	pool := pgtest.Open(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := state.NewPgStore(pool)
+	_, _, depID := seedLiveDeploy(t, s, ctx)
+
+	b, err := s.CreateBuild(ctx, depID, state.DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild: %v", err)
+	}
+
+	// First claim wins; row flips to running and started_at is set.
+	won, err := s.ClaimQueuedBuild(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("first ClaimQueuedBuild: %v", err)
+	}
+	if won.Status != state.BuildRunning {
+		t.Errorf("first claim status = %q, want running", won.Status)
+	}
+	if won.StartedAt.IsZero() {
+		t.Errorf("first claim started_at is zero")
+	}
+
+	// Second claim loses — row is no longer queued.
+	_, err = s.ClaimQueuedBuild(ctx, b.ID)
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("second claim err = %v, want ErrNotFound", err)
+	}
+
+	// Unknown id loses the same way.
+	_, err = s.ClaimQueuedBuild(ctx, "deadbeef")
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("unknown id err = %v, want ErrNotFound", err)
+	}
+}

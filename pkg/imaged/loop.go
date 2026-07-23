@@ -10,6 +10,7 @@ package imaged
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -341,9 +342,22 @@ func (l *Loop) runBuildReapTick(ctx context.Context, _ time.Time) {
 				"build", b.ID, "deployment", b.DeploymentID, "err", derr)
 			continue
 		}
-		payload := fmt.Sprintf(`{"build":"%s","deployment":"%s","app":"%s","kind":"%s"}`,
-			b.ID, b.DeploymentID, dep.AppID, string(b.Kind))
-		if err := l.handler.notif.Notify(ctx, db.NotifyBuildQueued, payload); err != nil {
+		// PR-A review: marshal through db.BuildQueuedPayload so producer
+		// and consumer stay locked-step. (Previously this used
+		// fmt.Sprintf with hard-coded keys; the four-field shape was
+		// load-bearing but untyped.)
+		payload, perr := json.Marshal(db.BuildQueuedPayload{
+			BuildID:      b.ID,
+			DeploymentID: b.DeploymentID,
+			AppID:        dep.AppID,
+			Kind:         string(b.Kind),
+		})
+		if perr != nil {
+			l.log.Warn("imaged: build reap marshal",
+				"build", b.ID, "err", perr)
+			continue
+		}
+		if err := l.handler.notif.Notify(ctx, db.NotifyBuildQueued, string(payload)); err != nil {
 			l.log.Warn("imaged: build reap notify",
 				"build", b.ID, "deployment", b.DeploymentID, "err", err)
 			continue

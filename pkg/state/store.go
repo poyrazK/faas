@@ -332,6 +332,12 @@ type Store interface {
 	CreateBuild(ctx context.Context, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error)
 	BuildByID(ctx context.Context, id string) (Build, error)
 	BuildByDeployment(ctx context.Context, deploymentID string) (Build, error)
+	// ClaimQueuedBuild atomically transitions queued → running and returns
+	// the row. Returns ErrNotFound when the row is missing OR when its
+	// status is no longer BuildQueued — callers (builderd's ProcessOne)
+	// use the second case to drop duplicate notifications from the apid
+	// write path and the imaged reaper (PR-A). started_at is set to now.
+	ClaimQueuedBuild(ctx context.Context, id string) (Build, error)
 	UpdateBuildStatus(ctx context.Context, id string, status BuildStatus, fc FailureClass, started, finished bool) error
 	// ListStaleQueuedBuilds returns builds still in BuildQueued whose
 	// enqueued_at is older than threshold. The imaged reaper (PR-A)

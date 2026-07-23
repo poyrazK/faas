@@ -254,17 +254,19 @@ func validateTarballShape(path string) *api.Problem {
 		if err != nil {
 			return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad tar", err.Error())
 		}
-		// PR-A: reject symlink/hardlink entries whose target points
-		// outside the unpack root BEFORE counting the entry. The
-		// `hdr.Name` check above already catches `..` / absolute paths
-		// on the entry itself, but a regular-file entry like
-		// "evil.txt" can carry Linkname="/etc/passwd" under
-		// Typeflag=TypeLink and escape the build sandbox when builderd
-		// unpacks. Same predicate applied to Linkname as to Name so
-		// the wire contract is uniform: a tarball that escapes is
-		// rejected on the first offending entry.
+		// PR-A: every name-based escape check runs BEFORE count++ so a
+		// tarball mixing 10k valid entries with one escaping symlink
+		// trips the escape check first, not the file-count cap
+		// (review ordering pin).
+		if escapesArchiveRoot(hdr.Name) {
+			return api.ErrSourceInvalid("absolute paths or '..' entries are rejected")
+		}
 		if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
-			if strings.HasPrefix(hdr.Linkname, "/") || strings.Contains(hdr.Linkname, "..") {
+			// Symlink/hardlink target uses the same predicate as the
+			// entry name. tar's tar.Reader doesn't resolve targets —
+			// builderd's unpack does — so we just reject anything that
+			// could escape when resolved relative to the entry's parent.
+			if escapesArchiveRoot(hdr.Linkname) {
 				return api.ErrSourceInvalid("symlink/hardlink with absolute or '..' target rejected")
 			}
 		}
@@ -272,11 +274,31 @@ func validateTarballShape(path string) *api.Problem {
 		if count > maxSourceFiles {
 			return api.ErrSourceInvalid(fmt.Sprintf("too many files (>%d)", maxSourceFiles))
 		}
-		if strings.HasPrefix(hdr.Name, "/") || strings.Contains(hdr.Name, "..") {
-			return api.ErrSourceInvalid("absolute paths or '..' entries are rejected")
-		}
 	}
 	return nil
+}
+
+// escapesArchiveRoot reports whether p would, when cleaned and joined
+// under an archive root, walk above that root. Catches absolute paths
+// and any path component equal to "..". PR-A review: the prior
+// strings.Contains("..") rejected safe names like "file..txt" —
+// splitting on the path separator and checking each component is the
+// tightest predicate that still closes the escape.
+func escapesArchiveRoot(p string) bool {
+	if p == "" {
+		return false
+	}
+	if strings.HasPrefix(p, "/") {
+		return true
+	}
+	// filepath.SplitList won't help; split manually so we don't pull in
+	// OS semantics (tar paths are always forward-slash on the wire).
+	for _, part := range strings.Split(p, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // isFlagSet reads a small multipart field and reports whether it carries a

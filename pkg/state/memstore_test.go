@@ -1726,3 +1726,57 @@ func TestMemStore_ListStaleQueuedBuilds(t *testing.T) {
 		t.Errorf("threshold=0 returned %d rows, want 2 (predicate is `enqueued_at < now()`)", len(out2))
 	}
 }
+
+// TestMemStore_ClaimQueuedBuild pins the atomic queued → running CAS
+// that closes the apid/reaper double-emit race (PR-A review). First
+// claim wins; subsequent claims return ErrNotFound. Mirrors
+// TestPg_ClaimQueuedBuild so the two backends stay in lock-step.
+func TestMemStore_ClaimQueuedBuild(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct, err := m.CreateAccount(ctx, "claim@example.com", "pro")
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := m.CreateApp(ctx, App{
+		AccountID: acct.ID, Slug: "claim-app", Type: AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	dep, err := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, Kind: DeploymentKindTarball, Status: DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	b, err := m.CreateBuild(ctx, dep.ID, DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatalf("CreateBuild: %v", err)
+	}
+
+	// First claim wins.
+	won, err := m.ClaimQueuedBuild(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("first ClaimQueuedBuild: %v", err)
+	}
+	if won.Status != BuildRunning {
+		t.Errorf("first claim status = %q, want running", won.Status)
+	}
+	if won.StartedAt.IsZero() {
+		t.Errorf("first claim started_at is zero")
+	}
+
+	// Second claim loses — row is no longer queued.
+	_, err = m.ClaimQueuedBuild(ctx, b.ID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("second claim err = %v, want ErrNotFound", err)
+	}
+
+	// Unknown id loses the same way.
+	_, err = m.ClaimQueuedBuild(ctx, "deadbeef")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown id err = %v, want ErrNotFound", err)
+	}
+}

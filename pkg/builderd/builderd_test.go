@@ -3,6 +3,7 @@ package builderd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -75,6 +77,40 @@ func seedDeploymentWithPlan(t *testing.T, store state.Store, source, plan string
 	}
 	app, err := store.CreateApp(context.Background(), state.App{
 		AccountID: acct.ID, Slug: "src-app", RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindTarball,
+		SourcePath:  source,
+		SourceBytes: 100,
+		LogPath:     filepath.Join(t.TempDir(), "build.log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 100, dep.LogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return build.ID, dep.ID, app.ID
+}
+
+// seedDeploymentWithSlug is the per-test-call variant for the cache_hit
+// subtest (seedBuildForCachePrime). MemStore rejects duplicate account
+// emails; vary the slug (and the email) so two consecutive seeds in
+// the same test don't collide.
+func seedDeploymentWithSlug(t *testing.T, store state.Store, source, slug string) (string, string, string) {
+	t.Helper()
+	email := fmt.Sprintf("%s@example.com", slug)
+	acct, err := store.CreateAccount(context.Background(), email, api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: slug, RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 5,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -622,12 +658,18 @@ func TestProcessOne_BuildMetricCodeByOutcome(t *testing.T) {
 		fvm := &fakeVM{out: BuildOutcome{OCIImage: outPath(t), ExitCode: 0, LogTailBytes: 9}}
 		ops := wire.NewOpsMetrics("builderd")
 		b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
-		buildID := mustSeed(t, store, srcTar(t))
-		if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		// mustSeed creates an account+app+deployment+build. MemStore's
+		// CreateAccount rejects duplicate emails, so vary the slug per
+		// call (and indirectly the account id via the slug→app→dep
+		// chain). The cache key is the SOURCE content hash — both
+		// builds point at the same `src` so the second hits.
+		src := srcTar(t)
+		primeID := seedBuildForCachePrime(t, store, src)
+		if _, err := b.ProcessOne(context.Background(), primeID); err != nil {
 			t.Fatalf("first ProcessOne (cache prime): %v", err)
 		}
-		// Second ProcessOne on the same source hash hits the cache.
-		_, _ = b.ProcessOne(context.Background(), buildID)
+		hitID := seedBuildForCachePrime(t, store, src)
+		_, _ = b.ProcessOne(context.Background(), hitID)
 		assertCodes(t, ops, "cache_hit", "cache_hit")
 	})
 
@@ -675,6 +717,19 @@ func TestProcessOne_BuildMetricCodeByOutcome(t *testing.T) {
 func mustSeed(t *testing.T, store state.Store, src string) string {
 	t.Helper()
 	id, _, _ := seedDeployment(t, store, src)
+	return id
+}
+
+// seedBuildForCachePrime is a per-test-call helper for the cache_hit
+// subtest. mustSeed routes through seedDeployment which hardcodes the
+// email "u@example.com"; the MemStore rejects duplicate emails, so the
+// cache_hit subtest (which seeds twice) needs unique accounts per
+// call. Slug carries the test-scoped uniqueness; the rest of the chain
+// falls out automatically.
+func seedBuildForCachePrime(t *testing.T, store state.Store, src string) string {
+	t.Helper()
+	slug := fmt.Sprintf("prime-%d", time.Now().UnixNano())
+	id, _, _ := seedDeploymentWithSlug(t, store, src, slug)
 	return id
 }
 

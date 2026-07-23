@@ -41,23 +41,15 @@ func TestCreateDeployment_RejectsSoftDeletedApp_Image(t *testing.T) {
 		t.Fatalf("status = %d, want 404 (%s)", rec.Code, rec.Body)
 	}
 	// Confirm: the store holds no deployments for the deleted app.
-	// AppBySlug returns ErrNotFound for deleted apps, so iterate via
-	// the account list instead.
-	apps, err := e.store.ListApps(context.Background(), e.acct.ID)
+	// PR-A review: the prior ListApps-iteration form was unfalsifiable
+	// because ListApps hides soft-deleted apps. Use the app.ID we kept
+	// before DeleteApp — same approach as the PgStore test.
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), app.ID, 0, 0)
 	if err != nil {
-		t.Fatalf("ListApps: %v", err)
+		t.Fatalf("ListDeploymentsForApp: %v", err)
 	}
-	for _, a := range apps {
-		if a.Slug != "del-img" {
-			continue
-		}
-		deps, err := e.store.ListDeploymentsForApp(context.Background(), a.ID, 0, 0)
-		if err != nil {
-			t.Fatalf("ListDeploymentsForApp: %v", err)
-		}
-		if len(deps) != 0 {
-			t.Errorf("store has %d deployments for deleted app, want 0", len(deps))
-		}
+	if len(deps) != 0 {
+		t.Errorf("store has %d deployments for deleted app, want 0", len(deps))
 	}
 }
 

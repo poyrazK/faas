@@ -825,6 +825,31 @@ func (s *PgStore) UpdateBuildStatus(ctx context.Context, id string, status Build
 	return nil
 }
 
+// ClaimQueuedBuild atomically transitions queued → running via a single
+// UPDATE … RETURNING and sets started_at = now(). Returns ErrNotFound
+// when the row is missing OR already in another status — that second
+// case is what lets builderd drop duplicate build_queued notifications
+// (apid write path + imaged reaper) without spawning two builder VMs.
+// Equivalent to a compare-and-swap at the row level.
+func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error) {
+	row := s.pool.QueryRow(ctx,
+		`update builds
+		   set status = 'running', started_at = now()
+		 where id = $1 and status = 'queued'
+		 returning id, deployment_id, kind, source_bytes, status,
+		           coalesce(failure_class,''), coalesce(log_path,''),
+		           started_at, finished_at, enqueued_at`,
+		id)
+	b, err := scanBuild(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Build{}, ErrNotFound
+		}
+		return Build{}, fmt.Errorf("state: claim queued build %s: %w", id, err)
+	}
+	return b, nil
+}
+
 // ListStaleQueuedBuilds is the imaged reaper's read surface (PR-A).
 // Returns every row still in BuildQueued whose enqueued_at is older
 // than `now() - threshold`. Uses the index on (status, enqueued_at)
