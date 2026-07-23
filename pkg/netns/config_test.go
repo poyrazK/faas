@@ -173,6 +173,46 @@ func TestSetupInstallsDefaultRouteAfterAddressing(t *testing.T) {
 	}
 }
 
+// TestSetupDefaultRouteArgvIsExact locks the EXACT argv bytes for the
+// netns default route and asserts exactly one such entry exists.
+// Contents-matching (see TestSetupInstallsNetnsDefaultRouteViaBridge)
+// is necessary but not sufficient: a future edit could add a second
+// route command whose argv happens to contain the expected substring
+// (e.g. a typo like `ip route add default via 10.100.0.1 dev eth0`
+// inside the netns) and pass the substring test, breaking the entire
+// tenant-egress story. nft/IP argv are not shell-parsed, so the only
+// way to compose them correctly is argv-by-argv equality.
+func TestSetupDefaultRouteArgvIsExact(t *testing.T) {
+	c := testConfig()
+	want := []string{
+		"ip", "netns", "exec", c.Netns,
+		"ip", "route", "add", "default", "via", "10.100.0.1", "dev", c.VethPeer,
+	}
+	cmds := c.SetupCommands()
+	hits := 0
+	for _, cmd := range cmds {
+		if len(cmd) != len(want) {
+			continue
+		}
+		match := true
+		for j := range want {
+			if cmd[j] != want[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			hits++
+		}
+	}
+	if hits == 0 {
+		t.Fatalf("SetupCommands missing exact argv %v; got:\n%s", want, flatten(cmds))
+	}
+	if hits > 1 {
+		t.Errorf("SetupCommands emitted %d argvs matching the default-route shape; want exactly 1", hits)
+	}
+}
+
 func TestNftCommandsPublishGuestPort(t *testing.T) {
 	rules := flatten(testConfig().NftCommands())
 	// Publish + NAT: DNAT the host identity's :8080 to the guest, masquerade egress.
