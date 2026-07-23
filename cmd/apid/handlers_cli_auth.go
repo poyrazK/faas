@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -164,6 +165,15 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 // dashboard template cli_auth.html. Missing or malformed code →
 // error page; unknown code → "code not found" page (NOT a 404,
 // which would let a phishing page probe which codes exist).
+//
+// CSRF (review finding A1): on a valid code we mint a sealed CSRF
+// token bound to (action="cli-auth", subject=<raw code>) using the
+// shared session.Manager and set it as the cli-auth-pre cookie. The
+// same token is rendered into the form's csrf_token hidden field.
+// postCliAuthPage verifies the cookie against the form value with
+// the matching action + subject. A cross-site POST lacks the cookie
+// and is rejected; a forged token cannot be opened without the
+// 32-byte session key.
 func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Request) {
 	hash, ok := normalizeCliAuthCode(r.URL.Query().Get("code"))
 	if !ok {
@@ -179,12 +189,30 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	// the POST handler can hash it. normalizeCliAuthCode strips the
 	// dash and uppercases; we put the hex back together.
 	raw := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(r.URL.Query().Get("code")), "-", ""))
+
+	// Mint the CSRF token + sidecar cookie bound to this code.
+	token, err := middleware.IssueForAnonymous(h.srv.sessions, "cli-auth", raw)
+	if err != nil {
+		h.log.Error("cli_auth.csrf_issue", "err", err)
+		http.Error(w, "render failed", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.CookieNameAnonymous,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   h.domain != "",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
+	})
+
 	page := dashboard.Page{
 		Title: "Authorize CLI session",
 		Body:  "cli_auth",
 		Data: map[string]any{
 			"Code":      raw,
-			"CSRFToken": "cli-auth:yes", // mirror dashboard_delete.go literal-string CSRF (review finding F1)
+			"CSRFToken": token,
 		},
 	}
 	if err := dashboard.Render(w, h.log, page); err != nil {
@@ -200,22 +228,34 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 // claims the code, fires NotifyCliAuthCodeActivated, sets the
 // faas_sid session cookie so the browser is logged in too,
 // redirects to /dashboard/account.
+//
+// CSRF (review finding A1): verify the cli-auth-pre cookie + form
+// token are bound to (action="cli-auth", subject=<raw code>). The
+// subject is the normalized code so an attacker who replays the
+// cookie against a different code they minted on /v1/cli-auth/code
+// cannot match the binding.
 func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	// CSRF guard (review finding F1). The hidden confirm_token field
-	// is the literal string "cli-auth:yes" rendered by renderCliAuthPage.
-	// Mirrors cmd/apid/dashboard_delete.go::confirmTokenMatches — a
-	// future HMAC refactor covers both surfaces in one PR.
-	if !confirmTokenMatches(r, "cli-auth") {
-		h.renderCliAuthError(w, "Invalid form", "Please reload the page and try again.")
+	// Resolve the code first so we can pass it as the CSRF subject.
+	rawCode := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(r.FormValue("code")), "-", ""))
+	if rawCode == "" {
+		h.renderCliAuthError(w, "Missing fields", "Both an 8-character code and an email are required.")
 		return
 	}
-	hash, ok := normalizeCliAuthCode(r.FormValue("code"))
+	hash, ok := normalizeCliAuthCode(rawCode)
 	if !ok {
 		h.renderCliAuthError(w, "Missing fields", "Both an 8-character code and an email are required.")
+		return
+	}
+	// CSRF guard (review finding A1). Cookie + form value must be a
+	// sealed envelope with action=cli-auth and subject=rawCode. A
+	// cross-site POST lacks the cookie and is rejected here before
+	// any account lookup or claim.
+	if err := middleware.VerifyAnonymous(h.srv.sessions, r, "cli-auth", rawCode); err != nil {
+		h.renderCliAuthError(w, "Invalid form", "Please reload the page and try again.")
 		return
 	}
 	email := strings.TrimSpace(strings.ToLower(r.FormValue("email")))

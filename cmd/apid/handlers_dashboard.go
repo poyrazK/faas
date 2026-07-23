@@ -21,6 +21,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -312,12 +313,41 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := dashboard.AccountData{
-		Keys:                keyItems,
-		ShowDelete:          view.Status != state.AccountDeletedPending,
-		DeleteConfirmToken:  "delete:yes",
-		ShowRestore:         view.Status == state.AccountDeletedPending,
-		RestoreConfirmToken: "restore:yes",
+		Keys:        keyItems,
+		ShowDelete:  view.Status != state.AccountDeletedPending,
+		ShowRestore: view.Status == state.AccountDeletedPending,
 	}
+	// CSRF (review finding A3): mint sealed envelopes bound to
+	// (action, account_id) and set the matching faas_csrf sidecar
+	// cookie. The renderer always issues both the delete and the
+	// restore tokens because the page conditionally shows one of the
+	// forms — the unused cookie is harmless (10 min TTL) and avoids
+	// the "user scrolled down, the form unrendered, the token went
+	// stale" footgun.
+	deleteTok, err := middleware.IssueForAuthenticated(s.sessions, "delete", view.ID)
+	if err != nil {
+		log.Error("dashboard renderAccount: csrf issue delete", "err", err, "account_id", view.ID)
+		renderProblem(w, log, err)
+		return
+	}
+	restoreTok, err := middleware.IssueForAuthenticated(s.sessions, "restore", view.ID)
+	if err != nil {
+		log.Error("dashboard renderAccount: csrf issue restore", "err", err, "account_id", view.ID)
+		renderProblem(w, log, err)
+		return
+	}
+	csrfCookie := &http.Cookie{
+		Name:     middleware.CookieNameAuthenticated,
+		Value:    deleteTok,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.domain != "",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
+	}
+	http.SetCookie(w, csrfCookie)
+	data.DeleteConfirmToken = deleteTok
+	data.RestoreConfirmToken = restoreTok
 	if view.DeletionRequestedAt != nil {
 		restoreUntil := view.DeletionRequestedAt.Add(state.DeletionGraceDuration()).
 			UTC().Format(time.RFC3339)

@@ -638,14 +638,25 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad webhook", err.Error()))
 		return
 	}
-	// Verify signature when configured. Empty secret = dev mode (network
-	// trust); the production deploy must set STRIPE_WEBHOOK_SECRET.
-	if s.stripeWebhookSecret != "" {
-		header := r.Header.Get("Stripe-Signature")
-		if err := stripex.VerifySignature(body, header, s.stripeWebhookSecret, 5*time.Minute); err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad signature", err.Error()))
-			return
-		}
+	// Fail closed (security review A2): refuse to process events when
+	// STRIPE_WEBHOOK_SECRET is unset. Previously the handler accepted
+	// unsigned bodies, letting anyone suspend any account. The 503
+	// tells the operator (via journal/log scrape) that the secret
+	// needs to be provisioned; dev-mode callers should set
+	// STRIPE_WEBHOOK_SECRET to a fixed test secret to reach the
+	// handler's success path.
+	if s.stripeWebhookSecret == "" {
+		s.log.Error("stripe_webhook.no_secret",
+			"err", "STRIPE_WEBHOOK_SECRET is unset; refusing to process events")
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"stripe webhook not configured",
+			"STRIPE_WEBHOOK_SECRET is unset; refusing to process events"))
+		return
+	}
+	header := r.Header.Get("Stripe-Signature")
+	if err := stripex.VerifySignature(body, header, s.stripeWebhookSecret, 5*time.Minute); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad signature", err.Error()))
+		return
 	}
 	var ev struct {
 		Type string `json:"type"`
