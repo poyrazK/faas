@@ -241,6 +241,7 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 //   - vector → {"resultType":"vector",  "result":[{"value":[ts,"x"]}, ...]}
 //   - scalar → {"resultType":"scalar",  "result":[{"value":[ts,"x"]}]}
 //   - matrix → {"resultType":"matrix",  "result":[{"values":[[ts,"x"],...]}], ...}
+//
 // We must support both vector and scalar because e.g.
 // `count(ALERTS{alertstate="firing"}) > 0` returns a scalar — the
 // alert-state PromQL expression the §12 degraded flag depends on.
