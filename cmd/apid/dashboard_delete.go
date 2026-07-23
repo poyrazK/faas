@@ -1,6 +1,7 @@
 package main
 
-// G6 dashboard delete/restore forms (spec §17 G6, ADR-021).
+// G6 dashboard delete/restore forms (spec §17 G6, ADR-021, security
+// review A3).
 //
 // The /dashboard/account page renders a "danger zone" with two
 // CSRF-protected POST forms:
@@ -13,10 +14,14 @@ package main
 // from handlers_account.go so the audit, email, and notification
 // side-effects stay identical to the REST API path.
 //
-// CSRF defence: the form must post with ?confirm=1 in the URL AND the
-// form must include a hidden confirmation token field. The token is
-// a per-session HMAC the dashboard page mints when it renders the
-// account template (see pkg/dashboard/templates/account.html).
+// CSRF defence (review finding A3): the form posts a sealed
+// envelope bound to (action, account_id) that the shared
+// middleware.VerifyAuthenticated helper verifies. The renderer
+// (renderAccount in handlers_dashboard.go) mints the token at GET
+// time using middleware.IssueForAuthenticated and sets it both as
+// the faas_csrf sidecar cookie and as the form's csrf_token hidden
+// field. A cross-site POST cannot read the cookie, so the helper
+// rejects before any state change.
 
 import (
 	"encoding/json"
@@ -26,12 +31,13 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // dashboardDelete handles POST /dashboard/account/delete. The form
-// posts here with a confirmation token; we verify the token matches
-// the session-bound secret and call scheduleDeletion.
+// posts here with a sealed csrf_token; we verify it against the
+// faas_csrf cookie + account binding and call scheduleDeletion.
 //
 // On success → 302 to /dashboard/account?deleted=1 (the dashboard
 // template reads the flag and shows the "scheduled for deletion"
@@ -43,8 +49,13 @@ func (s *server) dashboardDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if !confirmTokenMatches(r, "delete") {
-		http.Error(w, "invalid confirmation token", http.StatusBadRequest)
+	if err := middleware.VerifyAuthenticated(s.sessions, r, "delete", acct.ID); err != nil {
+		// Surface an RFC 7807 problem so the response shape matches
+		// the rest of apid. The helper wraps ErrCSRFInvalid on every
+		// failure path, so the message is intentionally generic —
+		// "invalid" doesn't tell the caller which check tripped.
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
 	if _, prob := s.scheduleDeletion(r.Context(), acct); prob != nil {
@@ -55,16 +66,17 @@ func (s *server) dashboardDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // dashboardRestore handles POST /dashboard/account/restore. Mirrors
-// dashboardDelete — verify the confirm token, call cancelDeletion,
-// redirect to the success banner.
+// dashboardDelete — verify the csrf_token against (action="restore",
+// account_id), call cancelDeletion, redirect to the success banner.
 func (s *server) dashboardRestore(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if !confirmTokenMatches(r, "restore") {
-		http.Error(w, "invalid confirmation token", http.StatusBadRequest)
+	if err := middleware.VerifyAuthenticated(s.sessions, r, "restore", acct.ID); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
 	if _, prob := s.cancelDeletion(r.Context(), acct); prob != nil {
@@ -109,31 +121,6 @@ func (s *server) dashboardExport(w http.ResponseWriter, r *http.Request) {
 			time.Now().UTC().Format("20060102")+`.json"`)
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(bundle)
-}
-
-// confirmTokenMatches verifies the form's confirmation token against
-// the session-bound HMAC. The token shape is `action|nonce` where
-// action ∈ {"delete", "restore"} — binding the action into the token
-// prevents a stolen "delete" token from being replayed against the
-// restore endpoint. The token is rendered into the dashboard
-// template via pkg/dashboard.Page.ConfirmTokens and signed with the
-// same session.Manager that seals cookies, so an attacker who can't
-// forge a cookie can't forge a token either.
-//
-// For the M8 G6 milestone we accept the simple shape: the form must
-// POST with a `confirm_token` field equal to the literal string
-// "<action>:yes". The dashboard template renders the matching value
-// inline; CSRF depth comes from the same-origin cookie requirement
-// (the browser sends faas_sid on the POST but the attacker site
-// can't read it). When M8.5 lands an HMAC-based token, this helper
-// swaps in the verify path without changing call sites.
-func confirmTokenMatches(r *http.Request, action string) bool {
-	if err := r.ParseForm(); err != nil {
-		return false
-	}
-	got := r.PostForm.Get("confirm_token")
-	want := action + ":yes"
-	return got == want && got != ""
 }
 
 // dashboardDPA handles GET /dashboard/account/dpa. Renders the DPA

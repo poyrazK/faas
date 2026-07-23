@@ -77,14 +77,19 @@ func NewClient(store state.Store, dedupe PushDedupe, apiKey, secret string, log 
 	return c
 }
 
-// PushUsageRecord is the meterd-side entry point. It deduplicates on
-// (account, hour) before issuing the Stripe call so a redelivered hour
-// is a no-op. The Stripe call itself is gated behind a real-stripe
-// SDK call (see usage.go); the unit tests exercise the dedupe gate
-// end-to-end without the SDK.
+// PushUsageRecordSum is the meterd-side entry point on the integer-mb-
+// seconds path. The pusher hands the sum of usage_minutes.mb_seconds
+// for the billing window (a full day under the production cadence) and
+// the SDK converts to the wire quantity in pure int64 arithmetic — no
+// float, no per-hour truncation loss. See usage.go::pushUsageRecordSDKSum
+// for the wire-quantity contract.
 //
-// PushUsageRecord satisfies the pkg/meter.StripePusher interface.
-func (c *Client) PushUsageRecord(ctx context.Context, acct state.Account, hour time.Time, gbHours float64) error {
+// Deduplicates on (account, hour) before issuing the Stripe call so a
+// redelivered hour is a no-op. The (account, hour) key is unchanged
+// from the float path; the dedupe table is unaware of the precision
+// difference. PushUsageRecordSum satisfies the
+// pkg/meter.StripePusher interface.
+func (c *Client) PushUsageRecordSum(ctx context.Context, acct state.Account, hour time.Time, mbSeconds int64) error {
 	if acct.StripeCustomerID == "" || acct.StripeSubscriptionItem == "" {
 		// No customer / subscription yet — skip silently. Either
 		// field being empty means there's no Stripe surface to bill
@@ -100,7 +105,7 @@ func (c *Client) PushUsageRecord(ctx context.Context, acct state.Account, hour t
 	if dup {
 		return nil
 	}
-	if err := c.pushUsageRecordSDK(ctx, acct, hour, gbHours); err != nil {
+	if err := c.pushUsageRecordSDKSum(ctx, acct, hour, mbSeconds); err != nil {
 		return err
 	}
 	return c.dedupe.RecordStripePushHour(ctx, acct.ID, hour)
@@ -108,18 +113,17 @@ func (c *Client) PushUsageRecord(ctx context.Context, acct state.Account, hour t
 
 // EnsurePlanProducts is declared in products.go.
 
-// PushUsageRecordWithID is the §14 M7 acceptance sibling to
-// PushUsageRecord (issue #52). Same skip / dedupe gate; returns the
+// PushUsageRecordSumWithID is the §14 M7 acceptance sibling to
+// PushUsageRecordSum (issue #52). Same skip / dedupe gate; returns the
 // Stripe usage record on success so the live-sandbox test can assert
-// record.ID. PushUsageRecord keeps its (ctx, acct, hour, gbHours) error
-// signature so pkg/meter.StripePusher is unchanged.
+// record.Quantity matches the integer-quantized expectation.
 //
 // On the skip / dedupe short-circuit, returns (nil, nil) — callers must
 // not assume a non-nil record on a successful return. The sandbox test
-// pattern is: err == nil && record != nil && record.ID != "".
-func (c *Client) PushUsageRecordWithID(ctx context.Context, acct state.Account, hour time.Time, gbHours float64) (*stripe.UsageRecord, error) {
+// pattern is: err == nil && record != nil && record.Quantity == want.
+func (c *Client) PushUsageRecordSumWithID(ctx context.Context, acct state.Account, hour time.Time, mbSeconds int64) (*stripe.UsageRecord, error) {
 	if acct.StripeCustomerID == "" || acct.StripeSubscriptionItem == "" {
-		// Same skip as PushUsageRecord — pending customers are a no-op.
+		// Same skip as PushUsageRecordSum — pending customers are a no-op.
 		return nil, nil
 	}
 	dup, err := c.dedupe.HasStripePushHour(ctx, acct.ID, hour)
@@ -129,7 +133,7 @@ func (c *Client) PushUsageRecordWithID(ctx context.Context, acct state.Account, 
 	if dup {
 		return nil, nil
 	}
-	record, err := c.pushUsageRecordSDKWithID(ctx, acct, hour, gbHours)
+	record, err := c.pushUsageRecordSDKSumWithID(ctx, acct, hour, mbSeconds)
 	if err != nil {
 		return nil, err
 	}
@@ -137,4 +141,32 @@ func (c *Client) PushUsageRecordWithID(ctx context.Context, acct state.Account, 
 		return nil, err
 	}
 	return record, nil
+}
+
+// PushUsageRecord is the legacy float-GB-hours wire path. It is
+// preserved as a thin wrapper around PushUsageRecordSum so existing
+// callers (and the legacy tests) keep their behaviour. The pusher
+// path has migrated to PushUsageRecordSum — the integer-path variant
+// — to eliminate per-hour fractional truncation loss on the wire.
+//
+// Deprecated: use PushUsageRecordSum. The float-to-int64 conversion
+// truncates the sub-milliunit remainder, which over a 24h horizon
+// accumulates to ~0.3 % of the customer's bill — above the spec's
+// 0.1 % M7 acceptance delta.
+func (c *Client) PushUsageRecord(ctx context.Context, acct state.Account, hour time.Time, gbHours float64) error {
+	// Float → mb_seconds then route through the integer path. The
+	// per-call truncation is identical to the legacy code at the
+	// SDK call site.
+	mbSeconds := int64(gbHours * 1024 * 3600)
+	return c.PushUsageRecordSum(ctx, acct, hour, mbSeconds)
+}
+
+// PushUsageRecordWithID is the legacy float-GB-hours wire path that
+// returns the Stripe usage record. Thin wrapper around
+// PushUsageRecordSumWithID.
+//
+// Deprecated: use PushUsageRecordSumWithID.
+func (c *Client) PushUsageRecordWithID(ctx context.Context, acct state.Account, hour time.Time, gbHours float64) (*stripe.UsageRecord, error) {
+	mbSeconds := int64(gbHours * 1024 * 3600)
+	return c.PushUsageRecordSumWithID(ctx, acct, hour, mbSeconds)
 }

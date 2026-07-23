@@ -189,8 +189,12 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 		}
 	}
 
-	// 3. Build success rate over last 5m.
-	buildQ := `sum(rate(vmmd_op_duration_seconds_count{op="create_cold_boot",code="ok"}[5m])) / sum(rate(vmmd_op_duration_seconds_count{op="create_cold_boot"}[5m])) * 100`
+	// 3. Build success rate over last 5m. Spec §12 defines success as
+	// non-user_error: an app that fails to build because of the customer's
+	// own code is not a platform failure. Sourced from builderd's real
+	// build counter (ADR-030) — NOT the old vmmd cold-boot proxy, which
+	// measured a different thing entirely (wake success, not build).
+	buildQ := `sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) / sum(rate(builderd_ops_total{op="build"}[5m])) * 100`
 	if pct, err := c.queryScalar(ctx, buildQ); err == nil {
 		snap.BuildSuccessPct = pct
 		okCount++

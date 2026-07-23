@@ -117,8 +117,15 @@ hourly Stripe usage push are not operational.
   `/healthz`. Same PR #71 wires both via `wire.NewOpsMetrics("meterd")` and
   an inline `/healthz` (returning 200 unconditionally — richer semantics
   follow-up).
-- **§14 M7 acceptance test (24h GB-h shadow, <0.1 % delta)** — not in tree.
-  Required before §14 close; separate PR.
+- **§14 M7 acceptance test (24h GB-h shadow, integer-arithmetic exact)**
+  — landed. See `pkg/meter/meter_test.go::TestInvoiceShadow24h`
+  (local math), `pkg/meter/pusher_shadow_test.go::TestPushHour_Shadow24h`
+  (push-side integer equality), and
+  `pkg/stripex/sandbox_test.go::TestInvoiceShadow24h_Sandbox` (live
+  Stripe SDK — asserts `record.Quantity == 6187` exactly, zero
+  delta). Cadence switched from per-hour float (`qty =
+  int64(gbHours * 1000)`, 0.315 % short over 24h) to per-day integer
+  (`qty = mbSeconds * 1000 / 1024 / 3600`).
 - **A3 (transactional suspend-and-park)**, **A4 (Free restore)**,
   **A5 (quota/dunning ordering race)** — separate PRs, polish.
 
@@ -168,6 +175,11 @@ spinner) and PR #51 (the closeout batch):
   scrape config template at
   `deploy/ansible/roles/prometheus/templates/prometheus.yml.j2`.
   Grafana dashboard export at `deploy/grafana/faas-fleet.json`.
+  **Build metrics (ADR-030):** `builderd_ops_total{op="build",code}`,
+  `builderd_build_duration_seconds{outcome}`, `builderd_build_queue_wait_seconds`
+  now emit from the build lifecycle, and `apid /status` computes the
+  build-success SLO from real build data instead of the old vmmd
+  cold-boot proxy (which measured wake, not build).
 - **§12 public status page** — `apid` serves `GET /status` (static
   HTML, `deploy/statuspage/index.html`) and `GET /status/slo.json`
   (3 PromQL queries against the local Prometheus with a 30 s
@@ -207,8 +219,15 @@ and open an issue if you want it.
 - ~~**`pkg/stripex/usage.go::PushUsageRecord`** — currently
   `nil`-returning `TODO stripe-go`. Bring the SDK in, write a
   test against the Stripe sandbox.~~ **Closed by PR #69.**
-- **§14 M7 acceptance test (24h GB-h shadow, <0.1 % delta)** — not
-  in tree. Required before §14 close; separate PR.
+- **§14 M7 acceptance test (24h GB-h shadow, integer-arithmetic exact)**
+  — landed. See `pkg/meter/meter_test.go::TestInvoiceShadow24h`
+  (local math), `pkg/meter/pusher_shadow_test.go::TestPushHour_Shadow24h`
+  (push-side integer equality), and
+  `pkg/stripex/sandbox_test.go::TestInvoiceShadow24h_Sandbox` (live
+  Stripe SDK — asserts `record.Quantity == 6187` exactly, zero
+  delta). Cadence switched from per-hour float (`qty =
+  int64(gbHours * 1000)`, 0.315 % short over 24h) to per-day integer
+  (`qty = mbSeconds * 1000 / 1024 / 3600`).
 - **Idempotent billing + meterd `/metrics` + `/healthz`** —
   PR #71 (`feat/m7-beta-hardening`).
 

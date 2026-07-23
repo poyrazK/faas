@@ -156,10 +156,12 @@ type APIKeyItem struct {
 type AccountData struct {
 	Keys []APIKeyItem
 	// ShowDelete + DeleteConfirmToken drive the "Danger zone" partial
-	// in templates/account.html. The token is the literal string
-	// "delete:yes" the POST form must echo back (see
-	// cmd/apid/dashboard_delete.go::confirmTokenMatches). ShowRestore
-	// + RestoreUntil render the matching "Restore account" form when
+	// in templates/account.html. The token is a sealed envelope bound
+	// to (action="delete", account_id) that the POST handler verifies
+	// via pkg/middleware.VerifyAuthenticated. The matching faas_csrf
+	// sidecar cookie is set by the renderer (handlers_dashboard.go)
+	// so a cross-site POST cannot read it. ShowRestore +
+	// RestoreUntil render the matching "Restore account" form when
 	// the row is in deleted_pending — the deadline is the human-
 	// readable restore_until the dashboard template surfaces.
 	ShowDelete          bool

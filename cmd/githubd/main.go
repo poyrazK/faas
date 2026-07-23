@@ -121,10 +121,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		gRPCImpl = realSvc
 	}
 
+	// ops: one per-daemon Prometheus registry shared by every
+	// observer in githubd (gRPC handlers + the inbound webhook
+	// push). WebhookLoopbackHandler mounts it at GET /metrics on
+	// the loopback :8083 mux (§11 loopback-only invariant; gatewayd
+	// only forwards POST /webhooks/github, so GET /metrics can't
+	// leak externally).
+	ops := wire.NewOpsMetrics("githubd")
 	srv := &githubd.Server{
 		Service:     webhookSvc,
 		Log:         log,
-		GRPCServer:  githubdgrpc.New(gRPCImpl, wire.NewOpsMetrics("githubd"), log),
+		Ops:         ops,
+		GRPCServer:  githubdgrpc.New(gRPCImpl, ops, log),
 		HTTPAddr:    cfg.HTTPAddr,
 		SocketPath:  cfg.SocketPath,
 		ListenAddr:  cfg.ListenAddr,

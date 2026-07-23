@@ -242,6 +242,7 @@ type Build struct {
 	LogPath      string
 	StartedAt    time.Time
 	FinishedAt   time.Time
+	EnqueuedAt   time.Time // set at CreateBuild; builderd measures queue wait against it (ADR-030)
 }
 
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;

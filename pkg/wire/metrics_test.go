@@ -91,6 +91,75 @@ func render(t *testing.T, m *wire.OpsMetrics) string {
 	return body
 }
 
+func TestOpsMetrics_ObserveBuild(t *testing.T) {
+	m := wire.NewOpsMetrics("builderd")
+	m.ObserveBuildCount("ok")
+	m.ObserveBuildCount("ok")
+	m.ObserveBuildCount("cache_hit")
+	m.ObserveBuildCount("user_error")
+	m.ObserveBuildDuration("ok", 42*time.Second)
+	m.ObserveBuildDuration("cache_hit", 200*time.Millisecond)
+	m.ObserveBuildQueueWait(3 * time.Second)
+
+	body := render(t, m)
+	for _, want := range []string{
+		`builderd_ops_total{code="ok",op="build"} 2`,
+		`builderd_ops_total{code="cache_hit",op="build"} 1`,
+		`builderd_ops_total{code="user_error",op="build"} 1`,
+		`builderd_build_duration_seconds_count{outcome="ok"} 1`,
+		`builderd_build_duration_seconds_count{outcome="cache_hit"} 1`,
+		`builderd_build_duration_seconds_count{outcome="failed"} 0`,
+		`builderd_build_queue_wait_seconds_count 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q in:\n%s", want, body)
+		}
+	}
+}
+
+func TestOpsMetrics_ObserveBuildNilSafe(t *testing.T) {
+	// builderd unit tests construct the orchestrator without metrics; the
+	// observers must be no-ops on a nil receiver rather than panicking.
+	var m *wire.OpsMetrics
+	m.ObserveBuildCount("ok")
+	m.ObserveBuildDuration("ok", time.Second)
+	m.ObserveBuildQueueWait(time.Second)
+}
+
+func TestOpsMetrics_ObserveImagedOCIPull(t *testing.T) {
+	// Same shape as the vmm-proxy test: real observations on a subset of
+	// (op, result) tuples + zero-valued pre-instantiated buckets for the
+	// rest of the closed set.
+	m := wire.NewOpsMetrics("imaged")
+	m.ObserveImagedOCIPull("manifest", "ok", 200*time.Millisecond)
+	m.ObserveImagedOCIPull("blob", "ok", 5*time.Second)
+	m.ObserveImagedOCIPull("blob", "err", 60*time.Second)
+	m.ObserveImagedOCIPull("above_base", "ok", 800*time.Millisecond)
+
+	body := render(t, m)
+	for _, want := range []string{
+		// Real observations.
+		`imaged_oci_pull_duration_seconds_count{op="manifest",result="ok"} 1`,
+		`imaged_oci_pull_duration_seconds_count{op="blob",result="ok"} 1`,
+		`imaged_oci_pull_duration_seconds_count{op="blob",result="err"} 1`,
+		`imaged_oci_pull_duration_seconds_count{op="above_base",result="ok"} 1`,
+		// Pre-instantiated tuples we never observed: still zero-valued.
+		`imaged_oci_pull_duration_seconds_count{op="config",result="ok"} 0`,
+		`imaged_oci_pull_duration_seconds_count{op="manifest",result="err"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q in:\n%s", want, body)
+		}
+	}
+}
+
+func TestOpsMetrics_NewObserversNilSafe(t *testing.T) {
+	// imaged unit tests construct the orchestrator without metrics;
+	// the new observer must be a no-op on a nil receiver.
+	var m *wire.OpsMetrics
+	m.ObserveImagedOCIPull("blob", "ok", time.Second)
+}
+
 func TestRenderSeconds(t *testing.T) {
 	for _, tc := range []struct {
 		in   time.Duration

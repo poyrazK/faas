@@ -44,6 +44,13 @@ type Server struct {
 	// GRPCServer is the registered Server; nil → no gRPC listener.
 	GRPCServer *githubdgrpc.Server
 
+	// Ops holds the per-daemon Prometheus registry. Wired via
+	// WithOpsMetrics so callers (cmd/githubd) control the registry
+	// lifecycle. WebhookLoopbackHandler mounts Ops.Handler() at
+	// GET /metrics on the same loopback listener as
+	// POST /webhooks/github.
+	Ops *wire.OpsMetrics
+
 	// SocketPath is the unix socket path when ListenAddr is empty
 	// (default /run/faas/githubd.sock).
 	SocketPath string
@@ -73,6 +80,16 @@ const DefaultSocketPath = "/run/faas/githubd.sock"
 // DefaultHTTPAddr is the loopback listener gatewayd reverse-proxies
 // /webhooks/github to. Spec §11: githubd is loopback-only.
 const DefaultHTTPAddr = "127.0.0.1:8083"
+
+// WithOpsMetrics attaches a per-daemon Prometheus registry. Required
+// by Start: WebhookLoopbackHandler exposes the registry at GET /metrics
+// on the loopback mux, and the inbound webhook observer records into the
+// same registry. Mirrors pkg/builderd/builderd.go WithOpsMetrics (PR #124,
+// ADR-030) and the setters on pkg/imaged/Handler and cmd/apid/server.
+func (s *Server) WithOpsMetrics(ops *wire.OpsMetrics) *Server {
+	s.Ops = ops
+	return s
+}
 
 // Start binds the gRPC + HTTP listeners, wires the handlers, and
 // returns when both are serving. The returned cleanup func
@@ -178,58 +195,97 @@ func (s *Server) Start(ctx context.Context) (func(context.Context) error, <-chan
 // before forwarding; this handler re-verifies (defense in depth)
 // and then dispatches via Service.HandlePushRequest.
 //
+// Loopback-only invariant (§11 single-public-listener): the listener
+// binds to 127.0.0.1:8083; gatewayd's edge-verifying proxy is the only
+// reachable caller. Adding GET /metrics for ops scraping on the same
+// mux is safe — there's no path from the public internet to it.
+//
 // On success: 200 with the deployment_id (or "ignored" if the
 // push didn't match any binding). On verify failure: 401. On
 // decode failure: 400. On internal error: 500.
 func (s *Server) WebhookLoopbackHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/webhooks/github", s.handleWebhookPush)
+	if s.Ops != nil {
+		// Nil s.Ops = metrics not wired. Still serve the webhook path
+		// (the daemon stays up); just skip /metrics so a partially
+		// configured unit test doesn't expose a stray handler.
+		mux.Handle("/metrics", s.Ops.Handler())
+	}
+	return mux
+}
+
+// handleWebhookPush is the POST /webhooks/github receiver — split out
+// from the mux so a single named function shows up in profiles / Go's
+// recovery trace rather than a closure.
+func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
+	const op = "webhook_push"
+	start := time.Now()
+	// observe is the nil-safe observe closure: when Ops isn't wired
+	// (a unit test that builds a Server directly), every exit below
+	// becomes a no-op instead of a nil-deref panic. Captures `s` and
+	// `start` by reference so the per-call start time stays correct.
+	// Same pattern as apid's observeWrap nil-safety (review finding
+	// #3 on PR #132).
+	observe := func(err error) {
+		if s.Ops != nil {
+			s.Ops.Observe(op, time.Since(start), err)
+		}
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		observe(errors.New("githubd: webhook method not allowed"))
+		return
+	}
+	body, err := readBody(w, r)
+	if err != nil {
+		s.Log.Warn("githubd webhook body read", "err", err)
+		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+		observe(err)
+		return
+	}
+	// Re-verify the HMAC. The gatewayd proxy already did this,
+	// but a misconfigured proxy (no secret) must NOT bypass the
+	// daemon-side check.
+	sig := r.Header.Get("X-Hub-Signature-256")
+	secret := webhookSecretFromHeader(r)
+	if secret == nil || !verifyOrLog(s, body, sig, secret) {
+		http.Error(w, "signature verification failed", http.StatusUnauthorized)
+		observe(errors.New("githubd: webhook signature invalid"))
+		return
+	}
+	depID, err := s.Service.HandlePushRequest(r.Context(), body)
+	if err != nil {
+		if IsNoBinding(err) {
+			// 200 + ignored payload — the push doesn't apply to
+			// any of our apps. GitHub's webhook retry policy
+			// respects a 2xx response, so this is the canonical
+			// "not mine, do not retry" reply. From githubd's POV
+			// the call succeeded, so err=nil on observe (the §12
+			// dashboard counts it as a no-op dispatch, not an error).
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ignored","reason":"no_binding"}`))
+			observe(nil)
 			return
 		}
-		body, err := readBody(w, r)
-		if err != nil {
-			s.Log.Warn("githubd webhook body read", "err", err)
-			http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		// Re-verify the HMAC. The gatewayd proxy already did this,
-		// but a misconfigured proxy (no secret) must NOT bypass the
-		// daemon-side check.
-		sig := r.Header.Get("X-Hub-Signature-256")
-		secret := webhookSecretFromHeader(r)
-		if secret == nil || !verifyOrLog(s, body, sig, secret) {
-			http.Error(w, "signature verification failed", http.StatusUnauthorized)
-			return
-		}
-		depID, err := s.Service.HandlePushRequest(r.Context(), body)
-		if err != nil {
-			if IsNoBinding(err) {
-				// 200 + ignored payload — the push doesn't apply to
-				// any of our apps. GitHub's webhook retry policy
-				// respects a 2xx response, so this is the canonical
-				// "not mine, do not retry" reply.
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"status":"ignored","reason":"no_binding"}`))
-				return
-			}
-			s.Log.Error("githubd webhook handle", "err", err)
-			http.Error(w, "internal", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		// Marshal the depID into JSON so the response body is
-		// safely escaped (the depID is operator-controlled today
-		// but a future caller might thread a tainted string
-		// through this path).
-		respBody, _ := json.Marshal(struct {
-			Status       string `json:"status"`
-			DeploymentID string `json:"deployment_id"`
-		}{Status: statusQueued, DeploymentID: depID})
-		_, _ = w.Write(respBody)
-	})
+		s.Log.Error("githubd webhook handle", "err", err)
+		http.Error(w, "internal", http.StatusInternalServerError)
+		observe(err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	// Marshal the depID into JSON so the response body is
+	// safely escaped (the depID is operator-controlled today
+	// but a future caller might thread a tainted string
+	// through this path).
+	respBody, _ := json.Marshal(struct {
+		Status       string `json:"status"`
+		DeploymentID string `json:"deployment_id"`
+	}{Status: statusQueued, DeploymentID: depID})
+	_, _ = w.Write(respBody)
+	observe(nil)
 }
 
 // readBody is split out so the 413 path can fail fast without

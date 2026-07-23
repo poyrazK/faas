@@ -39,6 +39,39 @@
   failed_when: false
   when: "'onebox-faas' not in (lookup('file', '/etc/nftables.conf', errors='ignore') or '')"
 
+# Tenant bridge bootstrap (idempotent). The per-instance netns in
+# pkg/netns/config.go expects `br-tenants` to exist with IP 10.100.0.1/16
+# — this is the gateway IP the per-instance default route installs. The
+# Lima metal shim does this in deploy/lima/run-metal.sh; production
+# EX44 bootstrap needs the equivalent. MUST run BEFORE the nft
+# syntax-check / reload below — the host firewall's forward chain uses
+# `iif "br-tenants"`, which resolves the interface index at load time
+# and fails on a clean box if the bridge is missing. The `ip link add`
+# task is gated by `creates:` so converged runs no-op; the `ip addr
+# add` swallows only the "File exists" error and reports changed
+# on a fresh box.
+#
+# NOTE: persistence across reboots is OUT OF SCOPE for this PR.
+# The runtime `ip` commands recreate the bridge each boot; a
+# follow-up should add a netplan / systemd-networkd / oneshot
+# unit so the bridge survives restart on the EX44. Until then
+# operators must `make bootstrap` again after every reboot.
+- name: nftables — ensure tenant bridge exists
+  ansible.builtin.command: ip link add {{ tenant_bridge }} type bridge
+  args:
+    creates: /sys/class/net/{{ tenant_bridge }}
+
+- name: nftables — ensure bridge IP is present
+  ansible.builtin.command: ip addr add {{ bridge_cidr }} dev {{ tenant_bridge }}
+  register: bridge_addr
+  changed_when: "'RTNETLINK answers: File exists' not in bridge_addr.stderr"
+  failed_when:
+    - bridge_addr.rc != 0
+    - "'File exists' not in bridge_addr.stderr"
+
+- name: nftables — bring the tenant bridge up
+  ansible.builtin.command: ip link set {{ tenant_bridge }} up
+
 - name: nftables — drop faas ruleset into /etc/nftables.conf
   ansible.builtin.copy:
     src: policy_nftables.conf
@@ -52,6 +85,15 @@
   ansible.builtin.command: nft -c -f /etc/nftables.conf
   changed_when: false
   check_mode: false
+
+# Apply the ruleset now — the role has no reload handler, so a re-run
+# that changes /etc/nftables.conf would otherwise leave the live kernel
+# running the old ruleset until next reboot. Gated on nft_drop.changed
+# to stay no-op on a converged box. Idempotent: the ruleset's
+# `flush ruleset` first directive wipes and re-loads.
+- name: nftables — load the ruleset (no reload handler; reload directly)
+  ansible.builtin.command: nft -f /etc/nftables.conf
+  when: nft_drop.changed
 
 - name: nftables — enable + start nftables
   ansible.builtin.service:

@@ -851,7 +851,7 @@ func (m *MemStore) CreateBuild(_ context.Context, deploymentID string, kind Depl
 	if _, ok := m.deployments[deploymentID]; !ok {
 		return Build{}, fmt.Errorf("state: build for unknown deployment %q", deploymentID)
 	}
-	b := Build{ID: newID(), DeploymentID: deploymentID, Kind: kind, SourceBytes: sourceBytes, Status: BuildQueued, LogPath: logPath}
+	b := Build{ID: newID(), DeploymentID: deploymentID, Kind: kind, SourceBytes: sourceBytes, Status: BuildQueued, LogPath: logPath, EnqueuedAt: time.Now()}
 	m.builds[b.ID] = b
 	return b, nil
 }
@@ -2764,6 +2764,24 @@ func (m *MemStore) SetPastDueAtForTest(id string, at time.Time) error {
 	}
 	stamp := at.UTC()
 	a.PastDueAt = &stamp
+	m.accounts[id] = a
+	return nil
+}
+
+// SetDeletionRequestedAtForTest is the test-only backdoor the
+// RestoreAccount-past-grace test uses to fast-forward the 30-day grace
+// window without sleeping the test suite. Same `*_ForTest` naming
+// convention as SetPastDueAtForTest (production audit-friendly); not
+// part of the Store interface.
+func (m *MemStore) SetDeletionRequestedAtForTest(id string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	stamp := at.UTC()
+	a.DeletionRequestedAt = &stamp
 	m.accounts[id] = a
 	return nil
 }
