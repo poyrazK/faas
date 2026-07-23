@@ -117,8 +117,15 @@ hourly Stripe usage push are not operational.
   `/healthz`. Same PR #71 wires both via `wire.NewOpsMetrics("meterd")` and
   an inline `/healthz` (returning 200 unconditionally — richer semantics
   follow-up).
-- **§14 M7 acceptance test (24h GB-h shadow, <0.1 % delta)** — not in tree.
-  Required before §14 close; separate PR.
+- **§14 M7 acceptance test (24h GB-h shadow, integer-arithmetic exact)**
+  — landed. See `pkg/meter/meter_test.go::TestInvoiceShadow24h`
+  (local math), `pkg/meter/pusher_shadow_test.go::TestPushHour_Shadow24h`
+  (push-side integer equality), and
+  `pkg/stripex/sandbox_test.go::TestInvoiceShadow24h_Sandbox` (live
+  Stripe SDK — asserts `record.Quantity == 6187` exactly, zero
+  delta). Cadence switched from per-hour float (`qty =
+  int64(gbHours * 1000)`, 0.315 % short over 24h) to per-day integer
+  (`qty = mbSeconds * 1000 / 1024 / 3600`).
 - **A3 (transactional suspend-and-park)**, **A4 (Free restore)**,
   **A5 (quota/dunning ordering race)** — separate PRs, polish.
 
@@ -207,8 +214,15 @@ and open an issue if you want it.
 - ~~**`pkg/stripex/usage.go::PushUsageRecord`** — currently
   `nil`-returning `TODO stripe-go`. Bring the SDK in, write a
   test against the Stripe sandbox.~~ **Closed by PR #69.**
-- **§14 M7 acceptance test (24h GB-h shadow, <0.1 % delta)** — not
-  in tree. Required before §14 close; separate PR.
+- **§14 M7 acceptance test (24h GB-h shadow, integer-arithmetic exact)**
+  — landed. See `pkg/meter/meter_test.go::TestInvoiceShadow24h`
+  (local math), `pkg/meter/pusher_shadow_test.go::TestPushHour_Shadow24h`
+  (push-side integer equality), and
+  `pkg/stripex/sandbox_test.go::TestInvoiceShadow24h_Sandbox` (live
+  Stripe SDK — asserts `record.Quantity == 6187` exactly, zero
+  delta). Cadence switched from per-hour float (`qty =
+  int64(gbHours * 1000)`, 0.315 % short over 24h) to per-day integer
+  (`qty = mbSeconds * 1000 / 1024 / 3600`).
 - **Idempotent billing + meterd `/metrics` + `/healthz`** —
   PR #71 (`feat/m7-beta-hardening`).
 

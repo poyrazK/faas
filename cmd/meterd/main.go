@@ -10,8 +10,12 @@
 //     per-plan ladder: Free at ≥100 % flips the account to suspended
 //     and parks every live instance; paid plans emit a one-shot
 //     quota_warning and accrue overage.
-//   - stripe tick: every 60 m, pushes the past hour's GB-hours to
-//     Stripe as a metered usage record (spec §4.7, ADR-010).
+//   - stripe tick: every 24 h, pushes the past day's billable
+//     mb_seconds to Stripe as a metered usage record with an
+//     integer-arithmetic wire quantity (spec §4.7, ADR-010). The
+//     per-day aggregate is the M7 §14 fix for the per-hour fractional
+//     truncation that accumulated to ~0.3 % of the customer's bill —
+//     above the spec's 0.1 % acceptance delta.
 //
 // meterd is the ONLY writer that triggers Free-tier hard stops — apid's
 // auth gate and schedd's ledger just observe the resulting status.
@@ -50,8 +54,17 @@ type parkInstanceParker interface {
 // stripePusher is the Slice-2 stripex.Client interface meterd uses.
 // We don't import pkg/stripex here — the daemon is testable against
 // a recorder, and the wire-up in main.go is one line.
+//
+// PushUsageRecordSum is the integer-mb-seconds path; it receives the
+// pusher's summed usage_minutes.mb_seconds across the billing window
+// (a full day under the production cadence, cfg.StripeInterval = 24h).
+// The SDK converts to wire units in int64 arithmetic — no float, no
+// per-hour fractional truncation loss on the wire. Mirrors
+// pkg/meter.StripePusher, kept as a separate type to keep cmd/meterd
+// free of a direct import cycle on the interface (cmd imports
+// pkg/meter, but pkg/meter doesn't import cmd).
 type stripePusher interface {
-	PushUsageRecord(ctx context.Context, account state.Account, hour time.Time, gbHours float64) error
+	PushUsageRecordSum(ctx context.Context, account state.Account, hour time.Time, mbSeconds int64) error
 }
 
 func main() {
@@ -200,7 +213,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		apiKey := deps.getenv("STRIPE_API_KEY")
 		if apiKey == "" {
-			log.Warn("STRIPE_API_KEY is empty — hourly Stripe push will no-op (pushUsageRecordSDK returns an error without a key)")
+			log.Warn("STRIPE_API_KEY is empty — daily Stripe push will no-op (pushUsageRecordSDKSum returns an error without a key)")
 		}
 		webhookSecret := deps.getenv("STRIPE_WEBHOOK_SECRET")
 		stripe = deps.newStripeClient(apiKey, webhookSecret, store, store, log)

@@ -45,16 +45,17 @@ func newAppWithSlug(t *testing.T, ctx context.Context, s *state.MemStore, accoun
 // recordingStripe is the meterd-side test fake for the Stripe pusher.
 // Mirrors fakeParker / fakeNotifier in meter_test.go:18-65 — same
 // mutex-guarded slice, no production-code touch. Records every
-// (acct.ID, hour, gb) the pusher passes through, so the test can
-// assert the exact value the SDK would see against the synthetic
-// dataset's hand-computed number.
+// (acct.ID, hour, mbSeconds) the pusher passes through, so the test
+// can assert the exact integer value the SDK would see against the
+// synthetic dataset's hand-computed number.
 //
-// err is an optional return-error knob — when set, every PushUsageRecord
-// returns it (wrapped or unwrapped) before recording the call. The
-// TestPushHour_RecordsStripeError test sets err to a *stripe.Error so
-// the classifier seam (stripex.ClassifyPushError) is exercised through
-// the pusher rather than directly. When err is nil the fake returns
-// nil — same behavior as the production stripex Client on success.
+// err is an optional return-error knob — when set, every
+// PushUsageRecordSum returns it (wrapped or unwrapped) before recording
+// the call. The TestPushHour_RecordsStripeError test sets err to a
+// *stripe.Error so the classifier seam (stripex.ClassifyPushError) is
+// exercised through the pusher rather than directly. When err is nil
+// the fake returns nil — same behavior as the production stripex
+// Client on success.
 type recordingStripe struct {
 	mu    sync.Mutex
 	calls []recordedCall
@@ -64,13 +65,13 @@ type recordingStripe struct {
 type recordedCall struct {
 	AccountID string
 	Hour      time.Time
-	GBHours   float64
+	MBSeconds int64
 }
 
-func (r *recordingStripe) PushUsageRecord(_ context.Context, acct state.Account, hour time.Time, gbHours float64) error {
+func (r *recordingStripe) PushUsageRecordSum(_ context.Context, acct state.Account, hour time.Time, mbSeconds int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.calls = append(r.calls, recordedCall{AccountID: acct.ID, Hour: hour, GBHours: gbHours})
+	r.calls = append(r.calls, recordedCall{AccountID: acct.ID, Hour: hour, MBSeconds: mbSeconds})
 	return r.err
 }
 
@@ -125,16 +126,24 @@ func scrapeOpsTotal(t *testing.T, m *wire.OpsMetrics) map[string]int {
 
 // TestPushHour_Shadow24h is the §14 M7 push-side acceptance gate.
 // Mirror of TestInvoiceShadow24h: a 256 MB Hobby instance resident
-// for 24 h drives 1440 minute-ticks of sampling, then 24 PushHour
+// for 24 h drives 1440 minute-ticks of sampling (one row per minute,
+// each row = BillableRAMMB(256) * 60 mb_seconds), then 24 PushHour
 // ticks (one per hour) must collectively hand the SDK 24 (acct, hour)
-// tuples whose summed gb matches the hand-computed (264 * 60 * 1440)
-// / (1024 * 3600) figure = 6.187500 GB-h to 6 dp, within 0.1 %.
+// tuples whose summed mb_seconds matches the hand-computed
+// 264 * 60 * 60 * 24 = 22_809_600 mb_seconds exactly.
+//
 // The "24 h" framing is the spec; the math is the acceptance.
 //
 // Why 24 PushHour calls instead of one: HourWindow is a one-hour
-// window — the production loop pushes the past hour every hour. The
-// acceptance scenario mirrors that cadence exactly. Each call must
-// see its own hour's worth of usage rows.
+// window — the production loop pushes the past 24h once per day
+// (cfg.StripeInterval = 24h) but the pusher's *internal* logic walks
+// per-hour SourceWindow. The 24-call test mirrors the per-hour
+// exercise of the SDK-bound interface so any per-hour drift bug
+// surfaces in the unit test before the live-sandbox job.
+//
+// The assertion is integer equality, not a percentage tolerance. The
+// integer-wire path (pkg/stripex/usage.go) is deterministic — any
+// drift here means the meter's mb_seconds accumulator is broken.
 //
 // Sample layout: starting at T0 (top of hour) and stepping `now`
 // AFTER each SampleAndRoll, the 1440 samples land at minutes
@@ -197,22 +206,31 @@ func TestPushHour_Shadow24h(t *testing.T) {
 	if len(calls) != hoursToPush {
 		t.Fatalf("recorded calls = %d, want %d (one per hour)", len(calls), hoursToPush)
 	}
-	var totalGB float64
+	var totalMB int64
+	// Per-hour mb_seconds: the sampler stamps 60 rows of
+	// api.BillableRAMMB(256) * 60 mb_seconds each (one per minute),
+	// and UsageByHour sums across the [start, end) window. So one
+	// hour-window total = 60 samples × per-minute = 60 × 60 × billable
+	// = 3600 × billable. For a 256 MB Hobby instance: 3600 × 264 =
+	// 950_400 mb_seconds per hour.
+	wantPerHour := int64(api.BillableRAMMB(256)) * 60 * 60 // 264 * 3600 = 950_400
 	for i, c := range calls {
 		if c.AccountID != acct.ID {
 			t.Errorf("call[%d].AccountID = %q, want %q", i, c.AccountID, acct.ID)
 		}
-		totalGB += c.GBHours
+		if c.MBSeconds != wantPerHour {
+			t.Errorf("call[%d].MBSeconds = %d, want %d (one hour of 256 MB Hobby = 60 minute-rows summed)",
+				i, c.MBSeconds, wantPerHour)
+		}
+		totalMB += c.MBSeconds
 	}
-	wantMB := (256 + api.PerVMOverheadMB) * 60 * minutesIn24h
-	wantGB := meter.GBHours(int64(wantMB))
-	delta := totalGB - wantGB
-	if delta < 0 {
-		delta = -delta
-	}
-	if delta/wantGB > 0.001 {
-		t.Fatalf("push-side shadow delta %.6f GB (%.4f%%) exceeds 0.1%%: got=%.6f want=%.6f",
-			delta, delta/wantGB*100, totalGB, wantGB)
+	// Hand-computed sum across 24 hours: billable * 60 * 60 * 24.
+	// Uses BillableRAMMB so a future PerVMOverheadMB change keeps
+	// the test equation in sync.
+	wantTotal := int64(api.BillableRAMMB(256)) * 60 * 60 * hoursIn24h
+	if totalMB != wantTotal {
+		t.Fatalf("push-side shadow sum = %d mb_sec, want %d (exact integer equality)",
+			totalMB, wantTotal)
 	}
 }
 
