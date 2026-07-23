@@ -79,11 +79,13 @@ func TestVerify_CookieFormMismatch(t *testing.T) {
 func TestVerify_TamperedToken(t *testing.T) {
 	m := newTestManager(t)
 	tok, _ := IssueForAuthenticated(m, "delete", "acct-1")
-	// Flip the last character.
-	tampered := tok[:len(tok)-1] + "X"
-	if tampered == tok {
-		tampered = tok[:len(tok)-2] + "XX"
-	}
+	// Flip the last character. '!' is intentionally NOT in
+	// base64.RawURLEncoding's alphabet (A-Z a-z 0-9 - _) so
+	// base64.DecodeString rejects the tampered string immediately,
+	// independent of which byte the AEAD would have decoded
+	// otherwise. Picking an alphabet char like 'X' flaked ~1/64 on
+	// the prior pkg/session tamper test (memory pkg-session-tamper-flake).
+	tampered := tok[:len(tok)-1] + "!"
 	req := buildPost(t, CookieNameAuthenticated, tampered, FormFieldName+"="+tampered)
 	if err := VerifyAuthenticated(m, req, "delete", "acct-1"); err == nil {
 		t.Fatal("expected tampered token to fail, got nil")
