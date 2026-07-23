@@ -320,7 +320,7 @@ func TestSec11_ApiKeyHashedAtRest(t *testing.T) {
 
 	var gotHash []byte
 	err := pool.QueryRow(context.Background(),
-		`SELECT key_hash FROM api_keys
+		`SELECT key_sha256 FROM api_keys
 		 WHERE account_id = (
 		   SELECT id FROM accounts WHERE email = 'e2e+hobby+sec11@test.example'
 		 ) LIMIT 1`,
@@ -329,13 +329,13 @@ func TestSec11_ApiKeyHashedAtRest(t *testing.T) {
 		t.Fatalf("query api_keys: %v", err)
 	}
 	if !bytes.Equal(gotHash, wantHash) {
-		t.Errorf("key_hash mismatch: got %x want %x", gotHash, wantHash)
+		t.Errorf("key_sha256 mismatch: got %x want %x", gotHash, wantHash)
 	}
 	if strings.Contains(string(gotHash), bearer) {
-		t.Errorf("plaintext bearer %q found inside key_hash %x — NOT hashed", bearer, gotHash)
+		t.Errorf("plaintext bearer %q found inside key_sha256 %x — NOT hashed", bearer, gotHash)
 	}
 	if strings.Contains(string(gotHash), "fp_live_") {
-		t.Errorf("plaintext key prefix %q found inside key_hash %x", "fp_live_", gotHash)
+		t.Errorf("plaintext key prefix %q found inside key_sha256 %x", "fp_live_", gotHash)
 	}
 }
 
