@@ -857,20 +857,28 @@ func TestClient_NonProblemErrorResponse(t *testing.T) {
 }
 
 func TestAPIError_RenderWithAndWithoutDocs(t *testing.T) {
+	// UX §3.3 is now owned by renderAPIError (commands.go), not by
+	// the SDK's APIError.Error() — the SDK's Error() is a single-line
+	// "<code>: <detail>" suitable for %w chains. The three-line shape
+	// is a CLI concern, so the assertion targets renderAPIError.
 	with := APIError{Problem: api.Problem{Title: "T", Detail: "D", DocsURL: "https://docs.x"}}
-	if !strings.Contains(with.Error(), "https://docs.x") {
-		t.Errorf("with docs: %q should include docs URL", with.Error())
+	var withBuf bytes.Buffer
+	renderAPIError(&withBuf, &with)
+	if !strings.Contains(withBuf.String(), "https://docs.x") {
+		t.Errorf("with docs: %q should include docs URL", withBuf.String())
 	}
 	without := APIError{Problem: api.Problem{Title: "T", Detail: "D"}}
-	if strings.Contains(without.Error(), "https://docs.x") {
-		t.Errorf("without docs: %q must not include docs URL", without.Error())
+	var withoutBuf bytes.Buffer
+	renderAPIError(&withoutBuf, &without)
+	if strings.Contains(withoutBuf.String(), "https://docs.x") {
+		t.Errorf("without docs: %q must not include docs URL", withoutBuf.String())
 	}
 }
 
 // TestAPIError_FallbackURLAlwaysThreeLines (issue #64 D2) locks UX §3.3:
 // the three-line shape must hold even when the server omits DocsURL.
-// Without the per-code fallback, this test fails on the second case
-// because the renderer dropped the third line.
+// The three-line shape is owned by renderAPIError (commands.go); see
+// TestAPIError_RenderWithAndWithoutDocs for the SDK-vs-CLI separation.
 func TestAPIError_FallbackURLAlwaysThreeLines(t *testing.T) {
 	cases := []struct {
 		name string
@@ -885,10 +893,15 @@ func TestAPIError_FallbackURLAlwaysThreeLines(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ae := APIError{Problem: api.Problem{
+			ae := &APIError{Problem: api.Problem{
 				Title: "Something broke", Detail: "details here", Code: tc.code,
 			}}
-			got := ae.Error()
+			var buf bytes.Buffer
+			renderAPIError(&buf, ae)
+			// renderAPIError uses RenderTitle + RenderDocsRow, both
+			// newline-terminated; the buffer therefore has a trailing
+			// newline. Trim it before counting "lines of content".
+			got := strings.TrimRight(buf.String(), "\n")
 			lines := strings.Split(got, "\n")
 			if len(lines) != 3 {
 				t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), got)
@@ -904,9 +917,11 @@ func TestAPIError_FallbackURLAlwaysThreeLines(t *testing.T) {
 
 	// Empty Code → 2-line fallback (no docs URL to synthesise — preserves
 	// today's behavior for malformed problem bodies).
-	ae := APIError{Problem: api.Problem{Title: "T", Detail: "D"}}
-	if got, want := len(strings.Split(ae.Error(), "\n")), 2; got != want {
-		t.Errorf("empty Code should render %d lines, got %d:\n%s", want, got, ae.Error())
+	ae := &APIError{Problem: api.Problem{Title: "T", Detail: "D"}}
+	var buf bytes.Buffer
+	renderAPIError(&buf, ae)
+	if got, want := len(strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")), 2; got != want {
+		t.Errorf("empty Code should render %d lines, got %d:\n%s", want, got, buf.String())
 	}
 }
 

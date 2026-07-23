@@ -284,7 +284,7 @@ func cmdDeployTarball(args []string) int {
 	}
 
 	if *tarball != "" {
-		dep, err := client.DeployTarball(ctx, slug, *tarball, *runtime, *handler, *dockerfile)
+		dep, err := DeployTarball(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile)
 		if err != nil {
 			return printErr("Bad --tarball", err)
 		}
@@ -810,13 +810,13 @@ func cmdLogs(args []string) int {
 	if *deployment != "" {
 		path += "&deployment=" + *deployment
 	}
-	req, err := http.NewRequest("GET", client.baseURL+path, nil)
+	req, err := http.NewRequest("GET", client.BaseURL()+path, nil)
 	if err != nil {
 		return printErr("Bad request", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+client.token)
+	req.Header.Set("Authorization", "Bearer "+client.Token())
 	req.Header.Set("Accept", "text/event-stream")
-	resp, err := client.http.Do(req)
+	resp, err := client.HTTPClient().Do(req)
 	if err != nil {
 		return printErr("Could not reach the API", err)
 	}
@@ -938,15 +938,15 @@ func (s *sseLineReader) fill() error {
 func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 	PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
 	path := "/v1/deployments/" + dep.ID + "/logs?follow=1"
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL()+path, nil)
 	if err != nil {
 		return printErr("Could not open log stream", err)
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token())
 	}
 	req.Header.Set("Accept", "text/event-stream")
-	resp, err := c.http.Do(req)
+	resp, err := c.HTTPClient().Do(req)
 	if err != nil {
 		// Stream unreachable up front — try one GetDeployment poll in
 		// case the build already finished before we opened the stream
