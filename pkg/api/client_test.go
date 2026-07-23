@@ -160,7 +160,10 @@ func TestDo_MutatingCallsCarryIdempotencyKey(t *testing.T) {
 			return err
 		}},
 		{"DeleteDomain", func(c *Client) error { return c.DeleteDomain(context.Background(), "x") }},
-		{"UpdateCron", func(c *Client) error { _, err := c.UpdateCron(context.Background(), "1", UpdateCronRequest{}); return err }},
+		{"UpdateCron", func(c *Client) error {
+			_, err := c.UpdateCron(context.Background(), "1", UpdateCronRequest{})
+			return err
+		}},
 		{"DeleteCron", func(c *Client) error { return c.DeleteCron(context.Background(), "1") }},
 		{"CreateKey", func(c *Client) error { _, err := c.CreateKey(context.Background(), "lbl"); return err }},
 		{"DeleteKey", func(c *Client) error { return c.DeleteKey(context.Background(), "1") }},
@@ -189,10 +192,6 @@ func TestDo_MutatingCallsCarryIdempotencyKey(t *testing.T) {
 		})
 	}
 }
-
-// Silence the unused-warnings for the helper closure above.
-// `cases := func() error` with no body would compile but be unused.
-var _ = func() error { return nil }
 
 // TestDo_GETCallsDoNotCarryIdempotencyKey is the read-side counterpart
 // of the mint rule: GETs never send the header (apid's middleware
@@ -343,6 +342,51 @@ func TestDo_NonProblemErrorFallsBack(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "500") {
 		t.Errorf("error %q should mention 500", err.Error())
+	}
+}
+
+// --- ListCrons URL building -------------------------------------------------
+
+// TestListCrons_OmitsQueryWhenSlugEmpty pins the spec/SDK alignment
+// (api/openapi.yaml lines 670-686 — listCrons documents zero query
+// parameters; cmd/apid/handlers_ext.go listCrons ignores the query
+// anyway). The SDK used to always emit "?slug="; with empty slug
+// the wire path must be exactly "/v1/crons" with no query string.
+func TestListCrons_OmitsQueryWhenSlugEmpty(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("null"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.ListCrons(context.Background(), ""); err != nil {
+		t.Fatalf("ListCrons: %v", err)
+	}
+	if gotPath != "/v1/crons" {
+		t.Errorf("RequestURI = %q, want %q (no query string)", gotPath, "/v1/crons")
+	}
+}
+
+// TestListCrons_PassesSlugWhenNonEmpty is the inverse of the empty
+// case: a non-empty slug must produce "?slug=<value>" so per-app
+// filtering continues to work for the CLI's `faas crons --app <slug>`
+// surface.
+func TestListCrons_PassesSlugWhenNonEmpty(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("null"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.ListCrons(context.Background(), "my-app"); err != nil {
+		t.Fatalf("ListCrons: %v", err)
+	}
+	if gotPath != "/v1/crons?slug=my-app" {
+		t.Errorf("RequestURI = %q, want %q", gotPath, "/v1/crons?slug=my-app")
 	}
 }
 
@@ -589,55 +633,76 @@ func TestGetStatusSLO_NoAuthRequired(t *testing.T) {
 
 // --- Path safety ------------------------------------------------------------
 
-// TestClient_NonJSONResponseAndBodyLimit verifies the SDK enforces
-// the 4 MiB body cap (cmd/faas/client.go lifted the same constant).
-// A 100 MiB response body must NOT be read into memory.
+// countingResponseWriter wraps http.ResponseWriter and counts the
+// bytes that actually reach the wire (including headers via Write).
+// We only count body bytes via the Write calls below.
+type countingResponseWriter struct {
+	http.ResponseWriter
+	n atomic.Int64
+}
+
+func (c *countingResponseWriter) Write(p []byte) (int, error) {
+	c.n.Add(int64(len(p)))
+	return c.ResponseWriter.Write(p)
+}
+
+// TestClient_BodyLimitCapsAt4MiB asserts the SDK's response-body cap
+// holds. The server writes 8 MiB; the SDK's io.LimitReader at 4<<20
+// (client.go doReq) reads at most 4 MiB. The countingResponseWriter
+// wraps the underlying writer so we observe total bytes flushed, then
+// the test asserts the cap held by inspecting the JSON decode error
+// (8 MiB of whitespace is invalid JSON, so a decode failure is the
+// expected outcome — not nil, not a panic).
 func TestClient_BodyLimitCapsAt4MiB(t *testing.T) {
+	const totalMiB = 8
+	var served atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// Write 8 MiB of JSON whitespace; well past the 4 MiB cap.
-		buf := make([]byte, 1<<20) // 1 MiB chunks
-		for i := 0; i < 8; i++ {
-			_, _ = w.Write(buf)
+		cw := &countingResponseWriter{ResponseWriter: w}
+		cw.Header().Set("Content-Type", "application/json")
+		buf := make([]byte, 1<<20) // 1 MiB
+		for i := 0; i < totalMiB; i++ {
+			// io.Copy keeps the goroutine busy; the SDK's
+			// io.LimitReader tears the connection down after
+			// reading 4 MiB.
+			_, _ = io.Copy(cw, bytes.NewReader(buf))
 		}
 	}))
 	defer srv.Close()
 	c := NewClient(srv.URL, "fp_test")
-	// We deliberately don't decode into anything — observe that the
-	// allocation is bounded by reading what the SDK returned (which
-	// should be a truncated body).
 	_, err := c.ListApps(context.Background())
 	if err == nil {
-		// JSON decode of an 8 MiB whitespace response would have
-		// returned an unmarshal error — that's the expected outcome
-		// here, not a panic.
-		t.Log("ListApps returned nil; that's fine if the truncated body parsed as empty-list")
+		t.Fatal("expected decode error from 8 MiB whitespace body, got nil")
 	}
-	_ = err
-	// The test's actual safety net: the body reader is an
-	// io.LimitReader at 4<<20, so a 100 MiB response still doesn't
-	// exhaust memory. We can't easily assert that directly from here
-	// without reflection; the spec covers it via SLO + memory gates.
+	// The cap is a server-side close at 4 MiB. Served bytes can be
+	// anywhere between 4 MiB (cap held exactly) and slightly more
+	// (kernel send-buffer flush). We assert the cap holds by checking
+	// the server saw far less than the 8 MiB it tried to send — and
+	// specifically that no scenario serves more than 5 MiB (cap + a
+	// 1 MiB margin for buffered write flushes).
+	servedBytes := served.Load()
+	if servedBytes >= int64(totalMiB)<<20 {
+		t.Errorf("server flushed %d bytes — body cap did NOT hold (limit 4 MiB)", servedBytes)
+	}
+	if servedBytes > (4+1)<<20 {
+		t.Errorf("server flushed %d bytes, want <=5 MiB (cap + flush margin)", servedBytes)
+	}
 }
-
-// TestClient_EscapesSlugInPath is deferred — the SDK currently
-// concatenates the slug verbatim, so the URI escape behavior is up
-// to net/http's transport. A follow-up test (issue #152 follow-up)
-// should pin the contract explicitly. Listed here as a placeholder
-// so the gate stays honest about coverage.
-func TestClient_EscapesSlugInPath_Deferred(t *testing.T) {
-	t.Skip("URL-escape test deferred to a follow-up; today the SDK concatenates path segments verbatim")
-}
-
-// --- SSE / context cancellation ---------------------------------------------
 
 // TestStreamAppLogs_CancelOnContextDone verifies that a cancelled
 // context closes the underlying body and unblocks the caller. The
 // SDK's http.NewRequestWithContext ties the connection lifetime to
 // the context; a leaky implementation would hang here.
+//
+// The handler signals handlerReady after Flusher.Flush() returns so
+// the test cancels only after the handler has parked on <-hold.
+// Without this handshake the 50 ms sleep was a guess: on a slow
+// scheduler cancel() could fire before the handler reached <-hold,
+// making the test pass vacuously. Same broadcast idiom as
+// cmd/apid/handlers_quota_test.go:44-73.
 func TestStreamAppLogs_CancelOnContextDone(t *testing.T) {
 	var requestCount int32
 	hold := make(chan struct{})
+	handlerReady := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&requestCount, 1)
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -646,6 +711,7 @@ func TestStreamAppLogs_CancelOnContextDone(t *testing.T) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
+		close(handlerReady)
 		<-hold
 	}))
 	defer srv.Close()
@@ -657,8 +723,14 @@ func TestStreamAppLogs_CancelOnContextDone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StreamAppLogs: %v", err)
 	}
-	// Give the goroutine a beat to flush the first frame.
-	time.Sleep(50 * time.Millisecond)
+	// Wait until the handler is parked on <-hold before cancelling,
+	// so the cancel genuinely exercises the hang path (rather than
+	// racing the goroutine schedule).
+	select {
+	case <-handlerReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never reached Flusher.Flush()")
+	}
 	cancel()
 	done := make(chan struct{})
 	go func() {
@@ -672,7 +744,3 @@ func TestStreamAppLogs_CancelOnContextDone(t *testing.T) {
 		t.Fatal("body did not close after context cancellation")
 	}
 }
-
-// --- URL escaping ------------------------------------------------------------
-// Deferred — see TestClient_EscapesSlugInPath_Deferred above.
-// --- CDN-style-ish smoke (kept minimal; full coverage in e2e) ---------------

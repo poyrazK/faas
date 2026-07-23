@@ -25,3 +25,15 @@ func (c *Client) sseClient() *http.Client {
 		Transport: c.http.Transport,
 	}
 }
+
+// LogEvent is the parsed shape of one deployment-logs frame. SDK
+// callers wrap StreamDeploymentLogs with their own SSE parser and
+// json.Unmarshal each frame's data into this type. Defined here so
+// the SDK owns the public type instead of leaking the server-side
+// shape from cmd/apid/handlers_ext.go.
+type LogEvent struct {
+	Seq       int64  `json:"seq"`
+	Stream    string `json:"stream"` // "stdout" or "stderr"
+	Line      string `json:"line"`
+	WrittenAt string `json:"written_at"`
+}

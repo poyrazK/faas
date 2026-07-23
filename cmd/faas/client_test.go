@@ -395,7 +395,6 @@ var _ = NewClientWithDeployTimeout // pin the alias
 // alongside TestClient_NewClientWithDeployTimeout — both tests poked
 // unexported fields/methods on Client that are now in pkg/api.
 
-
 func writeMinimalFile(path string) error {
 	f, err := os.Create(path)
 	if err != nil {

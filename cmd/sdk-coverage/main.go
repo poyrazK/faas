@@ -47,14 +47,14 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
-	"GET /v1/account/dpa":       true, // public markdown (no Bearer; SDK consumers don't render HTML)
-	"POST /v1/webhooks/stripe":  true, // HMAC-signed webhook; outside the Bearer-auth surface
-	"GET /v1/openapi.yaml":      true, // metadata
-	"GET /v1/openapi.json":      true, // metadata
-	"POST /v1/cli-auth/code":    true, // anonymous device-code (CLI uses wrapper)
+	"GET /v1/account/dpa":        true, // public markdown (no Bearer; SDK consumers don't render HTML)
+	"POST /v1/webhooks/stripe":   true, // HMAC-signed webhook; outside the Bearer-auth surface
+	"GET /v1/openapi.yaml":       true, // metadata
+	"GET /v1/openapi.json":       true, // metadata
+	"POST /v1/cli-auth/code":     true, // anonymous device-code (CLI uses wrapper)
 	"POST /v1/cli-auth/exchange": true,
-	"GET /status/slo.json":      true,
-	"GET /status":               true,
+	"GET /status/slo.json":       true,
+	"GET /status":                true,
 }
 
 // sdkMethodExclude lists methods on *Client that aren't a 1:1 wire
@@ -62,14 +62,14 @@ var routeExclude = map[string]bool{
 // response-shape getters (HTTPClient/BaseURL/Token) belong here so
 // the gate doesn't false-positive on them.
 var sdkMethodExclude = map[string]bool{
-	"HTTPClient":            true,
-	"BaseURL":               true,
-	"Token":                 true,
-	"ListDeploymentsAll":    true, // cursor walker; not a route
-	"DeployMultipart":      true, // open-ended reader-based upload; CLI's DeployTarball is the wired route
-	"MintCliAuthCode":      true, // anonymous device-code mint; route excluded above
-	"ExchangeCliAuthCode":  true, // anonymous device-code poll; route excluded above
-	"GetStatusSLO":         true, // public status; route excluded above
+	"HTTPClient":          true,
+	"BaseURL":             true,
+	"Token":               true,
+	"ListDeploymentsAll":  true, // cursor walker; not a route
+	"DeployMultipart":     true, // open-ended reader-based upload; CLI's DeployTarball is the wired route
+	"MintCliAuthCode":     true, // anonymous device-code mint; route excluded above
+	"ExchangeCliAuthCode": true, // anonymous device-code poll; route excluded above
+	"GetStatusSLO":        true, // public status; route excluded above
 }
 
 // methodRouteMap pins the routes whose natural SDK verb doesn't
@@ -79,42 +79,42 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
-	"DELETE /v1/keys/{id}":            "DeleteKey",
-	"DELETE /v1/domains/{domain}":     "DeleteDomain",
-	"DELETE /v1/crons/{id}":           "DeleteCron",
-	"DELETE /v1/apps/{slug}":          "DeleteApp",
+	"DELETE /v1/keys/{id}":                 "DeleteKey",
+	"DELETE /v1/domains/{domain}":          "DeleteDomain",
+	"DELETE /v1/crons/{id}":                "DeleteCron",
+	"DELETE /v1/apps/{slug}":               "DeleteApp",
 	"DELETE /v1/apps/{slug}/secrets/{key}": "UnsetSecret",
 	"PUT /v1/apps/{slug}/secrets/{key}":    "SetSecret",
-	"PATCH /v1/apps/{slug}":           "UpdateApp",
-	"POST /v1/apps/{slug}/rename":     "RenameApp",
-	"GET /v1/apps/{slug}":             "GetApp",
-	"GET /v1/apps/{slug}/instances":   "ListInstances",
-	"POST /v1/apps/{slug}/park":       "Park",
-	"POST /v1/apps/{slug}/wake":       "Wake",
-	"POST /v1/apps/{slug}/rollback":   "Rollback",
-	"POST /v1/apps/{slug}/deployments": "Deploy",
-	"GET /v1/account/export":          "ExportAccount",
-	"DELETE /v1/account":              "DeleteAccount",
-	"PATCH /v1/account/plan":          "ChangePlan",
-	"GET /v1/account":                 "Whoami",
-	"POST /v1/account/restore":        "RestoreAccount",
-	"GET /v1/apps/{slug}/logs":        "StreamAppLogs",
-	"GET /v1/deployments/{id}/logs":   "StreamDeploymentLogs",
-	"GET /v1/deployments/{id}":        "GetDeployment",
-	"GET /v1/deployments":             "ListDeployments",
-	"GET /v1/apps":                    "ListApps",
-	"POST /v1/apps":                   "CreateApp",
-	"GET /status/slo.json":            "GetStatusSLO",
-	"PATCH /v1/crons/{id}":            "UpdateCron",
-	"POST /v1/crons":                  "CreateCron",
-	"GET /v1/crons":                   "ListCrons",
-	"GET /v1/usage/summary":           "UsageSummary",
-	"GET /v1/usage":                   "GetUsage",
-	"GET /v1/apps/{slug}/secrets":     "ListSecrets",
-	"GET /v1/domains":                 "ListDomains",
-	"POST /v1/domains":                "CreateDomain",
-	"GET /v1/keys":                    "ListKeys",
-	"POST /v1/keys":                   "CreateKey",
+	"PATCH /v1/apps/{slug}":                "UpdateApp",
+	"POST /v1/apps/{slug}/rename":          "RenameApp",
+	"GET /v1/apps/{slug}":                  "GetApp",
+	"GET /v1/apps/{slug}/instances":        "ListInstances",
+	"POST /v1/apps/{slug}/park":            "Park",
+	"POST /v1/apps/{slug}/wake":            "Wake",
+	"POST /v1/apps/{slug}/rollback":        "Rollback",
+	"POST /v1/apps/{slug}/deployments":     "Deploy",
+	"GET /v1/account/export":               "ExportAccount",
+	"DELETE /v1/account":                   "DeleteAccount",
+	"PATCH /v1/account/plan":               "ChangePlan",
+	"GET /v1/account":                      "Whoami",
+	"POST /v1/account/restore":             "RestoreAccount",
+	"GET /v1/apps/{slug}/logs":             "StreamAppLogs",
+	"GET /v1/deployments/{id}/logs":        "StreamDeploymentLogs",
+	"GET /v1/deployments/{id}":             "GetDeployment",
+	"GET /v1/deployments":                  "ListDeployments",
+	"GET /v1/apps":                         "ListApps",
+	"POST /v1/apps":                        "CreateApp",
+	"GET /status/slo.json":                 "GetStatusSLO",
+	"PATCH /v1/crons/{id}":                 "UpdateCron",
+	"POST /v1/crons":                       "CreateCron",
+	"GET /v1/crons":                        "ListCrons",
+	"GET /v1/usage/summary":                "UsageSummary",
+	"GET /v1/usage":                        "GetUsage",
+	"GET /v1/apps/{slug}/secrets":          "ListSecrets",
+	"GET /v1/domains":                      "ListDomains",
+	"POST /v1/domains":                     "CreateDomain",
+	"GET /v1/keys":                         "ListKeys",
+	"POST /v1/keys":                        "CreateKey",
 }
 
 func main() {
@@ -206,6 +206,12 @@ func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {
 // failure message is descriptive even when the auto-derivation
 // misses the mark. The map in methodRouteMap overrides this when
 // the natural verb differs (e.g. POST …/deployments → Deploy).
+//
+// Today every spec route is in methodRouteMap, so this function is
+// unreachable at runtime. It exists only as a fallback so a future
+// route that ships without a map entry produces a descriptive error
+// (the developer sees "POST /v1/apps/{slug}/x → SDK method PostAppsSlugX"
+// instead of "unknown"). Not authoritative; methodRouteMap is.
 func deriveMethodName(method, path string) string {
 	method = strings.Title(strings.ToLower(method))
 	// Strip /v1/ prefix and {} placeholders; title-case each segment.
@@ -267,8 +273,8 @@ func loadSpec(path string) (map[string]map[string]any, error) {
 		return out, nil
 	}
 	for i := 0; i+1 < len(paths.Content); i += 2 {
-		pn := paths.Content[i]      // path key
-		on := paths.Content[i+1]    // operation mapping
+		pn := paths.Content[i]   // path key
+		on := paths.Content[i+1] // operation mapping
 		if on.Kind != yaml.MappingNode {
 			continue
 		}

@@ -52,6 +52,15 @@ import (
 // NewClient (30s default timeout) or NewClientWithDeployTimeout
 // (longer upload timeout). Pass-through to net/http for SSE streams is
 // configured internally; see logs.go.
+//
+// Path and query parameters are passed verbatim to net/http. The
+// OpenAPI spec constrains every path param to a regex that excludes
+// URL-unsafe characters (slug = ^[a-z0-9-]+$, id = ^[a-f0-9]{32}$,
+// key = ^[A-Z][A-Z0-9_]*$, domain = ^[a-z0-9.\-]+$); apid validates
+// input with these patterns, so malformed input surfaces as a 4xx
+// Problem rather than a URL-mangled 404. SDK callers that compose
+// slugs from user input should validate against the spec pattern
+// before calling.
 type Client struct {
 	baseURL string
 	token   string
@@ -91,7 +100,11 @@ func (c *Client) HTTPClient() *http.Client { return c.http }
 // BaseURL returns the URL prefix the client was constructed with.
 func (c *Client) BaseURL() string { return c.baseURL }
 
-// Token returns the bearer token (empty for anonymous clients).
+// Token returns the bearer token the client was constructed with
+// (empty for anonymous clients). The returned value is the raw
+// secret; do NOT log it, surface it in errors, or persist it. SDK
+// callers that need to forward the token to other surfaces should
+// copy it into a local variable scoped to the request.
 func (c *Client) Token() string { return c.token }
 
 // uploadHTTP returns the upload client or falls back to the default.
@@ -132,7 +145,18 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := c.http.Do(req)
+	return c.doReq(c.http, req, out)
+}
+
+// doReq executes a prepared request against the given *http.Client
+// (default c.http or uploadHTTP for tarball uploads) and applies the
+// SDK's standard response handling: 4 MiB body cap, non-2xx → Problem,
+// 2xx → unmarshal into out when out != nil. The caller is responsible
+// for auth + Idempotency-Key + Content-Type — see do for the standard
+// recipe; methods that need a custom header set it on req before
+// calling doReq.
+func (c *Client) doReq(cli *http.Client, req *http.Request, out any) error {
+	resp, err := cli.Do(req)
 	if err != nil {
 		return fmt.Errorf("could not reach the API: %w", err)
 	}
@@ -182,33 +206,19 @@ func (c *Client) ExportAccount(ctx context.Context, includeSecrets bool) (Accoun
 // idempotent under Idempotency-Key; callers may pass an explicit
 // stable key (CI retries) or "" to auto-mint a UUIDv4 per call.
 func (c *Client) DeleteAccount(ctx context.Context, idempotencyKey string) (AccountDeletionResponse, error) {
-	var out AccountDeletionResponse
-	req, _ := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/v1/account", nil)
+	if idempotencyKey == "" {
+		idempotencyKey = newUUIDv4()
+	}
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/v1/account", nil)
+	if err != nil {
+		return AccountDeletionResponse{}, err
+	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-	if idempotencyKey != "" {
-		req.Header.Set("Idempotency-Key", idempotencyKey)
-	} else {
-		req.Header.Set("Idempotency-Key", newUUIDv4())
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return out, fmt.Errorf("could not reach the API: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 300 {
-		var p Problem
-		if json.Unmarshal(body, &p) == nil && p.Code != "" {
-			return out, &APIError{Problem: p}
-		}
-		return out, fmt.Errorf("API error: %s", resp.Status)
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return out, fmt.Errorf("decode response: %w", err)
-	}
-	return out, nil
+	req.Header.Set("Idempotency-Key", idempotencyKey)
+	var out AccountDeletionResponse
+	return out, c.doReq(c.http, req, &out)
 }
 
 // RestoreAccount cancels a pending deletion (spec §17 G6).
@@ -275,29 +285,15 @@ func (c *Client) DeployMultipart(ctx context.Context, slug string, source io.Rea
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	// DeployMultipart bypasses Client.do; auto-mint Idempotency-Key here
-	// so retry-safe semantics still hold. The file-open guard (if any)
-	// runs at the caller before this mint, so a rejected path never
-	// produces an Idempotency-Key on the wire.
+	// DeployMultipart bypasses Client.do (multipart Content-Type wins
+	// over the JSON default) and routes through the longer-timeout
+	// upload client. Auto-mint Idempotency-Key here so retry-safe
+	// semantics still hold; the file-open guard (if any) runs at the
+	// caller before this mint, so a rejected path never produces an
+	// Idempotency-Key on the wire.
 	req.Header.Set("Idempotency-Key", newUUIDv4())
-	resp, err := c.uploadHTTP().Do(req)
-	if err != nil {
-		return DeploymentResponse{}, fmt.Errorf("could not reach the API: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode >= 300 {
-		var p Problem
-		if json.Unmarshal(data, &p) == nil && p.Code != "" {
-			return DeploymentResponse{}, &APIError{Problem: p}
-		}
-		return DeploymentResponse{}, fmt.Errorf("API error: %s", resp.Status)
-	}
 	var out DeploymentResponse
-	if err := json.Unmarshal(data, &out); err != nil {
-		return DeploymentResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return out, nil
+	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
 
 // GetApp returns the app metadata for a slug.
@@ -368,10 +364,18 @@ func (c *Client) DeleteDomain(ctx context.Context, domain string) error {
 	return c.do(ctx, "DELETE", "/v1/domains/"+domain, nil, nil)
 }
 
-// Crons.
+// ListCrons returns every cron on the account when slug is empty,
+// or every cron for the given app when slug is non-empty. The slug
+// filter is added to the wire only when non-empty so the request
+// matches the spec (zero documented parameters) and the server-side
+// listCrons handler returns 200 with the full account-scoped list.
 func (c *Client) ListCrons(ctx context.Context, slug string) ([]CronResponse, error) {
+	path := "/v1/crons"
+	if slug != "" {
+		path += "?slug=" + slug
+	}
 	var out []CronResponse
-	return out, c.do(ctx, "GET", "/v1/crons?slug="+slug, nil, &out)
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 func (c *Client) CreateCron(ctx context.Context, slug string, req CreateCronRequest) (CronResponse, error) {
 	var out CronResponse
@@ -388,7 +392,7 @@ func (c *Client) ListKeys(ctx context.Context) ([]APIKeyResponse, error) {
 }
 func (c *Client) CreateKey(ctx context.Context, label string) (APIKeyResponse, error) {
 	var out APIKeyResponse
-	return out, c.do(ctx, "POST", "/v1/keys", map[string]string{"label": label}, &out)
+	return out, c.do(ctx, "POST", "/v1/keys", CreateKeyRequest{Label: label}, &out)
 }
 func (c *Client) DeleteKey(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/keys/"+id, nil, nil)
