@@ -1693,7 +1693,6 @@ func TestMemStore_ClaimQueuedBuild(t *testing.T) {
 	}
 }
 
-
 // TestMemStore_CreateDeployment_SupersedesPriorLive mirrors the
 // PgStore supersede happy-path. Two pending-style deployments go
 // through; the second must observe the prior as superseded in the
