@@ -33,6 +33,27 @@ import (
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
+// ciRunnerSkip returns true when the test is being executed inside
+// GitHub Actions / generic CI — i.e. NOT on a production EX44 host.
+// The host-baseline checks below pin operator-side configuration that
+// the ansible role applies at bootstrap; running them on a stock
+// ubuntu-latest runner would always fail. They are intended for the
+// EX44 and for a separately-tagginged CI box (separate, future PR).
+//
+// macOS dev is gated by //go:build linux; the GH runner detection
+// below filters the remaining linux-on-CI host from the production
+// linux-on-EX44 environment.
+func ciRunnerSkip() bool {
+	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+		return true
+	}
+	// Belt: any system that's NOT labeled for the EX44 prod boot.
+	if _, err := os.Stat("/etc/faas/host-baseline-applied"); err != nil {
+		return true // baseline file absent ⇒ run on a generic host
+	}
+	return false
+}
+
 // --- TestSec11_CgroupsV2Unified ------------------------------------------
 //
 // §11 "cgroups v2 unified" — the only mode Firecracker snapshot
@@ -46,6 +67,9 @@ import (
 func TestSec11_CgroupsV2Unified(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux host check")
+	}
+	if ciRunnerSkip() {
+		t.Skip("host-baseline check (EX44-only; CI runner is generic ubuntu)")
 	}
 
 	// The cgroup.controllers file is only emitted under a unified
@@ -74,6 +98,9 @@ func TestSec11_KernelAtLeast68(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux host check")
 	}
+	if ciRunnerSkip() {
+		t.Skip("host-baseline check (EX44-only; CI runner is generic ubuntu)")
+	}
 	maj, min, err := kernelVersion()
 	if err != nil {
 		t.Fatalf("read /proc/version: %v", err)
@@ -94,6 +121,9 @@ func TestSec11_KernelAtLeast68(t *testing.T) {
 func TestSec11_UnprivilegedUserNSDisabled(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux host check")
+	}
+	if ciRunnerSkip() {
+		t.Skip("host-baseline check (EX44-only; CI runner is generic ubuntu)")
 	}
 	v, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone")
 	if err != nil {
@@ -116,6 +146,9 @@ func TestSec11_UnprivilegedUserNSDisabled(t *testing.T) {
 func TestSec11_UnattendedUpgradesSecurityOnly(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux host check")
+	}
+	if ciRunnerSkip() {
+		t.Skip("host-baseline check (EX44-only; CI runner is generic ubuntu)")
 	}
 
 	auto, err := os.ReadFile("/etc/apt/apt.conf.d/20auto-upgrades")
