@@ -67,6 +67,20 @@
     - { path: "/var/log/faas",   user: "faas-apid" }
     - { path: "/var/spool/faas", user: "faas-apid" }
     - { path: "/srv/fc/snap",    user: "faas-imaged" }
+    - { path: "/etc/faas/statuspage", user: "faas-apid" }
+
+# Status page HTML (spec §12, M8 acceptance). apid reads this file at
+# /status; without it the handler returns the embedded "source
+# unavailable" fallback and the alert-driven degraded pill never
+# renders. ReadOnlyPaths=/etc/faas in faas-apid.service covers the
+# read; no separate ReadWritePaths entry needed here.
+- name: control_plane_service — install status page HTML
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../statuspage/index.html"
+    dest: /etc/faas/statuspage/index.html
+    owner: root
+    group: faas
+    mode: "0644"
 
 - name: control_plane_service — note for operators (NOT auto-enabled)
   ansible.builtin.debug:

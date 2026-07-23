@@ -31,6 +31,12 @@ EnvironmentFile=/etc/faas/sealed.env
 # apid only — the other five daemons don't read FAAS_SESSION_KEY.
 LoadCredential=faas_session_key:/etc/faas/secrets/session.key
 Environment=FAAS_SESSION_KEY=%d/faas_session_key
+# Status page (spec §12, M8 acceptance). The HTML lives under
+# ReadOnlyPaths=/etc/faas below; FAAS_STATUSPAGE_PATH tells cmd/apid
+# where to read it. Without this the alert-driven "degraded" pill
+# never renders in production — the file exists in the role's deploy
+# but apid falls back to a minimal "source unavailable" page.
+Environment=FAAS_STATUSPAGE_PATH=/etc/faas/statuspage/index.html
 
 # Hardening baseline.
 NoNewPrivileges=yes
