@@ -98,8 +98,8 @@ func TestMigrations_00027_InstancesWakeID(t *testing.T) {
 		t.Fatalf("insert apps: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `
-		insert into deployments (app_id, status, source_kind)
-		values ($1, 'live', 'tarball')
+		insert into deployments (app_id, kind, image_digest, status, created_at)
+		values ($1, 'image', 'sha256:seed-wake-id', 'live', now())
 		returning id
 	`, appRowID).Scan(&depRowID); err != nil {
 		t.Fatalf("insert deployments: %v", err)

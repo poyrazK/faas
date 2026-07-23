@@ -1080,9 +1080,14 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// path that left the column NULL — though migration 00027 enforces
 	// NOT NULL post-apply, the COALESCE keeps scanInstance round-tripping
 	// a non-empty string even on half-migrated test DBs.
+	// Cast $6 to text before the empty-string test — Postgres otherwise
+	// infers $6 as uuid from the column type and the untyped '' literal
+	// fails with "COALESCE types text and uuid cannot be matched"
+	// (SQLSTATE 42804). The CASE shape also keeps the gen_random_uuid()
+	// branch on the text path so the whole expression resolves to uuid.
 	row := s.pool.QueryRow(ctx,
 		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at)
-		 values ($1, $2, $3, $4, $5, coalesce(nullif($6, ''), gen_random_uuid()), now())
+		 values ($1, $2, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else $6::uuid end, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id`,
 		appID, deploymentID, state, ramMB, nodeID, wakeID)
