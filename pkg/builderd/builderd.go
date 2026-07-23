@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // Notifier is the pg_notify surface builderd uses. db.Notify satisfies it.
@@ -81,6 +82,11 @@ type Builderd struct {
 	resid    ResidencyProbe
 	cfg      Config
 	log      *slog.Logger
+	// ops is the build-metrics sink (ADR-030). nil in unit tests that
+	// don't care about metrics; all observations guard on nil (the
+	// ObserveBuild* methods are also nil-safe). Wired in production via
+	// WithOpsMetrics from cmd/builderd.
+	ops *wire.OpsMetrics
 }
 
 // New wires a Builderd. vm may be nil in unit tests (the orchestrator still
@@ -108,6 +114,15 @@ func New(store state.Store, notif Notifier, vm VM, cache *Cache, det *Detector, 
 		cfg:      cfg,
 		log:      log,
 	}
+}
+
+// WithOpsMetrics attaches the build-metrics sink (ADR-030) and returns the
+// same Builderd for chaining. Mirrors pkg/sched.Engine.WithOpsMetrics.
+// cmd/builderd wires the daemon's real *wire.OpsMetrics; leaving it unset
+// (the unit-test default) makes every observation a no-op.
+func (b *Builderd) WithOpsMetrics(ops *wire.OpsMetrics) *Builderd {
+	b.ops = ops
+	return b
 }
 
 // BuildResult is the outcome of one queued build.
@@ -150,6 +165,16 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	}
 	defer b.emitBuildLog(ctx, build.ID, "build started\n")
 
+	// Build telemetry (ADR-030). Queue wait = time the build sat between
+	// apid's CreateBuild (enqueued_at) and this dequeue point; observed
+	// once here so only builds that actually started count. Duration is
+	// wall-clock from here to any terminal path, emitted via defer so
+	// every return below (success, cache hit, or failure) records it
+	// exactly once. All observers are nil-safe (ops may be unset in tests).
+	b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
+	buildStart := time.Now()
+	defer func() { b.ops.ObserveBuildDuration(time.Since(buildStart)) }()
+
 	fw, err := b.detector.Detect(dep.SourcePath)
 	if err != nil {
 		b.markFailed(ctx, dep.ID, build.ID, state.FailureUserError, "framework detect: "+err.Error())
@@ -181,7 +206,7 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 			b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "notify prime: "+err.Error())
 			return BuildResult{}, err
 		}
-		b.markSucceeded(ctx, build.ID)
+		b.markSucceeded(ctx, build.ID, "cache_hit")
 		return BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true}, nil
 	}
 
@@ -306,12 +331,15 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "notify prime: "+err.Error())
 		return BuildResult{}, err
 	}
-	b.markSucceeded(ctx, build.ID)
+	b.markSucceeded(ctx, build.ID, "ok")
 	return BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: out.LogTailBytes}, nil
 }
 
 // markSucceeded updates the build row to BuildSucceeded, finished=true.
-func (b *Builderd) markSucceeded(ctx context.Context, buildID string) {
+// code is the ops_total{op="build"} label — "ok" for a fresh build or
+// "cache_hit" for the cache short-circuit (ADR-030).
+func (b *Builderd) markSucceeded(ctx context.Context, buildID, code string) {
+	b.ops.ObserveBuildCount(code)
 	if err := b.store.UpdateBuildStatus(ctx, buildID, state.BuildSucceeded, "", false, true); err != nil {
 		b.log.Warn("builderd: mark succeeded", "build", buildID, "err", err)
 	}
@@ -322,6 +350,9 @@ func (b *Builderd) markSucceeded(ctx context.Context, buildID string) {
 // reality (instead of leaving it stuck in DeployBuilding forever).
 // The empty-string fc guard in pkg/state means a non-empty fc must be passed.
 func (b *Builderd) markFailed(ctx context.Context, depID, buildID string, fc state.FailureClass, msg string) {
+	// ops_total{op="build",code=<fc>} — the §12 build-success ratio counts
+	// everything except code="user_error" as a success (ADR-030).
+	b.ops.ObserveBuildCount(string(fc))
 	b.log.Warn("builderd: build failed", "build", buildID, "deployment", depID, "failure_class", fc, "msg", msg)
 	b.emitBuildLog(ctx, buildID, "FAILED: "+msg+"\n")
 	if err := b.store.UpdateBuildStatus(ctx, buildID, state.BuildFailed, fc, false, true); err != nil {

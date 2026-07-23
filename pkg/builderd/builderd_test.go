@@ -5,13 +5,16 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // fakeNotifier records every Notify call. Used to assert build_log fan-out
@@ -531,4 +534,76 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// scrapeMetrics renders the daemon's /metrics body via the OpsMetrics
+// handler so build-metric assertions match the real exposition format.
+func scrapeMetrics(t *testing.T, ops *wire.OpsMetrics) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	ops.Handler().ServeHTTP(rec, req)
+	return rec.Body.String()
+}
+
+func TestProcessOne_EmitsBuildMetrics(t *testing.T) {
+	// A fresh successful build increments ops_total{op="build",code="ok"}
+	// and observes both build histograms exactly once (ADR-030).
+	store := state.NewMemStore()
+	srcTar := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, srcTar, []string{"package.json", "index.js"})
+	buildID, _, _ := seedDeployment(t, store, srcTar)
+
+	out := filepath.Join(t.TempDir(), "produced.ext4")
+	if err := os.WriteFile(out, []byte("produced layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{out: BuildOutcome{OCIImage: out, ExitCode: 0, LogTailBytes: 14}}
+	ops := wire.NewOpsMetrics("builderd")
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	body := scrapeMetrics(t, ops)
+	for _, want := range []string{
+		`builderd_ops_total{code="ok",op="build"} 1`,
+		`builderd_build_duration_seconds_count 1`,
+		`builderd_build_queue_wait_seconds_count 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in metrics:\n%s", want, body)
+		}
+	}
+}
+
+func TestProcessOne_BuildMetricCodeByOutcome(t *testing.T) {
+	// The ops_total code label must match the terminal outcome so the §12
+	// build-success ratio (code!="user_error") is computed off real data.
+	tests := []struct {
+		name     string
+		outcome  BuildOutcome
+		wantCode string
+	}{
+		{"oom", BuildOutcome{OCIImage: "/dev/null", ExitCode: 137, FailureClass: "FailureOOM"}, "oom"},
+		{"timeout", BuildOutcome{OCIImage: "/dev/null", ExitCode: 124, FailureClass: "FailureTimeout"}, "timeout"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			src := filepath.Join(t.TempDir(), "src.tar.gz")
+			makeTarballWithName(t, src, []string{"package.json"})
+			buildID, _, _ := seedDeployment(t, store, src)
+			fvm := &fakeVM{out: tc.outcome}
+			ops := wire.NewOpsMetrics("builderd")
+			b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
+
+			_, _ = b.ProcessOne(context.Background(), buildID)
+			body := scrapeMetrics(t, ops)
+			want := `builderd_ops_total{code="` + tc.wantCode + `",op="build"} 1`
+			if !strings.Contains(body, want) {
+				t.Errorf("missing %q in metrics:\n%s", want, body)
+			}
+		})
+	}
 }

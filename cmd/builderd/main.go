@@ -125,10 +125,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	store := state.NewPgStore(pool)
 	notif := dbNotifier{pool: pool}
 	resid := deps.newResidentProbe(ctx, cfg.ScheddMetricsURL)
+	// Single OpsMetrics for the daemon: builderd both records build
+	// telemetry on it (ObserveBuild*) and serves it at /metrics. Building
+	// it once (not inline in the /metrics block) is what makes the build
+	// series real rather than a throwaway (ADR-030).
+	ops := wire.NewOpsMetrics("builderd")
 	b := builderdpkg.New(store, notif, driver, nil, nil, resid, builderdpkg.Config{
 		CacheDir:    cfg.CacheDir,
 		MetricsAddr: cfg.MetricsAddr,
-	}, log)
+	}, log).WithOpsMetrics(ops)
 
 	notifCh, err := db.SubscribeWithReconnect(ctx, pool, []string{
 		db.NotifyBuildQueued,
@@ -141,7 +146,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var httpSrv *http.Server
 	if cfg.MetricsAddr != "" {
 		mux := http.NewServeMux()
-		mux.Handle("/metrics", wire.NewOpsMetrics("builderd").Handler())
+		mux.Handle("/metrics", ops.Handler())
 		httpSrv = &http.Server{Addr: cfg.MetricsAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		go func() {
 			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
