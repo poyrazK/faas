@@ -6,11 +6,26 @@ rules:
   oas3-valid-media-example: error
   no-eval-in-markdown: error
 
-  # Description prose — warn on day 1, promote to error after polishing.
+  # Description prose — promoted to error after the 47 mechanical
+  # additions in PR (TBD): 31 schemas, 9 requestBodies, 6 inline
+  # parameters. Each description is a 1-line phrase sourced from the
+  # matching Go struct doc-comment. operation-description stays at
+  # warn — the operation's `summary:` field is sufficient context for
+  # OpenAPI consumers and the existing 10 ops have one already.
   operation-description: warn
   tag-description: warn
   info-contact: warn
   info-license: warn
+  component-description: error
+  description-duplication: error
+  oas3-parameter-description: error
 
   # Disable single-box cloud-irrelevant rules.
   oas3-api-servers: off
+  # Wire is snake_case by design — every pkg/api/*.go JSON tag, every §11
+  # metadata format, every ADR-009 / ADR-013 identifier uses snake_case.
+  # camel-case-properties is a JavaScript convention mis-applied to a
+  # Go-shaped wire API. Disabling removes 76 noise warnings; if we ever
+  # do support JS clients that prefer camelCase we can flip this back on
+  # alongside a separate camelCase-shadow spec at /v1/openapi.camel.json.
+  camel-case-properties: off

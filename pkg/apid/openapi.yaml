@@ -72,10 +72,12 @@ paths:
       description: Returns the calling account, its plan, and quota limits.
       responses:
         '200':
-          description: OK
+          description: "The calling account: id, plan, limits snapshot, current-month usage, and total app count."
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AccountResponse' }
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -94,7 +96,9 @@ paths:
           description: Staged.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AccountDeletionResponse' }
+              schema:
+                $ref: '#/components/schemas/AccountDeletionResponse'
+                example: {"status":"deleted_pending","scheduled_at":"2026-07-23T11:25:00Z","restore_until":"2026-08-22T11:25:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/ConflictDelete' }
 
@@ -109,15 +113,20 @@ paths:
         new plan only.
       requestBody:
         required: true
+        description: "Plan change payload."
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ChangePlanRequest' }
+            schema:
+              $ref: '#/components/schemas/ChangePlanRequest'
+              example: {"plan":"pro"}
       responses:
         '200':
-          description: OK
+          description: The updated account profile after the plan change.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AccountResponse' }
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
@@ -143,14 +152,16 @@ paths:
           description: If true (default), include the sealed-secret envelopes.
       responses:
         '200':
-          description: OK
+          description: "A bundled JSON document: the account itself plus every owned app, deployment, build, instance, usage record, domain, cron, API key, sealed-secret envelope, and the audit trail."
           headers:
             Content-Disposition:
               schema: { type: string }
               description: 'attachment; filename="faas-account-<id>-<yyyymmdd>.json"'
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AccountExportResponse' }
+              schema:
+                $ref: '#/components/schemas/AccountExportResponse'
+                example: {"exported_at":"2026-07-23T11:25:00Z","account":{...},"apps":[],"deployments":[],"builds":[],"instances":[],"usage":[],"domains":[],"crons":[],"api_keys":[],"app_secrets":[],"audit_trail":[]}
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /v1/account/restore:
@@ -164,7 +175,9 @@ paths:
           description: Restored.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AccountResponse' }
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","email":"ops@example.com","plan":"hobby","status":"active","limits":{"plan":"hobby","ram_mb":256,"max_concurrency":2,"deployed_apps":3,"included_gb_hours":50,"app_layer_max_mb":512},"usage_gb_hours":1.234,"app_count":3,"github_install_id":null}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/ConflictDelete' }
 
@@ -177,12 +190,14 @@ paths:
       summary: List apps on the account.
       responses:
         '200':
-          description: OK
+          description: Apps on the account.
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/AppResponse' }
+              example:
+                - {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","ram_mb":256,"max_concurrency":2,"min_instances":0,"status":"active","url":"https://hello-world.example.com","manifest":{"entrypoint":["node","server.js"]},"created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
@@ -191,17 +206,22 @@ paths:
       summary: Create an app.
       requestBody:
         required: true
+        description: "App creation payload (slug, type, runtime, RAM, …). See CreateAppRequest schema."
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateAppRequest' }
+            schema:
+              $ref: '#/components/schemas/CreateAppRequest'
+              example: {"slug":"hello-world","type":"app","runtime":"","ram_mb":256,"max_concurrency":2,"idle_timeout_s":60,"manifest":null}
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
-          description: Created.
+          description: The new app.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AppResponse' }
+              schema:
+                $ref: '#/components/schemas/AppResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","runtime":"","ram_mb":256,"max_concurrency":2,"idle_timeout_s":60,"min_instances":0,"state":"running","last_deployment_id":"0123456789abcdef0123456789abcdef","created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z"}
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/PlanLimit' }
@@ -217,10 +237,12 @@ paths:
       summary: Fetch one app.
       responses:
         '200':
-          description: OK
+          description: The app.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AppResponse' }
+              schema:
+                $ref: '#/components/schemas/AppResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","runtime":"","ram_mb":256,"max_concurrency":2,"idle_timeout_s":60,"min_instances":0,"state":"running","last_deployment_id":"0123456789abcdef0123456789abcdef","created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -230,15 +252,20 @@ paths:
       summary: Partial-update an app.
       requestBody:
         required: true
+        description: "Patch payload — every field is optional; omitted fields are unchanged. See UpdateAppRequest."
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/UpdateAppRequest' }
+            schema:
+              $ref: '#/components/schemas/UpdateAppRequest'
+              example: {"ram_mb":512,"max_concurrency":3,"idle_timeout_s":120,"min_instances":1}
       responses:
         '200':
-          description: OK
+          description: The updated app.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AppResponse' }
+              schema:
+                $ref: '#/components/schemas/AppResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","runtime":"","ram_mb":256,"max_concurrency":2,"idle_timeout_s":60,"min_instances":0,"state":"running","last_deployment_id":"0123456789abcdef0123456789abcdef","created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z"}
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/PlanLimit' }
@@ -250,7 +277,7 @@ paths:
       operationId: deleteApp
       summary: Delete an app.
       responses:
-        '204': { description: Deleted. }
+        '204': { description: No body. The resource was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -269,9 +296,12 @@ paths:
         Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
       requestBody:
         required: true
+        description: "Either a prebuilt OCI image reference (`application/json`) or a source tarball upload (`multipart/form-data`). See the operation description for plan size caps."
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateDeploymentRequest' }
+            schema:
+              $ref: '#/components/schemas/CreateDeploymentRequest'
+              example: {"image":"ghcr.io/onebox-faas/hello:abc1234"}
           multipart/form-data:
             schema:
               type: object
@@ -279,6 +309,7 @@ paths:
                 source:
                   type: string
                   format: binary
+                  description: "Multipart file field — the source tarball or Dockerfile context."
                 dockerfile:
                   type: boolean
                 kind:
@@ -291,10 +322,12 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
-          description: Accepted.
+          description: The deployment whose build has been accepted and queued.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/DeploymentResponse' }
+              schema:
+                $ref: '#/components/schemas/DeploymentResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","deployment_id":"0123456789abcdef0123456789abcdef","status":"running","commit_sha":"abc1234","created_at":"2026-07-23T11:25:00Z","finished_at":"2026-07-23T11:26:00Z","source_bytes":12345678}
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/SourceEgressDenied' }
@@ -313,10 +346,12 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
-          description: Accepted.
+          description: The deployment that was created by rolling back to the previous version.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/DeploymentResponse' }
+              schema:
+                $ref: '#/components/schemas/DeploymentResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","deployment_id":"0123456789abcdef0123456789abcdef","status":"running","commit_sha":"abc1234","created_at":"2026-07-23T11:25:00Z","finished_at":"2026-07-23T11:26:00Z","source_bytes":12345678}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/NoRollbackTarget' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -357,17 +392,22 @@ paths:
       summary: Rename an app.
       requestBody:
         required: true
+        description: "Rename payload — the new slug. See RenameAppRequest."
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/RenameAppRequest' }
+            schema:
+              $ref: '#/components/schemas/RenameAppRequest'
+              example: {"new_slug":"hello-world-v2"}
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
-          description: OK
+          description: The renamed app.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AppResponse' }
+              schema:
+                $ref: '#/components/schemas/AppResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","runtime":"","ram_mb":256,"max_concurrency":2,"idle_timeout_s":60,"min_instances":0,"state":"running","last_deployment_id":"0123456789abcdef0123456789abcdef","created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z"}
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/ConflictRename' }
@@ -381,12 +421,14 @@ paths:
       summary: Read-only instance list for an app.
       responses:
         '200':
-          description: OK
+          description: Instances belonging to the app.
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/InstanceResponse' }
+              example:
+                - {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","deployment_id":"0123456789abcdef0123456789abcdef","state":"running","ram_mb":256,"started_at":"2026-07-23T11:25:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -409,7 +451,7 @@ paths:
           description: If 1, hold the connection open and stream new entries.
       responses:
         '200':
-          description: OK
+          description: A text/event-stream of structured log lines, terminated by an empty SSE frame when the connection closes.
           content:
             text/event-stream: {}
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -425,10 +467,12 @@ paths:
       summary: List sealed secrets on an app.
       responses:
         '200':
-          description: OK
+          description: Sealed-secret envelopes on the app (plaintext never returned).
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AppSecretListResponse' }
+              schema:
+                $ref: '#/components/schemas/AppSecretListResponse'
+                example: {"items":[],"next_before":null}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -446,15 +490,20 @@ paths:
         persists the ciphertext. The plaintext never lands in PG.
       requestBody:
         required: true
+        description: "Secret payload — key name + plaintext. Sealed at rest; plaintext never returned."
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PutAppSecretRequest' }
+            schema:
+              $ref: '#/components/schemas/PutAppSecretRequest'
+              example: {"key":"DATABASE_URL","value":"postgres://..."}
       responses:
         '200':
-          description: OK
+          description: The stored sealed-secret envelope.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AppSecretResponse' }
+              schema:
+                $ref: '#/components/schemas/AppSecretResponse'
+                example: {"key":"DATABASE_URL","sealed_ciphertext":"<base64 x25519+xsalsa20-poly1305 ciphertext>","version":1,"created_at":"2026-07-23T11:25:00Z"}
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/PlanLimitSecrets' }
@@ -465,7 +514,7 @@ paths:
       operationId: deleteSecret
       summary: Delete a sealed secret.
       responses:
-        '204': { description: Deleted. }
+        '204': { description: No body. The sealed-secret envelope was removed. }
         '400': { $ref: '#/components/responses/SecretNotFound' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -486,16 +535,19 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Page size (1–200, default 50).
         - name: before
           in: query
           schema: { type: string, format: date-time }
           description: RFC3339Nano cursor from a previous response's `next_before`.
       responses:
         '200':
-          description: OK
+          description: A paginated list of deployments.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/DeploymentListResponse' }
+              schema:
+                $ref: '#/components/schemas/DeploymentListResponse'
+                example: {"items":[],"next_before":null}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -508,10 +560,12 @@ paths:
       summary: Fetch one deployment.
       responses:
         '200':
-          description: OK
+          description: The deployment.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/DeploymentResponse' }
+              schema:
+                $ref: '#/components/schemas/DeploymentResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","deployment_id":"0123456789abcdef0123456789abcdef","status":"running","commit_sha":"abc1234","created_at":"2026-07-23T11:25:00Z","finished_at":"2026-07-23T11:26:00Z","source_bytes":12345678}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -530,15 +584,18 @@ paths:
         - name: before_seq
           in: query
           schema: { type: integer }
+          description: Stream cursor — return only log entries with seq strictly less than this value.
         - name: limit
           in: query
           schema: { type: integer }
+          description: Maximum number of log entries to return in the initial burst before streaming.
         - name: follow
           in: query
           schema: { type: integer, enum: [0, 1], default: 0 }
+          description: If 1, hold the connection open and stream new build log entries as they arrive.
       responses:
         '200':
-          description: OK
+          description: A text/event-stream of build log entries, terminated by an empty SSE frame when the build finishes.
           content:
             text/event-stream: {}
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -554,12 +611,14 @@ paths:
       summary: List custom domain bindings.
       responses:
         '200':
-          description: OK
+          description: Custom-domain bindings on the account.
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/CustomDomainResponse' }
+              example:
+                - {"id":"0123456789abcdef0123456789abcdef","domain":"app.example.com","app_id":"0123456789abcdef0123456789abcdef","verified":true,"tls_state":"active","created_at":"2026-07-23T11:25:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
@@ -568,17 +627,22 @@ paths:
       summary: Bind a custom domain.
       requestBody:
         required: true
+        description: "Domain-bind payload — domain string + target app slug. See CreateCustomDomainRequest."
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateCustomDomainRequest' }
+            schema:
+              $ref: '#/components/schemas/CreateCustomDomainRequest'
+              example: {"domain":"app.example.com","app_id":"0123456789abcdef0123456789abcdef"}
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
-          description: Created.
+          description: The new custom-domain binding.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/CustomDomainResponse' }
+              schema:
+                $ref: '#/components/schemas/CustomDomainResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","domain":"app.example.com","app_id":"0123456789abcdef0123456789abcdef","verified":true,"tls_state":"active","created_at":"2026-07-23T11:25:00Z"}
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -596,7 +660,7 @@ paths:
       operationId: deleteDomain
       summary: Remove a custom domain binding.
       responses:
-        '204': { description: Deleted. }
+        '204': { description: No body. The binding was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -610,12 +674,14 @@ paths:
       summary: List cron triggers.
       responses:
         '200':
-          description: OK
+          description: Cron triggers on the account.
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/CronResponse' }
+              example:
+                - {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","schedule":"*/5 * * * *","path":"/cron","enabled":true,"created_at":"2026-07-23T11:25:00Z","last_fired_at":"2026-07-23T11:20:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
@@ -624,17 +690,22 @@ paths:
       summary: Create a cron trigger.
       requestBody:
         required: true
+        description: "Cron payload — schedule expression + target URL. See CreateCronRequest."
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateCronRequest' }
+            schema:
+              $ref: '#/components/schemas/CreateCronRequest'
+              example: {"schedule":"*/5 * * * *","target_url":"https://hello-world.example.com/cron"}
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
-          description: Created.
+          description: The new cron trigger.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/CronResponse' }
+              schema:
+                $ref: '#/components/schemas/CronResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","schedule":"*/5 * * * *","target_url":"https://hello-world.example.com/cron","enabled":true,"last_run_at":"2026-07-23T11:20:00Z","next_run_at":"2026-07-23T11:25:00Z"}
         '400': { $ref: '#/components/responses/CronInvalid' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -648,15 +719,20 @@ paths:
       summary: Partial-update a cron.
       requestBody:
         required: true
+        description: "Cron patch — every field is optional. See UpdateCronRequest."
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/UpdateCronRequest' }
+            schema:
+              $ref: '#/components/schemas/UpdateCronRequest'
+              example: {"enabled":false,"schedule":"0 * * * *"}
       responses:
         '200':
-          description: OK
+          description: The updated cron trigger.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/CronResponse' }
+              schema:
+                $ref: '#/components/schemas/CronResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","schedule":"*/5 * * * *","target_url":"https://hello-world.example.com/cron","enabled":true,"last_run_at":"2026-07-23T11:20:00Z","next_run_at":"2026-07-23T11:25:00Z"}
         '400': { $ref: '#/components/responses/CronInvalid' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -666,7 +742,7 @@ paths:
       operationId: deleteCron
       summary: Delete a cron.
       responses:
-        '204': { description: Deleted. }
+        '204': { description: No body. The cron trigger was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -680,12 +756,14 @@ paths:
       summary: List API keys (no plaintext).
       responses:
         '200':
-          description: OK
+          description: API key metadata on the account. Plaintext is never returned.
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/APIKeyResponse' }
+              example:
+                - {"id":"0123456789abcdef0123456789abcdef","prefix":"fp_live_ab","label":"ci-deploy","created_at":"2026-07-23T11:25:00Z","last_used_at":"2026-07-23T11:25:00Z","requests":42}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
@@ -697,15 +775,20 @@ paths:
         and cannot be retrieved; subsequent GETs return only the prefix.
       requestBody:
         required: true
+        description: "API key creation payload — label only. Plaintext is returned exactly once in the 201 response."
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateKeyRequest' }
+            schema:
+              $ref: '#/components/schemas/CreateKeyRequest'
+              example: {"label":"ci-deploy"}
       responses:
         '201':
-          description: Created.
+          description: The new API key. **The plaintext is returned exactly once** — every subsequent GET returns only the prefix.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/APIKeyResponse' }
+              schema:
+                $ref: '#/components/schemas/APIKeyResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","prefix":"fp_live_ab","label":"ci-deploy","created_at":"2026-07-23T11:25:00Z","last_used_at":"2026-07-23T11:25:00Z","requests":42}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -717,7 +800,7 @@ paths:
       operationId: deleteKey
       summary: Revoke an API key.
       responses:
-        '204': { description: Deleted. }
+        '204': { description: No body. The key was revoked. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -733,14 +816,17 @@ paths:
         - name: month
           in: query
           schema: { type: string, pattern: '^\d{4}-\d{2}$', example: '2026-07' }
+          description: Billing month in `YYYY-MM` form (UTC). Defaults to the current month.
       responses:
         '200':
-          description: OK
+          description: Per-app usage rows for the month.
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/UsageResponse' }
+              example:
+                - {"month":"2026-07","app_id":"0123456789abcdef0123456789abcdef","mb_seconds":1234,"requests":42,"included_gb_hours":50,"used_gb_hours":1.234,"next_before":null}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -753,12 +839,15 @@ paths:
         - name: month
           in: query
           schema: { type: string, pattern: '^\d{4}-\d{2}$' }
+          description: Billing month in `YYYY-MM` form (UTC). Defaults to the current month for the roll-up.
       responses:
         '200':
-          description: OK
+          description: The monthly roll-up with overage math.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/UsageSummaryResponse' }
+              schema:
+                $ref: '#/components/schemas/UsageSummaryResponse'
+                example: {"month":"2026-07","plan":"hobby","included_gb_hours":50,"used_gb_hours":1.234,"overage_gb_hours":0,"overage_cents":0}
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -780,7 +869,7 @@ paths:
       security: []
       responses:
         '200':
-          description: OK
+          description: The OpenAPI 3.1 document for this API.
           headers:
             Cache-Control:
               schema: { type: string, example: 'public, max-age=300' }
@@ -799,7 +888,7 @@ paths:
       security: []
       responses:
         '200':
-          description: OK
+          description: The OpenAPI 3.1 document for this API, as JSON.
           headers:
             Cache-Control:
               schema: { type: string, example: 'public, max-age=300' }
@@ -851,40 +940,44 @@ components:
     # ─── Account ──────────────────────────────────────────────────────────
 
     AccountResponse:
+      description: "Account profile: id, email, plan, status, limits snapshot, current-month usage, and total app count."
       type: object
       required: [id, email, plan, status, limits, usage_gb_hours, app_count]
       properties:
-        id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         email: { type: string, format: email }
-        plan: { type: string, enum: [free, hobby, pro, scale] }
-        status: { type: string, enum: [active, past_due, suspended, deleted_pending] }
+        plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
+        status: { type: string, enum: [active, past_due, suspended, deleted_pending] , example: "active"}
         limits: { $ref: '#/components/schemas/AccountLimits' }
         usage_gb_hours: { type: number }
         app_count: { type: integer }
         github_install_id: { type: [string, "null"] }
 
     AccountLimits:
+      description: "Plan-driven quota and resource caps: max RAM per app, concurrent wakes, total deployed apps, included GB-hours, and max app-layer bytes per build."
       type: object
       required: [plan, ram_mb, max_concurrency, deployed_apps, included_gb_hours, app_layer_max_mb]
       properties:
-        plan: { type: string, enum: [free, hobby, pro, scale] }
-        ram_mb: { type: integer }
+        plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
+        ram_mb: { type: integer , example: 256}
         max_concurrency: { type: integer }
         deployed_apps: { type: integer }
         included_gb_hours: { type: integer, format: int64 }
         app_layer_max_mb: { type: integer }
 
     ChangePlanRequest:
+      description: "Target plan for the change."
       type: object
       required: [plan]
       properties:
-        plan: { type: string, enum: [free, hobby, pro, scale] }
+        plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
 
     AccountExportResponse:
+      description: "GDPR export bundle: the account itself, every owned app, deployment, build, instance, usage record, domain, cron, API key, and sealed-secret envelope, plus the audit trail."
       type: object
       required: [exported_at, account, apps, deployments, builds, instances, usage, domains, crons, api_keys, app_secrets]
       properties:
-        exported_at: { type: string, format: date-time }
+        exported_at: { type: string, format: date-time , example: "2026-07-23T11:25:00Z"}
         account: { $ref: '#/components/schemas/AccountResponse' }
         apps: { type: array, items: { $ref: '#/components/schemas/AppResponse' } }
         deployments: { type: array, items: { $ref: '#/components/schemas/DeploymentResponse' } }
@@ -900,46 +993,51 @@ components:
           items: { $ref: '#/components/schemas/GdprAuditExportResponse' }
 
     AccountDeletionResponse:
+      description: "Result of staging account deletion: status flips to `deleted_pending` and `restore_until` marks the end of the 30-day grace window."
       type: object
       required: [status, scheduled_at, restore_until]
       properties:
-        status: { type: string, enum: [deleted_pending] }
+        status: { type: string, enum: [deleted_pending] , example: "deleted_pending"}
         scheduled_at: { type: string, format: date-time }
         restore_until: { type: string, format: date-time }
 
     BuildExportResponse:
+      description: "One build record: source artifact bytes, kind (app/function), status, and lifecycle timestamps."
       type: object
       required: [id, deployment_id, app_id, kind, status, source_bytes]
       properties:
-        id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         kind: { type: string }
-        status: { type: string }
+        status: { type: string , example: "active"}
         source_bytes: { type: integer, format: int64 }
         started_at: { type: [string, "null"], format: date-time }
         finished_at: { type: [string, "null"], format: date-time }
 
     UsageExportResponse:
+      description: "One usage record: app id, GB-hours consumed, started/finished timestamps for the export window."
       type: object
       required: [app_id, month, mb_seconds, requests]
       properties:
-        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         month: { type: string, pattern: '^\d{4}-\d{2}$' }
         mb_seconds: { type: integer, format: int64 }
         requests: { type: integer, format: int64 }
 
     APIKeyExportResponse:
+      description: "One API key in export form: id, prefix (first 8 chars), label, created/last-used timestamps, and request count."
       type: object
       required: [id, prefix, created_at]
       properties:
-        id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         prefix: { type: string }
-        label: { type: [string, "null"] }
+        label: { type: [string, "null"] , example: "ci-deploy"}
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, "null"], format: date-time }
 
     GdprAuditExportResponse:
+      description: "One row of the GDPR audit trail: actor, action (`export`, `delete`, `restore`), timestamp, and IP."
       type: object
       required: [action, requested_at]
       properties:
@@ -948,11 +1046,12 @@ components:
         completed_at: { type: [string, "null"], format: date-time }
 
     AppSecretExportResponse:
+      description: "One sealed secret in export form: key name, sealed ciphertext (sealed at rest per §11), version, and timestamps. Plaintext is never exported."
       type: object
       required: [app_id, key, ciphertext, created_at, updated_at]
       properties:
-        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
         ciphertext: { type: string, description: 'base64-encoded age-sealed envelope' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -960,47 +1059,52 @@ components:
     # ─── Apps ─────────────────────────────────────────────────────────────
 
     AppResponse:
+      description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, and last-deploy pointer."
       type: object
       required: [id, slug, type, ram_mb, max_concurrency, min_instances, status, url, manifest]
       properties:
-        id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$' }
-        type: { type: string, enum: [app, function] }
-        runtime: { type: [string, "null"], enum: [node22, python312] }
-        ram_mb: { type: integer }
+        id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
+        type: { type: string, enum: [app, function] , example: "app"}
+        runtime: { type: string, enum: [node22, python312], description: "Runtime for `type: function` apps. Omit for `type: app` (the default)." }
+        ram_mb: { type: integer , example: 256}
         max_concurrency: { type: integer }
         idle_timeout_s: { type: [integer, "null"] }
         min_instances: { type: integer }
-        status: { type: string }
+        status: { type: string , example: "active"}
         url: { type: string, format: uri }
         manifest: { $ref: '#/components/schemas/AppManifest' }
 
     CreateAppRequest:
+      description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."
       type: object
       required: [slug]
       properties:
-        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
-        type: { type: string, enum: [app, function] }
+        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world" }
+        type: { type: string, enum: [app, function] , example: "app"}
         runtime: { type: string, enum: [node22, python312] }
-        ram_mb: { type: integer }
+        ram_mb: { type: integer , example: 256}
         max_concurrency: { type: integer }
         idle_timeout_s: { type: integer }
 
     UpdateAppRequest:
+      description: "Partial update — every field is optional; omitted fields are unchanged."
       type: object
       properties:
-        ram_mb: { type: [integer, "null"] }
+        ram_mb: { type: [integer, "null"] , example: 256}
         idle_timeout_s: { type: [integer, "null"] }
         max_concurrency: { type: [integer, "null"] }
         min_instances: { type: [integer, "null"], minimum: 0 }
 
     RenameAppRequest:
+      description: "Rename payload: new slug. Old slug returns 404 immediately on the next request."
       type: object
       required: [new_slug]
       properties:
-        new_slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
+        new_slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world-v2" }
 
     AppManifest:
+      description: "App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag (§ux 6.3)."
       type: object
       required: [entrypoint]
       properties:
@@ -1019,20 +1123,22 @@ components:
     # ─── Deployments ──────────────────────────────────────────────────────
 
     DeploymentResponse:
+      description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps."
       type: object
       required: [id, app_id, image_digest, kind, status, created_at]
       properties:
-        id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         build_id: { type: [string, "null"], pattern: '^[a-f0-9]{32}$' }
         image_digest: { type: string }
         kind: { type: string }
-        status: { type: string }
+        status: { type: string , example: "active"}
         error: { type: [string, "null"] }
         error_code: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
 
     DeploymentListResponse:
+      description: "Paginated deployment list with a `next_before` cursor for backward pagination."
       type: object
       required: [items]
       properties:
@@ -1042,6 +1148,7 @@ components:
         next_before: { type: [string, "null"], format: date-time }
 
     CreateDeploymentRequest:
+      description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload."
       type: object
       properties:
         image:
@@ -1051,15 +1158,16 @@ components:
     # ─── Instances ────────────────────────────────────────────────────────
 
     InstanceResponse:
+      description: "Read-only instance view: id, deployment, state (waking/running/...), lease uid, and host-side internal endpoint (loopback only)."
       type: object
       required: [id, app_id, deployment_id, state, ram_mb]
       properties:
-        id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         state: { type: string }
         host_ip: { type: [string, "null"] }
-        ram_mb: { type: integer }
+        ram_mb: { type: integer , example: 256}
         started_at: { type: [string, "null"], format: date-time }
         last_request_at: { type: [string, "null"], format: date-time }
         parked_at: { type: [string, "null"], format: date-time }
@@ -1067,62 +1175,68 @@ components:
     # ─── Domains ──────────────────────────────────────────────────────────
 
     CustomDomainResponse:
+      description: "A custom domain binding: domain string, target app, verification status, and TLS provisioning state."
       type: object
       required: [domain, app_id, verified]
       properties:
-        domain: { type: string }
-        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        domain: { type: string , example: "app.example.com"}
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         challenge_token: { type: [string, "null"] }
         verified: { type: boolean }
         verified_at: { type: [string, "null"], format: date-time }
         txt_record: { type: [string, "null"] }
 
     CreateCustomDomainRequest:
+      description: "Bind a custom domain to an app."
       type: object
       required: [domain, app_id]
       properties:
-        domain: { type: string }
-        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        domain: { type: string , example: "app.example.com"}
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
 
     # ─── Crons ────────────────────────────────────────────────────────────
 
     CronResponse:
+      description: "A cron trigger: schedule (cron expression), target URL, last/next run timestamps, and enabled flag."
       type: object
       required: [id, app_id, schedule, path, enabled, created_at]
       properties:
-        id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        schedule: { type: string }
+        id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        schedule: { type: string , example: "*/5 * * * *"}
         path: { type: string }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         last_fired_at: { type: [string, "null"], format: date-time }
 
     CreateCronRequest:
+      description: "Cron creation payload: schedule expression and target URL."
       type: object
       required: [app_id, schedule]
       properties:
-        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        schedule: { type: string }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        schedule: { type: string , example: "*/5 * * * *"}
         path: { type: string }
         enabled: { type: [boolean, "null"] }
 
     UpdateCronRequest:
+      description: "Partial cron update."
       type: object
       properties:
-        schedule: { type: [string, "null"] }
+        schedule: { type: [string, "null"] , example: "*/5 * * * *"}
         path: { type: [string, "null"] }
         enabled: { type: [boolean, "null"] }
 
     # ─── API keys ─────────────────────────────────────────────────────────
 
     APIKeyResponse:
+      description: "API key metadata: id, prefix (first 8 chars), label, created/last-used timestamps, request count. **Plaintext is returned only on POST**."
       type: object
       required: [id, prefix, created_at]
       properties:
-        id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         prefix: { type: string, description: 'First 16 chars of the key (e.g. `fp_live_abc12345…`).' }
-        label: { type: [string, "null"] }
+        label: { type: [string, "null"] , example: "ci-deploy"}
         last_used_at: { type: [string, "null"], format: date-time }
         created_at: { type: string, format: date-time }
         plaintext:
@@ -1130,27 +1244,31 @@ components:
           description: PRESENT ONLY on POST /v1/keys response. Never returned again.
 
     CreateKeyRequest:
+      description: "API key creation payload: label only."
       type: object
       properties:
-        label: { type: string, maxLength: 100 }
+        label: { type: string, maxLength: 100 , example: "ci-deploy"}
 
     # ─── Secrets ──────────────────────────────────────────────────────────
 
     PutAppSecretRequest:
+      description: "Set a secret: key name and plaintext (sealed at rest immediately, plaintext discarded after seal)."
       type: object
       required: [value]
       properties:
-        value: { type: string, description: 'Plaintext. Sealed server-side; never persisted in plaintext.' }
+        value: { type: string, description: 'Plaintext. Sealed server-side; never persisted in plaintext.' , example: "sk_test_secret_value"}
 
     AppSecretResponse:
+      description: "A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps."
       type: object
       required: [key, created_at, updated_at]
       properties:
-        key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 }
+        key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
     AppSecretListResponse:
+      description: "Paginated list of sealed-secret envelopes (no plaintext)."
       type: object
       required: [secrets, quota_max, count]
       properties:
@@ -1163,20 +1281,22 @@ components:
     # ─── Usage ────────────────────────────────────────────────────────────
 
     UsageResponse:
+      description: "Per-app usage for one month: GB-hours consumed and a `next_before` cursor for paging deployments within the window."
       type: object
       required: [app_id, mb_seconds, requests, included_gb_hours]
       properties:
-        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         mb_seconds: { type: integer, format: int64 }
         requests: { type: integer, format: int64 }
         included_gb_hours: { type: integer, format: int64 }
 
     UsageSummaryResponse:
+      description: "Account-level monthly roll-up: included GB-hours, used, overage math, and remaining balance."
       type: object
       required: [month, used_gb_hours, included_gb_hours, overage_gb_hours, overage_cents]
       properties:
         month: { type: string, pattern: '^\d{4}-\d{2}$', example: '2026-07' }
-        used_gb_hours: { type: number }
+        used_gb_hours: { type: number , example: 1.234}
         included_gb_hours: { type: integer, format: int64 }
         overage_gb_hours: { type: number }
         overage_cents: { type: integer, format: int64, description: 'Integer cents. Overages are €0.01/GB-h.' }
@@ -1193,10 +1313,19 @@ components:
         user at the next action. `billing_portal_url` is populated on
         `code: payment_required` so the dashboard can deep-link the
         customer to the Stripe-hosted billing portal (issue #142).
+      example:
+        type: "https://docs.DOMAIN/errors/validation_failed"
+        title: Validation failed
+        status: 422
+        code: validation_failed
+        detail: "ram_mb must be one of [128, 256, 512, 1024, 2048]"
+        limit: null
+        observed: null
+        docs_url: "https://docs.DOMAIN/errors/validation_failed"
       properties:
-        type: { type: string, format: uri }
-        title: { type: string }
-        status: { type: integer }
+        type: { type: string, format: uri , example: "https://docs.DOMAIN/errors/validation_failed"}
+        title: { type: string , example: "Validation failed"}
+        status: { type: integer , example: 422}
         code: { type: string, description: 'Stable machine-readable error code. See StatusForCode in pkg/api/errors.go.' }
         detail: { type: string }
         limit: { type: [integer, "null"] }
