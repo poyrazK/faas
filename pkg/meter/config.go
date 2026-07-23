@@ -7,7 +7,7 @@ import "time"
 //
 //   - sample tick: 60 s  (every minute flush)
 //   - quota tick:  60 s  (every minute verdict per account)
-//   - stripe tick: 60 m  (every hour push)
+//   - stripe tick: 24 h  (every day push, integer-arithmetic wire quantity)
 //   - dunning tick: 1 h  (dunning state machine 7d/21d clocks)
 //
 // The four timers run independently — a slow quota loop never blocks the
@@ -22,7 +22,12 @@ type Config struct {
 	// Zero means the production default (60 s).
 	QuotaInterval time.Duration
 	// StripeInterval is how often the Stripe pusher fires. Zero means
-	// the production default (60 m).
+	// the production default (24 h). The integer-arithmetic wire
+	// quantity (pkg/stripex/usage.go) is deterministic across the full
+	// window, so the pusher posts *one* metered usage record per
+	// account per 24h instead of one per hour — eliminates per-hour
+	// fractional truncation loss on the wire (was ~0.3 % of the bill
+	// for a Hobby instance; spec gate is 0.1 %).
 	StripeInterval time.Duration
 	// DunningInterval is how often the dunning timer sweeps accounts
 	// for the past_due → 7d → suspended and suspended → 21d →
@@ -49,7 +54,7 @@ func (c *Config) Defaults() {
 		c.QuotaInterval = 60 * time.Second
 	}
 	if c.StripeInterval == 0 {
-		c.StripeInterval = 60 * time.Minute
+		c.StripeInterval = 24 * time.Hour
 	}
 	if c.DunningInterval == 0 {
 		c.DunningInterval = time.Hour

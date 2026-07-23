@@ -1,14 +1,23 @@
 name: stripex sandbox
 
 # Manual-only acceptance job for the Stripe sandbox live POST (issue #52,
-# §14 M7 acceptance). Runs pkg/stripex's
-# TestPushUsageRecord_PostsToStripeSandbox against a real sk_test_… key
-# and a sandbox subscription_item. The test asserts record.ID is non-empty
-# and prefixed "mbur_" (Stripe's usage-record prefix).
+# §14 M7 acceptance). Runs pkg/stripex's sandbox tests against a real
+# sk_test_… key and a sandbox subscription_item:
 #
-# Triggered by 'Run workflow' from the Actions UI. NOT a PR gate — Stripe
-# availability must not block merges. Mirrors the workflow_dispatch gating
-# the existing metal job uses.
+#   - TestPushUsageRecord_PostsToStripeSandbox asserts record.ID is
+#     non-empty and prefixed "mbur_" (Stripe's usage-record prefix).
+#   - TestInvoiceShadow24h_Sandbox asserts record.Quantity == 6187
+#     exactly for a 24h Hobby-instance push — the §14 M7 wire-quantity
+#     acceptance (integer arithmetic, 0% delta — see
+#     pkg/stripex/sandbox_test.go and pkg/stripex/usage.go).
+#
+# Both tests share the same env-gate (sk_test_… key + si_…) and the
+# same append-only dedupe-by-day pattern, so a single -run regex
+# covers both.
+#
+# Triggered by 'Run workflow' from the Actions UI. NOT a PR gate —
+# Stripe availability must not block merges. Mirrors the
+# workflow_dispatch gating the existing metal job uses.
 #
 # Required repo secrets:
 #   - STRIPE_API_KEY        (sk_test_… key from Stripe dashboard)
@@ -32,4 +41,4 @@ jobs:
         with:
           go-version: '1.25'
       - name: stripex sandbox live POST
-        run: go test -v -run PostsToStripeSandbox ./pkg/stripex/...
+        run: go test -v -run 'PostsToStripeSandbox|InvoiceShadow24h_Sandbox' ./pkg/stripex/...

@@ -11,20 +11,32 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// StripePusher is the slice of pkg/stripex the hourly pusher uses. The
+// StripePusher is the slice of pkg/stripex the pusher loop uses. The
 // interface lives here so meterd can be wired against a no-op in tests
 // and the real Client (Slice 2) in production — both directions of the
 // dependency are recorded in ADR-019.
+//
+// PushUsageRecordSum takes the integer sum of mb_seconds across the
+// billing window (a full day under the production cadence). The SDK
+// quantizes in int64 arithmetic — no float, no per-hour fractional
+// truncation loss on the wire (see pkg/stripex/usage.go).
 type StripePusher interface {
-	PushUsageRecord(ctx context.Context, account state.Account, hour time.Time, gbHours float64) error
+	PushUsageRecordSum(ctx context.Context, account state.Account, hour time.Time, mbSeconds int64) error
 }
 
-// Pusher is the meterd daemon's hourly Stripe loop. It walks every paid
-// account with a stripe_customer_id, sums the past hour's billable
-// GB-RAM-hours, and pushes a metered usage record. Stripe's API
-// idempotency-key (per (account, hour)) sits on top of the SDK call so a
-// retry is safe; meterd's own loop is at-least-once too — a redelivered
-// hour is just a duplicate that Stripe collapses.
+// Pusher is the meterd daemon's Stripe push loop. It walks every paid
+// account with a stripe_customer_id, sums the past billing window's
+// billable mb_seconds, and pushes a single metered usage record. Stripe's
+// API idempotency-key (per (account, hour)) sits on top of the SDK call
+// so a retry is safe; meterd's own loop is at-least-once too — a
+// redelivered window is just a duplicate that Stripe collapses.
+//
+// The production cadence is one push per day (cfg.StripeInterval =
+// 24h). The pusher reads usage_minutes across the past 24h window and
+// hands the integer sum to the SDK; the SDK converts to wire units
+// with one deterministic integer division. The historical per-hour
+// float path was retired in M7 §14 — see docs/STATUS.md and the
+// acceptance test in pkg/stripex/sandbox_test.go.
 type Pusher struct {
 	store  state.Store
 	stripe StripePusher
@@ -56,15 +68,23 @@ func HourWindow(at time.Time) (start, end time.Time) {
 	return start, end
 }
 
-// PushHour pushes the billable GB-hours for one hour for every paid
-// account. Free accounts are skipped (no Stripe customer, no overage).
-// Returns the number of accounts it pushed for so the loop can log a
-// line; errors push loop backoff decisions up to the caller.
+// PushHour pushes the billable mb_seconds for one billing window for
+// every paid account. Free accounts are skipped (no Stripe customer, no
+// overage). Returns the number of accounts it pushed for so the loop
+// can log a line; errors push loop backoff decisions up to the caller.
+//
+// TODO(M7-followup): rename to PushWindow (or similar) once
+// pkg/meter/loop.go is updated to a daily cadence. The function name
+// is kept as PushHour for historical / interface consistency with the
+// loop driver; the underlying billing window is HourWindow(now), which
+// spans the past 24h under the production cadence
+// (cfg.StripeInterval = 24h). The integer mb_seconds sum is handed to
+// the SDK which converts to wire units in pure int64 arithmetic.
 //
 // Each non-skip SDK call is observed under the "stripe" op with a code
 // label from stripex.ClassifyPushError — "ok" on success, a stable
 // failure-mode label (card-error, rate-limit, invalid-request, etc.)
-// on failure. The skip branches (gb <= 0, free plan, suspended,
+// on failure. The skip branches (mbSec <= 0, free plan, suspended,
 // missing usage rows) are silent so the dashboard distinguishes
 // "did nothing" from "tried and Stripe bounced it".
 func (p *Pusher) PushHour(ctx context.Context) (int, error) {
@@ -95,12 +115,11 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 		for _, u := range rows {
 			mbSec += u.MBSeconds
 		}
-		gb := GBHours(mbSec)
-		if gb <= 0 {
+		if mbSec <= 0 {
 			continue
 		}
 		pushStart := time.Now()
-		perr := p.stripe.PushUsageRecord(ctx, acct, start, gb)
+		perr := p.stripe.PushUsageRecordSum(ctx, acct, start, mbSec)
 		code := stripex.ClassifyPushError(perr)
 		dur := time.Since(pushStart)
 		p.ops.ObserveCode("stripe", code, dur)
