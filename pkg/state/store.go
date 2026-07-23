@@ -269,15 +269,22 @@ type Store interface {
 
 	// Deployments.
 	// CreateDeployment atomically inserts a new pending deployment row
-	// for the given app. When the app already has a non-superseded,
-	// non-failed deployment row, the SAME transaction flips that prior
-	// row's status to 'superseded' before INSERTing the new one. The
-	// returned `prior` value is the just-superseded row (zero-valued
-	// Deployment when no prior row existed). A reader therefore never
-	// observes the prior row as superseded without the new row being
-	// committed in the same instant. PR-B closes the prior
-	// supersede-before-create race that previously orphaned a live
-	// deployment when the new INSERT failed.
+	// for the given app. When the app already has a pending or live
+	// deployment row, the SAME transaction flips that prior row's
+	// status to 'superseded' before INSERTing the new one. A
+	// building/imaging/snapshotting row is left untouched — its
+	// pipeline (vmmd VM, builderd, imaged ext4 conversion) is still
+	// running and we must not orphan it; the second deploy then
+	// creates a parallel row, and schedd's watchdog reaps the loser
+	// on the next idle window.
+	//
+	// The returned `prior` value is the just-superseded row
+	// (zero-valued Deployment when no prior row existed, AND when the
+	// only previous row was building/imaging/snapshotting). A reader
+	// therefore never observes the prior row as superseded without
+	// the new row being committed in the same instant. PR-B closes
+	// the prior supersede-before-create race that previously
+	// orphaned a live deployment when the new INSERT failed.
 	//
 	// AppDeleted apps must accept neither deployments nor supersedes;
 	// the parent-app gate is the same FOR UPDATE as PR-A's
@@ -370,15 +377,6 @@ type Store interface {
 	// RequeueBuild itself is unconditional.
 	RequeueBuild(ctx context.Context, id string) error
 	UpdateBuildStatus(ctx context.Context, id string, status BuildStatus, fc FailureClass, started, finished bool) error
-	// ListStaleQueuedBuilds returns builds still in BuildQueued whose
-	// enqueued_at is older than threshold. The imaged reaper (PR-A)
-	// walks this set on a tick and re-emits db.NotifyBuildQueued for
-	// each, recovering from a missed pg_notify at the apid write path
-	// (e.g. transient Postgres blip between INSERT and NOTIFY).
-	// Builds is bounded by spec §9 (shallow queue), so a full scan is
-	// cheap; if pressure emerges, add a partial index on
-	// (status, enqueued_at) WHERE status='queued'.
-	ListStaleQueuedBuilds(ctx context.Context, threshold time.Duration) ([]Build, error)
 
 	// Custom domains (apid is sole writer).
 	CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error)

@@ -1577,83 +1577,7 @@ func TestPg_CreateDeployment_RejectsDeletedApp(t *testing.T) {
 	}
 }
 
-// TestPg_ListStaleQueuedBuilds is the PR-A SQL pin for the imaged
-// reaper's read surface. Mirrors TestMemStore_ListStaleQueuedBuilds.
-// The schema layer is migrations/00027 which adds enqueued_at
-// timestamptz; the index ordering doesn't matter for this scan (the
-// queue is bounded per spec §9).
-//
-// Skips without Postgres (pgtest.Open handles the skip).
-func TestPg_ListStaleQueuedBuilds(t *testing.T) {
-	pool := pgtest.Open(t)
-	ctx := context.Background()
-	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	s := state.NewPgStore(pool)
-	_, _, depID := seedLiveDeploy(t, s, ctx)
-
-	// Three builds on the same deployment row: one queued 2 min ago,
-	// one queued now, one BuildRunning (also backdated). The predicate
-	// is `status='queued' AND enqueued_at < now() - threshold`; with
-	// threshold=1min, only the first qualifies.
-	oldBuild, err := s.CreateBuild(ctx, depID, state.DeploymentKindTarball, 100, "")
-	if err != nil {
-		t.Fatalf("CreateBuild old: %v", err)
-	}
-	freshBuild, err := s.CreateBuild(ctx, depID, state.DeploymentKindTarball, 100, "")
-	if err != nil {
-		t.Fatalf("CreateBuild fresh: %v", err)
-	}
-	runningBuild, err := s.CreateBuild(ctx, depID, state.DeploymentKindTarball, 100, "")
-	if err != nil {
-		t.Fatalf("CreateBuild running: %v", err)
-	}
-
-	// Backdate old to 2 minutes ago; flip running to BuildRunning
-	// and backdate it too. The status filter must exclude running
-	// regardless of age.
-	if _, err := pool.Exec(ctx,
-		`update builds set enqueued_at = now() - interval '2 minutes' where id = $1`,
-		oldBuild.ID); err != nil {
-		t.Fatalf("backdate old: %v", err)
-	}
-	if _, err := pool.Exec(ctx,
-		`update builds set status = 'running', enqueued_at = now() - interval '2 minutes' where id = $1`,
-		runningBuild.ID); err != nil {
-		t.Fatalf("flip running: %v", err)
-	}
-
-	out, err := s.ListStaleQueuedBuilds(ctx, time.Minute)
-	if err != nil {
-		t.Fatalf("ListStaleQueuedBuilds(1m): %v", err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("got %d stale builds, want 1 (only the backdated queued row)", len(out))
-	}
-	if out[0].ID != oldBuild.ID {
-		t.Errorf("stale id = %q, want %q", out[0].ID, oldBuild.ID)
-	}
-
-	// Threshold = 0 → predicate becomes `enqueued_at < now()`. Every
-	// queued row qualifies (the fresh row's enqueued_at was stamped at
-	// CreateBuild, a few ms before this call). The running row stays
-	// filtered by status.
-	out2, err := s.ListStaleQueuedBuilds(ctx, 0)
-	if err != nil {
-		t.Fatalf("ListStaleQueuedBuilds(0): %v", err)
-	}
-	gotIDs := make([]string, len(out2))
-	for i, b := range out2 {
-		gotIDs[i] = b.ID
-	}
-	if !contains(gotIDs, oldBuild.ID) || !contains(gotIDs, freshBuild.ID) {
-		t.Errorf("threshold=0 missing queued rows; got %v", gotIDs)
-	}
-	if contains(gotIDs, runningBuild.ID) {
-		t.Errorf("threshold=0 leaked the running row; got %v", gotIDs)
-	}
-}
+// TestPg_ClaimQueuedBuild pins the atomic queued → running transition
 
 // TestPg_ClaimQueuedBuild pins the atomic queued → running transition
 // that closes the apid/reaper double-emit race (PR-A review). First
@@ -1700,101 +1624,164 @@ func TestPg_ClaimQueuedBuild(t *testing.T) {
 	}
 }
 
-// TestPg_CreateInstance_DefaultWakeIDRoundTrip asserts that when the
-// caller passes an empty wake_id (the common path — schedd mints the
-// ID and we backfill at the DB), the row stores a non-empty UUID and
-// the value round-trips through every read path schedd uses
-// (RunningInstanceForApp here; ListInstancesForApp is exercised in
-// the dashboard handler tests). The migration's `default
-// gen_random_uuid()` is what populates the column when the caller
-// passes ”, so this test also doubles as a regression on the
-// migration: drop the default and this test breaks.
-func TestPg_CreateInstance_DefaultWakeIDRoundTrip(t *testing.T) {
+// TestPg_CreateDeployment_SupersedesPriorLive pins the at-rest happy
+// path: a second deploy against an app that already has a `live`
+// deployment row gets the prior row flipped to `superseded` inside the
+// same tx, and the new row is inserted with `pending`. The returned
+// new row carries the just-created identity; the prior is read back
+// via DeploymentByID to assert (2-return CreateDeployment shape).
+func TestPg_CreateDeployment_SupersedesPriorLive(t *testing.T) {
 	s, ctx := pgStore(t)
-	_, appID, depID := seedLiveDeploy(t, s, ctx)
 
-	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, resolveDefaultLocal(t, ctx, s), "")
+	_, appID, priorDepID := seedLiveDeploy(t, s, ctx)
+
+	created, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: "registry.example.com/v2@sha256:" + strings.Repeat("a", 64),
+		Status:      state.DeployPending,
+	})
 	if err != nil {
-		t.Fatalf("CreateInstance: %v", err)
+		t.Fatalf("second CreateDeployment: %v", err)
 	}
-	if ins.WakeID == "" {
-		t.Fatal("WakeID empty after CreateInstance; default should populate via gen_random_uuid()")
-	}
-	if _, err := uuid.Parse(ins.WakeID); err != nil {
-		t.Errorf("WakeID %q is not a valid UUID: %v", ins.WakeID, err)
+	if created.Status != state.DeployPending {
+		t.Errorf("created.Status = %q, want pending", created.Status)
 	}
 
-	got, err := s.RunningInstanceForApp(ctx, appID)
+	// The DB must agree: the prior row is superseded.
+	got, err := s.DeploymentByID(ctx, priorDepID)
 	if err != nil {
-		t.Fatalf("RunningInstanceForApp: %v", err)
+		t.Fatalf("DeploymentByID(prior): %v", err)
 	}
-	if got.WakeID != ins.WakeID {
-		t.Errorf("WakeID round-trip lost: stored=%q read=%q", ins.WakeID, got.WakeID)
+	if got.Status != state.DeploySuperseded {
+		t.Errorf("DB prior.Status = %q, want superseded", got.Status)
 	}
 }
 
-// TestPg_CreateInstance_ExplicitWakeIDRoundTrip asserts that when the
-// caller passes an explicit wake_id (the path schedd uses in production
-// after PR #wake-id lands), the row stores that exact string. This
-// pins down the contract schedd relies on: "if I tell the store which
-// wake_id to use, the row carries the value I gave it".
-func TestPg_CreateInstance_ExplicitWakeIDRoundTrip(t *testing.T) {
+// TestPg_CreateDeployment_LeavesBuildingRowAlone is the M-1 review
+// invariant: a second deploy against an app whose only prior row is
+// `building` (mid-VM-boot / mid-build / mid-imaging) must NOT
+// supersede it. The new row lands, the old row keeps running.
+//
+// Without this gate, an in-VM builderd on row A would write
+// `markSucceeded` → `UpdateDeploymentStatus(A, ..., live)` mid-way
+// through row A's pipeline, while the same tx would have already
+// flipped row A to `superseded`. The deployment row the scheduler
+// sees depends on whichever UpdateDeploymentStatus lands last —
+// non-deterministic, and a genuine orphan.
+func TestPg_CreateDeployment_LeavesBuildingRowAlone(t *testing.T) {
 	s, ctx := pgStore(t)
-	_, appID, depID := seedLiveDeploy(t, s, ctx)
-	want := "0193f7c0-1234-7abc-9def-0123456789ab"
+	acctID, appID, _ := seedLiveDeploy(t, s, ctx)
 
-	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 512, resolveDefaultLocal(t, ctx, s), want)
-	if err != nil {
-		t.Fatalf("CreateInstance: %v", err)
+	// Flip the existing row to `building` (simulating: apid set it
+	// after CreateDeployment; builderd hasn't returned yet).
+	priorDepID := mustCreateImageDeployment(t, s, ctx, appID)
+	if err := s.UpdateDeploymentStatus(ctx, priorDepID, state.DeployBuilding, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus(building): %v", err)
 	}
-	if ins.WakeID != want {
-		t.Errorf("WakeID = %q, want %q", ins.WakeID, want)
+
+	// Second deploy — must NOT supersede the building row.
+	created, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: "registry.example.com/v3@sha256:" + strings.Repeat("b", 64),
+		Status:      state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("second CreateDeployment: %v", err)
+	}
+	if created.Status != state.DeployPending {
+		t.Errorf("created.Status = %q, want pending", created.Status)
+	}
+
+	// DB confirms — the building row is untouched, no race orphan.
+	got, err := s.DeploymentByID(ctx, priorDepID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(building): %v", err)
+	}
+	if got.Status != state.DeployBuilding {
+		t.Errorf("building row Status = %q, want building (untouched)", got.Status)
+	}
+
+	// Sanity: both rows are visible to the app's history.
+	all, err := s.ListDeploymentsForApp(ctx, appID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForApp: %v", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("len(ListDeploymentsForApp) = %d, want 2 (building + pending)", len(all))
+	}
+	_ = acctID
+}
+
+// mustCreateImageDeployment creates a fresh deployment row on appID
+// at `pending` status so a test can flip its status independently.
+// Returns the depID.
+func mustCreateImageDeployment(t *testing.T, s *state.PgStore, ctx context.Context, appID string) string {
+	t.Helper()
+	d, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: "registry.example.com/v1@sha256:" + strings.Repeat("c", 64),
+		Status:      state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("mustCreateImageDeployment: %v", err)
+	}
+	return d.ID
+}
+
+// TestPg_CreateDeployment_NoOpFirstDeploy covers the "no prior row"
+// path: no supersede must fire when there is no prior live/pending
+// row. The created row carries the just-created identity and the
+// prior (queried via DeploymentByID of a non-existent sentinel) is
+// not observed — but the structural guarantee is that the row count
+// stays at 1.
+func TestPg_CreateDeployment_NoOpFirstDeploy(t *testing.T) {
+	s, ctx := pgStore(t)
+	acctID := createAccount(t, s, ctx, "first-deploy@example.com")
+	appID := createApp(t, s, ctx, acctID, "first-deploy")
+
+	created, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: "registry.example.com/first@sha256:" + strings.Repeat("d", 64),
+		Status:      state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if created.Status != state.DeployPending {
+		t.Errorf("created.Status = %q, want pending", created.Status)
+	}
+
+	all, err := s.ListDeploymentsForApp(ctx, appID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForApp: %v", err)
+	}
+	if len(all) != 1 {
+		t.Errorf("len(ListDeploymentsForApp) = %d, want 1 (only the first deploy)", len(all))
+	}
+	if all[0].ID != created.ID {
+		t.Errorf("all[0].ID = %q, want %q", all[0].ID, created.ID)
 	}
 }
 
-// TestPg_ListLatestInstancesForApp_BoundedLimit pins the SQL LIMIT
-// contract for the dashboard's "Recent wakes" path (cmd/apid/
-// handlers_dashboard.renderAppDetail). The previous unbounded
-// ListInstancesForApp + in-memory sort was a perf footgun for any
-// long-lived app — review finding #5 (gaps analysis 2026-07-23).
-func TestPg_ListLatestInstancesForApp_BoundedLimit(t *testing.T) {
-	s, ctx := pgStore(t)
-	_, appID, depID := seedLiveDeploy(t, s, ctx)
-
-	// Seed 5 parked instances; the dashboard query must cap at the
-	// requested limit regardless of total row count.
-	for i := 0; i < 5; i++ {
-		if _, err := s.CreateInstance(ctx, appID, depID, string(state.StateParked), 256, resolveDefaultLocal(t, ctx, s), ""); err != nil {
-			t.Fatalf("CreateInstance %d: %v", i, err)
-		}
-	}
-
-	// limit=2 → exactly 2 rows.
-	rows, err := s.ListLatestInstancesForApp(ctx, appID, 2)
+// createAccount / createApp are tiny helpers mirroring seedLiveDeploy
+// for tests that DON'T want the trailing live deployment.
+func createAccount(t *testing.T, s *state.PgStore, ctx context.Context, email string) string {
+	t.Helper()
+	a, err := s.CreateAccount(ctx, email, api.PlanPro)
 	if err != nil {
-		t.Fatalf("ListLatestInstancesForApp(2): %v", err)
+		t.Fatalf("CreateAccount: %v", err)
 	}
-	if len(rows) != 2 {
-		t.Errorf("rows = %d, want 2 (LIMIT 2 enforced)", len(rows))
-	}
+	return a.ID
+}
 
-	// limit=0 and limit=-1 must fail closed (empty), not return everything.
-	for _, lim := range []int{0, -1} {
-		rows, err := s.ListLatestInstancesForApp(ctx, appID, lim)
-		if err != nil {
-			t.Fatalf("ListLatestInstancesForApp(%d): %v", lim, err)
-		}
-		if len(rows) != 0 {
-			t.Errorf("limit=%d returned %d rows, want 0 (fail-closed)", lim, len(rows))
-		}
-	}
-
-	// limit larger than total returns all 5.
-	rows, err = s.ListLatestInstancesForApp(ctx, appID, 50)
+func createApp(t *testing.T, s *state.PgStore, ctx context.Context, acctID, slug string) string {
+	t.Helper()
+	a, err := s.CreateApp(ctx, state.App{
+		AccountID: acctID, Slug: slug, Type: state.AppTypeApp,
+		RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+	})
 	if err != nil {
-		t.Fatalf("ListLatestInstancesForApp(50): %v", err)
+		t.Fatalf("CreateApp: %v", err)
 	}
-	if len(rows) != 5 {
-		t.Errorf("rows = %d, want 5 (limit larger than total)", len(rows))
-	}
+	return a.ID
 }

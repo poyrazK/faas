@@ -681,9 +681,15 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		if existing.AppID != d.AppID {
 			continue
 		}
+		// Same narrow set as PgStore (PR-B): only flip pending/live
+		// rows. A building/imaging/snapshotting row represents a
+		// pipeline already running; flipping it would orphan the
+		// vmmd VM / builderd process / imaged ext4 conversion. The
+		// second deploy creates a parallel row and the schedd
+		// watchdog reaps the loser on idle.
 		switch existing.Status {
-		case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting, DeployLive:
-			// current world
+		case DeployPending, DeployLive:
+			// current world — supersede
 		default:
 			continue
 		}
@@ -1018,31 +1024,6 @@ func (m *MemStore) RequeueBuild(_ context.Context, id string) error {
 	b.StartedAt = time.Time{}
 	m.builds[id] = b
 	return nil
-}
-
-// ListStaleQueuedBuilds mirrors PgStore.ListStaleQueuedBuilds (PR-A).
-// Same predicate (BuildQueued AND enqueued_at older than threshold),
-// same sort order (oldest first so the reaper drains the backlog
-// deterministically). Walks m.builds under m.mu — the queue is
-// shallow per spec §9, so an O(N) scan per tick is fine.
-func (m *MemStore) ListStaleQueuedBuilds(_ context.Context, threshold time.Duration) ([]Build, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cutoff := time.Now().Add(-threshold)
-	out := make([]Build, 0)
-	for _, b := range m.builds {
-		if b.Status != BuildQueued {
-			continue
-		}
-		if !b.EnqueuedAt.Before(cutoff) {
-			continue
-		}
-		out = append(out, b)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].EnqueuedAt.Before(out[j].EnqueuedAt)
-	})
-	return out, nil
 }
 
 // --- Custom domains ---------------------------------------------------------

@@ -193,6 +193,36 @@
                                                           └──────────────┘
 ```
 
+## Imaged pipeline (NOT touched by this ADR)
+
+This ADR is **scoped to the *build* queue**, which sits between
+`apid.CreateBuild` and `builderd.markSucceeded/markFailed`. The
+*image* pipeline — snapshot_prime → Firecracker boot →
+`db.NotifySnapshotBoot` → imaged's snapshot-status consumer — is
+**unchanged** by ADR-031. To be explicit about what imaged does and
+doesn't do after this ADR:
+
+| Imaged concern | Status under ADR-031 |
+|---|---|
+| Subscribes to `db.NotifyBuildQueued` | **Removed** — builderd owns build delivery now. |
+| Runs `runBuildReapTick` (PR-A rescue) | **Removed** — replaced by builderd's `workerLoop`. |
+| Subscribes to `db.NotifySnapshotBoot` | **Unchanged** — imaged still owns snapshot status reconciliation (F5). |
+| Consumes `db.NotifyDeploymentChanged` for `superseded` status | **Unchanged** — F5 cleanup of the prior deployment's snapshot still flows through imaged. |
+| Owns `apps.snapshot_path` stamping | **Unchanged** — schedd→imaged `snapshot_prime` handshake still lives in `pkg/imaged/handler.go`. |
+
+The contract between builderd and imaged stays at the
+`db.NotifySnapshotBoot` boundary: builderd produces the app-layer
+ext4 + the snapshot-priming notification; imaged watches
+`builds.status='succeeded'`-fan-out via `deployment_changed` and
+waits for the snapshot to come up before stamping
+`snapshot_path`. PRD-A's reaper was the only way `builds.status`
+touched imaged; ADR-031 closes that loop entirely.
+
+If a future change wants imaged to participate in build-queue
+ownership (e.g. a stuck-running sweep that flips `builds.status`
+back to `queued`), that change must come as **ADR-032** and update
+the table above.
+
 ## Cross-reference
 
 - `pkg/state/store.go` — `ClaimNextQueuedBuild`, `RequeueBuild`.

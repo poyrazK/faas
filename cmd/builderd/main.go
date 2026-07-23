@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -231,25 +232,51 @@ func workerLoop(ctx context.Context, b *builderdpkg.Builderd, interval time.Dura
 		if err == nil {
 			continue
 		}
-		// Empty queue is the expected idle state. Log only at debug
-		// so we don't drown the logs on a quiet box.
+		// Distinguish the two "nothing to do" cases at the worker's
+		// eye line: an empty queue is normal idle (claim itself
+		// surfaces ErrNotFound, no build row was ever touched); a
+		// vanished-row means we CAS-claimed a build row but its
+		// parent deployment/app was concurrently deleted between
+		// claim and load — a real anomaly worth a WARN so an
+		// operator can correlate it with an apid/schedd event.
+		// state.ErrNotFound matches both because ProcessNext
+		// wraps the inner DeploymentByID/AppByID misses with %w.
+		// Empty queue: claim returned ErrNotFound unwrapped. Log
+		// signature: errors.Is is true AND the err chain has no
+		// "load deployment"/"load app" wrap (those are the vanished
+		// row markers).
 		if errors.Is(err, state.ErrNotFound) {
-			log.Debug("builderd: worker tick — queue empty")
+			switch {
+			case isVanishedRowErr(err):
+				log.Warn("builderd: worker tick — vanished row (deployment/app deleted mid-claim)", "err", err)
+			default:
+				log.Debug("builderd: worker tick — queue empty")
+			}
 			continue
 		}
-		// ErrNoSlot means ProcessNext claimed the row, hit
-		// DecideSlot's denial, marked it failed, and returned
-		// ErrNoSlot. Wait — ProcessOne still calls markFailed on
-		// no-slot. The worker cannot rely on the row staying queued
-		// unless we requeue here BEFORE ProcessNext fails it. The
-		// actual requeue lives in ProcessNext's no-slot path via
-		// store.RequeueBuild (see the PR-B doc-comment there).
+		// ErrNoSlot is the "slot budget exhausted" state —
+		// processClaimedBuild already requeued the row (preserving
+		// its FIFO enqueued_at), so the worker just waits for the
+		// next tick without logging warn.
 		if errors.Is(err, builderdpkg.ErrNoSlot) {
 			log.Debug("builderd: worker tick — no slot, row requeued")
 			continue
 		}
 		log.Warn("builderd: worker tick — process next", "err", err)
 	}
+}
+
+// isVanishedRowErr reports whether a state.ErrNotFound matched by the
+// caller came from processClaimedBuild's DeploymentByID/AppByID load
+// (i.e. the build row was claimed but its parents vanished) instead
+// of an empty queue. The wrap strings are stable — see
+// pkg/builderd/builderd.go::processClaimedBuild. Using strings rather
+// than sentinel errors keeps the original error stream readable in
+// logs (the wrap is what an operator would grep for).
+func isVanishedRowErr(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "builderd: load deployment") ||
+		strings.Contains(s, "builderd: load app")
 }
 
 // dbNotifier adapts *pgxpool.Pool to builderdpkg.Notifier.

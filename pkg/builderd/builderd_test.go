@@ -750,6 +750,66 @@ func assertCodes(t *testing.T, ops *wire.OpsMetrics, wantCode, wantOutcome strin
 	}
 }
 
+// TestMarkSucceededAndFailed_NilOpsAreSafe pins the OpsMetrics
+// nil-safety contract (ADR-030) through Builderd's two metric
+// funnels. The OpsMetrics methods each have an `if m == nil` guard,
+// but the guards are only useful if Builderd actually goes through
+// `b.ops` (a typed-nil pointer) without dereferencing first. A
+// future refactor that swaps `b.ops.ObserveBuild*` for a direct
+// field read would silently break tests that construct a Builderd
+// without WithOpsMetrics — and ProcessOne's 25+ call sites would
+// start panicking on the no-metrics unit-test path. This regression
+// net stays exactly one assertion: build a Builderd with b.ops
+// deliberately unset, drive markSucceeded + markFailed, observe zero
+// panics. The store still flips BuildSucceeded / BuildFailed; only
+// the Prometheus hand-off is a no-op.
+func TestMarkSucceededAndFailed_NilOpsAreSafe(t *testing.T) {
+	store := state.NewMemStore()
+	srcTar := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, srcTar, []string{"package.json"})
+	buildID, _, _ := seedDeployment(t, store, srcTar)
+
+	b := New(store, &fakeNotifier{}, nil, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if b.ops != nil {
+		t.Fatalf("preconditions: ops must default to nil, got %#v", b.ops)
+	}
+	start := time.Now()
+
+	// markSucceeded on a typed-nil *OpsMetrics: the ObserveBuildCount
+	// + ObserveBuildDuration guards swallow the nil receiver; the
+	// store mutation still flips BuildSucceeded.
+	b.markSucceeded(context.Background(), buildID, "ok", start)
+	got, err := store.BuildByID(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("BuildByID after markSucceeded: %v", err)
+	}
+	if got.Status != state.BuildSucceeded {
+		t.Errorf("after markSucceeded: status=%q, want %q", got.Status, state.BuildSucceeded)
+	}
+
+	// markFailed on the same nil-ops Builderd for a different build.
+	// Cross-check the failure funnel too — it observes under
+	// code=<FailureClass> and outcome="failed" (different metrics
+	// paths than markSucceeded), so a half-implemented guard wouldn't
+	// catch it. seedDeployment reuses the same account slug so the
+	// second row needs a unique slug (seedDeploymentWithSlug varies
+	// the account email, dodging MemStore's duplicate-email guard).
+	srcTar2 := filepath.Join(t.TempDir(), "src2.tar.gz")
+	makeTarballWithName(t, srcTar2, []string{"package.json"})
+	buildID2, depID2, _ := seedDeploymentWithSlug(t, store, srcTar2, "nil-ops-fail")
+	b.markFailed(context.Background(), depID2, buildID2, state.FailureInfra, "nil-ops regression: infra failure path", start)
+	got2, err := store.BuildByID(context.Background(), buildID2)
+	if err != nil {
+		t.Fatalf("BuildByID after markFailed: %v", err)
+	}
+	if got2.Status != state.BuildFailed {
+		t.Errorf("after markFailed: status=%q, want %q", got2.Status, state.BuildFailed)
+	}
+	if got2.FailureClass != state.FailureInfra {
+		t.Errorf("after markFailed: failure_class=%q, want %q", got2.FailureClass, state.FailureInfra)
+	}
+}
+
 // ----------------------------------------------------------------------
 // PR-B: ProcessNext (durable worker surface) + ErrNoSlot requeue
 // ----------------------------------------------------------------------

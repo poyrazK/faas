@@ -142,11 +142,17 @@ func (b *Builderd) WithOpsMetrics(ops *wire.OpsMetrics) *Builderd {
 	return b
 }
 
-// WithSlotDecider swaps the slot-allocation function for tests so the
+// withSlotDecider swaps the slot-allocation function for tests so the
 // no-slot requeue path (PR-B §B.5) can be exercised without standing
-// up a full ResidencyProbe rig. Production callers must NOT use this
-// — DecideSlot is the canonical implementation.
-func (b *Builderd) WithSlotDecider(f func(ResidencyProbe, int) SlotDecision) *Builderd {
+// up a full ResidencyProbe rig. Unexported so production callers
+// cannot reach it — DecideSlot is the canonical implementation and
+// the build-path security invariant "builds never outrank tenant
+// wakes" must not be bypassable from outside `package builderd`.
+// Tests inside the package re-export it as `WithSlotDecider` via
+// `pkg/builderd/testhelpers_test.go` (which is in `package builderd`,
+// not `package builderd_test`, so the unexported field stays
+// reachable).
+func (b *Builderd) withSlotDecider(f func(ResidencyProbe, int) SlotDecision) *Builderd {
 	b.slotDecide = f
 	return b
 }
@@ -228,16 +234,27 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// started_at was set by ClaimQueuedBuild; the legacy UpdateBuildStatus
 	// call here would clobber it, so we skip it. (Previously this line
 	// started_at = now() via UpdateBuildStatus; the CAS covers that.)
-	defer b.emitBuildLog(ctx, build.ID, "build started\n")
+	//
+	// Note: we deliberately do NOT emit a "build started" log here.
+	// "started" is a property of the spawn (or cache hit) decision,
+	// not the claim. The two real "started" sites below — the cache
+	// hit path and the spawn path — each emit the line so a no-slot
+	// requeue, a detect-failure markFailed, or a spawn failure never
+	// log a misleading "build started" before any actual work
+	// happened.
 
-	// Build telemetry (ADR-030). Queue wait = time the build sat between
-	// apid's CreateBuild (enqueued_at) and this dequeue point; observed
-	// once here so only builds that actually started count. Build
-	// duration is observed inside markSucceeded/markFailed (the single
-	// choke points for every terminal path) using `buildStart` and the
-	// outcome they decide. All observers are nil-safe (ops may be unset
-	// in tests).
-	b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
+	// Build telemetry (ADR-030). buildStart anchors the
+	// build_duration_seconds histogram observed inside
+	// markSucceeded/markFailed (the single choke points for every
+	// terminal path). The queue-wait observation is deferred until
+	// past the slot decision so a no-slot requeue does not inflate
+	// the histogram (PR-B review finding M-3). buildStart is set
+	// here so every terminal funnel — including no-slot — has a
+	// valid wall-clock anchor; it is overwritten with a more precise
+	// value at the two real "started" sites (cache hit, spawn)
+	// below to keep the duration histogram honest about the
+	// cache/scratch distinction. ObserveBuild* methods are
+	// nil-safe at the call sites (M-6 fix).
 	buildStart := time.Now()
 
 	fw, err := b.detector.Detect(dep.SourcePath)
@@ -256,6 +273,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, err
 	}
 	if cached, ok := b.cache.Lookup(srcHash, fw); ok {
+		// Cache hit is one of the two real "build started" sites
+		// (the other is the spawn path below). Observe the
+		// queue-wait here so a no-slot requeue on a sibling row
+		// does not inflate the histogram with sub-second noise
+		// (PR-B review finding M-3).
+		b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
+		buildStart = time.Now()
+		b.emitBuildLog(ctx, build.ID, "build started (cache hit)\n")
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("cache hit (%s, %d bytes) — skipping vm spawn\n", cached.Path, cached.Bytes))
 		if err := b.store.SetDeploymentRootfs(ctx, dep.ID, cached.Path, sched.AppLayerKey(app.Slug, dep.ID), cached.Bytes); err != nil {
 			b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "set rootfs: "+err.Error(), buildStart)
@@ -299,6 +324,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, ErrNoSlot
 	}
 	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("allocated builder slot (%s)\n", slot.Label))
+
+	// Past the slot decision — this is one of the two real "build
+	// started" sites (the other is the cache hit path above).
+	// Observe queue-wait here so a no-slot requeue doesn't
+	// double-count it (PR-B review finding M-3).
+	b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
+	buildStart = time.Now()
+	b.emitBuildLog(ctx, build.ID, "build started\n")
 
 	if b.vm == nil {
 		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "vm driver not wired (metal only)", buildStart)

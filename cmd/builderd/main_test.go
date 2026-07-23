@@ -279,9 +279,20 @@ func TestWorkerLoop_DoesNotDoubleSpawnForSameRow(t *testing.T) {
 		defer close(done)
 		workerLoop(ctx, b, 20*time.Millisecond, discardLog())
 	}()
-	// 200ms = ~10 ticks. The worker's ErrNotFound path is silent;
-	// the assertion is the Spawn counter.
-	time.Sleep(200 * time.Millisecond)
+	// Poll for the deadline instead of a flat sleep: the worker's
+	// ErrNotFound path is silent and only the Spawn counter can
+	// fail the test, so we want the assertion to fire as soon as
+	// (and if) Spawn is ever called. A flat 200ms sleep gives the
+	// worker ~10 ticks to prove the CAS holds — keep the same
+	// deadline but check the counter every 10ms so a regression
+	// surfaces immediately rather than after the full wall.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if fvm.calls.Load() > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	cancel()
 	<-done
 
