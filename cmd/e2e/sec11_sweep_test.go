@@ -28,6 +28,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -386,18 +387,30 @@ func poolDSN(pool *pgxpool.Pool) string {
 	return dbURL
 }
 
-// cfgHost extracts the host portion from a pgx DSN. Returns "" for
-// unix-socket-only DSNs (no explicit `host=`), so TestSec11_UnixSocketOnlyDSN
-// can decide whether the test target is TCP or local. We use this
-// rather than parsing the URL more thoroughly because the only
-// branching on `host=` we care about is "is the daemon forced into a
-// TCP connection by CI". If `host=` is unset the DSN already targets
-// /var/run/postgresql or whatever pgx treats as the libpq default
-// (which on the EX44 is the unix socket).
+// cfgHost extracts the host portion from a pgx DSN. Used by
+// TestSec11_UnixSocketOnlyDSN to skip when CI forces a TCP target
+// (which we can detect by either a query `host=...` or a URL
+// authority). Returns "" for unix-socket-only DSNs whose pgx form
+// is `postgres:///faas` (no authority) or `host=/run/postgresql`
+// (a path, not a hostname); callers use "" to mean "skip the
+// TCP-detection branch and assert unix-socket only".
 func cfgHost(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err == nil && u.Host != "" {
+		// Authority (userinfo@host:port) is sufficient evidence of TCP.
+		return strings.SplitN(u.Host, ":", 2)[0]
+	}
 	for _, kv := range strings.FieldsFunc(dsn, func(r rune) bool { return r == '&' || r == ' ' }) {
 		if strings.HasPrefix(kv, "host=") {
-			return strings.TrimPrefix(kv, "host=")
+			host := strings.TrimPrefix(kv, "host=")
+			// pgx unix-socket form is host=/run/postgresql, host=., or
+			// host=/var/run/postgresql. Anything starting with "/" is a
+			// file path. A bare "." or ".." is also unix-socket by pgx
+			// convention; the local test harness is fine with that.
+			if strings.HasPrefix(host, "/") || host == "." || host == ".." {
+				return ""
+			}
+			return host
 		}
 	}
 	return ""
