@@ -11,9 +11,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// Loop runs the four meterd timers (sample / quota / stripe / dunning)
-// until the context cancels. Each timer fires on its own cadence; the
-// first error from any goroutine is surfaced to the caller.
+// Loop runs the five meterd timers (sample / quota / stripe / dunning
+// / residency) until the context cancels. Each timer fires on its own
+// cadence; the first error from any goroutine is surfaced to the
+// caller.
 //
 // The Loop never blocks the daemon's shutdown — every ticker selects on
 // both its tick and ctx.Done. Production wires this from cmd/meterd;
@@ -37,19 +38,21 @@ type Loop struct {
 	// both loops hand off the same Sender via DunningSender's local
 	// interface shape. nil falls back to a no-op sender in NewLoop so
 	// tests don't have to thread a stub.
-	mailer  DunningSender
-	dunning *Dunning
-	now     func() time.Time
-	log     *slog.Logger
-	cfg     *Config
-	ops     *wire.OpsMetrics
+	mailer    DunningSender
+	dunning   *Dunning
+	residency *Residency
+	now       func() time.Time
+	log       *slog.Logger
+	cfg       *Config
+	ops       *wire.OpsMetrics
 
 	lastTickMu sync.RWMutex
 	// lastTick records the wall-clock time each named tick body last
 	// completed successfully. Keys mirror the runTicks "name" argument:
-	// "sample", "stripe", "dunning" are populated by runTicks; "quota"
-	// is populated by runQuotaOnce (same field, written outside
-	// runTicks because quota is loop-shaped, not single-tick).
+	// "sample", "stripe", "dunning", "residency" are populated by
+	// runTicks; "quota" is populated by runQuotaOnce (same field,
+	// written outside runTicks because quota is loop-shaped, not
+	// single-tick).
 	lastTick map[string]time.Time
 }
 
@@ -59,9 +62,12 @@ type Loop struct {
 // that don't exercise dunning pass nil and the fourth goroutine is
 // skipped. mailer may be nil; NewLoop coerces nil to noopDunningSender
 // so callers don't have to special-case the zero value (mirrors
-// ops/log coercion above). ops and log likewise may be nil — see the
-// Loop doc comment.
-func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif Notifier, mailer DunningSender, dunning *Dunning, now func() time.Time, log *slog.Logger, cfg *Config, ops *wire.OpsMetrics) *Loop {
+// ops/log coercion above). residency is wired unconditionally today
+// (the gauge emit is the source of truth for the §12 dashboard panel
+// and must not be skipped in production); the ops.SetResidentGBPerCustomer
+// method is nil-safe so the loop tolerates a nil ops receiver. ops
+// and log likewise may be nil — see the Loop doc comment.
+func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif Notifier, mailer DunningSender, dunning *Dunning, residency *Residency, now func() time.Time, log *slog.Logger, cfg *Config, ops *wire.OpsMetrics) *Loop {
 	if now == nil {
 		now = time.Now
 	}
@@ -74,21 +80,25 @@ func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif 
 	if mailer == nil {
 		mailer = noopDunningSender{}
 	}
+	if residency == nil {
+		residency = NewResidency(store, now, log, ops)
+	}
 	return &Loop{
 		store: store, parker: parker, stripe: stripe, notif: notif,
-		mailer: mailer, dunning: dunning, now: now, log: log, cfg: cfg, ops: ops,
+		mailer: mailer, dunning: dunning, residency: residency, now: now, log: log, cfg: cfg, ops: ops,
 		lastTick: make(map[string]time.Time),
 	}
 }
 
-// Run starts the four timers and blocks until ctx cancels or any timer
-// errors out. Sampler / quota loop / stripe pusher / dunning each log +
-// continue on per-tick errors so a transient Postgres blip doesn't kill
-// the daemon; only a context cancel returns cleanly.
+// Run starts the five timers and blocks until ctx cancels or any timer
+// errors out. Sampler / quota loop / stripe pusher / dunning /
+// residency each log + continue on per-tick errors so a transient
+// Postgres blip doesn't kill the daemon; only a context cancel returns
+// cleanly.
 func (l *Loop) Run(ctx context.Context) error {
 	sampler := NewSampler(l.store, l.now)
 	pusher := NewPusher(l.store, l.stripe, l.log, l.now, l.ops)
-	errc := make(chan error, 4)
+	errc := make(chan error, 5)
 	go func() {
 		errc <- l.runTicks(ctx, l.cfg.SampleInterval, func(c context.Context) error {
 			_, err := sampler.SampleAndRoll(c)
@@ -107,6 +117,15 @@ func (l *Loop) Run(ctx context.Context) error {
 			errc <- l.runTicks(ctx, l.cfg.DunningInterval,
 				func(c context.Context) error { return l.dunning.RunOnce(c) },
 				"dunning")
+		}()
+	}
+	if l.residency != nil {
+		go func() {
+			errc <- l.runTicks(ctx, l.cfg.ResidencyInterval,
+				func(c context.Context) error {
+					_, err := l.residency.RunOnce(c)
+					return err
+				}, "residency")
 		}()
 	}
 	// Block until either ctx cancels or a hard error fires.

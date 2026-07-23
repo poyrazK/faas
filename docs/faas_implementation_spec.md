@@ -407,7 +407,7 @@ Concurrency and RAM interaction (the R1 discipline, mechanized): builder VMs are
 
 ## 12. Observability and SLOs
 
-Prometheus (node_exporter + per-daemon `/metrics`) → Grafana Cloud free tier; alerting via Grafana → email + Pushover.
+Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS on the management bridge; alerting via Alertmanager → email + Pushover (ADR-031).
 
 **The dashboard row that mirrors the financial model (check weekly, feed the sheet monthly):**
 

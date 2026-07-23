@@ -240,18 +240,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	// FAAS_QUOTA_INTERVAL / FAAS_SAMPLE_INTERVAL / FAAS_STRIPE_INTERVAL /
-	// FAAS_DUNNING_INTERVAL let the e2e test shrink the timer cadences
-	// to sub-second for the "transition within one tick" acceptance. A
-	// bad parse logs and falls through to mc.Defaults() rather than
-	// crashing the daemon.
+	// FAAS_DUNNING_INTERVAL / FAAS_RESIDENCY_INTERVAL let the e2e test
+	// shrink the timer cadences to sub-second for the "transition
+	// within one tick" acceptance. A bad parse logs and falls through
+	// to mc.Defaults() rather than crashing the daemon.
 	applyEnvTick("FAAS_SAMPLE_INTERVAL", &mc.SampleInterval, deps.getenv, log)
 	applyEnvTick("FAAS_QUOTA_INTERVAL", &mc.QuotaInterval, deps.getenv, log)
 	applyEnvTick("FAAS_STRIPE_INTERVAL", &mc.StripeInterval, deps.getenv, log)
 	applyEnvTick("FAAS_DUNNING_INTERVAL", &mc.DunningInterval, deps.getenv, log)
+	applyEnvTick("FAAS_RESIDENCY_INTERVAL", &mc.ResidencyInterval, deps.getenv, log)
 
 	// Dunning timer: drives the 7-day past_due → suspended and 21-day
 	// suspended → deleted_pending transitions (spec §4.7, §17). Wired
-	// into the loop alongside sample/quota/stripe so all four timers
+	// into the loop alongside sample/quota/stripe so all five timers
 	// share the same ctx-cancel lifecycle.
 	dunning := meter.NewDunning(meter.DunningParams{
 		Store:  store,
@@ -266,10 +267,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and coerces to a fresh test registry; here we hand it the real one.
 	ops := wire.NewOpsMetrics("meterd")
 
-	// The four timers run in goroutines; the cancel-watcher below picks
+	// Residency timer: emits the §12 "Resident GB per paying customer"
+	// gauge (ADR-031, PR #141). Wired into the loop alongside
+	// sample/quota/stripe/dunning so all five timers share the same
+	// ctx-cancel lifecycle. ops is the per-daemon registry above;
+	// residency.SetResidentGBPerCustomer is nil-safe so a later ops
+	// swap doesn't take the gauge down with it.
+	residency := meter.NewResidency(store, deps.now, log, ops)
+
+	// The five timers run in goroutines; the cancel-watcher below picks
 	// up the first error and returns. meterd has no inbound gRPC — the
 	// public listener is gatewayd's (spec §Component ownership).
-	loop := meter.NewLoop(store, parker, pusher, pn, mailer, dunning, deps.now, log, mc, ops)
+	loop := meter.NewLoop(store, parker, pusher, pn, mailer, dunning, residency, deps.now, log, mc, ops)
 	errc := make(chan error, 1)
 	go func() { errc <- loop.Run(ctx) }()
 

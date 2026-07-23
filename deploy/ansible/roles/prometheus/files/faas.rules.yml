@@ -238,3 +238,27 @@ groups:
           summary: "Daemon {{ $labels.job }} is down"
           description: "Prometheus has been unable to scrape {{ $labels.job }} for 2m. Check systemd status + recent logs."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonDown.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Resident GB per paying customer (meterd / metrics endpoint)
+      # Spec §12 row: "resident GB per paying customer | 0.305 (=312 MB) | > 0.45 warn".
+      # ADR-031 splits the metric by plan so an operator can see which
+      # segment is migrating toward the §12 page threshold (0.45). The
+      # alert fans out per-plan via {{ $labels.plan }}; the alertmanager
+      # inhibit rule groups on family=residency so a per-plan page-tier
+      # crossing suppresses any per-plan warn on the same group.
+      #
+      # Plan label is the canonical api.Plan string (free|hobby|pro|scale)
+      # emitted by meterd's Residency tick (pkg/meter/residency.go).
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasResidentGbPerCustomerHigh
+        expr: max by (plan) (meterd_resident_gb_per_customer) > 0.45
+        for: 1h
+        labels:
+          severity: warn
+          component: meterd
+          family: residency
+        annotations:
+          summary: "Resident GB per paying customer > 0.45 (plan {{ $labels.plan }})"
+          description: "Plan {{ $labels.plan }} has been above the §12 page threshold (0.45 GB-RAM-hours / paying customer) for 1h. Spec target is 0.305. Cross-check FaasHighResidentRamPct — fleet RAM pressure is the usual upstream cause."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResidentGbPerCustomerHigh.md"

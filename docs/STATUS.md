@@ -338,10 +338,11 @@ and open an issue if you want it.
   `deploy/scripts/faas-m8-restore-drill.sh` on the EX44 and fill
   in `docs/drills/2026-07-20-restore-drill.md` (template present).
 - **Status page + SLO dashboard** — public SLOs from spec §12
-  (API 99.5 % monthly, wake p95 < 1 s, build success ≥ 99 %). The
-  pipeline (Prometheus scrape + Grafana JSON + `apid /status` +
-  `apid /status/slo.json`) is in via PR #51; the operator
-  verification step (Grafana panels render non-zero data, SLO
+  (API 99.5 % monthly, wake p95 < 1 s, build success ≥ 99 %).
+  Pipeline (Prometheus scrape + Grafana JSON + `apid /status` +
+  `apid /status/slo.json`) in via PR #51; Grafana provisioning +
+  D1–D5 threshold fixes + M1/M2 panels via PR #141 (ADR-031).
+  Operator verification (Grafana panels render non-zero data, SLO
   JSON returns denominators) is the EX44 follow-up.
 - **§11 checklist item-by-item sign-off** (cgroups v2 only,
   `unprivileged_userns_clone=0`, auditd, unattended-upgrades,

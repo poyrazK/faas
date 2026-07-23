@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -73,6 +74,15 @@ type OpsMetrics struct {
 	// wait histogram is unlabelled (every observation has the same shape).
 	buildDur       *prometheus.HistogramVec
 	buildQueueWait prometheus.Histogram
+	// residentGBPerCustomer: per-plan "resident GB-hours per paying
+	// customer" gauge emitted by meterd (ADR-031, PR #141). Labelled
+	// by plan ∈ {free, hobby, pro, scale} so the §12 dashboard's
+	// "Resident GB per paying customer" panel can split by plan while
+	// the FaasResidentGbPerCustomerHigh alert rule fans out per-plan.
+	// Cardinality bounded at 4 — the closed plan set is enumerated
+	// in the pre-instantiation loop below so every plan label surfaces
+	// in /metrics from the moment the daemon boots.
+	residentGBPerCustomer *prometheus.GaugeVec
 	// imagedOCIPull: per-call latency of imaged's OCI registry pulls
 	// (manifest, config, blob, above-base). Sized to api.OCIPullTimeoutSeconds
 	// (60 s); the 5 s control-plane bucket is wrong for the multi-second
@@ -135,6 +145,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// Sized to the §12 alert thresholds: healthy < 60 s, page at > 300 s.
 		Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600},
 	})
+	residentGBPerCustomer := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_resident_gb_per_customer",
+		Help: "Monthly GB-RAM-hours divided by paying-customer count, per plan (ADR-031). Spec §12 target 0.305 (≈312 MB/customer); > 0.45 warns. Emitted by meterd once per ResidencyInterval.",
+	}, []string{"plan"})
 	wakeIDV4Fallback := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: prefix + "_wake_id_v4_fallback_total",
 		Help: "Count of wake_id mints where uuid.NewV7 returned an error and the engine fell back to uuid.New (v4). Any non-zero rate indicates a broken crypto/rand subsystem and breaks the time-ordering invariant the instances_wake_id_app_idx partial index is built on. Should never increment in production.",
@@ -146,7 +160,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		// multi-second for big layers; 60 s ceiling = OCIPullTimeoutSeconds.
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60},
 	}, []string{"op", "result"})
-	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, stripePushDur, buildDur, buildQueueWait, wakeIDV4Fallback, imagedOCIPull)
+	reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, stripePushDur, buildDur, buildQueueWait, residentGBPerCustomer, wakeIDV4Fallback, imagedOCIPull)
 	// Pre-instantiate the closed (op,result) set for the OCI-pull
 	// histogram so its HELP/TYPE and zero-valued buckets surface in
 	// /metrics from the moment the daemon boots — same precedent as
@@ -170,17 +184,27 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, label := range stripe.PushResultLabels() {
 		stripePushDur.WithLabelValues(label)
 	}
+	// Pre-instantiate the closed plan set for the residentGBPerCustomer
+	// gauge so its HELP/TYPE and zero-valued samples surface in /metrics
+	// from the moment the daemon boots — same precedent as the histogram
+	// pre-instantiation above. An idle box with zero paying customers
+	// would otherwise render the dashboard panel as "no data" until at
+	// least one plan tick has fired (ADR-031).
+	for _, plan := range api.Plans {
+		residentGBPerCustomer.WithLabelValues(string(plan))
+	}
 	return &OpsMetrics{
-		registry:         reg,
-		ops:              ops,
-		dur:              dur,
-		watchdogKills:    watchdogKills,
-		eventsWriteFail:  eventsWriteFail,
-		stripePushDur:    stripePushDur,
-		buildDur:         buildDur,
-		buildQueueWait:   buildQueueWait,
-		wakeIDV4Fallback: wakeIDV4Fallback,
-		imagedOCIPull:    imagedOCIPull,
+		registry:              reg,
+		ops:                   ops,
+		dur:                   dur,
+		watchdogKills:         watchdogKills,
+		eventsWriteFail:       eventsWriteFail,
+		stripePushDur:         stripePushDur,
+		buildDur:              buildDur,
+		buildQueueWait:        buildQueueWait,
+		residentGBPerCustomer: residentGBPerCustomer,
+		wakeIDV4Fallback:      wakeIDV4Fallback,
+		imagedOCIPull:         imagedOCIPull,
 	}
 }
 
@@ -299,6 +323,19 @@ func (m *OpsMetrics) ObserveImagedOCIPull(op, result string, dur time.Duration) 
 		return
 	}
 	m.imagedOCIPull.WithLabelValues(op, result).Observe(dur.Seconds())
+}
+
+// SetResidentGBPerCustomer writes one sample to the
+// <daemon>_resident_gb_per_customer gauge (ADR-031, PR #141).
+// Spec §12 target is 0.305 GB-RAM-hours per paying customer
+// (= 312 MB / Hobby plan's 256 MB ≈ 312 MB-monthly inclusive); > 0.45
+// warns. Safe on a nil receiver so meterd unit tests without metrics
+// keep working.
+func (m *OpsMetrics) SetResidentGBPerCustomer(plan string, gb float64) {
+	if m == nil {
+		return
+	}
+	m.residentGBPerCustomer.WithLabelValues(plan).Set(gb)
 }
 
 // Handler returns an http.Handler that serves the registry's metrics.

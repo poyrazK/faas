@@ -37,6 +37,12 @@ type Config struct {
 	// after the deadline a row is transitioned, never the deadline
 	// itself (the comparison is against PastDueAt).
 	DunningInterval time.Duration
+	// ResidencyInterval is how often the residency timer emits the
+	// §12 "Resident GB per paying customer" gauge (ADR-031, PR #141).
+	// Zero means the production default (60 s). 60 s matches the
+	// §12 alert rule's `for: 1h` window with enough resolution to
+	// catch a fast-migrating plan without spending DB scans.
+	ResidencyInterval time.Duration
 	// ScheddSocket is the unix socket meterd dials for ParkInstance.
 	ScheddSocket string
 	// NotifyBackend is the db.Notify implementation; defaults to the
@@ -58,5 +64,8 @@ func (c *Config) Defaults() {
 	}
 	if c.DunningInterval == 0 {
 		c.DunningInterval = time.Hour
+	}
+	if c.ResidencyInterval == 0 {
+		c.ResidencyInterval = 60 * time.Second
 	}
 }
