@@ -20,7 +20,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -136,18 +135,6 @@ func (a *authHandlers) postLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *authHandlers) renderCheckEmail(w http.ResponseWriter) {
-	page := dashboard.Page{
-		Title: "Sign in",
-		Body:  "login",
-		Flash: "Check your email — we sent you a magic link.",
-	}
-	if err := dashboard.Render(w, a.log, page); err != nil {
-		a.log.Error("dashboard render check-email", "err", err)
-		http.Error(w, "render failed", http.StatusInternalServerError)
-	}
-}
-
 // verify handles GET /auth/verify?token=…. On success, sets the
 // faas_sid cookie and redirects to /dashboard/. On replay / expiry /
 // invalid, returns 410 Gone (semantically correct: the resource was
@@ -261,17 +248,6 @@ func WithAccount(ctx context.Context, acct state.Account) context.Context {
 func AccountFrom(ctx context.Context) (state.Account, bool) {
 	a, ok := ctx.Value(accountContextKey{}).(state.Account)
 	return a, ok
-}
-
-// mintLoginToken returns (hex-encoded 32-byte raw token, sha256 hash,
-// error). The hash is what we store; the hex raw token is what goes
-// in the email link.
-func mintLoginToken() (string, []byte, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", nil, err
-	}
-	return hex.EncodeToString(raw), api.HashToken(raw), nil
 }
 
 // looksLikeEmail is a permissive shape check — RFC 5322 is too
