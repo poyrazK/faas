@@ -36,12 +36,7 @@ func planProducts() []api.Plan {
 	return []api.Plan{api.PlanHobby, api.PlanPro, api.PlanScale}
 }
 
-// planMonthlyMillicents + planOverageMillicents removed: the financial-
-// model source of truth is pkg/api/limits.go (planLimits.PriceMillicents
-// + OverageMillicentsPerGBHour). The shared wrappers
-// billing.PlanMonthlyMillicents and billing.PlanOverageMillicentsPerGBHour
-// in pkg/billing/plans.go delegate there, so the per-provider call sites
-// below don't drift from the financial model.
+// planMonthlyMillicents + planOverageMillicents moved to pkg/billing/plans.go.
 
 // millicentsToPaddleAmount converts integer millicents (project's
 // 1000-decimal currency unit) to Paddle's "lowest denomination in a

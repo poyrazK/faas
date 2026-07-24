@@ -111,7 +111,4 @@ func (c *Client) CreateCustomer(ctx context.Context, acct state.Account) (string
 	return cus.ID, nil
 }
 
-// planMonthlyMillicents removed: the financial-model source of truth
-// is pkg/api/limits.go's planLimits.PriceMillicents column, and the
-// shared wrapper billing.PlanMonthlyMillicents delegates to it. See
-// pkg/billing/plans.go.
+// planMonthlyMillicents moved to pkg/billing/plans.go (PlanMonthlyMillicents).

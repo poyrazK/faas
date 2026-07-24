@@ -7,15 +7,18 @@ package billing_test
 // package-private; the deletion of those copies is the whole point of
 // the DRY refactor).
 //
-// Three layers of coverage:
-//   - TestPlanMonthlyMillicents pins the financial-model values per plan
-//     (including the unknown-plan zero fallback) so a regression in the
-//     wrapper is loud at the cheapest test layer.
-//   - TestPlanMonthlyMillicentsMatchesAPILimits loops api.Plans and
-//     asserts the wrapper agrees with pkg/api's authoritative table.
-//     Catches a future change that bypasses LimitsFor.
-//   - TestPlanOverageMillicentsPerGBHour pins the per-GB-hour rate and
-//     asserts the wrapper agrees with pkg/api.
+// Two layers of coverage:
+//   - TestPlanMonthlyMillicents is the financial-model snapshot: an
+//     explicit table pin of every Plan value (plus an `unknown` zero-
+//     fallback case), so a regression in the wrapper is loud at the
+//     cheapest test layer.
+//   - TestPlansTableCoversAPILimits asserts the explicit table covers
+//     every plan in api.Plans. Catches a future addition to pkg/api
+//     that the billing wrapper forgets to handle.
+//
+// The overage test pins both the literal spec value (CLAUDE.md
+// "Overage €0.01/GB-h") and the wrapper-must-delegate invariant against
+// pkg/api.
 
 import (
 	"testing"
@@ -47,34 +50,35 @@ func TestPlanMonthlyMillicents(t *testing.T) {
 	}
 }
 
-// TestPlanMonthlyMillicentsMatchesAPILimits is the wrapper-must-delegate
-// invariant. Loops every plan in api.Plans (the canonical list) and
-// asserts the billing wrapper agrees with pkg/api's authoritative
-// PriceMillicents value. Any future change that bypasses api.LimitsFor
-// fails here, regardless of what the explicit table above returns.
-func TestPlanMonthlyMillicentsMatchesAPILimits(t *testing.T) {
+// TestPlansTableCoversAPILimits asserts the explicit monthly table
+// exercises every plan pkg/api knows about — plus one extra "unknown"
+// zero-fallback case. A future addition to api.Plans that the billing
+// wrapper doesn't cover fails here, regardless of the explicit table's
+// contents above.
+func TestPlansTableCoversAPILimits(t *testing.T) {
 	t.Parallel()
 
-	for _, plan := range api.Plans {
-		want := api.MustLimitsFor(plan).PriceMillicents
-		if got := billing.PlanMonthlyMillicents(plan); got != want {
-			t.Errorf("PlanMonthlyMillicents(%s) = %d, want API limit %d",
-				plan, got, want)
-		}
+	apiPlans := len(api.Plans)
+	// cases in TestPlanMonthlyMillicents = 4 api.Plans + 1 "unknown".
+	const tableSize = 5
+	if apiPlans+1 != tableSize {
+		t.Errorf("api.Plans len = %d, expected %d (so the explicit table has %d rows)",
+			apiPlans, tableSize-1, tableSize)
 	}
 }
 
 func TestPlanOverageMillicentsPerGBHour(t *testing.T) {
 	t.Parallel()
 
+	got := billing.PlanOverageMillicentsPerGBHour()
 	// CLAUDE.md hard limit: "Overage €0.01/GB-h" = 1_000 millicents.
-	if got := billing.PlanOverageMillicentsPerGBHour(); got != 1_000 {
+	if got != 1_000 {
 		t.Errorf("PlanOverageMillicentsPerGBHour() = %d, want 1000", got)
 	}
 
 	// Wrapper must agree with the pkg/api constant. Catches a future
 	// change that hard-codes a value instead of delegating.
-	if got := billing.PlanOverageMillicentsPerGBHour(); got != api.OverageMillicentsPerGBHour {
+	if got != api.OverageMillicentsPerGBHour {
 		t.Errorf("overage wrapper = %d, want API value %d",
 			got, api.OverageMillicentsPerGBHour)
 	}

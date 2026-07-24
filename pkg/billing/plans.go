@@ -17,10 +17,6 @@ import "github.com/onebox-faas/faas/pkg/api"
 // pkg/api is the authoritative source for plan limits and financial-model
 // values. Unknown plans return zero, matching api.LimitsFor's zero fallback.
 // Do not use this as plan validation; that's api.Plan.Valid()'s job.
-//
-// Callers: pkg/billing/stripe/products.go (EnsurePlanProducts monthly
-// Plan creation) and pkg/billing/paddle/products.go (ensureProducts
-// monthly planPriceSpec).
 func PlanMonthlyMillicents(p api.Plan) int64 {
 	l, _ := api.LimitsFor(p)
 	return l.PriceMillicents
