@@ -139,7 +139,7 @@ const (
 	// --max-concurrency").
 	CodeInvalidMinInstances = "invalid_min_instances"
 
-// Move 1 event-shaped surfaces (spec §4.4, §4.9). The CLI exit-code
+	// Move 1 event-shaped surfaces (spec §4.4, §4.9). The CLI exit-code
 	// table treats them as 403/422/402; surfacing the codes separately
 	// lets the dashboard render a "move to Scale to lift the cap"
 	// hint without parsing prose.

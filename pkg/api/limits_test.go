@@ -7,7 +7,7 @@ import "testing"
 // same PR — that is the point.
 func TestPlanLimitsMatchSpec(t *testing.T) {
 	want := map[Plan]Limits{
-// Move 1: Free gates async_invoke and queues (spec §4.4 paid-only).
+		// Move 1: Free gates async_invoke and queues (spec §4.4 paid-only).
 		// EgressAllowlistAllowed/MaxSize default to false/0 (Go zero), so
 		// Free/Hobby rows below omit them intentionally — mirrors the
 		// MinInstancesAllowed row shape.

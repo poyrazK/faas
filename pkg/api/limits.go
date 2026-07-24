@@ -75,7 +75,7 @@ type Limits struct {
 	// apid's updateApp handler gates the PATCH body on this flag.
 	MinInstancesAllowed bool
 
-// Move 1 event-shaped surfaces (spec §4.4, §4.9, CLAUDE.md Hard
+	// Move 1 event-shaped surfaces (spec §4.4, §4.9, CLAUDE.md Hard
 	// limits). The apid cap checks on POST .../queues/invocations:send
 	// and POST /v1/apps/{slug}/delayed-tasks read these via
 	// MustLimitsFor; schedd's drain re-checks delayed_tasks before
