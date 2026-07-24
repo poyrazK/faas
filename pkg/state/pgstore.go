@@ -332,7 +332,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		`insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances)
 		 values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9)
 		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		           max_concurrency, status, manifest, created_at, min_instances`,
+		           max_concurrency, status, manifest, created_at, min_instances, egress_allowlist::text`,
 		app.AccountID, app.Slug, string(app.Type), runtime, app.RAMMB, idle, app.MaxConcurrency, manifestBytes, app.MinInstances)
 	created, err := scanApp(row)
 	if err != nil {
@@ -448,7 +448,7 @@ func (s *PgStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug str
 		`update apps set slug = $3
 		 where account_id = $1 and slug = $2 and status <> 'deleted'
 		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		           max_concurrency, status, manifest, created_at, min_instances`,
+		           max_concurrency, status, manifest, created_at, min_instances, egress_allowlist::text`,
 		accountID, oldSlug, newSlug)
 	return scanApp(row)
 }
