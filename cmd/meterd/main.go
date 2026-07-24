@@ -34,7 +34,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/onebox-faas/faas/pkg/billing/stripe"
+	"github.com/onebox-faas/faas/pkg/billing"
+	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -51,22 +52,6 @@ type parkInstanceParker interface {
 	ParkInstance(ctx context.Context, instanceID, reason string) error
 }
 
-// stripePusher is the Slice-2 stripe.Client interface meterd uses.
-// We don't import pkg/billing/stripe here — the daemon is testable against
-// a recorder, and the wire-up in main.go is one line.
-//
-// PushUsageRecordSum is the integer-mb-seconds path; it receives the
-// pusher's summed usage_minutes.mb_seconds across the billing window
-// (a full day under the production cadence, cfg.StripeInterval = 24h).
-// The SDK converts to wire units in int64 arithmetic — no float, no
-// per-hour fractional truncation loss on the wire. Duplicated from
-// pkg/meter.StripePusher rather than imported so the test fake
-// (cmd/meterd/main_test.go::nopStripe) stays a single-method struct
-// scoped to this package.
-type stripePusher interface {
-	PushUsageRecordSum(ctx context.Context, account state.Account, hour time.Time, mbSeconds int64) error
-}
-
 func main() {
 	wire.Daemon("meterd", run)
 }
@@ -78,7 +63,7 @@ type runDeps struct {
 	migrate    func(context.Context, *pgxpool.Pool) error
 	loadMeter  func(*Config) (*meter.Config, error)
 	// getenv is the env reader the wire-up uses (FAAS_SCHEDD_ADDR,
-	// STRIPE_API_KEY, FAAS_QUOTA_INTERVAL, ...). Tests can stub it.
+	// FAAS_BILLING_PROVIDER, FAAS_QUOTA_INTERVAL, ...). Tests can stub it.
 	// Mirrors cmd/apid/main.go's getenv on its runDeps.
 	getenv func(string) string
 	// dialSchedd is the constructor for the schedd gRPC client. nil in
@@ -88,17 +73,17 @@ type runDeps struct {
 	// daemon's lifecycle cancellation and can dial a TLS-wrapped remote
 	// schedd once the control plane is decoupled.
 	dialSchedd func(ctx context.Context, target string, tlsCfg *tls.Config) (parkInstanceParker, error)
-	// newStripeClient is the constructor for the stripe facade. nil
-	// in production (defaultDeps wires stripe.NewClient); tests inject
-	// a recording stub. apiKey + webhookSecret are passed in (not read
-	// from os.Getenv inside the closure) so a test that stubs getenv
-	// sees the same credential values flow into the Client — matches
-	// the test-double pattern at cmd/apid/main.go.
-	newStripeClient func(apiKey, webhookSecret string, store state.Store, dedupe stripe.PushDedupe, log *slog.Logger) stripePusher
+	// loadBillingProvider constructs the billing.Provider the pusher
+	// loop dispatches through (ADR-025 / PR #3). nil in production
+	// (defaultDeps wires billingloader.LoadProviderForMeterd); tests
+	// inject a stub that returns a no-op Provider so the loop body
+	// runs without touching Stripe/Paddle. Mirrors the test-double
+	// pattern at cmd/apid/main.go.
+	loadBillingProvider func(env func(string) string, store state.Store, log *slog.Logger) (billing.Provider, string, error)
 	// The two collaborators are wired in production by runWithDeps
 	// after the pool is open; tests can pre-populate via the fields.
 	parker parkInstanceParker
-	stripe stripePusher
+	pusher billing.Provider
 	// mailer is the dunning-timer's outbound email. Wired via
 	// mail.SenderFromEnv in defaultDeps so the FAAS_MAIL_TRANSPORT
 	// knob is honored (default: log). Tests can inject a noop.
@@ -128,8 +113,8 @@ func defaultDeps() runDeps {
 			}
 			return c, nil
 		},
-		newStripeClient: func(apiKey, webhookSecret string, store state.Store, dedupe stripe.PushDedupe, log *slog.Logger) stripePusher {
-			return stripe.NewClient(store, dedupe, apiKey, webhookSecret, log)
+		loadBillingProvider: func(env func(string) string, store state.Store, log *slog.Logger) (billing.Provider, string, error) {
+			return billingloader.LoadProviderForMeterd(env, store, store, log)
 		},
 		mailer: nil, // populated lazily in runWithDeps via mail.SenderFromEnv
 		now:    time.Now,
@@ -206,29 +191,32 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		parker = c
 	}
 
-	pusher := deps.stripe
+	pusher := deps.pusher
 	if pusher == nil {
-		if deps.newStripeClient == nil {
-			return fmt.Errorf("meterd: nil newStripeClient and nil stripe")
+		if deps.loadBillingProvider == nil {
+			return fmt.Errorf("meterd: nil loadBillingProvider and nil pusher (refusing to start unbounded)")
 		}
-		apiKey := deps.getenv("STRIPE_API_KEY")
-		if apiKey == "" {
-			log.Warn("STRIPE_API_KEY is empty — daily Stripe push will no-op (pushUsageRecordSDKSum returns an error without a key)")
+		var provName string
+		var err error
+		pusher, provName, err = deps.loadBillingProvider(deps.getenv, store, log)
+		if err != nil {
+			return fmt.Errorf("meterd: load billing provider: %w", err)
 		}
-		webhookSecret := deps.getenv("STRIPE_WEBHOOK_SECRET")
-		pusher = deps.newStripeClient(apiKey, webhookSecret, store, store, log)
-		// Best-effort product/price cache: runs once at boot so the
-		// Stripe pusher has PlanPriceIDs populated. Failure logs +
-		// continues — the push path is the source of truth, this is
-		// only a cache. Gated on apiKey so dev boxes without a key
-		// skip the call entirely.
-		if apiKey != "" {
-			if sc, ok := pusher.(*stripe.Client); ok {
-				if err := sc.EnsurePlanProducts(ctx); err != nil {
-					log.Warn("meterd: EnsurePlanProducts failed (continuing)", "err", err)
-				}
-			}
+		// Empty STRIPE_API_KEY on a Stripe box is a soft-warn today
+		// (pushUsageRecordSDKSum returns an error per call, the loop
+		// logs and skips); with the Paddle provider, FAAS_PADDLE_API_KEY
+		// must be set or the SDK refuses to initialize. Surface the
+		// provider name so an operator can match the warning to the
+		// right env var.
+		if provName == "stripe" && deps.getenv("STRIPE_API_KEY") == "" {
+			log.Warn("STRIPE_API_KEY is empty — daily Stripe push will no-op (pushUsageRecordSDKSum returns an error without a key)",
+				"provider", provName)
 		}
+		if provName == "paddle" && deps.getenv("FAAS_PADDLE_API_KEY") == "" {
+			log.Warn("FAAS_PADDLE_API_KEY is empty — daily Paddle push will no-op",
+				"provider", provName)
+		}
+		log.Info("meterd billing provider loaded", "provider", provName)
 	}
 
 	// Mailer: defaults to mail.SenderFromEnv so FAAS_MAIL_TRANSPORT

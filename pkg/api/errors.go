@@ -48,6 +48,19 @@ type Problem struct {
 	// substituted. Optional; omitempty keeps the existing API shape
 	// unchanged for every other error code.
 	BillingPortalURL string `json:"billing_portal_url,omitempty"`
+	// PaddleCheckoutURL is set on payment_required (CodePayment) errors
+	// when the platform is running on the Paddle provider. Mirrors
+	// BillingPortalURL's shape — the customer's next action is to land
+	// on a Paddle-hosted checkout page for the target plan. Optional +
+	// omitempty so the Stripe-default response shape is unchanged.
+	// Mutually exclusive with BillingPortalURL on a single Problem: the
+	// 402 carries either billing_portal_url (Stripe) or
+	// paddle_checkout_url+tx_id (Paddle), never both.
+	PaddleCheckoutURL string `json:"paddle_checkout_url,omitempty"`
+	// TxID is the provider's transaction handle (Paddle: txn_…,
+	// Stripe: empty). The dashboard renders this as a confirmation id
+	// after the customer completes checkout. Empty on the Stripe path.
+	TxID string `json:"tx_id,omitempty"`
 }
 
 // Error implements the error interface so a Problem can flow through %w chains.

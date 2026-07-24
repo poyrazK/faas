@@ -49,7 +49,13 @@ type Provider struct {
 	// over. Mutex serializes the per-account accumulation.
 	pendingOverage sync.Map // map[string]*overageAccumulator
 	flushFn        FlushFn  // test seam; nil → defaultFlushLocked (production)
-	now            func() time.Time
+	// createUpgradeTxnFn is the seam CreateUpgradeTransaction delegates
+	// to. Tests substitute a counter/recorder stub so they can assert
+	// the SDK request shape (price handle, CustomData, Idempotency-Key
+	// tag) without standing up a full *paddle.SDK. nil → the default
+	// production body (same call shape as defaultFlushLocked).
+	createUpgradeTxnFn CreateUpgradeTxnFn
+	now                func() time.Time
 }
 
 // NewProvider wires the Paddle v5 SDK. sandbox=true →

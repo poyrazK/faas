@@ -27,6 +27,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/mail"
@@ -289,6 +290,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// operator-hosted Stripe billing portal URL, validate it before
 	// deploy, and never interpolate untrusted input.
 	srv.WithBillingPortalURL(deps.getenv("FAAS_BILLING_PORTAL_URL"))
+
+	// Billing provider dispatch (ADR-025 / PR #3). When
+	// FAAS_BILLING_PROVIDER=paddle the loader constructs a
+	// *paddle.Provider and runs EnsurePlanProducts so the catalog is
+	// populated before the first /v1/webhooks/paddle POST can land.
+	// When unset (or "stripe") the loader returns (nil, "stripe", nil)
+	// and the changePlan 402 path falls back to the FAAS_BILLING_PORTAL_URL
+	// template above — the pre-PR-#3 Stripe path is bit-for-bit
+	// unchanged.
+	billingProv, provName, err := billingloader.LoadProviderForAPID(deps.getenv, log)
+	if err != nil {
+		return fmt.Errorf("apid: load billing provider: %w", err)
+	}
+	if billingProv != nil {
+		srv.WithBillingProvider(billingProv)
+	}
+	log.Info("billing provider loaded", "provider", provName)
 
 	// Issue #98 / ADR-028: admin allowlist for /v1/compute-nodes.
 	// Empty in dev = all admin routes 403 with code admin_required;

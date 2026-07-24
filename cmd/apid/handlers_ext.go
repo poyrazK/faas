@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -631,13 +632,41 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 			"from", logsanitize.Field(string(acct.Plan)),
 			"to", logsanitize.Field(string(plan)),
 		)
-		api.WriteProblem(w, &api.Problem{
-			Status:           http.StatusPaymentRequired,
-			Code:             api.CodePayment,
-			Title:            "Stripe subscription required",
-			Detail:           "plan upgrades to " + string(plan) + " require an active Stripe subscription; use the billing portal to upgrade",
-			BillingPortalURL: s.billingPortalURLFor(acct),
-		})
+		prob := &api.Problem{
+			Status: http.StatusPaymentRequired,
+			Code:   api.CodePayment,
+			Title:  "Billing subscription required",
+			Detail: "plan upgrades to " + string(plan) + " require an active subscription; complete checkout to upgrade",
+		}
+		// Provider dispatch: if the active provider has a real upgrade
+		// path (Paddle), call CreateUpgradeTransaction and surface the
+		// hosted checkout URL + tx handle on the Problem. The Stripe
+		// stub returns ("", "", nil) — apid reads txID == "" to fall
+		// through to the precomputed FAAS_BILLING_PORTAL_URL template
+		// (which the operator controls per environment).
+		//
+		// No-provider box (FAAS_BILLING_PROVIDER unset) and Stripe both
+		// land here with the same template response, so the pre-PR-#3
+		// Stripe path is bit-for-bit unchanged.
+		if s.billingProvider != nil {
+			txID, checkoutURL, err := s.billingProvider.CreateUpgradeTransaction(ctx(r), acct, plan)
+			if err != nil {
+				s.log.Error("create_upgrade_tx",
+					"account", acct.ID,
+					"target_plan", logsanitize.Field(string(plan)),
+					"err", err)
+				api.WriteProblem(w, api.ErrCapacity("upgrade unavailable"))
+				return
+			}
+			if txID != "" {
+				prob.PaddleCheckoutURL = checkoutURL
+				prob.TxID = txID
+				api.WriteProblem(w, prob)
+				return
+			}
+		}
+		prob.BillingPortalURL = s.billingPortalURLFor(acct)
+		api.WriteProblem(w, prob)
 		return
 	}
 	if err := s.store.UpdateAccountPlan(ctx(r), acct.ID, plan); err != nil {
@@ -716,24 +745,99 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	// Map Stripe's event_type strings to the normalized billing.EventType
+	// the dunning state machine dispatches on. The Paddle webhook (see
+	// paddleWebhook) builds a billing.Event directly from the SDK's
+	// VerifyWebhook return value, so both paths converge on
+	// handleBillingEvent.
+	normalized := billing.Event{
+		Type:       mapStripeTypeToEventType(ev.Type),
+		CustomerID: ev.Data.Object.Customer,
+		PlanID:     ev.Data.Object.Plan,
+		Raw:        body,
+	}
+	s.handleBillingEvent(r.Context(), normalized, acct)
+	w.WriteHeader(http.StatusOK)
+}
+
+// paddleWebhook accepts signed Paddle events. Mirrors stripeWebhook
+// (cmd/apid/handlers_ext.go:672) but the signature verify + JSON parse
+// happen inside s.billingProvider.VerifyWebhook so apid never sees
+// Paddle-shaped wire format. The dunning state machine is provider-
+// neutral — handleBillingEvent is the shared dispatch.
+//
+// Returns 503 if FAAS_BILLING_PROVIDER != paddle (a misrouted POST from
+// Paddle to a Stripe-only box should be visible in logs, not silently
+// 200'd). Returns 400 on bad payload / bad signature. Unknown event
+// types return 200 so Paddle stops retrying.
+func (s *server) paddleWebhook(w http.ResponseWriter, r *http.Request) {
+	if s.billingProvider == nil {
+		s.log.Error("paddle_webhook.no_provider",
+			"err", "FAAS_BILLING_PROVIDER != paddle; refusing to process events")
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"paddle webhook not configured",
+			"FAAS_BILLING_PROVIDER != paddle; refusing to process events"))
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad webhook", err.Error()))
+		return
+	}
+	// The Paddle provider inspects the Paddle-Signature header inside
+	// VerifyWebhook. Pass it as a one-entry map — the provider's
+	// own keying is case-insensitive (paddle/provider.go:168-171
+	// checks both casings).
+	headers := map[string]string{
+		"Paddle-Signature": r.Header.Get("Paddle-Signature"),
+	}
+	ev, err := s.billingProvider.VerifyWebhook(body, headers, 5*time.Minute)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad signature", err.Error()))
+		return
+	}
+	acct, err := s.lookupAccountByPaddleID(r.Context(), ev.CustomerID)
+	if err != nil {
+		// Unknown customer: 200 so Paddle stops retrying. New
+		// customers land via CreateCustomer; we don't auto-provision
+		// on a webhook.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	s.handleBillingEvent(r.Context(), ev, acct)
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleBillingEvent is the provider-neutral dunning state machine.
+// Both stripeWebhook and paddleWebhook call it after their per-provider
+// VerifyWebhook succeeds and the account is resolved. The four
+// transitions (active / past_due / suspended / plan-change) and the
+// associated dunning emails are the same for both providers — only
+// the event source differs.
+//
+// ev.Type is the normalized billing.EventType. Stripe-shaped event
+// strings ("invoice.payment_failed" etc.) are mapped to the normalized
+// enum by the stripeWebhook handler before the call; Paddle's
+// VerifyWebhook returns the normalized enum directly.
+func (s *server) handleBillingEvent(ctx context.Context, ev billing.Event, acct state.Account) {
 	switch ev.Type {
-	case "customer.subscription.deleted":
-		_ = s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountSuspended)
-	case "invoice.payment_failed":
+	case billing.EventSubscriptionCanceled:
+		_ = s.store.UpdateAccountStatus(ctx, acct.ID, state.AccountSuspended)
+	case billing.EventPaymentFailed:
 		// Apps keep serving; deploys blocked at the auth gate (handlers
 		// reading acct.Active() refuse writes). 7-day dunning timer
 		// (M7 dunning state machine) lives in pkg/meter.Dunning.
 		//
 		// We route through MarkDunningStep(active → past_due) instead
 		// of the unconditional UpdateAccountStatus we used to call, so
-		// past_due_at is stamped on the Stripe event itself (not on
+		// past_due_at is stamped on the webhook event itself (not on
 		// the dunning timer's first-observation backfill, which could
 		// be up to one DunningInterval later — spec §4.7). The
 		// compare-and-flip guard rejects rows already in past_due
-		// (Stripe redelivery) and rows in suspended/deleted_pending
+		// (provider redelivery) and rows in suspended/deleted_pending
 		// (no business flipping state backwards), both of which we
 		// swallow as no-ops.
-		if err := s.store.MarkDunningStep(r.Context(), acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
+		if err := s.store.MarkDunningStep(ctx, acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				s.log.Debug("apid: payment_failed on already-advanced account",
 					"account", acct.ID, "from_status", acct.Status)
@@ -743,25 +847,20 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// First delivery — the CAS flip succeeded and past_due_at
 			// was stamped. Send the entry-point email per spec §171
-			// "All transitions emailed". Stripe redelivery is naturally
-			// silent here: MarkDunningStep returns ErrNotFound on a
-			// second delivery (status already past_due), which routes
-			// through the if branch above and skips the mail.
-			//
-			// Mail errors are warn-logged but never undo the status
-			// flip — Stripe told us about a real payment failure and
-			// the customer needs to be marked past_due regardless of
-			// whether our SMTP relay is healthy. The meterd 7-day
-			// timer is the safety net for the customer-facing notice.
+			// "All transitions emailed". Provider redelivery is
+			// naturally silent here: MarkDunningStep returns
+			// ErrNotFound on a second delivery (status already
+			// past_due), which routes through the if branch above
+			// and skips the mail.
 			subject, body := mail.PaymentFailedBody(acct.Email, time.Now().UTC())
-			if err := s.mailer.Send(r.Context(), Message{
+			if err := s.mailer.Send(ctx, Message{
 				To: []string{acct.Email}, Subject: subject, TextBody: body,
 			}); err != nil {
 				s.log.Warn("apid: payment_failed mail",
 					"account", acct.ID, "err", err)
 			}
 		}
-	case "invoice.payment_succeeded":
+	case billing.EventPaymentSucceeded:
 		// Restore the account if it was past_due. meterd will refresh
 		// quota state on its next tick. We also clear the dedupe stamp
 		// on last_quota_warning_at so the next quota tick (if the
@@ -769,7 +868,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		// fresh warning — otherwise the stamp from the previous day
 		// would suppress it (spec §4.7).
 		if acct.Status == state.AccountPastDue {
-			if err := s.store.UpdateAccountStatus(r.Context(), acct.ID, state.AccountActive); err != nil {
+			if err := s.store.UpdateAccountStatus(ctx, acct.ID, state.AccountActive); err != nil {
 				s.log.Warn("apid: payment_succeeded restore",
 					"account", acct.ID, "err", err)
 			} else {
@@ -780,7 +879,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 				// past_due → active transition, never on a no-op
 				// redelivery.
 				subject, body := mail.AccountRestoredBody(acct.Email, time.Now().UTC())
-				if err := s.mailer.Send(r.Context(), Message{
+				if err := s.mailer.Send(ctx, Message{
 					To: []string{acct.Email}, Subject: subject, TextBody: body,
 				}); err != nil {
 					s.log.Warn("apid: payment_succeeded mail",
@@ -789,17 +888,44 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// Clear the dedupe stamp on every payment_succeeded, not just
-		// past_due → active flips: a fresh signup's first Stripe
+		// past_due → active flips: a fresh signup's first provider
 		// confirmation shouldn't wait until the next UTC midnight to
 		// hear about a quota they crossed during the trial, and the
-		// Cost of an extra pg_notify on a no-op event is nil.
-		_ = s.store.ClearQuotaWarning(r.Context(), acct.ID)
-	case "customer.subscription.updated":
-		if ev.Data.Object.Plan != "" {
-			_ = s.store.UpdateAccountPlan(r.Context(), acct.ID, api.Plan(ev.Data.Object.Plan))
+		// cost of an extra pg_notify on a no-op event is nil.
+		_ = s.store.ClearQuotaWarning(ctx, acct.ID)
+	case billing.EventSubscriptionUpdated:
+		if ev.PlanID != "" {
+			_ = s.store.UpdateAccountPlan(ctx, acct.ID, api.Plan(ev.PlanID))
 		}
 	}
-	w.WriteHeader(http.StatusOK)
+}
+
+// mapStripeTypeToEventType translates Stripe's `type` strings into the
+// normalized billing.EventType. Kept here (not in pkg/billing/stripe)
+// because the mapping is apid's dunning-state-machine concern, not a
+// provider-internal mapping. The Paddle path's pkg/billing/paddle
+// already returns the normalized enum from its VerifyWebhook.
+//
+// Unknown types return EventUnknown so handleBillingEvent falls
+// through to a 200 no-op (providers expect 2xx for everything they
+// didn't recognize so they don't retry forever).
+func mapStripeTypeToEventType(t string) billing.EventType {
+	switch t {
+	case "customer.subscription.created":
+		return billing.EventSubscriptionCreated
+	case "customer.subscription.updated":
+		return billing.EventSubscriptionUpdated
+	case "customer.subscription.deleted":
+		return billing.EventSubscriptionCanceled
+	case "customer.subscription.past_due":
+		return billing.EventSubscriptionPastDue
+	case "invoice.payment_failed":
+		return billing.EventPaymentFailed
+	case "invoice.payment_succeeded":
+		return billing.EventPaymentSucceeded
+	default:
+		return billing.EventUnknown
+	}
 }
 
 // lookupAccountByStripeID is a thin wrapper around
@@ -811,6 +937,18 @@ func (s *server) lookupAccountByStripeID(ctx context.Context, stripeID string) (
 		return state.Account{}, errors.New("apid: empty stripe customer id")
 	}
 	return s.store.AccountByStripeCustomerID(ctx, stripeID)
+}
+
+// lookupAccountByPaddleID is the Paddle counterpart to
+// lookupAccountByStripeID. The accounts.stripe_customer_id column is
+// reused (ADR-025 — column rename is a separate migration PR), so the
+// underlying store method is a 1-line pass-through; the dedicated
+// helper name keeps the Paddle call sites self-documenting.
+func (s *server) lookupAccountByPaddleID(ctx context.Context, paddleID string) (state.Account, error) {
+	if paddleID == "" {
+		return state.Account{}, errors.New("apid: empty paddle customer id")
+	}
+	return s.store.AccountByPaddleCustomerID(ctx, paddleID)
 }
 
 // --- response helpers ------------------------------------------------------

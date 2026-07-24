@@ -1821,3 +1821,53 @@ func TestMemStore_ListLatestInstancesForApp_BoundedLimit(t *testing.T) {
 		t.Errorf("rows = %d, want 5 (all)", len(rows))
 	}
 }
+
+// TestAccountByPaddleCustomerID_Mirror asserts the Paddle mirror of
+// AccountByStripeCustomerID is a 1-line pass-through that reads from
+// the same reverse-lookup map (accounts.stripe_customer_id is reused
+// per ADR-025). The test exercises the full write→read round-trip:
+// UpdateAccountPaddleCustomerID writes ctm_xyz, AccountByPaddleCustomerID
+// reads it back, and AccountByStripeCustomerID returns the same account
+// (the column is shared — the dedicated Paddle method name is just a
+// self-documenting alias for the same body).
+func TestAccountByPaddleCustomerID_Mirror(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMemStore()
+	acct, err := m.CreateAccount(ctx, "u-paddle@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := m.UpdateAccountPaddleCustomerID(ctx, acct.ID, "ctm_test_xyz"); err != nil {
+		t.Fatalf("UpdateAccountPaddleCustomerID: %v", err)
+	}
+
+	got, err := m.AccountByPaddleCustomerID(ctx, "ctm_test_xyz")
+	if err != nil {
+		t.Fatalf("AccountByPaddleCustomerID: %v", err)
+	}
+	if got.ID != acct.ID {
+		t.Errorf("ID = %q, want %q", got.ID, acct.ID)
+	}
+	if got.StripeCustomerID != "ctm_test_xyz" {
+		t.Errorf("StripeCustomerID = %q, want ctm_test_xyz (column reused per ADR-025)", got.StripeCustomerID)
+	}
+
+	// The Stripe-side mirror must return the same account — proves
+	// the index is genuinely shared (the dedicated Paddle method name
+	// is documentation, not a different index).
+	stripeSame, err := m.AccountByStripeCustomerID(ctx, "ctm_test_xyz")
+	if err != nil {
+		t.Fatalf("AccountByStripeCustomerID (mirror): %v", err)
+	}
+	if stripeSame.ID != acct.ID {
+		t.Errorf("Stripe mirror ID = %q, want %q", stripeSame.ID, acct.ID)
+	}
+
+	// Unknown ID returns ErrNotFound — pins the negative case so a
+	// future refactor that aliases the bodies can't silently swallow
+	// it.
+	if _, err := m.AccountByPaddleCustomerID(ctx, "ctm_does_not_exist"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown id err = %v, want ErrNotFound", err)
+	}
+}

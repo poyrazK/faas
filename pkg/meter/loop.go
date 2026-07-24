@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -31,7 +32,7 @@ import (
 type Loop struct {
 	store  state.Store
 	parker ScheddParker
-	stripe StripePusher
+	pusher billing.Provider
 	notif  Notifier
 	// mailer is the customer-facing email sender (spec §171 "dunning +
 	// quota mails reference email"). Shared with the dunning timer —
@@ -67,7 +68,7 @@ type Loop struct {
 // and must not be skipped in production); the ops.SetResidentGBPerCustomer
 // method is nil-safe so the loop tolerates a nil ops receiver. ops
 // and log likewise may be nil — see the Loop doc comment.
-func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif Notifier, mailer DunningSender, dunning *Dunning, residency *Residency, now func() time.Time, log *slog.Logger, cfg *Config, ops *wire.OpsMetrics) *Loop {
+func NewLoop(store state.Store, parker ScheddParker, pusher billing.Provider, notif Notifier, mailer DunningSender, dunning *Dunning, residency *Residency, now func() time.Time, log *slog.Logger, cfg *Config, ops *wire.OpsMetrics) *Loop {
 	if now == nil {
 		now = time.Now
 	}
@@ -84,7 +85,7 @@ func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif 
 		residency = NewResidency(store, now, log, ops)
 	}
 	return &Loop{
-		store: store, parker: parker, stripe: stripe, notif: notif,
+		store: store, parker: parker, pusher: pusher, notif: notif,
 		mailer: mailer, dunning: dunning, residency: residency, now: now, log: log, cfg: cfg, ops: ops,
 		lastTick: make(map[string]time.Time),
 	}
@@ -97,7 +98,7 @@ func NewLoop(store state.Store, parker ScheddParker, stripe StripePusher, notif 
 // cleanly.
 func (l *Loop) Run(ctx context.Context) error {
 	sampler := NewSampler(l.store, l.now)
-	pusher := NewPusher(l.store, l.stripe, l.log, l.now, l.ops)
+	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
 	errc := make(chan error, 5)
 	go func() {
 		errc <- l.runTicks(ctx, l.cfg.SampleInterval, func(c context.Context) error {

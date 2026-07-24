@@ -305,6 +305,42 @@ func (m *MemStore) AccountByStripeCustomerID(_ context.Context, stripeCustomerID
 	return a, nil
 }
 
+// UpdateAccountPaddleCustomerID mirrors UpdateAccountStripeCustomerID
+// for the Paddle ctm_… ID. The accounts.stripe_customer_id column is
+// reused (ADR-025 — column rename is a separate migration PR), so the
+// underlying field + reverse-lookup map are the same; the dedicated
+// method name keeps the Paddle call sites self-documenting.
+func (m *MemStore) UpdateAccountPaddleCustomerID(_ context.Context, id, paddleCustomerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	a.StripeCustomerID = paddleCustomerID // column is reused per ADR-025
+	m.accounts[id] = a
+	// Maintain the reverse-lookup map. Same map as the Stripe path —
+	// a single deployment uses one provider, so the prefix-stripped
+	// (cus_ vs ctm_) index is unambiguous in practice.
+	for k, v := range m.stripeByCustomer {
+		if v == id && k != paddleCustomerID {
+			delete(m.stripeByCustomer, k)
+			break
+		}
+	}
+	m.stripeByCustomer[paddleCustomerID] = id
+	return nil
+}
+
+// AccountByPaddleCustomerID is the reverse-lookup the Paddle webhook
+// uses to find the account behind a `customer_id` field. Same map as
+// the Stripe path (the column is reused); the dedicated method name
+// keeps the Paddle call sites self-documenting and leaves the door
+// open for a column-rename PR to swap bodies without touching callers.
+func (m *MemStore) AccountByPaddleCustomerID(ctx context.Context, paddleCustomerID string) (Account, error) {
+	return m.AccountByStripeCustomerID(ctx, paddleCustomerID)
+}
+
 // ListAllAccounts walks the account map under the store mutex. The
 // meterd quota + Stripe-push loops both call this; bounded by the
 // customer count on the one box.

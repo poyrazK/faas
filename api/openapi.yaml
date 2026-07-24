@@ -1319,6 +1319,13 @@ components:
         user at the next action. `billing_portal_url` is populated on
         `code: payment_required` so the dashboard can deep-link the
         customer to the Stripe-hosted billing portal (issue #142).
+        `paddle_checkout_url` + `tx_id` are populated instead when the
+        box is running on the Paddle billing provider
+        (`FAAS_BILLING_PROVIDER=paddle`, ADR-025) — the customer lands
+        on a Paddle-hosted checkout page for the target plan and the
+        dashboard renders the transaction handle as a confirmation id.
+        Exactly one of `billing_portal_url` or `paddle_checkout_url` is
+        populated on a given 402 — never both.
       example:
         type: "https://docs.DOMAIN/errors/validation_failed"
         title: Validation failed
@@ -1338,6 +1345,19 @@ components:
         observed: { type: [integer, "null"] }
         docs_url: { type: string, format: uri }
         billing_portal_url: { type: string, format: uri }
+        paddle_checkout_url:
+          type: string
+          format: uri
+          description: |
+            Paddle-hosted checkout URL on a `payment_required` 402 when
+            the box is running on the Paddle billing provider. Mutually
+            exclusive with `billing_portal_url`.
+        tx_id:
+          type: string
+          description: |
+            Paddle transaction handle (`txn_…`) on a `payment_required`
+            402. Empty on the Stripe path. The dashboard renders this as
+            a confirmation id after the customer completes checkout.
 
     RateLimitPlain:
       type: string
