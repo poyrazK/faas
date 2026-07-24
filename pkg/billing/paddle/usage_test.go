@@ -71,40 +71,11 @@ func TestCalendarMonthStart(t *testing.T) {
 	}
 }
 
-// TestPlanMonthlyMillicents is the financial-model pin. CLAUDE.md:
-// "Money: integer cents/millicents. Floats near money fail review."
-// Any drift here would change customer invoices; the test ensures
-// the project stays in sync with the financial-model column the
-// spec points at.
-func TestPlanMonthlyMillicents(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		plan api.Plan
-		want int64
-	}{
-		{api.PlanHobby, 900_000},   // €9
-		{api.PlanPro, 2_900_000},   // €29
-		{api.PlanScale, 9_900_000}, // €99
-		{api.PlanFree, 0},          // Free is non-recurring
-	}
-	for _, tc := range cases {
-		t.Run(string(tc.plan), func(t *testing.T) {
-			if got := planMonthlyMillicents(tc.plan); got != tc.want {
-				t.Errorf("planMonthlyMillicents(%s) = %d, want %d", tc.plan, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestPlanOverageMillicents(t *testing.T) {
-	t.Parallel()
-
-	// Spec hard limit: €0.01/GB-h = 1000 millicents (1 cent).
-	if got := planOverageMillicents(); got != 1_000 {
-		t.Errorf("planOverageMillicents() = %d, want 1000", got)
-	}
-}
+// TestPlanMonthlyMillicents + TestPlanOverageMillicents removed: the
+// price-table coverage moved to pkg/billing/plans_test.go in package
+// billing_test. The per-provider copies were package-private and have
+// been deleted with their helpers; the shared wrappers in plans.go now
+// own the contract.
 
 func TestMillicentsToPaddleAmount(t *testing.T) {
 	t.Parallel()

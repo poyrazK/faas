@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 	stripe "github.com/stripe/stripe-go"
 )
@@ -51,7 +52,7 @@ func (c *Client) EnsurePlanProducts(ctx context.Context) error {
 			Currency:  stripe.String("usd"),
 			Interval:  stripe.String("month"),
 			UsageType: stripe.String("licensed"),
-			Amount:    stripe.Int64(planMonthlyMillicents(p)),
+			Amount:    stripe.Int64(billing.PlanMonthlyMillicents(p)),
 		})
 		if err != nil {
 			return err
@@ -110,24 +111,4 @@ func (c *Client) CreateCustomer(ctx context.Context, acct state.Account) (string
 	return cus.ID, nil
 }
 
-// planMonthlyMillicents returns the per-month price for a paid tier,
-// in integer millicents (per spec §Conventions — money is integer
-// cents/millicents, no floats near money). Pulled from the financial
-// model:
-//   - Hobby: €9 / month
-//   - Pro:   €29 / month
-//   - Scale: €99 / month
-//
-// (€1 = 100_000 millicents at the model's 1000-decimal precision —
-// so €9 = 9 * 100_000 = 900_000 millicents.)
-func planMonthlyMillicents(p api.Plan) int64 {
-	switch p {
-	case api.PlanHobby:
-		return 900_000
-	case api.PlanPro:
-		return 2_900_000
-	case api.PlanScale:
-		return 9_900_000
-	}
-	return 0
-}
+// planMonthlyMillicents moved to pkg/billing/plans.go (PlanMonthlyMillicents).
