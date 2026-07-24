@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -202,16 +203,34 @@ func TestMailAdapter_SurfacesSenderError(t *testing.T) {
 	}
 }
 
-// TestLoginSetsSessionAndSendsNoEmail pins the retired-magic-link
-// contract: POST /login authenticates the user by setting the faas_sid
-// session cookie synchronously and sends NO login email (the legacy
-// magic-link dispatch was removed from postLogin). The mailer stays
-// wired for dunning/quota mail, so we assert the login path itself
-// stays silent even when a real sender is injected.
+// TestLoginSetsSessionAndSendsNoEmail pins the post-#165 contract:
+// POST /login authenticates the user by setting the faas_sid session
+// cookie synchronously and sends NO login email. The mailer stays
+// wired for dunning/quota mail; the login path itself stays silent.
+//
+// Post-#165 (issue #165, ADR-032) the login path requires a valid
+// X-Dashboard-Key header (a pre-existing "web-console" API key from
+// the buggy pre-#165 deploy). The test seeds such a key, exercises
+// the legitimate happy path, and asserts:
+//
+//   - HTTP 200 (the customer signed in).
+//   - faas_sid cookie set.
+//   - No email sent (the legacy magic-link dispatch is gone).
+//   - No api_key field in the response body (the #165 leak path is
+//     closed; the response never carries a key, on success or
+//     failure).
 func TestLoginSetsSessionAndSendsNoEmail(t *testing.T) {
 	const email = "user@example.com"
 	store := state.NewMemStore()
-	if _, err := store.CreateAccount(context.Background(), email, api.PlanFree); err != nil {
+	acct, err := store.CreateAccount(context.Background(), email, api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateAPIKey(context.Background(), acct.ID, hash, "web-console"); err != nil {
 		t.Fatal(err)
 	}
 	rec := &recordingSender{}
@@ -219,10 +238,10 @@ func TestLoginSetsSessionAndSendsNoEmail(t *testing.T) {
 	srv.mailer = newMailerAdapter(rec)
 	h := srv.handler()
 
-	// POST /login takes a form-encoded email (handlers_auth.go::postLogin).
 	form := url.Values{"email": {email}}
 	req := httptest.NewRequest("POST", "/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set(dashboardKeyHeader, plaintext)
 	recHTTP := httptest.NewRecorder()
 	h.ServeHTTP(recHTTP, req)
 	if recHTTP.Code != http.StatusOK {
@@ -243,5 +262,16 @@ func TestLoginSetsSessionAndSendsNoEmail(t *testing.T) {
 	// No login email should ever be dispatched.
 	if msgs := rec.snapshot(); len(msgs) != 0 {
 		t.Errorf("expected no login email, got %d message(s): %+v", len(msgs), msgs)
+	}
+
+	// Body must NOT have api_key. Pre-#165 this was the leak
+	// path that made the takeover reproducible from a single
+	// POST /login + jq.
+	var body map[string]any
+	if err := json.NewDecoder(recHTTP.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if _, has := body["api_key"]; has {
+		t.Errorf("response body has api_key field; this is the #165 leak path")
 	}
 }

@@ -3,11 +3,16 @@
 // The dashboard auth flow:
 //
 //  1. GET  /login            → renders the email form
-//  2. POST /login            → looks up the account by email, mints a
-//     32-byte random token, stores its
-//     SHA-256 hash with a 15-minute expiry,
-//     emails the raw token to the user, and
-//     renders "check your email"
+//  2. POST /login            → looks up the account by email AND the
+//     pre-existing "web-console" API key presented via
+//     X-Dashboard-Key. On a match, sets the faas_sid
+//     session cookie. This handler no longer
+//     auto-creates accounts and no longer mints a new
+//     API key on login (issue #165, ADR-032).
+//     PR #2 replaces this path with email+password
+//     (Argon2id) and the legacy X-Dashboard-Key fallback
+//     is removed once every pre-#165 customer has set a
+//     password.
 //  3. GET  /auth/verify?token=… → consumes the token (one-shot),
 //     sets faas_sid cookie, redirects
 //     to /dashboard/
@@ -22,7 +27,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -30,6 +34,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -47,6 +52,13 @@ const (
 	loginPath  = "/login"
 	verifyPath = "/auth/verify"
 	logoutPath = "/logout"
+
+	// dashboardKeyHeader is the X-Dashboard-Key header name. The
+	// PR #1 login path (issue #165 fix) accepts a pre-existing
+	// "web-console" API key here as the one remaining way to
+	// authenticate. PR #2 replaces this with email+password and
+	// drops the header — see ADR-032.
+	dashboardKeyHeader = "X-Dashboard-Key"
 )
 
 // authHandlers groups the dashboard-side auth dependencies so we can
@@ -71,67 +83,117 @@ func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// postLogin is the PR #1 (issue #165) hardened login path.
+//
+// Pre-#165, any POST /login with a well-formed email auto-created
+// an account, minted a "web-console" API key, returned that key in
+// the response body, and set a 7-day session cookie — with zero
+// verification. That was a full pre-auth account-takeover (spec
+// §11 violation).
+//
+// Post-#165:
+//
+//   - Auto-creation is gone. Unknown email → 401 invalid_credentials.
+//   - The web-console API key mint is gone. The response body
+//     carries only `{status, account}` — no api_key field.
+//   - The ONLY way to authenticate through /login in PR #1 is to
+//     present a pre-existing "web-console" API key via the
+//     X-Dashboard-Key header. That fallback exists so the
+//     customers the buggy handler created before #165 can still
+//     reach the dashboard; PR #2 replaces it with email+password
+//     (Argon2id) and removes the header — see ADR-032.
+//
+// Why header AND email, not header alone: a leaked API key alone
+// must never be sufficient to take over a dashboard session. The
+// customer's browser still has to submit the account's email
+// alongside the key, and the session cookie is HttpOnly +
+// SameSite=Lax. The X-Dashboard-Key path is a backstop for the
+// pre-#165 customers; PR #2's email+password path replaces it.
 func (a *authHandlers) postLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form", http.StatusBadRequest)
+		api.WriteProblem(w, api.ErrValidation("could not parse form body"))
 		return
 	}
 	email := strings.TrimSpace(strings.ToLower(r.FormValue("email")))
 	if email == "" {
-		http.Error(w, "email required", http.StatusBadRequest)
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Missing email", "email is required"))
 		return
 	}
 	if !looksLikeEmail(email) {
-		http.Error(w, "email invalid", http.StatusBadRequest)
+		api.WriteProblem(w, api.ErrValidation("email is not a well-formed address"))
 		return
 	}
 
-	acct, err := a.srv.store.AccountByEmail(r.Context(), email)
-	if errors.Is(err, state.ErrNotFound) {
-		// Auto-create real user account in PostgreSQL
-		acct, err = a.srv.store.CreateAccount(r.Context(), email, api.PlanFree)
-		if err != nil {
-			a.log.Error("login.create_account", "err", err)
-			http.Error(w, "internal", http.StatusInternalServerError)
-			return
-		}
-	} else if err != nil {
-		a.log.Error("login.account_lookup", "err", err)
-		http.Error(w, "internal", http.StatusInternalServerError)
+	// PR #1 (issue #165, ADR-032): the only remaining way to
+	// sign in via /login is a pre-existing "web-console" API key
+	// presented via the X-Dashboard-Key header. We deliberately
+	// do NOT fall back to auto-creating an account on lookup
+	// miss — that path is what made the original handler a
+	// pre-auth account-takeover.
+	key := strings.TrimSpace(r.Header.Get(dashboardKeyHeader))
+	if !api.ValidAPIKeyFormat(key) {
+		a.log.Info("login.invalid_key_format", "email", logsanitize.Field(email))
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
+			api.CodeInvalidCredentials, "Sign-in failed",
+			"provide a valid dashboard key via X-Dashboard-Key"))
 		return
 	}
 
-	// Issue active API key for this user
-	rawKey, _, err := api.GenerateAPIKey()
-	if err == nil {
-		_, _ = a.srv.store.CreateAPIKey(r.Context(), acct.ID, api.HashAPIKey(rawKey), "web-console")
+	acct, err := a.srv.store.AccountByKeyHash(r.Context(), api.HashAPIKey(key))
+	if err != nil {
+		// Same body as the email/key-mismatch path: anti-enumeration.
+		a.log.Info("login.key_not_found", "email", logsanitize.Field(email))
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
+			api.CodeInvalidCredentials, "Sign-in failed",
+			"invalid email or dashboard key"))
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(acct.Email), email) {
+		// The header resolved to a real account, but the
+		// submitted email doesn't match. Don't leak which is
+		// which; same body as the no-match path.
+		a.log.Info("login.email_key_mismatch", "email", logsanitize.Field(email))
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
+			api.CodeInvalidCredentials, "Sign-in failed",
+			"invalid email or dashboard key"))
+		return
 	}
 
-	// Mint session & set HttpOnly faas_sid cookie
-	if sess, err := a.srv.sessions.Issue(acct.ID); err == nil {
-		http.SetCookie(w, &http.Cookie{
-			Name:     sessionCookie,
-			Value:    sess,
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   true,
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   int(sessionCookieLifetime.Seconds()),
-		})
+	// Mint session & set HttpOnly faas_sid cookie. The response
+	// body carries NO api_key (PR #1 closes issue #165 — the
+	// legacy handler returned the freshly minted key in the
+	// response, which made the takeover reproducible from a
+	// single POST /login curl).
+	cookie, err := a.srv.sessions.Issue(acct.ID)
+	if err != nil {
+		a.log.Error("login.session_issue", "err", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
+			"internal_error", "Internal Error", "failed to issue session"))
+		return
 	}
-
-	// The faas_sid session cookie above already authenticates the user,
-	// so the legacy magic-link email is redundant and has been retired.
-	// The mailer is still wired for dunning + quota-warning emails; only
-	// the login dispatch is gone. (/auth/verify remains but is no longer
-	// reachable via login since no login token is minted here.)
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    cookie,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(sessionCookieLifetime.Seconds()),
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	// NOTE: the response body intentionally omits `api_key`.
+	// Pre-#165 this JSON had `"api_key": "fp_live_..."` — the
+	// attacker grabbed that key and used it for full account
+	// control. The key path remains as a PR #1 fallback ONLY
+	// because pre-existing customers still hold a key from the
+	// buggy deploy and need a way back in; the response never
+	// surfaces it again.
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":  "ok",
 		"account": acct,
-		"api_key": rawKey,
 	})
 }
 

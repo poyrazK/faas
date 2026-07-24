@@ -42,6 +42,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 026 | schedd consumes `NotifyAccountDeletionPending` and evicts live instances | accepted | M8 — landed 2026-07-21 |
 | 027 | Stripe push observability taxonomy (11-label + duration histogram) | accepted | M7 hardening |
 | 031 | Per-app egress IP allowlist (`cidr[]` on `apps`, post-deny accept) | accepted | M8 tier-2 |
+| 032 | MVP auth: harden /login against #165 + real sign-in methods | accepted | issue #165 |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

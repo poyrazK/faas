@@ -87,6 +87,15 @@ var dtoExclude = map[string]bool{
 var codeExclude = map[string]bool{
 	"CodeCliAuthPending":     true, // /v1/cli-auth/* (anonymous)
 	"CodeCliAuthUnavailable": true, // /v1/cli-auth/* (anonymous)
+
+	// Password-reset codes (issue #165, ADR-032). Declared in
+	// pkg/api/errors.go ahead of PR #2 so the dashboard auth
+	// surface has a stable code vocabulary from PR #1 onward;
+	// the actual /auth/reset and /login/forgot routes that emit
+	// them land in PR #2 alongside the openapi.yaml entries that
+	// remove these from the exclude list.
+	"CodeResetTokenInvalid": true, // PR #2 emits on GET /auth/reset?token=…
+	"CodeResetTokenExpired": true, // PR #2 emits on POST /auth/reset with aged token
 }
 
 // schemaSpecOnly lists schemas that exist in the spec but have no Go DTO.

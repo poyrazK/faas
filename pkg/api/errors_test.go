@@ -196,6 +196,8 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 		CodeUnauthorized, CodeNotFound, CodeValidation,
 		CodeImageNotFound, CodeImageEgressDenied, CodeImageManifestInvalid,
 		CodeCliAuthPending, CodeCliAuthUnavailable,
+		CodeInvalidCredentials, CodeEmailNotVerified, CodePasswordTooWeak,
+		CodeResetTokenInvalid, CodeResetTokenExpired, CodeAccountExists,
 	}
 	seen := make(map[string]bool)
 	for _, c := range codes {
@@ -224,6 +226,33 @@ func TestStatusForCode_ImageCodes(t *testing.T) {
 		{CodeImageManifestInvalid, http.StatusUnprocessableEntity},
 		{CodeImageEgressDenied, http.StatusForbidden},
 		{"totally_made_up_code", http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			if got := StatusForCode(tc.code); got != tc.want {
+				t.Errorf("StatusForCode(%q) = %d, want %d", tc.code, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStatusForCode_AuthCodes locks the HTTP status mapping for the
+// dashboard-auth codes added in PR #1 (issue #165, ADR-032). Both
+// invalid_credentials and email_not_verified must collapse to 401 so
+// the dashboard form can render a single "sign in failed" copy for
+// both; the surface must NOT distinguish them, otherwise an attacker
+// can probe for which case fired.
+func TestStatusForCode_AuthCodes(t *testing.T) {
+	cases := []struct {
+		code string
+		want int
+	}{
+		{CodeInvalidCredentials, http.StatusUnauthorized},
+		{CodeEmailNotVerified, http.StatusUnauthorized},
+		{CodePasswordTooWeak, http.StatusBadRequest},
+		{CodeAccountExists, http.StatusBadRequest},
+		{CodeResetTokenInvalid, http.StatusGone},
+		{CodeResetTokenExpired, http.StatusGone},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
