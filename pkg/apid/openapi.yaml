@@ -257,7 +257,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/UpdateAppRequest'
-              example: {"ram_mb":512,"max_concurrency":3,"idle_timeout_s":120,"min_instances":1}
+              example: {"ram_mb":512,"max_concurrency":3,"idle_timeout_s":120,"min_instances":1,"egress_allowlist":["1.2.3.0/24","8.8.8.0/24"]}
       responses:
         '200':
           description: The updated app.
@@ -1095,6 +1095,19 @@ components:
         idle_timeout_s: { type: [integer, "null"] }
         max_concurrency: { type: [integer, "null"] }
         min_instances: { type: [integer, "null"], minimum: 0 }
+        # ADR-031 (tier-2 of the network roadmap): per-app
+        # outbound IPv4 allowlist. Replace-mode semantics:
+        # omitted → no change; non-null array → atomic
+        # overwrite (empty array clears). Pro/Scale only;
+        # Free/Hobby PATCH → 403 plan_egress_allowlist_not_
+        # allowed. Plan caps: Pro 16 entries, Scale 64.
+        egress_allowlist:
+          description: "IPv4 CIDR allowlist; empty array clears to chain-default-accept."
+          type: array
+          items:
+            type: string
+            pattern: '^[0-9./]+$'
+            example: 1.2.3.0/24
 
     RenameAppRequest:
       description: "Rename payload: new slug. Old slug returns 404 immediately on the next request."
