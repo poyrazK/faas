@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -231,6 +232,96 @@ func TestAllV1Routes_RequireAuthOrLimit(t *testing.T) {
 				t.Errorf("status = %d, want 4xx (route is not behind s.auth/s.authLimited)", rec.Code)
 			}
 		})
+	}
+}
+
+// TestPostLoginLimitBlocksEleventhAttempt pins the spec §11 "10/min/IP"
+// limit on POST /login (the issue #165 hardened path). POST /login
+// returns 401 for every invalid attempt — no header, bad header, email
+// mismatch, unknown email — so a 401-only counter would work too, but
+// the wiring uses CountEveryAttempt on the dashboard bucket so it
+// matches GET /login's behaviour (which has to count 200s for
+// anti-enumeration).
+//
+// An attacker brute-forcing POST /login from a single IP must be
+// capped at 10 attempts/min before the 11th gets 429. This is the
+// load-bearing defence against the path that was a full
+// pre-auth account-takeover before PR #1; if the wiring ever drops
+// the AuthLimit wrap on POST /login (e.g. someone "simplifies" the
+// route table and forgets), this test goes red.
+func TestPostLoginLimitBlocksEleventhAttempt(t *testing.T) {
+	srv := newAuthLimitServer(t)
+	const ip = "203.0.113.120:55555"
+
+	fire := func() int {
+		rec := httptest.NewRecorder()
+		body := "email=alice%40example.com"
+		req := httptest.NewRequest(http.MethodPost, "/login",
+			strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = ip
+		srv.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	// 10 attempts: every one is 401 (invalid_credentials — no
+	// X-Dashboard-Key supplied). The first 10 must pass through
+	// the limiter and reach the handler.
+	for i := 1; i <= 10; i++ {
+		if c := fire(); c != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: code = %d, want 401", i, c)
+		}
+	}
+	// 11th attempt: limiter trips, 429.
+	if c := fire(); c != http.StatusTooManyRequests {
+		t.Fatalf("11th: code = %d, want 429 (spec §11 10/min/IP)", c)
+	}
+}
+
+// TestPostLoginLimit_SharedBucketWithGetLogin confirms POST /login
+// and GET /login share one bucket per spec §11 — they're the same
+// login surface, just different methods. An attacker rotating
+// between GET /login and POST /login must NOT get 20 attempts/min
+// from the same IP; the bucket is the same.
+//
+// Pinned because per-CLAUDE.md memory ("Middleware AuthLimit shared
+// bucket"), a fresh AuthLimit(cfg) per route silently violates the
+// spec. The test names the IP and the IP is unique per test.
+func TestPostLoginLimit_SharedBucketWithGetLogin(t *testing.T) {
+	srv := newAuthLimitServer(t)
+	const ip = "203.0.113.121:55555"
+
+	fireGET := func() int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/login", nil)
+		req.RemoteAddr = ip
+		srv.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	firePOST := func() int {
+		rec := httptest.NewRecorder()
+		body := "email=alice%40example.com"
+		req := httptest.NewRequest(http.MethodPost, "/login",
+			strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = ip
+		srv.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// 5 GETs + 5 POSTs = 10. Both must not trip the limiter.
+	for i := 1; i <= 5; i++ {
+		if c := fireGET(); c != http.StatusOK {
+			t.Fatalf("GET #%d: code = %d, want 200", i, c)
+		}
+	}
+	for i := 1; i <= 5; i++ {
+		if c := firePOST(); c != http.StatusUnauthorized {
+			t.Fatalf("POST #%d: code = %d, want 401", i, c)
+		}
+	}
+	// 11th attempt (any method): 429.
+	if c := fireGET(); c != http.StatusTooManyRequests {
+		t.Fatalf("GET 11th: code = %d, want 429 (GET+POST share bucket per spec §11)", c)
 	}
 }
 

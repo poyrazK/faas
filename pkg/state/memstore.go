@@ -34,7 +34,7 @@ type MemStore struct {
 	mu        sync.Mutex
 	accounts  map[string]Account
 	keys      map[string]APIKey
-	keyByHash map[string]string
+	keyByHash map[string]APIKey
 	apps      map[string]App
 	// githubBindings is keyed by appID. Holds the (install_id,
 	// repo_full_name, production_branch) tuple the /oauth/callback
@@ -140,7 +140,7 @@ func NewMemStore() *MemStore {
 	m := &MemStore{
 		accounts:       map[string]Account{},
 		keys:           map[string]APIKey{},
-		keyByHash:      map[string]string{},
+		keyByHash:      map[string]APIKey{},
 		apps:           map[string]App{},
 		githubBindings: map[string]GitHubBinding{},
 		deployments:    map[string]Deployment{},
@@ -226,11 +226,25 @@ func (m *MemStore) AccountByEmail(_ context.Context, email string) (Account, err
 func (m *MemStore) AccountByKeyHash(_ context.Context, hash []byte) (Account, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	accountID, ok := m.keyByHash[hex.EncodeToString(hash)]
+	k, ok := m.keyByHash[hex.EncodeToString(hash)]
 	if !ok {
 		return Account{}, ErrNotFound
 	}
-	return m.accounts[accountID], nil
+	return m.accounts[k.AccountID], nil
+}
+
+// APIKeyByHash resolves an api_keys row by its SHA-256 hash. Used by
+// the post-login audit log (cmd/apid/handlers_auth.go) so an operator
+// investigating "who signed in as alice?" can identify which key
+// authenticated. Returns ErrNotFound when no row matches.
+func (m *MemStore) APIKeyByHash(_ context.Context, hash []byte) (APIKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k, ok := m.keyByHash[hex.EncodeToString(hash)]
+	if !ok {
+		return APIKey{}, ErrNotFound
+	}
+	return k, nil
 }
 
 func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan) error {
@@ -373,7 +387,7 @@ func (m *MemStore) CreateAPIKey(_ context.Context, accountID string, hash []byte
 	}
 	k := APIKey{ID: newID(), AccountID: accountID, Hash: hash, Label: label, CreatedAt: time.Now()}
 	m.keys[k.ID] = k
-	m.keyByHash[h] = accountID
+	m.keyByHash[h] = k
 	return k, nil
 }
 
