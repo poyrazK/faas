@@ -357,7 +357,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the wake path is one consistent admission gate.
 	if cfg.GatewaySynthSocket != "" {
 		synth, dialErr := sched.DialGatewaySynth(cfg.GatewaySynthSocket, log)
-		if dialErr == nil {
+		if dialErr != nil {
+			// A failed dial disables the entire drain — async /
+			// queue / delayed-task rows would still arrive via the
+			// 1s safety ticker (no notify) but every dispatch
+			// would 502. Surface loud so the operator notices
+			// before customers start timing out.
+			log.Error("drain: synth dial failed; event-shaped dispatch is disabled",
+				"socket", cfg.GatewaySynthSocket, "err", dialErr)
+		} else {
 			drain := sched.NewDrain(engine.Store(), engine,
 				sched.WithDrainGatewaySynth(synth),
 				sched.WithDrainNotifier(engine.Notifier()),
@@ -365,7 +373,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			notifC, subErr := db.SubscribeWithReconnect(ctx, pool,
 				[]string{db.NotifyInvocationDue}, log)
 			if subErr != nil {
-				log.Warn("drain: subscribe invocation_due", "err", subErr)
+				log.Error("drain: subscribe invocation_due failed; safety ticker still runs",
+					"err", subErr)
 			} else {
 				go func() {
 					if err := drain.Run(ctx, notifC); err != nil && !errors.Is(err, context.Canceled) {

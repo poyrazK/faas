@@ -221,12 +221,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// queue Move 2 introduces. For now the drain records the
 		// post-state as 'dispatching' — the row's result is set
 		// later (or left NULL for async sources) by the drain's
-		// CompleteInvocation call.
+		// CompleteInvocation call. The live instance handle from
+		// the Wake response is echoed back on the returned
+		// Invocation so schedd can StampInstanceInvocation —
+		// without it the meter's per-instance count lands on 0.
 		invoke: func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
-			_, _, _, err := sched.Wake(ctx, appID)
+			instanceID, _, _, err := sched.Wake(ctx, appID)
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
+			inv.InstanceID = instanceID
 			inv.State = state.InvocationDispatching
 			return inv, nil
 		},

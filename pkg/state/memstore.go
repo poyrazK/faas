@@ -1254,13 +1254,19 @@ func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.
 // pathway. retryAfter > 0 leaves the row at state=pending with
 // due_at = now + retryAfter and bumps attempts (transient blip);
 // retryAfter == 0 terminates the row at state=failed (e.g. invalid
-// envelope). State must be dispatching to avoid racing the
-// Happy-path Complete call.
+// envelope). State must be pending or dispatching to avoid racing
+// the happy-path Complete call (terminal states return ErrNotFound
+// so the drain's redelivery is a no-op). Mirrors the PG contract
+// exactly so the drain's cap re-check on pending rows works on both
+// backends.
 func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string, retryAfter time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inv, ok := m.invocations[id]
-	if !ok || inv.State != InvocationDispatching {
+	if !ok {
+		return ErrNotFound
+	}
+	if inv.State != InvocationPending && inv.State != InvocationDispatching {
 		return ErrNotFound
 	}
 	inv.LastError = lastError
@@ -1361,6 +1367,24 @@ func (m *MemStore) CountInstanceInvocationsInMinute(_ context.Context, instanceI
 		n++
 	}
 	return n, nil
+}
+
+// StampInstanceInvocation writes the live instance handle onto a
+// dispatching row. MemStore matches the PG contract exactly: only
+// rows in 'dispatching' state accept a stamp (Complete and Fail
+// hold their own locks on the row; racing them would corrupt the
+// state machine). Returns ErrNotFound if the row is missing or not
+// dispatching.
+func (m *MemStore) StampInstanceInvocation(_ context.Context, id, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.invocations[id]
+	if !ok || inv.State != InvocationDispatching {
+		return ErrNotFound
+	}
+	inv.InstanceID = instanceID
+	m.invocations[id] = inv
+	return nil
 }
 
 // --- Instances --------------------------------------------------------------

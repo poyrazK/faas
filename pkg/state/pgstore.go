@@ -1064,7 +1064,7 @@ func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 const invocationSelectCols = `id, app_id, account_id, source, state, method, path,
        payload, headers, due_at, scheduled_at, cron_id, ack_url,
        result, lease_expires_at, received_at, completed_at, attempts,
-       last_error, created_at`
+       last_error, created_at, instance_id`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	payload, err := jsonOrEmpty(inv.Payload)
@@ -1165,23 +1165,23 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 // lease. Optimistic update: a row already in dispatching with an
 // unexpired lease rejects with ErrNotFound so the drain retries on
 // the next tick (matches MemStore and matches the SKIP LOCKED
-// precedent). instanceID is the just-woken handle so pkg/meter can
-// join `usage_minutes` against `invocations` on the (instance,
-// minute) count.
-func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, leaseSeconds int) (Invocation, error) {
-	var instanceArg any
-	if instanceID != "" {
-		instanceArg = instanceID
-	}
+// precedent).
+//
+// instanceID is accepted for back-compat with the Store contract but
+// intentionally NOT stamped here — the drain doesn't know the live
+// instance handle until engine.Wake returns, and the wake gate is
+// the only component that can mint one. The drain follows up with
+// Store.StampInstanceInvocation once Wake succeeds, so the meter
+// join (CountInstanceInvocationsInMinute) sees the right value.
+func (s *PgStore) ClaimInvocation(ctx context.Context, id, _ /*instanceID*/ string, leaseSeconds int) (Invocation, error) {
 	row := s.pool.QueryRow(ctx, `
 		update invocations
 		   set state = 'dispatching',
-		       lease_expires_at = now() + ($3 || ' seconds')::interval,
+		       lease_expires_at = now() + ($2 || ' seconds')::interval,
 		       received_at = now(),
-		       instance_id = coalesce($2, instance_id),
 		       attempts = attempts + 1
 		 where id = $1 and state = 'pending'
-		 returning `+invocationSelectCols, id, instanceArg, leaseSeconds)
+		 returning `+invocationSelectCols, id, leaseSeconds)
 	inv, err := scanInvocation(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1314,6 +1314,26 @@ func (s *PgStore) CountInstanceInvocationsInMinute(ctx context.Context, instance
 	return n, nil
 }
 
+// StampInstanceInvocation writes the live instance handle onto a
+// dispatching row. State guard mirrors the drain's lifecycle: a
+// Complete / Fail call could land in any of pending/dispatching
+// (Fail allows the retry path) but the instance_id stamp must
+// only land while the row is dispatching — after that the row is
+// either terminal or back in pending with no instance binding.
+func (s *PgStore) StampInstanceInvocation(ctx context.Context, id, instanceID string) error {
+	tag, err := s.pool.Exec(ctx, `
+		update invocations
+		   set instance_id = $2
+		 where id = $1 and state = 'dispatching'`, id, instanceID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // jsonOrEmpty normalises a json.RawMessage to a Postgres jsonb value
 // — empty/null bodies are kept as the literal '{}' so the column
 // NOT NULL + default '{}' shape holds.
@@ -1378,13 +1398,13 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	inv := Invocation{}
 	var source, state string
 	var scheduledAt, leaseExpires, receivedAt, completedAt *time.Time
-	var cronID, ackURL, lastErr *string
+	var cronID, ackURL, lastErr, instanceID *string
 	var payload, headers, result []byte
 	if err := scan(
 		&inv.ID, &inv.AppID, &inv.AccountID, &source, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
 		&result, &leaseExpires, &receivedAt, &completedAt, &inv.Attempts,
-		&lastErr, &inv.CreatedAt,
+		&lastErr, &inv.CreatedAt, &instanceID,
 	); err != nil {
 		return Invocation{}, err
 	}
@@ -1420,6 +1440,9 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	}
 	if lastErr != nil {
 		inv.LastError = *lastErr
+	}
+	if instanceID != nil {
+		inv.InstanceID = *instanceID
 	}
 	return inv, nil
 }

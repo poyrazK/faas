@@ -603,25 +603,48 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 		Headers:   json.RawMessage(`{"x-faas-cron":"true"}`),
 		DueAt:     now,
 	}
-	if _, err := l.engine.Store().EnqueueInvocation(ctx, inv); err != nil {
+	enq, err := l.engine.Store().EnqueueInvocation(ctx, inv)
+	if err != nil {
 		l.log.Warn("cron: enqueue invocation", "cron_id", c.ID, "err", err)
 		// Continue past — legacy wake-only path is still safe.
+	}
+	// Walk the row through pending → dispatching BEFORE calling
+	// Invoke. The store's Claim only accepts state=pending, and
+	// StampInstanceInvocation only accepts state=dispatching — so
+	// the lifecycle must mirror the drain's: claim → invoke → stamp
+	// → complete. Doing the claim here also keeps the row out of
+	// the drain's next tick (which filters state='pending').
+	if enq.ID != "" {
+		if _, err := l.engine.Store().ClaimInvocation(ctx, enq.ID, "", 60); err != nil {
+			l.log.Warn("cron: claim invocation", "cron_id", c.ID, "err", err)
+		}
 	}
 	if l.gateway != nil {
 		// Invoke delivers the synthetic HTTP envelope through the
 		// wake gate; the meter + the runner both see this as a
-		// request with method+path+headers (and a body once the
-		// drain joins the post-state). SynthesizeRequest's no-
-		// payload shape is preserved for back-compat with callers
-		// outside this codepath.
-		if _, err := l.gateway.Invoke(ctx, c.AppID, inv); err != nil {
-			l.log.Warn("cron: invoke", "cron_id", c.ID, "err", err)
+		// request with method+path+headers. The synth adapter
+		// (cmd/gatewayd) does its own always-Wake internally and
+		// returns the live instance id on the echoed Invocation.
+		invokeOut, ierr := l.gateway.Invoke(ctx, c.AppID, inv)
+		if ierr != nil {
+			l.log.Warn("cron: invoke", "cron_id", c.ID, "err", ierr)
 			// Fall through to legacy wake-only shape so this
 			// doesn't silently drop. tests may rely on the
 			// SynthesizeRequest call for back-compat assertions.
 			if err := l.gateway.SynthesizeRequest(ctx, c.AppID, "POST", c.Path); err != nil {
 				l.log.Warn("cron: synthesize (legacy)", "cron_id", c.ID, "err", err)
 				return
+			}
+		} else if enq.ID != "" {
+			// Stamp the live instance handle + complete the row
+			// so the drain's per-tick (state='pending' filter)
+			// never picks it up. The meter join counts this row
+			// once, against the live instance.
+			if err := l.engine.Store().StampInstanceInvocation(ctx, enq.ID, invokeOut.InstanceID); err != nil {
+				l.log.Warn("cron: stamp instance", "cron_id", c.ID, "err", err)
+			}
+			if err := l.engine.Store().CompleteInvocation(ctx, enq.ID, nil); err != nil {
+				l.log.Warn("cron: complete", "cron_id", c.ID, "err", err)
 			}
 		}
 	}

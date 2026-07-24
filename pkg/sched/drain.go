@@ -2,6 +2,7 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
@@ -10,6 +11,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// ErrPermanentInvoke is the sentinel the gateway returns when an
+// envelope is permanently undeliverable (4xx — bad payload, app
+// deleted, no such method). The drain maps this to state='failed'
+// (retryAfter=0) instead of bouncing the row back to pending; a
+// retried bad payload just keeps failing.
+var ErrPermanentInvoke = errors.New("sched: permanent invoke error")
+
+// ErrPermanentWake is the sentinel for wake errors that the drain
+// will never recover from (no such app, app PARKED with no live
+// deployment, account deleted). Surfaced by the engine's Wake
+// implementation; the drain short-circuits to state='failed'.
+var ErrPermanentWake = errors.New("sched: permanent wake error")
 
 // Drain is the Move 1 event-shaped scheduler. It walks due rows from
 // the unified invocations table (async_invoke / queue / delayed_task /
@@ -163,11 +177,16 @@ func (d *Drain) Tick(ctx context.Context) {
 //  1. Cap re-check (delayed_task only — config-drift protection).
 //  2. ClaimInvocation (pending → dispatching, lease, attempts++).
 //  3. engine.Wake (idempotent — may return an existing RUNNING instance).
-//  4. gateway.Invoke (delivers envelope through wake gate).
-//  5. CompleteInvocation (state → completed; result blob attached).
+//  4. StampInstanceInvocation — write the live handle onto the row
+//     so the meter's CountInstanceInvocationsInMinute join lands.
+//  5. gateway.Invoke (delivers envelope through wake gate).
+//  6. CompleteInvocation (state → completed; result blob attached).
 //
 // Errors branch on transient vs permanent: transient = retryAfter 5s
-// (Claim → re-set to pending); permanent = terminal failed.
+// (Claim → re-set to pending); permanent = terminal failed. The
+// gateway is responsible for surfacing ErrPermanentInvoke when the
+// underlying HTTP status is 4xx; the engine's Wake surfaces
+// ErrPermanentWake on no-such-app / no-live-deployment.
 func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// 1. Cap re-check (delayed_task source only — the plan may have
 	// been downgraded between EnqueueInvocation and now).
@@ -179,29 +198,38 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 	}
 	// 2. Claim.
-	claimed, err := d.store.ClaimInvocation(ctx, inv.ID, "", d.wakeLeaseSeconds)
-	if err != nil {
+	if _, err := d.store.ClaimInvocation(ctx, inv.ID, "", d.wakeLeaseSeconds); err != nil {
 		// Already-claimed (MemStore ErrNotFound, PgStore race): the
 		// "skip locked" path caught us on the next LIST. Skip.
 		return
 	}
-	_ = claimed
 
 	// 3. Wake (Always-Wake = idempotent). Returns the live instance
-	// handle on success (WakeResult carries the instance id we want
-	// to stamp for the meter's per-instance count).
+	// handle on success; the drain stamps it onto the row so the
+	// meter's per-instance count is non-zero for this minute.
 	wakeRes, err := d.engine.Wake(ctx, inv.AppID)
 	if err != nil {
-		// Transient: most fails are host-network blips / cgroup
-		// pressure. retryAfter 5s; the loop will rebatch.
-		_ = d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), time.Duration(d.retryAfterSeconds)*time.Second)
-		d.log.Warn("drain: wake", "inv", inv.ID, "err", err)
+		retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
+		// Permanent wake errors short-circuit to state='failed' — a
+		// missing app, a deleted account, or a PARKED app with no
+		// live deployment will not recover by waiting 5s. The engine
+		// wraps the cause; we use errors.Is so the sentinels survive
+		// any future fmt.Errorf wrapping.
+		if errors.Is(err, ErrPermanentWake) {
+			retryAfter = 0
+		}
+		_ = d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter)
+		d.log.Warn("drain: wake", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
 		return
 	}
-	// 4. Invoke (deliver envelope). The drain does NOT have the
-	// sync-block shape today (only async sources reach this path);
-	// cmd/schedd's pg_notify fire-and-forget design means any error
-	// is transient.
+	// 4. Stamp the live instance handle. Failure here is non-fatal —
+	// the dispatch can still proceed; the meter just under-counts
+	// for this row. Logged so a regression in the stamp path is
+	// visible without aborting the dispatch.
+	if err := d.store.StampInstanceInvocation(ctx, inv.ID, wakeRes.InstanceID); err != nil {
+		d.log.Warn("drain: stamp instance", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err)
+	}
+	// 5. Invoke (deliver envelope).
 	if d.gateway == nil {
 		// No gateway (test seam): the drain still completes the
 		// row so the meter gets its tick.
@@ -210,13 +238,18 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 	if _, err := d.gateway.Invoke(ctx, inv.AppID, inv); err != nil {
-		// Transient path: backing off 5s and letting the drain retry
-		// is cheaper than re-waking when the synth endpoint is hot.
-		_ = d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), time.Duration(d.retryAfterSeconds)*time.Second)
-		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err)
+		// Permanent invoke errors (4xx) terminal-fail; transient
+		// (network / 5xx) retry. The gateway is the source of
+		// truth — it knows whether the failure is recoverable.
+		retryAfter := time.Duration(d.retryAfterSeconds) * time.Second
+		if errors.Is(err, ErrPermanentInvoke) {
+			retryAfter = 0
+		}
+		_ = d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter)
+		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
 		return
 	}
-	// 5. Complete.
+	// 6. Complete.
 	if err := d.store.CompleteInvocation(ctx, inv.ID, nil); err != nil {
 		// pgstore.ErrNotFound would mean someone else completed
 		// first; drain does NOT have to retry — the row is in a
@@ -230,12 +263,26 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 // emitDone fires invocation_done so the dashboard SSE hook (a
 // follow-up Move 2 PR) can light up. Today no listener subscribes;
 // the channel is defined so the follow-up lands in one PR.
+//
+// The payload is built with json.Marshal rather than string
+// concatenation to keep the CodeQL go/log-injection rules clean
+// (the inputs are UUIDs so the bug is theoretical, but Marshal
+// makes the audit story a no-op).
 func (d *Drain) emitDone(ctx context.Context, inv state.Invocation) {
 	if d.notifier == nil {
 		return
 	}
-	payload := `{"invocation_id":"` + inv.ID + `","app_id":"` + inv.AppID + `","source":"` + string(inv.Source) + `","state":"completed"}`
-	if err := d.notifier.Notify(ctx, db.NotifyInvocationDone, payload); err != nil && !errors.Is(err, context.Canceled) {
+	body, err := json.Marshal(map[string]string{
+		"invocation_id": inv.ID,
+		"app_id":        inv.AppID,
+		"source":        string(inv.Source),
+		"state":         string(state.InvocationCompleted),
+	})
+	if err != nil {
+		d.log.Warn("drain: marshal invocation_done", "inv", inv.ID, "err", err)
+		return
+	}
+	if err := d.notifier.Notify(ctx, db.NotifyInvocationDone, string(body)); err != nil && !errors.Is(err, context.Canceled) {
 		d.log.Warn("drain: notify invocation_done", "inv", inv.ID, "err", err)
 	}
 }

@@ -423,6 +423,15 @@ type Store interface {
 	// usage_minutes.requests = N on each rolling minute. Index-backed by
 	// invocations_instance_idx.
 	CountInstanceInvocationsInMinute(ctx context.Context, instanceID string, minute time.Time) (int, error)
+	// StampInstanceInvocation writes the live instance handle onto a
+	// dispatching row. The drain calls this AFTER engine.Wake returns,
+	// because the wake gate hands the drain the instance id only after
+	// admission + boot, not at claim time. The column drives the meter
+	// join; without this stamp the meter's CountInstanceInvocationsInMinute
+	// sees 0 invocations for the minute and under-bills. State must be
+	// 'dispatching' to avoid racing CompleteInvocation. Returns
+	// ErrNotFound if no matching row exists in dispatching state.
+	StampInstanceInvocation(ctx context.Context, id, instanceID string) error
 
 	// Instances (schedd is sole writer, spec §6). apid reads only.
 	//

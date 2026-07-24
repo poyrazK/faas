@@ -67,11 +67,15 @@ func (r *recordingSynth) SynthesizeRequest(_ context.Context, appID, _, path str
 
 // Invoke is the Move 1 wake-with-envelope path. recordingSynth just
 // increments so cron tests can assert the call landed (and the row
-// arrived in invocations).
+// arrived in invocations). The production gateway adapter (see
+// cmd/gatewayd/main.go) returns the live instance id from
+// sched.Wake; the test fake synthesises one so the cron loop's
+// StampInstanceInvocation can land without a real wake.
 func (r *recordingSynth) Invoke(_ context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
 	r.calls.Add(1)
 	r.last.Store(struct{ AppID, Path string }{AppID: appID, Path: inv.Path})
 	inv.State = state.InvocationDispatching
+	inv.InstanceID = "inst-fake-" + inv.ID
 	return inv, nil
 }
 
@@ -180,6 +184,29 @@ func TestCronDispatch_FiresOncePerBoundary(t *testing.T) {
 	last := synth.last.Load().(struct{ AppID, Path string })
 	if last.AppID != app.ID || last.Path != "/ping" {
 		t.Fatalf("last synth = %+v, want app=%s path=/ping", last, app.ID)
+	}
+
+	// Move 1 regression: the cron path must leave a row in
+	// invocations (state=completed) for each fire. The meter reads
+	// those rows; without them cron traffic is invisible to billing.
+	rows, err := store.ListInvocationsForAccount(ctx, acct.ID, 50, time.Time{})
+	if err != nil {
+		t.Fatalf("ListInvocationsForAccount: %v", err)
+	}
+	cronRows := 0
+	for _, r := range rows {
+		if r.Source == state.InvocationCron && r.AppID == app.ID {
+			cronRows++
+			if r.State != state.InvocationCompleted {
+				t.Errorf("cron row state = %q, want completed: %+v", r.State, r)
+			}
+			if r.InstanceID == "" {
+				t.Errorf("cron row missing instance_id (meter will under-count): %+v", r)
+			}
+		}
+	}
+	if cronRows != 2 {
+		t.Errorf("invocations rows with source=cron = %d, want 2 (one per fire)", cronRows)
 	}
 }
 
