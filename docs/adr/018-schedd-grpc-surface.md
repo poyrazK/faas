@@ -2,9 +2,10 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-16
+- **Updated:** 2026-07-24 (issue #168) — added `AdmitInstance` for fan-out admission.
 - **Decision:** schedd exposes a gRPC service `onebox.faas.schedd.v1.Schedd` on
-  the unix socket `/run/faas/schedd.sock` with two RPCs — `Wake(app_id)` and
-  `ReportActivity([]Touch)`. The `.proto` lives at
+  the unix socket `/run/faas/schedd.sock` with three RPCs — `Wake(app_id)`,
+  `AdmitInstance(app_id)`, and `ReportActivity([]Touch)`. The `.proto` lives at
   `api/proto/onebox/faas/schedd/v1/schedd.proto`; generated stubs are checked in
   next to it exactly like vmmd (ADR-013). gatewayd is the only caller for v1.0.
   Errors travel as `google.rpc.Status` carrying the RFC 7807 envelope via
@@ -13,6 +14,27 @@
   schedd in turn dials vmmd's socket through the typed wrapper
   `pkg/sched.VMMClient` (ADR-014 named this "a `pkg/sched/grpcclient` that wraps
   a vmmd connection").
+
+### `AdmitInstance` (issue #168)
+
+`AdmitInstance(app_id)` is the schedule scale-out primitive. Unlike `Wake`, it
+skips the Phase-1 "return newest RUNNING" shortcut so the gateway can demand a
+new instance even when others are already RUNNING. Three outcomes:
+
+- **admitted** — a fresh `RUNNING` row was created. `instance_id`, `node_id`,
+  `method`, `wake_id` populated.
+- **at_capacity** — the app was already at effective `max_concurrency`.
+  `at_capacity=true`; `instance_id`/`node_id`/`wake_id` are unset. The gateway
+  treats this as a benign no-op when it has ≥1 cached target.
+- **failure** — RAM headroom / chooser / store errors travel as a gRPC status
+  carrying the RFC 7807 problem (same envelope as `Wake`).
+
+The wire is additive — adding `at_capacity` and a separate request/response
+message is the only contract change. Existing `Wake` callers are unaffected.
+The cap is enforced atomically by `Engine.ledger.Admit` (same choke point as
+`Wake`); at-cap refusal does NOT write a `FAILED` row, only a non-nil error.
+Real failures (RAM headroom, store error) DO write a `FAILED` row to surface
+the failure mode for the reaper and billing.
 - **Why:**
   - (a) The gateway needs a wake path across a process boundary and CLAUDE.md's
     architecture is "gRPC on unix sockets in /run/faas/". vmmd already proved

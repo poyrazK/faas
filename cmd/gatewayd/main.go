@@ -197,8 +197,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// Flush per-instance last_request_at to schedd so its idle reaper sees
 	// gateway traffic (spec §4.1, ADR-018) — without this a busy app parks once
 	// its idle timer fires. schedd is the sole writer to `instances`, so we hand
-	// it the batch over gRPC (the same client we wake through).
-	deps.lastSeen = newSchedFlushSink(backend, sched, log)
+	// it the batch over gRPC (the same client we wake through). Issue #168
+	// dropped the addr→instance resolver hop: the handler now Touches by
+	// instance_id directly, and schedd drops unknown ids on its side.
+	deps.lastSeen = newSchedFlushSink(sched, log)
 	// Internal unix-socket RPC for schedd's cron dispatch loop (spec §4.4,
 	// M7). Routes a synthetic wake through schedd so metering + the
 	// per-minute sampler see the live instance. lastSeen-touches for cron
@@ -210,9 +212,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			// wake_id is discarded on the synth path (gaps analysis
 			// 2026-07-23): synthesized requests don't return a
 			// response header to a customer, so x-faas-wake-id has
-			// no consumer here. Wake is still called for the
-			// admit + boot side effects.
-			_, _, _, err := sched.Wake(ctx, appID)
+			// no consumer here. AdmitInstance is still called for
+			// the admit + boot side effects.
+			_, _, _, _, err := sched.AdmitInstance(ctx, appID)
 			return err
 		},
 		// Move 1: Wake the instance, then route the synthetic
@@ -540,8 +542,11 @@ type unwiredBackend struct{}
 func (unwiredBackend) Lookup(context.Context, string) (gateway.App, bool) {
 	return gateway.App{}, false
 }
-func (unwiredBackend) Target(string) (string, bool)                 { return "", false }
-func (unwiredBackend) Wake(context.Context, string) (string, error) { return "", nil }
+func (unwiredBackend) Pick(string) (gateway.Target, bool) { return gateway.Target{}, false }
+func (unwiredBackend) HealthyCount(string) int            { return 0 }
+func (unwiredBackend) Admit(context.Context, string, int) (string, bool, error) {
+	return "", false, nil
+}
 
 // envOrGateway returns the value of env key, or fallback when unset/empty.
 // Named with the daemon prefix to avoid a collision if two daemons are ever

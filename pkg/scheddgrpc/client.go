@@ -91,6 +91,27 @@ func (c *Client) Wake(ctx context.Context, appID string) (instanceID, nodeID, wa
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetWakeId(), nil
 }
 
+// AdmitInstance (issue #168) is the schedule scale-out RPC. Distinct
+// from Wake: it skips the Phase-1 "return newest RUNNING" shortcut so
+// each call either admits a new instance or signals at_capacity=true.
+//
+// Return shape:
+//   - instanceID, nodeID, wakeID: non-empty on the admitted path,
+//     empty on the at-capacity path.
+//   - atCapacity: true when the app is already at effective
+//     max_concurrency. The gateway treats this as a benign no-op
+//     when it already has ≥1 cached target.
+//   - err: non-nil only on real admission failures (RAM headroom,
+//     chooser, store). The benign app_concurrency_reached outcome is
+//     never lifted to an error.
+func (c *Client) AdmitInstance(ctx context.Context, appID string) (instanceID, nodeID, wakeID string, atCapacity bool, err error) {
+	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{AppId: appID})
+	if err != nil {
+		return "", "", "", false, liftErr(err)
+	}
+	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetWakeId(), resp.GetAtCapacity(), nil
+}
+
 // ReportActivity flushes a batch of last_request_at touches to schedd. Returns
 // the number of rows schedd applied (touches for parked/gone instances are
 // silently dropped on its side).

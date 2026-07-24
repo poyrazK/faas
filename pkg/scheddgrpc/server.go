@@ -29,6 +29,12 @@ import (
 // a store + vmmd.
 type SchedAPI interface {
 	Wake(ctx context.Context, appID string) (sched.WakeResult, error)
+	// AdmitInstance is the schedule scale-out primitive (issue #168).
+	// Bypasses the Phase-1 fast-path so a gateway can demand a new
+	// instance even when others are already RUNNING. Returns a typed
+	// AtCapacity result on the benign "already at max_concurrency"
+	// outcome — see sched.WakeResult.AtCapacity.
+	AdmitInstance(ctx context.Context, appID string) (sched.WakeResult, error)
 	ReportActivity(ctx context.Context, touches []state.InstanceTouch) (int, error)
 	// ParkWithReason is the meterd-triggered variant (M7, spec §4.7).
 	// The reason string is for the audit log; the park semantics are
@@ -78,6 +84,39 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 		NodeId:     res.NodeID,
 		Method:     mapMethod(res.Method),
 		WakeId:     res.WakeID,
+	}, nil
+}
+
+// AdmitInstance (issue #168) is the schedule scale-out RPC. Unlike
+// Wake it does not run the Phase-1 fast-path: each call either admits
+// a fresh instance or returns at_capacity=true. The gateway calls
+// this to fan-out across max_concurrency without hitting the
+// WakeGate's single-flight coalescing.
+//
+// Three outcomes map to three wire shapes:
+//   - admitted:        instance_id/node_id/wake_id populated, at_capacity=false
+//   - at_capacity:    at_capacity=true, identity fields empty
+//   - failure:        ResourceExhausted / Internal status with the
+//     RFC 7807 problem in the response's `problem`
+//     field — only on real admission errors (RAM
+//     headroom, chooser, store). The benign
+//     app_concurrency_reached outcome is NEVER lifted
+//     to a gRPC error: it surfaces as at_capacity=true
+//     so the gateway can treat it as a no-op.
+func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceRequest) (*scheddpb.AdmitInstanceResponse, error) {
+	const op = "AdmitInstance"
+	start := time.Now()
+	res, err := s.engine.AdmitInstance(ctx, req.GetAppId())
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &scheddpb.AdmitInstanceResponse{
+		InstanceId: res.InstanceID,
+		NodeId:     res.NodeID,
+		Method:     mapMethod(res.Method),
+		WakeId:     res.WakeID,
+		AtCapacity: res.AtCapacity,
 	}, nil
 }
 

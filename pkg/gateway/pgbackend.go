@@ -2,8 +2,11 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // Router is the Postgres-backed routing seam PGBackend reads through. It is the
@@ -19,27 +22,75 @@ type Router interface {
 	ResolveHost(ctx context.Context, host string) (app App, ok bool, err error)
 }
 
-// PGBackend is gatewayd's production Backend (spec §4.1): a host→app routing
-// cache over Postgres plus schedd over gRPC for wakes. It replaces the M4-era
-// unwiredBackend once schedd's gRPC surface (ADR-018) is up.
+// targetSet (issue #168) is the per-app list of routable instances the
+// gateway holds. Members are unique by InstanceID; Pick uses an atomic
+// round-robin cursor so the hot path is allocation-free even with multiple
+// instances in the set. The set is mutated under PGBackend.tgtMu.
+//
+// Concurrency model:
+//   - `next` is the atomic round-robin cursor; it monotonically increments
+//     on every Pick. Modulo the current length yields the picked slot.
+//   - `entries` is read-only inside Pick (RLock); mutation happens under
+//     Lock (addTarget / EvictInstance).
+type targetSet struct {
+	next    atomic.Uint64
+	entries []Target
+}
+
+// add appends a new Target to the set, replacing any existing entry with
+// the same InstanceID. Callers must hold tgtMu (Lock).
+func (s *targetSet) add(t Target) {
+	if t.NodeID == "" || t.InstanceID == "" {
+		return
+	}
+	for i, e := range s.entries {
+		if e.InstanceID == t.InstanceID {
+			// Re-admission of a known instance — overwrite in place.
+			s.entries[i] = t
+			return
+		}
+	}
+	s.entries = append(s.entries, t)
+}
+
+// remove drops the entry whose InstanceID matches. Returns the new slice
+// length. Callers must hold tgtMu (Lock).
+func (s *targetSet) remove(instanceID string) int {
+	for i, e := range s.entries {
+		if e.InstanceID == instanceID {
+			s.entries = append(s.entries[:i], s.entries[i+1:]...)
+			return len(s.entries)
+		}
+	}
+	return len(s.entries)
+}
+
+// pick returns one Target via atomic round-robin. Callers must hold tgtMu
+// (RLock). Empty set → ok=false.
+func (s *targetSet) pick() (Target, bool) {
+	if len(s.entries) == 0 {
+		return Target{}, false
+	}
+	idx := s.next.Add(1) - 1
+	return s.entries[int(idx%uint64(len(s.entries)))], true
+}
+
+// PGBackend is gatewayd's production Backend (spec §4.1, issue #168): a
+// host→app routing cache over Postgres plus schedd over gRPC for
+// per-instance admission. Replaces the M4-era unwiredBackend once schedd's
+// gRPC surface (ADR-018) is up.
 //
 // Two caches, populated on different paths:
 //
 //   - routes/apps: host→app_id (RouteCache, spec §4.1 10k LRU) and app_id→App
 //     (plan). Filled on a Lookup miss via Router; wholesale-reset on an
 //     app/domain change (Reset / FlushRoutes).
-//   - targets: app_id → compute_node.id. Filled ONLY by a successful Wake
-//     (which carries the node_id schedd chose via placement, issue #98 /
-//     ADR-028) and evicted on any instance_changed notification. Target() is
-//     the ctx-less hot path, so it must be a pure in-memory read — hence a
-//     cache the notify loop keeps fresh rather than a per-request DB hit.
-//
-// Note: the second value's TYPE is still a string for the existing
-// Backend.Target signature; the SEMANTIC is now compute_node.id (a uuid).
-// The legacy addr-based hot path lives on in handler.go's
-// ForwardingReverseProxy, which dereferences the node id via the
-// per-node vmmd client cache and forwards the HTTP bytes over the
-// overlay using the vmmd ForwardHTTP RPC.
+//   - targets: app_id → *targetSet. Filled by Admit (issue #168) when
+//     schedd returns a fresh instance, and mutated by EvictInstance when
+//     an instance_changed notification says a specific instance parked.
+//     Pick is the ctx-less hot path, so it must be a pure in-memory read —
+//     the notify loop + the admit path keep it fresh rather than per-request
+//     DB hits.
 type PGBackend struct {
 	router Router
 	sched  Scheduler
@@ -51,16 +102,10 @@ type PGBackend struct {
 	apps   map[string]App // app_id -> App (plan)
 
 	tgtMu sync.RWMutex
-	// targets is the hot-path app_id → compute_node.id cache. The string
-	// type is preserved (was host_ip:8080 in the legacy contract);
-	// gatewayd's handler looks up the per-node vmmd client from this id.
-	targets map[string]string
-	// nodeInstance reverses node_id → instance_id so the
-	// last_request_at flush can attribute a touch (keyed by the node id
-	// the handler proxied to) back to the instance row schedd owns
-	// (spec §4.1, ADR-018). Replaces the legacy addrInstance
-	// (addr → instance_id) which is no longer routable from a remote box.
-	nodeInstance map[string]string
+	// targets is the hot-path app_id → *targetSet cache. Each targetSet
+	// holds 1..max_concurrency Targets, picked round-robin on every
+	// request (issue #168).
+	targets map[string]*targetSet
 }
 
 // compile-time assertion PGBackend satisfies the edge seam.
@@ -72,13 +117,12 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		log = slog.Default()
 	}
 	return &PGBackend{
-		router:       router,
-		sched:        sched,
-		log:          log,
-		routes:       NewRouteCache(RouteCacheCap),
-		apps:         map[string]App{},
-		targets:      map[string]string{},
-		nodeInstance: map[string]string{},
+		router:  router,
+		sched:   sched,
+		log:     log,
+		routes:  NewRouteCache(RouteCacheCap),
+		apps:    map[string]App{},
+		targets: map[string]*targetSet{},
 	}
 }
 
@@ -108,69 +152,116 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	return app, true
 }
 
-// Target returns the cached compute_node.id for appID, or ("", false)
-// when no wake has populated it yet (the handler then blocks on Wake).
-// This is the hot path: a pure in-memory read, no ctx, no DB. The
-// returned string's SEMANTIC is now compute_node.id (was host_ip:8080
-// before #98); the handler dereferences it via the per-node vmmd
-// client cache.
-func (b *PGBackend) Target(appID string) (string, bool) {
+// Pick returns one routable Target for appID via atomic round-robin
+// (issue #168). Returns ("", false) when the cache is empty (no wake has
+// populated it yet, or every cached instance was evicted). The handler
+// must ensure capacity before calling Pick so this only returns false on
+// the rare eviction race.
+func (b *PGBackend) Pick(appID string) (Target, bool) {
 	b.tgtMu.RLock()
-	nodeID, ok := b.targets[appID]
+	set := b.targets[appID]
+	if set == nil {
+		b.tgtMu.RUnlock()
+		return Target{}, false
+	}
+	t, ok := set.pick()
 	b.tgtMu.RUnlock()
-	return nodeID, ok && nodeID != ""
+	return t, ok
 }
 
-// Wake blocks while schedd admits + dispatches an instance (restore or cold
-// boot) and caches the node id it returns so the handler's follow-up
-// Target hits without waiting for the instance_changed notification
-// round-trip. Returns the per-wake correlation handle (gaps analysis
-// 2026-07-23) — non-empty on a fresh wake, empty on a Phase-1 fast-path
-// return. The handler surfaces this on the response as x-faas-wake-id.
-// The error preserves schedd's *api.Problem so writeWakeError maps it
-// directly.
-func (b *PGBackend) Wake(ctx context.Context, appID string) (string, error) {
-	instanceID, nodeID, wakeID, err := b.sched.Wake(ctx, appID)
-	if err != nil {
-		return "", err
+// HealthyCount returns the number of routable Targets currently cached for
+// appID (issue #168). Drives the WakeGate's shouldWake predicate: stop
+// admitting once we're at the plan's effective max_concurrency.
+func (b *PGBackend) HealthyCount(appID string) int {
+	b.tgtMu.RLock()
+	set := b.targets[appID]
+	if set == nil {
+		b.tgtMu.RUnlock()
+		return 0
 	}
-	if nodeID != "" {
-		b.tgtMu.Lock()
-		b.targets[appID] = nodeID
-		if instanceID != "" {
-			b.nodeInstance[nodeID] = instanceID
-		}
-		b.tgtMu.Unlock()
-	}
-	return wakeID, nil
+	n := len(set.entries)
+	b.tgtMu.RUnlock()
+	return n
 }
 
-// EvictTarget drops the cached node id for appID. gatewayd calls this
-// on every instance_changed notification (running or parked): a
-// parked/destroyed instance must never be proxied to, and a state
-// change means the next request should re-resolve via an idempotent
-// Wake (which re-seeds the cache).
-func (b *PGBackend) EvictTarget(appID string) {
+// Admit asks schedd to admit ONE additional instance for appID (issue #168).
+// On the admitted path the new Target is added to the per-app targetSet
+// (dedup by InstanceID). On the at-capacity path the engine's typed result
+// is passed through (wakeID empty, err nil). On a real failure (RAM
+// headroom, chooser, store) the error is preserved — schedd lifts them to
+// *api.Problem at the wire boundary.
+//
+// Fan-out invariant (issue #168): HealthyCount < maxConcurrency is enforced
+// atomically inside this method. Concurrent callers serialize on tgtMu so a
+// burst of N requests cannot collectively exceed the cap. Schedd also
+// enforces the cap via its per-app ledger, but that round-trip is expensive
+// — the gateway-side check is the cheap fast path that keeps the RPC count
+// ≤ maxConcurrency per burst.
+func (b *PGBackend) Admit(ctx context.Context, appID string, maxConcurrency int) (string, bool, error) {
+	// Cheap fast path: refuse before we spend a gRPC round-trip.
 	b.tgtMu.Lock()
-	if nodeID, ok := b.targets[appID]; ok {
-		delete(b.nodeInstance, nodeID)
+	set := b.targets[appID]
+	if set != nil && len(set.entries) >= maxConcurrency {
+		b.tgtMu.Unlock()
+		return "", true, nil
 	}
-	delete(b.targets, appID)
+	b.tgtMu.Unlock()
+
+	instanceID, nodeID, wakeID, atCapacity, err := b.sched.AdmitInstance(ctx, appID)
+	if err != nil {
+		return "", false, err
+	}
+	if atCapacity {
+		return "", true, nil
+	}
+	if nodeID == "" || instanceID == "" {
+		return "", false, fmt.Errorf("schedd admit returned empty ids: instance=%q node=%q wake=%q", instanceID, nodeID, wakeID)
+	}
+	b.tgtMu.Lock()
+	set = b.targets[appID]
+	if set == nil {
+		set = &targetSet{}
+		b.targets[appID] = set
+	}
+	set.add(Target{
+		NodeID:     nodeID,
+		InstanceID: instanceID,
+		WakeID:     wakeID,
+		AddedAt:    time.Now(),
+	})
+	b.tgtMu.Unlock()
+	return wakeID, false, nil
+}
+
+// EvictInstance drops a specific instance from its app's targetSet (issue
+// #168). The instance_changed notification loop calls this with the
+// instance_id from the pg_notify payload; only that single entry is
+// removed, leaving any other instances in the set routable.
+func (b *PGBackend) EvictInstance(appID, instanceID string) {
+	if appID == "" || instanceID == "" {
+		return
+	}
+	b.tgtMu.Lock()
+	set := b.targets[appID]
+	if set == nil {
+		b.tgtMu.Unlock()
+		return
+	}
+	if set.remove(instanceID) == 0 {
+		delete(b.targets, appID)
+	}
 	b.tgtMu.Unlock()
 }
 
-// InstanceIDForNodeID resolves the instance a node was last woken as,
-// so the last_request_at flush can attribute touches (spec §4.1).
-// Returns ok=false once the target has been evicted (the instance
-// parked); the flush drops those. Replaces the legacy
-// InstanceIDForAddr; the addr-based lookup is no longer routable
-// from a remote box, so this lookup keeps the per-node attribution
-// on the gateway side.
-func (b *PGBackend) InstanceIDForNodeID(nodeID string) (string, bool) {
-	b.tgtMu.RLock()
-	id, ok := b.nodeInstance[nodeID]
-	b.tgtMu.RUnlock()
-	return id, ok
+// EvictTarget drops ALL cached targets for appID (legacy contract). Kept
+// for callers that don't yet parse the instance_id from the
+// instance_changed payload — it under-evicts nothing because the next
+// request will Pick from what's left and miss if everything's gone,
+// then re-admit. New code should prefer EvictInstance.
+func (b *PGBackend) EvictTarget(appID string) {
+	b.tgtMu.Lock()
+	delete(b.targets, appID)
+	b.tgtMu.Unlock()
 }
 
 // FlushRoutes clears the host→app and app→plan caches. gatewayd calls this on

@@ -105,8 +105,14 @@ func appsSuffix(domain string) string {
 
 // invalidator is the slice of gateway.PGBackend the notify loop drives. Declared
 // here so the loop is testable with a fake.
+//
+// Issue #168 widened the eviction surface: every instance_changed
+// notification carries the instance_id schedd owns (pkg/sched/engine.go's
+// emitInstanceChanged), and the gateway uses that to drop exactly one
+// entry from the per-app targetSet. EvictTarget (legacy wholesale drop) is
+// kept on the interface as a fallback when the payload is malformed.
 type invalidator interface {
-	EvictTarget(appID string)
+	EvictInstance(appID, instanceID string)
 	FlushRoutes()
 }
 
@@ -143,19 +149,30 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 }
 
 // handleInvalidation applies a single notification to the caches. instance
-// changes evict just that app's target; app/domain changes flush the route
-// caches wholesale (one-box scale, spec §4.3).
+// changes evict one entry from that app's targetSet (issue #168);
+// app/domain changes flush the route caches wholesale (one-box scale,
+// spec §4.3).
+//
+// Issue #168: the pg_notify payload now also carries instance_id (the
+// schedd-engine's emitInstanceChanged emits it next to app_id). The
+// listener uses that to drop exactly one entry from the per-app cache,
+// leaving any siblings routable. A malformed payload that omits either
+// field is logged-and-dropped — better to over-evict (next request
+// re-admits) than to crash the edge loop.
 func handleInvalidation(inv invalidator, n db.Notification, log *slog.Logger) {
 	switch n.Channel {
 	case db.NotifyInstanceChanged:
 		var p struct {
-			AppID string `json:"app_id"`
+			AppID      string `json:"app_id"`
+			InstanceID string `json:"instance_id"`
+			State      string `json:"state"`
+			WakeID     string `json:"wake_id"`
 		}
-		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" {
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" || p.InstanceID == "" {
 			log.Warn("gatewayd: bad instance_changed payload", "payload", n.Payload)
 			return
 		}
-		inv.EvictTarget(p.AppID)
+		inv.EvictInstance(p.AppID, p.InstanceID)
 	case db.NotifyAppChanged, db.NotifyDomainChanged:
 		inv.FlushRoutes()
 	}

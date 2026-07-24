@@ -4,6 +4,13 @@
 // §4.1 wants these flushed to Postgres every 15 s, not on every request —
 // the gateway-side batch keeps the request hot path off the DB.
 //
+// Issue #168: the key is now the instance id (the row PK schedd owns),
+// not the dial address. With fan-out across max_concurrency, multiple
+// instances can share a single compute_node — last_request_at must be
+// attributed per-instance so the reaper's idle budget applies to the
+// specific instance the customer was just hitting, not its node-mate
+// that has been idle for hours.
+//
 // Component ownership note: schedd is the ONLY writer to `instances`, so
 // `last_request_at` rows are owned by schedd. This package defines the seam
 // (LastSeenSink) and ships an in-memory implementation; cmd/schedd wires
@@ -19,16 +26,17 @@ import (
 )
 
 // LastSeenSink records the last time the gateway saw a successful proxied
-// request for an instance address. Implementations are expected to be
-// safe for concurrent use.
+// request for an instance. Implementations are expected to be safe for
+// concurrent use.
 type LastSeenSink interface {
-	// Touch records the timestamp for addr (must be in host:port form as
-	// returned by Backend.Target).
-	Touch(addr string, t time.Time)
+	// Touch records the timestamp for instanceID (the instances.id row PK
+	// schedd minted at Wake). Buffered until the next Flush; only the
+	// newest per instance id is kept so a burst collapses to one row.
+	Touch(instanceID string, t time.Time)
 	// Get returns the timestamp and whether it has been recorded.
-	Get(addr string) (time.Time, bool)
-	// Forget drops addr (e.g. when Target stops returning it).
-	Forget(addr string)
+	Get(instanceID string) (time.Time, bool)
+	// Forget drops instanceID (e.g. when the cached target is evicted).
+	Forget(instanceID string)
 	// Flush drives any buffered writes to durable storage. Called on a
 	// 15-second ticker; may be a no-op for the in-memory implementation.
 	Flush(ctx context.Context) error
@@ -45,22 +53,22 @@ func NewMemoryLastSeen() *MemoryLastSeen {
 	return &MemoryLastSeen{m: map[string]time.Time{}}
 }
 
-func (l *MemoryLastSeen) Touch(addr string, t time.Time) {
+func (l *MemoryLastSeen) Touch(instanceID string, t time.Time) {
 	l.mu.Lock()
-	l.m[addr] = t
+	l.m[instanceID] = t
 	l.mu.Unlock()
 }
 
-func (l *MemoryLastSeen) Get(addr string) (time.Time, bool) {
+func (l *MemoryLastSeen) Get(instanceID string) (time.Time, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	t, ok := l.m[addr]
+	t, ok := l.m[instanceID]
 	return t, ok
 }
 
-func (l *MemoryLastSeen) Forget(addr string) {
+func (l *MemoryLastSeen) Forget(instanceID string) {
 	l.mu.Lock()
-	delete(l.m, addr)
+	delete(l.m, instanceID)
 	l.mu.Unlock()
 }
 

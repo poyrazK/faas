@@ -20,23 +20,55 @@ type App struct {
 	Plan api.Plan
 }
 
+// Target is one routable instance in the gateway's per-app cache (issue
+// #168). Multiple Targets per app = real fan-out across max_concurrency.
+// The NodeID is the compute_node.id the instance lives on (ADR-028); the
+// forwarder dereferences it via the per-node vmmd client cache. The
+// InstanceID is the instances.id row schedd owns — used to attribute
+// last_request_at touches (spec §4.1) and to stamp x-faas-instance on
+// the request before proxying.
+type Target struct {
+	NodeID     string
+	InstanceID string
+	WakeID     string
+	AddedAt    time.Time
+}
+
 // Backend is the seam between the edge and the rest of the platform (in
 // production: the routing cache over Postgres, and schedd over gRPC). Splitting
 // it out keeps the hot request path testable end-to-end without a real cluster.
+//
+// Issue #168 widened this interface to support per-app fan-out:
+//   - Pick returns one routable instance for the app (round-robin across
+//     max_concurrency), used on every request (cold or warm).
+//   - HealthyCount returns the number of routable instances currently cached
+//     for the app. Drives the WakeGate's shouldWake predicate: stop admitting
+//     once we're at the plan's effective max_concurrency.
+//   - Admit asks schedd to admit ONE additional instance for the app, gated
+//     by maxConcurrency so concurrent callers cannot collectively over-admit
+//     past the cap (issue #168 trust model). Returns the new Target's
+//     WakeID on the admitted path, atCapacity=true when the cache is
+//     already at maxConcurrency (the gateway treats this as a benign
+//     no-op when it has ≥1 cached target), or an *api.Problem on real
+//     failure (RAM headroom, chooser, store).
 type Backend interface {
 	// Lookup resolves a hostname to its app (cache-first, spec §4.1).
 	Lookup(ctx context.Context, host string) (App, bool)
-	// Target returns a ready instance address (host:port) for the app, or false
-	// when none is running and a wake is needed (the hot path returns true here).
-	Target(appID string) (string, bool)
-	// Wake ensures an instance is running via schedd admission + vmmd
-	// restore. The wake_id is the per-wake-attempt correlation handle
-	// (gaps analysis 2026-07-23) schedd minted at Wake() Phase 2;
-	// non-empty on a fresh cold boot / restore, empty on the Phase-1
-	// fast path where an existing RUNNING instance was reused.
-	// Empty + nil error means "wake was unnecessary" (Target already
-	// had a ready address).
-	Wake(ctx context.Context, appID string) (wakeID string, err error)
+	// Pick returns one routable Target for appID via atomic round-robin, or
+	// ok=false when the cache is empty (caller should ensure capacity first).
+	Pick(appID string) (Target, bool)
+	// HealthyCount returns the number of routable Targets currently cached
+	// for appID. Drives the WakeGate's shouldWake predicate.
+	HealthyCount(appID string) int
+	// Admit asks schedd to admit ONE additional instance for appID, only
+	// when HealthyCount(appID) < maxConcurrency at the moment the call
+	// commits. Implementations MUST serialize the HealthyCount check and
+	// the cache update so a burst of concurrent Admit calls can never
+	// collectively exceed maxConcurrency (issue #168 fan-out invariant).
+	// On the admitted path wakeID is non-empty and the new Target is
+	// cached. On the at-capacity path wakeID is empty and err is nil.
+	// On real failure err is a non-nil *api.Problem.
+	Admit(ctx context.Context, appID string, maxConcurrency int) (wakeID string, atCapacity bool, err error)
 }
 
 // Handler is gatewayd's HTTP entrypoint: route → rate-limit → (wake-block if
@@ -61,7 +93,7 @@ type Handler struct {
 	// proxyByNode builds the reverse proxy for a compute_node.id (issue
 	// #98 / ADR-028). When non-nil, the handler dispatches every
 	// request through it instead of proxyFor — the string returned by
-	// Backend.Target is interpreted as a node id and dereferenced via
+	// Backend.Pick is interpreted as a node id and dereferenced via
 	// the per-node vmmd client cache. nil = legacy addr-based path
 	// (default for tests and the e2e harness; production wires
 	// ForwardingReverseProxy in cmd/gatewayd/main.go).
@@ -126,7 +158,7 @@ func (h *Handler) WithLimiter(l *Limiter) *Handler {
 // WithForwarding installs the per-node HTTP→gRPC forwarder built by
 // pkg/gateway/forwardproxy.go (issue #98 / ADR-028). When set, every
 // request dispatches through fn(nodeID) where nodeID is the value
-// Backend.Target returned. nil-safe: pass nil to revert to the legacy
+// Backend.Pick returned. nil-safe: pass nil to revert to the legacy
 // addr-based proxy path (used by tests and the e2e harness).
 func (h *Handler) WithForwarding(fn func(nodeID string) http.Handler) *Handler {
 	h.proxyByNode = fn
@@ -183,7 +215,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound,
 			api.CodeNotFound, "No such app",
 			fmt.Sprintf("host %q does not match the configured apps suffix", host)))
-		h.observe(r, rec.status, "", "", false, "")
+		h.observe(r, rec.status, "", "", false, Target{})
 		return
 	}
 
@@ -191,7 +223,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No such app", fmt.Sprintf("no app is routed to %q", host)))
-		h.observe(r, rec.status, "", "", false, "")
+		h.observe(r, rec.status, "", "", false, Target{})
 		return
 	}
 
@@ -203,49 +235,52 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if h.metrics != nil {
 			h.metrics.ObserveRateLimit(app.ID, string(app.Plan))
 		}
-		h.observe(r, rec.status, app.ID, string(app.Plan), false, "")
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
 
 	// Cap request body either direction (spec §4.1).
 	r.Body = http.MaxBytesReader(w, r.Body, api.MaxRequestBodyBytes)
 
-	// Hot path: a ready instance already exists.
-	addr, ready := h.backend.Target(app.ID)
-	cold := false
-	wakeStart := time.Now()
-	// firstByteRec is the per-request cell the wake-timing RoundTripper
-	// stamps at "first upstream response byte" (spec §6.3 — wake latency
-	// is measured request-received → first upstream byte, not full body).
-	// We install it on the request context BEFORE the proxy call so the
-	// httptrace.ClientTrace attached to the outbound request can find it.
+	// Per-app fan-out admission (issue #168). The WakeGate's
+	// shouldWake predicate runs HealthyCount against the plan's
+	// effective max_concurrency, so a burst of N requests admits up to
+	// N instances before short-circuiting.
+	limits, _ := api.LimitsFor(app.Plan)
+	//nolint:contextcheck // request ctx at handler boundary.
+	cold, wakeID, err := h.ensureCapacity(r.Context(), app.ID, limits.MaxConcurrency)
+	if err != nil {
+		writeWakeError(w, err)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+
+	// Pick one routable Target via atomic round-robin. After a
+	// successful ensure, HealthyCount ≥ 1, so this should succeed
+	// unless every cached instance was evicted between admit and pick
+	// (an instance_changed notification race). On that rare miss, fall
+	// through to the capacity problem — the WakeGate will retry on the
+	// next request.
+	target, ok := h.backend.Pick(app.ID)
+	if !ok {
+		writeWakeError(w, api.ErrAppConcurrencyReached(limits, 0))
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+
+	// Stamp the per-instance identity on the request BEFORE proxying so
+	// the per-node vmmd forwarder (issue #98 / ADR-028) can attribute
+	// the HTTP bytes to this exact instance. Overwrites any inbound
+	// x-faas-instance so an attacker can't steer the proxy to an
+	// arbitrary instance by setting the header (issue #168 trust model).
+	r.Header.Set("x-faas-instance", target.InstanceID)
+
+	// Per-request wake-timing recorder (spec §6.3) installed AFTER
+	// upstream stamping so the trace sees only the proxy hop, not the
+	// stamping overhead.
 	firstByteRec := &firstByteRecorder{}
 	//nolint:contextcheck // WithFirstByteRecorder wraps context.WithValue on r.Context(); lint can't trace through the function call.
 	r = r.WithContext(WithFirstByteRecorder(r.Context(), firstByteRec))
-	// wakeID is the per-wake-attempt correlation handle (gaps analysis
-	// 2026-07-23). Set on the response as x-faas-wake-id next to
-	// x-faas-wake below — operators can grep for the value to find the
-	// row in instances, the wake_boot_error event in the audit log, the
-	// schedd slog call, and the customer's own log line. Non-empty only
-	// on a fresh wake (cold boot or restore); the Phase-1 fast path
-	// (Target already had a ready address) leaves it empty, in which
-	// case the existing header stays unset.
-	var wakeID string
-	if !ready {
-		var werr error
-		wakeID, werr = h.wake(r.Context(), app.ID) //nolint:contextcheck // request ctx at handler boundary.
-		if werr != nil {
-			writeWakeError(w, werr)
-			h.observe(r, rec.status, app.ID, string(app.Plan), false, "")
-			return
-		}
-		if addr, ready = h.backend.Target(app.ID); !ready {
-			api.WriteProblem(w, api.ErrCapacity("woke but no instance became ready"))
-			h.observe(r, rec.status, app.ID, string(app.Plan), false, "")
-			return
-		}
-		cold = true
-	}
 
 	if cold {
 		// Cold-wake transparency (UX spec §6): let developers see the penalty.
@@ -257,17 +292,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// response, and never set on a Phase-1 fast-path response.
 		w.Header().Set("x-faas-wake-id", wakeID)
 	}
+
+	wakeStart := time.Now()
 	if h.proxyByNode != nil {
-		// Issue #98 / ADR-028: addr is a compute_node.id; the
-		// forwarder dials the per-node vmmd over the overlay and
+		// Issue #98 / ADR-028: Target.NodeID is the compute_node.id;
+		// the forwarder dials the per-node vmmd over the overlay and
 		// bridges the HTTP bytes through the instance netns via the
-		// ForwardHTTP RPC. addr stays in scope for the metrics
+		// ForwardHTTP RPC. target stays in scope for the metrics
 		// labels and observe() last-seen hook below.
-		h.proxyByNode(addr).ServeHTTP(w, r)
+		h.proxyByNode(target.NodeID).ServeHTTP(w, r)
 	} else {
-		h.proxyFor(addr).ServeHTTP(w, r)
+		// Legacy addr-based path. Target.NodeID is treated as a
+		// host:port by defaultProxy — preserved for tests and the
+		// e2e harness without a vmmd overlay.
+		h.proxyFor(target.NodeID).ServeHTTP(w, r)
 	}
-	h.observe(r, rec.status, app.ID, string(app.Plan), cold, addr)
+	h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
 	if cold && h.metrics != nil {
 		// Wake latency is "request-received to first upstream byte". The
 		// wake-timing RoundTripper stamps the inbound request's recorder at
@@ -279,7 +319,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		firstByteAt, ok := FirstByteFrom(r)
 		if !ok {
 			h.log.Warn("gateway: wake-timing first-byte stamp missing; observing full proxy duration",
-				"app", app.ID, "addr", addr)
+				"app", app.ID, "node", target.NodeID, "instance", target.InstanceID)
 			firstByteAt = time.Now()
 		}
 		h.metrics.ObserveColdWake(app.ID, firstByteAt.Sub(wakeStart))
@@ -289,8 +329,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // observe emits one metric increment + one structured log line per request.
 // Always called exactly once on the ServeHTTP exit path; missing it would
 // skew the §12 dashboard. On a 2xx response it also Touches the LastSeenSink
-// so the idle reaper (schedd) knows the instance was active (spec §4.1).
-func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold bool, addr string) {
+// keyed by InstanceID (issue #168 — per-instance attribution survives the
+// multi-instance fan-out where multiple instances share a single node).
+func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold bool, target Target) {
 	code := statusClass(status)
 	requestID := requestIDFrom(r)
 	if h.metrics != nil {
@@ -307,8 +348,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// Idle reaper hook (spec §4.1): 2xx → the instance is alive. 4xx/5xx are
 	// not evidence of activity (a misconfigured client can hammer a dead
 	// instance with 401s forever and we'd never park it).
-	if h.lastSeen != nil && status >= 200 && status < 300 && addr != "" {
-		h.lastSeen.Touch(addr, time.Now())
+	if h.lastSeen != nil && status >= 200 && status < 300 && target.InstanceID != "" {
+		h.lastSeen.Touch(target.InstanceID, time.Now())
 	}
 }
 
@@ -346,31 +387,107 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	return s.ResponseWriter.Write(b)
 }
 
-// wake holds the request while schedd/vmmd bring an instance up, coalescing
-// concurrent requests for the same app into one wake (spec §4.1). The
-// shouldWake predicate runs under the gate lock the moment a caller wins the
-// leader election, so if a peer's wake has just observed a ready instance we
-// don't fire a redundant restore.
+// ensureCapacity (issue #168) is the per-app fan-out admission primitive.
 //
-// Returns the wake_id minted by schedd (gaps analysis 2026-07-23) —
-// non-empty on a fresh cold boot / restore, empty when the existing
-// RUNNING instance was reused and no fresh wake_id was minted. The
-// handler surfaces this on the response as x-faas-wake-id so the
-// client can correlate logs with the platform's wake event.
-func (h *Handler) wake(ctx context.Context, appID string) (string, error) {
-	var wakeID string
-	err := h.gate.Wait(ctx, appID,
+// Three paths:
+//
+//  1. Cold start (HealthyCount == 0): go through the WakeGate so a
+//     burst of N concurrent cold requests to a fully-parked app
+//     coalesces to ONE cold boot per "generation". The leader runs
+//     ensure(); followers wait on its result, then EACH re-enters the
+//     cold-start loop and admits its own instance IF HealthyCount is
+//     still < max_concurrency. This is the per-generation fan-out: a
+//     burst of N requests against a parked app admits up to
+//     max_concurrency distinct instances, where 1 <= admitted <= N.
+//     The loop is bounded by max_concurrency so a single request
+//     cannot drive past the cap by itself (the cap is enforced per
+//     request, not per generation).
+//
+//  2. Fan-out (HealthyCount > 0, < max_concurrency): skip the gate and
+//     call Admit directly. Sequential requests after the cold-start
+//     burst go through this path; schedd's own ledger enforces the cap
+//     atomically.
+//
+//  3. Saturated (HealthyCount >= max_concurrency): no-op. Pick returns
+//     one of the cached targets.
+//
+// Returns (cold, wakeID, err):
+//   - cold=true on a fresh admit (one or more new instances reached RUNNING);
+//     cold=false when the request hit an existing cached target with no
+//     fresh admit fired.
+//   - wakeID is non-empty on a fresh admit, empty when no admit fired.
+//   - err is non-nil only on real admission failures (RAM headroom, chooser,
+//     store). The benign app_concurrency_reached outcome is never lifted to
+//     an error by Backend.Admit.
+func (h *Handler) ensureCapacity(ctx context.Context, appID string, maxConcurrency int) (cold bool, wakeID string, err error) {
+	// Loop bound: a single request can drive at most max_concurrency
+	// iterations (cold-start with follow-up fan-out). The cap is
+	// enforced atomically by Backend.Admit (HealthyCount + add as one
+	// serialized op), so this loop is bounded by observation, not by
+	// speculation about concurrency.
+	for attempt := 0; attempt < maxConcurrency; attempt++ {
+		healthy := h.backend.HealthyCount(appID)
+		if healthy == 0 {
+			c, w, e := h.coldStart(ctx, appID, maxConcurrency)
+			if e != nil {
+				return false, "", e
+			}
+			if c {
+				return true, w, nil
+			}
+			// Cold-start saw no need to admit (a peer's wake
+			// already populated the cache). Re-check HealthyCount
+			// and fall through to fan-out / saturation on the next
+			// iteration.
+			continue
+		}
+		if healthy >= maxConcurrency {
+			return false, "", nil
+		}
+		// Fan-out path: admit directly, no gate. Backend.Admit
+		// atomically checks HealthyCount < maxConcurrency under its
+		// own lock, so concurrent callers cannot collectively
+		// exceed the cap.
+		wakeID, atCapacity, e := h.backend.Admit(ctx, appID, maxConcurrency)
+		if e != nil {
+			return false, "", e
+		}
+		if atCapacity {
+			return false, "", nil
+		}
+		return true, wakeID, nil
+	}
+	return false, "", nil
+}
+
+// coldStart is path 1 of ensureCapacity: HealthyCount == 0, so we go
+// through the WakeGate's single-flight coalescing. shouldWake is held
+// under the gate lock and re-runs HealthyCount; if a peer's admit has
+// just landed, we skip the redundant cold boot.
+func (h *Handler) coldStart(ctx context.Context, appID string, maxConcurrency int) (bool, string, error) {
+	var admittedWakeID string
+	var cold bool
+	werr := h.gate.Wait(ctx, appID,
 		func() bool {
-			_, ready := h.backend.Target(appID)
-			return !ready
+			return h.backend.HealthyCount(appID) < maxConcurrency
 		},
 		func(ctx context.Context) error {
-			var werr error
-			wakeID, werr = h.backend.Wake(ctx, appID)
-			return werr
+			id, atCapacity, e := h.backend.Admit(ctx, appID, maxConcurrency)
+			if e != nil {
+				return e
+			}
+			if atCapacity {
+				return nil
+			}
+			admittedWakeID = id
+			cold = true
+			return nil
 		},
 	)
-	return wakeID, err
+	if werr != nil {
+		return false, "", werr
+	}
+	return cold, admittedWakeID, nil
 }
 
 func writeWakeError(w http.ResponseWriter, err error) {

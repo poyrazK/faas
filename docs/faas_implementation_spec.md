@@ -101,6 +101,7 @@ Each component: single Go binary, own systemd unit, structured logs (JSON, `slog
 - TLS: CertMagic. Wildcard cert for `*.apps.DOMAIN` via DNS-01 (Hetzner DNS API token). Custom domains (Pro+): on-demand HTTP-01 with an allowlist check against `custom_domains` table before issuance (prevents cert-mint abuse).
 - Routing: hostname → `app_id` via in-memory cache (LRU, 10k entries) backed by Postgres `LISTEN app_routes_changed`. Cache miss = one indexed PG lookup.
 - Wake-blocking: if app has no `RUNNING` instance, enqueue request (per-app queue, cap 512 requests / 30 s TTL, then `503 + Retry-After`), call `schedd.EnsureInstance(app_id)`, stream queued requests once readiness passes.
+- **Fan-out across `max_concurrency` (issue #168):** the routing cache is a per-app set of `Target{NodeID, InstanceID, WakeID}` (size ≤ plan's effective `max_concurrency`), picked via atomic round-robin so the hot path is allocation-free. `Backend.Admit(ctx, app_id, max_concurrency)` is the scale-out admission primitive; it atomically checks `HealthyCount < max_concurrency` before the gRPC round-trip so concurrent callers cannot collectively over-admit past the cap. At-capacity refusals surface as a typed `atCapacity=true` result (no gRPC status); the gateway treats them as a benign no-op when it already has ≥1 cached target. On every proxied request the handler stamps `x-faas-instance` with the picked `InstanceID`, overwriting any inbound header (trust model). Per-instance `last_request_at` is keyed by `instance_id` directly — the addr→instance resolver hop is gone.
 - Records `last_request_at[instance]` (in-memory, flushed to PG every 15 s) — this drives idle parking.
 - Rate limits (token bucket, per app): Free 5 rps burst 20; Hobby 20 rps burst 100; Pro 100 rps burst 500; Scale 500 rps burst 2000. Over-limit → `429`.
 - Request/response size caps: 25 MB body either direction. Timeouts: 60 s upstream response start, 300 s total.
@@ -125,6 +126,7 @@ Each component: single Go binary, own systemd unit, structured logs (JSON, `slog
 
 - **Admission (wake or build):** grant iff
   `resident_ram_mb + request_mb + 8 ≤ 0.85 × 56_000` **and** plan concurrent count not exceeded **and** vCPU slots (160) not exhausted. Builds request from the same guard but are also capped by the build semaphore (§9). Denial → gateway serves `503 capacity` (alert fires long before customers see this; see §12).
+- **`AdmitInstance` RPC (issue #168):** the gateway can ask schedd to admit ONE additional instance for an app, bypassing the Phase-1 fast-path shortcut. The cap is enforced atomically by the same ledger as `Wake`; the response carries an `at_capacity` typed result so the gateway can distinguish "we refused because you're already at cap" (no FAILED row written) from a real failure (RAM headroom, chooser, store). The gRPC surface is additive — see ADR-018 update.
 - **Idle reaper:** every 10 s, park instances with `now − last_request_at > idle_timeout(plan)`. Defaults: Free 30 s, Hobby 60 s, Pro 300 s, Scale 600 s (app-configurable down to 10 s, not above plan default × 2).
 - **Eviction (RAM pressure > 80 % of the 85 % target):** park instances LRU by last request; never evict an instance younger than 30 s; Scale plan evicted last.
 - **Free-tier disk reaper:** free apps with zero requests for 14 days → snapshot + rootfs moved to object storage, state `EVICTED_COLD` (redeploy = one click, re-flatten from stored image). This is the founding doc's ceiling-protection policy (§9.7 there).
@@ -319,11 +321,11 @@ Timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FA
 
 ### 6.2 Invariants (test these, they are the product)
 
-1. At most `max_concurrency(plan)` instances of one app in {WAKING, COLD_BOOTING, RUNNING}.
+1. At most `max_concurrency(plan)` instances of one app in {WAKING, COLD_BOOTING, RUNNING}. **Issue #168:** the gateway routes requests across the entire live set via atomic round-robin so a fan-out burst actually distributes load; `Backend.Admit` atomically refuses over-cap callers under the same `tgtMu` lock that mutates the cache.
 2. Σ (ram_mb + 8) over all instances in {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING} ≤ 47,600 MB.
 3. An app always has either a live snapshot or a rootfs it can cold boot — never neither.
 4. A parked app consumes zero resident RAM (verify: cgroup gone).
-5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream.
+5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream. **Issue #168:** the gateway picks per-instance `x-faas-instance` (overwriting inbound) so the per-node vmmd forwarder attributes every byte to the correct microVM even when multiple restored siblings share one compute_node.
 
 ### 6.3 Wake latency budget (p50 targets)
 

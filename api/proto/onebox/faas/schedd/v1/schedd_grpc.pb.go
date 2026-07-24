@@ -29,6 +29,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	Schedd_Wake_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/Wake"
+	Schedd_AdmitInstance_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/AdmitInstance"
 	Schedd_ReportActivity_FullMethodName = "/onebox.faas.schedd.v1.Schedd/ReportActivity"
 	Schedd_ParkInstance_FullMethodName   = "/onebox.faas.schedd.v1.Schedd/ParkInstance"
 )
@@ -49,6 +50,28 @@ type ScheddClient interface {
 	// returns a ResourceExhausted status carrying the RFC 7807 problem so the
 	// gateway can serve a 503 (spec §4.3).
 	Wake(ctx context.Context, in *WakeRequest, opts ...grpc.CallOption) (*WakeResponse, error)
+	// AdmitInstance attempts to admit ONE additional instance for the app
+	// (issue #168). Unlike Wake, this RPC skips the Phase-1 fast-path
+	// shortcut so a gateway can demand a new instance even when others
+	// are already RUNNING. The gateway uses it to fan-out across
+	// max_concurrency without hitting the WakeGate's single-flight
+	// coalescing.
+	//
+	// Three outcomes:
+	//
+	//   - admitted: a new RUNNING instance was created. instance_id,
+	//     node_id, method, wake_id are populated.
+	//   - at_capacity: the app is already at effective max_concurrency.
+	//     at_capacity=true; instance_id/node_id/wake_id are unset. The
+	//     gateway treats this as a benign no-op when it already has ≥1
+	//     cached target.
+	//   - failure: RAM headroom / chooser / store errors. ResourceExhausted
+	//     or Internal status carrying the RFC 7807 problem in `problem`.
+	//
+	// Stability: the wire is additive — adding at_capacity and a
+	// separate request/response message is the only contract change.
+	// Existing Wake callers are unaffected.
+	AdmitInstance(ctx context.Context, in *AdmitInstanceRequest, opts ...grpc.CallOption) (*AdmitInstanceResponse, error)
 	// ReportActivity records per-instance last_request_at touches the gateway
 	// batches (spec §4.1 flushes every 15 s). schedd persists them because
 	// schedd is the ONLY writer to the `instances` table (CLAUDE.md ownership);
@@ -74,6 +97,16 @@ func (c *scheddClient) Wake(ctx context.Context, in *WakeRequest, opts ...grpc.C
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WakeResponse)
 	err := c.cc.Invoke(ctx, Schedd_Wake_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) AdmitInstance(ctx context.Context, in *AdmitInstanceRequest, opts ...grpc.CallOption) (*AdmitInstanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdmitInstanceResponse)
+	err := c.cc.Invoke(ctx, Schedd_AdmitInstance_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +149,28 @@ type ScheddServer interface {
 	// returns a ResourceExhausted status carrying the RFC 7807 problem so the
 	// gateway can serve a 503 (spec §4.3).
 	Wake(context.Context, *WakeRequest) (*WakeResponse, error)
+	// AdmitInstance attempts to admit ONE additional instance for the app
+	// (issue #168). Unlike Wake, this RPC skips the Phase-1 fast-path
+	// shortcut so a gateway can demand a new instance even when others
+	// are already RUNNING. The gateway uses it to fan-out across
+	// max_concurrency without hitting the WakeGate's single-flight
+	// coalescing.
+	//
+	// Three outcomes:
+	//
+	//   - admitted: a new RUNNING instance was created. instance_id,
+	//     node_id, method, wake_id are populated.
+	//   - at_capacity: the app is already at effective max_concurrency.
+	//     at_capacity=true; instance_id/node_id/wake_id are unset. The
+	//     gateway treats this as a benign no-op when it already has ≥1
+	//     cached target.
+	//   - failure: RAM headroom / chooser / store errors. ResourceExhausted
+	//     or Internal status carrying the RFC 7807 problem in `problem`.
+	//
+	// Stability: the wire is additive — adding at_capacity and a
+	// separate request/response message is the only contract change.
+	// Existing Wake callers are unaffected.
+	AdmitInstance(context.Context, *AdmitInstanceRequest) (*AdmitInstanceResponse, error)
 	// ReportActivity records per-instance last_request_at touches the gateway
 	// batches (spec §4.1 flushes every 15 s). schedd persists them because
 	// schedd is the ONLY writer to the `instances` table (CLAUDE.md ownership);
@@ -139,6 +194,9 @@ type UnimplementedScheddServer struct{}
 
 func (UnimplementedScheddServer) Wake(context.Context, *WakeRequest) (*WakeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Wake not implemented")
+}
+func (UnimplementedScheddServer) AdmitInstance(context.Context, *AdmitInstanceRequest) (*AdmitInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AdmitInstance not implemented")
 }
 func (UnimplementedScheddServer) ReportActivity(context.Context, *ReportActivityRequest) (*ReportActivityResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportActivity not implemented")
@@ -181,6 +239,24 @@ func _Schedd_Wake_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ScheddServer).Wake(ctx, req.(*WakeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_AdmitInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdmitInstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).AdmitInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_AdmitInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).AdmitInstance(ctx, req.(*AdmitInstanceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -231,6 +307,10 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Wake",
 			Handler:    _Schedd_Wake_Handler,
+		},
+		{
+			MethodName: "AdmitInstance",
+			Handler:    _Schedd_AdmitInstance_Handler,
 		},
 		{
 			MethodName: "ReportActivity",

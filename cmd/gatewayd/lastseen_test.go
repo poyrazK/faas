@@ -10,17 +10,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// fakeResolver maps node id -> instance id for the sink under test.
-// Issue #98 / ADR-028: the dial key is now the compute_node.id the
-// handler forwarded to via the vmmd ForwardHTTP RPC, not the host:port
-// addr.
-type fakeResolver map[string]string
-
-func (f fakeResolver) InstanceIDForNodeID(nodeID string) (string, bool) {
-	id, ok := f[nodeID]
-	return id, ok
-}
-
 // fakeReporter captures the last batch handed to ReportActivity.
 type fakeReporter struct {
 	mu    sync.Mutex
@@ -40,16 +29,19 @@ func (r *fakeReporter) ReportActivity(_ context.Context, touches []state.Instanc
 	return len(touches), nil
 }
 
-func TestSchedFlushSink_ResolvesAndReports(t *testing.T) {
-	resolve := fakeResolver{"10.0.0.2:8080": "i-1", "10.0.0.3:8080": "i-2"}
+// TestSchedFlushSink_KeysByInstanceID (issue #168) — the sink's key is now
+// the instance id directly (the row PK schedd owns), so no resolver hop is
+// needed on the gateway side. Multiple instances can share a single node;
+// their touches are still kept distinct.
+func TestSchedFlushSink_KeysByInstanceID(t *testing.T) {
 	rep := &fakeReporter{}
-	s := newSchedFlushSink(resolve, rep, testLogger())
+	s := newSchedFlushSink(rep, testLogger())
 
 	t0 := time.UnixMilli(1_700_000_000_000)
-	s.Touch("10.0.0.2:8080", t0)
-	s.Touch("10.0.0.2:8080", t0.Add(2*time.Second)) // newer wins
-	s.Touch("10.0.0.3:8080", t0)
-	s.Touch("10.0.0.9:8080", t0) // unresolved → dropped
+	s.Touch("i-1", t0)
+	s.Touch("i-1", t0.Add(2*time.Second)) // newer wins
+	s.Touch("i-2", t0)
+	s.Touch("i-3", t0) // unknown to schedd — schedd drops it on its side
 
 	if err := s.Flush(context.Background()); err != nil {
 		t.Fatalf("Flush: %v", err)
@@ -63,8 +55,8 @@ func TestSchedFlushSink_ResolvesAndReports(t *testing.T) {
 	for _, tc := range rep.last {
 		byID[tc.InstanceID] = tc.LastRequest
 	}
-	if len(byID) != 2 {
-		t.Fatalf("touches = %+v, want 2 (i-1,i-2; i-3 unresolved dropped)", rep.last)
+	if len(byID) != 3 {
+		t.Fatalf("touches = %+v, want 3 (i-1, i-2, i-3)", rep.last)
 	}
 	if !byID["i-1"].Equal(t0.Add(2 * time.Second)) {
 		t.Errorf("i-1 time = %v, want newest %v", byID["i-1"], t0.Add(2*time.Second))
@@ -74,37 +66,39 @@ func TestSchedFlushSink_ResolvesAndReports(t *testing.T) {
 	}
 }
 
-func TestSchedFlushSink_EmptyAndAllUnresolvedSkipReport(t *testing.T) {
+// TestSchedFlushSink_EmptyBufferSkipsReport (issue #168) — no resolver hop
+// means the "unresolved" gate is gone; the sink only short-circuits when
+// its own buffer is empty.
+func TestSchedFlushSink_EmptyBufferSkipsReport(t *testing.T) {
 	rep := &fakeReporter{}
-	s := newSchedFlushSink(fakeResolver{}, rep, testLogger())
+	s := newSchedFlushSink(rep, testLogger())
 
 	// Empty buffer → no call.
 	if err := s.Flush(context.Background()); err != nil {
 		t.Fatalf("empty Flush: %v", err)
 	}
-	// Buffered but nothing resolves → still no call (schedd would reject anyway).
-	s.Touch("10.0.0.9:8080", time.Now())
+	s.Touch("i-9", time.Now())
 	if err := s.Flush(context.Background()); err != nil {
-		t.Fatalf("unresolved Flush: %v", err)
+		t.Fatalf("populated Flush: %v", err)
 	}
 	rep.mu.Lock()
 	defer rep.mu.Unlock()
-	if rep.calls != 0 {
-		t.Errorf("ReportActivity calls = %d, want 0", rep.calls)
+	if rep.calls != 1 {
+		t.Errorf("ReportActivity calls = %d, want 1 (one populated flush)", rep.calls)
 	}
 }
 
+// TestSchedFlushSink_ClearsBufferAndSurfacesError (issue #168) — flush
+// error surfaces to the caller; buffer is drained up front so a retry
+// doesn't double-count.
 func TestSchedFlushSink_ClearsBufferAndSurfacesError(t *testing.T) {
-	resolve := fakeResolver{"10.0.0.2:8080": "i-1"}
 	rep := &fakeReporter{err: errors.New("schedd down")}
-	s := newSchedFlushSink(resolve, rep, testLogger())
+	s := newSchedFlushSink(rep, testLogger())
 
-	s.Touch("10.0.0.2:8080", time.Now())
+	s.Touch("i-1", time.Now())
 	if err := s.Flush(context.Background()); err == nil {
 		t.Fatal("expected report error to surface")
 	}
-	// Buffer was drained up front, so a redelivery doesn't double-count: the
-	// next flush has nothing and makes no call.
 	if err := s.Flush(context.Background()); err != nil {
 		t.Fatalf("second Flush: %v", err)
 	}
@@ -116,14 +110,14 @@ func TestSchedFlushSink_ClearsBufferAndSurfacesError(t *testing.T) {
 }
 
 func TestSchedFlushSink_GetForget(t *testing.T) {
-	s := newSchedFlushSink(fakeResolver{}, &fakeReporter{}, testLogger())
+	s := newSchedFlushSink(&fakeReporter{}, testLogger())
 	now := time.Now()
-	s.Touch("a", now)
-	if got, ok := s.Get("a"); !ok || !got.Equal(now) {
+	s.Touch("i-1", now)
+	if got, ok := s.Get("i-1"); !ok || !got.Equal(now) {
 		t.Errorf("Get = %v,%v", got, ok)
 	}
-	s.Forget("a")
-	if _, ok := s.Get("a"); ok {
-		t.Error("addr survived Forget")
+	s.Forget("i-1")
+	if _, ok := s.Get("i-1"); ok {
+		t.Error("instance id survived Forget")
 	}
 }

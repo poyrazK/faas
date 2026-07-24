@@ -36,11 +36,16 @@ vmmd gRPC surface and the §11 auth model.
 **vmmd exposes an in-process HTTP frontend per instance via a new
 ForwardHTTP RPC.** The flow:
 
-1. gatewayd's hot path calls `Backend.Target(appID)`, which returns
-   a `compute_node.id` (the cached value populated by a successful
-   Wake). The string type is preserved for backwards compat with
-   pre-#98 tests; the SEMANTIC changed from `host_ip:8080` to
-   `compute_node.id`.
+1. gatewayd's hot path calls `Backend.Pick(appID)`, which returns one
+   `Target{NodeID, InstanceID, WakeID, AddedAt}` from the per-app
+   `targetSet` via atomic round-robin. The string type is preserved
+   for backwards compat with pre-#98 tests; the SEMANTIC changed from
+   `host_ip:8080` to `compute_node.id`. Pre-#168 the cache was a
+   `map[app_id]string` — one node id per app. Post-#168 the cache is a
+   per-app set of Targets (size ≤ `max_concurrency`), supporting fan-out
+   across the plan's effective concurrency cap. The picker uses an
+   atomic round-robin cursor so the hot path is allocation-free even
+   with multiple instances in the set.
 2. gatewayd dispatches through `proxyByNode(addr)` (a new
    `Handler` field installed by `WithForwarding(fn)`). The
    factory returns an `http.Handler` for the node.
@@ -117,6 +122,25 @@ inside vmmd, not socat.
   string field is now `node_id` (a UUID). PR #199 / pkg/scheddgrpc
   made the swap atomic, no shim. Replays of old clients fail at
   unmarshal time, which is the right signal.
+- **Issue #168 fan-out:** `Backend.Pick` now returns a `Target` per
+  pick (round-robin across the per-app set). The handler stamps
+  `x-faas-instance` on the request BEFORE handing it to the forwarder
+  so the bridge at vmmd can attribute inbound HTTP bytes to the
+  specific instance the picker chose. Inbound `x-faas-instance` is
+  overwritten — an attacker can't steer the proxy by setting the
+  header (issue #168 trust model). `Backend.Admit(ctx, appID,
+  maxConcurrency)` is the scale-out admission primitive; it
+  atomically checks `HealthyCount < maxConcurrency` before the gRPC
+  round-trip to schedd, so concurrent callers cannot collectively
+  over-admit past the cap. At-capacity refusals surface as
+  `atCapacity=true` (a typed result, no gRPC status).
+- **Per-instance `last_request_at` (issue #168):** the gateway's
+  `LastSeenSink.Touch(instanceID, t)` is keyed by instance id
+  directly, not by `node_id:port`. The handler no longer needs the
+  `nodeInstance` addr→instance resolver hop that was load-bearing in
+  M5; the flush sink is `schedFlushSink` and ships `Touch{InstanceID}`
+  directly to schedd. Per-instance attribution survives the
+  multi-instance fan-out where multiple instances share one node.
 - **Operational surface grows.** `compute_nodes` is operator-
   intent; the apid admin surface (ADR-029) gives operators CRUD
   on those rows. The synthetic `default-local` row stays
