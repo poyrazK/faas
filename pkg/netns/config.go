@@ -362,13 +362,13 @@ func (c Config) forwardChainPolicy() string {
 	return nftPolicyDrop
 }
 
-// forwardAllowlistRule (ADR-031) emits the per-app outbound IPv4
-// allowlist accept rule, or nil when EgressAllowlist is empty or
-// contains no v4 entries (so current behaviour — chain-policy accept
-// — stays the default for any vmmd that hasn't been wired, any app
-// that didn't PATCH the list, or any list that holds only v6
-// entries — the v6 half is emitted by forwardAllowlistRule6).
-// Shape:
+// forwardAllowlistRule (ADR-031 + ADR-032) emits the IPv4 half of
+// the per-app outbound IP allowlist accept rule, or nil when
+// EgressAllowlist is empty or contains no v4 entries (so current
+// behaviour — chain-policy accept — stays the default for any vmmd
+// that hasn't been wired, any app that didn't PATCH the list, or
+// any list that holds only v6 entries — the v6 half is emitted by
+// forwardAllowlistRule6). Shape:
 //
 //	nft add rule ip faas forward
 //	  iifname "tap0" ip daddr { CIDR1,CIDR2,… } accept

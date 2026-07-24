@@ -193,6 +193,28 @@ func TestUpdateAppEgressAllowlist_FreeGate(t *testing.T) {
 	assertProblem(t, rec, 403, api.CodePlanEgressAllowlistNotAllowed)
 }
 
+// TestUpdateAppEgressAllowlist_FreeGate_EmptySlice locks the
+// plan-tier gate for the empty-slice form: a Free plan PATCHing
+// `egress_allowlist: []` (an explicit "clear the allowlist") must
+// still hit the 403 path, NOT silently fall through and clear the
+// column. `validateUpdateApp` checks `req.EgressAllowlist != nil`
+// at handlers_ext.go:72 — a nil pointer is a no-op (column
+// unchanged), but a non-nil pointer with an empty slice is a
+// deliberate PATCH and must surface 403 the same as the populated
+// case. Without this pin, a future refactor that moves the
+// `EgressAllowlistAllowed()` check below the empty-slice branch
+// would let a Free user mutate the column to default-accept (a
+// small privilege-escalation surface — they couldn't SET a list
+// but could still CLEAR one).
+func TestUpdateAppEgressAllowlist_FreeGate_EmptySlice(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	mustSeedApp(t, e, "free-empty")
+	rec := e.do(t, "PATCH", "/v1/apps/free-empty", api.UpdateAppRequest{
+		EgressAllowlist: &[]string{},
+	}, nil)
+	assertProblem(t, rec, 403, api.CodePlanEgressAllowlistNotAllowed)
+}
+
 // TestUpdateAppEgressAllowlist_GatePrecedesPerEntryShape locks the
 // ordering: a Free plan sending a 64-entry list of deliberately
 // malformed CIDRs must surface 403 plan_egress_allowlist_not_allowed,
