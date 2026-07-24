@@ -886,26 +886,15 @@ paths:
         Same spec, YAML parsed and re-emitted as JSON. Preferred by
         SDK generators (`openapi-generator`, `oapi-codegen`).
       security: []
-  /v1/auth/google:
-    get:
-      tags: [auth]
-      operationId: renderGoogleAuthRedirect
-      summary: Initiate Google OAuth 2.0 flow.
-      security: []
       responses:
-        '302':
-          description: Redirects to Google consent screen.
-
-  /v1/auth/google/callback:
-    get:
-      tags: [auth]
-      operationId: handleGoogleOAuthCallback
-      summary: Google OAuth 2.0 callback endpoint.
-      security: []
-      responses:
-        '302':
-          description: Redirects to application dashboard upon successful login.
-        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '200':
+          description: The OpenAPI 3.1 document for this API, as JSON.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: 'public, max-age=300' }
+          content:
+            application/json:
+              schema: { type: object }
 
 components:
 

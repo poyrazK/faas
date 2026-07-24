@@ -21,6 +21,10 @@ const (
 	googleAuthStateCookie = "faas_google_state"
 	googleAuthPath        = "/v1/auth/google"
 	googleCallbackPath    = "/v1/auth/google/callback"
+	// schemeHTTPS is the value of the X-Forwarded-Proto header (and the
+	// tld of the redirect scheme) when the request was served over TLS.
+	// Lifted to a const so goconst doesn't flag the repeated literal.
+	schemeHTTPS = "https"
 )
 
 // GoogleUserInfo represents the payload returned by Google's OAuth2 userinfo endpoint.
@@ -56,7 +60,7 @@ func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request
 		Value:    stateToken,
 		Path:     googleCallbackPath,
 		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   300, // 5 minutes
 	})
@@ -65,8 +69,8 @@ func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request
 	if redirectURI == "" {
 		host := r.Host
 		scheme := "http"
-		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-			scheme = "https"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
+			scheme = schemeHTTPS
 		}
 		redirectURI = fmt.Sprintf("%s://%s%s", scheme, host, googleCallbackPath)
 	}
@@ -113,8 +117,8 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	if redirectURI == "" {
 		host := r.Host
 		scheme := "http"
-		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-			scheme = "https"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
+			scheme = schemeHTTPS
 		}
 		redirectURI = fmt.Sprintf("%s://%s%s", scheme, host, googleCallbackPath)
 	}
@@ -132,7 +136,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "token exchange failed"))
 		return
 	}
-	defer tokenResp.Body.Close()
+	defer func() { _ = tokenResp.Body.Close() }()
 
 	if tokenResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(tokenResp.Body)
@@ -164,7 +168,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "failed to fetch user info from Google"))
 		return
 	}
-	defer userInfoResp.Body.Close()
+	defer func() { _ = userInfoResp.Body.Close() }()
 
 	var googleUser GoogleUserInfo
 	if err := json.NewDecoder(userInfoResp.Body).Decode(&googleUser); err != nil {
@@ -196,7 +200,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(sessionCookieLifetime.Seconds()),
 	})
