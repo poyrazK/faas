@@ -106,15 +106,24 @@ type AppSpec struct {
 	// a single envelope, and writes /etc/faas/secrets.env on drive1.
 	// Empty list = no file written.
 	SealedEnv []*SealedSecret `protobuf:"bytes,6,rep,name=sealed_env,json=sealedEnv,proto3" json:"sealed_env,omitempty"`
-	// ADR-031 (tier-2 of the network roadmap): per-app outbound IP
-	// allowlist, v4 CIDRs. Empty list = no allowlist rule emitted
-	// (current behaviour preserved); non-empty → vmmd translates into
-	// netns.Config.EgressAllowlist, which emits a single
+	// ADR-031 + ADR-032 (tier-2 of the network roadmap): per-app
+	// outbound IP allowlist. Each entry is a CIDR string ("1.2.3.0/24"
+	// for v4, "2001:db8::/32" for v6). Empty list = no allowlist rule
+	// emitted (default behaviour preserved); non-empty → vmmd
+	// translates into netns.Config.EgressAllowlist, which emits an
 	//
 	//	`iifname "tap0" ip daddr { … } accept`
 	//
-	// rule in the per-netns forward chain after the lateral-movement
-	// deny. Plan-gated upstream (Free/Hobby always empty); see
+	// rule on the per-netns `ip faas forward` chain AND, for any v6
+	// entries, an
+	//
+	//	`iifname "tap0" ip6 daddr { … } accept`
+	//
+	// rule on the `ip6 faas forward` chain (per-family table split,
+	// ADR-023; the renderer partitions by prefix.Addr().Is4()). Both
+	// partitions land after the lateral-movement deny. Non-/0 contract
+	// held by the DB trigger `apps_egress_allowlist_cidr` (migration
+	// 00030). Plan-gated upstream (Free/Hobby always empty); see
 	// pkg/api/limits.go::EgressAllowlistAllowed.
 	EgressAllowlist []string `protobuf:"bytes,7,rep,name=egress_allowlist,json=egressAllowlist,proto3" json:"egress_allowlist,omitempty"`
 	unknownFields   protoimpl.UnknownFields
