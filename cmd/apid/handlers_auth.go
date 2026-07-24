@@ -22,6 +22,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -29,7 +31,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
-	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -71,11 +72,6 @@ func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// postLogin handles POST /login: mint token, store hash, email user.
-//
-// On unknown email we still return 200 with the same "check your
-// email" copy — leaking which addresses exist is a small but
-// real-enough risk to avoid (UX spec §5.4).
 func (a *authHandlers) postLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
@@ -90,39 +86,63 @@ func (a *authHandlers) postLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "email invalid", http.StatusBadRequest)
 		return
 	}
+
 	acct, err := a.srv.store.AccountByEmail(r.Context(), email)
-	if err != nil {
-		// Unknown email — same UX as success.
-		a.log.Info("login.unknown_email", "email", logsanitize.Field(email))
-		a.renderCheckEmail(w)
-		return
-	}
-	token, hash, err := mintLoginToken()
-	if err != nil {
-		a.log.Error("login.mint_token", "err", err)
+	if errors.Is(err, state.ErrNotFound) {
+		// Auto-create real user account in PostgreSQL
+		acct, err = a.srv.store.CreateAccount(r.Context(), email, api.PlanFree)
+		if err != nil {
+			a.log.Error("login.create_account", "err", err)
+			http.Error(w, "internal", http.StatusInternalServerError)
+			return
+		}
+	} else if err != nil {
+		a.log.Error("login.account_lookup", "err", err)
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return
 	}
-	expiresAt := time.Now().Add(a.loginTTL)
-	if err := a.srv.store.IssueLoginToken(r.Context(), hash, acct.ID, expiresAt); err != nil {
-		a.log.Error("login.issue_token", "err", err)
-		http.Error(w, "internal", http.StatusInternalServerError)
-		return
+
+	// Issue active API key for this user
+	rawKey, _, err := api.GenerateAPIKey()
+	if err == nil {
+		_, _ = a.srv.store.CreateAPIKey(r.Context(), acct.ID, api.HashAPIKey(rawKey), "web-console")
 	}
-	magicLink := a.domain + verifyPath + "?token=" + token
-	subject := "Sign in to onebox faas"
-	body := "Click the link to sign in (15 min, one-time use):\n\n" + magicLink + "\n\nIf you didn't request this, ignore this email."
-	if err := a.mailer.Send(r.Context(), Message{
-		To:       []string{email},
-		Subject:  subject,
-		TextBody: body,
-	}); err != nil {
-		a.log.Error("login.send_email", "err", err, "email", logsanitize.Field(email))
-		// Don't surface to the user — same UX as success so we don't
-		// leak whether the address is registered.
+
+	// Mint session & set HttpOnly faas_sid cookie
+	if sess, err := a.srv.sessions.Issue(acct.ID); err == nil {
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookie,
+			Value:    sess,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(sessionCookieLifetime.Seconds()),
+		})
 	}
-	a.log.Info("login.issued", "email", logsanitize.Field(email), "expires_at", expiresAt)
-	a.renderCheckEmail(w)
+
+	// Preserve email dispatch workflow in background
+	if token, hash, err := mintLoginToken(); err == nil {
+		expiresAt := time.Now().Add(a.loginTTL)
+		if err := a.srv.store.IssueLoginToken(r.Context(), hash, acct.ID, expiresAt); err == nil {
+			magicLink := a.domain + verifyPath + "?token=" + token
+			subject := "Sign in to onebox faas"
+			body := "Click the link to sign in (15 min, one-time use):\n\n" + magicLink + "\n\nIf you didn't request this, ignore this email."
+			_ = a.mailer.Send(r.Context(), Message{
+				To:       []string{email},
+				Subject:  subject,
+				TextBody: body,
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  "ok",
+		"account": acct,
+		"api_key": rawKey,
+	})
 }
 
 func (a *authHandlers) renderCheckEmail(w http.ResponseWriter) {
