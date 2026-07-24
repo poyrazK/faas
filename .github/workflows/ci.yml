@@ -216,12 +216,12 @@ jobs:
           echo "→ installed: $("$HOME/.local/vacuum/bin/vacuum" version)"
           echo "$HOME/.local/vacuum/bin" >> "$GITHUB_PATH"
       - name: spec-check
-        # GOBIN pins the Makefile's `$(VACUUM) := $(GOBIN)/vacuum` lookup
-        # to the directory we just installed into. Without this the
-        # `make spec-install` guard falls through to `go install` and
-        # re-pays the ~3 min build cost.
-        env:
-          GOBIN: "${{ env.HOME }}/.local/vacuum/bin"
+        # The install vacuum step above appends $HOME/.local/vacuum/bin
+        # to $GITHUB_PATH, so `make spec-install` finds the binary via
+        # `command -v vacuum` (PATH lookup) and short-circuits before
+        # the `go install` fallback. No GOBIN override needed: the
+        # Makefile's `$(GOBIN)` default (`go env GOPATH/bin`) is the
+        # correct install location for the local-dev `go install` path.
         run: make spec-check
 
       # M5+: pgx-backed Store. Tests that need Postgres are skipped when

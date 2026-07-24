@@ -230,15 +230,15 @@ VACUUM_RULES := api/vacuum.yaml
 
 .PHONY: spec-install
 spec-install: ## Install vacuum at the pinned version (idempotent)
-	# Each line is its own shell statement so this guard stays bash -e safe
-	# (a single `&&` chain trips on the first `command -v` returning 1 when
-	# vacuum isn't installed yet — CI runs `set -e`, the make recipe inherits
-	# it). CI installs vacuum in its own workflow step (ci.yml); this target
-	# stays here for local `make spec-lint` / `make spec-check` first-run use.
-	@if command -v $(VACUUM) >/dev/null 2>&1; then \
-	  $(VACUUM) version 2>&1 | grep -q $(VACUUM_VER) && { echo "vacuum $(VACUUM_VER) installed"; exit 0; }; \
+	# CI installs vacuum in its own workflow step (ci.yml) and appends its
+	# bin dir to $GITHUB_PATH, so `vacuum` resolves on PATH in the next
+	# step. Locally, `make spec-check` first-run will fall through to
+	# `go install` if vacuum isn't on PATH yet. Each line is its own shell
+	# statement so this guard stays bash -e safe.
+	@if command -v vacuum >/dev/null 2>&1; then \
+	  vacuum version 2>&1 | grep -q $(VACUUM_VER) && { echo "vacuum $(VACUUM_VER) installed"; exit 0; }; \
 	fi; \
-	GOFLAGS='' GOBIN=$(dir $(VACUUM)) go install github.com/daveshanley/vacuum@$(VACUUM_VER)
+	GOFLAGS='' GOBIN=$(or $(GOBIN),$(shell go env GOPATH)/bin) go install github.com/daveshanley/vacuum@$(VACUUM_VER)
 
 .PHONY: spec-sync
 spec-sync: ## Sync the //go:embed copy of the spec from api/openapi.yaml
@@ -247,7 +247,7 @@ spec-sync: ## Sync the //go:embed copy of the spec from api/openapi.yaml
 
 .PHONY: spec-lint
 spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
-	@$(VACUUM) lint -r $(VACUUM_RULES) $(SPEC)
+	@vacuum lint -r $(VACUUM_RULES) $(SPEC)
 
 .PHONY: spec-check
 spec-check: spec-install spec-lint spec-sync ## CI gate: vacuum lint + AST parity + git clean (runs in PR CI)
