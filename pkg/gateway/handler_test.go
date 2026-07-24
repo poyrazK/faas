@@ -20,16 +20,38 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
-// fakeBackend simulates routing + a parked app that wakes on demand.
+// fakeBackend simulates routing + a parked app that wakes on demand, plus
+// the per-app target set (issue #168) so tests can assert fan-out
+// behavior end-to-end without a real cluster.
 type fakeBackend struct {
 	mu        sync.Mutex
 	app       App
 	host      string
-	upstream  string // set once "woken"
-	running   bool
+	upstream  string // address the proxy connects to (the "node id" on the legacy path)
+	running   bool   // legacy: pre-#168 single-target mode
 	wakeErr   error
-	wakes     int32
-	wakeIDOut string // value Wake() returns; empty → "fake-wake-id"
+	admits    int32
+	wakeIDOut string // value Admit() returns; empty → "fake-wake-id"
+	// targets holds cached per-instance entries (issue #168). Populated
+	// by Admit when admits > 0; Pick returns them round-robin via a
+	// local counter. Tests seed via AddTarget to simulate a pre-warm
+	// fleet without going through Admit.
+	targets []Target
+	// nextIdx is the round-robin cursor for Pick (legacy-mode fallback
+	// when no targets have been seeded).
+	nextIdx atomic.Uint64
+	// admitErrOverrides forces the next N Admit calls to return the
+	// given error (used by the at-capacity test).
+	atCapForCalls int32
+}
+
+// AddTarget seeds a Target into the per-app cache without going through
+// Admit (issue #168). Used by tests that simulate a pre-warmed fleet or
+// simulate eviction.
+func (b *fakeBackend) AddTarget(t Target) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.targets = append(b.targets, t)
 }
 
 func (b *fakeBackend) Lookup(_ context.Context, host string) (App, bool) {
@@ -39,28 +61,68 @@ func (b *fakeBackend) Lookup(_ context.Context, host string) (App, bool) {
 	return App{}, false
 }
 
-func (b *fakeBackend) Target(string) (string, bool) {
+func (b *fakeBackend) Pick(_ string) (Target, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.running {
-		return b.upstream, true
+	if len(b.targets) > 0 {
+		idx := b.nextIdx.Add(1) - 1
+		return b.targets[int(idx%uint64(len(b.targets)))], true
 	}
-	return "", false
+	if b.running {
+		// Legacy single-target mode (preserves pre-#168 test
+		// expectations): Target.NodeID doubles as the addr. WakeID
+		// is empty so the handler doesn't stamp x-faas-wake-id.
+		return Target{NodeID: b.upstream, InstanceID: "i-fake", WakeID: ""}, true
+	}
+	return Target{}, false
 }
 
-func (b *fakeBackend) Wake(_ context.Context, _ string) (string, error) {
-	atomic.AddInt32(&b.wakes, 1)
-	if b.wakeErr != nil {
-		return "", b.wakeErr
-	}
+func (b *fakeBackend) HealthyCount(_ string) int {
 	b.mu.Lock()
-	b.running = true // now Target will succeed
-	b.mu.Unlock()
-	if b.wakeIDOut != "" {
-		return b.wakeIDOut, nil
+	defer b.mu.Unlock()
+	if len(b.targets) > 0 {
+		return len(b.targets)
 	}
-	return "fake-wake-id", nil
+	if b.running {
+		return 1
+	}
+	return 0
 }
+
+func (b *fakeBackend) Admit(_ context.Context, _ string, maxConcurrency int) (string, bool, error) {
+	// Issue #168 fan-out invariant: the HealthyCount + addTarget pair
+	// must be serialized. The fakeBackend takes b.mu for the whole
+	// call so concurrent Admit callers cannot collectively exceed
+	// maxConcurrency. Production PGBackend enforces the same invariant
+	// under tgtMu (see pkg/gateway/pgbackend.go).
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.targets) >= maxConcurrency {
+		// Already at the cap — the production semantics here are
+		// "schedule atomically refused", surfaced as atCapacity.
+		return "", true, nil
+	}
+	seq := atomic.AddInt32(&b.admits, 1)
+	if atomic.LoadInt32(&b.atCapForCalls) > 0 {
+		atomic.AddInt32(&b.atCapForCalls, -1)
+		return "", true, nil
+	}
+	if b.wakeErr != nil {
+		return "", false, b.wakeErr
+	}
+	b.running = true // legacy-mode flag — also seeded via setLegacyHot in tests
+	// Mint a fresh per-admit Target so the round-robin fans out
+	// across admits (issue #168).
+	t := Target{NodeID: b.upstream, InstanceID: "i-" + itoa(uint64(seq)), WakeID: "fake-wake-id"}
+	b.targets = append(b.targets, t)
+	if b.wakeIDOut != "" {
+		return b.wakeIDOut, false, nil
+	}
+	return "fake-wake-id", false, nil
+}
+
+// Admits returns the AdmitInstance() call count (test assertion hook).
+func (b *fakeBackend) Admits() *int32 { return &b.admits }
 
 func newTestHandler(t *testing.T) (*Handler, *fakeBackend, *httptest.Server) {
 	t.Helper()
@@ -77,6 +139,29 @@ func newTestHandler(t *testing.T) (*Handler, *fakeBackend, *httptest.Server) {
 	// Quiet logger: tests don't need slog output; the metrics assertion is the
 	// real check. Production uses slog.Default() via NewHandler.
 	return NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil))), b, upstream
+}
+
+// setLegacyHot is the test helper that flips the fake backend into the
+// legacy pre-#168 single-target mode: one Target cached, no admit fires.
+// Replaces the old `b.running = true` idiom.
+func (b *fakeBackend) setLegacyHot() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.running = true
+	if len(b.targets) == 0 {
+		b.targets = append(b.targets, Target{
+			NodeID:     b.upstream,
+			InstanceID: "i-fake",
+			WakeID:     "", // empty: no fresh admit fired
+		})
+	}
+}
+
+// unlimitedLimiter is duplicated here from handler_load_test.go so the
+// fan-out + cold-coalesce tests in handler_test.go can disable the
+// per-app rate limit without dragging in load-test infrastructure.
+func unlimitedLimiter() *Limiter {
+	return NewLimiter().WithNoop()
 }
 
 func TestColdWakeReturns200AndHeader(t *testing.T) {
@@ -103,14 +188,15 @@ func TestColdWakeReturns200AndHeader(t *testing.T) {
 	if got := rec.Header().Get("x-faas-wake-id"); got != "fake-wake-id" {
 		t.Errorf("x-faas-wake-id = %q, want fake-wake-id", got)
 	}
-	if atomic.LoadInt32(&b.wakes) != 1 {
-		t.Errorf("expected exactly 1 wake, got %d", b.wakes)
+	if atomic.LoadInt32(b.Admits()) != 1 {
+		t.Errorf("expected exactly 1 admit, got %d", atomic.LoadInt32(b.Admits()))
 	}
 }
 
 func TestHotPathDoesNotWakeOrTagCold(t *testing.T) {
 	h, b, _ := newTestHandler(t)
-	b.running = true // already hot
+	b.app.Plan = api.PlanFree // cap=1, so shouldWake returns false when target is seeded
+	b.setLegacyHot()          // pre-seed one Target, no admit fires
 
 	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 	rec := httptest.NewRecorder()
@@ -125,8 +211,8 @@ func TestHotPathDoesNotWakeOrTagCold(t *testing.T) {
 	if got := rec.Header().Get("x-faas-wake-id"); got != "" {
 		t.Errorf("warm request must not carry x-faas-wake-id, got %q", got)
 	}
-	if atomic.LoadInt32(&b.wakes) != 0 {
-		t.Error("hot path must not trigger a wake")
+	if atomic.LoadInt32(b.Admits()) != 0 {
+		t.Errorf("hot path must not trigger an admit, got %d", atomic.LoadInt32(b.Admits()))
 	}
 }
 
@@ -185,15 +271,15 @@ func TestAppsSuffixFilter(t *testing.T) {
 	}
 
 	// Doesn't match suffix → 404 (without ever calling b.Lookup).
-	b.wakes = 0
+	atomic.StoreInt32(b.Admits(), 0)
 	req = httptest.NewRequest("GET", "http://attacker.example/", nil)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("non-matching suffix = %d, want 404", rec.Code)
 	}
-	if atomic.LoadInt32(&b.wakes) != 0 {
-		t.Error("non-matching suffix must not wake the app")
+	if atomic.LoadInt32(b.Admits()) != 0 {
+		t.Error("non-matching suffix must not admit the app")
 	}
 }
 
@@ -224,7 +310,7 @@ func TestRequestIDRoundTrip(t *testing.T) {
 
 func TestRateLimitReturns429(t *testing.T) {
 	h, b, _ := newTestHandler(t)
-	b.running = true
+	b.setLegacyHot()          // hot path; the rate-limit test doesn't care about wake
 	b.app.Plan = api.PlanFree // burst 20
 
 	got429 := false
@@ -245,8 +331,14 @@ func TestRateLimitReturns429(t *testing.T) {
 	}
 }
 
+// TestConcurrentColdRequestsCoalesceToOneWake (issue #168) — at the
+// Free-plan cap of max_concurrency=1, 50 concurrent cold requests still
+// coalesce to exactly ONE admit (the WakeGate's single-flight guarantee).
+// Higher plans admit more; covered by TestCapThreeAdmitsThreeDistinctInstances.
 func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 	h, b, _ := newTestHandler(t)
+	b.app.Plan = api.PlanFree // cap = 1 → coalesces to one admit
+	h.WithLimiter(unlimitedLimiter())
 
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
@@ -262,8 +354,93 @@ func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if got := atomic.LoadInt32(&b.wakes); got != 1 {
-		t.Errorf("50 concurrent cold requests should trigger 1 wake, got %d", got)
+	if got := atomic.LoadInt32(b.Admits()); got != 1 {
+		t.Errorf("50 concurrent cold requests should trigger 1 admit, got %d", got)
+	}
+}
+
+// TestHandlerStampsXFaasInstanceHeader (issue #168) — every proxied
+// request carries x-faas-instance set to the picked Target's InstanceID.
+// Inbound x-faas-instance is overwritten so an attacker can't steer the
+// proxy to an arbitrary instance by setting the header on their request.
+func TestHandlerStampsXFaasInstanceHeader(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Echo back the inbound x-faas-instance so the test can assert.
+		_, _ = w.Write([]byte(r.Header.Get("x-faas-instance")))
+	}))
+	t.Cleanup(upstream.Close)
+
+	b := &fakeBackend{
+		app:      App{ID: "app-1", Plan: api.PlanFree},
+		host:     "stamp.apps.dom",
+		upstream: upstream.Listener.Addr().String(),
+	}
+	b.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "i-stamp-1", WakeID: "fake-wake-id"})
+	h := NewHandlerWith(b, NewMetrics(), nil)
+
+	req := httptest.NewRequest("GET", "http://stamp.apps.dom/", nil)
+	req.Header.Set("x-faas-instance", "attacker-supplied-id")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Body.String(); got != "i-stamp-1" {
+		t.Errorf("upstream saw x-faas-instance=%q, want i-stamp-1 (gateway must overwrite inbound)", got)
+	}
+}
+
+// TestFanOutAdmitsUpToCapThenReuses (issue #168) — for plans with
+// max_concurrency > 1, a burst of concurrent cold requests admits up
+// to max_concurrency distinct instances; subsequent requests reuse
+// the cached targets without firing new admits.
+//
+// Hobby plan caps at 2, so 4 concurrent cold requests admit 2 distinct
+// instances (the leader's admit + 1 follower's fan-out admit), and the
+// remaining 2 followers hit the cache. A sequential 5th request also
+// reuses the cache.
+func TestFanOutAdmitsUpToCapThenReuses(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.app.Plan = api.PlanHobby // max_concurrency = 2
+	h.WithLimiter(unlimitedLimiter())
+
+	const fans = 4
+	var wg sync.WaitGroup
+	for i := 0; i < fans; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Errorf("status = %d, want 200", rec.Code)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// The cache must hold exactly max_concurrency targets after the
+	// burst — the cap is enforced, not "approximately". Note: the
+	// gateway may call Admit MORE than max_concurrency times when
+	// multiple followers race past the HealthyCount<cap check; schedd's
+	// ledger rejects the excess via atCapacity=true and those rejects
+	// don't add a Target. The cache size is the load-bearing invariant.
+	if got := b.HealthyCount("app-1"); got != 2 {
+		t.Errorf("HealthyCount after %d concurrent cold requests on Hobby cap = %d, want 2", fans, got)
+	}
+
+	// 5th request hits the cache — no new admit.
+	preAdmit := atomic.LoadInt32(b.Admits())
+	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if post := atomic.LoadInt32(b.Admits()); post > preAdmit {
+		t.Errorf("5th request must reuse cached target, got %d new admits", post-preAdmit)
+	}
+	if got := b.HealthyCount("app-1"); got != 2 {
+		t.Errorf("HealthyCount after 5th request = %d, want 2", got)
 	}
 }
 

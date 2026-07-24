@@ -119,16 +119,19 @@ func TestAppsSuffix(t *testing.T) {
 	}
 }
 
-// fakeInvalidator records EvictTarget / FlushRoutes calls.
+// fakeInvalidator records EvictInstance / FlushRoutes calls.
 type fakeInvalidator struct {
 	mu       sync.Mutex
-	evicted  []string
+	evicted  map[string]string // instance_id -> app_id
 	flushCnt int
 }
 
-func (f *fakeInvalidator) EvictTarget(appID string) {
+func (f *fakeInvalidator) EvictInstance(appID, instanceID string) {
 	f.mu.Lock()
-	f.evicted = append(f.evicted, appID)
+	if f.evicted == nil {
+		f.evicted = map[string]string{}
+	}
+	f.evicted[instanceID] = appID
 	f.mu.Unlock()
 }
 func (f *fakeInvalidator) FlushRoutes() {
@@ -146,13 +149,18 @@ func TestHandleInvalidation(t *testing.T) {
 	handleInvalidation(f, db.Notification{Channel: db.NotifyDomainChanged, Payload: `{"domain":"x.io"}`}, log)
 	// Malformed instance payload → no evict, no panic.
 	handleInvalidation(f, db.Notification{Channel: db.NotifyInstanceChanged, Payload: `not json`}, log)
+	// instance payload missing instance_id → no evict.
+	handleInvalidation(f, db.Notification{Channel: db.NotifyInstanceChanged, Payload: `{"app_id":"app-7"}`}, log)
 	// Unknown channel → ignored.
 	handleInvalidation(f, db.Notification{Channel: "other", Payload: `{}`}, log)
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.evicted) != 1 || f.evicted[0] != "app-7" {
-		t.Errorf("evicted = %v, want [app-7]", f.evicted)
+	if got, want := f.evicted["i-1"], "app-7"; got != want {
+		t.Errorf("evicted[i-1] = %q, want %q", got, want)
+	}
+	if len(f.evicted) != 1 {
+		t.Errorf("evicted map = %v, want 1 entry", f.evicted)
 	}
 	if f.flushCnt != 2 {
 		t.Errorf("flush count = %d, want 2 (app + domain)", f.flushCnt)

@@ -17,26 +17,40 @@ import (
 
 // fixedBackend is a Backend that returns whatever the test sets. Used to
 // exercise the handler composition without depending on the unwired default.
+// Issue #168: shaped to the new Backend interface (Pick / Admit / HealthyCount).
 type fixedBackend struct {
 	app        gateway.App
 	appOK      bool
-	target     string
-	targetOK   bool
-	wakeErr    error
-	wakeCalled int
-	wakeName   string
+	picks      []gateway.Target
+	pickIdx    int
+	admitErr   error
+	admitCalls int
+	atCap      bool
 }
 
-func (f *fixedBackend) Lookup(_ context.Context, name string) (gateway.App, bool) {
+func (f *fixedBackend) Lookup(_ context.Context, _ string) (gateway.App, bool) {
 	return f.app, f.appOK
 }
-func (f *fixedBackend) Target(name string) (string, bool) {
-	return f.target, f.targetOK
+func (f *fixedBackend) Pick(_ string) (gateway.Target, bool) {
+	if len(f.picks) == 0 {
+		return gateway.Target{}, false
+	}
+	t := f.picks[f.pickIdx%len(f.picks)]
+	f.pickIdx++
+	return t, true
 }
-func (f *fixedBackend) Wake(ctx context.Context, name string) (string, error) {
-	f.wakeCalled++
-	f.wakeName = name
-	return "", f.wakeErr
+func (f *fixedBackend) HealthyCount(_ string) int {
+	return len(f.picks)
+}
+func (f *fixedBackend) Admit(_ context.Context, _ string, _ int) (string, bool, error) {
+	f.admitCalls++
+	if f.admitErr != nil {
+		return "", false, f.admitErr
+	}
+	if f.atCap {
+		return "", true, nil
+	}
+	return "wake-fixed", false, nil
 }
 
 func discardLogger() *slog.Logger {
@@ -48,11 +62,14 @@ func TestUnwiredBackendReturnsNotFound(t *testing.T) {
 	if _, ok := b.Lookup(context.Background(), "any"); ok {
 		t.Error("Lookup should report not-found")
 	}
-	if _, ok := b.Target("any"); ok {
-		t.Error("Target should report not-found")
+	if _, ok := b.Pick("any"); ok {
+		t.Error("Pick should report not-found")
 	}
-	if _, err := b.Wake(context.Background(), "any"); err != nil {
-		t.Errorf("Wake should be no-op: %v", err)
+	if got := b.HealthyCount("any"); got != 0 {
+		t.Errorf("HealthyCount = %d, want 0", got)
+	}
+	if _, _, err := b.Admit(context.Background(), "any", 1); err != nil {
+		t.Errorf("Admit should be no-op: %v", err)
 	}
 }
 
@@ -188,21 +205,23 @@ func TestFixedBackend_Delegates(t *testing.T) {
 	b := &fixedBackend{
 		app:      gateway.App{ID: "a1", Plan: api.PlanHobby},
 		appOK:    true,
-		target:   "10.0.0.2:8080",
-		targetOK: true,
-		wakeErr:  errors.New("upstream"),
+		picks:    []gateway.Target{{NodeID: "10.0.0.2:8080", InstanceID: "i-1"}},
+		admitErr: errors.New("upstream"),
 	}
 	if a, ok := b.Lookup(context.Background(), "name"); !ok || a.ID != "a1" {
 		t.Errorf("Lookup = %+v,%v", a, ok)
 	}
-	if tgt, ok := b.Target("a"); !ok || tgt != "10.0.0.2:8080" {
-		t.Errorf("Target = %q,%v", tgt, ok)
+	if tgt, ok := b.Pick("a"); !ok || tgt.NodeID != "10.0.0.2:8080" {
+		t.Errorf("Pick = %+v,%v", tgt, ok)
 	}
-	if _, err := b.Wake(context.Background(), "x"); err == nil || err.Error() != "upstream" {
-		t.Errorf("Wake err = %v", err)
+	if got := b.HealthyCount("a"); got != 1 {
+		t.Errorf("HealthyCount = %d, want 1", got)
 	}
-	if b.wakeCalled != 1 || b.wakeName != "x" {
-		t.Errorf("Wake call not recorded: %d %q", b.wakeCalled, b.wakeName)
+	if _, _, err := b.Admit(context.Background(), "x", 1); err == nil || err.Error() != "upstream" {
+		t.Errorf("Admit err = %v", err)
+	}
+	if b.admitCalls != 1 {
+		t.Errorf("Admit call not recorded: %d", b.admitCalls)
 	}
 }
 

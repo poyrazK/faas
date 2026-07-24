@@ -13,6 +13,7 @@ import (
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -25,13 +26,26 @@ import (
 )
 
 type fakeEngine struct {
-	wakeFn   func(ctx context.Context, appID string) (sched.WakeResult, error)
-	reportFn func(ctx context.Context, touches []state.InstanceTouch) (int, error)
-	parkFn   func(ctx context.Context, instanceID, reason string) error
+	wakeFn          func(ctx context.Context, appID string) (sched.WakeResult, error)
+	admitInstanceFn func(ctx context.Context, appID string) (sched.WakeResult, error)
+	reportFn        func(ctx context.Context, touches []state.InstanceTouch) (int, error)
+	parkFn          func(ctx context.Context, instanceID, reason string) error
 }
 
 func (f *fakeEngine) Wake(ctx context.Context, appID string) (sched.WakeResult, error) {
 	return f.wakeFn(ctx, appID)
+}
+
+func (f *fakeEngine) AdmitInstance(ctx context.Context, appID string) (sched.WakeResult, error) {
+	if f.admitInstanceFn != nil {
+		return f.admitInstanceFn(ctx, appID)
+	}
+	// Default: behave like Wake so existing tests that don't set
+	// admitInstanceFn continue to compile and pass unchanged.
+	if f.wakeFn != nil {
+		return f.wakeFn(ctx, appID)
+	}
+	return sched.WakeResult{}, nil
 }
 
 func (f *fakeEngine) ReportActivity(ctx context.Context, touches []state.InstanceTouch) (int, error) {
@@ -163,5 +177,94 @@ func TestWake_PropagatesWakeID(t *testing.T) {
 	}
 	if got := resp.GetWakeId(); got != wantWakeID {
 		t.Errorf("wake_id = %q, want %q", got, wantWakeID)
+	}
+}
+
+// TestAdmitInstance_AdmitsNewInstance (issue #168) — the happy path:
+// the engine returns a WakeResult with identity fields populated and
+// AtCapacity=false. The wire must reflect exactly that.
+func TestAdmitInstance_AdmitsNewInstance(t *testing.T) {
+	const wantWakeID = "0193f7c0-aaaa-7abc-9def-0123456789ab"
+	cli := newServer(t, &fakeEngine{
+		admitInstanceFn: func(context.Context, string) (sched.WakeResult, error) {
+			return sched.WakeResult{
+				InstanceID: "i-1",
+				NodeID:     "node-test-1",
+				Method:     vmmdpb.WakeMethod_WAKE_COLD_BOOT,
+				WakeID:     wantWakeID,
+			}, nil
+		},
+	})
+	resp, err := cli.AdmitInstance(context.Background(), &scheddpb.AdmitInstanceRequest{AppId: "app-1"})
+	if err != nil {
+		t.Fatalf("AdmitInstance: %v", err)
+	}
+	if got := resp.GetInstanceId(); got != "i-1" {
+		t.Errorf("instance_id = %q, want i-1", got)
+	}
+	if got := resp.GetNodeId(); got != "node-test-1" {
+		t.Errorf("node_id = %q, want node-test-1", got)
+	}
+	if resp.GetMethod() != scheddpb.WakeMethod_WAKE_COLD_BOOT {
+		t.Errorf("method = %v, want WAKE_COLD_BOOT", resp.GetMethod())
+	}
+	if got := resp.GetWakeId(); got != wantWakeID {
+		t.Errorf("wake_id = %q, want %q", got, wantWakeID)
+	}
+	if resp.GetAtCapacity() {
+		t.Errorf("at_capacity = true on admit path; want false")
+	}
+}
+
+// TestAdmitInstance_AtCapacityIsTypedResult (issue #168) — the benign
+// "already at max_concurrency" outcome must surface as at_capacity=true,
+// identity fields empty, no gRPC error. The gateway treats this as a
+// no-op when it already has ≥1 cached target.
+func TestAdmitInstance_AtCapacityIsTypedResult(t *testing.T) {
+	cli := newServer(t, &fakeEngine{
+		admitInstanceFn: func(context.Context, string) (sched.WakeResult, error) {
+			return sched.WakeResult{AtCapacity: true}, nil
+		},
+	})
+	resp, err := cli.AdmitInstance(context.Background(), &scheddpb.AdmitInstanceRequest{AppId: "app-1"})
+	if err != nil {
+		t.Fatalf("AdmitInstance: %v (at_capacity must NOT be lifted to an error)", err)
+	}
+	if !resp.GetAtCapacity() {
+		t.Errorf("at_capacity = false; want true")
+	}
+	if got := resp.GetInstanceId(); got != "" {
+		t.Errorf("instance_id = %q on at_capacity path; want empty", got)
+	}
+	if got := resp.GetNodeId(); got != "" {
+		t.Errorf("node_id = %q on at_capacity path; want empty", got)
+	}
+	if got := resp.GetWakeId(); got != "" {
+		t.Errorf("wake_id = %q on at_capacity path; want empty", got)
+	}
+}
+
+// TestAdmitInstance_RealFailureSurfacesProblem (issue #168) — only
+// genuine admission failures (RAM headroom, store error) travel as
+// gRPC errors with the RFC 7807 problem. At-capacity must not.
+func TestAdmitInstance_RealFailureSurfacesProblem(t *testing.T) {
+	cli := newServer(t, &fakeEngine{
+		admitInstanceFn: func(context.Context, string) (sched.WakeResult, error) {
+			return sched.WakeResult{}, api.ErrCapacity("RAM headroom exhausted")
+		},
+	})
+	_, err := cli.AdmitInstance(context.Background(), &scheddpb.AdmitInstanceRequest{AppId: "app-1"})
+	if err == nil {
+		t.Fatalf("AdmitInstance: want error on capacity; got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("expected status-shaped error, got %T", err)
+	}
+	if st.Code() != codes.ResourceExhausted {
+		t.Errorf("code = %v; want ResourceExhausted", st.Code())
+	}
+	if p, ok := grpcerr.FromStatus(err); !ok || p == nil || p.Code != api.CodeCapacity {
+		t.Errorf("problem = %v; want CodeCapacity", p)
 	}
 }

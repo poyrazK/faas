@@ -138,6 +138,110 @@ func TestProperty_EngineWake_RespectsMaxConcurrency(t *testing.T) {
 	}
 }
 
+// TestProperty_EngineAdmitInstance_RespectsMaxConcurrency (issue #168).
+// AdmitInstance is the schedule scale-out primitive: it bypasses Wake's
+// Phase-1 fast-path so each call either admits a new instance or
+// returns WakeResult{AtCapacity: true} when the app is already at
+// effective max_concurrency. The gateway squeezes this until it
+// reaches the cap, then treats the no-op as benign when it already
+// has ≥1 cached target.
+//
+// Properties the test asserts (parallel to the Wake variant):
+//
+//   - exactly maxConc AdmitInstance calls return WakeResult with
+//     AtCapacity=false and a non-empty InstanceID (the cap is
+//     admitted, not "any positive <6")
+//   - the remaining goroutines-maxConc calls return WakeResult with
+//     AtCapacity=true (the typed "no more slots" result);
+//     errors.As(err, &*api.Problem{}) must be false — these are
+//     not errors, the ledger refusal is lifted into a typed result
+//   - state.ListInstancesForApp returns exactly maxConc rows, all
+//     RUNNING (no FAILED rows — the typed capacity branch deletes
+//     the unattached row, it never writes FAILED)
+//   - the ledger.Concurrency(appID) returns exactly maxConc
+//
+// fakeVMM.sleepFor=10ms holds the per-app lock long enough that the
+// contention window is real (same as the Wake variant).
+func TestProperty_EngineAdmitInstance_RespectsMaxConcurrency(t *testing.T) {
+	store := state.NewMemStore()
+	const maxConc = 3
+	_, app, _ := seedApp(t, store, api.PlanPro, 128, maxConc)
+	vmm := &fakeVMM{sleepFor: 10 * time.Millisecond}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	const goroutines = 6
+	results := make(chan struct {
+		res WakeResult
+		err error
+	}, goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			res, err := e.AdmitInstance(context.Background(), app.ID)
+			results <- struct {
+				res WakeResult
+				err error
+			}{res, err}
+		}()
+	}
+
+	var admitted, atCap int
+	seenInstances := make(map[string]bool)
+	for i := 0; i < goroutines; i++ {
+		r := <-results
+		if r.err != nil {
+			t.Errorf("AdmitInstance error = %v; want nil (typed capacity is NOT an error)", r.err)
+			continue
+		}
+		if r.res.AtCapacity {
+			atCap++
+			continue
+		}
+		if r.res.InstanceID == "" {
+			t.Errorf("admitted result with empty InstanceID")
+			continue
+		}
+		if seenInstances[r.res.InstanceID] {
+			t.Errorf("duplicate instance id across admits: %q", r.res.InstanceID)
+		}
+		seenInstances[r.res.InstanceID] = true
+		admitted++
+	}
+
+	if admitted != maxConc {
+		t.Errorf("admitted = %d, want %d (cap)", admitted, maxConc)
+	}
+	if atCap != goroutines-maxConc {
+		t.Errorf("atCap = %d, want %d", atCap, goroutines-maxConc)
+	}
+
+	rows, err := store.ListInstancesForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ListInstancesForApp: %v", err)
+	}
+	if len(rows) != maxConc {
+		t.Errorf("len(rows) = %d, want %d (typed capacity deletes unattached rows)", len(rows), maxConc)
+	}
+	var running, failed int
+	for _, ins := range rows {
+		switch ins.State {
+		case string(state.StateRunning):
+			running++
+		case string(state.StateFailed):
+			failed++
+		}
+	}
+	if running != maxConc {
+		t.Errorf("running = %d, want %d", running, maxConc)
+	}
+	if failed != 0 {
+		t.Errorf("failed = %d, want 0 (typed capacity must not write FAILED rows)", failed)
+	}
+
+	if got := e.Ledger().Concurrency(app.ID); got != maxConc {
+		t.Errorf("ledger.Concurrency(%s) = %d, want %d", app.ID, got, maxConc)
+	}
+}
+
 // TestProperty_EngineWake_DropsLockAroundBootRPC — pins the Phase-3
 // lock-drop documented at engine.go:172-203 (PR #73 commit 2, M7
 // finding #1). During a long cold-boot for app A, a Wake for a

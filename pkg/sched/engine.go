@@ -188,6 +188,14 @@ type WakeResult struct {
 	// header unset on the fast path, which lost the correlation
 	// handle for warm requests).
 	WakeID string
+	// AtCapacity is set true by AdmitInstance (issue #168) when the
+	// app is already at effective max_concurrency and no new instance
+	// row was created. The gateway treats this as a benign no-op when
+	// it already has ≥1 cached target; the Wire RPC carries the same
+	// signal as a typed at_capacity boolean so the gateway never
+	// inspects error codes. Always false on Wake (the existing fast
+	// path is the only short-circuit there).
+	AtCapacity bool
 }
 
 // Wake ensures a running instance for appID and returns its address (spec §4.3
@@ -222,6 +230,16 @@ type WakeResult struct {
 // guest_uid) and a Park triggered by the reaper reads the row under
 // its own appMu; without re-acquiring, the reaper could see a
 // partially-written row and act on it.
+// Wake ensures a running instance for appID and returns its address (spec §4.3
+// wake path). Idempotent: an app that already has a RUNNING instance returns it
+// without a new boot — this is what lets the gateway's single-flight WakeGate
+// hand every coalesced waiter an address. Admission denial returns a *api.Problem
+// (capacity / plan concurrency) the gateway maps straight to 503/409.
+//
+// Phase 1 is the fast-path shortcut under appMu; missing means the
+// shared admitAndDispatch runs Phase 2-4. AdmitInstance (issue #168)
+// skips Phase 1 explicitly so a gateway can demand a new instance
+// even when others are already RUNNING.
 func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
@@ -238,8 +256,56 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: running lookup: %w", err)
 	}
+	release()
+	// Wake preserves the legacy contract: a ledger refusal surfaces
+	// as *api.Problem{Code: CodePlanLimitConcur}. The ledger's
+	// capacity refusal happens INSIDE admitAndDispatch; we forward
+	// rather than lift into the typed AtCapacity result.
+	return e.admitAndDispatch(ctx, appID, false)
+}
 
-	// ── Phase 2: admit window, still under appMu ──────────────────
+// AdmitInstance attempts to admit one additional instance for appID,
+// bypassing the Phase 1 "return newest RUNNING" shortcut. Returns
+// WakeResult{AtCapacity: true} when the app is already at effective
+// max_concurrency (issue #168); the gateway treats this as a benign
+// no-op when it already has at least one cached target. Other
+// admission failures (RAM headroom, chooser error) keep the existing
+// FAILED-row shape and surface as *api.Problem.
+//
+// Phase 2-4 are shared with Wake via admitAndDispatch; the only
+// behavioural difference is the missing Phase 1 fast-path so a
+// second/third/... capacity slot can be opened on demand, plus the
+// liftCapacityToResult=true flag that turns a CodePlanLimitConcur
+// ledger refusal into the typed AtCapacity result.
+func (e *Engine) AdmitInstance(ctx context.Context, appID string) (WakeResult, error) {
+	return e.admitAndDispatch(ctx, appID, true)
+}
+
+// admitAndDispatch is the shared Phase 2–4 body used by both Wake and
+// AdmitInstance. It takes the per-app lock once for Phase 2, drops it
+// across the slow vmmd RPC (Phase 3), and re-acquires for the
+// post-boot commit (Phase 4). Callers must NOT hold appMu; the helper
+// manages the lock itself.
+//
+// Distinct from Wake's Phase 1: AdmitInstance skips the "return newest
+// RUNNING row" shortcut so each call either admits a new instance or
+// returns AtCapacity=true. The Phase 1 shortcut is preserved on Wake
+// by the wrapper above.
+//
+// liftCapacityToResult controls the admission-failure branch:
+//
+//   - true (AdmitInstance): a CodePlanLimitConcur ledger refusal
+//     becomes WakeResult{AtCapacity: true}, nil. The unattached row
+//     is deleted; no FAILED row is written. The gateway treats this
+//     as a no-op when it already has ≥1 cached target.
+//
+//   - false (Wake): the same CodePlanLimitConcur refusal surfaces
+//     as *api.Problem so the existing wake contract is preserved
+//     bit-for-bit. The row falls back to the legacy "transition to
+//     FAILED, return problem" path.
+func (e *Engine) admitAndDispatch(ctx context.Context, appID string, liftCapacityToResult bool) (WakeResult, error) {
+	// ── Phase 2: admit window, under appMu ──────────────────
+	release := e.lockApp(appID)
 	app, acct, limits, dep, err := e.resolveApp(ctx, appID)
 	if err != nil {
 		release()
@@ -313,11 +379,39 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
 		NodeID: placement.NodeID,
 	}); err != nil {
-		// Admit failed (capacity / concurrency). Lock the row to
-		// FAILED before releasing: a concurrent reader must see a
-		// coherent final state, not an unattached reservation. Use
-		// transitionWithKind so the audit log records this as a
-		// wake_boot_error rather than a generic state_transition.
+		// Admit failed (capacity / concurrency). The two rejection
+		// modes differ in how loudly the engine surfaces them:
+		//
+		//   - CodePlanLimitConcur (typed capacity): the app is already
+		//     at effective max_concurrency. This is the benign
+		//     "app_concurrency_reached" outcome AdmitInstance is
+		//     designed to ask for; we delete the row and return
+		//     AtCapacity=true so the gateway treats it as a no-op
+		//     when it already has ≥1 cached target. Issue #168.
+		//
+		//   - any other *api.Problem (RAM headroom → CodeCapacity, etc):
+		//     a real platform failure. Lock the row to FAILED so a
+		//     concurrent reader sees a coherent final state, not an
+		//     unattached reservation; transitionWithKind records it
+		//     as a wake_boot_error rather than a generic state_transition.
+		//
+		// Wake's existing behaviour is preserved exactly: a Wake that
+		// hits CodePlanLimitConcur still returns the *api.Problem
+		// (the FastPath's healthy count check should make this
+		// unreachable on the Wake path, but the contract is unchanged).
+		var prob *api.Problem
+		if liftCapacityToResult && errors.As(err, &prob) && prob.Code == api.CodePlanLimitConcur {
+			// AdmitInstance asks for one more slot; the ledger says
+			// we're already at the cap. Roll the row back without
+			// writing FAILED (the row never had a reservation
+			// attached — Admit's failure branch never inserted one).
+			if delErr := e.store.DeleteInstance(ctx, ins.ID); delErr != nil {
+				e.log.Warn("admit: delete unattached row after concurrency cap",
+					"app", appID, "instance", ins.ID, "err", delErr)
+			}
+			release()
+			return WakeResult{AtCapacity: true}, nil
+		}
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "admit_denied")
 		release()
 		return WakeResult{}, err // *api.Problem

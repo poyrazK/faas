@@ -6,14 +6,17 @@ import (
 	"testing"
 )
 
-func TestFakeSchedulerReturnsAddress(t *testing.T) {
-	s := NewFakeScheduler("1.2.3.4:8080").WithInstanceID("i-7").WithWakeID("w-9")
-	instanceID, addr, wakeID, err := s.Wake(context.Background(), "app-1")
+func TestFakeSchedulerAdmitInstance(t *testing.T) {
+	s := NewFakeScheduler("node-fake-1").WithInstanceID("i-7").WithWakeID("w-9")
+	instanceID, nodeID, wakeID, atCap, err := s.AdmitInstance(context.Background(), "app-1")
 	if err != nil {
-		t.Fatalf("Wake err = %v", err)
+		t.Fatalf("AdmitInstance err = %v", err)
 	}
-	if addr != "1.2.3.4:8080" {
-		t.Errorf("addr = %q, want 1.2.3.4:8080", addr)
+	if atCap {
+		t.Errorf("atCapacity = true; want false on admit path")
+	}
+	if nodeID != "node-fake-1" {
+		t.Errorf("nodeID = %q, want node-fake-1", nodeID)
 	}
 	if instanceID != "i-7" {
 		t.Errorf("instanceID = %q, want i-7", instanceID)
@@ -24,22 +27,37 @@ func TestFakeSchedulerReturnsAddress(t *testing.T) {
 	if got := s.Calls(); got != 1 {
 		t.Errorf("Calls = %d, want 1", got)
 	}
-	if got := s.WakesFor("app-1"); got != 1 {
-		t.Errorf("WakesFor = %d, want 1", got)
+	if got := s.AdmitsFor("app-1"); got != 1 {
+		t.Errorf("AdmitsFor = %d, want 1", got)
+	}
+}
+
+func TestFakeSchedulerMintsFreshInstanceID(t *testing.T) {
+	s := NewFakeScheduler("node-fake-1")
+	ids := map[string]bool{}
+	for i := 0; i < 3; i++ {
+		id, _, _, _, err := s.AdmitInstance(context.Background(), "app-1")
+		if err != nil {
+			t.Fatalf("AdmitInstance: %v", err)
+		}
+		if ids[id] {
+			t.Errorf("duplicate instance id %q on call #%d", id, i)
+		}
+		ids[id] = true
 	}
 }
 
 func TestFakeSchedulerWithErr(t *testing.T) {
 	want := errors.New("boom")
-	s := NewFakeScheduler("addr").WithErr(want)
-	_, _, _, err := s.Wake(context.Background(), "app-1")
+	s := NewFakeScheduler("node-fake-1").WithErr(want)
+	_, _, _, _, err := s.AdmitInstance(context.Background(), "app-1")
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
 	}
 }
 
 func TestNoopSchedulerReturnsUnconfigured(t *testing.T) {
-	_, _, _, err := NoopScheduler{}.Wake(context.Background(), "app-1")
+	_, _, _, _, err := NoopScheduler{}.AdmitInstance(context.Background(), "app-1")
 	if !errors.Is(err, ErrSchedulerUnconfigured) {
 		t.Errorf("err = %v, want ErrSchedulerUnconfigured", err)
 	}

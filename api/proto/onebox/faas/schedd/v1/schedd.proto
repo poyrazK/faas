@@ -30,6 +30,29 @@ service Schedd {
   // gateway can serve a 503 (spec §4.3).
   rpc Wake(WakeRequest) returns (WakeResponse);
 
+  // AdmitInstance attempts to admit ONE additional instance for the app
+  // (issue #168). Unlike Wake, this RPC skips the Phase-1 fast-path
+  // shortcut so a gateway can demand a new instance even when others
+  // are already RUNNING. The gateway uses it to fan-out across
+  // max_concurrency without hitting the WakeGate's single-flight
+  // coalescing.
+  //
+  // Three outcomes:
+  //
+  //   - admitted: a new RUNNING instance was created. instance_id,
+  //     node_id, method, wake_id are populated.
+  //   - at_capacity: the app is already at effective max_concurrency.
+  //     at_capacity=true; instance_id/node_id/wake_id are unset. The
+  //     gateway treats this as a benign no-op when it already has ≥1
+  //     cached target.
+  //   - failure: RAM headroom / chooser / store errors. ResourceExhausted
+  //     or Internal status carrying the RFC 7807 problem in `problem`.
+  //
+  // Stability: the wire is additive — adding at_capacity and a
+  // separate request/response message is the only contract change.
+  // Existing Wake callers are unaffected.
+  rpc AdmitInstance(AdmitInstanceRequest) returns (AdmitInstanceResponse);
+
   // ReportActivity records per-instance last_request_at touches the gateway
   // batches (spec §4.1 flushes every 15 s). schedd persists them because
   // schedd is the ONLY writer to the `instances` table (CLAUDE.md ownership);
@@ -89,6 +112,38 @@ message WakeResponse {
   // minted by an earlier wake — gateway can resolve it via
   // PGBackend.InstanceIDForNodeID if needed.
   string wake_id     = 5;
+}
+
+// AdmitInstanceRequest mirrors WakeRequest for the schedule scale-out
+// RPC (issue #168). Single field today; kept as a separate message so
+// future per-app target hints (placement preference, eager-warm) can
+// land on the request without breaking Wake's contract.
+message AdmitInstanceRequest {
+  string app_id = 1;
+}
+
+// AdmitInstanceResponse is the typed result of Engine.AdmitInstance.
+// On the admitted path it mirrors WakeResponse minus the `problem`
+// field (no failure path here — admission refusal is signalled via
+// at_capacity=true in the happy case, or a gRPC status carrying the
+// RFC 7807 problem on real errors). On the at-capacity path
+// instance_id / node_id / wake_id are unset.
+message AdmitInstanceResponse {
+  string instance_id = 1;
+  string node_id     = 2;
+  WakeMethod method  = 3;
+  string wake_id     = 4;
+  // at_capacity is true when the app was already at effective
+  // max_concurrency and no new instance was started. The gateway
+  // treats this as a benign no-op when it already has ≥1 cached
+  // target. Always false on the admitted path.
+  bool at_capacity   = 5;
+  // problem carries the RFC 7807 fields on real failure (RAM
+  // headroom, store error, etc). The status code itself is
+  // google.rpc.Status via google.golang.org/grpc/status; see
+  // pkg/grpcerr. This field mirrors WakeResponse and stays unset on
+  // the admitted / at_capacity paths.
+  google.protobuf.Struct problem = 6;
 }
 
 // Touch is one instance's most-recent request time.
