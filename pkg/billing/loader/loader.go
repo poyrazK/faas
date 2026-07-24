@@ -66,7 +66,11 @@ import (
 //     the literal "paddle".
 //
 //   - Any other value → error so a typo fails the boot loudly.
-func LoadProviderForAPID(env func(string) string, log *slog.Logger) (billing.Provider, string, error) {
+//
+// ctx is the boot-level context — a daemon shutdown cancels it, which
+// lets an in-flight EnsurePlanProducts call abort cleanly instead of
+// racing the process exit.
+func LoadProviderForAPID(ctx context.Context, env func(string) string, log *slog.Logger) (billing.Provider, string, error) {
 	switch env("FAAS_BILLING_PROVIDER") {
 	case "", "stripe":
 		return nil, "stripe", nil
@@ -78,10 +82,9 @@ func LoadProviderForAPID(env func(string) string, log *slog.Logger) (billing.Pro
 		// EnsurePlanProducts at boot so the price catalog is populated
 		// before the first /v1/webhooks/paddle call (the dunning state
 		// machine + the changePlan 402 path both read planMonthly /
-		// planOverage). Uses context.Background — the boot path doesn't
-		// have a request context, and the call is bounded by the SDK's
-		// HTTP timeout.
-		if err := p.EnsurePlanProducts(context.Background()); err != nil {
+		// planOverage). The call is bounded by the SDK's HTTP timeout
+		// and the supplied ctx so a daemon shutdown can cancel it.
+		if err := p.EnsurePlanProducts(ctx); err != nil {
 			return nil, "", fmt.Errorf("billing: paddle EnsurePlanProducts: %w", err)
 		}
 		return p, "paddle", nil
@@ -104,6 +107,12 @@ func LoadProviderForAPID(env func(string) string, log *slog.Logger) (billing.Pro
 //     arg is empty.
 //
 //   - Any other value → error so a typo fails the boot loudly.
+//
+// Note: no ctx parameter — the Stripe + Paddle constructors here don't
+// accept a context (they don't dial out at construction time; the
+// ping happens later on the pusher tick). The pusher loop's own ctx
+// governs the actual SDK calls. LoadProviderForAPID takes ctx because
+// it eagerly runs EnsurePlanProducts at boot.
 func LoadProviderForMeterd(env func(string) string, store state.Store, dedupe stripe.PushDedupe, log *slog.Logger) (billing.Provider, string, error) {
 	switch env("FAAS_BILLING_PROVIDER") {
 	case "", "stripe":

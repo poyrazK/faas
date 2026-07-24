@@ -299,7 +299,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and the changePlan 402 path falls back to the FAAS_BILLING_PORTAL_URL
 	// template above — the pre-PR-#3 Stripe path is bit-for-bit
 	// unchanged.
-	billingProv, provName, err := billingloader.LoadProviderForAPID(deps.getenv, log)
+	billingProv, provName, err := billingloader.LoadProviderForAPID(ctx, deps.getenv, log)
 	if err != nil {
 		return fmt.Errorf("apid: load billing provider: %w", err)
 	}

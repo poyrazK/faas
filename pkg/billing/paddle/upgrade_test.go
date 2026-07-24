@@ -40,14 +40,10 @@ func TestCreateUpgradeTransaction_NoClient(t *testing.T) {
 // template path, mis-routing a Paddle customer onto a Stripe portal.
 func TestCreateUpgradeTransaction_MissingMonthlyPrice(t *testing.T) {
 	t.Parallel()
+	// Construct a non-nil *paddle.SDK so the SDK-init guard passes and
+	// the catalog guard (the unit under test) actually fires. Sandbox
+	// constructor is no-I/O; the catalog lookup never reaches the SDK.
 	p := &Provider{
-		client:  nil, // SDK guard fires second; catalog guard fires first only if client is set
-		catalog: &priceCatalog{planMonthly: map[api.Plan]string{}, planOverage: map[api.Plan]string{}, planCustomers: map[api.Plan]string{}},
-	}
-	// Construct a non-nil *paddle.SDK; easiest path is to call NewProvider
-	// with a sandbox key (no real network — paddle.NewSandbox returns an
-	// SDK object whose methods are never invoked under the catalog guard).
-	p = &Provider{
 		client:  mustNewSandboxSDK(t, "pdl_test_e2e"),
 		catalog: &priceCatalog{planMonthly: map[api.Plan]string{}, planOverage: map[api.Plan]string{}, planCustomers: map[api.Plan]string{}},
 	}

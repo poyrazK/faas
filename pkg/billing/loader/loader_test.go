@@ -4,6 +4,7 @@
 package loader
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -34,7 +35,7 @@ func discardLog() *slog.Logger {
 // pre-PR-#3 behaviour.
 func TestLoadProviderForAPID_Default(t *testing.T) {
 	t.Parallel()
-	p, name, err := LoadProviderForAPID(mapEnv(nil), discardLog())
+	p, name, err := LoadProviderForAPID(context.Background(), mapEnv(nil), discardLog())
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -53,7 +54,7 @@ func TestLoadProviderForAPID_Default(t *testing.T) {
 // wire shape.
 func TestLoadProviderForAPID_StripeSameAsDefault(t *testing.T) {
 	t.Parallel()
-	p, name, err := LoadProviderForAPID(mapEnv(map[string]string{"FAAS_BILLING_PROVIDER": "stripe"}), discardLog())
+	p, name, err := LoadProviderForAPID(context.Background(), mapEnv(map[string]string{"FAAS_BILLING_PROVIDER": "stripe"}), discardLog())
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -75,7 +76,7 @@ func TestLoadProviderForAPID_StripeSameAsDefault(t *testing.T) {
 // programmer error, not on auth).
 func TestLoadProviderForAPID_Paddle_BuildsProvider(t *testing.T) {
 	t.Parallel()
-	p, name, err := LoadProviderForAPID(mapEnv(map[string]string{
+	p, name, err := LoadProviderForAPID(context.Background(), mapEnv(map[string]string{
 		"FAAS_BILLING_PROVIDER":      "paddle",
 		"FAAS_PADDLE_API_KEY":        "pdl_test_loader",
 		"FAAS_PADDLE_WEBHOOK_SECRET": "whk_test",
@@ -106,7 +107,7 @@ func TestLoadProviderForAPID_Paddle_BuildsProvider(t *testing.T) {
 // they're on Braintree while the box quietly falls back to Stripe.
 func TestLoadProviderForAPID_Unknown(t *testing.T) {
 	t.Parallel()
-	_, _, err := LoadProviderForAPID(mapEnv(map[string]string{"FAAS_BILLING_PROVIDER": "braintree"}), discardLog())
+	_, _, err := LoadProviderForAPID(context.Background(), mapEnv(map[string]string{"FAAS_BILLING_PROVIDER": "braintree"}), discardLog())
 	if err == nil {
 		t.Fatalf("err = nil, want error for unknown provider")
 	}
