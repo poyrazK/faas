@@ -2,6 +2,7 @@ package meter
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -84,7 +85,18 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 				AdmissionMB: api.BillableRAMMB(ins.RAMMB),
 				MBSeconds:   MBSecondsPerMinute(api.BillableRAMMB(ins.RAMMB)),
 			}
-			if err := s.store.AppendUsage(ctx, app.AccountID, app.ID, ins.ID, minute, row.MBSeconds, 0); err != nil {
+			// Move 1 (event-driven packaging): set usage_minutes.requests
+			// to the count of invocations the drain drove through this
+			// instance in this minute. Index-backed by
+			// invocations_instance_idx (state='dispatching'). For
+			// instances with zero traffic (just parked, not yet woken)
+			// this returns 0 — matching the existing free-tier
+			// semantics.
+			requests, err := s.store.CountInstanceInvocationsInMinute(ctx, ins.ID, minute)
+			if err != nil {
+				return out, fmt.Errorf("meter: sample %s/%s: %w", app.ID, ins.ID, err)
+			}
+			if err := s.store.AppendUsage(ctx, app.AccountID, app.ID, ins.ID, minute, row.MBSeconds, int64(requests)); err != nil {
 				return out, err
 			}
 			out = append(out, row)

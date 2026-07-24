@@ -45,7 +45,13 @@ type MemStore struct {
 	builds         map[string]Build
 	domains        map[string]CustomDomain
 	crons          map[string]Cron
-	instances      map[string]Instance
+	// invocations is the Move 1 event-shaped queue (async_invoke,
+	// queue, delayed_task, cron). MemStore mirrors PgStore's `select
+	// ... for update skip locked` semantics by serialising every access
+	// through m.mu (MemStore is inherently single-process); per-row
+	// lease_expires_at is in-memory instead of SQL NOW().
+	invocations map[string]Invocation
+	instances   map[string]Instance
 	// loginTokens is keyed by the hex-encoded SHA-256 hash of the
 	// raw token (so the binary []byte hash from ConsumeLoginToken
 	// matches the map key format used in MemStore everywhere else).
@@ -141,6 +147,7 @@ func NewMemStore() *MemStore {
 		builds:         map[string]Build{},
 		domains:        map[string]CustomDomain{},
 		crons:          map[string]Cron{},
+		invocations:    map[string]Invocation{},
 		instances:      map[string]Instance{},
 		loginTokens:    map[string]LoginToken{},
 		cliAuthCodes:   map[string]CliAuthCode{},
@@ -1211,6 +1218,262 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 		}
 	}
 	return out, nil
+}
+
+// --- Invocations (Move 1 event-shaped queue: async_invoke / queue /
+//   delayed_task / cron). Schedd is the sole writer to state
+//   transitions (Store Claim/Complete/Fail); apid owns the INSERT
+//   path (EnqueueInvocation) and the cancel surface
+//   (CancelInvocation). The MemStore mirrors the production
+//   `for update skip locked` semantics by serialising every access
+//   through m.mu; ListDueInvocations sorts by due_at ASC and caps
+//   the returned slice at the caller's limit so the drain's batching
+//   shape matches PgStore.
+
+func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.apps[inv.AppID]; !ok {
+		return Invocation{}, fmt.Errorf("state: invocation for unknown app %q", inv.AppID)
+	}
+	if inv.ID == "" {
+		inv.ID = newID()
+	}
+	if inv.State == "" {
+		inv.State = InvocationPending
+	}
+	if inv.CreatedAt.IsZero() {
+		inv.CreatedAt = time.Now()
+	}
+	m.invocations[inv.ID] = inv
+	return inv, nil
+}
+
+func (m *MemStore) InvocationByID(_ context.Context, id string) (Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.invocations[id]
+	if !ok {
+		return Invocation{}, ErrNotFound
+	}
+	return inv, nil
+}
+
+// ListDueInvocations returns pending rows whose due_at <= now, ordered
+// by due_at ascending. Mirrors the production SELECT … FOR UPDATE
+// SKIP LOCKED + LIMIT n shape the schedd drain depends on; MemStore
+// does not need explicit locking because the whole map is guarded by
+// m.mu. Caller's `limit` caps the slice.
+func (m *MemStore) ListDueInvocations(_ context.Context, now time.Time, limit int) ([]Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Invocation
+	for _, inv := range m.invocations {
+		if inv.State != InvocationPending {
+			continue
+		}
+		if inv.DueAt.After(now) {
+			continue
+		}
+		out = append(out, inv)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DueAt.Equal(out[j].DueAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].DueAt.Before(out[j].DueAt)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// ClaimInvocation atomically transitions pending → dispatching and
+// stamps lease_expires_at = now + leaseSeconds. MemStore is
+// single-process so the "skip locked" guarantee is unconditional —
+// if another goroutine already grabbed the row, we observe state ≠
+// pending and return ErrNotFound (the schedd drain treats this as
+// "claimed elsewhere", which is the intended behaviour even on PG).
+// instanceID is the just-woken instance handle the drain captured;
+// stored on the row so pkg/meter can join on completion.
+func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, leaseSeconds int) (Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.invocations[id]
+	if !ok {
+		return Invocation{}, ErrNotFound
+	}
+	if inv.State != InvocationPending {
+		return Invocation{}, ErrNotFound
+	}
+	now := time.Now()
+	exp := now.Add(time.Duration(leaseSeconds) * time.Second)
+	inv.State = InvocationDispatching
+	inv.LeaseExpiresAt = &exp
+	inv.InstanceID = instanceID
+	inv.ReceivedAt = &now
+	inv.Attempts++
+	m.invocations[id] = inv
+	return inv, nil
+}
+
+// CompleteInvocation finalises a dispatching row with the optional
+// result blob. State must be dispatching; anything else returns
+// ErrNotFound so the drain doesn't double-complete a row that PG
+// already flipped.
+func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.RawMessage) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.invocations[id]
+	if !ok || inv.State != InvocationDispatching {
+		return ErrNotFound
+	}
+	inv.State = InvocationCompleted
+	if len(result) > 0 {
+		inv.Result = result
+	}
+	now := time.Now()
+	inv.CompletedAt = &now
+	m.invocations[id] = inv
+	return nil
+}
+
+// FailInvocation is the durable store half of the drain's error
+// pathway. retryAfter > 0 leaves the row at state=pending with
+// due_at = now + retryAfter and bumps attempts (transient blip);
+// retryAfter == 0 terminates the row at state=failed (e.g. invalid
+// envelope). State must be pending or dispatching to avoid racing
+// the happy-path Complete call (terminal states return ErrNotFound
+// so the drain's redelivery is a no-op). Mirrors the PG contract
+// exactly so the drain's cap re-check on pending rows works on both
+// backends.
+func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string, retryAfter time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.invocations[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if inv.State != InvocationPending && inv.State != InvocationDispatching {
+		return ErrNotFound
+	}
+	inv.LastError = lastError
+	if retryAfter > 0 {
+		inv.State = InvocationPending
+		inv.DueAt = time.Now().Add(retryAfter)
+		inv.LeaseExpiresAt = nil
+	} else {
+		inv.State = InvocationFailed
+		now := time.Now()
+		inv.CompletedAt = &now
+	}
+	m.invocations[id] = inv
+	return nil
+}
+
+// CountPendingInvocations is the index-backed count the apid cap
+// check uses on every queueSend / delayedTaskCreate POST. In
+// MemStore it walks the whole map (tests are small), but the
+// semantic — "live" = pending ∪ dispatching — matches the PG
+// partial-index predicate exactly.
+func (m *MemStore) CountPendingInvocations(_ context.Context, appID string, source InvocationSource) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, inv := range m.invocations {
+		if inv.AppID != appID || inv.Source != source {
+			continue
+		}
+		if inv.State != InvocationPending && inv.State != InvocationDispatching {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
+// CancelInvocation moves any non-terminal row to state=cancelled.
+// The drain may have already flipped to dispatching; we let that
+// finish and just stamp CompletedAt + Result=skip here so the row
+// stays out of any future "due" scan.
+func (m *MemStore) CancelInvocation(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.invocations[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if inv.State == InvocationCompleted || inv.State == InvocationFailed || inv.State == InvocationCancelled {
+		return nil
+	}
+	inv.State = InvocationCancelled
+	now := time.Now()
+	inv.CompletedAt = &now
+	m.invocations[id] = inv
+	return nil
+}
+
+// ListInvocationsForAccount is the dashboard's unified history read.
+// MemStore returns rows ordered CreatedAt DESC for any caller.
+func (m *MemStore) ListInvocationsForAccount(_ context.Context, accountID string, limit int, _ time.Time) ([]Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Invocation
+	for _, inv := range m.invocations {
+		if inv.AccountID == accountID {
+			out = append(out, inv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// CountInstanceInvocationsInMinute is the meter sampler hook.
+// MemStore uses a single-map walk and filters in Go; production
+// hits the invocations_instance_idx via `state='dispatching'`.
+// "dispatching" matches the production shape exactly (only rows
+// the drain actually drove across the wake gate count toward
+// `usage_minutes.requests`).
+func (m *MemStore) CountInstanceInvocationsInMinute(_ context.Context, instanceID string, minute time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	end := minute.Add(time.Minute)
+	n := 0
+	for _, inv := range m.invocations {
+		if inv.State != InvocationDispatching {
+			continue
+		}
+		if inv.DueAt.Before(minute) || !inv.DueAt.Before(end) {
+			continue
+		}
+		if inv.InstanceID != instanceID {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
+// StampInstanceInvocation writes the live instance handle onto a
+// dispatching row. MemStore matches the PG contract exactly: only
+// rows in 'dispatching' state accept a stamp (Complete and Fail
+// hold their own locks on the row; racing them would corrupt the
+// state machine). Returns ErrNotFound if the row is missing or not
+// dispatching.
+func (m *MemStore) StampInstanceInvocation(_ context.Context, id, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.invocations[id]
+	if !ok || inv.State != InvocationDispatching {
+		return ErrNotFound
+	}
+	inv.InstanceID = instanceID
+	m.invocations[id] = inv
+	return nil
 }
 
 // --- Instances --------------------------------------------------------------

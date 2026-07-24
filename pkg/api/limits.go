@@ -75,6 +75,37 @@ type Limits struct {
 	// apid's updateApp handler gates the PATCH body on this flag.
 	MinInstancesAllowed bool
 
+	// Move 1 event-shaped surfaces (spec §4.4, §4.9, CLAUDE.md Hard
+	// limits). The apid cap checks on POST .../queues/invocations:send
+	// and POST /v1/apps/{slug}/delayed-tasks read these via
+	// MustLimitsFor; schedd's drain re-checks delayed_tasks before
+	// claiming a row in case the cap shifted between enqueue and tick.
+	//
+	// MaxQueueDepth bounds the per-app live (pending+dispatching)
+	// 'queue' rows at any moment. The drain long-poll (queueReceive)
+	// holds the cap stable; an empty queue stops draining.
+	//
+	// MaxDelayedTasksPerApp caps how many delayed_tasks an app may
+	// have scheduled (pending+dispatching). Scale gets the cap-check
+	// ceiling (1e6); per-task payload remains the binding
+	// constraint via MaxSourceBytesPerInvocation.
+	//
+	// MaxSourceBytesPerInvocation is the body size cap the apid
+	// enforces on every event-shaped POST (sync invoke, async
+	// invoke, queue :send, delayed-task create). The matrix scales
+	// sub-linearly with the source-tarball ratio so a customer can
+	// send roughly the same fraction of their tier budget per
+	// payload regardless of plan.
+	//
+	// AsyncInvokeAllowed gates the async-invoke surface: Free is
+	// false (spec §4.4 reserves event-shaped primitives for paid
+	// tiers). sync-invoke and queueReceive are still reachable; only
+	// the 202 surface is plan-conditional.
+	MaxQueueDepth               int
+	MaxDelayedTasksPerApp       int
+	MaxSourceBytesPerInvocation int
+	AsyncInvokeAllowed          bool
+
 	// EgressAllowlistAllowed toggles the per-app outbound IP allowlist
 	// (ADR-031, tier-2 of the network roadmap). Free + Hobby keep
 	// allowlist opt-out because the abuse-desk use case is a
@@ -119,6 +150,13 @@ var planLimits = map[Plan]Limits{
 		EgressMbit:          10,
 		SecretCountMax:      3,
 		SecretValueMaxBytes: 4 * 1024,
+		// Move 1: async invoke and queues are paid-only (§4.4); Free
+		// keeps HTTP-only. The tiny 1 KB payload cap is the binding
+		// constraint should a Free customer spoof the gate.
+		MaxQueueDepth:               0,
+		MaxDelayedTasksPerApp:       0,
+		MaxSourceBytesPerInvocation: 0,
+		AsyncInvokeAllowed:          false,
 	},
 	PlanHobby: {
 		Plan:                PlanHobby,
@@ -136,6 +174,13 @@ var planLimits = map[Plan]Limits{
 		EgressMbit:          25,
 		SecretCountMax:      25,
 		SecretValueMaxBytes: 8 * 1024,
+		// 64 KB envelope = 0.25 % of Hobby's 25 MB tarball budget — small
+		// enough to keep the drain tick bounded, large enough for typical
+		// JSON event payloads.
+		MaxQueueDepth:               5,
+		MaxDelayedTasksPerApp:       5,
+		MaxSourceBytesPerInvocation: 64 * 1024,
+		AsyncInvokeAllowed:          true,
 	},
 	PlanPro: {
 		Plan:                PlanPro,
@@ -154,6 +199,11 @@ var planLimits = map[Plan]Limits{
 		SecretCountMax:      50,
 		SecretValueMaxBytes: 16 * 1024,
 		MinInstancesAllowed: true,
+		// 256 KB = 0.1 % of Pro's 250 MB tarball.
+		MaxQueueDepth:               25,
+		MaxDelayedTasksPerApp:       50,
+		MaxSourceBytesPerInvocation: 256 * 1024,
+		AsyncInvokeAllowed:          true,
 		// ADR-031: Pro gets 16 CIDR entries — enough for "1 SaaS +
 		// 1 webhook + 1 monitoring + ~10 partner integrations" which
 		// is the typical Pro-tier reachability graph.
@@ -177,6 +227,12 @@ var planLimits = map[Plan]Limits{
 		SecretCountMax:      100,
 		SecretValueMaxBytes: 32 * 1024,
 		MinInstancesAllowed: true,
+		// Soft ceiling: the binding constraint on Scale is the per-payload
+		// byte cap (1 MiB), not the row count.
+		MaxQueueDepth:               100,
+		MaxDelayedTasksPerApp:       1_000_000,
+		MaxSourceBytesPerInvocation: 1024 * 1024,
+		AsyncInvokeAllowed:          true,
 		// ADR-031: Scale gets 64 CIDR entries — broad enough for
 		// SaaS-scale apps with many upstream integrations; doubling
 		// the Pro budget tracks the doubling in DeployedApps (25 -> 100).

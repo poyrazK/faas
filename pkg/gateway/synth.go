@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,28 +14,35 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// SynthDispatcher is the slice of the gateway the internal cron RPC
-// needs. Going through Wake (rather than reimplementing routing +
-// proxying) ensures capacity + plan-quota admission apply identically
-// to cron traffic, and the per-minute sampler picks up the live
-// instance for metering. lastSeen is intentionally out of scope here:
-// schedd's ReportActivity is instance-scoped, and exposing an
-// app-scoped touch is its own PR — for now, cron-fired apps park on
-// the next idle boundary, which is fine for v1.
+// SynthDispatcher is the slice of the gateway the internal schedd
+// RPC needs. Going through Wake/Invoke (rather than reimplementing
+// routing + proxying) ensures capacity + plan-quota admission apply
+// identically to cron / async / queue-pull / delayed-task traffic,
+// and the per-minute sampler picks up the live instance for metering.
+//
+// Wake is the no-payload path (legacy cron wake-only; back-pressure
+// probe). Invoke carries a payload through the wake gate so the
+// synthetic HTTP envelope (method + path + body + headers) reaches
+// the runner envelope unchanged — the cron rewriting bug fixed by
+// Move 1 was the Wake-only path never reaching the runner at all.
 type SynthDispatcher interface {
 	Wake(ctx context.Context, appID string) error
+	Invoke(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
 }
 
 // SynthServer is the unix-socket HTTP listener that exposes
-// POST /v1/synthesize. It exists so schedd can fire synthetic cron
-// requests through gatewayd (spec §4.4, M7) without touching the
-// public listener.
+// /v1/synthesize (legacy no-payload path) and /v1/invocations:dispatch
+// (Move 1 event-shaped path). Both routes share the unix-socket DAC
+// auth (ADR-015) — only schedd is in the `faas` group, so the socket
+// IS the auth.
 //
-// Auth: the unix-socket DAC model (ADR-015). Listeners run as mode 0660
-// group `faas`; only schedd is in that group. No header auth, no
-// token — the socket IS the auth.
+// The Move 1 follow-up split /v1/synthesize and /v1/invocations:dispatch
+// into two routes (rather than one body-discriminated POST) so the
+// dispatcher-surface widening above stays load-bearing: a future Move
+// 2 surface can extend SynthDispatcher without rewriting the wire.
 type SynthServer struct {
 	socketPath string
 	dispatcher SynthDispatcher
@@ -53,6 +61,11 @@ func NewSynthServer(socketPath string, dispatcher SynthDispatcher, log *slog.Log
 	mux := http.NewServeMux()
 	s := &SynthServer{socketPath: socketPath, dispatcher: dispatcher, log: log}
 	mux.HandleFunc("/v1/synthesize", s.handleSynthesize)
+	// Move 1: schedd's drain posts here for event-shaped invocations
+	// (async_invoke / queue / delayed_task / cron). The response is
+	// the post-dispatch Invocation row (state + result envelope),
+	// which schedd's drain stores via Store.CompleteInvocation.
+	mux.HandleFunc("/v1/invocations:dispatch", s.handleInvocationDispatch)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	// ReadHeaderTimeout pins the Slowloris attack surface (gosec G112).
 	// The unix socket is DAC-gated (ADR-015), but we set the timeout
@@ -163,4 +176,110 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 	}
 	s.calls.Add(1)
 	w.WriteHeader(http.StatusOK)
+}
+
+// invocationDispatchRequest is the body schedd's drain posts.
+// InvocationID / Source carry through to the runner envelope as
+// x-faas-invocation-id + x-faas-invocation-source so the user's
+// function can branch on shape without re-parsing the dispatch
+// response.
+type invocationDispatchRequest struct {
+	InvocationID string            `json:"invocation_id"`
+	AppID        string            `json:"app_id"`
+	Source       string            `json:"source"` // async_invoke|queue|delayed_task|cron
+	Method       string            `json:"method"`
+	Path         string            `json:"path"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	// BodyB64 is base64-encoded so JSON encoding stays trivial and
+	// the cron path (no body) ships an empty string by default.
+	BodyB64 string `json:"body_b64,omitempty"`
+}
+
+func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req invocationDispatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.AppID == "" || req.InvocationID == "" {
+		http.Error(w, "app_id + invocation_id required", http.StatusBadRequest)
+		return
+	}
+	method := req.Method
+	if method == "" {
+		method = http.MethodPost
+	}
+	path := req.Path
+	if path == "" {
+		path = "/"
+	}
+	// body is decoded base64-ish (we accept the literal bytes); keep
+	// the field small so the drain's per-tick JSON stays bounded.
+	var payload []byte
+	if req.BodyB64 != "" {
+		// base64.StdEncoding is the default the platform uses for
+		// every other envelope (e.g. gateway request bodies, secret
+		// ciphertext). Match.
+		dec, err := base64Decode(req.BodyB64)
+		if err != nil {
+			http.Error(w, "body_b64 invalid", http.StatusBadRequest)
+			return
+		}
+		payload = dec
+	}
+	inv := state.Invocation{
+		ID:      req.InvocationID,
+		AppID:   req.AppID,
+		Source:  state.InvocationSource(req.Source),
+		Method:  method,
+		Path:    path,
+		Payload: payload,
+		Headers: jsonOrEmpty(req.Headers),
+	}
+	// Pre-flush logsanitised fields so a malicious /invocations:dispatch
+	// caller cannot forge lines.
+	s.log.Debug("gateway synth: invocation dispatched",
+		"inv", logsanitize.Field(req.InvocationID),
+		"app_id", logsanitize.Field(req.AppID),
+		"source", logsanitize.Field(req.Source),
+		"method", logsanitize.Field(method),
+		"path", logsanitize.Field(path))
+	out, err := s.dispatcher.Invoke(r.Context(), req.AppID, inv)
+	if err != nil {
+		// Transient vs permanent split: any error here means the
+		// runner never received the body. schedd retries transient
+		// (5s); permanent shapes (no such app) end the row.
+		s.log.Warn("gateway synth: invoke", "inv", logsanitize.Field(req.InvocationID), "err", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	s.calls.Add(1)
+	w.Header().Set("Content-Type", "application/json")
+	// Echo the post-dispatch state + result back so the drain can
+	// call CompleteInvocation(result) on the same transaction.
+	_ = json.NewEncoder(w).Encode(struct {
+		State  string          `json:"state"`
+		Result json.RawMessage `json:"result,omitempty"`
+	}{string(out.State), out.Result})
+}
+
+func jsonOrEmpty(m map[string]string) json.RawMessage {
+	if len(m) == 0 {
+		return json.RawMessage("{}")
+	}
+	b, _ := json.Marshal(m)
+	return b
+}
+
+// base64Decode wraps base64.StdEncoding with an explicit error so the
+// synth handler stays readable. Callers MUST reject malformed bodies
+// — a forged body_b64 could otherwise smuggle arbitrary bytes into
+// the runner envelope (the runner's JSON parser only sees the body,
+// not the encoding we used).
+func base64Decode(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
 }

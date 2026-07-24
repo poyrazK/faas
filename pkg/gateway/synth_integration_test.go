@@ -10,15 +10,26 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/state"
 	"time"
 )
 
-// fakeDispatcher records Wake calls so the handler can run end-to-end.
+// fakeDispatcher records Wake + Invoke calls so the handler can run
+// end-to-end (covers both legacy wake-only and Move 1 invoke paths).
 type fakeDispatcher struct{ calls []string }
 
 func (f *fakeDispatcher) Wake(_ context.Context, appID string) error {
 	f.calls = append(f.calls, appID)
 	return nil
+}
+
+// Invoke echoes the wake path; the integration test only verifies the
+// wire reached the dispatcher, not the response shape.
+func (f *fakeDispatcher) Invoke(_ context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+	f.calls = append(f.calls, appID)
+	inv.State = state.InvocationDispatching
+	return inv, nil
 }
 
 // TestSynthHandlerSanitizesLogFields asserts that a synthesized request

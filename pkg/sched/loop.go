@@ -405,12 +405,20 @@ func (l *Loop) runReaper(ctx context.Context) {
 	}
 }
 
-// GatewaySynth is the slice of the gateway-internal RPC the cron loop
-// uses to fire a synthetic request through gatewayd (so metering +
-// rate-limit apply identically to user traffic). Defined as an interface
-// here so the cron loop can be tested without a live gateway socket.
+// GatewaySynth is the slice of the gateway-internal RPC the cron
+// loop (and Move 1's drain) use to fire a synthetic request through
+// gatewayd (so metering + rate-limit apply identically to user
+// traffic). Defined as an interface here so the cron loop can be
+// tested without a live gateway socket.
+//
+// SynthesizeRequest is the legacy no-payload path (back-pressure
+// probe; deprecated — kept so old callers and tests don't break).
+// Invoke is the Move 1 path: it carries an invocation row through
+// the wake gate so cron / async / queue-pull / delayed-task traffic
+// reaches the runner envelope unchanged.
 type GatewaySynth interface {
 	SynthesizeRequest(ctx context.Context, appID, method, path string) error
+	Invoke(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
 }
 
 // httpGatewaySynth is the production GatewaySynth: a unix-socket HTTP
@@ -469,6 +477,42 @@ func (h *httpGatewaySynth) SynthesizeRequest(ctx context.Context, appID, method,
 		return fmt.Errorf("sched: synth: gateway returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// Invoke posts the Move 1 invocation envelope to gatewayd's
+// /v1/invocations:dispatch route. The response carries the post-dispatch
+// state (dispatched/completed) so the drain can call Store.CompleteInvocation
+// with the result blob. Network errors bubble up so the drain can retry.
+func (h *httpGatewaySynth) Invoke(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+	body, err := json.Marshal(map[string]any{
+		"invocation_id": inv.ID,
+		"app_id":        appID,
+		"source":        string(inv.Source),
+		"method":        inv.Method,
+		"path":          inv.Path,
+	})
+	if err != nil {
+		return inv, fmt.Errorf("sched: invocation marshal: %w", err)
+	}
+	url := "http://unix/v1/invocations:dispatch"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return inv, fmt.Errorf("sched: invocation request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return inv, fmt.Errorf("sched: invocation do: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusBadGateway {
+		return inv, fmt.Errorf("sched: invocation: gateway returned %d", resp.StatusCode)
+	}
+	// Reset state to dispatched; gateway-set state strings are
+	// "dispatched" today. Persistent failure surfaces to the drain
+	// via the 502 path above.
+	inv.State = state.InvocationDispatching
+	return inv, nil
 }
 
 // runCronTick walks every enabled cron and dispatches any whose
@@ -543,10 +587,65 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 		l.log.Warn("cron: wake", "cron_id", c.ID, "err", err)
 		return
 	}
+	// Move 1: write the cron row to invocations so it shows up in
+	// /v1/invocations and the meter sees it. cron_id is stamped so
+	// the unified history endpoint can join back to crons for
+	// "last_fired_at" semantics (kept on the crons table; both
+	// surfaces are still served per the chosen plan).
+	cronID := c.ID
+	inv := state.Invocation{
+		AppID:     c.AppID,
+		AccountID: acct.ID,
+		Source:    state.InvocationCron,
+		Method:    "POST",
+		Path:      c.Path,
+		CronID:    &cronID,
+		Headers:   json.RawMessage(`{"x-faas-cron":"true"}`),
+		DueAt:     now,
+	}
+	enq, err := l.engine.Store().EnqueueInvocation(ctx, inv)
+	if err != nil {
+		l.log.Warn("cron: enqueue invocation", "cron_id", c.ID, "err", err)
+		// Continue past — legacy wake-only path is still safe.
+	}
+	// Walk the row through pending → dispatching BEFORE calling
+	// Invoke. The store's Claim only accepts state=pending, and
+	// StampInstanceInvocation only accepts state=dispatching — so
+	// the lifecycle must mirror the drain's: claim → invoke → stamp
+	// → complete. Doing the claim here also keeps the row out of
+	// the drain's next tick (which filters state='pending').
+	if enq.ID != "" {
+		if _, err := l.engine.Store().ClaimInvocation(ctx, enq.ID, "", 60); err != nil {
+			l.log.Warn("cron: claim invocation", "cron_id", c.ID, "err", err)
+		}
+	}
 	if l.gateway != nil {
-		if err := l.gateway.SynthesizeRequest(ctx, c.AppID, "POST", c.Path); err != nil {
-			l.log.Warn("cron: synthesize", "cron_id", c.ID, "err", err)
-			return
+		// Invoke delivers the synthetic HTTP envelope through the
+		// wake gate; the meter + the runner both see this as a
+		// request with method+path+headers. The synth adapter
+		// (cmd/gatewayd) does its own always-Wake internally and
+		// returns the live instance id on the echoed Invocation.
+		invokeOut, ierr := l.gateway.Invoke(ctx, c.AppID, inv)
+		if ierr != nil {
+			l.log.Warn("cron: invoke", "cron_id", c.ID, "err", ierr)
+			// Fall through to legacy wake-only shape so this
+			// doesn't silently drop. tests may rely on the
+			// SynthesizeRequest call for back-compat assertions.
+			if err := l.gateway.SynthesizeRequest(ctx, c.AppID, "POST", c.Path); err != nil {
+				l.log.Warn("cron: synthesize (legacy)", "cron_id", c.ID, "err", err)
+				return
+			}
+		} else if enq.ID != "" {
+			// Stamp the live instance handle + complete the row
+			// so the drain's per-tick (state='pending' filter)
+			// never picks it up. The meter join counts this row
+			// once, against the live instance.
+			if err := l.engine.Store().StampInstanceInvocation(ctx, enq.ID, invokeOut.InstanceID); err != nil {
+				l.log.Warn("cron: stamp instance", "cron_id", c.ID, "err", err)
+			}
+			if err := l.engine.Store().CompleteInvocation(ctx, enq.ID, nil); err != nil {
+				l.log.Warn("cron: complete", "cron_id", c.ID, "err", err)
+			}
 		}
 	}
 	if err := l.engine.Store().MarkCronFired(ctx, c.ID, now); err != nil {
