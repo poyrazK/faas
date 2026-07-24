@@ -268,6 +268,65 @@ type Cron struct {
 	LastFiredAt time.Time // zero until first fire; updated by MarkCronFired
 }
 
+// InvocationSource tags the API surface that originated a row on the
+// invocations table (Move 1 — async_invoke / queue / delayed_task / cron).
+// Mirrored as a CHECK constraint in migrations/00029_invocations.sql.
+type InvocationSource string
+
+const (
+	InvocationAsyncInvoke InvocationSource = "async_invoke"
+	InvocationQueue       InvocationSource = "queue"
+	InvocationDelayedTask InvocationSource = "delayed_task"
+	InvocationCron        InvocationSource = "cron"
+)
+
+// InvocationState is the row lifecycle on the invocations table. The
+// allowed transitions are pending→dispatching→completed (happy path)
+// and pending/dispatching→failed or pending→cancelled (terminal). The
+// CHECK constraint enforces the discrete values; the engine admits
+// transitions only through the Store.ClaimInvocation / Complete / Fail /
+// Cancel methods.
+type InvocationState string
+
+const (
+	InvocationPending     InvocationState = "pending"
+	InvocationDispatching InvocationState = "dispatching"
+	InvocationCompleted   InvocationState = "completed"
+	InvocationFailed      InvocationState = "failed"
+	InvocationCancelled   InvocationState = "cancelled"
+)
+
+// Invocation mirrors a row on the invocations table. apid writes
+// customer-intent rows; schedd's drain loop owns state transitions
+// pending → dispatching → completed/failed via the Store.Claim /
+// Complete / Fail methods. InstanceID is NULL on the inbound INSERT path
+// and is stamped by the drain's claim step (state→dispatching); the
+// meter reads it via CountInstanceInvocationsInMinute to set
+// usage_minutes.requests.
+type Invocation struct {
+	ID             string           `json:"id"`
+	AppID          string           `json:"app_id"`
+	AccountID      string           `json:"account_id"`
+	InstanceID     string           `json:"instance_id,omitempty"`
+	Source         InvocationSource `json:"source"`
+	State          InvocationState  `json:"state"`
+	Method         string           `json:"method"`
+	Path           string           `json:"path"`
+	Payload        json.RawMessage  `json:"payload"`
+	Headers        json.RawMessage  `json:"headers"`
+	DueAt          time.Time        `json:"due_at"`
+	ScheduledAt    *time.Time       `json:"scheduled_at,omitempty"`
+	CronID         *string          `json:"cron_id,omitempty"`
+	AckURL         string           `json:"ack_url,omitempty"`
+	Result         json.RawMessage  `json:"result,omitempty"`
+	LeaseExpiresAt *time.Time       `json:"lease_expires_at,omitempty"`
+	ReceivedAt     *time.Time       `json:"received_at,omitempty"`
+	CompletedAt    *time.Time       `json:"completed_at,omitempty"`
+	Attempts       int              `json:"attempts"`
+	LastError      string           `json:"last_error,omitempty"`
+	CreatedAt      time.Time        `json:"created_at"`
+}
+
 // GdprAction enumerates the GDPR self-service actions recorded in
 // the gdpr_requests ledger. The DB CHECK constraint enforces these
 // three values; exporting the constants avoids typo bugs in apid +

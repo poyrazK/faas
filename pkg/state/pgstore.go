@@ -1051,6 +1051,379 @@ func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 	return scanCrons(rows)
 }
 
+// --- invocations (Move 1 event-shaped queue) ---------------------------------
+//
+// Schema: migrations/00029_invocations.sql. The drain's hot path is
+// ListDueInvocations, which uses invocations_due_idx +
+// `for update skip locked` so two schedds could co-exist safely
+// without double-claiming. Schedd is currently the sole writer
+// (CLAUDE.md); single-writer invariant means the lock is preventive
+// rather than required today. State transitions inside a transaction
+// so claim/complete/fail cannot race the cron rewrite in loop.go.
+
+const invocationSelectCols = `id, app_id, account_id, source, state, method, path,
+       payload, headers, due_at, scheduled_at, cron_id, ack_url,
+       result, lease_expires_at, received_at, completed_at, attempts,
+       last_error, created_at`
+
+func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
+	payload, err := jsonOrEmpty(inv.Payload)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("state: invocations payload: %w", err)
+	}
+	headers, err := jsonOrEmpty(inv.Headers)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("state: invocations headers: %w", err)
+	}
+	var scheduledAt, leaseExpires any
+	if inv.ScheduledAt != nil {
+		scheduledAt = inv.ScheduledAt.UTC()
+	}
+	if inv.LeaseExpiresAt != nil {
+		leaseExpires = inv.LeaseExpiresAt.UTC()
+	}
+	var cronID any
+	if inv.CronID != nil && *inv.CronID != "" {
+		cronID = *inv.CronID
+	}
+	row := s.pool.QueryRow(ctx, `
+		insert into invocations
+			(app_id, account_id, source, state, method, path,
+			 payload, headers, due_at, scheduled_at, cron_id,
+			 ack_url, lease_expires_at)
+		values
+			($1, $2, $3, coalesce(nullif($4,''),'pending'), $5, $6,
+			 $7, $8, $9, $10, $11,
+			 nullif($12,''), $13)
+		returning `+invocationSelectCols,
+		inv.AppID, inv.AccountID, string(inv.Source), string(inv.State),
+		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
+		scheduledAt, cronID, inv.AckURL, leaseExpires)
+	out, err := scanInvocation(row)
+	if err != nil {
+		return Invocation{}, mapErr(err)
+	}
+	// Allow the caller to bind result/last_error before insert (rare,
+	// mainly used by tests).
+	if len(inv.Result) > 0 {
+		out.Result = inv.Result
+	}
+	if inv.LastError != "" {
+		out.LastError = inv.LastError
+	}
+	if inv.CompletedAt != nil {
+		out.CompletedAt = inv.CompletedAt
+	}
+	return out, nil
+}
+
+func (s *PgStore) InvocationByID(ctx context.Context, id string) (Invocation, error) {
+	row := s.pool.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id = $1`, id)
+	return scanInvocation(row)
+}
+
+// ListDueInvocations is the drain's hot path. Wraps the SELECT in a
+// tx, sorts by due_at, and skips rows another writer already locked.
+// The drain's batched loop decides when to call it again (the drain
+// bounds by `batchSize` and exits when the slice is shorter than the
+// bound).
+func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit int) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 64
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("state: invocations begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
+		select `+invocationSelectCols+`
+		  from invocations
+		 where state = 'pending' and due_at <= $1
+		 order by due_at
+		 for update skip locked
+		 limit $2`, now.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: invocations list-due: %w", err)
+	}
+	out, err := scanInvocations(rows)
+	if err != nil {
+		return nil, err
+	}
+	// SKIP LOCKED implies we hold a row lock until commit. The drain
+	// re-fetches the row by id (via ClaimInvocation) which is fine —
+	// the lock release at commit allows the claim to resolve in a
+	// fresh transaction. Commit immediately so we don't carry the
+	// long-running tx the drain's per-app loop would otherwise sit on.
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("state: invocations list-due commit: %w", err)
+	}
+	return out, nil
+}
+
+// ClaimInvocation transitions pending → dispatching and stamps the
+// lease. Optimistic update: a row already in dispatching with an
+// unexpired lease rejects with ErrNotFound so the drain retries on
+// the next tick (matches MemStore and matches the SKIP LOCKED
+// precedent). instanceID is the just-woken handle so pkg/meter can
+// join `usage_minutes` against `invocations` on the (instance,
+// minute) count.
+func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, leaseSeconds int) (Invocation, error) {
+	var instanceArg any
+	if instanceID != "" {
+		instanceArg = instanceID
+	}
+	row := s.pool.QueryRow(ctx, `
+		update invocations
+		   set state = 'dispatching',
+		       lease_expires_at = now() + ($3 || ' seconds')::interval,
+		       received_at = now(),
+		       instance_id = coalesce($2, instance_id),
+		       attempts = attempts + 1
+		 where id = $1 and state = 'pending'
+		 returning `+invocationSelectCols, id, instanceArg, leaseSeconds)
+	inv, err := scanInvocation(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Invocation{}, ErrNotFound
+		}
+		return Invocation{}, mapErr(err)
+	}
+	return inv, nil
+}
+
+func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error {
+	tag, err := s.pool.Exec(ctx, `
+		update invocations
+		   set state = 'completed',
+		       completed_at = now(),
+		       received_at = coalesce(received_at, now()),
+		       result = coalesce($2, result)
+		 where id = $1 and state in ('dispatching','pending')`, id, nullableJSON(result))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError string, retryAfter time.Duration) error {
+	var query string
+	var args []any
+	if retryAfter > 0 {
+		query = `update invocations
+				    set state = 'pending',
+				        due_at = now() + ($2 || ' microseconds')::interval,
+				        lease_expires_at = null,
+				        last_error = $3,
+				        attempts = attempts + 1
+				  where id = $1 and state in ('dispatching','pending')`
+		args = []any{id, retryAfter.Microseconds(), lastError}
+	} else {
+		query = `update invocations
+				    set state = 'failed',
+				        completed_at = now(),
+				        last_error = $2
+				  where id = $1 and state in ('dispatching','pending')`
+		args = []any{id, lastError}
+	}
+	tag, err := s.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CountPendingInvocations is the index-backed apid cap check.
+// Mirrors the `invocations_app_pending_idx` partial index predicate
+// (state in ('pending','dispatching')) so the planner uses it.
+func (s *PgStore) CountPendingInvocations(ctx context.Context, appID string, source InvocationSource) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		select count(*) from invocations
+		 where app_id = $1 and source = $2
+		   and state in ('pending','dispatching')`, appID, string(source)).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func (s *PgStore) CancelInvocation(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `
+		update invocations
+		   set state = 'cancelled',
+		       completed_at = coalesce(completed_at, now())
+		 where id = $1 and state in ('pending','dispatching')`, id)
+	if err != nil {
+		return err
+	}
+	// Already-terminal rows are idempotently no-op (the dashboard's
+	// cancel button must not 404 once the dispatch finished).
+	if tag.RowsAffected() == 0 {
+		// Distinguish "already terminal" from "not found" so the
+		// apid handler can choose the right response.
+		var exists bool
+		if e := s.pool.QueryRow(ctx, `select exists(select 1 from invocations where id = $1)`, id).Scan(&exists); e != nil {
+			return e
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		return nil
+	}
+	return nil
+}
+
+func (s *PgStore) ListInvocationsForAccount(ctx context.Context, accountID string, limit int, before time.Time) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `select `+invocationSelectCols+`
+		from invocations
+		where account_id = $1
+		  and ($2::timestamptz is null or created_at < $2)
+		order by created_at desc
+		limit $3`, accountID, nullableTime(before), limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanInvocations(rows)
+}
+
+// CountInstanceInvocationsInMinute is the meter sampler hook.
+// `state='dispatching'` matches the MemStore predicate exactly —
+// only rows the drain actually drove across the wake gate count
+// toward usage_minutes.requests.
+func (s *PgStore) CountInstanceInvocationsInMinute(ctx context.Context, instanceID string, minute time.Time) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		select count(*) from invocations
+		 where instance_id = $1
+		   and state = 'dispatching'
+		   and due_at >= $2 and due_at < $3`,
+		instanceID, minute.UTC(), minute.Add(time.Minute).UTC()).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// jsonOrEmpty normalises a json.RawMessage to a Postgres jsonb value
+// — empty/null bodies are kept as the literal '{}' so the column
+// NOT NULL + default '{}' shape holds.
+func jsonOrEmpty(b json.RawMessage) ([]byte, error) {
+	if len(b) == 0 {
+		return []byte("{}"), nil
+	}
+	if !json.Valid(b) {
+		return nil, fmt.Errorf("invalid json: %s", string(b))
+	}
+	return b, nil
+}
+
+// nullableJSON returns nil for empty bytes so COALESCE in
+// CompleteInvocation leaves the previously-stored result intact.
+func nullableJSON(b json.RawMessage) any {
+	if len(b) == 0 {
+		return nil
+	}
+	if !json.Valid(b) {
+		return nil
+	}
+	return []byte(b)
+}
+
+func nullableTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC()
+}
+
+func scanInvocation(row pgx.Row) (Invocation, error) {
+	inv, err := scanInvocationCols(row.Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Invocation{}, ErrNotFound
+		}
+		return Invocation{}, err
+	}
+	return inv, nil
+}
+
+func scanInvocations(rows pgx.Rows) ([]Invocation, error) {
+	var out []Invocation
+	for rows.Next() {
+		inv, err := scanInvocationCols(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, inv)
+	}
+	return out, rows.Err()
+}
+
+// scanInvocationCols scans one row. Nullable columns are taken via
+// *time.Time / *string so a NULL turns into the zero value rather
+// than blowing the Scan. The select clause above is the contract —
+// if anyone touches the column list there, this function must move
+// with it.
+func scanInvocationCols(scan func(...any) error) (Invocation, error) {
+	inv := Invocation{}
+	var source, state string
+	var scheduledAt, leaseExpires, receivedAt, completedAt *time.Time
+	var cronID, ackURL, lastErr *string
+	var payload, headers, result []byte
+	if err := scan(
+		&inv.ID, &inv.AppID, &inv.AccountID, &source, &state, &inv.Method, &inv.Path,
+		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
+		&result, &leaseExpires, &receivedAt, &completedAt, &inv.Attempts,
+		&lastErr, &inv.CreatedAt,
+	); err != nil {
+		return Invocation{}, err
+	}
+	inv.Source = InvocationSource(source)
+	inv.State = InvocationState(state)
+	if len(payload) > 0 {
+		inv.Payload = payload
+	}
+	if len(headers) > 0 {
+		inv.Headers = headers
+	}
+	if len(result) > 0 {
+		inv.Result = result
+	}
+	if scheduledAt != nil {
+		inv.ScheduledAt = scheduledAt
+	}
+	if leaseExpires != nil {
+		inv.LeaseExpiresAt = leaseExpires
+	}
+	if receivedAt != nil {
+		inv.ReceivedAt = receivedAt
+	}
+	if completedAt != nil {
+		inv.CompletedAt = completedAt
+	}
+	if cronID != nil {
+		id := *cronID
+		inv.CronID = &id
+	}
+	if ackURL != nil {
+		inv.AckURL = *ackURL
+	}
+	if lastErr != nil {
+		inv.LastError = *lastErr
+	}
+	return inv, nil
+}
+
 // --- instances --------------------------------------------------------------
 
 func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error) {

@@ -165,7 +165,20 @@ const (
 	// and every active=false (heartbeat watchdog), so a future
 	// request to the same node re-dials against the fresh row.
 	// Issue #98 / ADR-028.
+	//
+	// NotifyInvocationDue {"invocation_id":uuid, "app_id":uuid,
+	//                     "source":"async_invoke|queue|delayed_task|cron"}
+	//   schedd drain wakes immediately on a new pending row so an
+	//   async invoke lands inside the customer's SLO without waiting
+	//   on the 1s safety ticker. Source identifier lets the drain skip
+	//   the cap re-check on rows the apid already gated.
+	// NotifyInvocationDone {"invocation_id":uuid, "app_id":uuid,
+	//                     "source":"...", "state":"completed|failed|cancelled"}
+	//   fired by the drain's state-machine transition; reserved for a
+	//   follow-up SSE push (the dashboard polls /v1/invocations today).
 	NotifyComputeNodeChanged = "compute_node_changed"
+	NotifyInvocationDue      = "invocation_due"
+	NotifyInvocationDone     = "invocation_done"
 )
 
 // Subscribe holds a dedicated connection on the pool in LISTEN state for the

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -374,6 +375,54 @@ type Store interface {
 	// dispatched through gatewayd (spec §4.4, M7). MemStore keeps a
 	// lastFiredAt map; PgStore uses a column added in migration 00003.
 	MarkCronFired(ctx context.Context, cronID string, at time.Time) error
+
+	// Invocations (Move 1 — async_invoke / queue / delayed_task / cron).
+	// apid writes customer-intent rows; schedd's drain loop owns the
+	// state transitions pending → dispatching → completed/failed.
+	// InstanceID is stamped by ClaimInvocation (state→dispatching) so
+	// pkg/meter can join. instance_id is unique to a dispatched row.
+	EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error)
+	InvocationByID(ctx context.Context, id string) (Invocation, error)
+	// ListDueInvocations returns up to `limit` rows whose state='pending'
+	// and due_at <= now, ordered by due_at. The drain tick calls this with
+	// LIMIT 64 inside a `for update skip locked` (MemStore is single-process
+	// and intrinsically serialised; PgStore uses the row-level lock to
+	// support a future multi-leader schedd without an ADR follow-up).
+	ListDueInvocations(ctx context.Context, now time.Time, limit int) ([]Invocation, error)
+	// ClaimInvocation atomically transitions pending → dispatching and
+	// stamps lease_expires_at = now + leaseSeconds. The drain writes the
+	// InstanceID it just woke as well. No-op if already dispatching with
+	// an unexpired lease; the returned row reflects the post-state so the
+	// caller can branch on claimed.State to recover from a double-claim.
+	ClaimInvocation(ctx context.Context, id, instanceID string, leaseSeconds int) (Invocation, error)
+	// CompleteInvocation finalises a dispatched row with an optional result
+	// envelope (response status + body bytes for sync invoke; nil for the
+	// other sources). State → completed.
+	CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error
+	// FailInvocation records a terminal or retryable error. When retryAfter
+	// > 0 the row goes back to state='pending' with due_at = now +
+	// retryAfter; when retryAfter == 0 the row is terminal ('failed').
+	// The drain uses the transient path on Wake/Invoke queue-full / timeout;
+	// the permanent path on shape / capacity errors.
+	FailInvocation(ctx context.Context, id string, lastError string, retryAfter time.Duration) error
+	// CountPendingInvocations is index-backed by invocations_app_pending_idx;
+	// used by the apid cap check on POST .../queues/invocations:send and
+	// POST /v1/apps/{slug}/delayed-tasks, and by the drain's cap re-check
+	// on DispatchDelayedTask rows.
+	CountPendingInvocations(ctx context.Context, appID string, source InvocationSource) (int, error)
+	// CancelInvocation moves a pending row to state='cancelled'. Customer
+	// DELETE on /v1/delayed-tasks/{id}; the drain skips cancelled rows.
+	// Returns ErrNotFound if the row is already terminal.
+	CancelInvocation(ctx context.Context, id string) error
+	// ListInvocationsForAccount is the dashboard's "recent invocations"
+	// view; pagination cursor is the same opaque `before` convention used
+	// by ListDeployments.
+	ListInvocationsForAccount(ctx context.Context, accountID string, limit int, before time.Time) ([]Invocation, error)
+	// CountInstanceInvocationsInMinute is the meter's join key: it counts
+	// dispatched rows for (instance, minute) so SampleAndRoll can set
+	// usage_minutes.requests = N on each rolling minute. Index-backed by
+	// invocations_instance_idx.
+	CountInstanceInvocationsInMinute(ctx context.Context, instanceID string, minute time.Time) (int, error)
 
 	// Instances (schedd is sole writer, spec §6). apid reads only.
 	//
