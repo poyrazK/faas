@@ -49,6 +49,8 @@ var routeExclude = map[string]bool{
 	"POST /login":                     true, // dashboard magic-link POST
 	"POST /logout":                    true, // dashboard logout
 	"GET /auth/verify":                true, // magic-link consume
+	"GET /v1/auth/google":             true, // Google OAuth 2.0 redirect
+	"GET /v1/auth/google/callback":    true, // Google OAuth 2.0 callback
 	"GET /oauth/callback":             true, // GitHub App install callback
 	"GET /dashboard":                  true, // HTML dashboard
 	"GET /dashboard/":                 true, // HTML dashboard
