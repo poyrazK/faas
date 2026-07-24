@@ -61,10 +61,13 @@ regression net still passes on a clean reverse.
 
 ### Renderer — partition v4/v6 internally
 
-`pkg/netns/config.go::forwardAllowlistRule` is widened to return
-`[][]string` (was `[]string`). Internally it partitions the single
-`EgressAllowlist` slice into v4 and v6 halves via
-`prefix.Addr().Is4()` and emits two argvs:
+`pkg/netns/config.go::forwardAllowlistRule` (v4-only helper) and
+`forwardAllowlistRule6` (v6-only sibling, new at 032) together
+cover the per-family partition. Both return a single `[]string`
+argv (or nil when their half is empty) — the split is into two
+helpers, not a single `[][]string`. Internally each helper
+partitions the single `EgressAllowlist` slice via
+`prefix.Addr().Is4()` and emits one argv:
 
 ```
 nft add rule ip  faas forward iifname "tap0" ip  daddr { <v4 list> } accept   [v4 only]
@@ -100,6 +103,18 @@ Unchanged. Free/Hobby always empty (403
 `plan_egress_allowlist_not_allowed`); Pro up to 16 combined
 entries; Scale up to 64 combined entries. No per-family split —
 the budget is the same regardless of mix.
+
+### Chain policy — flips on the single field, both chains
+
+`forwardChainPolicy` (config.go) checks `len(c.EgressAllowlist) == 0`
+only — no per-family split. So a v6-only or mixed allowlist flips
+**both** chains to `policy drop`, even if the v4 chain has no
+allowlist rule of its own. This is deliberate: an operator pinning
+v6 destinations has signalled intent to constrain egress, so v4
+falls back to default deny rather than the historical default-accept.
+A future per-family policy toggle (e.g. "v4 default-accept, v6
+allowlist-only") is a separate ADR if a customer needs the
+asymmetry.
 
 ## Consequences
 
