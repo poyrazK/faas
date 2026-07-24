@@ -219,6 +219,43 @@ const (
 	// them, and returning a single code avoids probing.
 	CodeCliAuthPending     = "cli_auth_code_pending"
 	CodeCliAuthUnavailable = "cli_auth_code_unavailable"
+
+	// Dashboard auth (issue #165, ADR-032). Pre-#165, POST /login
+	// auto-created an account + minted a "web-console" API key + set
+	// the session cookie on ANY email with zero verification, which
+	// was a full pre-auth account-takeover (spec §11 violation).
+	// Post-#165, the dashboard surfaces are real auth:
+	//
+	//   - invalid_credentials: 401 for both "no such email" and
+	//     "wrong password" — the two paths share the same response
+	//     body so the surface doesn't leak which case it hit. The
+	//     constant-time Argon2id pad on the no-account path closes
+	//     the timing oracle; see cmd/apid/handlers_auth.go.
+	//   - email_not_verified: 401 when a Google / GitHub OAuth
+	//     callback returns a profile whose primary email is not
+	//     verified by the provider. Distinct from invalid_credentials
+	//     because the customer can fix this by verifying the email
+	//     upstream; we never mint an unverified session.
+	//   - password_too_weak: 400 at /signup when the password fails
+	//     the NIST-style floor (≥12 chars). The Detail names the
+	//     rule so the dashboard form can highlight which constraint
+	//     tripped.
+	//   - reset_token_invalid / reset_token_expired: 410 for GET /
+	//     POST /auth/reset when the token doesn't exist (invalid)
+	//     or has aged past 15 minutes (expired). 410 Gone is the
+	//     semantically correct status: the resource was a one-shot
+	//     and is no longer addressable.
+	//   - account_exists: never returned directly. Anti-enumeration
+	//     keeps the body identical between "signed in via /signup"
+	//     and "email already taken"; the constant exists so future
+	//     surfaces (e.g. an explicit "claim this email" admin tool)
+	//     can branch on it without inventing a new code.
+	CodeInvalidCredentials = "invalid_credentials"
+	CodeEmailNotVerified   = "email_not_verified"
+	CodePasswordTooWeak    = "password_too_weak"
+	CodeResetTokenInvalid  = "reset_token_invalid"
+	CodeResetTokenExpired  = "reset_token_expired"
+	CodeAccountExists      = "account_exists"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -287,6 +324,12 @@ func StatusForCode(code string) int {
 		return http.StatusPaymentRequired
 	case CodeInvocationNotFound:
 		return http.StatusNotFound
+	case CodeInvalidCredentials, CodeEmailNotVerified:
+		return http.StatusUnauthorized
+	case CodePasswordTooWeak, CodeAccountExists:
+		return http.StatusBadRequest
+	case CodeResetTokenInvalid, CodeResetTokenExpired:
+		return http.StatusGone
 	default:
 		return http.StatusInternalServerError
 	}

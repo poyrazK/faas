@@ -183,6 +183,11 @@ type Store interface {
 	CreateAPIKey(ctx context.Context, accountID string, hash []byte, label string) (APIKey, error)
 	DeleteAPIKey(ctx context.Context, accountID, keyID string) error
 	ListAPIKeys(ctx context.Context, accountID string) ([]APIKey, error)
+	// APIKeyByHash resolves an api_keys row by its SHA-256 hash. Used
+	// by the post-login audit log (cmd/apid/handlers_auth.go) so an
+	// operator investigating "who signed in as alice?" can identify
+	// which key authenticated. Returns ErrNotFound if no row matches.
+	APIKeyByHash(ctx context.Context, hash []byte) (APIKey, error)
 	TouchKeyLastUsed(ctx context.Context, keyID string) error
 
 	// Login tokens (M7.5 magic-link, spec §14 + ADR-011).
