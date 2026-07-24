@@ -133,6 +133,13 @@ type APIKeyResponse struct {
 	Plaintext string `json:"plaintext,omitempty"`
 }
 
+// CreateKeyRequest is the body of POST /v1/keys. Label is optional
+// (max 100 chars per spec); empty label is allowed and renders as
+// `{}` so the server's optional-field handling stays in scope.
+type CreateKeyRequest struct {
+	Label string `json:"label,omitempty"`
+}
+
 // CustomDomainResponse is a custom domain's wire shape. VerifiedAt is the
 // zero time on unverified rows; the verifier goroutine polls DNS and updates
 // it (spec §7).
