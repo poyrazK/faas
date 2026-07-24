@@ -32,14 +32,17 @@ type UpdateAppRequest struct {
 	// 403 plan_min_instances_not_allowed (apid gate). Must be <=
 	// plan MaxConcurrency (422 invalid_min_instances).
 	MinInstances *int `json:"min_instances,omitempty"`
-	// EgressAllowlist (ADR-031, tier-2 of the network roadmap) is
-	// the per-app outbound IPv4 allowlist. Each entry is a CIDR
-	// string ("1.2.3.0/24"); the slice replaces the full list
-	// (atomic full-overwrite at the apps row). Plan-gated upstream
-	// (Free/Hobby return 403 plan_egress_allowlist_not_allowed);
-	// size-capped at plan.EgressAllowlistMaxSize() (Pro 16, Scale 64).
-	// Empty slice / nil pointer = clear the allowlist (back to the
-	// default-accept chain policy).
+	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
+	// roadmap) is the per-app outbound IP allowlist. Each entry is
+	// a CIDR string ("1.2.3.0/24" for v4, "2001:db8::/32" for v6);
+	// the slice replaces the full list (atomic full-overwrite at the
+	// apps row). Plan-gated upstream (Free/Hobby return 403
+	// plan_egress_allowlist_not_allowed); size-capped at
+	// plan.EgressAllowlistMaxSize() (Pro 16, Scale 64) — v4 + v6
+	// entries share the same count budget. Empty slice / nil
+	// pointer = clear the allowlist (back to the default-accept
+	// chain policy). The non-/0 contract is enforced by the DB
+	// trigger `apps_egress_allowlist_cidr` (migration 00030).
 	EgressAllowlist *[]string `json:"egress_allowlist,omitempty"`
 }
 

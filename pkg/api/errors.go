@@ -465,14 +465,16 @@ func ErrEgressAllowlistTooLong(got, maxSize int) *Problem {
 		WithDocs("https://docs.DOMAIN/apps#egress-allowlist")
 }
 
-// ErrInvalidEgressAllowlist (ADR-031) is a 400 for entries that don't
-// ParsePrefix as a v4 CIDR. The detail names the offending entry so an
-// operator triaging a rejected PATCH sees exactly which line is bad.
-// v6 attempts land here too (v1 is v4 only; v6 mirror is a future ADR).
+// ErrInvalidEgressAllowlist (ADR-031 + ADR-032) is a 400 for
+// entries that don't ParsePrefix as a v4 or v6 CIDR, or that
+// have masklen /0. The detail names the offending entry so an
+// operator triaging a rejected PATCH sees exactly which line is
+// bad. ADR-032 — v6 entries are accepted alongside v4 entries;
+// the non-/0 contract is shared with the DB trigger.
 func ErrInvalidEgressAllowlist(entry string, reason error) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidEgressAllowlist,
 		"Invalid egress allowlist entry",
-		fmt.Sprintf("entry %q is not a valid IPv4 CIDR: %v.", entry, reason)).
+		fmt.Sprintf("entry %q is not a valid v4 or v6 CIDR (non-/0): %v.", entry, reason)).
 		WithDocs("https://docs.DOMAIN/apps#egress-allowlist")
 }
 

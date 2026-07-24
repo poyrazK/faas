@@ -96,3 +96,83 @@ func TestUpdateApp_WithEgressAllowlist(t *testing.T) {
 		t.Errorf("after Set empty: EgressAllowlist = %v, want empty", updated.EgressAllowlist)
 	}
 }
+
+// TestUpdateApp_WithEgressAllowlistV6 (ADR-032) is the v6 mirror of
+// the parent test: v6 entries round-trip through MemStore exactly
+// like v4. The non-/0 contract is held by the DB trigger
+// `apps_egress_allowlist_cidr` (migration 00030) — the in-memory
+// store is intentionally permissive so it stays useful as a test
+// double for code paths that don't care about the family split.
+func TestUpdateApp_WithEgressAllowlistV6(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	acct, err := store.CreateAccount(ctx, "alice@example.com", "free")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "v6"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v6list := []netip.Prefix{
+		netip.MustParsePrefix("fe80::/10"),
+		netip.MustParsePrefix("2001:db8::/32"),
+	}
+	updated, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{
+		EgressAllowlist:    &v6list,
+		SetEgressAllowlist: true,
+	})
+	if err != nil {
+		t.Fatalf("set v6 allowlist: %v", err)
+	}
+	if !reflect.DeepEqual(updated.EgressAllowlist, v6list) {
+		t.Errorf("after Set v6:\n got  %v\n want %v", updated.EgressAllowlist, v6list)
+	}
+	readBack, err := store.AppByID(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(readBack.EgressAllowlist, v6list) {
+		t.Errorf("AppByID v6 round-trip:\n got  %v\n want %v", readBack.EgressAllowlist, v6list)
+	}
+}
+
+// TestUpdateApp_WithEgressAllowlistMixed (ADR-032) pins that a v4 +
+// v6 list round-trips together. The renderer partitions by family
+// at emit time; the store cares about neither.
+func TestUpdateApp_WithEgressAllowlistMixed(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	acct, err := store.CreateAccount(ctx, "alice@example.com", "free")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "mix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mixed := []netip.Prefix{
+		netip.MustParsePrefix("1.2.3.0/24"),
+		netip.MustParsePrefix("fe80::/10"),
+		netip.MustParsePrefix("8.8.8.0/24"),
+		netip.MustParsePrefix("2001:db8::/32"),
+	}
+	updated, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{
+		EgressAllowlist:    &mixed,
+		SetEgressAllowlist: true,
+	})
+	if err != nil {
+		t.Fatalf("set mixed allowlist: %v", err)
+	}
+	if !reflect.DeepEqual(updated.EgressAllowlist, mixed) {
+		t.Errorf("after Set mixed:\n got  %v\n want %v", updated.EgressAllowlist, mixed)
+	}
+	readBack, err := store.AppByID(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(readBack.EgressAllowlist, mixed) {
+		t.Errorf("AppByID mixed round-trip:\n got  %v\n want %v", readBack.EgressAllowlist, mixed)
+	}
+}

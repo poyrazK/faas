@@ -292,21 +292,21 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// netns.Config omits the rule when ConntrackCap <= 0 so a vmmd that
 	// hasn't been rebuilt still wakes cleanly.
 	nc.ConntrackCap = m.conntrackCap
-	// ADR-031 — translate the wire-level CIDR strings into netip.Prefix
-	// once, here, so the nft renderer never touches stringly-typed
-	// addresses. apid's PATCH handler already ParsePrefix'd these on
-	// input and the apps.egress_allowlist cidr[] CHECK rejected any v6,
-	// so a parse failure at this layer means the wire contract is
-	// violated — fail fast rather than silently emit a half-formed
-	// ruleset (a single bad CIDR would otherwise crash nft). Defence
-	// in depth: wire-side v6 reject here too, so a wire-bypass (e.g.
-	// a vmmd that forgets to re-validate) cannot smuggle a v6 prefix
-	// into the per-netns `ip faas forward` chain (nft rejects v6 in
-	// an `ip`-family chain with a parse error and aborts the whole
-	// add-rule sequence, so the instance would fail to wake closed).
+	// ADR-031 + ADR-032 — translate the wire-level CIDR strings into
+	// netip.Prefix once, here, so the nft renderer never touches
+	// stringly-typed addresses. apid's PATCH handler already
+	// ParsePrefix'd these on input and the apps.egress_allowlist
+	// cidr[] TRIGGER (`apps_egress_allowlist_cidr`, migration 00030)
+	// rejects families outside {4,6} and any /0, so a parse failure
+	// at this layer means the wire contract is violated — fail fast
+	// rather than silently emit a half-formed ruleset (a single bad
+	// CIDR would otherwise crash nft). Defence in depth: wire-side
+	// gate here too, so a wire-bypass (e.g. a vmmd that forgets to
+	// re-validate) cannot smuggle a bad prefix past apid. ADR-032 —
+	// the v4-only gate was removed; v4 + v6 are both allowed here.
 	// Bits()==0 mirrors the apid gate so a wire-bypass cannot land a
-	// /0 either. On reject the named-return `err` triggers the
-	// cleanup defer registered above (release the slot).
+	// /0 either. On reject the named-return `err` triggers the cleanup
+	// defer registered above (release the slot).
 	if len(req.EgressAllowlist) > 0 {
 		nc.EgressAllowlist = make([]netip.Prefix, 0, len(req.EgressAllowlist))
 		for _, c := range req.EgressAllowlist {
@@ -314,8 +314,8 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 			if perr != nil {
 				return nil, fmt.Errorf("wake %s: egress allowlist: invalid CIDR %q: %w", req.Instance, c, perr)
 			}
-			if !prefix.Addr().Is4() || prefix.Bits() == 0 {
-				return nil, fmt.Errorf("wake %s: egress allowlist: rejected %q (v4 only, non-/0; ADR-031 v1)", req.Instance, c)
+			if prefix.Bits() == 0 {
+				return nil, fmt.Errorf("wake %s: egress allowlist: rejected %q (masklen /0; ADR-032 non-/0 contract)", req.Instance, c)
 			}
 			nc.EgressAllowlist = append(nc.EgressAllowlist, prefix)
 		}

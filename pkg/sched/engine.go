@@ -73,14 +73,17 @@ func bootTimeout(s state.State) time.Duration {
 	}
 }
 
-// prefixesToCIDRStrings (ADR-031) flattens state.App.EgressAllowlist
-// (netip.Prefix) into the wire-shape vmmd expects ([]string). The empty
-// input returns nil so the proto carries an empty list (no allowlist rule
-// emitted). apid's PUT already ParsePrefix'd each entry and the
-// apps.egress_allowlist cidr[] CHECK rejects v6, so every Prefix here is
-// a valid v4 — String() round-trips through the same parser on the
-// other side (vmmdgrpc.proto -> fcvm.WakeRequest -> pkg/fcvm.Wake ->
-// netip.ParsePrefix at manager.go, which fails closed).
+// prefixesToCIDRStrings (ADR-031 + ADR-032) flattens
+// state.App.EgressAllowlist (netip.Prefix) into the wire-shape vmmd
+// expects ([]string). The empty input returns nil so the proto carries
+// an empty list (no allowlist rule emitted). apid's PUT already
+// ParsePrefix'd each entry and the apps.egress_allowlist cidr[] DB
+// trigger (`apps_egress_allowlist_cidr`, migration 00030) accepts both
+// v4 and v6 — every Prefix here is a valid v4 OR v6 — String()
+// round-trips through the same parser on the other side
+// (vmmdgrpc.proto -> fcvm.WakeRequest -> pkg/fcvm.Wake ->
+// netip.ParsePrefix at manager.go, which fails closed). The
+// per-family partition happens at the renderer.
 func prefixesToCIDRStrings(prefixes []netip.Prefix) []string {
 	if len(prefixes) == 0 {
 		return nil

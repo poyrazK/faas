@@ -687,7 +687,7 @@ func TestTcCommandsValidRate(t *testing.T) {
 	}
 }
 
-// TestForwardAllowlistRuleHelper pins the unit-tested branch in
+// TestForwardAllowlistRuleHelper pins the v4 unit-tested branch in
 // isolation. Empty EgressAllowlist must return nil (no rule shape at
 // all) — the renderer chooses NOT to fabricate "ip daddr {} accept"
 // on empty, because chain-policy accept handles the no-list case.
@@ -703,7 +703,8 @@ func TestTcCommandsValidRate(t *testing.T) {
 // Plan source: ADR-031 ("tier-2 of the network roadmap"). The
 // post-deny/pre-default-accept placement is asserted separately
 // (TestNftCommandsAllowlistRuleRunsAfterDenies) because the helper
-// itself doesn't know its position in the chain.
+// itself doesn't know its position in the chain. The v6 sibling is
+// pinned by TestForwardAllowlistRule6Helper below.
 func TestForwardAllowlistRuleHelper(t *testing.T) {
 	nx := []string{"ip", "netns", "exec", "fc-test", "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
@@ -714,15 +715,15 @@ func TestForwardAllowlistRuleHelper(t *testing.T) {
 		t.Errorf("empty EgressAllowlist: helper returned %v, want nil", got)
 	}
 
-	// Single CIDR: single argv with the expected shape.
+	// Single v4 CIDR: single argv with the expected shape.
 	one := testConfig()
 	one.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
 	wantOne := `ip netns exec fc-test nft add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } accept`
 	if got := strings.Join(one.forwardAllowlistRule(nft), " "); got != wantOne {
-		t.Errorf("single CIDR:\n got  %s\n want %s", got, wantOne)
+		t.Errorf("single v4 CIDR:\n got  %s\n want %s", got, wantOne)
 	}
 
-	// Multiple CIDRs: comma-joined set, NO trailing whitespace.
+	// Multiple v4 CIDRs: comma-joined set, NO trailing whitespace.
 	many := testConfig()
 	many.EgressAllowlist = []netip.Prefix{
 		netip.MustParsePrefix("1.2.3.0/24"),
@@ -731,125 +732,296 @@ func TestForwardAllowlistRuleHelper(t *testing.T) {
 	}
 	wantMany := `ip netns exec fc-test nft add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24,8.8.8.0/24,9.9.9.0/24 } accept`
 	if got := strings.Join(many.forwardAllowlistRule(nft), " "); got != wantMany {
-		t.Errorf("multiple CIDRs:\n got  %s\n want %s", got, wantMany)
+		t.Errorf("multiple v4 CIDRs:\n got  %s\n want %s", got, wantMany)
+	}
+
+	// v4-only partition: a v6-only EgressAllowlist produces NO v4
+	// rule (the v6 half is emitted by forwardAllowlistRule6). This
+	// is the ADR-032 family split: each chain reads its own slice.
+	v6Only := testConfig()
+	v6Only.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("fe80::/10")}
+	if got := v6Only.forwardAllowlistRule(nft); got != nil {
+		t.Errorf("v6-only input on v4 helper: got %v, want nil", got)
+	}
+
+	// Mixed input on the v4 helper: only the v4 entries appear.
+	mixed := testConfig()
+	mixed.EgressAllowlist = []netip.Prefix{
+		netip.MustParsePrefix("1.2.3.0/24"),
+		netip.MustParsePrefix("fe80::/10"),
+	}
+	wantMixedV4 := `ip netns exec fc-test nft add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } accept`
+	if got := strings.Join(mixed.forwardAllowlistRule(nft), " "); got != wantMixedV4 {
+		t.Errorf("mixed input on v4 helper:\n got  %s\n want %s", got, wantMixedV4)
+	}
+}
+
+// TestForwardAllowlistRule6Helper is the ADR-032 v6 mirror of
+// TestForwardAllowlistRuleHelper. Same shape: nil on empty, comma-
+// joined set with NO trailing whitespace, family-pinned (v6 only —
+// a v4 entry produces nil here because the v4 helper owns it).
+//
+// Internal to NftCommands — do not invoke from anywhere else. The
+// helper signature mirrors forwardAllowlistRule so the per-family
+// symmetric test pattern is grep-able.
+func TestForwardAllowlistRule6Helper(t *testing.T) {
+	nx := []string{"ip", "netns", "exec", "fc-test", "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+
+	// Empty: nothing emitted.
+	if got := testConfig().forwardAllowlistRule6(nft); got != nil {
+		t.Errorf("empty EgressAllowlist: helper returned %v, want nil", got)
+	}
+
+	// Single v6 CIDR: single argv with the expected v6 shape.
+	one := testConfig()
+	one.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("fe80::/10")}
+	wantOne := `ip netns exec fc-test nft add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } accept`
+	if got := strings.Join(one.forwardAllowlistRule6(nft), " "); got != wantOne {
+		t.Errorf("single v6 CIDR:\n got  %s\n want %s", got, wantOne)
+	}
+
+	// Multiple v6 CIDRs: comma-joined set, NO trailing whitespace.
+	many := testConfig()
+	many.EgressAllowlist = []netip.Prefix{
+		netip.MustParsePrefix("fe80::/10"),
+		netip.MustParsePrefix("2001:db8::/32"),
+	}
+	wantMany := `ip netns exec fc-test nft add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10,2001:db8::/32 } accept`
+	if got := strings.Join(many.forwardAllowlistRule6(nft), " "); got != wantMany {
+		t.Errorf("multiple v6 CIDRs:\n got  %s\n want %s", got, wantMany)
+	}
+
+	// v6-only partition: a v4-only EgressAllowlist produces NO v6
+	// rule. Symmetric to the v4 helper's v6-only case above.
+	v4Only := testConfig()
+	v4Only.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
+	if got := v4Only.forwardAllowlistRule6(nft); got != nil {
+		t.Errorf("v4-only input on v6 helper: got %v, want nil", got)
+	}
+
+	// Mixed input on the v6 helper: only the v6 entries appear.
+	mixed := testConfig()
+	mixed.EgressAllowlist = []netip.Prefix{
+		netip.MustParsePrefix("1.2.3.0/24"),
+		netip.MustParsePrefix("fe80::/10"),
+	}
+	wantMixedV6 := `ip netns exec fc-test nft add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } accept`
+	if got := strings.Join(mixed.forwardAllowlistRule6(nft), " "); got != wantMixedV6 {
+		t.Errorf("mixed input on v6 helper:\n got  %s\n want %s", got, wantMixedV6)
 	}
 }
 
 // TestNftCommandsEmitsAllowlistRule asserts the FULL-RULESET path:
 // when EgressAllowlist is non-empty, NftCommands emits exactly ONE
-// allowlist rule inside the IPv4 forward chain. Mirrors the
-// ConntrackCap test style.
+// allowlist rule per family partition inside the corresponding
+// forward chain. ADR-032 expanded the v1 surface from v4-only to
+// v4 + v6, partitioned by `prefix.Addr().Is4()` at render time.
 //
-// Note: the allowlist is a v4-only v1 surface (ADR-031); the
-// IPv6-mirror ADR is out of scope. We deliberately DO NOT assert a
-// v6 sibling — adding one later needs its own ADR.
+// v4-only input → exactly one v4 rule (zero v6).
+// v6-only input → exactly one v6 rule (zero v4).
+// Mixed input → one v4 rule + one v6 rule.
+//
+// Mirrors the ConntrackCap test style.
 func TestNftCommandsEmitsAllowlistRule(t *testing.T) {
-	c := testConfig()
-	c.EgressAllowlist = []netip.Prefix{
-		netip.MustParsePrefix("1.2.3.0/24"),
-		netip.MustParsePrefix("8.8.8.0/24"),
+	type wantCounts struct {
+		v4 int
+		v6 int
 	}
-	cmds := c.NftCommands()
-	want := `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24,8.8.8.0/24 } accept`
-	count := 0
-	for _, cmd := range cmds {
-		line := strings.Join(cmd, " ")
-		if strings.Contains(line, "ip daddr {") && strings.Contains(line, "accept") && !strings.Contains(line, "drop") {
-			count++
-			if !strings.Contains(line, want) {
-				t.Errorf("allowlist rule mismatch:\n got  %s\n want-substr %s", line, want)
+	cases := []struct {
+		name     string
+		allow    []netip.Prefix
+		want     wantCounts
+		v4Substr string // optional: assert a substring on the v4 rule
+		v6Substr string // optional: assert a substring on the v6 rule
+	}{
+		{
+			name: "v4-only",
+			allow: []netip.Prefix{
+				netip.MustParsePrefix("1.2.3.0/24"),
+				netip.MustParsePrefix("8.8.8.0/24"),
+			},
+			want:     wantCounts{v4: 1, v6: 0},
+			v4Substr: `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24,8.8.8.0/24 } accept`,
+		},
+		{
+			name: "v6-only",
+			allow: []netip.Prefix{
+				netip.MustParsePrefix("fe80::/10"),
+				netip.MustParsePrefix("2001:db8::/32"),
+			},
+			want:     wantCounts{v4: 0, v6: 1},
+			v6Substr: `add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10,2001:db8::/32 } accept`,
+		},
+		{
+			name: "mixed-v4-and-v6",
+			allow: []netip.Prefix{
+				netip.MustParsePrefix("1.2.3.0/24"),
+				netip.MustParsePrefix("fe80::/10"),
+			},
+			want:     wantCounts{v4: 1, v6: 1},
+			v4Substr: `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } accept`,
+			v6Substr: `add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } accept`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := testConfig()
+			c.EgressAllowlist = tc.allow
+			cmds := c.NftCommands()
+			v4Count, v6Count := 0, 0
+			for _, cmd := range cmds {
+				line := strings.Join(cmd, " ")
+				// Allowlist-shape: `<family> daddr { … } accept` and
+				// NOT a `drop` (the lateral-movement deny has the
+				// same prefix).
+				switch {
+				case strings.Contains(line, "ip daddr {") && strings.Contains(line, "accept") && !strings.Contains(line, "drop") && !strings.Contains(line, "ip6 daddr"):
+					v4Count++
+					if tc.v4Substr != "" && !strings.Contains(line, tc.v4Substr) {
+						t.Errorf("v4 allowlist rule mismatch:\n got  %s\n want-substr %s", line, tc.v4Substr)
+					}
+				case strings.Contains(line, "ip6 daddr {") && strings.Contains(line, "accept") && !strings.Contains(line, "drop"):
+					v6Count++
+					if tc.v6Substr != "" && !strings.Contains(line, tc.v6Substr) {
+						t.Errorf("v6 allowlist rule mismatch:\n got  %s\n want-substr %s", line, tc.v6Substr)
+					}
+				}
 			}
-		}
-	}
-	if count != 1 {
-		t.Errorf("expected exactly 1 allowlist rule in NftCommands, found %d:\n%s", count, flatten(cmds))
+			if v4Count != tc.want.v4 {
+				t.Errorf("v4 allowlist rule count = %d, want %d:\n%s", v4Count, tc.want.v4, flatten(cmds))
+			}
+			if v6Count != tc.want.v6 {
+				t.Errorf("v6 allowlist rule count = %d, want %d:\n%s", v6Count, tc.want.v6, flatten(cmds))
+			}
+		})
 	}
 }
 
 // TestNftCommandsOmitsAllowlistRule_WhenEmpty: an empty allowlist
-// must NOT emit the rule, even when other knobs (ConntrackCap,
-// EgressMbit) are populated. Empty allowlist is the default-accept
-// case — adding a "daddr { } accept" rule would be cosmetic at best,
-// wrong at worst (a future nft syntax check might reject the empty
-// set). Pinning the omission here makes that asymmetry explicit.
+// must NOT emit the rule on either chain, even when other knobs
+// (ConntrackCap, EgressMbit) are populated. Empty allowlist is the
+// default-accept case — adding a "daddr { } accept" rule would be
+// cosmetic at best, wrong at worst (a future nft syntax check might
+// reject the empty set). Pinning the omission here makes that
+// asymmetry explicit. ADR-032 expanded the scan to include the v6
+// chain (`ip6 daddr { … } accept` is equally forbidden).
 func TestNftCommandsOmitsAllowlistRule_WhenEmpty(t *testing.T) {
 	c := testConfig()
 	c.ConntrackCap = 4096
 	c.EgressMbit = 100
 	for i, cmd := range c.NftCommands() {
 		line := strings.Join(cmd, " ")
-		if strings.Contains(line, "ip daddr {") && strings.Contains(line, "accept") {
-			t.Errorf("rule %d contains allowlist-shape `daddr { … } accept` but EgressAllowlist is empty:\n%s", i, line)
+		switch {
+		case strings.Contains(line, "ip daddr {") && strings.Contains(line, "accept"):
+			t.Errorf("rule %d contains v4 allowlist-shape `ip daddr { … } accept` but EgressAllowlist is empty:\n%s", i, line)
+		case strings.Contains(line, "ip6 daddr {") && strings.Contains(line, "accept"):
+			t.Errorf("rule %d contains v6 allowlist-shape `ip6 daddr { … } accept` but EgressAllowlist is empty (ADR-032):\n%s", i, line)
 		}
 	}
 }
 
 // TestNftCommandsAllowlistRuleRunsAfterDenies asserts the placement
-// the ADR-031 comment promises: AFTER the SMTP drop + lateral-
-// movement deny (so deny > allow on overlap) and AFTER the
+// the ADR-031 + ADR-032 comments promise: AFTER the SMTP drop +
+// lateral-movement deny (so deny > allow on overlap) and AFTER the
 // established/related accept (so reply packets on existing flows
 // keep flowing regardless of the allowlist). The chain-policy accept
 // would be reached if the rule didn't exist, but with allowlist
 // enabled the rule itself is the last meaningful gate.
+//
+// Mixed v4 + v6 input exercises BOTH chains — the v4 allowlist
+// must come after the v4 lateral-movement deny, and the v6
+// allowlist must come after the v6 lateral-movement deny. ADR-032.
 func TestNftCommandsAllowlistRuleRunsAfterDenies(t *testing.T) {
 	c := testConfig()
-	c.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
+	c.EgressAllowlist = []netip.Prefix{
+		netip.MustParsePrefix("1.2.3.0/24"),
+		netip.MustParsePrefix("fe80::/10"),
+	}
 	cmds := c.NftCommands()
-	var established, smtpDrop, daddrDrop, allowlist = -1, -1, -1, -1
+	var v4Established, v4SmtpDrop, v4DaddrDrop, v4Allowlist = -1, -1, -1, -1
+	var v6Established, v6DaddrDrop, v6Allowlist = -1, -1, -1
 	for i, cmd := range cmds {
 		line := strings.Join(cmd, " ")
-		if !strings.Contains(line, "ip faas") {
-			continue
-		}
 		switch {
-		case established < 0 && strings.Contains(line, "ct state established,related accept"):
-			established = i
-		case smtpDrop < 0 && strings.Contains(line, "tcp dport") && strings.Contains(line, "drop"):
-			smtpDrop = i
-		case daddrDrop < 0 && strings.Contains(line, "daddr") && strings.Contains(line, "drop"):
-			daddrDrop = i
-		case allowlist < 0 && strings.Contains(line, "daddr") && strings.Contains(line, "accept"):
-			allowlist = i
+		// v4 chain.
+		case strings.Contains(line, "ip faas"):
+			switch {
+			case v4Established < 0 && strings.Contains(line, "ct state established,related accept"):
+				v4Established = i
+			case v4SmtpDrop < 0 && strings.Contains(line, "tcp dport") && strings.Contains(line, "drop"):
+				v4SmtpDrop = i
+			case v4DaddrDrop < 0 && strings.Contains(line, "ip daddr") && strings.Contains(line, "drop"):
+				v4DaddrDrop = i
+			case v4Allowlist < 0 && strings.Contains(line, "ip daddr") && strings.Contains(line, "accept"):
+				v4Allowlist = i
+			}
+		// v6 chain (no SMTP drop; ADR-023).
+		case strings.Contains(line, "ip6 faas"):
+			switch {
+			case v6Established < 0 && strings.Contains(line, "ct state established,related accept"):
+				v6Established = i
+			case v6DaddrDrop < 0 && strings.Contains(line, "ip6 daddr") && strings.Contains(line, "drop"):
+				v6DaddrDrop = i
+			case v6Allowlist < 0 && strings.Contains(line, "ip6 daddr") && strings.Contains(line, "accept"):
+				v6Allowlist = i
+			}
 		}
 	}
-	if established < 0 || smtpDrop < 0 || daddrDrop < 0 || allowlist < 0 {
-		t.Fatalf("missing rule: established=%d smtp=%d daddr=%d allowlist=%d\n%s",
-			established, smtpDrop, daddrDrop, allowlist, flatten(cmds))
+	if v4Established < 0 || v4SmtpDrop < 0 || v4DaddrDrop < 0 || v4Allowlist < 0 {
+		t.Fatalf("v4 chain: missing rule: established=%d smtp=%d daddrDrop=%d allowlist=%d\n%s",
+			v4Established, v4SmtpDrop, v4DaddrDrop, v4Allowlist, flatten(cmds))
 	}
-	if established >= allowlist || smtpDrop >= allowlist || daddrDrop >= allowlist {
-		t.Errorf("allowlist (rule %d) must come AFTER established=%d smtpDrop=%d daddrDrop=%d",
-			allowlist, established, smtpDrop, daddrDrop)
+	if v6Established < 0 || v6DaddrDrop < 0 || v6Allowlist < 0 {
+		t.Fatalf("v6 chain: missing rule: established=%d daddrDrop=%d allowlist=%d\n%s",
+			v6Established, v6DaddrDrop, v6Allowlist, flatten(cmds))
+	}
+	if v4Established >= v4Allowlist || v4SmtpDrop >= v4Allowlist || v4DaddrDrop >= v4Allowlist {
+		t.Errorf("v4 allowlist (rule %d) must come AFTER established=%d smtpDrop=%d daddrDrop=%d",
+			v4Allowlist, v4Established, v4SmtpDrop, v4DaddrDrop)
+	}
+	if v6Established >= v6Allowlist || v6DaddrDrop >= v6Allowlist {
+		t.Errorf("v6 allowlist (rule %d) must come AFTER established=%d daddrDrop=%d",
+			v6Allowlist, v6Established, v6DaddrDrop)
 	}
 }
 
 // TestAllowlistAndConnlimitCoexist: a Config with both knobs enabled
 // emits both rules. Order: cap (after established, before deny),
 // then deny, then allowlist (after deny). Pin that both rules land.
+// ADR-032 expanded to assert the v6 siblings too.
 func TestAllowlistAndConnlimitCoexist(t *testing.T) {
 	c := testConfig()
 	c.ConntrackCap = 4096
-	c.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
+	c.EgressAllowlist = []netip.Prefix{
+		netip.MustParsePrefix("1.2.3.0/24"),
+		netip.MustParsePrefix("fe80::/10"),
+	}
 	cmds := c.NftCommands()
 	v4Cap := `add rule ip faas forward ct count over 4096 counter name "faas_cap" drop`
 	v4Allow := `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } accept`
-	var capIdx, allowIdx = -1, -1
+	v6Cap := `add rule ip6 faas forward ct count over 4096 counter name "faas_cap" drop`
+	v6Allow := `add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } accept`
+	var v4CapIdx, v4AllowIdx = -1, -1
+	var v6CapIdx, v6AllowIdx = -1, -1
 	for i, cmd := range cmds {
 		line := strings.Join(cmd, " ")
 		switch {
-		case capIdx < 0 && strings.Contains(line, v4Cap):
-			capIdx = i
-		case allowIdx < 0 && strings.Contains(line, v4Allow):
-			allowIdx = i
+		case v4CapIdx < 0 && strings.Contains(line, v4Cap):
+			v4CapIdx = i
+		case v4AllowIdx < 0 && strings.Contains(line, v4Allow):
+			v4AllowIdx = i
+		case v6CapIdx < 0 && strings.Contains(line, v6Cap):
+			v6CapIdx = i
+		case v6AllowIdx < 0 && strings.Contains(line, v6Allow):
+			v6AllowIdx = i
 		}
 	}
-	if capIdx < 0 {
-		t.Errorf("v4 conntrack cap rule missing")
+	if v4CapIdx < 0 || v4AllowIdx < 0 || v4CapIdx >= v4AllowIdx {
+		t.Errorf("v4 chain: capIdx=%d allowIdx=%d; cap must come BEFORE allowlist", v4CapIdx, v4AllowIdx)
 	}
-	if allowIdx < 0 {
-		t.Errorf("v4 allowlist rule missing")
-	}
-	if capIdx < 0 || allowIdx < 0 || capIdx >= allowIdx {
-		t.Errorf("cap (rule %d) must come BEFORE allowlist (rule %d) so a denied flow never spuriously overrides the cap", capIdx, allowIdx)
+	if v6CapIdx < 0 || v6AllowIdx < 0 || v6CapIdx >= v6AllowIdx {
+		t.Errorf("v6 chain: capIdx=%d allowIdx=%d; cap must come BEFORE allowlist (ADR-032)", v6CapIdx, v6AllowIdx)
 	}
 }
 
@@ -904,8 +1076,10 @@ func TestNftCommandsChainPolicySwitchesWithAllowlist(t *testing.T) {
 	}
 
 	// Populated case: BOTH chains use policy drop, and exactly one
-	// allowlist accept rule is on the v4 chain (the v6 sibling is a
-	// separate ADR — no accept rule on ip6 yet).
+	// allowlist accept rule is on each chain that has any entries
+	// (ADR-032 — the v6 mirror lands a sibling on `ip6 faas forward`
+	// whenever the v6 partition is non-empty; v4-only input still
+	// produces one v4 rule and zero v6 rules).
 	pop := testConfig()
 	pop.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
 	ruleset := flatten(pop.NftCommands())

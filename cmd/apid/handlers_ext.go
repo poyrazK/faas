@@ -79,13 +79,18 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if len(*req.EgressAllowlist) > maxSize {
 			return api.ErrEgressAllowlistTooLong(len(*req.EgressAllowlist), maxSize)
 		}
-		// Per-entry shape: every CIDR must ParsePrefix as a v4 with a
-		// non-zero host-bits prefix. The Postgres cidr[] CHECK rejects
-		// v6 at write time — catching it here just gives a more
-		// operator-friendly error message naming the bad entry.
+		// Per-entry shape: every CIDR must ParsePrefix as either v4
+		// or v6 (ADR-032 — the v6 mirror), with a non-zero mask. The
+		// Postgres cidr[] TRIGGER `apps_egress_allowlist_cidr`
+		// (migration 00030) rejects families outside {4,6} and any
+		// /0 at write time — catching it here just gives a more
+		// operator-friendly error message naming the bad entry. The
+		// `Bits() == 0` reject is shared with the DB trigger so a
+		// future /0 rejection in either layer cannot quietly
+		// disagree.
 		for _, raw := range *req.EgressAllowlist {
 			prefix, err := netip.ParsePrefix(raw)
-			if err != nil || !prefix.Addr().Is4() || prefix.Bits() == 0 {
+			if err != nil || prefix.Bits() == 0 {
 				return api.ErrInvalidEgressAllowlist(raw, errOrZero("parse failed", err))
 			}
 		}
