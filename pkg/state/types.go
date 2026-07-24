@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -150,9 +151,19 @@ type App struct {
 	// of idle timeout. Pro/Scale only — the apid updateApp handler
 	// rejects Hobby/Free with 403 plan_min_instances_not_allowed.
 	MinInstances int
-	Status       AppStatus
-	Manifest     AppManifest
-	CreatedAt    time.Time
+	// EgressAllowlist is the per-app outbound CIDR allowlist (ADR-031,
+	// tier-2 of the network roadmap). Empty => no allowlist rule
+	// emitted, current behaviour preserved; non-empty => the per-netns
+	// forward chain gains an `iifname tap0 ip daddr { … } accept`
+	// rule after the lateral-movement deny. v4 only in v1 (the v6
+	// mirror is a separate ADR). Plan-gated: Free/Hobby always read
+	// empty (apid updateApp rejects PATCH with 403
+	// plan_egress_allowlist_not_allowed); Pro max 16 entries; Scale
+	// max 64 entries — see pkg/api/limits.go.
+	EgressAllowlist []netip.Prefix
+	Status          AppStatus
+	Manifest        AppManifest
+	CreatedAt       time.Time
 }
 
 // AppManifest is the runner-scaffold payload. Stored as jsonb in Postgres;
@@ -405,8 +416,17 @@ type UpdateAppParams struct {
 	// default for Free/Hobby).
 	MinInstances    *int
 	SetMinInstances bool
-	Status          *AppStatus
-	Manifest        *AppManifest
+	// EgressAllowlist is the per-app outbound CIDR allowlist
+	// (ADR-031). SetEgressAllowlist distinguishes "unset" from
+	// "explicit empty" (= "no allowlist rule, current behaviour").
+	// A nil pointer when SetEgressAllowlist is false leaves the
+	// column unchanged; a non-nil empty slice with
+	// SetEgressAllowlist true replaces the stored array with '{}'
+	// (the default — see migration 00029).
+	EgressAllowlist    *[]netip.Prefix
+	SetEgressAllowlist bool
+	Status             *AppStatus
+	Manifest           *AppManifest
 }
 
 // Snapshot is one restoreable microVM state (spec §4.6, ADR-005).

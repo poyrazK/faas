@@ -498,6 +498,90 @@ func TestRestoreFailsThenColdBootSucceeds(t *testing.T) {
 	}
 }
 
+// TestWakeRejectsEgressAllowlist_v6Closed: defence-in-depth in the
+// wire path (PR #159 review F3). apid's PATCH + the Postgres cidr[]
+// CHECK already reject v6 at write time, but a wire-bypass (a vmmd
+// that forgets to re-validate, a corrupted plan-tier check, a
+// future migration that loosens the apid gate) must not be able to
+// land a v6 prefix in the per-netns `ip faas forward` chain — nft
+// rejects v6 in an `ip`-family table, which would abort the rule
+// sequence and break Wake.
+//
+// The Wake path ParsePrefix's each entry and re-validates family +
+// non-/0 BEFORE touching the netns. A v6 entry fails Closed with a
+// caller-actionable error naming the offending CIDR; the deferred
+// cleanup unwinds the lease so LeakCount stays 0.
+//
+// Mirrors the cleanup discipline of TestColdBootNetworkFailureLeaksNothing
+// (manager_test.go:365) on a fail-fast path that returns BEFORE any
+// nft argv runs.
+func TestWakeRejectsEgressAllowlist_v6Closed(t *testing.T) {
+	run := &fakeRunner{}
+	vmm := &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	_, err := m.Wake(context.Background(), WakeRequest{
+		Instance:   "vw",
+		BaseKey:    "/b.ext4",
+		LayerKey:   "/l.ext4",
+		VcpuCount:  2,
+		MemSizeMiB: 128,
+		// v6 prefix: apid+DB would normally catch this, the wire-side
+		// re-validate is the load-bearing gate if either is bypassed.
+		EgressAllowlist: []string{"fe80::/10"},
+	})
+	if err == nil {
+		t.Fatal("Wake with v6 EgressAllowlist entry: expected fail-closed, got success")
+	}
+	if !strings.Contains(err.Error(), "fe80::/10") {
+		t.Errorf("error should name the offending CIDR; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "v4 only") {
+		t.Errorf("error should say v4 only (ADR-031 v1); got: %v", err)
+	}
+	// No nft commands may have run — the re-validate is BEFORE
+	// Setup/NftCommands. A future regression that moves validation
+	// after setup would leave a half-rendered netns behind; pin here.
+	if run.ran("nft") {
+		t.Error("nft commands ran before v6 rejection — render order regressed")
+	}
+	if m.LeasedCount() != 0 {
+		t.Errorf("lease leaked after fail-closed: leased=%d", m.LeasedCount())
+	}
+}
+
+// TestWakeRejectsEgressAllowlist_ZeroBitsClosed: same defence-in-
+// depth shape, on the /0 case. apid's PATCH rejects Bits()==0
+// (PR #159 review F2); the Wake path re-validates so a wire-bypass
+// cannot smuggle 0.0.0.0/0 (which would unblock the whole v4
+// internet and make the allowlist a no-op).
+func TestWakeRejectsEgressAllowlist_ZeroBitsClosed(t *testing.T) {
+	run := &fakeRunner{}
+	vmm := &fakeVMM{}
+	m := newTestManager(run, vmm)
+
+	_, err := m.Wake(context.Background(), WakeRequest{
+		Instance:        "w0",
+		BaseKey:         "/b.ext4",
+		LayerKey:        "/l.ext4",
+		VcpuCount:       2,
+		MemSizeMiB:      128,
+		EgressAllowlist: []string{"0.0.0.0/0"},
+	})
+	if err == nil {
+		t.Fatal("Wake with /0 EgressAllowlist entry: expected fail-closed, got success")
+	}
+	if !strings.Contains(err.Error(), "0.0.0.0/0") {
+		t.Errorf("error should name the offending CIDR; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "non-/0") {
+		t.Errorf("error should mention the non-/0 invariant; got: %v", err)
+	}
+	if m.LeasedCount() != 0 {
+		t.Errorf("lease leaked after fail-closed: leased=%d", m.LeasedCount())
+	}
+}
+
 // TestRestoreSucceedsUsesFastPath — counter-test to the fallback: when
 // Restore works, cold boot is NOT called and the returned method is
 // WakeRestore.

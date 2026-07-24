@@ -100,6 +100,15 @@ message AppSpec {
   // a single envelope, and writes /etc/faas/secrets.env on drive1.
   // Empty list = no file written.
   repeated SealedSecret sealed_env = 6;
+  // ADR-031 (tier-2 of the network roadmap): per-app outbound IP
+  // allowlist, v4 CIDRs. Empty list = no allowlist rule emitted
+  // (current behaviour preserved); non-empty → vmmd translates into
+  // netns.Config.EgressAllowlist, which emits a single
+  //   `iifname "tap0" ip daddr { … } accept`
+  // rule in the per-netns forward chain after the lateral-movement
+  // deny. Plan-gated upstream (Free/Hobby always empty); see
+  // pkg/api/limits.go::EgressAllowlistAllowed.
+  repeated string egress_allowlist = 7;
 }
 
 // SealedSecret is one (key, ciphertext) pair from app_secrets. The key is

@@ -41,6 +41,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 025 | Decoupled control plane and compute nodes | proposed | M8 |
 | 026 | schedd consumes `NotifyAccountDeletionPending` and evicts live instances | accepted | M8 — landed 2026-07-21 |
 | 027 | Stripe push observability taxonomy (11-label + duration histogram) | accepted | M7 hardening |
+| 031 | Per-app egress IP allowlist (`cidr[]` on `apps`, post-deny accept) | accepted | M8 tier-2 |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

@@ -36,6 +36,11 @@ func toWakeRequest(req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, err
 		MemSizeMiB:       int(app.GetMemSizeMib()),
 		EgressMbit:       int(app.GetEgressMbit()),
 		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
+		// ADR-031: forward the per-app outbound IP allowlist on the
+		// wake wire. apid parses + plan-gates + size-caps upstream;
+		// vmmd translates CIDRs into netns.Config.EgressAllowlist on
+		// Wake. Empty slice = no allowlist rule (current behaviour).
+		EgressAllowlist: app.GetEgressAllowlist(),
 	}
 	if snap != nil {
 		// #96 / ADR-025 axis 2 (slice 3) — mem_path is gone from the
@@ -87,6 +92,9 @@ func toColdBootRequest(req *vmmdpb.CreateColdBootRequest) (fcvm.WakeRequest, err
 		MemSizeMiB:       int(app.GetMemSizeMib()),
 		EgressMbit:       int(app.GetEgressMbit()),
 		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
+		// ADR-031: see toWakeRequest for the rationale; cold-boot
+		// mirrors it so deploy primes the same egress policy.
+		EgressAllowlist: app.GetEgressAllowlist(),
 	}, nil
 }
 
