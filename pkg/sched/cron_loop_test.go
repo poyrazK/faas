@@ -65,6 +65,16 @@ func (r *recordingSynth) SynthesizeRequest(_ context.Context, appID, _, path str
 	return nil
 }
 
+// Invoke is the Move 1 wake-with-envelope path. recordingSynth just
+// increments so cron tests can assert the call landed (and the row
+// arrived in invocations).
+func (r *recordingSynth) Invoke(_ context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+	r.calls.Add(1)
+	r.last.Store(struct{ AppID, Path string }{AppID: appID, Path: inv.Path})
+	inv.State = state.InvocationDispatching
+	return inv, nil
+}
+
 // makeEngine builds a sched.Engine backed by a MemStore and the fake
 // VMM. ledger is the in-memory admission ledger (re-built by NewNodeLedger).
 func makeEngine(t *testing.T, store state.Store, vmm RoutedVMM) (*Engine, *NodeLedger) {

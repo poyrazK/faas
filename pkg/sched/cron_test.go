@@ -34,6 +34,16 @@ func (f *fakeSynth) SynthesizeRequest(_ context.Context, appID, method, path str
 	return nil
 }
 
+// Invoke is the Move 1 path. fakeSynth just records the call so
+// cron dispatch tests can assert on it (the production path goes
+// through gatewayd).
+func (f *fakeSynth) Invoke(_ context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+	f.calls.Add(1)
+	f.last.Store(synthCall{AppID: appID, Method: inv.Method, Path: inv.Path})
+	inv.State = state.InvocationDispatching
+	return inv, nil
+}
+
 // TestParseSchedule_AcceptsCommonExpressions is the smoke test for the
 // 5-field cron syntax. The ones below cover the common shapes the
 // docs use ("every minute", "every 5 min", "daily at 03:00", "M/W/F").

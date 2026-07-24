@@ -350,6 +350,32 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	loopErr := make(chan error, 1)
 	go func() { loopErr <- loop.Run(ctx) }()
 
+	// Move 1 drain: a second goroutine inside schedd that drains the
+	// unified invocations table on a 1s safety tick + invocation_due
+	// pg_notify channel. Shares the engine + store with the cron
+	// loop; the synth client is the same one the cron loop uses so
+	// the wake path is one consistent admission gate.
+	if cfg.GatewaySynthSocket != "" {
+		synth, dialErr := sched.DialGatewaySynth(cfg.GatewaySynthSocket, log)
+		if dialErr == nil {
+			drain := sched.NewDrain(engine.Store(), engine,
+				sched.WithDrainGatewaySynth(synth),
+				sched.WithDrainNotifier(engine.Notifier()),
+				sched.WithDrainLogger(log))
+			notifC, subErr := db.SubscribeWithReconnect(ctx, pool,
+				[]string{db.NotifyInvocationDue}, log)
+			if subErr != nil {
+				log.Warn("drain: subscribe invocation_due", "err", subErr)
+			} else {
+				go func() {
+					if err := drain.Run(ctx, notifC); err != nil && !errors.Is(err, context.Canceled) {
+						log.Warn("drain", "err", err)
+					}
+				}()
+			}
+		}
+	}
+
 	select {
 	case <-ctx.Done():
 		log.Info("draining")

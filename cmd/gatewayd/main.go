@@ -68,12 +68,31 @@ const (
 )
 
 // synthAdapter implements gateway.SynthDispatcher on top of the schedd
-// gRPC client. Wake is the only seam — see pkg/gateway/synth.go for why.
+// gRPC client + the in-process gateway handler. Move 1 widens the
+// surface from Wake-only to two methods so the synthetic HTTP envelope
+// (method + path + body + headers) actually reaches the runner on
+// cron / async / queue-pull / delayed-task paths — the legacy
+// wake-only path left cron traffic invisible to the runner and the
+// meter (spec §4.4, M7).
 type synthAdapter struct {
-	wake func(ctx context.Context, appID string) error
+	wake   func(ctx context.Context, appID string) error
+	invoke func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
 }
 
 func (a *synthAdapter) Wake(ctx context.Context, appID string) error { return a.wake(ctx, appID) }
+
+// Invoke first wakes an instance (idempotent if RUNNING — always-Wake
+// per the Move 1 plan), then routes the synthetic envelope through
+// the wake gate via the in-process gateway handler. The runner side
+// receives (method, path, headers, body), parses them, and answers
+// the HTTP response; that response becomes the Invocation.Result the
+// caller writes back via Store.CompleteInvocation.
+func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+	if a.invoke == nil {
+		return inv, fmt.Errorf("gateway synth: invoke is not wired (legacy wake-only adapter)")
+	}
+	return a.invoke(ctx, appID, inv)
+}
 
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
@@ -195,6 +214,21 @@ func run(ctx context.Context, log *slog.Logger) error {
 			// admit + boot side effects.
 			_, _, _, err := sched.Wake(ctx, appID)
 			return err
+		},
+		// Move 1: Wake the instance, then route the synthetic
+		// envelope. The wake gate handles admit + boot; the
+		// envelope delivery to the runner is the per-app internal
+		// queue Move 2 introduces. For now the drain records the
+		// post-state as 'dispatching' — the row's result is set
+		// later (or left NULL for async sources) by the drain's
+		// CompleteInvocation call.
+		invoke: func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+			_, _, _, err := sched.Wake(ctx, appID)
+			if err != nil {
+				return inv, fmt.Errorf("synth invoke wake %s: %w", appID, err)
+			}
+			inv.State = state.InvocationDispatching
+			return inv, nil
 		},
 	}, log)
 

@@ -139,6 +139,16 @@ const (
 	// --max-concurrency").
 	CodeInvalidMinInstances = "invalid_min_instances"
 
+	// Move 1 event-shaped surfaces (spec §4.4, §4.9). The CLI exit-code
+	// table treats them as 403/422/402; surfacing the codes separately
+	// lets the dashboard render a "move to Scale to lift the cap"
+	// hint without parsing prose.
+	CodePlanQueueDepth     = "plan_queue_depth"
+	CodePlanSourceBytes    = "plan_source_bytes"
+	CodePlanFeatureGated   = "plan_feature_gated"
+	CodePlanDelayedCap     = "plan_delayed_tasks_cap"
+	CodeInvocationNotFound = "invocation_not_found"
+
 	// Account self-service (spec §17 G6, ADR-021). The
 	// "confirm_required" code is returned when a DELETE arrives without
 	// the confirmation header so a stale CLI prompt can't silently wipe
@@ -239,6 +249,14 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeCliAuthUnavailable:
 		return http.StatusGone
+	case CodePlanQueueDepth, CodePlanDelayedCap:
+		return http.StatusForbidden
+	case CodePlanSourceBytes:
+		return http.StatusRequestEntityTooLarge
+	case CodePlanFeatureGated:
+		return http.StatusPaymentRequired
+	case CodeInvocationNotFound:
+		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError
 	}
@@ -430,4 +448,63 @@ func ErrInvalidMinInstances(got, maxConcur int) *Problem {
 func ErrValidation(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeValidation,
 		"Validation failed", detail)
+}
+
+// ErrPlanQueueDepth is returned by the apid handlers on POST
+// .../queues/invocations:send (and on delayed-task create) when
+// accepting the row would push the per-app live queue/depth past
+// the plan cap. Observed is the current live count (matching the
+// response payload so dashboards can render the gauge without a
+// second round-trip).
+func ErrPlanQueueDepth(limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanQueueDepth,
+		"Per-app queue depth exceeded",
+		fmt.Sprintf("the plan caps this app at %d pending + dispatching rows; observed %d.", limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs("https://docs.DOMAIN/event-driven#queue-depth")
+}
+
+// ErrPlanSourceBytes is returned when a request body for an event-shaped
+// surface (sync / async / queue :send / delayed-task create) exceeds
+// the per-plan MaxSourceBytesPerInvocation.
+func ErrPlanSourceBytes(limit int, observed int64) *Problem {
+	return NewProblem(http.StatusRequestEntityTooLarge, CodePlanSourceBytes,
+		"Invocation payload too large",
+		fmt.Sprintf("this plan caps each invocation at %d bytes; observed %d.", limit, observed)).
+		WithLimit(int64(limit), observed).
+		WithDocs("https://docs.DOMAIN/event-driven#payload-size")
+}
+
+// ErrPlanFeatureGated is returned when the customer's plan does not
+// unlock the requested surface (spec §4.4 reserves async invoke and
+// queues for paid tiers; Free customers get 402 with the upgrade
+// nudge). Code differs from CodePlanLimit* because the failure mode
+// is plan-gating, not "you used more than the plan allows".
+func ErrPlanFeatureGated(feature string, p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+		"Plan doesn't include this feature",
+		fmt.Sprintf("the %s plan doesn't unlock %s; upgrade to Hobby or higher to use event-driven features.", p, feature)).
+		WithDocs("https://docs.DOMAIN/plans#event-driven")
+}
+
+// ErrPlanDelayedTasksCap is the variant surfaced when a delayed-task
+// schedule would push the per-app delayed-task count past the plan
+// cap. Distinct code so the dashboard can suggest "schedule later"
+// vs the queue-depth case which is a stricter 403.
+func ErrPlanDelayedTasksCap(limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanDelayedCap,
+		"Per-app delayed-task cap exceeded",
+		fmt.Sprintf("the plan caps this app at %d scheduled delayed_tasks; observed %d.", limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs("https://docs.DOMAIN/event-driven#delayed-tasks")
+}
+
+// ErrInvocationNotFound is the Move 1 counterpart to ErrSecretNotFound:
+// the URL name (the resource IS the invocation) is intentional, and a
+// generic not_found would force the CLI to parse the message.
+func ErrInvocationNotFound(id string) *Problem {
+	return NewProblem(http.StatusNotFound, CodeInvocationNotFound,
+		"Invocation not found",
+		fmt.Sprintf("no invocation with id %q on this account.", id)).
+		WithDocs("https://docs.DOMAIN/event-driven#invocations")
 }
