@@ -61,8 +61,13 @@ import (
 //     the billing-portal template URL).
 //
 //   - FAAS_BILLING_PROVIDER "paddle" → constructs a *paddle.Provider and
-//     runs EnsurePlanProducts so the catalog is populated before the
-//     first /v1/webhooks/paddle POST can land. Returns the provider +
+//     best-effort runs EnsurePlanProducts so the price catalog is
+//     populated before the first /v1/webhooks/paddle POST can land.
+//     Returns the provider + the literal "paddle" even if the catalog
+//     hydration fails — the catalog hydrates lazily on the first
+//     CreateUpgradeTransaction / FlushOverageNow call, and a transient
+//     Paddle outage at boot must not take down apid (the webhook
+//     ingress is independent of the catalog). Returns the provider +
 //     the literal "paddle".
 //
 //   - Any other value → error so a typo fails the boot loudly.
@@ -84,8 +89,17 @@ func LoadProviderForAPID(ctx context.Context, env func(string) string, log *slog
 		// machine + the changePlan 402 path both read planMonthly /
 		// planOverage). The call is bounded by the SDK's HTTP timeout
 		// and the supplied ctx so a daemon shutdown can cancel it.
+		//
+		// Best-effort: a failed hydration is warn-logged, not fatal.
+		// The upgrade 402 will degrade to a 500 "monthly price missing"
+		// until the next EnsurePlanProducts run (e2e harness +
+		// transient Paddle outage at boot both need this). The webhook
+		// ingress is independent of the catalog — the dunning state
+		// machine reads acct.Plan, not price handles, so the boot
+		// failure mode is the upgrade 402 path only.
 		if err := p.EnsurePlanProducts(ctx); err != nil {
-			return nil, "", fmt.Errorf("billing: paddle EnsurePlanProducts: %w", err)
+			log.Warn("billing: paddle EnsurePlanProducts failed at boot — upgrade 402 will degrade to 500 until next run",
+				"err", err)
 		}
 		return p, "paddle", nil
 	default:

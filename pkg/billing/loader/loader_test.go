@@ -67,13 +67,20 @@ func TestLoadProviderForAPID_StripeSameAsDefault(t *testing.T) {
 }
 
 // TestLoadProviderForAPID_Paddle_BuildsProvider asserts the paddle path
-// returns a non-nil Provider + the literal "paddle" name. The
-// EnsurePlanProducts call inside the loader dials api.sandbox.paddle.com
-// — the test doesn't set FAAS_PADDLE_SANDBOX so the loader goes against
-// the live production API. To keep the test hermetic we set
-// FAAS_PADDLE_SANDBOX=1 (sandbox host, still requires a valid key shape
-// but never actually writes — the SDK constructor only fails on
-// programmer error, not on auth).
+// returns a non-nil Provider + the literal "paddle" name. The loader
+// best-effort runs EnsurePlanProducts; if the catalog hydration fails
+// (e.g. a CI runner with no outbound, or a stale Paddle API key) the
+// loader still returns the provider — the upgrade 402 will degrade to
+// a 500 "monthly price missing" until the next EnsurePlanProducts
+// call, but the webhook ingress and dunning state machine keep
+// working.
+//
+// Hermeticity: the test uses a synthetic pdl_test_loader key against
+// api.sandbox.paddle.com. The SDK constructor only fails on programmer
+// error, not on auth, so the loader never returns an error from this
+// path. The EnsurePlanProducts call inside the loader may fail
+// silently (warn-logged) and the test still asserts on the provider
+// shape.
 func TestLoadProviderForAPID_Paddle_BuildsProvider(t *testing.T) {
 	t.Parallel()
 	p, name, err := LoadProviderForAPID(context.Background(), mapEnv(map[string]string{
@@ -83,14 +90,7 @@ func TestLoadProviderForAPID_Paddle_BuildsProvider(t *testing.T) {
 		"FAAS_PADDLE_SANDBOX":        "1",
 	}), discardLog())
 	if err != nil {
-		// EnsurePlanProducts dials the sandbox host; this can fail
-		// in a network-isolated sandbox (CI without outbound). Mark
-		// as skip rather than fail so the test still passes the
-		// constructor-only assertion.
-		if strings.Contains(err.Error(), "paddle EnsurePlanProducts") {
-			t.Skipf("EnsurePlanProducts requires outbound network: %v", err)
-		}
-		t.Fatalf("err = %v, want nil", err)
+		t.Fatalf("err = %v, want nil (loader is best-effort on EnsurePlanProducts)", err)
 	}
 	if name != "paddle" {
 		t.Errorf("name = %q, want %q", name, "paddle")
