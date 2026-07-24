@@ -566,12 +566,15 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 		a.MinInstances = derefInt(p.MinInstances)
 	}
 	if p.SetEgressAllowlist {
-		// ADR-031: nil-with-Set is treated as "clear to default
-		// (empty)" so the API can express "drop the allowlist back to
-		// no-list" via a PATCH with egress_allowlist:[] ; non-nil is
-		// copied verbatim. The slice is intentionally reallocated so
-		// the caller can't mutate the stored value through the slice
-		// header it holds after the call returns.
+		// ADR-031 + ADR-032: nil-with-Set is treated as "clear to
+		// default (empty)" so the API can express "drop the
+		// allowlist back to no-list" via a PATCH with
+		// egress_allowlist:[] ; non-nil is copied verbatim. The
+		// slice is intentionally reallocated so the caller can't
+		// mutate the stored value through the slice header it holds
+		// after the call returns. v4 + v6 entries share the same
+		// counter (Pro 16, Scale 64) — see
+		// pkg/api/limits.go::EgressAllowlistMaxSize.
 		src := derefPrefixes(p.EgressAllowlist)
 		dst := make([]netip.Prefix, len(src))
 		copy(dst, src)

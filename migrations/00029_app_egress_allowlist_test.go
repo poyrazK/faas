@@ -8,8 +8,6 @@
 //   2. The egress_allowlist column exists with default '{}'.
 //   3. UPDATE apps SET egress_allowlist = ARRAY['1.2.3.0/24'::cidr]
 //      round-trips; read-back via pgstore returns the same array.
-//   4. The CHECK constraint rejects v6 entries (the v4-only v1
-//      contract — v6 mirror is deferred per ADR-031 "v4 only in v1").
 //
 // Slot note: this PR initially shipped as 00028 (CI run 30029100342
 // failed with `duplicate migration prefix 00028` because PR #153
@@ -21,6 +19,18 @@
 // same rationale. No SQL changes; the migration is slot-agnostic
 // (no RENAME that depends on the prefix), only the test name and
 // the human-readable seed UUIDs change.
+//
+// Contract history: 00029 originally shipped with a v4-only
+// BEFORE-row TRIGGER (`apps_egress_allowlist_v4_only` /
+// `apps_egress_allowlist_v4_only_check()`). ADR-032 (migration
+// 00030) replaces it with a v4-or-v6, non-/0 guard
+// (`apps_egress_allowlist_cidr` /
+// `apps_egress_allowlist_cidr_check()`). The `AcceptsV6`
+// sub-test below replaced the original `RejectsV6` sub-test at
+// ADR-032 ship time — the v6 mirror closes a paper-cut where a
+// tenant who pinned an IPv4 allowlist still had every IPv6
+// destination reachable (the v6 chain's only constraint was the
+// ADR-023 deny set + the chain-policy accept).
 //
 // Build tag matches the rest of the migration tests; set
 // FAAS_SKIP_PG_TESTS=1 to skip locally (see migrations/README.md).
@@ -39,7 +49,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// TestMigrations_00029_AppEgressAllowlist pins the column + CHECK.
+// TestMigrations_00029_AppEgressAllowlist pins the column + the
+// v4-round-trip contract.
 //
 // Three named scenarios:
 //
@@ -48,9 +59,19 @@ import (
 //     (The default applies at insert-time, but a re-read after
 //     migration proves the column is present and defaulted.)
 //   - RoundTripV4: an UPDATE with a single v4 CIDR round-trips.
-//   - RejectsV6: an UPDATE that tries to set a v6 entry fails the
-//     CHECK constraint with the SQLSTATE Postgres uses for
-//     check_violation.
+//   - V6ByVersion: the v6-round-trip shape differs by migration state:
+//     pre-ADR-032 (max(version_id) < 30) → `RejectsV6`: an UPDATE
+//     with a v6 CIDR fails with SQLSTATE 23514 + constraint
+//     `apps_egress_allowlist_v4_only` (the v4-only trigger that
+//     00029 originally shipped). post-ADR-032 (max(version_id)
+//     >= 30) → `AcceptsV6`: an UPDATE with a v6 CIDR succeeds and
+//     reads back. The non-/0 contract itself is pinned by 00030's
+//     TestMigrations_00030_AppEgressAllowlistV6::RejectsSlashZeroV6.
+//
+// The version branch closes the clean-reverse gap: a developer who
+// runs the suite against a database that's been MigrateDown'd to
+// 00029 still gets the original v4-only contract pinned, not a
+// silent pass because AcceptsV6 happens to be lenient.
 func TestMigrations_00029_AppEgressAllowlist(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
@@ -62,6 +83,19 @@ func TestMigrations_00029_AppEgressAllowlist(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("db.MigrateUp: %v (regression: missing migration slot between 1 and 29)", err)
 	}
+
+	// (1b) Snapshot the current applied version so V6ByVersion can
+	// branch on whether 00030 is in place. The MAX query covers
+	// both fresh-up and MigrateDown-to-here cases (per memory
+	// `goose-v0-sentinel-row`: MAX(version_id) == N is the canonical
+	// signal; the N+1 sentinel row only exists post-v0 schema).
+	var maxApplied int64
+	if err := pool.QueryRow(ctx, `
+		select COALESCE(MAX(version_id), 0) from goose_db_version where is_applied
+	`).Scan(&maxApplied); err != nil {
+		t.Fatalf("read goose_db_version MAX: %v", err)
+	}
+	v6MirrorApplied := maxApplied >= 30
 
 	// (2) Seed an account + apps row to carry the column. The
 	// literal UUIDs mirror the 00022 backfill test style — fixed
@@ -122,43 +156,58 @@ func TestMigrations_00029_AppEgressAllowlist(t *testing.T) {
 		t.Errorf("round-trip egress_allowlist missing 8.8.8.0/24: %q", asText)
 	}
 
-	// (5) RejectsV6 — the per-element family guard must fire. The
-	// guard is a BEFORE-row TRIGGER (migrations/00029_app_egress_
-	// allowlist.sql) that runs on INSERT/UPDATE OF egress_allowlist
-	// and raises SQLSTATE 23514 (check_violation) with constraint
-	// name 'apps_egress_allowlist_v4_only' via `using constraint =`.
-	// The CHECK-with-bool_and shape that the previous draft used is
-	// rejected by Postgres at apply time (aggregate functions are
-	// not allowed in CHECK expressions) — keep the trigger shape.
-	// We assert on the structured PgError fields rather than the
-	// message text: pgx v5's *pgconn.PgError.Error() renders only
-	// `Severity: Message (SQLSTATE Code)` (see pgconn/errors.go:53),
-	// so the constraint name is reachable only via errors.As +
-	// pgErr.ConstraintName. Pinning the code + constraint name also
-	// protects against a future helper that wraps the error string.
-	_, err := pool.Exec(ctx, `
-		update apps
-		   set egress_allowlist = array['fe80::/10'::cidr]
-		 where id = '00000000-0000-0000-0000-000000000029'
-	`)
-	if err == nil {
-		t.Fatalf("UPDATE with v6 CIDR unexpectedly succeeded; apps_egress_allowlist_v4_only TRIGGER did not fire")
-	}
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) {
-		t.Fatalf("v6 update error not a *pgconn.PgError: %v", err)
-	}
-	if pgErr.Code != "23514" {
-		t.Errorf("v6 update SQLSTATE = %q, want %q (check_violation); full: %v", pgErr.Code, "23514", err)
-	}
-	if pgErr.ConstraintName != "apps_egress_allowlist_v4_only" {
-		t.Errorf("v6 update constraint name = %q, want %q; full: %v", pgErr.ConstraintName, "apps_egress_allowlist_v4_only", err)
-	}
-	// Also assert the message text names the contract so a future
-	// regression that swaps the SQLSTATE helper but keeps the message
-	// still trips the test. Belt and suspenders; the structured
-	// assertions above are the load-bearing ones.
-	if !strings.Contains(pgErr.Message, "v4-only") {
-		t.Errorf("v6 update message = %q, want substring %q", pgErr.Message, "v4-only")
-	}
+	// (5) V6ByVersion — branch on whether 00030 has applied.
+	// Pre-030 (clean-reverse scenario): the v4-only guard from 00029
+	// is in effect; v6 must be rejected with SQLSTATE 23514 +
+	// constraint `apps_egress_allowlist_v4_only`. Post-030: v6
+	// succeeds (the v4-or-v6, non-/0 guard from 00030). The non-/0
+	// contract itself is pinned by 00030's RejectsSlashZeroV6.
+	t.Run("V6ByVersion", func(t *testing.T) {
+		if v6MirrorApplied {
+			t.Run("AcceptsV6", func(t *testing.T) {
+				if _, err := pool.Exec(ctx, `
+					update apps
+					   set egress_allowlist = array['fe80::/10'::cidr]
+					 where id = '00000000-0000-0000-0000-000000000029'
+				`); err != nil {
+					t.Fatalf("update v6 egress_allowlist (post-ADR-032): %v", err)
+				}
+				var asTextV6 string
+				if err := pool.QueryRow(ctx, `
+					select egress_allowlist::text
+					  from apps
+					 where id = '00000000-0000-0000-0000-000000000029'
+				`).Scan(&asTextV6); err != nil {
+					t.Fatalf("read v6 egress_allowlist (post-ADR-032): %v", err)
+				}
+				if !strings.Contains(asTextV6, "fe80::/10") {
+					t.Errorf("v6 round-trip missing fe80::/10: %q", asTextV6)
+				}
+			})
+		} else {
+			t.Run("RejectsV6", func(t *testing.T) {
+				_, err := pool.Exec(ctx, `
+					update apps
+					   set egress_allowlist = array['fe80::/10'::cidr]
+					 where id = '00000000-0000-0000-0000-000000000029'
+				`)
+				if err == nil {
+					t.Fatalf("UPDATE with v6 CIDR unexpectedly succeeded; apps_egress_allowlist_v4_only TRIGGER did not fire")
+				}
+				var pgErr *pgconn.PgError
+				if !errors.As(err, &pgErr) {
+					t.Fatalf("v6 update error not a *pgconn.PgError: %v", err)
+				}
+				if pgErr.Code != "23514" {
+					t.Errorf("v6 update SQLSTATE = %q, want %q (check_violation); full: %v", pgErr.Code, "23514", err)
+				}
+				if pgErr.ConstraintName != "apps_egress_allowlist_v4_only" {
+					t.Errorf("v6 update constraint name = %q, want %q; full: %v", pgErr.ConstraintName, "apps_egress_allowlist_v4_only", err)
+				}
+				if !strings.Contains(pgErr.Message, "v4-only") {
+					t.Errorf("v6 update message = %q, want substring %q", pgErr.Message, "v4-only")
+				}
+			})
+		}
+	})
 }

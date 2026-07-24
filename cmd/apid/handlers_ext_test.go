@@ -193,6 +193,28 @@ func TestUpdateAppEgressAllowlist_FreeGate(t *testing.T) {
 	assertProblem(t, rec, 403, api.CodePlanEgressAllowlistNotAllowed)
 }
 
+// TestUpdateAppEgressAllowlist_FreeGate_EmptySlice locks the
+// plan-tier gate for the empty-slice form: a Free plan PATCHing
+// `egress_allowlist: []` (an explicit "clear the allowlist") must
+// still hit the 403 path, NOT silently fall through and clear the
+// column. `validateUpdateApp` checks `req.EgressAllowlist != nil`
+// at handlers_ext.go:72 — a nil pointer is a no-op (column
+// unchanged), but a non-nil pointer with an empty slice is a
+// deliberate PATCH and must surface 403 the same as the populated
+// case. Without this pin, a future refactor that moves the
+// `EgressAllowlistAllowed()` check below the empty-slice branch
+// would let a Free user mutate the column to default-accept (a
+// small privilege-escalation surface — they couldn't SET a list
+// but could still CLEAR one).
+func TestUpdateAppEgressAllowlist_FreeGate_EmptySlice(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	mustSeedApp(t, e, "free-empty")
+	rec := e.do(t, "PATCH", "/v1/apps/free-empty", api.UpdateAppRequest{
+		EgressAllowlist: &[]string{},
+	}, nil)
+	assertProblem(t, rec, 403, api.CodePlanEgressAllowlistNotAllowed)
+}
+
 // TestUpdateAppEgressAllowlist_GatePrecedesPerEntryShape locks the
 // ordering: a Free plan sending a 64-entry list of deliberately
 // malformed CIDRs must surface 403 plan_egress_allowlist_not_allowed,
@@ -225,15 +247,62 @@ func TestUpdateAppEgressAllowlist_ZeroBits(t *testing.T) {
 	assertProblem(t, rec, 400, api.CodeInvalidEgressAllowlist)
 }
 
-// TestUpdateAppEgressAllowlist_V6RejectedOnPro: v6 must be invalid
-// even on a paid plan (ADR-031 v4-only v1). The cidr[] CHECK would
-// reject v6 at write time, but the handler catches it earlier with
-// a more actionable error naming the bad entry.
-func TestUpdateAppEgressAllowlist_V6RejectedOnPro(t *testing.T) {
+// TestUpdateAppEgressAllowlist_V6AcceptedOnPro: a v6-only allowlist
+// must be accepted on a paid plan (ADR-032 v6 mirror). The handler
+// no longer rejects v6 entries; the DB trigger
+// `apps_egress_allowlist_cidr` (migration 00030) holds the
+// non-/0 contract. The MemStore path is sufficient here — pgStore
+// has its own round-trip tests under pkg/state.
+func TestUpdateAppEgressAllowlist_V6AcceptedOnPro(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "pro-v6")
+	id := mustSeedApp(t, e, "pro-v6")
 	rec := e.do(t, "PATCH", "/v1/apps/pro-v6", api.UpdateAppRequest{
 		EgressAllowlist: &[]string{"fe80::/10"},
+	}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	// Re-read via AppByID to confirm the slice round-tripped.
+	app, err := e.store.AppByID(context.Background(), id)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if len(app.EgressAllowlist) != 1 || app.EgressAllowlist[0].String() != "fe80::/10" {
+		t.Fatalf("allowlist = %+v, want [fe80::/10]", app.EgressAllowlist)
+	}
+}
+
+// TestUpdateAppEgressAllowlist_MixedAcceptedOnPro: a mixed v4 + v6
+// allowlist must be accepted (ADR-032). The renderer partitions
+// into two argvs; the handler does not need to know.
+func TestUpdateAppEgressAllowlist_MixedAcceptedOnPro(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	id := mustSeedApp(t, e, "pro-mixed")
+	rec := e.do(t, "PATCH", "/v1/apps/pro-mixed", api.UpdateAppRequest{
+		EgressAllowlist: &[]string{"1.2.3.0/24", "fe80::/10"},
+	}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	app, err := e.store.AppByID(context.Background(), id)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if len(app.EgressAllowlist) != 2 {
+		t.Fatalf("allowlist len = %d, want 2: %+v", len(app.EgressAllowlist), app.EgressAllowlist)
+	}
+}
+
+// TestUpdateAppEgressAllowlist_SlashZeroRejectedV6: `::/0` is the
+// "everything" sentinel and must be rejected with 400
+// invalid_egress_allowlist just like its v4 sibling (ADR-032
+// non-/0 contract). The DB trigger is the source of truth, but
+// the handler catches it earlier with a more actionable error.
+func TestUpdateAppEgressAllowlist_SlashZeroRejectedV6(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "pro-v6-zero")
+	rec := e.do(t, "PATCH", "/v1/apps/pro-v6-zero", api.UpdateAppRequest{
+		EgressAllowlist: &[]string{"::/0"},
 	}, nil)
 	assertProblem(t, rec, 400, api.CodeInvalidEgressAllowlist)
 }

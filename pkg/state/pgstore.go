@@ -2963,9 +2963,9 @@ func cidrPrefixesToArray(prefixes []netip.Prefix) string {
 // On any parse failure we return an empty slice and rely on the caller
 // to fail loud — none of the consumers silently swallow a malformed
 // allowlist because (a) the API layer validates each entry with
-// netip.ParsePrefix before insert, and (b) the schema CHECK
-// (apps_egress_allowlist_v4_only) rejects bogus entries at the DB.
-// Defensive parse is belt-and-braces, not load-bearing.
+// netip.ParsePrefix before insert, and (b) the DB trigger
+// (apps_egress_allowlist_cidr, migration 00030) rejects bogus entries
+// at the schema. Defensive parse is belt-and-braces, not load-bearing.
 func cidrTextToPrefixes(text string) []netip.Prefix {
 	text = strings.TrimSpace(text)
 	if text == "{}" || text == "" {

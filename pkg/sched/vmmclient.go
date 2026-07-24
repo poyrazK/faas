@@ -89,7 +89,7 @@ type AppSpec struct {
 	MemSizeMiB      int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
 	EgressMbit      int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	SealedEnv       []fcvm.SealedEnvEntry
-	EgressAllowlist []string // ADR-031; v4 CIDRs; empty = no allowlist rule
+	EgressAllowlist []string // ADR-031 + ADR-032; v4 or v6 CIDRs; empty = no allowlist rule. The renderer partitions by family.
 }
 
 // SnapshotRef points at the snapshot to restore from and the Firecracker
