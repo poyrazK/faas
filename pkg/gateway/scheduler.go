@@ -1,23 +1,18 @@
 // Scheduler is the seam between the gateway and schedd (spec §4.1, §4.2).
-// The only call that crosses this boundary right now is AdmitInstance(appID)
-// (issue #168); the long-term schedd daemon (M5) provides a gRPC
-// implementation that lives in cmd/schedd. Today this file ships:
+// The single call that crosses this boundary is AdmitInstance(appID)
+// (issue #168); schedd's gRPC implementation lives in pkg/scheddgrpc
+// (ADR-018). This file ships:
 //
 //  1. The Scheduler interface — the method set schedd must implement.
-//  2. A fake implementation — returns configurable deterministic identity
-//     values so the gateway remains testable in isolation.
-//  3. A noop implementation — wires up when no scheduler is configured
-//     (e.g. unit tests that exercise the routing/wake path independently
+//     PGBackend holds a Scheduler and Backend.Admit delegates to it
+//     (pkg/gateway/pgbackend.go).
+//  2. FakeScheduler — an in-process scheduler that returns configurable
+//     deterministic identity values. pgbackend_test.go uses it to
+//     exercise multi-instance + eviction flows without standing up
+//     schedd.
+//  3. NoopScheduler — wires up when no scheduler is configured (e.g.
+//     unit tests that exercise the routing/wake path independently
 //     of schedd semantics).
-//
-// M5 wiring swaps FakeScheduler for the gRPC client (see
-// vmmdgrpc/server.go pattern with bufconn tests).
-//
-// IMPORTANT: The hot-path Backend interface (handler.go) is the existing
-// seam and stays untouched in this PR. The Scheduler here is the proper
-// shape for M5 to consume — Backend is slated to delegate its Admit method
-// to a Scheduler once schedd has a gRPC server. Until then, FakeScheduler
-// sits unused but available.
 package gateway
 
 import (

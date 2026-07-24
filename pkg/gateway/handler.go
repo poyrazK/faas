@@ -263,7 +263,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// next request.
 	target, ok := h.backend.Pick(app.ID)
 	if !ok {
-		writeWakeError(w, api.ErrAppConcurrencyReached(limits, 0))
+		// Race: every cached instance was evicted between
+		// ensureCapacity returning and our Pick. Surface the observed
+		// (current) HealthyCount so the operator's metrics panel
+		// shows 0 vs the cap (was 1+ microseconds ago).
+		writeWakeError(w, api.ErrAppConcurrencyReached(limits, h.backend.HealthyCount(app.ID)))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}

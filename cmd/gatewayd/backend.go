@@ -156,9 +156,21 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 // Issue #168: the pg_notify payload now also carries instance_id (the
 // schedd-engine's emitInstanceChanged emits it next to app_id). The
 // listener uses that to drop exactly one entry from the per-app cache,
-// leaving any siblings routable. A malformed payload that omits either
-// field is logged-and-dropped — better to over-evict (next request
-// re-admits) than to crash the edge loop.
+// leaving any siblings routable.
+//
+// Cache-self-destruct guard (issue #168): the wake flow emits TWO
+// notifications per successful wake — WAKING/COLD_BOOTING right after
+// CreateInstance (engine.go:375) and RUNNING after vmmd boot succeeds
+// (engine.go:574 → 1277). PGBackend.Admit runs the gRPC RPC between
+// these two emissions and adds the Target to the cache; without the
+// state filter below, the RUNNING notification would evict the
+// Target we just added, defeating the cache and creating a thundering
+// herd under sustained load. Only evict on terminal-ish states where
+// the instance has actually left the routable set.
+//
+// A malformed payload that omits either app_id or instance_id is
+// logged-and-dropped — better to over-evict (next request re-admits)
+// than to crash the edge loop.
 func handleInvalidation(inv invalidator, n db.Notification, log *slog.Logger) {
 	switch n.Channel {
 	case db.NotifyInstanceChanged:
@@ -172,7 +184,16 @@ func handleInvalidation(inv invalidator, n db.Notification, log *slog.Logger) {
 			log.Warn("gatewayd: bad instance_changed payload", "payload", n.Payload)
 			return
 		}
-		inv.EvictInstance(p.AppID, p.InstanceID)
+		// Lifecycle states (waking/cold_booting/running) leave the cache
+		// alone — the entry is either pending admit (the WAKING emission
+		// arrives BEFORE the gateway's RPC returns, no Target yet) or
+		// already healthy (the RUNNING emission arrives AFTER
+		// PGBackend.Admit has seeded the Target). Terminal-ish states
+		// evict the entry so the next request re-admits.
+		switch p.State {
+		case "stopped", "failed", "parked", "snapshotting":
+			inv.EvictInstance(p.AppID, p.InstanceID)
+		}
 	case db.NotifyAppChanged, db.NotifyDomainChanged:
 		inv.FlushRoutes()
 	}

@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Router is the Postgres-backed routing seam PGBackend reads through. It is the
@@ -215,7 +218,14 @@ func (b *PGBackend) Admit(ctx context.Context, appID string, maxConcurrency int)
 		return "", true, nil
 	}
 	if nodeID == "" || instanceID == "" {
-		return "", false, fmt.Errorf("schedd admit returned empty ids: instance=%q node=%q wake=%q", instanceID, nodeID, wakeID)
+		// schedd returned a successful admit with empty ids. This is
+		// an internal-server-error class event — the wire contract
+		// says instance_id/node_id are populated on the admitted
+		// path. Lift to *api.Problem so writeWakeError surfaces a
+		// descriptive 5xx instead of the generic "wake failed" 503.
+		return "", false, api.NewProblem(http.StatusInternalServerError,
+			api.CodeCapacity, "schedd admit returned empty ids",
+			fmt.Sprintf("instance=%q node=%q wake=%q", instanceID, nodeID, wakeID))
 	}
 	b.tgtMu.Lock()
 	set = b.targets[appID]

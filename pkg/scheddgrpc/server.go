@@ -51,14 +51,16 @@ type Server struct {
 	log    *slog.Logger
 }
 
-// New wires the server. ops may be nil (a throwaway registry); log may be nil
-// (slog default).
+// New wires the server. ops may be nil (a throwaway registry used by
+// bufconn tests); log may be nil (slog default). The default ops
+// registry is namespaced "schedd" so metrics from a misconfigured
+// test harness don't collide with production series.
 func New(engine SchedAPI, ops *wire.OpsMetrics, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
 	if ops == nil {
-		ops = wire.NewOpsMetrics("schedd_test")
+		ops = wire.NewOpsMetrics("schedd")
 	}
 	return &Server{engine: engine, ops: ops, log: log}
 }

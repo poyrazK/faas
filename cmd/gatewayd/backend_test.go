@@ -166,3 +166,46 @@ func TestHandleInvalidation(t *testing.T) {
 		t.Errorf("flush count = %d, want 2 (app + domain)", f.flushCnt)
 	}
 }
+
+// TestHandleInvalidation_LifecycleStatesDoNotEvict (issue #168) pins the
+// cache-self-destruct guard: lifecycle states (waking/cold_booting/running)
+// must NOT evict. The wake flow emits two notifications per successful
+// wake — WAKING right after CreateInstance, RUNNING after vmmd boot —
+// and the gateway adds the Target to its cache on the Admit RPC return
+// between those two emissions. Evicting on either notification drops
+// the Target we just added, defeating the cache.
+func TestHandleInvalidation_LifecycleStatesDoNotEvict(t *testing.T) {
+	for _, state := range []string{"waking", "cold_booting", "running"} {
+		f := &fakeInvalidator{}
+		log := testLogger()
+		payload := `{"instance_id":"i-lifecycle","app_id":"app-9","state":"` + state + `"}`
+		handleInvalidation(f, db.Notification{Channel: db.NotifyInstanceChanged, Payload: payload}, log)
+
+		f.mu.Lock()
+		evicted := len(f.evicted)
+		f.mu.Unlock()
+		if evicted != 0 {
+			t.Errorf("state=%q: evicted %d entries, want 0 (cache-self-destruct guard)", state, evicted)
+		}
+	}
+}
+
+// TestHandleInvalidation_TerminalStatesEvict (issue #168) verifies the
+// companion to the lifecycle test: terminal-ish states (stopped, failed,
+// parked, snapshotting) DO evict so the next request re-admits on a
+// different node / wakes fresh.
+func TestHandleInvalidation_TerminalStatesEvict(t *testing.T) {
+	for _, state := range []string{"stopped", "failed", "parked", "snapshotting"} {
+		f := &fakeInvalidator{}
+		log := testLogger()
+		payload := `{"instance_id":"i-term","app_id":"app-9","state":"` + state + `"}`
+		handleInvalidation(f, db.Notification{Channel: db.NotifyInstanceChanged, Payload: payload}, log)
+
+		f.mu.Lock()
+		got := f.evicted["i-term"]
+		f.mu.Unlock()
+		if got != "app-9" {
+			t.Errorf("state=%q: evicted[i-term] = %q, want app-9", state, got)
+		}
+	}
+}
