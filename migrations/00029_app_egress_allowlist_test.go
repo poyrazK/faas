@@ -29,8 +29,11 @@ package migrations_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -119,20 +122,43 @@ func TestMigrations_00029_AppEgressAllowlist(t *testing.T) {
 		t.Errorf("round-trip egress_allowlist missing 8.8.8.0/24: %q", asText)
 	}
 
-	// (5) RejectsV6 — the per-element family CHECK must fire. SQLSTATE
-	// 23514 is Postgres's check_violation; the message mentions the
-	// apps_egress_allowlist_v4_only constraint by name. We assert on
-	// BOTH (sqlstate and constraint name) so a future helper that
-	// wraps the error doesn't silently pass.
+	// (5) RejectsV6 — the per-element family guard must fire. The
+	// guard is a BEFORE-row TRIGGER (migrations/00029_app_egress_
+	// allowlist.sql) that runs on INSERT/UPDATE OF egress_allowlist
+	// and raises SQLSTATE 23514 (check_violation) with constraint
+	// name 'apps_egress_allowlist_v4_only' via `using constraint =`.
+	// The CHECK-with-bool_and shape that the previous draft used is
+	// rejected by Postgres at apply time (aggregate functions are
+	// not allowed in CHECK expressions) — keep the trigger shape.
+	// We assert on the structured PgError fields rather than the
+	// message text: pgx v5's *pgconn.PgError.Error() renders only
+	// `Severity: Message (SQLSTATE Code)` (see pgconn/errors.go:53),
+	// so the constraint name is reachable only via errors.As +
+	// pgErr.ConstraintName. Pinning the code + constraint name also
+	// protects against a future helper that wraps the error string.
 	_, err := pool.Exec(ctx, `
 		update apps
 		   set egress_allowlist = array['fe80::/10'::cidr]
 		 where id = '00000000-0000-0000-0000-000000000029'
 	`)
 	if err == nil {
-		t.Fatalf("UPDATE with v6 CIDR unexpectedly succeeded; apps_egress_allowlist_v4_only CHECK did not fire")
+		t.Fatalf("UPDATE with v6 CIDR unexpectedly succeeded; apps_egress_allowlist_v4_only TRIGGER did not fire")
 	}
-	if !strings.Contains(err.Error(), "apps_egress_allowlist_v4_only") {
-		t.Errorf("v6 update error did not name the v4-only CHECK; got: %v", err)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("v6 update error not a *pgconn.PgError: %v", err)
+	}
+	if pgErr.Code != "23514" {
+		t.Errorf("v6 update SQLSTATE = %q, want %q (check_violation); full: %v", pgErr.Code, "23514", err)
+	}
+	if pgErr.ConstraintName != "apps_egress_allowlist_v4_only" {
+		t.Errorf("v6 update constraint name = %q, want %q; full: %v", pgErr.ConstraintName, "apps_egress_allowlist_v4_only", err)
+	}
+	// Also assert the message text names the contract so a future
+	// regression that swaps the SQLSTATE helper but keeps the message
+	// still trips the test. Belt and suspenders; the structured
+	// assertions above are the load-bearing ones.
+	if !strings.Contains(pgErr.Message, "v4-only") {
+		t.Errorf("v6 update message = %q, want substring %q", pgErr.Message, "v4-only")
 	}
 }

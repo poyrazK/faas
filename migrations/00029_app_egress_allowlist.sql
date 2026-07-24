@@ -18,32 +18,62 @@
 -- The per-plan cap is a count of *entries*, validated in the API
 -- layer (pkg/api/limits.go EgressAllowlistMaxSize) before SQL.
 -- Migration 00007 (compute_node bind fields) made the same call.
---
--- CHECK constraint: cidr[] does not carry a per-element CHECK in
--- Postgres. The family check is a function constraint over the
--- array. Empty array stays allowed (the default — "no allowlist").
 
 alter table apps
   add column if not exists egress_allowlist cidr[] not null default '{}';
 
--- The constraint is not guarded by IF NOT EXISTS (Postgres doesn't
--- support that on ADD CONSTRAINT). The drop + add pair matches the
--- 00010 / 00011 pattern, so the migration is idempotent across
--- re-runs during local development.
-alter table apps drop constraint if exists apps_egress_allowlist_v4_only;
-alter table apps
-  add constraint apps_egress_allowlist_v4_only
-    check (
-      cardinality(egress_allowlist) = 0
-      or bool_and(family(cidr) = 4)
-    );
+-- v4-only v1. Postgres CHECK constraints cannot reference aggregate
+-- functions (bool_and/family(cidr) is not allowed) — that approach
+-- compiles into a SQL parse error: `column "cidr" does not exist`.
+-- A CHECK on the OUTER array with a helper function marked IMMUTABLE
+-- could also work, but a BEFORE-row TRIGGER is more idiomatic for
+-- "validate per-element of an array column" and keeps the constraint
+-- logic visible in DDL rather than off in a plpgsql function. The
+-- trigger fires on INSERT and UPDATE; empty arrays short-circuit
+-- (the documented default-"no allowlist" state). The guard mirrors
+-- the apid PATCH handler's parse step — apid catches the operator-
+-- friendly error first, the trigger is the floor for any code path
+-- that bypasses apid (vmmd wire side, sqlc-flavoured tooling,
+-- manual psql).
+--
+-- IF NOT EXISTS pattern: drop + create, both idempotent, mirrors the
+-- ALTER … DROP CONSTRAINT pattern the rest of the migrations use.
+drop trigger if exists apps_egress_allowlist_v4_only on apps;
+create or replace function apps_egress_allowlist_v4_only_check()
+  returns trigger
+  language plpgsql
+  as $$
+declare
+  bad cidr;
+begin
+  if new.egress_allowlist is null or cardinality(new.egress_allowlist) = 0 then
+    return new;
+  end if;
+  for bad in
+    select c
+      from unnest(new.egress_allowlist) c
+     where family(c) <> 4
+    limit 1
+  loop
+    raise exception 'apps_egress_allowlist: v4-only v1 (got %)', bad
+      using errcode = '23514',
+            constraint = 'apps_egress_allowlist_v4_only';
+  end loop;
+  return new;
+end;
+$$;
+create trigger apps_egress_allowlist_v4_only
+  before insert or update of egress_allowlist on apps
+  for each row
+  execute function apps_egress_allowlist_v4_only_check();
 
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
 
-alter table apps drop constraint if exists apps_egress_allowlist_v4_only;
+drop trigger if exists apps_egress_allowlist_v4_only on apps;
+drop function if exists apps_egress_allowlist_v4_only_check();
 alter table apps drop column if exists egress_allowlist;
 
 -- +goose StatementEnd
