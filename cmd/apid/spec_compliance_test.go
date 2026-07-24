@@ -41,6 +41,7 @@ const (
 var routeExclude = map[string]bool{
 	"GET /v1/account/dpa":             true, // public markdown (no auth)
 	"POST /v1/webhooks/stripe":        true, // HMAC-signed webhook
+	"POST /v1/webhooks/paddle":        true, // HMAC-signed webhook (PR #3 / ADR-025)
 	"GET /v1/compute-nodes":           true, // operator-only (ADR-029)
 	"POST /v1/compute-nodes":          true, // operator-only
 	"DELETE /v1/compute-nodes/{name}": true, // operator-only

@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -112,6 +113,14 @@ type server struct {
 	// domain-only URL until the customer's id is wired in. Empty
 	// means the 402 still goes out but BillingPortalURL is omitted.
 	billingPortalURL string
+	// billingProvider is the per-deployment Provider apid's webhook
+	// + changePlan handlers dispatch through. Wired via WithBillingProvider
+	// from cmd/apid/main.go::LoadProviderForAPID. nil = "Stripe path
+	// stays inline" (the apid Stripe webhook uses the legacy
+	// stripe.VerifySignature check + the BillingPortalURL template, so
+	// no *stripe.Client is needed at the apid level). The Paddle path
+	// sets this to a *paddle.Provider at boot.
+	billingProvider billing.Provider
 	// ops holds the per-daemon Prometheus registry. Wired via
 	// WithOpsMetrics so callers (cmd/apid) control the registry
 	// lifecycle. A dedicated metric observer middleware sits atop
@@ -148,6 +157,16 @@ func (s *server) WithStatusCache(promURL, htmlPath string) *server {
 // still goes out, just without the BillingPortalURL extension).
 func (s *server) WithBillingPortalURL(template string) *server {
 	s.billingPortalURL = template
+	return s
+}
+
+// WithBillingProvider attaches the per-deployment billing.Provider.
+// Called from cmd/apid/main.go after LoadProviderForAPID. When non-nil
+// the /v1/webhooks/paddle route is mounted and the changePlan 402 path
+// dispatches through it; when nil the apid Stripe path stays inline
+// (the legacy stripe.VerifySignature + BillingPortalURL template).
+func (s *server) WithBillingProvider(p billing.Provider) *server {
+	s.billingProvider = p
 	return s
 }
 
@@ -377,6 +396,14 @@ func (s *server) handler() http.Handler {
 	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept
 	// unsigned and trust the network boundary; ADR-007 hardening later).
 	mux.HandleFunc("POST /v1/webhooks/stripe", s.stripeWebhook)
+	// Paddle webhook (no auth — Paddle signs requests; same trust
+	// model as the Stripe path). The handler returns 503 if
+	// FAAS_BILLING_PROVIDER != paddle so a misrouted POST from Paddle
+	// to a Stripe-only box is visible in logs rather than silently
+	// 200'd. Mounted unconditionally so the same apid binary works
+	// on either provider; the handler's 503 covers the wrong-provider
+	// case.
+	mux.HandleFunc("POST /v1/webhooks/paddle", s.paddleWebhook)
 
 	// Operator admin surface (issue #98 / ADR-028). Auth lives in
 	// s.adminAllows (email allowlist via FAAS_ADMIN_EMAILS); handlers

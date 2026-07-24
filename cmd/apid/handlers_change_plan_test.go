@@ -15,8 +15,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -29,7 +31,13 @@ const billingPortalURL = "https://billing.example.com/portal?account={account_id
 // in. The existing setup helper (server_test.go) intentionally keeps
 // the surface minimal; tests that need the 402 extension need a richer
 // hook, so we extend here rather than mutate the shared helper.
-func setupChangePlan(t *testing.T, plan api.Plan, stripeItem string) testEnv {
+//
+// Returns both the testEnv (for HTTP-level assertions) and the *server
+// (for tests that need to install a billing.Provider via
+// WithBillingProvider). The handler is closed over the same server
+// reference, so installing the provider before issuing the request
+// is observable on the request path.
+func setupChangePlan(t *testing.T, plan api.Plan, stripeItem string) (testEnv, *server) {
 	t.Helper()
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(context.Background(), fmt.Sprintf("%s@example.com", plan), plan)
@@ -49,7 +57,7 @@ func setupChangePlan(t *testing.T, plan api.Plan, stripeItem string) testEnv {
 		"example.com", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, nil, nil,
 		15*24, "")
 	srv.WithBillingPortalURL(billingPortalURL)
-	return testEnv{h: srv.handler(), store: store, key: pt, acct: acct}
+	return testEnv{h: srv.handler(), store: store, key: pt, acct: acct}, srv
 }
 
 // TestChangePlan_GateMatrix exercises every (current, requested) pair
@@ -137,7 +145,7 @@ func TestChangePlan_GateMatrix(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e := setupChangePlan(t, tc.startingPlan, tc.stripeItem)
+			e, _ := setupChangePlan(t, tc.startingPlan, tc.stripeItem)
 			rec := e.do(t, "PATCH", "/v1/account/plan",
 				map[string]string{"plan": string(tc.requestedPlan)}, nil)
 			if rec.Code != tc.wantStatus {
@@ -227,7 +235,7 @@ func TestChangePlan_NoBillingPortalURL(t *testing.T) {
 // assert by snapshotting the stored plan before the request and
 // confirming it did not change.
 func TestChangePlan_NoAccountWriteOnGate(t *testing.T) {
-	e := setupChangePlan(t, api.PlanFree, "")
+	e, _ := setupChangePlan(t, api.PlanFree, "")
 	rec := e.do(t, "PATCH", "/v1/account/plan",
 		map[string]string{"plan": "pro"}, nil)
 	if rec.Code != http.StatusPaymentRequired {
@@ -288,5 +296,152 @@ func TestPlanIsPaidAndRequiresStripeUpgradeTo(t *testing.T) {
 					r.from, r.to, got, r.want)
 			}
 		})
+	}
+}
+
+// fakeBillingProvider is the cmd/apid-side test double for billing.Provider.
+// Only CreateUpgradeTransaction is exercised by the changePlan tests; the
+// other methods are no-op stubs so the type satisfies billing.Provider's
+// full surface (PR #3 / ADR-025).
+type fakeBillingProvider struct {
+	txnID       string
+	checkoutURL string
+	err         error
+	calls       int
+}
+
+func (f *fakeBillingProvider) EnsurePlanProducts(context.Context) error { return nil }
+func (f *fakeBillingProvider) CreateCustomer(context.Context, state.Account) (string, error) {
+	return "", nil
+}
+func (f *fakeBillingProvider) PushUsageRecord(context.Context, state.Account, time.Time, int64) error {
+	return nil
+}
+func (f *fakeBillingProvider) VerifyWebhook([]byte, map[string]string, time.Duration) (billing.Event, error) {
+	return billing.Event{}, nil
+}
+func (f *fakeBillingProvider) CreateUpgradeTransaction(_ context.Context, acct state.Account, target api.Plan) (string, string, error) {
+	f.calls++
+	if f.err != nil {
+		return "", "", f.err
+	}
+	return f.txnID, f.checkoutURL, nil
+}
+
+// TestChangePlan_PaddleCheckout_RendersPaddleExtension pins the
+// Paddle dispatch on the changePlan 402 path (PR #3 / ADR-025). The
+// fakeBillingProvider returns ("txn_abc", "https://paddle.example/checkout/xyz", nil);
+// the handler must surface those as PaddleCheckoutURL + TxID
+// extensions on the 402 Problem, with BillingPortalURL empty.
+//
+// Bit-for-bit mirror of the Stripe case in TestChangePlan_GateMatrix —
+// the upgrade is blocked (free→pro, no subscription item), so the
+// response is the 402 shape, not the 200 success path.
+func TestChangePlan_PaddleCheckout_RendersPaddleExtension(t *testing.T) {
+	e, srv := setupChangePlan(t, api.PlanFree, "")
+	fake := &fakeBillingProvider{
+		txnID:       "txn_abc",
+		checkoutURL: "https://paddle.example/checkout/xyz",
+	}
+	srv.WithBillingProvider(fake)
+
+	rec := e.do(t, "PATCH", "/v1/account/plan",
+		map[string]string{"plan": string(api.PlanPro)}, nil)
+
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402\nbody = %s", rec.Code, rec.Body)
+	}
+	if fake.calls != 1 {
+		t.Errorf("CreateUpgradeTransaction calls = %d, want 1", fake.calls)
+	}
+	var prob api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("body not problem+json: %s", rec.Body)
+	}
+	if prob.Code != api.CodePayment {
+		t.Errorf("Code = %q, want %q", prob.Code, api.CodePayment)
+	}
+	if prob.PaddleCheckoutURL != fake.checkoutURL {
+		t.Errorf("PaddleCheckoutURL = %q, want %q", prob.PaddleCheckoutURL, fake.checkoutURL)
+	}
+	if prob.TxID != fake.txnID {
+		t.Errorf("TxID = %q, want %q", prob.TxID, fake.txnID)
+	}
+	// Mutually exclusive: BillingPortalURL must be empty when PaddleCheckoutURL is set.
+	if prob.BillingPortalURL != "" {
+		t.Errorf("BillingPortalURL = %q, want empty on Paddle path", prob.BillingPortalURL)
+	}
+
+	// Plan must NOT have been written — same gate semantics as the Stripe case.
+	updated, err := e.store.AccountByID(context.Background(), e.acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Plan != api.PlanFree {
+		t.Errorf("plan after = %q, want %q (gate blocks the write)", updated.Plan, api.PlanFree)
+	}
+}
+
+// TestChangePlan_PaddleProvider_NoProviderTemplateFallback asserts
+// that when billingProvider is set but CreateUpgradeTransaction returns
+// the Stripe-stub sentinel ("", "", nil), the handler falls through to
+// the BillingPortalURL template path. This is the apid-side contract
+// that lets one Provider serve as a "Stripe-on-Paddle-box" fallback
+// (operator runs Paddle as the active provider but the upgrade path
+// is template-only — e.g. while the price catalog hasn't been seeded
+// yet).
+func TestChangePlan_PaddleProvider_NoProviderTemplateFallback(t *testing.T) {
+	e, srv := setupChangePlan(t, api.PlanFree, "")
+	fake := &fakeBillingProvider{
+		// Stripe stub: txID == "" is the dispatch signal.
+		txnID:       "",
+		checkoutURL: "",
+	}
+	srv.WithBillingProvider(fake)
+
+	rec := e.do(t, "PATCH", "/v1/account/plan",
+		map[string]string{"plan": string(api.PlanPro)}, nil)
+
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402", rec.Code)
+	}
+	var prob api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("body not problem+json: %s", rec.Body)
+	}
+	if prob.BillingPortalURL == "" {
+		t.Errorf("expected billing_portal_url to be set; got empty (fallback path)")
+	}
+	if prob.PaddleCheckoutURL != "" {
+		t.Errorf("PaddleCheckoutURL = %q, want empty (Stripe stub path)", prob.PaddleCheckoutURL)
+	}
+	if prob.TxID != "" {
+		t.Errorf("TxID = %q, want empty (Stripe stub path)", prob.TxID)
+	}
+}
+
+// TestChangePlan_NoProvider_StripeDefault asserts the no-provider path
+// is bit-for-bit unchanged from pre-PR-#3. The changePlan 402 must
+// carry BillingPortalURL + nothing else — a regression net for the
+// PR-#3 dispatch refactor.
+func TestChangePlan_NoProvider_StripeDefault(t *testing.T) {
+	e, _ := setupChangePlan(t, api.PlanFree, "")
+	// No WithBillingProvider call — same shape as pre-PR-#3.
+
+	rec := e.do(t, "PATCH", "/v1/account/plan",
+		map[string]string{"plan": string(api.PlanPro)}, nil)
+
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402", rec.Code)
+	}
+	var prob api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("body not problem+json: %s", rec.Body)
+	}
+	if prob.BillingPortalURL == "" {
+		t.Errorf("billing_portal_url empty on no-provider path")
+	}
+	if prob.PaddleCheckoutURL != "" || prob.TxID != "" {
+		t.Errorf("Paddle extensions must not appear on no-provider path: %+v", prob)
 	}
 }

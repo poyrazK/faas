@@ -128,6 +128,14 @@ hourly Stripe usage push are not operational.
   (`qty = mbSeconds * 1000 / 1024 / 3600`).
 - **A3 (transactional suspend-and-park)**, **A4 (Free restore)**,
   **A5 (quota/dunning ordering race)** — separate PRs, polish.
+- **Provider-pluggable billing layer (Stripe + Paddle)** — landed via
+  PR #1 (Stripe facade extraction + `billing.Provider`), PR #2
+  (`pkg/billing/paddle` + HMAC verify + overage accumulator), and
+  PR #3 (apid + meterd dispatch + `CreateUpgradeTransaction` 5th
+  method + apid `/v1/webhooks/paddle` mount). Operator selects via
+  `FAAS_BILLING_PROVIDER=paddle`; empty = Stripe (bit-for-bit
+  unchanged). ADR-032 records the decision. Dashboard + CLI surface
+  for `paddle_checkout_url` rendering is PR #4.
 
 ## M7.5 — thin dashboard + githubd. ✅
 

@@ -23,6 +23,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -70,6 +71,29 @@ type Provider interface {
 	// Paddle: Paddle-Signature `ts=`). Empty header / bad signature
 	// returns ErrBadSignature, wrapped with operation context.
 	VerifyWebhook(payload []byte, headers map[string]string, tolerance time.Duration) (Event, error)
+
+	// CreateUpgradeTransaction materializes the provider's hosted-checkout
+	// surface for an upgrade to targetPlan. apid's changePlan handler
+	// calls this when an account's plan is being upgraded and the
+	// customer has no active subscription item yet — the typical
+	// free → paid direct path (spec §4.7).
+	//
+	//   - Paddle: calls paddle.Client.CreateTransaction against the
+	//     per-plan monthly price and returns (txn_…,
+	//     https://paddle.checkout/…, nil). The 402 Problem carries
+	//     these as PaddleCheckoutURL + TxID extensions so the dashboard
+	//     can render an upsell button + confirmation id.
+	//   - Stripe: returns ("", "", nil) — a deliberate signal that the
+	//     apid handler should fall back to the precomputed
+	//     FAAS_BILLING_PORTAL_URL template (with {account_id}
+	//     substituted). Stripe's billing-portal session is operator-
+	//     configured, not SDK-created.
+	//
+	// The "(txID == \"\") ⇒ Stripe stub" contract is the dispatch signal
+	// the apid handler branches on. Implementations should add a stable
+	// Idempotency-Key (Paddle: recorded in CustomData) so a redelivered
+	// upgrade click doesn't create a duplicate Transaction.
+	CreateUpgradeTransaction(ctx context.Context, acct state.Account, targetPlan api.Plan) (txID, checkoutURL string, err error)
 }
 
 // EventType is the provider-neutral "what happened" classifier apid

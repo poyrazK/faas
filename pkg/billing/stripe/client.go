@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 	stripe "github.com/stripe/stripe-go"
@@ -259,6 +260,22 @@ func (c *Client) VerifyWebhook(payload []byte, headers map[string]string, tolera
 		SubscriptionID: ev.Data.Object.Subscription,
 		Raw:            bytes.Clone(payload),
 	}, nil
+}
+
+// CreateUpgradeTransaction is the Stripe stub for the billing.Provider
+// interface. Stripe's upgrade path is template-only: the apid 402
+// carries the operator-controlled FAAS_BILLING_PORTAL_URL with
+// {account_id} substituted, so the SDK never has to create a
+// billing-portal session. The empty txID + checkoutURL are the
+// "Stripe stub" signal — apid's changePlan handler reads txID == "" to
+// render billing_portal_url instead of paddle_checkout_url + tx_id.
+//
+// Adding this stub keeps the var _ billing.Provider = (*Client)(nil)
+// compile-time assertion (client.go:30) target-stable across PR #3's
+// 5-method Provider interface. See pkg/billing/provider.go:75-99 for
+// the full contract.
+func (c *Client) CreateUpgradeTransaction(_ context.Context, _ state.Account, _ api.Plan) (string, string, error) {
+	return "", "", nil
 }
 
 // mapStripeEventType translates Stripe's `type` strings into the

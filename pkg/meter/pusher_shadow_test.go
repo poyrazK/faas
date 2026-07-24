@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -42,7 +43,13 @@ func newAppWithSlug(t *testing.T, ctx context.Context, s *state.MemStore, accoun
 // suite end-to-end sees the local meter and the value that would be
 // pushed to Stripe agree.
 
-// recordingStripe is the meterd-side test fake for the Stripe pusher.
+// recordingStripe is the meterd-side test fake for the billing.Provider
+// the pusher dispatches through (PR #3 / ADR-025). Satisfies the
+// full billing.Provider surface — the meterd loop only exercises
+// PushUsageRecord, but the conformance assertion in the test file
+// guards against accidental partial implementations leaking into
+// other tests that need CreateCustomer / VerifyWebhook / etc.
+//
 // Mirrors fakeParker / fakeNotifier in meter_test.go:18-65 — same
 // mutex-guarded slice, no production-code touch. Records every
 // (acct.ID, hour, mbSeconds) the pusher passes through, so the test
@@ -50,7 +57,7 @@ func newAppWithSlug(t *testing.T, ctx context.Context, s *state.MemStore, accoun
 // synthetic dataset's hand-computed number.
 //
 // err is an optional return-error knob — when set, every
-// PushUsageRecordSum returns it (wrapped or unwrapped) before recording
+// PushUsageRecord returns it (wrapped or unwrapped) before recording
 // the call. The TestPushHour_RecordsStripeError test sets err to a
 // *stripe.Error so the classifier seam (stripe.ClassifyPushError) is
 // exercised through the pusher rather than directly. When err is nil
@@ -68,7 +75,30 @@ type recordedCall struct {
 	MBSeconds int64
 }
 
-func (r *recordingStripe) PushUsageRecordSum(_ context.Context, acct state.Account, hour time.Time, mbSeconds int64) error {
+// EnsurePlanProducts / CreateCustomer / VerifyWebhook / CreateUpgradeTransaction
+// are no-op stubs here — the meterd pusher loop only calls PushUsageRecord.
+// Returning (empty, nil) / (empty, empty, nil) for the methods that have
+// empty-string "no provider" semantics matches the production shapes
+// (stripe.Client returns "" for CreateUpgradeTransaction; the dunning
+// state machine is the only caller of VerifyWebhook and never goes
+// through this fake).
+func (r *recordingStripe) EnsurePlanProducts(_ context.Context) error {
+	return nil
+}
+
+func (r *recordingStripe) CreateCustomer(_ context.Context, _ state.Account) (string, error) {
+	return "", nil
+}
+
+func (r *recordingStripe) VerifyWebhook(_ []byte, _ map[string]string, _ time.Duration) (billing.Event, error) {
+	return billing.Event{}, nil
+}
+
+func (r *recordingStripe) CreateUpgradeTransaction(_ context.Context, _ state.Account, _ api.Plan) (string, string, error) {
+	return "", "", nil
+}
+
+func (r *recordingStripe) PushUsageRecord(_ context.Context, acct state.Account, hour time.Time, mbSeconds int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, recordedCall{AccountID: acct.ID, Hour: hour, MBSeconds: mbSeconds})

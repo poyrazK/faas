@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -73,9 +75,9 @@ func stubMeterdDeps(cfgPath, metricsAddr string, pool *pgxpool.Pool, listenFn fu
 		loadMeter:             func(c *Config) (*meter.Config, error) { return c.Meter, nil },
 		getenv:                env,
 		dialSchedd:            func(context.Context, string, *tls.Config) (parkInstanceParker, error) { return &nopParker{}, nil },
-		newStripeClient:       nil, // skipped when stripe is pre-populated
+		loadBillingProvider:   nil, // skipped when pusher is pre-populated
 		parker:                &nopParker{},
-		stripe:                &nopStripe{},
+		pusher:                &nopProvider{},
 		mailer:                nil,
 		now:                   time.Now,
 		metricsListenAndServe: listenFn,
@@ -113,16 +115,29 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// nopParker and nopStripe keep runWithDeps's optional collaborators happy
-// without dialing anything.
+// nopParker and nopProvider keep runWithDeps's optional collaborators happy
+// without dialing anything. nopProvider satisfies the full billing.Provider
+// surface (PR #3 / ADR-025) — the meterd loop only exercises PushUsageRecord
+// but the conformance assertion guards against accidental partial
+// implementations leaking into other test packages.
 type nopParker struct{}
 
 func (nopParker) ParkInstance(context.Context, string, string) error { return nil }
 
-type nopStripe struct{}
+type nopProvider struct{}
 
-func (nopStripe) PushUsageRecordSum(context.Context, state.Account, time.Time, int64) error {
+func (nopProvider) EnsurePlanProducts(context.Context) error { return nil }
+func (nopProvider) CreateCustomer(context.Context, state.Account) (string, error) {
+	return "", nil
+}
+func (nopProvider) PushUsageRecord(context.Context, state.Account, time.Time, int64) error {
 	return nil
+}
+func (nopProvider) VerifyWebhook([]byte, map[string]string, time.Duration) (billing.Event, error) {
+	return billing.Event{}, nil
+}
+func (nopProvider) CreateUpgradeTransaction(context.Context, state.Account, api.Plan) (string, string, error) {
+	return "", "", nil
 }
 
 // TestRun_MetricsAddrEmptySkipsListener — when cfg.MetricsAddr is empty,
@@ -462,7 +477,22 @@ type meterRec struct {
 	calls int
 }
 
-func (r *meterRec) PushUsageRecordSum(context.Context, state.Account, time.Time, int64) error {
+// EnsurePlanProducts / CreateCustomer / VerifyWebhook / CreateUpgradeTransaction
+// are no-op stubs — the meterd pusher loop only calls PushUsageRecord.
+// Returning the empty-string "no provider" semantics matches the production
+// shapes so the test exercises the same dispatch surface as prod.
+func (r *meterRec) EnsurePlanProducts(context.Context) error { return nil }
+func (r *meterRec) CreateCustomer(context.Context, state.Account) (string, error) {
+	return "", nil
+}
+func (r *meterRec) VerifyWebhook([]byte, map[string]string, time.Duration) (billing.Event, error) {
+	return billing.Event{}, nil
+}
+func (r *meterRec) CreateUpgradeTransaction(context.Context, state.Account, api.Plan) (string, string, error) {
+	return "", "", nil
+}
+
+func (r *meterRec) PushUsageRecord(context.Context, state.Account, time.Time, int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls++
@@ -500,7 +530,7 @@ func TestRun_MetricsAddr_StripePushLabels(t *testing.T) {
 	}
 	rec := &meterRec{}
 	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, subSecondIntervalsEnv())
-	deps.stripe = rec // override nopStripe; pre-populated field on runDeps
+	deps.pusher = rec // override nopProvider; pre-populated field on runDeps
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
