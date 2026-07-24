@@ -46,28 +46,19 @@ env:
   VACUUM_SHA256_LINUX_AMD64: "84a596d5f88dd42f6f020376e5d2c2a29e6e51cc4b5614828f03dda122457a03"
 
 jobs:
-  # Default fast lane: lint + vet + unit + build + proto.
-  # All gates that block PR merge live here.
+  # Three parallel jobs (PR #167) so the long poles — unit tests (~4:20)
+  # and spec-check (~3:54) — run in parallel instead of in series. Wall
+  # time drops from 10:44 to ~max(test, unit-tests, spec-check) ≈ ~4:40.
+  #
+  # `test` (lint + build + small checks), `unit-tests` (race-enabled Go
+  # test suite + pg integration), and `spec-check` (vacuum lint + AST
+  # parity) all start independently on PR open. No `needs:` between them.
+  # The job ID `test` is preserved so the commented-out `needs: test` in
+  # cd-digitalocean.yml still resolves if anyone re-enables it.
   test:
-    name: lint + tests + build
+    name: lint + build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: faas
-          POSTGRES_PASSWORD: faas
-          POSTGRES_DB: faas
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U faas -d faas"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -106,8 +97,6 @@ jobs:
         run: test -z "$(gofmt -l $(find . -name '*.go'))" || (gofmt -l $(find . -name '*.go'); exit 1)
       - name: vet
         run: go vet ./...
-      - name: unit tests
-        run: make test
       - name: build
         run: make build
 
@@ -168,21 +157,81 @@ jobs:
       - name: proto-check
         run: make proto-check
 
-      # OpenAPI spec gate (PR #129). The spec is the source of truth for
-      # documentation; the code is the source of truth for behavior; this
-      # gate is the bridge. Same regenerate-and-diff pattern as proto-check /
-      # sqlc-check / egress-check: vacuum lint + AST parity + git clean.
-      # Fails the PR if a route / DTO / Code* constant drifts without a
-      # matching spec change.
-      #
-      # vacuum is downloaded as a pre-built binary from GitHub Releases
-      # (verified against VACUUM_SHA256_LINUX_AMD64) instead of `go install`'d
-      # — the source build takes ~3 min cross-compiling vacuum against the
-      # runner's Go toolchain. The binary is ~20 MB and downloads in <5 s.
-      # The same precedent is used by every other binary in the EX44
-      # ansible roles (deploy/ansible/roles/{alertmanager,node_exporter,
-      # prometheus,firecracker,grafana}/), so the supply-chain pin pattern
-      # matches the production host.
+  # Race-enabled unit test suite + pgx-backed Store integration tests.
+  # Owns the 4:20 long pole — runs in parallel with `test` and `spec-check`
+  # so the wall time is bounded by the slowest of the three (≈ 4:40).
+  # Postgres service + DATABASE_URL mirror the previous combined job.
+  unit-tests:
+    name: unit tests + pg integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+      # `make test` is `go test -race -count=1 ./...` — covers every
+      # package that builds on `ubuntu-latest`. ~4:20 on a cold runner,
+      # dominated by `pkg/sched` + `pkg/fcvm` lifecycle tests.
+      - name: unit tests
+        run: make test
+      # M5+: pgx-backed Store. Tests that need Postgres are skipped when
+      # DATABASE_URL is unset, so the suite stays green on local dev too.
+      - name: pg integration tests
+        run: go test -race -count=1 ./pkg/state/... ./pkg/db/...
+
+  # OpenAPI spec gate (PR #129). The spec is the source of truth for
+  # documentation; the code is the source of truth for behavior; this
+  # gate is the bridge. Same regenerate-and-diff pattern as proto-check /
+  # sqlc-check / egress-check: vacuum lint + AST parity + git clean.
+  # Fails the PR if a route / DTO / Code* constant drifts without a
+  # matching spec change.
+  #
+  # Split out of the `test` job in PR #167 so its ~4 min of vacuum lint +
+  # AST work runs alongside the Go build/lint/test pipeline instead of
+  # after it.
+  #
+  # vacuum is downloaded as a pre-built binary from GitHub Releases
+  # (verified against VACUUM_SHA256_LINUX_AMD64) instead of `go install`'d
+  # — the source build takes ~3 min cross-compiling vacuum against the
+  # runner's Go toolchain. The binary is ~20 MB and downloads in <5 s.
+  # The same precedent is used by every other binary in the EX44
+  # ansible roles (deploy/ansible/roles/{alertmanager,node_exporter,
+  # prometheus,firecracker,grafana}/), so the supply-chain pin pattern
+  # matches the production host.
+  spec-check:
+    name: spec-check (OpenAPI lint + AST parity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      # setup-go is needed because `make spec-check` invokes
+      # `$(GO) test -count=1 -run TestSpecCompliance ./cmd/apid/...` for
+      # the AST parity assertion (~0.4 s locally, negligible in CI).
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # No Go cache: spec-check runs a single tiny test, not worth
+          # the cache hit; this also keeps the job self-contained without
+          # sharing Go module downloads with `test` / `unit-tests`.
       - name: install vacuum
         run: |
           # Belt + suspenders: refuse to run on a non-x86_64 runner instead
@@ -223,13 +272,6 @@ jobs:
         # Makefile's `$(GOBIN)` default (`go env GOPATH/bin`) is the
         # correct install location for the local-dev `go install` path.
         run: make spec-check
-
-      # M5+: pgx-backed Store. Tests that need Postgres are skipped when
-      # DATABASE_URL is unset, so the suite stays green on local dev too.
-      - name: pg integration tests
-        env:
-          DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
-        run: go test -race -count=1 ./pkg/state/... ./pkg/db/...
 
   coverage:
     services:

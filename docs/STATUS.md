@@ -260,7 +260,7 @@ The §12 dashboard pipeline is wired end-to-end:
 | `FaasBuildSuccessLow` | [BuildSuccessLow](runbooks/FaasBuildSuccessLow.md) | warn |
 | `FaasDaemonDown` | [DaemonDown](runbooks/FaasDaemonDown.md) | page |
 
-CI gate: `promtool check rules` runs in `lint + tests + build` against
+CI gate: `promtool check rules` runs in `lint + build` against
 the same tarball the production ansible role pins (`prom_version: "2.54.1"`),
 catching malformed PromQL or dangling matchers at PR time.
 
