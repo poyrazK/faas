@@ -106,8 +106,8 @@ func TestMigrations_00029_Invocations(t *testing.T) {
 				t.Fatalf("seed account: %v", err)
 			}
 			if err := pool.QueryRow(ctx, `
-				insert into apps (slug, account_id, runtime)
-				values ('inv-test-app', '00000000-0000-0000-0000-000000000001'::uuid, 'node22')
+				insert into apps (slug, account_id, runtime, ram_mb)
+				values ('inv-test-app', '00000000-0000-0000-0000-000000000001'::uuid, 'node22', 128)
 				returning id
 			`).Scan(&appID); err != nil {
 				t.Fatalf("seed app (retry): %v", err)
@@ -173,8 +173,8 @@ func TestMigrations_00029_Invocations(t *testing.T) {
 				t.Fatalf("seed account: %v", err)
 			}
 			if err := pool.QueryRow(ctx, `
-				insert into apps (slug, account_id, runtime)
-				values ('inv-test-app', '00000000-0000-0000-0000-000000000001'::uuid, 'node22')
+				insert into apps (slug, account_id, runtime, ram_mb)
+				values ('inv-test-app', '00000000-0000-0000-0000-000000000001'::uuid, 'node22', 128)
 				returning id, account_id`).Scan(&appID, &accountID); err != nil {
 				t.Fatalf("reseed parent app: %v", err)
 			}

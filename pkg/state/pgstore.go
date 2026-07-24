@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -1161,27 +1162,31 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 	return out, nil
 }
 
-// ClaimInvocation transitions pending → dispatching and stamps the
-// lease. Optimistic update: a row already in dispatching with an
-// unexpired lease rejects with ErrNotFound so the drain retries on
-// the next tick (matches MemStore and matches the SKIP LOCKED
-// precedent).
-//
-// instanceID is accepted for back-compat with the Store contract but
-// intentionally NOT stamped here — the drain doesn't know the live
-// instance handle until engine.Wake returns, and the wake gate is
-// the only component that can mint one. The drain follows up with
-// Store.StampInstanceInvocation once Wake succeeds, so the meter
-// join (CountInstanceInvocationsInMinute) sees the right value.
-func (s *PgStore) ClaimInvocation(ctx context.Context, id, _ /*instanceID*/ string, leaseSeconds int) (Invocation, error) {
+// ClaimInvocation transitions pending → dispatching, stamps the
+// lease, and writes the live instance handle (when known — empty
+// string from the drain's first pass is overwritten by
+// Store.StampInstanceInvocation once engine.Wake returns). Optimistic
+// update: a row already in dispatching with an unexpired lease
+// rejects with ErrNotFound so the drain retries on the next tick
+// (matches MemStore and matches the SKIP LOCKED precedent).
+func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, leaseSeconds int) (Invocation, error) {
+	// pgx v5.10's text-format encoder can't carry an int through a
+	// `||` text-concat in `text || text → interval`. Local Postgres
+	// accepts the implicit form, but the Postgres 15 image on GH
+	// Actions rejects the lookup with "unable to encode 30 into text
+	// format for text (OID 25)". Format the lease in Go with the
+	// unit suffix so pgx encodes a string (no encode-plan lookup)
+	// and Postgres parses it as interval.
+	leaseText := strconv.Itoa(leaseSeconds) + " seconds"
 	row := s.pool.QueryRow(ctx, `
 		update invocations
 		   set state = 'dispatching',
-		       lease_expires_at = now() + ($2 || ' seconds')::interval,
+		       lease_expires_at = now() + $3::interval,
+		       instance_id = coalesce(nullif($2, ''), instance_id),
 		       received_at = now(),
 		       attempts = attempts + 1
 		 where id = $1 and state = 'pending'
-		 returning `+invocationSelectCols, id, leaseSeconds)
+		 returning `+invocationSelectCols, id, instanceID, leaseText)
 	inv, err := scanInvocation(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1213,14 +1218,19 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 	var query string
 	var args []any
 	if retryAfter > 0 {
+		// Same int→text concat workaround as ClaimInvocation: pass the
+		// microseconds as a pre-formatted string with the unit suffix so
+		// Postgres parses it as interval. Avoids the OID 25 encode-plan
+		// lookup failure on the GH Actions Postgres 15 image.
+		retryText := strconv.FormatInt(retryAfter.Microseconds(), 10) + " microseconds"
 		query = `update invocations
 				    set state = 'pending',
-				        due_at = now() + ($2 || ' microseconds')::interval,
+				        due_at = now() + $2::interval,
 				        lease_expires_at = null,
 				        last_error = $3,
 				        attempts = attempts + 1
 				  where id = $1 and state in ('dispatching','pending')`
-		args = []any{id, retryAfter.Microseconds(), lastError}
+		args = []any{id, retryText, lastError}
 	} else {
 		query = `update invocations
 				    set state = 'failed',
