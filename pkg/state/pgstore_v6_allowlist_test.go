@@ -1,7 +1,7 @@
 package state_test
 
 // ADR-032: round-trip the v6 mirror through the real PgStore so the
-// DB trigger `apps_egress_allowlist_cidr` (migration 00030) is
+// DB trigger `apps_egress_allowlist_cidr` (migration 00033) is
 // exercised end-to-end. The MemStore hermetic suite covers the
 // parse / Set semantics; this file pins the SQL surface.
 //

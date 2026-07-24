@@ -123,7 +123,7 @@ type AppSpec struct {
 	// ADR-023; the renderer partitions by prefix.Addr().Is4()). Both
 	// partitions land after the lateral-movement deny. Non-/0 contract
 	// held by the DB trigger `apps_egress_allowlist_cidr` (migration
-	// 00030). Plan-gated upstream (Free/Hobby always empty); see
+	// 00033). Plan-gated upstream (Free/Hobby always empty); see
 	// pkg/api/limits.go::EgressAllowlistAllowed.
 	EgressAllowlist []string `protobuf:"bytes,7,rep,name=egress_allowlist,json=egressAllowlist,proto3" json:"egress_allowlist,omitempty"`
 	unknownFields   protoimpl.UnknownFields

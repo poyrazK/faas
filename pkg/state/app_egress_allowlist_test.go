@@ -100,7 +100,7 @@ func TestUpdateApp_WithEgressAllowlist(t *testing.T) {
 // TestUpdateApp_WithEgressAllowlistV6 (ADR-032) is the v6 mirror of
 // the parent test: v6 entries round-trip through MemStore exactly
 // like v4. The non-/0 contract is held by the DB trigger
-// `apps_egress_allowlist_cidr` (migration 00030) — the in-memory
+// `apps_egress_allowlist_cidr` (migration 00033) — the in-memory
 // store is intentionally permissive so it stays useful as a test
 // double for code paths that don't care about the family split.
 func TestUpdateApp_WithEgressAllowlistV6(t *testing.T) {

@@ -570,7 +570,7 @@ func TestWakeRejectsEgressAllowlist_ZeroBitsClosed(t *testing.T) {
 // of the non-/0 contract. `::/0` would unblock the entire IPv6
 // internet and make the v6 allowlist a no-op, so the wire-side
 // Bits()==0 reject still trips regardless of family. The DB trigger
-// also rejects it (migration 00030), but the wire gate is the
+// also rejects it (migration 00033), but the wire gate is the
 // defence-in-depth layer if the DB is bypassed (e.g. a future
 // migration that loosens the trigger).
 func TestWakeRejectsEgressAllowlist_V6SlashZeroClosed(t *testing.T) {

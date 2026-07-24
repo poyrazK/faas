@@ -78,7 +78,7 @@ func bootTimeout(s state.State) time.Duration {
 // expects ([]string). The empty input returns nil so the proto carries
 // an empty list (no allowlist rule emitted). apid's PUT already
 // ParsePrefix'd each entry and the apps.egress_allowlist cidr[] DB
-// trigger (`apps_egress_allowlist_cidr`, migration 00030) accepts both
+// trigger (`apps_egress_allowlist_cidr`, migration 00033) accepts both
 // v4 and v6 — every Prefix here is a valid v4 OR v6 — String()
 // round-trips through the same parser on the other side
 // (vmmdgrpc.proto -> fcvm.WakeRequest -> pkg/fcvm.Wake ->

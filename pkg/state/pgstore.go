@@ -2984,7 +2984,7 @@ func cidrPrefixesToArray(prefixes []netip.Prefix) string {
 // to fail loud — none of the consumers silently swallow a malformed
 // allowlist because (a) the API layer validates each entry with
 // netip.ParsePrefix before insert, and (b) the DB trigger
-// (apps_egress_allowlist_cidr, migration 00030) rejects bogus entries
+// (apps_egress_allowlist_cidr, migration 00033) rejects bogus entries
 // at the schema. Defensive parse is belt-and-braces, not load-bearing.
 func cidrTextToPrefixes(text string) []netip.Prefix {
 	text = strings.TrimSpace(text)

@@ -69,7 +69,7 @@ create trigger apps_egress_allowlist_cidr
 -- +goose StatementBegin
 
 -- Down-migrate restores the v4-only trigger so 00029's RejectsV6
--- (which becomes AcceptsV6 only after 00030 ships; the original
+-- (which becomes AcceptsV6 only after 00033 ships; the original
 -- v4-only contract is what 00029 originally pinned) passes on a
 -- clean reverse. Same shape as 00029's up-migrate, verbatim.
 

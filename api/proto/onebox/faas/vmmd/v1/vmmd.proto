@@ -113,7 +113,7 @@ message AppSpec {
   // ADR-023; the renderer partitions by prefix.Addr().Is4()). Both
   // partitions land after the lateral-movement deny. Non-/0 contract
   // held by the DB trigger `apps_egress_allowlist_cidr` (migration
-  // 00030). Plan-gated upstream (Free/Hobby always empty); see
+  // 00033). Plan-gated upstream (Free/Hobby always empty); see
   // pkg/api/limits.go::EgressAllowlistAllowed.
   repeated string egress_allowlist = 7;
 }

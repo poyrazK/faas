@@ -83,7 +83,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		// Per-entry shape: every CIDR must ParsePrefix as either v4
 		// or v6 (ADR-032 — the v6 mirror), with a non-zero mask. The
 		// Postgres cidr[] TRIGGER `apps_egress_allowlist_cidr`
-		// (migration 00030) rejects families outside {4,6} and any
+		// (migration 00033) rejects families outside {4,6} and any
 		// /0 at write time — catching it here just gives a more
 		// operator-friendly error message naming the bad entry. The
 		// `Bits() == 0` reject is shared with the DB trigger so a

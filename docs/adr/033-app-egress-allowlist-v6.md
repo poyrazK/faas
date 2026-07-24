@@ -42,7 +42,7 @@ drift, deny-line audit).
 
 The v4-only `apps_egress_allowlist_v4_only` CHECK constraint from
 migration 00029 is dropped and replaced by a BEFORE-row PL/pgSQL
-trigger (`apps_egress_allowlist_cidr`, migration 00030) that
+trigger (`apps_egress_allowlist_cidr`, migration 00033) that
 enforces:
 
 1. Each entry's `family(c)` is 4 or 6 (no exotic families).
@@ -118,11 +118,14 @@ asymmetry.
 
 ## Consequences
 
-- New migration: `00030_app_egress_allowlist_v6.sql` (drops the
+- New migration: `00033_app_egress_allowlist_v6.sql` (drops the
   v4-only trigger + function; creates `apps_egress_allowlist_cidr`
-  trigger + function). Slot collision risk (PR #153 + PR #159 each
-  renumbered once); if a parallel PR claims 00030 first, renumber
-  per the existing precedent.
+  trigger + function). Slot collision: this slice initially shipped
+  as 00030, but `00030_invocations.sql`,
+  `00031_invocations_notify.sql`, and `00032_delayed_tasks.sql`
+  (event-driven FaaS / Move 1, unrelated to the egress allowlist)
+  had already merged to main. Renumbered 00030 → 00032 → 00033
+  per the PR #153 + PR #159 precedent; the SQL is slot-agnostic.
 - apid + vmmd wire layers accept v6 entries (defence-in-depth
   gates loosened; DB trigger is the new source of truth).
 - Renderer partition is the only behaviour change for egress: two
@@ -173,8 +176,8 @@ asymmetry.
 
 ## Cross-reference
 
-- `migrations/00030_app_egress_allowlist_v6.sql` — trigger swap.
-- `migrations/00030_app_egress_allowlist_v6_test.go` — DB-level
+- `migrations/00033_app_egress_allowlist_v6.sql` — trigger swap.
+- `migrations/00033_app_egress_allowlist_v6_test.go` — DB-level
   tests (RoundTripV6, RoundTripMixed, RejectsSlashZeroV4/V6).
 - `migrations/00029_app_egress_allowlist_test.go` —
   `RejectsV6` → `AcceptsV6` rename on clean-reverse.

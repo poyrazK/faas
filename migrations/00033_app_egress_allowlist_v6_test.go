@@ -1,21 +1,25 @@
 //go:build !no_pg
 
-// Migration-apply test for 00030 (ADR-032 — v6 mirror of the
+// Migration-apply test for 00033 (ADR-032 — v6 mirror of the
 // per-app egress allowlist). Pins the contract swap:
 //
-//   1. The migration set applies cleanly through 00030.
+//   1. The migration set applies cleanly through 00033.
 //   2. v6 CIDRs round-trip (UPDATE / read-back).
 //   3. Mixed v4 + v6 in one UPDATE round-trips.
 //   4. `0.0.0.0/0` is rejected (SQLSTATE 23514, constraint
 //      `apps_egress_allowlist_cidr`).
 //   5. `::/0` is rejected with the same shape.
 //
-// Slot note: 00030 is the next free slot after 00029 (PR #159
-// merged). Per `docs/adr/README.md` "migrations are append-only
-// and contiguous" + the precedent set by PR #153 (`00027→00028`)
-// and PR #159 (`00028→00029`) for collision renumbering. If a
-// parallel PR claims 00030 first, renumber per that precedent;
-// the SQL is slot-agnostic.
+// Slot note: 00033 is the next free slot after 00032
+// (`00030_invocations.sql`, `00031_invocations_notify.sql`, and
+// `00032_delayed_tasks.sql` already on main — all for the
+// event-driven FaaS / Move 1 surface, unrelated to the egress
+// allowlist). Per `docs/adr/README.md` "migrations are
+// append-only and contiguous" + the precedent set by PR #153
+// (`00027→00028`), PR #159 (`00028→00029`), and PR #175
+// (`00030→00032→00033`) for collision renumbering. If a parallel
+// PR claims 00033 first, renumber per that precedent; the SQL is
+// slot-agnostic.
 //
 // Build tag matches the rest of the migration tests; set
 // FAAS_SKIP_PG_TESTS=1 to skip locally (see migrations/README.md).
@@ -34,11 +38,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// TestMigrations_00030_AppEgressAllowlistV6 pins the v6 mirror
+// TestMigrations_00033_AppEgressAllowlistV6 pins the v6 mirror
 // contract from ADR-032. Five named scenarios:
 //
 //   - ApplyThrough030: the full migration set applies cleanly
-//     through 00030 (regression: missing slot between 1 and 30
+//     through 00033 (regression: missing slot between 1 and 33
 //     surfaces here before we get to the per-assertion pins).
 //   - RoundTripV6: an UPDATE with two v6 CIDRs reads back the
 //     same CIDRs.
@@ -56,14 +60,14 @@ import (
 // `github.com/jackc/pgx/v5/pgconn/errors.go:53`), so the
 // constraint name is reachable only via the typed fields, not
 // `strings.Contains`.
-func TestMigrations_00030_AppEgressAllowlistV6(t *testing.T) {
+func TestMigrations_00033_AppEgressAllowlistV6(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 
-	// (1) Apply through 00030. A regression that drops a slot
-	// between 1 and 30 surfaces here before the per-assertion pins.
+	// (1) Apply through 00033. A regression that drops a slot
+	// between 1 and 33 surfaces here before the per-assertion pins.
 	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("db.MigrateUp: %v (regression: missing migration slot between 1 and 30)", err)
+		t.Fatalf("db.MigrateUp: %v (regression: missing migration slot between 1 and 33)", err)
 	}
 
 	// (2) Seed an account + apps row to carry the column. The
@@ -71,7 +75,7 @@ func TestMigrations_00030_AppEgressAllowlistV6(t *testing.T) {
 	// idempotent; they mirror the 00029 test style for grep-ability.
 	if _, err := pool.Exec(ctx, `
 		insert into accounts (id, email, plan, created_at)
-		values ('00000000-0000-0000-0000-000000000030',
+		values ('00000000-0000-0000-0000-000000000033',
 		        'allowlist-v6-test@example.com', 'pro', now())
 		on conflict (id) do nothing
 	`); err != nil {
@@ -79,8 +83,8 @@ func TestMigrations_00030_AppEgressAllowlistV6(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		insert into apps (id, account_id, slug, ram_mb, max_concurrency, idle_timeout_s, status, created_at)
-		values ('00000000-0000-0000-0000-000000000030',
-		        '00000000-0000-0000-0000-000000000030',
+		values ('00000000-0000-0000-0000-000000000033',
+		        '00000000-0000-0000-0000-000000000033',
 		        'allowlist-v6-test', 256, 1, 30, 'active', now())
 		on conflict (id) do nothing
 	`); err != nil {
@@ -93,7 +97,7 @@ func TestMigrations_00030_AppEgressAllowlistV6(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		update apps
 		   set egress_allowlist = array['fe80::/10'::cidr, '2001:db8::/32'::cidr]
-		 where id = '00000000-0000-0000-0000-000000000030'
+		 where id = '00000000-0000-0000-0000-000000000033'
 	`); err != nil {
 		t.Fatalf("update v6 egress_allowlist: %v", err)
 	}
@@ -101,7 +105,7 @@ func TestMigrations_00030_AppEgressAllowlistV6(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		select egress_allowlist::text
 		  from apps
-		 where id = '00000000-0000-0000-0000-000000000030'
+		 where id = '00000000-0000-0000-0000-000000000033'
 	`).Scan(&asText); err != nil {
 		t.Fatalf("read v6 egress_allowlist: %v", err)
 	}
@@ -118,14 +122,14 @@ func TestMigrations_00030_AppEgressAllowlistV6(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		update apps
 		   set egress_allowlist = array['1.2.3.0/24'::cidr, 'fe80::/10'::cidr]
-		 where id = '00000000-0000-0000-0000-000000000030'
+		 where id = '00000000-0000-0000-0000-000000000033'
 	`); err != nil {
 		t.Fatalf("update mixed egress_allowlist: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `
 		select egress_allowlist::text
 		  from apps
-		 where id = '00000000-0000-0000-0000-000000000030'
+		 where id = '00000000-0000-0000-0000-000000000033'
 	`).Scan(&asText); err != nil {
 		t.Fatalf("read mixed egress_allowlist: %v", err)
 	}
@@ -145,7 +149,7 @@ func TestMigrations_00030_AppEgressAllowlistV6(t *testing.T) {
 	_, err := pool.Exec(ctx, `
 		update apps
 		   set egress_allowlist = array['0.0.0.0/0'::cidr]
-		 where id = '00000000-0000-0000-0000-000000000030'
+		 where id = '00000000-0000-0000-0000-000000000033'
 	`)
 	if err == nil {
 		t.Fatalf("UPDATE with 0.0.0.0/0 unexpectedly succeeded; apps_egress_allowlist_cidr TRIGGER did not fire")
@@ -168,7 +172,7 @@ func TestMigrations_00030_AppEgressAllowlistV6(t *testing.T) {
 	_, err = pool.Exec(ctx, `
 		update apps
 		   set egress_allowlist = array['::/0'::cidr]
-		 where id = '00000000-0000-0000-0000-000000000030'
+		 where id = '00000000-0000-0000-0000-000000000033'
 	`)
 	if err == nil {
 		t.Fatalf("UPDATE with ::/0 unexpectedly succeeded; apps_egress_allowlist_cidr TRIGGER did not fire")

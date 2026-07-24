@@ -250,7 +250,7 @@ func TestUpdateAppEgressAllowlist_ZeroBits(t *testing.T) {
 // TestUpdateAppEgressAllowlist_V6AcceptedOnPro: a v6-only allowlist
 // must be accepted on a paid plan (ADR-032 v6 mirror). The handler
 // no longer rejects v6 entries; the DB trigger
-// `apps_egress_allowlist_cidr` (migration 00030) holds the
+// `apps_egress_allowlist_cidr` (migration 00033) holds the
 // non-/0 contract. The MemStore path is sufficient here — pgStore
 // has its own round-trip tests under pkg/state.
 func TestUpdateAppEgressAllowlist_V6AcceptedOnPro(t *testing.T) {

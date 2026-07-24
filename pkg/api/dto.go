@@ -42,7 +42,7 @@ type UpdateAppRequest struct {
 	// entries share the same count budget. Empty slice / nil
 	// pointer = clear the allowlist (back to the default-accept
 	// chain policy). The non-/0 contract is enforced by the DB
-	// trigger `apps_egress_allowlist_cidr` (migration 00030).
+	// trigger `apps_egress_allowlist_cidr` (migration 00033).
 	EgressAllowlist *[]string `json:"egress_allowlist,omitempty"`
 }
 

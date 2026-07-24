@@ -23,7 +23,7 @@
 // Contract history: 00029 originally shipped with a v4-only
 // BEFORE-row TRIGGER (`apps_egress_allowlist_v4_only` /
 // `apps_egress_allowlist_v4_only_check()`). ADR-032 (migration
-// 00030) replaces it with a v4-or-v6, non-/0 guard
+// 00033) replaces it with a v4-or-v6, non-/0 guard
 // (`apps_egress_allowlist_cidr` /
 // `apps_egress_allowlist_cidr_check()`). The `AcceptsV6`
 // sub-test below replaced the original `RejectsV6` sub-test at
@@ -60,13 +60,13 @@ import (
 //     migration proves the column is present and defaulted.)
 //   - RoundTripV4: an UPDATE with a single v4 CIDR round-trips.
 //   - V6ByVersion: the v6-round-trip shape differs by migration state:
-//     pre-ADR-032 (max(version_id) < 30) → `RejectsV6`: an UPDATE
+//     pre-ADR-032 (max(version_id) < 33) → `RejectsV6`: an UPDATE
 //     with a v6 CIDR fails with SQLSTATE 23514 + constraint
 //     `apps_egress_allowlist_v4_only` (the v4-only trigger that
 //     00029 originally shipped). post-ADR-032 (max(version_id)
-//     >= 30) → `AcceptsV6`: an UPDATE with a v6 CIDR succeeds and
-//     reads back. The non-/0 contract itself is pinned by 00030's
-//     TestMigrations_00030_AppEgressAllowlistV6::RejectsSlashZeroV6.
+//     >= 33) → `AcceptsV6`: an UPDATE with a v6 CIDR succeeds and
+//     reads back. The non-/0 contract itself is pinned by 00033's
+//     TestMigrations_00033_AppEgressAllowlistV6::RejectsSlashZeroV6.
 //
 // The version branch closes the clean-reverse gap: a developer who
 // runs the suite against a database that's been MigrateDown'd to
@@ -85,7 +85,7 @@ func TestMigrations_00029_AppEgressAllowlist(t *testing.T) {
 	}
 
 	// (1b) Snapshot the current applied version so V6ByVersion can
-	// branch on whether 00030 is in place. The MAX query covers
+	// branch on whether 00033 is in place. The MAX query covers
 	// both fresh-up and MigrateDown-to-here cases (per memory
 	// `goose-v0-sentinel-row`: MAX(version_id) == N is the canonical
 	// signal; the N+1 sentinel row only exists post-v0 schema).
@@ -95,7 +95,7 @@ func TestMigrations_00029_AppEgressAllowlist(t *testing.T) {
 	`).Scan(&maxApplied); err != nil {
 		t.Fatalf("read goose_db_version MAX: %v", err)
 	}
-	v6MirrorApplied := maxApplied >= 30
+	v6MirrorApplied := maxApplied >= 33
 
 	// (2) Seed an account + apps row to carry the column. The
 	// literal UUIDs mirror the 00022 backfill test style — fixed
@@ -156,12 +156,12 @@ func TestMigrations_00029_AppEgressAllowlist(t *testing.T) {
 		t.Errorf("round-trip egress_allowlist missing 8.8.8.0/24: %q", asText)
 	}
 
-	// (5) V6ByVersion — branch on whether 00030 has applied.
-	// Pre-030 (clean-reverse scenario): the v4-only guard from 00029
+	// (5) V6ByVersion — branch on whether 00033 has applied.
+	// Pre-032 (clean-reverse scenario): the v4-only guard from 00029
 	// is in effect; v6 must be rejected with SQLSTATE 23514 +
-	// constraint `apps_egress_allowlist_v4_only`. Post-030: v6
-	// succeeds (the v4-or-v6, non-/0 guard from 00030). The non-/0
-	// contract itself is pinned by 00030's RejectsSlashZeroV6.
+	// constraint `apps_egress_allowlist_v4_only`. Post-032: v6
+	// succeeds (the v4-or-v6, non-/0 guard from 00033). The non-/0
+	// contract itself is pinned by 00033's RejectsSlashZeroV6.
 	t.Run("V6ByVersion", func(t *testing.T) {
 		if v6MirrorApplied {
 			t.Run("AcceptsV6", func(t *testing.T) {

@@ -296,7 +296,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// netip.Prefix once, here, so the nft renderer never touches
 	// stringly-typed addresses. apid's PATCH handler already
 	// ParsePrefix'd these on input and the apps.egress_allowlist
-	// cidr[] TRIGGER (`apps_egress_allowlist_cidr`, migration 00030)
+	// cidr[] TRIGGER (`apps_egress_allowlist_cidr`, migration 00033)
 	// rejects families outside {4,6} and any /0, so a parse failure
 	// at this layer means the wire contract is violated — fail fast
 	// rather than silently emit a half-formed ruleset (a single bad

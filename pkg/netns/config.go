@@ -72,7 +72,7 @@ type Config struct {
 	// exists on either chain. Free/Hobby plans never populate this
 	// field — apid gates the PATCH upstream. The non-/0 contract
 	// is enforced by the DB trigger
-	// `apps_egress_allowlist_cidr` (migration 00030, ADR-032).
+	// `apps_egress_allowlist_cidr` (migration 00033, ADR-032).
 	EgressAllowlist []netip.Prefix
 }
 
