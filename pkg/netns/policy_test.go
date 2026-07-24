@@ -446,7 +446,7 @@ func TestHostPolicyMasqueradeSubstitutesCIDRAndIface(t *testing.T) {
 //   - nft returns EPERM / "Operation not permitted". `nft -c -f` still
 //     instantiates transient handle state via nfnetlink; even without
 //     committing, it requires CAP_NET_ADMIN. ubuntu-latest CI runs the
-//     `lint + tests + build` step as the github-actions user (no caps),
+//     `lint + build` step as the github-actions user (no caps),
 //     so this gate will skip in CI. Operators running the test locally
 //     with `sudo` get the full check; without sudo it skips. The
 //     production gate is `make egress-check` (root in CI), this test
