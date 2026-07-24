@@ -59,7 +59,7 @@ func cmdAccountExport(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if err := client.ExportAccount(context.Background(), *out, !*noSecrets); err != nil {
+	if err := ExportAccountFile(client, context.Background(), *out, !*noSecrets); err != nil {
 		return printErr("Export failed", err)
 	}
 	abs, _ := filepath.Abs(*out)

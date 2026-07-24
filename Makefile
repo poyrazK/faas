@@ -257,3 +257,13 @@ spec-check: spec-install spec-lint spec-sync ## CI gate: vacuum lint + AST parit
 	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) || \
 	  (echo "spec-check: spec drift — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
+
+.PHONY: sdk-check
+sdk-check: ## CI gate: every OpenAPI route has a typed SDK method on pkg/api.Client
+	# Pure-read AST/YAML diff (no I/O, no goroutines), so the recipe
+	# mirrors spec-check's shape exactly. The script exits 1 when a
+	# spec route has no SDK method; warnings about extra SDK helpers
+	# (List*All, ExportAccount) are non-fatal so adding helpers
+	# ahead of spec work isn't blocked.
+	@$(GO) run ./cmd/sdk-coverage
+

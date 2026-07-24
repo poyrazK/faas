@@ -157,12 +157,12 @@ jobs:
       - name: proto-check
         run: make proto-check
 
-  # Race-enabled unit test suite + pgx-backed Store integration tests.
+# Race-enabled unit test suite + pgx-backed Store integration tests.
   # Owns the 4:20 long pole — runs in parallel with `test` and `spec-check`
   # so the wall time is bounded by the slowest of the three (≈ 4:40).
   # Postgres service + DATABASE_URL mirror the previous combined job.
   unit-tests:
-    name: unit tests + pg integration
+    name: unit tests + pg integration + SDK
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -193,6 +193,16 @@ jobs:
       # dominated by `pkg/sched` + `pkg/fcvm` lifecycle tests.
       - name: unit tests
         run: make test
+      # Public Go SDK drift gate. Companion to spec-check: fails the
+      # PR when an OpenAPI route ships without a typed *Client method in
+      # pkg/api. Pure read-only AST+YAML walk; no installs needed.
+      - name: sdk-check
+        run: make sdk-check
+      # Public Go SDK test suite. Mirrors every SDK method against a
+      # stub apid via httptest; fast enough for the standard PR run.
+      # -race catches any sync issue in the SSE / multipart helpers.
+      - name: SDK unit tests
+        run: go test -race -count=1 ./pkg/api/...
       # M5+: pgx-backed Store. Tests that need Postgres are skipped when
       # DATABASE_URL is unset, so the suite stays green on local dev too.
       - name: pg integration tests

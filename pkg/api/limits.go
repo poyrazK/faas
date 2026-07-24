@@ -74,6 +74,23 @@ type Limits struct {
 	// which is the cost shape of the always-on tier. Pro + Scale opt in.
 	// apid's updateApp handler gates the PATCH body on this flag.
 	MinInstancesAllowed bool
+
+	// EgressAllowlistAllowed toggles the per-app outbound IP allowlist
+	// (ADR-031, tier-2 of the network roadmap). Free + Hobby keep
+	// allowlist opt-out because the abuse-desk use case is a
+	// Pro+ concern (Scale customers are the ones with the budget to
+	// care about egress hygiene). Pro/Scale cap their max entries
+	// differently — Pro is 16, Scale 64 — the higher scale tier gets
+	// a larger entry budget because SaaS-scale apps tend to integrate
+	// with more upstream services. apid's updateApp handler rejects a
+	// PATCH with 403 plan_egress_allowlist_not_allowed when this is
+	// false.
+	EgressAllowlistAllowed bool
+	// EgressAllowlistMaxSize is the per-app count cap on CIDR entries.
+	// 0 with Allowed=false (Free/Hobby); non-zero with Allowed=true
+	// (Pro: 16; Scale: 64). apid's updateApp rejects with 400
+	// egress_allowlist_too_long when the PATCH body has more entries.
+	EgressAllowlistMaxSize int
 }
 
 // planLimits is the authoritative table. Values: spec §1 quota row, §4.1 rate
@@ -137,6 +154,11 @@ var planLimits = map[Plan]Limits{
 		SecretCountMax:      50,
 		SecretValueMaxBytes: 16 * 1024,
 		MinInstancesAllowed: true,
+		// ADR-031: Pro gets 16 CIDR entries — enough for "1 SaaS +
+		// 1 webhook + 1 monitoring + ~10 partner integrations" which
+		// is the typical Pro-tier reachability graph.
+		EgressAllowlistAllowed: true,
+		EgressAllowlistMaxSize: 16,
 	},
 	PlanScale: {
 		Plan:                PlanScale,
@@ -155,6 +177,11 @@ var planLimits = map[Plan]Limits{
 		SecretCountMax:      100,
 		SecretValueMaxBytes: 32 * 1024,
 		MinInstancesAllowed: true,
+		// ADR-031: Scale gets 64 CIDR entries — broad enough for
+		// SaaS-scale apps with many upstream integrations; doubling
+		// the Pro budget tracks the doubling in DeployedApps (25 -> 100).
+		EgressAllowlistAllowed: true,
+		EgressAllowlistMaxSize: 64,
 	},
 }
 
@@ -428,6 +455,36 @@ func (p Plan) MinInstancesAllowed() bool {
 		return false
 	}
 	return l.MinInstancesAllowed
+}
+
+// EgressAllowlistAllowed reports whether the plan may set a per-app
+// outbound IP allowlist (ADR-031). Pro + Scale opt in; Free + Hobby
+// stay off — the abuse-desk hygiene this surface gives is a paid
+// concern. apid's updateApp handler gates `req.EgressAllowlist` on
+// this; the CLI surfaces the rejection with
+// CodePlanEgressAllowlistNotAllowed. Unknown plans fail closed
+// (return false) so a missing row never silently unlocks a
+// premium feature — same contract as MinInstancesAllowed above.
+func (p Plan) EgressAllowlistAllowed() bool {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return false
+	}
+	return l.EgressAllowlistAllowed
+}
+
+// EgressAllowlistMaxSize returns the per-plan CIDR-entry cap for an
+// allowlist (ADR-031). 0 for Free/Hobby (the gate above rejects
+// before this matters); 16 for Pro; 64 for Scale. apid rejects a
+// PATCH whose `req.EgressAllowlist` has more entries with 400
+// egress_allowlist_too_long. Returning 0 on unknown plans makes a
+// missing plan row a fail-closed denial, not a silent default.
+func (p Plan) EgressAllowlistMaxSize() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.EgressAllowlistMaxSize
 }
 
 // AdmissionMB is the RAM an instance charges against the admission ceiling and

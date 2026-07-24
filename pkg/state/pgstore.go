@@ -25,6 +25,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -261,11 +263,11 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	runtime := nullString(app.Runtime)
 	idle := nullableInt(app.IdleTimeoutS)
 	row := s.pool.QueryRow(ctx,
-		`insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances)
-		 values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9)
+		`insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist)
+		 values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9, $10::cidr[])
 		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		           max_concurrency, status, manifest, created_at, min_instances`,
-		app.AccountID, app.Slug, string(app.Type), runtime, app.RAMMB, idle, app.MaxConcurrency, manifestBytes, app.MinInstances)
+		           max_concurrency, status, manifest, created_at, min_instances, egress_allowlist::text`,
+		app.AccountID, app.Slug, string(app.Type), runtime, app.RAMMB, idle, app.MaxConcurrency, manifestBytes, app.MinInstances, cidrPrefixesToArray(app.EgressAllowlist))
 	return scanApp(row)
 }
 
@@ -330,7 +332,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		`insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances)
 		 values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9)
 		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		           max_concurrency, status, manifest, created_at, min_instances`,
+		           max_concurrency, status, manifest, created_at, min_instances, egress_allowlist::text`,
 		app.AccountID, app.Slug, string(app.Type), runtime, app.RAMMB, idle, app.MaxConcurrency, manifestBytes, app.MinInstances)
 	created, err := scanApp(row)
 	if err != nil {
@@ -345,7 +347,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 func (s *PgStore) AppByID(ctx context.Context, id string) (App, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		        max_concurrency, status, manifest, created_at, min_instances
+		        max_concurrency, status, manifest, created_at, min_instances, egress_allowlist::text
 		 from apps where id = $1`, id)
 	return scanApp(row)
 }
@@ -353,7 +355,7 @@ func (s *PgStore) AppByID(ctx context.Context, id string) (App, error) {
 func (s *PgStore) AppBySlug(ctx context.Context, slug string) (App, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		        max_concurrency, status, manifest, created_at, min_instances
+		        max_concurrency, status, manifest, created_at, min_instances, egress_allowlist::text
 		 from apps where slug = $1 and status <> 'deleted'`, slug)
 	return scanApp(row)
 }
@@ -361,7 +363,7 @@ func (s *PgStore) AppBySlug(ctx context.Context, slug string) (App, error) {
 func (s *PgStore) ListApps(ctx context.Context, accountID string) ([]App, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		        max_concurrency, status, manifest, created_at, min_instances
+		        max_concurrency, status, manifest, created_at, min_instances, egress_allowlist::text
 		 from apps where account_id = $1 and status <> 'deleted' order by created_at desc`, accountID)
 	if err != nil {
 		return nil, err
@@ -373,7 +375,7 @@ func (s *PgStore) ListApps(ctx context.Context, accountID string) ([]App, error)
 func (s *PgStore) ListAllApps(ctx context.Context) ([]App, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		        max_concurrency, status, manifest, created_at, min_instances
+		        max_concurrency, status, manifest, created_at, min_instances, egress_allowlist::text
 		 from apps where status <> 'deleted' order by created_at desc`)
 	if err != nil {
 		return nil, err
@@ -402,15 +404,17 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		   max_concurrency = coalesce($5, max_concurrency),
 		   status          = coalesce($6, status),
 		   manifest        = case when $7 then $8::jsonb else manifest end,
-		   min_instances   = case when $9 then $10 else min_instances end
+		   min_instances   = case when $9 then $10 else min_instances end,
+		   egress_allowlist = case when $11 then $12::cidr[] else egress_allowlist end
 		 where id = $1
 		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		           max_concurrency, status, manifest, created_at, min_instances`,
+		           max_concurrency, status, manifest, created_at, min_instances, egress_allowlist::text`,
 		id,
 		p.RAMMB, p.SetIdleTimeout, derefInt(p.IdleTimeoutS),
 		p.MaxConcurrency, nullAppStatus(p.Status),
 		p.Manifest != nil, manifestBytes,
-		p.SetMinInstances, derefInt(p.MinInstances))
+		p.SetMinInstances, derefInt(p.MinInstances),
+		p.SetEgressAllowlist, cidrPrefixesToArray(derefPrefixes(p.EgressAllowlist)))
 	return scanApp(row)
 }
 
@@ -444,7 +448,7 @@ func (s *PgStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug str
 		`update apps set slug = $3
 		 where account_id = $1 and slug = $2 and status <> 'deleted'
 		 returning id, account_id, slug, type, coalesce(runtime,''), ram_mb, coalesce(idle_timeout_s,0),
-		           max_concurrency, status, manifest, created_at, min_instances`,
+		           max_concurrency, status, manifest, created_at, min_instances, egress_allowlist::text`,
 		accountID, oldSlug, newSlug)
 	return scanApp(row)
 }
@@ -2216,8 +2220,9 @@ func scanApp(row pgx.Row) (App, error) {
 	a := App{}
 	var typeStr, statusStr string
 	var manifestBytes []byte
+	var allowlistText string
 	if err := row.Scan(&a.ID, &a.AccountID, &a.Slug, &typeStr, &a.Runtime, &a.RAMMB, &a.IdleTimeoutS,
-		&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances); err != nil {
+		&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances, &allowlistText); err != nil {
 		return App{}, mapErr(err)
 	}
 	a.Type = AppType(typeStr)
@@ -2225,6 +2230,7 @@ func scanApp(row pgx.Row) (App, error) {
 	if len(manifestBytes) > 0 {
 		_ = json.Unmarshal(manifestBytes, &a.Manifest)
 	}
+	a.EgressAllowlist = cidrTextToPrefixes(allowlistText)
 	return a, nil
 }
 
@@ -2234,8 +2240,9 @@ func scanApps(rows pgx.Rows) ([]App, error) {
 		a := App{}
 		var typeStr, statusStr string
 		var manifestBytes []byte
+		var allowlistText string
 		if err := rows.Scan(&a.ID, &a.AccountID, &a.Slug, &typeStr, &a.Runtime, &a.RAMMB, &a.IdleTimeoutS,
-			&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances); err != nil {
+			&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances, &allowlistText); err != nil {
 			return nil, err
 		}
 		a.Type = AppType(typeStr)
@@ -2243,6 +2250,7 @@ func scanApps(rows pgx.Rows) ([]App, error) {
 		if len(manifestBytes) > 0 {
 			_ = json.Unmarshal(manifestBytes, &a.Manifest)
 		}
+		a.EgressAllowlist = cidrTextToPrefixes(allowlistText)
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -2489,6 +2497,65 @@ func nullAppStatus(p *AppStatus) any {
 		return nil
 	}
 	return string(*p)
+}
+
+// cidrPrefixesToArray renders a Go []netip.Prefix as a pgx driver value
+// for a cidr[] column. Empty/nil renders as a literal `'{}'` string so
+// Postgres casts it to an empty array (matches the column default of
+// '{}' from migration 00029). Non-empty renders as a Postgres array
+// literal: '{1.2.3.0/24,8.8.8.0/24}'. Bypasses pgx's array codec
+// because it doesn't have a clean cidr[] element type by default and
+// building the literal here keeps the cidr parse surface on the Go
+// side (validation already ran in cmd/apid).
+//
+// Returns the wire shape pgx expects: a single string that Postgres
+// casts to cidr[]. The cast in the surrounding SQL is `$N::cidr[]`.
+func cidrPrefixesToArray(prefixes []netip.Prefix) string {
+	if len(prefixes) == 0 {
+		return "{}"
+	}
+	parts := make([]string, len(prefixes))
+	for i, p := range prefixes {
+		parts[i] = p.String()
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+// cidrTextToPrefixes parses the text rendering of a Postgres cidr[]
+// column back to []netip.Prefix. The rendered shape from pgx is
+// '{1.2.3.0/24,8.8.8.0/24}' (with surrounding braces, no spaces between
+// entries). Empty: '{}' or '[]' depending on pgx version; both render
+// as no entries. We split on top-level commas only (entries are CIDR
+// strings, no embedded commas), so a naïve Split is correct.
+//
+// On any parse failure we return an empty slice and rely on the caller
+// to fail loud — none of the consumers silently swallow a malformed
+// allowlist because (a) the API layer validates each entry with
+// netip.ParsePrefix before insert, and (b) the schema CHECK
+// (apps_egress_allowlist_v4_only) rejects bogus entries at the DB.
+// Defensive parse is belt-and-braces, not load-bearing.
+func cidrTextToPrefixes(text string) []netip.Prefix {
+	text = strings.TrimSpace(text)
+	if text == "{}" || text == "" {
+		return nil
+	}
+	// Strip surrounding braces if present.
+	if len(text) >= 2 && text[0] == '{' && text[len(text)-1] == '}' {
+		text = text[1 : len(text)-1]
+	}
+	if text == "" {
+		return nil
+	}
+	parts := strings.Split(text, ",")
+	out := make([]netip.Prefix, 0, len(parts))
+	for _, p := range parts {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(p))
+		if err != nil {
+			continue
+		}
+		out = append(out, prefix)
+	}
+	return out
 }
 
 // ensure net import isn't dropped if other helpers move into this file.
