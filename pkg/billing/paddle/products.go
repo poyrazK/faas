@@ -8,6 +8,7 @@ import (
 
 	"github.com/PaddleHQ/paddle-go-sdk/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 )
 
 // faasPlanNamePrefix is the product-name prefix EnsurePlanProducts
@@ -35,32 +36,12 @@ func planProducts() []api.Plan {
 	return []api.Plan{api.PlanHobby, api.PlanPro, api.PlanScale}
 }
 
-// planMonthlyMillicents returns the per-month price for a paid tier
-// in integer millicents (per spec §Conventions — money is integer
-// cents/millicents, no floats near money). Same source as
-// pkg/billing/stripe/products.go; duplicated here to keep paddle
-// independent of stripe (DRY is a future PR for plans.go).
-//
-//	Hobby: €9 / month   = 900_000 millicents
-//	Pro:   €29 / month  = 2_900_000 millicents
-//	Scale: €99 / month  = 9_900_000 millicents
-func planMonthlyMillicents(p api.Plan) int64 {
-	switch p {
-	case api.PlanHobby:
-		return 900_000
-	case api.PlanPro:
-		return 2_900_000
-	case api.PlanScale:
-		return 9_900_000
-	}
-	return 0
-}
-
-// planOverageMillicents is the per-GB-hour overage rate. Spec hard
-// limit (CLAUDE.md "Overage €0.01/GB-h") → 1_000 millicents.
-func planOverageMillicents() int64 {
-	return 1_000
-}
+// planMonthlyMillicents + planOverageMillicents removed: the financial-
+// model source of truth is pkg/api/limits.go (planLimits.PriceMillicents
+// + OverageMillicentsPerGBHour). The shared wrappers
+// billing.PlanMonthlyMillicents and billing.PlanOverageMillicentsPerGBHour
+// in pkg/billing/plans.go delegate there, so the per-provider call sites
+// below don't drift from the financial model.
 
 // millicentsToPaddleAmount converts integer millicents (project's
 // 1000-decimal currency unit) to Paddle's "lowest denomination in a
@@ -155,11 +136,11 @@ func (p *Provider) ensureProducts(ctx context.Context) error {
 
 		monthly := planPriceSpec{
 			description: planToProductName(plan) + "-monthly",
-			millicents:  planMonthlyMillicents(plan),
+			millicents:  billing.PlanMonthlyMillicents(plan),
 		}
 		overage := planPriceSpec{
 			description: planToProductName(plan) + "-overage",
-			millicents:  planOverageMillicents(),
+			millicents:  billing.PlanOverageMillicentsPerGBHour(),
 		}
 		if err := p.ensurePriceForProduct(ctx, prod.ID, plan, monthly, p.catalog.planMonthly); err != nil {
 			return err
