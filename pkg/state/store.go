@@ -269,6 +269,28 @@ type Store interface {
 	InstallationIDForRepo(ctx context.Context, repoFullName string) (int64, error)
 
 	// Deployments.
+	// CreateDeployment atomically inserts a new pending deployment row
+	// for the given app. When the app already has a pending or live
+	// deployment row, the SAME transaction flips that prior row's
+	// status to 'superseded' before INSERTing the new one. A
+	// building/imaging/snapshotting row is left untouched — its
+	// pipeline (vmmd VM, builderd, imaged ext4 conversion) is still
+	// running and we must not orphan it; the second deploy then
+	// creates a parallel row, and schedd's watchdog reaps the loser
+	// on the next idle window.
+	//
+	// Callers that need to surface a NotifyDeploymentChanged for the
+	// just-superseded row use LatestDeployment(ctx, appID) AFTER
+	// CreateDeployment returns — the in-tx supersede means the prior
+	// row is already visible as 'superseded' to the next read. The
+	// two-step read avoids turning CreateDeployment into a 3-return
+	// signature that breaks every pre-PR-B call site (notably the
+	// slice-3 cascade test on main).
+	//
+	// AppDeleted apps must accept neither deployments nor supersedes;
+	// the parent-app gate is the same FOR UPDATE as PR-A's
+	// CreateAppIfUnderQuota pattern. The 404 s.notFound path at the
+	// apid call site is unchanged.
 	CreateDeployment(ctx context.Context, d Deployment) (Deployment, error)
 	DeploymentByID(ctx context.Context, id string) (Deployment, error)
 	LatestDeployment(ctx context.Context, appID string) (Deployment, error)
@@ -339,16 +361,23 @@ type Store interface {
 	// use the second case to drop duplicate notifications from the apid
 	// write path and the imaged reaper (PR-A). started_at is set to now.
 	ClaimQueuedBuild(ctx context.Context, id string) (Build, error)
+	// ClaimNextQueuedBuild is the durability-net worker surface (PR-B).
+	// Atomically picks the next queued row in enqueued_at ASC order using
+	// SELECT … FOR UPDATE SKIP LOCKED, flips it to running, sets
+	// started_at = now(). Returns ErrNotFound when the queue is empty so
+	// the worker can sleep without surfacing an error. SKIP LOCKED is
+	// what keeps a future second builderd process (or pg_cron) from
+	// starving the in-process worker — both compete cleanly for the
+	// head of the queue without ever observing the same row.
+	ClaimNextQueuedBuild(ctx context.Context) (Build, error)
+	// RequeueBuild resets a running build back to queued with enqueued_at
+	// untouched (preserving FIFO order) when the builder slot allocator
+	// (DecideSlot) rules the row out (builderd worker PR-B). started_at
+	// is cleared. Returns ErrNotFound when the row is missing. The
+	// caller (builderd worker) decides whether to requeue or fail;
+	// RequeueBuild itself is unconditional.
+	RequeueBuild(ctx context.Context, id string) error
 	UpdateBuildStatus(ctx context.Context, id string, status BuildStatus, fc FailureClass, started, finished bool) error
-	// ListStaleQueuedBuilds returns builds still in BuildQueued whose
-	// enqueued_at is older than threshold. The imaged reaper (PR-A)
-	// walks this set on a tick and re-emits db.NotifyBuildQueued for
-	// each, recovering from a missed pg_notify at the apid write path
-	// (e.g. transient Postgres blip between INSERT and NOTIFY).
-	// Builds is bounded by spec §9 (shallow queue), so a full scan is
-	// cheap; if pressure emerges, add a partial index on
-	// (status, enqueued_at) WHERE status='queued'.
-	ListStaleQueuedBuilds(ctx context.Context, threshold time.Duration) ([]Build, error)
 
 	// Custom domains (apid is sole writer).
 	CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error)

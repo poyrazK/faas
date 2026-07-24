@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -70,6 +71,25 @@ func bootTimeout(s state.State) time.Duration {
 	default:
 		return ColdBootTimeout
 	}
+}
+
+// prefixesToCIDRStrings (ADR-031) flattens state.App.EgressAllowlist
+// (netip.Prefix) into the wire-shape vmmd expects ([]string). The empty
+// input returns nil so the proto carries an empty list (no allowlist rule
+// emitted). apid's PUT already ParsePrefix'd each entry and the
+// apps.egress_allowlist cidr[] CHECK rejects v6, so every Prefix here is
+// a valid v4 — String() round-trips through the same parser on the
+// other side (vmmdgrpc.proto -> fcvm.WakeRequest -> pkg/fcvm.Wake ->
+// netip.ParsePrefix at manager.go, which fails closed).
+func prefixesToCIDRStrings(prefixes []netip.Prefix) []string {
+	if len(prefixes) == 0 {
+		return nil
+	}
+	out := make([]string, len(prefixes))
+	for i, p := range prefixes {
+		out[i] = p.String()
+	}
+	return out
 }
 
 // Notifier is the pg_notify surface the engine needs. db.Notify (pool-backed)
@@ -337,6 +357,15 @@ func (e *Engine) Wake(ctx context.Context, appID string) (WakeResult, error) {
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
 		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),
+		// ADR-031: surface the per-app egress allowlist on the
+		// wake wire. vmmd translates the CIDRs into the per-netns
+		// forward chain. Empty slice = no allowlist rule (current
+		// behaviour); the apps_changed pg_notify handler at the
+		// top of Wake re-reads the app row under a fresh ledger
+		// lock, so a PATCH that lands between two wakes takes
+		// effect on the next wake. Live instances keep their
+		// old netns — same contract as RAMMB and MaxConcurrency.
+		EgressAllowlist: prefixesToCIDRStrings(app.EgressAllowlist),
 	}
 
 	// Capture the boot inputs we need across the unlocked window. These
@@ -670,6 +699,12 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
 		EgressMbit: int32(limits.EgressMbit),
 		SealedEnv:  e.loadSealedEnv(ctx, acct.ID, appID),
+		// ADR-031: see the Wake builder above. Prime is the
+		// deploy-pipeline first boot — same wire shape, same
+		// per-netns ruleset; a freshly-deployed app starts under
+		// its declared egress policy rather than awaiting a later
+		// wake.
+		EgressAllowlist: prefixesToCIDRStrings(app.EgressAllowlist),
 	}
 	// Per-call deadline (commit 1, spec §6.1). Same rationale as Wake:
 	// Prime's vmmd call gets the ColdBootTimeout budget — a Prime

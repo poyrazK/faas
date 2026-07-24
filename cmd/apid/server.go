@@ -395,6 +395,10 @@ func (s *server) handler() http.Handler {
 	// cookie flow works without an API-key round trip.
 	mux.Handle("GET /v1/events", s.dashboardChain(s.eventsHandler(s.log)))
 
+	// Google OAuth 2.0 Auth
+	mux.HandleFunc("GET /v1/auth/google", s.renderGoogleAuthRedirect)
+	mux.HandleFunc("GET /v1/auth/google/callback", s.handleGoogleOAuthCallback)
+
 	// Dashboard surface (M7.5, ADR-011). Lives behind gatewayd's
 	// /dashboard/* reverse-proxy (spec §11 single-public-listener).
 	//
@@ -686,25 +690,40 @@ type accountHandler func(w http.ResponseWriter, r *http.Request, acct state.Acco
 func (s *server) auth(next accountHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok := bearerToken(r)
-		if !api.ValidAPIKeyFormat(tok) {
-			api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-				"Unauthorized", "provide a valid API key as a Bearer token"))
-			return
-		}
-		acct, err := s.store.AccountByKeyHash(r.Context(), api.HashAPIKey(tok))
-		if err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-				"Unauthorized", "unknown API key"))
-			return
-		}
-		if !acct.Active() {
-			if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
-				api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
-					"Account suspended", "resolve billing to continue: https://DOMAIN/billing"))
+		if api.ValidAPIKeyFormat(tok) {
+			acct, err := s.store.AccountByKeyHash(r.Context(), api.HashAPIKey(tok))
+			if err == nil {
+				if !acct.Active() {
+					if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
+							"Account suspended", "resolve billing to continue: https://DOMAIN/billing"))
+						return
+					}
+				}
+				next(w, r, acct)
 				return
 			}
 		}
-		next(w, r, acct)
+
+		// Session cookie authentication (faas_sid) for Web Dashboard
+		if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
+			if env, err := s.sessions.Verify(c.Value); err == nil {
+				if acct, err := s.store.AccountByID(r.Context(), env.AccountID); err == nil {
+					if !acct.Active() {
+						if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
+							api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
+								"Account suspended", "resolve billing to continue: https://DOMAIN/billing"))
+							return
+						}
+					}
+					next(w, r, acct)
+					return
+				}
+			}
+		}
+
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+			"Unauthorized", "provide a valid API key as a Bearer token or sign in via session cookie"))
 	}
 }
 

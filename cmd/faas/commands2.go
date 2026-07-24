@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -284,7 +283,7 @@ func cmdDeployTarball(args []string) int {
 	}
 
 	if *tarball != "" {
-		dep, err := client.DeployTarball(ctx, slug, *tarball, *runtime, *handler, *dockerfile)
+		dep, err := DeployTarball(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile)
 		if err != nil {
 			return printErr("Bad --tarball", err)
 		}
@@ -806,31 +805,18 @@ func cmdLogs(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	path := "/v1/apps/" + slug + "/logs?follow=" + boolStr(*follow)
-	if *deployment != "" {
-		path += "&deployment=" + *deployment
-	}
-	req, err := http.NewRequest("GET", client.baseURL+path, nil)
+	ctx := context.Background()
+	body, err := client.StreamAppLogs(ctx, slug, *deployment, *follow)
 	if err != nil {
-		return printErr("Bad request", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+client.token)
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := client.http.Do(req)
-	if err != nil {
+		var ae *APIError
+		if errors.As(err, &ae) {
+			renderAPIError(os.Stderr, ae)
+			return exitCodeForStatus(ae.Problem.Status)
+		}
 		return printErr("Could not reach the API", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-		var p api.Problem
-		if json.Unmarshal(data, &p) == nil && p.Code != "" {
-			renderAPIError(os.Stderr, &APIError{Problem: p})
-			return exitCodeForStatus(p.Status)
-		}
-		return printErr("Logs failed", fmt.Errorf("status %d", resp.StatusCode))
-	}
-	dec := newSSELineReader(resp.Body)
+	defer func() { _ = body.Close() }()
+	dec := newSSELineReader(body)
 	for {
 		line, err := dec.Next()
 		if err != nil {
@@ -841,13 +827,6 @@ func cmdLogs(args []string) int {
 		}
 		fmt.Println(line)
 	}
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "1"
-	}
-	return "0"
 }
 
 // sseLineReader peels "data: <line>\n\n" off a text/event-stream.
@@ -937,16 +916,8 @@ func (s *sseLineReader) fill() error {
 // Issue #64 D4 — replaces the old "✓ Queued build …" and exit.
 func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 	PrintProgress(osStdout, "build queued for %s (deployment %s)", dep.AppID, dep.ID)
-	path := "/v1/deployments/" + dep.ID + "/logs?follow=1"
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
-	if err != nil {
-		return printErr("Could not open log stream", err)
-	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := c.http.Do(req)
+	ctx := context.Background()
+	body, err := c.StreamDeploymentLogs(ctx, dep.ID, nil, 0, true)
 	if err != nil {
 		// Stream unreachable up front — try one GetDeployment poll in
 		// case the build already finished before we opened the stream
@@ -957,17 +928,8 @@ func streamDeployLogs(c *Client, dep api.DeploymentResponse) int {
 		PrintWarn(os.Stderr, "stream unreachable; follow manually: faas logs --deployment %s", dep.ID)
 		return 3
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-		var p api.Problem
-		if json.Unmarshal(data, &p) == nil && p.Code != "" {
-			renderAPIError(os.Stderr, &APIError{Problem: p})
-			return exitCodeForStatus(p.Status)
-		}
-		return printErr("Build log stream failed", fmt.Errorf("status %d", resp.StatusCode))
-	}
-	dec := newSSELineReader(resp.Body)
+	defer func() { _ = body.Close() }()
+	dec := newSSELineReader(body)
 	for {
 		line, err := dec.Next()
 		if err != nil {

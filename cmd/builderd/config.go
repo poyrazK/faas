@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -58,6 +59,14 @@ type Config struct {
 	// Empty disables the 2nd slot — same behaviour as the pre-fix
 	// nil-probe path.
 	ScheddMetricsURL string `toml:"schedd_metrics_url"`
+	// PollInterval is the cadence of the durable worker (PR-B) that
+	// scans the build queue via SELECT … FOR UPDATE SKIP LOCKED. The
+	// fast path remains LISTEN/NOTIFY (apid's emit on build_queued);
+	// this worker is the recovery net for missed notify / apid
+	// crashed mid-deploy / Postgres restart windows. Zero falls back
+	// to 2 s in main.go — well below the pg_notify RTT on the EX44
+	// (≈200 ms) so the worker is the safety net, not the primary.
+	PollInterval time.Duration `toml:"poll_interval"`
 }
 
 // ResolveVMMTarget returns the dial target for vmmd. VMMTarget wins
@@ -85,6 +94,7 @@ func LoadConfig(path string) (*Config, error) {
 		BuildDriveDir:    "/var/lib/faas/build-drive",
 		BuildExportDir:   "/var/lib/faas/build-out",
 		ScheddMetricsURL: "http://127.0.0.1:9090/metrics/fcvm",
+		PollInterval:     2 * time.Second,
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

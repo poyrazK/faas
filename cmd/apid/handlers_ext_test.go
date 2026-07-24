@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -176,6 +177,82 @@ func TestUpdateAppMinInstances_Negative(t *testing.T) {
 	neg := -1
 	rec := e.do(t, "PATCH", "/v1/apps/pro-neg", api.UpdateAppRequest{MinInstances: &neg}, nil)
 	assertProblem(t, rec, 422, api.CodeInvalidMinInstances)
+}
+
+// TestUpdateAppEgressAllowlist_FreeGate locks the plan-tier gate:
+// Free plans cannot set egress_allowlist at all. The handler must
+// return 403 plan_egress_allowlist_not_allowed, not 400, because the
+// feature is tier-locked — the value the customer typed is
+// irrelevant. Mirrors TestUpdateAppMinInstances_Hobby above.
+func TestUpdateAppEgressAllowlist_FreeGate(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	mustSeedApp(t, e, "free-allow")
+	rec := e.do(t, "PATCH", "/v1/apps/free-allow", api.UpdateAppRequest{
+		EgressAllowlist: &[]string{"1.2.3.0/24"},
+	}, nil)
+	assertProblem(t, rec, 403, api.CodePlanEgressAllowlistNotAllowed)
+}
+
+// TestUpdateAppEgressAllowlist_GatePrecedesPerEntryShape locks the
+// ordering: a Free plan sending a 64-entry list of deliberately
+// malformed CIDRs must surface 403 plan_egress_allowlist_not_allowed,
+// NOT 400 invalid_egress_allowlist. Leaking the per-entry shape
+// failure on a tier-locked feature would tell a Free user which
+// things to fix before upgrading — small information leak, but
+// pinned because the code path is easy to invert in a future
+// refactor of validateUpdateApp.
+func TestUpdateAppEgressAllowlist_GatePrecedesPerEntryShape(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	mustSeedApp(t, e, "free-leak")
+	bad := []string{"not-a-cidr", "still-not", "also-not"}
+	rec := e.do(t, "PATCH", "/v1/apps/free-leak", api.UpdateAppRequest{
+		EgressAllowlist: &bad,
+	}, nil)
+	assertProblem(t, rec, 403, api.CodePlanEgressAllowlistNotAllowed)
+}
+
+// TestUpdateAppEgressAllowlist_ZeroBits: /0 must be rejected as
+// invalid_egress_allowlist regardless of plan, even on a Pro tier
+// that otherwise allows the feature. PR #159 review F2: a /0 in the
+// allowlist would unblock every v4 destination and silently neuter
+// the gate, defeating the operator's whole intent.
+func TestUpdateAppEgressAllowlist_ZeroBits(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "pro-zero")
+	rec := e.do(t, "PATCH", "/v1/apps/pro-zero", api.UpdateAppRequest{
+		EgressAllowlist: &[]string{"0.0.0.0/0"},
+	}, nil)
+	assertProblem(t, rec, 400, api.CodeInvalidEgressAllowlist)
+}
+
+// TestUpdateAppEgressAllowlist_V6RejectedOnPro: v6 must be invalid
+// even on a paid plan (ADR-031 v4-only v1). The cidr[] CHECK would
+// reject v6 at write time, but the handler catches it earlier with
+// a more actionable error naming the bad entry.
+func TestUpdateAppEgressAllowlist_V6RejectedOnPro(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "pro-v6")
+	rec := e.do(t, "PATCH", "/v1/apps/pro-v6", api.UpdateAppRequest{
+		EgressAllowlist: &[]string{"fe80::/10"},
+	}, nil)
+	assertProblem(t, rec, 400, api.CodeInvalidEgressAllowlist)
+}
+
+// TestUpdateAppEgressAllowlist_TooLong: a Pro plan (cap 16) sending
+// 17 entries must surface 400 egress_allowlist_too_long, NOT 403
+// (the plan gate already cleared; per-entry shape already cleared —
+// only size remains).
+func TestUpdateAppEgressAllowlist_TooLong(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "pro-big")
+	many := make([]string, 0, 17)
+	for i := 1; i <= 17; i++ {
+		many = append(many, fmt.Sprintf("10.0.%d.0/24", i))
+	}
+	rec := e.do(t, "PATCH", "/v1/apps/pro-big", api.UpdateAppRequest{
+		EgressAllowlist: &many,
+	}, nil)
+	assertProblem(t, rec, 400, api.CodeEgressAllowlistTooLong)
 }
 
 // --- CRUD coverage for handlers_ext.go (slice 2) ----------------------------

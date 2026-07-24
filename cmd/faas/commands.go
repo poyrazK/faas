@@ -340,11 +340,20 @@ func printErr(title string, err error) int {
 // (output.go) owns every literal ✓/✗/→ string in the package —
 // lint_tripwires_test.go::TestLintTripwire_NoGlyphLiteralOutsideOutput
 // then has a single allow-listed file to audit.
+//
+// When Problem.DocsURL is empty but Problem.Code is non-empty, the
+// docs row is synthesised from docsURLForCode(Code) so UX §3.3 holds
+// even for codes the server didn't decorate with WithDocs. Skipping
+// the row entirely (as the older renderer did) breaks the three-line
+// contract on its most common paths.
 func renderAPIError(w io.Writer, e *APIError) {
 	if e == nil || e.Problem.Title == "" {
 		return
 	}
 	p := e.Problem
+	if p.DocsURL == "" && p.Code != "" {
+		p.DocsURL = docsURLForCode(p.Code)
+	}
 	RenderTitle(w, p.Title)
 	// Detail row has no glyph — direct write is intentional. Routing
 	// through a no-op RenderDetailRow would only mirror the formatter,

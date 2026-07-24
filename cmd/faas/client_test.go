@@ -188,7 +188,7 @@ func TestClient_DeployTarball_AutoMintsIdempotencyKey(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(srv.URL, "fp_test")
-	if _, err := c.DeployTarball(context.Background(), "x", tar, "", "", false); err != nil {
+	if _, err := DeployTarball(c, context.Background(), "x", tar, "", "", false); err != nil {
 		t.Fatalf("DeployTarball: %v", err)
 	}
 	if got == "" {
@@ -234,7 +234,7 @@ func TestClient_DeployTarball_RejectsSymlink_NoIdempotencyKeySent(t *testing.T) 
 	defer srv.Close()
 	c := NewClient(srv.URL, "fp_test")
 
-	_, err := c.DeployTarball(context.Background(), "x", link, "", "", false)
+	_, err := DeployTarball(c, context.Background(), "x", link, "", "", false)
 	if err == nil {
 		t.Fatal("DeployTarball accepted a symlinked tarball path")
 	}
@@ -273,7 +273,7 @@ func TestClient_DeployTarball_RejectsDanglingSymlink(t *testing.T) {
 	defer srv.Close()
 	c := NewClient(srv.URL, "fp_test")
 
-	_, err := c.DeployTarball(context.Background(), "x", link, "", "", false)
+	_, err := DeployTarball(c, context.Background(), "x", link, "", "", false)
 	if err == nil {
 		t.Fatal("DeployTarball accepted a dangling symlinked tarball path")
 	}
@@ -308,7 +308,7 @@ func TestClient_DeployTarball_RejectsDirectoryAsTarball(t *testing.T) {
 	defer srv.Close()
 	c := NewClient(srv.URL, "fp_test")
 
-	_, err := c.DeployTarball(context.Background(), "x", subdir, "", "", false)
+	_, err := DeployTarball(c, context.Background(), "x", subdir, "", "", false)
 	if err == nil {
 		t.Fatal("DeployTarball accepted a directory as the tarball path")
 	}
@@ -364,7 +364,7 @@ func TestClient_DeployTarball_HappyPathStillUploads(t *testing.T) {
 	defer srv.Close()
 	c := NewClient(srv.URL, "fp_test")
 
-	resp, err := c.DeployTarball(context.Background(), "x", tar, "", "", false)
+	resp, err := DeployTarball(c, context.Background(), "x", tar, "", "", false)
 	if err != nil {
 		t.Fatalf("DeployTarball: %v", err)
 	}
@@ -385,40 +385,15 @@ func TestClient_DeployTarball_HappyPathStillUploads(t *testing.T) {
 	}
 }
 
-// TestClient_NewClientWithDeployTimeout honors the longer upload
-// timeout (issue #64 D4). We don't simulate a slow upload here — the
-// test pins the constructor contract so a future refactor doesn't
-// drop the field. The 30s default still applies when no override is
-// set.
-func TestClient_NewClientWithDeployTimeout(t *testing.T) {
-	t.Run("zero timeout falls back to default", func(t *testing.T) {
-		c := NewClientWithDeployTimeout("http://x", "", 0)
-		if c.uploadHTTP() != c.http {
-			t.Error("zero timeout should fall back to default http client")
-		}
-	})
-	t.Run("positive timeout gets its own client", func(t *testing.T) {
-		c := NewClientWithDeployTimeout("http://x", "", 5*60_000_000_000) // 5 min
-		if c.uploadHTTP() == c.http {
-			t.Error("positive timeout should produce a distinct deploy client")
-		}
-		if c.uploadHTTP().Timeout.Seconds() != 300 {
-			t.Errorf("deploy timeout = %v, want 5m", c.uploadHTTP().Timeout)
-		}
-	})
-}
+// TestClient_NewClientWithDeployTimeout's coverage moved to
+// pkg/api/client_test.go once the constructor moved to the public SDK.
+// The upload-client-vs-default-client contract is now an SDK invariant;
+// the test is rewritten to assert via exported *http.Client accessors.
+var _ = NewClientWithDeployTimeout // pin the alias
 
-// TestNewUUIDv4_Shape pins the v4 contract. Random v4 UUIDs must have
-// version=4 and variant=10 — without those, the server-side cache key
-// could collide with non-v4 strings.
-func TestNewUUIDv4_Shape(t *testing.T) {
-	for i := 0; i < 16; i++ {
-		got := newUUIDv4()
-		if !uuidV4Shape.MatchString(got) {
-			t.Errorf("newUUIDv4() = %q, not UUID v4 shape", got)
-		}
-	}
-}
+// TestNewUUIDv4_Shape moved to pkg/api/client_test.go in commit 3
+// alongside TestClient_NewClientWithDeployTimeout — both tests poked
+// unexported fields/methods on Client that are now in pkg/api.
 
 func writeMinimalFile(path string) error {
 	f, err := os.Create(path)

@@ -1,0 +1,25 @@
+---
+# grafana — handlers (mirrors alertmanager/handlers/main.yml).
+
+- name: restart grafana-server
+  ansible.builtin.systemd:
+    name: grafana-server
+    state: restarted
+  listen: restart grafana-server
+
+- name: reload grafana provisioning
+  ansible.builtin.uri:
+    url: "http://{{ gv_listen_addr }}/api/admin/provisioning/dashboards/reload"
+    method: POST
+    user: admin
+    password: "{{ lookup('ansible.builtin.file', gv_admin_password_file) }}"
+    force_basic_auth: true
+    status_code: 200
+    validate_certs: false   # noqa: insecure — plaintext bridge bind; no TLS (admin-only)
+  failed_when: false        # dev_mode + missing password file => 401; carry on
+  listen: reload grafana provisioning
+
+- name: daemon-reload
+  ansible.builtin.systemd:
+    daemon_reload: true
+  listen: daemon-reload

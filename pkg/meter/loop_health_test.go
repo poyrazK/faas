@@ -204,6 +204,7 @@ func newHealthFixture(t *testing.T, withDunning bool) (*meter.Loop, *meter.Confi
 		&fakeNotifier{},
 		nil, // mailer — nil coerces to noopDunningSender in NewLoop
 		dunning,
+		nil, // residency — nil; the gauge emit is exercised by residency_test.go
 		func() time.Time { return now },
 		discardLog(),
 		cfg,

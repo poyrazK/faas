@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -447,116 +446,12 @@ func TestHandleDeployment_PullDigestSentinel_PersistsErrorCode(t *testing.T) {
 	}
 }
 
-// TestHandleBuildQueued asserts the queued build is dispatched to the canonical
-// snapshot_boot handler: imaged decodes apid's actual payload shape
-// ({"app","build","deployment","kind"}), walks the deployment to snapshotting,
-// and re-emits NotifySnapshotPrime for schedd. The M5 contract changed in
-// the M8 PR — apid's emit shape is the source of truth and imaged no longer
-// flips the build row to running inline (builderd owns that transition).
-func TestHandleBuildQueued(t *testing.T) {
-	store := state.NewMemStore()
-	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
-	app, _ := store.CreateApp(context.Background(), state.App{
-		AccountID: acct.ID, Slug: "src-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
-		Runtime: RuntimeNode22,
-	})
-	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/x.tgz",
-	})
-	b, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 4096, "/var/log/x.log")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Stamp the rootfs the way builderd would (a tarball path).
-	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 4096); err != nil {
-		t.Fatal(err)
-	}
-	notif := &fakeNotifier{}
-	appsRoot := t.TempDir()
-	// Pre-place a fake function runner so buildFunctionLayer doesn't bail out
-	// for the empty-path case (F3 fail-loud).
-	bin := filepath.Join(t.TempDir(), "faas-runner")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	h := New(store, notif, fakePuller{digest: "sha256:abc"}, &fakeBuilder{bytesOut: 4096}, "./init", appsRoot, silentLogger())
-	h.WithFunctionRunnerNode22(bin)
-	// apid emits the canonical M8 shape — app, build, deployment, kind.
-	n := db.Notification{
-		Channel: db.NotifyBuildQueued,
-		Payload: `{"app":"` + app.ID + `","build":"` + b.ID + `","deployment":"` + dep.ID + `","kind":"tarball"}`,
-	}
-	h.HandleNotification(context.Background(), n)
-	got, _ := store.DeploymentByID(context.Background(), dep.ID)
-	if got.Status != state.DeploySnapshotting {
-		t.Errorf("deployment status = %s, want snapshotting", got.Status)
-	}
-	// Must re-emit NotifySnapshotPrime for schedd (M6 chain).
-	primeFound := false
-	for _, c := range notif.calls {
-		if c.channel == db.NotifySnapshotPrime &&
-			strings.Contains(c.payload, app.ID) &&
-			strings.Contains(c.payload, dep.ID) {
-			primeFound = true
-		}
-	}
-	if !primeFound {
-		t.Errorf("expected NotifySnapshotPrime to schedd; got %v", notif.calls)
-	}
-}
-
-// TestHandleBuildQueued_EmptyRootfsPath_NoOp is the F-01 regression. apid
-// emits build_queued immediately at deploy creation; builderd stamps
-// deployments.rootfs_path later (after the build VM produces an OCI
-// image). Prior to F-01, handleBuildQueued dispatched unconditionally to
-// handleSnapshotBoot, which transitioned the deployment to DeployFailed
-// with "empty rootfs_path" on every tarball/dockerfile deploy — blocking
-// the whole product. The fix: handleBuildQueued is a thin pass-through
-// for the build status update and is otherwise a no-op when the stamp is
-// absent; the canonical path is builderd's NotifySnapshotBoot emit that
-// arrives AFTER the stamp.
-func TestHandleBuildQueued_EmptyRootfsPath_NoOp(t *testing.T) {
-	store := state.NewMemStore()
-	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
-	app, _ := store.CreateApp(context.Background(), state.App{
-		AccountID: acct.ID, Slug: "src-app", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
-		Runtime: RuntimeNode22,
-	})
-	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/tmp/x.tgz",
-	})
-	b, _ := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 4096, "/var/log/x.log")
-	// Crucially: NO SetDeploymentRootfs call — apid's build_queued
-	// arrives before builderd has had a chance to stamp.
-	notif := &fakeNotifier{}
-	bin := filepath.Join(t.TempDir(), "faas-runner")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	h := New(store, notif, fakePuller{digest: "sha256:abc"}, &fakeBuilder{bytesOut: 4096}, "./init", t.TempDir(), silentLogger())
-	h.WithFunctionRunnerNode22(bin)
-	n := db.Notification{
-		Channel: db.NotifyBuildQueued,
-		Payload: `{"app":"` + app.ID + `","build":"` + b.ID + `","deployment":"` + dep.ID + `","kind":"tarball"}`,
-	}
-	h.HandleNotification(context.Background(), n)
-	got, _ := store.DeploymentByID(context.Background(), dep.ID)
-	if got.Status == state.DeployFailed {
-		t.Fatalf("F-01 regression: deployment transitioned to failed despite empty rootfs_path (the bug); status=%s", got.Status)
-	}
-	// Must NOT have re-emitted NotifySnapshotPrime — no work happened.
-	for _, c := range notif.calls {
-		if c.channel == db.NotifySnapshotPrime {
-			t.Errorf("F-01 regression: NotifySnapshotPrime emitted for an un-stamped build; payload=%s", c.payload)
-		}
-	}
-	// The build status MUST still flip to running — that's the part that
-	// belongs in imaged even when there's no rootfs to convert.
-	gotBuild, _ := store.BuildByID(context.Background(), b.ID)
-	if gotBuild.Status != state.BuildRunning {
-		t.Errorf("build status = %s, want %s", gotBuild.Status, state.BuildRunning)
-	}
-}
+// PR-B: TestHandleBuildQueued + TestHandleBuildQueued_EmptyRootfsPath_NoOp retired.
+// imaged no longer subscribes to db.NotifyBuildQueued (builderd owns the
+// build-queue durability surface now). handleBuildQueued stays
+// (referenced via handleSnapshotBoot's wait path) but is no longer
+// dispatched from HandleNotification. See LoopConstructionNoReaper
+// for the new contract assertion.
 
 // TestHandleNotification_AppChanged_Deleted_CarriesAppID is the F-04
 // regression. apid's emit shape for app_changed is now

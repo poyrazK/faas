@@ -1,10 +1,10 @@
 //go:build !no_pg
 
-// Migration-apply test for 00029 (invocations table) + 00030 (notify
-// triggers) + 00031 (helper view). Pins the load-bearing Move 1
+// Migration-apply test for 00030 (invocations table) + 00031 (notify
+// triggers) + 00032 (helper view). Pins the load-bearing Move 1
 // schema contract:
 //
-//   1. The migration set applies cleanly through 00031.
+//   1. The migration set applies cleanly through 00032.
 //   2. The table exposes the columns the schedd drain writes on the
 //      hot path (state, due_at, source, instance_id, attempts).
 //   3. The four partial indexes (invocations_due_idx,
@@ -14,7 +14,7 @@
 //      outside the documented set. pg_notify channels are
 //      one-shot; the trigger contract is observed through the
 //      listener (mirrors 00026_compute_node_notify_test.go).
-//   5. The invocations_pending_per_app view from 00031 aggregates
+//   5. The invocations_pending_per_app view from 00032 aggregates
 //      pending+dispatching rows.
 //
 // Build tag mirrors 00024_compute_nodes_test.go:26 and
@@ -35,11 +35,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// TestMigrations_00029_Invocations pins the schema + notify + view
+// TestMigrations_00030_Invocations pins the schema + notify + view
 // contract for the Move 1 event-shaped queue. Mirrors the
 // 00025/00026 shape: one test, comprehensive coverage, no
 // per-feature drift.
-func TestMigrations_00029_Invocations(t *testing.T) {
+func TestMigrations_00030_Invocations(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -223,7 +223,7 @@ func TestMigrations_00029_Invocations(t *testing.T) {
 	})
 
 	t.Run("pending_per_app_view_exists", func(t *testing.T) {
-		// Migration 00031 must have created the helper view. The view
+		// Migration 00032 must have created the helper view. The view
 		// filters on state IN ('pending','dispatching') — verified by
 		// the predicate in information_schema, plus by a smoke SELECT
 		// (smoke must not error regardless of row count).

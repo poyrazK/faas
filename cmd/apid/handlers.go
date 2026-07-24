@@ -143,22 +143,15 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.DOMAIN/app@sha256:..."))
 		return
 	}
-	// apid writes the row and notifies; imaged/schedd advance it to PARKED (never
-	// a direct call, spec §Component ownership). Mark any prior non-superseded
-	// deployment for this app as superseded so rollback has a target. We don't
-	// gate on status=Live because M5 doesn't drive deployments to Live yet —
-	// the test path needs the superseded row regardless of pipeline state.
-	if prev, perr := s.store.LatestDeployment(ctx(r), app.ID); perr == nil && prev.Status != state.DeploySuperseded {
-		if serr := s.store.MarkDeploymentSuperseded(ctx(r), prev.ID); serr != nil {
-			s.log.Warn("could not mark previous deployment superseded", "prev", prev.ID, "err", serr)
-		}
-	}
-	// Store the FULL ref (host/repo@sha256:...) into image_digest, not the bare
-	// digest. imaged's OCI puller needs the host to dial the right registry;
-	// `docker.io/library/sha256:...` is the wrong resolution for non-Docker
-	// deploys (issue #53 / M5 acceptance on Lima). The column name is historical
-	// — the contract is "a digest-pinned reference" enforced by isDigestPinned
-	// above; consumers should ParseReference it.
+	// PR-B: the prior-deployment supersede is folded into
+	// store.CreateDeployment's tx (pkg/state/pgstore.go). apid no longer
+	// holds a "supersede then create" two-step — the in-tx ordering
+	// guarantees the previous live deployment is NEVER observed
+	// superseded without the new pending row also being visible. We
+	// read the prior row BEFORE the call via LatestDeployment so the
+	// supersede-notify can carry its id; this keeps the return shape
+	// 2-tuple and backward-compatible with pre-PR-B call sites.
+	prev, _ := s.store.LatestDeployment(ctx(r), app.ID)
 	d, err := s.store.CreateDeployment(ctx(r), state.Deployment{
 		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
 	})
@@ -178,6 +171,15 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// cmd/apid/deploy_steps.go.
 	_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged,
 		fmt.Sprintf(`{"kind":"image","status":"pending","app_id":"%s","deployment_id":"%s","to":"%s"}`, app.ID, d.ID, d.ID))
+	// PR-B: if a prior row was just superseded inside the same tx,
+	// fire a second NotifyDeploymentChanged so imaged's F5 cleanup
+	// handler (handleDeploymentChanged) can drop the prior snapshot.
+	// The notify carries status="superseded" + to=prev.ID; if no prev
+	// existed (first deploy on this app), skip the second notify.
+	if prev.ID != "" {
+		_ = s.notif.Notify(ctx(r), db.NotifyDeploymentChanged,
+			fmt.Sprintf(`{"kind":"image","status":"superseded","app_id":"%s","deployment_id":"%s","to":"%s"}`, app.ID, prev.ID, prev.ID))
+	}
 	// Sanitize req.Image at the log sink — CodeQL go/log-injection (CWE-117).
 	// isDigestPinned already rejects malformed refs with 400 before this line,
 	// but a future field/wrapper change would break that invariant. Sanitizing

@@ -203,15 +203,7 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 				h.log.Warn("imaged: cleanup superseded", "deployment", p.To, "err", err)
 			}
 		}
-	case db.NotifyBuildQueued:
-		var p buildQueuedPayload
-		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
-			h.log.Warn("imaged: bad build_queued payload", "err", err)
-			return
-		}
-		if err := h.handleBuildQueued(ctx, p); err != nil {
-			h.log.Warn("imaged: build queue failed", "app", p.AppID, "build", p.BuildID, "err", err)
-		}
+	// PR-B: NotifyBuildQueued arm removed (builderd owns the channel now).
 	case db.NotifySnapshotBoot:
 		var p snapshotBootPayload
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
@@ -265,16 +257,12 @@ type appChangedPayload struct {
 	Kind  string `json:"kind"`
 }
 
-// buildQueuedPayload is the JSON shape apid emits on `build_queued` (see
-// cmd/apid/deploy_inputs.go — `{"build", "deployment", "app", "kind"}`).
-// F4 closes the gap where this struct decoded `app_id`/`build_id` while
-// the on-wire shape used `app`/`build`, so the M5 stub never fired.
-type buildQueuedPayload struct {
-	AppID        string `json:"app"`
-	BuildID      string `json:"build"`
-	DeploymentID string `json:"deployment"`
-	Kind         string `json:"kind"`
-}
+// PR-B: buildQueuedPayload and (*Handler).handleBuildQueued were
+// removed. imaged is no longer subscribed to db.NotifyBuildQueued
+// (builderd owns the queue via the durable worker + LISTEN fast path,
+// see ADR-031). The build → OCI-image conversion happens in the
+// snapshot_boot handler below, which fires AFTER builderd stamps
+// rootfs_path onto the deployment row.
 
 // snapshotWrittenPayload is the JSON shape schedd emits on `snapshot_written`
 // after a Prime/Park writes the blob via vmmd (ADR-018, see pkg/db.NotifyChannels).
@@ -688,63 +676,6 @@ func (h *Handler) handleSnapshotWritten(ctx context.Context, p snapshotWrittenPa
 	return nil
 }
 
-// handleBuildQueued advances a queued source build. The full builderd VM
-// pipeline runs in pkg/builderd and emits NotifySnapshotBoot when the OCI
-// tarball is ready; imaged subscribes to that channel (handleSnapshotBoot)
-// and converts the tarball into an app-layer ext4. handleBuildQueued here
-// is a thin dispatcher that:
-//
-//   - flips the builds row to running so dashboards reflect the state,
-//   - resolves the deployment_id from the build row,
-//   - if the deployment's rootfs_path has already been stamped by builderd,
-//     synthesises a snapshotBootPayload and forwards to handleSnapshotBoot;
-//   - otherwise, returns (the canonical path is builderd's later
-//     NotifySnapshotBoot emit).
-//
-// F-01: apid emits build_queued immediately at deploy creation; builderd
-// stamps rootfs_path LATER (after the build VM produces an OCI image).
-// The old code dispatched to handleSnapshotBoot unconditionally, which
-// failed the deployment with "empty rootfs_path" on every tarball /
-// dockerfile deploy. The canonical F4 path is the NotifySnapshotBoot
-// channel — handleBuildQueued now stays out of the way until builderd
-// has stamped.
-//
-// This keeps the apid-emitted payload shape ({build, deployment, app, kind})
-// untouched while funnelling all OCI-tarball→ext4 work through the
-// canonical handler.
-func (h *Handler) handleBuildQueued(ctx context.Context, p buildQueuedPayload) error {
-	if p.BuildID == "" || p.DeploymentID == "" {
-		return errors.New("imaged: build_queued missing build or deployment id")
-	}
-	// failure_class is "" while the build is in-flight; both MemStore and
-	// PgStore treat the empty string as "preserve prior value" via a
-	// `case when $3 = ''` guard in the UPDATE. There is no FailureNone
-	// constant — empty string is the canonical no-class sentinel.
-	if err := h.store.UpdateBuildStatus(ctx, p.BuildID, state.BuildRunning, "", true, false); err != nil {
-		return fmt.Errorf("imaged: mark building: %w", err)
-	}
-	dep, err := h.store.DeploymentByID(ctx, p.DeploymentID)
-	if err != nil {
-		return fmt.Errorf("imaged: resolve deployment for build: %w", err)
-	}
-	// F-01: wait for builderd to stamp rootfs_path before converting.
-	// The handler isn't idempotent on a not-yet-stamped deployment —
-	// running buildImageLayer / buildFunctionLayer now would either
-	// no-op (image kind, nothing to pull) or fail loud (tarball kind,
-	// no OCI tarball to convert). Either way we poison the deployment.
-	if dep.RootfsPath == "" {
-		h.log.Info("imaged: build_queued: waiting on builderd to stamp rootfs_path",
-			"app", p.AppID, "build", p.BuildID, "deployment", dep.ID, "kind", p.Kind)
-		return nil
-	}
-	h.log.Info("imaged: build queued (dispatch to handleSnapshotBoot)",
-		"app", p.AppID, "build", p.BuildID, "deployment", dep.ID, "kind", p.Kind)
-	return h.handleSnapshotBoot(ctx, snapshotBootPayload{
-		AppID:        p.AppID,
-		DeploymentID: dep.ID,
-	})
-}
-
 // handleSnapshotBoot is the canonical builderd-driven path (F4). builderd
 // has finished its build VM, stamped the OCI image tarball onto
 // deployments.rootfs_path, and emitted NotifySnapshotBoot. imaged:
@@ -777,10 +708,9 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 		return nil
 	}
 	if dep.RootfsPath == "" {
-		// builderd hasn't stamped yet (or handleBuildQueued dispatched
-		// too early). Treat as a transient no-op rather than failing
-		// the deployment — the subsequent NotifySnapshotBoot / second
-		// build_queued redelivery will find a stamp. F-01.
+		// builderd hasn't stamped yet. Treat as a transient no-op rather
+		// than failing the deployment — the subsequent NotifySnapshotBoot
+		// redelivery will find a stamp. F-01.
 		h.log.Warn("imaged: snapshot_boot skipped — rootfs_path empty; waiting on builderd",
 			"deployment", p.DeploymentID)
 		return nil

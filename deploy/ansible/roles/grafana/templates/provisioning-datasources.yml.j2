@@ -1,0 +1,19 @@
+# Datasource provisioning — single Prometheus on the local management
+# bridge. editable=false: an operator who wants a second datasource must
+# change the ansible role (the role owns the file surface, not the
+# Grafana admin API). timeInterval=15s matches Prometheus' default
+# scrape interval so the dashboard panels don't render at a cadence
+# misaligned with the underlying series.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: "{{ gv_prom_url }}"
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST

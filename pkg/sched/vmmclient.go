@@ -76,13 +76,20 @@ type PingOutcome struct {
 // §11/G2). schedd is the only writer that can load these rows (apid writes
 // intent, schedd reads to drive wakes). Empty slice = no secrets file
 // written; vmmd treats nil and empty as equivalent.
+//
+// EgressAllowlist (ADR-031) carries the per-app outbound IP allowlist —
+// CIDR strings (e.g. "1.2.3.0/24"), parsed upstream by apid on PUT/PATCH
+// and re-validated by the apps.egress_allowlist cidr[] CHECK (v4-only).
+// Empty slice = no allowlist rule emitted in the per-netns forward chain
+// (current behaviour preserved).
 type AppSpec struct {
-	BaseKey    string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
-	LayerKey   string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
-	VCPUCount  int32  // 2, or 4 for Scale
-	MemSizeMiB int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
-	EgressMbit int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
-	SealedEnv  []fcvm.SealedEnvEntry
+	BaseKey         string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
+	LayerKey        string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
+	VCPUCount       int32  // 2, or 4 for Scale
+	MemSizeMiB      int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
+	EgressMbit      int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	SealedEnv       []fcvm.SealedEnvEntry
+	EgressAllowlist []string // ADR-031; v4 CIDRs; empty = no allowlist rule
 }
 
 // SnapshotRef points at the snapshot to restore from and the Firecracker
@@ -268,12 +275,13 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		})
 	}
 	return &vmmdpb.AppSpec{
-		BaseKey:    a.BaseKey,
-		LayerKey:   a.LayerKey,
-		VcpuCount:  a.VCPUCount,
-		MemSizeMib: a.MemSizeMiB,
-		EgressMbit: a.EgressMbit,
-		SealedEnv:  sealed,
+		BaseKey:         a.BaseKey,
+		LayerKey:        a.LayerKey,
+		VcpuCount:       a.VCPUCount,
+		MemSizeMib:      a.MemSizeMiB,
+		EgressMbit:      a.EgressMbit,
+		SealedEnv:       sealed,
+		EgressAllowlist: a.EgressAllowlist,
 	}
 }
 

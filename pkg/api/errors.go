@@ -139,7 +139,7 @@ const (
 	// --max-concurrency").
 	CodeInvalidMinInstances = "invalid_min_instances"
 
-	// Move 1 event-shaped surfaces (spec §4.4, §4.9). The CLI exit-code
+// Move 1 event-shaped surfaces (spec §4.4, §4.9). The CLI exit-code
 	// table treats them as 403/422/402; surfacing the codes separately
 	// lets the dashboard render a "move to Scale to lift the cap"
 	// hint without parsing prose.
@@ -148,6 +148,23 @@ const (
 	CodePlanFeatureGated   = "plan_feature_gated"
 	CodePlanDelayedCap     = "plan_delayed_tasks_cap"
 	CodeInvocationNotFound = "invocation_not_found"
+
+	// ADR-031 (tier-2 of the network roadmap) — per-app egress
+	// allowlist. Same gate shape as MinInstances: the feature is
+	// plan-locked (Pro/Scale only), and there are two distinct
+	// failure modes that warrant distinct codes so the CLI can
+	// render actionable retry guidance.
+	//   * CodePlanEgressAllowlistNotAllowed = 403 "your plan does
+	//     not unlock this knob at all" (Free/Hobby).
+	//   * CodeEgressAllowlistTooLong = 400 "the PATCH carries more
+	//     CIDRs than your plan caps" (Pro/Scale but the slice is
+	//     too long; not a billing failure).
+	CodePlanEgressAllowlistNotAllowed = "plan_egress_allowlist_not_allowed"
+	CodeEgressAllowlistTooLong        = "egress_allowlist_too_long"
+	// CodeInvalidEgressAllowlist is a 400 for shape violations:
+	// an entry that doesn't ParsePrefix, or a v6 CIDR (v1 is v4
+	// only; v6 mirror is a separate ADR).
+	CodeInvalidEgressAllowlist = "invalid_egress_allowlist"
 
 	// Account self-service (spec §17 G6, ADR-021). The
 	// "confirm_required" code is returned when a DELETE arrives without
@@ -439,6 +456,42 @@ func ErrInvalidMinInstances(got, maxConcur int) *Problem {
 		fmt.Sprintf("min_instances must be in [0, %d] (plan max_concurrency); got %d.", maxConcur, got)).
 		WithLimit(int64(maxConcur), int64(got)).
 		WithDocs("https://docs.DOMAIN/apps#min-instances")
+}
+
+// ErrPlanEgressAllowlistNotAllowed (ADR-031) is returned when a Free or Hobby
+// account tries to set apps.egress_allowlist. Same gate shape as
+// ErrPlanMinInstancesNotAllowed: the knob is plan-locked, and Pro/Scale
+// is where the operator surface lives. The plan is named in the body so
+// a CLI prompt can render "upgrade to Pro to unlock this knob" without
+// a second lookup.
+func ErrPlanEgressAllowlistNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanEgressAllowlistNotAllowed,
+		"Plan doesn't allow an egress allowlist",
+		fmt.Sprintf("the %s plan cannot pin an egress IP allowlist; upgrade to Pro or Scale to unlock this operator surface.", p)).
+		WithDocs("https://docs.DOMAIN/apps#egress-allowlist")
+}
+
+// ErrEgressAllowlistTooLong (ADR-031) is returned when the PATCH carries more
+// CIDRs than the plan's per-app cap. 400 (not 422) because the request shape is
+// well-formed — only the count is over budget. The limit + observed pair rides
+// on the Problem so the CLI can branch on its own copy of the cap (no re-fetch).
+func ErrEgressAllowlistTooLong(got, maxSize int) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeEgressAllowlistTooLong,
+		"Egress allowlist too long",
+		fmt.Sprintf("egress_allowlist has %d entries; plan caps it at %d.", got, maxSize)).
+		WithLimit(int64(maxSize), int64(got)).
+		WithDocs("https://docs.DOMAIN/apps#egress-allowlist")
+}
+
+// ErrInvalidEgressAllowlist (ADR-031) is a 400 for entries that don't
+// ParsePrefix as a v4 CIDR. The detail names the offending entry so an
+// operator triaging a rejected PATCH sees exactly which line is bad.
+// v6 attempts land here too (v1 is v4 only; v6 mirror is a future ADR).
+func ErrInvalidEgressAllowlist(entry string, reason error) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeInvalidEgressAllowlist,
+		"Invalid egress allowlist entry",
+		fmt.Sprintf("entry %q is not a valid IPv4 CIDR: %v.", entry, reason)).
+		WithDocs("https://docs.DOMAIN/apps#egress-allowlist")
 }
 
 // ErrValidation is a 400 fallback for malformed request bodies. Used by
