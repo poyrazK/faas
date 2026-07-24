@@ -93,6 +93,26 @@ func (s *PgStore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, e
 	return scanAccount(row)
 }
 
+// APIKeyByHash resolves an api_keys row by its SHA-256 hash. Used by
+// the post-login audit log (cmd/apid/handlers_auth.go) so an operator
+// investigating "who signed in as alice?" can identify which key
+// authenticated. Returns ErrNotFound when no row matches. Same O(log n)
+// index-backed lookup as AccountByKeyHash — same key_sha256 UNIQUE
+// constraint in migrations/00001_init.sql.
+func (s *PgStore) APIKeyByHash(ctx context.Context, hash []byte) (APIKey, error) {
+	row := s.pool.QueryRow(ctx,
+		`select id, account_id, key_sha256, coalesce(label,''), created_at
+		 from api_keys where key_sha256 = $1`, hash)
+	k := APIKey{}
+	if err := row.Scan(&k.ID, &k.AccountID, &k.Hash, &k.Label, &k.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return APIKey{}, ErrNotFound
+		}
+		return APIKey{}, mapErr(err)
+	}
+	return k, nil
+}
+
 func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Plan) error {
 	_, err := s.pool.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
 	return err
