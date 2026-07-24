@@ -202,17 +202,14 @@ func TestMailAdapter_SurfacesSenderError(t *testing.T) {
 	}
 }
 
-// TestMagicLinkDeliveredThroughMailer is the G4 closure end-to-end
-// test: it boots a real handler stack (no listener), injects a
-// recordingSender as srv.mailer via the adapter, fires POST /login,
-// and asserts the magic-link email actually reached the wire. Without
-// the newMailerAdapter path, the production code only ever hit
-// newLogMailer (which calls slog) and this message would never appear.
-func TestMagicLinkDeliveredThroughMailer(t *testing.T) {
+// TestLoginSetsSessionAndSendsNoEmail pins the retired-magic-link
+// contract: POST /login authenticates the user by setting the faas_sid
+// session cookie synchronously and sends NO login email (the legacy
+// magic-link dispatch was removed from postLogin). The mailer stays
+// wired for dunning/quota mail, so we assert the login path itself
+// stays silent even when a real sender is injected.
+func TestLoginSetsSessionAndSendsNoEmail(t *testing.T) {
 	const email = "user@example.com"
-	// The login handler only dispatches an email when AccountByEmail
-	// resolves — the unknown-email branch is silent (handlers_auth.go:
-	// postLogin). Seed the account so the happy path fires.
 	store := state.NewMemStore()
 	if _, err := store.CreateAccount(context.Background(), email, api.PlanFree); err != nil {
 		t.Fatal(err)
@@ -228,26 +225,23 @@ func TestMagicLinkDeliveredThroughMailer(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recHTTP := httptest.NewRecorder()
 	h.ServeHTTP(recHTTP, req)
-	// 200 (check-email page rendered) is the success contract.
 	if recHTTP.Code != http.StatusOK {
 		t.Fatalf("/login status = %d body = %s", recHTTP.Code, recHTTP.Body.String())
 	}
 
-	msgs := rec.snapshot()
-	if len(msgs) == 0 {
-		t.Fatal("no message recorded; magic link not delivered through mailAdapter")
+	// The session cookie is the authentication contract now.
+	var gotSession bool
+	for _, c := range recHTTP.Result().Cookies() {
+		if c.Name == sessionCookie && c.Value != "" {
+			gotSession = true
+		}
 	}
-	m := msgs[0]
-	if len(m.To) == 0 || m.To[0] != email {
-		t.Errorf("recipient = %v, want %s", m.To, email)
+	if !gotSession {
+		t.Errorf("expected %s session cookie to be set on /login", sessionCookie)
 	}
-	// Pin the literal subject the handler writes (cmd/apid/handlers_auth.go:
-	// postLogin). Marketing copy is deliberate; if it ever changes, this
-	// test breaks loudly so the change shows up in review.
-	if m.Subject != "Sign in to onebox faas" {
-		t.Errorf("subject = %q, want %q", m.Subject, "Sign in to onebox faas")
-	}
-	if !strings.Contains(m.TextBody, "verify?token=") {
-		t.Errorf("body missing token URL: %q", m.TextBody)
+
+	// No login email should ever be dispatched.
+	if msgs := rec.snapshot(); len(msgs) != 0 {
+		t.Errorf("expected no login email, got %d message(s): %+v", len(msgs), msgs)
 	}
 }

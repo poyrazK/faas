@@ -121,20 +121,11 @@ func (a *authHandlers) postLogin(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Preserve email dispatch workflow in background
-	if token, hash, err := mintLoginToken(); err == nil {
-		expiresAt := time.Now().Add(a.loginTTL)
-		if err := a.srv.store.IssueLoginToken(r.Context(), hash, acct.ID, expiresAt); err == nil {
-			magicLink := a.domain + verifyPath + "?token=" + token
-			subject := "Sign in to onebox faas"
-			body := "Click the link to sign in (15 min, one-time use):\n\n" + magicLink + "\n\nIf you didn't request this, ignore this email."
-			_ = a.mailer.Send(r.Context(), Message{
-				To:       []string{email},
-				Subject:  subject,
-				TextBody: body,
-			})
-		}
-	}
+	// The faas_sid session cookie above already authenticates the user,
+	// so the legacy magic-link email is redundant and has been retired.
+	// The mailer is still wired for dunning + quota-warning emails; only
+	// the login dispatch is gone. (/auth/verify remains but is no longer
+	// reachable via login since no login token is minted here.)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
