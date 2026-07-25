@@ -271,6 +271,36 @@ spec-check: spec-install spec-lint spec-sync denylist-md ## CI gate: vacuum lint
 	  (echo "spec-check: drift (spec or denylist.md) — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
 
+.PHONY: images-lock-check
+images-lock-check: ## CI gate: every images/*.Dockerfile FROM is digest-pinned via images/Dockerfile.lock (issue #197 B3.5 + B3.6)
+	# Two pure-stdlib Python scripts (no install) run the gate:
+	#   1. images_lock_check.py        — lock -> Dockerfile direction
+	#                                    (entry exists, digest is real
+	#                                    not REPLACE_ME, Dockerfile line
+	#                                    matches `pinned_in_dockerfile`).
+	#   2. audit_dockerfile_froms.py   — Dockerfile -> lock direction
+	#                                    (every non-scratch FROM is
+	#                                    either digest-pinned or covered
+	#                                    by the lock; bare tags fail).
+	# A failed images-lock-update leaves REPLACE_ME in the lock; the
+	# gate stops the PR before it reaches main. Operator runs
+	# `make images-lock-update` to resolve the real digests.
+	@python3 scripts/ci/images_lock_check.py
+	@python3 scripts/ci/audit_dockerfile_froms.py
+	@echo "images-lock-check: OK"
+
+.PHONY: images-lock-update
+images-lock-update: ## Operator-only: resolve current registry digests, update Dockerfile.lock + FROM lines (issue #197 B3.5 + B3.6)
+	# Skipped here on purpose — the resolver needs `crane` (or
+	# `docker buildx imagetools inspect`) and registry credentials
+	# the CI runner doesn't have. The operator runs the resolver
+	# locally once at PR-merge time:
+	#   python3 scripts/ci/images_lock_update.py --repo-root .
+	# The script rewrites BOTH images/Dockerfile.lock (the source of
+	# truth) and the matching `FROM ...@sha256:` line in each
+	# Dockerfile. The CI gate above then accepts the PR.
+	@echo "images-lock-update: not implemented in CI; run scripts/ci/images_lock_update.py locally"
+
 .PHONY: denylist-md
 denylist-md: ## Regenerate docs/denylist.md from the shared egress catalog (ADR-034 §Consequences)
 	# Pure-Go generator — no template strings, no timestamps. Deterministic

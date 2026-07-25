@@ -187,20 +187,26 @@ func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
 // existing callers — every test that never calls WithStorage — running
 // against the legacy path without a churn. production calls WithStorage
 // in cmd/imaged so the default is never exercised in prod.
-func (h *Handler) storageFor() storage.StorageBackend {
+//
+// Issue #197 B3.8: previously panicked on a bad appsRoot (empty path /
+// NUL bytes). Tests can now reach this code path when a Handler is
+// constructed without WithStorage AND appsRoot is empty — return the
+// error instead of panicking. Production wiring (cmd/imaged calls
+// WithStorage unconditionally) is unaffected.
+func (h *Handler) storageFor() (storage.StorageBackend, error) {
 	if h.storage != nil {
-		return h.storage
+		return h.storage, nil
 	}
 	// Safe-by-default: NewLocalStorageBackend only errors on empty root or
 	// NUL bytes in the path (appsRoot is supplied by cmd/imaged and tests
-	// use t.TempDir()). Falling back to a nil backend would crash every
-	// Build call, which is the loud failure we want.
+	// use t.TempDir()). Returning the error lets callers degrade to a
+	// logged WARN instead of taking the daemon down mid-deploy.
 	be, err := storage.NewLocalStorageBackend(h.appsRoot)
 	if err != nil {
-		panic(fmt.Sprintf("imaged: storageFor default backend: %v", err))
+		return nil, fmt.Errorf("imaged: storageFor default backend: %w", err)
 	}
 	h.storage = be
-	return be
+	return be, nil
 }
 
 // appsRootPath returns the on-disk legacy path the legacy code path
@@ -454,6 +460,11 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	// below streams all layers via oci.PullLayers for fakes that don't
 	// implement ManifestPuller.
 	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	be, err := h.storageFor()
+	if err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "imaged: storageFor")
+		return fmt.Errorf("imaged: storageFor: %w", err)
+	}
 	if mp, ok := h.oci.(oci.ManifestPuller); ok {
 		above, diffs, err := h.aboveBaseLayers(ctx, mp, dep.ImageDigest, app.Runtime, manifest)
 		if err != nil {
@@ -476,7 +487,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			Manifest:      manifest,
 			GuestInitPath: h.guestInitPath,
 			Plan:          acct.Plan,
-			Storage:       h.storageFor(),
+			Storage:       be,
 			StorageKey:    appsKey,
 		})
 		if err != nil {
@@ -514,7 +525,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			Manifest:      manifest,
 			GuestInitPath: h.guestInitPath,
 			Plan:          acct.Plan,
-			Storage:       h.storageFor(),
+			Storage:       be,
 			StorageKey:    appsKey,
 		})
 		if err != nil {
@@ -632,12 +643,17 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	}
 
 	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	be, err := h.storageFor()
+	if err != nil {
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, "storageFor: "+err.Error())
+		return fmt.Errorf("imaged: storageFor: %w", err)
+	}
 	result, err := h.builder.Build(ctx, rootfs.BuildInput{
 		Layers:        layersAsReaders(nil), // function deploys use the tarball via BuildInput.Tarball
 		Manifest:      manifest,
 		GuestInitPath: h.guestInitPath,
 		Plan:          acct.Plan,
-		Storage:       h.storageFor(),
+		Storage:       be,
 		StorageKey:    appsKey,
 		// TarballPath lets the rootfs.Builder stream the customer's
 		// source tarball into /app during layer assembly. Tests skip
@@ -1130,17 +1146,27 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 	// Per-app ext4 (drive1). Storage.Delete swallows ErrNotFound; the
 	// legacy os.Remove-Warn check is preserved via the storage backend's
 	// own error wrapping.
+	be, err := h.storageFor()
+	if err != nil {
+		// Issue #197 B3.8: storage init failure during cleanup is a
+		// Warn — there's nothing useful to clean up if storage is
+		// missing, and we don't want to fail the deploy that triggered
+		// this cleanup. The caller (HandleNotification) logs the
+		// returned error at Warn.
+		h.log.Warn("imaged: cleanup storageFor", "deployment", dep.ID, "err", err)
+		return err
+	}
 	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
-	if err := h.storageFor().Delete(ctx, appsKey); err != nil {
+	if err := be.Delete(ctx, appsKey); err != nil {
 		h.log.Warn("imaged: cleanup ext4", "key", appsKey, "err", err)
 	}
 	if !keepSnap {
 		memKey := state.SnapMemKey(dep.ID)
 		vmKey := state.SnapVMStateKey(dep.ID)
-		if err := h.storageFor().Delete(ctx, memKey); err != nil {
+		if err := be.Delete(ctx, memKey); err != nil {
 			h.log.Warn("imaged: cleanup snap mem", "key", memKey, "err", err)
 		}
-		if err := h.storageFor().Delete(ctx, vmKey); err != nil {
+		if err := be.Delete(ctx, vmKey); err != nil {
 			h.log.Warn("imaged: cleanup snap vmstate", "key", vmKey, "err", err)
 		}
 	}
@@ -1168,7 +1194,13 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup list deployments: %w", err)
 	}
-	be := h.storageFor()
+	be, err := h.storageFor()
+	if err != nil {
+		// Issue #197 B3.8: storage init failure during app cleanup is
+		// Warn-only — return the error so HandleNotification logs it,
+		// but don't fail the caller.
+		return fmt.Errorf("imaged: app cleanup storageFor: %w", err)
+	}
 	for _, d := range deps {
 		appsKey := sched.AppLayerKey(app.Slug, d.ID)
 		if err := be.Delete(ctx, appsKey); err != nil {

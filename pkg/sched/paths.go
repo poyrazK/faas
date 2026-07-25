@@ -1,6 +1,10 @@
 package sched
 
-import "github.com/onebox-faas/faas/pkg/state"
+import (
+	goruntime "runtime"
+
+	"github.com/onebox-faas/faas/pkg/state"
+)
 
 // paths.go is the single place schedd derives the host filesystem locations of
 // an instance's boot inputs (spec §8: /srv/fc/base read-only bases, lv-fc app
@@ -93,22 +97,47 @@ func SnapshotVMStateKey(deploymentID string) string {
 
 // BaseKey returns the storage key for a runtime's shared drive0 base ext4
 // image. Returns "base/base.ext4" for plain apps, "base/runner-<runtime>.ext4"
-// for function apps.
+// for function apps. The key is per-arch (issue #197 B3.3) — the same
+// runtime produces different base ext4s on amd64 vs arm64. Thin wrapper
+// over BaseKeyForArch that pins the arch to runtime.GOARCH for the
+// single-box case (this daemon's host arch).
 func BaseKey(runtime string) string {
+	return BaseKeyForArch(runtime, goruntime.GOARCH)
+}
+
+// BaseKeyForArch returns the storage key for a runtime's shared drive0
+// base ext4 image, partitioned by arch. Different arches need distinct
+// base ext4s (the initramfs, kernel modules, and userland binaries don't
+// cross over). The legacy BaseKey(runtime) collapses to a single host
+// arch; this is the form schedd's wake wire carries and the form imaged
+// publishes under.
+//
+// Shapes:
+//   - runtime == "": "base/base-<arch>.ext4"
+//   - runtime != "": "base/runner-<runtime>-<arch>.ext4"
+func BaseKeyForArch(runtime, arch string) string {
 	if runtime == "" {
-		return "base/base.ext4"
+		return "base/base-" + arch + ".ext4"
 	}
-	return "base/runner-" + runtime + ".ext4"
+	return "base/runner-" + runtime + "-" + arch + ".ext4"
 }
 
 // BaseDigestKey returns the storage key for a runtime's base-image
 // config digest sidecar. The sidecar is the immutable check on whether
-// the staged base ext4 needs re-pulling.
+// the staged base ext4 needs re-pulling. Thin wrapper over
+// BaseDigestKeyForArch that pins the arch to runtime.GOARCH.
 func BaseDigestKey(runtime string) string {
+	return BaseDigestKeyForArch(runtime, goruntime.GOARCH)
+}
+
+// BaseDigestKeyForArch mirrors BaseKeyForArch for the digest sidecar.
+// Same per-arch partition — a fresh arm64 install must not nuke an
+// existing amd64 sidecar when both arches share the same storage root.
+func BaseDigestKeyForArch(runtime, arch string) string {
 	if runtime == "" {
-		return "base/base.ext4.digest"
+		return "base/base-" + arch + ".ext4.digest"
 	}
-	return "base/runner-" + runtime + ".ext4.digest"
+	return "base/runner-" + runtime + "-" + arch + ".ext4.digest"
 }
 
 // LayerKey returns the storage key for a deployment's drive1 layer.

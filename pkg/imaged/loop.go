@@ -300,7 +300,10 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 	if _, err := l.store.DeleteSnapshotsByID(ctx, ids); err != nil {
 		return err
 	}
-	be := l.handler.storageFor()
+	be, err := l.handler.storageFor()
+	if err != nil {
+		return fmt.Errorf("imaged: gc storageFor: %w", err)
+	}
 	for _, t := range ts {
 		// snap blobs: delete both files; the storage backend swallows
 		// missing keys so a transient race with restore is harmless.

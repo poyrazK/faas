@@ -443,6 +443,15 @@ type Store interface {
 	// wire and vmmd resolves it via Storage.Get before staging the chroot.
 	SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error
 
+	// SetDeploymentSourceURL records the canonical upstream URL +
+	// commit SHA the build was triggered from (Tier 3 / issue #197
+	// B3.10 schema half, migrations/00047). Populated by githubd's
+	// CreateDeployment callback. Empty values are accepted (an
+	// image: deploy with no upstream URL is a normal case). The
+	// reader is build_provenance (Phase 2) which surfaces the
+	// values at GET /v1/builds/{id}/provenance.
+	SetDeploymentSourceURL(ctx context.Context, id, sourceURL, commitSHA string) error
+
 	// Builds (apid creates the queued row; builderd writes status, spec §9).
 	CreateBuild(ctx context.Context, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error)
 	BuildByID(ctx context.Context, id string) (Build, error)

@@ -1082,6 +1082,29 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	return nil
 }
 
+// SetDeploymentSourceURL mirrors the pgstore / migrations/00047 column pair
+// (Tier 3 / issue #197 B3.10). Empty strings are accepted (an image:
+// deploy with no upstream URL is the common case). commit_sha is
+// length-bounded at the DB layer (deployments_commit_sha_len_chk); the
+// memstore enforces the same 64-char cap to keep behaviour aligned
+// with PgStore (otherwise unit tests would let through values the DB
+// would reject, hiding a bug class).
+func (m *MemStore) SetDeploymentSourceURL(_ context.Context, id, sourceURL, commitSHA string) error {
+	if commitSHA != "" && len(commitSHA) > 64 {
+		return fmt.Errorf("state: commit_sha length %d exceeds 64", len(commitSHA))
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	d.SourceURL = sourceURL
+	d.CommitSHA = commitSHA
+	m.deployments[id] = d
+	return nil
+}
+
 // SetDeploymentFailed mirrors PgStore.SetDeploymentFailed (ADR-021):
 // status pinned to 'failed'; error_code is the RFC 7807 code lifted
 // from pkg/api.SentinelToCode; error keeps the free-text message.

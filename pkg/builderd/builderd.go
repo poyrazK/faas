@@ -253,6 +253,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("builderd: load app: %w", err)
 	}
+	// Issue #197 B3.11: the cache key is partitioned by plan. A Hobby
+	// customer's cached layer must not serve a Pro build (the layer
+	// was built against the Hobby cap, not the Pro cap). Load the
+	// account eagerly so the cache lookup below can include the plan.
+	acct, acctErr := b.store.AccountByID(ctx, app.AccountID)
+	if acctErr != nil {
+		return BuildResult{}, fmt.Errorf("builderd: load account: %w", acctErr)
+	}
 
 	// B2.2 (issue #196): record the claim so the next
 	// ClaimNextQueuedBuildWithFairness round excludes this account
@@ -312,7 +320,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "source hash: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
-	if cached, ok := b.cache.Lookup(srcHash, fw); ok {
+	if cached, ok := b.cache.Lookup(srcHash, fw, acct.Plan); ok {
 		// Cache hit is one of the two real "build started" sites
 		// (the other is the spawn path below). Observe the
 		// queue-wait here so a no-slot requeue on a sibling row
@@ -452,11 +460,6 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "stat produced layer: "+statErr.Error(), buildStart)
 		return BuildResult{}, statErr
 	}
-	acct, acctErr := b.store.AccountByID(ctx, app.AccountID)
-	if acctErr != nil {
-		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "load account: "+acctErr.Error(), buildStart)
-		return BuildResult{}, acctErr
-	}
 	lim, known := api.LimitsFor(acct.Plan)
 	if !known {
 		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "unknown plan: "+string(acct.Plan), buildStart)
@@ -469,7 +472,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 
 	// Stamp the cache so the next build of the same source is a hit.
-	if err := b.cache.Store(srcHash, fw, out.OCIImage, out.LogTailBytes); err != nil {
+	if err := b.cache.Store(srcHash, fw, acct.Plan, out.OCIImage, out.LogTailBytes); err != nil {
 		b.log.Warn("builderd: cache store failed (continuing)", "err", err)
 	}
 	// Stamp the produced layer path onto the deployment row. imaged will

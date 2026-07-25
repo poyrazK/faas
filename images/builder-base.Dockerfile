@@ -27,7 +27,11 @@ ARG RAILPACK_VERSION=0.31.1
 # the VM boundary is the actual security perimeter (ADR-003).
 ARG BUILDKIT_VERSION=0.31.2
 
-FROM --platform=$TARGETPLATFORM debian:12-slim
+FROM --platform=$TARGETPLATFORM debian:12-slim@sha256:REPLACE_ME_AT_MERGE_TIME
+# Issue #197 B3.5: the `debian:12-slim` tag is mutable. The digest is
+# pinned via images/Dockerfile.lock; `make images-lock-update` resolves
+# the current registry digest and updates BOTH the lock and the FROM
+# line. CI runs `make images-lock-check` to fail any PR that drifts.
 ARG RAILPACK_VERSION
 ARG BUILDKIT_VERSION
 ARG TARGETARCH

@@ -149,7 +149,7 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.Store(hash, FrameworkNode, layerPath, 18); err != nil {
+	if err := c.Store(hash, FrameworkNode, api.PlanPro, layerPath, 18); err != nil {
 		t.Fatal(err)
 	}
 
@@ -226,7 +226,7 @@ func TestProcessOne_VMSpawnSucceedsAndStamps(t *testing.T) {
 	}
 	// Cache should have been populated.
 	hash, _ := hashFile(srcTar)
-	if _, ok := c.Lookup(hash, FrameworkNode); !ok {
+	if _, ok := c.Lookup(hash, FrameworkNode, api.PlanPro); !ok {
 		t.Error("expected cache populated after successful build")
 	}
 }
@@ -1019,7 +1019,7 @@ func TestProcessNext_FairnessWindow_ZeroDisablesFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.Store(hash, FrameworkNode, srcCopy, 17); err != nil {
+	if err := c.Store(hash, FrameworkNode, api.PlanPro, srcCopy, 17); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1077,7 +1077,7 @@ func TestProcessNext_FairnessWindow_PreferQuietAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.Store(hash, FrameworkNode, srcCopy, 17); err != nil {
+	if err := c.Store(hash, FrameworkNode, api.PlanPro, srcCopy, 17); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1134,7 +1134,7 @@ func TestProcessNext_RecordRecentBuildClaim_FailureDoesNotFailBuild(t *testing.T
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.Store(hash, FrameworkNode, srcCopy, 17); err != nil {
+	if err := c.Store(hash, FrameworkNode, api.PlanPro, srcCopy, 17); err != nil {
 		t.Fatal(err)
 	}
 

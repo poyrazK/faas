@@ -355,6 +355,50 @@ func TestHandleDeploymentTarballIgnored(t *testing.T) {
 	}
 }
 
+// TestHandler_StorageFor_MissingRootErrors is the B3.8 regression guard.
+// Pre-fix: storageFor() panicked when appsRoot was empty or contained a
+// NUL byte, taking the daemon down mid-deploy. Post-fix: it returns an
+// error and the handler logs a Warn instead of crashing.
+func TestHandler_StorageFor_MissingRootErrors(t *testing.T) {
+	store := state.NewMemStore()
+	notif := &fakeNotifier{}
+	// appsRoot="" forces the lazy default in storageFor to call
+	// NewLocalStorageBackend("") which rejects empty roots.
+	h := New(store, notif, fakePuller{}, &fakeBuilder{}, "./init", "", silentLogger())
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("storageFor panicked on empty appsRoot: %v (issue #197 B3.8)", r)
+		}
+	}()
+	be, err := h.storageFor()
+	if err == nil {
+		t.Fatalf("storageFor: expected error on empty appsRoot, got nil")
+	}
+	if be != nil {
+		t.Fatalf("storageFor: expected nil backend on error, got %T", be)
+	}
+}
+
+// TestHandler_StorageFor_NULByteErrors covers the other NewLocalStorageBackend
+// rejection case (NUL in the path). Belt-and-braces for B3.8.
+func TestHandler_StorageFor_NULByteErrors(t *testing.T) {
+	store := state.NewMemStore()
+	notif := &fakeNotifier{}
+	h := New(store, notif, fakePuller{}, &fakeBuilder{}, "./init", "/bad\x00path", silentLogger())
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("storageFor panicked on NUL-byte appsRoot: %v (issue #197 B3.8)", r)
+		}
+	}()
+	be, err := h.storageFor()
+	if err == nil {
+		t.Fatalf("storageFor: expected error on NUL-byte appsRoot, got nil")
+	}
+	if be != nil {
+		t.Fatalf("storageFor: expected nil backend on error, got %T", be)
+	}
+}
+
 // TestHandleDeploymentOCIFailure marks the deployment failed and surfaces the
 // error to the caller (logged, not returned — the loop swallows).
 func TestHandleDeploymentOCIFailure(t *testing.T) {

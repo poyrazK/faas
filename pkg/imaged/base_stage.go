@@ -86,7 +86,10 @@ func (h *Handler) EnsureBaseExt4(ctx context.Context, ref, baseKey, digestKey, o
 	// restart would be wasteful and would also race the cold-boot path
 	// if a build happened to land mid-stage.
 	wantDigest := manifest.Config.Digest
-	be := h.storageFor()
+	be, err := h.storageFor()
+	if err != nil {
+		return BaseStageResult{}, fmt.Errorf("imaged: storageFor for base stage: %w", err)
+	}
 	// Idempotency: trust the digest sidecar. When it matches, the base
 	// ext4 is the right artifact — we don't re-stream its bytes here.
 	// A bare Get-and-close on baseKey would stream 130 MB through the

@@ -6,7 +6,11 @@
 # Keep it tiny: it is the lower layer of every overlay and any bloat here is paid
 # once on disk but affects boot for every app. No package manager, no shell tools
 # beyond busybox.
-FROM debian:12-slim AS build
+FROM debian:12-slim@sha256:REPLACE_ME_AT_MERGE_TIME AS build
+# Issue #197 B3.5 (extension): base-minimal shares the same `debian:12-slim`
+# digest as builder-base; the lock entry covers both. The `scratch` FROM
+# below is the empty canonical image (no upstream repo) and is exempt
+# from the lock.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libc6 ca-certificates busybox && \
     rm -rf /var/lib/apt/lists/*

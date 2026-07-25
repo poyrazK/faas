@@ -15,22 +15,29 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// CacheEntry is one cached build: source-hash + framework → produced layer
-// path + size. The entry is purely on-disk; pkg/state never sees it (ADR-005
-// keeps state in the SQL tables; the cache is content-addressed storage that
-// can be wiped without data loss).
+// CacheEntry is one cached build: source-hash + framework + plan → produced
+// layer path + size. The entry is purely on-disk; pkg/state never sees it
+// (ADR-005 keeps state in the SQL tables; the cache is content-addressed
+// storage that can be wiped without data loss).
 type CacheEntry struct {
 	Path  string
 	Bytes int64
 }
 
 // Cache is a content-addressed cache of produced app layers. The key is
-// sha256(source-bytes); the value is the produced ext4 layer + size. The
-// filesystem layout is:
+// sha256(source-bytes) + framework + plan; the value is the produced ext4
+// layer + size. The filesystem layout is:
 //
-//	<CacheDir>/<sha256>.<framework>/layer.ext4
+//	<CacheDir>/<sha256>.<framework>.<plan>/layer.ext4
+//
+// Plan is in the key (issue #197 B3.11) so a Hobby customer's cached layer
+// (built against the Hobby cap) does not serve a Pro deploy (which would
+// expect Pro layering / resource sizes). All four plans get distinct
+// cache directories; the GC sweep walks all of them.
 //
 // Lookup is best-effort: a missing entry is not an error (the caller will
 // build). A corrupted entry (size mismatch, missing file) IS an error so the
@@ -42,16 +49,16 @@ type Cache struct {
 // NewCache wires a Cache rooted at dir. The dir is created lazily.
 func NewCache(dir string) *Cache { return &Cache{root: dir} }
 
-// Lookup returns the cached layer for (sourceHash, fw) if one exists and
-// looks intact. (false, nil) is a cache miss, not an error.
+// Lookup returns the cached layer for (sourceHash, fw, plan) if one exists
+// and looks intact. (false, nil) is a cache miss, not an error.
 //
 // B1.3 (issue #195): a cache hit requires BOTH the layer file AND a
 // matching sidecar. The sidecar is a sibling file
-// `<root>/<sha256>.<fw>/layer.sha256` whose contents are the sourceHash
-// the layer was built from. A missing sidecar, an empty sidecar, or a
-// mismatched sidecar all return a cache miss — the next Store
-// re-creates the sidecar (idempotent), so legacy caches written before
-// B1.3 self-heal on first Store of the same key.
+// `<root>/<sha256>.<fw>.<plan>/layer.sha256` whose contents are the
+// sourceHash the layer was built from. A missing sidecar, an empty
+// sidecar, or a mismatched sidecar all return a cache miss — the next
+// Store re-creates the sidecar (idempotent), so legacy caches written
+// before B1.3 self-heal on first Store of the same key.
 //
 // The sidecar is a tamper-detector for crash-recovery (the layer
 // publish is atomic, but a process kill between the layer rename and
@@ -59,11 +66,11 @@ func NewCache(dir string) *Cache { return &Cache{root: dir} }
 // content-addressed proof of layer bytes — that requires hashing the
 // layer, not the source, and is out of scope for #195 (Tier 3 cosign
 // signing territory).
-func (c *Cache) Lookup(sourceHash string, fw Framework) (CacheEntry, bool) {
+func (c *Cache) Lookup(sourceHash string, fw Framework, plan api.Plan) (CacheEntry, bool) {
 	if c == nil || c.root == "" {
 		return CacheEntry{}, false
 	}
-	p := c.entryPath(sourceHash, fw)
+	p := c.entryPath(sourceHash, fw, plan)
 	st, err := os.Stat(p)
 	if err != nil {
 		return CacheEntry{}, false
@@ -74,7 +81,7 @@ func (c *Cache) Lookup(sourceHash string, fw Framework) (CacheEntry, bool) {
 	// Sidecar check: must exist, must be regular, must contain the
 	// sourceHash. Whitespace-tolerant because Store writes
 	// "<sourceHash>\n" and operators may inspect the file with `cat`.
-	cs := c.checksumPath(sourceHash, fw)
+	cs := c.checksumPath(sourceHash, fw, plan)
 	sc, err := os.Stat(cs)
 	if err != nil {
 		return CacheEntry{}, false
@@ -92,25 +99,25 @@ func (c *Cache) Lookup(sourceHash string, fw Framework) (CacheEntry, bool) {
 	return CacheEntry{Path: p, Bytes: st.Size()}, true
 }
 
-// checksumPath returns the canonical sidecar path for (sourceHash, fw).
+// checksumPath returns the canonical sidecar path for (sourceHash, fw, plan).
 // The sidecar is a SIBLING of the layer.ext4 file inside the layer's
 // own directory:
 //
-//	<root>/<sha256>.<fw>/layer.ext4   ← the layer
-//	<root>/<sha256>.<fw>/layer.sha256 ← the sidecar
+//	<root>/<sha256>.<fw>.<plan>/layer.ext4   ← the layer
+//	<root>/<sha256>.<fw>.<plan>/layer.sha256 ← the sidecar
 //
 // The two filenames are siblings inside the same directory, so neither
 // can collide with the other and a future "manifest.json" or "meta.json"
 // added to the same dir won't rename-conflict.
-func (c *Cache) checksumPath(sourceHash string, fw Framework) string {
-	return filepath.Join(c.root, sourceHash+"."+string(fw), "layer.sha256")
+func (c *Cache) checksumPath(sourceHash string, fw Framework, plan api.Plan) string {
+	return filepath.Join(c.root, sourceHash+"."+string(fw)+"."+string(plan), "layer.sha256")
 }
 
-// Store moves the produced layer into the cache under the source-hash key.
-// The publish is atomic: write to a unique temp file in the destination
-// directory, fsync, close, then os.Rename onto the canonical name. A crash
-// mid-write leaves the temp file behind; the canonical name is never
-// observable in a half-written state.
+// Store moves the produced layer into the cache under the (sourceHash, fw,
+// plan) key. The publish is atomic: write to a unique temp file in the
+// destination directory, fsync, close, then os.Rename onto the canonical
+// name. A crash mid-write leaves the temp file behind; the canonical name
+// is never observable in a half-written state.
 //
 // CRITICAL invariants:
 //
@@ -119,7 +126,7 @@ func (c *Cache) checksumPath(sourceHash string, fw Framework) string {
 //     returns. Renaming the source would silently break the subsequent
 //     SetDeploymentRootfs call. Always copy-then-rename-to-dst.
 //
-//  2. Concurrent Store calls for DIFFERENT (sourceHash, fw) keys MUST NOT
+//  2. Concurrent Store calls for DIFFERENT (sourceHash, fw, plan) keys MUST NOT
 //     share a temp path. Two writers with a literal dst.tmp would race —
 //     one writer's os.Rename would publish the other's data. os.CreateTemp
 //     with a "cache-*.tmp" wildcard gives each call a unique suffix
@@ -132,11 +139,11 @@ func (c *Cache) checksumPath(sourceHash string, fw Framework) string {
 //  4. First-writer wins: if the canonical entry already exists, return
 //     nil without rewriting. Content-addressed storage means later
 //     writers should produce identical bytes; the existing copy is fine.
-func (c *Cache) Store(sourceHash string, fw Framework, layerPath string, bytes int64) error {
+func (c *Cache) Store(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64) error {
 	if c == nil || c.root == "" {
 		return errors.New("cache: not configured")
 	}
-	dst := c.entryPath(sourceHash, fw)
+	dst := c.entryPath(sourceHash, fw, plan)
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("cache: mkdir: %w", err)
 	}
@@ -147,7 +154,7 @@ func (c *Cache) Store(sourceHash string, fw Framework, layerPath string, bytes i
 	// the new Lookup, and the sidecar is the small bit of metadata that
 	// makes it a hit again).
 	if _, err := os.Stat(dst); err == nil {
-		return c.writeSidecar(sourceHash, fw)
+		return c.writeSidecar(sourceHash, fw, plan)
 	}
 	// Step 1: open source for reading (never write to it).
 	//
@@ -214,18 +221,18 @@ func (c *Cache) Store(sourceHash string, fw Framework, layerPath string, bytes i
 	// layer-without-sidecar and returns a cache miss — the
 	// conservative choice. Every successful Lookup after both
 	// publishes have landed sees both files.
-	return c.writeSidecar(sourceHash, fw)
+	return c.writeSidecar(sourceHash, fw, plan)
 }
 
 // writeSidecar atomically publishes the sidecar file at
-// checksumPath(sourceHash, fw) with content "<sourceHash>\n". Uses
+// checksumPath(sourceHash, fw, plan) with content "<sourceHash>\n". Uses
 // the same temp+rename idiom as the layer publish: unique temp,
 // copy, sync, close, rename. Idempotent on existing sidecar.
-func (c *Cache) writeSidecar(sourceHash string, fw Framework) error {
+func (c *Cache) writeSidecar(sourceHash string, fw Framework, plan api.Plan) error {
 	if c == nil || c.root == "" {
 		return errors.New("cache: not configured")
 	}
-	cs := c.checksumPath(sourceHash, fw)
+	cs := c.checksumPath(sourceHash, fw, plan)
 	if _, err := os.Stat(cs); err == nil {
 		return nil // already published
 	}
@@ -261,8 +268,8 @@ func (c *Cache) writeSidecar(sourceHash string, fw Framework) error {
 	return nil
 }
 
-func (c *Cache) entryPath(sourceHash string, fw Framework) string {
-	return filepath.Join(c.root, sourceHash+"."+string(fw), "layer.ext4")
+func (c *Cache) entryPath(sourceHash string, fw Framework, plan api.Plan) string {
+	return filepath.Join(c.root, sourceHash+"."+string(fw)+"."+string(plan), "layer.ext4")
 }
 
 // CacheGCSweepLoop is the free-function goroutine that calls

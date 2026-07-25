@@ -5,8 +5,11 @@
 package rootfs
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -250,4 +253,111 @@ func newTestStorage(t *testing.T) storage.StorageBackend {
 		t.Fatalf("storage.NewLocalStorageBackend: %v", err)
 	}
 	return be
+}
+
+// writeGzTar writes a gzipped tar with one regular file at path
+// `name` containing `body`. Used by the B3.7 cap tests so a
+// synthetic tarball can be handed to ApplyTarball.
+func writeGzTar(t *testing.T, path, name string, body []byte) {
+	t.Helper()
+	var raw bytes.Buffer
+	tw := tar.NewWriter(&raw)
+	hdr := &tar.Header{
+		Name: name,
+		Mode: 0o644,
+		Size: int64(len(body)),
+		Typeflag: tar.TypeReg,
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatalf("tar.WriteHeader: %v", err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatalf("tar.Write: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar.Close: %v", err)
+	}
+	var gz bytes.Buffer
+	gzw := gzip.NewWriter(&gz)
+	if _, err := gzw.Write(raw.Bytes()); err != nil {
+		t.Fatalf("gzip.Write: %v", err)
+	}
+	if err := gzw.Close(); err != nil {
+		t.Fatalf("gzip.Close: %v", err)
+	}
+	if err := os.WriteFile(path, gz.Bytes(), 0o644); err != nil {
+		t.Fatalf("write tarball: %v", err)
+	}
+}
+
+// TestApplyTarball_RespectsCap — issue #197 B3.7. A tarball whose
+// single entry's declared size exceeds capBytes must be rejected
+// with *ErrTarballExceedsCap before the file is written to disk.
+// The cap is the cumulative byte total, not per-entry; per-entry
+// is enforced by io.CopyN in applyEntry.
+func TestApplyTarball_RespectsCap(t *testing.T) {
+	dir := t.TempDir()
+	staging := filepath.Join(dir, "staging")
+	if err := os.MkdirAll(staging, 0o755); err != nil {
+		t.Fatalf("mkdir staging: %v", err)
+	}
+	tarball := filepath.Join(dir, "src.tar.gz")
+	// 1 MiB body under a 64 KiB cap. The cap is checked against the
+	// declared header size, so the actual write doesn't have to
+	// run a million bytes through io.CopyN.
+	writeGzTar(t, tarball, "handler.js", bytes.Repeat([]byte("x"), 1024*1024))
+
+	const capBytes = 64 * 1024
+	err := ApplyTarball(staging, tarball, capBytes)
+	if err == nil {
+		t.Fatalf("ApplyTarball accepted 1 MiB body under %d cap", capBytes)
+	}
+	var capErr *ErrTarballExceedsCap
+	if !errors.As(err, &capErr) {
+		t.Fatalf("err = %v (%T); want *ErrTarballExceedsCap", err, err)
+	}
+	if capErr.CapBytes != capBytes {
+		t.Errorf("CapBytes = %d; want %d", capErr.CapBytes, capBytes)
+	}
+	if capErr.EntryBytes != 1024*1024 {
+		t.Errorf("EntryBytes = %d; want %d", capErr.EntryBytes, 1024*1024)
+	}
+}
+
+// TestApplyTarball_UnderCapAccepts — the inverse: a small tarball
+// under the cap must unpack cleanly.
+func TestApplyTarball_UnderCapAccepts(t *testing.T) {
+	dir := t.TempDir()
+	staging := filepath.Join(dir, "staging")
+	if err := os.MkdirAll(staging, 0o755); err != nil {
+		t.Fatalf("mkdir staging: %v", err)
+	}
+	tarball := filepath.Join(dir, "src.tar.gz")
+	writeGzTar(t, tarball, "handler.js", []byte("console.log('hi')"))
+	if err := ApplyTarball(staging, tarball, 1024*1024); err != nil {
+		t.Fatalf("ApplyTarball under-cap: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(staging, "app", "handler.js"))
+	if err != nil {
+		t.Fatalf("read handler.js: %v", err)
+	}
+	if string(body) != "console.log('hi')" {
+		t.Errorf("body = %q; want %q", body, "console.log('hi')")
+	}
+}
+
+// TestApplyTarball_ZeroCapSkipsGate — passing capBytes=0 keeps the
+// legacy unbounded behavior. The legacy callers (tests, internal
+// callers without a plan context) must not regress.
+func TestApplyTarball_ZeroCapSkipsGate(t *testing.T) {
+	dir := t.TempDir()
+	staging := filepath.Join(dir, "staging")
+	if err := os.MkdirAll(staging, 0o755); err != nil {
+		t.Fatalf("mkdir staging: %v", err)
+	}
+	tarball := filepath.Join(dir, "src.tar.gz")
+	writeGzTar(t, tarball, "handler.js", bytes.Repeat([]byte("y"), 16*1024))
+	if err := ApplyTarball(staging, tarball, 0); err != nil {
+		t.Fatalf("ApplyTarball cap=0: %v", err)
+	}
 }

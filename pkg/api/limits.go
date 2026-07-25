@@ -155,6 +155,8 @@ var planLimits = map[Plan]Limits{
 		DeployedApps:        1,
 		MaxConcurrency:      1,
 		RAMMB:               128,
+		// AppLayerMaxMB 256 matches spec §1 ("App-layer build ... Free 256 MB").
+		// Aligned with spec §1, 2026-07-26 (Tier 3 issue #197 spec-drift audit).
 		AppLayerMaxMB:       256,
 		SourceTarballMaxMB:  100,
 		VCPU:                2,

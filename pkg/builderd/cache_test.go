@@ -11,11 +11,13 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCache_MissReturnsFalse(t *testing.T) {
 	c := NewCache(t.TempDir())
-	if _, ok := c.Lookup("deadbeef", FrameworkNode); ok {
+	if _, ok := c.Lookup("deadbeef", FrameworkNode, api.PlanHobby); ok {
 		t.Error("lookup on empty cache should miss")
 	}
 }
@@ -29,10 +31,10 @@ func TestCache_StoreAndLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := "0123456789abcdef"
-	if err := c.Store(hash, FrameworkNode, src, 16); err != nil {
+	if err := c.Store(hash, FrameworkNode, api.PlanHobby, src, 16); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := c.Lookup(hash, FrameworkNode)
+	got, ok := c.Lookup(hash, FrameworkNode, api.PlanHobby)
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -51,7 +53,7 @@ func TestCache_StoreIdempotent(t *testing.T) {
 	if err := os.WriteFile(src, []byte("first"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store("h1", FrameworkPython, src, 5); err != nil {
+	if err := c.Store("h1", FrameworkPython, api.PlanHobby, src, 5); err != nil {
 		t.Fatal(err)
 	}
 	// Second store with different src — should NOT overwrite.
@@ -59,10 +61,10 @@ func TestCache_StoreIdempotent(t *testing.T) {
 	if err := os.WriteFile(src2, []byte("second"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store("h1", FrameworkPython, src2, 6); err != nil {
+	if err := c.Store("h1", FrameworkPython, api.PlanHobby, src2, 6); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := c.Lookup("h1", FrameworkPython)
+	got, ok := c.Lookup("h1", FrameworkPython, api.PlanHobby)
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -73,10 +75,10 @@ func TestCache_StoreIdempotent(t *testing.T) {
 
 func TestCache_NilSafe(t *testing.T) {
 	var c *Cache
-	if _, ok := c.Lookup("h", FrameworkNode); ok {
+	if _, ok := c.Lookup("h", FrameworkNode, api.PlanHobby); ok {
 		t.Error("nil cache should miss")
 	}
-	if err := c.Store("h", FrameworkNode, "/x", 1); err == nil {
+	if err := c.Store("h", FrameworkNode, api.PlanHobby, "/x", 1); err == nil {
 		t.Error("nil cache Store should error")
 	}
 }
@@ -134,7 +136,7 @@ func TestCacheStore_AtomicOnCrash(t *testing.T) {
 	if err := os.Truncate(src, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store("crash-hash", FrameworkNode, src, 0); err != nil {
+	if err := c.Store("crash-hash", FrameworkNode, api.PlanHobby, src, 0); err != nil {
 		t.Fatalf("Store should succeed (atomic publish of empty file is OK): %v", err)
 	}
 	// The source file MUST still be on disk for the caller to use —
@@ -151,7 +153,7 @@ func TestCacheStore_AtomicOnCrash(t *testing.T) {
 	// populated OR not present, never torn. The post-fix path is "fully
 	// populated with whatever the source had", and the source was 0
 	// bytes here.
-	dst := c.entryPath("crash-hash", FrameworkNode)
+	dst := c.entryPath("crash-hash", FrameworkNode, api.PlanHobby)
 	st, err = os.Stat(dst)
 	if err != nil {
 		t.Fatalf("dst missing after Store: %v", err)
@@ -175,7 +177,7 @@ func TestCacheStore_PreservesSource(t *testing.T) {
 	if err := os.WriteFile(src, payload, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store("preserve-hash", FrameworkNode, src, int64(len(payload))); err != nil {
+	if err := c.Store("preserve-hash", FrameworkNode, api.PlanHobby, src, int64(len(payload))); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(src)
@@ -186,7 +188,7 @@ func TestCacheStore_PreservesSource(t *testing.T) {
 		t.Errorf("source bytes changed: got %q, want %q", got, payload)
 	}
 	// dst has the same content.
-	dst := c.entryPath("preserve-hash", FrameworkNode)
+	dst := c.entryPath("preserve-hash", FrameworkNode, api.PlanHobby)
 	dstBytes, err := os.ReadFile(dst)
 	if err != nil {
 		t.Fatalf("dst missing: %v", err)
@@ -207,7 +209,7 @@ func TestCacheStore_NoTempLeftover(t *testing.T) {
 	if err := os.WriteFile(src, []byte("happy"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store("happy-hash", FrameworkNode, src, 5); err != nil {
+	if err := c.Store("happy-hash", FrameworkNode, api.PlanHobby, src, 5); err != nil {
 		t.Fatal(err)
 	}
 	// Walk the cache root and assert no `cache-*.tmp` file exists.
@@ -264,7 +266,7 @@ func TestCacheStore_ConcurrentStoresAreSafe(t *testing.T) {
 			defer wg.Done()
 			<-start
 			hash := "concurrent-" + string(rune('a'+idx))
-			if err := c.Store(hash, FrameworkNode, srcs[idx], 1024); err != nil {
+			if err := c.Store(hash, FrameworkNode, api.PlanHobby, srcs[idx], 1024); err != nil {
 				errs <- err
 			}
 		}(i)
@@ -279,7 +281,7 @@ func TestCacheStore_ConcurrentStoresAreSafe(t *testing.T) {
 	// All N entries must exist with the correct bytes.
 	for i := 0; i < N; i++ {
 		hash := "concurrent-" + string(rune('a'+i))
-		entry, ok := c.Lookup(hash, FrameworkNode)
+		entry, ok := c.Lookup(hash, FrameworkNode, api.PlanHobby)
 		if !ok {
 			t.Errorf("concurrent[%d]: cache miss after concurrent Store", i)
 			continue
@@ -312,17 +314,17 @@ func TestCacheStore_FirstWriterWins(t *testing.T) {
 	if err := os.WriteFile(src, []byte("first"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store("idem", FrameworkPython, src, 5); err != nil {
+	if err := c.Store("idem", FrameworkPython, api.PlanHobby, src, 5); err != nil {
 		t.Fatal(err)
 	}
 	src2 := filepath.Join(t.TempDir(), "layer2.ext4")
 	if err := os.WriteFile(src2, []byte("second"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store("idem", FrameworkPython, src2, 6); err != nil {
+	if err := c.Store("idem", FrameworkPython, api.PlanHobby, src2, 6); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := c.Lookup("idem", FrameworkPython)
+	got, ok := c.Lookup("idem", FrameworkPython, api.PlanHobby)
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
@@ -341,15 +343,15 @@ func TestCacheLookup_RejectsMissingSidecar(t *testing.T) {
 	if err := os.WriteFile(src, []byte("layer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store("missing-sidecar", FrameworkNode, src, 5); err != nil {
+	if err := c.Store("missing-sidecar", FrameworkNode, api.PlanHobby, src, 5); err != nil {
 		t.Fatal(err)
 	}
 	// Delete the sidecar out from under the cache.
-	cs := c.checksumPath("missing-sidecar", FrameworkNode)
+	cs := c.checksumPath("missing-sidecar", FrameworkNode, api.PlanHobby)
 	if err := os.Remove(cs); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := c.Lookup("missing-sidecar", FrameworkNode); ok {
+	if _, ok := c.Lookup("missing-sidecar", FrameworkNode, api.PlanHobby); ok {
 		t.Error("B1.3 regression: Lookup returned hit after sidecar was deleted")
 	}
 }
@@ -363,14 +365,14 @@ func TestCacheLookup_RejectsMismatchedSidecar(t *testing.T) {
 	if err := os.WriteFile(src, []byte("layer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store("mismatch", FrameworkNode, src, 5); err != nil {
+	if err := c.Store("mismatch", FrameworkNode, api.PlanHobby, src, 5); err != nil {
 		t.Fatal(err)
 	}
-	cs := c.checksumPath("mismatch", FrameworkNode)
+	cs := c.checksumPath("mismatch", FrameworkNode, api.PlanHobby)
 	if err := os.WriteFile(cs, []byte("different-hash\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := c.Lookup("mismatch", FrameworkNode); ok {
+	if _, ok := c.Lookup("mismatch", FrameworkNode, api.PlanHobby); ok {
 		t.Error("B1.3 regression: Lookup returned hit after sidecar was tampered")
 	}
 }
@@ -385,10 +387,10 @@ func TestCacheLookup_RejectsMalformedSidecar(t *testing.T) {
 	if err := os.WriteFile(src, []byte("layer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store("malformed", FrameworkNode, src, 5); err != nil {
+	if err := c.Store("malformed", FrameworkNode, api.PlanHobby, src, 5); err != nil {
 		t.Fatal(err)
 	}
-	cs := c.checksumPath("malformed", FrameworkNode)
+	cs := c.checksumPath("malformed", FrameworkNode, api.PlanHobby)
 	cases := []struct {
 		name    string
 		content string
@@ -403,7 +405,7 @@ func TestCacheLookup_RejectsMalformedSidecar(t *testing.T) {
 			if err := os.WriteFile(cs, []byte(tc.content), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if _, ok := c.Lookup("malformed", FrameworkNode); ok {
+			if _, ok := c.Lookup("malformed", FrameworkNode, api.PlanHobby); ok {
 				t.Errorf("B1.3 regression: malformed sidecar %q returned cache hit", tc.name)
 			}
 		})
@@ -422,14 +424,14 @@ func TestCacheLookup_AcceptsSidecarWithTrailingWhitespace(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := "trailing-ws-hash"
-	if err := c.Store(hash, FrameworkNode, src, 5); err != nil {
+	if err := c.Store(hash, FrameworkNode, api.PlanHobby, src, 5); err != nil {
 		t.Fatal(err)
 	}
-	cs := c.checksumPath(hash, FrameworkNode)
+	cs := c.checksumPath(hash, FrameworkNode, api.PlanHobby)
 	if err := os.WriteFile(cs, []byte(hash+"\n\n\n  \n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := c.Lookup(hash, FrameworkNode); !ok {
+	if _, ok := c.Lookup(hash, FrameworkNode, api.PlanHobby); !ok {
 		t.Error("B1.3 regression: Lookup rejected sidecar with trailing whitespace")
 	}
 }
@@ -447,11 +449,11 @@ func TestCacheStore_RepairsSidecar(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := "legacy-cache-key"
-	if err := c.Store(hash, FrameworkNode, src, 5); err != nil {
+	if err := c.Store(hash, FrameworkNode, api.PlanHobby, src, 5); err != nil {
 		t.Fatal(err)
 	}
 	// Delete the sidecar to simulate a legacy cache state.
-	cs := c.checksumPath(hash, FrameworkNode)
+	cs := c.checksumPath(hash, FrameworkNode, api.PlanHobby)
 	if err := os.Remove(cs); err != nil {
 		t.Fatal(err)
 	}
@@ -461,13 +463,13 @@ func TestCacheStore_RepairsSidecar(t *testing.T) {
 	if err := os.WriteFile(src2, []byte("layer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store(hash, FrameworkNode, src2, 5); err != nil {
+	if err := c.Store(hash, FrameworkNode, api.PlanHobby, src2, 5); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(cs); err != nil {
 		t.Fatalf("B1.3 self-heal regression: sidecar not re-created: %v", err)
 	}
-	if _, ok := c.Lookup(hash, FrameworkNode); !ok {
+	if _, ok := c.Lookup(hash, FrameworkNode, api.PlanHobby); !ok {
 		t.Error("B1.3 self-heal regression: Lookup missed after sidecar re-creation")
 	}
 }
@@ -483,10 +485,10 @@ func TestCacheStore_IdempotentSidecar(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := "idem-sidecar"
-	if err := c.Store(hash, FrameworkNode, src, 5); err != nil {
+	if err := c.Store(hash, FrameworkNode, api.PlanHobby, src, 5); err != nil {
 		t.Fatal(err)
 	}
-	cs := c.checksumPath(hash, FrameworkNode)
+	cs := c.checksumPath(hash, FrameworkNode, api.PlanHobby)
 	first, err := os.ReadFile(cs)
 	if err != nil {
 		t.Fatal(err)
@@ -497,7 +499,7 @@ func TestCacheStore_IdempotentSidecar(t *testing.T) {
 	if err := os.WriteFile(src2, []byte("layer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store(hash, FrameworkNode, src2, 5); err != nil {
+	if err := c.Store(hash, FrameworkNode, api.PlanHobby, src2, 5); err != nil {
 		t.Fatal(err)
 	}
 	second, err := os.ReadFile(cs)
@@ -516,8 +518,8 @@ func TestCacheStore_IdempotentSidecar(t *testing.T) {
 func TestChecksumPath_Roundtrip(t *testing.T) {
 	root := t.TempDir()
 	c := NewCache(root)
-	got := c.checksumPath("0123456789abcdef", FrameworkNode)
-	want := filepath.Join(root, "0123456789abcdef.node", "layer.sha256")
+	got := c.checksumPath("0123456789abcdef", FrameworkNode, api.PlanHobby)
+	want := filepath.Join(root, "0123456789abcdef.node.hobby", "layer.sha256")
 	if got != want {
 		t.Errorf("checksumPath = %q, want %q (sibling file inside layer dir)", got, want)
 	}
@@ -808,12 +810,12 @@ func TestCacheSweep_ConcurrentStoreAndSweep(t *testing.T) {
 			// Chtimes the entry dir to NOW after Store so the entry
 			// survives the Sweep's TTL=0 pass (which evicts entries
 			// whose mtime < now).
-			if err := c.Store(hash, FrameworkNode, src, 64); err != nil {
+			if err := c.Store(hash, FrameworkNode, api.PlanHobby, src, 64); err != nil {
 				// Acceptable: sweep may have raced and deleted the
 				// dst dir mid-write. Next build retries.
 				continue
 			}
-			dir := filepath.Join(c.root, hash+".node")
+			dir := filepath.Join(c.root, hash+".node.hobby")
 			if err := os.Chtimes(dir, now.Add(time.Duration(i+1)*time.Second), now.Add(time.Duration(i+1)*time.Second)); err != nil {
 				t.Errorf("chtimes: %v", err)
 			}

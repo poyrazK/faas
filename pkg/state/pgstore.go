@@ -765,7 +765,8 @@ func (s *PgStore) DeploymentByID(ctx context.Context, id string) (Deployment, er
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
 		        coalesce(rootfs_path,''), coalesce(rootfs_key,''), coalesce(rootfs_bytes,0),
-		        status, coalesce(error,''), coalesce(error_code,''), created_at
+		        status, coalesce(error,''), coalesce(error_code,''), created_at,
+		        coalesce(source_url,''), coalesce(commit_sha,'')
 		 from deployments where id = $1`, id)
 	return scanDeploymentWithRootfs(row)
 }
@@ -774,7 +775,8 @@ func (s *PgStore) LatestDeployment(ctx context.Context, appID string) (Deploymen
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-		        status, coalesce(error,''), coalesce(error_code,''), created_at
+		        status, coalesce(error,''), coalesce(error_code,''), created_at,
+		        coalesce(source_url,''), coalesce(commit_sha,'')
 		 from deployments where app_id = $1 order by created_at desc limit 1`, appID)
 	return scanDeployment(row)
 }
@@ -784,7 +786,8 @@ func (s *PgStore) LiveDeployment(ctx context.Context, appID string) (Deployment,
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
 		        coalesce(rootfs_path,''), coalesce(rootfs_key,''), coalesce(rootfs_bytes,0),
-		        status, coalesce(error,''), coalesce(error_code,''), created_at
+		        status, coalesce(error,''), coalesce(error_code,''), created_at,
+		        coalesce(source_url,''), coalesce(commit_sha,'')
 		 from deployments where app_id = $1 and status = 'live' order by created_at desc limit 1`, appID)
 	return scanDeploymentWithRootfs(row)
 }
@@ -793,7 +796,8 @@ func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID string) 
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 		        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-		        status, coalesce(error,''), coalesce(error_code,''), created_at
+		        status, coalesce(error,''), coalesce(error_code,''), created_at,
+		        coalesce(source_url,''), coalesce(commit_sha,'')
 		 from deployments where app_id = $1 and status = 'superseded'
 		 order by created_at desc limit 1`, appID)
 	return scanDeployment(row)
@@ -829,14 +833,16 @@ func (s *PgStore) ListDeploymentsForApp(ctx context.Context, appID string, limit
 		rows, err = s.pool.Query(ctx,
 			`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 			        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-			        status, coalesce(error,''), coalesce(error_code,''), created_at
+			        status, coalesce(error,''), coalesce(error_code,''), created_at,
+			        coalesce(source_url,''), coalesce(commit_sha,'')
 			 from deployments where app_id = $1 order by created_at desc limit $2 offset $3`,
 			appID, limit, offset)
 	} else {
 		rows, err = s.pool.Query(ctx,
 			`select id, app_id, coalesce(build_id::text,''), image_digest, kind,
 			        coalesce(source_path,''), coalesce(source_bytes,0), coalesce(handler,''), coalesce(log_path,''),
-			        status, coalesce(error,''), coalesce(error_code,''), created_at
+			        status, coalesce(error,''), coalesce(error_code,''), created_at,
+			        coalesce(source_url,''), coalesce(commit_sha,'')
 			 from deployments where app_id = $1 order by created_at desc offset $2`,
 			appID, offset)
 	}
@@ -865,7 +871,8 @@ func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID strin
 		rows, err = s.pool.Query(ctx,
 			`select d.id, d.app_id, coalesce(d.build_id::text,''), d.image_digest, d.kind,
 			        coalesce(d.source_path,''), coalesce(d.source_bytes,0), coalesce(d.handler,''), coalesce(d.log_path,''),
-			        d.status, coalesce(d.error,''), coalesce(d.error_code,''), d.created_at
+			        d.status, coalesce(d.error,''), coalesce(d.error_code,''), d.created_at,
+			        coalesce(d.source_url,''), coalesce(d.commit_sha,'')
 			 from deployments d join apps a on a.id = d.app_id
 			 where a.account_id = $1 order by d.created_at desc limit $2`,
 			accountID, limit)
@@ -873,7 +880,8 @@ func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID strin
 		rows, err = s.pool.Query(ctx,
 			`select d.id, d.app_id, coalesce(d.build_id::text,''), d.image_digest, d.kind,
 			        coalesce(d.source_path,''), coalesce(d.source_bytes,0), coalesce(d.handler,''), coalesce(d.log_path,''),
-			        d.status, coalesce(d.error,''), coalesce(d.error_code,''), d.created_at
+			        d.status, coalesce(d.error,''), coalesce(d.error_code,''), d.created_at,
+			        coalesce(d.source_url,''), coalesce(d.commit_sha,'')
 			 from deployments d join apps a on a.id = d.app_id
 			 where a.account_id = $1 and d.created_at < $2
 			 order by d.created_at desc limit $3`,
@@ -919,6 +927,35 @@ func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path, key string,
 		    set rootfs_path = $2, rootfs_key = $3, rootfs_bytes = $4
 		  where id = $1`,
 		id, nullString(path), nullString(key), bytes)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetDeploymentSourceURL stamps the upstream URL + commit SHA on a
+// deployment (Tier 3 / issue #197 B3.10 schema half, migrations/00047).
+// Populated by githubd's CreateDeployment callback once the deployment
+// row exists. Phase 2 (provenance) reads source_url + commit_sha from
+// the deployment row when stamping build_provenance.source_url, so
+// the two phases don't have to re-derive from the trigger.
+//
+// Both columns are nullable; passing empty strings is the normal case
+// for image: deploys that don't have an upstream commit. The
+// commit_sha length cap (64) is enforced by the DB CHECK
+// (deployments_commit_sha_len_chk); a too-long value surfaces here
+// as the same error the DB would have raised, so a unit-test path
+// that goes through memstore and a production path that goes through
+// pgstore both fail the same way.
+func (s *PgStore) SetDeploymentSourceURL(ctx context.Context, id, sourceURL, commitSHA string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update deployments
+		    set source_url = $2, commit_sha = $3
+		  where id = $1`,
+		id, nullString(sourceURL), nullString(commitSHA))
 	if err != nil {
 		return err
 	}
@@ -3137,7 +3174,8 @@ func scanDeployment(row pgx.Row) (Deployment, error) {
 	var kind, statusStr string
 	if err := row.Scan(&d.ID, &d.AppID, &d.BuildID, &d.ImageDigest, &kind,
 		&d.SourcePath, &d.SourceBytes, &d.Handler, &d.LogPath,
-		&statusStr, &d.Error, &d.ErrorCode, &d.CreatedAt); err != nil {
+		&statusStr, &d.Error, &d.ErrorCode, &d.CreatedAt,
+		&d.SourceURL, &d.CommitSHA); err != nil {
 		return Deployment{}, mapErr(err)
 	}
 	d.Kind = DeploymentKind(kind)
@@ -3159,7 +3197,8 @@ func scanDeploymentWithRootfs(row pgx.Row) (Deployment, error) {
 	if err := row.Scan(&d.ID, &d.AppID, &d.BuildID, &d.ImageDigest, &kind,
 		&d.SourcePath, &d.SourceBytes, &d.Handler, &d.LogPath,
 		&rootfsPath, &rootfsKey, &d.RootfsBytes,
-		&statusStr, &d.Error, &d.ErrorCode, &d.CreatedAt); err != nil {
+		&statusStr, &d.Error, &d.ErrorCode, &d.CreatedAt,
+		&d.SourceURL, &d.CommitSHA); err != nil {
 		return Deployment{}, mapErr(err)
 	}
 	d.RootfsPath = rootfsPath
@@ -3176,7 +3215,8 @@ func scanDeployments(rows pgx.Rows) ([]Deployment, error) {
 		var kind, statusStr string
 		if err := rows.Scan(&d.ID, &d.AppID, &d.BuildID, &d.ImageDigest, &kind,
 			&d.SourcePath, &d.SourceBytes, &d.Handler, &d.LogPath,
-			&statusStr, &d.Error, &d.ErrorCode, &d.CreatedAt); err != nil {
+			&statusStr, &d.Error, &d.ErrorCode, &d.CreatedAt,
+			&d.SourceURL, &d.CommitSHA); err != nil {
 			return nil, err
 		}
 		d.Kind = DeploymentKind(kind)

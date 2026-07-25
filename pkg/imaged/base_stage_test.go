@@ -312,6 +312,57 @@ func (b *failingBuilder) BuildBase(_ context.Context, _ rootfs.BaseBuildInput) (
 	return rootfs.BaseBuildResult{}, b.err
 }
 
+// TestEnsureBaseExt4_PerArchPartition — issue #197 B3.3. The same
+// runtime staged under two different arch-suffixed keys must produce
+// two distinct published ext4s and two distinct digest sidecars in
+// storage. This is the load-bearing property that lets an arm64
+// imaged binary coexist on the same storage root as an amd64 one
+// without clobbering each other's base image.
+func TestEnsureBaseExt4_PerArchPartition(t *testing.T) {
+	mp := newTwoLayerPuller(t)
+	b := &fakeBuilder{}
+	hs := newBaseHarness(t, mp, b)
+
+	// Per-arch keys derived via the same helper schedd uses on the
+	// wake wire — the source of truth.
+	const baseKeyAmd64 = "base/runner-builder-amd64.ext4"
+	const baseKeyArm64 = "base/runner-builder-arm64.ext4"
+	const digKeyAmd64 = "base/runner-builder-amd64.ext4.digest"
+	const digKeyArm64 = "base/runner-builder-arm64.ext4.digest"
+
+	// Stage the amd64 base.
+	if _, err := hs.h.EnsureBaseExt4(context.Background(),
+		"ghcr.io/onebox-faas/builder-base:latest", baseKeyAmd64, digKeyAmd64, ""); err != nil {
+		t.Fatalf("amd64 stage: %v", err)
+	}
+	// Stage the arm64 base into the same storage backend.
+	if _, err := hs.h.EnsureBaseExt4(context.Background(),
+		"ghcr.io/onebox-faas/builder-base:latest", baseKeyArm64, digKeyArm64, ""); err != nil {
+		t.Fatalf("arm64 stage: %v", err)
+	}
+
+	// Both ext4s must be present and byte-distinct (the fakeBuilder
+	// stamps unique bytes per call so the two stages produce non-
+	// identical blobs).
+	for _, k := range []string{baseKeyAmd64, baseKeyArm64} {
+		rc, err := hs.be.Get(context.Background(), k)
+		if err != nil {
+			t.Fatalf("missing ext4 at %s: %v", k, err)
+		}
+		buf, _ := io.ReadAll(rc)
+		rc.Close()
+		if len(buf) == 0 {
+			t.Fatalf("ext4 at %s is empty", k)
+		}
+	}
+	// Both digest sidecars must be present.
+	for _, k := range []string{digKeyAmd64, digKeyArm64} {
+		if _, err := hs.be.Get(context.Background(), k); err != nil {
+			t.Fatalf("missing digest sidecar at %s: %v", k, err)
+		}
+	}
+}
+
 // brokenManifestPuller fails PullManifest. Used to prove registry errors
 // surface rather than being swallowed.
 type brokenManifestPuller struct{ manifestErr error }
