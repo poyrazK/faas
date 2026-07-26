@@ -1203,6 +1203,30 @@ func (s *server) deploymentResponse(d state.Deployment) api.DeploymentResponse {
 	}
 }
 
+// buildProvenanceResponse renders a state.BuildProvenance as the
+// public DTO (ADR-038). Field-by-field mirror; timestamps render
+// as RFC3339 UTC strings. Empty strings (cache-hit builds today;
+// pre-Phase-3 builds once Phase 3 ships) pass through as-is so the
+// customer can branch on <field> != "".
+func (s *server) buildProvenanceResponse(p state.BuildProvenance) api.BuildProvenanceResponse {
+	return api.BuildProvenanceResponse{
+		ID:             p.ID,
+		BuildID:        p.BuildID,
+		BuildkitVer:    p.BuildkitVer,
+		RailpackVer:    p.RailpackVer,
+		BaseDigest:     p.BaseDigest,
+		SourceSHA256:   p.SourceSHA256,
+		SourceURL:      p.SourceURL,
+		CommitSHA:      p.CommitSHA,
+		Plan:           p.Plan,
+		RunnerDigest:   p.RunnerDigest,
+		BuilderNodeID:  p.BuilderNodeID,
+		StartedAt:      p.StartedAt.UTC().Format(time.RFC3339),
+		FinishedAt:     p.FinishedAt.UTC().Format(time.RFC3339),
+		SBOMStorageKey: p.SBOMStorageKey,
+	}
+}
+
 func instanceResponse(ins state.Instance) api.InstanceResponse {
 	r := api.InstanceResponse{
 		ID:           ins.ID,
@@ -1591,4 +1615,44 @@ func startSSE(w http.ResponseWriter) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	w.(http.Flusher).Flush()
+}
+
+// getBuildProvenance returns the ADR-038 provenance row for a build
+// (Tier 3 / issue #197 B3.10-read half). Two-step ownership check:
+// BuildByID → DeploymentByID → AppByID, comparing App.AccountID against
+// the requesting account. A mismatch renders 404 with the same
+// envelope getDeployment uses ("no such build") so IDOR probes
+// can't enumerate cross-account build ids (security round-4 finding).
+//
+// A build with no provenance row (pre-PR build, or successful
+// build whose populator INSERT failed and was logged at WARN
+// inside builderd.recordProvenance) renders 404 with code
+// build_provenance_not_found — distinct from "no such build"
+// so the customer can branch on the difference.
+//
+// Per ADR-034 rev2 the route is gated by the same `build:read`
+// scope the rest of the build surface uses.
+func (s *server) getBuildProvenance(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	id := r.PathValue("id")
+	build, err := s.store.BuildByID(ctx(r), id)
+	if err != nil {
+		s.notFound(w, "no such build")
+		return
+	}
+	dep, err := s.store.DeploymentByID(ctx(r), build.DeploymentID)
+	if err != nil {
+		s.notFound(w, "no such build")
+		return
+	}
+	app, err := s.store.AppByID(ctx(r), dep.AppID)
+	if err != nil || app.AccountID != acct.ID {
+		s.notFound(w, "no such build")
+		return
+	}
+	prov, err := s.store.BuildProvenanceByBuildID(ctx(r), build.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrBuildProvenanceNotFound())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.buildProvenanceResponse(prov))
 }

@@ -288,6 +288,32 @@ type Build struct {
 	EnqueuedAt   time.Time // set at CreateBuild; builderd measures queue wait against it (ADR-030)
 }
 
+// BuildProvenance is the post-mortem "what ran?" record for a Build
+// (ADR-038, Tier 3 / issue #197 B3.1). Populated by builderd at the
+// two markSucceeded sites; read by apid at GET /v1/builds/{id}/provenance
+// and by the CLI at `faas build provenance <id>`.
+//
+// One row per build_id (UNIQUE constraint enforces it). Fields mirror
+// the table shape with no translation; empty strings round-trip the
+// nullable columns. sbom_storage_key is empty in this PR — Phase 3's
+// syft populator fills it.
+type BuildProvenance struct {
+	ID             string
+	BuildID        string
+	BuildkitVer    string
+	RailpackVer    string
+	BaseDigest     string
+	SourceSHA256   string
+	SourceURL      string
+	CommitSHA      string
+	Plan           string
+	RunnerDigest   string
+	BuilderNodeID  string
+	StartedAt      time.Time
+	FinishedAt     time.Time
+	SBOMStorageKey string
+}
+
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
 // gatewayd reads it to decide whether to mint a cert (spec §4.1, §7).
 type CustomDomain struct {

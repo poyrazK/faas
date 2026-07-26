@@ -104,6 +104,14 @@ type Config struct {
 	// Zero falls back to 24 hours in main.go — daily is the right
 	// frequency for a slow disk-bleed control.
 	CacheGCSweepInterval time.Duration `toml:"cache_gc_sweep_interval"`
+	// BuilderNodeID is the compute_node name stamped onto every
+	// build_provenance row (ADR-038, Tier 3 / issue #197 B3.1).
+	// Defaults to "default-local" in LoadConfig — the synthetic
+	// node NewMemStore + the production single-box both seed with
+	// the same name. Operators can override via this field when
+	// builderd runs on a non-default node (multi-node deployments
+	// post-PR-B).
+	BuilderNodeID string `toml:"builder_node_id"`
 }
 
 // ResolveVMMTarget returns the dial target for vmmd. VMMTarget wins
@@ -146,6 +154,11 @@ func LoadConfig(path string) (*Config, error) {
 		CacheMaxBytes:        50 << 30, // 50 GiB
 		CacheMaxAge:          30 * 24 * time.Hour,
 		CacheGCSweepInterval: 24 * time.Hour,
+		// ADR-038: default compute_node name stamped on provenance
+		// rows. "default-local" matches the synthetic node seeded by
+		// migrations/00024 + NewMemStore, so a MemStore-backed test
+		// and the production single-box write the same value.
+		BuilderNodeID: "default-local",
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

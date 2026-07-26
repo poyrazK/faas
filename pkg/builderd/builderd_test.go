@@ -1157,3 +1157,137 @@ func TestProcessNext_RecordRecentBuildClaim_FailureDoesNotFailBuild(t *testing.T
 		t.Errorf("deployment flipped to failed on record error; want unchanged")
 	}
 }
+
+// TestProcessOne_CacheHitPersistsProvenance — ADR-038 / Tier 3
+// / issue #197 B3.1: the cache-hit markSucceeded path must land
+// a build_provenance row. Catches the regression where the
+// populator is only wired at the fresh-build markSucceeded site
+// (the second site's symPole in the cache-hit branch closes).
+func TestProcessOne_CacheHitPersistsProvenance(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+
+	buildID, _, _ := seedDeployment(t, store, src)
+
+	// Pre-populate the cache so the lookup hits.
+	cacheRoot := t.TempDir()
+	c := NewCache(cacheRoot)
+	layerPath := filepath.Join(t.TempDir(), "layer.ext4")
+	if err := os.WriteFile(layerPath, []byte("pre-cached layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := hashFile(src)
+	if err := c.Store(hash, FrameworkNode, api.PlanPro, layerPath, 18); err != nil {
+		t.Fatal(err)
+	}
+
+	fvm := &fakeVM{} // proves the spawn was skipped.
+	notif := &fakeNotifier{}
+	b := New(store, notif, fvm, c, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	// The populator must have landed a row keyed by build_id.
+	prov, err := store.BuildProvenanceByBuildID(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("BuildProvenanceByBuildID: %v (populator MUST land on the cache-hit path)", err)
+	}
+	if prov.SourceSHA256 != hash {
+		t.Errorf("SourceSHA256 = %q, want %q", prov.SourceSHA256, hash)
+	}
+	if prov.Plan != string(api.PlanPro) {
+		t.Errorf("Plan = %q, want %q", prov.Plan, api.PlanPro)
+	}
+}
+
+// TestProcessOne_FreshBuildPersistsProvenance — the OTHER
+// markSucceeded site (the spawn path) must also populate the
+// row. Coverage is lighter here because the spawn path is
+// gated behind fvm.spawnCalls > 0; we just check the row lands.
+// The deeper source_url / commit_sha stamping is verified in
+// TestProcessOne_ProvenanceCopiesDeploymentSourceFields below.
+func TestProcessOne_FreshBuildPersistsProvenance(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+
+	buildID, _, _ := seedDeployment(t, store, src)
+
+	// No cache pre-population → fresh-build branch.
+	cacheRoot := t.TempDir()
+	c := NewCache(cacheRoot)
+	// Layer must exist for cache.Store (AppLayerMaxMB stat check)
+	// in the post-build bookkeeping.
+	layerPath := filepath.Join(t.TempDir(), "layer.ext4")
+	if err := os.WriteFile(layerPath, []byte("tiny layer content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fvm := &fakeVM{
+		// fakeVM.WaitForCompletion returns f.out; pre-set it so the
+		// spawn path produces the canned layer path.
+		out: BuildOutcome{OCIImage: layerPath, ExitCode: 0, LogTailBytes: 0},
+	}
+	notif := &fakeNotifier{}
+	b := New(store, notif, fvm, c, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	prov, err := store.BuildProvenanceByBuildID(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("BuildProvenanceByBuildID: %v (fresh-build path must populate)", err)
+	}
+	if prov.SourceSHA256 == "" {
+		t.Errorf("SourceSHA256 = empty, want non-empty (hashFile at line ~318)")
+	}
+	if prov.Plan != string(api.PlanPro) {
+		t.Errorf("Plan = %q, want %q", prov.Plan, api.PlanPro)
+	}
+}
+
+// TestProcessOne_ProvenanceCopiesDeploymentSourceFields —
+// guards the ADR-038 "what ran?" propagation. The provenance
+// source_url + commit_sha are copied from the deployment row
+// (Phase 1 columns from migration 00047); a regression that
+// drops the copy is silent without this test.
+func TestProcessOne_ProvenanceCopiesDeploymentSourceFields(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+	buildID, depID, _ := seedDeployment(t, store, src)
+
+	const wantURL = "https://github.com/acme/app@main"
+	const wantSHA = "0123456789abcdef0123456789abcdef01234567"
+	if err := store.SetDeploymentSourceURL(context.Background(), depID, wantURL, wantSHA); err != nil {
+		t.Fatalf("SetDeploymentSourceURL: %v", err)
+	}
+
+	cacheRoot := t.TempDir()
+	c := NewCache(cacheRoot)
+	layerPath := filepath.Join(t.TempDir(), "layer.ext4")
+	if err := os.WriteFile(layerPath, []byte("pre-cached layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := hashFile(src)
+	if err := c.Store(hash, FrameworkNode, api.PlanPro, layerPath, 18); err != nil {
+		t.Fatal(err)
+	}
+
+	b := New(store, &fakeNotifier{}, &fakeVM{}, c, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	prov, err := store.BuildProvenanceByBuildID(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("BuildProvenanceByBuildID: %v", err)
+	}
+	if prov.SourceURL != wantURL {
+		t.Errorf("SourceURL = %q, want %q (populator must copy from deployments.source_url)", prov.SourceURL, wantURL)
+	}
+	if prov.CommitSHA != wantSHA {
+		t.Errorf("CommitSHA = %q, want %q (populator must copy from deployments.commit_sha)", prov.CommitSHA, wantSHA)
+	}
+}

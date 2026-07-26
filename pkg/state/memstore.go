@@ -77,8 +77,14 @@ type MemStore struct {
 	githubBindings map[string]GitHubBinding
 	deployments    map[string]Deployment
 	builds         map[string]Build
-	domains        map[string]CustomDomain
-	crons          map[string]Cron
+	// buildProvenance is the ADR-038 "what ran?" record keyed by
+	// build_id (mirrors build_provenance.build_id UNIQUE). MemStore
+	// holds the same idempotent-replace semantics as PgStore's
+	// ON CONFLICT (build_id) DO UPDATE so a redelivered build
+	// overwrites the same row instead of doubling.
+	buildProvenance map[string]BuildProvenance
+	domains         map[string]CustomDomain
+	crons           map[string]Cron
 	// invocations is the Move 1 event-shaped queue (async_invoke,
 	// queue, delayed_task, cron). MemStore mirrors PgStore's `select
 	// ... for update skip locked` semantics by serialising every access
@@ -204,13 +210,17 @@ type usageMinute struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		accounts:         map[string]Account{},
-		keys:             map[string]APIKey{},
-		keyByHash:        map[string]APIKey{},
-		apps:             map[string]App{},
-		githubBindings:   map[string]GitHubBinding{},
-		deployments:      map[string]Deployment{},
-		builds:           map[string]Build{},
+		accounts:       map[string]Account{},
+		keys:           map[string]APIKey{},
+		keyByHash:      map[string]APIKey{},
+		apps:           map[string]App{},
+		githubBindings: map[string]GitHubBinding{},
+		deployments:    map[string]Deployment{},
+		builds:         map[string]Build{},
+		// buildProvenance is the ADR-038 "what ran?" map keyed by
+		// build_id (mirrors the build_provenance.build_id UNIQUE).
+		// Starts empty; CreateBuildProvenance fills it.
+		buildProvenance:  map[string]BuildProvenance{},
 		domains:          map[string]CustomDomain{},
 		crons:            map[string]Cron{},
 		invocations:      map[string]Invocation{},
@@ -1197,6 +1207,40 @@ func (m *MemStore) UpdateBuildStatus(_ context.Context, id string, status BuildS
 	}
 	m.builds[id] = b
 	return nil
+}
+
+// CreateBuildProvenance mirrors PgStore.CreateBuildProvenance
+// (ADR-038, Tier 3 / issue #197 B3.1). Idempotent: re-creating a
+// row for an existing build_id overwrites the existing entry in
+// place (mirrors ON CONFLICT (build_id) DO UPDATE). Empty BuildID
+// is a programming error and returns an error so a unit-test path
+// surfaces it instead of producing a malformed key.
+//
+// The build row existence is NOT checked — the populator calls
+// this from a context where the build_id has just been claimed
+// (succeeded), and the schema FK ensures a referential guarantee
+// at the DB level. The MemStore shape trusts the caller.
+func (m *MemStore) CreateBuildProvenance(_ context.Context, prov BuildProvenance) error {
+	if prov.BuildID == "" {
+		return errors.New("state: build_provenance BuildID empty")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.buildProvenance[prov.BuildID] = prov
+	return nil
+}
+
+// BuildProvenanceByBuildID mirrors PgStore.BuildProvenanceByBuildID.
+// Returns ErrNotFound when no row exists for the build_id — the
+// apid handler renders 404 with code=build_provenance_not_found.
+func (m *MemStore) BuildProvenanceByBuildID(_ context.Context, buildID string) (BuildProvenance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.buildProvenance[buildID]
+	if !ok {
+		return BuildProvenance{}, ErrNotFound
+	}
+	return p, nil
 }
 
 // SweepStuckRunningBuilds mirrors PgStore.SweepStuckRunningBuilds

@@ -797,6 +797,113 @@ func TestGetDeployment_UnknownReturns404(t *testing.T) {
 	assertProblem(t, rec, 404, api.CodeNotFound)
 }
 
+// TestGetBuildProvenance_HappyPath — ADR-038 / Tier 3 / issue
+// #197 B3.10-read half. Seeds app + deployment + build + a
+// provenance row under the test account, then verifies the
+// GET /v1/builds/{id}/provenance route renders the DTO with
+// every field. The pre-existing source_url + commit_sha
+// propagation from deployment is verified in the builderd
+// test package; here we only assert the public surface.
+func TestGetBuildProvenance_HappyPath(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "prov-happy")
+	build, err := e.store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 0, "")
+	if err != nil {
+		t.Fatalf("seed build: %v", err)
+	}
+	now := time.Now().UTC()
+	prov := state.BuildProvenance{
+		BuildID:        build.ID,
+		SourceSHA256:   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		SourceURL:      "https://github.com/acme/app@main",
+		CommitSHA:      "0123456789abcdef0123456789abcdef01234567",
+		Plan:           string(api.PlanPro),
+		BuilderNodeID:  "default-local",
+		StartedAt:      now,
+		FinishedAt:     now.Add(2 * time.Second),
+		SBOMStorageKey: "",
+	}
+	if err := e.store.CreateBuildProvenance(context.Background(), prov); err != nil {
+		t.Fatalf("seed provenance: %v", err)
+	}
+
+	rec := e.do(t, "GET", "/v1/builds/"+build.ID+"/provenance", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out api.BuildProvenanceResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.BuildID != build.ID {
+		t.Errorf("BuildID = %q, want %q", out.BuildID, build.ID)
+	}
+	if out.SourceSHA256 != prov.SourceSHA256 {
+		t.Errorf("SourceSHA256 = %q, want %q", out.SourceSHA256, prov.SourceSHA256)
+	}
+	if out.Plan != string(api.PlanPro) {
+		t.Errorf("Plan = %q, want %q", out.Plan, api.PlanPro)
+	}
+	if out.BuilderNodeID != "default-local" {
+		t.Errorf("BuilderNodeID = %q, want %q", out.BuilderNodeID, "default-local")
+	}
+}
+
+// TestGetBuildProvenance_NoSuchBuild404 — no build row at the
+// supplied id. The route's first barrier is BuildByID, so the
+// response uses the same 404 shape as getDeployment.
+func TestGetBuildProvenance_NoSuchBuild404(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "GET", "/v1/builds/0123456789abcdef0123456789abcdef/provenance", nil, nil)
+	assertProblem(t, rec, 404, api.CodeNotFound)
+}
+
+// TestGetBuildProvenance_NoRow404 — build exists, provenance
+// doesn't. The route's second barrier is BuildProvenanceByBuildID,
+// which returns apierr.ErrBuildProvenanceNotFound (the
+// build_provenance_not_found code, distinct from CodeNotFound
+// so the dashboard can branch on it).
+func TestGetBuildProvenance_NoRow404(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "prov-norow")
+	build, err := e.store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 0, "")
+	if err != nil {
+		t.Fatalf("seed build: %v", err)
+	}
+	rec := e.do(t, "GET", "/v1/builds/"+build.ID+"/provenance", nil, nil)
+	assertProblem(t, rec, 404, api.CodeBuildProvenanceNotFound)
+}
+
+// TestGetBuildProvenance_OtherAccountIDOR — the route MUST
+// render 404 when the build's owning app belongs to a
+// different account, even with a valid build_id + provenance
+// row in the store. The check is
+// dep.AppID → AppByID → App.AccountID == acct.ID. A
+// regression that drops the check is a cross-account IDOR.
+func TestGetBuildProvenance_OtherAccountIDOR(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "prov-idor")
+	build, err := e.store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 0, "")
+	if err != nil {
+		t.Fatalf("seed build: %v", err)
+	}
+	// Stamp a provenance row directly — bypasses the populator,
+	// which is fine: we're exercising the handler, not builderd.
+	if err := e.store.CreateBuildProvenance(context.Background(), state.BuildProvenance{
+		BuildID:      build.ID,
+		SourceSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		StartedAt:    time.Now().UTC(),
+		FinishedAt:   time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed provenance: %v", err)
+	}
+
+	// New server with a DIFFERENT account, hitting the same build id.
+	e2 := setup(t, api.PlanHobby)
+	rec := e2.do(t, "GET", "/v1/builds/"+build.ID+"/provenance", nil, nil)
+	assertProblem(t, rec, 404, api.CodeNotFound)
+}
+
 // TestRollbackApp_HappyPath seeds two deployments (one live, one
 // superseded), then rolls back. Confirms the response shape (it carries
 // the previously-superseded deployment's id) AND that the underlying

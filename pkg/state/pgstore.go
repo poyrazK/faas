@@ -1065,6 +1065,76 @@ func (s *PgStore) UpdateBuildStatus(ctx context.Context, id string, status Build
 	return nil
 }
 
+// CreateBuildProvenance stamps the post-mortem "what ran?" row for a
+// successful Build (ADR-038, Tier 3 / issue #197 B3.1). The
+// `ON CONFLICT (build_id) DO UPDATE` clause makes a redelivered
+// build (LISTEN race between the apid write path and imaged's
+// reaper; PR-A's redelivery dedupe) idempotent — the row is updated
+// in place with the same values rather than failing with 23505.
+//
+// Builderd is best-effort: a failed call returns the error and
+// logs at WARN inside pkg/builderd.recordProvenance. The build
+// itself still succeeds (the builds row is the authoritative
+// customer-visible transition; provenance is metadata). The apid
+// reader renders 404 when the row is missing — a paging event
+// whose root cause is "populator INSERT failed", not "build
+// failed".
+//
+// The columns stamped cover all spec §9 fields; nullable ones use
+// nullString so an empty input maps to NULL (e.g. cache-hit builds
+// have empty buildkit_version / railpack_version / base_digest).
+func (s *PgStore) CreateBuildProvenance(ctx context.Context, prov BuildProvenance) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into build_provenance
+		   (build_id, buildkit_version, railpack_version, base_digest, source_sha256,
+		    source_url, commit_sha, plan, runner_digest, builder_node_id,
+		    started_at, finished_at, sbom_storage_key)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		 on conflict (build_id) do update set
+		   buildkit_version = excluded.buildkit_version,
+		   railpack_version = excluded.railpack_version,
+		   base_digest      = excluded.base_digest,
+		   source_sha256    = excluded.source_sha256,
+		   source_url       = excluded.source_url,
+		   commit_sha       = excluded.commit_sha,
+		   plan             = excluded.plan,
+		   runner_digest    = excluded.runner_digest,
+		   builder_node_id  = excluded.builder_node_id,
+		   started_at       = excluded.started_at,
+		   finished_at      = excluded.finished_at,
+		   sbom_storage_key = excluded.sbom_storage_key`,
+		prov.BuildID,
+		nullString(prov.BuildkitVer),
+		nullString(prov.RailpackVer),
+		nullString(prov.BaseDigest),
+		prov.SourceSHA256,
+		nullString(prov.SourceURL),
+		nullString(prov.CommitSHA),
+		nullString(prov.Plan),
+		nullString(prov.RunnerDigest),
+		nullString(prov.BuilderNodeID),
+		prov.StartedAt,
+		prov.FinishedAt,
+		nullString(prov.SBOMStorageKey),
+	)
+	return err
+}
+
+// BuildProvenanceByBuildID resolves the row by build_id. Returns
+// ErrNotFound when the build has no provenance row — a pre-PR
+// build, or a successful build whose populator INSERT failed and
+// was logged at WARN inside builderd. The apid handler turns
+// ErrNotFound into 404 with code=build_provenance_not_found.
+func (s *PgStore) BuildProvenanceByBuildID(ctx context.Context, buildID string) (BuildProvenance, error) {
+	row := s.pool.QueryRow(ctx,
+		`select id, build_id, coalesce(buildkit_version,''), coalesce(railpack_version,''),
+		        coalesce(base_digest,''), source_sha256, coalesce(source_url,''), coalesce(commit_sha,''),
+		        coalesce(plan,''), coalesce(runner_digest,''), coalesce(builder_node_id,''),
+		        started_at, finished_at, coalesce(sbom_storage_key,'')
+		   from build_provenance where build_id = $1`, buildID)
+	return scanBuildProvenance(row)
+}
+
 // SweepStuckRunningBuilds is the reaper sweep (issue #195 B1.4).
 // Returns the number of rows flipped. A partial index on
 // builds(status='running') keeps this O(matches) instead of O(table).
@@ -3243,6 +3313,25 @@ func scanBuild(row pgx.Row) (Build, error) {
 	b.Status = BuildStatus(statusStr)
 	b.FailureClass = FailureClass(fc)
 	return b, nil
+}
+
+// scanBuildProvenance reads a build_provenance row into the
+// BuildProvenance struct (ADR-038). All columns except id, build_id,
+// source_sha256, started_at, finished_at are COALESCEd to empty
+// string on the read side so the struct's text fields stay
+// valid (avoiding a nil-deref if a future migration loosens a
+// NOT NULL).
+func scanBuildProvenance(row pgx.Row) (BuildProvenance, error) {
+	p := BuildProvenance{}
+	if err := row.Scan(
+		&p.ID, &p.BuildID, &p.BuildkitVer, &p.RailpackVer,
+		&p.BaseDigest, &p.SourceSHA256, &p.SourceURL, &p.CommitSHA,
+		&p.Plan, &p.RunnerDigest, &p.BuilderNodeID,
+		&p.StartedAt, &p.FinishedAt, &p.SBOMStorageKey,
+	); err != nil {
+		return BuildProvenance{}, mapErr(err)
+	}
+	return p, nil
 }
 
 func scanDomains(rows pgx.Rows) ([]CustomDomain, error) {

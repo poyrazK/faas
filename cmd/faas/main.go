@@ -124,6 +124,13 @@ func run(args []string) int {
 		// `faas deployment <id>` — get one. Must come before appSlugFallback
 		// so the singular is never misread as an app slug.
 		return cmdDeployment(args[1:])
+	case dispatchBuild:
+		// `faas build provenance <id>` — ADR-038 / Tier 3 / issue
+		// #197 B3.10-read half. The parent dispatch is in
+		// commands_builds.go::cmdBuild; future build-surface
+		// subcommands (`logs`, `sbom`) land there without
+		// touching this switch.
+		return cmdBuild(args[1:])
 	case appSlugFallback:
 		// Routes to cmdAppDispatch which knows the new scale/rename
 		// subcommand form and falls back to the legacy flag-form

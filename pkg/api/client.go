@@ -254,6 +254,17 @@ func (c *Client) GetDeployment(ctx context.Context, id string) (DeploymentRespon
 	return out, c.do(ctx, "GET", "/v1/deployments/"+id, nil, &out)
 }
 
+// GetBuildProvenance returns the ADR-038 build_provenance row for
+// a build id. Backs the `faas build provenance <id>` CLI command.
+// The backend surfaces a missing row as a 404 with code
+// build_provenance_not_found, which the SDK propagates as a
+// *APIError — callers should check against apierr.Code() when the
+// distinction matters (vs. a hard 404 "no such build").
+func (c *Client) GetBuildProvenance(ctx context.Context, id string) (BuildProvenanceResponse, error) {
+	var out BuildProvenanceResponse
+	return out, c.do(ctx, "GET", "/v1/builds/"+id+"/provenance", nil, &out)
+}
+
 // DeployMultipart ships a source tarball (with optional runtime +
 // handler) to the multipart deploy endpoint. sourceName is the form
 // filename apid sees in the multipart "source" part; pass the

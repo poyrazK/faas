@@ -136,6 +136,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		CacheDir:       cfg.CacheDir,
 		MetricsAddr:    cfg.MetricsAddr,
 		FairnessWindow: cfg.FairnessWindow,
+		// ADR-038: BuilderNodeID is stamped onto every
+		// build_provenance row builderd writes. Defaulted to
+		// "default-local" in LoadConfig; multi-node deployments
+		// override per-builder via the toml field.
+		BuilderNodeID: cfg.BuilderNodeID,
 	}, log).WithOpsMetrics(ops)
 	// builderd.New instantiates its own *Cache from cfg.CacheDir;
 	// we construct a sibling Cache at the same root for the GC loop

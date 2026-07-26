@@ -122,6 +122,33 @@ type CreateDeploymentRequest struct {
 	Image string `json:"image,omitempty"` // registry.DOMAIN/...@sha256:...
 }
 
+// BuildProvenanceResponse is the public surface of build_provenance
+// (ADR-038, Tier 3 / issue #197 B3.10-read half). Field names mirror
+// the table columns with snake_case naming so the customer-visible
+// JSON stays self-documenting on a `curl`.
+//
+// Fields are nullable strings; empty values map to "" so the customer
+// reads "buildkit_version = \"\"" for a pre-Phase-3 build that the
+// populator hasn't back-filled. The dashboard branches on
+// `sbom_storage_key != ""` to enable the "Download SBOM" link;
+// every other field is observational metadata for audits.
+type BuildProvenanceResponse struct {
+	ID             string `json:"id"`
+	BuildID        string `json:"build_id"`
+	BuildkitVer    string `json:"buildkit_version"`
+	RailpackVer    string `json:"railpack_version"`
+	BaseDigest     string `json:"base_digest"`
+	SourceSHA256   string `json:"source_sha256"`
+	SourceURL      string `json:"source_url"`
+	CommitSHA      string `json:"commit_sha"`
+	Plan           string `json:"plan"`
+	RunnerDigest   string `json:"runner_digest"`
+	BuilderNodeID  string `json:"builder_node_id"`
+	StartedAt      string `json:"started_at"`
+	FinishedAt     string `json:"finished_at"`
+	SBOMStorageKey string `json:"sbom_storage_key"`
+}
+
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
 	ID          string `json:"id"`

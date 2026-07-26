@@ -430,6 +430,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/deployments", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDeployment))))
 	mux.HandleFunc("GET /v1/deployments/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getDeployment)))
 	mux.HandleFunc("GET /v1/deployments/{id}/logs", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.streamDeploymentLogs)))
+	// Builds (ADR-038). The provenance route is the only /v1/builds
+	// surface today; deployments.id remains the parent resource.
+	// Build:read scope (api.ScopesReadSurface) gates the read.
+	mux.HandleFunc("GET /v1/builds/{id}/provenance", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getBuildProvenance)))
 	mux.HandleFunc("POST /v1/apps/{slug}/rollback", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/park", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.parkApp)))
 	mux.HandleFunc("POST /v1/apps/{slug}/wake", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.wakeApp)))

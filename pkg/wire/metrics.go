@@ -203,6 +203,16 @@ type OpsMetrics struct {
 	// vs. denylist catalog edit). Cardinality is identical to
 	// egressDeny — same catalog, same (cidr, family) label set.
 	ociEgressDeny *prometheus.CounterVec
+	// provenanceWrites: ADR-038 / Tier 3 / issue #197 B3.1
+	// observability. Counter labelled by code ∈ {ok, error} so the
+	// dashboard surfaces the populator success rate alongside the
+	// builds counter (which it pairs with — every successful build
+	// should land a provenance row). Unbounded cardinality risk is
+	// closed by the closed `code` label set. Registered on every
+	// daemon (the counter is unused except on builderd, but the
+	// single-registry pattern — memory note wire/OpsMetrics —
+	// demands the field be present on the shared struct).
+	provenanceWrites *prometheus.CounterVec
 }
 
 // NewOpsMetrics builds an OpsMetrics keyed on the per-daemon prefix — e.g.
@@ -353,14 +363,24 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// vmmd) from "dialer refused it" (this metric on imaged) — they
 	// have different remediation paths.
 	var ociEgressDeny *prometheus.CounterVec
+	// ADR-038 / Tier 3 / issue #197 B3.1: build_provenance
+	// populator counter. Single CounterVec with a closed `code`
+	// label set ({ok, error}); pre-instantiated below so both rows
+	// surface in /metrics from boot. Unlabelled cardinality is
+	// ZERO — every daemon gets the same field, only builderd
+	// increments in production.
+	provenanceWrites := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_provenance_writes_total",
+		Help: "Build provenance populator outcomes (ADR-038). code ∈ {ok, error}. Every successful build should land an `ok` row; a growing `error` rate indicates the populator WARN-logged failures that surfaced as 404 on GET /v1/builds/{id}/provenance.",
+	}, []string{"code"})
 	if prefix == "imaged" {
 		ociEgressDeny = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_oci_egress_deny_total",
 			Help: "Per-CIDR user-space dialer denial counter (PR-E, spec §11 + §12). Same (cidr, family) label set as egress_deny_total, but counts dialer refusals (oci.EgressDialContext returned ErrImageEgressDenied) rather than kernel-layer nftables drops. The two metrics together let an operator see whether a tenant's blocked pull hit the firewall first (egress_deny_total) or the user-space check (oci_egress_deny_total) — different levers.",
 		}, []string{"cidr", "family"})
-		reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, auditWriteFail, stripePushDur, paddlePushDur, buildDur, buildQueueWait, residentGBPerCustomer, wakeIDV4Fallback, imagedOCIPull, instanceCPUPct, instanceRSSMB, instanceInflightReqs, instanceStatsCollectDur, instanceStatsPartialErrors, scaleUpDecisions, scaleUpAdmitRPS, sseClients, egressDeny, ociEgressDeny)
+		reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, auditWriteFail, stripePushDur, paddlePushDur, buildDur, buildQueueWait, residentGBPerCustomer, wakeIDV4Fallback, imagedOCIPull, instanceCPUPct, instanceRSSMB, instanceInflightReqs, instanceStatsCollectDur, instanceStatsPartialErrors, scaleUpDecisions, scaleUpAdmitRPS, sseClients, egressDeny, ociEgressDeny, provenanceWrites)
 	} else {
-		reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, auditWriteFail, stripePushDur, paddlePushDur, buildDur, buildQueueWait, residentGBPerCustomer, wakeIDV4Fallback, imagedOCIPull, instanceCPUPct, instanceRSSMB, instanceInflightReqs, instanceStatsCollectDur, instanceStatsPartialErrors, scaleUpDecisions, scaleUpAdmitRPS, sseClients, egressDeny)
+		reg.MustRegister(ops, dur, watchdogKills, eventsWriteFail, auditWriteFail, stripePushDur, paddlePushDur, buildDur, buildQueueWait, residentGBPerCustomer, wakeIDV4Fallback, imagedOCIPull, instanceCPUPct, instanceRSSMB, instanceInflightReqs, instanceStatsCollectDur, instanceStatsPartialErrors, scaleUpDecisions, scaleUpAdmitRPS, sseClients, egressDeny, provenanceWrites)
 	}
 	// Pre-instantiate the closed (op,result) set for the OCI-pull
 	// histogram so its HELP/TYPE and zero-valued buckets surface in
@@ -372,6 +392,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		for _, result := range []string{"ok", "err"} {
 			imagedOCIPull.WithLabelValues(op, result)
 		}
+	}
+	// ADR-038: pre-instantiate the closed provenance_writes_total
+	// `code` label set so the rows surface in /metrics from boot —
+	// same precedent as every other CounterVec on this struct.
+	// Closed set: ok, error. Extending this loop is the right
+	// place to add a new code (e.g. "permission_denied"); match
+	// the same change in ObserveProvenanceWrite below.
+	for _, code := range []string{"ok", "error"} {
+		provenanceWrites.WithLabelValues(code)
 	}
 	// Pre-instantiate every label in the closed result set so the
 	// histogram's HELP/TYPE and zero-valued buckets surface in
@@ -468,6 +497,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		sseClients:                 sseClients,
 		egressDeny:                 egressDeny,
 		ociEgressDeny:              ociEgressDeny,
+		provenanceWrites:           provenanceWrites,
 	}
 }
 
@@ -653,6 +683,24 @@ func (m *OpsMetrics) ObserveBuildCount(code string) {
 		return
 	}
 	m.ops.WithLabelValues("build", code).Inc()
+}
+
+// ObserveProvenanceWrite records one ADR-038 build_provenance
+// populator outcome. code is "ok" on a successful CREATE /
+// ON CONFLICT (build_id) DO UPDATE write, "error" on any
+// failure (logged at WARN inside
+// pkg/builderd.recordProvenance; the build itself still
+// succeeded). The §12 dashboard's "Provenance populator
+// success" ratio is the `ok` / (`ok` + `error`) fraction
+// per builderd scrape window; a sustained non-1.0 rate points
+// at a database issue (connection-pool starvation, FK drift,
+// ON CONFLICT DO UPDATE going stale). Safe on a nil receiver
+// so the populator's best-effort path doesn't crash unit tests.
+func (m *OpsMetrics) ObserveProvenanceWrite(code string) {
+	if m == nil {
+		return
+	}
+	m.provenanceWrites.WithLabelValues(code).Inc()
 }
 
 // ObserveBuildDuration records one build's wall-clock duration in the

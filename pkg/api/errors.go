@@ -166,6 +166,12 @@ const (
 	CodePlanFeatureGated   = "plan_feature_gated"
 	CodePlanDelayedCap     = "plan_delayed_tasks_cap"
 	CodeInvocationNotFound = "invocation_not_found"
+	// CodeBuildProvenanceNotFound is the ADR-038 / Tier 3 #197
+	// B3.10-read sentinel. Distinct from a generic "no such build"
+	// so the customer can branch: a build that exists with no
+	// provenance row is the "populator INSERT failed + WARN logged"
+	// outcome, not a 404 of the build itself.
+	CodeBuildProvenanceNotFound = "build_provenance_not_found"
 
 	// ADR-031 (tier-2 of the network roadmap) — per-app egress
 	// allowlist. Same gate shape as MinInstances: the feature is
@@ -656,6 +662,20 @@ func ErrInvocationNotFound(id string) *Problem {
 		"Invocation not found",
 		fmt.Sprintf("no invocation with id %q on this account.", id)).
 		WithDocs("https://docs.DOMAIN/event-driven#invocations")
+}
+
+// ErrBuildProvenanceNotFound is the ADR-038 surface for a build
+// whose populator INSERT never landed (best-effort WARN inside
+// builderd.recordProvenance) OR for a pre-PR build that pre-dates
+// build_provenance entirely. Distinct from "no such build" so the
+// customer (and the dashboard) can branch on it. The build row is
+// authoritative for the success/fail transition; the missing
+// provenance is observational metadata.
+func ErrBuildProvenanceNotFound() *Problem {
+	return NewProblem(http.StatusNotFound, CodeBuildProvenanceNotFound,
+		"Build provenance not found",
+		"the build succeeded but no provenance row exists; builderd logged a warning when the populator failed").
+		WithDocs("https://docs.DOMAIN/builds#provenance")
 }
 
 // ErrLongPollTimeout is returned by the long-poll handlers (sync

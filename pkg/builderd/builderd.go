@@ -90,6 +90,13 @@ type Config struct {
 	// behaves like the pre-B2.2 FIFO claim). Default 30s; a longer
 	// window trades queue latency for fairness.
 	FairnessWindow time.Duration `toml:"fairness_window"`
+	// BuilderNodeID is the compute_node name stamped onto every
+	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
+	// #197 B3.1). Defaulted to "default-local" on the one-box by
+	// cmd/builderd. Empty in unit tests; recordProvenance treats an
+	// empty value as NOT-NULL-allowed-via-nullString so the
+	// stamp is benign.
+	BuilderNodeID string `toml:"builder_node_id"`
 }
 
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
@@ -107,6 +114,12 @@ type Builderd struct {
 	// ObserveBuild* methods are also nil-safe). Wired in production via
 	// WithOpsMetrics from cmd/builderd.
 	ops *wire.OpsMetrics
+	// builderNodeID is the compute_node name builderd writes onto every
+	// provenance row (ADR-038). Defaulted to "default-local" on the
+	// one-box; cmd/builderd sets it from a Config field. test
+	// fixtures can leave it empty; recordProvenance stamps empty
+	// which pgstore's NULLIF / nullString roundtrip permits.
+	builderNodeID string
 	// slotDecide is the slot-allocation hook. Production wires
 	// b.slotDecide = DecideSlot in New; tests inject a closure to
 	// exercise the no-slot requeue path without standing up a full
@@ -344,6 +357,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "notify prime: "+err.Error(), buildStart)
 			return BuildResult{}, err
 		}
+		// ADR-038: stamp provenance BEFORE markSucceeded so the
+		// build row + provenance row land within the same critical
+		// section from the customer's perspective. The populator
+		// reads build.StartedAt (set by ClaimQueuedBuild) and
+		// finishedAt = time.Now() (this markSucceeded hasn't
+		// stamped finished_at yet). Best-effort; failure logs at
+		// WARN inside recordProvenance.
+		b.recordProvenance(ctx, build, dep, app, acct, srcHash, true)
 		b.markSucceeded(ctx, build.ID, "cache_hit", buildStart)
 		return BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true}, nil
 	}
@@ -489,6 +510,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, dep.ID, build.ID, state.FailureInfra, "notify prime: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
+	// ADR-038: stamp provenance BEFORE markSucceeded. Same shape as
+	// the cache-hit branch above; empty buildkit_version +
+	// railpack_version + base_digest + runner_digest + sbom_storage_key
+	// (Phase 3 populator fills them in).
+	b.recordProvenance(ctx, build, dep, app, acct, srcHash, false)
 	b.markSucceeded(ctx, build.ID, "ok", buildStart)
 	return BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: out.LogTailBytes}, nil
 }
@@ -530,6 +556,67 @@ func (b *Builderd) markFailed(ctx context.Context, depID, buildID string, fc sta
 	if err := b.store.UpdateDeploymentStatus(ctx, depID, state.DeployFailed, msg); err != nil {
 		b.log.Warn("builderd: mark deployment failed", "deployment", depID, "build", buildID, "err", err)
 	}
+}
+
+// recordProvenance is the ADR-038 populator. Called from the two
+// markSucceeded sites in processClaimedBuild (cache-hit path + fresh-
+// build path). Stamps build_provenance with the "what ran?" record:
+// source SHA, account plan, deployment URL/commit, builder node ID,
+// and the build's started_at / finished_at timestamps. Empty fields
+// (buildkit_version, railpack_version, base_digest, runner_digest,
+// sbom_storage_key) are populated by Phase 3 (cosign sign + syft
+// SBOM); the columns exist today so Phase 3 is a zero-cost schema
+// change.
+//
+// Best-effort: a failed INSERT logs at WARN. The build itself still
+// succeeds — the builds row is the authoritative customer-visible
+// success/fail transition; provenance is observational metadata.
+// The reader (apid GET /v1/builds/{id}/provenance) renders 404
+// when this INSERT didn't land, surfacing the failure as a
+// missing-provenance 404 rather than a build-succeeded-with-
+// no-evidence.
+//
+// finishedAt may be zero in the cache-hit path because the row's
+// finished_at is stamped inside UpdateBuildStatus, which runs in
+// markSucceeded AFTER this call returns. We use time.Now() in that
+// case so the record lands with a non-zero finished_at; the next
+// call (none expected — this is a one-shot per build) would
+// overwrite.
+func (b *Builderd) recordProvenance(ctx context.Context, build state.Build, dep state.Deployment, app state.App, acct state.Account, srcSHA string, isCacheHit bool) {
+	finishedAt := build.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now()
+	}
+	prov := state.BuildProvenance{
+		BuildID:        build.ID,
+		BuildkitVer:    "",
+		RailpackVer:    "",
+		BaseDigest:     "",
+		SourceSHA256:   srcSHA,
+		SourceURL:      dep.SourceURL,
+		CommitSHA:      dep.CommitSHA,
+		Plan:           string(acct.Plan),
+		RunnerDigest:   "",
+		BuilderNodeID:  b.builderNodeID,
+		StartedAt:      build.StartedAt,
+		FinishedAt:     finishedAt,
+		SBOMStorageKey: "",
+	}
+	if isCacheHit {
+		// Cache-hit builds have empty started_at on the row in the rare
+		// path where ClaimQueuedBuild set started_at=now BUT the
+		// caller's UpdateBuildStatus(stamp_finished=true) under markSucceeded
+		// hasn't run yet. We keep the read of build.StartedAt so a
+		// redelivered path sees the value post-claim; the only
+		// fallback needed is for finished_at, not started_at.
+		_ = isCacheHit // field documented in ADR-038 §provenance row contents
+	}
+	if err := b.store.CreateBuildProvenance(ctx, prov); err != nil {
+		b.ops.ObserveProvenanceWrite("error")
+		b.log.Warn("builderd: record provenance failed (build still succeeded)", "build", build.ID, "err", err)
+		return
+	}
+	b.ops.ObserveProvenanceWrite("ok")
 }
 
 // emitBuildLog appends a line to the build log file (lazily opened) and fans

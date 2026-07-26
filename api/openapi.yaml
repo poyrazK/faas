@@ -947,6 +947,49 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # ─── Builds (ADR-038, Tier 3 / issue #197 B3.10-read half) ───────────────
+  # The provenance route is the only /v1/builds surface today.
+  # deployments.id remains the parent resource; Build:read scope
+  # (api.ScopesReadSurface) gates the read.
+
+  /v1/builds/{id}/provenance:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [builds]
+      operationId: getBuildProvenance
+      summary: Get build provenance.
+      description: |
+        Returns the ADR-038 `build_provenance` row for a single build.
+        Each successful build produces exactly one provenance row
+        (builderd's populator runs at the `markSucceeded` sites); the
+        row is the customer-visible "what ran?" record: buildkit /
+        railpack version, base / runner digests, source URL + commit
+        SHA, plan, builder node ID, and the build's started_at /
+        finished_at timestamps.
+
+        A 404 with `code=build_provenance_not_found` is returned when
+        the build exists but no provenance row landed (the populator
+        logs a WARN inside builderd on a failed INSERT — the build
+        itself still succeeded). A 404 with `code=not_found` is
+        returned when no build row matches the id, or when the
+        build's owning app belongs to a different account.
+      responses:
+        '200':
+          description: The build provenance row, with every field populated. Empty strings indicate a column the populator hasn't filled yet (the schema half of Phase 2 is in this PR; cosign / SBOM populate the rest in Phase 3).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildProvenanceResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Either the build row is missing, OR the build exists but the populator INSERT failed (code=build_provenance_not_found).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── Custom domains ───────────────────────────────────────────────────────
 
   /v1/domains:
@@ -1958,6 +2001,42 @@ components:
           type: array
           items: { $ref: '#/components/schemas/DeploymentResponse' }
         next_before: { type: [string, "null"], format: date-time }
+
+    BuildProvenanceResponse:
+      description: |
+        ADR-038 / Tier 3 / issue #197 B3.10-read half: the
+        post-mortem "what ran?" record for a single successful build.
+        Field names mirror the `build_provenance` table columns. Empty
+        strings indicate a column the populator hasn't filled yet —
+        `buildkit_version`, `railpack_version`, `base_digest`,
+        `runner_digest`, and `sbom_storage_key` are populated by
+        Phase 3 (cosign signer + syft SBOM), but the columns exist
+        today so Phase 3 is a zero-cost schema change.
+      type: object
+      required:
+        - id
+        - build_id
+        - source_sha256
+        - plan
+        - builder_node_id
+        - started_at
+        - finished_at
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        build_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        buildkit_version: { type: string }
+        railpack_version: { type: string }
+        base_digest: { type: string }
+        source_sha256: { type: string, description: "sha256 of the customer's source tarball (the cache lookup key)." }
+        source_url: { type: string }
+        commit_sha: { type: string }
+        plan: { type: string, description: "free / hobby / pro / scale — copied from the account at claim time." }
+        runner_digest: { type: string }
+        builder_node_id: { type: string, description: "compute_node name (default `default-local` on the one-box)." }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        sbom_storage_key: { type: [string, "null"], description: "Phase 3 populator fills this from `syft` output. Empty string when not yet populated." }
+
 
     CreateDeploymentRequest:
       description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload."
