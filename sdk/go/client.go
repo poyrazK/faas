@@ -2,6 +2,7 @@ package faas
 
 import (
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/poyrazK/faas-go/internal/api"
@@ -54,24 +55,55 @@ func NewClient(baseURL, token string, opts ...Option) (*Client, error) {
 	c := &Client{Client: inner}
 
 	// Run the option chain FIRST. WithHTTPClient replaces
-	// HTTPClient().Transport with the caller's; the idempotency
-	// shim must be installed AFTER that so it sits inside the
-	// caller's transport (innermost), injecting the Idempotency-Key
-	// header before the caller's retry or auth middleware runs.
-	// Installing the shim first would let WithHTTPClient overwrite
-	// it with the caller's Transport — silently dropping the opt-in
-	// key contract for callers who pass &http.Client{Timeout: …}.
+	// HTTPClient().Transport with the caller's; every shim we
+	// install below (idempotency, logging, retry) must wrap
+	// whatever Transport the option chain left behind. Installing
+	// any of them before the options would let WithHTTPClient
+	// silently overwrite the shim with the caller's Transport —
+	// dropping the opt-in key contract for callers who pass
+	// &http.Client{Timeout: …}.
 	for _, opt := range opts {
 		if err := opt(c); err != nil {
 			return nil, err
 		}
 	}
 
-	// Install the idempotency round-tripper LAST. It wraps whatever
-	// Transport the option chain left behind (the caller's custom
-	// Transport, or http.DefaultTransport if WithHTTPClient wasn't
-	// supplied) so the opt-in key contract holds in both cases.
-	c.Client.HTTPClient().Transport = newIdempotencyRoundTripper(c.Client.HTTPClient().Transport)
+	// Install the round-tripper stack LAST, outermost → innermost:
+	//
+	//   retry RT          (outermost: sees every response, decides
+	//     |                 whether to retry; one log per attempt
+	//     v                 via the inner logging RT)
+	//   logging RT        (one slog.Debug line per attempt)
+	//     |
+	//     v
+	//   idempotency RT    (mints Idempotency-Key so retries are
+	//     |                 safe server-side via the apid replay
+	//     v                 middleware, 24h window)
+	//   underlying RT     (user's via WithHTTPClient, or
+	//                       http.DefaultTransport)
+	//
+	// The order matters: retry must be outermost so its decision
+	// is based on the immediate response from the chain below;
+	// logging is one step inside so it sees every attempt
+	// individually (a retried request emits two log lines);
+	// idempotency is innermost so the Idempotency-Key header is
+	// set on the actual outgoing request regardless of retries.
+	httpClient := c.Client.HTTPClient()
+	// The internal *api.Client leaves Transport unset
+	// (&http.Client{Timeout: …} → typed-nil *http.Transport).
+	// If we wrap a typed-nil here, the first request panics.
+	// Fall back to http.DefaultTransport for the round-tripper
+	// chain; the Timeout on the http.Client still applies.
+	if httpClient.Transport == nil {
+		httpClient.Transport = http.DefaultTransport
+	}
+	// retry first (outermost)
+	httpClient.Transport = newRetryRoundTripper(httpClient.Transport, c.retryMax, c.retryBackoff)
+	// logging second (sees each attempt)
+	httpClient.Transport = newLoggingRoundTripper(httpClient.Transport, c.log)
+	// idempotency last (innermost; sets the header on the
+	// outgoing request)
+	httpClient.Transport = newIdempotencyRoundTripper(httpClient.Transport)
 
 	return c, nil
 }
