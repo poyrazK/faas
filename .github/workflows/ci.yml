@@ -327,6 +327,37 @@ jobs:
         working-directory: sdk/go
         run: go test -count=1 ./...
 
+  # fakeapid fixture (issue #266, PR 4). The cross-language smoke
+  # fixture for the public SDKs — a stdlib-only Go binary that
+  # mimics apid's surface so Node (PR 5) and Python (PR 6) SDKs
+  # can smoke-test against a real HTTP process. The fixture must
+  # build + test cleanly with no external deps; this gate fails
+  # the PR if a regression breaks the wire shape.
+  #
+  # Mirrors sdk-go: same GO_VERSION, no services, no path filters
+  # (the existing convention is "no filter" so we don't accidentally
+  # skip the gate when a non-sdk change touches the workflow).
+  # PR 5/6 will invoke this job's pre-built ./bin/fakeapid from
+  # their own `-tags smoke_bin` runs to assert artifact
+  # compatibility (see sdk/fakeapid/main_bin_test.go).
+  sdk-fakeapid:
+    name: sdk-fakeapid (Go stdlib fixture)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # No Go cache: the fixture module has zero external deps
+          # (no go.sum), so cache hit rate is zero anyway.
+      - name: go build
+        working-directory: sdk/fakeapid
+        run: go build -o bin/fakeapid .
+      - name: go test
+        working-directory: sdk/fakeapid
+        run: go test -count=1 -race ./...
+
   coverage:
     services:
       postgres:

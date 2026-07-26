@@ -30,13 +30,18 @@ type Option func(*Client) error
 // and the wire, so the caller's retry/auth middleware runs AFTER
 // the header is injected.
 //
-// Passing nil is a no-op; the existing client is kept.
+// Passing nil is a no-op; the existing client is kept. A nil
+// hc.Transport (the default for &http.Client{Timeout: …}) is
+// also a no-op so the round-tripper stack doesn't end up wrapping
+// a typed-nil Transport (which panics on first use).
 func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) error {
 		if hc == nil {
 			return nil
 		}
-		c.Client.HTTPClient().Transport = hc.Transport
+		if hc.Transport != nil {
+			c.Client.HTTPClient().Transport = hc.Transport
+		}
 		c.Client.HTTPClient().Timeout = hc.Timeout
 		return nil
 	}
