@@ -1,7 +1,21 @@
 -- +goose Up
 -- +goose StatementBegin
 --
--- 00051_deployments_source_url.sql — Tier 3 (issue #197 B3.10 schema half).
+-- 00053_deployments_source_url.sql — Tier 3 (issue #197 B3.10 schema half).
+--
+-- Slot renumbered 00051 → 00053 by hotfix/main-00051-collision after
+-- PR #322 (cosign SBOM) and PR #340 (cron-limits-peppy) both claimed
+-- 00051 in parallel sprints and both landed on main, leaving the
+-- migrations-check gate broken for every downstream PR. We picked
+-- 00053 to keep PR #340's slot (its crons_app_full_idx index was the
+-- more recently-deployed 00051, so live prod DBs already have it
+-- recorded at version 51; renumbering it would force a re-record
+-- that lies). PR #322's deployment-table migration moves to 00053
+-- instead — its `if not exists` + drop-then-add guards make the
+-- SQL a no-op on a fresh DB that already has the columns from a
+-- pre-merge rebase, and on a live prod DB the SQL adds them for
+-- the first time (so the slot-53 row in goose_db_version is the
+-- honest "applied here" record).
 --
 -- Adds two columns to deployments:
 --

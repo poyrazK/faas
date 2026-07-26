@@ -1,6 +1,6 @@
 // Tier 3 (issue #197 B3.10 schema half) — MemStore source_url /
 // commit_sha round-trip. The pgstore coverage is in
-// migrations/00051_deployments_source_url_test.go (the migration
+// migrations/00053_deployments_source_url_test.go (the migration
 // itself enforces the schema and the 64-char CHECK).
 //
 // Build tag mirrors memstore_test.go:1 (none — pure unit).
