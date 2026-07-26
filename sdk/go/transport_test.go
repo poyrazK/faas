@@ -139,6 +139,36 @@ func TestLoggingRoundTripper_NilLoggerIsNoop(t *testing.T) {
 	}
 }
 
+// TestLoggingRoundTripper_LevelInfoDropsLines: the RT only emits
+// at slog.LevelDebug. A logger configured at LevelInfo (the
+// default for production setups that don't want request chatter)
+// must produce no output. This pins the "Debug only" contract so
+// a future change that promotes the level to Info is caught
+// here, before it floods customer logs.
+func TestLoggingRoundTripper_LevelInfoDropsLines(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	stub := &recordingTripper{
+		fn: func(req *http.Request, attempt int) (*http.Response, error) {
+			return okResponse(), nil
+		},
+	}
+	rt := newLoggingRoundTripper(stub, log)
+
+	resp, err := rt.RoundTrip(newGetRequest(t))
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	_ = resp.Body.Close()
+	if stub.calls != 1 {
+		t.Errorf("calls: got %d, want 1", stub.calls)
+	}
+	if out := buf.String(); out != "" {
+		t.Errorf("LevelInfo logger should suppress Debug lines, got:\n%s", out)
+	}
+}
+
 // TestRetryRoundTripper_RetriesOn5xx: 500, 500, 200 → 3 attempts,
 // final response is 200.
 func TestRetryRoundTripper_RetriesOn5xx(t *testing.T) {

@@ -68,7 +68,15 @@ non-stdlib package, because Node and Python SDKs spawn the
 ## CI
 
 The `sdk-fakeapid` job in `.github/workflows/ci.yml` runs
-`go build . && go test -count=1 -race ./...` in this directory.
-PR 5 and PR 6 will add their own jobs that invoke
-`go test -tags smoke_bin` from this directory to assert
-artifact compatibility.
+`go build -o bin/fakeapid . && go test -count=1 -race ./...`
+in this directory.
+
+**Required follow-up for PR 5 / PR 6**: their CI jobs MUST invoke
+`go test -tags smoke_bin -count=1 -run TestPreBuiltBinary ./...`
+from this directory after building the artifact (the `sdk-fakeapid`
+job already produces `./bin/fakeapid`). The `smoke_bin` build
+tag is a separate compilation unit that spawns the pre-built
+binary rather than re-compiling — without it, a regression that
+breaks the shipped artifact while leaving source compilable would
+go undetected. The `sdk-fakeapid` job's un-tagged tests do not
+cover this path (they call `buildFixtureBinary` in-test).

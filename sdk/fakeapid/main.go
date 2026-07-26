@@ -58,17 +58,17 @@ func accountLimits() map[string]any {
 // round-trip; EgressAllowlist materialises as [] (not null).
 func appResponse(slug string) []byte {
 	return mustJSON(map[string]any{
-		"id":                     "app_01HXYZ",
-		"slug":                   slug,
-		"type":                   "app",
-		"ram_mb":                 256,
-		"max_concurrency":        2,
-		"min_instances":          0,
-		"status":                 "active",
-		"url":                    "https://" + slug + ".example.com",
-		"manifest":               appManifest(),
-		"egress_allowlist":       []string{},
-		"autoscale_target_rps":   0,
+		"id":                       "app_01HXYZ",
+		"slug":                     slug,
+		"type":                     "app",
+		"ram_mb":                   256,
+		"max_concurrency":          2,
+		"min_instances":            0,
+		"status":                   "active",
+		"url":                      "https://" + slug + ".example.com",
+		"manifest":                 appManifest(),
+		"egress_allowlist":         []string{},
+		"autoscale_target_rps":     0,
 		"autoscale_target_cpu_pct": 0,
 	})
 }
@@ -181,17 +181,17 @@ func (f *fixture) handler() http.Handler {
 			// `[]AppResponse` decode exercises the slice path.
 			_, _ = w.Write(mustJSON([]map[string]any{
 				{
-					"id":                     "app_01HXYZ",
-					"slug":                   "hello-world",
-					"type":                   "app",
-					"ram_mb":                 256,
-					"max_concurrency":        2,
-					"min_instances":          0,
-					"status":                 "active",
-					"url":                    "https://hello-world.example.com",
-					"manifest":               appManifest(),
-					"egress_allowlist":       []string{},
-					"autoscale_target_rps":   0,
+					"id":                       "app_01HXYZ",
+					"slug":                     "hello-world",
+					"type":                     "app",
+					"ram_mb":                   256,
+					"max_concurrency":          2,
+					"min_instances":            0,
+					"status":                   "active",
+					"url":                      "https://hello-world.example.com",
+					"manifest":                 appManifest(),
+					"egress_allowlist":         []string{},
+					"autoscale_target_rps":     0,
 					"autoscale_target_cpu_pct": 0,
 				},
 			}))
@@ -320,8 +320,12 @@ func main() {
 		log.Fatalf("fakeapid: listen %s: %v", addr, err)
 	}
 	log.Printf("fakeapid listening on http://%s", ln.Addr().String())
-	// http.Server.Serve closes gracefully on SIGTERM. We don't
-	// trap signals here — the smoke test sends Kill().
+	// http.Serve returns http.ErrServerClosed only when the
+	// listener is closed via Shutdown/Close on a *http.Server.
+	// We don't trap SIGTERM here — the smoke test sends SIGKILL
+	// via the process group (Setpgid:true), so the binary
+	// terminates without draining connections. That is the
+	// correct contract for a hermetic fixture.
 	if err := http.Serve(ln, f.handler()); err != nil {
 		log.Fatalf("fakeapid: serve: %v", err)
 	}

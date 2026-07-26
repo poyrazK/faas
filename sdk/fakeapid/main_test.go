@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -328,7 +327,7 @@ func spawnFakeAPID(t *testing.T, binPath string) (string, func()) {
 	// Capture stdout/stderr in a mutex-guarded buffer (the daemon
 	// may log a startup line and we want to surface it on failure
 	// without racing the writer under -race).
-	logBuf := &syncBuffer{}
+	logBuf := &safeBuffer{}
 	cmd.Stdout = logBuf
 	cmd.Stderr = logBuf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -408,28 +407,25 @@ func TestSpawnedBinary_BootsAndServes(t *testing.T) {
 	}
 }
 
-// syncBuffer is a mutex-guarded bytes.Buffer. Captures cmd output
+// safeBuffer is a mutex-guarded bytes.Buffer. Captures cmd output
 // without tripping -race when the smoke test reads the buffer
 // while the daemon writes (memory: e2etest-harness-safebuffer).
-type syncBuffer struct {
+// Renamed from syncBuffer for parity with pkg/e2etest's
+// e2etest.SafeBuffer — the two helpers have identical semantics
+// and a single name across the repo makes grep cheaper.
+type safeBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
 }
 
-func (b *syncBuffer) Write(p []byte) (int, error) {
+func (b *safeBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.Write(p)
 }
 
-func (b *syncBuffer) String() string {
+func (b *safeBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
-
-// Ensure unused import warning doesn't fire when this file is
-// read with `go test -run Spawn` only (io is used by the
-// httptest paths above; this reference keeps the import set
-// stable across edits).
-var _ = io.EOF
