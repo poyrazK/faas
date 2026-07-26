@@ -365,7 +365,7 @@ func (s *server) renderPricing(w http.ResponseWriter, r *http.Request, log *slog
 		})
 	}
 	page := dashboard.Page{Title: "Pricing", Body: "pricing", Account: dashboardAccountView(view, appCount), Data: dashboard.PricingData{Plans: plans}}
-	if err := dashboard.Render(w, log, page); err != nil {
+	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
 }
@@ -411,7 +411,7 @@ func (s *server) renderInvoices(w http.ResponseWriter, r *http.Request, log *slo
 	page := dashboard.Page{Title: "Invoices", Body: "invoices", Account: dashboardAccountView(view, appCount), Data: dashboard.InvoicesData{
 		Month: monthStr, Items: items, NextBefore: nextBefore,
 	}}
-	if err := dashboard.Render(w, log, page); err != nil {
+	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
 }
