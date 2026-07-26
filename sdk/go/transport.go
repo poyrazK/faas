@@ -4,8 +4,37 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
+
+// safeLogField strips ASCII line breaks from a request-supplied
+// string before it lands in a log line. CodeQL's go/log-injection
+// rule explicitly lists strings.ReplaceAll as a recognised
+// sanitiser (its help text shows the canonical pattern: replace
+// "\r" and "\n" before logging); we follow that shape so the
+// alert auto-closes. We also cap at 1 KiB so a hostile URL with
+// a multi-MB query string doesn't turn into a multi-MB log entry.
+// Slog's JSON handler renders the result as a plain JSON object
+// field (no quotes around the value), so downstream observers see
+// the URL with CRLF silently dropped — the right contract for
+// transport logging.
+//
+// Used by loggingRoundTripper before passing req.Method and
+// req.URL.String() to slog.Debug. Both fields are user-controlled
+// at the HTTP layer (the server can accept arbitrary request
+// lines on untrusted ingress), so the sanitiser is required, not
+// optional. References: memory codeql-go-log-injection-sanitisers
+// (the same fix at pkg/gateway/forwardproxy.go:88).
+func safeLogField(s string) string {
+	const max = 1024
+	if len(s) > max {
+		s = s[:max] + "…"
+	}
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
+}
 
 // loggingRoundTripper wraps an http.RoundTripper, emitting one
 // slog.Debug line per request/response. nil log is a true no-op
@@ -35,24 +64,26 @@ func newLoggingRoundTripper(next http.RoundTripper, log *slog.Logger) http.Round
 
 func (l *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	start := time.Now()
+	method := safeLogField(req.Method)
+	url := safeLogField(req.URL.String())
 	l.log.Debug("faas http request",
-		"method", req.Method,
-		"url", req.URL.String(),
+		"method", method,
+		"url", url,
 	)
 	resp, err := l.next.RoundTrip(req)
 	elapsed := time.Since(start)
 	if err != nil {
 		l.log.Debug("faas http response",
-			"method", req.Method,
-			"url", req.URL.String(),
+			"method", method,
+			"url", url,
 			"error", err.Error(),
 			"elapsed_ms", elapsed.Milliseconds(),
 		)
 		return resp, err
 	}
 	l.log.Debug("faas http response",
-		"method", req.Method,
-		"url", req.URL.String(),
+		"method", method,
+		"url", url,
 		"status", resp.StatusCode,
 		"elapsed_ms", elapsed.Milliseconds(),
 	)

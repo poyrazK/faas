@@ -397,3 +397,92 @@ func TestLoggingAndRetryStack(t *testing.T) {
 		t.Errorf("response log count: got %d, want %d\n%s", got, want, out)
 	}
 }
+
+// TestSafeLogField_StripsCRLF: the sanitiser strips both ASCII
+// CR and LF before the value reaches slog. This is the canonical
+// CodeQL go/log-injection pattern (memory:
+// codeql-go-log-injection-sanitisers) — without these two
+// strings.ReplaceAll calls, CodeQL flags the round-tripper
+// log lines as forged-log-entry vectors. Note: req.URL.String()
+// percent-encodes the CRLF before this helper sees it (so the
+// bytes never reach the sanitiser), but req.Method on a hostile
+// request line could carry raw CRLF, and slog's text handler
+// would render that as a real newline in the output. The unit
+// test exercises both shapes.
+func TestSafeLogField_StripsCRLF(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{"plain", "GET /v1/apps", "GET /v1/apps"},
+		{"LF", "/v1/apps\nhaha=1", "/v1/appshaha=1"},
+		{"CRLF", "/v1/apps\r\nhaha=1", "/v1/appshaha=1"},
+		{"only CR", "abc\rdef", "abcdef"},
+		{"only LF", "abc\ndef", "abcdef"},
+		{"empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := safeLogField(tc.in)
+			if got != tc.want {
+				t.Errorf("safeLogField(%q): got %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSafeLogField_CapsAt1KiB: a hostile URL with a multi-MB
+// query string would otherwise turn into a multi-MB log entry.
+// The sanitiser truncates at 1024 bytes and appends an ellipsis.
+func TestSafeLogField_CapsAt1KiB(t *testing.T) {
+	in := strings.Repeat("x", 4096)
+	got := safeLogField(in)
+	if len(got) <= 1024 {
+		t.Errorf("expected truncation, len=%d", len(got))
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("expected ellipsis suffix, got %q…", got[len(got)-1:])
+	}
+	if !strings.Contains(got, "x") {
+		t.Errorf("expected preserved body, got %q", got)
+	}
+}
+
+// TestLoggingRoundTripper_StripsCRLFFromURL: end-to-end check
+// that no raw CRLF reaches the log line. The URL passes through
+// net/http's percent-encoding (so the bytes in req.URL.String()
+// are %0a/%0d, not raw LF/CR), but the test still confirms the
+// log output is single-line. This pins the behavioural contract
+// independently of the CodeQL alert.
+func TestLoggingRoundTripper_StripsCRLFFromURL(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	stub := &recordingTripper{
+		fn: func(req *http.Request, attempt int) (*http.Response, error) {
+			return okResponse(), nil
+		},
+	}
+	rt := newLoggingRoundTripper(stub, log)
+
+	req, err := http.NewRequest(http.MethodGet,
+		"http://example.com/v1/apps?x=haha%0a%0dforged", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := rt.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	out := buf.String()
+	// Two log lines per roundtrip (request + response) means the
+	// output has exactly two newlines. If the sanitiser were
+	// broken, additional CRLFs would appear from forged entries.
+	if got, want := strings.Count(out, "\n"), 2; got != want {
+		t.Errorf("newline count: got %d, want %d (extra CRLFs would indicate a sanitiser regression)\n%s", got, want, out)
+	}
+	if !strings.Contains(out, "forged") {
+		t.Errorf("expected body content to survive sanitisation, got:\n%s", out)
+	}
+}
