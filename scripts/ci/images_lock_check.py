@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
-"""images_lock_check.py — Tier 3 (issue #197 B3.5 + B3.6) gate.
+"""images_lock_check.py — Tier 3 (issue #197 B3.5 + B3.6) lock→Dockerfile gate.
 
-Reads images/Dockerfile.lock and asserts that:
+Walks every entry in images/Dockerfile.lock and asserts that:
 
-  1. Every entry's `pinned_in_dockerfile` is the exact FROM line in the
-     named Dockerfile (whitespace included). A Dockerfile that drifted
-     from the lock (someone bumped a tag without re-running
-     `make images-lock-update`) fails here.
-
-  2. No entry's `digest` is the `REPLACE_ME_AT_MERGE_TIME` placeholder.
+  1. No entry's `digest` is the `REPLACE_ME_AT_MERGE_TIME` placeholder.
      This is the "operator actually ran images-lock-update" gate — a
      PR that lands with placeholder digests will be rejected by CI
-     before the squash-merge.
+     before the squash-merge. Reported FIRST so a placeholder is a
+     single clear error rather than a cascade.
 
-  3. Every non-ARG, non-FROM-as-ARG FROM line in images/*.Dockerfile
-     has a corresponding entry in the lock. (We don't audit this in
-     the strict sense — the inverse direction is "if Dockerfile
-     contains `FROM foo:bar` not in the lock, fail". The `audit_dockerfile_froms.py`
-     script handles that case; this script is the lock→Dockerfile
-     direction.)
+  2. Each non-placeholder entry's `pinned_in_dockerfile` string is the
+     exact FROM line in the named Dockerfile (whitespace tolerant). A
+     Dockerfile that drifted from the lock (someone bumped a tag
+     without re-running `make images-lock-update`) fails here.
+
+This is the FORWARD direction of the lock — it answers "is the lock
+honored?" The INVERSE direction ("is every FROM line in
+images/*.Dockerfile covered by the lock?") lives in
+`audit_dockerfile_froms.py` and is run as the second half of the
+`images-lock-check` Makefile target. Together they form a two-sided
+gate: the lock cannot drift forward (this file) and the Dockerfiles
+cannot drift backward (the audit script).
 
 Exits non-zero on any failure with a human-readable error. Pure stdlib
 so CI doesn't need to install a JSON library.

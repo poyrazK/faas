@@ -7,12 +7,22 @@
 //   1. Both new columns (source_url, commit_sha) are nullable and
 //      accept the documented shapes (a normal URL, a 40-char sha1).
 //
-//   2. The commit_sha length CHECK rejects a string over 64 chars.
+//   2. The commit_sha shape CHECK (regex ^([0-9a-f]+$ AND length 7..64))
+//      rejects three bad shapes:
+//        - a 65-char string (over-length)
+//        - a 64-char non-hex string (e.g. 64 × 'g')
+//        - a 6-char string (under-length; empty-string-with-no-NULL)
 //      The CHECK was added in 00047 (it didn't exist before); this is
 //      the "constraint actually fires" guard.
 //
 //   3. Existing deployments rows (from before the migration) are
 //      unaffected — they read with both new columns NULL.
+//
+//   4. The 64-char sha256 boundary is accepted.
+//
+// IDs are randomized per test run (PR #241 review finding #6) so a
+// concurrent sibling migration test against the same pgtest DB
+// cannot collide on the literal 00000000-...-00047 etc. fixtures.
 //
 // Build tag mirrors apply_walk_test.go:4 — set FAAS_SKIP_PG_TESTS=1
 // locally to skip.
@@ -21,7 +31,10 @@ package migrations_test
 
 import (
 	"context"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -34,6 +47,18 @@ func TestMigrations_00047_DeploymentsSourceURL(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("db.MigrateUp: %v", err)
 	}
+
+	// Randomized IDs (PR #241 review finding #6): literal UUIDs would
+	// collide with a concurrent sibling migration test that uses the
+	// same fixture shape.
+	acctID := uuid.NewString()
+	appID := uuid.NewString()
+	depID := uuid.NewString()
+	depID65 := uuid.NewString()
+	depID64g := uuid.NewString()
+	depID6 := uuid.NewString()
+	depID64 := uuid.NewString()
+	depIDLegacy := uuid.NewString()
 
 	// (1) Both columns exist and are nullable.
 	var sourceURLNullable, commitSHANullable *string
@@ -60,26 +85,21 @@ func TestMigrations_00047_DeploymentsSourceURL(t *testing.T) {
 		t.Errorf("deployments.commit_sha nullable: got %v, want YES", commitSHANullable)
 	}
 
-	// (2) Insert a deployment with both fields populated. We need an
-	// app + account to satisfy the FK. Reuse the test fixtures from
-	// 00046's seed shape.
-	const acctID = "00000000-0000-0000-0000-000000000047"
+	// (2) Insert a deployment with both fields populated. The fixture
+	// shape mirrors 00046's seed: an account + an app + a deployment
+	// in a single transaction so a failure leaves no partial state.
 	if _, err := pool.Exec(ctx, `
 		insert into accounts (id, email, plan, created_at)
 		values ($1, 'b310@example.com', 'hobby', now())
-		on conflict (id) do nothing
 	`, acctID); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
-	const appID = "00000000-0000-0000-0000-0000000000a1"
 	if _, err := pool.Exec(ctx, `
 		insert into apps (id, account_id, slug, ram_mb, max_concurrency, idle_timeout_s)
 		values ($1, $2, 'b310-app', 256, 2, 60)
-		on conflict (id) do nothing
 	`, appID, acctID); err != nil {
 		t.Fatalf("seed app: %v", err)
 	}
-	const depID = "00000000-0000-0000-0000-0000000000d1"
 	const wantURL = "https://github.com/acme/app@main"
 	const wantSHA = "0123456789abcdef0123456789abcdef01234567" // 40-char sha1
 	if _, err := pool.Exec(ctx, `
@@ -101,29 +121,40 @@ func TestMigrations_00047_DeploymentsSourceURL(t *testing.T) {
 		t.Errorf("commit_sha round-trip: got %v, want %s", gotSHA, wantSHA)
 	}
 
-	// (3) The CHECK rejects a too-long commit_sha.
-	if _, err := pool.Exec(ctx, `
-		insert into deployments (id, app_id, kind, source_bytes, status, commit_sha)
-		values ('00000000-0000-0000-0000-0000000000d2', $1, 'image', 1024, 'pending',
-		        repeat('a', 65))
-	`, appID); err == nil {
-		t.Fatalf("expected CHECK violation for 65-char commit_sha, got nil")
+	// (3) The CHECK rejects three bad shapes (PR #241 review finding #5).
+	for _, tc := range []struct {
+		name string
+		dep  string
+		body string // body bytes, must be raw hex characters
+	}{
+		{"over-long", depID65, strings.Repeat("a", 65)},
+		// 64-char but not hex: 64 × 'g'. The pre-tightening CHECK accepted this;
+		// the post-tightening CHECK must reject it.
+		{"non-hex", depID64g, strings.Repeat("g", 64)},
+		// Under-length (6 chars). The lower bound rejects the empty-string-without-NULL
+		// path the old CHECK allowed.
+		{"under-long", depID6, strings.Repeat("a", 6)},
+	} {
+		if _, err := pool.Exec(ctx, `
+			insert into deployments (id, app_id, kind, source_bytes, status, commit_sha)
+			values ($1, $2, 'image', 1024, 'pending', $3)
+		`, tc.dep, appID, tc.body); err == nil {
+			t.Fatalf("CHECK %s: expected violation for %s, got nil", tc.name, tc.body)
+		}
 	}
 
-	// (4) The CHECK accepts the boundary value (exactly 64 chars).
-	const depID64 = "00000000-0000-0000-0000-0000000000d3"
+	// (4) The CHECK accepts the boundary value (exactly 64 hex chars).
 	if _, err := pool.Exec(ctx, `
 		insert into deployments (id, app_id, kind, source_bytes, status, commit_sha)
-		values ($1, $2, 'image', 1024, 'pending', repeat('b', 64))
-	`, depID64, appID); err != nil {
-		t.Fatalf("64-char commit_sha should be accepted: %v", err)
+		values ($1, $2, 'image', 1024, 'pending', $3)
+	`, depID64, appID, strings.Repeat("b", 64)); err != nil {
+		t.Fatalf("64-hex-char commit_sha should be accepted: %v", err)
 	}
 
 	// (5) Pre-existing deployments (created before the migration)
 	// read with both new columns NULL. We simulate by inserting a
 	// row with explicit NULLs (semantically identical to a row from
 	// before the columns existed).
-	const depIDLegacy = "00000000-0000-0000-0000-0000000000d4"
 	if _, err := pool.Exec(ctx, `
 		insert into deployments (id, app_id, kind, source_bytes, status, source_url, commit_sha)
 		values ($1, $2, 'image', 1024, 'pending', NULL, NULL)

@@ -135,6 +135,19 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 		// expand past the plan limit.
 		capBytes := int64(limits.AppLayerMaxMB) * 1024 * 1024
 		if err := ApplyTarball(staging, in.TarballPath, capBytes); err != nil {
+			// Promote the sentinel to the plan-scoped RFC 7807 Problem
+			// so the customer-facing deploy failure carries the limit +
+			// observed value + docs URL instead of a generic "function
+			// tarball exceeds cap" string. The post-unpack observed size
+			// is `Written + Entry` — the total that would have been
+			// written had we not aborted (matches the message at the
+			// ErrTarballExceedsCap site). Mirrors CheckCap's
+			// api.ErrAppLayerTooLarge return at size.go:74 so callers
+			// see the same Problem shape for both cap violations.
+			var capErr *ErrTarballExceedsCap
+			if errors.As(err, &capErr) {
+				return BuildResult{}, api.ErrAppLayerTooLarge(limits, capErr.WrittenBytes+capErr.EntryBytes)
+			}
 			return BuildResult{}, err
 		}
 	}
@@ -296,13 +309,18 @@ func InjectGuestInit(staging, guestInitPath string) error {
 // (the customer uploads node_modules and the layer blows past the
 // drive1 cap). Pass 0 to skip the cap (legacy callers + tests).
 //
-// Returns ErrTarballExceedsCap (errors.Is-detectable) when the
+// Returns ErrTarballExceedsCap (errors.As-detectable) when the
 // cumulative unpacked bytes exceed capBytes. The cap is enforced
 // after each entry so a 10 GB tarball is rejected without writing the
 // full 10 GB to disk — the per-entry io.CopyN in applyEntry is the
-// inner bound, this is the outer bound. The caller promotes the
-// sentinel to api.ErrAppLayerTooLarge(*Problem) with the plan in
-// context.
+// inner bound, this is the outer bound. The cap is on DECLARED tar
+// header sizes, not actual streamed bytes: a malicious tarball
+// declaring hdr.Size=1 with a 1 GB body would only consume the
+// declared 1 byte toward the cap (the io.CopyN is the inner
+// streamer-side guard). Build() above promotes the sentinel to
+// api.ErrAppLayerTooLarge(*Problem) with the plan in context;
+// direct callers (e.g. unit tests) can errors.As against
+// *ErrTarballExceedsCap to inspect WrittenBytes / EntryBytes.
 //
 //nolint:forbidigo // tarballPath is the apid-spooled path under spoolRoot() that already passed apid's validateTarballShape (in cmd/apid/deploy_inputs.go) — bytes are validated before builderd opens them; symlink-attack on the open itself is impossible because apid wrote the file via os.Create above with a fresh random id. The "customer" framing in the doc comment refers to the *contents* of the tarball (handler code), not the file path on disk.
 func ApplyTarball(staging, tarballPath string, capBytes int64) error {
@@ -323,8 +341,13 @@ func ApplyTarball(staging, tarballPath string, capBytes int64) error {
 
 // ErrTarballExceedsCap is the sentinel returned by ApplyTarball when a
 // function tarball's cumulative unpacked bytes exceed the cap. Callers
-// can errors.Is against it to translate to the plan-scoped
+// can errors.As against it to translate to the plan-scoped
 // api.ErrAppLayerTooLarge Problem.
+//
+// The cap is on DECLARED tar header sizes (issue #197 B3.7); a
+// tarball whose entries lie about hdr.Size would under-report toward
+// the cap but still be bounded by the per-entry io.CopyN inner
+// guard. See ApplyTarball's doc for the full story.
 type ErrTarballExceedsCap struct {
 	WrittenBytes int64
 	EntryBytes   int64

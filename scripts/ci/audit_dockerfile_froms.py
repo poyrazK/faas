@@ -38,6 +38,16 @@ from pathlib import Path
 # no tag) is treated as a mutable reference and MUST be in the lock.
 
 FROM_RE = re.compile(r"^FROM\s+(?P<rest>.*)$")
+# ARG_PLACEHOLDER_RE matches `$ARG` or `${ARG}` in the IMAGE:REF slot
+# only — the first whitespace-separated token after FROM (multi-arch
+# `--platform=$XYZ` flags are stripped first by parse_dockerfile_lines).
+# We deliberately do NOT match ARG placeholders anywhere in the rest
+# of the line (PR #241 review finding #8): a hypothetical
+# `FROM https://registry.example/$BRANCH/img:v1` should not be
+# treated as "has ARG substitution in the upstream image" just
+# because `$BRANCH` appears in the URL path. The image reference is
+# the first whitespace-separated token; the tag (and thus the
+# mutability) lives in that token, not later in the URL.
 ARG_PLACEHOLDER_RE = re.compile(r"\$\{?[A-Z_][A-Z0-9_]*\}?")
 
 
@@ -57,13 +67,24 @@ def from_clause_is_digest_pinned(rest: str) -> bool:
 
 
 def from_clause_has_arg_substitution(rest: str) -> bool:
-    """True if the FROM <rest> contains any $ARG or ${ARG} placeholder.
+    """True if the FROM <rest>'s IMAGE:REF slot contains a $ARG or
+    ${ARG} placeholder (PR #241 review finding #8).
+
+    Only the first whitespace-separated token is checked — a
+    hypothetical `FROM https://registry.example/$BRANCH/img:v1` is
+    NOT treated as having an ARG substitution in the upstream
+    image, even though `$BRANCH` appears in the line. The image
+    reference (and the tag mutability) lives in that token, not
+    later in the URL.
 
     Note: the substitution need not be TARGETPLATFORM — even $SUITE
     (e.g. `debian:${SUITE}-slim`) is treated as "we don't know the
     resolved image at parse time, defer to the lock."
     """
-    return bool(ARG_PLACEHOLDER_RE.search(rest))
+    if not rest:
+        return False
+    ref = rest.split()[0]
+    return bool(ARG_PLACEHOLDER_RE.search(ref))
 
 
 # Canonical empty image — not a mutable upstream; the FROM `scratch`

@@ -341,9 +341,12 @@ func TestEnsureBaseExt4_PerArchPartition(t *testing.T) {
 		t.Fatalf("arm64 stage: %v", err)
 	}
 
-	// Both ext4s must be present and byte-distinct (the fakeBuilder
-	// stamps unique bytes per call so the two stages produce non-
-	// identical blobs).
+	// Both ext4s must be present at their respective per-arch keys. The
+	// fakeBuilder writes the same literal "fake ext4" payload regardless
+	// of call, so this test only asserts presence (NOT byte-distinction);
+	// the load-bearing property — same key with different arch suffixes
+	// would NOT clobber — is exercised by the TestBaseKeyForArch_* family
+	// in pkg/sched/paths_test.go.
 	for _, k := range []string{baseKeyAmd64, baseKeyArm64} {
 		rc, err := hs.be.Get(context.Background(), k)
 		if err != nil {

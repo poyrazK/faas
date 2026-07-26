@@ -60,8 +60,13 @@ def _auth_header_for(repo: str) -> dict[str, str] | None:
         except (OSError, json.JSONDecodeError):
             return None
         # Find the matching auth entry by host prefix.
+        # PR #241 review finding #9: `host in repo` was too permissive —
+        # "quay.io" matched "myquay.io.example.com". Tighten to exact
+        # equality or full-segment prefix: `repo == host` (bare-host
+        # form, e.g. when the lock entry omitted `/library`) or
+        # `repo.startswith(host + "/")` (canonical repository form).
         for host, entry in (cfg.get("auths") or {}).items():
-            if repo.startswith(host) or host in repo:
+            if repo == host or repo.startswith(host + "/"):
                 auth_b64 = entry.get("auth")
                 if auth_b64:
                     return {"Authorization": "Basic " + auth_b64}

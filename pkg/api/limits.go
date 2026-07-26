@@ -151,12 +151,14 @@ type Limits struct {
 //	Scale 100/20 / 1024 / 1500
 var planLimits = map[Plan]Limits{
 	PlanFree: {
-		Plan:                PlanFree,
-		DeployedApps:        1,
-		MaxConcurrency:      1,
-		RAMMB:               128,
-		// AppLayerMaxMB 256 matches spec §1 ("App-layer build ... Free 256 MB").
-		// Aligned with spec §1, 2026-07-26 (Tier 3 issue #197 spec-drift audit).
+		Plan:           PlanFree,
+		DeployedApps:   1,
+		MaxConcurrency: 1,
+		RAMMB:          128,
+		// AppLayerMaxMB 256 — Free is the lowest cap tier; spec §1 ("App-
+		// layer build ... Free 256 MB") and the limits table both read 256
+		// (PR #241 spec-drift audit, 2026-07-26). This is a no-op
+		// alignment comment; the value was 256 before this audit too.
 		AppLayerMaxMB:       256,
 		SourceTarballMaxMB:  100,
 		VCPU:                2,

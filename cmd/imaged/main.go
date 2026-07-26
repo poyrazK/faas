@@ -218,11 +218,14 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}
 	basePath := envOr("FAAS_BUILDER_BASE_PATH", "/srv/fc/base/builder-base.ext4")
 	// #96 / ADR-025 axis 2: EnsureBaseExt4 publishes via the StorageBackend
-	// under sched.BaseKey / sched.BaseDigestKey. basePath is kept as a
-	// resolution target (LocalStorageBackend joins it under FAAS_STORAGE_ROOT)
-	// for one release — the migration slice flips to key-only.
-	baseKey := sched.BaseKey("builder")
-	digestKey := sched.BaseDigestKey("builder")
+	// under sched.BaseKeyForArch / sched.BaseDigestKeyForArch, partitioned
+	// by the imaged binary's host arch (issue #197 B3.3). basePath is kept
+	// as a resolution target (LocalStorageBackend joins it under
+	// FAAS_STORAGE_ROOT) for one release — the migration slice flips to
+	// key-only.
+	arch := imaged.BuilderArch()
+	baseKey := sched.BaseKeyForArch("builder", arch)
+	digestKey := sched.BaseDigestKeyForArch("builder", arch)
 	baseRes, err := h.EnsureBaseExt4(ctx, baseRef, baseKey, digestKey, basePath)
 	if err != nil {
 		return fmt.Errorf("imaged: stage builder base %s → %s: %w", baseRef, basePath, err)
@@ -246,6 +249,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 
 	log.Info("imaged ready",
 		"min_layer_mb", rootfs.MinLayerMB,
+		"arch", arch,
 		"builder_base_path", basePath,
 		"builder_base_ref", baseRef,
 		"builder_base_digest", baseRes.ConfigDigest,
