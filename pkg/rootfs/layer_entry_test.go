@@ -44,22 +44,39 @@ func TestApplyEntry_TypeRegTruncatesExisting(t *testing.T) {
 	}
 }
 
-func TestApplyEntry_SymlinkExternal(t *testing.T) {
-	// Pin the CodeQL go/path-injection hardening: a header whose Linkname
-	// is an absolute host path is REJECTED before the staging directory is
-	// touched. Previously applyEntry blindly called os.Symlink(hdr.Linkname,
-	// target), letting a malicious layer create a symlink whose target
-	// pointed at /etc/hostname (or anything else on the host). Now safeJoin
-	// runs first and absolute paths get a "rootfs: absolute entry path"
-	// error.
+// TestApplyEntry_Symlink_AbsoluteLinknameResolvesToArchiveRoot pins the
+// OCI/Docker layer-format convention for absolute symlink Linknames:
+// the absolute text is interpreted relative to the archive root (the
+// staging dir), NOT to the host root. The header's Linkname is
+// `/etc/hostname`; resolveSymlinkText strips the leading `/`, joins
+// to dir, and stores `<dir>/etc/hostname` as the symlink text — a
+// path INSIDE the staging tree. Real-world base images (alpine's
+// `bin/<tool> -> /bin/busybox`) all use this convention.
+//
+// This replaces the prior `TestApplyEntry_SymlinkExternal` test that
+// asserted rejection of absolute Linknames; that interpretation
+// broke every real OCI base image at staging time.
+func TestApplyEntry_Symlink_AbsoluteLinknameResolvesToArchiveRoot(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "link")
 	hdr := &tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "/etc/hostname"}
-	if err := applyEntry(dir, target, hdr, nil); err == nil {
-		t.Fatal("applyEntry accepted absolute symlink target; expected safeJoin rejection")
+	if err := applyEntry(dir, target, hdr, nil); err != nil {
+		t.Fatalf("applyEntry rejected absolute Linkname: %v (archive-root semantics broken)", err)
 	}
-	if _, err := os.Lstat(target); err == nil {
-		t.Errorf("escaped symlink landed on host: %s", target)
+	li, err := os.Lstat(target)
+	if err != nil {
+		t.Fatalf("symlink not created: %v", err)
+	}
+	if li.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("entry is not a symlink: mode=%v", li.Mode())
+	}
+	got, err := os.Readlink(target)
+	if err != nil {
+		t.Fatalf("readlink: %v", err)
+	}
+	want := filepath.Join(dir, "etc", "hostname")
+	if got != want {
+		t.Errorf("symlink target = %q, want %q", got, want)
 	}
 }
 

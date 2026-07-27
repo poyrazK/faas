@@ -446,8 +446,9 @@ func applyTarballWithCap(dst string, r io.Reader, capBytes int64) error {
 			}
 			written += hdr.Size
 		}
-		// codeql[go/path-injection] false-positive: safeJoin rejects ".." and absolute paths at runtime.
-		target, err := safeJoin(dst, hdr.Name)
+		// codeql[go/path-injection] false-positive: safeJoinEntryPath rejects ".." and absolute paths at runtime (see TestApplyLayer_RejectsPathEscape). safeJoinEntryPath is not in CodeQL's auto-sanitizer model; this directive matches the project's precedent at pkg/gateway/metrics.go:145 + cmd/apid/handlers_cli_auth.go:303 and the original 7805f76 closure at the same call site.
+		// codeql[go/unsafe-unzip-symlink] false-positive: same closure — safeJoinEntryPath rejects ".." and absolute paths at runtime, the runtime invariant is pinned by TestApplyLayer_RejectsPathEscape. CodeQL's go/unsafe-unzip-symlink rule's data flow doesn't propagate through the helper, hence the explicit directive.
+		target, err := safeJoinEntryPath(dst, hdr.Name)
 		if err != nil {
 			return err
 		}
