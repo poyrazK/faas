@@ -76,9 +76,18 @@ func TestPg_SetMFASecret_UnknownAccountReturnsErrNotFound(t *testing.T) {
 // TestPg_MarkMFAEnrolled_StampsEnrolledAt pins the happy path AND verifies
 // that mfa_required flips back to false (which is what makes the
 // requireMFA middleware's "enrolled but not required" state observable).
+//
+// The migration 00049 CHECK constraint
+// (accounts_mfa_enrolled_shape_chk) requires
+// mfa_secret_encrypted to be NOT NULL whenever
+// mfa_enrolled_at is stamped — we set the secret first so the
+// enrollment stamp is accepted.
 func TestPg_MarkMFAEnrolled_StampsEnrolledAt(t *testing.T) {
 	s, ctx := pgStore(t)
 	acctID := createAccount(t, s, ctx, pgTestEmail(t))
+	if err := s.SetMFASecret(ctx, acctID, []byte("cipher"), [][]byte{{0xAB}}); err != nil {
+		t.Fatalf("SetMFASecret: %v", err)
+	}
 	if err := s.MarkMFAEnrolled(ctx, acctID); err != nil {
 		t.Fatalf("MarkMFAEnrolled: %v", err)
 	}
@@ -199,45 +208,59 @@ func TestPg_SetMFARequired_UnknownAccountReturnsErrNotFound(t *testing.T) {
 // failed and superseded deployments are NOT counted (the chokepoint's
 // 2nd-deploy gate only cares about live workload). Also pins the
 // apps.status <> 'deleted' filter (tombstoned apps are invisible too).
+//
+// Note: CreateDeployment's INSERT hard-codes status='pending' regardless
+// of the caller's Status field, AND auto-supersedes any prior
+// pending|live row on the same app. To stage a failed and a superseded
+// row, we (1) put them on separate apps so the seed's live row stays
+// untouched, and (2) flip each one via SetDeploymentFailed /
+// MarkDeploymentSuperseded — both are real Store methods that the test
+// fixture is also exercising.
 func TestPg_CountDeployments_ExcludesFailedAndSuperseded(t *testing.T) {
 	s, ctx := pgStore(t)
-	acctID, appID, liveDepID := seedLiveDeploy(t, s, ctx)
+	acctID, seededAppID, liveDepID := seedLiveDeploy(t, s, ctx)
 
-	// Add two deployments that should NOT be counted: one failed,
-	// one superseded.
-	failed, err := s.CreateDeployment(ctx, state.Deployment{
-		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:bad",
-		Status: state.DeployFailed,
+	// One failed row on its own app — must NOT be counted.
+	failedAppID := createApp(t, s, ctx, acctID, "failed-app")
+	failedDep, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: failedAppID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:bad",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(failed): %v", err)
 	}
-	superseded, err := s.CreateDeployment(ctx, state.Deployment{
-		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:sup",
-		Status: state.DeploySuperseded,
+	if _, err := s.SetDeploymentFailed(ctx, failedDep.ID, "build_failed", "compile error"); err != nil {
+		t.Fatalf("SetDeploymentFailed: %v", err)
+	}
+
+	// One superseded row on yet another app — must NOT be counted.
+	supAppID := createApp(t, s, ctx, acctID, "superseded-app")
+	supDep, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: supAppID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:sup",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(superseded): %v", err)
 	}
-	// One additional live deployment → total counted = 2.
-	extra, err := s.CreateDeployment(ctx, state.Deployment{
-		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:new",
-		Status: state.DeployPending,
-	})
-	if err != nil {
+	if err := s.MarkDeploymentSuperseded(ctx, supDep.ID); err != nil {
+		t.Fatalf("MarkDeploymentSuperseded: %v", err)
+	}
+
+	// One extra pending deployment on yet a third app — DOES count.
+	extraAppID := createApp(t, s, ctx, acctID, "extra-app")
+	if _, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: extraAppID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:new",
+	}); err != nil {
 		t.Fatalf("CreateDeployment(extra): %v", err)
 	}
+
+	_ = seededAppID
 	_ = liveDepID
-	_ = failed
-	_ = superseded
-	_ = extra
 
 	n, err := s.CountDeployments(ctx, acctID)
 	if err != nil {
 		t.Fatalf("CountDeployments: %v", err)
 	}
 	if n != 2 {
-		t.Errorf("CountDeployments = %d, want 2 (live + extra; failed/superseded filtered)", n)
+		t.Errorf("CountDeployments = %d, want 2 (seeded live + extra pending; failed/superseded filtered)", n)
 	}
 }
 
