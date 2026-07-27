@@ -207,6 +207,13 @@ const (
 	// only; v6 mirror is a separate ADR).
 	CodeInvalidEgressAllowlist = "invalid_egress_allowlist"
 
+	// CodeInvalidLogLevel is a 400 returned by GET /v1/apps/{slug}/logs
+	// when ?level= is set to anything other than info|warn|error
+	// (case-insensitive). Issue #309. A typo'd CLI flag should fail
+	// fast at the parse step rather than silently stream an
+	// unfiltered view that the customer thinks is filtered.
+	CodeInvalidLogLevel = "invalid_log_level"
+
 	// Account self-service (spec §17 G6, ADR-021). The
 	// "confirm_required" code is returned when a DELETE arrives without
 	// the confirmation header so a stale CLI prompt can't silently wipe

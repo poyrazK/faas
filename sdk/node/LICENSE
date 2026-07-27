@@ -1,0 +1,8 @@
+LicenseRef-onebox-internal
+
+This package is part of the one-box FaaS platform monorepo and is not
+yet published to npm. Source-available to monorepo contributors only;
+no redistribution rights granted.
+
+PR 13 will replace this file with the customer-facing license chosen
+for the first tagged release.

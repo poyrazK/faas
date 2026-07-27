@@ -6,7 +6,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
+
+// LogFilter narrows the /v1/apps/{slug}/logs stream. All fields are
+// optional; an empty LogFilter is a no-op.
+//
+// Grep is a case-sensitive substring match against the rendered line
+// (the same byte stream the server emits in `event: log\ndata:`).
+// Since is an RFC3339 lower bound on the structured timestamp; the
+// server skips lines whose `written_at` is earlier. Level is a
+// minimum-level filter — accepted values are "info", "warn", "error"
+// (case-insensitive). All three are applied server-side; the CLI
+// does not re-filter, so the wire and the print loop are always
+// consistent.
+type LogFilter struct {
+	Grep  string
+	Since string
+	Level string
+}
 
 // StreamAppLogs opens the GET /v1/apps/{slug}/logs stream and returns
 // its raw response body. The response is text/event-stream; callers
@@ -22,18 +40,35 @@ import (
 // `?deployment=` query param the CLI's `faas logs --deployment` uses);
 // pass "" to receive all instances' frames.
 //
+// f carries the optional LogFilter (grep/since/level). Empty fields
+// are dropped from the URL. Issue #309.
+//
 // Non-2xx responses are decoded as *APIError (same convention as the
 // JSON methods) and the body is closed internally; the caller only
 // ever sees a successful body or an error.
-func (c *Client) StreamAppLogs(ctx context.Context, slug, deploymentID string, follow bool) (io.ReadCloser, error) {
-	path := fmt.Sprintf("/v1/apps/%s/logs?follow=", slug)
+func (c *Client) StreamAppLogs(ctx context.Context, slug, deploymentID string, follow bool, f LogFilter) (io.ReadCloser, error) {
+	path := fmt.Sprintf("/v1/apps/%s/logs?", slug)
+	q := ""
 	if follow {
-		path += "1"
+		q += "&follow=1"
 	} else {
-		path += "0"
+		q += "&follow=0"
 	}
 	if deploymentID != "" {
-		path += "&deployment=" + deploymentID
+		q += "&deployment=" + deploymentID
+	}
+	if f.Grep != "" {
+		q += "&grep=" + url.QueryEscape(f.Grep)
+	}
+	if f.Since != "" {
+		q += "&since=" + url.QueryEscape(f.Since)
+	}
+	if f.Level != "" {
+		q += "&level=" + url.QueryEscape(f.Level)
+	}
+	if len(q) > 0 {
+		// path already has "?"; strip leading "&"
+		path += q[1:]
 	}
 	return c.stream(ctx, path)
 }

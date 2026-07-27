@@ -1,0 +1,44 @@
+{
+  "name": "gregale/skd-node",
+  "version": "0.1.0",
+  "description": "Node SDK for the one-box FaaS platform. Generated from api/openapi.yaml.",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.10.0"
+  },
+  "packageManager": "npm@10.9.0",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "restricted"
+  },
+  "scripts": {
+    "gen": "node scripts/gen.mjs",
+    "gen:check": "node scripts/gen.mjs && git diff --exit-code -- src/generated",
+    "build": "tsc -p tsconfig.json",
+    "test:build": "tsc -p tsconfig.test.json",
+    "test": "npm run test:build && node --test --test-concurrency=1 'dist-test/test/**/*.test.js' && node --test --test-concurrency=1 test/post-process.test.mjs",
+    "test:smoke": "npm run test:build && node --test --test-concurrency=1 dist-test/test/smoke.test.js",
+    "test:unit": "npm run test:build && node --test --test-concurrency=1 dist-test/test/sse.test.js && node --test --test-concurrency=1 test/post-process.test.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "22.10.0",
+    "openapi-typescript-codegen": "0.31.0",
+    "typescript": "5.6.3"
+  }
+}

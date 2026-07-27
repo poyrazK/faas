@@ -1686,6 +1686,16 @@ func writeLogEvent(w http.ResponseWriter, flusher http.Flusher, e state.LogEntry
 // contract (pkg/api/logs.go::StreamAppLogs) keeps returning a 200 with
 // parseable frames and the dashboard's per-app log button doesn't 404.
 // Move 4 replaces the body.
+//
+// Issue #309: the handler now also accepts three optional filter query
+// params — grep (substring), since (RFC3339 lower bound), level
+// (info|warn|error, case-insensitive). The Move 3 stub does not consume
+// them yet (vmmd's Logs(req) gRPC isn't wired); we parse them into a
+// logFilter local so the wire contract is locked, and reject a bad
+// `level` value at parse time so a typo'd CLI flag fails fast rather
+// than silently emitting an unfiltered stream. Move 4's body filters
+// the vmmd stream against this same logFilter — the parameter is
+// already in scope when the body gets swapped in.
 func (s *server) streamAppLogs(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -1696,6 +1706,21 @@ func (s *server) streamAppLogs(w http.ResponseWriter, r *http.Request, acct stat
 			"No running instance", "the app is parked; wake it first"))
 		return
 	}
+	q := r.URL.Query()
+	f := logFilter{
+		Grep:  q.Get("grep"),
+		Since: q.Get("since"),
+		Level: q.Get("level"),
+	}
+	if f.Level != "" && !validLogLevel(f.Level) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeInvalidLogLevel,
+			"invalid level", "level must be one of info, warn, error"))
+		return
+	}
+	_ = f // Move 3 stub: filtered params are accepted but not consumed.
+	// The vmmd Logs(req) gRPC subscription lands in Move 4; until then
+	// the ring buffer is unreachable from this path. Documenting the
+	// parse so the wire contract is stable from this commit forward.
 	startSSE(w)
 	flusher, _ := w.(http.Flusher)
 	// Two frames then close: a not_implemented signal so a client can
@@ -1707,6 +1732,34 @@ func (s *server) streamAppLogs(w http.ResponseWriter, r *http.Request, acct stat
 	_, _ = fmt.Fprint(w, "event: end\ndata: {}\n\n")
 	if flusher != nil {
 		flusher.Flush()
+	}
+}
+
+// logFilter carries the optional /v1/apps/{slug}/logs filter params
+// (issue #309). All fields are optional; an empty value skips the
+// filter. The Move 3 stub receives but does not consume it; Move 4
+// passes it to vmmd's Logs(req) gRPC and applies matching on the
+// ring-buffer side.
+//
+// Grep is matched case-sensitively against the rendered line. Since
+// is an RFC3339 lower bound (validation deferred to vmmd). Level is
+// case-insensitive — "INFO" / "info" / "Info" all match the same set.
+type logFilter struct {
+	Grep  string
+	Since string
+	Level string
+}
+
+// validLogLevel reports whether s is one of info|warn|error in any
+// case. Other values must fail at parse time so a CLI typo ("--level
+// inof") returns 400 immediately instead of silently streaming an
+// unfiltered view that the customer thinks is filtered.
+func validLogLevel(s string) bool {
+	switch strings.ToLower(s) {
+	case "info", "warn", "error":
+		return true
+	default:
+		return false
 	}
 }
 

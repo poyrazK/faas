@@ -1143,16 +1143,42 @@ func validateRepoSlug(s string) error {
 // and faas queue tail. signal.NotifyContext on os.Interrupt makes
 // Ctrl-C tear down the in-flight request within ~50 ms instead of
 // waiting for the body Close to be GC'd.
+//
+// Issue #309: --grep, --since (RFC3339), and --level (info|warn|error)
+// narrow the stream server-side. Pre-validation runs locally so a
+// typo'd --since or --level fails fast (no needless SSE open).
+// Server-side filtering means the CLI never re-filters; the wire and
+// the print loop stay consistent.
 func cmdLogs(args []string) int {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	follow := fs.Bool("follow", false, "follow new lines")
 	deployment := fs.String("deployment", "", "deployment id (default: latest)")
+	grep := fs.String("grep", "", "substring filter; matches the raw line")
+	since := fs.String("since", "", "RFC3339 lower bound on the log timestamp")
+	level := fs.String("level", "", "minimum level: info, warn, or error")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: faas logs <slug> [--follow] [--deployment ID]", "logs")
+		PrintUsage(os.Stderr, "usage: faas logs [--follow] [--deployment ID] [--grep S] [--since RFC3339] [--level info|warn|error] <slug>", "logs")
 		return 1
+	}
+	// Pre-validate so a typo'd flag fails fast without opening the
+	// SSE stream. The server also rejects bad `level` with 400; this
+	// check exists to give a clean error message without burning a
+	// round-trip on a clearly invalid input.
+	if *since != "" {
+		if _, err := time.Parse(time.RFC3339, *since); err != nil {
+			return printErr("--since must be RFC3339 (e.g. 2026-07-27T00:00:00Z)", err)
+		}
+	}
+	if *level != "" {
+		switch strings.ToLower(*level) {
+		case "info", "warn", "error":
+		default:
+			return printErr("--level must be one of info, warn, error",
+				fmt.Errorf("got %q", *level))
+		}
 	}
 	slug := fs.Arg(0)
 	client, err := authedClient()
@@ -1161,7 +1187,8 @@ func cmdLogs(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	body, err := client.StreamAppLogs(ctx, slug, *deployment, *follow)
+	body, err := client.StreamAppLogs(ctx, slug, *deployment, *follow,
+		api.LogFilter{Grep: *grep, Since: *since, Level: *level})
 	if err != nil {
 		var ae *APIError
 		if errors.As(err, &ae) {

@@ -1,0 +1,44 @@
+# openapi-python-client configuration for faas_sdk (v0.29.0).
+#
+# Pinned via:
+#   - sdk/python/scripts/gen.py::regen (docstring + invocation)
+#   - .github/workflows/ci.yml (sdk-gen-python: pip install
+#     openapi-python-client==0.29.0)
+# Major-version bumps require a new ADR.
+#
+# 0.29.0's ConfigFile (openapi_python_client/config.py::ConfigFile)
+# accepts the keys below; only the ones we explicitly set are shown.
+# Unset keys take the generator's defaults.
+#
+# Field reference (mirrors openapi_python_client 0.29.0):
+#   project_name_override       : string — override the on-disk project
+#                                  directory name. We set this to
+#                                  `faas_sdk` so the generator writes
+#                                  `<output>/faas_sdk/` directly.
+#   package_name_override       : string — override the import name.
+#                                  Set to `faas_sdk` so `from faas_sdk
+#                                  import FaaSClient` resolves.
+#   package_version_override    : string — single source of truth for
+#                                  the wheel version (cross-references
+#                                  pyproject.toml::version).
+#   use_path_prefixes_for_title_model_names : bool — when False, model
+#                                  names are short (`GetAppsResponse`,
+#                                  not `AppsGetAppsResponse`). The
+#                                  Go and Node SDKs default to False
+#                                  too; we align.
+#   field_prefix                : string — drops the `field_` prefix
+#                                  the generator defaults to. The Node
+#                                  SDK also dropped this (`Date`, not
+#                                  `field_date`).
+#   literal_enums               : bool — emits `Literal["a", "b"]`
+#                                  unions so comparisons like
+#                                  `problem.code == "not_found"` are
+#                                  statically typed.
+#   docstrings_on_attributes    : bool — useful for codegen review.
+project_name_override: faas_sdk
+package_name_override: faas_sdk
+package_version_override: '0.1.0'
+use_path_prefixes_for_title_model_names: false
+field_prefix: ''
+literal_enums: true
+docstrings_on_attributes: true

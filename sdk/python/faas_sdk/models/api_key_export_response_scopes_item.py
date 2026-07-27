@@ -1,0 +1,20 @@
+from typing import Literal
+
+APIKeyExportResponseScopesItem = Literal[
+    "admin", "apps:read", "deploy:write", "secrets:read", "secrets:write", "usage:read"
+]
+
+API_KEY_EXPORT_RESPONSE_SCOPES_ITEM_VALUES: set[APIKeyExportResponseScopesItem] = {
+    "admin",
+    "apps:read",
+    "deploy:write",
+    "secrets:read",
+    "secrets:write",
+    "usage:read",
+}
+
+
+def check_api_key_export_response_scopes_item(value: str) -> APIKeyExportResponseScopesItem:
+    if value in API_KEY_EXPORT_RESPONSE_SCOPES_ITEM_VALUES:
+        return value
+    raise TypeError(f"Unexpected value {value!r}. Expected one of {API_KEY_EXPORT_RESPONSE_SCOPES_ITEM_VALUES!r}")

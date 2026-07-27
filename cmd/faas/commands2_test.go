@@ -792,3 +792,143 @@ func TestCmdDeployTarball_NoFlags_DockerfileAndPackageJson(t *testing.T) {
 		t.Errorf("runtime = %q, want empty (App-type deploy)", gotRuntime)
 	}
 }
+
+// TestCmdLogs_GrepSinceLevel pins issue #309: `faas logs <slug> --grep S
+// --since RFC3339 --level info|warn|error` threads the filter through
+// the SDK call. The fake apid captures the raw query string and the
+// test asserts each filter lands as the expected query param. Empty
+// fields are omitted so the pre-#309 wire (only `follow=0`) stays
+// byte-identical. Pre-validation is exercised too: an invalid
+// --since or --level returns non-zero without ever opening the SSE
+// stream.
+func TestCmdLogs_GrepSinceLevel(t *testing.T) {
+	type captured struct {
+		method   string
+		path     string
+		rawQuery string
+	}
+	var (
+		mu   sync.Mutex
+		got  captured
+		hits int32
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = captured{
+			method:   r.Method,
+			path:     r.URL.Path,
+			rawQuery: r.URL.RawQuery,
+		}
+		mu.Unlock()
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		// Two synthetic frames then a terminal `end` so cmdLogs exits
+		// cleanly. Server-side filtering is asserted via the URL,
+		// not the wire frames (the Move 3 stub doesn't filter).
+		_, _ = w.Write([]byte("event: log\ndata: hello world\n\n"))
+		_, _ = w.Write([]byte("event: end\ndata: {}\n\n"))
+	}))
+	defer srv.Close()
+
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	cases := []struct {
+		name    string
+		args    []string
+		wantHit int32 // 0 = pre-validated; 1 = SDK call reached the server
+		wantRaw string
+	}{
+		{
+			name:    "no filter flags → only follow=0",
+			args:    []string{"my-app"},
+			wantHit: 1,
+			wantRaw: "follow=0",
+		},
+		{
+			name:    "grep only",
+			args:    []string{"--grep", "ERROR", "my-app"},
+			wantHit: 1,
+			wantRaw: "follow=0&grep=ERROR",
+		},
+		{
+			name:    "since only",
+			args:    []string{"--since", "2026-07-27T00:00:00Z", "my-app"},
+			wantHit: 1,
+			wantRaw: "follow=0&since=2026-07-27T00%3A00%3A00Z",
+		},
+		{
+			name:    "level only",
+			args:    []string{"--level", "warn", "my-app"},
+			wantHit: 1,
+			wantRaw: "follow=0&level=warn",
+		},
+		{
+			name:    "all three (escaping stress test)",
+			args:    []string{"--grep", "needle & thread", "--since", "2026-07-27T12:34:56Z", "--level", "error", "my-app"},
+			wantHit: 1,
+			wantRaw: "follow=0&grep=needle+%26+thread&since=2026-07-27T12%3A34%3A56Z&level=error",
+		},
+		{
+			name:    "--since rejects non-RFC3339",
+			args:    []string{"--since", "yesterday", "my-app"},
+			wantHit: 0,
+		},
+		{
+			name:    "--level rejects unknown value",
+			args:    []string{"--level", "inof", "my-app"},
+			wantHit: 0,
+		},
+		{
+			name:    "--follow + --grep still flow through",
+			args:    []string{"--follow", "--grep", "OOM", "my-app"},
+			wantHit: 1,
+			wantRaw: "follow=1&grep=OOM",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			got = captured{}
+			mu.Unlock()
+			atomic.StoreInt32(&hits, 0)
+
+			code := cmdLogs(tc.args)
+
+			if tc.wantHit == 0 {
+				// Pre-validation failed: the server MUST NOT have
+				// been hit (we want a fast error path with no
+				// SSE open).
+				if atomic.LoadInt32(&hits) != 0 {
+					t.Errorf("server hit %d times during pre-validation; want 0", atomic.LoadInt32(&hits))
+				}
+				if code == 0 {
+					t.Errorf("expected non-zero exit on invalid --since/--level, got 0")
+				}
+				return
+			}
+			if atomic.LoadInt32(&hits) != 1 {
+				t.Errorf("server hit %d times, want exactly 1", atomic.LoadInt32(&hits))
+			}
+			mu.Lock()
+			rawQuery := got.rawQuery
+			path := got.path
+			method := got.method
+			mu.Unlock()
+			if method != http.MethodGet {
+				t.Errorf("method = %s, want GET", method)
+			}
+			if path != "/v1/apps/my-app/logs" {
+				t.Errorf("path = %q, want /v1/apps/my-app/logs", path)
+			}
+			if rawQuery != tc.wantRaw {
+				t.Errorf("RawQuery = %q, want %q", rawQuery, tc.wantRaw)
+			}
+			if code != 0 {
+				t.Errorf("exit code = %d, want 0", code)
+			}
+		})
+	}
+}

@@ -448,7 +448,7 @@ func TestStreamAppLogs_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(srv.URL, "fp_test")
-	body, err := c.StreamAppLogs(context.Background(), "x", "", false)
+	body, err := c.StreamAppLogs(context.Background(), "x", "", false, LogFilter{})
 	if err != nil {
 		t.Fatalf("StreamAppLogs: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestStreamAppLogs_ProblemError(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(srv.URL, "fp_test")
-	body, err := c.StreamAppLogs(context.Background(), "missing", "", false)
+	body, err := c.StreamAppLogs(context.Background(), "missing", "", false, LogFilter{})
 	if err == nil {
 		_ = body.Close()
 		t.Fatal("expected error on 404")
@@ -482,6 +482,78 @@ func TestStreamAppLogs_ProblemError(t *testing.T) {
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Problem.Code != CodeNotFound {
 		t.Errorf("want APIError{Code: not_found}, got %T %v", err, err)
+	}
+}
+
+// TestStreamAppLogs_FilterQueryString pins the URL contract for the
+// LogFilter fields (issue #309). The server-side stub captures the
+// raw query and the test asserts each filter lands as a separate
+// query parameter with the expected value (url-escaped for grep;
+// case-insensitive parsing deferred to the server). Empty fields
+// MUST be omitted so a CLI that passes a zero LogFilter sends
+// exactly the same query as the pre-#309 wire.
+func TestStreamAppLogs_FilterQueryString(t *testing.T) {
+	var gotRawQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("event: end\ndata: {}\n\n"))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	cases := []struct {
+		name   string
+		filter LogFilter
+		follow bool
+		want   string
+	}{
+		{
+			name:   "empty filter → no extra params",
+			filter: LogFilter{},
+			want:   "follow=0",
+		},
+		{
+			name:   "grep only",
+			filter: LogFilter{Grep: "ERROR"},
+			want:   "follow=0&grep=ERROR",
+		},
+		{
+			name:   "since only (RFC3339 with colons escaped)",
+			filter: LogFilter{Since: "2026-07-27T00:00:00Z"},
+			want:   "follow=0&since=2026-07-27T00%3A00%3A00Z",
+		},
+		{
+			name:   "level only",
+			filter: LogFilter{Level: "warn"},
+			want:   "follow=0&level=warn",
+		},
+		{
+			name:   "all three (escaping stress test)",
+			filter: LogFilter{Grep: "needle & thread", Since: "2026-07-27T12:34:56Z", Level: "error"},
+			want:   "follow=0&grep=needle+%26+thread&since=2026-07-27T12%3A34%3A56Z&level=error",
+		},
+		{
+			name:   "follow=1 + grep",
+			filter: LogFilter{Grep: "OOM"},
+			follow: true,
+			want:   "follow=1&grep=OOM",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotRawQuery = ""
+			body, err := c.StreamAppLogs(context.Background(), "x", "", tc.follow, tc.filter)
+			if err != nil {
+				t.Fatalf("StreamAppLogs: %v", err)
+			}
+			_, _ = io.Copy(io.Discard, body)
+			_ = body.Close()
+			if gotRawQuery != tc.want {
+				t.Errorf("RawQuery = %q, want %q", gotRawQuery, tc.want)
+			}
+		})
 	}
 }
 
@@ -719,7 +791,7 @@ func TestStreamAppLogs_CancelOnContextDone(t *testing.T) {
 
 	c := NewClient(srv.URL, "fp_test")
 	ctx, cancel := context.WithCancel(context.Background())
-	body, err := c.StreamAppLogs(ctx, "x", "", true)
+	body, err := c.StreamAppLogs(ctx, "x", "", true, LogFilter{})
 	if err != nil {
 		t.Fatalf("StreamAppLogs: %v", err)
 	}

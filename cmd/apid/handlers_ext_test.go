@@ -2012,3 +2012,101 @@ func TestStreamAppLogs_NotImplementedFrame(t *testing.T) {
 		t.Errorf("frame order wrong: not_implemented@%d end@%d", niIdx, endIdx)
 	}
 }
+
+// TestStreamAppLogs_AcceptsFilterParams pins issue #309's wire
+// contract: the GET /v1/apps/{slug}/logs handler MUST accept the
+// three filter query params (grep, since, level) without 400ing,
+// even though the Move 3 stub does not consume them. The Move 4
+// implementation that filters the vmmd ring buffer is gated on
+// these params being on the wire from this commit forward — a
+// customer who sets `faas logs <slug> --grep ERROR` today expects
+// the filter to take effect when Move 4 ships.
+func TestStreamAppLogs_AcceptsFilterParams(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "filter-logs")
+	appID := mustSeedApp(t, e, "filter-logs-app")
+	if _, err := e.store.CreateInstance(context.Background(), appID, dep.ID, "stopped", 256, "default-local", ""); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{"all three", "?follow=0&grep=ERROR&since=2026-07-27T00:00:00Z&level=error"},
+		{"grep only", "?follow=0&grep=ERROR"},
+		{"since only", "?follow=0&since=2026-07-27T00:00:00Z"},
+		{"level only (case-insensitive: INFO)", "?follow=0&level=INFO"},
+		{"empty values (treated as absent)", "?follow=0&grep=&since=&level="},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := e.do(t, "GET", "/v1/apps/filter-logs-app/logs"+tc.query, nil, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+			}
+			if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+				t.Errorf("Content-Type = %q, want text/event-stream", ct)
+			}
+			// The Move 3 stub still emits the two opening frames
+			// unchanged; this asserts the filter params did not
+			// silently regress the wire contract.
+			if !strings.Contains(rec.Body.String(), "event: not_implemented") {
+				t.Errorf("body missing not_implemented frame:\n%s", rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "event: end\ndata: {}") {
+				t.Errorf("body missing end frame:\n%s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestStreamAppLogs_RejectsBadLevel pins the parse-time rejection
+// of an unknown `level` value (issue #309). The server MUST return
+// 400 with the canonical CodeInvalidLogLevel problem body so a CLI
+// typo (e.g. `--level inof`) fails fast instead of silently
+// streaming an unfiltered view that the customer thinks is filtered.
+// Both a lowercase typo and a level outside the enum (e.g.
+// "debug") exercise the validator.
+func TestStreamAppLogs_RejectsBadLevel(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "bad-level-logs")
+	appID := mustSeedApp(t, e, "bad-level-logs-app")
+	if _, err := e.store.CreateInstance(context.Background(), appID, dep.ID, "stopped", 256, "default-local", ""); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	cases := []struct {
+		name  string
+		level string
+	}{
+		{"typo inof", "inof"},
+		{"unsupported debug", "debug"},
+		{"empty after trim is fine (treated as absent)", ""}, // sanity
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			query := "?follow=0"
+			if tc.level != "" {
+				query += "&level=" + tc.level
+			}
+			rec := e.do(t, "GET", "/v1/apps/bad-level-logs-app/logs"+query, nil, nil)
+			if tc.level == "" {
+				// empty level is treated as absent → 200 + stub frames
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+				}
+				return
+			}
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+			if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/problem+json") {
+				t.Errorf("Content-Type = %q, want application/problem+json", ct)
+			}
+			if !strings.Contains(rec.Body.String(), api.CodeInvalidLogLevel) {
+				t.Errorf("body missing %q code: %s", api.CodeInvalidLogLevel, rec.Body.String())
+			}
+		})
+	}
+}
