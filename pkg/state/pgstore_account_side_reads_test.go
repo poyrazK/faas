@@ -30,7 +30,8 @@ import (
 // the join semantics independent of APIKeyByHash's separate read.
 func TestPg_AccountByKeyHash_ResolvesViaAPIKeyJoin(t *testing.T) {
 	s, ctx := pgStore(t)
-	acctID := createAccount(t, s, ctx, pgTestEmail(t))
+	email := pgTestEmail(t)
+	acctID := createAccount(t, s, ctx, email)
 	hash := []byte("keyhash-32-bytes-X1234567890abcdef")
 	if _, err := s.CreateAPIKey(ctx, acctID, hash, "test-label", []string{"deploy:write"}); err != nil {
 		t.Fatalf("CreateAPIKey: %v", err)
@@ -42,8 +43,11 @@ func TestPg_AccountByKeyHash_ResolvesViaAPIKeyJoin(t *testing.T) {
 	if got.ID != acctID {
 		t.Errorf("ID = %q, want %q", got.ID, acctID)
 	}
-	if got.Email == "" {
-		t.Errorf("Email = empty, want the createAccount email")
+	// Pin the email value exactly — a future refactor of pgTestEmail
+	// (or a separate accounts row inserted by a sibling test in the same
+	// schema) would silently leak past an `!= ""` check.
+	if got.Email != email {
+		t.Errorf("Email = %q, want %q", got.Email, email)
 	}
 }
 
@@ -149,11 +153,13 @@ func TestPg_AccountByPaddleCustomerID_UnknownReturnsErrNotFound(t *testing.T) {
 	}
 }
 
-// TestPg_ListAllAccounts_ReturnsAllIncludingDeactivated pins the meterd
-// walk: every account (active, deactivated, deleted) comes back. The
-// chokepoint caller filters in memory — but the Store method itself
-// must surface every row, not just the active subset.
-func TestPg_ListAllAccounts_ReturnsAllIncludingDeactivated(t *testing.T) {
+// TestPg_ListAllAccounts_ReturnsAll pins the meterd walk: every account
+// the Store method sees comes back. The chokepoint caller (meterd) filters
+// in memory — but the Store itself must surface every row, not just the
+// active subset. This test pins the unfiltered surface; deactivation and
+// deletion status do not narrow the result set (covered separately at
+// pgstore_account_deletion_test.go).
+func TestPg_ListAllAccounts_ReturnsAll(t *testing.T) {
 	s, ctx := pgStore(t)
 	acctA := createAccount(t, s, ctx, pgTestEmail(t)+"-a")
 	acctB := createAccount(t, s, ctx, pgTestEmail(t)+"-b")
