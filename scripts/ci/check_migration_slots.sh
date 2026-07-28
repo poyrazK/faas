@@ -87,8 +87,13 @@ fi
 echo "this PR claims slot(s): $(echo "${mine}" | tr '\n' ' ')"
 
 reserved="$(printf '%s\n' "${mine_raw}" \
-	| sed -nE 's|^migrations/([0-9]{5})_(.*_)?(reservation|reserve_slot)(_[^/]*)?\.sql$|\1|p' \
-	| sort -u | tr '\n' ' ')"
+	# grep -E with -o (only print matched portion) avoids the optional-group
+	# parens that BSD sed -E rejects on macOS. GNU sed (CI) accepts the
+	# nested (.*_)? form, but the gate runs in dev on macOS too and a
+	# portable regex is worth the slight readability cost.
+	| grep -oE '^migrations/[0-9]{5}_((.*_)?(reservation|reserve_slot))(_[^/]*)?\.sql$' \
+	| sed -E 's|migrations/([0-9]{5})_.*|\1|' \
+	| sort -u | tr '\n' ' ' || true)"
 if [[ -n "${reserved}" ]]; then
 	echo "this PR holds reservation slot(s): ${reserved} (excluded from overlap check)"
 fi
