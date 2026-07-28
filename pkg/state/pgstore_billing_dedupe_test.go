@@ -184,8 +184,16 @@ func TestPg_ClaimPaddleOverageWindow_LeaseBoundarySteals(t *testing.T) {
 // TestPg_CompletePaddleOverageWindow_FlipsPendingToCompleted pins the
 // happy path: pod-A claims, then completes. The row ends in
 // state='completed' and pushed_at is stamped.
+//
+// Note: a follow-up claim from a second pod is intentionally permitted
+// after Complete (see pgstore.go:3875-3897 — re-claim on a 'completed'
+// row is the design-comment-documented retry-after-failure path).
+// That assertion lives in
+// pgstore_paddle_claim_regression_test.go:ReclaimAfterCompleteIsPermitted
+// (PR #382). This test pins the state-transition shape directly via
+// the row readback, since the re-claim side is covered elsewhere.
 func TestPg_CompletePaddleOverageWindow_FlipsPendingToCompleted(t *testing.T) {
-	s, ctx := pgStore(t)
+	s, ctx, pool := pgWithPool(t)
 	acctID := createAccount(t, s, ctx, pgTestEmail(t))
 	window := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 
@@ -196,15 +204,20 @@ func TestPg_CompletePaddleOverageWindow_FlipsPendingToCompleted(t *testing.T) {
 		t.Fatalf("CompletePaddleOverageWindow: %v", err)
 	}
 
-	// Verify via a second claim from pod-B: it must NOT win (the row
-	// is in state='completed', and the claim's WHERE excludes
-	// rows whose claimed_at is fresh).
-	claimed, err := s.ClaimPaddleOverageWindow(ctx, acctID, window, "pod-B", 5*time.Minute)
-	if err != nil {
-		t.Fatalf("ClaimPaddleOverageWindow(pod-B after complete): %v", err)
+	// Read back the row directly: state must be 'completed' (the
+	// happy path), pushed_at must be non-NULL.
+	var state string
+	var pushedAt *time.Time
+	if err := pool.QueryRow(ctx,
+		`select state, pushed_at from paddle_overage_dedupe where account_id = $1 and window_start = $2`,
+		acctID, window).Scan(&state, &pushedAt); err != nil {
+		t.Fatalf("read row state: %v", err)
 	}
-	if claimed {
-		t.Errorf("ClaimPaddleOverageWindow(pod-B after complete) = true, want false (already completed)")
+	if state != "completed" {
+		t.Errorf("state = %q, want completed", state)
+	}
+	if pushedAt == nil {
+		t.Errorf("pushed_at is NULL, want non-NULL after Complete")
 	}
 }
 
