@@ -161,7 +161,7 @@
   register: am_svc
   when: not am_dev_mode | bool
 
-- name: alertmanager — dev mode: skip service start
+- name: "alertmanager — dev mode: skip service start"
   ansible.builtin.debug:
     msg: >-
       am_dev_mode=true; alertmanager.service NOT enabled. Run with

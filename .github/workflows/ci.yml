@@ -134,6 +134,38 @@ jobs:
           sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
           promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
 
+      # ansible syntax gate. deploy/ansible/ is the source of truth for the
+      # box's systemd units, sysctls and secret file modes, but nothing in
+      # CI ever parsed it — so it rotted. When this gate was added, SIX role
+      # files did not parse as YAML at all (unquoted `name:` values holding
+      # a `: `, a `when:` opening with a double-quoted path, `failed_when:`
+      # OR-chains whose continuation lines sat at the `-` indent), and the
+      # tree failed before ansible even reached module resolution.
+      #
+      # That is why the deploy roles drifted from the live box: three copies
+      # of faas-imaged.service existed and two were missing /srv/fc/base
+      # while all three were missing /srv/fc/sigs, which crash-looped imaged
+      # and took cd-digitalocean red (PR #374, #375). Nothing could have
+      # caught it, because the playbook was unrunnable.
+      #
+      # --syntax-check both parses every file and RESOLVES every module, so
+      # it also catches semantics YAML alone can't: a task-level `creates:`
+      # that ansible rejects as a conflicting action statement (and which
+      # silently disabled the kernel-extract idempotency guard), and a role
+      # adopting a collection that requirements.yml doesn't pin.
+      #
+      # ansible-core is version-pinned for the same reason promtool is: the
+      # gate should fail on OUR drift, not on an upstream release. Deprecation
+      # warnings are printed but not fatal — ansible-core's deprecation
+      # schedule is outside this repo's control.
+      - name: ansible syntax-check
+        run: |
+          set -euo pipefail
+          pip install --quiet 'ansible-core==2.21.2'
+          cd deploy/ansible
+          ansible-galaxy collection install -r requirements.yml
+          ansible-playbook --syntax-check site.yml
+
       # Daemon smoke: every cmd/<daemon>/main.go is a one-box binary that wires
       # through pkg/wire.Daemon. `--help` must exit 0 with non-empty usage text
       # (a silent success here usually means init() truncated on a bad flag

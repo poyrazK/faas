@@ -43,7 +43,7 @@
   vars:
     cgroup_extra_kargs: "" # platform-specific extras (e.g. intel_iommu=on) go here
 
-- name: grub — sysctl: disable unprivileged user namespaces (spec §11)
+- name: "grub — sysctl: disable unprivileged user namespaces (spec §11)"
   ansible.builtin.copy:
     dest: /etc/sysctl.d/99-faas.conf
     owner: root

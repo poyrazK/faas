@@ -1,11 +1,20 @@
-# Collections pin for the bootstrap play. Empty in M0 — we deliberately
-# stick to the ansible.builtin module set so the play has no Galaxy
-# network dependency at run time. Future milestones that need richer
-# modules (e.g. LVM, postgres) drop a version-pinned entry here.
+# Collections pin for the bootstrap play.
 #
-#   collections:
-#     - community.general>=8.0.0
-#     - community.postgresql>=3.0.0
+# M0 deliberately stuck to the ansible.builtin module set so the play had
+# no Galaxy network dependency at run time. That stopped being true when
+# the postgres role adopted community.postgresql.postgresql_user
+# (roles/postgres/tasks/main.yml) without adding the entry here — so
+# `ansible-playbook` failed with:
+#
+#   couldn't resolve module/action 'community.postgresql.postgresql_user'
+#
+# on any machine that hadn't installed the collection out of band. The
+# ansible-syntax-check CI job installs from this file, so a role that
+# adopts a new collection without pinning it here now fails in CI rather
+# than at `make bootstrap` time on a fresh box.
 #
 # Install with:
 #   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: community.postgresql
+    version: ">=3.0.0"

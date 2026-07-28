@@ -48,7 +48,7 @@
   register: pg_role
   failed_when: false  # pg module may be missing in M0; manual `createuser` fallback below
 
-- name: postgres — fallback: create role via psql if pg_user module unavailable
+- name: "postgres — fallback: create role via psql if pg_user module unavailable"
   ansible.builtin.command: >
     sudo -u postgres psql -c "CREATE ROLE faas LOGIN INHERIT;"
   changed_when: false
