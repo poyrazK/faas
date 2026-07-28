@@ -101,8 +101,13 @@
   register: kernel_tar
 
 - name: firecracker — extract kernel source
-  ansible.builtin.command: tar -xJf /tmp/linux-{{ fc_kernel_version }}.tar.xz -C /usr/src
-  creates: "/usr/src/linux-{{ fc_kernel_version }}"
+  # `creates` is a command-module parameter, not a task keyword. At task
+  # level ansible rejects it as a conflicting action statement — and the
+  # idempotency guard it was meant to provide never applied, so this
+  # re-extracted the kernel tarball on every run.
+  ansible.builtin.command:
+    cmd: "tar -xJf /tmp/linux-{{ fc_kernel_version }}.tar.xz -C /usr/src"
+    creates: "/usr/src/linux-{{ fc_kernel_version }}"
 
 - name: firecracker — fetch FC kernel config
   ansible.builtin.get_url:
@@ -114,8 +119,10 @@
   register: kernel_config
 
 - name: firecracker — apply FC kernel config
-  ansible.builtin.command: cp /tmp/config-{{ fc_kernel_version }} /usr/src/linux-{{ fc_kernel_version }}/.config
-  creates: "/usr/src/linux-{{ fc_kernel_version }}/.config"
+  # Same task-level `creates` bug as the extract step above.
+  ansible.builtin.command:
+    cmd: "cp /tmp/config-{{ fc_kernel_version }} /usr/src/linux-{{ fc_kernel_version }}/.config"
+    creates: "/usr/src/linux-{{ fc_kernel_version }}/.config"
 
 - name: firecracker — ensure CONFIG_BLK_DEV_VIRTIO=y (built-in, not module)
   ansible.builtin.lineinfile:

@@ -38,7 +38,13 @@
       installimage config (spec §8); enabling prjquota on an existing
       XFS is destructive.
     success_msg: "/srv/fc has prjquota"
-  when: "/srv/fc" in mounts_text and "tmpfs" not in (mounts_text | regex_search('^[^ ]+ /srv/fc [^ ]+', '\0') or '')
+  # Folded scalar, not an inline value: the expression opens with a
+  # double-quoted "/srv/fc", so YAML read it as a quoted scalar and then
+  # choked on the rest of the line. It mixes both quote styles, so neither
+  # outer quoting works — a block scalar is the only clean form.
+  when: >-
+    "/srv/fc" in mounts_text
+    and "tmpfs" not in (mounts_text | regex_search('^[^ ]+ /srv/fc [^ ]+', '\0') or '')
 
 - name: xfs — ensure /srv/fc/jail directory (1700 perms per Gotchas)
   ansible.builtin.file:

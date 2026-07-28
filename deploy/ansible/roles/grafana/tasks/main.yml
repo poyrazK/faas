@@ -202,7 +202,7 @@
   register: gv_svc
   when: not gv_dev_mode | bool
 
-- name: grafana — dev mode: skip service start
+- name: "grafana — dev mode: skip service start"
   ansible.builtin.debug:
     msg: >-
       gv_dev_mode=true; grafana-server.service NOT enabled. Run with

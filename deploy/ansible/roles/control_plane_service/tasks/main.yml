@@ -110,10 +110,11 @@
     path: /etc/faas/secrets/session.key
   register: faas_session_key_stat
   failed_when:
-    - not faas_session_key_stat.stat.exists
-    or faas_session_key_stat.stat.mode != "0400"
-    or faas_session_key_stat.stat.pw_name != "root"
-    or faas_session_key_stat.stat.gr_name != "root"
+    - >-
+      not faas_session_key_stat.stat.exists
+      or faas_session_key_stat.stat.mode != "0400"
+      or faas_session_key_stat.stat.pw_name != "root"
+      or faas_session_key_stat.stat.gr_name != "root"
 
 # IAM-2 / issue #186 (TOTP MFA on dashboard sessions): apid needs
 # to read /etc/faas/secrets/host.age so the MFA handlers
@@ -140,10 +141,11 @@
     path: /etc/faas/secrets/host.age
   register: faas_host_age_stat
   failed_when:
-    - not faas_host_age_stat.stat.exists
-    or faas_host_age_stat.stat.mode != "0400"
-    or faas_host_age_stat.stat.pw_name != "root"
-    or faas_host_age_stat.stat.gr_name != "root"
+    - >-
+      not faas_host_age_stat.stat.exists
+      or faas_host_age_stat.stat.mode != "0400"
+      or faas_host_age_stat.stat.pw_name != "root"
+      or faas_host_age_stat.stat.gr_name != "root"
 
 # Tier 3 / ADR-038 §Phase 3 — cosign sign-keypair (build attestation).
 # imaged reads /etc/faas/secrets/sign.key at startup
@@ -164,17 +166,19 @@
     path: /etc/faas/secrets/sign.key
   register: faas_sign_key_stat
   failed_when:
-    - not faas_sign_key_stat.stat.exists
-    or faas_sign_key_stat.stat.mode != "0440"
-    or faas_sign_key_stat.stat.pw_name != "root"
-    or faas_sign_key_stat.stat.gr_name != "faas"
+    - >-
+      not faas_sign_key_stat.stat.exists
+      or faas_sign_key_stat.stat.mode != "0440"
+      or faas_sign_key_stat.stat.pw_name != "root"
+      or faas_sign_key_stat.stat.gr_name != "faas"
 
 - name: control_plane_service — assert sign-pub.pem mode is 0444 root:root (Tier 3)
   ansible.builtin.stat:
     path: /etc/faas/secrets/sign-pub.pem
   register: faas_sign_pub_stat
   failed_when:
-    - not faas_sign_pub_stat.stat.exists
-    or faas_sign_pub_stat.stat.mode != "0444"
-    or faas_sign_pub_stat.stat.pw_name != "root"
-    or faas_sign_pub_stat.stat.gr_name != "root"
+    - >-
+      not faas_sign_pub_stat.stat.exists
+      or faas_sign_pub_stat.stat.mode != "0444"
+      or faas_sign_pub_stat.stat.pw_name != "root"
+      or faas_sign_pub_stat.stat.gr_name != "root"
