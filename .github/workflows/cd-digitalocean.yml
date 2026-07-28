@@ -183,9 +183,17 @@ jobs:
           done
           rm -rf /opt/faas/bin/deploy-tmp
 
-          # Run pending migrations as faas user.
+          # Migration preflight, then apply. `migrate -status` reports the
+          # box's version and the pending list WITHOUT applying anything, so
+          # the CI log always records the before-state. When a migration then
+          # fails, "was the box where we expected it to be?" is answerable
+          # from the log — previously that took an SSH session, because the
+          # only output was a raw SQLSTATE from mid-apply.
+          FAAS_DSN='postgres:///faas?host=/run/postgresql&user=faas'
           su - faas -s /bin/bash -c \
-            "DATABASE_URL='postgres:///faas?host=/run/postgresql&user=faas' /opt/faas/bin/migrate"
+            "DATABASE_URL='${FAAS_DSN}' /opt/faas/bin/migrate -status"
+          su - faas -s /bin/bash -c \
+            "DATABASE_URL='${FAAS_DSN}' /opt/faas/bin/migrate"
 
           # Provision the cosign sign keypair if it's missing.
           # PR #371 ships `faas sign-keys init` (operator CLI) and

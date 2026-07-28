@@ -662,7 +662,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # fetch-depth: 0 — the slot-collision and replay-safety steps both diff
+      # against origin/<base>, which a shallow clone cannot resolve.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -670,6 +674,23 @@ jobs:
           cache-dependency-path: go.sum
       - name: migrations check (static)
         run: make migrations-check
+
+      # Cross-PR slot collision. TestMigrationsUniquePrefixes (in the static
+      # step above) only sees one branch at a time: a PR builds against
+      # refs/pull/N/merge, which cannot contain a sibling PR's files. So two
+      # open PRs can each add 00054_*.sql, both go green, and the collision
+      # only exists after the second merges — at which point main panics with
+      # "goose: duplicate version 54", every other open PR goes red, and the
+      # deploy fails. That happened on slots 51, 52 and 54 (issue #366).
+      # Post-merge detection is too late; this moves it to the only point
+      # where renumbering is cheap.
+      - name: migration slot collision (vs other open PRs)
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: ./scripts/ci/check_migration_slots.sh
       # No `-tags no_pg` here on purpose: apply_walk_test.go carries
       # `//go:build !no_pg`, so the static-only `make migrations-check`
       # step skips it and this step picks it up. The `-run` filter
@@ -678,6 +699,36 @@ jobs:
       # here because their package has no build tag.
       - name: migrations apply-and-walk
         run: go test -race -count=1 -v -run TestMigrationsApplyAndWalk ./migrations/...
+
+      # Replay safety for migrations this diff ADDS. apply-and-walk above
+      # migrates a FRESH database, which is the one state the DO box is never
+      # in: twice its schema has been AHEAD of its goose ledger and the deploy
+      # died mid-apply on a migration CI had passed —
+      #   00030_invocations:            relation "invocations" already exists
+      #   00053_deployments_source_url: column "source_url" already exists
+      # Only NEW migrations are replayed: 00001_init is legitimately not
+      # re-runnable, and replaying from zero against a populated database is
+      # not a scenario worth surviving. See migrations/replay_safety_test.go.
+      - name: compute added migration versions
+        id: newmig
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch -q origin "${{ github.base_ref }}"
+            base="$(git merge-base HEAD "origin/${{ github.base_ref }}")"
+          else
+            # push to main: compare against the commit before this one, so a
+            # direct merge still exercises whatever it introduced.
+            base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          versions="$(git diff --name-only --diff-filter=A "${base}" HEAD -- 'migrations/*.sql' \
+            | sed -nE 's|.*/([0-9]{5})_.*\.sql$|\1|p' | sort -u | paste -sd, -)"
+          echo "versions=${versions}" >> "$GITHUB_OUTPUT"
+          echo "added migration versions: ${versions:-<none>}"
+      - name: migrations replay-safety (new migrations only)
+        env:
+          FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
+        run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
 
   sqlc-check:
     # Drift gate between queries.sql + schema.sql and the committed
