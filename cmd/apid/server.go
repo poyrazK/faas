@@ -1244,12 +1244,6 @@ func principalFrom(r *http.Request) (principal, bool) {
 	return principal{Acct: acct, Key: key}, true
 }
 
-// withPrincipal returns a context carrying the principal. Bridges to
-// pkg/auth so the value is readable by pkg/auth.RequireScope.
-func withPrincipal(ctx context.Context, p principal) context.Context {
-	return authmw.WithPrincipal(ctx, p.Acct, p.Key)
-}
-
 // principalHasScope reports whether the principal carries at least one
 // of the allowed scopes. Session-cookie principals (Key == nil) are
 // implicitly admin. An empty allowed set is a no-op (the caller didn't
@@ -1317,25 +1311,6 @@ func principalHasScope(p principal, allowed []string) bool {
 // api.ScopesDeployWriteSurface / api.ScopesSecretsWriteSurface /
 // api.ScopesUsageReadSurface) — admin is in every set, so a session
 // cookie or admin key always satisfies. See ADR-034 rev2.
-
-// touchKeyLastUsed bumps last_used_at on the given api_key after a
-// successful bearer auth. Observability only — never auth. Detached
-// context + 2 s timeout means a slow or hung PG cannot block the user's
-// request, and a canceled client (tab close, SSE disconnect) still
-// leaves a stamp. An error is logged at WARN; the next successful
-// request will overwrite a stale value anyway. Accepts a parent ctx
-// (unused — the goroutine detaches) so it matches contextcheck's
-// "function takes ctx" guidance; the touch never respects its parent
-// because it MUST outlive the request.
-//
-//nolint:contextcheck // detached-context is the load-bearing behavior for fire-and-forget observability
-func (s *server) touchKeyLastUsed(_ context.Context, keyID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := s.store.TouchKeyLastUsed(ctx, keyID); err != nil {
-		s.log.Warn("api_key last_used_at touch failed", "key_id", keyID, "error", err.Error())
-	}
-}
 
 // requireScope is the cmd/apid-side facade. The body lives in
 // pkg/auth (cmd/apid/auth_facade.go::requireScope is the bridge).

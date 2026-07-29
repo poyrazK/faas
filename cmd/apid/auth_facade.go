@@ -20,11 +20,9 @@
 //   - s.adminAllows — per-daemon operator-email allowlist (compute_nodes.go).
 //     PR-2 (gatewayd AppLogsHandler) doesn't need it; keep the seam
 //     per-daemon.
-//   - mfaAllowlist / isMFAAllowlisted — still referenced by the cookie
-//     branch of pkg/auth's RequireSession for the in-place stamp of the
-//     mfa-pending flag. Today pkg/auth re-implements the same prefix
-//     matching; the cmd/apid copy is preserved for tests + direct
-//     hand-tests so the operator surface is observable.
+//   - mfaEnrollRequired — login-handler-only predicate that decides
+//     whether to stamp MfaPending=true on a freshly issued cookie.
+//     pkg/auth reads the flag, cmd/apid writes it.
 package main
 
 import (

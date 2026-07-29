@@ -489,7 +489,9 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					// via principalFrom(r) and MFAPendingFrom(r).
 					// See the package doc on the pointer-mutation
 					// contract (issue #278 / PR #332).
+					//nolint:contextcheck // pointer-mutation contract: r.Context() must be the inherited ctx; capturing into a local breaks observeWrap.
 					r = r.WithContext(withSession(r.Context(), sess))
+					//nolint:contextcheck // same pointer-mutation contract: AccountByID reads from r.Context() so the returned principal stamps into the same ctx as withPrincipal below.
 					if acct, err := m.Authn.AccountByID(r.Context(), env.AccountID); err == nil {
 						if !acct.Active() {
 							if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
@@ -498,7 +500,9 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 								return
 							}
 						}
+						//nolint:contextcheck // same pointer-mutation contract: withPrincipal derives from r.Context() so the principal stamps into the OUTER r, not a captured local ctx.
 						*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: nil}))
+						//nolint:contextcheck // same pointer-mutation contract: withMFAPending derives from r.Context() so the flag stamps into the OUTER r.
 						*r = *r.WithContext(withMFAPending(r.Context(), session.IsMFAPending(env)))
 						next(w, r, acct)
 						return
