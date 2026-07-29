@@ -1,7 +1,7 @@
 # ADR-029 · apid Compute-Nodes Admin Surface
 
-- **Status:** proposed
-- **Date:** 2026-07-22
+- **Status:** accepted v1.1 (2026-07-29). The CRUD surface is live; v1.1 adds the §6.4 audit-trail cross-reference — admin actions remain un-emitted into `events` (deferred to a v1.2 follow-up; see Consequences).
+- **Date:** 2026-07-22 (proposed); 2026-07-29 (accepted v1.1)
 - **Issue:** #98
 - **Decision:** Add operator-facing CRUD on `compute_nodes` to apid:
   `GET /v1/compute-nodes`, `POST /v1/compute-nodes`, `DELETE

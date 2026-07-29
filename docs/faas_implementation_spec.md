@@ -391,6 +391,31 @@ Timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FA
 
 Measured end-to-end as `gateway_wake_latency_seconds`. Regression gate in CI-on-metal (§14).
 
+### 6.4 Failure-mode catalogue (ADR-025 v1.1, ADR-028 v1.1, ADR-029 v1.1)
+
+This subsection is the cross-reference page for the three v1.1 ADRs. Steady-state behaviour is in §6.1–§6.3; this section maps the edge cases an operator will see in multi-node (ADR-025) routing. The intent is *one* page an on-call can scan when paged — not a redesign.
+
+| Failure | Detection | Behaviour today | Reference |
+|---|---|---|---|
+| `default-local` row hard-deleted via admin | `DELETE /v1/compute-nodes/default-local?hard=1` returns 409 `default_local_protected` | Refused at the handler; migration 00024's backfill references still hold | ADR-029 v1.1 |
+| Operator UPSERTs typo'd `target_url` | Next `POST /v1/apps/{slug}/logs` 502 (no gRPC client resolves); `pg_notify compute_node_changed` evicts the cached conn | Loud-fail at the next wake; admin dashboard or `apid_logs_emitted_total` reveals the misconfig | ADR-029 v1.1 |
+| Remote vmmd `Heartbeat` stalls > 90 s | schedd's `pkg/sched.Heartbeat` watchdog flips `active=false`; `compute_node_changed` fires | Placement skips the node; gatewayd evicts the conn; in-flight wake falls back to a different node via `ChoosePlacement` | ADR-028 v1.1, ADR-025 v1.1 |
+| gatewayd↔vmmd overlay partition (Tailscale/Wireguard) | `Heartbeat` misses; same as above | Acceptable v1.0 tail; tighter alerting via `gateway_wake_latency_seconds` + `wake_locality_host_total` | ADR-028 v1.1 |
+| Per-instance bridge (socat-equivalent) fails | vmmd logs raw stderr; bridge script's `ip netns exec` returns non-zero | Inbound request 502; trace ends at vmmd (no client-side leak of internal paths) | ADR-028 v1.1 |
+| `pkg/wire.DialContext` returns `codes.Unavailable` (TLS handshake fail) | mTLS handshake refuses; admission rejects | Schedd admission fails closed — no instance restored; customer sees a 503 from `POST /v1/apps/{slug}/wake` | ADR-025 v1.1 |
+| `pkg/storage.PrefixRouter` chooses wrong backend (misconfigured `storage.local_prefix`) | `imaged` `publishBaseExt4` writes to local disk instead of OCI | Loud-fail on first wake of a remote node (the OCI pull returns 404); surfaced via `pkg/storage/router.go` resolution log | ADR-025 v1.1 |
+| Schedd picks a drained node (race vs watchdog) | `ChoosePlacement` ranks by `HeadroomMB`; a node whose `active=false` has 0 headroom | Picker ranks it last; if no other node fits, request 503 | ADR-025 v1.1, ADR-028 v1.1 |
+| Concurrent Admin-allowlist rotation (`FAAS_ADMIN_EMAILS` change) | apid reads at startup; in-process only | Empty allowlist ⇒ all admin routes 403 `admin_required`. No reload path in v1.0. | ADR-029 v1.1 |
+| `pkg/gateway.TargetSet` admits an instance whose `NodeID == ""` (regression guard) | `targetSet.Add` returns error; pgbackend tests cover | Refused at the atomic update; gatewayd logs the rejection | ADR-028 v1.1, §6.2 |
+| WakeResponse wire shape reverts (someone re-adds `.addr`) | `pkg/scheddgrpc` proto compile fails; `grep -rn "\.addr" pkg/ cmd/` sweep | Proto compilation is the regression gate; pre-#199 clients fail at unmarshal | ADR-025 v1.1, ADR-028 v1.1, issue #168 |
+| `migration 00024` `default-local` `47600` literal backfilled changed | Admission ceiling would change | Anti-goal: do not touch the literal. Re-backfill requires a new ADR | ADR-025 v1.1 |
+
+**Operator runbook pointers:**
+
+- Per-component verification scripts live in `docs/runbooks/multi-host-rollout.md` (A.4) and `docs/runbooks/gate-a.md` (G.1, Gate-A active-passive adoption).
+- Admin surface row-by-row CRUD: `apid GET/POST/DELETE /v1/compute-nodes` (ADR-029 v1.1).
+- Cross-box gRPC dial: `pkg/wire.DialContext` (ADR-025 axis 1).
+
 ---
 
 ## 7. Networking

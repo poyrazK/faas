@@ -1,7 +1,7 @@
 # ADR-028 · gatewayd Remote Routing via gRPC-Bridged ForwardHTTP
 
-- **Status:** proposed
-- **Date:** 2026-07-22
+- **Status:** accepted v1.1 (2026-07-29). Shipped via PRs #112, #113, #114, #115, #119, #122; the placeholder `host_ip:8080` is gone, `WakeResponse.node_id` is on the wire, and gatewayd's `NodeClientCache` evicts on `compute_node_changed`. v1.1 cross-references ADR-025 v1.1 and ADR-029 v1.1 — the three-axis story now reads as a unit.
+- **Date:** 2026-07-22 (proposed); 2026-07-29 (accepted v1.1)
 - **Issue:** #98
 - **Decision:** Replace gatewayd's direct HTTP-to-inner-VM reverse proxy
   with an in-process HTTP→gRPC forwarder. gatewayd dials the vmmd that owns

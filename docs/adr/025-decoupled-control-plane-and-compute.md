@@ -1,7 +1,7 @@
 # ADR-025 · Decoupled Control Plane and Compute Nodes
 
-- **Status:** proposed
-- **Date:** 2026-07-21
+- **Status:** accepted v1.1 (2026-07-29). v1.1 adds the §6.4 failure-mode catalogue (spec §6.4); v1.0 was the original three-axis decoupling. **Status flips do not authorise a real cutover** — landing the first second-EX44 box is a separate operational decision tracked by runbook `docs/runbooks/multi-host-rollout.md` (A.4).
+- **Date:** 2026-07-21 (proposed); 2026-07-29 (accepted v1.1)
 - **Decision:** Evolve the FaaS architecture from a strict single-box loopback deployment to a decoupled, location-transparent topology. Specifically:
   - Transition the internal service-to-service gRPC boundaries (e.g. `schedd` ➔ `vmmd`, `builderd` ➔ `vmmd`) from hardcoded UNIX domain sockets to support standard TCP/IP networking secured via **Mutual TLS (mTLS)**.
   - Abstract local filesystem writes for rootfs layers and VM snapshot storage behind a unified storage interface (`StorageBackend`). Support local disk storage for single-box mode, and an OCI registry or object-storage-backed driver for distributed deployments.
