@@ -242,6 +242,35 @@ func TestRequireSession_BearerHappyPath(t *testing.T) {
 	}
 }
 
+// TestRequireSession_BearerSchemeCaseInsensitive pins RFC 6750 §2.1:
+// the "Bearer" scheme name is case-insensitive. A client that
+// sends "bearer <token>" or "BEARER <token>" must reach the same
+// authentication path as "Bearer <token>".
+func TestRequireSession_BearerSchemeCaseInsensitive(t *testing.T) {
+	for _, scheme := range []string{"Bearer", "bearer", "BEARER", "BeArEr"} {
+		t.Run(scheme, func(t *testing.T) {
+			authn := newFakeAuthn()
+			hash := api.HashAPIKey(validBearerKey)
+			authn.authKey[string(hash)] = authResult{acct: mkActiveAccount("acct-1"), key: mkKey("key-1", api.ScopeAdmin)}
+
+			mw := newMW(t, authn, nil, nil, nil)
+			hits := 0
+			h := mw.RequireSession(func(_ http.ResponseWriter, _ *http.Request, _ state.Account) { hits++ })
+
+			rec := httptest.NewRecorder()
+			r := mkRequest("GET", "/v1/apps", map[string]string{"Authorization": scheme + " " + validBearerKey}, nil)
+			h(rec, r)
+
+			if hits != 1 {
+				t.Errorf("scheme=%q hits=%d, want 1", scheme, hits)
+			}
+			if rec.Code != http.StatusOK {
+				t.Errorf("scheme=%q status=%d, want 200", scheme, rec.Code)
+			}
+		})
+	}
+}
+
 func TestRequireSession_BearerInvalidFormat(t *testing.T) {
 	authn := newFakeAuthn()
 	mw := newMW(t, authn, nil, nil, nil)

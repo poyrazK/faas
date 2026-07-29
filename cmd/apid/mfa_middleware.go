@@ -71,6 +71,13 @@ func mfaPendingFrom(r *http.Request) (bool, bool) {
 // enrollment / step-up / recovery / disable without first
 // satisfying MFA on a different route.
 //
+// MUST match pkg/auth/middleware.mfaAllowlist — a future
+// post-extraction refactor that lifts the cookie branch fully
+// into pkg/auth would consume the pkg/auth copy and delete this
+// one. Until then, the two lists must stay byte-identical; a
+// silent drift here would let an MFA-pending session reach a
+// route pkg/auth refuses, or vice versa.
+//
 //   - /v1/account                — whoami (lets the dashboard know
 //     which account it's prompting).
 //   - /v1/account/mfa/enroll     — start enrollment.

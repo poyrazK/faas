@@ -195,6 +195,23 @@ func (m *Middleware) sessionTouchWindow() time.Duration {
 	return sessionTouchWindow
 }
 
+// --- test seams (NOT production API) -------------------------------------
+//
+// The eight symbols below (KeyDebounceMapSize, SessionDebounceMapSize,
+// KeyTouchWindowForTest, SessionTouchWindowForTest, KeyTouchWindow,
+// SessionTouchWindow, KeyDebounceShouldTouch, SessionDebounceShouldTouch)
+// and TouchTicket.FiredAtSet exist ONLY so whitebox tests in
+// package middleware_test can observe + drive the debouncer
+// election + eviction contract without becoming internal-package
+// tests (which would force them to rebuild helpers that already
+// live in middleware_test.go).
+//
+// Production code MUST NOT call any of these. The intended
+// consumer is pkg/auth/middleware/debounce_whitebox_test.go.
+// A future refactor that consolidates these into a single
+// (*Middleware).ForTest helper is welcome; the wide surface is a
+// stopgap so each test case can name exactly the seam it needs.
+
 // KeyDebounceMapSize returns the current size of the per-key
 // debounce map. Exported for whitebox tests that pin the eviction
 // contract (pkg/auth/middleware/debounce_whitebox_test.go).
@@ -316,6 +333,11 @@ type keyTouchDebounce struct {
 // TouchTicket carries the map reference + the key id so AfterFire
 // can atomically delete the entry without the caller threading
 // extra arguments through the detached-goroutine path.
+//
+// Exported solely for whitebox tests in package middleware_test
+// (debounce_whitebox_test.go). Production code MUST NOT construct
+// or read *TouchTicket values; the only consumer-facing surface is
+// the debouncer's shouldTouch entry point.
 type TouchTicket struct {
 	m       *sync.Map // pointer to debouncer.tickets; load-bearing for CompareAndDelete
 	id      string    // map key for CompareAndDelete
@@ -360,6 +382,15 @@ func (d *keyTouchDebounce) shouldTouch(keyID string, now time.Time, window time.
 		if d.tickets.CompareAndSwap(keyID, t, fresh) {
 			return fresh, true
 		}
+		// CAS-lose: a concurrent firer already installed a
+		// winner. We re-load and re-check the window — if the
+		// winner is fresh (within window) we yield; if the
+		// winner is itself stale we still want SOMEONE to fire
+		// so the touch isn't lost, hence the unconditional
+		// Store below. The two Store paths (CAS-win vs fall-
+		// through) are NOT duplicates: the CAS path installs
+		// the fresh ticket we just built; the fall-through path
+		// is the "everyone else gave up, last firer wins" branch.
 		if cur, ok := d.tickets.Load(keyID); ok {
 			latest := cur.(*TouchTicket)
 			if last := latest.firedAt.Load(); last != nil && now.Sub(*last) < window {
@@ -448,6 +479,16 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					if handled {
 						return
 					}
+					// Stamp the live session row onto the local r
+					// so AccountByID (below) sees it via the same
+					// context the cookie branch built. The rebind
+					// is intentionally discarded after this block
+					// — the *r mutations below write the principal
+					// + mfa-pending flag directly into the OUTER
+					// request so observeWrap (cmd/apid) sees them
+					// via principalFrom(r) and MFAPendingFrom(r).
+					// See the package doc on the pointer-mutation
+					// contract (issue #278 / PR #332).
 					r = r.WithContext(withSession(r.Context(), sess))
 					if acct, err := m.Authn.AccountByID(r.Context(), env.AccountID); err == nil {
 						if !acct.Active() {
@@ -558,6 +599,15 @@ const sessionTouchWindow = 5 * time.Minute
 // sessionTouchDebounce mirrors keyTouchDebounce but keyed on the
 // session id (sid) rather than the API key id. Same pointer-version
 // CompareAndDelete contract (see TouchTicket.AfterFire).
+//
+// TODO(extract-debouncer): sessionTouchDebounce.shouldTouch is
+// byte-identical to keyTouchDebounce.shouldTouch except for the
+// key-name parameter (sid vs keyID). A small generic helper
+// typed on string (or a mapDebounce[K ~string] type parameter)
+// would compress ~50 LOC and ensure the election / eviction
+// contract evolves in lockstep. Follow-up refactor — not
+// required for PR-1 because the duplication is so thin
+// (one parameter name) that the abstraction is arguable.
 type sessionTouchDebounce struct {
 	tickets sync.Map // sid string → *TouchTicket
 }
@@ -569,8 +619,12 @@ func (d *sessionTouchDebounce) shouldTouch(sid string, now time.Time, window tim
 			return nil, false
 		}
 		// Stale ticket: CAS-replace so a concurrent firer that
-		// already swapped the ticket wins; if our CAS loses, fall
-		// through to the second conditional check on the winner.
+		// already swapped the ticket wins; if our CAS loses,
+		// fall through to the second conditional check on the
+		// winner. The unconditional Store below is the
+		// "everyone else gave up, last firer wins" branch — NOT
+		// a duplicate of the CAS path; the CAS path installs
+		// the fresh ticket we just built.
 		fresh := &TouchTicket{m: &d.tickets, id: sid}
 		fresh.firedAt.Store(&now)
 		if d.tickets.CompareAndSwap(sid, t, fresh) {
@@ -797,11 +851,18 @@ func isMFAAllowlisted(path string) bool {
 // --- cookie helpers ------------------------------------------------------
 
 // bearerToken extracts the bearer token from the Authorization
-// header. Mirrors cmd/apid/server.go:1578.
+// header. The scheme is matched case-insensitively per RFC 6750
+// §2.1 ("Bearer" is the registered scheme name; clients in the
+// wild occasionally lowercase it). A scheme we don't recognise
+// falls through to the session-cookie branch.
+//
+// Mirrors cmd/apid/server.go:1578 (which was case-sensitive; this
+// lift tightens the contract).
 func bearerToken(r *http.Request) string {
 	h := r.Header.Get("Authorization")
-	if after, ok := strings.CutPrefix(h, "Bearer "); ok {
-		return strings.TrimSpace(after)
+	const scheme = "bearer "
+	if len(h) >= len(scheme) && strings.EqualFold(h[:len(scheme)], scheme) {
+		return strings.TrimSpace(h[len(scheme):])
 	}
 	return ""
 }
