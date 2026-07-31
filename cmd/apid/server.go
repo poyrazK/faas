@@ -1394,7 +1394,7 @@ func (c *captureWriter) WriteHeader(status int) {
 func (c *captureWriter) Write(b []byte) (int, error) {
 	// lgtm[go/reflected-xss] false-positive: captureWriter is a pass-through; upstream content type + renderer make the XSS sink unreachable. See captureWriter doc-comment.
 	c.body.Write(b)
-	return c.ResponseWriter.Write(b)  // lgtm[go/reflected-xss] false-positive: pass-through wrapper
+	return c.ResponseWriter.Write(b) // lgtm[go/reflected-xss] false-positive: pass-through wrapper
 }
 
 // --- helpers ---------------------------------------------------------------
