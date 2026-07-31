@@ -81,7 +81,7 @@ func (r *statusRecorder) Write(p []byte) (int, error) {
 	if !r.wroteHeader {
 		r.wroteHeader = true
 	}
-	// codeql[go/reflected-xss] false-positive: statusRecorder is a pass-through; the 429 path uses http.Error (text/plain, line 209), the success path forwards to next.ServeHTTP which sets application/json or application/problem+json. See statusRecorder doc-comment.
+	// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; the 429 path uses http.Error (text/plain, line 209), the success path forwards to next.ServeHTTP which sets application/json or application/problem+json. See statusRecorder doc-comment.
 	return r.ResponseWriter.Write(p)
 }
 

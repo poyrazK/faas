@@ -1378,7 +1378,7 @@ func (s *server) idempotent(next accountHandler) accountHandler {
 // which renders through html/template (templates/*.html). CodeQL cannot
 // see through the ResponseWriter wrapper so it conservatively flags any
 // Write as a possible HTML sink; the upstream content type and renderer
-// make that unreachable. See the // codeql[go/reflected-xss]
+// make that unreachable. See the // lgtm[go/reflected-xss]
 // false-positive suppressions on the Write call below.
 type captureWriter struct {
 	http.ResponseWriter
@@ -1392,8 +1392,8 @@ func (c *captureWriter) WriteHeader(status int) {
 }
 
 func (c *captureWriter) Write(b []byte) (int, error) {
+	// lgtm[go/reflected-xss] false-positive: captureWriter is a pass-through; upstream content type + renderer make the XSS sink unreachable. See captureWriter doc-comment.
 	c.body.Write(b)
-	// codeql[go/reflected-xss] false-positive: captureWriter is a pass-through; upstream content type + renderer make the XSS sink unreachable. See captureWriter doc-comment.
 	return c.ResponseWriter.Write(b)
 }
 
