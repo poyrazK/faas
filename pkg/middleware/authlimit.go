@@ -82,7 +82,7 @@ func (r *statusRecorder) Write(p []byte) (int, error) {
 		r.wroteHeader = true
 	}
 	// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; the 429 path uses http.Error (text/plain, line 209), the success path forwards to next.ServeHTTP which sets application/json or application/problem+json. See statusRecorder doc-comment.
-	return r.ResponseWriter.Write(p)
+	return r.ResponseWriter.Write(p)  // lgtm[go/reflected-xss] false-positive: pass-through wrapper
 }
 
 // Flush forwards to the underlying ResponseWriter if it implements
