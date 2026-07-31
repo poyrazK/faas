@@ -742,7 +742,10 @@ jobs:
     # tick here as "coverage held".
     name: coverage (Codecov)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 20m to cover the -timeout=15m go test step (cmd/e2e under -race
+    # + coverage runs ~11-12 min; see memory cmd-e2e-coverage-timeout-
+    # edge.md) plus startup, dependency download, and upload overhead.
+    timeout-minutes: 20
     # OIDC for the Codecov upload. Codecov accepts a short-lived GitHub
     # OIDC token in place of a long-lived CODECOV_TOKEN for public repos
     # (per codecov-action's `use_oidc` input). This is the right path for
