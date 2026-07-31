@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -579,6 +580,112 @@ func TestApidProxy_LogsCarveOutToHandler(t *testing.T) {
 	}
 }
 
+// TestApidProxy_LogsCarveOutPrecedesAPIDRouting — table-driven
+// expansion of TestApidProxy_LogsCarveOutToHandler that pins the
+// dispatch order for the negative cases the single-shot test
+// doesn't cover. apidProxy.ServeHTTP MUST check isApidLogsPath
+// BEFORE isApidPath (cmd/gatewayd/proxy.go:110-120) — the table
+// rows prove that:
+//   - paths that look like logs routes dispatch to logsHandler;
+//   - paths that match the apid prefix but NOT the logs matcher
+//     dispatch to apid;
+//   - paths that match neither fall through to next.
+//
+// Without this test a future refactor that swaps the order in
+// ServeHTTP would silently send /v1/apps/foo/logs to apid and the
+// customer-facing log stream would 404. The single-shot test only
+// pins the happy path; this test pins the precedence at the
+// dispatch layer, not the matcher layer.
+func TestApidProxy_LogsCarveOutPrecedesAPIDRouting(t *testing.T) {
+	cases := []struct {
+		name       string
+		path       string
+		wantTarget string // "logs", "apid", or "next"
+	}{
+		// Logs carve-out wins.
+		{"/v1/apps/foo/logs exact", "/v1/apps/foo/logs", "logs"},
+		{"/v1/apps/foo/logs/ trailing slash", "/v1/apps/foo/logs/", "logs"},
+		// Anchored prefix accepts any slug — same as isApidLogsPath
+		// matches anything that satisfies the (prefix + /logs) shape.
+		{"/v1/apps/foobar/logs", "/v1/apps/foobar/logs", "logs"},
+		// apid prefix wins (not logs, not next).
+		{"/v1/apps/foo no logs suffix", "/v1/apps/foo", "apid"},
+		{"/v1/apps/foo/logsbar anchor regression guard", "/v1/apps/foo/logsbar", "apid"},
+		{"/v1/apps//logs empty slug", "/v1/apps//logs", "apid"},
+		// No /v1 prefix at all — fall through to next.
+		{"/api/v2/foo outside /v1", "/api/v2/foo", "next"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var upstreamHits, logsHits, nextHits int
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamHits++
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("apid: ok"))
+			}))
+			t.Cleanup(upstream.Close)
+
+			logsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				logsHits++
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("logs: ok"))
+			})
+
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				nextHits++
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("next: ok"))
+			})
+
+			log := slog.New(slog.NewTextHandler(io.Discard, nil))
+			handler := newApidProxyWithLogs(upstream.URL, next, logsHandler, log)
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			handler.ServeHTTP(rec, req)
+
+			switch tc.wantTarget {
+			case "logs":
+				if logsHits != 1 {
+					t.Errorf("logs handler hits = %d, want 1 (path %q should route to logs)", logsHits, tc.path)
+				}
+				if upstreamHits != 0 {
+					t.Errorf("apid upstream hits = %d, want 0 (logs carve-out must beat apid routing) for path %q", upstreamHits, tc.path)
+				}
+				if nextHits != 0 {
+					t.Errorf("next hits = %d, want 0 (logs carve-out must not fall through) for path %q", nextHits, tc.path)
+				}
+				if !strings.Contains(rec.Body.String(), "logs: ok") {
+					t.Errorf("body = %q, want logs handler envelope", rec.Body.String())
+				}
+			case "apid":
+				if upstreamHits != 1 {
+					t.Errorf("apid upstream hits = %d, want 1 (path %q should proxy to apid)", upstreamHits, tc.path)
+				}
+				if logsHits != 0 {
+					t.Errorf("logs handler hits = %d, want 0 (path %q is not a logs route)", logsHits, tc.path)
+				}
+				if nextHits != 0 {
+					t.Errorf("next hits = %d, want 0 (path %q matched the apid prefix)", nextHits, tc.path)
+				}
+			case "next":
+				if nextHits != 1 {
+					t.Errorf("next hits = %d, want 1 (path %q must fall through)", nextHits, tc.path)
+				}
+				if upstreamHits != 0 {
+					t.Errorf("apid upstream hits = %d, want 0 (path %q is not an apid path)", upstreamHits, tc.path)
+				}
+				if logsHits != 0 {
+					t.Errorf("logs handler hits = %d, want 0 (path %q is not a logs route)", logsHits, tc.path)
+				}
+			default:
+				t.Fatalf("unknown wantTarget %q", tc.wantTarget)
+			}
+		})
+	}
+}
+
 // TestApidProxy_LogsCarveOutMethodFilter pins the method-filter
 // contract: isApidLogsPath matches on path only (no method check),
 // so a POST to /v1/apps/{slug}/logs also dispatches through the
@@ -660,5 +767,70 @@ func TestApidProxy_LogsCarveOutDisabledWhenHandlerNil(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "apid: ok") {
 		t.Errorf("body = %q, want the apid upstream envelope", rec.Body.String())
+	}
+}
+
+// TestApidPathReservations_Documented is the drift-protection guard
+// for spec §4.1.1: every apidRoot* constant declared in
+// cmd/gatewayd/proxy.go (the matcher source-of-truth) must appear
+// verbatim in docs/faas_implementation_spec.md so customer-facing
+// docs match the platform's reservation list.
+//
+// The matcher is the source of truth; the spec is documentation
+// that must match. If a future change adds a new apidRoot* constant
+// without updating the spec, this test fails. The test reads the
+// spec from the repo root relative to this file (the cmd/gatewayd/
+// test binary is built and run from the repo root, so the relative
+// path resolves to the repo-root copy of the spec).
+//
+// The reverse direction (spec mentions a path the matcher doesn't
+// cover) is NOT pinned here — the spec might intentionally document
+// upcoming reservations, and the matcher is the live contract. The
+// one-way drift is what matters for "the customer-facing note in
+// the spec stays accurate to what gatewayd actually reserves".
+func TestApidPathReservations_Documented(t *testing.T) {
+	specPath := "../../docs/faas_implementation_spec.md"
+	data, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", specPath, err)
+	}
+	body := string(data)
+
+	// Find the §4.1.1 reservation section. We scan for the heading
+	// and assert each constant appears within the next ~10kB so a
+	// future spec rewrite that drops the heading (or moves the
+	// section) is loud.
+	const heading = "#### 4.1.1 Platform path reservations"
+	idx := strings.Index(body, heading)
+	if idx < 0 {
+		t.Fatalf("spec missing %q section", heading)
+	}
+	end := idx + 10_000
+	if end > len(body) {
+		end = len(body)
+	}
+	section := body[idx:end]
+
+	// Pulled from cmd/gatewayd/proxy.go's apidRoot* const block
+	// (proxy.go:233-246). Keep in sync with that block — this test
+	// IS the guard that catches drift.
+	wantConsts := []string{
+		"/v1",
+		"/dashboard",
+		"/oauth/", // the matcher has apidRootOAuthPrefix = "/oauth/"; the spec subsection says "/oauth/... subtree (NOT bare /oauth)"
+		"/login",
+		"/signup",
+		"/login/forgot",
+		"/auth/verify",
+		"/auth/reset",
+		"/logout",
+		"/status",
+		"/healthz",
+		"/cli-auth",
+	}
+	for _, want := range wantConsts {
+		if !strings.Contains(section, want) {
+			t.Errorf("spec §4.1.1 missing apidRoot constant %q — update the docs in the same PR that adds the constant", want)
+		}
 	}
 }

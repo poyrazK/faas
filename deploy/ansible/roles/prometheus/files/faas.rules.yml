@@ -613,6 +613,64 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryWarn.md"
 
       # ─────────────────────────────────────────────────────────────────
+      # Per-host TLS cert expiry (Finding 2 / ADR-024 H3 follow-up).
+      # The aggregate rule above covers the box-level signal; these
+      # rules attach a hostname + kind label so the alert routes to
+      # the right custom domain. `hostname!="__other__"` excludes the
+      # bounded-admission overflow (an admission overflow means we've
+      # run past hostnameLabelSetCap and don't have a real host name
+      # to attribute). `kind!="unknown"` excludes misclassifications
+      # so an issuer-key wiring bug doesn't page.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasTLSCertExpiryPageByHost
+        expr: gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} < (14 * 86400)
+        for: 5m
+        labels:
+          severity: page
+          component: gatewayd
+          family: tls_cert_expiry
+          hostname: "{{ $labels.hostname }}"
+          kind: "{{ $labels.kind }}"
+        annotations:
+          summary: "TLS cert for {{ $labels.hostname }} expires in ≤14 days"
+          description: "Per-host cert expiry below 14 days. kind={{ $labels.kind }} tells you whether the wildcard (DNS-01) or an on-demand (HTTP-01) cert is affected — wildcard renewals auto-recover via DNS-01; on-demand renewals need the customer to keep the custom_domains row active and the HTTP-01 challenge endpoint reachable. Verify certmagic's renew-loop for this host (check the slog for {{ $labels.hostname }} renew lines)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPageByHost.md"
+
+      - alert: FaasTLSCertExpiryWarnByHost
+        expr: gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} < (30 * 86400) and gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} >= (14 * 86400)
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd
+          family: tls_cert_expiry
+          hostname: "{{ $labels.hostname }}"
+          kind: "{{ $labels.kind }}"
+        annotations:
+          summary: "TLS cert for {{ $labels.hostname }} expiry < 30 days"
+          description: "Per-host cert expiry is between 14 and 30 days. Renewals normally fire at 30d; if no renew log line surfaces for this host within the next 12h, force-renew via `faas cert refresh --host={{ $labels.hostname }}`."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryWarnByHost.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Cert-expiry refresher walk-completeness (Finding 2). The
+      # refresher ticks this counter every interval; `partial`
+      # means a filesystem blip cut the walk short. A persistent
+      # partial is the "refresher silently failing" signal —
+      # operators should investigate BEFORE certs actually expire,
+      # rather than waiting for the gauge to drift.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasTLSCertExpiryRefresherPartial
+        expr: increase(gateway_tls_cert_expiry_refresher_walk_complete_total{result="partial"}[1h]) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd
+          family: tls_cert_expiry
+        annotations:
+          summary: "Cert-expiry refresher walk was partial"
+          description: "At least one tick in the last hour completed with a partial walk result — the refresher either saw a subtree disappear mid-walk (concurrent certmagic renewal — usually benign) or hit a filesystem error. If the partial persists across multiple ticks, the cert-expiry gauges will stop refreshing and the §12 alerts will go stale. Check `/var/lib/faas/certs/certificates/` permissions and the gatewayd slog for `cert expiry walk was partial` Warn lines."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
+
+      # ─────────────────────────────────────────────────────────────────
       # On-demand cert mint denial rate
       # (gatewayd / gateway_tls_on_demand_denied_total{reason}).
       # ADR-024 H3 closure: spec §11 abuse-vector observability — a

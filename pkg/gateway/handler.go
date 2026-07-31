@@ -358,6 +358,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if !h.accountLimiter.AllowAccount(app.AccountID, app.Plan) {
 		w.Header().Set("Retry-After", "1")
 		w.Header().Set("x-faas-rate-limit-scope", "account")
+		// Per-account 429 still surfaces the per-account bucket state
+		// so a customer debugging a 429 storm can see which throttle
+		// tripped. Distinct X-AccountRateLimit-* header family so
+		// generic tooling that auto-parses X-RateLimit-* doesn't
+		// conflate per-app and per-account values (Finding 6).
+		h.writeAccountRateLimitHeaders(w, app.AccountID, app.Plan)
 		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
 			"Rate limit exceeded", "slow down and retry"))
 		if h.metrics != nil {
@@ -371,6 +377,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !h.limiter.Allow(app.ID, app.Plan) {
 		w.Header().Set("Retry-After", "1")
 		w.Header().Set("x-faas-rate-limit-scope", "app")
+		// 429 path: write the post-decrement bucket snapshot so
+		// clients can compute Retry-After locally without parsing the
+		// problem+json body. The header set runs before the
+		// api.WriteProblem below so the body has time to read them.
+		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
 		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
 			"Rate limit exceeded", "slow down and retry"))
 		if h.metrics != nil {
@@ -379,6 +390,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+
+	// Success path: stamp the per-app headers BEFORE the proxy runs so
+	// they reach the wire regardless of what the upstream does (a
+	// committed upstream response body would otherwise overwrite the
+	// headers we set here). Allow already consumed one token above; the
+	// Peek snapshot therefore reflects "tokens left after this
+	// request" which is the standard X-RateLimit-Remaining contract.
+	h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
 
 	// Cap request body either direction (spec §4.1).
 	r.Body = http.MaxBytesReader(w, r.Body, api.MaxRequestBodyBytes)
@@ -622,6 +641,87 @@ func (h *Handler) recordEgress(rec *statusRecorder, target Target, app App) {
 	if h.metrics != nil && app.ID != "" {
 		h.metrics.ObserveResponseBytes(app.ID, string(app.Plan), rec.Bytes)
 	}
+}
+
+// writeAppRateLimitHeaders writes the X-RateLimit-{Limit,Remaining,Reset}
+// header trio for the per-app bucket after the most recent Allow has
+// consumed one token. Skips silently when Peek returns ok=false (a
+// noop limiter, an unknown plan, or a bucket the limiter has not yet
+// seen for this app) — the absence of the headers is the loader-side
+// signal that the value is "not yet established" rather than
+// "exhausted". Set on the 2xx success path so dashboards that read
+// X-RateLimit-* see the post-consume value, and on the per-app 429
+// path so clients can compute Retry-After from the headers without
+// parsing the problem+json body.
+//
+// Cross-process limitation (Finding 6 / ADR-040 follow-up): in a
+// multi-gatewayd fleet each gatewayd process keeps its own bucket;
+// the value reflects this gatewayd's view. ADR-040 already flagged
+// this; the X-RateLimit-* contract is documented to expose rather
+// than to remove the limitation. When a shared-bucket design ships
+// this method moves behind a shared-state seam with the same call
+// signature.
+func (h *Handler) writeAppRateLimitHeaders(w http.ResponseWriter, appID string, plan api.Plan) {
+	if h == nil || h.limiter == nil {
+		return
+	}
+	limit, remaining, reset, ok := h.limiter.Peek(appID, plan)
+	if !ok {
+		return
+	}
+	w.Header().Set("X-RateLimit-Limit", intToString(limit))
+	w.Header().Set("X-RateLimit-Remaining", intToString(remaining))
+	w.Header().Set("X-RateLimit-Reset", intToString(reset))
+}
+
+// writeAccountRateLimitHeaders writes the X-AccountRateLimit-*
+// header trio for the per-account bucket (ADR-040 / Finding 6).
+// Distinct header family from X-RateLimit-* so generic
+// X-RateLimit-* consumers (e.g. browser DevTools) don't conflate the
+// two scopes. Set only on the per-account 429 path today; the
+// per-account value is rarely useful to a customer on the 2xx path
+// (they care about their app's bucket, not their account-wide one).
+func (h *Handler) writeAccountRateLimitHeaders(w http.ResponseWriter, accountID string, plan api.Plan) {
+	if h == nil || h.accountLimiter == nil || accountID == "" {
+		return
+	}
+	limit, remaining, reset, ok := h.accountLimiter.PeekAccount(accountID, plan)
+	if !ok {
+		return
+	}
+	w.Header().Set("X-AccountRateLimit-Limit", intToString(limit))
+	w.Header().Set("X-AccountRateLimit-Remaining", intToString(remaining))
+	w.Header().Set("X-AccountRateLimit-Reset", intToString(reset))
+}
+
+// intToString is a tiny strconv.Itoa shim so handler.go doesn't grow
+// a strconv import for three call sites. Avoids the existing
+// scheduler.go itoa(uint64) so the package keeps a single per-type
+// convention.
+func intToString(i int) string {
+	// Local format avoids the strconv import. Negative values render
+	// with a leading "-" so a Peek that observes (somehow) a negative
+	// token count is visible to the client; in practice limit /
+	// remaining are non-negative by construction (the floor in Peek).
+	if i == 0 {
+		return "0"
+	}
+	neg := i < 0
+	if neg {
+		i = -i
+	}
+	var buf [20]byte
+	pos := len(buf)
+	for i > 0 {
+		pos--
+		buf[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	if neg {
+		pos--
+		buf[pos] = '-'
+	}
+	return string(buf[pos:])
 }
 
 // preInstantiateApp records appID once and delegates to

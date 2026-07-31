@@ -106,7 +106,8 @@ func newApidProxyWithLogs(target string, next http.Handler, logsHandler http.Han
 // apid. The match is run before isApidPath so the loopback
 // proxy never sees the path. The pattern is matched by
 // isApidLogsPath (hand-rolled, not regexp — per-request regex
-// is expensive).
+// is expensive). The dispatch-order invariant is pinned by
+// TestApidProxy_LogsCarveOutPrecedesAPIDRouting in proxy_test.go.
 func (a *apidProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isApidLogsPath(r.URL.Path) && a.logsHandler != nil {
 		a.logsHandler.ServeHTTP(w, r)

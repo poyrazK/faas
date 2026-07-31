@@ -121,6 +121,145 @@ func (l *Limiter) Forget(appID string) {
 	l.mu.Unlock()
 }
 
+// Peek is a non-mutating snapshot of the token bucket for appID on plan.
+// Used by the response-header writer (X-RateLimit-*) and by the
+// /v1/internal/quota endpoint that backs the dashboard's bucket
+// indicator (issue #314 / Finding 6). The function copies (tokens,
+// last) into locals, applies the standard refill formula against the
+// supplied clock WITHOUT writing back, and returns the same shape
+// allowToken would have produced — but never decrements.
+//
+// Returns:
+//
+//	limit         = plan.RateLimitBurst (the bucket ceiling)
+//	remaining     = floor(tokens) (token-count visible to the next caller)
+//	resetSeconds  = ceil((1 - fractionalTokens) / rps) when tokens < 1,
+//	               else 0 (the bucket is full and resets immediately on Allow)
+//	ok            = true iff the bucket exists AND the plan is known;
+//	               false on unknown plan, on missing bucket (app has
+//	               never been Allow'd into the limiter — distinct from
+//	               "0 remaining"), and on noop mode (the noop limiter
+//	               has no bucket state — callers must skip the
+//	               header write rather than emit zero-valued headers
+//	               that imply exhaustion).
+//
+// Peek holds the limiter mutex for the same duration allowToken does
+// — a copy + math. Concurrent Peek/Allow under -race is safe (the
+// mutex is the sync point). The refill math intentionally mirrors
+// allowToken so a snapshot read on tick N agrees with the consumption
+// Allow on tick N+1 would have made.
+//
+// Cross-process limitation (documented in the header contract): in a
+// multi-gatewayd fleet each gateway process keeps its own bucket; the
+// values reflect THIS gatewayd's view. ADR-040 already flagged this;
+// this surface makes the limitation visible, not gone.
+func (l *Limiter) Peek(appID string, plan api.Plan) (limit, remaining, resetSeconds int, ok bool) {
+	if l == nil || l.noop {
+		return 0, 0, 0, false
+	}
+	limits, found := api.LimitsFor(plan)
+	if !found {
+		return 0, 0, 0, false
+	}
+	limit = limits.RateLimitBurst
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.buckets[appID]
+	if b == nil {
+		// The bucket has never been Allow'd — the app exists in the
+		// routing cache but hasn't been seen at the rate-limit edge
+		// yet. Returning ok=false here distinguishes "never seen"
+		// (dashboard renders "—") from "exhausted" (dashboard
+		// renders "0 of N remaining").
+		return limit, 0, 0, false
+	}
+	// Read the cached rps/burst the limiter stored when the bucket was
+	// last Allow'd. allowToken refreshes these on every call (so a
+	// mid-flight plan change is reflected); Peek picks up whatever
+	// value is currently cached. Peek does NOT write back — leaving the
+	// bucket unchanged is the non-mutating contract.
+	rps, burst := b.rps, b.burst
+	tokens := b.tokens
+	last := b.last
+	now := l.now()
+	dt := now.Sub(last).Seconds()
+	if dt > 0 {
+		tokens += dt * rps
+		if tokens > burst {
+			tokens = burst
+		}
+	}
+	if tokens < 0 {
+		tokens = 0
+	}
+	remaining = int(tokens)
+	if remaining < 0 {
+		remaining = 0
+	}
+	if tokens < 1 {
+		// ceil((1 - tokens) / rps) → seconds until the next whole
+		// token becomes available. Adding 1 then floor() gives the
+		// standard ceil semantics for positive denominators
+		// (rps > 0 by construction in api.LimitsFor).
+		resetSeconds = int((1-tokens)/rps + 1)
+		if resetSeconds < 1 {
+			resetSeconds = 1
+		}
+	}
+	return limit, remaining, resetSeconds, true
+}
+
+// PeekAccount mirrors Peek for the per-account bucket (ADR-040). The
+// rate units in the limits table for the per-account path are RPM,
+// so allowToken divides by 60; Peek does the same so the visible
+// reset time uses the same denominator the limiter actually refills
+// at. Returns ok=false on noop, unknown plan, or missing bucket (the
+// same "never seen" contract as Peek).
+func (l *Limiter) PeekAccount(accountID string, plan api.Plan) (limit, remaining, resetSeconds int, ok bool) {
+	if l == nil || l.noop {
+		return 0, 0, 0, false
+	}
+	rpm := plan.RateLimitPerAccountRPM()
+	if rpm <= 0 {
+		return 0, 0, 0, false
+	}
+	rps := float64(rpm) / 60.0
+	burst := float64(rpm)
+	limit = rpm
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.buckets[accountID]
+	if b == nil {
+		return limit, 0, 0, false
+	}
+	tokens := b.tokens
+	last := b.last
+	now := l.now()
+	dt := now.Sub(last).Seconds()
+	if dt > 0 {
+		tokens += dt * rps
+		if tokens > burst {
+			tokens = burst
+		}
+	}
+	if tokens < 0 {
+		tokens = 0
+	}
+	remaining = int(tokens)
+	if remaining < 0 {
+		remaining = 0
+	}
+	if tokens < 1 {
+		resetSeconds = int((1-tokens)/rps + 1)
+		if resetSeconds < 1 {
+			resetSeconds = 1
+		}
+	}
+	return limit, remaining, resetSeconds, true
+}
+
 // ForgetAccount drops an account's bucket (ADR-040). Symmetric with Forget
 // for the per-account scope. SIGHUP uses ForgetAll which covers both scopes
 // at once; ForgetAccount is the per-scope escape hatch (e.g. for an admin

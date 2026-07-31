@@ -91,7 +91,42 @@ type Metrics struct {
 	// ADR-040 (issue #292). Labels: account_id, plan. Pre-instantiates
 	// the four plan rows under the `__other__` placeholder so the §12
 	// dashboard panel never shows "no data" before the first 429.
+	// Real account_id rows are bounded by accountLabels (see
+	// account_label_set.go) — overflow collapses to `__other__` so the
+	// §12 panel stays bounded past customer-count growth (issue #278
+	// precedent in pkg/wire/metrics.go).
 	accountRateLimited *prometheus.CounterVec
+	// accountLabels bounds the dynamic `account_id` label set on
+	// accountRateLimited (and any future account-labelled metric in
+	// this package). Mirrors pkg/wire/metrics.go's accountLabelSet
+	// (issue #278); the duplicate type is deliberate — pkg/gateway
+	// has no dependency on pkg/wire today, and importing pkg/wire
+	// solely for an unexported primitive would couple this package
+	// to the cross-daemon metrics graph. See account_label_set.go
+	// for the behavioural contract and the rationale for non-eviction.
+	accountLabels *accountLabelSet
+	// hostnameLabels bounds the dynamic `hostname` label set on
+	// tlsCertExpiryByHost. Same non-evicting, map+mutex shape as
+	// accountLabels; see hostname_label_set.go for the contract and
+	// the rationale for non-eviction. The cap (hostnameLabelSetCap)
+	// is intentionally documented as a daemon-lifetime ceiling.
+	hostnameLabels *hostnameLabelSet
+	// hostKinds remembers the (hostname, kind) tuple the refresher
+	// wrote via ObserveHostCertExpiry so the stale-delete path in
+	// nanStaleAdmittedHostCertExpiry can target the exact tuple
+	// (DeleteLabelValues is tuple-keyed). hostnameLabelSet is
+	// hostname-keyed only; the kind is set at write time and isn't
+	// recoverable from the set later. Stored as a plain string so
+	// metrics.go doesn't import CertKind from cert_expiry.go.
+	//
+	// Concurrency: single-writer by design. ONLY refreshCertExpiryOnce
+	// (and its callees ObserveHostCertExpiry / DeleteHostCertExpiry)
+	// touch this map, and it runs as a single-goroutine ticker
+	// (cmd/gatewayd/main.go). The /metrics scrape path doesn't read it
+	// — Gather walks the *Vec by label, not by hostKinds. If a future
+	// change introduces a second writer, this map must grow its own
+	// mutex.
+	hostKinds map[string]string
 	// requestDuration backs issue #273 / ADR-042: per-app full
 	// request-received → handler-return duration. Labels: app, class
 	// (2xx/3xx/4xx/5xx — derived by statusClassBucket, NOT the full
@@ -139,8 +174,29 @@ type Metrics struct {
 	// 30 d) and "about to expire" (page at 14 d) without a per-host
 	// fan-out. A negative value means a cert on disk is already past
 	// its NotAfter; the page rule fires regardless.
-	tlsCertExpiry     prometheus.Gauge
-	tlsOnDemandDenied *prometheus.CounterVec
+	tlsCertExpiry prometheus.Gauge
+	// tlsCertExpiryByHost is the per-host mirror of tlsCertExpiry
+	// (ADR-024 H3 follow-up, Finding 2). Labels: hostname, kind.
+	// Same remaining-lifetime semantics as the aggregate (negative
+	// when expired; NaN when the host is no longer observed, so
+	// Prometheus drops the series and the alert's < expression
+	// returns false for the absent series). bounded by
+	// hostnameLabels; overflow collapses to hostname="__other__".
+	// `kind` is "wildcard" or "ondemand" (or "unknown" — see
+	// cert_expiry.go for the classification rules). The aggregate
+	// tlsCertExpiry stays as a daemon-level compatibility metric so
+	// existing alert rules (FaasTLSCertExpiryPage / Warn) keep
+	// firing unchanged; new per-host rules query tlsCertExpiryByHost.
+	tlsCertExpiryByHost *prometheus.GaugeVec
+	// tlsCertExpiryRefresherWalkComplete is a counter the refresher
+	// ticks once per tick with a {result} label ∈ {complete,
+	// partial, empty}. Operators page on `increase(...{result="partial"}[1h]) > 0`
+	// to catch a refresher silently failing (e.g. a filesystem blip
+	// where the root is unreachable). Empty ticks are also counted
+	// so a fresh daemon or a post-cutover box doesn't page on
+	// "no certs" (the rule's `result="partial"` filter excludes them).
+	tlsCertExpiryRefresherWalkComplete *prometheus.CounterVec
+	tlsOnDemandDenied                  *prometheus.CounterVec
 	// wakeLocality is the increment-only wake-outcome classifier that
 	// backs the multiplex scale-out decision (PR scale-out readiness,
 	// ADRs 025/028). Outcome ∈ {local_snapshot, local_coldboot} today;
@@ -166,7 +222,10 @@ type Metrics struct {
 func NewMetrics() *Metrics {
 	reg := prometheus.NewRegistry()
 	m := &Metrics{
-		registry: reg,
+		registry:       reg,
+		accountLabels:  newAccountLabelSet(),
+		hostnameLabels: newHostnameLabelSet(),
+		hostKinds:      make(map[string]string),
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_requests_total",
 			Help: "Total gateway requests, labelled by app, plan, and HTTP status class.",
@@ -216,23 +275,18 @@ func NewMetrics() *Metrics {
 			Help: "Per-(app, plan) HTTP response body bytes observed by the gateway (ADR-046 PR-2). One Add per observed byte, called once per proxied response after the ReverseProxy returns. Canonical persisted metric is usage_minutes.tx_bytes; this counter is the real-time operator view for §12 anomaly detection.",
 		}, []string{"app", "plan"}),
 		// ADR-040 / issue #292. account_id label has cardinality O(active
-		// accounts × 4 plans). The bounded admission lives in the
-		// alert + runbook audit path (max ~10k customers on the one-box
-		// box today); raw labels are surfaced only on first 429 to avoid
-		// pre-instantiating 40k zero-valued series. Pre-instantiation
-		// only touches the closed (plan) set under the "__other__"
-		// placeholder so the §12 panel surfaces from boot.
-		//
-		// TODO(ADR-040 follow-up): bind ObserveAccountRateLimit to the
-		// apid accountLabelSet admission primitive (issue #278,
-		// pkg/wire/metrics.go) before customer count crosses ~10k.
-		// Without the binding a flood of distinct account_id labels on a
-		// misuse case would mint unbounded series and break §12. The
-		// same primitive already gates apid_request_total{account_id}; the
-		// wiring is a one-line call into the shared helper.
+		// accounts × 4 plans). Bounded admission lives in
+		// accountLabels (account_label_set.go) — real ids over the
+		// accountLabelSetCap collapse to "__other__" before they
+		// reach this counter so the §12 panel stays bounded past
+		// customer-count growth. Pre-instantiation only touches the
+		// closed (plan) set under the "__other__" placeholder so the
+		// §12 panel surfaces from boot. Real account_id rows appear
+		// on first 429 (or via admit() pre-instantiation if a future
+		// change wants the closed loop tightened).
 		accountRateLimited: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_per_account_rate_limited_total",
-			Help: "Requests rejected by the per-account rate limiter (ADR-040 / issue #292). Labelled by account_id, plan. account_id=\"__other__\" is the bounded admission overflow placeholder for the closed (plan) set.",
+			Help: "Requests rejected by the per-account rate limiter (ADR-040 / issue #292). Labelled by account_id, plan. account_id=\"__other__\" is the bounded admission overflow placeholder for BOTH the closed (plan) pre-instantiation AND the accountLabelSet overflow (capacity = accountLabelSetCap = 10k). Past the cap the admit() helper collapses every distinct account_id to \"__other__\" so a flood of distinct accounts does not mint unbounded series.",
 		}, []string{"account_id", "plan"}),
 		// Issue #273 / ADR-042. Per-app full request duration.
 		// Buckets resolve both warm (≤100ms) and slow (≥1s) traffic; the
@@ -265,6 +319,35 @@ func NewMetrics() *Metrics {
 			Name: "gateway_tls_cert_expiry_seconds",
 			Help: "Smallest remaining lifetime across cached certs on disk (cfg.StorageDir). ADR-024 H3 (closed). Page at ≤14 d; warn at ≤30 d. Gauge is unset (no series) before the first cert is minted; the `<` alert expression handles a missing series correctly. A negative value means a cert on disk is already past its NotAfter — the page rule fires regardless.",
 		}),
+		// ADR-024 H3 follow-up (Finding 2): per-host visibility. Same
+		// gauge family as tlsCertExpiry but with hostname + kind
+		// labels. Negative = expired. NaN = the host is no longer
+		// observed (certmagic removed it; refresher NaN's the gauge
+		// so Prometheus drops the series and the alert's < expression
+		// returns false for the absent series). hostname="__other__"
+		// is the bounded admission overflow for hostname (capacity
+		// hostnameLabelSetCap = 10k); kind ∈ {wildcard, ondemand,
+		// unknown} — see cert_expiry.go's classifyByIssuerKey for the
+		// source-of-truth. kind="unknown" means the issuer key didn't
+		// match either the wildcard or the on-demand bucket and is
+		// excluded from the per-host page rules so operators don't
+		// chase a misclassification.
+		tlsCertExpiryByHost: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_tls_cert_expiry_by_host_seconds",
+			Help: "Per-host remaining cert lifetime (cfg.StorageDir). ADR-024 H3 follow-up (Finding 2). hostname=\"__other__\" is the bounded admission overflow for the hostname label (capacity hostnameLabelSetCap = 10k); kind ∈ {wildcard, ondemand, unknown}. Negative = expired; NaN = host no longer observed (Prometheus drops the series). Page rules query `hostname!=\"__other__\",kind!=\"unknown\"` so misclassification and overflow do not page.",
+		}, []string{"hostname", "kind"}),
+		// Walk completeness signal so an operator can page on "the
+		// refresher silently failed" rather than waiting for the
+		// gauge to drift. result ∈ {complete, partial, empty}.
+		// `complete` = full walk succeeded with ≥1 cert;
+		// `empty` = full walk succeeded with 0 certs (boot or
+		// post-cutover state); `partial` = walk returned an error
+		// after partial success OR the root was missing/inaccessible.
+		// The page rule increments on result="partial".
+		tlsCertExpiryRefresherWalkComplete: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_tls_cert_expiry_refresher_walk_complete_total",
+			Help: "Cert-expiry refresher walk-completeness classifier (Finding 2). result ∈ {complete, partial, empty}. Increment once per tick. Page rule fires on increase of result=\"partial\" so a silently-failing refresher pages the operator before certs actually expire.",
+		}, []string{"result"}),
 		// ADR-024 H3 (closed in PR #345). The reason label set is closed
 		// and pre-instantiated below so every reason series surfaces in
 		// /metrics from boot. Only `allowlist` is wired today (from the
@@ -339,7 +422,15 @@ func NewMetrics() *Metrics {
 	for _, outcome := range []string{"local_snapshot", "local_coldboot"} {
 		m.wakeLocality.WithLabelValues(outcome)
 	}
-	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeQueueWait, m.queueDepth, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsOnDemandDenied, m.wakeLocality, m.computeNodeChangedSubscriberAlive, m.responseBytes)
+	// ADR-024 H3 follow-up (Finding 2): pre-instantiate the closed
+	// (result) set on the walk-completeness counter so the §12
+	// dashboard panel surfaces from boot. result="partial" is the
+	// page signal — pre-instantiating it lets the rule fire on
+	// increase without waiting for a first partial event.
+	for _, result := range []string{"complete", "partial", "empty"} {
+		m.tlsCertExpiryRefresherWalkComplete.WithLabelValues(result)
+	}
+	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeQueueWait, m.queueDepth, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.wakeLocality, m.computeNodeChangedSubscriberAlive, m.responseBytes)
 	return m
 }
 
@@ -415,9 +506,19 @@ func (m *Metrics) ObserveRateLimit(appID, plan string) {
 // ObserveRateLimit (which the call site guards with `if h.metrics != nil`).
 // Per-account 429s are the dashboard's primary abuse signal so the
 // call site shouldn't have to remember the nil guard.
+//
+// accountID is routed through the bounded accountLabelSet (issue #278
+// pattern from pkg/wire/metrics.go) before reaching the counter.
+// Overflow past accountLabelSetCap collapses to "__other__" so the
+// §12 panel stays bounded past customer-count growth; the literal
+// label "anonymous" and the overflow "other" are passed through
+// untouched so the closed (plan) pre-instantiated series keep working.
 func (m *Metrics) ObserveAccountRateLimit(accountID, plan string) {
 	if m == nil {
 		return
+	}
+	if m.accountLabels != nil {
+		accountID = m.accountLabels.admit(accountID)
 	}
 	m.accountRateLimited.WithLabelValues(accountID, plan).Inc()
 }
@@ -557,6 +658,73 @@ func (m *Metrics) SetTLSCertExpiry(d time.Duration) {
 		return
 	}
 	m.tlsCertExpiry.Set(d.Seconds())
+}
+
+// ObserveHostCertExpiry writes the remaining lifetime for one host to
+// the gateway_tls_cert_expiry_by_host_seconds gauge (Finding 2).
+// hostname is routed through m.hostnameLabels.admit() before reaching
+// the gauge; overflow collapses to hostname="__other__". The gauge
+// value semantics mirror SetTLSCertExpiry: positive for a not-yet-
+// expired cert, negative for an expired one (the per-host page rule
+// fires regardless of sign).
+//
+// Records the (hostname, kind) tuple in m.hostKinds so the stale-
+// delete path on subsequent ticks can target the exact tuple (the
+// hostnameLabelSet is hostname-keyed only and cannot recover the
+// kind later).
+//
+// kind ∈ {wildcard, ondemand, unknown}. Safe on a nil receiver.
+func (m *Metrics) ObserveHostCertExpiry(hostname, kind string, d time.Duration) {
+	if m == nil {
+		return
+	}
+	if m.hostnameLabels != nil {
+		hostname = m.hostnameLabels.admit(hostname)
+	}
+	m.tlsCertExpiryByHost.WithLabelValues(hostname, kind).Set(d.Seconds())
+	if m.hostKinds != nil {
+		m.hostKinds[hostname] = kind
+	}
+}
+
+// DeleteHostCertExpiry removes a (hostname, kind) series from the
+// gateway_tls_cert_expiry_by_host_seconds gauge (Finding 2). Used
+// by the cert-expiry refresher to drop stale-host series on every
+// walk: a host that was present in tick N but absent in tick N+1
+// must not carry a stale value into the next tick, so the gauge
+// series is deleted (DeleteLabelValues is the Prometheus-canonical
+// way to drop a labelled series — exposition drops absent series
+// entirely, so the alert's < expression returns false).
+//
+// hostname is routed through m.hostnameLabels.admit() before the
+// delete so the call matches the same label tuple the original
+// ObserveHostCertExpiry would have written. Also forgets the
+// (hostname, kind) tuple in m.hostKinds. Safe on a nil receiver;
+// idempotent on a non-existent series (DeleteLabelValues returns
+// false but does not error).
+func (m *Metrics) DeleteHostCertExpiry(hostname, kind string) {
+	if m == nil {
+		return
+	}
+	if m.hostnameLabels != nil {
+		hostname = m.hostnameLabels.admit(hostname)
+	}
+	m.tlsCertExpiryByHost.DeleteLabelValues(hostname, kind)
+	if m.hostKinds != nil && m.hostKinds[hostname] == kind {
+		delete(m.hostKinds, hostname)
+	}
+}
+
+// ObserveCertExpiryRefresherWalkResult increments the
+// gateway_tls_cert_expiry_refresher_walk_complete_total counter for
+// the result ∈ {complete, partial, empty}. The refresher calls this
+// once per tick. Safe on a nil receiver so unit tests can omit the
+// metric bundle without nil-guarding every call site.
+func (m *Metrics) ObserveCertExpiryRefresherWalkResult(result string) {
+	if m == nil {
+		return
+	}
+	m.tlsCertExpiryRefresherWalkComplete.WithLabelValues(result).Inc()
 }
 
 // requestLogger is a one-line structured slog request logger used by Handler.

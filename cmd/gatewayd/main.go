@@ -390,7 +390,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// the goroutine after tlsBundle.Close (spec §12 panel surfaces
 		// immediately on /metrics; the alert rules live in faas.rules.yml).
 		deps.tlsCertExpiryCancel = gateway.StartCertExpiryRefresher(
-			ctx, resolved.StorageDir, deps.metrics, 5*time.Minute, log,
+			ctx, resolved.StorageDir, deps.metrics, 5*time.Minute,
+			// wildcardIssuerKey: the certmagic issuer-key path the
+			// DNS-01 solver uses for *.apps.<zone>. Empty string
+			// disables the wildcard classification — every cached
+			// cert is then classified as CertKindOnDemand, which is
+			// the conservative fallback. Production sets this from
+			// TOML alongside WildcardCertDomain so the per-host
+			// gauge labels accurately reflect issuer type.
+			"", log,
 		)
 	}
 	// Forward the operator-configured apid loopback URL through the
@@ -692,6 +700,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Private listener: control plane only — never authenticated (it's on a
 	// private bind), never reachable from the public-internet path.
 	controlMux := gateway.ControlMux(handler.Metrics(), nil)
+	// Finding 6 (issue #314): mount the dashboard quota endpoint on the
+	// control mux so an in-box caller (operator's curl today, future
+	// apid-side dial) can read per-app bucket state without going through
+	// the public :443 listener — that path self-rate-limits. The handler
+	// reads from the same *Limiter the public edge uses (handler.Limiter()
+	// is the seam) so the snapshot agrees with what Allow consumed.
+	controlMux.HandleFunc("/v1/internal/quota", internalQuotaHandler(handler, log))
 
 	// Track every *http.Server we spin up so the shutdown path can drain
 	// them in parallel. sslib guidance is "call Shutdown on each" rather

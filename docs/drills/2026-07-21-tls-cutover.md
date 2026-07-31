@@ -1,5 +1,13 @@
 # TLS cut-over drill — 2026-07-21 (M8 acceptance, ADR-024)
 
+> ⚠️ **PENDING — operator execution required.** This drill template
+> was scaffolded as part of the gatewayd Tier-1 PR
+> (`worktree-tier1-gatewayd-fix`, Finding 5) but the actual EX44 run
+> has not happened yet. The §14 milestone gate is the EX44 execution,
+> not this document — issue #252 stays open until the row population
+> below is filled in by an operator against a live box. Do NOT mark
+> the issue closed from a code-only PR.
+
 ## Acceptance bar
 
 > "gatewayd terminates TLS via CertMagic (DNS-01 wildcard +
@@ -35,7 +43,7 @@ Paste the raw command output under "Result".)
 | 6 | Cert-mint abuse vector (attacker SNI) | `handshake failure` (allowlist denies) | |
 | 7 | apid status unaffected (loopback) | `200`, SLO JSON unchanged | |
 | 8 | Cert expiry | `notAfter=` ≥ 60 days out | |
-| 9 | TLS metric scrape (`gateway_tls_*` surfaces on :9090/metrics) | `gateway_tls_cert_expiry_seconds` ≥ 1d, `gateway_tls_on_demand_denied_total{reason=...}` present (any value, including 0) | |
+| 9 | TLS metric scrape (`gateway_tls_*` surfaces on :9090/metrics) | `gateway_tls_cert_expiry_seconds` ≥ 1d, `gateway_tls_cert_expiry_by_host_seconds{hostname,kind}` ≥ 1 row (per-host gauge from Finding 2), `gateway_tls_cert_expiry_refresher_walk_complete_total{result="complete"}` ≥ 1, `gateway_tls_on_demand_denied_total{reason=...}` present (any value, including 0) | |
 
 ## journalctl excerpt (first 60 s after `systemctl restart faas-gatewayd`)
 

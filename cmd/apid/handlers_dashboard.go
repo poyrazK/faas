@@ -152,6 +152,12 @@ func (s *server) appListItem(ctx context.Context, app state.App, latest map[stri
 		StateBadge:      cls,
 		StateBadgeGlyph: glyph,
 		StateBadgeLabel: label,
+		// Finding 6 (issue #314): the cell's data attributes are
+		// stamped at the caller level (renderAppsList knows the
+		// account-wide plan; this helper has neither). Supplied
+		// empty here so a partial migration doesn't render a
+		// confusing cell.
+		AppID: app.ID,
 	}
 }
 
@@ -181,6 +187,19 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 			last = d.CreatedAt
 		}
 		items = append(items, s.appListItem(ctx, a, latest, last))
+	}
+	// Finding 6 (issue #314): stamp the per-row quota-cell metadata.
+	// account.Plan is the plan every app in this account sees
+	// (RateLimitBurst / RateLimitRPS lives on api.LimitsFor(plan)).
+	// QuotaLabel stays "—" until the apid→gatewayd loopback dial
+	// lands — distinguishable from the live "N/M" reading on the
+	// next PR. The static cells don't currently render the plan in
+	// the visible text, so this is essentially dead-handed metadata
+	// for today; the data attributes carry the keys the follow-up
+	// HTMX wire-in will read.
+	for i := range items {
+		items[i].Plan = string(acct.Plan)
+		items[i].QuotaLabel = dashboardEmDash
 	}
 	// Reuse the already-fetched apps list for the count (review
 	// finding #5: avoid a second SQL round-trip when we already
@@ -274,8 +293,11 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		log.Warn("dashboard renderAppDetail: count deployed apps", "account_id", acct.ID, "err", err)
 		appCount = 0
 	}
+	appRow := s.appListItem(ctx, app, latest, time.Time{})
+	appRow.Plan = string(acct.Plan)
+	appRow.QuotaLabel = dashboardEmDash
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
-		App:             s.appListItem(ctx, app, latest, time.Time{}),
+		App:             appRow,
 		Manifest:        dashboardManifestView(app),
 		Deployments:     deps,
 		Crons:           cronItems,
@@ -362,7 +384,7 @@ func (s *server) fetchDashboardAlerts(ctx context.Context, log *slog.Logger, acc
 		if !rule.LastFiredAt.IsZero() {
 			item.LastFiredAtLabel = dashboard.RelativeTime(rule.LastFiredAt, now)
 		} else {
-			item.LastFiredAtLabel = "—"
+			item.LastFiredAtLabel = dashboardEmDash
 		}
 		deliveries, derr := s.store.ListAlertDeliveriesForRule(ctx, rule.ID, 5)
 		if derr != nil {
@@ -800,6 +822,13 @@ func renderProblem(w http.ResponseWriter, log *slog.Logger, err error) {
 // apps"). When appCount < 0 the caller has no count available
 // (the page already had to query the apps list separately, so we
 // reuse that count instead of issuing a second SQL round-trip).
+//
+// dashboardEmDash is the "not yet known" placeholder the dashboard
+// renders for cells whose values come from a missing dial/wire.
+// Lifted to a constant so goconst stops nagging about the three
+// em-dash occurrences (relative-time "—", quota-cell "—").
+const dashboardEmDash = "—"
+
 func dashboardAccountView(acct state.Account, appCount int) *dashboard.AccountView {
 	n := appCount
 	if n < 0 {

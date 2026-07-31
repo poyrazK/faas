@@ -102,6 +102,16 @@ type AppListItem struct {
 	StateBadge      string
 	StateBadgeGlyph string
 	StateBadgeLabel string
+	// Finding 6 (issue #314): per-app rate-limit bucket column. The
+	// handler renders a static placeholder ("—" — "not yet wired") at
+	// this PR; the dashboard /v1/internal/quota wiring is the
+	// follow-up that adds the apid→gatewayd loopback dial so a real
+	// Peek value can land here without going through the self-DoS-ing
+	// public listener. AppID + Plan are pre-supplied as data-attrs on
+	// the cell so the follow-up PR can wire hx-get without re-templating.
+	AppID      string
+	Plan       string
+	QuotaLabel string
 }
 
 // ManifestView is the runner-scaffold snapshot shown on the app detail

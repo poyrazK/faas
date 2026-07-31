@@ -437,6 +437,62 @@ func TestMetricsAccountRateLimitedRegistersAndPreInstantiates(t *testing.T) {
 	}
 }
 
+// TestMetricsAccountRateLimitedOverflowCollapsesToOther — the
+// accountLabelSet mirror (issue #278 pattern from pkg/wire/metrics.go)
+// must collapse distinct account_ids past the cap to "__other__" so
+// the §12 panel cardinality stays bounded past customer-count growth.
+// Reaches into the unexported accountLabels field via a custom
+// constructor (test-only newAccountLabelSetWithCap) so the test
+// exercises the real overflow path with a tiny capacity.
+//
+// Asserts:
+//   - the cap'th distinct real id is admitted (appears under its
+//     real label);
+//   - the (cap+1)'th distinct id collapses to "__other__" (does NOT
+//     mint a new label);
+//   - "anonymous" and "__other__" themselves pass through admit()
+//     untouched so the closed (plan) pre-instantiation keeps working.
+func TestMetricsAccountRateLimitedOverflowCollapsesToOther(t *testing.T) {
+	const cap = 4
+	s := newAccountLabelSetWithCap(cap)
+	if got := s.admit("acct-1"); got != "acct-1" {
+		t.Fatalf("admit(acct-1) = %q, want %q", got, "acct-1")
+	}
+	if got := s.admit("acct-2"); got != "acct-2" {
+		t.Fatalf("admit(acct-2) = %q, want %q", got, "acct-2")
+	}
+	if got := s.admit("acct-3"); got != "acct-3" {
+		t.Fatalf("admit(acct-3) = %q, want %q", got, "acct-3")
+	}
+	// 3 real ids admitted (cap=4, reservedCount=2; remaining budget=2).
+	if got := s.admit("acct-4"); got != "acct-4" {
+		t.Fatalf("admit(acct-4) = %q, want %q (cap still has budget)", got, "acct-4")
+	}
+	// Now the budget is exhausted — the next distinct id collapses.
+	if got := s.admit("acct-5"); got != otherAccountLabel {
+		t.Fatalf("admit(acct-5) = %q, want %q (overflow)", got, otherAccountLabel)
+	}
+	// And stays collapsed even after further distinct ids.
+	if got := s.admit("acct-6"); got != otherAccountLabel {
+		t.Fatalf("admit(acct-6) = %q, want %q (still overflow)", got, otherAccountLabel)
+	}
+	// An already-admitted id still surfaces under its real label —
+	// admission is sticky, not LRU.
+	if got := s.admit("acct-1"); got != "acct-1" {
+		t.Fatalf("admit(acct-1) again = %q, want %q (sticky admission)", got, "acct-1")
+	}
+	// Reserved labels are pass-through and never consume capacity.
+	if got := s.admit(""); got != anonymousAccountLabel {
+		t.Fatalf("admit(\"\") = %q, want %q (empty normalises)", got, anonymousAccountLabel)
+	}
+	if got := s.admit(anonymousAccountLabel); got != anonymousAccountLabel {
+		t.Fatalf("admit(anonymous) = %q, want %q (pass-through)", got, anonymousAccountLabel)
+	}
+	if got := s.admit(otherAccountLabel); got != otherAccountLabel {
+		t.Fatalf("admit(__other__) = %q, want %q (pass-through)", got, otherAccountLabel)
+	}
+}
+
 // TestMetricsAccountRateLimitedNilSafe — the helper must not panic on a
 // nil receiver (the call site in pkg/gateway/handler.go already
 // nil-guards, but the helper itself is nil-safe by design — mirror of
@@ -444,6 +500,43 @@ func TestMetricsAccountRateLimitedRegistersAndPreInstantiates(t *testing.T) {
 func TestMetricsAccountRateLimitedNilSafe(t *testing.T) {
 	var m *Metrics
 	m.ObserveAccountRateLimit("x", "free") // must not panic
+}
+
+// TestMetricsAccountRateLimitedNilAccountLabels — covers the path
+// where the helper is called on a *Metrics whose accountLabels is nil
+// (e.g. a Metrics constructed outside NewMetrics, or after a future
+// refactor that introduces a no-metrics constructor). The call must
+// not panic and must fall back to the literal account_id, preserving
+// the pre-mirror behaviour for the unit-test path.
+func TestMetricsAccountRateLimitedNilAccountLabels(t *testing.T) {
+	m := NewMetrics()
+	// Simulate the "accountLabels never wired" path by nil-ing the
+	// field after NewMetrics constructed it. Real production wiring
+	// always sets it, but a future refactor that introduces a
+	// no-metrics constructor must keep the helper nil-safe.
+	m.accountLabels = nil
+	// Must not panic.
+	m.ObserveAccountRateLimit("acct-x", "pro")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	m.Handler().ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), `gateway_per_account_rate_limited_total{account_id="acct-x",plan="pro"} 1`) {
+		t.Errorf("fallback path did not surface literal account_id; body:\n%s", rec.Body.String())
+	}
+}
+
+// TestNewAccountLabelSetPanicsOnZeroCapacity — fail-loud at boot if
+// the production wiring accidentally constructs with capacity ≤ 0.
+// Mirrors pkg/wire/metrics.go:2573-2588 (the upstream primitive
+// panics on the same condition).
+func TestNewAccountLabelSetPanicsOnZeroCapacity(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("newAccountLabelSetWithCap(0) did not panic")
+		}
+	}()
+	_ = newAccountLabelSetWithCap(0)
 }
 
 // TestMetricsWakeLocalityPreinstantiated pins the closed (outcome) set

@@ -109,6 +109,32 @@ Each component: single Go binary, own systemd unit, structured logs (JSON, `slog
 - **Multi-node forwarding (ADR-028):** When schedd has placed an instance on a remote compute_node, gatewayd dials the per-node vmmd over the overlay (Tailscale or Wireguard; see §10 below) and bridges the HTTP bytes via vmmd's `ForwardHTTP` RPC. The cache layer is `NodeClientCache`: one `*grpc.ClientConn` per `compute_node.id`, evicted on every `compute_node_changed` pg_notify. Hop-by-hop headers (RFC 7230 §6.1) are stripped before the bridge. Body cap is 25 MiB; the bridge refuses larger payloads with `ResourceExhausted` before any bytes leave the gateway. The default-local node (one-box dev) skips the bridge and uses the existing direct reverse-proxy path.
 - Emits: `gateway_requests_total{app,code}`, `gateway_wake_latency_seconds` (histogram), `gateway_queue_depth`.
 
+#### 4.1.1 Platform path reservations
+
+gatewayd is the **only public listener on the box**; before falling through to the host-routed wake/proxy path, every request checks `isApidPath` (`cmd/gatewayd/proxy.go:202-228`). The matcher is the canonical reservation list — customer apps **cannot** expose routes under any of these prefixes, and the spec §4.1.1 enumerates them so the customer-facing docs can mirror the platform's own contract.
+
+| Reserved path                          | Owning handler (apid)                                     | Why reserved                                     |
+|----------------------------------------|------------------------------------------------------------|--------------------------------------------------|
+| `/v1` and `/v1/` subtree               | REST API (§4.2) — apps, deployments, domains, crons, …     | Permanent API surface; ADR-011 single-listener    |
+| `/dashboard` and `/dashboard/` subtree | Dashboard (M7.5, ADR-011)                                 | Customer-facing dashboard, session middleware     |
+| `/oauth/...` subtree (NOT bare `/oauth`) | OAuth callbacks (`/oauth/callback` mounted today)        | Subtree-only; bare `/oauth` deliberately 404s    |
+| `/login`, `/login/`, `/login/...`      | Magic-link + session login                                 | Auth flows                                       |
+| `/signup`, `/signup/...`               | Account creation                                           | Auth flows                                       |
+| `/login/forgot`, `/login/forgot/...`   | Password reset request                                     | Auth flows                                       |
+| `/auth/verify`, `/auth/verify/...`     | Magic-link consume (legacy)                                | Auth flows                                       |
+| `/auth/reset`, `/auth/reset/...`       | Password reset completion (issue #165 / PR #180)          | Auth flows                                       |
+| `/logout`, `/logout/`, `/logout/...`   | Session logout                                             | Auth flows                                       |
+| `/status`, `/status/`, `/status/...`   | Public status page (§12)                                   | Spec §12 panel surface                           |
+| `/healthz`                             | Loopback infra probe (CD health check)                     | Required by `deploy/digitalocean/bootstrap.sh` and `cd-digitalocean.yml` post-deploy smoke |
+| `/cli-auth`                            | Device-code approval page (§2.2)                           | CLI pairing                                      |
+| `/v1/apps/{slug}/logs`                 | Carve-out — gatewayd's own `AppLogsHandler` (issue #254 / Move 4 PR-2) | Customer log stream routed via gatewayd→schedd  |
+
+**Anchor discipline.** Every anchored root matches exact + `/` subtree via `hasApidPrefix` (cmd/gatewayd/proxy.go:171-176). A bare `HasPrefix(prefix)` would also match `prefix + arbitrary junk` (e.g. `/v1.zip`, `/loginfoo`) and silently steal customer-app paths — review finding #6 from the dashboard era. Bare `HasPrefix` is therefore deliberately avoided; only `/oauth/` is subtree-form because the only mounted route is `/oauth/callback`.
+
+**Customer-facing implication.** Apps must pick a different prefix for their own routes (e.g. `/api/`, `/v2/`). `/v1.zip` is **not** reserved — only `/v1` and `/v1/...` — so customers who want to expose a single-character-shorter alternative can use `/v1.<service>` or similar. The reservation table is enforced by `isApidPath` at request time; gatewayd returns a 404 to any path the customer tries to expose that conflicts.
+
+**Drift protection.** The `TestApidPathReservations_Documented` test in `cmd/gatewayd/proxy_test.go` reads this section and asserts every `apidRoot*` constant in `cmd/gatewayd/proxy.go:233-246` appears verbatim — the spec is documentation that must match the matcher, but the matcher is the source of truth. If a future change adds a new `apidRoot*` constant, this section must be updated in the same PR; CI fails the merge otherwise.
+
 ### 4.2 `apid` — control API
 
 **Owns:** the public REST API, auth, validation, and being the *only* writer to customer-intent tables.

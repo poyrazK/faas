@@ -41,6 +41,15 @@
     .empty .btn-cta { display: inline-block; padding: 0.5rem 1rem; border: 1px solid #2563eb; border-radius: 6px; color: #2563eb; text-decoration: none; }
     .empty .btn-cta:hover { background: #2563eb; color: #fff; }
     .empty .muted { color: #6b7280; font-size: 0.9rem; }
+    /* Finding 6: per-app rate-limit cell. The static "—" placeholder
+       renders muted so a missing wire-in is visually distinct from
+       a real bucket-state reading (a real reading renders
+       "N/M remaining"). Cells will poll once the apid→gatewayd
+       loopback dial lands. */
+    .quota-cell { color: #6b7280; font-size: 0.85rem; }
+    .quota-cell.ok { color: #065f46; }
+    .quota-cell.warn { color: #92400e; }
+    .quota-cell.empty { color: #6b7280; }
   </style>
 </head>
 <body hx-ext="sse" sse-connect="/v1/events">
@@ -62,7 +71,7 @@
       {{$items := .Data}}
       {{if $items}}
         <table>
-          <thead><tr><th>Slug</th><th>State</th><th>Lifecycle</th><th>URL</th><th>Last deploy</th><th></th></tr></thead>
+          <thead><tr><th>Slug</th><th>State</th><th>Lifecycle</th><th>Rate limit</th><th>URL</th><th>Last deploy</th><th></th></tr></thead>
           <tbody>
             {{range $items}}
               <tr>
@@ -73,6 +82,20 @@
                      lifecycle bit). -->
                 <td><span class="badge {{.StateBadge}}" title="{{.StateBadgeLabel}}">{{.StateBadgeGlyph}} {{.StateBadgeLabel}}</span></td>
                 <td><span class="badge {{.Status}}">{{.Status}}</span></td>
+                <!-- Finding 6 (issue #314): per-app rate-limit bucket
+                     indicator. The cell is refreshed by the gatewayd
+                     quota endpoint via HTMX; the JS consumes the JSON
+                     emitted by /v1/internal/quota?app_id=<uuid>&plan=<plan>.
+                     Until the apid→gatewayd loopback dial lands, this
+                     cell renders the static text the apid handler
+                     embeds (see IssueRef for the planned dial PR) —
+                     static "—" stays distinguishable from "exhausted"
+                     so a missing wire-in is visible to the operator.
+                     AppID is supplied via the row's data attributes so
+                     a follow-up PR can wire hx-get without re-templating. -->
+                <td data-app-id="{{.AppID}}" data-plan="{{.Plan}}">
+                  <span class="quota-cell">{{.QuotaLabel}}</span>
+                </td>
                 <td><a href="{{.URL}}">{{.URL}}</a></td>
                 <td>{{.LastDeployed}}</td>
                 <td><a href="/dashboard/apps/{{.Slug}}">Details</a></td>
