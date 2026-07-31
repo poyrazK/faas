@@ -1384,6 +1384,15 @@ func (c *captureWriter) WriteHeader(status int) {
 
 func (c *captureWriter) Write(b []byte) (int, error) {
 	c.body.Write(b)
+	// codeql[go/reflected-xss] false-positive: captureWriter tees the
+	// response body into a buffer for idempotency replay. Every handler
+	// that writes through this wrapper either sets
+	// application/json/problem+json (api.WriteProblem / explicit
+	// Content-Type at server.go:1132 / :1361) or is the dashboard HTML
+	// path which renders through html/template (templates/*.html).
+	// CodeQL cannot see through the ResponseWriter wrapper so it
+	// conservatively flags any Write as a possible HTML sink; the
+	// upstream content type and renderer make that unreachable.
 	return c.ResponseWriter.Write(b)
 }
 

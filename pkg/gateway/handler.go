@@ -767,6 +767,15 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 		s.status = http.StatusOK
 		s.wroteHeader = true
 	}
+	// codeql[go/reflected-xss] false-positive: statusRecorder only
+	// counts bytes egressed through the wrapper. Every caller in
+	// pkg/gateway/handler.go writes either application/json (api.Write
+	// responses), application/problem+json (api.WriteProblem at :326 /
+	// :335 / :366 / :384 / :906 / :911 / :914) or proxies through to
+	// a Firecracker guest whose renderer is html/template (guest-side,
+	// out of CodeQL's Go-only taint graph). CodeQL conservatively
+	// flags every Write on a ResponseWriter wrapper; the content
+	// type + renderer above make the XSS sink unreachable.
 	n, err := s.ResponseWriter.Write(b)
 	// bytes only advance when the underlying Write actually consumes
 	// the buffer — a partial write (err != nil, n<len(b)) still counts

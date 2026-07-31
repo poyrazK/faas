@@ -81,6 +81,17 @@ func (r *statusRecorder) Write(p []byte) (int, error) {
 	if !r.wroteHeader {
 		r.wroteHeader = true
 	}
+	// codeql[go/reflected-xss] false-positive: statusRecorder is a
+	// thin wrapper that just flips wroteHeader so the limiter can
+	// read the final status from the downstream handler (line 224
+	// reads rw.status). Bytes are passed through verbatim to the
+	// real ResponseWriter. The 429 path on this file (line 209)
+	// uses http.Error → text/plain; the success path forwards to
+	// next.ServeHTTP whose handlers set application/json or
+	// application/problem+json. The wrapper itself never renders
+	// HTML. CodeQL conservatively flags every Write on a
+	// ResponseWriter wrapper; the content type + the wrapper's
+	// pass-through nature make the XSS sink unreachable.
 	return r.ResponseWriter.Write(p)
 }
 
