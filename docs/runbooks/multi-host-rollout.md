@@ -30,21 +30,26 @@ horizontal-scale variant, not active-passive).
 >   material under `/etc/faas/secrets/{ca,schedd,vmmd,...}/`
 >   at 0400 root:root, generated via `gregale pki init`.
 > - **Tier 1 Phase 2 (`node_signature` on `CapacityReport`)** —
->   ✗ NOT shipped. Compute nodes can still forge capacity
->   reports to bias placement (the wire-format identity of a
->   vmmd is not yet authenticated by schedd; only the chain +
->   SAN of the leaf cert proves it's "a vmmd", not "the
->   specific vmmd we provisioned"). The ledger's per-node
->   ceiling is still enforced (it's enforced in-process by
->   `NodeLedger.Admit`), but the chooser's bias is
->   un-verified. **Do not use this runbook in production
->   until Phase 2 lands.**
+>   ✓ shipped in PR #457 (issue #95 slice 2 follow-up). The
+>   `CapacityReport` proto carries a `node_signature` field
+>   (ECDSA-P256 over the canonical-JSON payload, key-id-bound
+>   to the leaf cert's public key). `pkg/sched/capacity.go`
+>   exposes `SignNodeReport` (vmmd-side) and
+>   `VerifyNodeSignature` (schedd-side); `ErrEmptySignature`
+>   / `ErrSignatureMismatch` are the typed error returns.
+>   Schedd rejects reports with an empty signature on slice-3
+>   nodes and any report whose signature doesn't verify under
+>   the leaf-cert public key recorded in the `compute_nodes`
+>   row. The chooser's bias is now cryptographically bound to
+>   the vmmd that emitted the report — placement-trust gap
+>   closed.
 > - **Tier 1 Phase 3 (`OCIRegistryStorageBackend` end-to-end,
->   issue #95 slice 3)** — ✗ NOT shipped. Snapshot locality
->   under multi-host is not yet viable; see the "Snapshot
->   cache" step below. Each compute node must hold a local
->   copy of every app's per-app layer today, which defeats
->   the §4.6 two-drive storage economics at fleet scale.
+>   issue #95 slice 3)** — ✓ shipped in PR #457. Per-app
+>   layers now live in an OCI registry instead of replicated
+>   per-compute-node; the §4.6 two-drive storage economics
+>   hold at fleet scale. See `docs/adr/053-capacity-report-node-signature.md`
+>   for the signature surface and
+>   `docs/adr/054-oci-storage-backend.md` for the OCI plumbing.
 > - **Tier 1 Phase 4 (per-host egress policy templating)** —
 >   ✓ shipped in ADR-055. The static
 >   `policy_nftables.conf` is now a Jinja2 template
