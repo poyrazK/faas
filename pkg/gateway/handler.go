@@ -761,13 +761,13 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
+// codeql[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
 func (s *statusRecorder) Write(b []byte) (int, error) {
 	if !s.wroteHeader {
 		// First Write with no explicit WriteHeader → 200.
 		s.status = http.StatusOK
 		s.wroteHeader = true
 	}
-	// codeql[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
 	n, err := s.ResponseWriter.Write(b)
 	// bytes only advance when the underlying Write actually consumes
 	// the buffer — a partial write (err != nil, n<len(b)) still counts
