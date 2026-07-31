@@ -50,6 +50,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
 // internalQuotaHandler returns an http.HandlerFunc that reads the
@@ -60,7 +61,14 @@ import (
 func internalQuotaHandler(h *gateway.Handler, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if logger != nil {
-			logger.Debug("gatewayd internal quota poll", "remote", r.RemoteAddr, "query", r.URL.RawQuery)
+			// r.URL.RawQuery is attacker-controllable — sanitize at the
+			// source so a CR/LF in the query string can't break the
+			// log-injection invariant (one log line per event).
+			// r.RemoteAddr comes from the kernel, not the request, so
+			// it doesn't need sanitizing. Precedent: cmd/gatewayd/
+			// proxy.go:322 (apid proxy upstream error) and
+			// githubd_proxy.go:142 (replay rejection).
+			logger.Debug("gatewayd internal quota poll", "remote", r.RemoteAddr, "query", logsanitize.Field(r.URL.RawQuery))
 		}
 		q := r.URL.Query()
 		planStr := q.Get("plan")

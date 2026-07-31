@@ -45,6 +45,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
 // certmagicCertDir is the top-level directory under cfg.StorageDir where
@@ -320,7 +322,16 @@ func walkCerts(ctx context.Context, certsRoot, wildcardIssuerKey string, log *sl
 		issuerKey := filepath.Base(filepath.Dir(filepath.Dir(path)))
 		na, parseErr := parseCertNotAfter(path)
 		if parseErr != nil {
-			log.Warn("gateway: skip cert (parse failed)", "path", path, "err", parseErr)
+			// path comes from filepath.WalkDir; certmagic owns the
+			// directory but a corrupted fs entry could still produce
+			// an attacker-influenced string. Sanitize so a CR/LF in
+			// the path can't break the one-line-per-event log
+			// invariant. Precedent: cmd/gatewayd/proxy.go:322
+			// (logsanitize.Field on r.URL.Path), metrics.go:751
+			// (logsanitize.Field on request_id).
+			//
+			// codeql[go/log-injection] false-positive: CodeQL doesn't recognise logsanitize.Field as a sanitizer.
+			log.Warn("gateway: skip cert (parse failed)", "path", logsanitize.Field(path), "err", parseErr)
 			return nil
 		}
 		parsed++
