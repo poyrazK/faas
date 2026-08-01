@@ -11,15 +11,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// FloorNamespace (ADR-060, issue #515) is the UUID v5 namespace
-// for synthetic floor instance IDs. Derived from uuid.NameSpaceURL +
-// "onebox-faas/meterd/floor/v1" so the lineage is visible in the
-// UUID itself (any operator can decode the namespace via uuid.Parse +
-// introspection). Frozen forever — changing it changes every existing
-// floor row's identity and breaks AppendUsage first-write-wins
-// idempotency on (instance_id, minute) across an upgrade. Any future
-// rotation must be a new namespace string (v2, v3, …) plus a
-// one-shot migration that re-keys existing floor rows.
+// FloorNamespace (ADR-060, issue #515) is the UUID v5 namespace for
+// synthetic floor instance IDs derived from uuid.NameSpaceURL +
+// "onebox-faas/meterd/floor/v1". The `:floor:` lineage is visible
+// in the namespace name (any operator can decode it via uuid.Parse
+// + namespace introspection).
+//
+// # FROZEN — DO NOT bump "v1" in the namespace string.
+//
+// The version suffix exists for a reason: rotating the namespace
+// changes every existing floor row's identity and breaks AppendUsage
+// first-write-wins idempotency on (instance_id, minute) across the
+// upgrade. Any future rotation MUST be a new namespace string ("v2",
+// "v3", …) plus a one-shot migration that re-keys existing floor
+// rows. Pinned by TestFloorNamespaceFrozen.
 var FloorNamespace = uuid.NewSHA1(
 	uuid.NameSpaceURL,
 	[]byte("onebox-faas/meterd/floor/v1"),
