@@ -62,19 +62,19 @@ func TestMigrations_00085_BuildsKindGitHub(t *testing.T) {
 		t.Fatalf("seed app: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		insert into deployments (id, app_id, kind, status, source_url, commit_sha, created_at)
+		insert into deployments (id, app_id, kind, image_digest, status, source_url, commit_sha, created_at)
 		values ('00000000-0000-0000-0000-000000000285',
 		        '00000000-0000-0000-0000-000000000185',
-		        'github', 'pending', 'https://github.com/example/repo@abc123', 'abc123', now())
+		        'github', '', 'pending', 'https://github.com/example/repo@abc123', 'abc123', now())
 		on conflict (id) do nothing
 	`); err != nil {
 		t.Fatalf("seed deployment: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		insert into builds (id, deployment_id, kind, status, created_at)
+		insert into builds (id, deployment_id, kind, source_bytes, status, created_at)
 		values ('00000000-0000-0000-0000-000000000385',
 		        '00000000-0000-0000-0000-000000000285',
-		        'github', 'pending', now())
+		        'github', 1, 'queued', now())
 	`); err != nil {
 		t.Fatalf("insert build kind=github: %v (regression: CHECK did not accept the new value)", err)
 	}
@@ -83,10 +83,10 @@ func TestMigrations_00085_BuildsKindGitHub(t *testing.T) {
 	// rejected. This pins that the relaxation didn't open the column
 	// to "any text".
 	_, err := pool.Exec(ctx, `
-		insert into builds (id, deployment_id, kind, status, created_at)
+		insert into builds (id, deployment_id, kind, source_bytes, status, created_at)
 		values ('00000000-0000-0000-0000-000000000485',
 		        '00000000-0000-0000-0000-000000000285',
-		        'cli', 'pending', now())
+		        'cli', 1, 'queued', now())
 	`)
 	if err == nil {
 		t.Errorf("builds.kind='cli' was accepted; CHECK did not preserve the closed vocabulary")

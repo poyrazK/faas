@@ -28,6 +28,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -54,6 +55,7 @@ func stagingFixture() fstest.MapFS {
 // builderd's detector would see on disk.
 func decodeTarball(t *testing.T, path string) map[string][]byte {
 	t.Helper()
+	//nolint:forbidigo // test fixture path produced by t.TempDir(); not customer data
 	f, err := os.Open(path) //nolint:gosec // test path
 	if err != nil {
 		t.Fatalf("open tarball: %v", err)
@@ -68,7 +70,7 @@ func decodeTarball(t *testing.T, path string) map[string][]byte {
 	got := map[string][]byte{}
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -211,6 +213,7 @@ func TestRepackageRootTree_SubdirectoriesIncluded(t *testing.T) {
 	if err := repackageRootTree(context.Background(), src, "", dst); err != nil {
 		t.Fatalf("repackageRootTree: %v", err)
 	}
+	//nolint:forbidigo // test fixture path produced by t.TempDir(); not customer data
 	f, err := os.Open(dst) //nolint:gosec // test path
 	if err != nil {
 		t.Fatalf("open tarball: %v", err)
@@ -225,7 +228,7 @@ func TestRepackageRootTree_SubdirectoriesIncluded(t *testing.T) {
 	sawDir := false
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
