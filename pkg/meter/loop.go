@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/alerts"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -162,7 +163,19 @@ func (l *Loop) Run(ctx context.Context) error {
 	errc := make(chan error, 6)
 	go func() {
 		errc <- l.runTicks(ctx, l.cfg.SampleInterval, func(c context.Context) error {
-			_, err := sampler.SampleAndRoll(c)
+			// PR-A (ADR-060, issue #515): capture the
+			// returned rows so the closure can emit
+			// meterd_floor_applied_total{plan} once per
+			// app whose SyntheticFloor bool is true. The
+			// sampler stays free of ops; only this
+			// closure emits — mirrors the
+			// BillingCapExceededTotal precedent at
+			// runQuotaOnce:325 (per-account loop, ops
+			// emit inside the loop).
+			rows, err := sampler.SampleAndRoll(c)
+			if err == nil {
+				l.emitFloorApplied(c, rows)
+			}
 			return err
 		}, "sample")
 	}()
@@ -361,6 +374,72 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			}
 			l.log.Warn("meter: enforce_quota", "account", acct.ID, "err", err)
 		}
+	}
+}
+
+// emitFloorApplied (ADR-060, issue #515) groups the sampler's
+// returned RolledRows by AppID, finds the apps that emitted at
+// least one SyntheticFloor row, looks up each app's plan, and
+// increments meterd_floor_applied_total{plan} once per affected
+// (app, tick). One increment per app, not per synthetic row —
+// the counter is the floor-applied cardinality, not the floor-
+// volume cardinality. Missing-app / missing-account lookups
+// degrade to "" (no panic; ops surface stays consistent).
+//
+// The (appID → plan) map is built once per call from
+// ListAllAccounts (cheap; the quota tick already walks the full
+// accounts list). A nil receiver ops is tolerated (mirrors the
+// BillingCapExceededTotal accessor's nil-receiver contract).
+func (l *Loop) emitFloorApplied(ctx context.Context, rows []RolledRow) {
+	if l.ops == nil || len(rows) == 0 {
+		return
+	}
+	floorApps := map[string]bool{}
+	for _, r := range rows {
+		if r.SyntheticFloor {
+			floorApps[r.AppID] = true
+		}
+	}
+	if len(floorApps) == 0 {
+		return
+	}
+	// accountID → plan: built from ListAllAccounts once per
+	// tick (the quota tick already does this; the cost is
+	// negligible against the AppendUsage volume). accountID
+	// is fetched via ListAllApps; if that fails the floor
+	// counter still increments with plan="" so the ops
+	// surface never silently drops a metric row.
+	accounts, err := l.store.ListAllAccounts(ctx)
+	if err != nil {
+		l.log.Warn("meter: floor emit list_accounts", "err", err)
+		for range floorApps {
+			l.ops.MeterdFloorAppliedTotal("")
+		}
+		return
+	}
+	accountPlan := make(map[string]api.Plan, len(accounts))
+	for _, a := range accounts {
+		accountPlan[a.ID] = a.Plan
+	}
+	apps, err := l.store.ListAllApps(ctx)
+	if err != nil {
+		l.log.Warn("meter: floor emit list_apps", "err", err)
+		for range floorApps {
+			l.ops.MeterdFloorAppliedTotal("")
+		}
+		return
+	}
+	appAccount := make(map[string]string, len(apps))
+	for _, a := range apps {
+		appAccount[a.ID] = a.AccountID
+	}
+	for appID := range floorApps {
+		acctID, ok := appAccount[appID]
+		if !ok {
+			l.ops.MeterdFloorAppliedTotal("")
+			continue
+		}
+		l.ops.MeterdFloorAppliedTotal(string(accountPlan[acctID]))
 	}
 }
 

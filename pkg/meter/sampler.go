@@ -379,12 +379,12 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 					return out, err
 				}
 				out = append(out, RolledRow{
-					InstanceID:    instanceID,
-					AppID:         app.ID,
-					AccountID:     app.AccountID,
-					Minute:        minute,
-					AdmissionMB:   billable,
-					MBSeconds:     mb,
+					InstanceID:     instanceID,
+					AppID:          app.ID,
+					AccountID:      app.AccountID,
+					Minute:         minute,
+					AdmissionMB:    billable,
+					MBSeconds:      mb,
 					SyntheticFloor: true,
 				})
 			}
