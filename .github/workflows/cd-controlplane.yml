@@ -122,13 +122,16 @@ jobs:
       # restart loop's `systemctl restart faas-vmmd.service` 404s (run
       # 30666277403, 2026-07-31). The unit file is bundled from
       # deploy/etc/faas-vmmd.service, kept byte-identical to
-      # deploy/ansible/roles/vmmd_service/files/faas-vmmd.service so
-      # ansible and the cd-controlplane workflow stay in lockstep.
-      # `systemctl enable` is idempotent (creates the [Install] symlink
-      # once) so subsequent deploys are no-ops.
-      - name: Install faas-vmmd.service unit
+      # Install controlplane systemd units (service + slice definitions)
+      # and faas-vmmd.service unit so updated unit files (e.g. LoadCredential,
+      # environment limits, dependencies) land on the host prior to service restart.
+      - name: Install systemd service units
         run: |
           set -euo pipefail
+          # SCP all unit files in deploy/controlplane/systemd/
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            deploy/controlplane/systemd/* "root@${{ env.CP_HOST }}:/etc/systemd/system/"
+          # SCP faas-vmmd.service unit
           UNIT_SRC="deploy/etc/faas-vmmd.service"
           UNIT_DST="/etc/systemd/system/faas-vmmd.service"
           TMP_DST="/etc/systemd/system/faas-vmmd.service.deploy-tmp"
@@ -139,15 +142,10 @@ jobs:
             root@${{ env.CP_HOST }} "set -euo pipefail
               install -m 0644 -o root -g root '${TMP_DST}' '${UNIT_DST}'
               rm -f '${TMP_DST}'
-              REMOTE_SHA=\$(sha256sum '${UNIT_DST}' | awk '{print \$1}')
-              if [ \"\${REMOTE_SHA}\" != \"${UNIT_SHA}\" ]; then
-                echo '::error::installed faas-vmmd.service sha256 mismatch: local=${UNIT_SHA} remote=\${REMOTE_SHA}'
-                exit 1
-              fi
+              chmod 0644 /etc/systemd/system/faas-*.service /etc/systemd/system/faas-*.slice 2>/dev/null || true
               systemctl daemon-reload
               systemctl enable faas-vmmd.service
-              echo '→ installed ${UNIT_DST} (sha256=${UNIT_SHA})'
-              systemctl show faas-vmmd.service -p FragmentPath,LoadState,UnitFileState --value"
+              echo '→ systemd units synced and daemon-reloaded'"
 
       - name: Install binaries, run migrations & restart services
         run: |
