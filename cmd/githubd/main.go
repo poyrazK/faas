@@ -306,7 +306,8 @@ func readKeyPEMDefault() ([]byte, error) {
 // by ensureInstallToken's cold-start rehydrate path to unseal
 // stored install tokens. The default matches the rest of the
 // secrets tree (spec §11: /etc/faas/secrets/host.age, mode 0400
-// root:root). An operator can override via FAAS_HOST_AGE_KEY.
+// root:root); respects FAAS_HOST_AGE_IDENTITY_PATH (systemd
+// LoadCredential indirection per spec §11) and FAAS_HOST_AGE_KEY.
 //
 // Issue #316 / ADR-057: the previous default had a stray `.key`
 // suffix (/etc/faas/secrets/host.age.key) that didn't match any
@@ -317,6 +318,9 @@ func readKeyPEMDefault() ([]byte, error) {
 // LoadHostKeys(dir) (current + previous) returns the same pair
 // every daemon consumes.
 func hostKeyPath() string {
+	if p := os.Getenv("FAAS_HOST_AGE_IDENTITY_PATH"); p != "" {
+		return p
+	}
 	if p := os.Getenv("FAAS_HOST_AGE_KEY"); p != "" {
 		return p
 	}

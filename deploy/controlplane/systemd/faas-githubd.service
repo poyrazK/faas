@@ -14,6 +14,11 @@ RestartSec=2s
 Slice=faas-cp.slice
 MemoryMax=256M
 EnvironmentFile=/etc/faas/sealed.env
+# Host age identity (spec §11). LoadCredential copies /etc/faas/secrets/host.age
+# (mode 0400 root:root) into the unit's credential directory owned by faas:faas,
+# allowing githubd to read the identity without permission errors.
+LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
+Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_host_age_identity
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

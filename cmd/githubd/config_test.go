@@ -98,3 +98,29 @@ func TestConfig_LoadServerTLS(t *testing.T) {
 		t.Errorf("err = %q, want both tls_key_path and tls_ca_path named", err.Error())
 	}
 }
+
+func TestHostKeyPath_Precedence(t *testing.T) {
+	origIdentity := os.Getenv("FAAS_HOST_AGE_IDENTITY_PATH")
+	origKey := os.Getenv("FAAS_HOST_AGE_KEY")
+	defer func() {
+		os.Setenv("FAAS_HOST_AGE_IDENTITY_PATH", origIdentity)
+		os.Setenv("FAAS_HOST_AGE_KEY", origKey)
+	}()
+
+	os.Unsetenv("FAAS_HOST_AGE_IDENTITY_PATH")
+	os.Unsetenv("FAAS_HOST_AGE_KEY")
+	if got := hostKeyPath(); got != "/etc/faas/secrets/host.age" {
+		t.Errorf("default hostKeyPath() = %q, want /etc/faas/secrets/host.age", got)
+	}
+
+	os.Setenv("FAAS_HOST_AGE_KEY", "/custom/key.age")
+	if got := hostKeyPath(); got != "/custom/key.age" {
+		t.Errorf("FAAS_HOST_AGE_KEY hostKeyPath() = %q, want /custom/key.age", got)
+	}
+
+	os.Setenv("FAAS_HOST_AGE_IDENTITY_PATH", "/credential/identity.age")
+	if got := hostKeyPath(); got != "/credential/identity.age" {
+		t.Errorf("FAAS_HOST_AGE_IDENTITY_PATH hostKeyPath() = %q, want /credential/identity.age", got)
+	}
+}
+
