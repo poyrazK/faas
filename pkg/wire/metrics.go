@@ -378,6 +378,17 @@ type OpsMetrics struct {
 	// operating as designed (the customer hit the operator-set
 	// monthly ceiling), not a failure mode.
 	billingCapExceededTotal *prometheus.CounterVec
+	// meterdFloorAppliedTotal: counter incremented by meterd's sample
+	// tick every time the per-app min_instances GB-h floor was
+	// applied and synthetic usage_minutes rows were appended
+	// (ADR-060, issue #515). Labelled by plan ∈ {free, hobby, pro,
+	// scale}. Closed-set via api.Plans — the {app} label is
+	// unbounded cardinality and stays out. Increment once per
+	// (app, tick) — the SyntheticFloor bool is the in-memory
+	// lineage marker; storage shape unchanged. A non-zero rate
+	// indicates a customer-configured floor is active (Hobby /
+	// Pro / Scale only; PR-A's PATCH gate rejects Free).
+	meterdFloorAppliedTotal *prometheus.CounterVec
 	// imagedOCIPull: per-call latency of imaged's OCI registry pulls
 	// (manifest, config, blob, above-base). Sized to api.OCIPullTimeoutSeconds
 	// (60 s); the 5 s control-plane bucket is wrong for the multi-second
@@ -734,6 +745,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_billing_cap_exceeded_total",
 		Help: "Count of meterd quota ticks where accounts.overage_cap_cents was met and the overage-row insert was skipped (issue #279). Per-plan label so the §12 dashboard can split cap hits across plans. A non-zero rate is informational: a cap-hit account is operating as designed (the customer hit the operator-set monthly ceiling), not a failure mode.",
 	}, []string{"plan"})
+	meterdFloorAppliedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_meterd_floor_applied_total",
+		Help: "Count of meterd sample ticks where the per-app min_instances GB-h floor was applied and synthetic usage_minutes rows were appended (ADR-060, issue #515). Incremented once per (app, tick) when live instance count is below ScalingPolicy.MinInstances. Per-plan label so the §12 dashboard can split floor-applied apps across plans. Floor is Hobby/Pro/Scale only; PR-A's PATCH gate rejects Free.",
+	}, []string{"plan"})
 	wakeIDV4Fallback := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: prefix + "_wake_id_v4_fallback_total",
 		Help: "Count of wake_id mints where uuid.NewV7 returned an error and the engine fell back to uuid.New (v4). Any non-zero rate indicates a broken crypto/rand subsystem and breaks the time-ordering invariant the instances_wake_id_app_idx partial index is built on. Should never increment in production.",
@@ -1011,6 +1026,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		ops, dur, watchdogKills, eventsWriteFail, auditWriteFail,
 		auditWriteDur, requestFailures, requestTotal, stripePushDur, paddlePushDur,
 		buildDur, buildQueueWait, residentGBPerCustomer, billingCapExceededTotal,
+		meterdFloorAppliedTotal,
 		wakeIDV4Fallback,
 		snapshotDiskDrift,
 		imagedOCIPull, instanceCPUPct, instanceRSSMB, instanceInflightReqs,
@@ -1179,6 +1195,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// §12 dashboard panel as "no data" until the first cap hit.
 	for _, plan := range api.Plans {
 		billingCapExceededTotal.WithLabelValues(string(plan))
+		meterdFloorAppliedTotal.WithLabelValues(string(plan))
 	}
 	// Pre-instantiate every (cidr, family) label tuple from the egress
 	// denylist catalog so the counter's HELP/TYPE and zero-valued series
@@ -1301,6 +1318,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		buildQueueWait:                   buildQueueWait,
 		residentGBPerCustomer:            residentGBPerCustomer,
 		billingCapExceededTotal:          billingCapExceededTotal,
+		meterdFloorAppliedTotal:          meterdFloorAppliedTotal,
 		wakeIDV4Fallback:                 wakeIDV4Fallback,
 		snapshotDiskDrift:                snapshotDiskDrift,
 		capacitySignatureRejected:        capacitySignatureRejected,
@@ -2111,6 +2129,22 @@ func (m *OpsMetrics) BillingCapExceededTotal(plan string) {
 		return
 	}
 	m.billingCapExceededTotal.WithLabelValues(plan).Inc()
+}
+
+// MeterdFloorAppliedTotal is the per-plan counter the meterd sample
+// tick increments every time the per-app min_instances GB-h floor
+// fires and synthetic usage_minutes rows were appended
+// (ADR-060, issue #515). Labelled by plan ∈ {free, hobby, pro,
+// scale}. Free never fires (PR-A's PATCH gate rejects
+// min_instances > 0). One increment per (app, tick) — the
+// SyntheticFloor bool on RolledRow is the in-memory marker used by
+// the Loop closure to dedupe. Safe on a nil receiver so meterd
+// unit tests without metrics keep working.
+func (m *OpsMetrics) MeterdFloorAppliedTotal(plan string) {
+	if m == nil {
+		return
+	}
+	m.meterdFloorAppliedTotal.WithLabelValues(plan).Inc()
 }
 
 // AlertEvalSkippedDegradedTotal increments the alert-eval skip counter
