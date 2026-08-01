@@ -97,16 +97,17 @@ ok "User faas"
 # ─── 4. Directories ──────────────────────────────────────────────────────────
 step "Creating directories"
 BASE_DIR="/srv/fc/base"
+LIB_DIR="/var/lib/faas/githubd"
 mkdir -p "${FAAS_BIN}" "${FAAS_SRC}" "${CONFIG_DIR}" "${SECRETS_DIR}" \
-  "${RUN_DIR}" "${LOG_DIR}" "${SPOOL_DIR}" "${SNAP_DIR}" "${BASE_DIR}"
+  "${RUN_DIR}" "${LOG_DIR}" "${SPOOL_DIR}" "${SNAP_DIR}" "${BASE_DIR}" "${LIB_DIR}"
 chown root:faas "${CONFIG_DIR}" "${SECRETS_DIR}"
 chmod 0750 "${CONFIG_DIR}" "${SECRETS_DIR}"
 chown faas-apid:faas "${LOG_DIR}" "${SPOOL_DIR}"
 chmod 0750 "${LOG_DIR}" "${SPOOL_DIR}"
 chown faas-imaged:faas "${SNAP_DIR}" "${BASE_DIR}"
 chmod 0750 "${SNAP_DIR}" "${BASE_DIR}"
-chown faas:faas "${RUN_DIR}"
-chmod 0770 "${RUN_DIR}"
+chown -R faas:faas "${RUN_DIR}" /var/lib/faas
+chmod 0770 "${RUN_DIR}" /var/lib/faas "${LIB_DIR}"
 ok "Directories created"
 
 # ─── 5. Postgres setup ───────────────────────────────────────────────────────

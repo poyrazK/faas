@@ -265,6 +265,11 @@ jobs:
           done
           rm -rf /opt/faas/bin/deploy-tmp
 
+          # Ensure state/log directories exist with faas:faas ownership
+          mkdir -p /var/lib/faas/githubd /var/log/faas /var/spool/faas
+          chown -R faas:faas /var/lib/faas /var/log/faas /var/spool/faas 2>/dev/null || true
+          chmod 0770 /var/lib/faas /var/lib/faas/githubd /var/log/faas /var/spool/faas 2>/dev/null || true
+
           # Migration preflight, then apply. `migrate -status` reports the
           # box's version and the pending list WITHOUT applying anything, so
           # the CI log always records the before-state. When a migration then
