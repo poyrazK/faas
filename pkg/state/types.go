@@ -57,7 +57,7 @@ const (
 	// metering dashboards and per-customer billing breakdowns
 	// can split apid-CLI deploys from githubd webhook deploys.
 	// The CHECK constraint on builds.kind is relaxed to allow
-	// this value by migration 00083.
+	// this value by migration 00085.
 	DeploymentKindGitHub DeploymentKind = "github"
 )
 

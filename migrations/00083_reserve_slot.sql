@@ -1,0 +1,43 @@
+-- +goose Up
+-- +goose StatementBegin
+--
+-- 00083_reserve_slot.sql — slot reservation placeholder
+-- (ADR-041 / PR #391 migration gate carve-out).
+--
+-- This file is a deliberate no-op kept only to satisfy the
+-- migrations/embed_test.go::TestMigrationsContiguous requirement
+-- that the embedded migration set is exactly {1, 2, …, N} with
+-- no gaps. It carries no schema change and does not appear in any
+-- apply path (the replay-safety gate in ci.yml drops files whose
+-- basename matches the reservation regex from its "added
+-- migration versions" computation).
+--
+-- PR #513 (githubd push-dispatch close-loop, issue #432 phase 5)
+-- renumbered 00083 → 00085 after the cross-PR collision detector
+-- found open PRs #504 (sec: enforce cosign signature at deploy
+-- time, issue #472 / ADR-058) and #509 (phase 2 / gate a — per-node
+-- schedd + schedd-side async placement claim) had already claimed
+-- slot 83 with their own 00083_apps_require_signed.sql and
+-- 00083_apps_node_shard.sql, respectively. Without this
+-- reservation at 83, the branch's embedded FS would have a gap
+-- and TestMigrationsContiguous would fail at PR time.
+--
+-- PRs #504 and #509 already carry their own 00083_*.sql at this
+-- slot; this file is the canonical reservation per ADR-041 — both
+-- are intentionally present and the first one to merge wins.
+-- Whichever PR lands first, the others drop this reservation on
+-- rebase (or the gate catches the duplicate-prefix violation at
+-- merge time and the renumbering PR re-numbers again).
+--
+-- Body: `select 1;` — executes against the live DB at apply time
+-- but produces no schema change. Future-proof against upstream
+-- generator drift without chasing each new template revision.
+--
+select 1;
+
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+-- No-op: nothing to reverse (the Up body is a deliberate select 1;).
+-- +goose StatementEnd
