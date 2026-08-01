@@ -65,7 +65,7 @@ func TestMigrations_00085_BuildsKindGitHub(t *testing.T) {
 		insert into deployments (id, app_id, kind, image_digest, status, source_url, commit_sha, created_at)
 		values ('00000000-0000-0000-0000-000000000285',
 		        '00000000-0000-0000-0000-000000000185',
-		        'github', '', 'pending', 'https://github.com/example/repo@abc123', 'abc123', now())
+		        'github', '', 'pending', 'https://github.com/example/repo@abc1234', 'abc1234', now())
 		on conflict (id) do nothing
 	`); err != nil {
 		t.Fatalf("seed deployment: %v", err)
