@@ -27,7 +27,7 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 ReadOnlyPaths=/etc/faas
-ReadWritePaths=/var/log/faas
+ReadWritePaths=/var/log/faas /var/lib/faas
 
 [Install]
 WantedBy=multi-user.target
