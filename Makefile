@@ -82,8 +82,15 @@ proto-normalize: proto
 	done
 
 .PHONY: test
-test: ## Unit tests — must pass on any machine, no KVM needed
-	$(GO) test -race -count=1 $(PKGS)
+test: ## Unit tests — must pass on any machine, no KVM needed.
+	# -timeout=15m: ./cmd/e2e under -race walks pkg/e2etest.buildApid
+	# per test (unique -o path → cache miss), landing ~11-12 min on a
+	# busy runner and racing Go's 10m default ceiling. The coverage job
+	# already pins -timeout=15m (PR #452, ci.yml coverage job); mirror
+	# here for the unit-tests job so PR #499's heavier merge payload no
+	# longer trips the structural ceiling on reruns. Memory:
+	# cmd-e2e-coverage-timeout-edge.md
+	$(GO) test -race -count=1 -timeout=15m $(PKGS)
 
 .PHONY: test-state-coverage
 test-state-coverage: ## Assert pkg/state coverage ≥ 70% (excluding generated pkg/state/sqlc/**). Needs DATABASE_URL pointing at a reachable Postgres; PgStore tests skip cleanly otherwise.
