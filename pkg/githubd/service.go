@@ -342,6 +342,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			RepoFullName: ev.Repository.FullName,
 			Ref:          ev.Ref,
 			Branch:       branch,
+			Pusher:       ev.Pusher.Name,
 			SourcePath:   sourcePath,
 			SourceURL:    sourceURL,
 			SourceBytes:  sourceBytes,

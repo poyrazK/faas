@@ -65,11 +65,46 @@ type githubdBridgeNotifier interface {
 // in main.go owns.
 type githubdBridge struct {
 	githubdpb.UnimplementedGithubdServer
-	store githubdBridgeStore
-	notif githubdBridgeNotifier
-	log   *slog.Logger
-	ops   *wire.OpsMetrics
-	spool string // build-spool root for the build.log path
+	store       githubdBridgeStore
+	notif       githubdBridgeNotifier
+	log         *slog.Logger
+	ops         *wire.OpsMetrics
+	spool       string // build-spool root for the build.log path
+	stagingRoot string // allowed prefix for SourcePath (FAAS_GITHUBD_WORK_DIR/build-sources)
+	spoolRoot   string // allowed prefix for SourcePath (FAAS_SPOOL_ROOT) — kept for future expansion
+}
+
+// stagingPathAllowed reports whether sourcePath is under one of the
+// allowed roots after Clean. The unix-socket DAC is the only auth in
+// v1.0 (ADR-015), but allowing arbitrary host paths on a deployment
+// row would be a foot-gun for a future caller that runs on the same
+// box. The check is belt-and-suspenders: githubd's staging step
+// already writes under <FAAS_GITHUBD_WORK_DIR>/build-sources/, so a
+// legitimate call lands under stagingRoot; a malicious caller would
+// need to forge a path that prefix-matches an operator-controlled
+// directory. Empty roots disable the check (test-only).
+func (g *githubdBridge) stagingPathAllowed(sourcePath string) bool {
+	clean := filepath.Clean(sourcePath)
+	for _, root := range g.allowedStagingRoots() {
+		if root == "" {
+			continue
+		}
+		rootClean := filepath.Clean(root)
+		// Must be the root itself or a strict descendant.
+		// Trailing separator anchors the prefix so /var/lib/faas/githubd
+		// does not match /var/lib/faas/githubd-evil.
+		if clean == rootClean {
+			return true
+		}
+		if strings.HasPrefix(clean, rootClean+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *githubdBridge) allowedStagingRoots() []string {
+	return []string{g.stagingRoot, g.spoolRoot}
 }
 
 // maxSourceBytes caps the per-app tarball at 256 MB — the App-layer
@@ -182,6 +217,25 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if app.Status != state.AppActive {
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"EnqueueBuild: app %q is not active (status=%q)", req.AppId, app.Status)
+	}
+
+	// Source-path allowlist (issue #432 phase 5 review follow-up):
+	// the unix-socket DAC is the only auth in v1.0 (ADR-015), but
+	// a forged call to this bridge could otherwise stamp any
+	// host-readable path onto the deployment row's source_path.
+	// builderd's detector (pkg/builderd/detect.go:48) opens the
+	// path that lands here. githubd's staging step writes under
+	// <FAAS_GITHUBD_WORK_DIR>/build-sources/<account>/<app>/<sha>/;
+	// a legitimate call lands under that prefix. The check uses
+	// filepath.Clean + a separator-anchored prefix so a sibling
+	// directory like /var/lib/faas/githubd-evil does not match.
+	// Returned as InvalidArgument (not PermissionDenied) so a
+	// legitimate misconfiguration surfaces as a clear "wrong root"
+	// rather than a silently-debuggable 403.
+	if !g.stagingPathAllowed(req.SourcePath) {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"EnqueueBuild: source_path %q is not under staging root %q (or spool %q)",
+			req.SourcePath, g.stagingRoot, g.spoolRoot)
 	}
 
 	// Source-path validation: must exist on disk and be a regular
@@ -354,12 +408,22 @@ func grpcIsNotFound(err error) bool {
 // is implemented; the rest is UnimplementedGithubdServer) onto a
 // gRPC server. Called from runGithubdBridgeServer in main.go
 // alongside the HTTP server lifecycle.
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string) {
+//
+// stagingRoot is the githubd-side workdir (FAAS_GITHUBD_WORK_DIR,
+// default /var/lib/faas/githubd). The staging path appended by
+// githubd's dispatcher is <stagingRoot>/build-sources/<account>/
+// <app>/<sha>/source.tar.gz — that's the prefix the handler
+// allowlist-checks req.SourcePath against. Empty stagingRoot
+// disables the check (test-only path; production wiring MUST set
+// it).
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
-		store: store,
-		notif: notif,
-		log:   log,
-		ops:   ops,
-		spool: spool,
+		store:       store,
+		notif:       notif,
+		log:         log,
+		ops:         ops,
+		spool:       spool,
+		stagingRoot: filepath.Join(stagingRoot, "build-sources"),
+		spoolRoot:   spool,
 	})
 }

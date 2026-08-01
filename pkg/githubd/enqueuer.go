@@ -70,6 +70,7 @@ type BuildSpec struct {
 	RepoFullName string
 	Ref          string
 	Branch       string
+	Pusher       string
 	SourcePath   string
 	SourceURL    string
 	SourceBytes  int64
@@ -100,6 +101,19 @@ type BuildEnqueuer interface {
 // follow-up PR (issue #432 phase 5) swaps the production wiring
 // for the apidEnqueuer in cmd/githubd/main.go without touching
 // this noop.
+//
+// Production-shape contract (issue #432 phase 5 review
+// follow-up): the returned state.Build always carries
+//
+//   - ID: "noop-build-<UUIDv7>" — synthetic, never persisted
+//   - Kind: state.DeploymentKindGitHub — matches the production
+//     apidEnqueuer's output so test assertions that filter on
+//     Kind don't see a false negative
+//   - DeploymentID: "" — the noop does not own the deployment
+//     row; the apidEnqueuer fills this from the bridge response
+//
+// Tests that assert on DeploymentID must use a stub returning
+// a real ID (recordingEnqueuer in service_test.go does this).
 type noopEnqueuer struct {
 	log *slog.Logger
 }

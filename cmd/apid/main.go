@@ -134,6 +134,24 @@ func resolveGithubdBridgeSock(getenv func(string) string) string {
 	return getenv("FAAS_APID_GITHUBD_BRIDGE_SOCK")
 }
 
+// resolveGithubdStagingRoot reads FAAS_GITHUBD_WORK_DIR via the
+// test seam (deps.getenv). The default matches the githubd-side
+// githubdWorkDir() default (/var/lib/faas/githubd); the bridge
+// handlers append /build-sources internally so the same env var
+// that githubd reads configures the apid-side allowlist. The
+// staging prefix is the directory githubd's
+// pkg/githubd/staging.go:72 writes per-app tarballs into; a
+// mismatch between the two sides surfaces as invalid_argument on
+// the first push and is logged + retried by the dispatcher (the
+// githubd-side WARN carries the staged path the gRPC call
+// returned).
+func resolveGithubdStagingRoot(getenv func(string) string) string {
+	if p := getenv("FAAS_GITHUBD_WORK_DIR"); p != "" {
+		return p
+	}
+	return "/var/lib/faas/githubd"
+}
+
 // runDeps is the DI seam for run — same pattern as vmmd / gatewayd so we can
 // exercise the listener lifecycle without binding :8081 from tests.
 type runDeps struct {
@@ -677,7 +695,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			_ = l.Close()
 			return fmt.Errorf("apid: githubd bridge TLS: %w", tlsErr)
 		}
-		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot())
+		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv))
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: githubd bridge listen %q: %w", sock, err)
@@ -925,7 +943,7 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 // here are fatal — without the bridge listener githubd has no
 // way to enqueue builds and the dispatch path is silently
 // degraded (every push hits the noopEnqueuer path).
-func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string) (*grpc.Server, net.Listener, error) {
+func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string) (*grpc.Server, net.Listener, error) {
 	// Same multi-box guard as runAdvisoryServer — a tcp/dns
 	// target without TLS would silently build an insecure server.
 	// ADR-052.
@@ -949,7 +967,7 @@ func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Conf
 	// apid_githubd_bridge_enqueued_total on each landed build.
 	// The accessor is nil-receiver safe so the metric stays zero
 	// when ops is nil (test path).
-	registerGithubdBridge(srv, store, notif, log, ops, spool)
+	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot)
 	return srv, lis, nil
 }
 

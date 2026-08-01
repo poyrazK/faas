@@ -121,12 +121,7 @@ func (a *apidEnqueuer) Enqueue(ctx context.Context, spec githubd.BuildSpec) (sta
 		RepoFullName: spec.RepoFullName,
 		Ref:          spec.Ref,
 		Branch:       spec.Branch,
-		// Pusher is not carried in BuildSpec today
-		// (the dispatcher doesn't have it). The
-		// apid-side handler treats an empty pusher
-		// as "unknown" — the deployment row's
-		// pusher column is empty (vs the GitHub
-		// login for the apid-tarball path).
+		Pusher:       spec.Pusher,
 	}
 
 	resp, err := a.client.EnqueueBuild(ctx, req)
