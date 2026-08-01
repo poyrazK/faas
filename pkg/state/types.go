@@ -49,6 +49,16 @@ const (
 	DeploymentKindImage      DeploymentKind = "image"
 	DeploymentKindTarball    DeploymentKind = "tarball"
 	DeploymentKindDockerfile DeploymentKind = "dockerfile"
+	// DeploymentKindGitHub tags builds enqueued by the githubd push
+	// dispatch path (issue #432 phase 5 follow-up). The physical
+	// build pipeline is identical to DeploymentKindTarball
+	// (builderd reads dep.SourcePath as a local .tar.gz), but the
+	// deployment row identifies it as github-triggered so ADR-048
+	// metering dashboards and per-customer billing breakdowns
+	// can split apid-CLI deploys from githubd webhook deploys.
+	// The CHECK constraint on builds.kind is relaxed to allow
+	// this value by migration 00083.
+	DeploymentKindGitHub DeploymentKind = "github"
 )
 
 // DeploymentStatus tracks a deployment through the pipeline (spec §5, §9).

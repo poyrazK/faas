@@ -704,3 +704,57 @@ func TestOpsMetrics_PreInstantiatesStatelessAdvisorySeries(t *testing.T) {
 		}
 	}
 }
+
+// TestOpsMetrics_ObserveGithubdPathFilter (issue #432 phase 5 /
+// ADR-050 §109). The path-filter mode counter is labelled by
+// mode ∈ {paths, full_fallback, truncated, error, breaker_open}.
+// Closed-set semantics — an unknown mode (e.g. "discarded")
+// must NOT create a label series, and the nil-receiver must
+// not panic.
+func TestOpsMetrics_ObserveGithubdPathFilter(t *testing.T) {
+	m := wire.NewOpsMetrics("githubd")
+	m.ObserveGithubdPathFilter(wire.PathFilterModePaths)
+	m.ObserveGithubdPathFilter(wire.PathFilterModePaths)
+	m.ObserveGithubdPathFilter(wire.PathFilterModeFullFallback)
+	m.ObserveGithubdPathFilter(wire.PathFilterModeTruncated)
+	m.ObserveGithubdPathFilter(wire.PathFilterModeError)
+	m.ObserveGithubdPathFilter(wire.PathFilterModeBreakerOpen)
+	// Unknown mode: closed-set guard.
+	m.ObserveGithubdPathFilter("discarded")
+
+	body := render(t, m)
+	wantLines := []string{
+		`githubd_path_filter_total{mode="paths"} 2`,
+		`githubd_path_filter_total{mode="full_fallback"} 1`,
+		`githubd_path_filter_total{mode="truncated"} 1`,
+		`githubd_path_filter_total{mode="error"} 1`,
+		`githubd_path_filter_total{mode="breaker_open"} 1`,
+	}
+	for _, want := range wantLines {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `mode="discarded"`) {
+		t.Errorf("discarded label series must not be created, got:\n%s", body)
+	}
+
+	// Nil-receiver parity.
+	var nilM *wire.OpsMetrics
+	nilM.ObserveGithubdPathFilter(wire.PathFilterModePaths) // must not panic
+}
+
+// TestOpsMetrics_PreInstantiatesGithubdPathFilterSeries — the
+// closed `mode` label set must surface in /metrics from boot,
+// all five rows at value 0. Same pre-instantiation contract as
+// every other CounterVec on this struct.
+func TestOpsMetrics_PreInstantiatesGithubdPathFilterSeries(t *testing.T) {
+	m := wire.NewOpsMetrics("githubd")
+	body := render(t, m)
+	for _, mode := range []string{wire.PathFilterModePaths, wire.PathFilterModeFullFallback, wire.PathFilterModeTruncated, wire.PathFilterModeError, wire.PathFilterModeBreakerOpen} {
+		want := `githubd_path_filter_total{mode="` + mode + `"} 0`
+		if !strings.Contains(body, want) {
+			t.Errorf("pre-instantiated line %q missing in:\n%s", want, body)
+		}
+	}
+}

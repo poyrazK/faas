@@ -59,7 +59,31 @@ service Githubd {
   // after gatewayd forwards the request and the HMAC check passes.
   // Returns the empty deployment_id when no app is bound to the repo
   // (a common case for forks / first-time installs).
+  //
+  // DEPRECATED (issue #432 phase 5 closure): the inbound-webhook path
+  // is HTTP-only (gatewayd → /webhooks/github → githubd). The gRPC
+  // surface was originally designed for repo-level dispatch but cannot
+  // carry per-app build inputs (source_path on disk, source URL for
+  // provenance). Issue #432 phase 5 closes the loop with EnqueueBuild
+  // below, which carries the per-app build inputs and is the actual
+  // tea path. This method stays checked in for the bufconn round-trip
+  // test (slice 7) and to keep the gRPC contract additive.
   rpc CreateDeploymentFromPush(CreateDeploymentFromPushRequest) returns (CreateDeploymentFromPushResponse);
+
+  // EnqueueBuild is the githubd → apid bridge for per-app build
+  // enqueue (issue #432 phase 5). After the dispatcher fans out the
+  // touched apps (slice 1) and stages each app's RootDir subtree into
+  // githubd's build-sources dir as a per-app .tar.gz, githubd calls
+  // this RPC once per (app, commit_sha). apid creates the deployment
+  // row (Kind=DeploymentKindGitHub), the build row, and emits the
+  // build_queued pg_notify that builderd LISTENs on. The repo-level
+  // CreateDeploymentFromPush above stays as a documented dead-letter
+  // path; this RPC is the load-bearing one.
+  //
+  // Auth: the unix-socket 0660/group-`faas` DAC is the only auth in
+  // v1.0 (ADR-015). The transport is insecure credentials over a
+  // trusted local path; see pkg/githubdgrpc.Dial.
+  rpc EnqueueBuild(EnqueueBuildRequest) returns (EnqueueBuildResponse);
 
   // WriteCheck pushes a commit-status update back to GitHub via the
   // Checks API (POST /repos/{owner}/{repo}/check-runs). Idempotent on
@@ -203,3 +227,70 @@ message WriteCheckRequest {
   string    summary        = 5;
 }
 message WriteCheckResponse {}
+
+// EnqueueBuildRequest is the githubd → apid per-app build enqueue
+// payload (issue #432 phase 5). githubd stages each touched app's
+// RootDir subtree into a githubd-side workdir as a .tar.gz and
+// passes the absolute path on disk (source_path). On the apid side
+// the handler looks up the app, creates the deployment + build rows
+// in one tx (matching the apid-side deploy_inputs.go pattern), and
+// emits the build_queued pg_notify.
+//
+// Field ordering follows the gRPC "additive" rule (new fields at
+// the end, never renumber) so older callers can ignore new fields.
+message EnqueueBuildRequest {
+  // account_id is the accounts.id UUID the app belongs to. Used
+  // for the apid-side build-budget check (Hobby 5/app etc., spec
+  // §6.2) and the audit-log actor.
+  string account_id     = 1;
+  // app_id is the apps.id UUID the build is for. githubd resolves
+  // it from the (repo, app's RootDir) fan-out via the binding rows.
+  string app_id         = 2;
+  // commit_sha is the post-push commit SHA the build targets. The
+  // deployment row's commit_sha is stamped from this; the source
+  // tarball under source_path is the snapshot at this SHA.
+  string commit_sha     = 3;
+  // source_path is the absolute path on disk to the per-app
+  // .tar.gz that githubd staged under
+  // <FAAS_GITHUBD_WORK_DIR>/build-sources/<account_id>/<app_id>/<commit_sha>/source.tar.gz.
+  // builderd requires a local file path (pkg/builderd/builderd.go:321);
+  // the tarball is gzip-encoded so builderd's gzip.NewReader(line of
+  // pkg/builderd/detect.go:48) works unchanged.
+  string source_path    = 4;
+  // source_url is the upstream archive URL (the "codeload" tarball
+  // githubd pulled). Provenance-only; builderd never fetches it
+  // (pkg/builderd/builderd.go:644 recordProvenance stamps it on the
+  // build row but the build pipeline reads source_path).
+  string source_url     = 5;
+  // source_bytes is the size of the per-app tarball on disk. Stored
+  // on the deployment row alongside source_path (mirrors the
+  // apid-side deploy_inputs.go CreateDeployment flow).
+  int64  source_bytes   = 6;
+  // repo_full_name is "owner/name" — used for the audit-log
+  // payload and the §11 paper trail; it does not gate any
+  // authorization beyond the account_id check.
+  string repo_full_name = 7;
+  // ref is "refs/heads/main" (githubd strips the refs/heads/ prefix
+  // before storing on the deployment row, matching the existing
+  // CreateDeploymentFromPush wire shape).
+  string ref            = 8;
+  // branch is the human-readable branch name ("main", "master",
+  // "feature/foo"). githubd passes it through for the
+  // builds row's `branch` column (spec §6.4 audit dimension).
+  string branch         = 9;
+  // pusher is the GitHub login that triggered the push. Stored on
+  // the deployment row's `pusher` column for the §11 audit trail.
+  string pusher         = 10;
+}
+message EnqueueBuildResponse {
+  // build_id is the durable builds.id UUID apid created. Empty
+  // when the app_id's plan is over budget (apid returns 402 here
+  // and the gRPC error is mapped by pkg/grpcerr).
+  string build_id      = 1;
+  // deployment_id is the durable deployments.id UUID apid created.
+  // Same emptiness contract as build_id.
+  string deployment_id = 2;
+  // app_id is the app the build was (or was not) enqueued for.
+  // Echoed so the caller can log without re-resolving the binding.
+  string app_id        = 3;
+}

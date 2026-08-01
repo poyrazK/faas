@@ -135,12 +135,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	webhookSvc.Installs = installsAdapter
 	webhookSvc.Source = source
 	webhookSvc.Reconcile = ghReconcile
-	// PR-GH.5: build fan-out. The noop enqueuer mints
-	// synthetic buildIDs so the wire contract is exercised
-	// end-to-end. The follow-up slice that wires the real
-	// builderd bridge swaps this in cmd/githubd/main.go
-	// without touching pkg/githubd.
-	webhookSvc.Enqueuer = githubd.NewNoopEnqueuer(log)
+	// Issue #432 phase 5: workDir is the root under which
+	// the per-app source tarballs land during the dispatch
+	// loop (pkg/githubd/staging.go). Same value as the
+	// gitfetch temp dir hoisted at line 123-127; both
+	// producers share the operator-controlled dir tree.
+	webhookSvc.WorkDir = workDir
+	// Issue #432 phase 5: build fan-out. The production
+	// enqueuer dials the apid gRPC bridge via the
+	// ApidBridgeClient (cmd/githubd/apid_bridge.go). The
+	// apid handler (cmd/apid/githubd_bridge.go) creates
+	// the deployment + build rows and emits the
+	// build_queued pg_notify. Pre-PR-GH.5 the wiring was
+	// a noopEnqueuer (synthetic buildIDs); the swap is
+	// the load-bearing close-out for phase 5.
+	//
+	// The apidClient is the same one the bridge dial
+	// returns below — apidBridgeClient returns the stub
+	// when FAAS_APID_GITHUBD_BRIDGE_SOCK is empty, so
+	// the dispatcher stays safe on a dev box where the
+	// apid daemon isn't running.
+	webhookSvc.Enqueuer = NewApidEnqueuer(newApidBridgeClient(ctx, os.Getenv("FAAS_APID_GITHUBD_BRIDGE_SOCK"), nil, log), log)
 
 	// Slice 8 RealService (OAuth + Checks). Auth may be nil if
 	// the GitHub App credentials aren't provisioned — the daemon
@@ -216,7 +231,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// at boot. If the AppAuth init failed above the
 				// field stays nil and service.go falls back to
 				// full fan-out.
-				webhookSvc.ChangedFiles = githubd.NewHTTPChangedFiles(tokens, deps.httpClient())
+				//
+				// Issue #432 phase 5: the inner client is wrapped
+				// in a circuit breaker (NewBreakerChangedFiles)
+				// so 3 consecutive compare-API failures trip
+				// the breaker for 10 min and the dispatcher
+				// falls back to full fan-out without further
+				// load on the upstream. The breaker's mode label
+				// (githubd_path_filter_total{breaker_open})
+				// surfaces the trip in the §12 dashboard.
+				inner := githubd.NewHTTPChangedFiles(tokens, deps.httpClient())
+				webhookSvc.ChangedFiles = githubd.NewBreakerChangedFiles(inner, deps.now)
+				webhookSvc.Ops = ops
 				log.Info("githubd: OAuth + Checks wired", "app_id", appID)
 			}
 		}

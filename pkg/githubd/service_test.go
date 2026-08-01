@@ -137,7 +137,8 @@ func happyScan() reposcan.Result {
 	}
 }
 
-func newServiceForRig(r *testRig) *Service {
+func newServiceForRig(t *testing.T, r *testRig) *Service {
+	t.Helper()
 	svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	svc.Bindings = &stubBindings{byRepo: map[string]state.GitHubBinding{
 		"octo/api|main": {BindingID: "b-1", AccountID: r.acct, InstallID: r.install, RepoFullName: "octo/api", ProductionBranch: "main"},
@@ -145,10 +146,26 @@ func newServiceForRig(r *testRig) *Service {
 	svc.Installs = &stubInstalls{byAccount: map[string]state.GitHubInstall{
 		r.acct: {AccountID: r.acct, InstallationID: r.install, DefaultBranch: "main"},
 	}}
+	// Issue #432 phase 5: the MapFS fixture now seeds files
+	// under each workload's RootDir so the staging step
+	// (pkg/githubd/staging.go) can walk the subtree and
+	// produce a non-empty tarball. Without these, the
+	// staging step returns ErrNotExist and the dispatcher
+	// skips the enqueue. The "" RootDir (root-dir workload)
+	// is satisfied by the docker-compose.yml at the repo
+	// root.
 	svc.Source = &stubSource{fsys: fstest.MapFS{
-		"docker-compose.yml": &fstest.MapFile{Data: []byte("version: '3'\nservices:\n  api:\n    build: .\n")},
+		"docker-compose.yml":             &fstest.MapFile{Data: []byte("version: '3'\nservices:\n  api:\n    build: .\n")},
+		"services/auth/api/index.ts":     &fstest.MapFile{Data: []byte("export const auth = true;\n")},
+		"services/auth/api/package.json": &fstest.MapFile{Data: []byte("{}\n")},
+		"services/billing/main.go":       &fstest.MapFile{Data: []byte("package main\n")},
 	}}
 	svc.Reconcile = r.rec
+	// Issue #432 phase 5: the staging step needs a workDir
+	// (pkg/githubd/staging.go:stageAppSource). Tests get a
+	// fresh tmpdir per call so parallel test runs don't race
+	// on the staged tarball.
+	svc.WorkDir = t.TempDir()
 	return svc
 }
 
@@ -158,7 +175,7 @@ func TestHandlePushRequest_HappyPath(t *testing.T) {
 	// returns a Tier=1 result (one compose file → single).
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
 	rig.seedProject(t, "octo/api", "main")
-	svc := newServiceForRig(rig)
+	svc := newServiceForRig(t, rig)
 	var checkRepo, checkSHA string
 	var checkPhase githubdgrpc.CheckPhase
 	svc.WriteCheck = func(_ context.Context, repo, sha string, phase githubdgrpc.CheckPhase) error {
@@ -199,7 +216,7 @@ func TestHandlePushRequest_FeatureBranchIgnored(t *testing.T) {
 	// returns ErrIgnored.
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
 	rig.seedProject(t, "octo/api", "main")
-	svc := newServiceForRig(rig)
+	svc := newServiceForRig(t, rig)
 	// Override the binding map to include the feature/x branch.
 	svc.Bindings = &stubBindings{byRepo: map[string]state.GitHubBinding{
 		"octo/api|feature/x": {BindingID: "b-1", AccountID: rig.acct, InstallID: rig.install, RepoFullName: "octo/api", ProductionBranch: "main"},
@@ -216,7 +233,7 @@ func TestHandlePushRequest_SourceFetchFailure(t *testing.T) {
 	// before any ProjectByRepo fall-through.
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
 	rig.seedProject(t, "octo/api", "main")
-	svc := newServiceForRig(rig)
+	svc := newServiceForRig(t, rig)
 	want := errors.New("codeload down")
 	svc.Source = &stubSource{err: want}
 	body := []byte(`{"ref":"refs/heads/main","after":"x","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
@@ -248,7 +265,7 @@ func TestHandlePushRequest_ReconcileErrorBubbles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed project: %v", err)
 	}
-	svc := newServiceForRig(rig)
+	svc := newServiceForRig(t, rig)
 	body := []byte(`{"ref":"refs/heads/main","after":"x","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
 	_, err = svc.HandlePushRequest(context.Background(), body)
 	if err == nil {
@@ -264,7 +281,7 @@ func TestHandlePushRequest_ReconcileErrorBubbles(t *testing.T) {
 
 func TestHandlePushRequest_TagIsIgnored(t *testing.T) {
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
-	svc := newServiceForRig(rig)
+	svc := newServiceForRig(t, rig)
 	body := []byte(`{"ref":"refs/tags/v1.0","after":"x","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
 	_, err := svc.HandlePushRequest(context.Background(), body)
 	if !IsNoBinding(err) {
@@ -285,6 +302,12 @@ func TestWebhookHTTPHandler_IsLoopbackOnly(t *testing.T) {
 // recordingEnqueuer is the BuildEnqueuer stub for PR-GH.5
 // fan-out tests. It records every call and returns the
 // configured buildID (or error).
+//
+// Issue #432 phase 5: the seam grew from (accountID, appID,
+// commitSHA) string triples to BuildSpec structs (carrying the
+// staged source path). The stub records the buildID-mint
+// inputs and the BuildSpec so the fan-out tests can assert
+// on the per-app source path that the staging step produced.
 type recordingEnqueuer struct {
 	buildID string
 	err     error
@@ -292,17 +315,23 @@ type recordingEnqueuer struct {
 }
 
 type enqueueCall struct {
-	accountID string
-	appID     string
-	commitSHA string
+	accountID  string
+	appID      string
+	commitSHA  string
+	sourcePath string
 }
 
-func (r *recordingEnqueuer) Enqueue(_ context.Context, accountID, appID, commitSHA string) (string, error) {
-	r.calls = append(r.calls, enqueueCall{accountID: accountID, appID: appID, commitSHA: commitSHA})
+func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Build, error) {
+	r.calls = append(r.calls, enqueueCall{
+		accountID:  spec.App.AccountID,
+		appID:      spec.App.ID,
+		commitSHA:  spec.CommitSHA,
+		sourcePath: spec.SourcePath,
+	})
 	if r.err != nil {
-		return "", r.err
+		return state.Build{}, r.err
 	}
-	return r.buildID, nil
+	return state.Build{ID: r.buildID, Kind: state.DeploymentKindGitHub}, nil
 }
 
 // TestHandlePushRequest_FanOut_HappyPath is the PR-GH.5
@@ -313,7 +342,7 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, accountID, appID, commitS
 func TestHandlePushRequest_FanOut_HappyPath(t *testing.T) {
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
 	rig.seedProject(t, "octo/api", "main")
-	svc := newServiceForRig(rig)
+	svc := newServiceForRig(t, rig)
 	enq := &recordingEnqueuer{buildID: "build-1"}
 	svc.Enqueuer = enq
 	body := []byte(`{"ref":"refs/heads/main","after":"sha-1","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
@@ -348,7 +377,7 @@ func TestHandlePushRequest_FanOut_EmptyBuilds_NoEnqueue(t *testing.T) {
 		return reposcan.Result{Workloads: nil, Managed: nil, Tier: 1}, nil
 	})
 	rig.seedProject(t, "octo/api", "main")
-	svc := newServiceForRig(rig)
+	svc := newServiceForRig(t, rig)
 	enq := &recordingEnqueuer{buildID: "build-1"}
 	svc.Enqueuer = enq
 	body := []byte(`{"ref":"refs/heads/main","after":"sha-1","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
@@ -376,7 +405,7 @@ func TestHandlePushRequest_FanOut_EmptyBuilds_NoEnqueue(t *testing.T) {
 func TestHandlePushRequest_FanOut_EnqueueError_SoftFail(t *testing.T) {
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
 	rig.seedProject(t, "octo/api", "main")
-	svc := newServiceForRig(rig)
+	svc := newServiceForRig(t, rig)
 	enq := &recordingEnqueuer{err: errors.New("queue full")}
 	svc.Enqueuer = enq
 	body := []byte(`{"ref":"refs/heads/main","after":"sha-1","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
@@ -396,22 +425,26 @@ func TestHandlePushRequest_FanOut_EnqueueError_SoftFail(t *testing.T) {
 // dashboards filter fake IDs out of real-build metrics.
 func TestNoopEnqueuer_UniqueIDs(t *testing.T) {
 	e := NewNoopEnqueuer(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	id1, err := e.Enqueue(context.Background(), "acct-1", "app-1", "sha-1")
+	spec := BuildSpec{
+		App:       state.App{ID: "app-1", AccountID: "acct-1"},
+		CommitSHA: "sha-1",
+	}
+	b1, err := e.Enqueue(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	id2, err := e.Enqueue(context.Background(), "acct-1", "app-1", "sha-1")
+	b2, err := e.Enqueue(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if id1 == id2 {
-		t.Errorf("id1 == id2 (%q); repeat calls must produce different UUIDs", id1)
+	if b1.ID == b2.ID {
+		t.Errorf("b1.ID == b2.ID (%q); repeat calls must produce different UUIDs", b1.ID)
 	}
-	if !strings.HasPrefix(id1, "noop-build-") {
-		t.Errorf("id1 = %q; want noop-build- prefix", id1)
+	if !strings.HasPrefix(b1.ID, "noop-build-") {
+		t.Errorf("b1.ID = %q; want noop-build- prefix", b1.ID)
 	}
-	if !strings.HasPrefix(id2, "noop-build-") {
-		t.Errorf("id2 = %q; want noop-build- prefix", id2)
+	if !strings.HasPrefix(b2.ID, "noop-build-") {
+		t.Errorf("b2.ID = %q; want noop-build- prefix", b2.ID)
 	}
 }
 
@@ -455,7 +488,7 @@ func TestHandlePushRequest_BindingInstallIDMismatch_ErrNoBinding(t *testing.T) {
 func TestHandlePushRequest_TreeCloseNilSafe(t *testing.T) {
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
 	rig.seedProject(t, "octo/api", "main")
-	svc := newServiceForRig(rig)
+	svc := newServiceForRig(t, rig)
 	want := errors.New("codeload down")
 	svc.Source = &stubSource{err: want}
 	body := []byte(`{"ref":"refs/heads/main","after":"x","repository":{"full_name":"octo/api","name":"api"},"pusher":{"name":"alice"}}`)
@@ -547,7 +580,7 @@ func pathFilterRig(t *testing.T, cf ChangedFilesClient, includeRootWorkload bool
 	if err != nil {
 		t.Fatalf("seed project: %v", err)
 	}
-	svc := newServiceForRig(rig)
+	svc := newServiceForRig(t, rig)
 	rec := &recordingEnqueuer{}
 	svc.Enqueuer = rec
 	svc.ChangedFiles = cf
@@ -709,7 +742,7 @@ func TestHandlePushRequest_PathFilter_NoTouchedApps_SkipsCompare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed project: %v", err)
 	}
-	svc := newServiceForRig(rig)
+	svc := newServiceForRig(t, rig)
 	rec := &recordingEnqueuer{}
 	svc.Enqueuer = rec
 	svc.ChangedFiles = cf

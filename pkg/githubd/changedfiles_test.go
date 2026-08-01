@@ -361,3 +361,163 @@ func stringSliceEq(a, b []string) bool {
 	}
 	return true
 }
+
+// scriptedChangedFiles is a ChangedFilesClient stub that
+// returns (files, err) pairs from a scripted slice on each call.
+// The breaker tests use this to drive consecutive-failure
+// sequences without needing a live HTTP server.
+type scriptedChangedFiles struct {
+	steps []scriptStep
+	calls int
+}
+
+type scriptStep struct {
+	files []string
+	err   error
+}
+
+func (s *scriptedChangedFiles) ChangedFiles(_ context.Context, _ int64, _, _, _, _ string) ([]string, error) {
+	idx := s.calls
+	s.calls++
+	if idx >= len(s.steps) {
+		// Default: repeat the last step (tests that expect a
+		// tripped breaker rely on this — every subsequent call
+		// short-circuits at the wrapper).
+		idx = len(s.steps) - 1
+	}
+	return s.steps[idx].files, s.steps[idx].err
+}
+
+func TestBreaker_NotTripped_BelowThreshold(t *testing.T) {
+	t.Parallel()
+	// 2 consecutive failures (below threshold of 3) must NOT
+	// trip the breaker. The 3rd call still goes through to
+	// the inner client.
+	inner := &scriptedChangedFiles{steps: []scriptStep{
+		{files: nil, err: ErrUnavailable},
+		{files: nil, err: ErrUnavailable},
+		{files: []string{"a/b/c.ts"}, err: nil},
+	}}
+	clock := time.Now
+	w := NewBreakerChangedFiles(inner, clock)
+	for i := 0; i < 3; i++ {
+		files, err := w.ChangedFiles(context.Background(), 1, "octo", "api", "base", "head")
+		if i < 2 && !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("call %d: err = %v, want ErrUnavailable", i, err)
+		}
+		if i == 2 && err != nil {
+			t.Fatalf("call %d: err = %v, want nil", i, err)
+		}
+		if i == 2 && !stringSliceEq(files, []string{"a/b/c.ts"}) {
+			t.Fatalf("call %d: files = %v, want [a/b/c.ts]", i, files)
+		}
+	}
+	if inner.calls != 3 {
+		t.Errorf("inner.calls = %d, want 3 (breaker must not short-circuit below threshold)", inner.calls)
+	}
+}
+
+func TestBreaker_TripsAfterThreshold(t *testing.T) {
+	t.Parallel()
+	inner := &scriptedChangedFiles{steps: []scriptStep{
+		{files: nil, err: ErrUnavailable},
+		{files: nil, err: ErrUnavailable},
+		{files: nil, err: ErrUnavailable}, // 3rd → trips
+		{files: []string{"should-not-run.ts"}, err: nil},
+	}}
+	w := NewBreakerChangedFiles(inner, time.Now)
+	// First three calls land ErrUnavailable on the inner.
+	for i := 0; i < 3; i++ {
+		_, err := w.ChangedFiles(context.Background(), 1, "octo", "api", "base", "head")
+		if !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("call %d: err = %v, want ErrUnavailable", i, err)
+		}
+	}
+	// 4th call must short-circuit at the breaker — inner
+	// must NOT be called.
+	_, err := w.ChangedFiles(context.Background(), 1, "octo", "api", "base", "head")
+	if !errors.Is(err, ErrBreakerOpen) {
+		t.Fatalf("post-trip err = %v, want ErrBreakerOpen", err)
+	}
+	if inner.calls != 3 {
+		t.Errorf("inner.calls = %d, want 3 (4th call must short-circuit)", inner.calls)
+	}
+}
+
+func TestBreaker_TruncationDoesNotTrip(t *testing.T) {
+	t.Parallel()
+	// ErrTruncated is a "diff too big" signal, not an outage.
+	// Counting it toward the breaker would trip on every push
+	// to a busy monorepo.
+	inner := &scriptedChangedFiles{steps: []scriptStep{
+		{files: nil, err: ErrTruncated},
+		{files: nil, err: ErrTruncated},
+		{files: nil, err: ErrTruncated},
+		{files: nil, err: ErrTruncated},
+	}}
+	w := NewBreakerChangedFiles(inner, time.Now)
+	for i := 0; i < 4; i++ {
+		_, err := w.ChangedFiles(context.Background(), 1, "octo", "api", "base", "head")
+		if !errors.Is(err, ErrTruncated) {
+			t.Fatalf("call %d: err = %v, want ErrTruncated", i, err)
+		}
+	}
+	if inner.calls != 4 {
+		t.Errorf("inner.calls = %d, want 4 (truncation must NOT trip breaker)", inner.calls)
+	}
+}
+
+func TestBreaker_ResetsAfterCooldown(t *testing.T) {
+	t.Parallel()
+	inner := &scriptedChangedFiles{steps: []scriptStep{
+		{files: nil, err: ErrUnavailable},
+		{files: nil, err: ErrUnavailable},
+		{files: nil, err: ErrUnavailable}, // trip
+		{files: []string{"post-cooldown.ts"}, err: nil},
+	}}
+	// Fake clock advances exactly past the cooldown.
+	var now time.Time
+	clock := func() time.Time { return now }
+	w := NewBreakerChangedFiles(inner, clock)
+	for i := 0; i < 3; i++ {
+		_, _ = w.ChangedFiles(context.Background(), 1, "octo", "api", "base", "head")
+	}
+	// 4th call inside the cooldown window → ErrBreakerOpen.
+	_, err := w.ChangedFiles(context.Background(), 1, "octo", "api", "base", "head")
+	if !errors.Is(err, ErrBreakerOpen) {
+		t.Fatalf("inside-cooldown err = %v, want ErrBreakerOpen", err)
+	}
+	// Advance the clock past the cooldown.
+	now = now.Add(breakerCooldown + time.Second)
+	// 5th call goes through to inner (which serves the 4th
+	// step — post-cooldown.ts).
+	files, err := w.ChangedFiles(context.Background(), 1, "octo", "api", "base", "head")
+	if err != nil {
+		t.Fatalf("post-cooldown err = %v, want nil", err)
+	}
+	if !stringSliceEq(files, []string{"post-cooldown.ts"}) {
+		t.Errorf("post-cooldown files = %v, want [post-cooldown.ts]", files)
+	}
+	if inner.calls != 4 {
+		t.Errorf("inner.calls = %d, want 4 (post-cooldown must call inner)", inner.calls)
+	}
+}
+
+func TestBreaker_SuccessResetsFailureCount(t *testing.T) {
+	t.Parallel()
+	inner := &scriptedChangedFiles{steps: []scriptStep{
+		{files: nil, err: ErrUnavailable},
+		{files: nil, err: ErrUnavailable},
+		{files: []string{"ok.ts"}, err: nil}, // success resets counter
+		{files: nil, err: ErrUnavailable},    // counter starts at 1
+		{files: nil, err: ErrUnavailable},    // counter at 2
+		{files: []string{"ok2.ts"}, err: nil},
+	}}
+	w := NewBreakerChangedFiles(inner, time.Now)
+	for i := 0; i < 6; i++ {
+		_, _ = w.ChangedFiles(context.Background(), 1, "octo", "api", "base", "head")
+	}
+	if inner.calls != 6 {
+		t.Errorf("inner.calls = %d, want 6 (successes must reset counter, no false trip)", inner.calls)
+	}
+}

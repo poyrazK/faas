@@ -19,6 +19,15 @@
 // throughput is enough for v1.0 volumes. A TODO at the
 // call site points at the ADR-050 reference.
 //
+// Issue #432 phase 5 (repo-deploy close-the-loop): the seam
+// was extended to carry the staged source path / source URL /
+// source bytes / repo provenance as a BuildSpec struct. The
+// production implementation is the apidEnqueuer in
+// cmd/githubd/state_enqueue.go; the noopEnqueuer stays as the
+// test-only seam (the 11 tests in pkg/githubd/service_test.go
+// that use a recordingEnqueuer keep working unchanged because
+// they only assert on the returned build_id).
+//
 // RETRY + PARTIAL-SUCCESS:
 // Enqueue failures are best-effort (logged, not returned).
 // The webhooks HTTP contract is "200 OK with deployment_id"
@@ -36,31 +45,61 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// BuildSpec carries everything a build needs from the push
+// dispatcher. The noopEnqueuer ignores it; the apidEnqueuer
+// passes the staged source path + provenance URL + commit SHA
+// to githubd's RealService.CreateDeploymentFromPush via the
+// apid gRPC bridge (issue #432 phase 5).
+//
+// The state.App reference carries ID, RootDir, WorkloadName,
+// AccountID — the dispatcher fills these in from the reconcile
+// result + the binding row. The SourcePath is the absolute
+// path to the per-app .tar.gz on disk (githubd stages each
+// app's RootDir subtree into <FAAS_GITHUBD_WORK_DIR>/build-sources/
+// before the enqueue loop). SourceURL is the upstream archive
+// URL (the codeload tarball githubd pulled) — provenance-only,
+// builderd never fetches it. SourceBytes is the on-disk size
+// of the staged tarball.
+type BuildSpec struct {
+	App          state.App
+	CommitSHA    string
+	RepoFullName string
+	Ref          string
+	Branch       string
+	SourcePath   string
+	SourceURL    string
+	SourceBytes  int64
+}
 
 // BuildEnqueuer is the seam githubd uses to schedule a build
 // for one (app, commit) pair. The production implementation
-// will eventually call into builderd (or schedd's job queue)
-// — for v1.0 the seam is satisfied by a noopEnqueuer that
-// returns a synthetic build_id so the wire contract is
-// exercised end-to-end. The follow-up slice that wires the
-// real enqueue target will swap the implementation in
-// cmd/githubd/main.go without touching this interface.
+// (apidEnqueuer) calls the apid gRPC bridge, which writes the
+// deployment + build rows and emits the build_queued pg_notify
+// that builderd LISTENs on. The noopEnqueuer is the test +
+// pre-issue-#432 default — it mints a synthetic build_id so
+// the wire contract is exercised end-to-end without a real
+// bridge. The production wiring in cmd/githubd/main.go swaps
+// the noopEnqueuer for the apidEnqueuer.
 type BuildEnqueuer interface {
-	// Enqueue schedules a build for the given app at the
-	// given commit. The returned buildID is opaque to the
-	// caller (the webhook response includes it as a string).
-	// Errors are returned to the caller — the caller decides
-	// whether to fail the push or treat the missing build as
-	// a soft failure.
-	Enqueue(ctx context.Context, accountID, appID, commitSHA string) (buildID string, err error)
+	// Enqueue schedules a build for the given spec. The
+	// returned state.Build carries the (durable) build_id
+	// the apid-side bridge minted and the deployment_id
+	// the build row points at. Errors are returned to the
+	// caller — the dispatcher decides whether to fail the
+	// push or treat the missing build as a soft failure.
+	Enqueue(ctx context.Context, spec BuildSpec) (state.Build, error)
 }
 
-// noopEnqueuer is the test + slice-9 default. It mints a
-// deterministic buildID from the (appID, commitSHA) pair so
-// the wire contract is pin-able without a real builder
-// backend. PR-GH.5 swaps this for the real builderd bridge
-// in a follow-up slice.
+// noopEnqueuer is the test + pre-issue-#432 default. It mints a
+// deterministic buildID from the (app, commit) pair so the wire
+// contract is pin-able without a real bridge backend. The
+// follow-up PR (issue #432 phase 5) swaps the production wiring
+// for the apidEnqueuer in cmd/githubd/main.go without touching
+// this noop.
 type noopEnqueuer struct {
 	log *slog.Logger
 }
@@ -68,10 +107,9 @@ type noopEnqueuer struct {
 // NewNoopEnqueuer returns a BuildEnqueuer that mints a
 // synthetic buildID per call. The ID is a UUIDv7 prefixed
 // with "noop-build-" so dashboards can filter out fake IDs
-// from the real builderd bridge. The ID is NOT persistent —
-// a daemon restart renumbers all builds; the prefix lets
-// §12 dashboards exclude synthetic builds from real-build
-// throughput metrics.
+// from the real bridge. The ID is NOT persistent — a daemon
+// restart renumbers all builds; the prefix lets §12 dashboards
+// exclude synthetic builds from real-build throughput metrics.
 func NewNoopEnqueuer(log *slog.Logger) BuildEnqueuer {
 	if log == nil {
 		log = slog.Default()
@@ -85,13 +123,13 @@ func NewNoopEnqueuer(log *slog.Logger) BuildEnqueuer {
 // "build-<app>-<sha>" composition collided when an
 // installation re-pushed the same commit twice, and the
 // "build-" prefix read like a real build ID in dashboards.
-func (n *noopEnqueuer) Enqueue(ctx context.Context, accountID, appID, commitSHA string) (string, error) {
+func (n *noopEnqueuer) Enqueue(ctx context.Context, spec BuildSpec) (state.Build, error) {
 	u, err := uuid.NewV7()
 	if err != nil {
-		return "", fmt.Errorf("noop enqueuer: uuid v7: %w", err)
+		return state.Build{}, fmt.Errorf("noop enqueuer: uuid v7: %w", err)
 	}
 	bid := "noop-build-" + u.String()
 	n.log.Info("noop enqueuer: synthetic build",
-		"build_id", bid, "app_id", appID, "commit_sha", commitSHA, "account_id", accountID)
-	return bid, nil
+		"build_id", bid, "app_id", spec.App.ID, "commit_sha", spec.CommitSHA, "account_id", spec.App.AccountID)
+	return state.Build{ID: bid, Kind: state.DeploymentKindGitHub}, nil
 }

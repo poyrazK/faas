@@ -25,6 +25,16 @@ const (
 	KindReconcileAlert        = "project.reconcile.alert"
 	KindReconcileQuotaBlocked = "project.reconcile.quota_blocked"
 	KindScanSourceChanged     = "project.scan_source_changed"
+	// KindBuildEnqueued is the githubd-side audit event for a
+	// per-app build that's been enqueued via the apid gRPC
+	// bridge (issue #432 phase 5). Emitted by the githubd
+	// dispatcher AFTER the bridge returns a non-empty
+	// build_id. The linked apid-side event —
+	// auth.deployment.enqueued (or the existing
+	// build_queued pg_notify consumer downstream) — gives
+	// the operator a single-correlated paper trail of
+	// push → reconcile → build.
+	KindBuildEnqueued = "project.build.enqueued"
 )
 
 // Alert kind constants. Mirrors the audit kind's `reason` field —
@@ -176,5 +186,45 @@ func (s *Service) emitScanSourceChanged(
 		"from":       from,
 		"to":         to,
 		"commit_sha": commitSHA,
+	})
+}
+
+// EmitBuildEnqueued fires project.build.enqueued (issue #432
+// phase 5). Called by the githubd dispatcher AFTER the apid
+// bridge returns a non-empty build_id; the durable build row
+// is the source of truth, so emitting on success is what
+// keeps the audit paper trail consistent with the build
+// pipeline.
+//
+// Payload mirrors the dispatcher's BuildSpec fields so the
+// operator can join this row with the build row, the
+// deployment row, and the githubd-side reconcile.started
+// row by (project_id, app_id, commit_sha).
+//
+// Public (not emitBuildEnqueued) so cmd/githubd can call it
+// without a circular dependency — the githubd package imports
+// reconcile (for the BuildEnqueuer interface), so calling a
+// lowercase helper would not work. The constant
+// KindBuildEnqueued stays lowercase (internal-shape).
+func (s *Service) EmitBuildEnqueued(
+	ctx context.Context,
+	project state.Project,
+	appID string,
+	buildID string,
+	deploymentID string,
+	commitSHA string,
+	repoFullName string,
+	branch string,
+	sourcePath string,
+) {
+	s.Audit.Emit(ctx, KindBuildEnqueued, &project.AccountID, map[string]any{
+		"project_id":    project.ID,
+		"app_id":        appID,
+		"build_id":      buildID,
+		"deployment_id": deploymentID,
+		"commit_sha":    commitSHA,
+		"repo":          repoFullName,
+		"branch":        branch,
+		"source_path":   sourcePath,
 	})
 }

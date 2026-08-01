@@ -121,6 +121,19 @@ func resolveAdvisorySock(getenv func(string) string) string {
 	return getenv("FAAS_APID_ADVISORY_SOCK")
 }
 
+// resolveGithubdBridgeSock reads FAAS_APID_GITHUBD_BRIDGE_SOCK via
+// the test seam (deps.getenv). Empty string disables the listener —
+// the same pattern as resolveAdvisorySock so macOS dev boxes
+// don't try to bind /run/faas. The systemd unit stamps
+// FAAS_APID_GITHUBD_BRIDGE_SOCK=/run/faas/apid-githubd.sock in
+// production (issue #432 phase 5). Unlike the advisory socket,
+// the bridge socket has a separate path because the consumer
+// (githubd) dials it, not vmmd, and the 0660 DAC group is shared
+// between the githubd user and apid user.
+func resolveGithubdBridgeSock(getenv func(string) string) string {
+	return getenv("FAAS_APID_GITHUBD_BRIDGE_SOCK")
+}
+
 // runDeps is the DI seam for run — same pattern as vmmd / gatewayd so we can
 // exercise the listener lifecycle without binding :8081 from tests.
 type runDeps struct {
@@ -645,6 +658,38 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
+	// Issue #432 phase 5: githubd → apid build-enqueue bridge
+	// (separate listener from the advisory socket so an operator
+	// can disable one without the other). Empty sock disables the
+	// listener entirely (matches the advisory listener's pattern).
+	// The bridge receiver implementation is in githubd_bridge.go;
+	// it implements the githubdpb.GithubdServer interface (only
+	// EnqueueBuild is wired; the rest is UnimplementedGithubdServer).
+	var bridgeSrv *grpc.Server
+	var bridgeLis net.Listener
+	if sock := resolveGithubdBridgeSock(deps.getenv); sock != "" {
+		bridgeTLS, tlsErr := wire.LoadServerTLSConfig(
+			deps.getenv("FAAS_APID_GITHUBD_BRIDGE_TLS_CERT_PATH"),
+			deps.getenv("FAAS_APID_GITHUBD_BRIDGE_TLS_KEY_PATH"),
+			deps.getenv("FAAS_APID_GITHUBD_BRIDGE_TLS_CA_PATH"),
+		)
+		if tlsErr != nil {
+			_ = l.Close()
+			return fmt.Errorf("apid: githubd bridge TLS: %w", tlsErr)
+		}
+		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot())
+		if err != nil {
+			_ = l.Close()
+			return fmt.Errorf("apid: githubd bridge listen %q: %w", sock, err)
+		}
+		go func() {
+			log.Info("apid githubd bridge listening", "sock", sock)
+			if err := bridgeSrv.Serve(bridgeLis); err != nil {
+				log.Error("apid githubd bridge serve", "err", err)
+			}
+		}()
+	}
+
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenAddr)
@@ -668,6 +713,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// GracefulStop lets in-flight ForwardStatelessAdvisory
 			// calls finish writing their audit row before exit.
 			advisorySrv.GracefulStop()
+		}
+		if bridgeSrv != nil {
+			// GracefulStop lets in-flight EnqueueBuild RPCs finish
+			// writing the deployment + build rows before exit.
+			// A non-graceful Stop would leave the githubd dispatcher
+			// with a gRPC error mid-enqueue, which the dispatcher
+			// handles with log + skip — but graceful is cheaper.
+			bridgeSrv.GracefulStop()
 		}
 		// Issue #286: drain the async failed-login audit channel
 		// so in-flight rows land in the events table before the
@@ -845,6 +898,58 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 	// The accessor is nil-receiver safe so the metric stays zero
 	// when ops is nil (test path).
 	registerAdvisoryReceiver(srv, store, audit, notif, log, ops)
+	return srv, lis, nil
+}
+
+// runGithubdBridgeServer binds the githubd → apid build-enqueue
+// gRPC server onto a fresh /run/faas/apid-githubd.sock (or wherever
+// FAAS_APID_GITHUBD_BRIDGE_SOCK points). The githubd daemon dials
+// this listener after the dispatcher fans out the touched apps
+// and stages each app's RootDir subtree into its build-sources
+// dir as a per-app .tar.gz (issue #432 phase 5).
+//
+// The DAC contract mirrors the advisory socket (0660 group
+// `faas`) so githubd can dial without root, but the listener is
+// separately configurable so an operator can disable the bridge
+// for a single-box deployment that doesn't run githubd. Empty
+// sock disables the listener entirely (matches the e2e harness
+// path + macOS dev boxes where /run/faas is read-only).
+//
+// The receiver implementation is in githubd_bridge.go. The set
+// of state.Store methods the receiver needs is consumed through
+// the githubdBridgeStore interface so unit tests can pass a stub
+// without a real pgxpool. The store/notif/log/ops are passed
+// through by the production wiring code in run().
+//
+// Returns the server (caller calls Serve) and the listener. Errors
+// here are fatal — without the bridge listener githubd has no
+// way to enqueue builds and the dispatch path is silently
+// degraded (every push hits the noopEnqueuer path).
+func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string) (*grpc.Server, net.Listener, error) {
+	// Same multi-box guard as runAdvisoryServer — a tcp/dns
+	// target without TLS would silently build an insecure server.
+	// ADR-052.
+	if !isUnixSocketPath(target) && tlsCfg == nil {
+		return nil, nil, fmt.Errorf(
+			"githubd bridge: target %q is non-unix but %s is empty (set FAAS_APID_GITHUBD_BRIDGE_TLS_CERT_PATH / KEY_PATH / CA_PATH or point the target at a unix socket for single-box mode)",
+			target, "FAAS_APID_GITHUBD_BRIDGE_TLS_*_PATH")
+	}
+	var lis net.Listener
+	var err error
+	if isUnixSocketPath(target) {
+		lis, err = wire.ListenOrRecreateByName(target, "faas-apid")
+	} else {
+		lis, err = wire.Listen(ctx, target, tlsCfg)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("githubd bridge listen: %w", err)
+	}
+	srv := grpc.NewServer(wire.ServerCredsOrEmpty(tlsCfg)...)
+	// Pass ops so the receiver can increment
+	// apid_githubd_bridge_enqueued_total on each landed build.
+	// The accessor is nil-receiver safe so the metric stays zero
+	// when ops is nil (test path).
+	registerGithubdBridge(srv, store, notif, log, ops, spool)
 	return srv, lis, nil
 }
 

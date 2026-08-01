@@ -496,6 +496,16 @@ type OpsMetrics struct {
 	// producer side (vmmd forward outcomes), this one counts the
 	// consumer side (apid landed advisories).
 	apidStatelessAdvisoryEventsTotal *prometheus.CounterVec
+	// apidGithubdBridgeEnqueuedTotal: per-app build enqueue
+	// counter from the githubd → apid bridge (issue #432 phase 5).
+	// Labelled by `kind` ∈ {github} — the closed set of build
+	// sources the githubd bridge produces. Pre-instantiated in
+	// NewOpsMetrics so the row surfaces in /metrics from boot
+	// (the §12 dashboard panel queries the rate to surface
+	// github-triggered build volume). Single-registry: registered
+	// on every daemon; only apid increments via
+	// IncGithubdBridgeEnqueued.
+	apidGithubdBridgeEnqueuedTotal *prometheus.CounterVec
 	// egressDeny: per-CIDR drop counter for the nftables egress
 	// denylist (PR-E). Labelled by (cidr, family) — the cidr label
 	// is the DenyEntry.CounterName (e.g. "drop_v4_10_0_0_0_8") and
@@ -563,6 +573,20 @@ type OpsMetrics struct {
 	// base-stage time (pkg/imaged/base_stage.go) and re-read on
 	// every cold-boot by vmmd.
 	imageScanVulns *prometheus.CounterVec
+	// githubdPathFilterTotal: issue #432 phase 5 / ADR-050
+	// §109. Counter labelled by `mode` ∈ {paths, full_fallback,
+	// truncated, error, breaker_open} — the closed set
+	// githubd's push dispatch can land in. Incremented once per
+	// inbound webhook AFTER lookupChangedFiles returns a mode.
+	// Single-registry: registered on every daemon; only githubd
+	// increments via ObserveGithubdPathFilter. The panel selector
+	// is the §12 rate(`githubd_path_filter_total[5m]`) grouped by
+	// mode, and a non-zero `mode="breaker_open"` rate for 10m is
+	// the canary for the upstream compare-API outage (the
+	// circuit breaker in pkg/githubd/changedfiles.go trips after
+	// breakerFailureThreshold consecutive failures, then auto-
+	// resets after breakerCooldown).
+	githubdPathFilterTotal *prometheus.CounterVec
 }
 
 // NewOpsMetrics builds an OpsMetrics keyed on the per-daemon prefix — e.g.
@@ -992,6 +1016,32 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_stateless_advisory_events_total",
 		Help: "Per-batch stateless-advisory inbound counter (Mega-PR B). severity ∈ {high, warn, info}. One increment per ForwardStatelessAdvisory RPC at the receiver daemon whose audit row was written. Mirrors advisoryBatchesEmittedTotal on the forward side. Single-registry: registered on every daemon; only the receiver daemon increments via ObserveStatelessAdvisory.",
 	}, []string{"severity"})
+	// issue #432 phase 5: githubd → apid per-app build enqueue
+	// counter. Single CounterVec with a closed `kind` label set
+	// ({github} — the only value the githubd bridge currently
+	// produces; the label is forward-compat for future
+	// daemon-to-daemon build sources). Pre-instantiated so the
+	// row surfaces in /metrics from boot (the §12 dashboard panel
+	// queries `rate(apid_githubd_bridge_enqueued_total[5m])` to
+	// surface github-triggered build volume per app/account).
+	// Single-registry: registered on every daemon; only apid
+	// increments via IncGithubdBridgeEnqueued.
+	apidGithubdBridgeEnqueuedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_githubd_bridge_enqueued_total",
+		Help: "Per-app build enqueue counter from the githubd → apid bridge (issue #432 phase 5). kind ∈ {github}. One increment per EnqueueBuild RPC that lands a build row. Zero on a healthy box with no GitHub App bound; a non-zero rate is the cap on github-triggered build volume.",
+	}, []string{"kind"})
+	// issue #432 phase 5 / ADR-050 §109: path-filter mode
+	// counter. Labelled by mode ∈ {paths, full_fallback,
+	// truncated, error, breaker_open} — the closed set
+	// githubd's push dispatch can land in. Incremented once
+	// per inbound webhook in pkg/githubd/service.go at the
+	// call site that picks the filterMode. Pre-instantiated
+	// below so every row surfaces in /metrics from boot; the
+	// §12 dashboard panel groups the rate by mode.
+	githubdPathFilterTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_path_filter_total",
+		Help: "Path-filter mode counter for githubd push dispatch (issue #432 phase 5, ADR-050 §109). mode ∈ {paths, full_fallback, truncated, error, breaker_open}. One increment per inbound webhook after lookupChangedFiles picks a mode. mode=paths is the optimistic path; the others collapse into the rebuild-all fallback for that push. The single-registry pattern demands the field is present on every daemon's OpsMetrics — only githubd increments via ObserveGithubdPathFilter.",
+	}, []string{"mode"})
 	// PR-E sister collector for the user-space OCI dialer. Only
 	// registered when prefix == "imaged" — on every other daemon the
 	// field stays nil and the imaged-side hook in cmd/imaged/main.go
@@ -1025,6 +1075,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		oauthDisabledTotal,
 		advisoryBatchesEmittedTotal,
 		apidStatelessAdvisoryEventsTotal,
+		apidGithubdBridgeEnqueuedTotal,
+		githubdPathFilterTotal,
 		throttleSecondsTotal, throttleRatio,
 		egressSourceErrors,
 	}
@@ -1121,6 +1173,27 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	for _, sev := range []string{"high", "warn", "info"} {
 		apidStatelessAdvisoryEventsTotal.WithLabelValues(sev)
+	}
+	// issue #432 phase 5: pre-instantiate the githubd bridge
+	// `kind` label set ({github} — the only kind the bridge
+	// produces today; the loop is forward-compat for future
+	// daemon-to-daemon build sources). Same pattern as the
+	// pre-instantiations above so the row surfaces in /metrics
+	// from boot.
+	for _, kind := range []string{"github"} {
+		apidGithubdBridgeEnqueuedTotal.WithLabelValues(kind)
+	}
+	// issue #432 phase 5 / ADR-050 §109: pre-instantiate the
+	// path-filter `mode` label set. Five values cover every
+	// observable outcome in pkg/githubd/service.go's
+	// lookupChangedFiles + the new circuit breaker (the
+	// breaker_open value is incremented when the breaker is
+	// tripped, before the lookup ever calls GitHub). The
+	// labels are constants in this file (PathFilterMode*)
+	// so the dashboard and the closed-set switch share the
+	// same vocabulary.
+	for _, mode := range []string{PathFilterModePaths, PathFilterModeFullFallback, PathFilterModeTruncated, PathFilterModeError, PathFilterModeBreakerOpen} {
+		githubdPathFilterTotal.WithLabelValues(mode)
 	}
 	// issue #299: pre-instantiate the closed `severity` label set
 	// for imageScanVulns so the rows surface in /metrics from boot
@@ -1325,6 +1398,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		oauthDisabledTotal:               oauthDisabledTotal,
 		advisoryBatchesEmittedTotal:      advisoryBatchesEmittedTotal,
 		apidStatelessAdvisoryEventsTotal: apidStatelessAdvisoryEventsTotal,
+		apidGithubdBridgeEnqueuedTotal:   apidGithubdBridgeEnqueuedTotal,
+		githubdPathFilterTotal:           githubdPathFilterTotal,
 	}
 }
 
@@ -2510,6 +2585,56 @@ const (
 	AdvisorySeverityInfo = "info"
 )
 
+// GithubdBridgeKindGitHub is the only value the `kind` label
+// takes on the githubd → apid build enqueue counter (issue #432
+// phase 5). Mirrored as the constant the apid-side bridge
+// increments via IncGithubdBridgeEnqueued. The loop in
+// NewOpsMetrics pre-instantiates this value so the row surfaces
+// in /metrics from boot — same precedent as the advisorySeverity
+// closed-set above.
+const (
+	GithubdBridgeKindGitHub = "github"
+)
+
+// PathFilterMode* are the closed-set values for the `mode`
+// label on githubd_path_filter_total (issue #432 phase 5 /
+// ADR-050 §109). The closed-set switch in ObserveGithubdPathFilter
+// drops unknown values silently (CardinalityGuard) — adding a
+// new mode here requires the matching case in the switch AND
+// the matching entry in the pre-instantiation loop above so
+// the row surfaces in /metrics from boot.
+//
+//   - paths:         the optimistic path — the compare API
+//     returned successfully and the RootDir
+//     intersection picked the touched apps.
+//   - full_fallback: any of {client nil, before empty, owner/
+//     repo split failed, breaker open} — the
+//     dispatcher rebuilds every touched app.
+//     Different from truncated: full_fallback is
+//     the "we didn't even try" bucket.
+//   - truncated:     the compare API returned successfully
+//     but the diff was capped (300 files / 250
+//     commits). ADR-050 §109 mandates rebuild-
+//     all on this signal.
+//   - error:         the compare API returned a 4xx/5xx (after
+//     retries) that wasn't 429-truncation. The
+//     dispatcher rebuilds every touched app and
+//     logs at warn level.
+//   - breaker_open:  the circuit breaker in pkg/githubd/changedfiles.go
+//     was tripped on a prior push and the
+//     cooldown hasn't elapsed. The dispatcher
+//     doesn't even call GitHub — this label is
+//     incremented at the breaker-check site
+//     (BEFORE the lookup). A non-zero rate for
+//     10m is the canary for the upstream outage.
+const (
+	PathFilterModePaths        = "paths"
+	PathFilterModeFullFallback = "full_fallback"
+	PathFilterModeTruncated    = "truncated"
+	PathFilterModeError        = "error"
+	PathFilterModeBreakerOpen  = "breaker_open"
+)
+
 // ObserveAdvisoryBatchResult increments
 // stateless_advisory_batches_emitted_total{result} (Mega-PR B).
 // Called from pkg/vmmdgrpc/advisory_client.go on each
@@ -2552,6 +2677,59 @@ func (m *OpsMetrics) ObserveStatelessAdvisory(severity string) {
 	switch severity {
 	case AdvisorySeverityHigh, AdvisorySeverityWarn, AdvisorySeverityInfo:
 		m.apidStatelessAdvisoryEventsTotal.WithLabelValues(severity).Inc()
+	}
+}
+
+// IncGithubdBridgeEnqueued increments
+// githubd_bridge_enqueued_total{kind} (issue #432 phase 5). Called
+// from cmd/apid/githubd_bridge.go's EnqueueBuild handler on each
+// landed build row. kind is GithubdBridgeKindGitHub — the only
+// value the githubd bridge produces today; the switch is
+// forward-compat for future daemon-to-daemon build sources. Unknown
+// values produce no increment (closed-set guard). Nil receiver is
+// allowed for parity with the other Observe* accessors — apid
+// unit tests that don't wire metrics keep working.
+//
+// The function name uses the Inc* prefix (not Observe*) because
+// it accepts a state.DeploymentKind-shaped enum value, not a
+// duration+error pair — same shape as ObserveAdvisoryBatchResult
+// but without a time component. The receiver-side semantics
+// (one increment per landed build) mirror the producer-side
+// ObserveAdvisoryBatchResult pair.
+func (m *OpsMetrics) IncGithubdBridgeEnqueued(kind string) {
+	if m == nil || m.apidGithubdBridgeEnqueuedTotal == nil {
+		return
+	}
+	switch kind {
+	case GithubdBridgeKindGitHub:
+		m.apidGithubdBridgeEnqueuedTotal.WithLabelValues(kind).Inc()
+	}
+}
+
+// ObserveGithubdPathFilter increments
+// githubd_path_filter_total{mode} (issue #432 phase 5 /
+// ADR-050 §109). Called from pkg/githubd/service.go's
+// lookupChangedFiles (and the new circuit breaker in
+// pkg/githubd/changedfiles.go) once per inbound webhook after
+// the filterMode decision is made.
+//
+// The closed-set switch below is the load-bearing cardinality
+// guard: unknown modes produce no increment so the Prometheus
+// TSDB series set stays bounded. Nil receiver is allowed for
+// parity with the other Observe* accessors — githubd unit
+// tests that don't wire metrics keep working.
+//
+// The prefix on the metric name follows the
+// githubd_<counter> convention (single-registry); see the
+// wire-opsmetrics-single-registry note for why this struct is
+// identical across every daemon.
+func (m *OpsMetrics) ObserveGithubdPathFilter(mode string) {
+	if m == nil || m.githubdPathFilterTotal == nil {
+		return
+	}
+	switch mode {
+	case PathFilterModePaths, PathFilterModeFullFallback, PathFilterModeTruncated, PathFilterModeError, PathFilterModeBreakerOpen:
+		m.githubdPathFilterTotal.WithLabelValues(mode).Inc()
 	}
 }
 

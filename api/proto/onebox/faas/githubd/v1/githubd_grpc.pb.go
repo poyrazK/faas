@@ -39,6 +39,7 @@ const (
 	Githubd_UnbindAppRepo_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/UnbindAppRepo"
 	Githubd_GetAppBinding_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/GetAppBinding"
 	Githubd_CreateDeploymentFromPush_FullMethodName = "/onebox.faas.githubd.v1.Githubd/CreateDeploymentFromPush"
+	Githubd_EnqueueBuild_FullMethodName             = "/onebox.faas.githubd.v1.Githubd/EnqueueBuild"
 	Githubd_WriteCheck_FullMethodName               = "/onebox.faas.githubd.v1.Githubd/WriteCheck"
 	Githubd_VerifyInstallation_FullMethodName       = "/onebox.faas.githubd.v1.Githubd/VerifyInstallation"
 )
@@ -81,7 +82,30 @@ type GithubdClient interface {
 	// after gatewayd forwards the request and the HMAC check passes.
 	// Returns the empty deployment_id when no app is bound to the repo
 	// (a common case for forks / first-time installs).
+	//
+	// DEPRECATED (issue #432 phase 5 closure): the inbound-webhook path
+	// is HTTP-only (gatewayd → /webhooks/github → githubd). The gRPC
+	// surface was originally designed for repo-level dispatch but cannot
+	// carry per-app build inputs (source_path on disk, source URL for
+	// provenance). Issue #432 phase 5 closes the loop with EnqueueBuild
+	// below, which carries the per-app build inputs and is the actual
+	// tea path. This method stays checked in for the bufconn round-trip
+	// test (slice 7) and to keep the gRPC contract additive.
 	CreateDeploymentFromPush(ctx context.Context, in *CreateDeploymentFromPushRequest, opts ...grpc.CallOption) (*CreateDeploymentFromPushResponse, error)
+	// EnqueueBuild is the githubd → apid bridge for per-app build
+	// enqueue (issue #432 phase 5). After the dispatcher fans out the
+	// touched apps (slice 1) and stages each app's RootDir subtree into
+	// githubd's build-sources dir as a per-app .tar.gz, githubd calls
+	// this RPC once per (app, commit_sha). apid creates the deployment
+	// row (Kind=DeploymentKindGitHub), the build row, and emits the
+	// build_queued pg_notify that builderd LISTENs on. The repo-level
+	// CreateDeploymentFromPush above stays as a documented dead-letter
+	// path; this RPC is the load-bearing one.
+	//
+	// Auth: the unix-socket 0660/group-`faas` DAC is the only auth in
+	// v1.0 (ADR-015). The transport is insecure credentials over a
+	// trusted local path; see pkg/githubdgrpc.Dial.
+	EnqueueBuild(ctx context.Context, in *EnqueueBuildRequest, opts ...grpc.CallOption) (*EnqueueBuildResponse, error)
 	// WriteCheck pushes a commit-status update back to GitHub via the
 	// Checks API (POST /repos/{owner}/{repo}/check-runs). Idempotent on
 	// (repo, sha, phase) via the check_runs dedupe row so redelivered
@@ -184,6 +208,16 @@ func (c *githubdClient) CreateDeploymentFromPush(ctx context.Context, in *Create
 	return out, nil
 }
 
+func (c *githubdClient) EnqueueBuild(ctx context.Context, in *EnqueueBuildRequest, opts ...grpc.CallOption) (*EnqueueBuildResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnqueueBuildResponse)
+	err := c.cc.Invoke(ctx, Githubd_EnqueueBuild_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *githubdClient) WriteCheck(ctx context.Context, in *WriteCheckRequest, opts ...grpc.CallOption) (*WriteCheckResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WriteCheckResponse)
@@ -242,7 +276,30 @@ type GithubdServer interface {
 	// after gatewayd forwards the request and the HMAC check passes.
 	// Returns the empty deployment_id when no app is bound to the repo
 	// (a common case for forks / first-time installs).
+	//
+	// DEPRECATED (issue #432 phase 5 closure): the inbound-webhook path
+	// is HTTP-only (gatewayd → /webhooks/github → githubd). The gRPC
+	// surface was originally designed for repo-level dispatch but cannot
+	// carry per-app build inputs (source_path on disk, source URL for
+	// provenance). Issue #432 phase 5 closes the loop with EnqueueBuild
+	// below, which carries the per-app build inputs and is the actual
+	// tea path. This method stays checked in for the bufconn round-trip
+	// test (slice 7) and to keep the gRPC contract additive.
 	CreateDeploymentFromPush(context.Context, *CreateDeploymentFromPushRequest) (*CreateDeploymentFromPushResponse, error)
+	// EnqueueBuild is the githubd → apid bridge for per-app build
+	// enqueue (issue #432 phase 5). After the dispatcher fans out the
+	// touched apps (slice 1) and stages each app's RootDir subtree into
+	// githubd's build-sources dir as a per-app .tar.gz, githubd calls
+	// this RPC once per (app, commit_sha). apid creates the deployment
+	// row (Kind=DeploymentKindGitHub), the build row, and emits the
+	// build_queued pg_notify that builderd LISTENs on. The repo-level
+	// CreateDeploymentFromPush above stays as a documented dead-letter
+	// path; this RPC is the load-bearing one.
+	//
+	// Auth: the unix-socket 0660/group-`faas` DAC is the only auth in
+	// v1.0 (ADR-015). The transport is insecure credentials over a
+	// trusted local path; see pkg/githubdgrpc.Dial.
+	EnqueueBuild(context.Context, *EnqueueBuildRequest) (*EnqueueBuildResponse, error)
 	// WriteCheck pushes a commit-status update back to GitHub via the
 	// Checks API (POST /repos/{owner}/{repo}/check-runs). Idempotent on
 	// (repo, sha, phase) via the check_runs dedupe row so redelivered
@@ -295,6 +352,9 @@ func (UnimplementedGithubdServer) GetAppBinding(context.Context, *GetAppBindingR
 }
 func (UnimplementedGithubdServer) CreateDeploymentFromPush(context.Context, *CreateDeploymentFromPushRequest) (*CreateDeploymentFromPushResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateDeploymentFromPush not implemented")
+}
+func (UnimplementedGithubdServer) EnqueueBuild(context.Context, *EnqueueBuildRequest) (*EnqueueBuildResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EnqueueBuild not implemented")
 }
 func (UnimplementedGithubdServer) WriteCheck(context.Context, *WriteCheckRequest) (*WriteCheckResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WriteCheck not implemented")
@@ -449,6 +509,24 @@ func _Githubd_CreateDeploymentFromPush_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Githubd_EnqueueBuild_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnqueueBuildRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).EnqueueBuild(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_EnqueueBuild_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).EnqueueBuild(ctx, req.(*EnqueueBuildRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Githubd_WriteCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(WriteCheckRequest)
 	if err := dec(in); err != nil {
@@ -519,6 +597,10 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateDeploymentFromPush",
 			Handler:    _Githubd_CreateDeploymentFromPush_Handler,
+		},
+		{
+			MethodName: "EnqueueBuild",
+			Handler:    _Githubd_EnqueueBuild_Handler,
 		},
 		{
 			MethodName: "WriteCheck",

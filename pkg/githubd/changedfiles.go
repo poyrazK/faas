@@ -40,6 +40,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -58,6 +59,24 @@ var ErrTruncated = errors.New("changedfiles: diff truncated; rebuild all")
 // maps any non-nil error to the "rebuild all" fallback too —
 // conservative v1.0 posture.
 var ErrUnavailable = errors.New("changedfiles: lookup failed")
+
+// ErrBreakerOpen is returned by the wrappingChangedFiles client
+// when the circuit breaker is tripped. The caller maps this to
+// the "rebuild all" fallback per ADR-050 §109, the same as
+// ErrTruncated / ErrUnavailable. Distinguished from those so the
+// githubd_path_filter_total{breaker_open} counter can be
+// incremented independently — the breaker is a separate
+// observability channel from a single transient compare-API
+// failure.
+//
+// Trip conditions: breakerFailureThreshold (3) consecutive
+// non-truncation errors within breakerFailureWindow (5 min).
+// Reset: a single success clears the counter; if tripped, the
+// breaker auto-resets after breakerCooldown (10 min). The
+// cooldown is intentionally longer than the failure window —
+// a tripped breaker that resets inside the failure window
+// would re-trip on the same upstream outage.
+var ErrBreakerOpen = errors.New("changedfiles: breaker open")
 
 // compareFilesCap is the documented per-page ceiling on the
 // files[] array GitHub returns from compare. When the array hits
@@ -105,6 +124,146 @@ func NewHTTPChangedFiles(tokens *TokenCache, httpClient HTTPClient) ChangedFiles
 		httpClient:  httpClient,
 		maxRetries:  2,
 		baseBackoff: 200 * time.Millisecond,
+	}
+}
+
+// Breaker constants for the wrappingChangedFiles circuit
+// breaker (issue #432 phase 5 / ADR-050 §109). The defaults
+// match the plan's risk register: 3 consecutive failures trips
+// the breaker; a 5-min failure window matches the upstream
+// GitHub compare-API rate-limit window (5000/h per install);
+// the 10-min cooldown is intentionally longer than the failure
+// window so a re-trip on the same outage doesn't double-fire.
+const (
+	breakerFailureThreshold = 3
+	breakerFailureWindow    = 5 * time.Minute
+	breakerCooldown         = 10 * time.Minute
+)
+
+// NewBreakerChangedFiles wraps inner with a circuit breaker.
+// The breaker is a thin decorator — production wiring is
+// NewBreakerChangedFiles(NewHTTPChangedFiles(...)). The
+// returned client implements ChangedFilesClient; the breaker
+// state is internal to the wrapper and not exported.
+//
+// now is the clock seam so tests can advance time without
+// sleeping. Nil falls back to time.Now (the production path).
+//
+// Concurrency: a sync.Mutex guards the failure counter + the
+// trippedUntil field. The inner client's transport is
+// goroutine-safe (it owns the http.Client), so a single
+// wrapper instance can be shared across webhook goroutines.
+func NewBreakerChangedFiles(inner ChangedFilesClient, now func() time.Time) ChangedFilesClient {
+	if inner == nil {
+		return nil
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &wrappingChangedFiles{inner: inner, now: now}
+}
+
+// wrappingChangedFiles is the breaker wrapper. It tracks
+// consecutive non-truncation errors (ErrUnavailable, transport,
+// 4xx/5xx) and trips after breakerFailureThreshold in
+// breakerFailureWindow. A successful call resets the counter
+// to zero. Once tripped, all calls return ErrBreakerOpen
+// until breakerCooldown elapses, at which point the next call
+// is allowed through (half-open state isn't implemented — the
+// breaker is "open-or-closed", and a single success resets the
+// failure count from any prior trip).
+//
+// ErrTruncated (the canonical "rebuild all" signal) is NOT a
+// failure — the upstream is responding, the diff is just big.
+// Counting truncations toward the breaker threshold would
+// conflate "rate-limit / outage" with "big push to a popular
+// repo" and cause the breaker to trip on every push to a busy
+// monorepo.
+type wrappingChangedFiles struct {
+	inner        ChangedFilesClient
+	now          func() time.Time
+	mu           sync.Mutex
+	failureCount int
+	firstFailure time.Time
+	trippedUntil time.Time
+}
+
+// ChangedFiles delegates to the inner client unless the
+// breaker is tripped. On success the counter resets; on
+// non-truncation errors the counter increments and the
+// breaker may trip.
+func (w *wrappingChangedFiles) ChangedFiles(
+	ctx context.Context,
+	installationID int64,
+	owner, repo, base, head string,
+) ([]string, error) {
+	now := w.now()
+	if w.isOpen(now) {
+		return nil, ErrBreakerOpen
+	}
+	files, err := w.inner.ChangedFiles(ctx, installationID, owner, repo, base, head)
+	w.recordOutcome(now, err)
+	return files, err
+}
+
+// isOpen reports whether the breaker is tripped at t. The
+// caller passes w.now() so the check uses the same clock the
+// caller did for any time-based decisions. A tripped breaker
+// auto-resets once the cooldown elapses — the next call is
+// allowed through unconditionally; a single failure during
+// the half-open window re-trips it for another full cooldown.
+func (w *wrappingChangedFiles) isOpen(t time.Time) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.trippedUntil.IsZero() {
+		return false
+	}
+	if !t.Before(w.trippedUntil) {
+		// Cooldown elapsed; reset state and let the call through.
+		w.trippedUntil = time.Time{}
+		w.failureCount = 0
+		w.firstFailure = time.Time{}
+		return false
+	}
+	return true
+}
+
+// recordOutcome updates the breaker state after an inner
+// call. Truncation is NOT a failure (the upstream is healthy;
+// the diff is too big — see wrappingChangedFiles doc-comment).
+// A success resets the counter regardless of the failure
+// window. A failure increments the counter; if the counter
+// hits breakerFailureThreshold AND all those failures fall
+// within breakerFailureWindow, the breaker trips.
+func (w *wrappingChangedFiles) recordOutcome(t time.Time, err error) {
+	if err == nil {
+		w.mu.Lock()
+		w.failureCount = 0
+		w.firstFailure = time.Time{}
+		w.mu.Unlock()
+		return
+	}
+	if errors.Is(err, ErrTruncated) {
+		// Upstream is healthy; the diff is just big.
+		// Counting toward the breaker threshold would
+		// cause false trips on popular-repo pushes.
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	// If the first failure was outside the failure window,
+	// reset the counter so a slow-drip failure pattern
+	// doesn't accumulate forever.
+	if !w.firstFailure.IsZero() && t.Sub(w.firstFailure) > breakerFailureWindow {
+		w.failureCount = 0
+		w.firstFailure = time.Time{}
+	}
+	if w.firstFailure.IsZero() {
+		w.firstFailure = t
+	}
+	w.failureCount++
+	if w.failureCount >= breakerFailureThreshold {
+		w.trippedUntil = t.Add(breakerCooldown)
 	}
 }
 
