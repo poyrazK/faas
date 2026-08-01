@@ -123,4 +123,3 @@ func TestHostKeyPath_Precedence(t *testing.T) {
 		t.Errorf("FAAS_HOST_AGE_IDENTITY_PATH hostKeyPath() = %q, want /credential/identity.age", got)
 	}
 }
-
