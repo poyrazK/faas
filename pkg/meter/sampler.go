@@ -6,9 +6,43 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// FloorNamespace (ADR-060, issue #515) is the UUID v5 namespace
+// for synthetic floor instance IDs. Derived from uuid.NameSpaceURL +
+// "onebox-faas/meterd/floor/v1" so the lineage is visible in the
+// UUID itself (any operator can decode the namespace via uuid.Parse +
+// introspection). Frozen forever — changing it changes every existing
+// floor row's identity and breaks AppendUsage first-write-wins
+// idempotency on (instance_id, minute) across an upgrade. Any future
+// rotation must be a new namespace string (v2, v3, …) plus a
+// one-shot migration that re-keys existing floor rows.
+var FloorNamespace = uuid.NewSHA1(
+	uuid.NameSpaceURL,
+	[]byte("onebox-faas/meterd/floor/v1"),
+)
+
+// FloorInstanceID returns the deterministic UUID v5 for the
+// i-th floor slot of appID. Pure function: the same (appID, i)
+// always produces the same UUID, so first-write-wins on
+// (instance_id, minute) is preserved across re-ticks of the same
+// minute. The :floor: lineage is preserved in the namespace name.
+//
+// usage_minutes.instance_id is a UUID column
+// (migrations/00001_init.sql:99, PK (instance_id, minute)) and
+// PgStore.AppendUsage passes the ID raw — a non-UUID string would
+// fail INSERT with 22P02 invalid_text_representation. UUID v5 is
+// the only synthetic-ID scheme that satisfies both the schema type
+// and the first-write-wins idempotency contract.
+func FloorInstanceID(appID string, i int) uuid.UUID {
+	return uuid.NewSHA1(
+		FloorNamespace,
+		[]byte(fmt.Sprintf("%s:%d", appID, i)),
+	)
+}
 
 // CPUSource is the per-instance cumulative CPU-µs reader the sampler
 // uses to compute the per-minute delta. Production wires this to
@@ -195,6 +229,21 @@ type RolledRow struct {
 	// wired or the instance is in WAKE_RESTORE steady-
 	// state for the whole minute.
 	ColdBootCount int32
+	// SyntheticFloor (ADR-060, issue #515) marks a row
+	// generated to satisfy the per-app min_instances GB-h
+	// floor. True when the row's mb_seconds is NOT backed
+	// by a live instance but is appended to fill the gap
+	// between live instance count and
+	// ScalingPolicy.MinInstances. Used for observability
+	// (meterd_floor_applied_total{plan}) and the floor-vs-
+	// sampled property test; storage shape is unchanged
+	// (synthetic rows go through the same AppendUsage
+	// path with a UUID v5 instance ID via FloorInstanceID).
+	// The DB column is UUID, so the lineage cannot be
+	// inferred from the instance_id alone; this bool is
+	// the in-memory marker. Not persisted as a separate
+	// column — the synthetic identity is the UUID v5.
+	SyntheticFloor bool
 }
 
 // SampleAndRoll walks every app's live instances and appends one minute of
@@ -226,6 +275,12 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 		if err != nil {
 			return nil, err
 		}
+		// liveCount tracks CountsForRAM() instances for the
+		// floor math below (ADR-060, issue #515). CountsForRAM
+		// is the same predicate the live-instance loop uses,
+		// so the floor is symmetric with the rows we just
+		// wrote — never over- nor under-counting.
+		liveCount := 0
 		for _, ins := range ins {
 			if !state.State(ins.State).CountsForRAM() {
 				continue
@@ -275,6 +330,64 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 				return out, err
 			}
 			out = append(out, row)
+			liveCount++
+		}
+		// PR-A (ADR-060, issue #515): per-app GB-h floor for
+		// ScalingPolicy.MinInstances. When the floor is set
+		// and live instance count is below it, append
+		// (MinInstances - liveCount) synthetic rows whose
+		// total mb_seconds equals the floor's worth. Floor
+		// applies from t=0 — the reaper's first-minute
+		// warm-up window is billable (customer pays for the
+		// warm slot from the moment they configure it).
+		//
+		// Synthetic IDs are deterministic UUID v5
+		// (FloorInstanceID below) because
+		// usage_minutes.instance_id is a UUID column and
+		// PgStore.AppendUsage passes the ID raw. UUID v5
+		// preserves first-write-wins idempotency on
+		// (instance_id, minute) across re-ticks (the ID is
+		// a pure function of (appID, ordinal)). The total
+		// is split evenly across the gap; remainder goes
+		// to slot 0 so the integer sum is exact.
+		//
+		// The loop is fail-fast on AppendUsage errors:
+		// if a live-row write errors, we returned above
+		// without entering this block. If a synthetic-row
+		// write errors, we return here. A single tick of
+		// "no floor" is preferable to "floor without live
+		// rows" — partial floor state is more confusing to
+		// the customer than a missed minute.
+		policy := state.ScalingPolicyOrDefault(app.ScalingPolicy)
+		if policy.MinInstances > 0 && liveCount < policy.MinInstances {
+			gap := policy.MinInstances - liveCount
+			billable := api.BillableRAMMB(app.RAMMB)
+			floorTotal := int64(gap) * MBSecondsPerMinute(billable)
+			perRow := floorTotal / int64(gap)
+			remainder := floorTotal - perRow*int64(gap)
+			for i := 0; i < gap; i++ {
+				mb := perRow
+				if i == 0 {
+					mb += remainder
+				}
+				instanceID := FloorInstanceID(app.ID, i).String()
+				// Additive columns are zero (cpu_usec, tx_bytes,
+				// net_tx_bytes, net_rx_bytes, cold_boot_count,
+				// requests) — matches the "instance just parked, no
+				// traffic yet" shape. Only mb_seconds is non-zero.
+				if err := s.store.AppendUsage(ctx, app.AccountID, app.ID, instanceID, minute, mb, 0, 0, 0, 0, 0, 0); err != nil {
+					return out, err
+				}
+				out = append(out, RolledRow{
+					InstanceID:    instanceID,
+					AppID:         app.ID,
+					AccountID:     app.AccountID,
+					Minute:        minute,
+					AdmissionMB:   billable,
+					MBSeconds:     mb,
+					SyntheticFloor: true,
+				})
+			}
 		}
 	}
 	return out, nil
