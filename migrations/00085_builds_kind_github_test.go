@@ -71,10 +71,10 @@ func TestMigrations_00085_BuildsKindGitHub(t *testing.T) {
 		t.Fatalf("seed deployment: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		insert into builds (id, deployment_id, kind, source_bytes, status, created_at)
+		insert into builds (id, deployment_id, kind, source_bytes, status)
 		values ('00000000-0000-0000-0000-000000000385',
 		        '00000000-0000-0000-0000-000000000285',
-		        'github', 1, 'queued', now())
+		        'github', 1, 'queued')
 	`); err != nil {
 		t.Fatalf("insert build kind=github: %v (regression: CHECK did not accept the new value)", err)
 	}
@@ -83,10 +83,10 @@ func TestMigrations_00085_BuildsKindGitHub(t *testing.T) {
 	// rejected. This pins that the relaxation didn't open the column
 	// to "any text".
 	_, err := pool.Exec(ctx, `
-		insert into builds (id, deployment_id, kind, source_bytes, status, created_at)
+		insert into builds (id, deployment_id, kind, source_bytes, status)
 		values ('00000000-0000-0000-0000-000000000485',
 		        '00000000-0000-0000-0000-000000000285',
-		        'cli', 1, 'queued', now())
+		        'cli', 1, 'queued')
 	`)
 	if err == nil {
 		t.Errorf("builds.kind='cli' was accepted; CHECK did not preserve the closed vocabulary")
