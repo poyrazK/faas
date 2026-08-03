@@ -629,20 +629,15 @@ gateway_synth_socket = %q
 // extraEnv is appended last so a test can inject extra knobs if needed
 // (none today; mirrors startMeterd's signature).
 //
-// apid_loopback is wired to h.APIDURL (set by startAPID before this runs)
-// so the apid-side routes (when PR-B lands) proxy to the per-test apid
-// — without it, the future gatewayd falls back to the production
-// default http://127.0.0.1:8081 and a test that hits the gateway would
-// forward to a phantom apid.
+// PR-B (run.go) will reintroduce h.APIDURL plumbing — the production
+// proxy at cmd/gatewayd-internal/proxy.go forwards isApidPath
+// requests to h.APIDURL, and a future revision of this harness will
+// set FAAS_APID_LOOPBACK=… so the per-test apid is reachable.
 func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []string) {
 	t.Helper()
 	controlAddr := freeTCPAddr(t)
 	if h.ScheddSock == "" {
 		h.ScheddSock = filepath.Join(h.SockDir, "schedd.sock")
-	}
-	apidLoopback := h.APIDURL
-	if apidLoopback == "" {
-		apidLoopback = "http://127.0.0.1:8081"
 	}
 
 	// Tier-A7 placeholder daemon (cmd/gatewayd-internal/main.go):
