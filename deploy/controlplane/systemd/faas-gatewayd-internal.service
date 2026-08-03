@@ -1,0 +1,60 @@
+[Unit]
+Description=onebox-faas gatewayd-internal — routing + wake + proxy (Tier A7 split, ADR-070)
+Documentation=https://docs.gregale.dev/ops/gatewayd-internal
+# gatewayd-internal is the daemon gatewayd-public forwards to. It
+# must come up AFTER apid (route table source of truth) and schedd
+# (per-node Wake gRPC). Internal does NOT bind a public port — it
+# listens on a unix socket inside the box (ADR-015/018).
+After=faas-cp.slice network-online.target faas-apid.service faas-schedd.service
+Wants=faas-cp.slice faas-apid.service faas-schedd.service
+
+[Service]
+Type=simple
+ExecStart=/opt/faas/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml
+Restart=on-failure
+RestartSec=2s
+
+Slice=faas-cp.slice
+MemoryMax=512M
+
+# Internal daemon does NOT bind a public port. No
+# AmbientCapabilities=CAP_NET_BIND_SERVICE.
+
+# Hardening baseline — gatewayd-internal is NOT root; runs as faas:faas.
+User=faas
+Group=faas
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+# Unix-only (no AF_INET/AF_INET6 — we never dial external IPs from
+# here; all forwarding is via the unix socket to the public daemon
+# and gRPC to per-node schedd/vmmd over loopback mTLS).
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+
+# /run/faas is owned by faas-vmmd.service (the SOLE RuntimeDirectory=faas
+# across the faas service set). Declaring it here would create a SECOND
+# per-unit tmpfs instance whose bind-mount does not propagate back to the
+# host /run, so gatewayd-internal.sock would land inside this unit's own
+# tmpfs and be invisible to the public daemon (run 30841750214).
+# ReadWritePaths=/run/faas below is sufficient — this unit writes into
+# the host /run/faas directory that vmmd's RuntimeDirectory created.
+# Mode 0660 + group faas on the socket file itself is the §11 ACL
+# (ADR-015) — only faas:faas can dial.
+ReadWritePaths=/run/faas
+
+[Install]
+WantedBy=multi-user.target

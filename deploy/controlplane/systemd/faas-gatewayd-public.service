@@ -1,0 +1,59 @@
+[Unit]
+Description=onebox-faas gatewayd-public — TLS-only edge (Tier A7 split, ADR-070)
+Documentation=https://docs.gregale.dev/ops/gatewayd-public
+# gatewayd-public depends on apid (route cache mirror subscribes to
+# app_changed / domain_changed pg_notify) and gatewayd-internal (the
+# unix-socket target we forward every inbound request to). Internal
+# must be ready before the public daemon can pass /readyz itself.
+After=faas-cp.slice network-online.target faas-apid.service faas-gatewayd-internal.service
+Wants=faas-cp.slice faas-apid.service faas-gatewayd-internal.service
+
+[Service]
+Type=simple
+ExecStart=/opt/faas/bin/gatewayd-public --config /etc/faas/gatewayd-public.toml
+Restart=on-failure
+RestartSec=2s
+
+Slice=faas-cp.slice
+MemoryMax=512M
+
+# Public listener: TLS on :443 + ACME HTTP-01 on :80. CAP_NET_BIND_SERVICE
+# is the only capability needed (the daemon runs as faas user, not root).
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Hardening baseline — gatewayd-public is NOT root; runs as faas:faas.
+User=faas
+Group=faas
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+
+# CertMagic per-replica storage at /var/lib/faas/certs (mode 0700,
+# faas:faas). ReadWritePaths carves out exactly the dirs we write to.
+#
+# /run/faas is owned by faas-vmmd.service (the SOLE RuntimeDirectory=faas
+# across the faas service set). The public daemon dials
+# gatewayd-internal.sock, which lives in the host /run/faas (vmmd's
+# bind-mount) — so we need ReadWritePaths=/run/faas. Declaring
+# RuntimeDirectory=faas here would just create a second per-unit tmpfs
+# whose bind-mount wouldn't propagate back to /run.
+ReadWritePaths=/var/lib/faas/certs /run/faas
+ReadOnlyPaths=/etc/faas
+
+[Install]
+WantedBy=multi-user.target

@@ -110,7 +110,8 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             root@${{ env.CP_HOST }} "mkdir -p /opt/faas/bin/deploy-tmp"
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            bin/apid bin/schedd bin/gatewayd bin/imaged bin/meterd \
+            bin/apid bin/schedd bin/gatewayd bin/gatewayd-public \
+            bin/gatewayd-internal bin/imaged bin/meterd \
             bin/githubd bin/vmmd bin/gregale bin/migrate \
             root@${{ env.CP_HOST }}:/opt/faas/bin/deploy-tmp/
 
@@ -147,6 +148,14 @@ jobs:
               systemctl daemon-reload
               systemctl reset-failed
               systemctl enable faas-vmmd.service
+              # Tier A7 (ADR-070): once the gatewayd-public + gatewayd-internal
+              # pair is in the box and enabled, the legacy gatewayd daemon
+              # would race them on :9090. Disable + stop it (idempotent: a
+              # first-time deploy on a freshly-migrated box has nothing to
+              # stop, and a never-migrated box has nothing to disable).
+              systemctl enable faas-gatewayd-public.service faas-gatewayd-internal.service 2>/dev/null || true
+              systemctl stop    faas-gatewayd.service                  2>/dev/null || true
+              systemctl disable faas-gatewayd.service                  2>/dev/null || true
               echo '→ systemd units synced and daemon-reloaded'"
 
       - name: Install binaries, run migrations & restart services
@@ -155,16 +164,23 @@ jobs:
             root@${{ env.CP_HOST }} 'bash -s' << 'REMOTE'
           set -euo pipefail
 
-          FAAS_SERVICES="vmmd apid schedd gatewayd imaged meterd githubd"
-          # vmmd first (socket owner of /run/faas/vmmd.sock), then its dependents,
-          # then githubd (no vmmd dep). PR #610's systemd After= only orders STARTUP;
-          # this explicit list drives restart order during deploy.
-          FAAS_RESTART_ORDER="vmmd apid schedd gatewayd imaged meterd githubd"
+          FAAS_SERVICES="vmmd apid schedd gatewayd-public gatewayd-internal imaged meterd githubd"
+          # vmmd first (socket owner of /run/faas/vmmd.sock), then apid (route-table
+          # source), then gatewayd-internal + schedd (gatewayd-internal's deps),
+          # then gatewayd-public (the TLS edge; depends on gatewayd-internal),
+          # then imaged/meterd (vmmd dependents), then githubd (no vmmd dep).
+          # PR #610's systemd After= only orders STARTUP; this drives restart
+          # during deploy.
+          FAAS_RESTART_ORDER="vmmd apid schedd gatewayd-internal gatewayd-public imaged meterd githubd"
           if [[ "${FAAS_SERVICES}" != "${FAAS_RESTART_ORDER}" ]]; then
             echo "::error::FAAS_SERVICES and FAAS_RESTART_ORDER diverged; update both to keep dependency ordering correct"
             exit 1
           fi
-          BINARIES="apid schedd gatewayd imaged meterd githubd vmmd gregale migrate"
+          # Includes the legacy gatewayd binary during the migration window
+          # (ADR-070 keeps it in-tree). Treat it as a no-op install target on
+          # boxes that have fully migrated to the split pair (below we
+          # `systemctl disable` the legacy unit once the split pair is up).
+          BINARIES="apid schedd gatewayd gatewayd-public gatewayd-internal imaged meterd githubd vmmd gregale migrate"
           # NOT under /opt/faas/bin: survives a failed deploy + nothing globs it.
           ROLLBACK_DIR=/opt/faas/rollback
 
@@ -198,7 +214,7 @@ jobs:
                 systemctl is-active --quiet "faas-${svc}" || bad="${bad} ${svc}"
               done
               if [[ -z "${bad}" ]] && curl -sf --max-time 5 \
-                   http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+                   http://127.0.0.1:9090/healthz >/dev/null 2>&1; then
                 before="$(restart_counts)"
                 sleep 12
                 after="$(restart_counts)"
@@ -440,7 +456,7 @@ jobs:
             exit 1
           fi
 
-          # Health gate. Probes gatewayd (loopback :8080), not apid directly
+          # Health gate. Probes gatewayd-public (loopback :9090), not apid directly
           # — spec §11 binds apid to loopback-only and gatewayd
           # reverse-proxies /healthz onto apid, so this exercises the full
           # proxy chain end-to-end (issue #85 PR 1 + PR 2).
@@ -484,7 +500,7 @@ jobs:
 
           echo "2. Verifying Control API healthz endpoint..."
           STATUS=$(curl -sf -o /dev/null -w '%{http_code}' \
-            "http://${{ env.CP_HOST }}:8080/healthz" || echo 000)
+            "http://${{ env.CP_HOST }}:9090/healthz" || echo 000)
           echo "Control API /healthz status code: $STATUS"
           if [[ "$STATUS" != "200" ]]; then
             echo "::error::Control API health check failed with status $STATUS"
