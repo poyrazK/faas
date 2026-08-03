@@ -164,7 +164,7 @@ jobs:
             root@${{ env.CP_HOST }} 'bash -s' << 'REMOTE'
           set -euo pipefail
 
-          FAAS_SERVICES="vmmd apid schedd gatewayd-public gatewayd-internal imaged meterd githubd"
+          FAAS_SERVICES="vmmd apid schedd gatewayd-internal gatewayd-public imaged meterd githubd"
           # vmmd first (socket owner of /run/faas/vmmd.sock), then apid (route-table
           # source), then gatewayd-internal + schedd (gatewayd-internal's deps),
           # then gatewayd-public (the TLS edge; depends on gatewayd-internal),
