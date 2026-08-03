@@ -7,7 +7,7 @@ GOARCH  ?= $(shell $(GO) env GOARCH)
 export GOOS GOARCH
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid gatewayd-public gatewayd-internal schedd vmmd builderd imaged meterd gregale githubd hostage-gen
+DAEMONS := apid gatewayd gatewayd-public gatewayd-internal schedd vmmd builderd imaged meterd gregale githubd hostage-gen
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION)
 BINDIR  := bin
