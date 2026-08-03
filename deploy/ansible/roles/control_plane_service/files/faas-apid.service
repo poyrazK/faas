@@ -62,7 +62,7 @@ LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
 # sealed under either key unseal during the overlap. systemd
 # materialises whatever's on disk; this LoadCredential is a
 # no-op pre-rotation.
-LoadCredential=faas_host_age_identity_previous:/etc/faas/secrets/host.age.previous
+LoadCredential=faas_host_age_identity_previous:-/etc/faas/secrets/host.age.previous
 Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_host_age_identity
 
 # Hardening baseline.
