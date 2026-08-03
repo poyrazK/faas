@@ -271,7 +271,7 @@ func runDrain(ctx context.Context, log *slog.Logger, internalSrv, controlSrv *ht
 		}
 	}()
 	go func() {
-		log.Info("gatewayd-internal: control listening", "addr", controlAddr)
+		log.Info("gatewayd-internal: control listening", "addr", defaultControlAddr)
 		if err := controlSrv.Serve(controlListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
