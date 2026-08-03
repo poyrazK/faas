@@ -30,6 +30,14 @@ import (
 // to lowercase in the in-memory MD. The full header form (with x-faas-
 // prefix) is used when reading HTTP headers; the gRPC keys drop the
 // prefix because the prefix is meaningless inside the metadata carrier.
+//
+// x-faas-trace-id and x-faas-span-id are the OTel span-context carriers
+// (issue #555). The runtime source of truth for OTel propagation is
+// the W3C `traceparent` header (mounted by contrib/otelgrpc); these
+// x-faas-* keys are an internal backup so the existing slog envelope
+// can surface trace_id/span_id without re-parsing the traceparent
+// header at every read site. Schedd stamps the x-faas-* keys onto the
+// MD alongside the traceparent that otelgrpc writes.
 const (
 	mdKeyRequestID    = "x-faas-request-id"
 	mdKeyWakeID       = "x-faas-wake-id"
@@ -37,6 +45,8 @@ const (
 	mdKeyDeploymentID = "x-faas-deployment-id"
 	mdKeyInstanceID   = "x-faas-instance-id"
 	mdKeyInvocationID = "x-faas-invocation-id"
+	mdKeyTraceID      = "x-faas-trace-id"
+	mdKeySpanID       = "x-faas-span-id"
 )
 
 // WithCorrelationOutgoing attaches fields to ctx as gRPC outgoing
@@ -75,6 +85,12 @@ func WithCorrelationOutgoing(ctx context.Context, fields CorrelationFields) cont
 	}
 	if fields.InvocationID != "" {
 		pairs = append(pairs, mdKeyInvocationID, fields.InvocationID)
+	}
+	if fields.TraceID != "" {
+		pairs = append(pairs, mdKeyTraceID, fields.TraceID)
+	}
+	if fields.SpanID != "" {
+		pairs = append(pairs, mdKeySpanID, fields.SpanID)
 	}
 	if len(pairs) == 0 {
 		return ctx
@@ -137,6 +153,14 @@ func CorrelationFromIncoming(ctx context.Context) (CorrelationFields, bool) {
 	}
 	if v := md.Get(mdKeyInvocationID); len(v) > 0 && v[0] != "" {
 		out.InvocationID = v[0]
+		any = true
+	}
+	if v := md.Get(mdKeyTraceID); len(v) > 0 && v[0] != "" {
+		out.TraceID = v[0]
+		any = true
+	}
+	if v := md.Get(mdKeySpanID); len(v) > 0 && v[0] != "" {
+		out.SpanID = v[0]
 		any = true
 	}
 	return out, any

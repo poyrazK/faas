@@ -34,6 +34,13 @@ import (
 // Correlation field names emitted as slog attributes. Stable contract:
 // downstream log filters (Loki, the §12 dashboard alerts) match on these
 // exact keys. Renaming any of these is a breaking change.
+// FieldTraceID and FieldSpanID are the OTel span-context fields an
+// upstream ingress (gatewayd-public) or a wired wire.OtelInit (PR-1
+// of issue #555) lifts onto every slog record. They sit alongside the
+// existing correlation envelope: wake_id is the OTel trace_id
+// (UUIDv7, see schedd engine Phase 2), span_id is the currently
+// active span. Renaming any of these is a breaking change for Loki
+// filters and the §12 dashboard.
 const (
 	FieldRequestID    = "request_id"
 	FieldWakeID       = "wake_id"
@@ -41,17 +48,27 @@ const (
 	FieldDeploymentID = "deployment_id"
 	FieldInstanceID   = "instance_id"
 	FieldInvocationID = "invocation_id"
+	FieldTraceID      = "trace_id"
+	FieldSpanID       = "span_id"
 	FieldDaemon       = "daemon"
 )
 
 // CorrelationFields is the canonical set of fields that identify a single
 // inbound request or a single wake lifecycle. The struct is additive —
-// new fields (e.g. cron_id, build_id) can be added without breaking the
-// log contract as long as the wire-side metadata helper in grpcmetadata.go
-// carries them too.
+// new fields (e.g. cron_id, build_id, trace_id, span_id) can be added
+// without breaking the log contract as long as the wire-side metadata
+// helper in grpcmetadata.go carries them too.
 //
 // All fields are optional; a producer may pass a half-filled struct and
 // the empty fields are silently dropped from the emitted slog record.
+//
+// TraceID and SpanID are the OTel span context (issue #555). TraceID is
+// canonically the same value as WakeID on a cold-wake path (the engine
+// mints a UUIDv7 at Phase 2 and we reuse it as the OTel trace_id per
+// the design decision on issue #555). On a warm hit where no wake_id
+// is minted, the gateway-level traceparent is the source. The two
+// fields are kept separately so the slog envelope stays clean when
+// producers carry one but not the other.
 type CorrelationFields struct {
 	RequestID    string
 	WakeID       string
@@ -59,6 +76,8 @@ type CorrelationFields struct {
 	DeploymentID string
 	InstanceID   string
 	InvocationID string
+	TraceID      string
+	SpanID       string
 }
 
 // FromContext returns the correlation fields stored on ctx by the inbound
@@ -177,6 +196,12 @@ func appendCorrelationAttrs(attrs []any, fields CorrelationFields) []any {
 	}
 	if fields.InvocationID != "" {
 		attrs = append(attrs, FieldInvocationID, logsanitize.Field(fields.InvocationID))
+	}
+	if fields.TraceID != "" {
+		attrs = append(attrs, FieldTraceID, logsanitize.Field(fields.TraceID))
+	}
+	if fields.SpanID != "" {
+		attrs = append(attrs, FieldSpanID, logsanitize.Field(fields.SpanID))
 	}
 	return attrs
 }

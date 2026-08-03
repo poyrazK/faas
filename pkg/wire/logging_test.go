@@ -46,6 +46,9 @@ func TestNewCorrelationLogger_EmitsCanonicalFields(t *testing.T) {
 		DeploymentID: "dep-1",
 		InstanceID:   "ins-1",
 		InvocationID: "inv-1",
+		// OTel span context (issue #555 PR-1 envelope extension).
+		TraceID: "00000000000000000000000000000001",
+		SpanID:  "0000000000000001",
 	}, "schedd")
 	log.Info("hello", "k", "v")
 
@@ -61,6 +64,8 @@ func TestNewCorrelationLogger_EmitsCanonicalFields(t *testing.T) {
 		"deployment_id": "dep-1",
 		"instance_id":   "ins-1",
 		"invocation_id": "inv-1",
+		"trace_id":      "00000000000000000000000000000001",
+		"span_id":       "0000000000000001",
 		"daemon":        "schedd",
 		"msg":           "hello",
 		"k":             "v",
@@ -86,7 +91,7 @@ func TestNewCorrelationLogger_DropsEmptyFields(t *testing.T) {
 		t.Fatalf("got %d records, want 1", len(recs))
 	}
 	rec := recs[0]
-	for _, absent := range []string{"wake_id", "app_id", "deployment_id", "instance_id", "invocation_id"} {
+	for _, absent := range []string{"wake_id", "app_id", "deployment_id", "instance_id", "invocation_id", "trace_id", "span_id"} {
 		if _, ok := rec[absent]; ok {
 			t.Errorf("expected field %q to be dropped, got %v", absent, rec[absent])
 		}

@@ -90,6 +90,8 @@ func TestWithCorrelationOutgoing_SkipsEmptyFields(t *testing.T) {
 		"x-faas-deployment-id",
 		"x-faas-instance-id",
 		"x-faas-invocation-id",
+		"x-faas-trace-id",
+		"x-faas-span-id",
 	} {
 		if got := md.Get(key); len(got) > 0 {
 			t.Errorf("expected empty key %q to be skipped, got %v", key, got)
