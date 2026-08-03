@@ -285,7 +285,7 @@ jobs:
           # /run/faas: pre-create as plain root:root 0755 — vmmd's RuntimeDirectory
           # (SOLE owner per deploy/systemd/faas-vmmd.service) bind-mounts its
           # per-unit tmpfs over it on first start. Do NOT chown here.
-          mkdir -p /run/faas /etc/faas/secrets /var/lib/faas/githubd /var/log/faas /var/spool/faas
+          mkdir -p /run/faas /etc/faas/secrets /var/lib/faas/certs /var/lib/faas/githubd /var/log/faas /var/spool/faas
           chown -R faas:faas /var/lib/faas /var/log/faas /var/spool/faas 2>/dev/null || true
           chmod 0770 /var/lib/faas /var/lib/faas/githubd /var/log/faas /var/spool/faas 2>/dev/null || true
 

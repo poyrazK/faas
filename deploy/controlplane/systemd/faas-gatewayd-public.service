@@ -55,5 +55,13 @@ ProtectProc=invisible
 ReadWritePaths=/var/lib/faas/certs /run/faas
 ReadOnlyPaths=/etc/faas
 
+# Bypass compute_nodes DB lookup (cmd/gatewayd-public/main.go:386).
+# Single-box deploys don't seed the table — the env-supplied
+# identity is the documented fallback. Run 30848763268 hit
+# "no active compute_nodes row; bootstrap the box first" without
+# these.
+Environment="FAAS_NODE_ID=local-box"
+Environment="FAAS_NODE_NAME=local"
+
 [Install]
 WantedBy=multi-user.target

@@ -32,10 +32,13 @@ PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-# Unix-only (no AF_INET/AF_INET6 — we never dial external IPs from
-# here; all forwarding is via the unix socket to the public daemon
-# and gRPC to per-node schedd/vmmd over loopback mTLS).
-RestrictAddressFamilies=AF_UNIX
+# Unix-only listener at /run/faas/gatewayd-internal.sock plus the
+# loopback control plane on 127.0.0.1:9091 (FAAS_PUBLIC_CONTROL_ADDR,
+# per pkg/wire/server.go — read by certsync + the readiness probe).
+# All forwarding is via the unix socket to the public daemon and
+# gRPC to per-node schedd/vmmd over loopback mTLS. We never dial
+# external IPs from here.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SystemCallArchitectures=native
 LockPersonality=yes
 RestrictNamespaces=yes

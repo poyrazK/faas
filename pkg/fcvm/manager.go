@@ -665,11 +665,16 @@ func (m *Manager) ForwardStatelessAdvisory(ctx context.Context, instance, appID 
 // identified by `storageKey` read-only and returns the absolute
 // host path of the mountpoint. The flow:
 //
-//  1. Stage the StorageBackend bytes into /tmp/faas-parent-src-*
-//     via a sibling-temp tmp file so the Storage.Put pattern in
-//     pkg/rootfs (which mkdirs its staging dir elsewhere) doesn't
-//     collide. The tmp file is the loopback source.
-//  2. Create /tmp/faas-parent-mnt-* via vmmdmount.MountExt4ReadOnly.
+//  1. Stage the StorageBackend bytes into
+//     vmmdmount.MountRoot/faas-parent-src-* (currently
+//     /srv/fc/parent/faas-parent-src-*) via a sibling-temp tmp file
+//     so the Storage.Put pattern in pkg/rootfs (which mkdirs its
+//     staging dir elsewhere) doesn't collide. The tmp file is the
+//     loopback source. Lives under /srv/fc/parent, not /tmp, because
+//     vmmd's unit whitelists /srv/fc via ReadWritePaths but leaves
+//     /tmp read-only under ProtectSystem=strict (run 30848763268).
+//  2. Create vmmdmount.MountRoot/faas-parent-mnt-* via
+//     vmmdmount.MountExt4ReadOnly.
 //  3. Register (mountpoint, storageKey) in parentMounts; load-shed
 //     the oldest entry when the cap is reached.
 //  4. The src tmp is removed on UmountParentExt4 (it lives as long
@@ -697,7 +702,15 @@ func (m *Manager) MountParentExt4(ctx context.Context, storageKey string) (strin
 	}
 	defer func() { _ = rc.Close() }()
 
-	src, err := os.CreateTemp("", parentSrcPrefix)
+	// vmmdmount.MountRoot (pkg/vmmdmount/mount.go:71) — created by
+	// bootstrap as 0750 root:faas. vmmd's unit whitelists /srv/fc via
+	// ReadWritePaths (deploy/etc/faas-vmmd.service:20), but /tmp is
+	// not whitelisted and ProtectSystem=strict would block the
+	// CreateTemp call there (run 30848763268 — imaged → vmmd RPC
+	// "create src tmp: open /tmp/faas-parent-src-NNNN: read-only
+	// file system"). The umount/rmdir sweeps in pkg/vmmdmount also
+	// expect src files under MountRoot.
+	src, err := os.CreateTemp(vmmdmount.MountRoot, parentSrcPrefix)
 	if err != nil {
 		return "", fmt.Errorf("parent mount: create src tmp: %w", err)
 	}
