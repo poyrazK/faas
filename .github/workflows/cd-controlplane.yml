@@ -144,6 +144,7 @@ jobs:
               rm -f '${TMP_DST}'
               chmod 0644 /etc/systemd/system/faas-*.service /etc/systemd/system/faas-*.slice 2>/dev/null || true
               systemctl daemon-reload
+              systemctl reset-failed
               systemctl enable faas-vmmd.service
               echo '→ systemd units synced and daemon-reloaded'"
 
@@ -449,8 +450,12 @@ jobs:
             exit 1
           fi
 
+          # Reset any systemd start-limit-hit counters from previous crash loops
+          systemctl reset-failed
+
           # Restart all FaaS services.
           for svc in ${FAAS_SERVICES}; do
+            systemctl reset-failed "faas-${svc}.service" || true
             systemctl restart "faas-${svc}.service" || true
           done
 
