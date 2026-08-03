@@ -128,9 +128,10 @@ func listenSkipChown(path string, mode os.FileMode) (net.Listener, error) {
 		return nil, fmt.Errorf("wire: socket path must be absolute; got %q", path)
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(dir, 0o775); err != nil {
 		return nil, fmt.Errorf("wire: mkdir %q: %w", dir, err)
 	}
+	_ = os.Chmod(dir, 0o775)
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("wire: remove stale %q: %w", path, err)
 	}
