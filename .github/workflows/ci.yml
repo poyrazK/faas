@@ -168,7 +168,11 @@ jobs:
       - name: daemon smoke (--help)
         run: |
           set -e
-          for d in apid builderd gregale gatewayd imaged meterd schedd vmmd; do
+          # Tier A7 (ADR-070) split gatewayd into gatewayd-public + gatewayd-internal;
+          # the legacy gatewayd binary stays in-tree during the migration window
+          # (cd-controlplane deploys all three; legacy is stopped + disabled in
+          # the systemd unit step).
+          for d in apid builderd gregale gatewayd gatewayd-public gatewayd-internal imaged meterd schedd vmmd; do
             out=$(./bin/$d --help 2>&1)
             if [ -z "$out" ]; then
               echo "::error::$d --help returned no output"
