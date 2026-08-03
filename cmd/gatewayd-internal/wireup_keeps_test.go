@@ -49,6 +49,35 @@ func TestKeepsFileCompiles(t *testing.T) {
 // inspects only the *moved* files (everything in this package
 // except the placeholder shell + the keeps file), and asserts
 // every declaration is referenced at least once.
+//
+// MATCH DESIGN (intentionally fuzzy):
+//
+//	The match is a substring search by BARE name — receiver
+//	prefixes and struct-literal braces are stripped before
+//	matching. Why fuzzy and not line-by-line:
+//
+//	1. Cross-line keeps (e.g. `var _ = (*T).M` versus the
+//	   declaration `func (*T) M() {}`) cannot line up by
+//	   file position because Go reorders declarations.
+//	2. The keeps file is a flat list; the moved files declare
+//	   in arbitrary order. Trying to map keeps 1:1 to
+//	   declarations via line numbers breaks the moment a
+//	   developer reorders either file.
+//
+//	The fuzzy match accepts one risk: a declaration `Foo` may
+//	pass the check because a keep line for `Foo` got there
+//	"by accident" (e.g. another file in the package happens to
+//	contain a `Foo` reference). That risk is bounded by the
+//	exported-only filter (lines 153, 169, 175 below) which
+//	limits matches to package surface, and by the structural
+//	test in cmd/gatewayd-internal/_compile (the build itself
+//	fails if a keep references a removed symbol). The CI
+//	tripwire is `make lint` + `go build ./...`, both of which
+//	fire on the FAILURE we care about (linter flags unused +
+//	build fails on stale keep).
+//
+//	PR-B retires wireup_keeps.go entirely when run.go is wired;
+//	this test goes with it.
 func TestKeepsCoverAllMovedPackageSymbols(t *testing.T) {
 	dir := packageDir(t)
 	keepsSrc := mustReadFile(t, filepath.Join(dir, "wireup_keeps.go"))
@@ -66,20 +95,18 @@ func TestKeepsCoverAllMovedPackageSymbols(t *testing.T) {
 
 	// Collect every declaration in every moved file.
 	decls, files := collectPackageDecls(t, dir, skipFiles)
+	t.Logf("scanned %d moved files for exported declarations", len(files))
+	for _, f := range files {
+		t.Logf("  in-scope file: %s", f)
+	}
 
 	// For each declaration, check that either the keeps file or
-	// main.go references it. We match by BARE name (the linter's
-	// format is "T.M" or just "T"; the keeps file uses either
-	// "var _ = T{}.M" or "var _ T" — both contain the bare name
-	// as a substring).
+	// main.go references it. Match by BARE name (linter uses "T.M";
+	// keeps file uses "var _ = T{}.M" or "var _ T" — both contain
+	// the bare name as a substring).
 	for _, d := range decls {
-		// d.name may be "(*T).M" (pointer receiver), "T.M"
-		// (value receiver), or "T" (type/var/const). The bare
-		// substring search in the keeps file matches all of
-		// these because the keeps file is plain Go.
 		bare := d.name
-		// Strip the receiver prefix for methods — we want
-		// "M" to match "T{}.M".
+		// Strip the receiver prefix for methods — "M" to match "T{}.M".
 		if i := strings.LastIndex(d.name, ")."); i >= 0 && i+1 < len(d.name) {
 			bare = d.name[i+2:] // skip ")."
 		} else if i := strings.LastIndex(d.name, "."); i >= 0 {
@@ -91,7 +118,6 @@ func TestKeepsCoverAllMovedPackageSymbols(t *testing.T) {
 		}
 		t.Errorf("moved symbol %s (in %s) has no keep in wireup_keeps.go and no reference in main.go; the linter will flag it. Add `var _ = %s` to wireup_keeps.go.", d.name, d.file, d.name)
 	}
-	_ = files
 }
 
 type pkgDecl struct {

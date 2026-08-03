@@ -67,6 +67,25 @@ const (
 	// and the body also serves as a tripwire — if a customer sees
 	// "TEMPLATE_OK" in production, a deploy slipped through.
 	placeholderBanner = "gatewayd-internal: handler wiring lands in follow-on PR — TEMPLATE_OK"
+
+	// headerXFaasReason is the response header every pre-wire-up
+	// stub in this daemon emits alongside a 503 so operators can
+	// tell which subsystem is not yet wired (`cmd/gatewayd-internal
+	// route-registration parity with the legacy daemon requires
+	// the AppLogsHandler route to be mounted even when its deps
+	// are nil — see the DELETE_ME_PR_B block below; PR-B replaces
+	// the stub with a real handler and the header is reused by
+	// the proxy/nodecache/warmhints/scheddrouter pre-wire-up
+	// stubs that land in the same PR).
+	headerXFaasReason = "X-Faas-Reason"
+
+	// reasonAppLogsNotWired is the value emitted on the
+	// /v1/apps/{slug}/logs stub. Distinguishing text is critical
+	// because the same header is reused (proxy/nodecache/
+	// warmhints/scheddrouter each have their own value); an
+	// operator reading the header sees a precise cause instead
+	// of a generic "not wired".
+	reasonAppLogsNotWired = "gatewayd-internal: app-logs wired in PR-B"
 )
 
 // envOr is the canonical env-override helper. Empty env falls
@@ -132,6 +151,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	cacheHydration := gateway.NewRouteCacheHydration()
 	placeholder := placeholderWithHydration(cacheHydration, cacheSig)
 
+	// DELETE_ME_PR_B — Tier-A7 PR-A applogs mux registration.
+	//
 	// Issue #254 / Move 4 PR-2: the AppLogsHandler claims the
 	// customer-facing `GET /v1/apps/{slug}/logs` route. The
 	// HANDLER is wired in PR-B (authMw + pgStore + scheddRouter
@@ -144,10 +165,17 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// in the legacy code, so the route 404'd; a 503 with an
 	// X-Faas-Reason header is a strictly more useful failure
 	// mode for the gap between file-move and wire-up).
+	//
+	// PR-B deletes the entire `mux := http.NewServeMux(); ...;
+	// placeholder = mux` block (lines below this comment
+	// through the `placeholder = mux` assignment) and replaces
+	// it with a single `mux.Handle("GET /v1/apps/{slug}/logs",
+	// &AppLogsHandler{...})` after the AppLogsHandler is
+	// constructed. The DELETE_ME_PR_B marker is greppable so
+	// the PR review has a forced tripwire.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/apps/{slug}/logs", func(w http.ResponseWriter, r *http.Request) {
-		// PR-A stub: replaced by &AppLogsHandler{...} in PR-B.
-		w.Header().Set("X-Faas-Reason", "gatewayd-internal: app-logs wired in PR-B")
+		w.Header().Set(headerXFaasReason, reasonAppLogsNotWired)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	})
 	mux.Handle("/", placeholder)

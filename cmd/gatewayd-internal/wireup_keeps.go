@@ -1,4 +1,4 @@
-// Package main — Tier A7 PR-A wire-up keeps.
+// DELETE_ME_PR_B — Tier A7 PR-A wire-up keeps (remove in PR-B).
 //
 // PR-A of the gatewayd-public / gatewayd-internal split (ADR-070)
 // is a pure file move: every handler, consumer, and helper that
@@ -27,6 +27,16 @@
 // same PR. Removing a moved file? Drop the keep at the same
 // time. The CI gate will catch any drift
 // (TestKeepsCoverAllMovedPackageSymbols in wireup_keeps_test.go).
+//
+// PR-B deletes this file (`git rm`) once `run.go` + `run_drain.go`
+// are wired; the matching test in `wireup_keeps_test.go` is
+// deleted in the same commit. Search `DELETE_ME_PR_B` for the
+// full list of placeholder artifacts PR-B needs to retire:
+//   - this file + its test
+//   - the `mux := http.NewServeMux(); ...; placeholder = mux`
+//     block in main.go (replaced by `&AppLogsHandler{}`)
+//   - the const block (headerXFaasReason, reasonAppLogsNotWired)
+//     is rolled into the production path or deleted if unused.
 package main
 
 // app_logs.go
