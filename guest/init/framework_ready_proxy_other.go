@@ -17,4 +17,3 @@ func startFrameworkReadyProxy(_ *slog.Logger) error {
 }
 
 var _ = startFrameworkReadyProxy
-
