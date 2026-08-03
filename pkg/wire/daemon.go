@@ -103,9 +103,10 @@ func Logger() *slog.Logger {
 // return nil on clean shutdown.
 type RunFunc func(ctx context.Context, log *slog.Logger) error
 
-// Daemon boots a daemon: parses the standard flags (--config, --version), builds
-// the logger, installs SIGINT/SIGTERM cancellation, runs fn, and exits non-zero
-// on error. It is the single entrypoint every cmd/<daemon>/main.go calls.
+// Daemon boots a daemon: parses the standard flags (--config, --version, --help),
+// builds the logger, installs SIGINT/SIGTERM cancellation, runs fn, and exits
+// non-zero on error. It is the single entrypoint every cmd/<daemon>/main.go
+// calls.
 //
 // SIGHUP is also wired (issue #518 PR-A): the handler re-reads FAAS_LOG_LEVEL
 // and atomically swaps the shared slog.LevelVar. systemd's ExecReload=/bin/kill
@@ -116,7 +117,17 @@ type RunFunc func(ctx context.Context, log *slog.Logger) error
 func Daemon(name string, fn RunFunc) {
 	configPath := flag.String("config", "/etc/faas/"+name+".toml", "path to the daemon's TOML config")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	showHelp := flag.Bool("help", false, "print usage and exit")
+	flag.Bool("h", false, "alias for --help")
 	flag.Parse()
+
+	if *showHelp {
+		fmt.Printf("%s — onebox-faas daemon\n\n", name)
+		fmt.Println("Flags:")
+		flag.PrintDefaults()
+		fmt.Printf("\nVersion: %s\n", Version)
+		return
+	}
 
 	if *showVersion {
 		fmt.Printf("%s %s\n", name, Version)

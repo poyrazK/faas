@@ -55,6 +55,40 @@ func TestDaemon_VersionFlag(t *testing.T) {
 	}
 }
 
+// TestDaemon_HelpFlag pins the --help short-circuit that ci.yml's daemon smoke
+// relies on (cmd/<daemon>/main.go is `wire.Daemon(name, run)`, so the same
+// flag.Parse hits every daemon). Without a registered --help, `flag.Parse`
+// errors on the unknown flag and exits before printing anything — the smoke
+// loop then sees empty stdout and reports "--help returned no output".
+func TestDaemon_HelpFlag(t *testing.T) {
+	if os.Getenv("WIRE_HELP_FLAG_CHILD") == "1" {
+		os.Args = append(os.Args, "--help")
+		wire.Daemon("testd", func(_ context.Context, _ *slog.Logger) error {
+			t.Fatal("fn must not run when --help is set")
+			return nil
+		})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestDaemon_HelpFlag")
+	cmd.Env = append(os.Environ(), "WIRE_HELP_FLAG_CHILD=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("child failed: %v\n%s", err, out)
+	}
+	got := string(out)
+	// Must include daemon name + the registered flags. We don't pin the
+	// exact --help wording (could change with future flag registrations);
+	// just verify help fires and reads as usage, not "unknown flag".
+	for _, needle := range []string{"testd", "-config", "-version", "-help"} {
+		if !strings.Contains(got, needle) {
+			t.Errorf("expected %q in --help output, got:\n%s", needle, got)
+		}
+	}
+	if strings.Contains(got, "flag provided but not defined") {
+		t.Errorf("--help produced 'flag provided but not defined' error:\n%s", got)
+	}
+}
+
 func TestLogger_JSONToStderr(t *testing.T) {
 	// Redirect stderr to capture slog output for the duration of the call.
 	r, w, err := os.Pipe()
