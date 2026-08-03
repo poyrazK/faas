@@ -277,6 +277,13 @@ jobs:
             # uses the same vmmd-only RuntimeDirectory and the dirent
             # state may be just as stale as the failed deploy left it.
             rm -rf /run/faas
+            # Same drop-in sweep — see main restart path for the long version.
+            rm -rf /etc/systemd/system/faas-schedd.service.d \
+                   /etc/systemd/system/faas-vmmd.service.d \
+                   /etc/systemd/system/faas-gatewayd.service.d \
+                   /etc/systemd/system/faas-gatewayd-internal.service.d \
+                   /etc/systemd/system/faas-gatewayd-public.service.d
+            systemctl daemon-reload
             for svc in ${FAAS_RESTART_ORDER}; do
               systemctl restart "faas-${svc}.service" || true
             done
@@ -519,6 +526,22 @@ jobs:
           # every deploy thereafter; vmmd's RuntimeDirectory will
           # recreate it as the canonical root-owned bind-mount.
           rm -rf /run/faas
+
+          # Remove any drop-ins that re-declare RuntimeDirectory=faas
+          # on schedd/gatewayd. These sneak in via operator workarounds
+          # (e.g. the run 30839233808 diagnostic that lived as
+          # /etc/systemd/system/faas-schedd.service.d/10-runtime-directory.conf)
+          # and quietly re-introduce the per-unit tmpfs collision even
+          # though the canonical unit file is correct — `systemctl show`
+          # would still report `RuntimeDirectory=faas` for schedd. The
+          # scp above overwrites the canonical unit, but drop-ins take
+          # precedence. This is intentionally idempotent.
+          rm -rf /etc/systemd/system/faas-schedd.service.d \
+                 /etc/systemd/system/faas-vmmd.service.d \
+                 /etc/systemd/system/faas-gatewayd.service.d \
+                 /etc/systemd/system/faas-gatewayd-internal.service.d \
+                 /etc/systemd/system/faas-gatewayd-public.service.d
+          systemctl daemon-reload
 
           # Restart all FaaS services in dependency order. vmmd MUST
           # come first so /run/faas/vmmd.sock is bound before imaged
