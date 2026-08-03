@@ -359,6 +359,14 @@ func mustGetAppID(t *testing.T, h *e2etest.Harness, key, slug string) string {
 // gatewayAppURL returns the gatewayd URL the harness booted, with the path
 // appended. gatewayd's router does host-based lookup; the test sets the Host
 // header explicitly (see doGetWithHost) since no DNS is wired up.
+//
+// Tier-A7 split (ADR-070) PR-A: the placeholder gatewayd-internal daemon
+// does NOT open a public HTTP listener — h.GatewayURL is empty until
+// PR-B's run.go wires the handler graph. The deploy-wake metal tests
+// t.Skip themselves here because their entire surface is "boot a VM,
+// wake via the customer-facing listener" which lives in gatewayd-public
+// (PR-C). PR-B restores the public HTTP listener; PR-C adds the TLS
+// edge that route-the-traffic-through-here eventually needs.
 func gatewayAppURL(h *e2etest.Harness, _ string) string {
 	return h.GatewayURL + "/"
 }

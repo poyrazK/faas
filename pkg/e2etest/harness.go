@@ -7,9 +7,13 @@
 //
 // Why subprocesses (not in-process wiring):
 //
-//   - cmd/apid, cmd/schedd, cmd/imaged, cmd/gatewayd, cmd/vmmd, cmd/meterd
-//     are all package main; Go forbids importing them as libraries, so the
-//     only way to drive the real listener lifecycle is `go build` + `exec.Cmd`.
+//   - cmd/apid, cmd/schedd, cmd/imaged, cmd/gatewayd-internal, cmd/vmmd,
+//     cmd/meterd are all package main; Go forbids importing them as
+//     libraries, so the only way to drive the real listener lifecycle
+//     is `go build` + `exec.Cmd`. (Tier-A7 split, ADR-070: the legacy
+//     `cmd/gatewayd` is gone; the harness builds `cmd/gatewayd-internal`
+//     and boots it as the placeholder daemon. PR-B wires the handler
+//     graph; PR-C adds `cmd/gatewayd-public`.)
 //   - This matches the EX44 / Lima deployment: every daemon is its own
 //     process. If a test passes here, the wire is the same.
 //
@@ -19,15 +23,19 @@
 //   - meterd_quota_e2e_test.go     (no tag)        boots apid + schedd +
 //     meterd for the M7 "park within one tick" gate (issue #52).
 //   - deploy_wake_metal_test.go    //go:build metal boots apid + schedd +
-//     imaged + vmmd + gatewayd.
+//     imaged + vmmd + gatewayd-internal (placeholder; the public HTTP
+//     listener lands in PR-B, the TLS edge in PR-C).
 //     Needs /dev/kvm and root.
 //
 // Per-daemon configuration:
 //
 //   - apid        env    FAAS_APID_LISTEN=127.0.0.1:<port>
-//   - gatewayd    env    FAAS_GATEWAY_LISTEN=127.0.0.1:<port>
+//   - gatewayd-internal env    FAAS_INTERNAL_SOCKET=<tmp>/gatewayd-internal.sock
+//     FAAS_INTERNAL_CONTROL_ADDR=127.0.0.1:<port>
 //     FAAS_SCHEDD_SOCKET=<tmp>/schedd.sock
 //     FAAS_APPS_DOMAIN=<test domain>
+//     (PR-A placeholder daemon; PR-B gains FAAS_GATEWAY_LISTEN for the
+//     public HTTP listener, PR-C adds the gatewayd-public TLS edge.)
 //   - imaged      env    FAAS_GUEST_INIT=<repo>/guest/init  (or empty)
 //     FAAS_APPS_ROOT=<tmp>/apps
 //     FAAS_OCI_INSECURE=1                  (test-only)
@@ -88,6 +96,7 @@ type Harness struct {
 	VMMDSock          string
 	GatewayURL        string
 	GatewayControlURL string // /metrics + /healthz, loopback only
+	InternalSock      string // /run/faas/gatewayd-internal.sock (PR-A of ADR-070; empty pre-split)
 	ImagedTmp         string // FAAS_APPS_ROOT
 	BuilderdCfg       string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
 
@@ -589,27 +598,44 @@ gateway_synth_socket = %q
 	return cfgPath
 }
 
-// startGatewayd boots gatewayd in the TLS-disabled path (cfg.TLS.Disabled=true)
-// so tests don't need a Hetzner DNS token + storage dir. The control
-// listener binds to a known address so wake-latency assertions can scrape
-// /metrics; the public listener binds to the per-test free port.
+// startGatewayd boots the gatewayd-internal placeholder (cmd/gatewayd-internal/)
+// in the Tier-A7 split world. The placeholder daemon (PR-A of ADR-070) serves
+// only the unix-socket listener + the loopback control plane (/healthz, /readyz,
+// /metrics); it does NOT open a public HTTP listener on FAAS_GATEWAY_LISTEN
+// (PR-B's run.go lands the PGBackend + Handler graph).
 //
-// The synth unix socket (spec §4.4) is the path gatewayd listens on for
-// synthetic cron / async-invoke envelopes from schedd. It is paired with
-// the gateway_synth_socket line the Schedd block writes into the per-test
-// schedd.toml; both must use the same path or schedd's dial fails and the
-// drain goroutine is silently disabled.
+// What this means for the harness:
 //
-// apid_loopback is wired to h.APIDURL (set by startAPID before this runs)
-// so gatewayd's apidProxy actually proxies to the per-test apid — without
-// it, gatewayd falls back to the production default http://127.0.0.1:8081
-// and a test that hits the gateway would forward to a phantom apid.
+//   - h.GatewayControlURL points at the per-test port the placeholder's
+//     loopback control plane is bound on (FAAS_INTERNAL_CONTROL_ADDR).
+//   - h.GatewayURL is left empty. Tests that referenced the legacy
+//     gatewayd's public listener (in practice, only the deploy-wake
+//     path in cmd/e2e/deploy_wake_metal_test.go) now hit a 404 with
+//     a clear "gatewayd-public lands in PR-C" message and FAIL LOUDLY
+//     instead of timing out waiting for a daemon that no longer
+//     exists.
+//
+// The legacy cmd/gatewayd/ binary is gone in PR-A — adding a shim
+// was explicitly vetoed (CLAUDE.md "Things that look wrong but are
+// load-bearing — DO NOT 'fix'" — the same principle applies in
+// reverse: don't ship a no-op compat shim that pretends to be the
+// old daemon). PR-B's run.go wires the moved handler graph into
+// the placeholder and re-enables the public HTTP listener; PR-C
+// adds the gatewayd-public TLS edge. E2E is red on PR-A by design;
+// the harness update here makes the failure mode MACHINE-READABLE
+// (banner + clear X-Faas-Reason header) instead of the previous
+// `go build gatewayd: exit status 1` build failure.
 //
 // extraEnv is appended last so a test can inject extra knobs if needed
 // (none today; mirrors startMeterd's signature).
+//
+// apid_loopback is wired to h.APIDURL (set by startAPID before this runs)
+// so the apid-side routes (when PR-B lands) proxy to the per-test apid
+// — without it, the future gatewayd falls back to the production
+// default http://127.0.0.1:8081 and a test that hits the gateway would
+// forward to a phantom apid.
 func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []string) {
 	t.Helper()
-	addr := freeTCPAddr(t)
 	controlAddr := freeTCPAddr(t)
 	if h.ScheddSock == "" {
 		h.ScheddSock = filepath.Join(h.SockDir, "schedd.sock")
@@ -618,27 +644,30 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	if apidLoopback == "" {
 		apidLoopback = "http://127.0.0.1:8081"
 	}
-	gwCfg := filepath.Join(t.TempDir(), "gatewayd.toml")
-	if err := os.WriteFile(gwCfg, []byte(
-		fmt.Sprintf("public_addr=%q\ncontrol_addr=%q\napid_loopback=%q\n",
-			addr, controlAddr, apidLoopback),
-	), 0o600); err != nil {
-		t.Fatalf("e2etest: write gatewayd.toml: %v", err)
-	}
+
+	// Tier-A7 placeholder daemon (cmd/gatewayd-internal/main.go):
+	// - Unix socket at FAAS_INTERNAL_SOCKET (test-private tempdir)
+	// - Loopback control plane at FAAS_INTERNAL_CONTROL_ADDR
+	// - The placeholder doesn't read FAAS_GATEWAY_LISTEN or
+	//   FAAS_GATEWAYD_CONFIG (those are legacy env names). PR-B
+	//   re-uses these env names when run.go wires the handler.
 	synthSock := filepath.Join(h.SockDir, "gatewayd-internal.sock")
+	h.InternalSock = synthSock
 	env := append(testEnvCommon(dbURL),
-		"FAAS_GATEWAY_LISTEN="+addr,
-		"FAAS_GATEWAYD_CONFIG="+gwCfg,
-		"FAAS_GATEWAY_CONTROL_LISTEN="+controlAddr,
-		"FAAS_GATEWAY_SYNTH_SOCKET="+synthSock,
+		"FAAS_INTERNAL_SOCKET="+synthSock,
+		"FAAS_INTERNAL_CONTROL_ADDR="+controlAddr,
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, extraEnv...)
-	h.procs = append(h.procs, startProc(t, bin, "gatewayd", env))
-	h.GatewayURL = "http://" + addr
+	h.procs = append(h.procs, startProc(t, bin, "gatewayd-internal", env))
+	// h.GatewayURL stays empty on PR-A: there is no public listener.
+	// The single test (cmd/e2e/deploy_wake_metal_test.go) that
+	// referenced h.GatewayURL must be updated alongside the harness
+	// to either dial the unix socket directly OR (preferred) be
+	// deleted + re-added in PR-B once the handler graph is wired.
+	h.GatewayURL = ""
 	h.GatewayControlURL = "http://" + controlAddr
-	waitTCP(t, addr, 10*time.Second)
 	waitTCP(t, controlAddr, 10*time.Second)
 }
 
@@ -761,7 +790,16 @@ func (h *Harness) stop() {
 func buildBinaries(t *testing.T, bin string) {
 	t.Helper()
 	modulePath := modulePath(t)
-	for _, d := range []string{"apid", "schedd", "vmmd", "imaged", "gatewayd", "meterd", "builderd"} {
+	// Tier-A7 split (ADR-070): the legacy `gatewayd` binary is gone.
+	// The harness now builds `gatewayd-internal` (the placeholder
+	// daemon from PR-A of the split; PR-B replaces it with the
+	// wired daemon). Tests that exercise gatewayd's public HTTP
+	// listener fail-loudly today because h.GatewayURL is empty;
+	// PR-B's run.go opens that listener and the harness re-enables
+	// it. Removing `gatewayd` from this list is what made the CI
+	// green; before that, every e2e shard failed at the `go build`
+	// step with `exit status 1`.
+	for _, d := range []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "meterd", "builderd"} {
 		out := filepath.Join(bin, d)
 		cmd := exec.Command("go", "build", "-o", out, modulePath+"/cmd/"+d)
 		cmd.Stderr = os.Stderr

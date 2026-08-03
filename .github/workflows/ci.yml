@@ -168,7 +168,7 @@ jobs:
       - name: daemon smoke (--help)
         run: |
           set -e
-          for d in apid builderd gregale gatewayd imaged meterd schedd vmmd; do
+          for d in apid builderd gregale gatewayd-internal imaged meterd schedd vmmd; do
             out=$(./bin/$d --help 2>&1)
             if [ -z "$out" ]; then
               echo "::error::$d --help returned no output"
@@ -358,7 +358,7 @@ jobs:
       - name: unit tests (pure Go shard 1)
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd|pkg/api)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-public|cmd/gatewayd-internal|pkg/api)')
           go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard3.out -covermode=atomic $PKGS
 
       - name: upload to Codecov (pure Go shard 1)
@@ -388,7 +388,7 @@ jobs:
       - name: unit tests (pure Go shard 2)
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd|pkg/api)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-public|cmd/gatewayd-internal|pkg/api)')
           go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
       - name: upload to Codecov (pure Go shard 2)
