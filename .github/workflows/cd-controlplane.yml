@@ -226,10 +226,9 @@ jobs:
             done
             echo "::error::health gate timed out after 60s; unhealthy:${bad:- (gateway /healthz)}"
             for svc in ${FAAS_SERVICES}; do
-              systemctl is-active --quiet "faas-${svc}" || {
-                echo "--- faas-${svc} ---"
-                journalctl -u "faas-${svc}" -n 30 --no-pager || true
-              }
+              echo "=== faas-${svc} status & logs ==="
+              systemctl status "faas-${svc}" --no-pager || true
+              journalctl -u "faas-${svc}" -n 30 --no-pager || true
             done
             return 1
           }
