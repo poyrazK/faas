@@ -142,7 +142,8 @@ func handleResumeConn(f *os.File, log *slog.Logger) {
 	}
 	var req struct {
 		HostTimeUnixNano int64  `json:"hostTimeUnixNano"`
-		Entropy          string `json:"entropy"` // base64; decode + ioctl(RNDADDENTROPY)
+		Entropy          string `json:"entropy"`     // base64; decode + ioctl(RNDADDENTROPY)
+		Traceparent      string `json:"traceparent"` // W3C; empty is tolerated (issues PR-4)
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		log.Warn("vsock resume body parse", "err", err)
@@ -170,5 +171,12 @@ func handleResumeConn(f *os.File, log *slog.Logger) {
 		_, _ = f.Write([]byte{VsockResumeAckNack})
 		return
 	}
+	// Issue #555 PR-4: stash the W3C traceparent for the supervisor
+	// to read at Start(). The package var is the only safe seam
+	// between the vsock accept goroutine and the supervisor's main
+	// goroutine — the resume hook doesn't return a value, and the
+	// runner env can't be threaded back through the supervisor
+	// without a refactor that breaks the test fixture.
+	SetResumeTraceparent(req.Traceparent)
 	_, _ = f.Write([]byte{VsockResumeAckOK})
 }

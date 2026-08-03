@@ -199,6 +199,11 @@ func DialContext(ctx context.Context, target string, tlsCfg *tls.Config, opts ..
 	}
 
 	dialOpts := append([]grpc.DialOption{grpc.WithTransportCredentials(creds)}, opts...)
+	// Issue #555 PR-3: mount the OTel stats handler so outgoing RPCs
+	// propagate W3C traceparent via gRPC metadata. The handler is
+	// always present — when OTel is unconfigured (PR-1 noop fallback),
+	// it still installs a no-op stats handler so wiring is uniform.
+	dialOpts = append(dialOpts, TraceDialOptions()...)
 
 	switch t.Scheme {
 	case SchemeUnix, SchemeDNS:

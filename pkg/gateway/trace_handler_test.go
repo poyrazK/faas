@@ -23,9 +23,9 @@ func setupHandler(t *testing.T, token string) (*gateway.TraceHandler, *gateway.T
 		TraceID: "trace-1",
 		Spans: []gateway.SpanRow{
 			{
-				TraceID:  "trace-1",
-				SpanID:   "span-1",
-				Name:     "gateway.route",
+				TraceID:   "trace-1",
+				SpanID:    "span-1",
+				Name:      "gateway.route",
 				StartTime: now,
 				EndTime:   now.Add(5 * time.Millisecond),
 			},

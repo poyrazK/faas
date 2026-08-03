@@ -93,10 +93,19 @@ func ParseLevel(s string) (slog.Level, bool) {
 // mutates, so operators can reconfigure verbosity at runtime without
 // re-creating the logger. Pass slog.LevelInfo through HandlerOptions only
 // as a fallback; the Leveler wins at emit time anyway.
+//
+// Issue #555 PR-3: the JSON handler is wrapped with otelinit.NewSlogBridge
+// so every record emitted on a context carrying a SpanContext picks up
+// trace_id / span_id attributes. The wrapper reads context from
+// slog.Handler.Handle; callers that use Logger().InfoContext(ctx, ...)
+// (the slog idiom for contextual emit) get the trace IDs. Plain
+// Logger().Info(...) is preserved unchanged — the bridge no-ops when
+// context has no span.
 func Logger() *slog.Logger {
-	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+	h := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: logLevel,
-	}))
+	})
+	return slog.New(NewSlogBridge(h))
 }
 
 // RunFunc is a daemon's main body. It should block until ctx is cancelled and

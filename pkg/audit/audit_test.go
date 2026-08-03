@@ -8,6 +8,7 @@ package audit_test
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -218,6 +220,97 @@ func TestAuditor_Emit_NilDataMarshalsAsEmptyObject(t *testing.T) {
 	}
 	if string(rows[0].Data) != "{}" {
 		t.Errorf("Data = %q, want \"{}\"", rows[0].Data)
+	}
+}
+
+// TestAuditor_Emit_LiftsTraceContext pins issue #555 PR-5: when
+// ctx carries an OTel span, the trace_id + span_id are stamped onto
+// the audit row's data JSON so the row joins the in-memory trace ring
+// on the same key. The lift is best-effort: a missing span context
+// leaves the data unchanged.
+func TestAuditor_Emit_LiftsTraceContext(t *testing.T) {
+	store := state.NewMemStore()
+	a := audit.New(store, silentLog(), newStubAuditOps(), "apid")
+	acctRec, err := store.CreateAccount(context.Background(), "apid-audit-trace@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+
+	var tid oteltrace.TraceID
+	var sid oteltrace.SpanID
+	for i := range tid {
+		tid[i] = byte(i + 1)
+	}
+	for i := range sid {
+		sid[i] = byte(i + 1)
+	}
+	sc := oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+		TraceID: tid,
+		SpanID:  sid,
+		Remote:  true,
+	})
+	ctx := oteltrace.ContextWithSpanContext(context.Background(), sc)
+
+	a.Emit(ctx, "auth.login", &acctRec.ID, map[string]any{"ip": "127.0.0.1"})
+
+	rows, _ := store.ListEvents(context.Background(), acctRec.ID, 0)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	var data map[string]any
+	if err := json.Unmarshal(rows[0].Data, &data); err != nil {
+		t.Fatalf("unmarshal data: %v", err)
+	}
+	if data["trace_id"] != tid.String() {
+		t.Errorf("trace_id = %v, want %s", data["trace_id"], tid.String())
+	}
+	if data["span_id"] != sid.String() {
+		t.Errorf("span_id = %v, want %s", data["span_id"], sid.String())
+	}
+	if data["ip"] != "127.0.0.1" {
+		t.Errorf("ip attr dropped: %v", data)
+	}
+}
+
+// TestAuditor_Emit_PreservesCustomerTraceID pins the merge contract:
+// a customer-supplied trace_id in the data map is NOT overwritten by
+// the active span context. The cron-fired path (issue #517) and any
+// other seam that builds a trace_id outside the OTel SDK must keep
+// its value.
+func TestAuditor_Emit_PreservesCustomerTraceID(t *testing.T) {
+	store := state.NewMemStore()
+	a := audit.New(store, silentLog(), newStubAuditOps(), "apid")
+	acctRec, err := store.CreateAccount(context.Background(), "apid-audit-cust-tid@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+
+	sc := oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+		TraceID: oteltrace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		SpanID:  oteltrace.SpanID{1, 2, 3, 4, 5, 6, 7, 8},
+		Remote:  true,
+	})
+	ctx := oteltrace.ContextWithSpanContext(context.Background(), sc)
+
+	a.Emit(ctx, "cron.fired", &acctRec.ID, map[string]any{
+		"trace_id": "00000000000000000000000000000000",
+	})
+
+	rows, _ := store.ListEvents(context.Background(), acctRec.ID, 0)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	var data map[string]any
+	if err := json.Unmarshal(rows[0].Data, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if data["trace_id"] != "00000000000000000000000000000000" {
+		t.Errorf("trace_id = %v, want preserved customer value", data["trace_id"])
+	}
+	// span_id is still lifted from the active span (no collision
+	// because the customer only set trace_id).
+	if data["span_id"] == "" {
+		t.Errorf("span_id lifted = %v, want from active span", data["span_id"])
 	}
 }
 

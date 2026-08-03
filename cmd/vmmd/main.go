@@ -683,7 +683,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// last_request_at wire fields. PR-C reads them via
 	// instancestats.Reader.MaxInflightForApp.
 	activityTracker := activity.NewWithDefaults()
-	gsrv := grpc.NewServer(wire.ServerCredsOrEmpty(serverTLS)...)
+	gsrv := grpc.NewServer(append(
+		wire.ServerCredsOrEmpty(serverTLS),
+		wire.TraceServerOptions()...,
+	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(mgr, ops, fcVersion, log, cpuCache, netCache, activityTracker)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// on the gRPC server. vmmd is the corroborating-observation

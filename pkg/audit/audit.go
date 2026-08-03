@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -84,9 +85,27 @@ func (a *Auditor) SetOps(ops Ops) {
 // Emit writes one events row. accountID is optional (nil allowed for
 // system-level events, e.g. cron-fired by schedd). data may be nil;
 // marshal into {} on the way down so the column is always valid JSON.
+//
+// Issue #555 PR-5: lift the active OTel span context from ctx and
+// stamp trace_id / span_id onto the data JSON so the row joins the
+// in-memory trace ring on the same key. The lift is best-effort: a
+// missing span context (legacy single-box without OTel) leaves the
+// data unchanged.
 func (a *Auditor) Emit(ctx context.Context, kind string, accountID *string, data map[string]any) {
 	if data == nil {
 		data = map[string]any{}
+	}
+	if sc := oteltrace.SpanContextFromContext(ctx); sc.IsValid() {
+		// Don't overwrite a customer-supplied trace_id (e.g. cron-fired
+		// events that synthesise a trace_id for the row). The merge
+		// falls back to the active span context only when the field
+		// is absent.
+		if _, ok := data["trace_id"]; !ok {
+			data["trace_id"] = sc.TraceID().String()
+		}
+		if _, ok := data["span_id"]; !ok {
+			data["span_id"] = sc.SpanID().String()
+		}
 	}
 	payload, err := json.Marshal(data)
 	if err != nil {

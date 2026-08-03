@@ -1,25 +1,23 @@
-// Slog bridge — pkg/wire/otelinit/slog_bridge.go (issue #555 PR-3).
+// Slog bridge — pkg/wire/slog_bridge.go (issue #555 PR-3).
 //
-// Why this lives next to otelinit.go rather than pkg/wire: importing
-// OTel from pkg/wire would force every transitively-imported package
-// (e.g. pkg/logsanitize, pkg/middleware) to bump their module graph
-// to OTel. Keeping the bridge in pkg/wire/otelinit (sub-package of
-// pkg/wire) lets the rest of pkg/wire stay OTel-free.
+// Wraps an inner slog.Handler so that, on every record, the OTel
+// SpanContext on the record's context is lifted onto the record as
+// trace_id / span_id attributes (FieldTraceID, FieldSpanID). Wire it
+// as the inner handler in daemon.go::Logger() so every platform-wide
+// log line carries the trace IDs — issue #555 acceptance #2 ("grep
+// '"trace_id":"abc..."' /var/log/faas/*.jsonl" returns one span per
+// daemon").
 //
-// The bridge is a slog.Handler wrapper that, on every record, reads
-// the active OTel SpanContext from the record's context and emits
-// trace_id + span_id as the canonical slog attribute keys
-// (FieldTraceID, FieldSpanID). Wire it as the inner handler in
-// pkg/wire/daemon.go::Logger() (PR-3).
-package otelinit
+// The bridge is the only place in pkg/wire that imports OTel
+// (oteltrace.SpanContextFromContext). The import is restricted to
+// the bridge so a future OTel upgrade only touches this file.
+package wire
 
 import (
 	"context"
 	"log/slog"
 
 	oteltrace "go.opentelemetry.io/otel/trace"
-
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // traceLoggingHandler wraps an inner slog.Handler and lifts OTel span
@@ -67,8 +65,8 @@ func (h *traceLoggingHandler) Handle(ctx context.Context, r slog.Record) error {
 	sc := oteltrace.SpanContextFromContext(ctx)
 	if sc.IsValid() {
 		r.AddAttrs(
-			slog.String(wire.FieldTraceID, sc.TraceID().String()),
-			slog.String(wire.FieldSpanID, sc.SpanID().String()),
+			slog.String(FieldTraceID, sc.TraceID().String()),
+			slog.String(FieldSpanID, sc.SpanID().String()),
 		)
 	}
 	return h.inner.Handle(ctx, r)

@@ -527,7 +527,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("schedd: listen %s: %w", listenTarget, err)
 	}
-	gsrv := grpc.NewServer(wire.ServerCredsOrEmpty(serverTLS)...)
+	gsrv := grpc.NewServer(append(
+		wire.ServerCredsOrEmpty(serverTLS),
+		wire.TraceServerOptions()...,
+	)...)
 	// scheddgrpc.New(gsrv) is called after the instancestats.Reader
 	// is constructed below, so the server can serve
 	// ListInstanceStats (issue #279 / PR-B). A no-stats server

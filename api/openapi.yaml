@@ -3619,6 +3619,53 @@ paths:
             application/json:
               schema: { type: object }
 
+  /v1/traces/{trace_id}:
+    get:
+      tags: [observability]
+      operationId: getTrace
+      summary: Retrieve a stored OpenTelemetry trace.
+      description: |
+        Issue #555. Returns the full span tree for a single trace_id
+        (32-hex, the same as the request's `wake_id`). The trace is
+        sourced from the gatewayd-public in-memory ring (24h
+        retention, 100k default cap). When no OTLP endpoint is set
+        the ring is the only source — when OTLP is set, the ring
+        still operates as the customer-facing query layer.
+
+        Authentication: the `X-Faas-Trace-Auth` header must carry
+        the operator's observer token (env: `FAAS_TRACE_OBSERVER_TOKEN`).
+        The endpoint is gated even when the dashboard session cookie is
+        present — tracing is an operator surface, not a customer one.
+        An empty token disables the endpoint (returns 404).
+      security: []
+      parameters:
+        - name: trace_id
+          in: path
+          required: true
+          description: 32-hex W3C trace_id (or wake_id UUIDv7 hex form).
+          schema: { type: string, pattern: '^[0-9a-f]{32}$' }
+      responses:
+        '200':
+          description: The trace tree.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trace' }
+        '401':
+          description: |
+            Missing or wrong observer token. The endpoint is operator-
+            gated; the customer-facing dashboard session does not
+            grant access.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: |
+            Trace not in the ring (never seen, or evicted by the 24h
+            retention sweep / LRU cap).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
 components:
 
   securitySchemes:
@@ -6618,3 +6665,43 @@ components:
         text/plain:
           schema: { $ref: '#/components/schemas/RateLimitPlain' }
 
+
+    Trace:
+      description: |
+        Issue #555. A single OpenTelemetry trace — the span tree for one
+        request (one wake). The shape mirrors the SDK's ReadOnlySpan
+        flattened to JSON: trace_id + span_id are W3C hex, attributes
+        are a string map (the operator's debug session is a grep, not
+        a query). The same trace_id may host a
+        `gateway.handler` → `gateway.route` → `sched.wake` →
+        `vmmd.create_*` → `guest.resume` → `guest.readiness` chain
+        (issue #555 acceptance #1).
+      type: object
+      required: [trace_id, spans]
+      properties:
+        trace_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        started: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        spans:
+          type: array
+          items: { $ref: '#/components/schemas/TraceSpan' }
+
+    TraceSpan:
+      description: |
+        One span in a trace. Mirrors the OTel SDK's ReadOnlySpan
+        attributes (kind, name, status, parent linkage, timing) so
+        the customer's debug session can reconstruct the call tree.
+      type: object
+      required: [trace_id, span_id, name]
+      properties:
+        trace_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        span_id: { type: string, pattern: '^[0-9a-f]{16}$' }
+        parent_span_id: { type: string, pattern: '^[0-9a-f]{16}$' }
+        name: { type: string, example: sched.wake }
+        start_time: { type: string, format: date-time }
+        end_time: { type: string, format: date-time }
+        status: { type: string, enum: [ok, error] }
+        status_message: { type: string }
+        attributes:
+          type: object
+          additionalProperties: { type: string }

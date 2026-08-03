@@ -182,6 +182,12 @@ func runAppWithEnv(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 	// keeping the live edit here means the precedence assertion
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
+	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env. The
+	// W3C trace context was shipped from the host via the vsock
+	// resume hook; the supervisor reads it via GetResumeTraceparent
+	// at Start() time. Empty = no OTel configured, the env is
+	// unchanged.
+	env = StampTraceparentEnv(env, GetResumeTraceparent())
 	cmd.Env = env
 	// ADR-051 Phase 4 Slice A PR-B: tee the customer's stdout/stderr
 	// into the supervisor's ring buffer so the characterize probe can

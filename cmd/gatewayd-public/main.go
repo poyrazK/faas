@@ -49,6 +49,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -181,6 +182,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		internalURL,
 		log,
 	)
+	// Issue #555 PR-3: mount otelhttp.NewTransport so the outbound
+	// request to gatewayd-internal carries the same trace context
+	// (gateway.route span). The wrapper sits UNDER the proxy's
+	// RoundTripper so the inbound span context is propagated on the
+	// outbound hop.
+	proxy.Transport = otelhttp.NewTransport(proxy.Transport)
 
 	// Trace pipeline (issue #555 PR-2). Builds the in-memory ring,
 	// wires the OTLP/HTTP exporter when OTEL_EXPORTER_OTLP_ENDPOINT
@@ -202,7 +209,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	// Public-facing handler: httpsec outer wrapper → trace mux → internal proxy.
 	httpsec.SetHSTSEnabled(httpsec.HSTSEnabledFromEnv(hstsEnabledFromEnv))
-	publicHandler := httpsec.Static(traceMux)
+	// Issue #555 PR-3: otelhttp.NewHandler extracts W3C traceparent
+	// from inbound headers and starts a server span per request; the
+	// emitted spans flow into the TraceRing (PR-2) + OTLP exporter.
+	// This wrap sits INSIDE httpsec.Security so the response headers
+	// (HSTS, CSP nonce, etc.) don't show up as span attributes (the
+	// OTel view is the request itself, not the security headers).
+	publicHandler := httpsec.Static(otelhttp.NewHandler(traceMux, "gatewayd-public.handler"))
 
 	// Control mux + listeners.
 	controlMux := gateway.ControlMux(nil, probe.ReadyFunc())

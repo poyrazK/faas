@@ -971,7 +971,10 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 	if err != nil {
 		return nil, nil, fmt.Errorf("advisory listen: %w", err)
 	}
-	srv := grpc.NewServer(wire.ServerCredsOrEmpty(tlsCfg)...)
+	srv := grpc.NewServer(append(
+		wire.ServerCredsOrEmpty(tlsCfg),
+		wire.TraceServerOptions()...,
+	)...)
 	// Mega-PR B: pass ops so the receiver can increment
 	// apid_stateless_advisory_events_total on each landed advisory.
 	// The accessor is nil-receiver safe so the metric stays zero
@@ -1023,7 +1026,10 @@ func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Conf
 	if err != nil {
 		return nil, nil, fmt.Errorf("githubd bridge listen: %w", err)
 	}
-	srv := grpc.NewServer(wire.ServerCredsOrEmpty(tlsCfg)...)
+	srv := grpc.NewServer(append(
+		wire.ServerCredsOrEmpty(tlsCfg),
+		wire.TraceServerOptions()...,
+	)...)
 	// Pass ops so the receiver can increment
 	// apid_githubd_bridge_enqueued_total on each landed build.
 	// The accessor is nil-receiver safe so the metric stays zero

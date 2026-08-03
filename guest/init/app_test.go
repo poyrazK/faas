@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -239,5 +240,33 @@ func TestStampOverridePortEnv_AppendsAfterManifestPort(t *testing.T) {
 	out := StampOverridePortEnv(merged, 8080)
 	if out[len(out)-1] != "PORT=8080" {
 		t.Errorf("last PORT = %q, want PORT=8080 (platform contract)", out[len(out)-1])
+	}
+}
+
+// TestStampTraceparentEnv_AppendsWhenNonEmpty pins issue #555 PR-4:
+// the W3C trace context the host stashed via the vsock resume hook
+// is appended to the runner env. Empty traceparent is a no-op so
+// legacy single-box without OTel is unchanged.
+func TestStampTraceparentEnv_AppendsWhenNonEmpty(t *testing.T) {
+	out := StampTraceparentEnv([]string{"PATH=/usr/bin"}, "0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+	want := "TRACEPARENT=0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+	if out[len(out)-1] != want {
+		t.Errorf("last env = %q, want %q", out[len(out)-1], want)
+	}
+}
+
+// TestStampTraceparentEnv_EmptyIsNoOp pins the empty-input contract:
+// no TRACEPARENT row is added when the host hasn't shipped a
+// traceparent (legacy single-box without OTel, or a test fixture).
+func TestStampTraceparentEnv_EmptyIsNoOp(t *testing.T) {
+	in := []string{"PATH=/usr/bin"}
+	out := StampTraceparentEnv(in, "")
+	if len(out) != len(in) {
+		t.Errorf("empty traceparent mutated env: in=%v out=%v", in, out)
+	}
+	for _, e := range out {
+		if strings.HasPrefix(e, "TRACEPARENT=") {
+			t.Errorf("empty traceparent added a TRACEPARENT row: %v", e)
+		}
 	}
 }

@@ -56,6 +56,12 @@ var routeExclude = map[string]bool{
 	"GET /status/slo.json":       true,
 	"GET /status":                true,
 
+	// Issue #555 trace endpoint. Operator-only surface (X-Faas-Trace-Auth
+	// header), not a customer-Bearer-auth endpoint. The SDK does not
+	// model the operator token; the route is excluded from the
+	// coverage map.
+	"GET /v1/traces/{trace_id}": true,
+
 	// Dashboard auth (issue #165 PR #2, ADR-032). The SDK uses the
 	// device-code flow for programmatic auth; the dashboard cookie
 	// is the browser-only auth artifact. These routes are 302

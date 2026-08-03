@@ -41,6 +41,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // InternalDialer is the seam the public daemon wires to reach a
@@ -137,6 +139,16 @@ func newInternalProxyTransport(dialer InternalDialer) *http.Transport {
 		// Disable HTTP/2 — the unix-socket hop is HTTP/1.1 only.
 		ForceAttemptHTTP2: false,
 	}
+}
+
+// otelTransport wraps an inner RoundTripper with otelhttp.NewTransport so
+// the gatewayd-public proxy emits a span per outbound request and
+// extracts W3C traceparent from the inbound request headers (when the
+// inbound handler is wrapped with otelhttp.NewHandler). The wrapper is
+// unconditionally attached — the OTel SDK's noop fallback (PR-1) makes
+// this a no-op cost when no exporter is configured.
+func otelTransport(inner http.RoundTripper) http.RoundTripper {
+	return otelhttp.NewTransport(inner)
 }
 
 // ServeHTTP implements http.Handler. It rewrites the inbound

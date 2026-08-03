@@ -65,6 +65,25 @@ type randPoolInfo struct {
 	buf          [4096]byte // over-large; we only read first bufSize bytes
 }
 
+// resumeTraceparent is the W3C trace context the host shipped over vsock
+// (issue #555 PR-4). Captured by RunResumeHook from the resume JSON body
+// and read by runAppWithEnv when the supervisor starts the runner. The
+// package var is the cleanest seam here: the resume hook runs in a
+// vsock-accept goroutine; the supervisor runs on the main goroutine
+// after boot() returns. They never overlap. Empty string = no OTel
+// configured (legacy single-box without OTel), the runner's
+// TRACEPARENT env is simply unset.
+var resumeTraceparent string
+
+// SetResumeTraceparent is the test seam: tests that drive RunResumeHook
+// directly can stamp a controlled traceparent without going through the
+// vsock listener. Production code reads the body through handleResumeConn.
+func SetResumeTraceparent(tp string) { resumeTraceparent = tp }
+
+// GetResumeTraceparent returns the most-recently-captured traceparent
+// (empty if none). Used by runAppWithEnv.
+func GetResumeTraceparent() string { return resumeTraceparent }
+
 // RunResumeHook performs the post-restore hook: inject host-supplied CSPRNG
 // bytes into /dev/urandom via ioctl(RNDADDENTROPY) FIRST so each restore
 // mixes a unique prefix into the pool (virtio-rng state is snapshotted, so

@@ -79,6 +79,7 @@ var routeExclude = map[string]bool{
 	"GET /status/slo.json":                    true, // public status JSON
 	"GET /healthz":                            true, // loopback infra probe
 	"GET /v1/orgs/me":                         true, // PR-4 LoadOrg seam (issue #190 / IAM-6 / ADR-061); documented in PR 5 alongside the rest of /v1/orgs/{slug}
+	"GET /v1/traces/{trace_id}":               true, // issue #555: gatewayd-public trace endpoint (mounted via bare /v1/traces/ prefix; the scanner doesn't match it)
 }
 
 // dtoExclude lists pkg/api exported DTOs that are intentionally not in the
@@ -349,7 +350,19 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 	sort.Strings(kept)
 
 	specRoutes := flattenSpecPaths(spec.Paths)
-	sort.Strings(specRoutes)
+	// Apply the same exclude list to spec routes (issue #555: the
+	// trace route is mounted via a bare /v1/traces/ prefix in
+	// gatewayd-public, which the scanner doesn't see — the spec
+	// route is real but the code route can't be parsed).
+	var specKept []string
+	for _, r := range specRoutes {
+		if routeExclude[r] {
+			continue
+		}
+		specKept = append(specKept, r)
+	}
+	sort.Strings(specKept)
+	specRoutes = specKept
 
 	// Both directions: missing in spec, extra in code.
 	var missingInSpec, extraInCode []string

@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // JailerVMM is the production VMM. It provisions a jail chroot, launches
@@ -630,6 +631,11 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	if v.chrootBase == "" {
 		return fmt.Errorf("vmm: TriggerResumeHook: chrootBase not configured")
 	}
+	// Issue #555 PR-4: extract W3C traceparent from the boot context so
+	// the guest's resume hook can stamp TRACEPARENT onto the runner env.
+	// When the boot context has no span (e.g. legacy single-box without
+	// OTel config), the empty string is shipped and the guest no-ops.
+	traceparent := traceparentFromContext(ctx)
 	sock := v.vsockUDSSock(l.Instance)
 	deadline := time.Now().Add(resumeHookDialDeadline)
 	var conn net.Conn
@@ -696,8 +702,9 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 	}
 	body, err := json.Marshal(struct {
 		HostTimeUnixNano int64  `json:"hostTimeUnixNano"`
-		Entropy          string `json:"entropy"` // base64; guest decodes + ioctl(RNDADDENTROPY)
-	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy)})
+		Entropy          string `json:"entropy"`     // base64; guest decodes + ioctl(RNDADDENTROPY)
+		Traceparent      string `json:"traceparent"` // W3C; empty is tolerated (guest no-ops)
+	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}
@@ -1969,4 +1976,26 @@ func copyFile(src, dst string) (err error) {
 	}()
 	_, err = io.Copy(out, in)
 	return err
+}
+
+// traceparentFromContext renders the W3C traceparent header (issue #555
+// PR-4) from the active SpanContext on ctx. Returns an empty string
+// when no span is active (legacy single-box without OTel, or pre-Open
+// Telemetry tests). The empty string is shipped over vsock and the
+// guest-resume hook no-ops on it (the runner's TRACEPARENT env is
+// simply unset).
+//
+// Format: 32-hex trace_id + "-" + 16-hex span_id + "-" + 2-hex flags.
+// The flags byte is "01" (sampled) — the guest-side OTel SDK inherits
+// the sampling decision from the parent trace.
+func traceparentFromContext(ctx context.Context) string {
+	sc := oteltrace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return ""
+	}
+	return fmt.Sprintf("%s-%s-%02x",
+		sc.TraceID().String(),
+		sc.SpanID().String(),
+		uint8(sc.TraceFlags()),
+	)
 }

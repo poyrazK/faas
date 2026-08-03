@@ -38,6 +38,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // vmmd RPC deadlines (spec §6.1). Centralised here — not in VMMClient —
@@ -169,6 +171,12 @@ type Engine struct {
 	// Wired via WithOwnerNodeID after NewEngine; nil-safe so
 	// pre-Phase-2 tests stay green.
 	ownerNodeID string
+
+	// tracer is the OTel Tracer that emits sched.wake + vmmd.create_*
+	// spans (issue #555 PR-3). nil = no spans emitted (the OTel
+	// SDK's noop fallback is a no-op cost). Wired via WithTracer
+	// after NewEngine; tests stay span-less.
+	tracer oteltrace.Tracer
 
 	// rebalanceCooldownSeconds is the Tier A4 (ADR-064) cooldown
 	// between two successful reassignments of the same app. Default
@@ -514,6 +522,19 @@ func (e *Engine) WithOwnerNodeID(nodeID string) *Engine {
 		return e
 	}
 	e.ownerNodeID = nodeID
+	return e
+}
+
+// WithTracer wires the OTel Tracer used for sched.wake +
+// vmmd.create_* spans (issue #555 PR-3). When nil (the default), the
+// engine emits no spans — the OTel SDK's noop fallback is a no-op
+// cost. Production cmd/schedd wires the global tracer; legacy tests
+// stay span-less.
+func (e *Engine) WithTracer(tr oteltrace.Tracer) *Engine {
+	if e == nil {
+		return e
+	}
+	e.tracer = tr
 	return e
 }
 
@@ -1186,6 +1207,25 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID string, liftCapacit
 	var out *WakeOutcome
 	bootCtx, cancel := context.WithTimeout(ctx, e.budgetFor(bootInput.initState))
 	defer cancel()
+	// Issue #555 PR-3: sched.wake span encloses the vmmd RPC. The
+	// span's trace_id is the wake_id (uuidv7 → 32-hex), so the
+	// gateway-initiated trace continues across the schedd → vmmd
+	// boundary. The OTel-to-slog bridge (PR-3) lifts the trace_id
+	// onto every log line under bootCtx, giving a single grep key
+	// across the schedd engine.
+	var wakeSpan oteltrace.Span
+	if e.tracer != nil {
+		bootCtx, wakeSpan = e.tracer.Start(bootCtx, "sched.wake",
+			oteltrace.WithAttributes(
+				attribute.String("app_id", appID),
+				attribute.String("deployment_id", bootInput.depID),
+				attribute.String("instance_id", bootInput.insID),
+				attribute.String("wake_id", wakeID),
+				attribute.String("init_state", string(bootInput.initState)),
+			),
+		)
+		defer wakeSpan.End()
+	}
 	// issue #517 bootCtx stamp point: lift the inbound correlation
 	// (request_id / invocation_id from gatewayd) and join the
 	// engine-minted wake_id / instance_id so a single inbound id
@@ -1250,6 +1290,21 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID string, liftCapacit
 		// VMStatePath since migration 23 dropped snapshots.path).
 		vmstatePath := e.vmstateHostPathFor(bootInput.depID)
 		vmstateStorageKey := e.vmstateStorageKeyFor(bootInput.nodeID, bootInput.depID)
+		// Issue #555 PR-3: vmmd.create_from_snapshot child span.
+		// The vmmd-side gRPC stats handler (otelgrpc) starts a
+		// server span for the CreateFromSnapshot RPC; this client
+		// span is the parent linkage in the trace tree.
+		var createSpan oteltrace.Span
+		if e.tracer != nil {
+			bootCtx, createSpan = e.tracer.Start(bootCtx, "vmmd.create_from_snapshot",
+				oteltrace.WithAttributes(
+					attribute.String("app_id", bootInput.appID),
+					attribute.String("instance_id", bootInput.insID),
+					attribute.String("snap_id", bootInput.snapID),
+					attribute.String("deployment_id", bootInput.depID),
+				),
+			)
+		}
 		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec, SnapshotRef{
 			DeploymentID:      bootInput.depID,
 			FCVersion:         bootInput.snapVer,
@@ -1257,12 +1312,29 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID string, liftCapacit
 			VMStatePath:       vmstatePath,
 			VMStateStorageKey: vmstateStorageKey,
 		})
+		if createSpan != nil {
+			createSpan.End()
+		}
 	} else {
 		// Either no snap row at all (cold path), or a snap row with
 		// an empty StorageKey (F-1 contract violation — fall back to
 		// a real cold boot per ADR-005: snapshots are cache, not
 		// truth; wake must never depend on a snapshot existing).
+		// Issue #555 PR-3: vmmd.create_cold_boot child span.
+		var createSpan oteltrace.Span
+		if e.tracer != nil {
+			bootCtx, createSpan = e.tracer.Start(bootCtx, "vmmd.create_cold_boot",
+				oteltrace.WithAttributes(
+					attribute.String("app_id", bootInput.appID),
+					attribute.String("instance_id", bootInput.insID),
+					attribute.String("deployment_id", bootInput.depID),
+				),
+			)
+		}
 		out, err = e.vmm.CreateColdBoot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec)
+		if createSpan != nil {
+			createSpan.End()
+		}
 	}
 	if err != nil {
 		// Boot error path. Release the reservation, transition to
