@@ -785,6 +785,21 @@ func TestListenAsRequiresAbsolutePath(t *testing.T) {
 	}
 }
 
+func TestListenAs_UnknownDaemonUserFallback(t *testing.T) {
+	t.Setenv(SkipGroupLookupEnv, "1")
+	dir, err := os.MkdirTemp("/tmp", "wtr-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sockPath := "unix://" + filepath.Join(dir, "fb.sock")
+	lis, err := ListenAs(context.Background(), sockPath, nil, "definitely_not_a_real_user_xyzzy")
+	if err != nil {
+		t.Fatalf("ListenAs should fall back to current user when daemonUser is unknown; got: %v", err)
+	}
+	defer lis.Close()
+}
+
 // --- Compile-time pin: insecure credentials stay the unix default ------
 
 func TestDialUnixInsecure(t *testing.T) {

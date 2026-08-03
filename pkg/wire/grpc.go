@@ -338,6 +338,11 @@ func ServerCredsOrEmpty(tlsCfg *tls.Config) []grpc.ServerOption {
 // If daemonUser is empty, the existing ListenOrRecreateByName path is
 // used so legacy callers (tests, daemons that don't chown) still bind.
 func listenUnix(path, daemonUser string) (net.Listener, error) {
+	if daemonUser != "" {
+		if _, err := user.Lookup(daemonUser); err != nil {
+			daemonUser = ""
+		}
+	}
 	if daemonUser == "" {
 		return ListenOrRecreateByName(path, currentUserOrRoot())
 	}
