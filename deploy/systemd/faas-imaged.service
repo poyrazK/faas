@@ -1,8 +1,8 @@
 [Unit]
 Description=onebox-faas imaged — image/snapshot orchestrator (spec §4.6, ADR-003, ADR-005)
 Documentation=https://docs.gregale.dev/ops/imaged
-After=network.target faas-cp.slice
-Wants=faas-cp.slice
+After=network.target faas-cp.slice faas-vmmd.service
+Wants=faas-cp.slice faas-vmmd.service
 
 [Service]
 Type=simple

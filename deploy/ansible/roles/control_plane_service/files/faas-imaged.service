@@ -1,8 +1,9 @@
 [Unit]
 Description=onebox-faas imaged — image/snapshot orchestrator (spec §4.6, ADR-003, ADR-005)
 Documentation=https://docs.gregale.dev/ops/imaged
-After=network.target faas-cp.slice faas-vmmd.service
-Wants=faas-cp.slice faas-vmmd.service
+After=network.target postgresql.service faas-vmmd.service faas-cp.slice
+Wants=faas-vmmd.service faas-cp.slice
+Requires=postgresql.service
 
 [Service]
 Type=simple
