@@ -2,6 +2,9 @@
 # Go >= 1.23. One binary per cmd/ dir.
 
 GO      ?= go
+GOOS    ?= $(shell $(GO) env GOOS)
+GOARCH  ?= $(shell $(GO) env GOARCH)
+export GOOS GOARCH
 PKGS    := ./...
 COVERAGE_DIR := coverage
 DAEMONS := apid gatewayd schedd vmmd builderd imaged meterd gregale githubd hostage-gen

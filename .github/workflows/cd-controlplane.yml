@@ -49,8 +49,9 @@ jobs:
 
       - name: Cross-compile for linux/amd64
         run: |
-          GOOS=linux GOARCH=amd64 make build
-          GOOS=linux GOARCH=amd64 go build -o bin/migrate ./cmd/migrate
+          export GOOS=linux GOARCH=amd64 CGO_ENABLED=0
+          make build
+          go build -o bin/migrate ./cmd/migrate
 
       - name: Generate CycloneDX SBOM
         # issue #299: emit a CycloneDX 1.5 SBOM covering the Go
