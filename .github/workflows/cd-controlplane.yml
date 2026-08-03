@@ -265,9 +265,11 @@ jobs:
           done
           rm -rf /opt/faas/bin/deploy-tmp
 
-          # Ensure state/log directories exist with faas:faas ownership
-          mkdir -p /var/lib/faas/githubd /var/log/faas /var/spool/faas
-          chown -R faas:faas /var/lib/faas /var/log/faas /var/spool/faas 2>/dev/null || true
+          # Ensure state/log/runtime directories exist prior to systemd ProtectSystem=strict
+          # (ReadWritePaths targets MUST exist on disk before daemon start)
+          mkdir -p /run/faas /etc/faas/secrets /var/lib/faas/githubd /var/log/faas /var/spool/faas
+          chown -R faas:faas /run/faas /var/lib/faas /var/log/faas /var/spool/faas 2>/dev/null || true
+          chmod 0775 /run/faas
           chmod 0770 /var/lib/faas /var/lib/faas/githubd /var/log/faas /var/spool/faas 2>/dev/null || true
 
           # Migration preflight, then apply. `migrate -status` reports the
