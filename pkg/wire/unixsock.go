@@ -51,9 +51,10 @@ func ListenOrRecreate(path string, uid, gid int, mode os.FileMode) (net.Listener
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(dir, 0o775); err != nil {
 		return nil, fmt.Errorf("wire: mkdir %q: %w", dir, err)
 	}
+	_ = os.Chmod(dir, 0o775)
 
 	// Remove any stale socket left from an unclean shutdown. ENOENT is fine;
 	// anything else (e.g. EBUSY = process still listening) is propagated.
