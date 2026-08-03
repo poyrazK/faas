@@ -156,40 +156,19 @@ jobs:
           set -euo pipefail
 
           FAAS_SERVICES="vmmd apid schedd gatewayd imaged meterd githubd"
-          # Restart order: vmmd first (the only root component, the
-          # socket owner of /run/faas/vmmd.sock), then everyone that
-          # depends on vmmd (apid, schedd, gatewayd, imaged, meterd),
-          # then githubd (the only one without a vmmd dependency).
-          # This replaces the previous `${FAAS_SERVICES}` order which
-          # had the right start-dag but iterates the SAME loop twice
-          # across the main restart and the roll_back branch — every
-          # extra vmmd restart races the still-running previous vmmd
-          # and can leave /run/faas/vmmd.sock orphaned (the inode is
-          # held open by the previous vmmd fd, the dirent is gone,
-          # dialers get `no such file or directory` even though
-          # `ss -lnx` shows the listen entry). CI run 30837572523
-          # hit this twice.
-          #
-          # PR #610's `After=faas-vmmd.service` on the imaged unit
-          # only orders systemd STARTUP, not the loop-driven
-          # restart in this script. The explicit order below is
-          # what actually drives the dependency during deploy.
+          # vmmd first (socket owner of /run/faas/vmmd.sock), then its dependents,
+          # then githubd (no vmmd dep). PR #610's systemd After= only orders STARTUP;
+          # this explicit list drives restart order during deploy.
           FAAS_RESTART_ORDER="vmmd apid schedd gatewayd imaged meterd githubd"
           if [[ "${FAAS_SERVICES}" != "${FAAS_RESTART_ORDER}" ]]; then
             echo "::error::FAAS_SERVICES and FAAS_RESTART_ORDER diverged; update both to keep dependency ordering correct"
             exit 1
           fi
           BINARIES="apid schedd gatewayd imaged meterd githubd vmmd gregale migrate"
-          # Deliberately NOT under /opt/faas/bin: this dir survives a failed
-          # deploy (so the previous build stays inspectable) and nothing that
-          # globs the binary directory should ever see it.
+          # NOT under /opt/faas/bin: survives a failed deploy + nothing globs it.
           ROLLBACK_DIR=/opt/faas/rollback
 
-          # --- Snapshot the currently-installed binaries -------------------
-          # Without this a bad merge leaves the box crash-looping until a
-          # human notices: the imaged/rootfs regression racked up 18,991
-          # restarts across ~12 h before anyone looked. The deploy now owns
-          # its own undo.
+          # Snapshot current binaries (without this a bad merge leaves the box crash-looping).
           rm -rf "${ROLLBACK_DIR}"
           mkdir -p "${ROLLBACK_DIR}"
           for bin in ${BINARIES}; do
@@ -208,21 +187,9 @@ jobs:
             done
           }
 
-          # wait_healthy polls until every service is active AND the gateway
-          # answers /healthz, then holds to confirm it STAYS that way.
-          #
-          # The hold is load-bearing. `systemctl is-active` is a point sample,
-          # and a Type=simple daemon that crash-loops is genuinely "active"
-          # for the few hundred ms it takes to reach its fatal error. Sampled
-          # on the real box while imaged was looping:
-          #
-          #   activating activating activating active activating activating
-          #
-          # — "active" ~1 poll in 6. The first version of this gate hit that
-          # window and printed "✓ all services active, gateway healthy" one
-          # second before the verify step failed on the same box. Requiring
-          # NRestarts to be UNCHANGED across the hold is what distinguishes a
-          # started daemon from a looping one.
+          # wait_healthy: active + /healthz OK, then hold 12s and verify NRestarts UNCHANGED.
+          # is-active is a point sample — a crash-looping daemon reads "active" ~1 poll in 6
+          # before reaching its fatal error (the original gate hit that window).
           wait_healthy() {
             local deadline=$((SECONDS + 60)) svc bad before after
             while (( SECONDS < deadline )); do
@@ -257,10 +224,7 @@ jobs:
             return 1
           }
 
-          # roll_back restores the previous binaries and restarts. Migrations
-          # are deliberately NOT reverted: goose is append-only (repo rule)
-          # and every migration must stay readable by the previous binary for
-          # one release, so binaries-only is the safe direction.
+          # roll_back: binaries-only (goose is append-only, never revert migrations).
           roll_back() {
             echo "::warning::rolling back to the previous binaries"
             local bin
@@ -302,30 +266,9 @@ jobs:
 
           # Ensure state/log/runtime directories exist prior to systemd ProtectSystem=strict
           # (ReadWritePaths targets MUST exist on disk before daemon start).
-          #
-          # /run/faas is created as a plain root:root 0755 dir as a bootstrap
-          # fallback — systemd's RuntimeDirectory=faas is declared ONLY on
-          # faas-vmmd.service (the SOLE owner; see that unit's comment for
-          # the long version). vmmd's RuntimeDirectory creates /faas as a
-          # per-unit tmpfs and bind-mounts it at /run/faas inside the
-          # service's mount namespace, and that bind-mount is what makes
-          # /run/faas/<svc>.sock visible from the host. schedd + gatewayd
-          # units use ReadWritePaths=/run/faas and write directly into vmmd's
-          # bind-mount (no RuntimeDirectory declared, by design — declaring
-          # it on multiple units would create per-unit tmpfs instances whose
-          # bind-mounts don't all propagate back to /run, leaving the
-          # "second" service's socket invisible to the host — run 30841750214,
-          # post-#619).
-          #
-          # `mkdir -p /run/faas` is a no-op when vmmd's bind-mount already
-          # exists (the desired steady state); if it doesn't exist yet (fresh
-          # box or post-rollback), this pre-creates a root-owned stub that
-          # vmmd's RuntimeDirectory will replace with its tmpfs bind-mount on
-          # first start.
-          #
-          # We deliberately do NOT `chown /run/faas` here — vmmd's
-          # RuntimeDirectory owns it (root:root 0775 — see the vmmd unit's
-          # mode comment) and any other ownership would defeat its bind-mount.
+          # /run/faas: pre-create as plain root:root 0755 — vmmd's RuntimeDirectory
+          # (SOLE owner per deploy/systemd/faas-vmmd.service) bind-mounts its
+          # per-unit tmpfs over it on first start. Do NOT chown here.
           mkdir -p /run/faas /etc/faas/secrets /var/lib/faas/githubd /var/log/faas /var/spool/faas
           chown -R faas:faas /var/lib/faas /var/log/faas /var/spool/faas 2>/dev/null || true
           chmod 0770 /var/lib/faas /var/lib/faas/githubd /var/log/faas /var/spool/faas 2>/dev/null || true
@@ -342,22 +285,8 @@ jobs:
           su - faas -s /bin/bash -c \
             "DATABASE_URL='${FAAS_DSN}' /opt/faas/bin/migrate"
 
-          # Provision the cosign sign keypair if it's missing.
-          # PR #371 ships `faas sign-keys init` (operator CLI) and
-          # PR #322 made imaged + schedd fail-loud at startup if
-          # /etc/faas/secrets/sign.key or sign-pub.pem is absent.
-          # The cd-digitalocean workflow runs on every merge to
-          # main but never had to provision the keypair (PR #367
-          # + #370 cleared the migration panics, then #371 surfaced
-          # this as a new failure mode). This block auto-provisions
-          # when the files are missing and drift-repairs the perms
-          # when they're wrong — the same shape as bootstrap.sh
-          # step 11c. We deliberately do NOT call bootstrap.sh
-          # itself: it's operator-side and would clobber the
-          # operator's deploy SSH key on every merge. The init
-          # branch is "if missing" only; rotating on every deploy
-          # would invalidate every customer's build-verification
-          # chain.
+          # Provision cosign sign keypair if missing (PR #371 + #322 shape; bootstrap step 11c).
+          # Drift-repair on existing files; never rotate (would invalidate customer chains).
           SIGN_KEY_PATH=/etc/faas/secrets/sign.key
           SIGN_PUB_PATH=/etc/faas/secrets/sign-pub.pem
           if [[ ! -f "${SIGN_KEY_PATH}" || ! -f "${SIGN_PUB_PATH}" ]]; then
@@ -382,56 +311,13 @@ jobs:
             fi
           fi
 
-          # --- One-shot config fill: per-runtime base refs --------------
-          # Every runtime base in pkg/imaged/base.go::DefaultRuntimeBaseRefs
-          # has a default ref that points at the org's private
-          # ghcr.io/onebox-faas namespace (e.g. runner-node22:latest,
-          # runner-python312:latest, base-debian-parent:latest). The
-          # build-time puller is anonymous (pkg/oci/registry.go:519
-          # passes nil BasicAuth), the token endpoint returns 403, and
-          # imaged loops. The override path is per-runtime env var
-          # (FAAS_DEPLOY_BASE_REF_NODE22, _PYTHON312, _DEBIAN_PARENT,
-          # etc.), but sealed.env on a box that boot-strapped before
-          # #465 has no entries — every restart 403s on the first row
-          # the loop visits.
-          #
-          # Operator fix is to set the FAAS_DEPLOY_BASE_REF_* in
-          # sealed.env to a digest-pinned mirror.gcr.io ref. The
-          # mirror serves each image as a multi-arch manifest list
-          # (which our digest-pinned gate in cmd/imaged/main.go
-          # refuses — "manifest lists not supported" per
-          # sealed.env.example:15), so we resolve the amd64 entry's
-          # digest out-of-band and pin to that. Script is idempotent:
-          # the grep short-circuits when the var is already present.
-          #
-          # cd-controlplane.yml normally only ships binaries —
-          # operator manages /etc/faas/sealed.env via bootstrap.sh.
-          # This carve-out is for the box-side gap introduced when
-          # PR #465 (ADR-053) merged to main between operator
-          # bootstrap runs (the EX44 was bootstrapped 2026-07-24,
-          # #465 merged 2026-07-31 — the 7-day gap left the var
-          # unset, and post-fix run 30656504195 confirmed imaged
-          # now fails on the SECOND row once the first one passes,
-          # because every runtime base has the same default-ref
-          # shape).
-          #
-          # Each entry: VAR_NAME|LIBRARY_IMAGE. We resolve the amd64
-          # digest once per entry and append the var. Per-line
-          # ordering matters — debian-parent MUST land first because
-          # the 6 child runtimes declare ParentRef=BaseRefDebianParent
-          # and imaged's EnsureBases loop stages parent before
-          # children (pkg/imaged/base_stage.go:652-658, ADR-053).
-          # When debian-parent's env override is already set, that
-          # row is a no-op and we proceed to the children; when the
-          # box's apt sources are stale enough that one of the child
-          # tags has been republished, the digest resolver picks up
-          # the new bytes — same posture as the existing builder-base
-          # override.
-          #
-          # Inline python3 -c as a single line per the PR #484
-          # bulletproof-shape fix (multi-line heredocs escape bash
-          # word-splitting + YAML block-scalar folding and trip
-          # python's IndentationError).
+          # Per-runtime base refs (ADR-053). Mirrors of pkg/imaged base.go consts.
+          # PR #465 / #486 default-ref shape points at anonymous ghcr.io/onebox-faas; that
+          # private namespace returns 403 from this box's anonymous build-time puller.
+          # Override → digest-pinned mirror.gcr.io (digest-pinned gate refuses manifest
+          # lists; amd64 manifest from mirror is resolved inline). Order: debian-parent first
+          # (parent staging precedence in imaged's EnsureBases loop). Inline python3 -c per
+          # PR #484 bulletproof-shape fix.
           for entry in \
             "FAAS_DEPLOY_BASE_REF_DEBIAN_PARENT|library/debian|12-slim" \
             "FAAS_DEPLOY_BASE_REF_NODE22|library/node|22-bookworm-slim" \
@@ -459,50 +345,20 @@ jobs:
               >> /etc/faas/sealed.env
             echo "→ wrote ${VAR}=mirror.gcr.io/${LIB}@${DIG}"
           done
-          # Restart imaged once per write so the new env lands. The
-          # services restart loop below handles the daemon ordering;
-          # imaged needs a poke to re-read sealed.env.
+          # Restart imaged once per write so the new env lands.
           if grep -qE '^FAAS_DEPLOY_BASE_REF_(DEBIAN_PARENT|NODE22|PYTHON312|GO124(_ALPINE)?|NODE24|PYTHON313)=' \
                /etc/faas/sealed.env 2>/dev/null; then
             systemctl restart faas-imaged.service || true
             sleep 5
           fi
 
-          # --- Config drift guard: OCI base ref registry ------------------
-          # imaged pulls every runtime base on every startup — pointed at a
-          # registry it can't reach anonymously, a restart loop turns a
-          # transient failure into a permanent one. Three failure modes seen
-          # on the box:
-          #
-          #   1. docker.io — anonymous 100/6h pull rate limit (DO deploy
-          #      2026-07-24, burned 20,000 restarts).
-          #   2. ghcr.io/onebox-faas/* — the org's PRIVATE namespace; the
-          #      build-time puller is anonymous (pkg/oci/registry.go:519
-          #      passes nil BasicAuth) so the token endpoint returns 403
-          #      (cd-controlplane runs 30650464753 + 30652515669 +
-          #      30659586727 — every FAAS_DEPLOY_BASE_REF_* const
-          #      default at ghcr.io/onebox-faas/<runtime>:latest
-          #      trips the same way; PR #486 unblocked
-          #      FAAS_DEPLOY_BASE_REF_DEBIAN_PARENT, the next row
-          #      (node22) then 403'd).
-          #   3. tag-only refs — imaged's per-env-var digest-pinned gate in
-          #      cmd/imaged/main.go refuses them with a fail-loud error.
-          #
-          # deploy/controlplane/sealed.env.example pins mirror.gcr.io for
-          # every override; refuse to ship onto anonymous-pull drift so the
-          # next deploy doesn't get to find it the same way.
+          # Drift guard: refuse docker.io (rate-limited) or ghcr.io/onebox-faas (anonymous 403)
+          # OCI base refs. Both crash-loop imaged (PR #486, runs 30650464753 / 30652515669).
           BAD_RE='^(FAAS_BUILDER_BASE_REF|FAAS_DEPLOY_BASE_REF(_DEBIAN_PARENT|_NODE22|_PYTHON312|_GO124(_ALPINE)?|_NODE24|_PYTHON313)?)=(https?://)?(registry-1\.)?docker\.io/'
           if grep -qE "${BAD_RE}" /etc/faas/sealed.env 2>/dev/null; then
             echo "::error::an OCI base ref in /etc/faas/sealed.env points at docker.io — anonymous pulls are rate-limited and will crash-loop imaged. Use mirror.gcr.io (see deploy/controlplane/sealed.env.example)."
             exit 1
           fi
-          # Catch ANY per-runtime base ref still pointed at the private
-          # ghcr.io/onebox-faas namespace. The single regex covers
-          # _DEBIAN_PARENT, _NODE22, _PYTHON312, _GO124, _GO124_ALPINE,
-          # _NODE24, _PYTHON313 — every entry in pkg/imaged/base.go
-          # ::DefaultRuntimeBaseRefs. Without this, the writer above
-          # can re-seed the var to mirror.gcr.io but a stale value
-          # already in the file wins on the next loop visit.
           if grep -qE '^FAAS_DEPLOY_BASE_REF(_DEBIAN_PARENT|_NODE22|_PYTHON312|_GO124(_ALPINE)?|_NODE24|_PYTHON313)?=ghcr\.io/onebox-faas/' \
                /etc/faas/sealed.env 2>/dev/null; then
             echo "::error::a FAAS_DEPLOY_BASE_REF_* in /etc/faas/sealed.env points at the private ghcr.io/onebox-faas namespace — the build-time puller is anonymous (pkg/oci/registry.go:519), the token endpoint returns 403, and imaged loops. Override to a digest-pinned mirror.gcr.io ref (see deploy/controlplane/sealed.env.example + ADR-053). Every PR #465 default const is unreachable from this box; the env var MUST be overridden."
