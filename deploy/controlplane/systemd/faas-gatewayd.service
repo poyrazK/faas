@@ -23,8 +23,14 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-RuntimeDirectory=faas
-RuntimeDirectoryMode=0770
+# /run/faas is owned by faas-vmmd.service (the SOLE RuntimeDirectory=faas
+# across the faas service set; see faas-vmmd.service for the long version).
+# Declaring it here would create a second per-unit tmpfs whose bind-mount
+# would not propagate back to /run, so gatewayd's unix sockets would land
+# inside this unit's tmpfs and be invisible to imaged/schedd/vmmd.
+# ReadWritePaths=/run/faas below is sufficient — gatewayd writes into
+# the host /run/faas directory that vmmd's RuntimeDirectory created.
+ReadWritePaths=/run/faas
 ReadOnlyPaths=/etc/faas
 EnvironmentFile=/etc/faas/sealed.env
 

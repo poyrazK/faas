@@ -22,18 +22,28 @@ EnvironmentFile=/etc/faas/sealed.env
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
-# PrivateTmp=no + RuntimeDirectory=faas — see faas-vmmd.service for the
-# reasoning. Without dropping PrivateTmp, schedd.sock lands inside
-# schedd's per-mount-namespace tmpfs and imaged (which dials it) gets
-# `no such file or directory` (run 30839233808).
+# PrivateTmp=no — see faas-vmmd.service for the full reasoning. Without
+# dropping PrivateTmp, schedd's read of /run/faas/schedd.sock would resolve
+# inside schedd's per-mount-namespace tmpfs (not vmmd's bind-mount), so
+# imaged — which dials from its own mount ns — would get `no such file or
+# directory` even though `ss -lnx` shows the listen entry (run 30839233808).
+# /run/faas itself is owned by faas-vmmd.service's RuntimeDirectory=faas
+# (the SOLE declaration across the faas service set; see vmmd's unit for the
+# long version of why).
 PrivateTmp=no
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 ReadOnlyPaths=/etc/faas
 ReadWritePaths=/run/faas /var/log/faas
-RuntimeDirectory=faas
-RuntimeDirectoryMode=0770
+# Schedd inherits /run/faas from vmmd's bind-mount (which is the SOLE
+# RuntimeDirectory=faas across the faas service set). Declaring
+# RuntimeDirectory=faas here as well would create a SECOND per-unit
+# tmpfs instance; only the first such bind-mount in the start order
+# propagates back to the host /run, so schedd.sock would land inside
+# vmmd's tmpfs and be invisible from the host (run 30841750214).
+# ReadWritePaths above is sufficient — schedd writes into the host
+# /run/faas directory that vmmd's RuntimeDirectory created.
 
 [Install]
 WantedBy=multi-user.target

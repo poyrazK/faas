@@ -13,10 +13,13 @@ side during the migration window.
 
 ## What this role does NOT do
 
-- Provision the unix socket ACL (the unit uses
-  `RuntimeDirectory=faas` + `RuntimeDirectoryMode=0750`; the
-  daemon itself sets the per-socket mode to 0660 with group
-  `faas` on first dial).
+- Provision the unix socket ACL. `/run/faas` is owned by
+  `faas-vmmd.service` (the SOLE `RuntimeDirectory=faas` across the
+  faas service set; see `faas-vmmd.service` for why declaring it
+  here as well would create a second per-unit tmpfs whose
+  bind-mount doesn't propagate back to `/run`). The daemon
+  itself sets the per-socket mode to 0660 with group `faas` on
+  first dial.
 - Enable the unit (`systemctl enable --now faas-gatewayd-internal`).
 - Run the daemon (it picks up on first start).
 

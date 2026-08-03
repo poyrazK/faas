@@ -4,8 +4,10 @@
 # The internal daemon listens ONLY on a unix socket inside the box.
 # Public network exposure is impossible by design — no
 # AmbientCapabilities, no RestrictAddressFamilies other than
-# AF_UNIX. The unix socket is provisioned at /run/faas via
-# RuntimeDirectory=faas in the unit.
+# AF_UNIX. The unix socket lives at /run/faas/gatewayd-internal.sock,
+# which is owned by faas-vmmd.service (the SOLE RuntimeDirectory=faas
+# across the faas service set — see faas-vmmd.service for the long
+# explanation of why declaring it here would lose the bind-mount).
 
 - name: gatewayd_internal_service — install systemd unit
   ansible.builtin.copy:

@@ -49,12 +49,15 @@ ProtectClock=yes
 ProtectProc=invisible
 
 # CertMagic per-replica storage at /var/lib/faas/certs (mode 0700,
-# faas:faas). RuntimeDirectory=faas gives us /run/faas for the
-# gatewayd-internal.sock dial target. ReadWritePaths carves out
-# exactly the dirs we write to.
-RuntimeDirectory=faas
-RuntimeDirectoryMode=0750
-ReadWritePaths=/var/lib/faas/certs
+# faas:faas). ReadWritePaths carves out exactly the dirs we write to.
+#
+# /run/faas is owned by faas-vmmd.service (the SOLE RuntimeDirectory=faas
+# across the faas service set). The public daemon dials
+# gatewayd-internal.sock, which lives in the host /run/faas (vmmd's
+# bind-mount) — so we need ReadWritePaths=/run/faas. Declaring
+# RuntimeDirectory=faas here would just create a second per-unit tmpfs
+# whose bind-mount wouldn't propagate back to /run.
+ReadWritePaths=/var/lib/faas/certs /run/faas
 ReadOnlyPaths=/etc/faas
 
 [Install]

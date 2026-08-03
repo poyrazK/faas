@@ -25,9 +25,28 @@ ReadWritePaths=/etc/faas/secrets /run/faas /srv/fc /var/log/faas
 # tmpfs instance and NOT visible from the host — every other daemon
 # that dials /run/faas/vmmd.sock would get `no such file or directory`
 # even though `ss -lnx` shows the LISTEN entry (run 30839233808).
+#
+# This unit is the SOLE owner of /run/faas on disk. schedd and
+# gatewayd do NOT declare RuntimeDirectory=faas — when systemd sees
+# RuntimeDirectory=faas on multiple units, only the first one to
+# start gets its bind-mount propagated to the host /run; the others
+# silently fall through to writing into the existing dirent, which
+# puts their .sock into the first service's per-unit tmpfs instead
+# of the host's. schedd.sock + vmmd.sock land in two different
+# filesystem layers and only schedd.sock is visible from the host
+# (run 30841750214, post-#619). Keeping the declaration on vmmd
+# alone ensures all writes go through the same bind-mount.
+#
+# Mode 0775 (not 0770): the dir is root-owned but the `faas` group
+# needs write+execute to create schedd.sock / gatewayd-internal.sock.
+# Every faas service user (faas, faas-schedd, faas-vmmd, faas-gatewayd,
+# faas-imaged, faas-apid, faas-meterd, faas-githubd) is in the `faas`
+# group (see bootstrap.sh step 8 + the legacy PR #608 chown), and the
+# world-readable bit doesn't widen the attack surface — the socket files
+# themselves stay 0660 + group faas per §11 ACL (ADR-015).
 PrivateTmp=no
 RuntimeDirectory=faas
-RuntimeDirectoryMode=0770
+RuntimeDirectoryMode=0775
 ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

@@ -52,11 +52,16 @@ ProtectProc=invisible
 
 # CertMagic stores issued certs at /var/lib/faas/certs (mode 0700, root:faas).
 # ProtectSystem=strict makes the entire fs read-only — ReadWritePaths
-# carves out exactly the dirs we need to write to. RuntimeDirectory=faas
-# gives us /run/faas for the schedd-grpc unix socket + cron synth server.
-RuntimeDirectory=faas
-RuntimeDirectoryMode=0750
-ReadWritePaths=/var/lib/faas/certs
+# carves out exactly the dirs we need to write to.
+#
+# /run/faas is owned by faas-vmmd.service (the SOLE RuntimeDirectory=faas
+# across the faas service set). Declaring it here would create a SECOND
+# per-unit tmpfs instance whose bind-mount does not propagate back to the
+# host /run, so gatewayd's unix sockets would land inside gatewayd's
+# own tmpfs and be invisible to imaged/schedd/vmmd (run 30841750214).
+# ReadWritePaths=/run/faas is sufficient — gatewayd writes into the host
+# /run/faas directory that vmmd's RuntimeDirectory created.
+ReadWritePaths=/var/lib/faas/certs /run/faas
 ReadOnlyPaths=/etc/faas
 
 [Install]

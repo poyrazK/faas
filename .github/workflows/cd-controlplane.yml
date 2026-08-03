@@ -273,6 +273,10 @@ jobs:
                 install -m 0755 "${ROLLBACK_DIR}/${bin}" "/opt/faas/bin/${bin}"
               fi
             done
+            # Same /run/faas reset as the main restart path — rollback
+            # uses the same vmmd-only RuntimeDirectory and the dirent
+            # state may be just as stale as the failed deploy left it.
+            rm -rf /run/faas
             for svc in ${FAAS_RESTART_ORDER}; do
               systemctl restart "faas-${svc}.service" || true
             done
@@ -293,23 +297,28 @@ jobs:
           # (ReadWritePaths targets MUST exist on disk before daemon start).
           #
           # /run/faas is created as a plain root:root 0755 dir as a bootstrap
-          # fallback — systemd's RuntimeDirectory=faas (vmmd, schedd, gatewayd)
-          # creates /faas as a per-unit tmpfs and bind-mounts it at /run/faas
-          # inside the service's mount namespace, and that bind-mount is
-          # what makes /run/faas/<svc>.sock visible from the host. If this
-          # script chowns /run/faas to faas:faas (the old PR #608 behaviour),
-          # systemd's RuntimeDirectory sees the existing dir with the wrong
-          # ownership and silently skips the bind-mount — every daemon that
-          # dials /run/faas/vmmd.sock then gets `no such file or directory`
-          # even though `ss -lnx` shows the LISTEN entry. The RuntimeDirectory
-          # semantics also stamp /run/faas with per-service ownership on each
-          # restart (vmmd→root, schedd→faas-schedd, gatewayd→faas), so a
-          # blanket `chown -R faas:faas` here would race the restart loop.
+          # fallback — systemd's RuntimeDirectory=faas is declared ONLY on
+          # faas-vmmd.service (the SOLE owner; see that unit's comment for
+          # the long version). vmmd's RuntimeDirectory creates /faas as a
+          # per-unit tmpfs and bind-mounts it at /run/faas inside the
+          # service's mount namespace, and that bind-mount is what makes
+          # /run/faas/<svc>.sock visible from the host. schedd + gatewayd
+          # units use ReadWritePaths=/run/faas and write directly into vmmd's
+          # bind-mount (no RuntimeDirectory declared, by design — declaring
+          # it on multiple units would create per-unit tmpfs instances whose
+          # bind-mounts don't all propagate back to /run, leaving the
+          # "second" service's socket invisible to the host — run 30841750214,
+          # post-#619).
           #
-          # Operators upgrading a box that previously had the chown applied
-          # need to `rm -rf /run/faas` once after stopping vmmd/schedd/gatewayd
-          # so RuntimeDirectory creates it fresh. The next deploy will do the
-          # right thing automatically.
+          # `mkdir -p /run/faas` is a no-op when vmmd's bind-mount already
+          # exists (the desired steady state); if it doesn't exist yet (fresh
+          # box or post-rollback), this pre-creates a root-owned stub that
+          # vmmd's RuntimeDirectory will replace with its tmpfs bind-mount on
+          # first start.
+          #
+          # We deliberately do NOT `chown /run/faas` here — vmmd's
+          # RuntimeDirectory owns it (root:root 0775 — see the vmmd unit's
+          # mode comment) and any other ownership would defeat its bind-mount.
           mkdir -p /run/faas /etc/faas/secrets /var/lib/faas/githubd /var/log/faas /var/spool/faas
           chown -R faas:faas /var/lib/faas /var/log/faas /var/spool/faas 2>/dev/null || true
           chmod 0770 /var/lib/faas /var/lib/faas/githubd /var/log/faas /var/spool/faas 2>/dev/null || true
@@ -495,6 +504,21 @@ jobs:
 
           # Reset any systemd start-limit-hit counters from previous crash loops
           systemctl reset-failed
+
+          # Drop any stale /run/faas before restarting vmmd. vmmd's
+          # RuntimeDirectory=faas (the SOLE owner across the faas
+          # service set) bind-mounts a per-unit tmpfs at /run/faas,
+          # but if /run/faas already exists with foreign ownership
+          # (faas:faas from a prior bootstrap chown, or faas-schedd
+          # from schedd's previous RuntimeDirectory), systemd
+          # silently skips the bind-mount — every subsequent daemon
+          # that dials /run/faas/<svc>.sock gets `no such file or
+          # directory` even though `ss -lnx` shows the listen entry
+          # (run 30841750214, #619). Dropping the dir here is a
+          # no-op on a freshly bootstrapped box and idempotent on
+          # every deploy thereafter; vmmd's RuntimeDirectory will
+          # recreate it as the canonical root-owned bind-mount.
+          rm -rf /run/faas
 
           # Restart all FaaS services in dependency order. vmmd MUST
           # come first so /run/faas/vmmd.sock is bound before imaged

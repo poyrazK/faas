@@ -42,8 +42,12 @@ ProtectHostname=yes
 ProtectClock=yes
 ProtectProc=invisible
 
-RuntimeDirectory=faas
-RuntimeDirectoryMode=0750
+# /run/faas is owned by faas-vmmd.service (the SOLE RuntimeDirectory=faas
+# across the faas service set). The public daemon doesn't write any
+# sockets into /run/faas (it proxies via TCP + reads gatewayd-internal.sock
+# inherited from vmmd's bind-mount via ReadWritePaths on the internal unit),
+# so no RuntimeDirectory is needed here — declaring it would just create a
+# second per-unit tmpfs whose bind-mount wouldn't propagate back to /run.
 ReadWritePaths=/var/lib/faas/certs
 ReadOnlyPaths=/etc/faas
 

@@ -49,11 +49,15 @@ ProtectHostname=yes
 ProtectClock=yes
 ProtectProc=invisible
 
-# RuntimeDirectory=faas gives us /run/faas for the
-# gatewayd-internal.sock the public daemon dials. Mode 0660 + group
-# faas is the §11 ACL (ADR-015) — only faas:faas can dial.
-RuntimeDirectory=faas
-RuntimeDirectoryMode=0750
+# /run/faas is owned by faas-vmmd.service (the SOLE RuntimeDirectory=faas
+# across the faas service set). Declaring it here would create a SECOND
+# per-unit tmpfs instance whose bind-mount does not propagate back to the
+# host /run, so gatewayd-internal.sock would land inside this unit's own
+# tmpfs and be invisible to the public daemon (run 30841750214).
+# ReadWritePaths=/run/faas below is sufficient — this unit writes into
+# the host /run/faas directory that vmmd's RuntimeDirectory created.
+# Mode 0660 + group faas on the socket file itself is the §11 ACL
+# (ADR-015) — only faas:faas can dial.
 ReadWritePaths=/run/faas
 
 [Install]
