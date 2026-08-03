@@ -128,12 +128,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// RouteCacheHydration.MarkHydrated() and routerSig to the
 	// schedd router's first ready client).
 	probe := &gateway.ReadyzProbe{}
-	pgSig, pgStop := gateway.NewPGPingSignal(ctx, nil, 5*time.Second)
-	// pgSig's stopper always fires; the daemon hasn't opened a
-	// real Postgres pool yet (the file-move cluster opens it).
-	// The placeholder path signals PG as "ready" so the LB sees
-	// /readyz=200 (the daemon is not actually wired to PG yet).
+	// The placeholder has no Postgres pool to ping (PR-B's run.go
+	// opens the pool + calls NewPGPingSignal with a real pinger).
+	// NewPGPingSignal with a nil pool panics on the first tick
+	// (readiness.go:296 pool.Ping on nil), so we hand-construct a
+	// always-ready signal and set a no-op stopper. PR-B replaces
+	// this block with `pgSig, pgStop := gateway.NewPGPingSignal(ctx, pool, ...)`.
+	pgSig := probe.Register()
 	pgSig.Set(true, "")
+	pgStop := func() {}
 	cacheSig := probe.Register()
 	cacheSig.Set(false, "route cache not hydrated yet")
 	routerSig := probe.Register()
@@ -268,7 +271,7 @@ func runDrain(ctx context.Context, log *slog.Logger, internalSrv, controlSrv *ht
 		}
 	}()
 	go func() {
-		log.Info("gatewayd-internal: control listening", "addr", defaultControlAddr)
+		log.Info("gatewayd-internal: control listening", "addr", controlAddr)
 		if err := controlSrv.Serve(controlListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
