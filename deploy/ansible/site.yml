@@ -51,7 +51,8 @@
     - role: postgres_backup  # nightly pg_basebackup timer (M8)
     - role: control_plane_service  # systemd units + TOMLs for apid/schedd/imaged
     - role: vmmd_service     # drop systemd unit + example TOML; does NOT enable
-    - role: gatewayd_service # drop systemd unit + example TOML + cert storage dir
+    - role: gatewayd_public_service   # TLS-only edge daemon (ADR-070); drops systemd unit + /var/lib/faas/{certs,ca}
+    - role: gatewayd_internal_service # routing + wake + proxy daemon (ADR-070); drops systemd unit + /run/faas/gatewayd-internal.sock
     - role: node_exporter    # host-level telemetry for §12 dashboard
     - role: alertmanager     # §12 notification path; prometheus.service After= this
     - role: prometheus       # scrape config + service for §12 dashboard

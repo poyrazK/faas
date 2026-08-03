@@ -132,6 +132,27 @@ func run(ctx context.Context, log *slog.Logger) error {
 	cacheHydration := gateway.NewRouteCacheHydration()
 	placeholder := placeholderWithHydration(cacheHydration, cacheSig)
 
+	// Issue #254 / Move 4 PR-2: the AppLogsHandler claims the
+	// customer-facing `GET /v1/apps/{slug}/logs` route. The
+	// HANDLER is wired in PR-B (authMw + pgStore + scheddRouter
+	// land in run.go that PR); the MUX REGISTRATION is part of
+	// the file-move surface and must land in PR-A so that
+	// cmd/apid's spec-compliance parity test still sees the
+	// route after cmd/gatewayd/ is deleted. The 503 stub here
+	// returns the same response shape the legacy daemon
+	// delivered when any dep was nil (the if-block was skipped
+	// in the legacy code, so the route 404'd; a 503 with an
+	// X-Faas-Reason header is a strictly more useful failure
+	// mode for the gap between file-move and wire-up).
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/apps/{slug}/logs", func(w http.ResponseWriter, r *http.Request) {
+		// PR-A stub: replaced by &AppLogsHandler{...} in PR-B.
+		w.Header().Set("X-Faas-Reason", "gatewayd-internal: app-logs wired in PR-B")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	mux.Handle("/", placeholder)
+	placeholder = mux
+
 	// Unix-socket listener. Mode 0660 + group faas is the §11 ACL
 	// (ADR-015); the daemon-bootstrap concern (group setup, umask)
 	// is documented in deploy/systemd/gatewayd-internal.service.

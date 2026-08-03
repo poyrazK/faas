@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -19,11 +20,31 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 )
 
+// quotaUnwiredBackend routes nothing; every request 404s. Used by the
+// /v1/internal/quota tests so the handler has a Backend to call into
+// without touching the real Postgres path. PR A (pure file moves) —
+// the pre-split cmd/gatewayd/main.go hosted the same shim under the
+// name unwiredBackend. We re-declare it locally because the Handler
+// constructor requires a Backend value and the quota tests don't care
+// which one.
+type quotaUnwiredBackend struct{}
+
+func (quotaUnwiredBackend) Lookup(_ context.Context, _ string) (gateway.App, bool) {
+	return gateway.App{}, false
+}
+func (quotaUnwiredBackend) Pick(_ string) (gateway.Target, bool) {
+	return gateway.Target{}, false
+}
+func (quotaUnwiredBackend) HealthyCount(_ string) int { return 0 }
+func (quotaUnwiredBackend) Admit(_ context.Context, _ string, _ int) (string, gateway.WakeMethod, bool, error) {
+	return "", gateway.WakeMethodUnspecified, false, nil
+}
+
 // newQuotaTestHandler wires a *gateway.Handler with a fresh *Limiter
 // so the test can drain the bucket and verify the snapshot reads
 // the same value.
 func newQuotaTestHandler() *gateway.Handler {
-	return gateway.NewHandlerWith(unwiredBackend{}, nil, nil) // metrics=nil → no-op observation
+	return gateway.NewHandlerWith(quotaUnwiredBackend{}, nil, nil) // metrics=nil → no-op observation
 }
 
 func TestInternalQuotaHandler_MissingParam_400(t *testing.T) {
@@ -87,7 +108,7 @@ func TestInternalQuotaHandler_FreshBucket_Noop(t *testing.T) {
 // dashboard reads this and renders it; the value contract is the
 // load-bearing wire shape.
 func TestInternalQuotaHandler_AfterAllow(t *testing.T) {
-	h := gateway.NewHandlerWith(unwiredBackend{}, nil, nil)
+	h := gateway.NewHandlerWith(quotaUnwiredBackend{}, nil, nil)
 	if !h.Limiter().Allow("app-1", api.PlanHobby) {
 		t.Fatal("Allow returned false; want true")
 	}

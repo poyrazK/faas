@@ -324,11 +324,12 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 	// files that mount a `mux.Handle` for customer-facing routes.
 	// The gatewayd AppLogsHandler dispatch is wired via
 	// `mux.Handle("GET /v1/apps/{slug}/logs", ...)` in
-	// cmd/gatewayd/main.go; the applogs route is the only route
-	// the two daemons share today.
+	// cmd/gatewayd-internal/main.go (Tier A7 PR-A: handler files
+	// moved into cmd/gatewayd-internal); the applogs route is the
+	// only route the two daemons share today.
 	sources := []string{
 		filepath.Join(root, "cmd/apid", serverSrcPath),
-		filepath.Join(root, "cmd/gatewayd", "main.go"),
+		filepath.Join(root, "cmd/gatewayd-internal", "main.go"),
 	}
 	var codeRoutes []string
 	for _, p := range sources {
