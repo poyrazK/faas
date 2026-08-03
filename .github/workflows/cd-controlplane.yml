@@ -86,7 +86,7 @@ jobs:
           syft dir:. -o cyclonedx-json=bin/sbom.json --source-version "${{ github.sha }}"
 
       - name: Upload SBOM.json artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: SBOM.json
           path: bin/sbom.json
