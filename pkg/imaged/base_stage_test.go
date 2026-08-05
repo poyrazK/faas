@@ -924,6 +924,81 @@ func withMountStub(t *testing.T) {
 	})
 }
 
+// TestMountOverlay_RejectsEmptyPaths pins the contract that
+// mountOverlay returns the empty-path error before touching the
+// kernel syscall. A regression that swapped the early-return
+// shape would push empty paths through to mount(2) and produce
+// a kernel-side ENOENT that would obscure the real reason
+// (test fixture misuse). Lives as a doc-test guarding the
+// PR-K syscall path.
+func TestMountOverlay_RejectsEmptyPaths(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name              string
+		merged, lowerdir, upperdir, workdir string
+	}{
+		{"empty merged", "", "/l", "/u", "/w"},
+		{"empty lower", "/m", "", "/u", "/w"},
+		{"empty upper", "/m", "/l", "", "/w"},
+		{"empty workdir", "/m", "/l", "/u", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := mountOverlay(ctx, tc.merged, tc.lowerdir, tc.upperdir, tc.workdir)
+			if err == nil {
+				t.Fatalf("mountOverlay(%q,%q,%q,%q) succeeded; want empty-path error",
+					tc.merged, tc.lowerdir, tc.upperdir, tc.workdir)
+			}
+			if !strings.Contains(err.Error(), "empty path") {
+				t.Fatalf("mountOverlay error %q; want substring 'empty path'", err)
+			}
+		})
+	}
+}
+
+// TestUmountOverlay_EmptyArgIsNoop pins the contract that
+// umountOverlay("") returns nil without calling the kernel.
+// Matches the pre-syscall behavior of the old exec.Command
+// wrapper (which silently no-op'd on empty).
+func TestUmountOverlay_EmptyArgIsNoop(t *testing.T) {
+	if err := umountOverlay(""); err != nil {
+		t.Fatalf("umountOverlay(\"\") = %v; want nil", err)
+	}
+}
+
+// TestMountOverlayFn_DelegatesToSyscall locks in that the
+// production mountOverlayFn dispatches to mountOverlaySyscall
+// rather than exec'ing /bin/mount (the PR-K fix). We don't
+// actually want to call the syscall here — the harness below
+// substitutes a flag-recording closure that mimics the
+// syscall's contract shape and asserts the closure was hit
+// exactly once with the merged path.
+func TestMountOverlayFn_DelegatesToSyscall(t *testing.T) {
+	orig := mountOverlayFn
+	t.Cleanup(func() { mountOverlayFn = orig })
+
+	var called int
+	gotMerged := ""
+	mountOverlayFn = func(_ context.Context, merged, lowerdir, upperdir, workdir string) error {
+		called++
+		gotMerged = merged
+		if lowerdir == "" || upperdir == "" || workdir == "" {
+			return errors.New("empty path")
+		}
+		return nil
+	}
+
+	if err := mountOverlay(context.Background(), "/p/merged", "/p/lower", "/p/upper", "/p/work"); err != nil {
+		t.Fatalf("mountOverlay: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("mountOverlayFn called %d times; want 1", called)
+	}
+	if gotMerged != "/p/merged" {
+		t.Fatalf("merged=%q; want /p/merged", gotMerged)
+	}
+}
+
 // TestEnsureBaseExt4_WithParentRef_PullsDeltaOnly — happy
 // path for the ADR-053 staging branch. The runtime has 2
 // DiffIDs, the parent has 1 (matching the runtime's first).

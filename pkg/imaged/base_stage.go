@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -445,43 +444,47 @@ func (h *Handler) ensureBaseExt4ParentRef(
 
 // mountOverlay assembles `mount -t overlay overlay -o
 // lowerdir=<parentMount>,upperdir=<upper>,workdir=<workdir>
-// <merged>` under a ctx-bound exec.CommandContext. The merged
-// view is the child filesystem ready for `mkfs.ext4 -d <merged>`.
-// Returns the (empty) success path; a non-zero mount syscall
-// exit surfaces the kernel error verbatim.
+// <merged>` via the direct mount(2) syscall so the daemon's
+// ambient CAP_SYS_ADMIN is honored end-to-end. The merged view
+// is the child filesystem ready for `mkfs.ext4 -d <merged>`.
+// Returns the (empty) success path; a non-zero syscall surfaces
+// the kernel error verbatim.
 //
-// Note: imaged runs as User=faas-imaged with NoNewPrivileges=yes
-// (deploy/systemd/faas-imaged.service). A user-namespace overlay
-// mount requires either CAP_SYS_ADMIN (which imaged lacks) or a
-// kernel compiled with CONFIG_USER_NS_FS=y AND a userns mount
-// (newuidmap/newgidmap wiring). The one-box EX44 ships the
-// kernel with these enabled and the imaged unit does NOT carry
-// `UserNamespace=keep-id`, so `mount -t overlay` from inside the
-// imaged uid succeeds. The test seam (base_stage_test.go)
-// overrides mountOverlayFn with a no-op stub for unit-test
-// portability — the bufconn-style end-to-end coverage lives in
-// pkg/vmmdgrpc and on the EX44 metal path.
+// Why syscall, not exec /bin/mount: imaged runs as User=faas-imaged
+// with NoNewPrivileges=yes + AmbientCapabilities=cap_sys_admin
+// (deploy/systemd/faas-imaged.service). exec'ing the setuid-root
+// /bin/mount binary under NNP causes mount(8) to fail its libcap
+// check (it doesn't see the caller's ambient cap because the
+// process is now a different uid post-setuid) and the kernel
+// returns the misleading `overlayfs: upper fs does not support
+// tmpfile` / `cannot mount overlay read-only`. Calling
+// unix.Mount(2) directly carries the ambient cap through, which
+// is the whole reason PR-F added AmbientCapabilities=cap_sys_admin
+// to the unit. The syscall lives in mount_overlay_linux.go
+// (build-tag-stripped on non-linux for unit tests on macOS).
+//
+// The test seam (base_stage_test.go) overrides mountOverlayFn
+// with a no-op stub for unit-test portability — the bufconn-style
+// end-to-end coverage lives in pkg/vmmdgrpc and on the EX44 metal
+// path.
 func mountOverlay(ctx context.Context, merged, lowerdir, upperdir, workdir string) error {
 	return mountOverlayFn(ctx, merged, lowerdir, upperdir, workdir)
 }
 
 // mountOverlayFn is the package-level indirection so tests can
 // substitute a no-op (the production mount syscall requires
-// CAP_SYS_ADMIN or a userns mount that's unavailable on the
-// test host). Tests MUST restore the production value after the
-// stub run — see base_stage_test.go::withMountStub.
+// CAP_SYS_ADMIN, which is unavailable in the test environment).
+// Tests MUST restore the production value after the stub run —
+// see base_stage_test.go::withMountStub. The ctx parameter is
+// retained for test-seam parity (was used by the old exec
+// CommandContext wrapper).
 var mountOverlayFn = func(ctx context.Context, merged, lowerdir, upperdir, workdir string) error {
+	_ = ctx
 	if merged == "" || lowerdir == "" || upperdir == "" || workdir == "" {
 		return fmt.Errorf("imaged: mountOverlay: empty path (merged=%q lower=%q upper=%q work=%q)",
 			merged, lowerdir, upperdir, workdir)
 	}
-	opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerdir, upperdir, workdir)
-	cmd := exec.CommandContext(ctx, "mount", "-t", "overlay", "overlay", "-o", opts, merged)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("mount -t overlay -o %s %s: %w (%s)",
-			opts, merged, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return mountOverlaySyscall(merged, lowerdir, upperdir, workdir)
 }
 
 // umountOverlay unmounts the overlay assembled by mountOverlay.
@@ -496,20 +499,14 @@ func umountOverlay(merged string) error {
 // umountOverlayFn mirrors mountOverlayFn for the teardown
 // path. Tests can stub this to skip the real umount syscall;
 // production behavior is the unlink-then-umount idempotent
-// pattern.
+// pattern. Direct unix.Unmount(2) syscall (same justification
+// as mountOverlayFn — survives NoNewPrivileges + setuid binary
+// cap-drop edge cases that bash /bin/umount tripped over).
 var umountOverlayFn = func(merged string) error {
 	if merged == "" {
 		return nil
 	}
-	cmd := exec.Command("umount", merged)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		if strings.Contains(string(out), "EINVAL") || strings.Contains(string(out), "ENOENT") {
-			return nil
-		}
-		return fmt.Errorf("imaged: umount overlay %s: %w (%s)",
-			merged, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return umountOverlaySyscall(merged)
 }
 
 // openStringReader returns an io.Reader for the supplied string. The
