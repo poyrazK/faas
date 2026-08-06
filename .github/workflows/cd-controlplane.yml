@@ -178,10 +178,19 @@ jobs:
                # — apid exited with 'permission denied' on the stale
                # key files. Drift-repair: chown to faas-apid:faas and
                # chmod 0600 (no-op when already correct).
+               # PR-M.5: the \${key} literals below are backslash-escaped.
+               # The ssh heredoc body is double-quoted on the runner, so
+               # the runner's bash (set -euo pipefail) tries to expand
+               # ${key} BEFORE ssh runs — and 'key' is unbound on the
+               # runner. Without the escape the runner aborts locally
+               # with 'line NN: key: unbound variable' (deploy run
+               # 31079610150, PR #662). Escaping \$ passes the literal
+               # ${key} through to ssh, where the REMOTE bash expands
+               # it inside the for loop where 'key' IS bound.
                for key in /var/lib/faas/audit-hmac.key /var/lib/faas/recovery-hmac.key; do
-                 if [[ -e "${key}" ]]; then
-                   chown faas-apid:faas "${key}"
-                   chmod 0600 "${key}"
+                 if [[ -e "\${key}" ]]; then
+                   chown faas-apid:faas "\${key}"
+                   chmod 0600 "\${key}"
                  fi
                done
                ls -la /var/lib/faas/*.key 2>/dev/null || true"
