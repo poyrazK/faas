@@ -414,7 +414,124 @@ func TestE2E_Streaming_Metal_QuotaNonCounting(t *testing.T) {
 	}
 }
 
-// measureFirstChunk issues a GET against the streamed SSE endpoint
+// TestE2E_Streaming_Metal_H2CInnerLeg is the PR #686 / issue #686
+// acceptance gate: a streamed request that lands at the guest
+// through the new v2 H2C inner-leg bridge (default `streamBridgeVersion
+// = v2`). The test boots a Hobby app, sends a streamed SSE request,
+// and asserts:
+//
+//   1. The first chunk arrives within the gateway's TTFB ceiling
+//      (same assertion as TestE2E_Streaming_Metal_TTFBUnder1s — the
+//      regression guard for the v2 path is identical to v1 because
+//      the customer-visible contract is byte-for-byte identical).
+//   2. The full body payload equals the expected chunk×size total
+//      (the per-flush tx_bytes accuracy assertion that proves no
+//      chunks are dropped on the H2C inner leg — a SETTINGS-frame
+//      or stream-id bug would surface here as truncated chunks).
+//   3. After the test, restarting vmmd with FAAS_STREAM_BRIDGE_VERSION=v1
+//      still serves the same shape (a regression guard for the
+//      rollback knob; not auto-executed but documented in the test
+//      name so a follow-up runbook picks it up).
+//
+// Why this lives behind //go:build metal and not in the streaming
+// unit suite: the v2 path is only reachable after a real Firecracker
+// boot (the gatewayd → vmmd gRPC ForwardHTTPStream is the entry
+// point; nothing in the unit suite drives a live wake → stream
+// round-trip). The unit tests in pkg/vmmdgrpc/forward_v2_test.go
+// pin the bridge binary's H1 framing on the guest side; this test
+// pins the H2C transport on the gatewayd → bridge leg and the
+// end-to-end behavioral surface the customer sees.
+//
+// The wire-shape assertion (HTTP/2 SETTINGS frame present, no H1
+// request line on the inner leg) is the domain of a tcpdump test
+// against the per-instance tap; that's a follow-up because it
+// requires new tap-capture infrastructure. The behavioral parity
+// assertion is the load-bearing tripwire for the cutover: if v2
+// is broken at the SETTINGS / stream-id / flow-control layer, the
+// streamed response either fails outright or truncates — both
+// fail this test.
+func TestE2E_Streaming_Metal_H2CInnerLeg(t *testing.T) {
+	if !metalAvailable(t) {
+		return
+	}
+
+	pool := pgtest.Open(t)
+	if pool == nil {
+		return
+	}
+	if err := dbMigrateUp(t, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	registry := e2etest.NewFakeRegistry()
+	t.Cleanup(func() { registry.Close() })
+	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
+	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", "x")
+	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
+	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
+	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+
+	h := e2etest.StartWithEnv(t, pool, e2etest.DeployWake, []string{
+		"FAAS_GATEWAY_STREAMING=true",
+		// Default streamBridgeVersion is v2 post-PR-#750. Pinning
+		// it explicitly makes the test self-documenting and
+		// prevents a future default-flip from silently changing
+		// which path is under test.
+		"FAAS_STREAM_BRIDGE_VERSION=v2",
+	})
+	defer h.DumpLogs(t)
+
+	key := h.SeedAccount(context.Background(), api.PlanHobby)
+
+	slug := "stream-h2c-inner-" + randHexSuffix()
+	// Issue #695 / ADR-080: see TestE2E_Streaming_Metal_TTFBUnder1s.
+	falsy := false
+	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &falsy}); got != 201 {
+		t.Fatalf("create app %q: status=%d", slug, got)
+	}
+	appID := mustGetAppID(t, h, key, slug)
+
+	src := NodeFixtureStreaming(t)
+	raw, status := postMultipartDeployment(t, h, key, slug, src, false)
+	if status != http.StatusAccepted {
+		t.Fatalf("create deployment: status=%d body=%s", status, raw)
+	}
+	depID, _ := parseQueuedDeployment(t, raw)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 120*time.Second); err != nil {
+		t.Fatalf("deployment did not reach live: %v", err)
+	}
+	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
+		t.Fatalf("no parked instance: %v", err)
+	}
+
+	client := h.HTTPClient()
+	// 10 chunks × 1024 bytes at 200 ms — same shape as the TTFB
+	// test so the v1→v2 diff is just the wire-protocol swap, not
+	// the payload shape. A regression in H2C framing (SETTINGS
+	// never sent, stream-id mismatch, early GOAWAY) would either
+	// fail the first-chunk read OR truncate the body — both fail
+	// the assertions below.
+	const chunks = 10
+	const size = 1024
+	target := gatewayAppURL(h, slug) + "/sse?chunks=10&size=1024&interval=200"
+	if err := e2etest.WaitForHTTPReady(context.Background(), t, client, target, 10*time.Second); err != nil {
+		t.Fatalf("gateway not ready: %v", err)
+	}
+
+	ttfb := measureFirstChunk(t, client, target, slug+".apps.test.example", 30*time.Second)
+	if ttfb > 1*time.Second {
+		t.Errorf("TTFB = %v; want ≤ 1s (gateway TTFB ceiling under v2 inner-leg bridge)", ttfb)
+	}
+
+	payload := drainStreamedSSE(t, client, target, slug+".apps.test.example", 30*time.Second)
+	if payload != chunks*size {
+		t.Errorf("payload = %d bytes; want %d (H2C inner-leg dropped or truncated chunks)", payload, chunks*size)
+	}
+}
 // and returns the wall-clock duration from request start to the
 // first chunk read. The caller compares against the platform's
 // TTFB ceiling. A regression that accidentally buffers the whole

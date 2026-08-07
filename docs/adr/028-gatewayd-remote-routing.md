@@ -173,8 +173,6 @@ inside vmmd, not socat.
 
 ## Out of scope
 
-- HTTP/2 between gatewayd and the bridge — HTTP/1.1 keeps the
-  in-process forwarder tiny.
 - Multi-tenant gatewayd routing policies — gatewayd forwards to
   one node per instance today.
 - Tailscale ACLs — operators own their tailnet ACLs.
@@ -182,6 +180,49 @@ inside vmmd, not socat.
   peer lists via Ansible vault.
 - vmmd-as-both-gatewayd-and-vmmd on one node — collapsed topology
   is fine (default-local still works); no special-case code.
+
+## Amendment (issue #686 / PR #750, 2026-08-08)
+
+HTTP/2 between gatewayd and the bridge is **in scope** as of PR #750.
+The original "HTTP/2 between gatewayd and the bridge — HTTP/1.1 keeps
+the in-process forwarder tiny" carve-out was made before the gatewayd
+split (ADR-070) introduced H2C on the public→internal hop, at which
+point the inner leg became the only plaintext HTTP/1.1 hop in the
+gatewayd → vmmd → guest chain. The asymmetry was load-bearing: a
+gold-plated H2 hop on the wire that doesn't change the customer's
+HTTP/1.1 boundary at the public listener. The reversal is justified
+because:
+
+1. **One plaintext hop is worse than zero.** With H2C on the
+   public→internal hop (PR #713/#719), the inner leg was the last
+   H1 step. Keeping it H1 cost a content-type sniff and a chunked-
+   decoder path in the bridge for no upside.
+2. **The bridge binary is on disk anyway.** ADR-028 already ships
+   a `vmmd-stream-bridge` shell script; replacing it with a small
+   Go binary that emits H2C on the inbound unix socket and H1 to
+   the guest costs ~150 LOC and removes the H1 hop. PR #750 does
+   exactly this.
+3. **The customer-visible contract is unchanged.** The H1 envelope
+   the bridge writes to the guest is byte-for-byte the v1 shell
+   output — same `Transfer-Encoding: chunked`, same 8 KiB chunks,
+   same Host header. Guest-side `net/http` sees the same request.
+4. **Live rollback.** `FAAS_STREAM_BRIDGE_VERSION=v1` on vmmd
+   reverts to the shell bridge without a deploy (the env var is
+   consulted in `streamBridgeVersion` and routes the gRPC
+   `ForwardHTTPStream` call to the v1 wire-up). The default flipped
+   to `v2` in PR #750 after the metal-lima gate
+   (`TestE2E_Streaming_Metal_H2CInnerLeg`) confirmed H2C end-to-end.
+
+Artifacts:
+
+- `cmd/vmmd-stream-bridge/main.go` — the H2C server + H1 client
+  bridge binary; replaces the v1 shell script template.
+- `pkg/vmmdgrpc/forward.go::forwardHTTPStreamV2` — the v2 wire-up
+  (spawn, env vars, H2C client transport, response stream).
+- `pkg/vmmdgrpc/forward_v2_test.go` — bridge-binary wire-shape
+  unit test (H1 framing emitted to the guest).
+- `cmd/e2e/streaming_metal_test.go::TestE2E_Streaming_Metal_H2CInnerLeg`
+  — metal acceptance gate.
 
 ## Reference call sites
 

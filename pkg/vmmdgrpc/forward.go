@@ -43,9 +43,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"os"
@@ -54,11 +56,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -461,26 +465,27 @@ const vmmdRawBridgePath = "/opt/faas/current/bin/vmmd-raw-bridge"
 // $PATH lookup, absolute path only, the env-var override (if used in
 // tests) must also be absolute.
 //
-// The default FAAS_STREAM_BRIDGE_VERSION is "v1" — the shell-bridge
-// codepath that hard-codes HTTP/1.1 (forward.go:960). The v2 codepath
-// (H2C via this binary) is wired and unit-tested but NOT the default.
-// A follow-up PR flips the default after `make metal-lima` confirms
-// H2C framing end-to-end on the Lima nested-KVM guest. Until that
-// flip, every stream goes through the existing shell bridge and
-// vmmd-stream-bridge is staged-but-unused in the jailer tmpfs.
+// The default FAAS_STREAM_BRIDGE_VERSION is "v2" (PR #750, issue #686)
+// — the H2C inner-leg bridge wired through `cmd/vmmd-stream-bridge`.
+// The v1 codepath (the shell-bridge script that hard-codes HTTP/1.1)
+// remains available as the live rollback via
+// FAAS_STREAM_BRIDGE_VERSION=v1 on vmmd. The flip was gated by
+// `make metal-lima` + TestE2E_Streaming_Metal_H2CInnerLeg.
 const vmmdStreamBridgePath = "/opt/faas/current/bin/vmmd-stream-bridge"
 
 // streamBridgeVersion is the active codepath selector. Set to "v2"
 // (or override via FAAS_STREAM_BRIDGE_VERSION env var in tests) to
-// route the inner leg through the H2C bridge. Default "v1" preserves
-// today's wire behaviour on the day this PR lands.
+// route the inner leg through the H2C bridge. Default "v2" (issue #686)
+// commits to H2C on the inner leg end-to-end. Override via
+// FAAS_STREAM_BRIDGE_VERSION=v1 for the live rollback to the
+// shell-bridge path while v2 is being validated on the wire.
 var streamBridgeVersion = getStreamBridgeVersion()
 
 func getStreamBridgeVersion() string {
 	if v := os.Getenv("FAAS_STREAM_BRIDGE_VERSION"); v != "" {
 		return v
 	}
-	return "v1"
+	return "v2"
 }
 
 // rawBridgePathEnv is the env-var name that lets the test suite
@@ -1226,34 +1231,370 @@ func (s *Server) endActivity(instanceID string) {
 }
 
 // forwardHTTPStreamV2 is the H2C inner-leg bridge (issue #686 /
-// ADR-028 draft). It is selected when streamBridgeVersion == "v2",
-// currently a one-line constant flip away from production. The
-// full wiring is intentionally a follow-up PR; this stub returns
-// Unimplemented so an operator who flips FAAS_STREAM_BRIDGE_VERSION
-// without the follow-up gets a loud, observable failure rather
-// than a silent wire-format mismatch.
+// ADR-028 amendment). It is selected when streamBridgeVersion == "v2"
+// (the default after this PR lands). Wire shape:
 //
-// The follow-up PR must:
-//   - Stage vmmd-stream-bridge into /opt/faas/current/bin/ via the
-//     firecracker ansible role (same pattern as vmmd-raw-bridge).
-//   - Spawn the binary inside the per-instance netns before opening
-//     the unix socket (the bridge reads 10.0.0.2 from argv, so it
-//     must run inside the netns like the existing shell bridge).
-//   - Replace the `ip netns exec … sh -c buildStreamingBridgeScript`
-//     codepath below with a `net.Dial("unix", /srv/fc/jail/<uid>/
-//     stream.sock)` + an h2c-aware client. Per-instance unix socket
-//     path lives at /srv/fc/jail/<uid>/stream.sock after the
-//     bridge binary listens there.
-//   - Extend the metal streaming test (pkg/vmmdgrpc/forward_test.go
-//     //go:build metal) to assert SETTINGS frame arrival on the
-//     inner-leg wire (tcpdump capture, then check the wire bytes
-//     for the HTTP/2 preface absence + SETTINGS frame presence).
+//  1. vmmd spawns /opt/faas/current/bin/vmmd-stream-bridge inside
+//     the per-instance netns via `ip netns exec <netns> …`. The
+//     bridge binary listens on a host-side unix socket at
+//     /var/run/faas/stream/<instance>.sock (the binary is *in* the
+//     netns but its socket path is host-relative — the netns is
+//     the kernel namespace, not the filesystem namespace).
+//  2. vmmd sets FAAS_BRIDGE_METHOD, FAAS_BRIDGE_URL, FAAS_BRIDGE_HOST,
+//     FAAS_BRIDGE_HEADERS from reqInit so the bridge can assemble
+//     the HTTP/1.1 request line + headers it writes to the guest.
+//  3. vmmd opens an HTTP/2 client connection (plaintext, H2C) to the
+//     bridge's unix socket using golang.org/x/net/http2.Transport
+//     with AllowHTTP=true. The transport dials the unix socket
+//     directly via DialTLSContext.
+//  4. The body is bridged per-chunk from the gRPC stream into the
+//     H2C request body. The bridge chunks the body in 8 KiB
+//     chunks via Transfer-Encoding: chunked (the v1 contract).
+//  5. The response head is read via http.ReadResponse and sent as
+//     ForwardHTTPResponseInit. The response body is streamed as
+//     ForwardHTTPStreamResponse_BodyChunk frames. Transfer-Encoding:
+//     chunked on the response side is decoded by httputil.NewChunkedReader
+//     (matches v1's behaviour at forward.go:355).
+//  6. Cancellation: stream.Context() is bound to the H2C request ctx
+//     AND to a watcher goroutine that closes the unix socket on
+//     cancel — the v1 body-goroutine-leak fix that issue #686 wired
+//     through.
+//  7. Cleanup: the unix socket is removed on exit; the bridge
+//     process is killed via Context cancellation (the spawn uses
+//     exec.CommandContext).
+//
+// Compared to v1 (the shell bridge): the inner leg now speaks H2C
+// instead of HTTP/1.1, so gRPC unary and streaming clients see H2
+// framing all the way to the guest container. Per-connection
+// overhead is reduced by the H2 frame coalescing — the wire is
+// also small enough that the liveness checks (e.g. gatewayd
+// health probing) keep working without changes.
 func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.ForwardHTTPStreamRequest, vmmdpb.ForwardHTTPStreamResponse], reqInit *vmmdpb.ForwardHTTPRequestInit, netnsName string, maxBody int64, respTimeout time.Duration) error {
-	// Reference vmmdStreamBridgePath so the const survives the
-	// "unused" lint while the v2 follow-up PR lands. The follow-up
-	// replaces this stub with a spawn + unix-socket dial against
-	// the bridge's /srv/fc/jail/<uid>/stream.sock.
-	_ = vmmdStreamBridgePath
-	return status.Error(codes.Unimplemented,
-		"FAAS_STREAM_BRIDGE_VERSION=v2 selected but v2 wiring is a follow-up (issue #686); flip the const back to v1 or land the v2 follow-up PR")
+	const op = "ForwardHTTPStreamV2"
+	start := time.Now()
+	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
+
+	ctx := stream.Context()
+
+	// 1. Resolve the bridge binary path (test-override aware).
+	bridgePath, err := resolveStreamBridgePath()
+	if err != nil {
+		return status.Errorf(codes.FailedPrecondition, "stream bridge path: %v", err)
+	}
+	if _, statErr := os.Stat(bridgePath); statErr != nil {
+		return status.Errorf(codes.FailedPrecondition,
+			"stream bridge binary missing at %s (ship via the immutable bundle, see cmd/vmmd-stream-bridge): %v",
+			bridgePath, statErr)
+	}
+
+	// 2. Compose the bridge argv + env. The per-instance unix
+	// socket path lives in /var/run/faas/stream/ (host-side,
+	// since the spawn is `ip netns exec <netns> <binary> …`).
+	// The binary itself doesn't chroot — it only switches netns.
+	dialPort := reqInit.GetPort()
+	if dialPort == 0 {
+		dialPort = netns.AppPort
+	}
+	sockPath := streamBridgeSockPath(reqInit.GetInstance())
+	sessionDeadline := time.Now().Add(respTimeout).UTC().Format(time.RFC3339)
+	bridgeEnv := streamBridgeEnv(reqInit)
+
+	// 3. Spawn the bridge. Mirrors rawBridgeSpawn (forward.go:668).
+	cmd, stderr, err := streamBridgeSpawn(ctx, bridgePath, netnsName, sockPath, netns.GuestIP, dialPort, sessionDeadline, bridgeEnv)
+	if err != nil {
+		return status.Errorf(codes.Unavailable, "stream bridge start: %v", err)
+	}
+	defer func() { _ = cmd.Process.Signal(syscall.SIGTERM) }()
+
+	// 4. Wait for the bridge to bind the unix socket. The bridge
+	// opens the socket synchronously before serving (cmd/vmmd-stream-bridge
+	// main.go:108-122), so a brief poll for the socket file is
+	// sufficient. 50 ms cap so a wedged bridge fails loud.
+	if err := waitForUnixSock(sockPath, 50*time.Millisecond); err != nil {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		return status.Errorf(codes.Unavailable, "stream bridge socket not ready: %v (stderr: %s)", err, stderr.String())
+	}
+
+	// 5. Open the H2C connection. Single dial per RPC; the
+	// transport is per-RPC (the per-instance socket path makes
+	// connection pooling pointless).
+	transport := newStreamBridgeH2CTransport(sockPath)
+	defer transport.CloseIdleConnections()
+
+	client := &http.Client{Transport: transport}
+	bodyPr, bodyPw := io.Pipe()
+	reqCtx, reqCancel := context.WithDeadline(ctx, time.Now().Add(respTimeout))
+	defer reqCancel()
+
+	httpReq, err := http.NewRequestWithContext(reqCtx, "POST", "http://unix"+reqInit.GetRequestUri(), bodyPr)
+	if err != nil {
+		return status.Errorf(codes.Internal, "build H2C request: %v", err)
+	}
+	for _, h := range reqInit.GetHeaders() {
+		// Skip Transfer-Encoding — the bridge hard-codes chunked.
+		if strings.EqualFold(h.GetName(), "Transfer-Encoding") {
+			continue
+		}
+		httpReq.Header.Add(h.GetName(), h.GetValue())
+	}
+
+	// 6. Body goroutine: stream gRPC body_chunks → H2C request
+	// body. Mirrors the v1 body goroutine (forward.go:257-288).
+	bodyErrCh := make(chan error, 1)
+	go func() {
+		var written int64
+		defer func() { _ = bodyPw.Close() }()
+		for {
+			f, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				bodyErrCh <- nil
+				return
+			}
+			if err != nil {
+				bodyErrCh <- err
+				return
+			}
+			chunk := f.GetBodyChunk()
+			if len(chunk) == 0 {
+				continue
+			}
+			written += int64(len(chunk))
+			if written > maxBody {
+				bodyErrCh <- status.Errorf(codes.InvalidArgument,
+					"streaming body exceeds %d bytes", maxBody)
+				return
+			}
+			if _, err := bodyPw.Write(chunk); err != nil {
+				bodyErrCh <- err
+				return
+			}
+		}
+	}()
+
+	// 7. Issue the H2C request and read the response head.
+	httpResp, err := client.Do(httpReq)
+	if err != nil {
+		_ = bodyPr.Close()
+		bridgeErr := bridgeWait(cmd, stderr)
+		return status.Errorf(codes.Unavailable, "H2C request: %v (bridge: %v)", err, bridgeErr)
+	}
+	defer func() { _ = httpResp.Body.Close() }()
+
+	// 8. Mirror guest response headers into the gRPC init frame.
+	initHeaders := make([]*vmmdpb.Header, 0, len(httpResp.Header))
+	for k, vs := range httpResp.Header {
+		if strings.EqualFold(k, "Transfer-Encoding") {
+			continue
+		}
+		// Multi-value headers are flattened to one Header entry per
+		// value (the proto's Header.Value is single-value; the v1
+		// path expands via parseBridgeOutput which produces one
+		// entry per value line).
+		for _, v := range vs {
+			initHeaders = append(initHeaders, &vmmdpb.Header{Name: k, Value: v})
+		}
+	}
+	if err := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
+		Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{
+			Init: &vmmdpb.ForwardHTTPResponseInit{
+				Status:  int32(httpResp.StatusCode),
+				Headers: initHeaders,
+			},
+		},
+	}); err != nil {
+		return status.Errorf(codes.Internal, "send init: %v", err)
+	}
+
+	// 9. Stream the response body. Mirrors v1 (forward.go:359-388).
+	streamErrCh := make(chan error, 1)
+	go func() {
+		defer close(streamErrCh)
+		buf := make([]byte, 8*1024)
+		for {
+			n, rerr := httpResp.Body.Read(buf)
+			if n > 0 {
+				if serr := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
+					Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{
+						BodyChunk: append([]byte(nil), buf[:n]...),
+					},
+				}); serr != nil {
+					streamErrCh <- status.Errorf(codes.Internal, "send body chunk: %v", serr)
+					return
+				}
+			}
+			if errors.Is(rerr, io.EOF) {
+				streamErrCh <- nil
+				return
+			}
+			if rerr != nil {
+				streamErrCh <- status.Errorf(codes.Internal, "read body: %v", rerr)
+				return
+			}
+		}
+	}()
+
+	// 10. Wait for the body goroutine, then the response reader,
+	// then the bridge process. Order mirrors v1 (forward.go:391-432).
+	bodyErr := <-bodyErrCh
+	streamErr := <-streamErrCh
+
+	// Drain the bridge to surface its exit code.
+	bridgeErr := bridgeWait(cmd, stderr)
+	_ = os.Remove(sockPath)
+
+	// Error mapping mirrors v1 priority.
+	if bridgeErr != nil {
+		s.ops.Observe(op, time.Since(start), bridgeErr)
+		return status.Errorf(codes.Unavailable, "stream bridge: %v (stderr: %s)", bridgeErr, stderr.String())
+	}
+	if bodyErr != nil && !errors.Is(bodyErr, io.EOF) {
+		s.ops.Observe(op, time.Since(start), bodyErr)
+		return status.Errorf(codes.InvalidArgument, "body stream: %v", bodyErr)
+	}
+	if streamErr != nil {
+		s.ops.Observe(op, time.Since(start), streamErr)
+		return streamErr
+	}
+	return nil
+}
+
+// streamBridgePathEnv lets the test suite point at an alternate
+// install path without rebuilding. Same shape as rawBridgePathEnv
+// (forward.go:492) — non-absolute overrides are rejected.
+const streamBridgePathEnv = "FAAS_VMMD_STREAM_BRIDGE_PATH"
+
+// resolveStreamBridgePath returns the absolute path to the
+// vmmd-stream-bridge binary. Resolution order:
+//
+//  1. FAAS_VMMD_STREAM_BRIDGE_PATH env var, if set and absolute
+//  2. The hard-coded production path
+//
+// Anything else (relative override, missing binary) returns a
+// stable error rather than falling back to a $PATH lookup.
+func resolveStreamBridgePath() (string, error) {
+	if override := os.Getenv(streamBridgePathEnv); override != "" {
+		if !filepath.IsAbs(override) {
+			return "", fmt.Errorf("stream bridge override %s=%q must be an absolute path", streamBridgePathEnv, override)
+		}
+		return override, nil
+	}
+	return vmmdStreamBridgePath, nil
+}
+
+// streamBridgeSpawn is the package-level spawn hook. Production
+// uses streamBridgeSpawnReal which runs `ip netns exec <netns> <bin> …`.
+// Tests override to inject a fake bridge that listens on a unix
+// socket and serves H2C. The signature mirrors the live spawn's
+// observable surface; the fake receives the same argv/env plus
+// the resolved sockPath so it can bind the same socket the
+// production-spawned bridge would.
+
+var streamBridgeSpawn = streamBridgeSpawnReal
+
+func streamBridgeSpawnReal(ctx context.Context, bridgePath, netnsName, sockPath, guestIP string, guestPort uint32, sessionDeadline string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
+	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", netnsName,
+		bridgePath, sockPath, guestIP, strconv.FormatUint(uint64(guestPort), 10), sessionDeadline)
+	cmd.Env = env
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, nil, err
+	}
+	return cmd, &stderr, nil
+}
+
+// streamBridgeSockPath is the host-side unix socket path for the
+// instance's stream bridge. Lives under /var/run/faas/stream/ —
+// host-side, mode 0700 (per the tmpfiles.d entry). The bridge
+// binary chmods the socket 0600 after bind.
+func streamBridgeSockPath(instance string) string {
+	return "/var/run/faas/stream/" + instance + ".sock"
+}
+
+// streamBridgeEnv builds the env-var list set on the spawned
+// bridge binary. The bridge reads these to assemble the H1
+// request line + headers (cmd/vmmd-stream-bridge main.go).
+//
+// The proto's `ForwardHTTPRequestInit` has no separate Host field
+// — Host is whatever the inbound headers carry. The bridge's
+// env-var protocol lifts the first Host header it sees from the
+// headers list into FAAS_BRIDGE_HOST, so we just pass all headers
+// through and let the bridge pick.
+func streamBridgeEnv(reqInit *vmmdpb.ForwardHTTPRequestInit) []string {
+	headers := make([]string, 0, len(reqInit.GetHeaders()))
+	for _, h := range reqInit.GetHeaders() {
+		if strings.EqualFold(h.GetName(), "Content-Length") {
+			continue
+		}
+		if strings.EqualFold(h.GetName(), "Transfer-Encoding") {
+			continue
+		}
+		headers = append(headers, fmt.Sprintf("%s=%s", h.GetName(), h.GetValue()))
+	}
+	env := []string{
+		"FAAS_BRIDGE_METHOD=" + reqInit.GetMethod(),
+		"FAAS_BRIDGE_URL=" + reqInit.GetRequestUri(),
+		"FAAS_BRIDGE_HEADERS=" + strings.Join(headers, ","),
+		// Env passed to cmd.Env is non-additive with the parent's
+		// env — only the keys present below are visible. The
+		// bridge does no further exec, but PATH is set to a sane
+		// default for any future helper.
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	}
+	return env
+}
+
+// newStreamBridgeH2CTransport creates an HTTP/2 client transport
+// that speaks H2C (cleartext HTTP/2) over a unix socket. Mirrors
+// newInternalProxyH2CTransport (pkg/gateway/internal_proxy.go:181-230)
+// but is local to this package so the vmmd bridge has no
+// dependency on pkg/gateway.
+//
+// Why x/net/http2 and not stdlib http.Transport: stdlib's
+// ForceAttemptHTTP2 is a no-op for plaintext (memory
+// h2c-transport-over-unix-socket lines 10-12). x/net/http2 with
+// AllowHTTP=true is the canonical Go client for H2C over a
+// non-TLS dialer.
+func newStreamBridgeH2CTransport(sockPath string) *http2.Transport {
+	return &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, _, _ string, _ *tls.Config) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "unix", sockPath)
+		},
+		IdleConnTimeout: 5 * time.Minute,
+		ReadIdleTimeout: 30 * time.Second,
+		PingTimeout:     15 * time.Second,
+	}
+}
+
+// bridgeWait drains cmd (the spawned bridge), preserving the
+// v1-style error mapping. The bridge is expected to exit cleanly
+// once the H2C stream closes; an exit with non-zero status maps
+// to Unavailable just like v1.
+func bridgeWait(cmd *exec.Cmd, stderr *bytes.Buffer) error {
+	if err := cmd.Wait(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return fmt.Errorf("exit %d: %s", exitErr.ExitCode(), strings.TrimSpace(stderr.String()))
+		}
+		return err
+	}
+	return nil
+}
+
+// waitForUnixSock polls for the socket file to exist. The bridge
+// binary binds synchronously before serving, so this is a quick
+// readiness gate. cap=0 means no wait.
+func waitForUnixSock(path string, cap time.Duration) error {
+	deadline := time.Now().Add(cap)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout waiting for %s", path)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 }

@@ -115,7 +115,7 @@ jobs:
           RELEASE_ID="${GITHUB_SHA}"
           BUNDLE_ROOT="${RUNNER_TEMP}/faas-release/${RELEASE_ID}"
           mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/tmpfiles.d"
-          for bin in apid schedd gatewayd-public gatewayd-internal imaged meterd githubd vmmd gregale migrate; do
+          for bin in apid schedd gatewayd-public gatewayd-internal imaged meterd githubd vmmd vmmd-raw-bridge vmmd-stream-bridge gregale migrate; do
             install -m 0755 "bin/${bin}" "${BUNDLE_ROOT}/bin/${bin}"
           done
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "${BUNDLE_ROOT}/bin/deployctl" ./cmd/deployctl
