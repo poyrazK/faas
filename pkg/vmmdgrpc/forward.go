@@ -1433,13 +1433,29 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		}
 	}()
 
-	// 10. Wait for the body goroutine, then the response reader,
-	// then the bridge process. Order mirrors v1 (forward.go:391-432).
+	// 10. Wait for the body goroutine, then the response reader.
+	// Order mirrors v1 (forward.go:391-432).
 	bodyErr := <-bodyErrCh
 	streamErr := <-streamErrCh
 
-	// Drain the bridge to surface its exit code.
-	bridgeErr := bridgeWait(cmd, stderr)
+	// The bridge is a long-running HTTP server — unlike the v1
+	// shell bridge, it doesn't self-terminate when the response
+	// body is fully read. Send SIGTERM BEFORE bridgeWait so the
+	// process actually exits; the deferred SIGTERM at the top
+	// of this function only fires on function return, which is
+	// blocked on bridgeWait. Race the signal against a context-
+	// cancellation-based force-kill in case the bridge is wedged.
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	var bridgeErr error
+	bridgeDoneCh := make(chan struct{})
+	go func() { bridgeErr = bridgeWait(cmd, stderr); close(bridgeDoneCh) }()
+	select {
+	case <-bridgeDoneCh:
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		<-bridgeDoneCh
+	}
+
 	_ = os.Remove(sockPath)
 
 	// Error mapping mirrors v1 priority.
@@ -1515,18 +1531,26 @@ func streamBridgeSockPath(instance string) string {
 // bridge binary. The bridge reads these to assemble the H1
 // request line + headers (cmd/vmmd-stream-bridge main.go).
 //
-// The proto's `ForwardHTTPRequestInit` has no separate Host field
-// — Host is whatever the inbound headers carry. The bridge's
-// env-var protocol lifts the first Host header it sees from the
-// headers list into FAAS_BRIDGE_HOST, so we just pass all headers
-// through and let the bridge pick.
+// Host is lifted into its own FAAS_BRIDGE_HOST env var rather
+// than carried inside FAAS_BRIDGE_HEADERS so the comma in a
+// header VALUE never has to be escaped (Accept: text/html,
+// application/json and similar headers pass through unchanged).
+// The bridge writes FAAS_BRIDGE_HOST before any Host: line in
+// FAAS_BRIDGE_HEADERS, and the bridge-side Host: lines in
+// FAAS_BRIDGE_HEADERS overwrite the env value if present.
 func streamBridgeEnv(reqInit *vmmdpb.ForwardHTTPRequestInit) []string {
+	var host string
 	headers := make([]string, 0, len(reqInit.GetHeaders()))
 	for _, h := range reqInit.GetHeaders() {
-		if strings.EqualFold(h.GetName(), "Content-Length") {
+		switch {
+		case strings.EqualFold(h.GetName(), "Content-Length"),
+			strings.EqualFold(h.GetName(), "Transfer-Encoding"):
 			continue
-		}
-		if strings.EqualFold(h.GetName(), "Transfer-Encoding") {
+		case host == "" && strings.EqualFold(h.GetName(), "Host"):
+			// Lift the first Host into its own env var so
+			// comma-bearing header values stay intact in
+			// FAAS_BRIDGE_HEADERS below.
+			host = h.GetValue()
 			continue
 		}
 		headers = append(headers, fmt.Sprintf("%s=%s", h.GetName(), h.GetValue()))
@@ -1534,7 +1558,12 @@ func streamBridgeEnv(reqInit *vmmdpb.ForwardHTTPRequestInit) []string {
 	env := []string{
 		"FAAS_BRIDGE_METHOD=" + reqInit.GetMethod(),
 		"FAAS_BRIDGE_URL=" + reqInit.GetRequestUri(),
-		"FAAS_BRIDGE_HEADERS=" + strings.Join(headers, ","),
+		"FAAS_BRIDGE_HOST=" + host,
+		// Newline separator (not comma) — real headers like
+		// `Accept: text/html, application/json` carry commas
+		// in their values; CR/LF are illegal in HTTP/1.1
+		// field-values so they make a safe wire separator.
+		"FAAS_BRIDGE_HEADERS=" + strings.Join(headers, "\n"),
 		// Env passed to cmd.Env is non-additive with the parent's
 		// env — only the keys present below are visible. The
 		// bridge does no further exec, but PATH is set to a sane

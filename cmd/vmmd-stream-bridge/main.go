@@ -40,9 +40,13 @@
 //	FAAS_BRIDGE_METHOD  = HTTP method (e.g. GET, POST)
 //	FAAS_BRIDGE_URL     = request URI (e.g. /foo?bar=1)
 //	FAAS_BRIDGE_HOST    = Host header value (e.g. example.com)
-//	FAAS_BRIDGE_HEADERS = comma-separated k=v pairs, split on the
-//	                      first '=' so values may contain '='. Content-
-//	                      Length is dropped (chunked is hard-coded).
+//	FAAS_BRIDGE_HEADERS = newline-separated k=v pairs, split on the
+//	                      first '=' so values may contain '='. Newline
+//	                      is the separator because real headers like
+//	                      `Accept: text/html, application/json` carry
+//	                      commas in their values; CR/LF are illegal in
+//	                      HTTP/1.1 field-values. Content-Length is
+//	                      dropped (chunked is hard-coded).
 //
 // Wire protocol:
 //
@@ -290,15 +294,24 @@ func newHandler(guestIP string, guestPort uint16, deadline time.Time) http.Handl
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
 
-		// Drain the body goroutine so any chunked-encoding error
-		// surfaces as a 502 to the H2C client. The ctx watcher
-		// will close the conn when the handler returns (via the
-		// deferred close(stopWatch) sequence plus the deferred
-		// conn.Close on conn).
-		if err := <-bodyErr; err != nil && !errors.Is(err, io.EOF) {
-			// Best-effort: the response is already written,
-			// so we can't change the status. Log to stderr.
-			fmt.Fprintf(os.Stderr, "writeChunkedBody: %v\n", err)
+		// Drain the body goroutine best-effort. The handler is
+		// returning; if writeChunkedBody hasn't finished (e.g.
+		// the guest stopped reading the request body and r.Body
+		// never reaches EOF), don't block here — the ctx watcher
+		// has already closed conn, which will unblock r.Body.Read
+		// with `use of closed network connection` and the body
+		// goroutine will exit on its own. We only wait briefly
+		// so a clean finish logs any encoding error to stderr.
+		select {
+		case err := <-bodyErr:
+			if err != nil && !errors.Is(err, io.EOF) {
+				// Best-effort: the response is already written,
+				// so we can't change the status. Log to stderr.
+				fmt.Fprintf(os.Stderr, "writeChunkedBody: %v\n", err)
+			}
+		case <-ctx.Done():
+			// Body goroutine still running; the ctx watcher
+			// already closed conn — let it finish on its own.
 		}
 	})
 }
@@ -394,8 +407,13 @@ type headerEntry struct {
 	Value string
 }
 
-// parseHeaders splits a comma-separated `k=v,k=v` string into
-// header entries. Split on the FIRST `=` so values may contain `=`.
+// parseHeaders splits a newline-separated `k=v\nk=v` string into
+// header entries. Newline is the separator because HTTP/1.1 field-
+// values may not contain CR or LF (RFC 9110 §5.5 — obs-fold was
+// removed by the obsoletion of RFC 7230). Comma is NOT a safe
+// separator: real headers like `Accept: text/html, application/json`
+// and `Cache-Control: no-cache, no-store` carry commas in their
+// VALUES. Split on the FIRST `=` so values may also contain `=`.
 // Empty names are dropped. Names are returned verbatim (the
 // vmmd caller already lower-cased or canon-cased them via the
 // original `textproto.MIMEHeader`); we pass through unchanged
@@ -404,9 +422,12 @@ func parseHeaders(s string) []headerEntry {
 	if s == "" {
 		return nil
 	}
-	parts := strings.Split(s, ",")
+	parts := strings.Split(s, "\n")
 	out := make([]headerEntry, 0, len(parts))
 	for _, p := range parts {
+		if p == "" {
+			continue
+		}
 		eq := strings.IndexByte(p, '=')
 		if eq <= 0 {
 			continue

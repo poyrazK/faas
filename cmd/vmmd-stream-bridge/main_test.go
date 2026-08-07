@@ -74,7 +74,7 @@ func TestParseDeadline_PastTimestamp(t *testing.T) {
 	}
 }
 
-func TestParseHeaders_KVCommaList(t *testing.T) {
+func TestParseHeaders_NewlineSeparated(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
@@ -82,11 +82,14 @@ func TestParseHeaders_KVCommaList(t *testing.T) {
 	}{
 		{"empty", "", nil},
 		{"single", "a=1", []headerEntry{{Name: "a", Value: "1"}}},
-		{"two", "a=1,b=2", []headerEntry{{Name: "a", Value: "1"}, {Name: "b", Value: "2"}}},
-		{"value-contains-equals", "a=1,b=2=,c==3",
+		{"two", "a=1\nb=2", []headerEntry{{Name: "a", Value: "1"}, {Name: "b", Value: "2"}}},
+		{"value-contains-comma", "Accept=text/html, application/json\nX-Custom=val",
+			[]headerEntry{{Name: "Accept", Value: "text/html, application/json"}, {Name: "X-Custom", Value: "val"}}},
+		{"value-contains-equals", "a=1\nb=2=\nc==3",
 			[]headerEntry{{Name: "a", Value: "1"}, {Name: "b", Value: "2="}, {Name: "c", Value: "=3"}}},
-		{"empty-name-dropped", "=skip,a=1", []headerEntry{{Name: "a", Value: "1"}}},
-		{"no-equals-dropped", "noeq,a=1", []headerEntry{{Name: "a", Value: "1"}}},
+		{"empty-name-dropped", "=skip\na=1", []headerEntry{{Name: "a", Value: "1"}}},
+		{"no-equals-dropped", "noeq\na=1", []headerEntry{{Name: "a", Value: "1"}}},
+		{"trailing-newline-tolerated", "a=1\n", []headerEntry{{Name: "a", Value: "1"}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -167,7 +170,7 @@ func TestNewHandler_WritesHTTP11RequestLine(t *testing.T) {
 	t.Setenv("FAAS_BRIDGE_METHOD", "POST")
 	t.Setenv("FAAS_BRIDGE_URL", "/foo?bar=1")
 	t.Setenv("FAAS_BRIDGE_HOST", "example.com")
-	t.Setenv("FAAS_BRIDGE_HEADERS", "Content-Type=application/json,X-Custom=val")
+	t.Setenv("FAAS_BRIDGE_HEADERS", "Content-Type=application/json\nX-Custom=val")
 
 	// Start the bridge binary on a unix socket.
 	bindSock := tempUnixSock(t)

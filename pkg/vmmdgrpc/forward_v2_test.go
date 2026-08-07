@@ -178,7 +178,7 @@ func TestForwardHTTPStreamV2_HeadersAssembledFromInit(t *testing.T) {
 	env := []string{
 		"FAAS_BRIDGE_METHOD=POST",
 		"FAAS_BRIDGE_URL=/foo?bar=1",
-		"FAAS_BRIDGE_HEADERS=Content-Type=application/json,X-Custom=val",
+		"FAAS_BRIDGE_HEADERS=Content-Type=application/json\nX-Custom=val",
 	}
 	cmd := exec.CommandContext(ctx, bridgeBin, sockPath, "127.0.0.1", fmt.Sprintf("%d", port), deadline)
 	cmd.Env = env
