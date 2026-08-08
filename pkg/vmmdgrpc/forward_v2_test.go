@@ -187,15 +187,22 @@ func TestForwardHTTPStreamV2_HeadersAssembledFromInit(t *testing.T) {
 		_ = cmd.Wait()
 	}()
 
-	// Wait for the socket to appear.
-	deadline2 := time.Now().Add(2 * time.Second)
+	// Wait for the socket to appear. 5s budget covers the bridge
+	// binary's go build + fork on macOS under heavy parallel load
+	// (`make test` runs many packages concurrently and on cold
+	// builds or first invocation the bridge binary can take 2-3s
+	// to launch). The 50 ms inner-loop sleep keeps the test snappy
+	// when the bridge is already up. The ProcessState check below
+	// still fails fast on a startup error — the long budget only
+	// applies to slow-but-eventually-successful starts.
+	deadline2 := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline2) {
 		if _, err := os.Stat(sockPath); err == nil {
 			break
 		}
 		// Detect bridge exit early so a startup failure (bad
 		// deadline parse, env-var rejection, etc.) doesn't burn
-		// the full 2 s wait before the dial below surfaces it.
+		// the full 5 s wait before the dial below surfaces it.
 		if cmd.ProcessState != nil {
 			t.Fatalf("bridge exited before binding socket (exit=%d, stderr: %s)",
 				cmd.ProcessState.ExitCode(), stderrBuf.String())
@@ -203,7 +210,7 @@ func TestForwardHTTPStreamV2_HeadersAssembledFromInit(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if _, err := os.Stat(sockPath); err != nil {
-		t.Fatalf("bridge socket %s never appeared after 2s (stderr: %s)",
+		t.Fatalf("bridge socket %s never appeared after 5s (stderr: %s)",
 			sockPath, stderrBuf.String())
 	}
 

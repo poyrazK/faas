@@ -527,13 +527,10 @@ func currentStreamBridgeVersion() string {
 	return "v2"
 }
 
-// getStreamBridgeVersion was the init-time entry point before
-// PR #754's code review surfaced the rollback promise gap. Kept
-// as a deprecated alias so any external caller (none today, but
-// the symbol is exported) gets a compile-time hit.
-func getStreamBridgeVersion() string {
-	return currentStreamBridgeVersion()
-}
+// (No deprecated alias for getStreamBridgeVersion — the previous
+// version kept one for external callers, but the symbol was
+// unexported and had no callers in-tree; PR #754's lint pass
+// removed it. The current entry point is currentStreamBridgeVersion.)
 
 // rawBridgePathEnv is the env-var name that lets the test suite
 // (and any future operator override) point at an alternate
