@@ -19,7 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	gatewaydpb "github.com/onebox-faas/faas/api/proto/onebox/faas/gatewayd/v1"
+	egresspb "github.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -603,21 +603,21 @@ func TestGatewayEgressAdapter_EgressBytes(t *testing.T) {
 	}
 
 	// 2. recordFrame with empty InstanceId is a no-op.
-	a.recordFrame(&gatewaydpb.BytesFrame{InstanceId: "", Minute: timestamppb.New(anchor), Bytes: 4096})
+	a.recordFrame(&egresspb.BytesFrame{InstanceId: "", Minute: timestamppb.New(anchor), Bytes: 4096})
 	if _, _, ok := a.EgressBytes(""); ok {
 		t.Fatalf("EgressBytes(\"\") ok=true after empty-id record; want false (receiver also gates on empty)")
 	}
 
 	// 3. recordFrame with nil Minute is a no-op (the bucket
 	//    key is derived from frame.Minute.AsTime()).
-	a.recordFrame(&gatewaydpb.BytesFrame{InstanceId: "inst-1", Minute: nil, Bytes: 4096})
+	a.recordFrame(&egresspb.BytesFrame{InstanceId: "inst-1", Minute: nil, Bytes: 4096})
 	if _, _, ok := a.EgressBytes("inst-1"); ok {
 		t.Fatalf("EgressBytes(inst-1) ok=true after nil-Minute record; want false (no bucket was keyed)")
 	}
 
 	// 4. Happy path: a frame stamped at the anchor (truncated
 	//    to 12:00) is readable while the clock stays in 12:00.
-	a.recordFrame(&gatewaydpb.BytesFrame{
+	a.recordFrame(&egresspb.BytesFrame{
 		InstanceId: "inst-1",
 		Minute:     timestamppb.New(anchor),
 		Bytes:      4096,
@@ -638,7 +638,7 @@ func TestGatewayEgressAdapter_EgressBytes(t *testing.T) {
 	//    goes into its own bucket. While the clock is still in
 	//    the anchor minute, the anchor bucket is the one read.
 	nextMinute := anchor.Add(time.Minute)
-	a.recordFrame(&gatewaydpb.BytesFrame{
+	a.recordFrame(&egresspb.BytesFrame{
 		InstanceId: "inst-1",
 		Minute:     timestamppb.New(nextMinute),
 		Bytes:      8192,
@@ -664,7 +664,7 @@ func TestGatewayEgressAdapter_EgressBytes(t *testing.T) {
 
 	// 7. A fresh frame in the new minute restores ok=true with
 	//    that minute's bytes.
-	a.recordFrame(&gatewaydpb.BytesFrame{
+	a.recordFrame(&egresspb.BytesFrame{
 		InstanceId: "inst-1",
 		Minute:     timestamppb.New(a.now()),
 		Bytes:      16384,
@@ -724,7 +724,7 @@ func TestGatewayEgressAdapter_Concurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for f := 0; f < framesEach; f++ {
-				a.recordFrame(&gatewaydpb.BytesFrame{
+				a.recordFrame(&egresspb.BytesFrame{
 					InstanceId: "inst-1",
 					Minute:     timestamppb.New(anchor),
 					Bytes:      bytesPerFrm,
@@ -768,14 +768,14 @@ func TestGatewayEgressAdapter_Tracked(t *testing.T) {
 
 	// Two distinct instances, multiple frames each.
 	for i := 0; i < 5; i++ {
-		a.recordFrame(&gatewaydpb.BytesFrame{
+		a.recordFrame(&egresspb.BytesFrame{
 			InstanceId: "inst-A",
 			Minute:     timestamppb.New(anchor),
 			Bytes:      uint64(100 + i),
 		})
 	}
 	for i := 0; i < 3; i++ {
-		a.recordFrame(&gatewaydpb.BytesFrame{
+		a.recordFrame(&egresspb.BytesFrame{
 			InstanceId: "inst-B",
 			Minute:     timestamppb.New(anchor),
 			Bytes:      uint64(200 + i),

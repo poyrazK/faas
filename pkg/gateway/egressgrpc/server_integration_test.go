@@ -26,7 +26,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	gatewaydpbv1 "github.com/onebox-faas/faas/api/proto/onebox/faas/gatewayd/v1"
+	egresspb "github.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1"
 	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 )
@@ -62,7 +62,7 @@ func startEgressTestGRPC(t *testing.T, sink *egresssink.EgressSink) (string, fun
 	srv := egressgrpc.NewServer(sink, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	sock := shortUnixSocket(t)
 	gs := grpc.NewServer()
-	gatewaydpbv1.RegisterEgressTxServiceServer(gs, srv)
+	egresspb.RegisterEgressTxServiceServer(gs, srv)
 	lis, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen unix %s: %v", sock, err)
@@ -75,7 +75,7 @@ func startEgressTestGRPC(t *testing.T, sink *egresssink.EgressSink) (string, fun
 	return sock, cleanup
 }
 
-func dialEgressTestClient(t *testing.T, sock string) gatewaydpbv1.EgressTxServiceClient {
+func dialEgressTestClient(t *testing.T, sock string) egresspb.EgressTxServiceClient {
 	t.Helper()
 	conn, err := grpc.NewClient(
 		"unix:///"+strings.TrimPrefix(sock, "/"),
@@ -88,7 +88,7 @@ func dialEgressTestClient(t *testing.T, sock string) gatewaydpbv1.EgressTxServic
 		t.Fatalf("dial %s: %v", sock, err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return gatewaydpbv1.NewEgressTxServiceClient(conn)
+	return egresspb.NewEgressTxServiceClient(conn)
 }
 
 func TestServer_StreamBytes_EmitsRecordedBytes(t *testing.T) {
@@ -108,7 +108,7 @@ func TestServer_StreamBytes_EmitsRecordedBytes(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	stream, err := client.StreamBytes(ctx, &gatewaydpbv1.StreamBytesRequest{})
+	stream, err := client.StreamBytes(ctx, &egresspb.StreamBytesRequest{})
 	if err != nil {
 		t.Fatalf("open stream: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestServer_StreamBytes_EmptyStreamOnIdleSink(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	stream, err := client.StreamBytes(ctx, &gatewaydpbv1.StreamBytesRequest{})
+	stream, err := client.StreamBytes(ctx, &egresspb.StreamBytesRequest{})
 	if err != nil {
 		t.Fatalf("open stream: %v", err)
 	}

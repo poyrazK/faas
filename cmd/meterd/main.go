@@ -42,7 +42,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	gatewaydpb "github.com/onebox-faas/faas/api/proto/onebox/faas/gatewayd/v1"
+	egresspb "github.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1"
 	"github.com/onebox-faas/faas/pkg/alerts"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -271,11 +271,11 @@ type gatewayEgressAdapter struct {
 	// dialFn is the unix-socket dialer for the gateway
 	// stream. Tests substitute a fake dialer that returns a
 	// hand-rolled stream client; production wires the
-	// gatewaydpb-grpc DailContext. tlsCfg is nil on the
+	// egresspb-grpc DailContext. tlsCfg is nil on the
 	// single-box default-local path; mTLS-wrapped remote
 	// gatewayd deployments pass the loaded *tls.Config here
 	// (ADR-052).
-	dialFn func(ctx context.Context, socketPath string, tlsCfg *tls.Config) (gatewaydpb.EgressTxServiceClient, error)
+	dialFn func(ctx context.Context, socketPath string, tlsCfg *tls.Config) (egresspb.EgressTxServiceClient, error)
 }
 
 // EgressBytes returns the latest drained (instanceID,
@@ -360,8 +360,8 @@ func (a *gatewayEgressAdapter) startStream(ctx context.Context, socketPath strin
 // consumeStream runs one stream-receive iteration: open the
 // server-streaming RPC, fold every frame into the snapshot,
 // return when the upstream closes or the ctx cancels.
-func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client gatewaydpb.EgressTxServiceClient, log *slog.Logger) {
-	stream, err := client.StreamBytes(ctx, &gatewaydpb.StreamBytesRequest{})
+func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client egresspb.EgressTxServiceClient, log *slog.Logger) {
+	stream, err := client.StreamBytes(ctx, &egresspb.StreamBytesRequest{})
 	if err != nil {
 		if log != nil {
 			log.Warn("gatewayEgressAdapter: stream open failed", "err", err)
@@ -388,7 +388,7 @@ func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client gateway
 // be treated as its own bucket (different minuteUnix) and
 // coexist with the truncated bucket; that's the documented
 // "no implicit re-bucketing" contract.
-func (a *gatewayEgressAdapter) recordFrame(frame *gatewaydpb.BytesFrame) {
+func (a *gatewayEgressAdapter) recordFrame(frame *egresspb.BytesFrame) {
 	if frame == nil || frame.InstanceId == "" || frame.Minute == nil {
 		return
 	}
@@ -428,12 +428,12 @@ func (a *gatewayEgressAdapter) Tracked() int {
 // streaming RPC" shape (gRPC's stream stays alive across the
 // lifetime of the conn, and a dropped conn signals a stream close
 // which the goroutine handler reconnects on).
-func dialGatewayEgressStream(ctx context.Context, target string, tlsCfg *tls.Config) (gatewaydpb.EgressTxServiceClient, error) {
+func dialGatewayEgressStream(ctx context.Context, target string, tlsCfg *tls.Config) (egresspb.EgressTxServiceClient, error) {
 	conn, err := wire.DialContext(ctx, target, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("meterd: dial gatewayd egress %s: %w", target, err)
 	}
-	return gatewaydpb.NewEgressTxServiceClient(conn), nil
+	return egresspb.NewEgressTxServiceClient(conn), nil
 }
 
 // egressAggregator combines scheddEgressAdapter (net_tx_bytes)

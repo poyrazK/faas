@@ -34,11 +34,11 @@
 
 syntax = "proto3";
 
-package onebox.faas.gatewayd.v1;
+package onebox.faas.egress.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/gatewayd/v1;gatewaydpb";
+option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1;egresspb";
 
 // EgressTxService is the gRPC service gatewayd exposes for the
 // egress-producer channel (ADR-046 PR-2). Served on the same

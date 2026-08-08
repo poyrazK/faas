@@ -32,7 +32,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	gatewaydpb "github.com/onebox-faas/faas/api/proto/onebox/faas/gatewayd/v1"
+	egresspb "github.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1"
 	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -161,7 +161,7 @@ func newEgressGRPCListener(target string, tlsCfg *tls.Config, srv *egressgrpc.Se
 		opts = append(opts, wire.ServerCredsOrEmpty(tlsCfg)...)
 	}
 	gs := grpc.NewServer(opts...)
-	gatewaydpb.RegisterEgressTxServiceServer(gs, srv)
+	egresspb.RegisterEgressTxServiceServer(gs, srv)
 	return &egressGRPCListener{
 		socketPath: target,
 		server:     gs,

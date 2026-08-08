@@ -44,7 +44,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	gatewaydpbv1 "github.com/onebox-faas/faas/api/proto/onebox/faas/gatewayd/v1"
+	egresspb "github.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 )
 
@@ -64,7 +64,7 @@ var StreamCadence = 1 * time.Second
 // and is independently race-safe
 // (pkg/gateway/egresssink package doc).
 type Server struct {
-	gatewaydpbv1.UnimplementedEgressTxServiceServer
+	egresspb.UnimplementedEgressTxServiceServer
 
 	sink *egresssink.EgressSink
 	log  *slog.Logger
@@ -108,7 +108,7 @@ func (s *Server) ActiveStreams() int { return int(s.activeStreams.Load()) }
 // Empty drains are silent (zero-frame emits) so a working
 // gatewayd that happens to have no observed bytes this tick
 // doesn't trigger spurious "no data" alerts on the meterd side.
-func (s *Server) StreamBytes(req *gatewaydpbv1.StreamBytesRequest, stream grpc.ServerStreamingServer[gatewaydpbv1.BytesFrame]) error {
+func (s *Server) StreamBytes(req *egresspb.StreamBytesRequest, stream grpc.ServerStreamingServer[egresspb.BytesFrame]) error {
 	if s.sink == nil {
 		s.log.Warn("egressgrpc: stream opened but sink is nil; refusing with empty stream")
 		return nil
@@ -128,7 +128,7 @@ func (s *Server) StreamBytes(req *gatewaydpbv1.StreamBytesRequest, stream grpc.S
 			return nil
 		case <-t.C:
 			for _, rec := range s.sink.DrainRecords() {
-				if err := stream.Send(&gatewaydpbv1.BytesFrame{
+				if err := stream.Send(&egresspb.BytesFrame{
 					InstanceId: rec.InstanceID,
 					Minute:     timestamppb.New(rec.Minute.UTC()),
 					Bytes:      rec.Bytes,
