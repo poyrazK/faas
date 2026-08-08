@@ -1772,6 +1772,12 @@ func cmdConnect(args []string) int {
 			return printErr("Not logged in", err)
 		}
 		target := dashboardAccountURL(apiBase())
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{
+				"url":     target,
+				"service": "github",
+			}))
+		}
 		fmt.Printf("Opening %s to connect GitHub…\n", target)
 		if err := browser.Open(target); err != nil {
 			PrintFail(os.Stderr, "Could not open browser: %v", err)
