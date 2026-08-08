@@ -301,6 +301,49 @@ func suggestCommand(query string) (string, bool) {
 	return bestName, true
 }
 
+// suggestSubcommand is the per-top-level twin of suggestCommand:
+// walks c.Subcommands and returns the closest-by-Levenshtein name
+// when exactly one candidate is at the minimum distance ≤2. Ties
+// and over-threshold distances return ("", false) so the caller
+// falls through to a plain "unknown subcommand" message — same
+// ambiguity policy as suggestCommand. The threshold covers the
+// common typos (alerts `lst`/`lsit`, registry `st`) without
+// suggesting across unrelated verbs (registry `set` is distance
+// 3 from `rm`).
+func suggestSubcommand(query string, c cliCommand) (string, bool) {
+	const maxDist = 2
+	bestName := ""
+	bestDist := maxDist + 1
+	tied := false
+	for _, s := range c.Subcommands {
+		d := levenshtein(query, s.Name)
+		switch {
+		case d < bestDist:
+			bestName, bestDist, tied = s.Name, d, false
+		case d == bestDist:
+			// Tie: another subcommand at the same distance makes
+			// the suggestion ambiguous, so we suppress it.
+			tied = true
+		}
+	}
+	if tied || bestDist > maxDist || bestName == "" {
+		return "", false
+	}
+	return bestName, true
+}
+
+// maybeSuggestSub writes a one-line "Did you mean X?" hint to
+// stderr when sug is non-empty. Mirrors the wording in cmdMan
+// (man.go:60-62) so the failure surface is uniform across every
+// top-level dispatcher. No-op when sug == "" (ambiguous or
+// over-threshold — see suggestSubcommand).
+func maybeSuggestSub(sug string) {
+	if sug == "" {
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "  Did you mean %q?\n", sug)
+}
+
 // levenshtein computes the edit distance between a and b using
 // the classic dynamic-programming algorithm: O(len(a)*len(b))
 // time and space. We use a single-row rolling buffer (size
