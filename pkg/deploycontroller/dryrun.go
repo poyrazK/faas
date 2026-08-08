@@ -108,6 +108,7 @@ func DryRun(config Config, releaseID string) (MigrationReport, error) {
 		{filepath.Join(root, "bin", "migrate"), "candidate migration binary"},
 		{filepath.Join(root, "bin", "deployctl"), "candidate deployment controller"},
 		{filepath.Join(root, "systemd"), "candidate systemd units"},
+		{filepath.Join(root, "observability"), "candidate observability assets"},
 		{"/opt/faas/releases", "release storage"},
 		{"/etc/systemd/system", "systemd unit directory"},
 		{"/run/faas", "runtime socket directory"},

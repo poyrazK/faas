@@ -127,6 +127,18 @@ jobs:
           tar -xzf "/tmp/${PROM_TARBALL}" -C /tmp "prometheus-${PROM_VERSION}.linux-amd64/promtool"
           sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
           promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+          promtool check rules deploy/controlplane/observability/faas.rules.yml
+          promtool check rules deploy/controlplane/observability/pg_backup.rules.yml
+          # promtool resolves rule_files paths against the local fs; the
+          # bundle config references /etc/prometheus/*.rules.yml (the host
+          # install paths). Stage a shim tree so the check exercises the
+          # config as it will run on the box.
+          rm -rf /tmp/prometheus-config-check && mkdir -p /tmp/prometheus-config-check
+          cp deploy/controlplane/observability/prometheus.yml /tmp/prometheus-config-check/prometheus.yml
+          cp deploy/controlplane/observability/faas.rules.yml /tmp/prometheus-config-check/faas.rules.yml
+          cp deploy/controlplane/observability/pg_backup.rules.yml /tmp/prometheus-config-check/pg_backup.rules.yml
+          sed -i 's|/etc/prometheus/|/tmp/prometheus-config-check/|g' /tmp/prometheus-config-check/prometheus.yml
+          promtool check config /tmp/prometheus-config-check/prometheus.yml
 
       # ansible syntax gate. deploy/ansible/ is the source of truth for the
       # box's systemd units, sysctls and secret file modes, but nothing in
