@@ -60,9 +60,17 @@ func TestMailFactory_PicksCorrectTransport(t *testing.T) {
 		env      map[string]string
 		wantType string // fmt.Sprintf("%T", sender) for the chosen transport
 	}{
+		// Issue #246: an unset transport on a production box must NOT
+		// resolve to the log sender. Logging every dunning notice
+		// presents as healthy while the customer receives nothing.
 		{
-			name:     "unset-transport-defaults-to-log",
+			name:     "unset-transport-on-non-dev-box-drops-to-noop",
 			env:      map[string]string{},
+			wantType: "mail.NoopSender",
+		},
+		{
+			name:     "unset-transport-on-dev-box-keeps-log",
+			env:      map[string]string{"FAAS_DEV": "1"},
 			wantType: "*mail.LogSender",
 		},
 		{
@@ -115,11 +123,15 @@ func TestMailFactory_PicksCorrectTransport(t *testing.T) {
 			// Use t.Setenv so Go's test framework cleans up after us;
 			// t.Setenv on a non-existent key unsets it, matching the
 			// factory's getenv behaviour for "FAAS_MAIL_TRANSPORT=" → log.
+			// FAAS_DEV is cleared too: it now selects the unset-transport
+			// branch (issue #246), so leaving a developer's ambient
+			// FAAS_DEV=1 in place would make this table non-hermetic.
 			for _, k := range []string{
 				"FAAS_MAIL_TRANSPORT",
 				"FAAS_MAIL_RESEND_API_KEY",
 				"FAAS_MAIL_FROM",
 				"FAAS_MAIL_POSTMARK_TOKEN",
+				"FAAS_DEV",
 			} {
 				t.Setenv(k, "")
 			}

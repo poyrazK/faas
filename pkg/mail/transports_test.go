@@ -150,14 +150,62 @@ func TestPostmarkSender_MissingToken(t *testing.T) {
 	}
 }
 
-// TestSenderFromEnv_PicksLog confirms the default (no FAAS_MAIL_TRANSPORT)
+// TestSenderFromEnv_PicksLog confirms an EXPLICIT FAAS_MAIL_TRANSPORT=log
 // returns a LogSender that emits one record per Send.
 func TestSenderFromEnv_PicksLog(t *testing.T) {
-	getenv := func(string) string { return "" }
+	getenv := func(k string) string {
+		if k == "FAAS_MAIL_TRANSPORT" {
+			return "log"
+		}
+		return ""
+	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s := mail.SenderFromEnv(getenv, log)
 	if _, ok := s.(*mail.LogSender); !ok {
-		t.Errorf("default transport = %T, want *mail.LogSender", s)
+		t.Errorf("explicit log transport = %T, want *mail.LogSender", s)
+	}
+}
+
+// TestSenderFromEnv_UnsetTransport pins issue #246: an unset
+// FAAS_MAIL_TRANSPORT must NOT silently resolve to the log sender on
+// a production box. A dev box keeps the LogSender (readable dunning
+// copy in the journal); everything else gets a NoopSender so the
+// drop is honest and the accompanying WARN is actionable.
+func TestSenderFromEnv_UnsetTransport(t *testing.T) {
+	tests := []struct {
+		name    string
+		faasDev string
+		wantLog bool
+	}{
+		{name: "non-dev box drops loudly", faasDev: "", wantLog: false},
+		{name: "FAAS_DEV=0 is not a dev box", faasDev: "0", wantLog: false},
+		{name: "FAAS_DEV=1 keeps log sender", faasDev: "1", wantLog: true},
+		{name: "FAAS_DEV=true keeps log sender", faasDev: "true", wantLog: true},
+		{name: "FAAS_DEV=TRUE is case-insensitive", faasDev: "TRUE", wantLog: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			getenv := func(k string) string {
+				if k == "FAAS_DEV" {
+					return tt.faasDev
+				}
+				return ""
+			}
+			s := mail.SenderFromEnv(getenv, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+			if tt.wantLog {
+				if _, ok := s.(*mail.LogSender); !ok {
+					t.Errorf("FAAS_DEV=%q transport = %T, want *mail.LogSender", tt.faasDev, s)
+				}
+
+				return
+			}
+
+			if _, ok := s.(mail.NoopSender); !ok {
+				t.Errorf("FAAS_DEV=%q transport = %T, want mail.NoopSender", tt.faasDev, s)
+			}
+		})
 	}
 }
 
