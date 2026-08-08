@@ -163,14 +163,20 @@ func TestForwardHTTPStreamV2_HeadersAssembledFromInit(t *testing.T) {
 	// Bind a unix socket for the bridge. Use /tmp explicitly
 	// because macOS has a 104-byte unix socket path limit and
 	// t.TempDir() on macOS returns paths under
-	// /var/folders/.../T/ which can exceed it.
-	sockPath := "/tmp/faas-stream-bridge-test.sock"
+	// /var/folders/.../T/ which can exceed it. The path also
+	// needs to be unique per test invocation — `make test` runs
+	// all packages in parallel and a hardcoded path races with
+	// other tests in this package that bind the same name.
+	// Suffix with PID + a sanitised t.Name() (which may contain
+	// `/` for nested subtests; unix socket paths can't).
+	sockPath := "/tmp/faas-stream-bridge-test-" + fmt.Sprintf("%d-%s", os.Getpid(), strings.ReplaceAll(t.Name(), "/", "_")) + ".sock"
 	_ = os.Remove(sockPath)
 	lnBridge, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatalf("bridge listen: %v", err)
 	}
 	_ = lnBridge.Close()
+	t.Cleanup(func() { _ = os.Remove(sockPath) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -198,7 +204,18 @@ func TestForwardHTTPStreamV2_HeadersAssembledFromInit(t *testing.T) {
 		if _, err := os.Stat(sockPath); err == nil {
 			break
 		}
+		// Detect bridge exit early so a startup failure (bad
+		// deadline parse, env-var rejection, etc.) doesn't burn
+		// the full 2 s wait before the dial below surfaces it.
+		if cmd.ProcessState != nil {
+			t.Fatalf("bridge exited before binding socket (exit=%d, stderr: %s)",
+				cmd.ProcessState.ExitCode(), stderrBuf.String())
+		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(sockPath); err != nil {
+		t.Fatalf("bridge socket %s never appeared after 2s (stderr: %s)",
+			sockPath, stderrBuf.String())
 	}
 
 	// Open an H2C client to the bridge and POST a body.
