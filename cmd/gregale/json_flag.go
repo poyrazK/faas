@@ -15,6 +15,29 @@ import (
 //
 // Issue #64 D1: every command accepts --json; scripts and agents
 // depend on the stable shape (UX §3.2 "agents depend on it").
+//
+// Deliberately non-JSON commands (the rationale lives here; the
+// audit allow-list mirror in nonJSONAllowList in json_parity_test.go
+// must move with these). When a new command legitimately emits
+// no body, add it here AND to nonJSONAllowList — the audit test
+// fails CI otherwise.
+//
+//   - cmdLogin (commands.go)             — interactive paste-code prompt
+//   - cmdLogout (commands.go)            — side-effect only; no body
+//   - cmdWhoami (commands.go)            — shell-sourceable plaintext
+//   - cmdInit / runCmdInit* (commands_init.go) — file writes + human-only
+//     template table
+//   - cmdBackup / cmdBackupUnsealRclone  — operator fs writes; no body
+//   - cmdMfa enroll                      — QR PNG is written to disk
+//     (JSON shape is the path)
+//   - cmdMfa (confirm/verify/recover/disable) — write-only no-body
+//   - cmdHostAge init/rotate/status/prune — operator fs writes
+//   - cmdPKI init/status/rotate          — operator fs writes
+//   - cmdSignKeys init/rotate/status     — operator fs writes
+//   - cmdTrustedPublishers add/remove/list — operator fs writes
+//   - cmdOverageCap (set/clear)          — side-effect only
+//   - cmdApp --concurrency fast path     — explicitly rejects --json
+//     (commands2.go)
 var jsonOutput bool
 
 // applyJSONFlag consumes a leading --json (or -j / --json=BOOL) from
