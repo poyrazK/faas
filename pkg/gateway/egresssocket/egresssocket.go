@@ -17,13 +17,14 @@
 // closes — every time the operator-facing field set grows, all
 // three would otherwise need synchronized edits.
 //
-// # Scope (PR-A, refactor)
+// # Scope (PR-A, refactor; PR-C+D flips the default)
 //
 // This package is a pure move. It introduces the constants and the
-// resolver, and wires cmd/meterd/config.go to use the constants for
-// its default. It does NOT yet switch the production default (the
-// legacy default string is preserved verbatim through this PR; the
-// PR-C follow-up flips it to DefaultSocketPath).
+// resolver. PR-A wired cmd/meterd/config.go to use LegacySocketPath
+// as its default — preserving the pre-PR-A wire behavior on every
+// box. PR-C+D flips that default to DefaultSocketPath; the legacy
+// socket path remains readable through the resolver's
+// legacyEnvVal + legacyCfgVal slots for one release cycle.
 //
 // # Precedence (PR-C extension)
 //
@@ -52,8 +53,10 @@ const DefaultSocketPath = "/run/faas/egress.sock"
 
 // LegacySocketPath is the pre-PR-C default the monolithic
 // gatewayd daemon used when it served the egress channel directly.
-// Kept here so PR-A's caller can keep its current behavior
-// unchanged until PR-C flips the default.
+// Kept here so existing deployments with the legacy socket path
+// continue to work for one release cycle via the resolver's
+// legacyEnvVal + legacyCfgVal slots (PR-C+D flip). PR-E + a
+// follow-up PR removes this constant.
 const LegacySocketPath = "/run/faas/gatewayd-egress.sock"
 
 // ResolveSocketPath returns the unix-domain socket path the egress

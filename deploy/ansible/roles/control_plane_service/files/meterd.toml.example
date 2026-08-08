@@ -39,6 +39,22 @@
 # gateway_egress_tls_key_path  = "/etc/faas/tls/meterd/gatewayd-egress-client.key"
 # gateway_egress_tls_ca_path   = "/etc/faas/tls/ca/ca.crt"
 
+# egress_socket: dial target meterd uses to read tx_bytes (ADR-046).
+# PR-C rename of gateway_egress_socket. Single-box default
+# /run/faas/egress.sock; multi-box deployments override with
+# tcp://<node>:port and populate the egress_tls_* cluster. The
+# resolver (pkg/gateway/egresssocket) prefers egress_socket then
+# falls back to the legacy gateway_egress_socket for one release
+# cycle. Default values are pre-populated (not commented out) so a
+# fresh deploy picks up the new paths without operator action.
+egress_socket = "/run/faas/egress.sock"
+egress_tls_cert_path = "/etc/faas/tls/meterd/egress-client.crt"
+egress_tls_key_path  = "/etc/faas/tls/meterd/egress-client.key"
+# CA path: single-box leaves this empty (the daemon's own CA is
+# trusted via the system trust store). Multi-box points at the
+# control-plane CA bundle (/etc/faas/tls/ca/ca.crt).
+egress_tls_ca_path = ""
+
 # meter block — timer cadences + the per-tick behavior knobs. Default
 # cadences: sample 60s, quota 60s, stripe 60m. Override via env:
 # FAAS_SAMPLE_INTERVAL, FAAS_QUOTA_INTERVAL, FAAS_STRIPE_INTERVAL.

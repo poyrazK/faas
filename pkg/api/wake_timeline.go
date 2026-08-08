@@ -25,7 +25,7 @@ package api
 // canonical wake.* vocabulary (e.g. "wake.boot_started",
 // "wake.readiness_200", "wake.proxy_first_byte"), `actor` is the
 // daemon that wrote the row ("schedd", "vmmd", "gatewayd",
-// "builderd", "apid"), and `data` is the producer-supplied
+// "egress", "builderd", "apid"), and `data` is the producer-supplied
 // payload (json object).
 type WakeTimelineEvent struct {
 	At    string         `json:"at"`

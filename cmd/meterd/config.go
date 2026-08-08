@@ -35,21 +35,37 @@ type Config struct {
 	ScheddTLSKeyPath  string `toml:"schedd_tls_key_path"`
 	ScheddTLSCAPath   string `toml:"schedd_tls_ca_path"`
 
-	// GatewayEgressSocket is the gatewayd egress dial target meterd
-	// dials to read tx_bytes (ADR-046). Defaults to the legacy
-	// /run/faas/gatewayd-egress.sock (preserved verbatim through the
-	// PR-A refactor; PR-C flips the default to egresssocket.DefaultSocketPath
-	// and adds a read-both-prefer-new fallback for one release cycle).
-	// Multi-box deployments override with tcp:// or dns:// plus the
-	// gateway_egress_tls_* cluster.
+	// EgressSocket is the egress byte-counter dial target meterd
+	// dials to read tx_bytes (ADR-046). Defaults to
+	// egresssocket.DefaultSocketPath (/run/faas/egress.sock); the
+	// daemon-independent "egress" token mirrors the post-PR-B wire
+	// package (onebox.faas.egress.v1) and the post-Tier-A7 daemon
+	// split (ADR-070). Multi-box deployments override with tcp://
+	// or dns:// plus the egress_tls_* cluster.
+	EgressSocket string `toml:"egress_socket"`
+
+	// EgressTLSCertPath / Key / CA configure the mTLS material meterd
+	// uses to dial the egress listener when it lives on a remote
+	// compute node (ADR-052). All three empty => no TLS (single-box
+	// path uses the unix socket above); partial cluster => startup
+	// error. Field names are prefixed with egress_ so an operator
+	// can map the error straight to a TOML key.
+	EgressTLSCertPath string `toml:"egress_tls_cert_path"`
+	EgressTLSKeyPath  string `toml:"egress_tls_key_path"`
+	EgressTLSCAPath   string `toml:"egress_tls_ca_path"`
+
+	// GatewayEgressSocket is the deprecated (PR-C+D) alias for
+	// EgressSocket. Operators on pre-PR-C+D deployments keep using
+	// the gateway_egress_socket TOML key for one release cycle; the
+	// resolver in pkg/gateway/egresssocket gives EgressSocket
+	// (egress_socket) precedence, then falls back to this legacy
+	// field. PR-E + a follow-up PR removes this field.
 	GatewayEgressSocket string `toml:"gateway_egress_socket"`
 
-	// GatewayEgressTLSCertPath / Key / CA configure the mTLS material
-	// meterd uses to dial gatewayd's egress listener when it lives on a
-	// remote compute node (ADR-052). All three empty => no TLS (single-box
-	// path uses the unix socket above); partial cluster => startup error.
-	// Field names are prefixed with gateway_egress_ so an operator can map
-	// the error straight to a TOML key.
+	// GatewayEgressTLSCertPath / Key / CA are the deprecated (PR-C+D)
+	// aliases for EgressTLS*. Supported for one release cycle so
+	// single-box deployments that haven't updated /etc/faas/meterd.toml
+	// keep working. PR-E + a follow-up PR removes these fields.
 	GatewayEgressTLSCertPath string `toml:"gateway_egress_tls_cert_path"`
 	GatewayEgressTLSKeyPath  string `toml:"gateway_egress_tls_key_path"`
 	GatewayEgressTLSCAPath   string `toml:"gateway_egress_tls_ca_path"`
@@ -61,9 +77,19 @@ func (c *Config) LoadScheddTLS() (*tls.Config, error) {
 	return wire.LoadClientTLSConfigWithPrefix("schedd_", c.ScheddTLSCertPath, c.ScheddTLSKeyPath, c.ScheddTLSCAPath)
 }
 
-// LoadGatewayEgressTLS returns the client mTLS config meterd uses to
-// dial gatewayd's egress listener. Empty cluster returns (nil, nil);
+// LoadEgressTLS returns the client mTLS config meterd uses to dial the
+// egress byte-counter listener. Empty cluster returns (nil, nil);
 // partial cluster is rejected.
+func (c *Config) LoadEgressTLS() (*tls.Config, error) {
+	return wire.LoadClientTLSConfigWithPrefix("egress_", c.EgressTLSCertPath, c.EgressTLSKeyPath, c.EgressTLSCAPath)
+}
+
+// LoadGatewayEgressTLS returns the client mTLS config meterd uses to
+// dial the egress listener through the deprecated gateway_egress_*
+// field set. Empty cluster returns (nil, nil); partial cluster is
+// rejected. Deprecated: use LoadEgressTLS. Supported for one release
+// cycle so single-box deployments that haven't updated
+// /etc/faas/meterd.toml keep working.
 func (c *Config) LoadGatewayEgressTLS() (*tls.Config, error) {
 	return wire.LoadClientTLSConfigWithPrefix("gateway_egress_", c.GatewayEgressTLSCertPath, c.GatewayEgressTLSKeyPath, c.GatewayEgressTLSCAPath)
 }
@@ -73,6 +99,7 @@ func (c *Config) LoadGatewayEgressTLS() (*tls.Config, error) {
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
 		SocketPath:          "/run/faas/schedd.sock",
+		EgressSocket:        egresssocket.DefaultSocketPath,
 		GatewayEgressSocket: egresssocket.LegacySocketPath,
 		Meter:               &meter.Config{},
 	}

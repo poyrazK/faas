@@ -294,7 +294,7 @@ func TestEnsureLeafSignedByCA(t *testing.T) {
 // against silent drift — if the role list shrinks, something is wrong.
 func TestRolesIncludesEveryDaemon(t *testing.T) {
 	roles := Roles()
-	wantDirs := []string{"schedd", "vmmd", "builderd", "gatewayd", "apid", "meterd", "githubd"}
+	wantDirs := []string{"schedd", "vmmd", "builderd", "gatewayd", "apid", "meterd", "githubd", "egress"}
 	seen := map[string]bool{}
 	for _, r := range roles {
 		seen[r.Directory] = true

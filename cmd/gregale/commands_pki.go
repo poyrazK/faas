@@ -84,9 +84,15 @@ func cmdPKI(args []string) int {
 
 // pkiFlags is the shared flag surface. All three leaves accept
 // --root-dir and --force; only init and rotate actually use --force.
+// --daemon is honoured by rotate only — it filters the role set to
+// a single directory (with one cross-directory carve-out for the
+// meterd→egress client leaf) so an operator can reissue just the
+// certs the egress channel touches without churning the rest of the
+// fleet.
 type pkiFlags struct {
 	rootDir string
 	force   bool
+	daemon  string
 }
 
 func newPKIFlags(name string, defaultForce bool) (*flag.FlagSet, *pkiFlags) {
@@ -96,6 +102,8 @@ func newPKIFlags(name string, defaultForce bool) (*flag.FlagSet, *pkiFlags) {
 		"directory under which CA + per-daemon leaves live (canonical: "+pki.DefaultRootDir+")")
 	fs.BoolVar(&f.force, "force", defaultForce,
 		"re-issue leaves whose NotAfter is still >= 30d away (rotate path)")
+	fs.StringVar(&f.daemon, "daemon", "",
+		"rotate only the leaves in this directory (rotate path; e.g. --daemon egress to reissue just the egress server + meterd client leaves)")
 	return fs, f
 }
 
@@ -160,6 +168,15 @@ func cmdPKIStatus(args []string) int {
 // `gregale pki init --force`. The CLI splits them so the operator's
 // intent (initialize vs. rotate) is recorded in shell history and
 // stdout, not just by a flag toggle.
+//
+// --daemon <name> narrows the rotation to the leaves whose Directory
+// matches <name>, plus one cross-directory carve-out: when <name>
+// is "egress", the meterd→egress client leaf (Directory=meterd,
+// Filename=egress-client) is also rotated because the egress
+// server's CN is paired with that client cert at mTLS handshake
+// time. This is the rotation path the PR-C+D cert-dir migration
+// (deploy/ansible/roles/control_plane_service/tasks/migrate_egress_certs.yml)
+// expects operators to run immediately after the deploy lands.
 func cmdPKIRotate(args []string) int {
 	fs, f := newPKIFlags("pki rotate", true)
 	if err := fs.Parse(args); err != nil {
@@ -178,17 +195,55 @@ func cmdPKIRotate(args []string) int {
 	if err != nil {
 		return printErr("pki rotate: ensure CA", err)
 	}
-	written, _, errs := ensureAllLeaves(f.rootDir, caCert, caKey, true)
+	written, _, errs := ensureAllLeavesFiltered(f.rootDir, caCert, caKey, true, f.daemon)
 	for _, e := range errs {
 		fmt.Fprintf(os.Stderr, "  ! %v\n", e)
 	}
+	// PR-C+D: gatewayd was split (ADR-070) into gatewayd-internal +
+	// gatewayd-public; the egress server leaf lives on the egress
+	// directory and is consumed by gatewayd-internal. The restart
+	// hint names every daemon whose live cert changed, scoped to the
+	// --daemon filter if one was passed (empty == whole fleet).
+	hint := rotateRestartHint(f.daemon)
 	PrintOK(os.Stdout,
-		"Rotated %d leaves under %s (CA preserved)\n  Restart: systemctl restart gregale-{apid,gatewayd,schedd,vmmd,builderd,meterd,githubd}",
-		written, f.rootDir)
+		"Rotated %d leaves under %s (CA preserved)\n  %s",
+		written, f.rootDir, hint)
 	if len(errs) > 0 {
 		return 1
 	}
 	return 0
+}
+
+// rotateRestartHint returns the systemctl reload/restart line an
+// operator should run after a rotation. The whole-fleet list is
+// post-ADR-070 (gatewayd-internal is the only gatewayd-named daemon;
+// gatewayd-public uses certmagic, not the control-plane PKI).
+// Scoping to a single daemon narrows the list so a partial rotation
+// (--daemon egress) only restarts the daemons that actually loaded
+// the rotated leaves.
+func rotateRestartHint(daemon string) string {
+	if daemon != "" {
+		switch daemon {
+		case "egress":
+			// The egress server leaf is consumed by
+			// gatewayd-internal; the egress-client leaf is
+			// consumed by meterd.
+			return "Reload: systemctl reload faas-gatewayd-internal faas-meterd  (egress leaves: /etc/faas/tls/egress/egress.crt, /etc/faas/tls/meterd/egress-client.crt)"
+		case "meterd":
+			return "Reload: systemctl reload faas-meterd"
+		case "schedd":
+			return "Reload: systemctl reload faas-schedd"
+		case "vmmd":
+			return "Reload: systemctl reload faas-vmmd"
+		case "apid":
+			return "Reload: systemctl reload faas-apid"
+		case "githubd":
+			return "Reload: systemctl reload faas-githubd"
+		case "builderd":
+			return "Reload: systemctl reload faas-builderd"
+		}
+	}
+	return "Reload: systemctl reload faas-{apid,gatewayd-internal,schedd,vmmd,builderd,meterd,githubd}"
 }
 
 // ensureAllLeaves iterates pkg/pki.Roles() and ensures each is present.
@@ -210,6 +265,54 @@ func ensureAllLeaves(rootDir string, caCert *x509.Certificate, caKey *ecdsa.Priv
 		}
 	}
 	return written, skipped, errs
+}
+
+// ensureAllLeavesFiltered is ensureAllLeaves with an optional --daemon
+// scope. daemon="" iterates every role (delegates to ensureAllLeaves);
+// daemon="<dir>" matches role.Directory == dir PLUS one cross-directory
+// carve-out for the egress pair: when daemon=="egress", the meterd
+// client leaf (Directory=meterd, Filename=egress-client) is also
+// included because the egress server's CN (egress.faas) is paired with
+// that client cert at mTLS handshake time — rotating only the server
+// leaf would leave meterd holding a stale client cert and every
+// subsequent egress dial would fail with a tls: bad certificate.
+func ensureAllLeavesFiltered(rootDir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, force bool, daemon string) (int, int, []error) {
+	if daemon == "" {
+		return ensureAllLeaves(rootDir, caCert, caKey, force)
+	}
+	var written, skipped int
+	var errs []error
+	for _, role := range pki.Roles() {
+		if !roleMatchesDaemon(role, daemon) {
+			continue
+		}
+		err := pki.EnsureLeaf(rootDir, role, caCert, caKey, force)
+		switch {
+		case err == nil:
+			written++
+		case isErrLeafNotExpiringSoon(err):
+			skipped++
+		default:
+			errs = append(errs, fmt.Errorf("%s/%s: %w", role.Directory, role.Filename, err))
+		}
+	}
+	return written, skipped, errs
+}
+
+// roleMatchesDaemon returns true if role belongs to daemon. The
+// default match is role.Directory == daemon. The egress carve-out
+// (meterd client leaf whose Filename is "egress-client") is encoded
+// here so ensureAllLeavesFiltered stays free of role-specific
+// conditionals beyond the single carve-out the PR-C+D migration
+// requires.
+func roleMatchesDaemon(role pki.Role, daemon string) bool {
+	if role.Directory == daemon {
+		return true
+	}
+	if daemon == "egress" && role.Directory == "meterd" && role.Filename == "egress-client" {
+		return true
+	}
+	return false
 }
 
 // reportCAStatus prints one line for the CA.

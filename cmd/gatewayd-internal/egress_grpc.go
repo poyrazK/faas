@@ -1,4 +1,4 @@
-// cmd/gatewayd egress-grpc listener (ADR-046 PR-2 producer channel).
+// cmd/gatewayd-internal egress-grpc listener (ADR-046 PR-2 producer channel).
 //
 // Why this lives in a separate file from main.go: the dialer,
 // listener management, and registration logic are small but
@@ -35,32 +35,29 @@ import (
 	egresspb "github.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1"
 	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/gateway/egresssocket"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 const (
-	// defaultEgressGRPCSocketPath is the default unix-domain socket
-	// ADR-046 PR-2 gRPC producer channel listens on. Override with
-	// FAAS_GATEWAY_EGRESS_SOCKET. Distinct from
-	// FAAS_GATEWAY_SYNTH_SOCKET so the existing cron/dispatch
-	// service stays HTTP-shaped on its own socket (see file
-	// header).
-	defaultEgressGRPCSocketPath = "/run/faas/gatewayd-egress.sock"
-
 	// egressGRPCSocketMode mirrors the synth socket's 0660 + group
 	// `faas` posture (ADR-015). Only schedd/meterd are in the
 	// group, so the socket itself IS the auth.
 	egressGRPCSocketMode = 0o660
 )
 
-// egressGRPCSocketPath returns the socket path to bind, honoring
-// the FAAS_GATEWAY_EGRESS_SOCKET override. Empty string disables
-// the listener entirely (used by tests + the e2e harness).
+// egressGRPCSocketPath returns the socket path to bind, resolved
+// by egresssocket.ResolveFromOS which honours FAAS_EGRESS_SOCKET
+// (new, preferred), then FAAS_GATEWAY_EGRESS_SOCKET (legacy), then
+// the const default egresssocket.DefaultSocketPath.
 func egressGRPCSocketPath() string {
-	if v, ok := os.LookupEnv("FAAS_GATEWAY_EGRESS_SOCKET"); ok && v != "" {
-		return v
+	getEnv := func(key string) string {
+		if v, ok := os.LookupEnv(key); ok {
+			return v
+		}
+		return ""
 	}
-	return defaultEgressGRPCSocketPath
+	return egresssocket.ResolveFromOS(getEnv, "", "")
 }
 
 // egressGRPCListener owns the *grpc.Server + its bound unix
@@ -201,11 +198,11 @@ func (l *egressGRPCListener) start(ctx context.Context) error {
 	var err error
 	if isUnixSocketPath(l.socketPath) {
 		if err := os.Remove(l.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("gatewayd egress: remove stale socket: %w", err)
+			return fmt.Errorf("egress: remove stale socket: %w", err)
 		}
 		lis, err = net.Listen("unix", l.socketPath)
 		if err != nil {
-			return fmt.Errorf("gatewayd egress: listen %s: %w", l.socketPath, err)
+			return fmt.Errorf("egress: listen %s: %w", l.socketPath, err)
 		}
 		// The kernel publishes the dirent asynchronously after
 		// net.Listen returns. Under tmpfs load (CI runner pool,
@@ -222,14 +219,14 @@ func (l *egressGRPCListener) start(ctx context.Context) error {
 		// waitForSocket in TestEgressStopStopStart_RepeatedCycle.
 		if err := waitForSocketPath(l.socketPath, 2*time.Second); err != nil {
 			_ = lis.Close()
-			return fmt.Errorf("gatewayd egress: wait for socket dirent: %w", err)
+			return fmt.Errorf("egress: wait for socket dirent: %w", err)
 		}
 		if err := chmodSocket(l.socketPath, egressGRPCSocketMode); err != nil {
 			_ = lis.Close()
-			return fmt.Errorf("gatewayd egress: chmod: %w", err)
+			return fmt.Errorf("egress: chmod: %w", err)
 		}
 		l.listener = lis
-		l.log.Info("gatewayd egress: listening", "socket", l.socketPath)
+		l.log.Info("egress: listening", "socket", l.socketPath)
 	} else {
 		// TCP/DNS target. Use wire.Listen so the listener is
 		// raw TCP — gRPC's transport will do the TLS handshake
@@ -237,16 +234,16 @@ func (l *egressGRPCListener) start(ctx context.Context) error {
 		// (ADR-052 §Handler-layer peer binding).
 		lis, err = wire.Listen(ctx, l.socketPath, nil)
 		if err != nil {
-			return fmt.Errorf("gatewayd egress: listen %s: %w", l.socketPath, err)
+			return fmt.Errorf("egress: listen %s: %w", l.socketPath, err)
 		}
 		l.listener = lis
-		l.log.Info("gatewayd egress: listening", "addr", l.socketPath)
+		l.log.Info("egress: listening", "addr", l.socketPath)
 	}
 	l.serveDone = make(chan struct{})
 	go func() {
 		defer close(l.serveDone)
 		if err := l.server.Serve(lis); err != nil {
-			l.log.Warn("gatewayd egress: serve", "err", err)
+			l.log.Warn("egress: serve", "err", err)
 		}
 	}()
 	return nil
@@ -260,7 +257,7 @@ func (l *egressGRPCListener) start(ctx context.Context) error {
 // succeeded, deleting a live dirent that meterd then dials
 // into nothing (cd-controlplane run 31121004495 — meterd
 // OOM-killed from "stream open failed" log-flood because
-// /run/faas/gatewayd-egress.sock kept disappearing).
+// /run/faas/egress.sock kept disappearing).
 //
 // Stale dirents from a crash (where neither Remove nor the
 // graceful-close path ran) are handled by start()'s

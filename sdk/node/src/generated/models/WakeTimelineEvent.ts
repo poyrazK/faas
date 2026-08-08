@@ -22,7 +22,7 @@ export type WakeTimelineEvent = {
    */
   kind: string;
   /**
-   * Daemon that wrote the row (`schedd` / `vmmd` / `gatewayd` / `builderd` / `apid`).
+   * Daemon that wrote the row (`schedd` / `vmmd` / `gatewayd` / `egress` / `builderd` / `apid`).
    */
   actor: string;
   /**

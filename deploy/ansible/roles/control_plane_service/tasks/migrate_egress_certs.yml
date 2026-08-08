@@ -1,0 +1,86 @@
+---
+# PR-C+D cert directory migration: pre-PR-C deployments kept the
+# egress server leaf at /etc/faas/tls/gatewayd/egress.{crt,key}
+# under the directory named after the (now-removed) monolithic
+# gatewayd daemon. PR-C renames the directory + cert identity to
+# /etc/faas/tls/egress/egress.{crt,key}; this task moves the
+# existing leaf in place so `gregale pki rotate --daemon egress`
+# can issue against the new path without first running an
+# operator-driven `cp`.
+#
+# Idempotency: the `creates:` sentinel points at the new key file
+# — once it exists the task no-ops on subsequent runs. The CA
+# bundle (/etc/faas/tls/ca/) is unchanged; the tls-san.cnf file
+# (used by `gregale pki init` to seed SAN extensions) is copied
+# if present so a re-run of the PKI init doesn't fail because of
+# a missing reference config.
+#
+# Permissions: the moved cert keeps 0444 and the moved key keeps
+# 0400 root:root — these match the freshly-issued defaults and
+# the stat-asserts in main.yml that follow this task. A chmod
+# pass covers the edge case where the pre-PR-C install ran with
+# looser perms.
+#
+# Out of scope: the meterd client leaf (formerly
+# /etc/faas/tls/meterd/gatewayd-egress-client.crt) is regenerated
+# by `gregale pki rotate --daemon egress` — its filename rename
+# lands in the same rotation cycle, no manual move needed.
+
+- name: control_plane_service — stat pre-PR-C egress cert dir
+  ansible.builtin.stat:
+    path: /etc/faas/tls/gatewayd/egress.crt
+  register: faas_egress_legacy_cert_stat
+
+- name: control_plane_service — stat PR-C egress cert dir (sentinel)
+  ansible.builtin.stat:
+    path: /etc/faas/tls/egress/egress.key
+  register: faas_egress_new_key_stat
+
+- name: control_plane_service — migrate pre-PR-C egress cert dir to PR-C layout
+  ansible.builtin.command:
+    cmd: "mv /etc/faas/tls/gatewayd/egress.{{ item }} /etc/faas/tls/egress/egress.{{ item }}"
+    creates: "/etc/faas/tls/egress/egress.{{ item }}"
+  loop:
+    - crt
+    - key
+  when:
+    - faas_egress_legacy_cert_stat.stat.exists
+    - not faas_egress_new_key_stat.stat.exists
+
+- name: control_plane_service — migrate pre-PR-C tls-san.cnf to PR-C layout
+  ansible.builtin.command:
+    cmd: "mv /etc/faas/tls/gatewayd/tls-san.cnf /etc/faas/tls/egress/tls-san.cnf"
+    creates: /etc/faas/tls/egress/tls-san.cnf
+  when:
+    - faas_egress_legacy_cert_stat.stat.exists
+    - not faas_egress_new_key_stat.stat.exists
+
+- name: control_plane_service — chmod migrated egress cert 0444 root:root
+  ansible.builtin.file:
+    path: /etc/faas/tls/egress/egress.crt
+    owner: root
+    group: root
+    mode: "0444"
+    state: file
+  when:
+    - faas_egress_legacy_cert_stat.stat.exists
+    - not faas_egress_new_key_stat.stat.exists
+
+- name: control_plane_service — chmod migrated egress key 0400 root:root
+  ansible.builtin.file:
+    path: /etc/faas/tls/egress/egress.key
+    owner: root
+    group: root
+    mode: "0400"
+    state: file
+  when:
+    - faas_egress_legacy_cert_stat.stat.exists
+    - not faas_egress_new_key_stat.stat.exists
+
+- name: control_plane_service — remove empty pre-PR-C gatewayd cert dir
+  ansible.builtin.file:
+    path: /etc/faas/tls/gatewayd
+    state: absent
+  when:
+    - faas_egress_legacy_cert_stat.stat.exists
+    - not faas_egress_new_key_stat.stat.exists

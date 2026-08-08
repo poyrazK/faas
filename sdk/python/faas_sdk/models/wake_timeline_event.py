@@ -31,7 +31,7 @@ class WakeTimelineEvent:
     kind: str
     """Canonical `wake.*` kind. See ADR-064."""
     actor: str
-    """Daemon that wrote the row (`schedd` / `vmmd` / `gatewayd` / `builderd` / `apid`)."""
+    """Daemon that wrote the row (`schedd` / `vmmd` / `gatewayd` / `egress` / `builderd` / `apid`)."""
     data: WakeTimelineEventData
     """Producer-supplied payload (json object)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

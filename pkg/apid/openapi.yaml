@@ -4211,7 +4211,7 @@ paths:
                     data: { wake_id: "abcdef01-2345-6789-abcd-ef0123456789", app_id: "0123456789abcdef0123456789abcdef", instance_id: "inst-1", node_id: "node-1", healthcheck_path: "/healthz", probe_count: 1, elapsed_ms: 760 }
                   - at: "2026-07-25T13:25:01.220Z"
                     kind: wake.proxy_first_byte
-                    actor: gatewayd
+                    actor: egress
                     data: { wake_id: "abcdef01-2345-6789-abcd-ef0123456789", app_id: "0123456789abcdef0123456789abcdef", request_id: "r-1", instance_id: "inst-1", node_id: "node-1", latency_ms: 40 }
         '400':
           description: Malformed query parameter on the wake-timeline read — `since` not RFC 3339 or `limit` out of range.
@@ -7663,7 +7663,7 @@ components:
           example: wake.boot_started
         actor:
           type: string
-          description: "Daemon that wrote the row (`schedd` / `vmmd` / `gatewayd` / `builderd` / `apid`)."
+          description: "Daemon that wrote the row (`schedd` / `vmmd` / `gatewayd` / `egress` / `builderd` / `apid`)."
           example: schedd
         data:
           type: object

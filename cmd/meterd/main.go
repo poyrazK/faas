@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/reconciler"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/gateway/egresssocket"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -223,8 +224,8 @@ func (a *scheddEgressAdapter) EgressBytes(instanceID string) (uint64, uint64, bo
 // is the meterd-side source for usage_minutes.tx_bytes
 // (gateway HTTP response bytes). Production wires the gatewayd
 // gRPC stream
-// (onebox.faas.gatewayd.v1.EgressTxService.StreamBytes on
-// FAAS_GATEWAY_SYNTH_SOCKET) into a background goroutine that
+// (onebox.faas.egress.v1.EgressTxService.StreamBytes on
+// FAAS_GATEWAY_EGRESS_SOCKET) into a background goroutine that
 // feeds a per-(instance, minute) byte snapshot. Sample-time
 // reads (EgressBytes) look up the snapshot under the read lock
 // and return (txBytes, 0, true) when the gateway reported any
@@ -783,13 +784,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// future test harness can omit the egress wire without
 	// touching the constructor.
 	scheddEgress := &scheddEgressAdapter{cpu: cpu}
-	// Load the mTLS config for the gatewayd egress dial (ADR-052).
-	// Single-box deployments keep all three paths empty and
-	// LoadGatewayEgressTLS returns (nil, nil); multi-box deployments
-	// point gateway_egress_target at tcp:// or dns:// + a TLS cluster.
-	gwEgressTLS, err := cfg.LoadGatewayEgressTLS()
+	// Load the mTLS config for the egress dial (ADR-052). Single-box
+	// deployments keep all three paths empty and LoadEgressTLS returns
+	// (nil, nil); multi-box deployments point egress_target at tcp://
+	// or dns:// + a TLS cluster.
+	gwEgressTLS, err := cfg.LoadEgressTLS()
 	if err != nil {
-		return fmt.Errorf("meterd: load gateway egress TLS: %w", err)
+		return fmt.Errorf("meterd: load egress TLS: %w", err)
 	}
 	gwEgress := &gatewayEgressAdapter{
 		now:    deps.now,
@@ -798,26 +799,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		dialFn: dialGatewayEgressStream,
 	}
 	// PR-2: kick off the gateway stream consumer. The unix-socket
-	// path defaults to the same FAAS_GATEWAY_SYNTH_SOCKET that schedd
-	//'s synth dialer uses; both daemons reach the same gatewayd via
-	// the same group-`faas` DAC auth (ADR-015). ctx here is the loop
-	// ctx — when the daemon shuts down the goroutine returns.
-	envOr := func(key, fallback string) string {
-		if v, ok := os.LookupEnv(key); ok && v != "" {
+	// path is resolved by egresssocket.ResolveFromOS, which prefers
+	// FAAS_EGRESS_SOCKET (added in PR-C+D), then the legacy
+	// FAAS_GATEWAY_EGRESS_SOCKET (one release cycle), then
+	// cfg.EgressSocket, then cfg.GatewayEgressSocket (deprecated),
+	// then egresssocket.DefaultSocketPath. Both sockets (this one and
+	// FAAS_GATEWAY_SYNTH_SOCKET) share the same group-`faas` DAC auth
+	// (ADR-015). ctx here is the loop ctx — when the daemon shuts
+	// down the goroutine returns.
+	envOr := func(key string) string {
+		if v, ok := os.LookupEnv(key); ok {
 			return v
 		}
-		return fallback
+		return ""
 	}
-	// FAAS_GATEWAY_EGRESS_SOCKET is the ADR-046 PR-2 producer
-	// channel (separate from FAAS_GATEWAY_SYNTH_SOCKET, which
-	// stays HTTP-shaped for cron dispatch). Both share the same
-	// group-`faas` DAC auth (ADR-015). The env var wins over
-	// cfg.GatewayEgressSocket so the e2e harness can dial a
-	// per-test socket without rewriting the unit file.
-	gwSocketPath := envOr("FAAS_GATEWAY_EGRESS_SOCKET", cfg.GatewayEgressSocket)
-	if gwSocketPath == "" {
-		gwSocketPath = "/run/faas/gatewayd-egress.sock"
-	}
+	gwSocketPath := egresssocket.ResolveFromOS(envOr, cfg.EgressSocket, cfg.GatewayEgressSocket)
 	gwEgress.startStream(ctx, gwSocketPath, log)
 	egress := &egressAggregator{schedd: scheddEgress, gw: gwEgress}
 	// Issue #396 / ADR-045 PR 4: instantiate the alert evaluator and

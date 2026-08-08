@@ -314,6 +314,14 @@
     group: root
     mode: "0755"
 
+# PR-C+D cert directory migration: pre-PR-C deployments kept the
+# egress server leaf at /etc/faas/tls/gatewayd/egress.{crt,key}.
+# This runs first so the stat-asserts below see the PR-C layout
+# (`/etc/faas/tls/egress/egress.crt`). Idempotent — the `creates:`
+# sentinel in migrate_egress_certs.yml no-ops re-runs.
+- name: control_plane_service — migrate egress cert dir (PR-C+D)
+  ansible.builtin.include_tasks: migrate_egress_certs.yml
+
 # Tier 1 control-plane mTLS (ADR-052). The local-dev PKI
 # bootstrap lays out /etc/faas/tls/{ca,<daemon>/} with 0400
 # private keys and 0444 public certs; this stat-assert proves
@@ -345,16 +353,19 @@
   loop: "{{ faas_pki_leaves | zip(faas_pki_leaf_files) | map('list') }}"
   vars:
     # Each control-plane daemon has its own net.Listener / leaf
-    # filename under /etc/faas/tls/<daemon>/. gatewayd uses
-    # "egress.crt" because the gatewayd server leaf is the egress
-    # listener (the public TLS listener uses certmagic, not the
-    # control-plane PKI). The other three listen on gRPC servers
+    # filename under /etc/faas/tls/<daemon>/. The egress server
+    # leaf lives under /etc/faas/tls/egress/ — PR-C renamed the
+    # directory from gatewayd/ to egress/ to mirror the daemon-
+    # independent naming the Tier A9 PR-cluster establishes
+    # (the proto package is onebox.faas.egress.v1 and the
+    # runtime socket is /run/faas/egress.sock; the cert dir is
+    # the third mirror). The other three listen on gRPC servers
     # named "server".
     faas_pki_leaves:
       - schedd
       - apid
       - meterd
-      - gatewayd
+      - egress
     faas_pki_leaf_files:
       - server.crt
       - server.crt
