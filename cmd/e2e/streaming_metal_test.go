@@ -420,18 +420,18 @@ func TestE2E_Streaming_Metal_QuotaNonCounting(t *testing.T) {
 // = v2`). The test boots a Hobby app, sends a streamed SSE request,
 // and asserts:
 //
-//   1. The first chunk arrives within the gateway's TTFB ceiling
-//      (same assertion as TestE2E_Streaming_Metal_TTFBUnder1s — the
-//      regression guard for the v2 path is identical to v1 because
-//      the customer-visible contract is byte-for-byte identical).
-//   2. The full body payload equals the expected chunk×size total
-//      (the per-flush tx_bytes accuracy assertion that proves no
-//      chunks are dropped on the H2C inner leg — a SETTINGS-frame
-//      or stream-id bug would surface here as truncated chunks).
-//   3. After the test, restarting vmmd with FAAS_STREAM_BRIDGE_VERSION=v1
-//      still serves the same shape (a regression guard for the
-//      rollback knob; not auto-executed but documented in the test
-//      name so a follow-up runbook picks it up).
+//  1. The first chunk arrives within the gateway's TTFB ceiling
+//     (same assertion as TestE2E_Streaming_Metal_TTFBUnder1s — the
+//     regression guard for the v2 path is identical to v1 because
+//     the customer-visible contract is byte-for-byte identical).
+//  2. The full body payload equals the expected chunk×size total
+//     (the per-flush tx_bytes accuracy assertion that proves no
+//     chunks are dropped on the H2C inner leg — a SETTINGS-frame
+//     or stream-id bug would surface here as truncated chunks).
+//  3. After the test, restarting vmmd with FAAS_STREAM_BRIDGE_VERSION=v1
+//     still serves the same shape (a regression guard for the
+//     rollback knob; not auto-executed but documented in the test
+//     name so a follow-up runbook picks it up).
 //
 // Why this lives behind //go:build metal and not in the streaming
 // unit suite: the v2 path is only reachable after a real Firecracker
@@ -532,6 +532,7 @@ func TestE2E_Streaming_Metal_H2CInnerLeg(t *testing.T) {
 		t.Errorf("payload = %d bytes; want %d (H2C inner-leg dropped or truncated chunks)", payload, chunks*size)
 	}
 }
+
 // and returns the wall-clock duration from request start to the
 // first chunk read. The caller compares against the platform's
 // TTFB ceiling. A regression that accidentally buffers the whole
