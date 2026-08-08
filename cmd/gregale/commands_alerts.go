@@ -38,6 +38,7 @@ const (
 )
 
 func cmdAlerts(args []string) int {
+	parent, _ := lookupCliCommand("alerts")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale alerts <list|add|info|update|rm|rotate-secret> --app <slug>", "alerts")
 		return 1
@@ -57,6 +58,8 @@ func cmdAlerts(args []string) int {
 		return cmdAlertRotateSecret(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown alerts subcommand %q\n", args[0])
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	return 1
 }
 

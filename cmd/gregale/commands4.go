@@ -25,6 +25,7 @@ import (
 
 // cmdAccount dispatches `gregale account <subcommand>`.
 func cmdAccount(args []string) int {
+	parent, _ := lookupCliCommand("account")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale account {export|delete|restore|status|dpa|slo}", "account")
 		return 1
@@ -50,7 +51,9 @@ func cmdAccount(args []string) int {
 		// (issue #696 / ADR-082). Account-wide SLO rollup.
 		return cmdAccountSLO(args[1:])
 	default:
+		sug, _ := suggestSubcommand(args[0], parent)
 		fmt.Fprintf(os.Stderr, "gregale account: unknown subcommand %q\n", args[0])
+		maybeSuggestSub(sug)
 		return 1
 	}
 }

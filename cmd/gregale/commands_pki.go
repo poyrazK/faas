@@ -65,6 +65,7 @@ const (
 // with init/status/rotate it fans to the matching helper. Unknown
 // subcommands return 1 with a usage hint — same contract as cmdSignKeys.
 func cmdPKI(args []string) int {
+	parent, _ := lookupCliCommand("pki")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale pki <init|status|rotate> [flags]", "pki")
 		return 1
@@ -77,7 +78,9 @@ func cmdPKI(args []string) int {
 	case subPKIRotate:
 		return cmdPKIRotate(args[1:])
 	default:
+		sug, _ := suggestSubcommand(args[0], parent)
 		fmt.Fprintf(os.Stderr, "gregale pki: unknown subcommand %q (known: init, status, rotate)\n", args[0])
+		maybeSuggestSub(sug)
 		return 1
 	}
 }

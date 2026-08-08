@@ -53,6 +53,7 @@ func strInSlice(v string, s []string) bool {
 }
 
 func cmdWebhooks(args []string) int {
+	parent, _ := lookupCliCommand("webhooks")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale webhooks <list|add|info|update|rm|deliveries|retry|rotate-secret> [args]", "webhooks")
 		return 1
@@ -81,6 +82,8 @@ func cmdWebhooks(args []string) int {
 		return cmdWebhookRotateSecret(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown webhooks subcommand %q\n", args[0])
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	return 1
 }
 

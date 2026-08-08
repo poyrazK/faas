@@ -34,6 +34,7 @@ const dispatchBuild = "build"
 // so the customer's "gregale build provanence" typo surfaces
 // immediately rather than silently invoking a sibling.
 func cmdBuild(args []string) int {
+	parent, _ := lookupCliCommand("build")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale build <subcommand> [flags]\n  subcommands: provenance, sbom", "build")
 		return 1
@@ -44,7 +45,9 @@ func cmdBuild(args []string) int {
 	case "sbom":
 		return cmdBuildSbom(args[1:])
 	default:
+		sug, _ := suggestSubcommand(args[0], parent)
 		fmt.Fprintf(os.Stderr, "gregale build: unknown subcommand %q (known: provenance, sbom)\n", args[0])
+		maybeSuggestSub(sug)
 		return 1
 	}
 }

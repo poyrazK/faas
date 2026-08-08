@@ -41,6 +41,7 @@ const (
 // subcommand list (POSIX-style). Unknown subcommands return 1 (user
 // error per UX §3.2), not 2 (auth), because no token was attempted.
 func cmdBilling(args []string) int {
+	parent, _ := lookupCliCommand("billing")
 	if len(args) == 0 {
 		printBillingUsage(os.Stderr)
 		PrintUsage(os.Stderr, "usage: gregale billing <subcommand>", "billing")
@@ -59,8 +60,10 @@ func cmdBilling(args []string) int {
 		printBillingUsage(osStdout)
 		return 0
 	default:
+		sug, _ := suggestSubcommand(args[0], parent)
 		fmt.Fprintf(os.Stderr, "faas billing: unknown subcommand %q\n\n", args[0])
 		printBillingUsage(os.Stderr)
+		maybeSuggestSub(sug)
 		return 1
 	}
 }
@@ -121,6 +124,12 @@ func cmdBillingPortal(args []string) int {
 	}
 
 	if *printOnly || *noOpen {
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{
+				"url":     url,
+				"service": "billing",
+			}))
+		}
 		_, _ = fmt.Fprintln(osStdout, url)
 		return 0
 	}

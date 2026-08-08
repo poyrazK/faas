@@ -57,6 +57,7 @@ const dispatchBackup = "backup"
 const subUnsealRclone = "unseal-rclone"
 
 func cmdBackup(args []string) int {
+	parent, _ := lookupCliCommand("backup")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale backup <subcommand> [flags]\n  known subcommands: unseal-rclone, unseal-archive-creds", "backup")
 		return 1
@@ -67,7 +68,9 @@ func cmdBackup(args []string) int {
 	case subUnsealArchiveCreds:
 		return cmdBackupUnsealArchiveCreds(args[1:])
 	default:
+		sug, _ := suggestSubcommand(args[0], parent)
 		fmt.Fprintf(os.Stderr, "gregale backup: unknown subcommand %q (known: unseal-rclone, unseal-archive-creds)\n", args[0])
+		maybeSuggestSub(sug)
 		return 1
 	}
 }

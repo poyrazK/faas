@@ -40,6 +40,7 @@ import (
 // the customer can guess the shape from the docs without consulting
 // `gregale help`. Unknown subcommands return 1 with a usage hint.
 func cmdMfa(args []string) int {
+	parent, _ := lookupCliCommand("mfa")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale mfa <enroll|confirm|verify|recover|disable> [args]", "mfa")
 		return 1
@@ -56,7 +57,9 @@ func cmdMfa(args []string) int {
 	case "disable":
 		return cmdMfaDisable(args[1:])
 	default:
+		sug, _ := suggestSubcommand(args[0], parent)
 		fmt.Fprintf(os.Stderr, "gregale mfa: unknown subcommand %q (known: enroll, confirm, verify, recover, disable)\n", args[0])
+		maybeSuggestSub(sug)
 		return 1
 	}
 }

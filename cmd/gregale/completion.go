@@ -52,6 +52,7 @@ const completionDocsTopic = "completion"
 // the dispatch switch keeps the helpers in the same binary so
 // the install footprint stays "one binary, no extra scripts".
 func cmdCompletion(args []string) int {
+	parent, _ := lookupCliCommand("completion")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale completion <bash|zsh|fish|powershell>", completionDocsTopic)
 		return 1
@@ -76,6 +77,8 @@ func cmdCompletion(args []string) int {
 		return cmdCompletionCacheList(args[1])
 	}
 	_, _ = fmt.Fprintf(os.Stderr, "gregale completion: unknown subcommand %q (want bash|zsh|fish|powershell)\n", args[0])
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	return 1
 }
 

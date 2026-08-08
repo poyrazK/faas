@@ -49,6 +49,7 @@ var delayedTaskIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 // to the three leaves. Mirrors cmdCrons (commands_crons.go:40) for
 // the dispatcher shape.
 func cmdDelayedTask(args []string) int {
+	parent, _ := lookupCliCommand("delayed-task")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale delayed-task <add|get|cancel>", "delayed-task")
 		return 1
@@ -67,6 +68,8 @@ func cmdDelayedTask(args []string) int {
 		return cmdDelayedTaskCancel(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "gregale delayed-task: unknown subcommand %q\n", args[0])
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	return 1
 }
 

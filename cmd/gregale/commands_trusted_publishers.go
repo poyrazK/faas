@@ -50,6 +50,7 @@ const (
 // Unknown subcommands return 1 with a usage hint — same contract as
 // cmdSignKeys / cmdKeys.
 func cmdTrustedPublishers(args []string) int {
+	parent, _ := lookupCliCommand("trusted-publishers")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale trusted-publishers <add|remove|list> [flags]", "trusted-publishers")
 		return 1
@@ -62,7 +63,9 @@ func cmdTrustedPublishers(args []string) int {
 	case subTrustedList:
 		return cmdTrustedPublishersList(args[1:])
 	default:
+		sug, _ := suggestSubcommand(args[0], parent)
 		fmt.Fprintf(os.Stderr, "gregale trusted-publishers: unknown subcommand %q (known: add, remove, list)\n", args[0])
+		maybeSuggestSub(sug)
 		return 1
 	}
 }

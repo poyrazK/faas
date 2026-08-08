@@ -1099,6 +1099,7 @@ func cmdTraffic(args []string) int {
 // cmdDomains dispatches list/add/rm. Adding prints the TXT record the
 // customer must publish for verification (spec §7).
 func cmdDomains(args []string) int {
+	parent, _ := lookupCliCommand("domains")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale domains <list|add|rm> [args]", "domains")
 		return 1
@@ -1163,11 +1164,14 @@ func cmdDomains(args []string) int {
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "unknown domains subcommand %q\n", args[0])
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	return 1
 }
 
 // cmdCrons: list/add/update/rm.
 func cmdCrons(args []string) int {
+	parent, _ := lookupCliCommand("crons")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale crons <list|add|update|rm> [args]", "crons")
 		return 1
@@ -1244,6 +1248,8 @@ func cmdCrons(args []string) int {
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "unknown crons subcommand %q\n", args[0])
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	return 1
 }
 
@@ -1352,6 +1358,7 @@ func cmdCronsUpdate(args []string) int {
 
 // cmdKeys: list/add/rm. Adding returns the plaintext token once (spec §2.2).
 func cmdKeys(args []string) int {
+	parent, _ := lookupCliCommand("keys")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale keys <list|add|rm|rotate|grace-window> [args]", "keys")
 		return 1
@@ -1408,6 +1415,8 @@ func cmdKeys(args []string) int {
 		return cmdKeysGraceWindow(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown keys subcommand %q\n", args[0])
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	return 1
 }
 
@@ -1521,6 +1530,7 @@ func cmdKeysGraceWindow(args []string) int {
 // arg to the leaf FlagSet also preserves its normal unknown-flag
 // handling (cmdUsageList exits 1 on `--bogus`).
 func cmdUsage(args []string) int {
+	parent, _ := lookupCliCommand("usage")
 	if len(args) == 0 {
 		return cmdUsageList(nil)
 	}
@@ -1542,6 +1552,8 @@ func cmdUsage(args []string) int {
 	}
 	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
 	fmt.Fprintf(os.Stderr, "unknown usage subcommand %q\n", args[0])
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	return 1
 }
 

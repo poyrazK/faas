@@ -724,6 +724,7 @@ func cmdDashboard(args []string) int {
 //	dead-letter  rows that exhausted attempts
 //	ack          release a leased row
 func cmdQueueDispatch(args []string) int {
+	parent, _ := lookupCliCommand("queue")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
 			"  tail <slug>            long-poll the unified event stream (queue drain signals)\n"+
@@ -752,6 +753,7 @@ func cmdQueueDispatch(args []string) int {
 	case "ack":
 		return cmdQueueAck(args[1:])
 	default:
+		sug, _ := suggestSubcommand(args[0], parent)
 		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
 			"  tail <slug>            long-poll the unified event stream\n"+
 			"  send <slug> --payload J enqueue one row\n"+
@@ -761,6 +763,7 @@ func cmdQueueDispatch(args []string) int {
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
 			"  ack <slug> <row-id>    release a leased row\n",
 			"queue")
+		maybeSuggestSub(sug)
 		return 1
 	}
 }

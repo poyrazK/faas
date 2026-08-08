@@ -56,6 +56,7 @@ import (
 // so old scripts keep working. The pattern mirrors cmdUsage's
 // forwarder (commands2.go:1304).
 func cmdAuditEvents(args []string) int {
+	parent, _ := lookupCliCommand("audit-events")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale audit-events <list|get <id>>", "audit-events")
 		return 1
@@ -70,6 +71,8 @@ func cmdAuditEvents(args []string) int {
 		return cmdAuditEventsGet(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown audit-events subcommand %q\n", args[0])
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	return 1
 }
 

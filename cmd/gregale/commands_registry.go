@@ -38,6 +38,7 @@ import (
 // cmdRegistry dispatches `gregale registry <list|set|rm>` to the
 // three leaves. Mirrors cmdAlerts (commands_alerts.go:40).
 func cmdRegistry(args []string) int {
+	parent, _ := lookupCliCommand("registry")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale registry <list|set|rm> --app <slug> [--registry <h>] [--user <u>] [--password <p>]", "registry")
 		return 1
@@ -51,6 +52,8 @@ func cmdRegistry(args []string) int {
 		return cmdRegistryRm(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown registry subcommand %q\n", args[0])
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	return 1
 }
 

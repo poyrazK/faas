@@ -43,6 +43,7 @@ var (
 )
 
 func cmdSecrets(args []string) int {
+	parent, _ := lookupCliCommand("secrets")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale secrets <list|set|unset|list-all> --app <slug> [args]", "secrets")
 		return 1
@@ -58,6 +59,8 @@ func cmdSecrets(args []string) int {
 		return secretsListAll(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown secrets subcommand %q\n", args[0])
+	sug, _ := suggestSubcommand(args[0], parent)
+	maybeSuggestSub(sug)
 	return 1
 }
 

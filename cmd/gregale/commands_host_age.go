@@ -112,6 +112,7 @@ var (
 // matching helper. Unknown subcommands return 1 with a usage hint
 // — same contract as cmdSignKeys / cmdBuild / cmdSecrets / cmdKeys.
 func cmdHostAge(args []string) int {
+	parent, _ := lookupCliCommand("host-age")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale host-age <init|rotate|status|prune-previous> [flags]", "host-age")
 		return 1
@@ -126,7 +127,9 @@ func cmdHostAge(args []string) int {
 	case subHostAgePrunePrevious:
 		return cmdHostAgePrunePrevious(args[1:])
 	default:
+		sug, _ := suggestSubcommand(args[0], parent)
 		fmt.Fprintf(os.Stderr, "gregale host-age: unknown subcommand %q (known: init, rotate, status, prune-previous)\n", args[0])
+		maybeSuggestSub(sug)
 		return 1
 	}
 }

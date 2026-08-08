@@ -51,6 +51,7 @@ const (
 // Unknown subcommands return 1 with a usage hint — same contract
 // as cmdBuild / cmdSecrets / cmdKeys.
 func cmdSignKeys(args []string) int {
+	parent, _ := lookupCliCommand("sign-keys")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale sign-keys <init|rotate|status> [flags]", "sign-keys")
 		return 1
@@ -63,7 +64,9 @@ func cmdSignKeys(args []string) int {
 	case subStatus:
 		return cmdSignKeysStatus(args[1:])
 	default:
+		sug, _ := suggestSubcommand(args[0], parent)
 		fmt.Fprintf(os.Stderr, "gregale sign-keys: unknown subcommand %q (known: init, rotate, status)\n", args[0])
+		maybeSuggestSub(sug)
 		return 1
 	}
 }
