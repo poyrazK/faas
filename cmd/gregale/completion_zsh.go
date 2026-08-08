@@ -12,6 +12,17 @@
 // _arguments form for 50+ commands is verbose; we emit it anyway
 // because it matches user expectations (every zsh completion
 // looks like this) and the size cost is a one-time file write.
+//
+// All string literals rendered into the shell script use
+// double-quote escaping (escapeZshDQ). Single quotes cannot
+// represent apostrophes inside a description (the existing
+// `Rotate the alert's webhook secret` literally broke zsh -n
+// parsing) without a `'\''` sequence — but zsh's _arguments
+// treats everything between the apostrophes as one shell token,
+// so the escape sequence silently swallows the rest of the
+// argument line. Double-quoted strings escape `"`, `\`, `$`,
+// `` ` `` and embed any other byte verbatim, including `'` and
+// parens, so all of our Short descriptions render cleanly.
 
 package main
 
@@ -51,7 +62,7 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  local -a commands")
 	_, _ = fmt.Fprintln(w, "  commands=(")
 	for _, c := range cliCommands {
-		_, _ = fmt.Fprintf(w, "    '%s:%s'\n", c.Name, escapeZsh(c.Short))
+		_, _ = fmt.Fprintf(w, "    \"%s:%s\"\n", c.Name, escapeZshDQ(c.Short))
 	}
 	_, _ = fmt.Fprintln(w, "  )")
 	_, _ = fmt.Fprintln(w)
@@ -63,32 +74,30 @@ func renderZshHeader(w io.Writer) {
 }
 
 // renderZshCommand emits one _gregale_<cmd> function per cliCommand.
-// The function declares _arguments with the verb list, the flag
-// list, and (where applicable) the closed-set positional list.
-// Slug cache completion is offered for the first positional when
-// the command takes one and the name matches the cache keys.
+// Each _arguments token is emitted as its own double-quoted shell
+// word, so descriptions containing apostrophes (e.g. "the app's URL")
+// or unbalanced parens ("day (YYYY-MM-DD)") parse cleanly.
 func renderZshCommand(w io.Writer, c cliCommand) {
 	_, _ = fmt.Fprintf(w, "  _gregale_%s() {\n", c.Name)
-	verbList := make([]string, 0, len(c.Subcommands))
+	_, _ = fmt.Fprintln(w, "    _arguments \\")
+	// Subcommand verbs (e.g. alerts.list, alerts.add).
 	for _, s := range c.Subcommands {
-		verbList = append(verbList, s.Name+":"+escapeZsh(s.Short))
+		_, _ = fmt.Fprintf(w, "      \"%s:%s\" \\\n", s.Name, escapeZshDQ(s.Short))
 	}
-	flagList := make([]string, 0, len(c.Flags))
+	// Flags (e.g. --app <slug>).
 	for _, f := range c.Flags {
-		flagList = append(flagList, "--"+f.Name+"["+escapeZsh(f.Short)+"]")
+		_, _ = fmt.Fprintf(w, "      \"--%s[%s]\" \\\n", f.Name, escapeZshDQ(f.Short))
+		if len(f.ClosedSet) > 0 {
+			_, _ = fmt.Fprintf(w, "      \"--%s:option:(%s)\" \\\n", f.Name, strings.Join(f.ClosedSet, " "))
+		}
 	}
-	args := append([]string{}, verbList...)
-	args = append(args, flagList...)
+	// Closed-set positional (e.g. `plan`).
 	if len(c.ClosedSet) > 0 {
-		args = append(args, "1:plan:("+strings.Join(c.ClosedSet, " ")+")")
+		_, _ = fmt.Fprintf(w, "      \"1:plan:(%s)\" \\\n", strings.Join(c.ClosedSet, " "))
 	} else if c.hasSlugFirst() {
-		args = append(args, "1:slug:($(_gregale_cache_slugs apps))")
+		_, _ = fmt.Fprintln(w, "      \"1:slug:($(_gregale_cache_slugs apps))\" \\")
 	}
-	if len(args) == 0 {
-		_, _ = fmt.Fprintln(w, "    _arguments && return 0")
-	} else {
-		_, _ = fmt.Fprintf(w, "    _arguments %s && return 0\n", strings.Join(args, " "))
-	}
+	_, _ = fmt.Fprintln(w, "      && return 0")
 	_, _ = fmt.Fprintln(w, "  }")
 }
 
@@ -106,10 +115,24 @@ func renderZshFooter(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "_gregale \"$@\"")
 }
 
-// escapeZsh backslash-escapes the single-quote characters in a
-// description so the zsh _describe format stays parseable. zsh's
-// single-quote strings can't contain a literal single quote; the
-// workaround is to close the quote, emit \\', and reopen.
-func escapeZsh(s string) string {
-	return strings.ReplaceAll(s, "'", `'\''`)
+// escapeZshDQ backslash-escapes the four byte sequences that are
+// special inside a double-quoted zsh string: backslash itself,
+// double-quote, dollar, and backtick. Every other byte — including
+// single quotes, parens, brackets, and `!` — passes through
+// verbatim, so the result is safe to embed in either the
+// `_describe` array or the `_arguments` token list. We do NOT
+// touch `!` because interactive shells expand history on it but
+// completion scripts run under `zsh -n` (parse-only) and under
+// compsys (which does not interpret history).
+func escapeZshDQ(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\', '"', '$', '`':
+			b.WriteByte('\\')
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }

@@ -440,6 +440,103 @@ func TestCompletion_BashScriptIsSyntacticallyValid(t *testing.T) {
 	}
 }
 
+// TestCompletion_Bash3_2PrimitivesForbidden is the tripwire for
+// the macOS bash 3.2 constraint documented in completion_bash.go:15.
+// 3.2 ships without `mapfile`, `readarray`, `declare -A`,
+// `local -A`, and `[[ -v arr ]]`. Pasting any of these into the
+// bash script makes `gregale completion bash` install silently
+// but fail at TAB time with a parse error.
+//
+// We grep the rendered script (NOT the source) so an accidental
+// re-introduction via a code-generation helper would also trip.
+// One assertion per primitive — clearer failure messages than a
+// single multi-primitive regex.
+func TestCompletion_Bash3_2PrimitivesForbidden(t *testing.T) {
+	var buf bytes.Buffer
+	captureStdoutSwap(t, &buf, cmdCompletionBash)
+	out := buf.String()
+	forbidden := []struct {
+		primitive string
+		rationale string
+	}{
+		{"mapfile", "bash 4+ bulk array read"},
+		{"readarray", "bash 4+ alias of mapfile"},
+		{"declare -A", "associative array declaration"},
+		{"local -A", "associative array, function-scoped"},
+		{"[[ -v ", "bash 4.2+ variable-defined test"},
+	}
+	for _, p := range forbidden {
+		if strings.Contains(out, p.primitive) {
+			t.Errorf("bash 3.2 forbidden primitive %q (%s) rendered in completion script", p.primitive, p.rationale)
+		}
+	}
+}
+
+// TestCompletion_ZshScriptIsSyntacticallyValid pipes the rendered
+// zsh completion through `zsh -n` to catch parse errors. Skips
+// on hosts without zsh (uncommon on macOS, rare on CI Linux).
+func TestCompletion_ZshScriptIsSyntacticallyValid(t *testing.T) {
+	if _, err := exec.LookPath("zsh"); err != nil {
+		t.Skipf("zsh not available: %v", err)
+	}
+	var buf bytes.Buffer
+	captureStdoutSwap(t, &buf, cmdCompletionZsh)
+	c := exec.Command("zsh", "-n")
+	c.Stdin = &buf
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("zsh -n failed: %v\noutput:\n%s", err, string(out))
+	}
+}
+
+// TestCompletion_FishScriptIsSyntacticallyValid pipes the rendered
+// fish completion through `fish -n` to catch parse errors. Skips
+// on hosts without fish (rare; install via brew install fish).
+func TestCompletion_FishScriptIsSyntacticallyValid(t *testing.T) {
+	if _, err := exec.LookPath("fish"); err != nil {
+		t.Skipf("fish not available: %v", err)
+	}
+	var buf bytes.Buffer
+	captureStdoutSwap(t, &buf, cmdCompletionFish)
+	c := exec.Command("fish", "-n")
+	c.Stdin = &buf
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("fish -n failed: %v\noutput:\n%s", err, string(out))
+	}
+}
+
+// TestCompletion_PowershellScriptIsSyntacticallyValid parses the
+// rendered PowerShell completion via the PowerShell tokenizer.
+// We write the script to a temp file (pwsh parses by path), then
+// use [System.Management.Automation.Language.Parser]::ParseFile
+// which is the canonical parse-only entrypoint. Skips on hosts
+// without pwsh (rare; install via brew install --cask powershell).
+func TestCompletion_PowershellScriptIsSyntacticallyValid(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skipf("pwsh not available: %v", err)
+	}
+	var buf bytes.Buffer
+	captureStdoutSwap(t, &buf, cmdCompletionPowershell)
+	tmp, err := os.CreateTemp(t.TempDir(), "gregale-complete-*.ps1")
+	if err != nil {
+		t.Fatalf("tempfile: %v", err)
+	}
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		tmp.Close()
+		t.Fatalf("write: %v", err)
+	}
+	if err := tmp.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	// Escape single quotes for the pwsh command-string context.
+	escaped := strings.ReplaceAll(tmp.Name(), "'", "''")
+	psCmd := fmt.Sprintf("$errors = $null; $null = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$null, [ref]$errors); if ($errors) { $errors | Out-String; exit 1 }", escaped)
+	c := exec.Command(pwsh, "-NoProfile", "-Command", psCmd)
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("pwsh parse failed: %v\noutput:\n%s", err, string(out))
+	}
+}
+
 // captureStdoutSwap swaps osStdout for a buffer, runs fn, and restores.
 // Renamed to avoid collision with the safeBuffer-based captureStdout
 // in commands5_test.go. Accepts func() int because every
