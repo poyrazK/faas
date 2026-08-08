@@ -1012,6 +1012,16 @@ type BuildProvenance struct {
 	StartedAt      time.Time
 	FinishedAt     time.Time
 	SBOMStorageKey string
+	// FrameworkVer is the language version the customer's source
+	// declares they want (engines.node / requires-python / .nvmrc /
+	// .python-version / .tool-versions / go.mod ::go X.Y). Surfaced
+	// for operator observability — NEVER read by the build pipeline
+	// (the runtime version is bound by the OCI base ref via
+	// FAAS_DEPLOY_BASE_REF_<RUNTIME>; see ADR-052 §rejected-alts).
+	// Populated by pkg/builderd::recordProvenance (issue #740 /
+	// DEPLOY-PROV-5 / ADR-087). Empty when no version file is found
+	// or any parser fails — best-effort, never an error.
+	FrameworkVer   string
 }
 
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;

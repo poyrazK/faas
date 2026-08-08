@@ -1092,6 +1092,7 @@ type BuildProvenanceResponse struct {
 	StartedAt      string `json:"started_at"`
 	FinishedAt     string `json:"finished_at"`
 	SBOMStorageKey string `json:"sbom_storage_key"`
+	FrameworkVer   string `json:"framework_version"`
 }
 
 // DeploymentResponse is a deployment as returned by the API.

@@ -93,3 +93,17 @@ func (d *Detector) Detect(path string) (Framework, error) {
 	}
 	return FrameworkUnknown, errors.New("detect: no package.json, requirements.txt, go.mod, or Dockerfile found at tarball root")
 }
+
+// DetectWithVersion is Detect plus a best-effort version read. The
+// version is "" when no version file is found or the parser fails; it
+// is never an error condition. See detectversion.go for the per-parser
+// priority order and ADR-087 for the operator-only rationale (the
+// build pipeline never reads the returned version).
+func (d *Detector) DetectWithVersion(path string) (Framework, string, error) {
+	fw, err := d.Detect(path)
+	if err != nil {
+		return fw, "", err
+	}
+	ver, _ := detectVersion(path, fw) // best-effort; never propagates error
+	return fw, ver, nil
+}

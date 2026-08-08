@@ -336,12 +336,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// nil-safe at the call sites (M-6 fix).
 	buildStart := time.Now()
 
-	fw, err := b.detector.Detect(dep.SourcePath)
+	fw, ver, err := b.detector.DetectWithVersion(dep.SourcePath)
 	if err != nil {
 		b.markFailed(ctx, dep.ID, build.ID, state.FailureUserError, "framework detect: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
 	b.emitBuildLog(ctx, build.ID, "detected framework: "+string(fw)+"\n")
+	if ver != "" {
+		b.emitBuildLog(ctx, build.ID, "inferred source-declared version: "+ver+"\n")
+	}
 
 	// Cache check: content-addressed by sha256(source). A hit means we
 	// produced this exact app layer before and can short-circuit the VM
@@ -382,7 +385,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// finishedAt = time.Now() (this markSucceeded hasn't
 		// stamped finished_at yet). Best-effort; failure logs at
 		// WARN inside recordProvenance.
-		b.recordProvenance(ctx, build, dep, app, acct, srcHash, true)
+		b.recordProvenance(ctx, build, dep, app, acct, srcHash, true, ver)
 		b.markSucceeded(ctx, build.ID, "cache_hit", buildStart)
 		return BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true}, nil
 	}
@@ -532,7 +535,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// the cache-hit branch above; empty buildkit_version +
 	// railpack_version + base_digest + runner_digest + sbom_storage_key
 	// (Phase 3 populator fills them in).
-	b.recordProvenance(ctx, build, dep, app, acct, srcHash, false)
+	b.recordProvenance(ctx, build, dep, app, acct, srcHash, false, ver)
 	b.markSucceeded(ctx, build.ID, "ok", buildStart)
 	return BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: out.LogTailBytes}, nil
 }
@@ -718,7 +721,7 @@ func (b *Builderd) recordBuilderUsage(ctx context.Context, buildID string, build
 // case so the record lands with a non-zero finished_at; the next
 // call (none expected — this is a one-shot per build) would
 // overwrite.
-func (b *Builderd) recordProvenance(ctx context.Context, build state.Build, dep state.Deployment, app state.App, acct state.Account, srcSHA string, isCacheHit bool) {
+func (b *Builderd) recordProvenance(ctx context.Context, build state.Build, dep state.Deployment, app state.App, acct state.Account, srcSHA string, isCacheHit bool, frameworkVer string) {
 	finishedAt := build.FinishedAt
 	if finishedAt.IsZero() {
 		finishedAt = time.Now()
@@ -737,6 +740,7 @@ func (b *Builderd) recordProvenance(ctx context.Context, build state.Build, dep 
 		StartedAt:      build.StartedAt,
 		FinishedAt:     finishedAt,
 		SBOMStorageKey: "",
+		FrameworkVer:   frameworkVer,
 	}
 	if isCacheHit {
 		// Cache-hit builds have empty started_at on the row in the rare

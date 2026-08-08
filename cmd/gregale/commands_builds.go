@@ -151,6 +151,7 @@ func printProvenance(w io.Writer, p api.BuildProvenanceResponse) {
 		{"build_id", p.BuildID},
 		{"buildkit_version", p.BuildkitVer},
 		{"railpack_version", p.RailpackVer},
+		{"framework_version", p.FrameworkVer},
 		{"base_digest", p.BaseDigest},
 		{"source_sha256", p.SourceSHA256},
 		{"source_url", p.SourceURL},

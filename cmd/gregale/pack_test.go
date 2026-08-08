@@ -499,3 +499,176 @@ func TestAutoPackCwd_CleansUpOnError(t *testing.T) {
 		t.Errorf("path = %q, want empty on error", path)
 	}
 }
+
+// TestDetectFrameworkVersion_NodeNvmrc pins the CLI-side mirror of
+// pkg/builderd/detectversion.go (issue #740 / DEPLOY-PROV-5 /
+// ADR-087). The CLI banner must read .nvmrc when present and surface
+// the bare version.
+func TestDetectFrameworkVersion_NodeNvmrc(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".nvmrc", "22.11.0")
+	writeFile(t, dir, "package.json", "{}")
+	got := detectFrameworkVersion(dir, fwNode)
+	if got != "22.11.0" {
+		t.Errorf("got %q, want %q", got, "22.11.0")
+	}
+}
+
+// TestDetectFrameworkVersion_NodeNvmrcVPrefix pins the leading-v
+// strip (".nvmrc" commonly writes "v22.11.0").
+func TestDetectFrameworkVersion_NodeNvmrcVPrefix(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".nvmrc", "v22.11.0")
+	writeFile(t, dir, "package.json", "{}")
+	got := detectFrameworkVersion(dir, fwNode)
+	if got != "22.11.0" {
+		t.Errorf("got %q, want %q", got, "22.11.0")
+	}
+}
+
+// TestDetectFrameworkVersion_NodeEngines pins the package.json
+// fallback path. The caret-prefix is stripped; only the bare version
+// is returned.
+func TestDetectFrameworkVersion_NodeEngines(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package.json", `{"engines":{"node":"^22.11.0"}}`)
+	got := detectFrameworkVersion(dir, fwNode)
+	if got != "22.11.0" {
+		t.Errorf("got %q, want %q", got, "22.11.0")
+	}
+}
+
+// TestDetectFrameworkVersion_NvmrcWinsOverEngines pins the priority
+// order. .nvmrc takes precedence over engines.node when both are
+// present.
+func TestDetectFrameworkVersion_NvmrcWinsOverEngines(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".nvmrc", "20.10.0")
+	writeFile(t, dir, "package.json", `{"engines":{"node":">=22.11.0"}}`)
+	got := detectFrameworkVersion(dir, fwNode)
+	if got != "20.10.0" {
+		t.Errorf("got %q, want %q (.nvmrc wins)", got, "20.10.0")
+	}
+}
+
+// TestDetectFrameworkVersion_PythonPythonVersion pins the
+// python-version path.
+func TestDetectFrameworkVersion_PythonPythonVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".python-version", "3.11.0")
+	got := detectFrameworkVersion(dir, fwPython)
+	if got != "3.11.0" {
+		t.Errorf("got %q, want %q", got, "3.11.0")
+	}
+}
+
+// TestDetectFrameworkVersion_PythonRequiresPython pins the
+// pyproject.toml requires-python path.
+func TestDetectFrameworkVersion_PythonRequiresPython(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "pyproject.toml", `[project]
+name = "demo"
+requires-python = ">=3.13"
+`)
+	got := detectFrameworkVersion(dir, fwPython)
+	if got != "3.13" {
+		t.Errorf("got %q, want %q", got, "3.13")
+	}
+}
+
+// TestDetectFrameworkVersion_GoDirective pins the go.mod directive
+// path.
+func TestDetectFrameworkVersion_GoDirective(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", `module example.com/foo
+
+go 1.24
+`)
+	got := detectFrameworkVersion(dir, fwGo)
+	if got != "1.24" {
+		t.Errorf("got %q, want %q", got, "1.24")
+	}
+}
+
+// TestDetectFrameworkVersion_EmptyOnUnknown pins the negative case:
+// no version file → "". Customer just sees the framework= banner.
+func TestDetectFrameworkVersion_EmptyOnUnknown(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package.json", "{}")
+	got := detectFrameworkVersion(dir, fwNode)
+	if got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+// TestDetectFrameworkVersion_EmptyOnMalformedJSON pins the
+// best-effort parsing contract: a malformed package.json must NOT
+// panic or error; the function returns "" and the banner omits the
+// version= token.
+func TestDetectFrameworkVersion_EmptyOnMalformedJSON(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package.json", `{"engines": { "node": `)
+	got := detectFrameworkVersion(dir, fwNode)
+	if got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+// TestDetectFrameworkVersion_DockerEmpty pins the explicit
+// out-of-scope: Docker mode never returns a version (FROM parsing is
+// intentionally not implemented per issue #740).
+func TestDetectFrameworkVersion_DockerEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Dockerfile", "FROM scratch")
+	got := detectFrameworkVersion(dir, fwDocker)
+	if got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+// TestDetectFrameworkVersion_NoOpOnUnknownFramework pins the
+// unknown-framework branch: returns "" without reading the cwd.
+func TestDetectFrameworkVersion_NoOpOnUnknownFramework(t *testing.T) {
+	dir := t.TempDir()
+	got := detectFrameworkVersion(dir, fwUnknown)
+	if got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+// TestRuntimeSuggestionFor pins the (framework, version) →
+// whitelisted runtime name mapping used by the function error path's
+// runtime suggestion (issue #740 / ADR-087). The mapping is the
+// single source of truth for which `--runtime` value the CLI prints
+// in the error message; pinning here means a new runtime addition
+// forces an explicit test change.
+func TestRuntimeSuggestionFor(t *testing.T) {
+	cases := []struct {
+		name string
+		fw   framework
+		ver  string
+		want string
+	}{
+		{"node_22", fwNode, "22.11.0", "node22"},
+		{"node_24", fwNode, "24.0.0", "node24"},
+		{"node_20_falls_back_to_node22", fwNode, "20.0.0", "node22"},
+		{"node_18_older_falls_back_to_node22", fwNode, "18.0.0", "node22"},
+		{"python_313", fwPython, "3.13.0", "python313"},
+		{"python_312", fwPython, "3.12.0", "python312"},
+		{"python_311_falls_back_to_python312", fwPython, "3.11.0", "python312"},
+		{"python_310_older_falls_back_to_python312", fwPython, "3.10.0", "python312"},
+		{"go_124", fwGo, "1.24.0", "go124"},
+		{"go_122_below_whitelist", fwGo, "1.22.0", ""},
+		{"docker_no_op", fwDocker, "1.0", ""},
+		{"empty_version", fwNode, "", ""},
+		{"malformed_version", fwNode, "not-a-version", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runtimeSuggestionFor(tc.fw, tc.ver)
+			if got != tc.want {
+				t.Errorf("runtimeSuggestionFor(%q, %q) = %q, want %q", tc.fw, tc.ver, got, tc.want)
+			}
+		})
+	}
+}

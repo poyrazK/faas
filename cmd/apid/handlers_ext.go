@@ -2859,6 +2859,7 @@ func (s *server) buildProvenanceResponse(p state.BuildProvenance) api.BuildProve
 		StartedAt:      p.StartedAt.UTC().Format(time.RFC3339),
 		FinishedAt:     p.FinishedAt.UTC().Format(time.RFC3339),
 		SBOMStorageKey: p.SBOMStorageKey,
+		FrameworkVer:   p.FrameworkVer,
 	}
 }
 

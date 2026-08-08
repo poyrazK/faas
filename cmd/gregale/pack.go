@@ -3,11 +3,14 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,7 +45,9 @@ const (
 // new runtime to the map is a follow-up ADR.
 const (
 	runtimeNode22    = "node22"
+	runtimeNode24    = "node24"
 	runtimePython312 = "python312"
+	runtimePython313 = "python313"
 	runtimeGo124     = "go124"
 )
 
@@ -183,6 +188,268 @@ func detectFramework(srcDir string) framework {
 		return lang
 	}
 	return fwUnknown
+}
+
+// detectFrameworkVersion is the CLI-side mirror of
+// pkg/builderd/detectversion.go. It pre-walks srcDir (the local cwd
+// the customer is packing from) and returns the best-effort language
+// version declared by the source, or "" if no version marker is found
+// or any parser fails. Used by resolveDeployShape's shapeApp banner
+// (issue #740 / DEPLOY-PROV-5 / ADR-087) to render
+//
+//	Detected: app, framework=node, version=22.11.0
+//
+// BEFORE the multipart POST. The server independently re-derives the
+// same value for the build_provenance.framework_version column; the
+// CLI banner is purely informational — the operator reads the
+// authoritative value via `gregale build provenance <id>`.
+//
+// Priority order mirrors pkg/builderd/detectversion.go (kept in sync
+// intentionally — the CLI is the lighter view; the server is the
+// authoritative re-read):
+//
+//	node    → .nvmrc → package.json::engines.node → ""
+//	python  → .python-version → pyproject.toml::requires-python → ""
+//	go      → go.mod → "go X.Y" directive → ""
+//	docker  → "" (containers pin via FROM; out-of-scope per issue #740)
+//
+// Any parse error → "". A 64 KB cap per file mirrors the server-side
+// bound at pkg/builderd/detectversion.go::maxVersionFileBytes.
+func detectFrameworkVersion(srcDir string, fw framework) string {
+	switch fw {
+	case fwNode:
+		if v := cliReadFirstLine(srcDir, ".nvmrc"); v != "" {
+			if out := normalizeSemver(stripVersionPrefix(v)); out != "" {
+				return out
+			}
+		}
+		if body := cliReadFile(srcDir, "package.json"); body != "" {
+			if out := cliVersionFromPackageJSONNode(body); out != "" {
+				return out
+			}
+		}
+	case fwPython:
+		if v := cliReadFirstLine(srcDir, ".python-version"); v != "" {
+			if out := normalizePythonVersion(stripVersionPrefix(v)); out != "" {
+				return out
+			}
+		}
+		if body := cliReadFile(srcDir, "pyproject.toml"); body != "" {
+			if out := cliVersionFromPyprojectRequires(body); out != "" {
+				return out
+			}
+		}
+	case fwGo:
+		if body := cliReadFile(srcDir, "go.mod"); body != "" {
+			if out := cliVersionFromGoModDirective(body); out != "" {
+				return out
+			}
+		}
+	case fwDocker, fwUnknown:
+		// explicit out-of-scope / no anchor
+	}
+	return ""
+}
+
+// cliReadFile reads up to 64 KB of the named file in srcDir and returns
+// its contents. Returns "" on any error so the caller treats the file
+// as not-present. A 64 KB cap mirrors the server-side bound.
+func cliReadFile(srcDir, name string) string {
+	const maxBytes = 64 * 1024
+	path := filepath.Join(srcDir, name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	if len(data) > maxBytes {
+		return ""
+	}
+	return string(data)
+}
+
+// cliReadFirstLine returns the first non-blank, non-comment trimmed
+// line of the named file. "" on any error or all-blank file.
+func cliReadFirstLine(srcDir, name string) string {
+	body := cliReadFile(srcDir, name)
+	if body == "" {
+		return ""
+	}
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
+// stripVersionPrefix strips a leading "v" from a version string. The
+// rest of the version is matched by the per-parser regex; that's how
+// "v22.11.0" turns into "22.11.0" without forcing a strict semver
+// parse.
+func stripVersionPrefix(s string) string {
+	return strings.TrimPrefix(strings.TrimSpace(s), "v")
+}
+
+// normalizeSemver extracts the first dotted version (X.Y or X.Y.Z) from
+// s. Mirrors pkg/builderd/detectversion.go::normalizeSemver.
+func normalizeSemver(s string) string {
+	m := semverLikeCLI.FindString(s)
+	return m
+}
+
+// normalizePythonVersion mirrors the server-side normalizer.
+func normalizePythonVersion(s string) string {
+	m := pythonSemverLikeCLI.FindString(s)
+	return m
+}
+
+// pre-compiled regexes (CLI mirror). Identical to the server-side
+// versions in pkg/builderd/detectversion.go. Init-time via init() at
+// the bottom of this file would also work, but vars are simpler.
+var semverLikeCLI = regexp.MustCompile(`\d+\.\d+(?:\.\d+)?`)
+var pythonSemverLikeCLI = regexp.MustCompile(`\d+\.\d+(?:\.\d+)?`)
+
+// cliVersionFromPackageJSONNode mirrors pkg/builderd's
+// versionFromPackageJSONNode. Only the bare-version-extraction path is
+// copied; the server has the full encoding/json path because the
+// CLI-side path runs on untrusted customer source files.
+func cliVersionFromPackageJSONNode(body string) string {
+	var pkg struct {
+		Engines struct {
+			Node json.RawMessage `json:"node"`
+		} `json:"engines"`
+	}
+	if err := json.Unmarshal([]byte(body), &pkg); err != nil {
+		return ""
+	}
+	if len(pkg.Engines.Node) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(pkg.Engines.Node, &s); err != nil {
+		return ""
+	}
+	s = strings.TrimSpace(s)
+	for _, op := range []string{">=", "<=", ">", "<", "^", "~", "="} {
+		if strings.HasPrefix(s, op) {
+			s = strings.TrimPrefix(s, op)
+			break
+		}
+	}
+	return normalizeSemver(strings.TrimSpace(s))
+}
+
+// cliVersionFromPyprojectRequires mirrors the server-side regex
+// parser. We keep the regex identical so the server-side test cases
+// translate 1:1 to the CLI side.
+func cliVersionFromPyprojectRequires(body string) string {
+	re := regexp.MustCompile(`(?i)requires-python\s*=\s*["']([^"']+)["']`)
+	m := re.FindStringSubmatch(body)
+	if m == nil {
+		return ""
+	}
+	val := strings.TrimSpace(m[1])
+	for _, op := range []string{">=", "<=", "==", "!=", ">", "<", "~=", "^", "="} {
+		if strings.HasPrefix(val, op) {
+			val = strings.TrimPrefix(val, op)
+			break
+		}
+	}
+	if comma := strings.Index(val, ","); comma >= 0 {
+		val = strings.TrimSpace(val[:comma])
+	}
+	return normalizePythonVersion(val)
+}
+
+// cliVersionFromGoModDirective mirrors the server-side regex.
+func cliVersionFromGoModDirective(body string) string {
+	re := regexp.MustCompile(`(?m)^\s*go\s+(\d+\.\d+(?:\.\d+)?)\s*$`)
+	m := re.FindStringSubmatch(body)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// runtimeSuggestionFor maps a (framework, version) pair to the
+// closest whitelisted runtime name on the wire (cmd/apid/handlers.go:98).
+// Returns "" when no version is found or the framework is not
+// supported — the caller falls back to the bare error. The
+// whitelist is intentionally a small allow-list; we do not surface
+// never-released majors (e.g. "node26") because the build pipeline
+// wouldn't have a matching FAAS_DEPLOY_BASE_REF_NODE26 to consume.
+//
+// Fallback policy: when the marker's version is older than the
+// lowest whitelisted runtime (e.g. node20 → node22, python3.11 →
+// python312), we still suggest the closest available — the explicit
+// --runtime flag the customer types MUST be whitelisted, and the
+// marker's intent ("I want node 20") is best served by the closest
+// available (node22 is M6 v1's lowest). Returning "" would leave the
+// customer with the bare "no handler file" error and no actionable
+// hint, which is the opposite of the issue #740 / ADR-087 goal.
+func runtimeSuggestionFor(fw framework, ver string) string {
+	if ver == "" {
+		return ""
+	}
+	majorMinor := strings.SplitN(ver, ".", 3)
+	if len(majorMinor) < 2 {
+		return ""
+	}
+	major, err := strconv.Atoi(majorMinor[0])
+	if err != nil {
+		return ""
+	}
+	// The whitelist (cmd/apid/handlers.go:98) is the source of truth:
+	// node22, node24, python312, python313, go124. Below the lowest
+	// entry we still suggest the lowest entry (e.g. node20 → node22).
+	// Above the highest entry we refuse to lie: a node 26 source
+	// has no node26 runtime, so we return "" rather than suggest
+	// node24.
+	switch fw {
+	case fwNode:
+		switch {
+		case major >= 24:
+			return runtimeNode24
+		case major >= 22:
+			return runtimeNode22
+		case major >= 1:
+			// node18, node20, etc. → still suggest the lowest
+			// available (node22). Major >= 1 covers every realistic
+			// Node source — "node0" is not a thing.
+			return runtimeNode22
+		}
+	case fwPython:
+		if major >= 3 {
+			// 3.13 → python313, 3.11 → python312 (still in
+			// whitelist). 3.10, 3.11, 3.12, 3.13 all map to the
+			// closest available. We require minor for the past-
+			// 3.13 disambiguation.
+			minor, mErr := strconv.Atoi(majorMinor[1])
+			if mErr != nil {
+				return ""
+			}
+			if minor >= 13 {
+				return runtimePython313
+			}
+			return runtimePython312
+		}
+	case fwGo:
+		if major >= 1 {
+			// 1.24 → go124. The whitelist only has one Go runtime
+			// today; a 1.25+ suggestion would be a lie, so we
+			// require minor >= 24 exactly.
+			minor, mErr := strconv.Atoi(majorMinor[1])
+			if mErr != nil {
+				return ""
+			}
+			if minor >= 24 {
+				return runtimeGo124
+			}
+		}
+	}
+	return ""
 }
 
 // detectNestedMarkerHint returns true if srcDir contains at least one app
@@ -628,10 +895,26 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 	case shapeFunction:
 		rt, hnd, ok := inferFunctionRuntime(srcDir)
 		if !ok {
+			// Issue #740 / DEPLOY-PROV-5 / ADR-087: when the user
+			// passed --function on a directory that has an app
+			// marker's version file but no handler.{js,ts,py,go} at
+			// the root, surface the marker's version as a runtime
+			// suggestion so the error message is actionable. The
+			// suggestion is best-effort: when no version file is
+			// present we fall back to the bare error.
+			fw := detectFramework(srcDir)
+			suggestion := ""
+			if fw != fwUnknown && fw != fwDocker {
+				if ver := detectFrameworkVersion(srcDir, fw); ver != "" {
+					suggestion = fmt.Sprintf(
+						" Detected %s project (version %s) — try `--runtime %s --handler handler.handler`.",
+						fw, ver, runtimeSuggestionFor(fw, ver))
+				}
+			}
 			return shapeUnknown, "", "", fmt.Errorf(
 				"--function requires a single handler.{js,ts,py,go} at the project root; "+
-					"found zero or ambiguous handler files in %s",
-				filepath.Base(srcDir))
+					"found zero or ambiguous handler files in %s.%s",
+				filepath.Base(srcDir), suggestion)
 		}
 		// Print uses the inferred values — the caller may still
 		// override them via an explicit --runtime / --handler (out of
@@ -642,8 +925,17 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 		return shapeFunction, rt, hnd, nil
 	case shapeApp:
 		fw := detectFramework(srcDir)
+		// Issue #740 / DEPLOY-PROV-5 / ADR-087: mirror the
+		// server-side parser in the CLI banner. The version is
+		// informational; the server independently re-derives it
+		// for build_provenance.framework_version.
+		ver := detectFrameworkVersion(srcDir, fw)
 		if !jsonOutput {
-			PrintOK(osStdout, "Detected: app, framework=%s", fw)
+			if ver != "" {
+				PrintOK(osStdout, "Detected: app, framework=%s, version=%s", fw, ver)
+			} else {
+				PrintOK(osStdout, "Detected: app, framework=%s", fw)
+			}
 		}
 		return shapeApp, "", "", nil
 	}

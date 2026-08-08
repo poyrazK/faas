@@ -4592,8 +4592,8 @@ func (s *PgStore) CreateBuildProvenance(ctx context.Context, prov BuildProvenanc
 		`insert into build_provenance
 		   (build_id, buildkit_version, railpack_version, base_digest, source_sha256,
 		    source_url, commit_sha, plan, runner_digest, builder_node_id,
-		    started_at, finished_at, sbom_storage_key)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		    started_at, finished_at, sbom_storage_key, framework_version)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		 on conflict (build_id) do update set
 		   buildkit_version = excluded.buildkit_version,
 		   railpack_version = excluded.railpack_version,
@@ -4606,7 +4606,8 @@ func (s *PgStore) CreateBuildProvenance(ctx context.Context, prov BuildProvenanc
 		   builder_node_id  = excluded.builder_node_id,
 		   started_at       = excluded.started_at,
 		   finished_at      = excluded.finished_at,
-		   sbom_storage_key = excluded.sbom_storage_key`,
+		   sbom_storage_key = excluded.sbom_storage_key,
+		   framework_version = excluded.framework_version`,
 		prov.BuildID,
 		nullString(prov.BuildkitVer),
 		nullString(prov.RailpackVer),
@@ -4620,6 +4621,7 @@ func (s *PgStore) CreateBuildProvenance(ctx context.Context, prov BuildProvenanc
 		prov.StartedAt,
 		prov.FinishedAt,
 		nullString(prov.SBOMStorageKey),
+		nullString(prov.FrameworkVer),
 	)
 	return err
 }
@@ -4634,7 +4636,8 @@ func (s *PgStore) BuildProvenanceByBuildID(ctx context.Context, buildID string) 
 		`select id, build_id, coalesce(buildkit_version,''), coalesce(railpack_version,''),
 		        coalesce(base_digest,''), source_sha256, coalesce(source_url,''), coalesce(commit_sha,''),
 		        coalesce(plan,''), coalesce(runner_digest,''), coalesce(builder_node_id,''),
-		        started_at, finished_at, coalesce(sbom_storage_key,'')
+		        started_at, finished_at, coalesce(sbom_storage_key,''),
+		        coalesce(framework_version,'')
 		   from build_provenance where build_id = $1`, buildID)
 	return scanBuildProvenance(row)
 }
@@ -10170,6 +10173,7 @@ func scanBuildProvenance(row pgx.Row) (BuildProvenance, error) {
 		&p.BaseDigest, &p.SourceSHA256, &p.SourceURL, &p.CommitSHA,
 		&p.Plan, &p.RunnerDigest, &p.BuilderNodeID,
 		&p.StartedAt, &p.FinishedAt, &p.SBOMStorageKey,
+		&p.FrameworkVer,
 	); err != nil {
 		return BuildProvenance{}, mapErr(err)
 	}

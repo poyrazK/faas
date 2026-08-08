@@ -103,7 +103,10 @@ func TestResolveDeployShape_JSONSuppressesPrint(t *testing.T) {
 // containing package.json must produce the
 // "Detected: app, framework=node" line. The framework name comes
 // from detectFramework, kept here only to pin the format string
-// shape.
+// shape. Issue #740 / DEPLOY-PROV-5 / ADR-087 extends the line with
+// a version= token when a version file is present; this test pins
+// the no-version fallback (the empty case stays format-stable for
+// customers without a .nvmrc / package.json::engines).
 func TestResolveDeployShape_App(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "package.json", "{}")
@@ -124,6 +127,84 @@ func TestResolveDeployShape_App(t *testing.T) {
 	wantLine := "Detected: app, framework=node"
 	if !strings.Contains(got, wantLine) {
 		t.Errorf("stdout missing %q; got %q", wantLine, got)
+	}
+	if strings.Contains(got, "version=") {
+		t.Errorf("stdout unexpectedly contains version= token; got %q", got)
+	}
+}
+
+// TestResolveDeployShape_AppWithVersion pins the
+// "Detected: app, framework=node, version=22.11.0" banner extension
+// (issue #740 / DEPLOY-PROV-5 / ADR-087). The version comes from the
+// CLI-side mirror of pkg/builderd/detectversion.go (which reads
+// .nvmrc); the server independently re-derives it for
+// build_provenance.framework_version.
+func TestResolveDeployShape_AppWithVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package.json", "{}")
+	writeFile(t, dir, ".nvmrc", "22.11.0")
+
+	var buf bytes.Buffer
+	oldOut := osStdout
+	osStdout = &buf
+	defer func() { osStdout = oldOut }()
+
+	sh, _, _, err := resolveDeployShape(dir, false, false, false)
+	if err != nil {
+		t.Fatalf("resolveDeployShape: %v", err)
+	}
+	if sh != shapeApp {
+		t.Errorf("shape = %d, want shapeApp", sh)
+	}
+	got := buf.String()
+	wantLine := "Detected: app, framework=node, version=22.11.0"
+	if !strings.Contains(got, wantLine) {
+		t.Errorf("stdout missing %q; got %q", wantLine, got)
+	}
+}
+
+// TestResolveDeployShape_FunctionErrorWithMarkerSuggestion pins the
+// function error path's runtime suggestion (issue #740 / ADR-087).
+// When a user passes --function on a directory that has a Node
+// project (package.json + .nvmrc) but no handler.{js,ts,py,go}, the
+// error message must surface the marker-derived runtime as an
+// actionable hint.
+func TestResolveDeployShape_FunctionErrorWithMarkerSuggestion(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package.json", "{}")
+	writeFile(t, dir, ".nvmrc", "22.11.0")
+
+	sh, _, _, err := resolveDeployShape(dir, true, false, false)
+	if err == nil {
+		t.Fatalf("expected error for --function with no handler file")
+	}
+	if sh != shapeUnknown {
+		t.Errorf("shape = %d, want shapeUnknown", sh)
+	}
+	want := "Detected node project"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error must include the marker suggestion %q; got %q", want, err.Error())
+	}
+	if !strings.Contains(err.Error(), "--runtime node22") {
+		t.Errorf("error must suggest --runtime node22; got %q", err.Error())
+	}
+}
+
+// TestResolveDeployShape_FunctionErrorFallsBackWhenNoVersion pins
+// the negative case: when the function error path fires but no
+// version file is present, the suggestion is omitted and the error
+// remains the bare "no handler file" message (no degraded hint
+// surfacing a wrong runtime).
+func TestResolveDeployShape_FunctionErrorFallsBackWhenNoVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package.json", "{}")
+
+	_, _, _, err := resolveDeployShape(dir, true, false, false)
+	if err == nil {
+		t.Fatalf("expected error for --function with no handler file")
+	}
+	if strings.Contains(err.Error(), "Detected " ) {
+		t.Errorf("error must not include a marker suggestion when no version file is present; got %q", err.Error())
 	}
 }
 

@@ -608,7 +608,8 @@ CREATE TABLE public.build_provenance (
     builder_node_id text,
     started_at timestamp with time zone NOT NULL,
     finished_at timestamp with time zone NOT NULL,
-    sbom_storage_key text
+    sbom_storage_key text,
+    framework_version text
 );
 
 
