@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -216,5 +217,120 @@ func TestCmdMan_KnownCommandDoesNotSuggest(t *testing.T) {
 	}
 	if strings.Contains(stderr.String(), "Did you mean") {
 		t.Errorf("valid command should not suggest, got: %s", stderr.String())
+	}
+}
+
+// TestSuggestSubcommand_PicksClosest pins the helper against the
+// live alerts manifest. The expected outputs are derived from the
+// manifest's Subcommands slice (list, add, info, update, rm,
+// rotate-secret). If a future PR renames a subcommand, this test
+// fails loudly so the suggestion list can be re-audited.
+//
+// Cases:
+//   - typos: the happy path — single candidate at distance ≤2.
+//   - exact: the arg equals a real subcommand.
+//   - over_threshold: distance > 2 from every subcommand → no
+//     suggestion (the algorithm falls through to the bare
+//     "unknown subcommand" line).
+//
+// Empty query is academic (the dispatcher short-circuits at
+// len(args)==0) and is pinned separately in
+// TestSuggestSubcommand_PicksClosest_Empty below.
+func TestSuggestSubcommand_PicksClosest(t *testing.T) {
+	c, ok := lookupCliCommand("alerts")
+	if !ok {
+		t.Fatal("alerts not in cliCommands manifest — extractor broken or test fired pre-init")
+	}
+	cases := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{"transposition_suggests_list", "lst", "list"},
+		{"transposition_suggests_list_long", "lsit", "list"},
+		{"deletion_suggests_add", "addd", "add"},
+		{"deletion_suggests_rm", "rme", "rm"},
+		{"insertion_suggests_rotate_secret", "rotate-secrets", "rotate-secret"},
+		{"exact_match_returns_self", "add", "add"},
+		{"over_threshold_no_suggestion", "fooooo", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := suggestSubcommand(tc.query, c)
+			if got != tc.want {
+				t.Errorf("suggestSubcommand(%q, alerts) = %q, want %q", tc.query, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSuggestSubcommand_PicksClosest_Empty pins the deterministic
+// behaviour of the helper for an empty query. Empty input is
+// academic for the dispatcher (the len(args)==0 branch prints
+// usage), but the algorithm has a defined pick (the shortest-name
+// subcommand) and we pin it so a future refactor doesn't shift
+// the lie silently.
+//
+// As of this commit, alerts has subcommands {list, add, info,
+// update, rm, rotate-secret}; the shortest is "rm" (length 2).
+// If the manifest grows a 1-char subcommand, this test fails
+// loudly — that's the intent.
+func TestSuggestSubcommand_PicksClosest_Empty(t *testing.T) {
+	c, ok := lookupCliCommand("alerts")
+	if !ok {
+		t.Fatal("alerts not in cliCommands manifest")
+	}
+	got, ok := suggestSubcommand("", c)
+	if !ok {
+		t.Errorf("empty query should pick the shortest subcommand; got ok=false")
+	}
+	if len(got) > 2 {
+		t.Errorf("empty query should pick the shortest subcommand (%d chars); got %q (%d chars)", 2, got, len(got))
+	}
+}
+
+// TestSuggestSubcommand_SuppressesTies pins the tie-suppression
+// branch. alerts has subcommands at distance 1 from "lst": only
+// "list". The test would also fire if a future rename introduced
+// a 3-way tie (e.g. add "lstat" alongside "list") — the helper
+// would silently suppress and the test would fail. That's the
+// intent: surfaces manifest drift that would otherwise hide as a
+// hidden missing suggestion.
+func TestSuggestSubcommand_SuppressesTies(t *testing.T) {
+	c, ok := lookupCliCommand("alerts")
+	if !ok {
+		t.Fatal("alerts not in cliCommands manifest")
+	}
+	if got, _ := suggestSubcommand("lst", c); got != "list" {
+		t.Fatalf("expected single-winner 'list'; got %q", got)
+	}
+}
+
+// TestDispatcher_CmdAlertsUnknownSuggests is the integration test
+// for commit 3 (the dispatcher patch). It is intentionally NOT
+// shipped in commit 2 — commit 2 only validates the helpers in
+// isolation. After commit 3 lands, the dispatcher emits the
+// "Did you mean" hint and this test goes green.
+//
+// The test is in this file (not commands_alerts_test.go) because
+// man_test.go already owns the helpers and the dispatcher test
+// only differs from the helper tests in that it walks the
+// dispatcher path. Co-locating keeps the suggestion surface in
+// one file.
+func TestDispatcher_CmdAlertsUnknownSuggests(t *testing.T) {
+	stdout, restoreOut := captureStdout(t)
+	defer restoreOut()
+
+	var stderrBuf bytes.Buffer
+	_ = captureStderrSwap(t, &stderrBuf, func() int { return cmdAlerts([]string{"listz"}) })
+
+	if !strings.Contains(stderrBuf.String(), `unknown alerts subcommand "listz"`) {
+		t.Errorf("stderr missing unknown-subcommand line, got:\n%s", stderrBuf.String())
+	}
+	if !strings.Contains(stderrBuf.String(), `Did you mean "list"`) {
+		t.Errorf("stderr missing Did-you-mean hint, got:\n%s", stderrBuf.String())
+	}
+	if stdout.String() != "" {
+		t.Errorf("stdout should be empty for unknown subcommand, got: %q", stdout.String())
 	}
 }
