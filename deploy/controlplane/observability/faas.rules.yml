@@ -1,0 +1,870 @@
+# Prometheus alert rules — spec §12 SLO thresholds (faas_implementation_spec.md:412-424).
+#
+# Severity convention:
+#   info  → no notify; surfaces in Prometheus UI / Grafana only.
+#   warn  → ticket-only email via the alertmanager `faas-warn` route.
+#   page  → operator email + Pushover via the `faas-page` route.
+#
+# Runbook URLs point at docs/runbooks/<AlertName>.md. Each runbook is a
+# stub today (symptom / verify / silence steps) — the URLs satisfy
+# `runbook_url:` even when the runbook content is a TODO. A follow-up
+# PR fills the runbooks with concrete triage commands.
+#
+# Metric names are the ones the daemons actually emit (verified against
+# pkg/wire/metrics.go, pkg/gateway/metrics.go, pkg/fcvm/metrics.go,
+# pkg/builderd/builderd.go after PR #124 + PR #132). Do not rename
+# series here without updating the dashboards / status page first.
+#
+# Op labels: vmmd emits PascalCase (`op="CreateFromSnapshot"`,
+# `op="CreateColdBoot"`) — see pkg/vmmdgrpc/server.go:80,98 and
+# pkg/wire/metrics_test.go:46. PromQL label regex matchers are
+# implicitly anchored, so the regex MUST match the case exactly.
+
+groups:
+  # ────────────────────────────────────────────────────────────────────
+  # Traffic anomaly recording rules (issue #303, ADR-039).
+  # 3-day rolling baseline vs current 5m window. Series:
+  #   faas_apid_request_rate_5m:by_route            current rate (reqps)
+  #   faas_apid_error_rate_5m:by_route              5xx ratio over total
+  #   faas_apid_request_rate_3d_baseline:by_route   trailing 3d avg
+  #   faas_apid_error_rate_3d_baseline:by_route     trailing 3d avg
+  #   faas_apid_request_rate_ratio:by_route         current / baseline
+  #   faas_apid_error_rate_ratio:by_route           current / baseline
+  # Fan-out to per-account series is done by the alert rules, not here
+  # (keeps the recording-rule set O(routes) not O(customers)). The 3d
+  # window sees the same time-of-day/weekday traffic mix as the
+  # current 5m window; retention (15d, prom_retention_days) gives 5x
+  # headroom. clamp_min(...) guards against /0 when a route has zero
+  # recent traffic — the small 0.001 floor lets the ratio formula
+  # produce a numeric value rather than a NaN.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_anomaly_baseline
+    interval: 30s
+    rules:
+      - record: faas_apid_request_rate_3d_baseline:by_route
+        expr: avg_over_time( sum by (route) (rate(apid_request_total[5m])) [3d:5m] )
+
+      - record: faas_apid_error_rate_3d_baseline:by_route
+        expr: |
+          avg_over_time(
+              (
+                  (
+                      sum by (route) (rate(apid_request_total{code!="ok"}[5m]))
+                  )
+                  /
+                  clamp_min(
+                      sum by (route) (rate(apid_request_total[5m])),
+                      1
+                  )
+              )[3d:5m]
+          )
+
+      - record: faas_apid_request_rate_5m:by_route
+        expr: sum by (route) (rate(apid_request_total[5m]))
+
+      - record: faas_apid_error_rate_5m:by_route
+        expr: |
+          (
+              sum by (route) (rate(apid_request_total{code!="ok"}[5m]))
+          )
+          /
+          clamp_min(
+              sum by (route) (rate(apid_request_total[5m])),
+              1
+          )
+
+      - record: faas_apid_request_rate_ratio:by_route
+        expr: |
+          faas_apid_request_rate_5m:by_route
+          /
+          clamp_min(faas_apid_request_rate_3d_baseline:by_route, 0.001)
+
+      - record: faas_apid_error_rate_ratio:by_route
+        expr: |
+          faas_apid_error_rate_5m:by_route
+          /
+          clamp_min(faas_apid_error_rate_3d_baseline:by_route, 0.001)
+
+      # Per-account anomaly score (issue #303 follow-up). The 3d-baseline
+      # math that FaasTrafficSpikeAccount computes inline in its `expr`
+      # is lifted here so the FaasTrafficAnomaly aggregator alert can
+      # read a precomputed series rather than recomputing the ratio on
+      # every alert evaluation. Bounded by the accountLabelSet admission
+      # primitive (10 000 + "__other__") — the per-account fan-out is
+      # O(active customers), not unbounded.
+      - record: faas_apid_anomaly_score:by_account
+        expr: |
+          sum by (account_id) (rate(apid_request_total[5m]))
+          /
+          clamp_min(
+            avg_over_time(
+              sum by (account_id) (rate(apid_request_total[5m]))[3d:5m]
+            ),
+            0.001
+          )
+
+  - name: faas_slo
+    interval: 30s
+    rules:
+
+      # ─────────────────────────────────────────────────────────────────
+      # Resident RAM pressure (vmmd / fcvm gauges — schedd /metrics/fcvm)
+      # Spec §12 row: "resident_ram_pct ≤ 100 target, > 80 warn, > 92 page".
+      # family=resident_ram so the alertmanager inhibit rule can suppress
+      # the warn-tier email when the page-tier fires (alertnames differ).
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasHighResidentRamPct
+        expr: max(fcvm_resident_ram_pct) > 92
+        for: 5m
+        labels:
+          severity: page
+          component: vmmd
+          family: resident_ram
+        annotations:
+          summary: "Resident RAM > 92% of tenant budget"
+          description: "Σ(ram_mb + 8) over live instances has exceeded 92% of the 47,600 MB ceiling for 5m. New wakes will start failing admission."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
+
+      - alert: FaasHighResidentRamPctWarn
+        expr: max(fcvm_resident_ram_pct) > 80 and max(fcvm_resident_ram_pct) <= 92
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: resident_ram
+        annotations:
+          summary: "Resident RAM > 80% of tenant budget"
+          description: "Resident RAM between 80% and 92% of budget for 10m. Watch FaasHighResidentRamPct for the page-tier crossing."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Snapshot fleet average size (vmmd / fcvm — schedd /metrics/fcvm)
+      # Spec §12 row: "snapshot_fleet_avg_mb 130 plan, > 160 warn, > 200 page".
+      # §12 does NOT govern the p95 series; the V1 acceptance p95 ≤ 300 MB
+      # is a separate experiment threshold, not an alert.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasSnapshotFleetAvgHighPage
+        expr: max(fcvm_snapshot_fleet_avg_bytes) / 1024 / 1024 > 200
+        for: 10m
+        labels:
+          severity: page
+          component: vmmd
+          family: snapshot_fleet
+        annotations:
+          summary: "Snapshot fleet avg > 200 MB"
+          description: "Average snapshot size has exceeded 200 MB for 10m. The fleet is past the §12 page threshold; /srv allocation will start pressuring tenant disk quotas."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotFleetHigh.md"
+
+      - alert: FaasSnapshotFleetAvgHighWarn
+        expr: max(fcvm_snapshot_fleet_avg_bytes) / 1024 / 1024 > 160 and max(fcvm_snapshot_fleet_avg_bytes) / 1024 / 1024 <= 200
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: snapshot_fleet
+        annotations:
+          summary: "Snapshot fleet avg > 160 MB"
+          description: "Average snapshot size between 160 MB and 200 MB for 15m. Page-tier crossing likely on the next deploy wave if cold-boot fallback rate is also elevated."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotFleetHigh.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # LV-fc usage (vmmd — schedd /metrics/fcvm)
+      # Spec §12 row: "lv_fc_used_pct > 80 warn, > 90 page".
+      # Note: §8 (line 365) says imaged refuses > 90% and pages at 80%;
+      # §12 says warn at 80, page at 90. This rule uses §12 verbatim.
+      # The §8 / §12 contradiction is an ADR-worthy spec drift surfaced
+      # in the §17 lean list.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasLvFcUsageHighPage
+        expr: max(fcvm_lv_fc_used_pct) > 90
+        for: 5m
+        labels:
+          severity: page
+          component: vmmd
+          family: lv_fc
+        annotations:
+          summary: "lv-fc usage > 90%"
+          description: "The fc logical volume is past 90% used for 5m. imaged will start refusing new deploys; tenant snapshots can no longer be parked."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
+
+      - alert: FaasLvFcUsageHighWarn
+        expr: max(fcvm_lv_fc_used_pct) > 80 and max(fcvm_lv_fc_used_pct) <= 90
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: lv_fc
+        annotations:
+          summary: "lv-fc usage > 80%"
+          description: "lv-fc usage between 80% and 90% for 10m. Schedule the next LV-resize runbook before the page-tier crossing."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Build queue wait p95 (builderd)
+      # Spec §12 row: "build_queue_wait_p95 < 60s target, > 300s warn".
+      # No page threshold per spec (builds are not customer-blocking).
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasBuildQueueBacklog
+        expr: histogram_quantile(0.95, sum(rate(builderd_build_queue_wait_seconds_bucket[5m])) by (le)) > 300
+        for: 10m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue
+        annotations:
+          summary: "Build queue p95 wait > 5m"
+          description: "Builds are queueing > 300s at p95. The 2nd opportunistic builder slot may be blocked, or apid is emitting faster than builderd drains."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Gateway wake latency p95 (gatewayd)
+      # Spec §12 row: "gateway_wake_latency_seconds p95 ≤ 0.8s target, > 1.5s warn".
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasWakeLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) > 1.5
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd
+          family: wake_latency
+        annotations:
+          summary: "Gateway wake p95 > 1.5s"
+          description: "End-to-end cold-wake latency has exceeded the §12 page threshold (1.5s) at p95 for 10m. Cross-check FaasColdBootFallbackHigh — snapshot rot is the most likely cause."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWakeLatencyHigh.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Cold-boot fallback rate (vmmd / vmmd_cold_boot_fallback_total)
+      # Spec §12 row: "cold_boot_fallback_pct < 2% target, > 10% warn".
+      # Denominator = Σ(vmmd_ops_total{op="CreateFromSnapshot","CreateColdBoot"}).
+      # The op labels are PascalCase (pkg/vmmdgrpc/server.go:80,98) — the
+      # earlier lowercase regex matched nothing and the alert never fired.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasColdBootFallbackHigh
+        expr: |
+          rate(vmmd_cold_boot_fallback_total[5m])
+            /
+          sum(rate(vmmd_ops_total{op=~"CreateFromSnapshot|CreateColdBoot"}[5m]))
+            > 0.10
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: cold_boot_fallback
+        annotations:
+          summary: "Cold-boot fallback > 10% of wakes"
+          description: "More than 10% of wakes have fallen back from snapshot restore to cold-boot for 15m. Snapshot rot (FC version mismatch, rootfs drift) is the canonical cause; cf. ADR-005."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasColdBootFallbackHigh.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Public SLOs from spec §12 (status page row).
+      # Spec: "API availability 99.5% monthly, wake p95 < 1s,
+      #        build success (non-user_error) 99% — error budgets,
+      #        not promises."
+      # 5m rolling used to match the status-page cache; spec calls these
+      # monthly but PromQL recursion is out of scope here. Status page
+      # already surfaces the rolling-5m numbers.
+      #
+      # `sum(rate(...[5m])) > 0` guards the denominator so an idle box
+      # (no traffic yet) produces `false < 0.995` rather than `NaN < 0.995`
+      # (which is false too but masks a real breach window if the rate
+      # resets mid-window).
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasApiAvailabilityLow
+        expr: |
+          (sum(rate(gateway_requests_total{code=~"2.."}[5m]))
+            /
+          sum(rate(gateway_requests_total[5m])))
+            < 0.995
+        for: 10m
+        labels:
+          severity: page
+          component: gatewayd
+          family: api_availability
+        annotations:
+          summary: "API availability < 99.5% (rolling 5m)"
+          description: "The 2xx ratio over the last 5 minutes has been below the §12 public SLO (99.5%) for 10m. This is rolling, not monthly — the alert is intentionally more sensitive than the customer-facing SLO. Status page /status/slo.json shows the same metric."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
+
+      - alert: FaasBuildSuccessLow
+        expr: |
+          (sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m]))
+            /
+          sum(rate(builderd_ops_total{op="build"}[5m])))
+            < 0.99
+        for: 15m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_success
+        annotations:
+          summary: "Build success (non-user_error) < 99%"
+          description: "Build success excluding user_error has been below the §12 public SLO (99%) for 15m. Status page /status/slo.json shows the same metric."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildSuccessLow.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # apid audit-write failures (IAM-4 / ADR-035, issue #278).
+      #
+      # The audit emit is best-effort by design: the auth action has
+      # already returned 200 to the customer by the time AppendEvent
+      # runs, so a failed insert logs WARN and bumps this counter
+      # without rolling back the action. A sustained non-zero rate
+      # therefore means audit rows are silently missing while customer
+      # traffic looks healthy — a ticket-tier operational signal, not
+      # a page-tier outage.
+      #
+      # `sum(...)` (no `by (account_id)`) on purpose: a single
+      # misbehaving customer firing hundreds of failures/sec should
+      # trip the alert just as a Postgres outage would. The per-account
+      # breakdown is in the metric itself for the runbook drill-down.
+      #
+      # Threshold: > 5 failures/min over the rolling 5m window. The
+      # issue acceptance calls for "rate exceeds 5/min over 5m"; we
+      # use the standard `for: 5m` to debounce transient blips (a
+      # single INSERT retry race). `severity: warn` because audit
+      # rows missing ≠ customer action failing.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasApidAuditWriteFailures
+        expr: sum(rate(apid_audit_write_failures_total[5m])) > (5 / 60)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: audit_write
+        annotations:
+          summary: "apid audit writes failing above 5/min"
+          description: "The apid audit event append failure rate has exceeded 5 failures per minute over the rolling 5-minute window for 5m. Audit rows may be missing even though customer actions continue to succeed (best-effort per ADR-035). Drill down per-account via the runbook; sustained failures point at the events table, Postgres WAL, or the connection pool."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApidAuditWriteFailures.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Per-tenant noisy-customer detection (issue #300).
+      # The apid_top_tenant_rps{account_id} gauge is a presentation view
+      # over the per-account requestTotal counter, bounded at the top-1000
+      # by 24h request count with the rest under account_id="other"
+      # (ADR-041). This rule fires when any single customer exceeds
+      # 500 rps for 10m — the abuse threshold from the issue's literal
+      # acceptance list. The aggregation uses `topk(20, ...)` so the
+      # account_id label survives Alertmanager routing; the page
+      # receiver groups by [alertname, component] so 20 simultaneous
+      # offenders collapse into one page with per-account drill-down.
+      #
+      # The `account_id="other"` row is excluded via the `!=` matcher —
+      # the overflow bucket represents demoted customers (not abusive
+      # ones), and a non-zero "other" reading means the top-1000 cap is
+      # being saturated, which is a separate signal (covered by the
+      # snapshot_fleet_avg_mb-style fleet dashboards, not by this rule).
+      #
+      # Response: rate-limit + notify (docs/runbooks/tenant-abuse.md
+      # §Recover step 1+2). Escalation: suspend deployment (step 3).
+      # Severity: warn — abuse, not outage.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasTenantAbuse
+        expr: topk(20, max(apid_top_tenant_rps{account_id!="other"}) by (account_id)) > 500
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: tenant_abuse
+        annotations:
+          summary: "Tenant {{ $labels.account_id }} exceeding 500 rps for 10m"
+          description: "Customer {{ $labels.account_id }} sustained > 500 rps on apid for 10m. Cross-check gateway_top_tenant_rps for the L7 view, then follow docs/runbooks/tenant-abuse.md §Recover (rate-limit → notify → suspend deployment)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/tenant-abuse.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Daemon liveness — every scrape target should be up.
+      # 2m is tight: a single scrape miss (15s) does not trip it; a
+      # crashed daemon trips it within one evaluation cycle after restart.
+      # alertmanager is included because the page-route notification
+      # path depends on it being reachable from Prometheus on loopback;
+      # a dead alertmanager means alerts evaluate but never page anyone.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasDaemonDown
+        expr: up{job=~"apid|gatewayd|schedd|vmmd|imaged|builderd|meterd|githubd|alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: page
+          component: platform
+          family: daemon_liveness
+        annotations:
+          summary: "Daemon {{ $labels.job }} is down"
+          description: "Prometheus has been unable to scrape {{ $labels.job }} for 2m. Check systemd status + recent logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonDown.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Resident GB per paying customer (meterd / metrics endpoint)
+      # Spec §12 row: "resident GB per paying customer | 0.305 (=312 MB) | > 0.45 warn".
+      # ADR-031 splits the metric by plan so an operator can see which
+      # segment is migrating toward the §12 page threshold (0.45). The
+      # alert fans out per-plan via {{ $labels.plan }}; the alertmanager
+      # inhibit rule groups on family=residency so a per-plan page-tier
+      # crossing suppresses any per-plan warn on the same group.
+      #
+      # Plan label is the canonical api.Plan string (free|hobby|pro|scale)
+      # emitted by meterd's Residency tick (pkg/meter/residency.go).
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasResidentGbPerCustomerHigh
+        expr: max by (plan) (meterd_resident_gb_per_customer) > 0.45
+        for: 1h
+        labels:
+          severity: warn
+          component: meterd
+          family: residency
+        annotations:
+          summary: "Resident GB per paying customer > 0.45 (plan {{ $labels.plan }})"
+          description: "Plan {{ $labels.plan }} has been above the §12 page threshold (0.45 GB-RAM-hours / paying customer) for 1h. Spec target is 0.305. Cross-check FaasHighResidentRamPct — fleet RAM pressure is the usual upstream cause."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResidentGbPerCustomerHigh.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Traffic anomaly (issue #303, ADR-039). The 3d baseline rolls up
+      # in the faas_anomaly_baseline group above; the alerts below
+      # compare the recording rules and the per-account in-line ratio.
+      # Thresholds (3x / 10x spike, 0.2x / 0.1x drop, for: 10m / 15m /
+      # 15m / 30m) are ADR-039 decisions; the per-account rules use
+      # higher thresholds and longer `for:` to suppress per-customer
+      # noise. account_id="__other__" is the bounded overflow bucket
+      # (issue #278) — drill-down on it means the customer is past the
+      # 10k admission cap and the operator must check the daemon slog.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasTrafficSpike
+        expr: max(faas_apid_request_rate_ratio:by_route) > 3
+        for: 10m
+        labels:
+          severity: page
+          component: apid
+          family: traffic_anomaly
+          mode: fleet
+          direction: spike
+        annotations:
+          summary: "Traffic > 3x 3-day baseline (route {{ $labels.route }})"
+          description: "Route {{ $labels.route }} has been above 3x its 3d trailing average for 10m. DDoS, runaway retry storm, or upstream restore surge are the canonical causes. Drill down to the per-account level via the dedicated panel or sum by (account_id) (rate(apid_request_total[5m]))."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
+
+      - alert: FaasTrafficDrop
+        expr: |
+          (faas_apid_request_rate_ratio:by_route < 0.2)
+          and
+          (faas_apid_request_rate_5m:by_route > 0.1)
+        for: 15m
+        labels:
+          severity: page
+          component: apid
+          family: traffic_anomaly
+          mode: fleet
+          direction: drop
+        annotations:
+          summary: "Traffic < 0.2x 3-day baseline (route {{ $labels.route }})"
+          description: "Route {{ $labels.route }} has been below 20% of its 3d trailing average for 15m while still handling > 0.1 rps (so it's not idle). Upstream outage, misdeploy, or auth fault are the canonical causes. Cross-check FaasApiAvailabilityLow — sustained 5xx is the usual upstream cause."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
+
+      - alert: FaasTrafficSpikeAccount
+        expr: |
+          (
+            sum by (account_id) (rate(apid_request_total[5m]))
+            /
+            clamp_min(
+              avg_over_time(
+                sum by (account_id) (rate(apid_request_total[5m]))[3d:5m]
+              ),
+              0.001
+            )
+          ) > 10
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: traffic_anomaly
+          mode: account
+          direction: spike
+        annotations:
+          summary: "Account {{ $labels.account_id }} traffic > 10x its 3d average"
+          description: "Customer {{ $labels.account_id }} has been above 10x its 3d trailing average for 15m. Higher threshold than fleet-wide to suppress per-customer noise. account_id=\"__other__\" is the bounded overflow bucket (issue #278) — drill-down on it means the customer is past the 10k admission cap."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
+
+      - alert: FaasTrafficDropAccount
+        expr: |
+          (
+            sum by (account_id) (rate(apid_request_total[5m]))
+            /
+            clamp_min(
+              avg_over_time(
+                sum by (account_id) (rate(apid_request_total[5m]))[3d:5m]
+              ),
+              0.001
+            )
+          ) < 0.1
+          and on (account_id)
+          sum by (account_id) (rate(apid_request_total[5m])) > 0.1
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: traffic_anomaly
+          mode: account
+          direction: drop
+        annotations:
+          summary: "Account {{ $labels.account_id }} traffic < 0.1x its 3d average"
+          description: "Customer {{ $labels.account_id }} has been below 10% of its 3d trailing average for 30m. Longer `for:` than the spike rule because quiet customers are common and 30m crosses a real outage from a normal lull. account_id=\"__other__\" is the bounded overflow bucket (issue #278) — drill-down on it means the customer is past the 10k admission cap."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
+
+      # Platform-wide traffic drift (issue #303 follow-up). Fires when
+      # 10+ accounts simultaneously cross 2.0x their 3d baseline —
+      # the literal acceptance criterion from the issue body. The
+      # `unless on (account_id)` clause excludes the __other__ overflow
+      # bucket so the count only includes real customer ids; if many
+      # customers pile up at the admission cap, the alert fires on the
+      # admitted ones only and the operator follows the per-account
+      # drill-down to find the overflow.
+      - alert: FaasTrafficAnomaly
+        expr: |
+          (
+            count(
+              faas_apid_anomaly_score:by_account > 2
+            )
+            unless on (account_id)
+            faas_apid_anomaly_score:by_account{account_id="__other__"}
+          ) >= 10
+        for: 10m
+        labels:
+          severity: page
+          component: apid
+          family: traffic_anomaly
+          mode: platform
+          direction: drift
+        annotations:
+          summary: "{{ $value }} accounts simultaneously crossed 2x 3d baseline"
+          description: "Platform-wide traffic drift: {{ $value }} accounts are above 2x their 3d trailing average for 10m. Indicates either coordinated customer behavior (rare), a global scan/burst, or a misconfigured dashboard / refresh loop. Drill-down via the 'Anomaly spikes (last 7d)' panel (id 90 on faas-fleet-m8) for the top-20 accounts by peak anomaly score."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
+
+      # Error-rate spike / drop (ADR-039 §Open follow-ups). The recording
+      # rules (faas_apid_error_rate_5m:by_route, _3d_baseline, _ratio)
+      # already existed from PR #336; the alert blocks are the missing
+      # piece. Thresholds (2x spike, 0.5x drop) are deliberately tighter
+      # than the request-rate counterparts (3x / 0.2x) because error-rate
+      # is more sensitive — a small absolute spike in 5xx is a larger
+      # signal than a small absolute spike in 2xx traffic.
+      - alert: FaasErrorRateSpike
+        expr: max(faas_apid_error_rate_ratio:by_route) > 2
+        for: 10m
+        labels:
+          severity: page
+          component: apid
+          family: traffic_anomaly
+          mode: fleet
+          direction: spike
+          metric: error_rate
+        annotations:
+          summary: "Error rate > 2x 3-day baseline (route {{ $labels.route }})"
+          description: "Route {{ $labels.route }} has had its error rate above 2x its 3d trailing average for 10m. Cross-check apid_request_failures_total{account_id,route,code} for the per-account view. Common causes: upstream dependency (Postgres, Stripe, Paddle) starting to 5xx, customer-deploy regression, or auth-secret rotation that produced a wave of 401s."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
+
+      - alert: FaasErrorRateDrop
+        expr: |
+          (faas_apid_error_rate_ratio:by_route < 0.5)
+          and
+          (faas_apid_error_rate_5m:by_route > 0.001)
+        for: 15m
+        labels:
+          severity: page
+          component: apid
+          family: traffic_anomaly
+          mode: fleet
+          direction: drop
+          metric: error_rate
+        annotations:
+          summary: "Error rate < 0.5x 3-day baseline (route {{ $labels.route }})"
+          description: "Route {{ $labels.route }} has had its error rate below 50% of its 3d trailing average for 15m while still handling > 0.001 err/s (so it's not idle). Common causes: customer rolled back a misconfigured deploy, scanner traffic stopped, or upstream patch fixed an outage. The `> 0.001 err/s` guard prevents the rule from firing on routes that simply had no recent failures (the baseline would be ~0 and the ratio undefined)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # TLS cert expiry (gatewayd / gateway_tls_cert_expiry_seconds).
+      # ADR-024 H3 closure: page at ≤14 days, warn between 14 and 30.
+      # The gauge carries min(notAfter − now) across cached certs on
+      # cfg.StorageDir/certificates/...; first-mint pre-boot state is
+      # +Inf (the gauge default), which legitimately fails the < 14d
+      # comparator. Operators expect a missing cert at startup, not a
+      # page.
+      #
+      # The gauge is ticked every 5 minutes by
+      # pkg/gateway.StartCertExpiryRefresher; a stale gauge would mean
+      # the refresher goroutine died (visible as gateway_tls_cert_expiry_seconds
+      # not changing for > 6m — separate drift signal, not in this rule).
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasTLSCertExpiryPage
+        expr: gateway_tls_cert_expiry_seconds < (14 * 86400)
+        for: 5m
+        labels:
+          severity: page
+          component: gatewayd
+          family: tls_cert_expiry
+        annotations:
+          summary: "TLS cert expires in ≤14 days"
+          description: "The smallest remaining lifetime across cached certs is below 14 days. A renewal has failed (or never ran) — HTTPS serving across the box will start failing within hours. Re-run `make bootstrap` on the EX44 to refresh certmagic + the Hetzner DNS-01 token, then force-renew via `faas cert refresh`."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
+
+      - alert: FaasTLSCertExpiryWarn
+        expr: gateway_tls_cert_expiry_seconds < (30 * 86400) and gateway_tls_cert_expiry_seconds >= (14 * 86400)
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd
+          family: tls_cert_expiry
+        annotations:
+          summary: "TLS cert expiry < 30 days"
+          description: "Smallest remaining lifetime is between 14 and 30 days. Renewals normally fire at 30d; verify certmagic's renew-loop is alive (a log line every few minutes post-first-mint) and that the Hetzner DNS-01 token still has zone-write permission on the apps domain."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryWarn.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Per-host TLS cert expiry (Finding 2 / ADR-024 H3 follow-up).
+      # The aggregate rule above covers the box-level signal; these
+      # rules attach a hostname + kind label so the alert routes to
+      # the right custom domain. `hostname!="__other__"` excludes the
+      # bounded-admission overflow (an admission overflow means we've
+      # run past hostnameLabelSetCap and don't have a real host name
+      # to attribute). `kind!="unknown"` excludes misclassifications
+      # so an issuer-key wiring bug doesn't page.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasTLSCertExpiryPageByHost
+        expr: gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} < (14 * 86400)
+        for: 5m
+        labels:
+          severity: page
+          component: gatewayd
+          family: tls_cert_expiry
+          hostname: "{{ $labels.hostname }}"
+          kind: "{{ $labels.kind }}"
+        annotations:
+          summary: "TLS cert for {{ $labels.hostname }} expires in ≤14 days"
+          description: "Per-host cert expiry below 14 days. kind={{ $labels.kind }} tells you whether the wildcard (DNS-01) or an on-demand (HTTP-01) cert is affected — wildcard renewals auto-recover via DNS-01; on-demand renewals need the customer to keep the custom_domains row active and the HTTP-01 challenge endpoint reachable. Verify certmagic's renew-loop for this host (check the slog for {{ $labels.hostname }} renew lines)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPageByHost.md"
+
+      - alert: FaasTLSCertExpiryWarnByHost
+        expr: gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} < (30 * 86400) and gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} >= (14 * 86400)
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd
+          family: tls_cert_expiry
+          hostname: "{{ $labels.hostname }}"
+          kind: "{{ $labels.kind }}"
+        annotations:
+          summary: "TLS cert for {{ $labels.hostname }} expiry < 30 days"
+          description: "Per-host cert expiry is between 14 and 30 days. Renewals normally fire at 30d; if no renew log line surfaces for this host within the next 12h, force-renew via `faas cert refresh --host={{ $labels.hostname }}`."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryWarnByHost.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Cert-expiry refresher walk-completeness (Finding 2). The
+      # refresher ticks this counter every interval; `partial`
+      # means a filesystem blip cut the walk short. A persistent
+      # partial is the "refresher silently failing" signal —
+      # operators should investigate BEFORE certs actually expire,
+      # rather than waiting for the gauge to drift.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasTLSCertExpiryRefresherPartial
+        expr: increase(gateway_tls_cert_expiry_refresher_walk_complete_total{result="partial"}[1h]) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd
+          family: tls_cert_expiry
+        annotations:
+          summary: "Cert-expiry refresher walk was partial"
+          description: "At least one tick in the last hour completed with a partial walk result — the refresher either saw a subtree disappear mid-walk (concurrent certmagic renewal — usually benign) or hit a filesystem error. If the partial persists across multiple ticks, the cert-expiry gauges will stop refreshing and the §12 alerts will go stale. Check `/var/lib/faas/certs/certificates/` permissions and the legacy `faas-gatewayd` slog for `cert expiry walk was partial` Warn lines. PR #633 stripped certmagic from `gatewayd-public`; this alert is legacy-daemon-only and will be removed with the certsync sweep (PR-C)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # On-demand cert mint denial rate
+      # (gatewayd / gateway_tls_on_demand_denied_total{reason}).
+      # ADR-024 H3 closure: spec §11 abuse-vector observability — a
+      # non-zero rate of denials (sum across the reason label set) is the
+      # signal that someone is probing :443 for unowned SNIs. The
+      # closed `reason` set is {allowlist, dns01, token}; today only
+      # `allowlist` is wire-incremented (the DecisionFunc hook in
+      # tls_wire.go). The series for `dns01` and `token` are
+      # pre-instantiated at 0 so a frozen-zero is visible as the
+      # ADR-024 H3.b follow-up signal.
+      #
+      # Threshold: > 1/min (i.e. > 1/60 per-second on a 5m rate) for 5m.
+      # Sustained probes (scanners, hijackers) fire many requests/sec;
+      # the threshold is intentionally a hair above zero so a single
+      # misconfigured cron-job probe pages rather than hides.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasTLSOnDemandDeniedHigh
+        expr: sum(rate(gateway_tls_on_demand_denied_total[5m])) > (1 / 60)
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd
+          family: tls_on_demand_denied
+        annotations:
+          summary: "On-demand TLS denials > 1/min"
+          description: "The denials counter is climbing above 1/min over the rolling 5-minute window. Cross-check reason breakdown via `sum by (reason) (rate(gateway_tls_on_demand_denied_total[5m]))` — an allowlist spike means external scanners hitting :443; a frozen-zero on dns01 or token means the H3.b wire-incrementation follow-up is still pending."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSOnDemandDeniedHigh.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Per-account gateway rate-limit rejections
+      # (gatewayd / gateway_per_account_rate_limited_total{account_id, plan}).
+      # ADR-040 / issue #292 — defends against a botnet rotating across a
+      # single customer's many apps (each app stays under per-app rps, but
+      # the sum easily blows past the account's plan budget).
+      #
+      # Threshold: > 100/min fleet-total for 5m. Tuned as a coordination
+      # signal: a single misbehaving customer peaks well below 100; a
+      # botnet or runaway retry-loop is the realistic source. The §12
+      # dashboard's per-account drill-down pinpoints the offender; the
+      # `__other__` row in the exposition is the bounded admission
+      # overflow bucket (pre-instantiated at zero so a series with no
+      # traffic is visible).
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasPerAccountRateLimitSpike
+        expr: sum(rate(gateway_per_account_rate_limited_total[5m])) > (100 / 60)
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd
+          family: per_account_rate_limit
+        annotations:
+          summary: "Per-account gateway rejections above 100/min (fleet)"
+          description: "Fleet-wide per-account gateway rate-limit rejections have exceeded 100/min over the rolling 5-minute window for 5m. account_id=\"__other__\" is the bounded admission overflow bucket — drill down per-account via `topk(20, sum by (account_id, plan) (rate(gateway_per_account_rate_limited_total[5m])))`. Common causes: single customer burst (misdeploy / runaway retry), coordinated abuse (scanners rotating across an account's apps), or a config-driven throttling regression (plan row dropped to zero)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPerAccountRateLimitSpike.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Failed-login spike (issue #286, SOC 2 CC7.2). Threshold:
+      # 20 failed logins per minute from a single IP for 5 minutes —
+      # the canonical credential-stuffing pattern. Severity `warn`
+      # because the auth-limit bucket is shedding the burst at the
+      # middleware layer (the customer-facing 401 still returns
+      # normally); the alert is the visibility for SOC 2 evidence
+      # that the attack is being observed, not an outage signal.
+      #
+      # `ip` is bounded by ipLabelSet (maxIPLabelValues = 10_000,
+      # pkg/wire/metrics.go). Overflow collapses to ip="__other__"
+      # so a multi-IP botnet sweep rolls up into one bucket — drill
+      # into the audit rows for the per-IP attribution.
+      #
+      # Companion counter: apid_failed_login_audit_dropped_total —
+      # a non-zero rate means the audit flusher is the bottleneck
+      # under the burst AND the channel is full. The auth response
+      # is unaffected (the drop is non-blocking) but the audit rows
+      # are missing.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasFailedLoginSpike
+        expr: sum by (ip) (rate(apid_failed_login_total[5m])) > (20 / 60)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: security_anomaly
+        annotations:
+          summary: "Failed-login rate > 20/min from {{ $labels.ip }} for 5m"
+          description: "Failed logins from {{ $labels.ip }} exceeded 20/min over the rolling 5-minute window for 5m — the canonical credential-stuffing pattern. ip=\"__other__\" is the bounded admission overflow bucket (pkg/wire/metrics.go::maxIPLabelValues = 10_000); a single ip=\"__other__\" alert means the source IPs are past the admission cap — drill-down via the audit rows. SOC 2 CC7.2 evidence: select count(*) from events where kind = 'auth.login.failed' and at > now() - interval '5 minutes' group by data->>'ip_hash'. Companion: apid_failed_login_audit_dropped_total rising means the audit flusher is the bottleneck."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFailedLoginSpike.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Per-plan CPU starvation (issue #301, ADR-044).
+      # Source: vmmd_cpu_throttle_ratio{slice} gauge (NOT
+      # node_cpu_cgroup_throttled_seconds_total — that one is the
+      # kernel counter without a usage denominator). The gauge is
+      # computed inside vmmd as throttle_delta / (throttle_delta +
+      # usage_delta) over the per-tick 5m window and labelled by the
+      # per-plan cgroup sub-slice (tenant-free|tenant-hobby|tenant-pro|
+      # tenant-scale). The slice label is the alert's fan-out key;
+      # Alertmanager groups by [alertname, slice] so a single plan
+      # starving fires one page with the slice in the summary.
+      #
+      # Threshold: > 80% throttle ratio for 5m — literal from the
+      # issue. The 5m window debounces a single hot-loop arrival
+      # (one tenant scales up → ratio spikes for 30s → falls) while
+      # still paging on a sustained saturation event. Severity: warn
+      # because CPU starvation ≠ customer action failing (the
+      # cgroup's cpu.max just caps their slice); the response is
+      # operator-side capacity work, not a customer-facing outage.
+      #
+      # Response cascade (docs/runbooks/FaasCpuStarvation.md §Recover):
+      # top-N panel → plan raise for the customer → consider
+      # faas-tenant slice CPUQuota bump (1600% = 16 cores). Memory
+      # is NOT in scope — the per-VM memory.max is enforced by
+      # vmmd via the jailer (spec §11/G6); a starved VM is a CPU
+      # signal, not a RAM one.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasCpuStarvation
+        expr: vmmd_cpu_throttle_ratio{slice=~"tenant-.*"} > 0.8
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: cpu_starvation
+        annotations:
+          summary: "Tenant slice {{ $labels.slice }} throttled > 80% for 5m"
+          description: "Plan sub-slice {{ $labels.slice }} has been > 80% throttled over the rolling 5-minute window for 5m (issue #301 / ADR-044). The cpu.max quota for that plan is saturated; quiescent workloads are preempted. Cross-check the top-throttled-apps Grafana panel for which (account_id, app_id) is the dominant offender, then follow docs/runbooks/FaasCpuStarvation.md §Recover."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCpuStarvation.md"
+
+      # ─────────────────────────────────────────────────────────────────
+      # githubd path-filter posture (issue #432 phase 5 follow-up /
+      # ADR-050 §109). The counter githubd_path_filter_total{mode}
+      # ticks once per inbound push webhook. After the path-filter
+      # default flip the optimistic mode is `paths`; `full_fallback`
+      # only fires on empty-before pushes (legitimate), `truncated`
+      # only on big-diffs (legitimate + rebuild-all per ADR-050),
+      # and `error` / `breaker_open` only when the compare API itself
+      # fails or the GitHub App credentials are missing. Operators
+      # should investigate a sustained `error` or `breaker_open`
+      # because every push in those modes rebuilds every touched
+      # app — the conservative posture that defeats the path-filter
+      # efficiency win.
+      #
+      # family=path_filter so alertmanager inhibits the warn-tier
+      # email when the page-tier fires (alertnames differ).
+      # ─────────────────────────────────────────────────────────────────
+      - alert: FaasGithubdPathFilterDegraded
+        expr: sum(rate(githubd_path_filter_total{mode=~"error|breaker_open"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          component: githubd
+          family: path_filter
+        annotations:
+          summary: "githubd path-filter degraded — credentials missing or compare API unreachable"
+          description: "githubd_path_filter_total{mode=error|breaker_open} has been ticking for 10m. mode=error fires when the GitHub App credentials are not provisioned (cmd/githubd wires NewUnavailableChangedFiles as the stub) or when the GitHub compare API returned a transport / non-2xx error. mode=breaker_open fires after 3 consecutive errors trip the breaker (pkg/githubd/changedfiles.go). Either way every push rebuilds every touched app — the conservative posture defeats the path-filter efficiency win. Verify: 1) FAAS_GITHUB_APP_ID + FAAS_GITHUB_APP_KEY_PATH point at a valid App + key; 2) outbound api.github.com is reachable; 3) the App installation hasn't been revoked. Runbook: docs/runbooks/FaasGithubdPathFilterDegraded.md."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubdPathFilterDegraded.md"
+
+      - alert: FaasGithubdPathFilterDegradedWarn
+        expr: sum(rate(githubd_path_filter_total{mode=~"error|breaker_open"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: githubd
+          family: path_filter
+        annotations:
+          summary: "githubd path-filter degraded (warn-tier) — investigate before page"
+          description: "githubd_path_filter_total{mode=error|breaker_open} has been ticking for 5m. The page-tier alert (FaasGithubdPathFilterDegraded) fires at 10m; this warn-tier gives you a head start. Run the verify steps in the runbook before the page lands."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubdPathFilterDegraded.md"
+
+  # Billing drift detector (ADR-049 §B.1). The reconciler
+  # (pkg/billing/reconciler) computes abs(local-pushed) / max(local,
+  # pushed) over a rolling window per (account, provider) and
+  # exposes it as meterd_billing_drift_ratio. > 0.5% for an hour
+  # pages — Stripe / Paddle pushes are not silently dropping
+  # without an operator noticing.
+  - name: faas_billing
+    interval: 60s
+    rules:
+      - alert: BillingDrift
+        expr: max by (provider) (meterd_billing_drift_ratio) > 0.005
+        for: 1h
+        labels:
+          severity: page
+          component: meterd
+          family: billing_drift
+        annotations:
+          summary: "Provider {{ $labels.provider }} push drift > 0.5% for 1h"
+          description: "Stripe or Paddle push totals are diverging from local usage_minutes totals by more than 0.5% for an hour (ADR-049 §B.1). Revenue leakage if local > pushed, refund liability if pushed > local. The meterd_billing_drift_mb_seconds{account_id=…} gauge identifies the offending account. Run `faas admin reconcile --verbose` to inspect, or page the on-call."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
+      - alert: BillingDriftAccount
+        expr: meterd_billing_drift_ratio > 0.05
+        for: 15m
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_drift
+        annotations:
+          summary: "Account {{ $labels.account_id }} drift > 5% for 15m"
+          description: "Single-account drift exceeds 5% for 15m (ADR-049 §B.1). The 1h provider-aggregate BillingDrift alert may not fire for a single account if other accounts are quiet. Inspect the meterd_billing_drift_mb_seconds{account_id=…} gauge and Stripe's UsageRecordSummaries API for the affected subscription_item to confirm the gap."

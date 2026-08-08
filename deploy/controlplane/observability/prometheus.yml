@@ -1,0 +1,88 @@
+# Prometheus scrape config for the control-plane host.
+# Static release-bundle copy of deploy/ansible/roles/prometheus/templates/prometheus.yml.j2
+# rendered with the production defaults (prom_targets from the role defaults;
+# alertmanager on loopback; box label = "controlplane").
+# Generated at release-build time; do not hand-edit on the box.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    box: "controlplane"
+
+# Alert rules — evaluated every 30s against the closed (daemon, severity)
+# label set declared in faas.rules.yml.
+rule_files:
+  - /etc/prometheus/faas.rules.yml
+  - /etc/prometheus/pg_backup.rules.yml
+
+# Alertmanager — loopback-only, dialed from the Prometheus binary on the
+# same box. Wired here so the operator's pager sees what the dashboard
+# will eventually show.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["127.0.0.1:9093"]
+
+scrape_configs:
+  - job_name: "apid"
+    static_configs:
+      - targets: ["127.0.0.1:9101"]
+        labels:
+          job: "apid"
+
+  - job_name: "gatewayd"
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+        labels:
+          job: "gatewayd"
+
+  - job_name: "schedd"
+    static_configs:
+      - targets: ["127.0.0.1:9103"]
+        labels:
+          job: "schedd"
+    metrics_path: /metrics/fcvm
+
+  - job_name: "vmmd"
+    static_configs:
+      - targets: ["127.0.0.1:9104"]
+        labels:
+          job: "vmmd"
+    metrics_path: /metrics/fallback
+
+  - job_name: "imaged"
+    static_configs:
+      - targets: ["127.0.0.1:9102"]
+        labels:
+          job: "imaged"
+
+  - job_name: "builderd"
+    static_configs:
+      - targets: ["127.0.0.1:9105"]
+        labels:
+          job: "builderd"
+
+  - job_name: "githubd"
+    static_configs:
+      - targets: ["127.0.0.1:8083"]
+        labels:
+          job: "githubd"
+
+  - job_name: "meterd"
+    static_configs:
+      - targets: ["127.0.0.1:9106"]
+        labels:
+          job: "meterd"
+
+  - job_name: "alertmanager"
+    static_configs:
+      - targets: ["127.0.0.1:9093"]
+        labels:
+          job: "alertmanager"
+
+  - job_name: "node"
+    static_configs:
+      - targets: ["127.0.0.1:9100"]
+        labels:
+          job: "node"
