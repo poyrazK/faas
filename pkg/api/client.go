@@ -1234,6 +1234,62 @@ func (c *Client) GetAuditEvent(ctx context.Context, id string) (AuditEventRespon
 	return out, c.do(ctx, "GET", "/v1/audit-events/"+id, nil, &out)
 }
 
+// ListAuditLog returns the caller's audit-log entries newest-first
+// (issue #755 / PR-6). Reads the FK-free `audit_log` table
+// (migrations/00163_audit_log.sql), distinct from ListAuditEvents
+// which reads the live `events` table. Customer-scoped: pinned to
+// the calling account's id inside the handler; `account_id IS NULL`
+// rows are filtered out server-side.
+func (c *Client) ListAuditLog(ctx context.Context, since, kindPrefix string, limit int) (ListAuditLogResponse, error) {
+	var out ListAuditLogResponse
+	q := url.Values{}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if kindPrefix != "" {
+		q.Set("kind_prefix", kindPrefix)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/audit-log"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListAuditLogAll is the operator-side read of the audit-log
+// surface (issue #755 / PR-6). Admin-scoped: reads across accounts
+// when `accountID == ""` and surfaces `account_id IS NULL` rows
+// when `includeAnonymous == true`. Gated server-side on the
+// admin scope; the SDK caller must be holding an admin API key or
+// an admin session.
+func (c *Client) ListAuditLogAll(ctx context.Context, accountID, since, kindPrefix string, limit int, includeAnonymous bool) (ListAuditLogResponse, error) {
+	var out ListAuditLogResponse
+	q := url.Values{}
+	if accountID != "" {
+		q.Set("account_id", accountID)
+	}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if kindPrefix != "" {
+		q.Set("kind_prefix", kindPrefix)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if includeAnonymous {
+		q.Set("include_anonymous", "true")
+	}
+	path := "/v1/audit-log/all"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // CLI auth device-code flow (spec §2.2).
 
 // MintCliAuthCode anonymously mints a fresh device code.

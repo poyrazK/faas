@@ -170,13 +170,27 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 			g.p.Log.Warn("grace: hard delete failed", "account", acct.ID, "err", err)
 			continue
 		}
-		// Audit the hard delete (issue #755 / PR-5.5). The events
-		// row carries account_id = the deleted account (the
-		// audit_log table backfilled in DeleteAccount preserves it
-		// for the regulator); actor distinguishes the sweep from a
-		// customer's DELETE so a forensic auditor can tell the two
-		// surfaces apart. Best-effort: the auditor is non-blocking
-		// by spec §5.1, so a backlog here cannot delay the sweep.
+		// Audit the hard delete (issue #755 / PR-5.5 events-side
+		// + PR-6 audit_log-side). Two parallel rows are written so
+		// the post-deletion state is preserved across two tables:
+		//
+		//   - The events row written here (account_id = the deleted
+		//     account) is the per-event trail that the
+		//     pkg/eventretention 90-day sweep (ADR-075) will trim.
+		//   - The audit_log row written by DeleteAccount inside the
+		//     same tx (PR-6) is the FK-free, immutable
+		//     post-deletion evidence a regulator / DPO can read
+		//     after the accounts row is gone. ISO 27001 SoA A.5.33
+		//     retention = forever.
+		//
+		// actor distinguishes the sweep from a customer's DELETE so
+		// a forensic auditor can tell the two surfaces apart.
+		// Best-effort: the events-side auditor is non-blocking by
+		// spec §5.1, so a backlog here cannot delay the sweep. The
+		// audit_log-side insert lives inside the DeleteAccount tx,
+		// so an insert failure rolls back the entire delete and
+		// surfaces the error to the sweep above (the
+		// `hard delete failed` log).
 		acctID := acct.ID
 		g.p.Audit.Emit(ctx, "account.deleted", &acctID, map[string]any{
 			"actor":  "grace-sweep",

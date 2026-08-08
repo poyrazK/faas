@@ -975,6 +975,22 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/audit-events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAuditEvents))))
 	mux.HandleFunc("GET /v1/audit-events/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAuditEvent))))
 
+	// Issue #755 / PR-6 — audit_log dashboard surface. Reads the
+	// FK-free audit_log table (migrations/00163_audit_log.sql),
+	// distinct from /v1/audit-events which reads the live events
+	// table. Two routes by audience:
+	//
+	//   - /v1/audit-log: customer-scoped, MFA + apps:read; pinned
+	//     to the calling account's ID inside the handler. Same
+	//     scope posture as /v1/audit-events.
+	//   - /v1/audit-log/all: operator-only, admin scope; can read
+	//     across accounts and opt into account_id IS NULL rows
+	//     with ?include_anonymous=true. No MFA gate — admin
+	//     sessions and admin API keys are already MFA-gated upstream
+	//     at session issue time.
+	mux.HandleFunc("GET /v1/audit-log", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAuditLog))))
+	mux.HandleFunc("GET /v1/audit-log/all", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.listAuditLogAll)))
+
 	// Issue #517 / PR-C / ADR-064: customer-facing wake-timeline
 	// surface. Sub-resource of /v1/apps/{slug} — same auth chain
 	// as the rest of the /v1/apps/* read surface, same §12

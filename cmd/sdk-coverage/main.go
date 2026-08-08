@@ -243,6 +243,13 @@ var methodRouteMap = map[string]string{
 	"GET /v1/audit-events":      "ListAuditEvents",
 	"GET /v1/audit-events/{id}": "GetAuditEvent",
 
+	// Issue #755 / PR-6 — audit_log dashboard surface. Reads the
+	// FK-free audit_log table (migrations/00163_audit_log.sql);
+	// distinct from /v1/audit-events which reads the live events
+	// table. Two routes by audience (customer-scoped / operator).
+	"GET /v1/audit-log":     "ListAuditLog",
+	"GET /v1/audit-log/all": "ListAuditLogAll",
+
 	// Issue #517 / PR-C / ADR-064 — wake timeline. The route is a
 	// sub-resource of /v1/apps/{slug}/wakes/{wake_id}/timeline; the
 	// auto-derivation would produce "GetAppsSlugWakesWake-idTimeline"

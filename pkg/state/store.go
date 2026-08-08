@@ -2292,6 +2292,31 @@ type Store interface {
 	// the customer-facing timeline endpoint can chain the two
 	// queries under the same cursor.
 	ListEventsBySidecar(ctx context.Context, sidecarName string, since time.Time, limit int) ([]Event, error)
+
+	// InsertAuditLog (issue #755 / PR-6) writes one row to the
+	// FK-free audit_log table (migrations/00163_audit_log.sql).
+	// Append-only by spec: there is no UpdateAuditLog / DeleteAuditLog
+	// pair, and the table has no UPDATE / DELETE permission in
+	// production. The pgstore implementation runs the insert
+	// through pgx.Tx when called from inside DeleteAccount (so the
+	// audit row rides the same tx as the accounts row delete) and
+	// through the pool when called standalone.
+	//
+	// The memstore mirrors the shape so handler tests can exercise
+	// the read path without spinning Postgres.
+	InsertAuditLog(ctx context.Context, entry AuditLog) error
+
+	// ListAuditLog (issue #755 / PR-6) is the dashboard read path
+	// for the audit_log table. The filter struct drives every
+	// WHERE clause; no string-built queries (matches the repo
+	// convention enforced by the sqlc-check CI gate). Order is
+	// (received_at DESC, id DESC) so the result is stable across
+	// ties and honors the audit_log_received_at_idx.
+	//
+	// The customer-scoped handler pins AccountID to the calling
+	// account's ID; the operator endpoint leaves AccountID nil and
+	// passes IncludeAnonymous=true when ?include_anonymous=true.
+	ListAuditLog(ctx context.Context, filter AuditLogFilter) ([]AuditLog, error)
 	// DeploymentSidecarRAMs (issue #463 / ADR-070 / PR-C) returns
 	// the per-deployment sidecar RAM slice from the jsonb column.
 	// Empty/nil when the deployment has no sidecars — matching the

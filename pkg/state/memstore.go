@@ -171,6 +171,13 @@ type MemStore struct {
 	deploymentSidecarLayers map[string]DeploymentSidecarLayer
 	snapshots               []Snapshot
 	events                  []Event
+	// auditLog (issue #755 / PR-6) is the in-memory mirror of the
+	// pgstore.audit_log table. Append-only by spec — MemStore has no
+	// UpdateAuditLog / DeleteAuditLog pair. The DeleteAccount path
+	// appends one account.deleted row inside the same critical
+	// section that drops the accounts row, mirroring the PG
+	// atomicity contract.
+	auditLog []AuditLog
 	// usage holds one row per (instance, minute) — mirrors PgStore's
 	// usage_minutes PK. Aggregated into `usageByMonth` (per app, per
 	// calendar month) so UsageByMonth can keep returning the spec §10
@@ -6051,6 +6058,91 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 	return out, nil
 }
 
+// InsertAuditLog (issue #755 / PR-6) appends one row to the in-memory
+// audit_log mirror. The Data json.RawMessage is copied so a caller
+// can reuse the input slice without aliasing the stored row. The
+// append is guarded by m.mu (the rest of the audit_log surface is
+// read-also-mu-guarded). When called from inside DeleteAccount
+// (critical section already held by DeleteAccount itself) the
+// mu.Lock here is a recursive re-entry — Go's sync.Mutex is
+// non-reentrant, so DeleteAccount calls the inner appendAuditLog
+// helper that does NOT re-lock. Standalone callers (handlers,
+// tests) go through this method and pay the lock normally.
+func (m *MemStore) InsertAuditLog(_ context.Context, entry AuditLog) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.appendAuditLogLocked(entry)
+	return nil
+}
+
+// appendAuditLogLocked is the mu-held-critical-section variant of
+// InsertAuditLog. Caller must hold m.mu. DeleteAccount calls this
+// directly so it can stay inside its own critical section without
+// deadlocking on a re-entry.
+func (m *MemStore) appendAuditLogLocked(entry AuditLog) {
+	var dataCopy json.RawMessage
+	if len(entry.Data) > 0 {
+		dataCopy = append(json.RawMessage(nil), entry.Data...)
+	}
+	m.auditLog = append(m.auditLog, AuditLog{
+		ID:           entry.ID,
+		Kind:         entry.Kind,
+		AccountID:    entry.AccountID,
+		AccountEmail: entry.AccountEmail,
+		Actor:        entry.Actor,
+		ReceivedAt:   entry.ReceivedAt,
+		Data:         dataCopy,
+	})
+}
+
+// ListAuditLog (issue #755 / PR-6) is the dashboard read path. Walks
+// m.auditLog in reverse (newest-first) and applies the same WHERE
+// semantics as pgstore.ListAuditLog: AccountID is "match-or-null",
+// KindPrefix is a LIKE prefix match, Since is an inclusive lower
+// bound on ReceivedAt, IncludeAnonymous gates the AccountID-is-nil
+// rows. Limit defaults to 100 when zero / negative.
+//
+// Returned slice is a fresh copy of each AuditLog row (Data
+// included) so a caller can hold it past the next store mutation.
+func (m *MemStore) ListAuditLog(_ context.Context, filter AuditLogFilter) ([]AuditLog, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	var out []AuditLog
+	for i := len(m.auditLog) - 1; i >= 0; i-- {
+		row := m.auditLog[i]
+		if filter.AccountID != nil {
+			if row.AccountID == nil || *row.AccountID != *filter.AccountID {
+				continue
+			}
+		}
+		if filter.KindPrefix != "" && !strings.HasPrefix(row.Kind, filter.KindPrefix) {
+			continue
+		}
+		if !filter.Since.IsZero() && row.ReceivedAt.Before(filter.Since) {
+			continue
+		}
+		if !filter.IncludeAnonymous && row.AccountID == nil {
+			continue
+		}
+		// Defensive copy so the caller's slice doesn't alias the
+		// in-memory store row.
+		clone := row
+		if len(row.Data) > 0 {
+			clone.Data = append(json.RawMessage(nil), row.Data...)
+		}
+		out = append(out, clone)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 // ListEventsByWakeID (issue #517 / PR-C, ADR-064) — the
 // in-memory twin of the pgstore ListEventsByWakeID sqlc query.
 // Filters on the jsonb data.wake_id key (the index shape on the
@@ -8131,6 +8223,41 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		keptEvents = append(keptEvents, e)
 	}
 	m.events = keptEvents
+
+	// audit_log backfill (issue #755 / PR-6). Appends one
+	// account.deleted row to the in-memory audit_log mirror so the
+	// memstore surface mirrors the pgstore atomicity contract: the
+	// audit row is recorded at the moment of deletion and outlives
+	// the accounts row. Placement: AFTER the events cascade (the
+	// events table is the per-event trail that gets erased under
+	// GDPR) and BEFORE the parent delete(m.accounts, id).
+	//
+	// Uses appendAuditLogLocked directly (NOT InsertAuditLog) because
+	// DeleteAccount already holds m.mu — sync.Mutex is non-reentrant,
+	// so calling the locked InsertAuditLog would deadlock.
+	auditPayload, mErr := json.Marshal(map[string]string{
+		"source": "grace-sweep",
+		"email":  a.Email,
+		"actor":  "grace-sweep",
+	})
+	if mErr != nil {
+		return fmt.Errorf("memstore: marshal audit_log payload for %s: %w", id, mErr)
+	}
+	var auditAccountID *uuid.UUID
+	if idUUID != uuid.Nil {
+		idCopy := idUUID
+		auditAccountID = &idCopy
+	}
+	m.appendAuditLogLocked(AuditLog{
+		ID:           uuid.New(),
+		Kind:         AuditLogKindAccountDeleted,
+		AccountID:    auditAccountID,
+		AccountEmail: a.Email,
+		Actor:        "grace-sweep",
+		ReceivedAt:   time.Now().UTC(),
+		Data:         auditPayload,
+	})
+
 	delete(m.accounts, id)
 	return nil
 }

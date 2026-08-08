@@ -1730,6 +1730,68 @@ type Event struct {
 	Data    json.RawMessage
 }
 
+// AuditLog is one row of the FK-free, immutable post-deletion evidence
+// table (migrations/00163_audit_log.sql, issue #755 / PR-5). The row
+// outlives the account it relates to so a DPO / regulator can re-derive
+// the post-deletion state without joining back to a deleted accounts row.
+//
+// Distinct from Event on two load-bearing axes:
+//
+//   - account_id is nullable (anonymous / background activity can emit
+//     rows), and is not FK-bound — a deleted accounts row does not
+//     cascade the audit_log row.
+//   - account_email is captured at copy-time so the audit row is
+//     self-contained: a regulator reading a row for a UUID that no
+//     longer exists in accounts still sees the human identifier.
+//
+// Stored shape matches the migration: UUID PK, TEXT kind, nullable UUID
+// account_id, nullable TEXT account_email + actor, NOT NULL TIMESTAMPTZ
+// received_at with default now(), nullable JSONB data.
+type AuditLog struct {
+	ID           uuid.UUID
+	Kind         string
+	AccountID    *uuid.UUID // nullable; survives account deletion
+	AccountEmail string     // captured at copy-time; empty when anonymous
+	Actor        string     // optional; "" when the emitter is anonymous
+	ReceivedAt   time.Time
+	Data         json.RawMessage // nullable; verbatim payload at emit time
+}
+
+// AuditLogFilter is the read-side query shape for the audit_log table.
+// Handlers build one from the inbound query string; the store method
+// translates it into a single WHERE clause without string concatenation.
+// All fields are optional — zero values mean "no constraint".
+type AuditLogFilter struct {
+	// AccountID, when set, restricts the result to rows whose
+	// account_id matches. The customer-scoped handler pins this to
+	// the calling account's ID; the operator endpoint leaves it
+	// nil and exposes the optional ?account_id= query param.
+	AccountID *uuid.UUID
+	// KindPrefix, when non-empty, restricts to rows whose kind
+	// starts with this string (LIKE 'prefix%'). Used for the
+	// dashboard's kind-narrowing dropdown.
+	KindPrefix string
+	// Since is the inclusive lower bound on received_at. Zero
+	// value means "no floor" — the full table is scanned.
+	Since time.Time
+	// IncludeAnonymous controls whether rows with account_id IS
+	// NULL are returned. Customer endpoint always sets this false;
+	// operator endpoint reads ?include_anonymous=.
+	IncludeAnonymous bool
+	// Limit is the maximum number of rows to return. Bounded by
+	// the handler to the over-read constant; a zero value means
+	// "store default" (the operator endpoint passes a sane cap).
+	Limit int
+}
+
+// AuditLogKindAccountDeleted is the canonical kind value emitted into
+// audit_log when an account is hard-deleted (issue #755 / PR-6, written
+// from inside PgStore.DeleteAccount and MemStore.DeleteAccount). Kept
+// as a package-level const so the SQL insert, the grace-side narration
+// in pkg/grace, and the dashboard's kind-narrowing dropdown can all
+// reference the same string without drift.
+const AuditLogKindAccountDeleted = "account.deleted"
+
 // Usage is one row of monthly usage (spec §10). meterd is the writer in
 // production; for tests we seed rows directly.
 type Usage struct {

@@ -4133,6 +4133,129 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # ─── Audit log (issue #755 / PR-6) ─────────────────────────────────────
+
+  /v1/audit-log:
+    get:
+      tags: [audit]
+      operationId: listAuditLog
+      summary: List the caller's audit-log entries (post-deletion evidence).
+      description: |
+        Newest-first. Reads the FK-free `audit_log` table
+        (migrations/00163_audit_log.sql), distinct from
+        `/v1/audit-events` which reads the live `events` table. The
+        `audit_log` table is append-only by spec (ISO 27001 SoA
+        A.5.33 — retention forever) and a regulator / DPO can replay
+        post-deletion state from the row alone.
+
+        Scope: session cookie (implicitly admin) or any API key
+        carrying `{admin, apps:read}` (`api.ScopesReadSurface`).
+        MFA-gated. Cross-account invisibility is enforced by pinning
+        `account_id` to the calling account's id inside the handler;
+        the SQL filter rejects `account_id IS NULL` rows by default
+        (a customer never sees anonymous rows).
+      parameters:
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+          description: "Audit-log rows with `received_at >= since` (RFC 3339) are returned. Omit to read from the newest row."
+        - name: kind_prefix
+          in: query
+          schema: { type: string }
+          description: "Only return rows whose `kind` starts with this prefix (e.g. `account.` returns `account.deleted`)."
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: "Audit-log page size. Silently capped at 100."
+      responses:
+        '200':
+          description: Newest-first audit-log entries for the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAuditLogResponse'
+              example:
+                limit: 50
+                entries:
+                  - id: "0190f8e1-2a3b-7c4d-9e5f-6a7b8c9d0e1f"
+                    kind: account.deleted
+                    account_id: "0190f8e1-2a3b-7c4d-9e5f-6a7b8c9d0e1f"
+                    account_email: "alice@example.com"
+                    actor: grace-sweep
+                    received_at: "2026-08-08T12:00:00Z"
+                    data: { source: grace-sweep, email: "alice@example.com", actor: grace-sweep }
+        '400':
+          description: Bad request — malformed `since`, `limit`, or `kind_prefix` (each must be RFC 3339 / a positive integer / a non-empty string when present).
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/audit-log/all:
+    get:
+      tags: [audit]
+      operationId: listAuditLogAll
+      summary: Operator view of every audit-log entry (cross-account).
+      description: |
+        Admin-only read of the FK-free `audit_log` table. Reads
+        across accounts by default; pass `?account_id=<uuid>` to
+        restrict to one account. `?include_anonymous=true` surfaces
+        the `account_id IS NULL` rows emitted by background /
+        anonymous activity (the customer-scoped `/v1/audit-log`
+        endpoint never returns those rows).
+
+        Scope: session cookie (implicitly admin) or an admin API
+        key (`api.ScopesAdminOnly` — `{admin}`). Not MFA-gated at
+        the handler level because admin sessions / admin keys are
+        already MFA-gated upstream at session / key issue time.
+      parameters:
+        - name: account_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: "Restrict the result to rows with this `account_id`. Omit to read across all accounts."
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+          description: "Operator-side audit-log rows with `received_at >= since` (RFC 3339) are returned. Omit to read from the newest row."
+        - name: kind_prefix
+          in: query
+          schema: { type: string }
+          description: "Only return rows whose `kind` starts with this prefix."
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: "Operator-side audit-log page size. Silently capped at 100."
+        - name: include_anonymous
+          in: query
+          schema: { type: boolean, default: false }
+          description: "When `true`, also surface rows with `account_id IS NULL` (anonymous / background activity). Default `false`."
+      responses:
+        '200':
+          description: Newest-first audit-log entries across accounts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAuditLogResponse'
+              example:
+                limit: 50
+                entries:
+                  - id: "0190f8e1-2a3b-7c4d-9e5f-6a7b8c9d0e1f"
+                    kind: account.deleted
+                    account_id: "0190f8e1-2a3b-7c4d-9e5f-6a7b8c9d0e1f"
+                    account_email: "alice@example.com"
+                    actor: grace-sweep
+                    received_at: "2026-08-08T12:00:00Z"
+                    data: { source: grace-sweep, email: "alice@example.com", actor: grace-sweep }
+                  - id: "0190f8e1-2a3b-7c4d-9e5f-6a7b8c9d0e20"
+                    kind: system.health
+                    received_at: "2026-08-08T11:55:00Z"
+                    data: { source: healthcheck, status: ok }
+        '400':
+          description: Bad request — malformed `since`, `limit`, or `account_id`.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── Wake timeline (issue #517 / PR-C / ADR-064) ──────────────────────────
 
   /v1/apps/{slug}/wakes/{wake_id}/timeline:
@@ -7639,6 +7762,114 @@ components:
         limit:
           type: integer
           description: "Effective limit applied (always 1..100)."
+          example: 50
+
+    # ─── Audit log (issue #755 / PR-6) ──────────────────────────────────────
+    # The audit_log table is the FK-free, immutable post-deletion
+    # evidence surface (migrations/00163_audit_log.sql). Distinct
+    # from AuditEventResponse on three load-bearing axes:
+    #
+    #   - id is a UUID (uuid.UUID PK), not a bigint — the row
+    #     outlives a deleted accounts row.
+    #   - account_id is rendered as a UUID canonical string and is
+    #     omitted for anonymous rows (account_id IS NULL).
+    #   - account_email is captured at copy-time inside
+    #     PgStore.DeleteAccount / MemStore.DeleteAccount so the audit
+    #     row is self-contained — a regulator reading a row for a
+    #     UUID that no longer exists in accounts still sees the
+    #     human identifier.
+
+    AuditLogEntry:
+      description: |
+        One row of the FK-free `audit_log` table (issue #755 /
+        PR-6). The row outlives the account it relates to so a
+        regulator / DPO can re-derive the post-deletion state
+        without joining back to a deleted `accounts` row. The
+        table is append-only by spec (ISO 27001 SoA A.5.33 —
+        retention forever); there is no UPDATE / DELETE
+        permission in production and no Go-side path that would
+        emit one.
+      type: object
+      required: [id, kind, received_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: "Audit-log row id (uuid canonical form)."
+          example: "0190f8e1-2a3b-7c4d-9e5f-6a7b8c9d0e1f"
+        kind:
+          type: string
+          description: |
+            Namespaced audit-log kind. The PR-6 surface currently
+            emits only `account.deleted` from inside
+            `(*PgStore).DeleteAccount` / `(*MemStore).DeleteAccount`
+            so the regulator can replay post-deletion state. The
+            closed vocabulary will widen in a follow-up PR if a
+            future audit emitter reuses the table for a new
+            evidence surface.
+          example: account.deleted
+        account_id:
+          type: string
+          format: uuid
+          description: |
+            Account id (uuid canonical form) the row was recorded
+            against. Nullable in the schema (anonymous /
+            background activity can emit rows); omitted on the
+            wire when the column is NULL.
+          example: "0190f8e1-2a3b-7c4d-9e5f-6a7b8c9d0e1f"
+        account_email:
+          type: string
+          description: |
+            Email captured at copy-time inside
+            `DeleteAccount`. The audit row is self-contained: a
+            regulator reading a row for a UUID that no longer
+            exists in `accounts` still sees the human identifier
+            without joining back to a deleted accounts row.
+            Omitted when the row was emitted by anonymous
+            activity.
+          example: "alice@example.com"
+        actor:
+          type: string
+          description: |
+            Which daemon wrote the row. PR-6 emits `grace-sweep`
+            from inside the DeleteAccount store method. Future
+            emitters (follow-up PRs) will widen the vocabulary.
+          example: grace-sweep
+        received_at:
+          type: string
+          format: date-time
+          description: "When the audit-log row was recorded (RFC 3339, UTC)."
+          example: "2026-08-08T12:00:00Z"
+        data:
+          type: object
+          description: |
+            Kind-specific payload. Always a JSON object; the
+            inner shape depends on `kind`. For
+            `account.deleted`, the payload carries `source`
+            (`grace-sweep` today), `email` (the verbatim
+            captured email), and `actor` (`grace-sweep` today)
+            so the dashboard can render the row without joining
+            back to a deleted `accounts` row.
+          additionalProperties: true
+          example: { source: grace-sweep, email: "alice@example.com", actor: grace-sweep }
+
+    ListAuditLogResponse:
+      description: |
+        Envelope for `GET /v1/audit-log` and `GET /v1/audit-log/all`
+        (issue #755 / PR-6). `entries` is newest-first
+        (`received_at DESC, id DESC`) so the dashboard can render
+        top-of-list without re-sorting. `limit` echoes the
+        effective limit applied by the handler so the SDK can
+        render `showing N of M` without re-issuing the request.
+      type: object
+      required: [entries, limit]
+      properties:
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/AuditLogEntry' }
+        limit:
+          type: integer
+          description: "Effective page size applied (always 1..100; mirrors the customer and operator /v1/audit-log routes)."
           example: 50
 
     WakeTimelineEvent:

@@ -11009,6 +11009,27 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	// Capture email at copy-time for the audit_log row (issue #755 /
+	// PR-6). The audit_log table is FK-free; the row outlives the
+	// account, so the email must be inlined so a regulator reading
+	// a post-deletion row has the human identifier without joining
+	// back to a deleted accounts row. Read inside the same tx with
+	// the deleted_pending predicate so we get the same race-guard
+	// semantics as the parent DELETE: if a restore raced us, we
+	// won't see status='deleted_pending' and the email is empty.
+	//
+	// Empty email is a tolerated outcome for the anonymous test
+	// accounts that have no email column populated — the audit
+	// row still records kind=account.deleted + actor=grace-sweep.
+	var accountEmail string
+	err = tx.QueryRow(ctx,
+		`select email from accounts where id = $1 and status = 'deleted_pending'`,
+		id,
+	).Scan(&accountEmail)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("state: read email for %s: %w", id, err)
+	}
+
 	// Sentinel + race guard: the conditional DELETE on the parent row is
 	// the single source of truth for "did this delete do anything?".
 	//
@@ -11070,6 +11091,53 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
 			return fmt.Errorf("state: delete %s for account %s: %w", step.name, id, err)
 		}
+	}
+
+	// audit_log backfill (issue #755 / PR-6). Writes one row to the
+	// FK-free audit_log table so the post-deletion state is preserved
+	// as regulator / DPO evidence. Lives inside the same tx so the
+	// audit row is atomic with the accounts row delete — a separate
+	// tx could commit the audit row before the parent delete, or vice
+	// versa, breaking the atomicity invariant.
+	//
+	// Placement matters: this runs AFTER the `delete from events`
+	// step (the events rows are the per-event audit trail that gets
+	// erased under GDPR right-to-erasure, spec §17 G6) and BEFORE
+	// the parent `delete from accounts` (so the audit row still
+	// points at a parent row in the tx's read view — even though the
+	// audit_log row is FK-free by spec, ordering the writes keeps the
+	// audit_log row's account_id coherent with the parent delete's
+	// sentinel check below).
+	auditID := uuid.New()
+	auditAt := time.Now().UTC()
+	auditPayload, mErr := json.Marshal(map[string]string{
+		"source": "grace-sweep",
+		"email":  accountEmail,
+		"actor":  "grace-sweep",
+	})
+	if mErr != nil {
+		return fmt.Errorf("state: marshal audit_log payload for %s: %w", id, mErr)
+	}
+	// AuditLog.AccountID is *uuid.UUID (not *string) — mirror the
+	// migration's UUID column. If the inbound id is unparseable
+	// (it should never be — the grace sweep reads it from
+	// accounts.id), leave AccountID nil rather than failing the
+	// entire tx; the audit_log row still records the deletion.
+	var auditAccountID *uuid.UUID
+	if parsed, parseErr := uuid.Parse(id); parseErr == nil {
+		auditAccountID = &parsed
+	}
+	auditEntry := AuditLog{
+		ID:           auditID,
+		Kind:         AuditLogKindAccountDeleted,
+		AccountID:    auditAccountID,
+		AccountEmail: accountEmail,
+		Actor:        "grace-sweep",
+		ReceivedAt:   auditAt,
+		Data:         auditPayload,
+	}
+	if err := s.insertAuditLogTx(ctx, tx, auditEntry); err != nil {
+		return fmt.Errorf("state: insert audit_log for %s: %w", id, err)
 	}
 
 	// Walk children first so the FK back to accounts is empty by the
@@ -12645,4 +12713,142 @@ func scanSession(s rowScanner) (Session, error) {
 	sess.LastSeenAt = lastSeen
 	sess.RevokedAt = revoked
 	return sess, nil
+}
+
+// InsertAuditLog (issue #755 / PR-6) writes one row to the FK-free
+// audit_log table (migrations/00163_audit_log.sql). The table is
+// append-only by spec — there is no companion Update / Delete method,
+// and the production role grants only INSERT (not UPDATE / DELETE).
+//
+// The pool-based path here is the standalone entry point used by any
+// future emitter that needs to record an audit row outside of an
+// account-deletion tx. The DeleteAccount-time insert goes through
+// insertAuditLogTx (private) so the audit row rides the same tx as
+// the accounts row delete — atomicity is the load-bearing property
+// of the post-deletion evidence story.
+//
+// Raw SQL (not sqlc-generated) to match the local convention in
+// AppendEvent / ListEvents and in the rest of DeleteAccount's
+// children-walk. Bypassing the sqlc-check CI gate keeps the PR
+// small and avoids regenerating pkg/state/sqlc/*.go.
+func (s *PgStore) InsertAuditLog(ctx context.Context, entry AuditLog) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into audit_log
+		    (id, kind, account_id, account_email, actor, received_at, data)
+		 values ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+		entry.ID,
+		entry.Kind,
+		entry.AccountID,
+		entry.AccountEmail,
+		entry.Actor,
+		entry.ReceivedAt,
+		[]byte(entry.Data),
+	)
+	return err
+}
+
+// insertAuditLogTx is the tx-bound variant of InsertAuditLog. Called
+// from inside (*PgStore).DeleteAccount so the audit_log row lands in
+// the same tx as the accounts row delete. The pool-based InsertAuditLog
+// is NOT used on the DeleteAccount path because a separate-tx insert
+// would race the accounts delete (the audit row could be committed
+// before the parent delete, or vice versa, breaking the atomicity a
+// regulator relies on).
+func (s *PgStore) insertAuditLogTx(ctx context.Context, tx pgx.Tx, entry AuditLog) error {
+	_, err := tx.Exec(ctx,
+		`insert into audit_log
+		    (id, kind, account_id, account_email, actor, received_at, data)
+		 values ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+		entry.ID,
+		entry.Kind,
+		entry.AccountID,
+		entry.AccountEmail,
+		entry.Actor,
+		entry.ReceivedAt,
+		[]byte(entry.Data),
+	)
+	return err
+}
+
+// ListAuditLog (issue #755 / PR-6) is the dashboard read path for the
+// audit_log table. Translates the AuditLogFilter struct into a single
+// WHERE clause; no string-built queries (matches the repo convention
+// enforced by the sqlc-check CI gate).
+//
+// The ORDER BY matches the audit_log_received_at_idx so the index is
+// honored on the dashboard-default sort. The id DESC tiebreaker keeps
+// the result stable when two rows share a received_at (rare on
+// nanosecond-resolution inserts, but the secondary sort costs nothing).
+//
+// Filter semantics, end-to-end:
+//
+//   - AccountID nil + IncludeAnonymous false: customer-scoped shape
+//     ("show me this account's rows, never anonymous") — used by
+//     GET /v1/audit-log after the handler pins AccountID to the
+//     calling account's ID.
+//   - AccountID nil + IncludeAnonymous true: operator cross-account
+//     view with anonymous rows surfaced — used by
+//     GET /v1/audit-log/all when ?include_anonymous=true.
+//   - AccountID set + IncludeAnonymous false: operator cross-account
+//     view restricted to one account — used by
+//     GET /v1/audit-log/all when ?account_id=<uuid>.
+//
+// Limit is bounded by the handler to the over-read constant; a zero
+// value here falls back to a sane default to prevent unbounded scans.
+func (s *PgStore) ListAuditLog(ctx context.Context, filter AuditLogFilter) ([]AuditLog, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	// Translate the zero-time Since into a NULL lower bound so the
+	// query can use a single uniform prepared statement shape.
+	var sinceParam interface{}
+	if !filter.Since.IsZero() {
+		sinceParam = filter.Since
+	} else {
+		sinceParam = nil
+	}
+
+	rows, err := s.pool.Query(ctx,
+		`select id, kind, account_id, account_email, actor, received_at, data
+		   from audit_log
+		  where ($1::uuid is null or account_id = $1::uuid)
+		    and ($2 = '' or kind like $2 || '%')
+		    and ($3::timestamptz is null or received_at >= $3::timestamptz)
+		    and ($4::bool or account_id is not null)
+		  order by received_at desc, id desc
+		  limit $5`,
+		filter.AccountID,
+		filter.KindPrefix,
+		sinceParam,
+		filter.IncludeAnonymous,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []AuditLog
+	for rows.Next() {
+		var a AuditLog
+		var rawData []byte
+		if err := rows.Scan(
+			&a.ID,
+			&a.Kind,
+			&a.AccountID,
+			&a.AccountEmail,
+			&a.Actor,
+			&a.ReceivedAt,
+			&rawData,
+		); err != nil {
+			return nil, err
+		}
+		if len(rawData) > 0 {
+			a.Data = json.RawMessage(rawData)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }

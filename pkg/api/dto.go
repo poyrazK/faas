@@ -2306,6 +2306,49 @@ type ListAuditEventsResponse struct {
 	Limit  int                  `json:"limit"`
 }
 
+// --- audit_log (issue #755 / PR-6) ---------------------------------------
+//
+// AuditLogEntry is the wire shape for one row of the FK-free audit_log
+// table (migrations/00163_audit_log.sql). Distinct from
+// AuditEventResponse on three load-bearing axes:
+//
+//   - ID is a UUID, not a bigint — the table uses uuid.UUID PK so the
+//     row outlives a deleted accounts row.
+//   - AccountID is a UUID rendered as a canonical-hyphenated string
+//     (matches uuid.UUID.String()). It is omitempty: anonymous rows
+//     (account_id IS NULL, e.g. background activity) render without
+//     an AccountID field on the wire.
+//   - AccountEmail is the verbatim email captured at copy-time inside
+//     PgStore.DeleteAccount / MemStore.DeleteAccount. It is omitempty:
+//     anonymous rows have no email, and the regulator can still read
+//     them with an empty AccountEmail field. Empty string == "no
+//     customer-context at the moment of emission".
+//
+// Data is the raw jsonb payload; kind-specific schemas are documented
+// per-kind in the ADR. ReceivedAt is RFC 3339 so the dashboard's
+// "newest first" sort stays correct across timezones.
+type AuditLogEntry struct {
+	ID           string          `json:"id"` // uuid canonical form
+	Kind         string          `json:"kind"`
+	AccountID    string          `json:"account_id,omitempty"`    // uuid canonical; absent on anonymous rows
+	AccountEmail string          `json:"account_email,omitempty"` // captured at copy-time
+	Actor        string          `json:"actor,omitempty"`
+	ReceivedAt   string          `json:"received_at"` // RFC 3339
+	Data         json.RawMessage `json:"data,omitempty"`
+}
+
+// ListAuditLogResponse is the wire shape for GET /v1/audit-log and
+// GET /v1/audit-log/all. Entries are newest-first
+// (received_at DESC, id DESC) per the audit_log_received_at_idx so the
+// dashboard can render top-of-list without re-sorting. Limit echoes
+// the effective limit applied by the handler (capped at
+// listAuditLogLimitMax) so the SDK can display "showing 50 of N"
+// without re-issuing the request.
+type ListAuditLogResponse struct {
+	Entries []AuditLogEntry `json:"entries"`
+	Limit   int             `json:"limit"`
+}
+
 // --- GitHub install bind picker (PR-B; §11) ---------------------------------
 //
 // InstallBindRequest is the body for both POST /v1/install/repos/list
