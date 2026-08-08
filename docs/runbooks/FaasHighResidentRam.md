@@ -50,5 +50,24 @@ amtool silence add \
 
 The invariant §6.2/2 (Σ(ram_mb+8) ≤ 47,600 MB) is hard-enforced; the
 alert is the operator's leading indicator that a wake will start
-failing admission. Eviction policy is per-tenant — see `docs/ops/`
-for the eviction runbook.
+failing admission.
+
+Eviction is already running by the time this alert fires: the reaper
+sheds instances above **38,080 MB** (80 % of the ceiling), well below
+the 47,600 MB admission line. Full policy, selection order and
+recovery steps: [`docs/ops/eviction.md`](../ops/eviction.md).
+
+Two facts that change the triage:
+
+- An evicted instance lands in `stopped`, **not** `parked` — no
+  snapshot is taken, so the customer's next request is a cold boot.
+- A successful eviction emits **no log line and no metric**. The SQL
+  in the eviction runbook's *Verify* section is the only after-the-fact
+  record.
+
+```bash
+# Ledger truth — compare against 47600 (ceiling) and 38080 (eviction).
+sudo -u postgres psql -d faas -t -A -c "
+  SELECT COALESCE(SUM(ram_mb + 8), 0) FROM instances
+  WHERE state IN ('waking','cold_booting','running','snapshotting');"
+```
