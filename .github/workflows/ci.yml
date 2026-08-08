@@ -274,7 +274,7 @@ jobs:
         run: make sdk-check
 
       - name: upload to Codecov (pg shard 1)
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           files: coverage/cover-shard1.out
           flags: unittests
@@ -337,7 +337,7 @@ jobs:
         run: make check-state-coverage COVERFILE=coverage/cover-shard2.out
 
       - name: upload to Codecov (pg shard 2)
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           files: coverage/cover-shard2.out
           flags: unittests
@@ -367,7 +367,7 @@ jobs:
           go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard3.out -covermode=atomic $PKGS
 
       - name: upload to Codecov (pure Go shard 1)
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           files: coverage/cover-shard3.out
           flags: unittests
@@ -397,7 +397,7 @@ jobs:
           go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
       - name: upload to Codecov (pure Go shard 2)
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           files: coverage/cover-shard4.out
           flags: unittests
