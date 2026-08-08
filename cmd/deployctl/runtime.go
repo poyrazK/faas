@@ -38,6 +38,7 @@ func (r hostRuntime) Preflight(_ context.Context, manifest releasebundle.Manifes
 	for _, path := range []string{
 		filepath.Join(releaseRoot, "bin", "migrate"),
 		filepath.Join(releaseRoot, "systemd"),
+		filepath.Join(releaseRoot, "observability"),
 		"/etc/systemd/system",
 		"/run/faas",
 		"/srv/fc/base",
@@ -97,6 +98,9 @@ func (r hostRuntime) Activate(ctx context.Context, releaseRoot string) error {
 			return err
 		}
 	}
+	if err := r.activateObservability(ctx, releaseRoot); err != nil {
+		return err
+	}
 	if err := runCommand(ctx, "systemctl", "daemon-reload"); err != nil {
 		return err
 	}
@@ -107,6 +111,58 @@ func (r hostRuntime) Activate(ctx context.Context, releaseRoot string) error {
 	}
 	_ = runCommand(ctx, "systemctl", "stop", "faas-gatewayd.service")
 	_ = runCommand(ctx, "systemctl", "disable", "faas-gatewayd.service")
+	return nil
+}
+
+// activateObservability installs the release bundle's static
+// observability files (prometheus.yml, alert rules, prometheus +
+// alertmanager units) and reloads the running Prometheus so the
+// dashboard pipeline always matches the deployed daemon set.
+//
+// The bundle ships a fully static config (deploy/controlplane/
+// observability/prometheus.yml) so no host-side templating is needed;
+// the manifest's checksums verify it before activation.
+func (r hostRuntime) activateObservability(ctx context.Context, releaseRoot string) error {
+	obs := filepath.Join(releaseRoot, "observability")
+	if _, err := os.Stat(obs); err != nil {
+		if os.IsNotExist(err) {
+			return nil // no observability assets in this release
+		}
+		return err
+	}
+	mode := fs.FileMode(0o644)
+	for _, file := range []string{"prometheus.yml", "faas.rules.yml", "pg_backup.rules.yml"} {
+		src := filepath.Join(obs, file)
+		if _, err := os.Stat(src); err != nil {
+			return fmt.Errorf("observability asset %s: %w", file, err)
+		}
+		if err := installAtomic(src, filepath.Join("/etc/prometheus", file), mode); err != nil {
+			return fmt.Errorf("install %s: %w", file, err)
+		}
+	}
+	for _, unit := range []string{"prometheus.service", "alertmanager.service"} {
+		src := filepath.Join(obs, unit)
+		if _, err := os.Stat(src); err != nil {
+			return fmt.Errorf("observability unit %s: %w", unit, err)
+		}
+		if err := installAtomic(src, filepath.Join(r.unitDir, unit), mode); err != nil {
+			return fmt.Errorf("install %s: %w", unit, err)
+		}
+	}
+	// Validate the rendered config before reloading. promtool lives at
+	// /usr/local/bin/promtool on the box (ansible prometheus role);
+	// if it's missing, skip validation but still reload.
+	if err := runCommand(ctx, "/usr/local/bin/promtool", "check", "config", "/etc/prometheus/prometheus.yml"); err != nil {
+		return fmt.Errorf("promtool check config: %w", err)
+	}
+	_ = runCommand(ctx, "systemctl", "daemon-reload")
+	_ = runCommand(ctx, "systemctl", "enable", "prometheus.service")
+	_ = runCommand(ctx, "systemctl", "enable", "alertmanager.service")
+	// Reload (not restart) so active series/wal survive; first deploy
+	// falls back to start via reload-or-restart.
+	if err := runCommand(ctx, "systemctl", "reload-or-restart", "prometheus.service"); err != nil {
+		return fmt.Errorf("reload prometheus: %w", err)
+	}
 	return nil
 }
 

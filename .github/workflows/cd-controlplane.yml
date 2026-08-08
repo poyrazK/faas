@@ -114,7 +114,7 @@ jobs:
           set -euo pipefail
           RELEASE_ID="${GITHUB_SHA}"
           BUNDLE_ROOT="${RUNNER_TEMP}/faas-release/${RELEASE_ID}"
-          mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/tmpfiles.d"
+          mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/tmpfiles.d" "${BUNDLE_ROOT}/observability"
           for bin in apid schedd gatewayd-public gatewayd-internal imaged meterd githubd vmmd gregale migrate; do
             install -m 0755 "bin/${bin}" "${BUNDLE_ROOT}/bin/${bin}"
           done
@@ -133,6 +133,13 @@ jobs:
           done
           test ! -e "${BUNDLE_ROOT}/systemd/faas-gatewayd.service"
           install -m 0644 deploy/controlplane/tmpfiles.d/faas.conf "${BUNDLE_ROOT}/tmpfiles.d/faas.conf"
+          install -m 0644 \
+            deploy/controlplane/observability/prometheus.yml \
+            deploy/controlplane/observability/faas.rules.yml \
+            deploy/controlplane/observability/pg_backup.rules.yml \
+            deploy/controlplane/observability/prometheus.service \
+            deploy/controlplane/observability/alertmanager.service \
+            "${BUNDLE_ROOT}/observability/"
           go run ./cmd/deployctl bundle-create "${BUNDLE_ROOT}" "${RELEASE_ID}" "${GITHUB_SHA}" "linux/amd64"
           echo "BUNDLE_ROOT=${BUNDLE_ROOT}" >> "${GITHUB_ENV}"
           echo "RELEASE_ID=${RELEASE_ID}" >> "${GITHUB_ENV}"

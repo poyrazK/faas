@@ -1,0 +1,35 @@
+# Prometheus alert rules — off-host Postgres backup (issue #250).
+#
+# Companion to deploy/ansible/roles/prometheus/files/faas.rules.yml
+# (spec §12 SLO thresholds). This file holds the PgBackupStale alert;
+# splitting it out lets the postgres_backup ansible role own it
+# without a cross-role edit on the canonical rules file.
+#
+# Severity convention: matches faas.rules.yml header (info / warn /
+# page). PgBackupStale is `page` because a stale push means RPO is
+# degrading silently — the cluster keeps running but the off-host
+# recovery point slides into the local archive's retention window.
+#
+# Runbook: docs/runbooks/PostgresBackup.md.
+
+groups:
+  - name: faas.pg_backup
+    rules:
+      - alert: PgBackupStale
+        # `pg_backup_last_pushed_seconds` is set by cmd/apid's
+        # pgBackupPushedSampler (issue #250); 0 when the basebackup
+        # root is empty, otherwise the age of the newest tarball in
+        # /var/lib/pgsql/basebackup/. The alert fires when the push
+        # is missing for >24 h (spec §14 M8 + issue #250 acceptance
+        # bar — single-day retention is the policy).
+        expr: time() - pg_backup_last_pushed_seconds > 86400
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "Postgres basebackup not pushed to Hetzner Storage Box for >24h"
+          description: |
+            Last successful push: {{ $value | humanizeDuration }} ago.
+            Check `systemctl status faas-pg-basebackup-push.timer` and
+            `journalctl -u faas-pg-basebackup-push.service` on the CP host.
+            Runbook: docs/runbooks/PostgresBackup.md
