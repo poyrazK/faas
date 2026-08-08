@@ -1,4 +1,5 @@
 openapi: 3.1.0
+# throwaway drift marker for issue #745 gate verification — DO NOT MERGE
 
 info:
   title: one-box FaaS REST API
