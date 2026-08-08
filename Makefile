@@ -1,5 +1,10 @@
 # One-box FaaS — build & ops entrypoints (spec §Commands).
-# Go >= 1.23. One binary per cmd/ dir.
+# Go >= 1.24. One binary per cmd/ dir.
+# (Bumped from 1.23: cmd/vmmd-stream-bridge uses the Go 1.24+
+# http.Protocols API for H2C — srv.Protocols.SetUnencryptedHTTP2(true).
+# go.mod pins 1.25.7; this comment is the floor for the toolchain
+# so a developer on 1.23.x sees a clean compile error rather than
+# a runtime panic.)
 
 GO      ?= go
 GOOS    ?= $(shell $(GO) env GOOS)

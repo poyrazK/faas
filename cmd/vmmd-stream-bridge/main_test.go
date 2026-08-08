@@ -385,6 +385,131 @@ func TestNewHandler_PropagatesContextCancellation(t *testing.T) {
 	}
 }
 
+// TestSanitizeCRLF is the unit-level pin for finding #6 from
+// PR #754's medium code review. The function is the bridge-side
+// defense-in-depth: vmmd already strips CR/LF in streamBridgeEnv
+// (pkg/vmmdgrpc/forward.go), but the bridge is a stand-alone
+// binary that may be invoked from other surfaces (tests, future
+// operator override, misconfigured host env). The handler calls
+// sanitizeCRLF on every env-derived value before writing it to the
+// guest TCP socket; without this test a future refactor that drops
+// the call would re-open the CRLF-injection hole.
+func TestSanitizeCRLF(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty", in: "", want: ""},
+		{name: "no-control", in: "hello world", want: "hello world"},
+		{name: "bare-LF", in: "evil\ninjected", want: "evilinjected"},
+		{name: "bare-CR", in: "evil\rinjected", want: "evilinjected"},
+		{name: "CRLF", in: "evil\r\ninjected", want: "evilinjected"},
+		{name: "NUL-truncation", in: "real\x00fake", want: "realfake"},
+		{name: "multiple-LFs", in: "a\nb\nc", want: "abc"},
+		{name: "leading-CRLF", in: "\r\nX", want: "X"},
+		{name: "trailing-CRLF", in: "X\r\n", want: "X"},
+		{name: "only-CRLF", in: "\r\n", want: ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := sanitizeCRLF(c.in); got != c.want {
+				t.Errorf("sanitizeCRLF(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// TestNewHandler_SanitizesCRLFInEnvVars is the wire-level pin for
+// the CRLF sanitization: a FAAS_BRIDGE_HOST value containing CRLF
+// must NOT inject an extra header line into the H1 request to the
+// guest. Runs the handler with a malicious FAAS_BRIDGE_HOST and
+// asserts the captured guest bytes contain no extra header line.
+func TestNewHandler_SanitizesCRLFInEnvVars(t *testing.T) {
+	ln, fake := startFakeGuest(t)
+	defer func() { _ = ln.Close() }()
+	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
+
+	// Host header with embedded CRLF + injected header. The bridge
+	// MUST strip the CRLF before writing — otherwise the guest sees
+	// `Host: evil.com\r\nX-Injected: bad\r\n` which the guest's
+	// net/http would parse as two headers.
+	t.Setenv("FAAS_BRIDGE_METHOD", "GET")
+	t.Setenv("FAAS_BRIDGE_URL", "/")
+	t.Setenv("FAAS_BRIDGE_HOST", "evil.com\r\nX-Injected: bad")
+	t.Setenv("FAAS_BRIDGE_HEADERS", "X-Custom=clean")
+
+	bindSock := tempUnixSock(t)
+	lnBridge, err := net.Listen("unix", bindSock)
+	if err != nil {
+		t.Fatalf("bridge listen: %v", err)
+	}
+	defer func() { _ = lnBridge.Close() }()
+	srv := &http.Server{Handler: newHandler("127.0.0.1", mustPort(t, portStr), time.Now().Add(time.Minute))}
+	srv.Protocols = new(http.Protocols)
+	srv.Protocols.SetHTTP1(true)
+	go func() { _ = srv.Serve(lnBridge) }()
+	defer func() {
+		shutCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutCtx)
+	}()
+
+	c := &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return net.Dial("unix", bindSock)
+		},
+	}}
+	resp, err := c.Get("http://unix/")
+	if err != nil {
+		t.Fatalf("client do: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	// Allow the fake guest to capture the bytes (same shape as
+	// TestNewHandler_WritesHTTP11RequestLine).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		fake.mu.Lock()
+		got := string(fake.request)
+		fake.mu.Unlock()
+		if strings.Contains(got, "\r\n\r\n") {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	fake.mu.Lock()
+	got := string(fake.request)
+	fake.mu.Unlock()
+
+	// The CRLF is stripped (no header line break), but the
+	// concatenation "evil.com" + "X-Injected: bad" survives as
+	// ONE Host header value. The injection prevention is the
+	// line break — without it, the guest's net/http sees a single
+	// header line and ignores the embedded colon. Assert that:
+	//   1. There's exactly one Host header line (no second header
+	//      produced from the injected text).
+	//   2. The Host value is the sanitized concatenation.
+	//   3. X-Custom passes through unchanged.
+	hostLines := 0
+	for _, line := range strings.Split(got, "\r\n") {
+		if strings.HasPrefix(line, "Host:") {
+			hostLines++
+		}
+	}
+	if hostLines != 1 {
+		t.Errorf("CRLF injection succeeded (got %d Host header lines, want 1): %q", hostLines, got)
+	}
+	if !strings.Contains(got, "Host: evil.comX-Injected: bad") {
+		t.Errorf("expected sanitized Host header value to be the CRLF-stripped concatenation, got: %q", got)
+	}
+	if !strings.Contains(got, "X-Custom: clean") {
+		t.Errorf("expected X-Custom header in request, got: %q", got)
+	}
+}
+
 // --- helpers ---
 
 func tempUnixSock(t *testing.T) string {

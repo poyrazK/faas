@@ -82,6 +82,14 @@ const ForwardStreamMaxBodyBytes = 100 * 1024 * 1024
 // window.
 const ForwardStreamResponseTimeout = 900 * time.Second
 
+// streamBridgeSessionDeadline is the wall-clock ceiling for a
+// single v2 bridge session. Matches rawStreamSessionDeadline in
+// pkg/gateway/forwardproxy.go (24 h). The bridge binary enforces
+// it internally (cmd/vmmd-stream-bridge/main.go::defaultSessionDeadline);
+// vmmd passes the timestamp as argv[4] so the bridge can hand it
+// to context.WithDeadline on the per-request goroutine.
+const streamBridgeSessionDeadline = 24 * time.Hour
+
 // ForwardHTTPStream (issue #471 PR-B + PR-C / ADR-047) is the
 // bidi bridge the gatewayd hot path uses for every request. Wire
 // shape:
@@ -182,7 +190,12 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	//       PR confirms end-to-end on `make metal-lima`.
 	// The selection is a runtime var (not build tag) so the cutover
 	// is a one-line change once H2C framing is metal-verified.
-	if streamBridgeVersion == "v2" {
+	// IMPORTANT: the lookup must be per-request (not captured at
+	// package init) so FAAS_STREAM_BRIDGE_VERSION=v1 flips the
+	// bridge path live without a vmmd restart. ADR-028 amendment
+	// explicitly promises this no-deploy rollback; capturing the
+	// env at init time breaks that promise silently.
+	if currentStreamBridgeVersion() == "v2" {
 		return s.forwardHTTPStreamV2(stream, reqInit, netnsName, maxBody, respTimeout)
 	}
 
@@ -479,13 +492,47 @@ const vmmdStreamBridgePath = "/opt/faas/current/bin/vmmd-stream-bridge"
 // commits to H2C on the inner leg end-to-end. Override via
 // FAAS_STREAM_BRIDGE_VERSION=v1 for the live rollback to the
 // shell-bridge path while v2 is being validated on the wire.
-var streamBridgeVersion = getStreamBridgeVersion()
+//
+// The lookup is per-request, NOT captured at package init: ADR-028's
+// amendment promises a no-deploy rollback (set env var → next RPC
+// flips to v1). Package-init capture would silently ignore a
+// post-start env mutation and break that promise; see
+// currentStreamBridgeVersion below.
+//
+// The package-level var is kept for two reasons: (1) unit tests
+// that pre-set the version via t.Setenv need a synchronous read
+// surface, (2) SetStreamBridgeVersion below is the documented seam
+// for tests that want to pin the version across a test (avoiding
+// the per-request env lookup). Production code MUST NOT read this
+// var directly; always go through currentStreamBridgeVersion().
+var streamBridgeVersion = "v2"
 
-func getStreamBridgeVersion() string {
+// SetStreamBridgeVersion overrides the package-level selector for
+// the duration of a test. Production must NOT call this — it
+// bypasses the env-var rollback story. Tests use t.Cleanup to
+// restore the default.
+func SetStreamBridgeVersion(v string) {
+	streamBridgeVersion = v
+}
+
+// currentStreamBridgeVersion is the per-request lookup. It returns
+// the FAAS_STREAM_BRIDGE_VERSION env var if set, otherwise the
+// default "v2". This is the function production code calls; reading
+// the package var directly is a test-only path. Reading the env
+// per-request keeps the documented no-deploy rollback honest.
+func currentStreamBridgeVersion() string {
 	if v := os.Getenv("FAAS_STREAM_BRIDGE_VERSION"); v != "" {
 		return v
 	}
 	return "v2"
+}
+
+// getStreamBridgeVersion was the init-time entry point before
+// PR #754's code review surfaced the rollback promise gap. Kept
+// as a deprecated alias so any external caller (none today, but
+// the symbol is exported) gets a compile-time hit.
+func getStreamBridgeVersion() string {
+	return currentStreamBridgeVersion()
 }
 
 // rawBridgePathEnv is the env-var name that lets the test suite
@@ -1275,6 +1322,14 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
 
 	ctx := stream.Context()
+	// respTimeout was the v1 shell-bridge response-writer budget
+	// (ForwardStreamResponseTimeout = 900 s). For v2 the bridge
+	// session is capped at defaultSessionDeadline (24 h, set below
+	// as sessionDeadline) and the H2C request inherits stream.Context()
+	// directly. The parameter is kept on the signature so the v1 /
+	// v2 dispatch site stays symmetric; vmmd-side callers do not
+	// need to know which bridge handles the request.
+	_ = respTimeout
 
 	// 1. Resolve the bridge binary path (test-override aware).
 	bridgePath, err := resolveStreamBridgePath()
@@ -1296,7 +1351,18 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		dialPort = netns.AppPort
 	}
 	sockPath := streamBridgeSockPath(reqInit.GetInstance())
-	sessionDeadline := time.Now().Add(respTimeout).UTC().Format(time.RFC3339)
+	// Bridge session deadline: cap at the long ceiling
+	// (defaultSessionDeadline = 24 h, matches rawStreamSessionDeadline
+	// in pkg/gateway/forwardproxy.go). The respTimeout parameter is
+	// the vmmd-side response-writer timeout (15 min / 900 s), not
+	// the bridge session lifetime — passing respTimeout as the
+	// session deadline silently truncated long-poll / SSE / WS
+	// responses at 15 min under v2; v1 only cancelled on client
+	// disconnect (no hard cap). The H2C request ctx below also
+	// drops the explicit WithDeadline for the same reason — it
+	// inherits stream.Context() which cancels on client disconnect
+	// or gRPC stream deadline, whichever fires first.
+	sessionDeadline := time.Now().Add(streamBridgeSessionDeadline).UTC().Format(time.RFC3339)
 	bridgeEnv := streamBridgeEnv(reqInit)
 
 	// 3. Spawn the bridge. Mirrors rawBridgeSpawn (forward.go:668).
@@ -1323,7 +1389,18 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 
 	client := &http.Client{Transport: transport}
 	bodyPr, bodyPw := io.Pipe()
-	reqCtx, reqCancel := context.WithDeadline(ctx, time.Now().Add(respTimeout))
+	// H2C request ctx: inherit stream.Context() directly. v1 used
+	// exec.CommandContext(stream.Context(), …) which only cancelled
+	// on client disconnect — wrapping with a WithDeadline(time.Now().
+	// Add(respTimeout)) silently truncated long-poll / SSE / WS
+	// responses at 15 min under v2 (the bridge-internal ctx still
+	// has a 24h ceiling via the sessionDeadline above). The bridge
+	// also bounds the response-HEAD read at readHeaderTimeout in
+	// cmd/vmmd-stream-bridge/main.go:96, so a wedged guest fails
+	// loud; streaming bodies use the conn-wide deadline (none here)
+	// and rely on the watcher goroutine to close the conn on ctx
+	// cancellation.
+	reqCtx, reqCancel := context.WithCancel(ctx)
 	defer reqCancel()
 
 	httpReq, err := http.NewRequestWithContext(reqCtx, "POST", "http://unix"+reqInit.GetRequestUri(), bodyPr)
@@ -1511,6 +1588,26 @@ func streamBridgeSpawnReal(ctx context.Context, bridgePath, netnsName, sockPath,
 	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", netnsName,
 		bridgePath, sockPath, guestIP, strconv.FormatUint(uint64(guestPort), 10), sessionDeadline)
 	cmd.Env = env
+	// Pdeathsig: if vmmd is SIGKILLed (OOM-killer, orchestrator
+	// restart, kernel panic reboot path that bypasses our deferred
+	// SIGTERM), the bridge child must NOT be orphaned — unlike v1's
+	// per-request shell subprocess, v2 is a long-running HTTP server
+	// that holds the per-instance unix socket for the bridge's
+	// entire lifetime. An orphan would block the next wake with
+	// EADDRINUSE on the same sock path; on a control-plane node
+	// with many restarts that leaks until tmpfs is exhausted (the
+	// same gotcha CLAUDE.md flags for /srv/fc/jail). SIGTERM is the
+	// same signal vmmd sends on graceful shutdown, so a graceful
+	// path is unchanged; only the SIGKILL escape gets cleaned up.
+	//
+	// The SysProcAttr setup is split into platform-specific files
+	// (forward_pdeathsig_linux.go / forward_pdeathsig_other.go) so
+	// the linux-only Pdeathsig field stays out of the darwin/macos
+	// build, where the type is missing. The v2 spawn itself is
+	// always gated on `ip netns exec`, which only works on Linux —
+	// darwin compiles and unit-tests the vmmd package without ever
+	// hitting the production spawn path.
+	cmd.SysProcAttr = streamBridgeSysProcAttr()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
@@ -1549,20 +1646,29 @@ func streamBridgeEnv(reqInit *vmmdpb.ForwardHTTPRequestInit) []string {
 		case host == "" && strings.EqualFold(h.GetName(), "Host"):
 			// Lift the first Host into its own env var so
 			// comma-bearing header values stay intact in
-			// FAAS_BRIDGE_HEADERS below.
-			host = h.GetValue()
+			// FAAS_BRIDGE_HEADERS below. CR/LF stripped — the
+			// bridge writes the value verbatim to the guest TCP
+			// socket and CR/LF in a Host header value lets a
+			// caller smuggle a complete header line into the
+			// trusted inner envelope. v1's shellQuote rejected
+			// CR/LF at the vmmd-side build step; v2 must match.
+			host = sanitizeHeaderValue(h.GetValue())
 			continue
 		}
-		headers = append(headers, fmt.Sprintf("%s=%s", h.GetName(), h.GetValue()))
+		headers = append(headers, fmt.Sprintf("%s=%s", h.GetName(), sanitizeHeaderValue(h.GetValue())))
 	}
 	env := []string{
-		"FAAS_BRIDGE_METHOD=" + reqInit.GetMethod(),
-		"FAAS_BRIDGE_URL=" + reqInit.GetRequestUri(),
+		"FAAS_BRIDGE_METHOD=" + sanitizeHeaderValue(reqInit.GetMethod()),
+		"FAAS_BRIDGE_URL=" + sanitizeHeaderValue(reqInit.GetRequestUri()),
 		"FAAS_BRIDGE_HOST=" + host,
 		// Newline separator (not comma) — real headers like
 		// `Accept: text/html, application/json` carry commas
 		// in their values; CR/LF are illegal in HTTP/1.1
-		// field-values so they make a safe wire separator.
+		// field-values so they make a safe wire separator. Any
+		// CR/LF that snuck through sanitizeHeaderValue (e.g. via
+		// an env-var re-source) would terminate the line and
+		// inject a header — the bridge also strips CR/LF as
+		// defense-in-depth (cmd/vmmd-stream-bridge main.go).
 		"FAAS_BRIDGE_HEADERS=" + strings.Join(headers, "\n"),
 		// Env passed to cmd.Env is non-additive with the parent's
 		// env — only the keys present below are visible. The
@@ -1571,6 +1677,32 @@ func streamBridgeEnv(reqInit *vmmdpb.ForwardHTTPRequestInit) []string {
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
 	return env
+}
+
+// sanitizeHeaderValue strips CR and LF bytes from a string destined
+// for the bridge's env (FAAS_BRIDGE_HOST, FAAS_BRIDGE_HEADERS,
+// FAAS_BRIDGE_METHOD, FAAS_BRIDGE_URL). The bridge writes these
+// verbatim to the guest TCP socket; CR/LF in a value would let a
+// caller smuggle a complete header line into the trusted inner
+// envelope. v1's shellQuote() closed this hole at the vmmd-side
+// build step (forward.go:1046); v2 must match. The function is
+// deliberately idempotent (any combination of CR/LF collapses to
+// nothing) and rejects NUL too — NUL in an env var truncates at
+// the OS level and the bridge would see only the prefix.
+func sanitizeHeaderValue(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\r' || c == '\n' || c == 0 {
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 // newStreamBridgeH2CTransport creates an HTTP/2 client transport

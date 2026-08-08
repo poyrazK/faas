@@ -224,6 +224,24 @@ func newHandler(guestIP string, guestPort uint16, deadline time.Time) http.Handl
 		host := os.Getenv("FAAS_BRIDGE_HOST")
 		extraHeaders := parseHeaders(os.Getenv("FAAS_BRIDGE_HEADERS"))
 
+		// Defense-in-depth CR/LF sanitization. vmmd already strips
+		// CR/LF in streamBridgeEnv (pkg/vmmdgrpc/forward.go), but
+		// the bridge is a stand-alone binary that may be invoked
+		// from other surfaces (tests, future operator override,
+		// `FAAS_BRIDGE_*=value` env-set on a misconfigured host).
+		// Stripping again here means a hostile or buggy caller
+		// cannot smuggle a header line into the trusted inner
+		// envelope via FAAS_BRIDGE_HOST / FAAS_BRIDGE_HEADERS.
+		// CR/LF are illegal in HTTP/1.1 field-values (RFC 9110
+		// §5.5); stripping is lossless for legitimate input.
+		method = sanitizeCRLF(method)
+		url = sanitizeCRLF(url)
+		host = sanitizeCRLF(host)
+		for i := range extraHeaders {
+			extraHeaders[i].Name = sanitizeCRLF(extraHeaders[i].Name)
+			extraHeaders[i].Value = sanitizeCRLF(extraHeaders[i].Value)
+		}
+
 		d := net.Dialer{Timeout: dialTimeout}
 		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)))
 		if err != nil {
@@ -252,7 +270,7 @@ func newHandler(guestIP string, guestPort uint16, deadline time.Time) http.Handl
 		// (forward.go:998-1024) byte-for-byte modulo path-style
 		// differences; the guest's net/http must see the same
 		// envelope to handle the request correctly.
-		if err := writeH1RequestHead(conn, method, url, host, extraHeaders); err != nil {
+		if err := writeH1RequestHead(conn, method, url, host, guestIP, guestPort, extraHeaders); err != nil {
 			http.Error(w, fmt.Sprintf("write request head: %v", err), http.StatusBadGateway)
 			return
 		}
@@ -322,7 +340,7 @@ func newHandler(guestIP string, guestPort uint16, deadline time.Time) http.Handl
 // dropped (chunked is hard-coded). Headers go through the
 // `textproto.MIMEHeader.Set` canonical form (Title-Case header
 // names, no trailing whitespace on values).
-func writeH1RequestHead(w io.Writer, method, url, host string, headers []headerEntry) error {
+func writeH1RequestHead(w io.Writer, method, url, host, hostIP string, hostPort uint16, headers []headerEntry) error {
 	if _, err := fmt.Fprintf(w, "%s %s HTTP/1.1\r\n", method, url); err != nil {
 		return fmt.Errorf("write request line: %w", err)
 	}
@@ -354,8 +372,15 @@ func writeH1RequestHead(w io.Writer, method, url, host string, headers []headerE
 	}
 	if !seenHost {
 		// Always emit a Host — the guest's net/http may sniff for
-		// it; the v1 shell script always wrote one.
-		if _, err := fmt.Fprintf(w, "Host: 10.0.0.2\r\n"); err != nil {
+		// it; the v1 shell script always wrote one. The v1 script
+		// emitted `Host: 10.0.0.2:<port>` (forward.go:1007-1008)
+		// so vhost routers (Nginx server_name, Express vhost,
+		// Rails request.host) see the port too. v2 must match.
+		// Falling back to 10.0.0.2 only is a regression: an app
+		// pinned to AppPort=3000 (per-deployment override) would
+		// route on `Host: 10.0.0.2` (port-less) and miss the
+		// server_name match.
+		if _, err := fmt.Fprintf(w, "Host: %s:%d\r\n", hostIP, hostPort); err != nil {
 			return fmt.Errorf("write default Host: %w", err)
 		}
 	}
@@ -446,6 +471,32 @@ func parseHeaders(s string) []headerEntry {
 // small bodies per request; stdlib default is fine.
 func newBufioReader(r io.Reader) *bufio.Reader {
 	return bufio.NewReader(r)
+}
+
+// sanitizeCRLF strips CR, LF, and NUL bytes from a string destined
+// for the H1 wire. Defense-in-depth: vmmd already strips these in
+// streamBridgeEnv (pkg/vmmdgrpc/forward.go), but the bridge is a
+// stand-alone binary that may be invoked from other surfaces (tests,
+// future operator override, misconfigured host env). CR/LF in a
+// field-value would terminate the header line and smuggle a new
+// header into the trusted inner envelope (CRLF injection); NUL
+// truncates env-var values at the OS level so the bridge would
+// silently see only the prefix. Lossless for legitimate input —
+// CR/LF/NUL are illegal in HTTP/1.1 field-values (RFC 9110 §5.5).
+func sanitizeCRLF(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\r' || c == '\n' || c == 0 {
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 // parseDeadline accepts either an RFC3339 timestamp or a Go

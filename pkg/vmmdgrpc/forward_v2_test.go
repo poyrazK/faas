@@ -21,16 +21,12 @@
 package vmmdgrpc_test
 
 import (
-	"bufio"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -131,13 +127,6 @@ func indexCRLFCRLF(b []byte) int {
 		}
 	}
 	return -1
-}
-
-// sha256Sum is a quick hex digest for the test name.
-func sha256Sum(t *testing.T, b []byte) string {
-	t.Helper()
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:])
 }
 
 // TestForwardHTTPStreamV2_HeadersAssembledFromInit exercises the
@@ -247,11 +236,20 @@ func TestForwardHTTPStreamV2_HeadersAssembledFromInit(t *testing.T) {
 	if !strings.HasPrefix(got, "POST /foo?bar=1 HTTP/1.1\r\n") {
 		t.Errorf("request line = %q, want %q", firstLine(got), "POST /foo?bar=1 HTTP/1.1")
 	}
-	// Host header is emitted either from FAAS_BRIDGE_HOST or as a
-	// fallback (10.0.0.2 in production; the test only sets METHOD/URL/HEADERS,
-	// so the binary falls back to 10.0.0.2 — the production guest IP).
-	if !strings.Contains(got, "Host: ") {
-		t.Errorf("missing Host header: %q", got)
+	// Host header must include the dial port so vhost routers
+	// (Nginx server_name, Express vhost, Rails request.host) see
+	// the same wire shape v1's shell bridge emitted
+	// (forward.go:1046-1047). The test points the bridge at
+	// 127.0.0.1:<port>, so the fallback Host is `127.0.0.1:<port>`
+	// — not the production 10.0.0.2.
+	if !strings.Contains(got, fmt.Sprintf("Host: 127.0.0.1:%d\r\n", port)) {
+		t.Errorf("missing Host: 127.0.0.1:%d (got %q)", port, got)
+	}
+	// FAAS_BRIDGE_HOST, when set by vmmd from the inbound request,
+	// overrides the dial-port fallback. The test does NOT set
+	// FAAS_BRIDGE_HOST, so the fallback is what we expect above.
+	if strings.Contains(got, "Host: 10.0.0.2") {
+		t.Errorf("port-less Host: 10.0.0.2 must not appear (regression of finding #4): %q", got)
 	}
 	if !strings.Contains(got, "Transfer-Encoding: chunked\r\n") {
 		t.Errorf("missing Transfer-Encoding: chunked: %q", got)
@@ -311,9 +309,7 @@ func waitFor(t *testing.T, cap time.Duration, pred func() bool) {
 	t.Fatalf("waitFor timed out after %v", cap)
 }
 
-// silence unused import warnings if helpers get pruned.
-var (
-	_ = httptest.NewServer
-	_ = bufio.NewReader
-	_ = sha256Sum
-)
+// (Sanitization coverage lives in forward_v2_internal_test.go so it
+// can access the unexported streamBridgeEnv / sanitizeHeaderValue
+// helpers; this file stays in package vmmdgrpc_test for the rest of
+// the black-box coverage.)
