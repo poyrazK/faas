@@ -474,6 +474,39 @@ func TestCmdConnect_FallsBackOnBrowserError(t *testing.T) {
 	}
 }
 
+// TestCmdConnect_GithubJSONOutput pins the --json branch added in
+// Tier A8.2: when jsonOutput is set, cmdConnect emits
+// {"url": "...", "service": "github"} instead of opening the
+// browser. Mirrors the canonical JSON-shape pattern used by
+// commands_registry.go and the new TestCmdBillingPortal_JSONOutput.
+func TestCmdConnect_GithubJSONOutput(t *testing.T) {
+	rec := withRecorder(t)
+	t.Setenv("FAAS_TOKEN", "tok")
+	t.Setenv("FAAS_API", "https://api.example.test")
+
+	jsonOutput = true
+	defer func() { jsonOutput = false }()
+
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := cmdConnect([]string{"github"}); code != 0 {
+		t.Fatalf("cmdConnect github --json = %d, want 0", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout not valid JSON: %v\noutput: %s", err, stdout.String())
+	}
+	if got["url"] != "https://api.example.test/dashboard/account" {
+		t.Errorf("json url = %v, want the dashboard account URL", got["url"])
+	}
+	if got["service"] != "github" {
+		t.Errorf("json service = %v, want \"github\"", got["service"])
+	}
+	if len(rec.urls) != 0 {
+		t.Errorf("--json opened browser %d times; want 0", len(rec.urls))
+	}
+}
+
 func TestCmdOpen_HitsAppURL(t *testing.T) {
 	rec := withRecorder(t)
 	t.Setenv("FAAS_TOKEN", "tok")

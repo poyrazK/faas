@@ -88,6 +88,42 @@ func TestCmdBillingPortal_NoOpenAlias(t *testing.T) {
 	}
 }
 
+// TestCmdBillingPortal_JSONOutput pins the --json branch added in
+// Tier A8.2: when jsonOutput is set, --print emits
+// {"url": "...", "service": "billing"} instead of the bare URL
+// plain text. Mirrors the canonical JSON-shape pattern used by
+// commands_registry.go, commands_deployments.go.
+func TestCmdBillingPortal_JSONOutput(t *testing.T) {
+	apiURL := billingPortalStub(t, func() api.BillingPortalResponse {
+		return api.BillingPortalResponse{URL: "https://billing.example.com/portal?account=acct_42"}
+	})
+	t.Setenv("FAAS_API", apiURL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	jsonOutput = true
+	defer func() { jsonOutput = false }()
+
+	rec := withRecorder(t)
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := cmdBillingPortal([]string{"--print"}); code != 0 {
+		t.Fatalf("cmdBillingPortal --print --json = %d, want 0", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout not valid JSON: %v\noutput: %s", err, stdout.String())
+	}
+	if got["url"] != "https://billing.example.com/portal?account=acct_42" {
+		t.Errorf("json url = %v, want the substituted portal link", got["url"])
+	}
+	if got["service"] != "billing" {
+		t.Errorf("json service = %v, want \"billing\"", got["service"])
+	}
+	if len(rec.urls) != 0 {
+		t.Errorf("--json opened browser %d times; want 0", len(rec.urls))
+	}
+}
+
 func TestCmdBillingPortal_OpensBrowser(t *testing.T) {
 	apiURL := billingPortalStub(t, func() api.BillingPortalResponse {
 		return api.BillingPortalResponse{URL: "https://billing.example.com/portal?account=acct_42"}
