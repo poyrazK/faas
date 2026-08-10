@@ -48,6 +48,12 @@ func (c *Client) ListDeploymentsAll(ctx context.Context) ([]DeploymentResponse, 
 // propagate through GetBuilds — callers that pass `app` /
 // `status` only see the filtered slice walked to completion.
 //
+// The cursor is the opaque tuple `<started_at>|<id_hex>` from
+// the server (post-review fix for the original single-column
+// cursor that lost queued-build tails + sub-second rows past
+// page 1). The helper threads it verbatim — no parsing here.
+// See ADR-091 §3 + cmd/apid/handlers_ext.go::parseBuildCursor.
+//
 // Cancelling ctx stops the walk at the next page boundary — the
 // current page's rows are returned up to the cancellation point.
 func (c *Client) GetBuildsAll(ctx context.Context, app, status string) ([]BuildResponse, error) {

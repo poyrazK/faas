@@ -174,16 +174,21 @@ func TestCmdBuildList_NonEmpty(t *testing.T) {
 // page has a next_before, the output MUST end with the em-dash
 // (U+2014) hint byte-for-byte matching cmdDeployments. Drift
 // between the two surfaces breaks automation that greps the hint.
+//
+// The hint's cursor arg is the opaque tuple "<started_at>|<id_hex>"
+// (post-review fix for code-review issues #74 + #75) — the CLI
+// threads NextBefore verbatim, so this test pins that contract
+// end-to-end.
 func TestCmdBuildList_NextBeforeHint(t *testing.T) {
 	page := api.BuildListResponse{
 		Items: []api.BuildResponse{
 			{ID: "b1", Status: "running"},
 		},
-		NextBefore: "2026-08-10T12:00:00.000000000Z",
+		NextBefore: "2026-08-10T12:00:00Z|b00000000000000000000000000000001",
 	}
 	out := cmdBuildListText(t, page, nil)
 	// Byte-for-byte em-dash (U+2014) check.
-	const wantHint = "... more — pass --before 2026-08-10T12:00:00.000000000Z\n"
+	const wantHint = "... more — pass --before 2026-08-10T12:00:00Z|b00000000000000000000000000000001\n"
 	if !strings.Contains(out, wantHint) {
 		t.Errorf("missing em-dash cursor hint %q\nfull: %s", wantHint, out)
 	}
@@ -193,6 +198,29 @@ func TestCmdBuildList_NextBeforeHint(t *testing.T) {
 	}
 	if strings.Contains(out, "–") { // en-dash (U+2013) — wrong
 		t.Errorf("output uses en-dash (U+2013) instead of em-dash (U+2014):\n%s", out)
+	}
+}
+
+// TestCmdBuildList_NextBeforeHint_QueuedTail pins the queued-tail
+// cursor hint: when the page's last row is queued, the cursor's
+// started_at segment is empty ("|id_hex" shape) and the CLI must
+// render that verbatim — no time-formatting, no quoting.
+//
+// Regression tripwire for code-review Issue #1 (queued builds
+// dropped past page boundary under the original single-column
+// cursor that required a non-null started_at anchor).
+func TestCmdBuildList_NextBeforeHint_QueuedTail(t *testing.T) {
+	page := api.BuildListResponse{
+		Items: []api.BuildResponse{
+			{ID: "b1", Status: "running"},
+		},
+		NextBefore: "|b00000000000000000000000000000001",
+	}
+	out := cmdBuildListText(t, page, nil)
+	// Quoted to make the empty-string segment visually obvious.
+	const wantHint = "... more — pass --before |b00000000000000000000000000000001\n"
+	if !strings.Contains(out, wantHint) {
+		t.Errorf("missing queued-tail cursor hint %q\nfull: %s", wantHint, out)
 	}
 }
 
@@ -270,6 +298,13 @@ func TestCmdBuildList_InvalidLimit(t *testing.T) {
 	}
 	if code := cmdBuildList([]string{"--limit", "-1"}); code != 1 {
 		t.Errorf("cmdBuildList --limit -1 = %d, want 1", code)
+	}
+	// Post-review fix: --limit 0 used to silently fall back to
+	// the default 50. The help text says "1-200" — accepting 0
+	// was a UX papercut (callers who meant the default should
+	// omit --limit). Now rejected to match the help contract.
+	if code := cmdBuildList([]string{"--limit", "0"}); code != 1 {
+		t.Errorf("cmdBuildList --limit 0 = %d, want 1", code)
 	}
 }
 

@@ -459,7 +459,27 @@ type Store interface {
 	// The unlimited ListBuildsForAccount(ctx, accountID) sibling
 	// stays intact for the GDPR export at
 	// cmd/apid/handlers_account.go:643.
-	ListBuildsForAccountPaged(ctx context.Context, accountID, statusFilter, appIDFilter string, before time.Time, limit int) ([]Build, error)
+	// ListBuildsForAccountPaged returns one page of builds across the
+	// account's deployments, ordered started_at desc nulls last with
+	// id DESC as the tiebreaker (so queued builds at the tail — and
+	// sub-second collisions on started_at — paginate deterministically).
+	// Keyset pagination via (before.Time, beforeID): rows where
+	//   (started_at, id) < (before.Time, beforeID)
+	// under the nulls-last ordering. statusFilter="" means "any
+	// status". appIDFilter="" means "any app". When appIDFilter is
+	// set, restricts to deployments.app_id = appIDFilter.
+	//
+	// Mirrors ListDeploymentsForAccount (pkg/state/pgstore.go:4435).
+	//
+	// Used by GET /v1/builds (ADR-091, issue #741 close-out). The
+	// unlimited ListBuildsForAccount(ctx, accountID) sibling stays
+	// intact for the GDPR export at cmd/apid/handlers_account.go:643.
+	//
+	// Empty before.Time = first page; the beforeID is ignored in that
+	// case. Negative before.ID (zero value) is treated as "no id
+	// constraint" so callers can page through queued-only rows by
+	// id alone.
+	ListBuildsForAccountPaged(ctx context.Context, accountID, statusFilter, appIDFilter string, before time.Time, beforeID string, limit int) ([]Build, error)
 	ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error)
 	// UsageByAccount aggregates every per-minute usage_minutes row that
 	// landed in [since, now]. MemStore synthesizes the per-minute

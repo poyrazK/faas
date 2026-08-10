@@ -348,10 +348,11 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 	}
 
 	// (1) Account-scoped, no filter — returns all 7 owned builds
-	// ordered started_at desc, queued (zero) at the bottom.
-	// (5 running seeded above + 1 queued on dep2 + 1 fixture
-	// queued on dep1 from memCoverageSlice4Fixture.)
-	got, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, 0)
+	// ordered started_at desc nulls last, id desc as tiebreaker,
+	// queued (zero) at the bottom. (5 running seeded above + 1
+	// queued on dep2 + 1 fixture queued on dep1 from
+	// memCoverageSlice4Fixture.)
+	got, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, "", 0)
 	if err != nil {
 		t.Fatalf("account-wide: %v", err)
 	}
@@ -374,7 +375,7 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 	}
 
 	// (2) app=app2.ID — only the queued build on dep2 qualifies.
-	got, err = m.ListBuildsForAccountPaged(ctx, account.ID, "", app2.ID, time.Time{}, 0)
+	got, err = m.ListBuildsForAccountPaged(ctx, account.ID, "", app2.ID, time.Time{}, "", 0)
 	if err != nil {
 		t.Fatalf("app filter: %v", err)
 	}
@@ -384,7 +385,7 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 
 	// (3) status=running — only the 5 claimed builds qualify
 	// (queued has status=queued, not running).
-	got, err = m.ListBuildsForAccountPaged(ctx, account.ID, "running", "", time.Time{}, 0)
+	got, err = m.ListBuildsForAccountPaged(ctx, account.ID, "running", "", time.Time{}, "", 0)
 	if err != nil {
 		t.Fatalf("status filter: %v", err)
 	}
@@ -398,13 +399,13 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 	}
 
 	// (4) Keyset cursor — page 1 with limit=3 returns the 3
-	// newest running (base+4m, +3m, +2m); the cursor (base+2m)
-	// pages backwards to the 2 remaining running (+1m, base) +
-	// 1 queued at the tail. The fixture's queued row never
-	// surfaces here — once `before` is set, zero StartedAt
-	// rows drop off the SQL semantics (matches
-	// builds.started_at < $4 excluding NULL).
-	page1, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, 3)
+	// newest running (base+4m, +3m, +2m); the cursor (base+2m +
+	// page1[2].ID) pages backwards to the 2 remaining running
+	// (+1m, base) + 1 queued at the tail (dep2's queued build
+	// — the id tiebreaker keeps it deterministic). The slice4
+	// fixture's queued row dropped off because its ID sorts AFTER
+	// page1[2].ID when both have zero started_at.
+	page1, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, "", 3)
 	if err != nil {
 		t.Fatalf("page1: %v", err)
 	}
@@ -414,7 +415,10 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 	if !page1[2].StartedAt.Equal(base.Add(2 * time.Minute)) {
 		t.Errorf("page1[2] = %v, want base+2m", page1[2].StartedAt)
 	}
-	page2, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "", page1[2].StartedAt, 3)
+	// Pass the (started_at, id) tuple as the cursor — the id
+	// tiebreaker is what lets the queued tail surface.
+	page2, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "",
+		page1[2].StartedAt, page1[2].ID, 3)
 	if err != nil {
 		t.Fatalf("page2: %v", err)
 	}
@@ -422,9 +426,7 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 		t.Fatalf("page2 len = %d, want 3 (queued at tail): %+v", len(page2), page2)
 	}
 	// page2[0..1] = base+1m, base. page2[2] = queued (zero)
-	// from dep2 (the one we just created; the slice4 fixture
-	// queued row dropped off because zero StartedAt is never
-	// < base+2m).
+	// from dep2 (the one we just created).
 	if !page2[0].StartedAt.Equal(base.Add(time.Minute)) {
 		t.Errorf("page2[0] = %v, want base+1m", page2[0].StartedAt)
 	}
@@ -435,8 +437,23 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 		t.Errorf("page2[2] started_at = %v, want zero (queued)", page2[2].StartedAt)
 	}
 
+	// Page 3: cursor is the queued row's id (zero started_at) —
+	// the queued tail's id-only keyset picks up the slice4 fixture's
+	// queued row.
+	page3, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "",
+		page2[2].StartedAt, page2[2].ID, 3)
+	if err != nil {
+		t.Fatalf("page3: %v", err)
+	}
+	if len(page3) != 1 {
+		t.Fatalf("page3 len = %d, want 1 (fixture queued): %+v", len(page3), page3)
+	}
+	if !page3[0].StartedAt.IsZero() {
+		t.Errorf("page3[0] started_at = %v, want zero", page3[0].StartedAt)
+	}
+
 	// (5) limit clamps — limit=2 returns 2 rows.
-	clamped, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, 2)
+	clamped, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, "", 2)
 	if err != nil {
 		t.Fatalf("limit: %v", err)
 	}
@@ -446,7 +463,7 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 
 	// (6) Cross-account isolation — querying the OTHER account
 	// returns only the cross-account build, never the owned ones.
-	got, err = m.ListBuildsForAccountPaged(ctx, otherAcct.ID, "", "", time.Time{}, 0)
+	got, err = m.ListBuildsForAccountPaged(ctx, otherAcct.ID, "", "", time.Time{}, "", 0)
 	if err != nil {
 		t.Fatalf("other account: %v", err)
 	}
@@ -472,7 +489,7 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 		}
 		return expected[i].StartedAt.After(expected[j].StartedAt)
 	})
-	got, err = m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, 0)
+	got, err = m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, "", 0)
 	if err != nil {
 		t.Fatalf("ordering invariant: %v", err)
 	}

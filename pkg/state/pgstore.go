@@ -11446,33 +11446,40 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 }
 
 // ListBuildsForAccountPaged returns one page of builds across the
-// account's deployments, ordered started_at desc nulls last
-// (DEPLOY-PROV-6 follow-up / ADR-091, issue #741 close-out).
+// account's deployments, ordered started_at desc nulls last with
+// id DESC as the tiebreaker (DEPLOY-PROV-6 follow-up / ADR-091,
+// issue #741 close-out, post-review fix).
 //
-// Keyset pagination: pass the previous response's last started_at
-// as `before` to page backwards. before.IsZero() = first page.
-// The optional statusFilter and appIDFilter narrow the result;
-// empty string means "any status" / "any app" respectively.
+// Keyset pagination: pass the previous response's (started_at, id)
+// tuple as (before.Time, beforeID) to page backwards. before.IsZero()
+// = first page (beforeID ignored). The id tiebreaker is what makes
+// pagination deterministic for queued builds (started_at IS NULL)
+// AND for sub-second collisions on started_at — without it, rows
+// whose started_at lands in the same wall-clock second as the
+// cursor are dropped on the next page (whole-second wire format
+// vs. sub-second DB precision), and queued-only pages lose the
+// cursor entirely (no non-null started_at to anchor it on).
 //
 // The query is supported by builds_deployment_started_idx
 // (migrations/00166) — the leading deployment_id column lets
 // the planner's nested-loop strategy probe each outer deployment
 // row's builds via a bounded range scan instead of fetching +
 // filtering in-memory. The DESC NULLS LAST ordering matches the
-// SQL surface so queued builds (started_at IS NULL) stay at the
-// bottom of every page; the handler's pagination cursor walks
-// the page backward to find the LAST non-null started_at.
+// SQL surface so queued builds stay at the bottom of every page.
 //
 // limit is clamped server-side by the handler (1..200).
 func (s *PgStore) ListBuildsForAccountPaged(
 	ctx context.Context, accountID, statusFilter, appIDFilter string,
-	before time.Time, limit int,
+	before time.Time, beforeID string, limit int,
 ) ([]Build, error) {
 	var (
 		rows pgx.Rows
 		err  error
 	)
 	if before.IsZero() {
+		// First page: no keyset predicate, just the ordering +
+		// limit. id DESC is the stable tiebreaker that makes
+		// page-2's WHERE clause deterministic.
 		rows, err = s.pool.Query(ctx,
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
@@ -11483,9 +11490,25 @@ func (s *PgStore) ListBuildsForAccountPaged(
 			 where a.account_id = $1
 			   and ($2 = '' or b.status = $2)
 			   and ($3 = '' or d.app_id = $3::uuid)
-			 order by b.started_at desc nulls last
+			 order by b.started_at desc nulls last, b.id desc
 			 limit $4`, accountID, statusFilter, appIDFilter, limit)
-	} else {
+	} else if beforeID == "" {
+		// Queued-only cursor contract: empty started_at segment
+		// in the opaque cursor — caller is asking for rows
+		// STRICTLY AFTER a queued tail (the cursor's id is the
+		// boundary). The keyset becomes id-only in the NULL zone:
+		// "rows with started_at IS NULL AND id < beforeID".
+		// There are no other queued-zone rows beyond this branch
+		// because all non-NULL rows (started_at set) have already
+		// been returned in pages with non-empty started_at
+		// cursors.
+		//
+		// `before.IsZero()` is NOT enough to detect this branch
+		// because we need beforeID to be passed in. So the
+		// "first page" detection is `before.IsZero()`, and the
+		// "queued-tail" branch is `beforeID != "" && before.
+		// IsZero()`. The first-page case (no cursor at all)
+		// is `before.IsZero() && beforeID == ""`.
 		rows, err = s.pool.Query(ctx,
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
@@ -11496,9 +11519,53 @@ func (s *PgStore) ListBuildsForAccountPaged(
 			 where a.account_id = $1
 			   and ($2 = '' or b.status = $2)
 			   and ($3 = '' or d.app_id = $3::uuid)
-			   and b.started_at < $4
-			 order by b.started_at desc nulls last
-			 limit $5`, accountID, statusFilter, appIDFilter, before, limit)
+			   and b.started_at is null
+			   and b.id < $4
+			 order by b.id desc
+			 limit $5`, accountID, statusFilter, appIDFilter, beforeID, limit)
+	} else {
+		// Keyset (started_at, id) < (before, beforeID) under
+		// the DESC NULLS LAST ordering. Naively encoded as a
+		// row-value comparison it WOULD be `(b.started_at,
+		// b.id) < ($4, $5)` — but PG's row-value `<` is three-
+		// valued for tuples with NULL elements: a `(NULL, x) <
+		// (T, y)` row returns NULL and is therefore excluded
+		// by WHERE, which silently drops queued tails (started_at
+		// IS NULL) past page boundaries.
+		//
+		// The fix is a disjunction that respects all of the
+		// ordering cases:
+		//   1. earlier started_at          → included
+		//   2. equal started_at, smaller id → included
+		//   3. NULL started_at             → included (queued
+		//      zone falls AFTER every non-NULL row in DESC
+		//      NULLS LAST ordering, so any queued row is
+		//      strictly less than a non-NULL cursor)
+		// Case 3 ignores the id because once we're in the
+		// NULL zone, the ordering is by id DESC. The page-2
+		// result, in id-DESC order, advances the cursor to
+		// the SMALLEST queued id, which then anchors the
+		// queued-tail branch (case 3 + id < cursor.id) on
+		// subsequent pages. See pkg/state/pgstore.go's third
+		// branch (`before.IsZero() && beforeID != ""`) for
+		// the queued-tail cursor contract.
+		rows, err = s.pool.Query(ctx,
+			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
+			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
+			        b.started_at, b.finished_at, b.enqueued_at
+			 from builds b
+			 join deployments d on d.id = b.deployment_id
+			 join apps a on a.id = d.app_id
+			 where a.account_id = $1
+			   and ($2 = '' or b.status = $2)
+			   and ($3 = '' or d.app_id = $3::uuid)
+			   and (
+			       b.started_at < $4
+			       or (b.started_at = $4 and b.id < $5)
+			       or b.started_at is null
+			   )
+			 order by b.started_at desc nulls last, b.id desc
+			 limit $6`, accountID, statusFilter, appIDFilter, before, beforeID, limit)
 	}
 	if err != nil {
 		return nil, err
