@@ -120,14 +120,15 @@ func (r *PressureRebalancer) Run(ctx context.Context) error {
 // tick without the time.Ticker (the test seeds the
 // aggregator, calls tick once, asserts the dispatch).
 //
-// Clock: r.agg.now() — the rebalancer reads from the same
-// clock seam the aggregator was constructed with (production:
-// time.Now, tests: a frozen clock). Reading time.Now directly
-// would race the aggregator's window: a tick reads wall-clock,
-// finds the seeded events >60s in the past, and dispatches
-// nothing. Keep the two surfaces on one clock.
+// Clock seam: reads r.agg.Now() (the aggregator's clock —
+// time.Now in production, frozenClock in tests). Reading
+// wall-clock time.Now here would silently bypass the test
+// seam: a test that seeds events at frozen `now` and runs for
+// >window would see every event GC'd because PressuredApps's
+// cutoff is anchored to wall-clock time rather than the
+// test's frozen anchor.
 func (r *PressureRebalancer) tick(ctx context.Context) {
-	apps := r.agg.PressuredApps(r.thresholdPerMin, r.agg.now())
+	apps := r.agg.PressuredApps(r.thresholdPerMin, r.agg.Now())
 	if len(apps) == 0 {
 		return
 	}
@@ -150,11 +151,11 @@ func (r *PressureRebalancer) tick(ctx context.Context) {
 // down while sustained pressure built up) and dispatches the
 // handle per app. Returns the number of apps swept.
 //
-// Clock: r.agg.now() — same reasoning as tick; sweep must
-// share the aggregator's clock or the seed events are out of
-// window by the time we look.
+// Clock seam: reads r.agg.Now() — same reasoning as tick;
+// the aggregator's clock is the single anchor for windowed
+// reads across the package.
 func (r *PressureRebalancer) RunColdStartSweep(ctx context.Context) int {
-	apps := r.agg.PressuredApps(r.thresholdPerMin, r.agg.now())
+	apps := r.agg.PressuredApps(r.thresholdPerMin, r.agg.Now())
 	for _, appID := range apps {
 		if r.beforeSweepHook != nil {
 			r.beforeSweepHook(appID)
