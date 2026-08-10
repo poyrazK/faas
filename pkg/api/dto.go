@@ -1117,6 +1117,23 @@ type BuildProvenanceResponse struct {
 // when both timestamps are set; the field is omitted otherwise so a
 // queued/running build stays minimal. CI scripts shouldn't have to
 // parse RFC3339 to compute elapsed time.
+
+// Build status wire constants (ADR-091, DEPLOY-PROV-6 follow-up).
+// The 4-value enum is enforced by builds_status_check in
+// schema.sql:651 — clients see exactly one of these strings on
+// BuildResponse.Status. Name-spaced (not the bare string) so
+// goconst stops flagging the literal at 3+ hits across the
+// build/deploy surface. Mirror state.BuildStatus* on the state
+// side (pkg/state/types.go:123) but with the `BuildStatus` prefix
+// here on the wire side, per ADR-091 §3 + the memory note
+// goconst-status-literal-multi-resource.
+const (
+	BuildStatusQueued    = "queued"
+	BuildStatusRunning   = "running"
+	BuildStatusSucceeded = "succeeded"
+	BuildStatusFailed    = "failed"
+)
+
 type BuildResponse struct {
 	ID              string `json:"id"`
 	DeploymentID    string `json:"deployment_id"`
@@ -1129,6 +1146,24 @@ type BuildResponse struct {
 	StartedAt       string `json:"started_at,omitempty"`
 	FinishedAt      string `json:"finished_at,omitempty"`
 	DurationSeconds int    `json:"duration_seconds,omitempty"`
+}
+
+// BuildListResponse is the page shape for GET /v1/builds
+// (DEPLOY-PROV-6 follow-up / ADR-091, issue #741 close-out).
+// Items is the page (started_at desc nulls last); NextBefore is
+// the cursor for the next page (empty = end of list). The cursor
+// is the started_at of the LAST row with a non-null started_at on
+// this page, formatted as RFC3339Nano UTC. Mirrors
+// DeploymentListResponse.
+//
+// nulls-last rationale: queued builds (started_at IS NULL) sort
+// to the bottom of the first page; the handler walks the page
+// backward to find the LAST non-null started_at for the cursor
+// so passing next_before never skips the running/succeeded rows
+// behind queued builds at the tail of the previous page.
+type BuildListResponse struct {
+	Items      []BuildResponse `json:"items"`
+	NextBefore string          `json:"next_before,omitempty"`
 }
 
 // DeploymentResponse is a deployment as returned by the API.

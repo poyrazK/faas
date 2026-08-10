@@ -3113,6 +3113,107 @@ func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct st
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// listBuilds serves GET /v1/builds — every build the account owns,
+// in started_at desc nulls last order (DEPLOY-PROV-6 follow-up /
+// ADR-091, issue #741 close-out). Optional ?app=<slug> narrows
+// to one app; optional ?status=<s> filters to the 4-value status
+// enum. Cursor pagination via ?before=<RFC3339Nano>; limit
+// defaults to 50, capped at 200.
+//
+// IDOR: when ?app=<slug> is set, AppBySlug + App.AccountID == acct.ID
+// gates the query (cross-account slug renders 404 app_not_found,
+// same envelope as getApp). When ?app is omitted, the SQL itself
+// filters on a.account_id = $1 so cross-account data never leaves
+// the store.
+//
+// Filter validation: status must be one of queued|running|
+// succeeded|failed (bad values → 400 CodeValidation). Cursor must
+// parse as RFC3339Nano with RFC3339 fallback (bad → 400).
+//
+// Per ADR-089 §6 the route uses authLimited(requireScope(...))
+// WITHOUT requireMFA — same shape as GET /v1/builds/{id} (this
+// is intentional; GET /v1/deployments does use requireMFA but
+// the builds family does not — see ADR-089 §6). The route mount
+// in cmd/apid/server.go calls this out.
+func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			if n > 200 {
+				n = 200
+			}
+			limit = n
+		}
+	}
+	var before time.Time
+	if v := r.URL.Query().Get("before"); v != "" {
+		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			before = t
+		} else if t, err := time.Parse(time.RFC3339, v); err == nil {
+			before = t
+		} else {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Bad cursor", "expected RFC3339 timestamp"))
+			return
+		}
+	}
+	statusFilter := r.URL.Query().Get("status")
+	if statusFilter != "" {
+		switch statusFilter {
+		case api.BuildStatusQueued, api.BuildStatusRunning,
+			api.BuildStatusSucceeded, api.BuildStatusFailed:
+			// ok
+		default:
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Bad status filter",
+				"expected one of queued|running|succeeded|failed"))
+			return
+		}
+	}
+	appIDFilter := ""
+	if slug := r.URL.Query().Get("app"); slug != "" {
+		app, ok := s.loadApp(w, r, acct, slug)
+		if !ok {
+			return
+		}
+		appIDFilter = app.ID
+	}
+	rows, err := s.store.ListBuildsForAccountPaged(
+		r.Context(), acct.ID, statusFilter, appIDFilter, before, limit)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list builds"))
+		return
+	}
+	resp := api.BuildListResponse{Items: make([]api.BuildResponse, 0, len(rows))}
+	for _, b := range rows {
+		resp.Items = append(resp.Items, s.buildResponse(b))
+	}
+	if len(rows) == limit && limit > 0 && len(resp.Items) > 0 {
+		// NextBefore = started_at of the LAST row that has a non-null
+		// started_at (queued builds at the tail can't be a cursor —
+		// passing them would skip the running/succeeded rows behind).
+		// BuildResponse.StartedAt is the RFC3339 string (whole-second
+		// precision) per buildResponse at line 2994; sub-second
+		// precision is intentionally not exposed on the wire. The
+		// cursor is therefore always whole-second-aligned — passing
+		// it back with `<` semantics means rows whose wall-clock
+		// second equals the cursor are dropped (same second as the
+		// last row on this page = already returned). Tests that
+		// want second-precise equality should use RFC3339Nano on
+		// the store side, but the handler contract is second-
+		// aligned by design (matches buildResponse's wire shape).
+		for i := len(resp.Items) - 1; i >= 0; i-- {
+			if resp.Items[i].StartedAt != "" {
+				if t, err := time.Parse(time.RFC3339, resp.Items[i].StartedAt); err == nil {
+					resp.NextBefore = t.UTC().Format(time.RFC3339Nano)
+				}
+				break
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // usageSummary serves GET /v1/usage/summary — the aggregate
 // current-month (or ?month=YYYY-MM) roll-up the dashboard's usage
 // page renders. All money is integer cents; GB-h is float.

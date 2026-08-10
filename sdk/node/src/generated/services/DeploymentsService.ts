@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { BuildListResponse } from '../models/BuildListResponse.js';
 import type { BuildProvenanceResponse } from '../models/BuildProvenanceResponse.js';
 import type { BuildResponse } from '../models/BuildResponse.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
@@ -382,6 +383,77 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `Deployment row missing, cross-account probe, or scan has not run yet.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List builds (operator view).
+   * Returns every build the authenticated account owns, ordered
+   * started_at DESC (nulls last — queued builds stay at the
+   * bottom of the first page). Optional ?app=<slug> narrows to
+   * one app; optional ?status=<s> filters to the 4-value status
+   * enum (queued|running|succeeded|failed; omit for any status).
+   * Cursor pagination via ?before=<RFC3339Nano>; limit defaults
+   * to 50, capped at 200.
+   *
+   * The response shape mirrors /v1/deployments: items + a
+   * next_before cursor (empty when end of list). The cursor is
+   * the started_at of the LAST row with a non-null started_at
+   * on this page, so passing next_before never skips the
+   * running/succeeded rows behind queued builds at the tail of
+   * the previous page.
+   *
+   * @returns BuildListResponse A page of builds (ordered started_at DESC, nulls last).
+   * @throws ApiError
+   */
+  public static getBuilds({
+    app,
+    status,
+    before,
+    limit = 50,
+  }: {
+    /**
+     * Filter to a single app slug. Cross-account slug renders 404.
+     */
+    app?: string,
+    /**
+     * Filter to a single status. Omit for any status.
+     */
+    status?: 'queued' | 'running' | 'succeeded' | 'failed',
+    /**
+     * Cursor: fetch rows started strictly before this RFC3339Nano timestamp.
+     */
+    before?: string,
+    /**
+     * Page size (default 50, capped at 200).
+     */
+    limit?: number,
+  }): CancelablePromise<BuildListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/builds',
+      query: {
+        'app': app,
+        'status': status,
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `\`400 Bad Request\` — bad cursor (not RFC3339), bad status
+        filter (not one of queued|running|succeeded|failed), or
+        bad limit (non-numeric / out of range). Stable code
+        \`validation_failed\`.
+        `,
+        401: `code: unauthorized`,
+        404: `\`404 Not Found\` — only raised when ?app=<slug> is set
+        and the slug is unknown OR belongs to another account
+        (uniform 404 so cross-account probes can't enumerate).
+        Stable code \`app_not_found\`.
+        `,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

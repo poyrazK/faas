@@ -50,6 +50,7 @@ export type { BillingCatalogResponse } from './models/BillingCatalogResponse.js'
 export type { BillingPortalResponse } from './models/BillingPortalResponse.js';
 export type { BillingReconcileResponse } from './models/BillingReconcileResponse.js';
 export type { BuildExportResponse } from './models/BuildExportResponse.js';
+export type { BuildListResponse } from './models/BuildListResponse.js';
 export type { BuildProvenanceResponse } from './models/BuildProvenanceResponse.js';
 export type { BuildResponse } from './models/BuildResponse.js';
 export type { ChangeMemberRoleRequest } from './models/ChangeMemberRoleRequest.js';
