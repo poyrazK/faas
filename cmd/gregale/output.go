@@ -95,6 +95,14 @@ const GlyphFail = "✗"
 // Same rationale as GlyphOK.
 const GlyphProgress = "→"
 
+// GlyphEmDash is the placeholder character used when a tabular column
+// has no value to render (e.g. a queued build with no started_at, a
+// billing subscription that has never synced). Lives here (not at the
+// call site) so goconst's "string has 3 occurrences" tripwire has a
+// single allow-listed definition; every renderer's empty-state line
+// references this const instead of the U+2014 literal.
+const GlyphEmDash = "—"
+
 // writeStatus centralises the "leading glyph + space + content + newline"
 // rule. The four Print* functions are one-liners above. The error from
 // Fprintf is intentionally discarded: writer failures (closed pipe,

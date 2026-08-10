@@ -239,14 +239,17 @@ func TestPg_ListBuildsForAccountPaged(t *testing.T) {
 
 	// Seed: 1 running build (started_at set) + 1 queued build
 	// (started_at NULL) + 1 cross-account build (must NOT surface).
-	running, err := s.CreateBuild(ctx, deployment.ID, state.DeploymentKindImage, 1024, "/tmp/q.log")
+	// Build kind is `dockerfile` (per the builds_kind_check constraint
+	// added in 00085 — `image` is reserved for the *deployment* kind
+	// and rejected on builds).
+	running, err := s.CreateBuild(ctx, deployment.ID, state.DeploymentKindDockerfile, 1024, "/tmp/q.log")
 	if err != nil {
 		t.Fatalf("CreateBuild running: %v", err)
 	}
 	if _, err := s.ClaimQueuedBuild(ctx, running.ID); err != nil {
 		t.Fatalf("ClaimQueuedBuild: %v", err)
 	}
-	queued, err := s.CreateBuild(ctx, deployment.ID, state.DeploymentKindImage, 1024, "/tmp/q2.log")
+	queued, err := s.CreateBuild(ctx, deployment.ID, state.DeploymentKindDockerfile, 1024, "/tmp/q2.log")
 	if err != nil {
 		t.Fatalf("CreateBuild queued: %v", err)
 	}
@@ -264,7 +267,7 @@ func TestPg_ListBuildsForAccountPaged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateBuild(ctx, otherDep.ID, state.DeploymentKindImage, 999, "/tmp/x.log"); err != nil {
+	if _, err := s.CreateBuild(ctx, otherDep.ID, state.DeploymentKindDockerfile, 999, "/tmp/x.log"); err != nil {
 		t.Fatal(err)
 	}
 

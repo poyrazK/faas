@@ -297,7 +297,7 @@ func renderBuildListRow(w io.Writer, b api.BuildResponse) {
 	if started == "" {
 		// Queued builds have no started_at — surface the dash
 		// explicitly so the column stays aligned.
-		started = "—"
+		started = GlyphEmDash
 	}
 	_, _ = fmt.Fprintf(w, buildListRowFmt,
 		b.ID, b.DeploymentID, b.Status, b.Kind,

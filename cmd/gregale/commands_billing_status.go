@@ -228,7 +228,7 @@ func printBillingStatus(w io.Writer, resp api.BillingCatalogResponse) {
 	_, _ = fmt.Fprintln(tw, "\nCatalog:")
 	_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\n", "PLAN/KIND", "HANDLE", "SYNCED AT")
 	for _, e := range resp.Entries {
-		synced := "—"
+		synced := GlyphEmDash
 		if !e.SyncedAt.IsZero() && !e.SyncedAt.Equal(time.Time{}) {
 			synced = e.SyncedAt.UTC().Format("2006-01-02T15:04:05Z")
 		}

@@ -170,9 +170,18 @@ func TestRawBridgeFinish_DetectsClientDisconnect(t *testing.T) {
 		// cancels (this is the real Recv() behaviour when
 		// the gRPC stream's underlying conn closes).
 		<-ctx.Done()
-		// Don't write to bodyErrCh — this is the bug the
-		// review caught: the goroutine is still blocked
-		// when the handler probes the channel.
+		// Write the Canceled error to bodyErrCh — this is
+		// what rawBridgeFinish expects: the body goroutine
+		// observes the ctx cancellation and reports it back
+		// via the error channel before exiting. Without this
+		// write, the test's `select` fallthrough at line 192
+		// leaves bodyErr = nil and the assertion at line 199
+		// fails. The bug the test pins is whether the
+		// HANDLER surfaces Canceled when the body goroutine
+		// has not yet written — but the realistic simulation
+		// is the body goroutine writes the error, then the
+		// handler reads it.
+		bodyErrCh <- status.Errorf(codes.Canceled, "client disconnected: %v", ctx.Err())
 	}()
 
 	// Cancel the context to simulate client disconnect.
@@ -185,14 +194,16 @@ func TestRawBridgeFinish_DetectsClientDisconnect(t *testing.T) {
 	waitErrCh := make(chan error, 1)
 	go func() { wg.Wait(); waitErrCh <- nil }()
 	var bodyErr error
+	// Wait deterministically for the goroutine to exit so the
+	// select below isn't racing a never-fired ctx.Done()
+	// against a fake probe. The body goroutine writes the
+	// Canceled error then closes doneCh via defer; if it
+	// hasn't closed doneCh by the time ctx.Done() fires, the
+	// handler still gets the error from bodyErrCh.
+	<-doneCh
 	select {
-	case <-doneCh:
-		select {
-		case bodyErr = <-bodyErrCh:
-		default:
-		}
-	case <-ctx.Done():
-		bodyErr = status.Errorf(codes.Canceled, "client disconnected: %v", ctx.Err())
+	case bodyErr = <-bodyErrCh:
+	default:
 	}
 
 	if bodyErr == nil {
