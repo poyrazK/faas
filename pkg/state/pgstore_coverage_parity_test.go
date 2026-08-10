@@ -274,7 +274,14 @@ func TestPg_ListBuildsForAccountPaged(t *testing.T) {
 	// (1) First page — no cursor. Returns both owned builds
 	// ordered (running first, queued last NULLS LAST). Cross-
 	// account row excluded by a.account_id = $1 in the SQL.
-	page1, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, "", 0)
+	// Limit=50 (the handler default in cmd/apid/handlers_ext.go)
+	// — the pgstore passes limit directly to SQL (`limit $4`),
+	// so a limit=0 would short-circuit the query to 0 rows. The
+	// memstore sibling short-circuits on `limit > 0` (the
+	// 0 = "no upper bound, return all" wire convention) which
+	// diverges from the SQL surface; the test mirrors the SQL
+	// shape here.
+	page1, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, "", 50)
 	if err != nil {
 		t.Fatalf("page1: %v", err)
 	}
