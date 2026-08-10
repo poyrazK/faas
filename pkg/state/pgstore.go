@@ -8512,6 +8512,95 @@ func (s *PgStore) ListEventsByWakeID(ctx context.Context, wakeID string, since t
 	return out, rows.Err()
 }
 
+// ListAllEventsPaged (ADR-091 §3.7 / PR #3) is the operator-obs
+// backend's read-side query for the live events table. Mirrors the
+// SQL in pkg/state/queries.sql::ListAllEventsPaged; the raw-SQL
+// fallback here keeps the param semantics identical to the sqlc
+// version (no string-built queries, all parameters bound).
+//
+// Bounded by the handler to api.ObsAdminEventsLimitMax (500). The
+// interface{} params for the discriminator columns (actor, kind_prefix,
+// subject, since) match the sqlc-emitted shape — the SQL uses the
+// ($1 = ” OR ...) predicate so the column type cannot be inferred.
+// Bound as string / time.Time at the call site.
+func (s *PgStore) ListAllEventsPaged(ctx context.Context, actor, kindPrefix, subject string, since time.Time, limit int) ([]Event, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if !since.IsZero() {
+		since = since.UTC()
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, at, actor, kind, subject, data from events
+		 where ($1 = '' or actor = $1)
+		   and ($2 = '' or kind like $2 || '%')
+		   and ($3 = '' or subject = $3::uuid)
+		   and ($4 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $4)
+		 order by at desc, id desc
+		 limit $5`,
+		actor, kindPrefix, subject, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list_all_events_paged: %w", err)
+	}
+	defer rows.Close()
+	out := make([]Event, 0, 16)
+	for rows.Next() {
+		var e Event
+		var rawData []byte
+		if err := rows.Scan(&e.ID, &e.At, &e.Actor, &e.Kind, &e.Subject, &rawData); err != nil {
+			return nil, fmt.Errorf("state: list_all_events_paged: %w", err)
+		}
+		e.Data = json.RawMessage(rawData)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ListRecentEventsForAccount (ADR-091 §3.7 / PR #3) is the
+// per-account events drill-down. Backed by the partial
+// events_actor_account_idx on (actor_account_id) WHERE actor_account_id IS NOT NULL
+// (migrations/00099_orgs_memberships_invitations.sql). Same raw-SQL
+// shape as ListAllEventsPaged; the actor_account_id is the indexed
+// column so the planner picks the partial index on the per-account
+// filter regardless of the since filter.
+func (s *PgStore) ListRecentEventsForAccount(ctx context.Context, actorAccountID string, since time.Time, limit int) ([]Event, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if !since.IsZero() {
+		since = since.UTC()
+	}
+	parsedUUID, err := uuid.Parse(actorAccountID)
+	if err != nil {
+		// Unparseable actor_account_id — match the existing
+		// ListEvents behaviour where a malformed filter returns
+		// an empty slice rather than a SQL error.
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, at, actor, kind, subject, data from events
+		 where actor_account_id = $1
+		   and ($2 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $2)
+		 order by at desc, id desc
+		 limit $3`,
+		parsedUUID, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list_recent_events_for_account: %w", err)
+	}
+	defer rows.Close()
+	out := make([]Event, 0, 16)
+	for rows.Next() {
+		var e Event
+		var rawData []byte
+		if err := rows.Scan(&e.ID, &e.At, &e.Actor, &e.Kind, &e.Subject, &rawData); err != nil {
+			return nil, fmt.Errorf("state: list_recent_events_for_account: %w", err)
+		}
+		e.Data = json.RawMessage(rawData)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // ListEventsBySidecar (issue #463 / ADR-069 / PR-B) is the
 // sidecar-aware read-side twin of ListEventsByWakeID. Filters on
 // the jsonb expression data->>'sidecar_name' AND the closed

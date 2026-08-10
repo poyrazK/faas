@@ -25,7 +25,10 @@
 // non-nil Items slice so the JSON shape is stable.
 package api
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ObsOverviewResponse is the body of GET /v1/admin/obs/overview.
 // A single-object response (not a list) because the overview is a
@@ -305,4 +308,86 @@ type ObsRateLimitResponse struct {
 	LagSeconds  int                      `json:"lag_seconds"`
 	Durable     []ObsRateLimitDurableRow `json:"durable"`
 	Live        []ObsRateLimitLiveRow    `json:"live"`
+}
+
+// ObsAuditLogSearchResponse is the body of GET /v1/admin/obs/audit-log/search
+// (ADR-091 §3.7 / PR #3). Rows are projected verbatim from the FK-free
+// audit_log table (migrations/00163) — the table has no GIN index on
+// data and per ADR-091 §3.7.1 (amended 2026-08-10) the search surface
+// does NOT offer free-text on data. Filters are ?account_id, ?kind_prefix,
+// ?since, ?include_anonymous, ?limit; the full filter set is in
+// pkg/state.AuditLogFilter. PII access is logged separately by the
+// handler (every include_anonymous=true call emits a pii.accessed audit
+// row keyed on the caller).
+//
+// Items is always non-nil so the JSON shape is stable on empty windows;
+// IncludeAnonymous is the effective value (caller's request, not the
+// server's default) so the operator UI can render "anonymous rows
+// surfacing" without a second round-trip.
+type ObsAuditLogSearchResponse struct {
+	GeneratedAt      time.Time        `json:"generated_at"`
+	Items            []ObsAuditLogRow `json:"items"`
+	Limit            int              `json:"limit"`
+	IncludeAnonymous bool             `json:"include_anonymous"`
+	WindowHours      int              `json:"window_hours"`
+	KindPrefix       string           `json:"kind_prefix,omitempty"`
+	AccountID        string           `json:"account_id,omitempty"`
+}
+
+// ObsAuditLogRow is one row of the audit-log search. The fields are
+// the audit_log table verbatim — AccountID is the canonical UUID
+// (empty for anonymous rows), AccountEmail is the copy-time capture
+// (empty for anonymous rows), and Data is the verbatim JSON payload.
+// The grep tests in handlers_admin_obs_pr3_security_test.go pin the
+// omission of any caller-side redaction; this struct IS the wire shape.
+type ObsAuditLogRow struct {
+	ID           string          `json:"id"`
+	Kind         string          `json:"kind"`
+	AccountID    string          `json:"account_id,omitempty"`
+	AccountEmail string          `json:"account_email,omitempty"`
+	Actor        string          `json:"actor,omitempty"`
+	ReceivedAt   time.Time       `json:"received_at"`
+	Data         json.RawMessage `json:"data,omitempty"`
+}
+
+// ObsEventListResponse is the body of GET /v1/admin/obs/events
+// (ADR-091 §3.7 / PR #3). Distinct from ObsAuditLogSearchResponse
+// in two load-bearing axes (ADR-091 §3.7.4, "one source of truth per
+// intent"):
+//
+//   - Source table: events (live, bigint id, append-only) vs
+//     audit_log (FK-free, copy-time evidence). The two surfaces do
+//     NOT overlap.
+//   - Filter set: events has no `include_anonymous` toggle (every
+//     events row has an actor) and surfaces `actor` / `subject` /
+//     `kind_prefix` instead of `account_id` / `kind_prefix`.
+//
+// Items is always non-nil so the JSON shape is stable on empty windows.
+type ObsEventListResponse struct {
+	GeneratedAt time.Time     `json:"generated_at"`
+	Items       []ObsEventRow `json:"items"`
+	Limit       int           `json:"limit"`
+	WindowHours int           `json:"window_hours"`
+	KindPrefix  string        `json:"kind_prefix,omitempty"`
+	Actor       string        `json:"actor,omitempty"`
+	Subject     string        `json:"subject,omitempty"`
+}
+
+// ObsEventRow is one row of the events table read. The bigint id
+// surfaces as a string so JavaScript clients don't lose precision;
+// At is the event timestamp (RFC 3339 wire format). Subject is the
+// optional UUID the event relates to (e.g. an app_id for wake.* events).
+// Data is the verbatim JSON payload — admins need to see wake_id,
+// sidecar_name, instance_id, etc.
+//
+// PR #3 deliberately does NOT redact Data; the operator surface is
+// admin-only and the data column is the source of truth for the
+// related wire payloads (DEC-2 / ADR-091 §3.7.4).
+type ObsEventRow struct {
+	ID      int64           `json:"id"`
+	At      time.Time       `json:"at"`
+	Actor   string          `json:"actor"`
+	Kind    string          `json:"kind"`
+	Subject string          `json:"subject,omitempty"`
+	Data    json.RawMessage `json:"data,omitempty"`
 }

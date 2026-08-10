@@ -1413,6 +1413,85 @@ func (q *Queries) ListAPIKeys(ctx context.Context, db DBTX, accountID pgtype.UUI
 	return items, nil
 }
 
+const listAllEventsPaged = `-- name: ListAllEventsPaged :many
+select id, at, actor, kind, subject, data
+from events
+where ($1 = '' or actor = $1)
+  and ($2 = '' or kind like $2 || '%')
+  and ($3 = '' or subject = $3::uuid)
+  and ($4 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $4)
+order by at desc, id desc
+limit $5::int8
+`
+
+type ListAllEventsPagedParams struct {
+	Column1 interface{}
+	Column2 interface{}
+	Column3 interface{}
+	Column4 interface{}
+	Column5 int64
+}
+
+type ListAllEventsPagedRow struct {
+	ID      int64
+	At      pgtype.Timestamptz
+	Actor   string
+	Kind    string
+	Subject pgtype.UUID
+	Data    []byte
+}
+
+// ADR-091 §3.7 / PR #3 — operator-obs backend audit-reading surface.
+// Reads the live events table (NOT audit_log — distinct source of
+// truth per ADR-091 §3.7.4). Optional filters:
+//   - $1 actor    — exact match (handler passes "" to skip)
+//   - $2 kind_prefix — LIKE 'prefix%' (handler passes "" to skip)
+//   - $3 subject  — exact match (handler passes "" to skip)
+//   - $4 since    — RFC 3339 timestamptz (handler passes zero time to skip)
+//   - $5 limit    — top-N rows (handler default 200, cap 500;
+//     cast to int8 so sqlc emits int64 Params and the
+//     handler's int→int64 widening is safe)
+//
+// Order: at DESC, id DESC — the id tiebreaker keeps the planner on
+// the (kind, at DESC) index added by 00190_admin_obs_index.sql for
+// kind-prefix queries and avoids an unstable sort on the
+// over-read window.
+// Subject is uuid (nullable in the schema); the cast is left to
+// the handler so the handler can pass an empty string for "no
+// subject filter" without a NULL literal.
+func (q *Queries) ListAllEventsPaged(ctx context.Context, db DBTX, arg ListAllEventsPagedParams) ([]ListAllEventsPagedRow, error) {
+	rows, err := db.Query(ctx, listAllEventsPaged,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Column5,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllEventsPagedRow{}
+	for rows.Next() {
+		var i ListAllEventsPagedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.Actor,
+			&i.Kind,
+			&i.Subject,
+			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApps = `-- name: ListApps :many
 select id, account_id, slug, type, coalesce(runtime, ''), ram_mb, coalesce(idle_timeout_s, 0),
        max_concurrency, status, manifest, created_at
@@ -2059,6 +2138,74 @@ func (q *Queries) ListOrgsForAccount(ctx context.Context, db DBTX, accountID pgt
 			&i.DeletedPending,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentEventsForAccount = `-- name: ListRecentEventsForAccount :many
+select id, at, actor, kind, subject, data
+from events
+where actor_account_id = $1
+  and ($2 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $2)
+order by at desc, id desc
+limit $3::int8
+`
+
+type ListRecentEventsForAccountParams struct {
+	ActorAccountID pgtype.UUID
+	Column2        interface{}
+	Column3        int64
+}
+
+type ListRecentEventsForAccountRow struct {
+	ID      int64
+	At      pgtype.Timestamptz
+	Actor   string
+	Kind    string
+	Subject pgtype.UUID
+	Data    []byte
+}
+
+// ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
+// the partial index events_actor_account_idx on
+// (actor_account_id) WHERE actor_account_id IS NOT NULL
+// (migrations/00099_orgs_memberships_invitations.sql). Filters:
+//   - $1 actor_account_id — uuid (the account the actor belonged to)
+//   - $2 since             — RFC 3339 timestamptz (handler passes
+//     zero time to skip; the predicate is
+//     uniform with ListAllEventsPaged)
+//   - $3 limit             — top-N rows (handler default 200, cap 500;
+//     cast to int8 so sqlc emits int64 Params
+//     and the handler's int→int64 widening is
+//     safe)
+//
+// Order: at DESC, id DESC — same rationale as ListAllEventsPaged.
+// PR #3 wires the per-account filter on the SSE mirror's
+// per-account projections; the broader ?actor + ?subject filter
+// shape lives on ListAllEventsPaged.
+func (q *Queries) ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error) {
+	rows, err := db.Query(ctx, listRecentEventsForAccount, arg.ActorAccountID, arg.Column2, arg.Column3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRecentEventsForAccountRow{}
+	for rows.Next() {
+		var i ListRecentEventsForAccountRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.Actor,
+			&i.Kind,
+			&i.Subject,
+			&i.Data,
 		); err != nil {
 			return nil, err
 		}

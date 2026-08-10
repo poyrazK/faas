@@ -2414,6 +2414,33 @@ type Store interface {
 	// account's ID; the operator endpoint leaves AccountID nil and
 	// passes IncludeAnonymous=true when ?include_anonymous=true.
 	ListAuditLog(ctx context.Context, filter AuditLogFilter) ([]AuditLog, error)
+
+	// ListAllEventsPaged (ADR-091 §3.7 / PR #3) is the operator
+	// observability backend's read-side query for the live events
+	// table. Distinct from ListAuditLog (audit_log table) — the
+	// two surfaces do NOT overlap per ADR-091 §3.7.4.
+	//
+	// Filter shape: actor ("" / exact match), kind_prefix ("" /
+	// LIKE 'prefix%'), subject ("" / UUID), since (zero time / since
+	// floor), limit (top-N; bounded by handler to
+	// ObsAdminEventsLimitMax). The "" / zero literals are the
+	// "no filter" sentinel — sqlc binds them as interface{} because
+	// the SQL uses the ($1 = '' OR ...) predicate shape.
+	//
+	// Order is (at DESC, id DESC) — the id tiebreaker keeps the
+	// over-read stable across (kind, at DESC) index hits and
+	// avoids an unstable sort.
+	ListAllEventsPaged(ctx context.Context, actor, kindPrefix, subject string, since time.Time, limit int) ([]Event, error)
+
+	// ListRecentEventsForAccount (ADR-091 §3.7 / PR #3) is the
+	// per-account events drill-down. Backed by the events_actor_account_idx
+	// partial index on (actor_account_id) WHERE actor_account_id IS NOT NULL
+	// (migrations/00099_orgs_memberships_invitations.sql).
+	//
+	// since is the inclusive lower bound on at; limit is the top-N
+	// bounded by the caller's ObsAdminEventsLimitMax. Order is
+	// (at DESC, id DESC) — same rationale as ListAllEventsPaged.
+	ListRecentEventsForAccount(ctx context.Context, actorAccountID string, since time.Time, limit int) ([]Event, error)
 	// DeploymentSidecarRAMs (issue #463 / ADR-070 / PR-C) returns
 	// the per-deployment sidecar RAM slice from the jsonb column.
 	// Empty/nil when the deployment has no sidecars — matching the

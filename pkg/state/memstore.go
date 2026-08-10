@@ -6359,6 +6359,115 @@ func (m *MemStore) ListEventsByWakeID(_ context.Context, wakeID string, since ti
 	return out, nil
 }
 
+// ListAllEventsPaged (ADR-091 §3.7 / PR #3) is the in-memory twin
+// of PgStore.ListAllEventsPaged. Applies the same filter
+// semantics (actor / kind_prefix / subject / since) with the same
+// "empty string / zero time = no filter" sentinel used by the SQL
+// side. Order is (at DESC, id DESC) — same as the pgstore.
+// The cap to limit is applied AFTER the sort so the most-recent
+// rows are the ones that survive when the filter window is
+// larger than the limit.
+func (m *MemStore) ListAllEventsPaged(_ context.Context, actor, kindPrefix, subject string, since time.Time, limit int) ([]Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	var subjectFilter *uuid.UUID
+	if subject != "" {
+		parsed, err := uuid.Parse(subject)
+		if err == nil {
+			subjectFilter = &parsed
+		}
+		// Unparseable subject filter — no row would have produced it,
+		// return empty rather than silently matching everything.
+		// Mirrors the existing ListEvents contract.
+	}
+	var out []Event
+	for _, e := range m.events {
+		if actor != "" && e.Actor != actor {
+			continue
+		}
+		if kindPrefix != "" && !strings.HasPrefix(e.Kind, kindPrefix) {
+			continue
+		}
+		if subjectFilter != nil {
+			if e.Subject == nil || *e.Subject != *subjectFilter {
+				continue
+			}
+		}
+		if !since.IsZero() && e.At.Before(since) {
+			continue
+		}
+		out = append(out, e)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].At.Equal(out[j].At) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].At.After(out[j].At)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// ListRecentEventsForAccount (ADR-091 §3.7 / PR #3) is the
+// per-account events drill-down. Same filter contract as the
+// pgstore version. Backed by the in-memory append order so the
+// partial-index shape (migrations/00099) is mirrored by the
+// iteration: every event matches the actor_account_id predicate
+// first, then the since floor, then the limit cap.
+func (m *MemStore) ListRecentEventsForAccount(_ context.Context, actorAccountID string, since time.Time, limit int) ([]Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	parsed, err := uuid.Parse(actorAccountID)
+	if err != nil {
+		// Unparseable actor_account_id — match the pgstore
+		// behaviour (empty result, no error).
+		return nil, nil
+	}
+	var out []Event
+	for _, e := range m.events {
+		// Memstore's Event struct does not have actor_account_id
+		// as a typed field (it lives in the jsonb data blob on
+		// the pgstore side; the in-memory type carries only the
+		// fields PR-3 surfaces). Decode the data payload lazily
+		// to find the actor_account_id, mirroring the wake-id
+		// pattern used by ListEventsByWakeID.
+		var payload struct {
+			ActorAccountID string `json:"actor_account_id"`
+		}
+		if len(e.Data) == 0 {
+			continue
+		}
+		if err := json.Unmarshal(e.Data, &payload); err != nil {
+			continue
+		}
+		if payload.ActorAccountID != parsed.String() {
+			continue
+		}
+		if !since.IsZero() && e.At.Before(since) {
+			continue
+		}
+		out = append(out, e)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].At.Equal(out[j].At) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].At.After(out[j].At)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // ListEventsBySidecar (issue #463 / ADR-069 / PR-B) is the
 // sidecar-aware read-side twin of ListEventsByWakeID. Filters on
 // the jsonb data.sidecar_name key AND the closed wake.kind IN

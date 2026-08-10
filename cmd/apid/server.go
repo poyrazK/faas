@@ -1026,6 +1026,18 @@ func (s *server) handler() http.Handler {
 	// reads events + the in-process s.apiAuthLimiter snapshot.
 	mux.HandleFunc("GET /v1/admin/obs/anomalies",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAnomalies))))
+	// PR #3 endpoints (ADR-091 §3.7). audit-log/search reads the
+	// FK-free audit_log table (the regulator-grade evidence path);
+	// events reads the live events table (the live diagnostic path);
+	// nodes/events is the SSE mirror of the (deprecated) old
+	// /v1/compute-nodes/events path. All three routes inherit the
+	// same two-layer gate + MFA chain as PR #1 + PR #2.
+	mux.HandleFunc("GET /v1/admin/obs/audit-log/search",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAuditLogSearch))))
+	mux.HandleFunc("GET /v1/admin/obs/events",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsEvents))))
+	mux.HandleFunc("GET /v1/admin/obs/nodes/events",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNodesEventsSSE))))
 	mux.HandleFunc("GET /v1/admin/obs/rate-limits",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRateLimits))))
 
@@ -1202,7 +1214,7 @@ func (s *server) handler() http.Handler {
 	// CP-1: SSE stream on compute_node_changed. Operator-only,
 	// unfiltered (no per-account scoping — operators want raw
 	// fleet upserts, not the dashboard's mixed-workload feed).
-	mux.HandleFunc("GET /v1/compute-nodes/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.computeNodeEventsHandler))))
+	mux.HandleFunc("GET /v1/compute-nodes/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.withDeprecation(s.computeNodeEventsHandler)))))
 
 	// M7.5 SSE live-update (ADR-011). Handles session-cookie OR
 	// API-key auth itself — the cookie path is for the dashboard,

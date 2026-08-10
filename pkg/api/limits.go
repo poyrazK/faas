@@ -3253,4 +3253,23 @@ const (
 	// of the operator surface.
 	ObsAdminRateLimitLimitDefault = 100
 	ObsAdminRateLimitLimitMax     = ObsAdminPaginationMax
+
+	// ObsAdminAuditLogLimitDefault / ObsAdminAuditLogLimitMax bound
+	// the top-N size of /v1/admin/obs/audit-log/search (ADR-091 §3.7 /
+	// PR #3). Default 200 covers the operator's "what happened in
+	// the last hour" drill-down; cap 500 = ObsAdminPaginationMax
+	// for parity with the rest of the operator surface. The underlying
+	// store is bounded by an over-read on the same idiom as
+	// listAuditLogOverRead (cmd/apid/handlers_audit_log.go:67).
+	ObsAdminAuditLogLimitDefault = 200
+	ObsAdminAuditLogLimitMax     = ObsAdminPaginationMax
+
+	// ObsAdminEventsLimitDefault / ObsAdminEventsLimitMax bound the
+	// top-N size of /v1/admin/obs/events (ADR-091 §3.7 / PR #3).
+	// Same shape as the audit-log search: default 200, cap 500. The
+	// events table is append-only with no retention pruning today
+	// so the over-read budget is also bounded by the
+	// (kind, at DESC) index added by 00190_admin_obs_index.sql.
+	ObsAdminEventsLimitDefault = 200
+	ObsAdminEventsLimitMax     = ObsAdminPaginationMax
 )

@@ -231,3 +231,42 @@ func sessionFrom(r *http.Request) (state.Session, bool) {
 func (s *server) clearSessionCookie(w http.ResponseWriter, _ *http.Request) {
 	s.authMw.ClearSessionCookie(w)
 }
+
+// withDeprecation stamps the RFC 8594 + RFC 8288 deprecation headers
+// on the wrapped route so clients (and the operator UI's lint) can
+// detect a sunsetting endpoint. Three headers are set before the
+// handler runs:
+//
+//   - Deprecation: true                         (RFC 8594 §2)
+//   - Sunset: Wed, 01 Oct 2026 00:00:00 GMT     (RFC 8594 §3)
+//   - Link: </v1/admin/obs/nodes/events>;       (RFC 8288 —
+//     rel="successor-version"                     successor-version)
+//
+// The headers are written OUTSIDE the handler so they carry even on
+// auth-rejected paths (403 from the email allowlist, 401 from the
+// session middleware, etc.). The chain is
+// s.withDeprecation → s.authLimited → s.requireMFA → s.requireScope
+// → handler; mounting withDeprecation outermost means the headers
+// always land.
+//
+// PR #3 (ADR-091 §3.7.9) introduces this pattern on
+// /v1/compute-nodes/events. The new path /v1/admin/obs/nodes/events
+// does NOT carry the headers — it is the successor. 410 Gone on
+// the old path is a follow-up cleanup PR after one release.
+//
+// Sunset is the documented 2026-10-01 date; bump on every release
+// that ships a successor feature. Easy to bump per-PR because the
+// constant lives in one place.
+func (s *server) withDeprecation(next accountHandler) accountHandler {
+	const (
+		sunset = "Wed, 01 Oct 2026 00:00:00 GMT"
+		link   = `</v1/admin/obs/nodes/events>; rel="successor-version"`
+	)
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		h := w.Header()
+		h.Set("Deprecation", "true")
+		h.Set("Sunset", sunset)
+		h.Set("Link", link)
+		next(w, r, acct)
+	}
+}

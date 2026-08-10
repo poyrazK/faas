@@ -248,6 +248,57 @@ where data->>'wake_id' = $1
 order by at asc
 limit $3;
 
+-- name: ListAllEventsPaged :many
+-- ADR-091 §3.7 / PR #3 — operator-obs backend audit-reading surface.
+-- Reads the live events table (NOT audit_log — distinct source of
+-- truth per ADR-091 §3.7.4). Optional filters:
+--   * $1 actor    — exact match (handler passes "" to skip)
+--   * $2 kind_prefix — LIKE 'prefix%' (handler passes "" to skip)
+--   * $3 subject  — exact match (handler passes "" to skip)
+--   * $4 since    — RFC 3339 timestamptz (handler passes zero time to skip)
+--   * $5 limit    — top-N rows (handler default 200, cap 500;
+--                   cast to int8 so sqlc emits int64 Params and the
+--                   handler's int→int64 widening is safe)
+-- Order: at DESC, id DESC — the id tiebreaker keeps the planner on
+-- the (kind, at DESC) index added by 00190_admin_obs_index.sql for
+-- kind-prefix queries and avoids an unstable sort on the
+-- over-read window.
+-- Subject is uuid (nullable in the schema); the cast is left to
+-- the handler so the handler can pass an empty string for "no
+-- subject filter" without a NULL literal.
+select id, at, actor, kind, subject, data
+from events
+where ($1 = '' or actor = $1)
+  and ($2 = '' or kind like $2 || '%')
+  and ($3 = '' or subject = $3::uuid)
+  and ($4 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $4)
+order by at desc, id desc
+limit $5::int8;
+
+-- name: ListRecentEventsForAccount :many
+-- ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
+-- the partial index events_actor_account_idx on
+-- (actor_account_id) WHERE actor_account_id IS NOT NULL
+-- (migrations/00099_orgs_memberships_invitations.sql). Filters:
+--   * $1 actor_account_id — uuid (the account the actor belonged to)
+--   * $2 since             — RFC 3339 timestamptz (handler passes
+--                            zero time to skip; the predicate is
+--                            uniform with ListAllEventsPaged)
+--   * $3 limit             — top-N rows (handler default 200, cap 500;
+--                            cast to int8 so sqlc emits int64 Params
+--                            and the handler's int→int64 widening is
+--                            safe)
+-- Order: at DESC, id DESC — same rationale as ListAllEventsPaged.
+-- PR #3 wires the per-account filter on the SSE mirror's
+-- per-account projections; the broader ?actor + ?subject filter
+-- shape lives on ListAllEventsPaged.
+select id, at, actor, kind, subject, data
+from events
+where actor_account_id = $1
+  and ($2 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $2)
+order by at desc, id desc
+limit $3::int8;
+
 -- name: AppendUsage :exec
 -- Idempotent on (instance_id, minute) for mb_seconds / requests
 -- (M7 hardening, PR feat/m7-beta-hardening): a redelivered
