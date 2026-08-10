@@ -6376,12 +6376,17 @@ func (m *MemStore) ListAllEventsPaged(_ context.Context, actor, kindPrefix, subj
 	var subjectFilter *uuid.UUID
 	if subject != "" {
 		parsed, err := uuid.Parse(subject)
-		if err == nil {
-			subjectFilter = &parsed
+		if err != nil {
+			// Unparseable subject filter — no row would match it,
+			// so return empty rather than silently matching
+			// everything. Mirrors the pgstore contract: the SQL
+			// `$3 = '' OR subject = $3::uuid` clause fails the
+			// cast on a non-UUID string (Postgres returns 22P02
+			// invalid_text_representation); returning empty here
+			// keeps the two stores in lockstep on this edge.
+			return nil, nil
 		}
-		// Unparseable subject filter — no row would have produced it,
-		// return empty rather than silently matching everything.
-		// Mirrors the existing ListEvents contract.
+		subjectFilter = &parsed
 	}
 	var out []Event
 	for _, e := range m.events {

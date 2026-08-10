@@ -5011,3 +5011,59 @@ func TestMem_UpdateDeploymentTraffic_TieBreakStable(t *testing.T) {
 		t.Errorf("restore: Σ = %d, want 100", sum)
 	}
 }
+
+// TestMemStore_ListAllEventsPaged_BadSubjectEmpty pins the
+// memstore contract on unparseable subject filters (code-review
+// low on PR #817, 2026-08-10). Before the fix, a non-empty but
+// unparseable subject silently matched every event row — the
+// code comment promised "return empty rather than silently
+// matching everything" but the implementation just left
+// subjectFilter = nil and the per-row check became a no-op.
+//
+// Mirrors the pgstore contract: the SQL
+// `$3 = ” OR subject = $3::uuid` clause fails the cast on a
+// non-UUID string and returns no rows (Postgres 22P02). Returning
+// (nil, nil) keeps the two stores in lockstep on this edge.
+func TestMemStore_ListAllEventsPaged_BadSubjectEmpty(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	subject := uuid.New().String()
+	for i := 0; i < 3; i++ {
+		if err := m.AppendEvent(ctx, "system:schedd", "wake.requested", &subject, []byte(`{}`)); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	got, err := m.ListAllEventsPaged(ctx, "", "", "not-a-uuid", time.Time{}, 100)
+	if err != nil {
+		t.Fatalf("ListAllEventsPaged: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("unparseable subject: got %d rows, want 0 (mirrors pgstore SQL cast failure)", len(got))
+	}
+}
+
+// TestMemStore_ListAllEventsPaged_ValidSubject pins the
+// happy path on the same code path — defense against a future
+// "return empty on any non-empty subject" over-correction.
+func TestMemStore_ListAllEventsPaged_ValidSubject(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	subjectA := uuid.New().String()
+	subjectB := uuid.New().String()
+	if err := m.AppendEvent(ctx, "system:schedd", "wake.requested", &subjectA, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AppendEvent(ctx, "system:schedd", "wake.requested", &subjectB, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.ListAllEventsPaged(ctx, "", "", subjectA, time.Time{}, 100)
+	if err != nil {
+		t.Fatalf("ListAllEventsPaged: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("subject match: got %d rows, want 1 (subjectA only)", len(got))
+	}
+	if got[0].Subject == nil || got[0].Subject.String() != subjectA {
+		t.Errorf("subject: got %v, want %s", got[0].Subject, subjectA)
+	}
+}
