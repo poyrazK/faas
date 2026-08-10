@@ -447,6 +447,19 @@ type Store interface {
 	// probe another account's history.
 	FindGdprRequestByRequestID(ctx context.Context, accountID, requestID string) (GdprRequest, error)
 	ListBuildsForAccount(ctx context.Context, accountID string) ([]Build, error)
+	// ListBuildsForAccountPaged returns one page of builds across
+	// the account's deployments, ordered started_at desc nulls
+	// last. Keyset pagination via started_at < before. statusFilter=""
+	// means "any status". appIDFilter="" means "any app". When
+	// appIDFilter is set, restricts to deployments.app_id =
+	// appIDFilter. limit clamps at 200 server-side (cmd/apid
+	// handler does the same clamp).
+	//
+	// Used by GET /v1/builds (ADR-091, issue #741 close-out).
+	// The unlimited ListBuildsForAccount(ctx, accountID) sibling
+	// stays intact for the GDPR export at
+	// cmd/apid/handlers_account.go:643.
+	ListBuildsForAccountPaged(ctx context.Context, accountID, statusFilter, appIDFilter string, before time.Time, limit int) ([]Build, error)
 	ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error)
 	// UsageByAccount aggregates every per-minute usage_minutes row that
 	// landed in [since, now]. MemStore synthesizes the per-minute

@@ -8371,6 +8371,66 @@ func (m *MemStore) ListBuildsForAccount(_ context.Context, accountID string) ([]
 	return out, nil
 }
 
+// ListBuildsForAccountPaged returns one page of builds across the
+// account's deployments, ordered started_at desc nulls last
+// (DEPLOY-PROV-6 follow-up / ADR-091, issue #741 close-out).
+//
+// statusFilter="" matches any status; appIDFilter="" matches any
+// app. before.IsZero() = first page. limit is the page size
+// (server-side handler clamps at 200). The result ordering +
+// nulls-last semantics mirror the PgStore impl + the
+// builds_deployment_started_idx migration.
+func (m *MemStore) ListBuildsForAccountPaged(
+	_ context.Context, accountID, statusFilter, appIDFilter string,
+	before time.Time, limit int,
+) ([]Build, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ownedDeployments := map[string]struct{}{}
+	for _, d := range m.deployments {
+		if appIDFilter != "" && d.AppID != appIDFilter {
+			continue
+		}
+		app, ok := m.apps[d.AppID]
+		if !ok || app.AccountID != accountID {
+			continue
+		}
+		ownedDeployments[d.ID] = struct{}{}
+	}
+	var out []Build
+	for _, b := range m.builds {
+		if _, ok := ownedDeployments[b.DeploymentID]; !ok {
+			continue
+		}
+		if statusFilter != "" && string(b.Status) != statusFilter {
+			continue
+		}
+		if !before.IsZero() && !b.StartedAt.Before(before) {
+			// StartedAt == before or > before are excluded. Zero
+			// StartedAt (queued builds) is treated as the smallest
+			// possible value, so it never satisfies b.StartedAt <
+			// before — queued builds drop off the cursor as soon
+			// as before is set. This matches the SQL semantics.
+			continue
+		}
+		out = append(out, b)
+	}
+	// started_at desc nulls last — queued (zero) at the bottom.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StartedAt.IsZero() {
+			return false
+		}
+		if out[j].StartedAt.IsZero() {
+			return true
+		}
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // ListCronsForAccount returns every cron tied to the account.
 func (m *MemStore) ListCronsForAccount(_ context.Context, accountID string) ([]Cron, error) {
 	m.mu.Lock()

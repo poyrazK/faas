@@ -2,8 +2,11 @@ package state
 
 import (
 	"errors"
+	"sort"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // This slice closes the remaining real-branch gaps in MemStore that the
@@ -256,5 +259,231 @@ func TestMemStoreCoverageListUnplacedAndAllApps(t *testing.T) {
 	// empty.
 	if got, err := m.ListAppsByNodeID(ctx, DefaultLocalNodeName); err != nil || len(got) != 0 {
 		t.Fatalf("apps by node = %+v, %v", got, err)
+	}
+}
+
+// TestMemStoreCoverageListBuildsForAccountPaged (ADR-091, issue #741
+// close-out) covers the paged list path. Mirrors the PgStore
+// keyset SQL via a slice filter + sort. Pins:
+//
+//  1. Account-scoped default (no app/status filter).
+//  2. ?app=ID filter narrows to one app.
+//  3. ?status=running filter excludes queued + succeeded.
+//  4. Keyset cursor (before=...) pages backwards through
+//     started_at desc nulls last — queued (zero StartedAt)
+//     rows stay at the bottom of the first page and drop off
+//     once before is set.
+//  5. limit clamps the result set.
+//  6. Cross-account data never surfaces (GDPR-export-style
+//     isolation is the SQL store's job; the memstore mimics it
+//     via the apps.AccountID join).
+func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
+	m, ctx, account, _, deployment := memCoverageSlice4Fixture(t)
+	// Second app + deployment under the same account for the
+	// cross-app filter.
+	app2, err := m.CreateApp(ctx, App{ID: "00000000-0000-0000-0000-00000000slice9b", AccountID: account.ID, Slug: "slice9b"})
+	if err != nil {
+		t.Fatalf("CreateApp app2: %v", err)
+	}
+	dep2, err := m.CreateDeployment(ctx, Deployment{ID: "00000000-0000-0000-0000-00000000slice9d", AppID: app2.ID, Kind: DeploymentKindImage, CreatedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("CreateDeployment dep2: %v", err)
+	}
+	// Third account — its build must NEVER surface, even with
+	// no filter set.
+	otherAcct, err := m.CreateAccount(ctx, "slice9-other@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount other: %v", err)
+	}
+	otherApp, err := m.CreateApp(ctx, App{ID: "00000000-0000-0000-0000-00000000slice9c", AccountID: otherAcct.ID, Slug: "slice9c"})
+	if err != nil {
+		t.Fatalf("CreateApp other: %v", err)
+	}
+	otherDep, err := m.CreateDeployment(ctx, Deployment{ID: "00000000-0000-0000-0000-00000000slice9e", AppID: otherApp.ID, Kind: DeploymentKindImage, CreatedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("CreateDeployment other: %v", err)
+	}
+
+	// Seed 5 builds across the two owned deployments with
+	// deterministic, distinct started_at values, plus one queued
+	// (zero StartedAt) per deployment, plus one cross-account
+	// build.
+	base := time.Now().Add(-time.Hour)
+	ownedBuilds := []Build{}
+	for i := 0; i < 5; i++ {
+		b, err := m.CreateBuild(ctx, deployment.ID, DeploymentKindImage, 100, "/tmp/p.log")
+		if err != nil {
+			t.Fatalf("CreateBuild owned[%d]: %v", i, err)
+		}
+		// Backdate + claim + mark running so StartedAt sticks.
+		m.mu.Lock()
+		row := m.builds[b.ID]
+		row.StartedAt = base.Add(time.Duration(i) * time.Minute)
+		m.builds[b.ID] = row
+		m.mu.Unlock()
+		if _, err := m.ClaimQueuedBuild(ctx, b.ID); err != nil {
+			t.Fatalf("ClaimQueuedBuild[%d]: %v", i, err)
+		}
+		// After ClaimQueuedBuild the row's StartedAt may have been
+		// re-stamped; restore the deterministic value.
+		m.mu.Lock()
+		row = m.builds[b.ID]
+		row.StartedAt = base.Add(time.Duration(i) * time.Minute)
+		m.builds[b.ID] = row
+		m.mu.Unlock()
+		ownedBuilds = append(ownedBuilds, m.builds[b.ID])
+	}
+	// 1 queued build on the second owned deployment — zero
+	// StartedAt, must surface at the BOTTOM of the account-wide
+	// first page and drop off once `before` is set.
+	queued2, err := m.CreateBuild(ctx, dep2.ID, DeploymentKindImage, 50, "/tmp/q2.log")
+	if err != nil {
+		t.Fatalf("CreateBuild queued2: %v", err)
+	}
+	_ = queued2
+	// 1 build on the other-account deployment — must never surface.
+	_, err = m.CreateBuild(ctx, otherDep.ID, DeploymentKindImage, 999, "/tmp/x.log")
+	if err != nil {
+		t.Fatalf("CreateBuild other: %v", err)
+	}
+
+	// (1) Account-scoped, no filter — returns all 7 owned builds
+	// ordered started_at desc, queued (zero) at the bottom.
+	// (5 running seeded above + 1 queued on dep2 + 1 fixture
+	// queued on dep1 from memCoverageSlice4Fixture.)
+	got, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("account-wide: %v", err)
+	}
+	if len(got) != 7 {
+		t.Fatalf("account-wide len = %d, want 7 (cross-account row leaked or count drift): %+v", len(got), got)
+	}
+	// Top row = newest owned (base+4m); bottom 2 = queued (zero)
+	// rows (slice4 fixture + dep2 queued).
+	if !got[0].StartedAt.Equal(base.Add(4 * time.Minute)) {
+		t.Errorf("top row started_at = %v, want %v", got[0].StartedAt, base.Add(4*time.Minute))
+	}
+	queuedCount := 0
+	for _, b := range got {
+		if b.StartedAt.IsZero() {
+			queuedCount++
+		}
+	}
+	if queuedCount != 2 {
+		t.Errorf("queued rows = %d, want 2 (fixture + dep2)", queuedCount)
+	}
+
+	// (2) app=app2.ID — only the queued build on dep2 qualifies.
+	got, err = m.ListBuildsForAccountPaged(ctx, account.ID, "", app2.ID, time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("app filter: %v", err)
+	}
+	if len(got) != 1 || !got[0].StartedAt.IsZero() || got[0].DeploymentID != dep2.ID {
+		t.Fatalf("app filter = %+v, want 1 queued on dep2", got)
+	}
+
+	// (3) status=running — only the 5 claimed builds qualify
+	// (queued has status=queued, not running).
+	got, err = m.ListBuildsForAccountPaged(ctx, account.ID, "running", "", time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("status filter: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("status running len = %d, want 5", len(got))
+	}
+	for _, b := range got {
+		if b.Status != BuildRunning {
+			t.Errorf("status filter leaked %s/%s", b.ID, b.Status)
+		}
+	}
+
+	// (4) Keyset cursor — page 1 with limit=3 returns the 3
+	// newest running (base+4m, +3m, +2m); the cursor (base+2m)
+	// pages backwards to the 2 remaining running (+1m, base) +
+	// 1 queued at the tail. The fixture's queued row never
+	// surfaces here — once `before` is set, zero StartedAt
+	// rows drop off the SQL semantics (matches
+	// builds.started_at < $4 excluding NULL).
+	page1, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, 3)
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1) != 3 {
+		t.Fatalf("page1 len = %d, want 3", len(page1))
+	}
+	if !page1[2].StartedAt.Equal(base.Add(2 * time.Minute)) {
+		t.Errorf("page1[2] = %v, want base+2m", page1[2].StartedAt)
+	}
+	page2, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "", page1[2].StartedAt, 3)
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if len(page2) != 3 {
+		t.Fatalf("page2 len = %d, want 3 (queued at tail): %+v", len(page2), page2)
+	}
+	// page2[0..1] = base+1m, base. page2[2] = queued (zero)
+	// from dep2 (the one we just created; the slice4 fixture
+	// queued row dropped off because zero StartedAt is never
+	// < base+2m).
+	if !page2[0].StartedAt.Equal(base.Add(time.Minute)) {
+		t.Errorf("page2[0] = %v, want base+1m", page2[0].StartedAt)
+	}
+	if !page2[1].StartedAt.Equal(base) {
+		t.Errorf("page2[1] = %v, want base", page2[1].StartedAt)
+	}
+	if !page2[2].StartedAt.IsZero() {
+		t.Errorf("page2[2] started_at = %v, want zero (queued)", page2[2].StartedAt)
+	}
+
+	// (5) limit clamps — limit=2 returns 2 rows.
+	clamped, err := m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, 2)
+	if err != nil {
+		t.Fatalf("limit: %v", err)
+	}
+	if len(clamped) != 2 {
+		t.Errorf("limit=2 len = %d, want 2", len(clamped))
+	}
+
+	// (6) Cross-account isolation — querying the OTHER account
+	// returns only the cross-account build, never the owned ones.
+	got, err = m.ListBuildsForAccountPaged(ctx, otherAcct.ID, "", "", time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("other account: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("other account len = %d, want 1 (cross-tenant leak?): %+v", len(got), got)
+	}
+	if got[0].DeploymentID != otherDep.ID {
+		t.Errorf("other account leaked row: %s", got[0].DeploymentID)
+	}
+
+	// (7) Sanity: ordering invariant for the unfiltered set — sort
+	// the owned running rows by started_at desc and confirm
+	// ListBuildsForAccountPaged returns them at the TOP of the
+	// result in the same order. Queued rows (zero StartedAt) sort
+	// to the bottom — their relative order is not asserted.
+	expected := append([]Build{}, ownedBuilds...)
+	sort.Slice(expected, func(i, j int) bool {
+		if expected[i].StartedAt.IsZero() {
+			return false
+		}
+		if expected[j].StartedAt.IsZero() {
+			return true
+		}
+		return expected[i].StartedAt.After(expected[j].StartedAt)
+	})
+	got, err = m.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("ordering invariant: %v", err)
+	}
+	// got[0..4] should equal expected[0..4] (the 5 running rows);
+	// got[5..6] are queued (zero StartedAt) in arbitrary order.
+	for i := 0; i < 5; i++ {
+		if got[i].ID != expected[i].ID {
+			t.Errorf("order[%d]: got %s, want %s", i, got[i].ID, expected[i].ID)
+		}
+		if got[i].StartedAt.IsZero() {
+			t.Errorf("order[%d] leaked queued to top of running block", i)
+		}
 	}
 }
