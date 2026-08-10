@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/reconcile"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -98,6 +99,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	cfg, err := LoadConfig(deps.configPath)
 	if err != nil {
 		return fmt.Errorf("githubd: config: %w", err)
+	}
+	// Gate-B box-role gate. githubd is a control-plane daemon —
+	// it refuses to start under RoleComputeOnly. The role is
+	// set from TOML or FAAS_GITHUBD_ROLE at deploy time; default
+	// is RoleSingleBox so single-box dev boots unmoved.
+	if err := role.Require("githubd", cfg.Role, role.RoleSingleBox, role.RoleControlPlane); err != nil {
+		return err
 	}
 
 	pool, err := deps.openDB(ctx, "")

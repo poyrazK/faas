@@ -21,6 +21,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -113,6 +114,13 @@ type Config struct {
 	// BurntSushi/toml — e.g. "300s", "15m", "1h30m". Plain integer
 	// nanoseconds are NOT accepted (a bare `900` parses as 900 ns).
 	ResponseWriteTimeout time.Duration `toml:"response_write_timeout"`
+
+	// Role is the box shape this gatewayd-internal inhabits
+	// (Gate-B; env override FAAS_GATEWAYD_ROLE wins when set).
+	// gatewayd-internal is a compute-only daemon — it refuses to
+	// start under RoleControlPlane. RoleSingleBox is the default
+	// and lets single-box dev boot unmoved.
+	Role role.Role `toml:"role"`
 }
 
 // TOMLTLSConfig is the on-disk TLS subset. Function pointers and derived
@@ -142,6 +150,11 @@ type TOMLTLSConfig struct {
 // path continues to work for the e2e harness).
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
+		// Gate-B: env wins over TOML; both empty defaults to
+		// RoleSingleBox (single-box dev back-compat). The role
+		// gate at boot calls role.Require to refuse to start
+		// under the wrong box shape.
+		Role:            role.FromConfig("", "FAAS_GATEWAYD_ROLE"),
 		PublicAddr:      defaultPublicListenAddr,
 		ControlAddr:     "127.0.0.1:9090",
 		APIDLoopback:    "http://127.0.0.1:8081",

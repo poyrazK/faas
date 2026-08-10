@@ -13,6 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -152,6 +153,16 @@ type Config struct {
 	// over the toml value for the containerised-deploys path
 	// (no toml in those images).
 	NodeKeyPath string `toml:"node_key_path"`
+
+	// Role is the box shape this vmmd inhabits (Gate-B; env
+	// override FAAS_VMMD_ROLE wins when set). vmmd is a
+	// compute-only daemon — it refuses to start under
+	// RoleControlPlane. RoleSingleBox is the default and lets
+	// single-box dev boot unmoved. The host_vars setting
+	// `faas_box_role: compute-only` propagates through ansible
+	// to FAAS_VMMD_ROLE on the vmmd unit; a missing env keeps
+	// the field at RoleSingleBox.
+	Role role.Role `toml:"role"`
 }
 
 // ComputeNodeConfig is the [compute_node] TOML section. Field naming
@@ -250,6 +261,11 @@ func (c *Config) LoadAdvisoryClientTLS() (*tls.Config, error) {
 // in that case an empty config is returned.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
+		// Gate-B: env wins over TOML; both empty defaults to
+		// RoleSingleBox (single-box dev back-compat). The role
+		// gate at boot calls role.Require to refuse to start
+		// under the wrong box shape.
+		Role:       role.FromConfig("", "FAAS_VMMD_ROLE"),
 		SocketPath: "/run/faas/vmmd.sock",
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from sched.KernelKey(fcVersion) after FC

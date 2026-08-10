@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/cpustats"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -390,6 +391,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	cfg, err := LoadConfig(deps.configPath)
 	if err != nil {
+		return err
+	}
+	// Gate-B box-role gate. vmmd is a compute-only daemon — it
+	// refuses to start under RoleControlPlane. The role is set
+	// from TOML or FAAS_VMMD_ROLE at deploy time; default is
+	// RoleSingleBox so single-box dev boots unmoved.
+	if err := role.Require("vmmd", cfg.Role, role.RoleSingleBox, role.RoleComputeOnly); err != nil {
 		return err
 	}
 	listenTarget := cfg.ResolveListenTarget()

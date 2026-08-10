@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -112,6 +113,13 @@ type Config struct {
 	// builderd runs on a non-default node (multi-node deployments
 	// post-PR-B).
 	BuilderNodeID string `toml:"builder_node_id"`
+
+	// Role is the box shape this builderd inhabits (Gate-B; env
+	// override FAAS_BUILDERD_ROLE wins when set). builderd is a
+	// compute-only daemon — it refuses to start under
+	// RoleControlPlane. RoleSingleBox is the default and lets
+	// single-box dev boot unmoved.
+	Role role.Role `toml:"role"`
 }
 
 // ResolveVMMTarget returns the dial target for vmmd. VMMTarget wins
@@ -133,6 +141,11 @@ func (c *Config) LoadVMMTLS() (*tls.Config, error) {
 // file is not an error — the defaults produce a working daemon.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
+		// Gate-B: env wins over TOML; both empty defaults to
+		// RoleSingleBox (single-box dev back-compat). The role
+		// gate at boot calls role.Require to refuse to start
+		// under the wrong box shape.
+		Role:             role.FromConfig("", "FAAS_BUILDERD_ROLE"),
 		VMMDSocket:       "/run/faas/vmmd.sock",
 		CacheDir:         "/var/cache/faas/builds",
 		BuilderBase:      "/srv/fc/base/builder-base.ext4",

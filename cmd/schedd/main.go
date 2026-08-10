@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
@@ -247,6 +248,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	cfg, err := LoadConfig(deps.configPath)
 	if err != nil {
+		return err
+	}
+	// Gate-B box-role gate. schedd is a control-plane daemon — it
+	// refuses to start under RoleComputeOnly. The role is set
+	// from TOML or FAAS_SCHEDD_ROLE at deploy time; default is
+	// RoleSingleBox so single-box dev boots unmoved.
+	if err := role.Require("schedd", cfg.Role, role.RoleSingleBox, role.RoleControlPlane); err != nil {
 		return err
 	}
 	listenTarget := cfg.ResolveListenTarget()

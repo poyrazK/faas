@@ -26,6 +26,7 @@ vmlinux-*
 /init
 /imaged
 /builderd
+/meterd
 
 # Stray binaries at repo root from `make metal-lima` / local guest-init
 # build (cross-compiled for the Lima arm64 guest so the Dockerfile's

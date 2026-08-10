@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -99,6 +100,18 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		capCheck = func() error { return runtimecheck.MustCheckOnBoot(capsDecl, log, nil) }
 	}
 	if err := capCheck(); err != nil {
+		return err
+	}
+
+	// Gate-B box-role gate. imaged is a compute-only daemon — it
+	// refuses to start under RoleControlPlane. The role is set
+	// from FAAS_IMAGED_ROLE at deploy time (imaged has no
+	// config.go today; the env is the only source); default is
+	// RoleSingleBox so single-box dev boots unmoved. The gate
+	// runs before d.openDB so a misconfigured boot doesn't waste
+	// a Postgres connection.
+	if err := role.Require("imaged", role.FromConfig("", "FAAS_IMAGED_ROLE"),
+		role.RoleSingleBox, role.RoleComputeOnly); err != nil {
 		return err
 	}
 

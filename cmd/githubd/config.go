@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/BurntSushi/toml"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -39,6 +40,13 @@ type Config struct {
 	TLSCertPath string `toml:"tls_cert_path"`
 	TLSKeyPath  string `toml:"tls_key_path"`
 	TLSCAPath   string `toml:"tls_ca_path"`
+
+	// Role is the box shape this githubd inhabits (Gate-B; env
+	// override FAAS_GITHUBD_ROLE wins when set). githubd is a
+	// control-plane daemon — it refuses to start under
+	// RoleComputeOnly. RoleSingleBox is the default and lets
+	// single-box dev boot unmoved.
+	Role role.Role `toml:"role"`
 }
 
 // ResolveListenTarget returns the gRPC target the server should bind.
@@ -64,6 +72,11 @@ func (c *Config) LoadServerTLS() (*tls.Config, error) {
 // suffice; in that case a default config is returned.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
+		// Gate-B: env wins over TOML; both empty defaults to
+		// RoleSingleBox (single-box dev back-compat). The role
+		// gate at boot calls role.Require to refuse to start
+		// under the wrong box shape.
+		Role:       role.FromConfig("", "FAAS_GITHUBD_ROLE"),
 		HTTPAddr:   "127.0.0.1:8083",
 		SocketPath: "/run/faas/githubd.sock",
 	}

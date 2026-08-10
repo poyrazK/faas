@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 
@@ -120,6 +121,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	cfg, err := LoadConfig(deps.configPath)
 	if err != nil {
+		return err
+	}
+	// Gate-B box-role gate. builderd is a compute-only daemon —
+	// it refuses to start under RoleControlPlane. The role is
+	// set from TOML or FAAS_BUILDERD_ROLE at deploy time;
+	// default is RoleSingleBox so single-box dev boots unmoved.
+	if err := role.Require("builderd", cfg.Role, role.RoleSingleBox, role.RoleComputeOnly); err != nil {
 		return err
 	}
 	vmmTarget := cfg.ResolveVMMTarget()

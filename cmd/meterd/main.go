@@ -55,6 +55,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -613,6 +614,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	cfg, err := LoadConfig(deps.configPath)
 	if err != nil {
+		return err
+	}
+	// Gate-B box-role gate. meterd is a control-plane daemon —
+	// it refuses to start under RoleComputeOnly. The role is
+	// set from TOML or FAAS_METERD_ROLE at deploy time; default
+	// is RoleSingleBox so single-box dev boots unmoved.
+	if err := role.Require("meterd", cfg.Role, role.RoleSingleBox, role.RoleControlPlane); err != nil {
 		return err
 	}
 	mc, err := deps.loadMeter(cfg)

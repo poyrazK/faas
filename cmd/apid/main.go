@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
@@ -284,6 +285,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		capCheck = func() error { return runtimecheck.MustCheckOnBoot(capsDecl, log, nil) }
 	}
 	if err := capCheck(); err != nil {
+		return err
+	}
+
+	// Gate-B box-role gate. apid is a control-plane daemon — it
+	// refuses to start under RoleComputeOnly. The role is set
+	// from FAAS_APID_ROLE at deploy time (apid has no config.go
+	// today; the env is the only source); default is
+	// RoleSingleBox so single-box dev boots unmoved. The gate
+	// runs before db.Open so a misconfigured boot doesn't waste
+	// a Postgres connection.
+	if err := role.Require("apid", role.FromConfig("", "FAAS_APID_ROLE"),
+		role.RoleSingleBox, role.RoleControlPlane); err != nil {
 		return err
 	}
 

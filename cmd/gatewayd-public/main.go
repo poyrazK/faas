@@ -58,6 +58,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -127,6 +128,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		capCheck = func() error { return runtimecheck.MustCheckOnBoot(capsDecl, log, nil) }
 	}
 	if err := capCheck(); err != nil {
+		return err
+	}
+
+	// Gate-B box-role gate. gatewayd-public is a control-plane
+	// daemon — it refuses to start under RoleComputeOnly. The
+	// role is set from FAAS_GATEWAYD_PUBLIC_ROLE at deploy time
+	// (gatewayd-public has no config.go today; the env is the
+	// only source); default is RoleSingleBox so single-box dev
+	// boots unmoved. The gate runs before db.Open so a
+	// misconfigured boot doesn't waste a Postgres connection.
+	if err := role.Require("gatewayd-public", role.FromConfig("", "FAAS_GATEWAYD_PUBLIC_ROLE"),
+		role.RoleSingleBox, role.RoleControlPlane); err != nil {
 		return err
 	}
 

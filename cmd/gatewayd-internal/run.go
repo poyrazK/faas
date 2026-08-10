@@ -54,6 +54,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -402,6 +403,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
+		return err
+	}
+	// Gate-B box-role gate. gatewayd-internal is a compute-only
+	// daemon — it refuses to start under RoleControlPlane. The
+	// role is set from TOML or FAAS_GATEWAYD_ROLE at deploy time;
+	// default is RoleSingleBox so single-box dev boots unmoved.
+	if err := role.Require("gatewayd-internal", cfg.Role, role.RoleSingleBox, role.RoleComputeOnly); err != nil {
 		return err
 	}
 

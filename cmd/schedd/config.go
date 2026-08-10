@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -215,6 +216,16 @@ type Config struct {
 	// and the [compute_nodes] row is provisioned by `faas node
 	// register` (out of scope for ADR-056).
 	NodeName string `toml:"node_name"`
+
+	// Role is the box shape this schedd inhabits (Gate-B; env
+	// override FAAS_SCHEDD_ROLE wins when set). schedd is a
+	// control-plane daemon — it refuses to start under
+	// RoleComputeOnly. RoleSingleBox is the default and lets
+	// single-box dev boot unmoved. The host_vars setting
+	// `faas_box_role: control-plane` propagates through ansible
+	// to FAAS_SCHEDD_ROLE on the schedd unit; a missing env
+	// keeps the field at RoleSingleBox.
+	Role role.Role `toml:"role"`
 }
 
 // ResolveListenTarget returns the gRPC target schedd should bind.
@@ -311,6 +322,11 @@ func (c *Config) LoadVMMTLSWithVerifier(v wire.NodeVerifier) (*tls.Config, error
 // is not an error — the defaults produce a working daemon.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
+		// Gate-B: env wins over TOML; both empty defaults to
+		// RoleSingleBox (single-box dev back-compat). The role
+		// gate at boot calls role.Require to refuse to start
+		// under the wrong box shape.
+		Role:               role.FromConfig("", "FAAS_SCHEDD_ROLE"),
 		SocketPath:         "/run/faas/schedd.sock",
 		VMMDSocket:         "/run/faas/vmmd.sock",
 		GatewaySynthSocket: "/run/faas/gatewayd-internal.sock",
