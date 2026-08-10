@@ -89,7 +89,7 @@ are the canonical reference shape.
    New index supports both the keyset filter AND the existing
    `BuildByDeployment` single-id lookup (`queries.sql:353`).
    Forward-only addition in `Up`; `DROP INDEX` in `Down`. The
-   migration is `migrations/00193_builds_deployment_started_idx.sql`.
+   migration is `migrations/00195_builds_deployment_started_idx.sql`.
    Rationale for the column order: the planner's most likely
    strategy is nested-loop through `apps` (via
    `apps_account_idx`) → `deployments` (via
@@ -133,8 +133,8 @@ are the canonical reference shape.
 | Layer | File | Change |
 |-------|------|--------|
 | ADR | `docs/adr/091-build-list-endpoint.md` | This file. |
-| Migration | `migrations/00193_builds_deployment_started_idx.sql` | NEW. Index. |
-| Migration test | `migrations/00193_builds_deployment_started_idx_test.go` | NEW. Apply-walk pins it. |
+| Migration | `migrations/00195_builds_deployment_started_idx.sql` | NEW. Index. |
+| Migration test | `migrations/00195_builds_deployment_started_idx_test.go` | NEW. Apply-walk pins it. |
 | State interface | `pkg/state/store.go` | ADD `ListBuildsForAccountPaged`. |
 | State impl | `pkg/state/pgstore.go` | ADD keyset SQL impl. |
 | State impl | `pkg/state/memstore.go` | ADD slice-filter impl. |
@@ -207,7 +207,7 @@ are the canonical reference shape.
 - `daemonunit-check (generated drift)` — green. No daemon unit
   change.
 - `migrations (contiguity + apply)` — green. The new
-  `00193_builds_deployment_started_idx.sql` runs cleanly forward
+  `00195_builds_deployment_started_idx.sql` runs cleanly forward
   + back. Apply-walk test pins it.
 - `e2e (4 shards)` — green. Blackbox e2e untouched.
 

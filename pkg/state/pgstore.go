@@ -12032,15 +12032,19 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 // cursor entirely (no non-null started_at to anchor it on).
 //
 // The query is supported by builds_deployment_started_idx
-// (migrations/00193, originally renumbered from 166 mid-PR
-// after a sibling-PR fence took slot 166; 168 was also fenced
-// on main, then 174 too, so the renumber landed at 191 —
-// the next free slot beyond main's 190_admin_obs_index) —
-// the leading deployment_id column lets
-// the planner's nested-loop strategy probe each outer deployment
-// row's builds via a bounded range scan instead of fetching +
-// filtering in-memory. The DESC NULLS LAST ordering matches the
-// SQL surface so queued builds stay at the bottom of every page.
+// (migrations/00195, originally renumbered 166 → 191 → 193 → 195
+// during cross-PR reviews — each renumber was forced by a sibling
+// PR's reservation fence landing in the same slot mid-rebase;
+// the slot family uses the canonical cross-pr-slot-gate-reservation-
+// fence-pattern + drop-on-rebase cleanup; the latest cycle is
+// 193 → 195 after main landed 193_reserve_slot + 194_cron_fire_now
+// when PR #813/815 settled cross-PR — so the renumber landed at
+// 195, the next free slot beyond main's 194_cron_fire_now_requests).
+// The leading deployment_id column lets the planner's nested-loop
+// strategy probe each outer deployment row's builds via a bounded
+// range scan instead of fetching + filtering in-memory. The DESC
+// NULLS LAST ordering matches the SQL surface so queued builds
+// stay at the bottom of every page.
 //
 // limit is clamped server-side by the handler (1..200).
 func (s *PgStore) ListBuildsForAccountPaged(
