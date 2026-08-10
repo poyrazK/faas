@@ -397,15 +397,25 @@ export class DeploymentsService {
    * bottom of the first page). Optional ?app=<slug> narrows to
    * one app; optional ?status=<s> filters to the 4-value status
    * enum (queued|running|succeeded|failed; omit for any status).
-   * Cursor pagination via ?before=<RFC3339Nano>; limit defaults
+   * Cursor pagination via ?before=<opaque token>; limit defaults
    * to 50, capped at 200.
    *
    * The response shape mirrors /v1/deployments: items + a
    * next_before cursor (empty when end of list). The cursor is
-   * the started_at of the LAST row with a non-null started_at
-   * on this page, so passing next_before never skips the
-   * running/succeeded rows behind queued builds at the tail of
-   * the previous page.
+   * the opaque tuple `<rfc3339nano>|<id_hex>` of the LAST row
+   * on this page — server-emitted, round-tripped verbatim. The
+   * id tiebreaker makes the keyset deterministic for queued
+   * tails (started_at IS NULL) and for sub-second collisions
+   * on started_at. See ADR-091 §3.
+   *
+   * BuildResponse.started_at (the per-row wire field) is
+   * RFC3339 (whole-second) for backward compatibility with
+   * `GET /v1/builds/{id}`. The cursor's started_at segment is
+   * RFC3339Nano (sub-second preserved) so the keyset
+   * sub-second clause is reachable on rows whose started_at
+   * falls in the same wall-clock second. The two are
+   * deliberately different and the cursor's higher precision
+   * is intentional.
    *
    * @returns BuildListResponse A page of builds (ordered started_at DESC, nulls last).
    * @throws ApiError
@@ -425,7 +435,7 @@ export class DeploymentsService {
      */
     status?: 'queued' | 'running' | 'succeeded' | 'failed',
     /**
-     * Cursor: fetch rows started strictly before this RFC3339Nano timestamp.
+     * Opaque cursor token from a previous response's `next_before`. Format: `<rfc3339nano>|<id_hex>` (pipe-separated). Empty started_at segment encodes a queued-tail cursor (the `<id_hex>` part alone). Round-trip verbatim — do NOT re-parse or re-encode.
      */
     before?: string,
     /**
