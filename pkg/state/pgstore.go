@@ -10937,15 +10937,30 @@ func scanDeployments(rows pgx.Rows) ([]Deployment, error) {
 func scanBuild(row pgx.Row) (Build, error) {
 	b := Build{}
 	var kind, statusStr, fc string
-	var startedAt, finishedAt *time.Time
+	// pgtype.Timestamptz is the canonical nullable timestamptz
+	// reader in this file (see test_request_id_tz_row at
+	// pgstore.go:12322) — its `.Valid` flag round-trips NULL
+	// cleanly across both row.Scan (single-row callers like
+	// BuildByID) and rows.Scan (multi-row callers like
+	// ListBuildsForAccountPaged). `*time.Time` works for
+	// single-row scans when the dst pointer is nil, but pgx
+	// v5.10.0 rejects NULL into a nil `*time.Time` when the
+	// same scan args are reused across rows.Scan iterations —
+	// the running build has started_at set + finished_at NULL,
+	// and the second iteration's `finishedAt` is left at the
+	// first iteration's post-scan value, which is then
+	// incompatible with column NULL. pgtype.Timestamptz avoids
+	// the trap by always being a value type with a `.Valid`
+	// flag.
+	var startedAt, finishedAt pgtype.Timestamptz
 	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt); err != nil {
 		return Build{}, mapErr(err)
 	}
-	if startedAt != nil {
-		b.StartedAt = *startedAt
+	if startedAt.Valid {
+		b.StartedAt = startedAt.Time
 	}
-	if finishedAt != nil {
-		b.FinishedAt = *finishedAt
+	if finishedAt.Valid {
+		b.FinishedAt = finishedAt.Time
 	}
 	b.Kind = DeploymentKind(kind)
 	b.Status = BuildStatus(statusStr)
