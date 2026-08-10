@@ -11992,8 +11992,21 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 	for rows.Next() {
 		b := Build{}
 		var kind, statusStr, fc string
-		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &b.StartedAt, &b.FinishedAt); err != nil {
+		// pgtype.Timestamptz for nullable timestamps (same
+		// pattern as ListBuildsForAccountPaged immediately
+		// below and scanBuild at pgstore.go:10962): &b.StartedAt
+		// / &b.FinishedAt are *time.Time (Build fields are not
+		// pointers) and pgx v5.10.0 rejects NULL into a fresh
+		// *time.Time under rows.Scan.
+		var startedAt, finishedAt pgtype.Timestamptz
+		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt); err != nil {
 			return nil, err
+		}
+		if startedAt.Valid {
+			b.StartedAt = startedAt.Time
+		}
+		if finishedAt.Valid {
+			b.FinishedAt = finishedAt.Time
 		}
 		b.Kind = DeploymentKind(kind)
 		b.Status = BuildStatus(statusStr)
@@ -12137,9 +12150,24 @@ func (s *PgStore) ListBuildsForAccountPaged(
 	for rows.Next() {
 		b := Build{}
 		var kind, statusStr, fc string
+		// pgtype.Timestamptz is the canonical nullable timestamp
+		// reader here (mirrors scanBuild at pgstore.go:10962):
+		// &b.StartedAt / &b.FinishedAt are *time.Time (Build
+		// fields are not pointers), and pgx v5.10.0 refuses
+		// NULL into a fresh *time.Time under rows.Scan. The
+		// pgtype wrapper encodes NULL via .Valid = false so
+		// the inner `b.StartedAt = ...` only fires on a real
+		// timestamp.
+		var startedAt, finishedAt pgtype.Timestamptz
 		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes,
-			&statusStr, &fc, &b.LogPath, &b.StartedAt, &b.FinishedAt, &b.EnqueuedAt); err != nil {
+			&statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt); err != nil {
 			return nil, err
+		}
+		if startedAt.Valid {
+			b.StartedAt = startedAt.Time
+		}
+		if finishedAt.Valid {
+			b.FinishedAt = finishedAt.Time
 		}
 		b.Kind = DeploymentKind(kind)
 		b.Status = BuildStatus(statusStr)
