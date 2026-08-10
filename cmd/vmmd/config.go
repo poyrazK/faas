@@ -261,11 +261,6 @@ func (c *Config) LoadAdvisoryClientTLS() (*tls.Config, error) {
 // in that case an empty config is returned.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
-		// Gate-B: env wins over TOML; both empty defaults to
-		// RoleSingleBox (single-box dev back-compat). The role
-		// gate at boot calls role.Require to refuse to start
-		// under the wrong box shape.
-		Role:       role.FromConfig("", "FAAS_VMMD_ROLE"),
 		SocketPath: "/run/faas/vmmd.sock",
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from sched.KernelKey(fcVersion) after FC
@@ -301,6 +296,11 @@ func LoadConfig(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Gate-B: even on the missing-file path, resolve Role
+			// against FAAS_VMMD_ROLE so env wins over the empty
+			// TOML default. role.FromConfig falls back to
+			// RoleSingleBox when the env is unset.
+			c.Role = role.FromConfig(string(c.Role), "FAAS_VMMD_ROLE")
 			return c, nil
 		}
 		return nil, fmt.Errorf("vmmd: read %q: %w", path, err)
@@ -308,5 +308,12 @@ func LoadConfig(path string) (*Config, error) {
 	if err := toml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("vmmd: parse %q: %w", path, err)
 	}
+	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
+	// c.Role is consulted against FAAS_VMMD_ROLE. Setting Role in
+	// the defaults-struct literal lets toml.Unmarshal overwrite it,
+	// which would silently make the env override dead. The role
+	// gate at boot calls role.Require to refuse to start under the
+	// wrong box shape.
+	c.Role = role.FromConfig(string(c.Role), "FAAS_VMMD_ROLE")
 	return c, nil
 }

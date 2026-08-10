@@ -150,11 +150,6 @@ type TOMLTLSConfig struct {
 // path continues to work for the e2e harness).
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
-		// Gate-B: env wins over TOML; both empty defaults to
-		// RoleSingleBox (single-box dev back-compat). The role
-		// gate at boot calls role.Require to refuse to start
-		// under the wrong box shape.
-		Role:            role.FromConfig("", "FAAS_GATEWAYD_ROLE"),
 		PublicAddr:      defaultPublicListenAddr,
 		ControlAddr:     "127.0.0.1:9090",
 		APIDLoopback:    "http://127.0.0.1:8081",
@@ -162,11 +157,20 @@ func LoadConfig(path string) (*Config, error) {
 		TLS:             TOMLTLSConfig{Disabled: true}, // e2e harness default
 	}
 	if path == "" {
+		// Gate-B: resolve Role from FAAS_GATEWAYD_ROLE even on the
+		// env-only path so the role gate has the post-decode value.
+		// role.FromConfig falls back to RoleSingleBox when the env
+		// is unset, preserving single-box dev back-compat.
+		c.Role = role.FromConfig(string(c.Role), "FAAS_GATEWAYD_ROLE")
 		return c, nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			// Gate-B: same as the path=="" branch — resolve Role
+			// from FAAS_GATEWAYD_ROLE so env wins over the empty
+			// TOML default.
+			c.Role = role.FromConfig(string(c.Role), "FAAS_GATEWAYD_ROLE")
 			return c, nil
 		}
 		return nil, fmt.Errorf("gatewayd: read %q: %w", path, err)
@@ -174,6 +178,13 @@ func LoadConfig(path string) (*Config, error) {
 	if err := toml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("gatewayd: parse %q: %w", path, err)
 	}
+	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
+	// c.Role is consulted against FAAS_GATEWAYD_ROLE. Setting Role
+	// in the defaults-struct literal lets toml.Unmarshal overwrite
+	// it, which would silently make the env override dead. The
+	// role gate at boot calls role.Require to refuse to start
+	// under the wrong box shape.
+	c.Role = role.FromConfig(string(c.Role), "FAAS_GATEWAYD_ROLE")
 	return c, nil
 }
 

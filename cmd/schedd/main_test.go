@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/instancestats"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -64,6 +65,11 @@ func TestRun_BadConfigPath(t *testing.T) {
 
 func TestRun_OpenDBFailurePropagates(t *testing.T) {
 	wantErr := errors.New("db down")
+	// Gate-B (PR-1): the role gate runs before DB open, so the
+	// observed role must be one of schedd's allowed values
+	// (RoleSingleBox / RoleControlPlane). Set the env so this
+	// test exercises the DB-open path, not the role gate.
+	t.Setenv("FAAS_SCHEDD_ROLE", string(role.RoleSingleBox))
 	deps := runDeps{
 		configPath: filepath.Join(t.TempDir(), "absent.toml"), // ENOENT => defaults
 		capCheck:   func() error { return nil },

@@ -6,6 +6,10 @@
 // builderd, imaged, gatewayd-public) share an allow-list with one
 // of these and would only duplicate coverage.
 //
+// The FromConfig precedence tests pin the load-bearing contract:
+// env wins over TOML; both empty defaults to single-box; unknown
+// values pass through so Require can surface them at boot.
+//
 // The error-shape test pins the runbook sentence so an operator
 // reading the systemd journal can map it to a host_vars fix.
 package role
@@ -15,44 +19,6 @@ import (
 	"strings"
 	"testing"
 )
-
-func TestParse(t *testing.T) {
-	cases := []struct {
-		raw     string
-		want    Role
-		wantErr bool
-	}{
-		{raw: "", want: RoleSingleBox},
-		{raw: "single-box", want: RoleSingleBox},
-		{raw: "control-plane", want: RoleControlPlane},
-		{raw: "compute-only", want: RoleComputeOnly},
-		{raw: "SINGLE-BOX", wantErr: true},   // case-sensitive on purpose
-		{raw: "controlplane", wantErr: true}, // missing hyphen
-		{raw: "multi-box", wantErr: true},    // not a real role
-		{raw: "garbage", wantErr: true},
-		{raw: "single-box ", wantErr: true}, // trailing whitespace
-	}
-	for _, c := range cases {
-		got, err := Parse(c.raw)
-		if (err != nil) != c.wantErr {
-			t.Errorf("Parse(%q) err=%v wantErr=%v", c.raw, err, c.wantErr)
-			continue
-		}
-		if !c.wantErr && got != c.want {
-			t.Errorf("Parse(%q) = %q, want %q", c.raw, got, c.want)
-		}
-	}
-}
-
-func TestStrictParse(t *testing.T) {
-	if _, err := StrictParse(""); err == nil {
-		t.Error("StrictParse(\"\") = nil; want error (empty is required input)")
-	}
-	r, err := StrictParse("control-plane")
-	if err != nil || r != RoleControlPlane {
-		t.Errorf("StrictParse(\"control-plane\") = (%q, %v); want (control-plane, nil)", r, err)
-	}
-}
 
 func TestFromConfig_DefaultsToSingleBox(t *testing.T) {
 	// Both empty: TOML default + env unset → RoleSingleBox.
@@ -77,7 +43,10 @@ func TestFromConfig_UnknownTOMLPassesThrough(t *testing.T) {
 
 func TestFromConfig_EnvWinsOverTOML(t *testing.T) {
 	// Env wins when non-empty, even when TOML is set to a different
-	// value. This is the per-deploy override path.
+	// value. This is the per-deploy override path — ansible sets
+	// FAAS_<DAEMON>_ROLE from host_vars at the systemd unit level,
+	// and the daemon's LoadConfig runs FromConfig AFTER toml.Unmarshal
+	// so the post-decode c.Role is consulted against the env.
 	t.Setenv("FAAS_ROLE_TEST", "compute-only")
 	if got := FromConfig("control-plane", "FAAS_ROLE_TEST"); got != RoleComputeOnly {
 		t.Errorf("FromConfig(control-plane, env=compute-only) = %q; want compute-only "+
@@ -104,6 +73,47 @@ func TestFromConfig_UnknownEnvIsReturnedAsIs(t *testing.T) {
 	if got := FromConfig("", "FAAS_ROLE_TEST"); got != Role("not-a-role") {
 		t.Errorf("FromConfig(\"\", env=not-a-role) = %q; want %q (passthrough, "+
 			"Require surfaces the typed error)", got, "not-a-role")
+	}
+}
+
+func TestFromConfig_BothUnknownReturnsTOMLValue(t *testing.T) {
+	// Edge case: env unset, TOML is an unknown value. The function
+	// returns the unknown value as-is (passthrough) — Require will
+	// surface the typed error. We deliberately do NOT default to
+	// RoleSingleBox when the TOML had a value (even an unknown one)
+	// because the operator needs to see the bad value, not a silent
+	// fall-back that masks the typo.
+	t.Setenv("FAAS_ROLE_TEST", "")
+	if got := FromConfig("compute-onry", "FAAS_ROLE_TEST"); got != Role("compute-onry") {
+		t.Errorf("FromConfig(compute-onry, env unset) = %q; want passthrough",
+			got)
+	}
+}
+
+// TestFromConfig_PostDecodeInvocationOrder pins the load-bearing
+// detail that LoadConfig must call FromConfig AFTER toml.Unmarshal.
+// Setting Role inside the defaults-struct literal then letting
+// toml.Unmarshal decode the file over it makes the env override
+// silently dead — the env resolution never re-runs after the
+// decode. This test simulates the post-decode invocation order
+// (the test re-runs FromConfig with the post-decode value, just
+// like every daemon's LoadConfig should).
+func TestFromConfig_PostDecodeInvocationOrder(t *testing.T) {
+	// Simulate a TOML file with role="control-plane" decoded onto
+	// a defaults struct. The post-decode c.Role is "control-plane".
+	// An env override FAAS_DAEMON_ROLE=compute-only must win.
+	t.Setenv("FAAS_DAEMON_ROLE", "compute-only")
+	c := &struct {
+		Role Role
+	}{Role: RoleSingleBox} // pre-decode default
+	// ...toml.Unmarshal sets c.Role = "control-plane"...
+	c.Role = RoleControlPlane
+	// ...then LoadConfig calls FromConfig with the post-decode value.
+	c.Role = FromConfig(string(c.Role), "FAAS_DAEMON_ROLE")
+	if c.Role != RoleComputeOnly {
+		t.Errorf("post-decode FromConfig = %q; want compute-only (env must "+
+			"override TOML even when the field was pre-set in the defaults "+
+			"struct literal)", c.Role)
 	}
 }
 
@@ -232,6 +242,22 @@ func TestAllRolesIsSorted(t *testing.T) {
 	for i, r := range want {
 		if AllRoles[i] != r {
 			t.Errorf("AllRoles[%d] = %q; want %q", i, AllRoles[i], r)
+		}
+	}
+}
+
+// TestRole_IsKnown pins the membership predicate for tests and a
+// future --box-role CLI flag (PR-3). Known roles return true;
+// unknown values (including the empty string) return false.
+func TestRole_IsKnown(t *testing.T) {
+	for _, r := range AllRoles {
+		if !r.IsKnown() {
+			t.Errorf("Role(%q).IsKnown() = false; want true", r)
+		}
+	}
+	for _, raw := range []string{"", "SINGLE-BOX", "controlplane", "garbage"} {
+		if Role(raw).IsKnown() {
+			t.Errorf("Role(%q).IsKnown() = true; want false", raw)
 		}
 	}
 }

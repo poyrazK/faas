@@ -322,11 +322,6 @@ func (c *Config) LoadVMMTLSWithVerifier(v wire.NodeVerifier) (*tls.Config, error
 // is not an error — the defaults produce a working daemon.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
-		// Gate-B: env wins over TOML; both empty defaults to
-		// RoleSingleBox (single-box dev back-compat). The role
-		// gate at boot calls role.Require to refuse to start
-		// under the wrong box shape.
-		Role:               role.FromConfig("", "FAAS_SCHEDD_ROLE"),
 		SocketPath:         "/run/faas/schedd.sock",
 		VMMDSocket:         "/run/faas/vmmd.sock",
 		GatewaySynthSocket: "/run/faas/gatewayd-internal.sock",
@@ -373,6 +368,11 @@ func LoadConfig(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Gate-B: even on the missing-file path, resolve Role
+			// against FAAS_SCHEDD_ROLE so env wins over the empty
+			// TOML default. role.FromConfig falls back to
+			// RoleSingleBox when the env is unset.
+			c.Role = role.FromConfig(string(c.Role), "FAAS_SCHEDD_ROLE")
 			return c, nil
 		}
 		return nil, fmt.Errorf("schedd: read %q: %w", path, err)
@@ -380,5 +380,12 @@ func LoadConfig(path string) (*Config, error) {
 	if err := toml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("schedd: parse %q: %w", path, err)
 	}
+	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
+	// c.Role is consulted against FAAS_SCHEDD_ROLE. Setting Role in
+	// the defaults-struct literal lets toml.Unmarshal overwrite it,
+	// which would silently make the env override dead. The role
+	// gate at boot calls role.Require to refuse to start under the
+	// wrong box shape.
+	c.Role = role.FromConfig(string(c.Role), "FAAS_SCHEDD_ROLE")
 	return c, nil
 }

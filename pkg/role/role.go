@@ -34,6 +34,18 @@
 // Single-box dev (make bootstrap against 127.0.0.1) keeps working
 // because every daemon's allow-list includes RoleSingleBox and the
 // default resolves to RoleSingleBox.
+//
+// Resolution order (FromConfig):
+//
+//  1. Non-empty envKey env var wins.
+//  2. Else tomlValue (post-decode). Empty TOML → RoleSingleBox.
+//  3. Both empty → RoleSingleBox (single-box dev default).
+//
+// The function does NOT validate that tomlValue / env is a known
+// role — unknown values pass through so the daemon's Require call
+// at boot surfaces the typed error. An operator who typoed
+// `compute-onry` needs to see the bad value in the systemd journal,
+// not a silent default that masks the typo.
 package role
 
 import (
@@ -71,69 +83,45 @@ const (
 // validation in tests and operator-facing diagnostics.
 var AllRoles = []Role{RoleSingleBox, RoleControlPlane, RoleComputeOnly}
 
-// Parse returns the Role for raw. Empty string resolves to
-// RoleSingleBox (the default when no config is set). Any other
-// unknown value returns a typed error listing the valid set so the
-// caller can map it straight to a TOML key or env name.
-func Parse(raw string) (Role, error) {
-	if raw == "" {
-		return RoleSingleBox, nil
-	}
-	r := Role(raw)
-	if !slices.Contains(AllRoles, r) {
-		return "", fmt.Errorf("role: unknown %q (valid: %v)", raw, AllRoles)
-	}
-	return r, nil
+// IsKnown reports whether r is one of AllRoles. The check is the
+// single source of truth for the "is this a recognised role?" predicate;
+// FromConfig deliberately uses it to passthrough unknowns (see package
+// doc), but tests + a future --box-role flag will use it to validate
+// operator-supplied input.
+func (r Role) IsKnown() bool {
+	return slices.Contains(AllRoles, r)
 }
 
-// parseOrPassthrough is the FromConfig-only fallback for the TOML
-// value. Empty input is the default case (RoleSingleBox); unknown
-// values are passed through unchanged so the daemon's Require call
-// at boot surfaces the typed error. The strict Parse path is
-// reserved for operator-supplied flags (--box-role on the CLI),
-// where the call site is responsible for surfacing the error.
-func parseOrPassthrough(raw string) Role {
-	if raw == "" {
-		return RoleSingleBox
-	}
-	r := Role(raw)
-	if !slices.Contains(AllRoles, r) {
-		return r
-	}
-	return r
-}
-
-// StrictParse is the same as Parse but rejects empty as an error.
-// Useful for input that is required (e.g. an operator-supplied
-// --box-role flag); not used for the box-side gate where empty
-// must default to RoleSingleBox.
-func StrictParse(raw string) (Role, error) {
-	if raw == "" {
-		return "", fmt.Errorf("role: empty (valid: %v)", AllRoles)
-	}
-	return Parse(raw)
-}
-
-// FromConfig resolves the observed role from a TOML value or env
-// override. envKey is the env name to consult (e.g. "FAAS_SCHEDD_ROLE"
-// for schedd); when the env var is non-empty, it wins over the TOML
-// value. Both empty defaults to RoleSingleBox.
+// FromConfig resolves the observed role for a daemon at startup.
+// envKey is the env name to consult (e.g. "FAAS_SCHEDD_ROLE" for
+// schedd); when the env var is non-empty, it wins over the TOML
+// value (the per-deploy override path — ansible sets
+// FAAS_<DAEMON>_ROLE from host_vars at the systemd unit level).
+// Both empty defaults to RoleSingleBox (single-box dev back-compat).
 //
-// Use this from each daemon's LoadConfig so the resulting Config
-// carries a fully-resolved Role field — the caller never has to
-// reconsult the env at runtime.
+// tomlValue is the post-decode value of the daemon's `role` TOML
+// field. Empty string means "TOML had no key" (single-box default).
 //
-// Empty TOML empty env → RoleSingleBox. Unknown TOML / env values
-// pass through unchanged so the daemon's Require call at boot can
-// surface the typed error (the operator needs to see the actual
-// bad value, not a silent default that masks the typo).
+// Use this from each daemon's LoadConfig AFTER toml.Unmarshal so the
+// post-decode c.Role is consulted. Setting Role inside the
+// defaults-struct literal then letting toml.Unmarshal decode the
+// file over it makes the env override silently dead — the env
+// resolution never re-runs after the decode.
+//
+// Unknown TOML / env values pass through unchanged so the daemon's
+// Require call at boot can surface the typed error. An operator who
+// typoed `compute-onry` needs to see the bad value in the systemd
+// journal, not a silent default.
 func FromConfig(tomlValue, envKey string) Role {
 	if envKey != "" {
 		if v := os.Getenv(envKey); v != "" {
 			return Role(v)
 		}
 	}
-	return parseOrPassthrough(tomlValue)
+	if tomlValue == "" {
+		return RoleSingleBox
+	}
+	return Role(tomlValue)
 }
 
 // ErrRefused is returned by Require when the observed role is not
@@ -147,9 +135,9 @@ type ErrRefused struct {
 }
 
 // Error renders the refusal in the same "<daemon>: refusing to start
-// as <observed> on a multi-node fleet (...)" sentence shape as
-// schedd's existing default-local guard at cmd/schedd/config.go:259.
-// The runbook reads the same way across every daemon.
+// as <observed> (allowed: <list>)" sentence shape as schedd's existing
+// default-local guard at cmd/schedd/config.go:259. The runbook reads
+// the same way across every daemon.
 func (e *ErrRefused) Error() string {
 	return fmt.Sprintf("%s: refusing to start as role %q (allowed: %v)",
 		e.Daemon, e.Observed, e.Allowed)
