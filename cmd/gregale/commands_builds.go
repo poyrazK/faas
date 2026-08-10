@@ -322,7 +322,7 @@ func cmdBuildList(args []string) int {
 	app := fs.String("app", "", "filter to one app slug")
 	status := fs.String("status", "", "filter to status (queued|running|succeeded|failed)")
 	limit := fs.Int("limit", 50, "page size (1-200)")
-	before := fs.String("before", "", "pagination cursor (RFC3339Nano)")
+	before := fs.String("before", "", "pagination cursor (opaque token from NextBefore)")
 	all := fs.Bool("all", false, "walk every page (ignores --limit/--before)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -341,8 +341,13 @@ func cmdBuildList(args []string) int {
 			return 1
 		}
 	}
-	if *limit < 0 || *limit > 200 {
-		PrintUsage(os.Stderr, "usage: gregale build list --limit N (0 < N <= 200)", "build")
+	// Strict range check (post-review fix): the server defaults limit=50
+	// when 0 is passed, but the help text says "1-200" — accepting 0
+	// silently would be a UX papercut. --limit 0 is a usage error so
+	// callers either pick the default explicitly (omit --limit) or
+	// pick a real page size.
+	if *limit < 1 || *limit > 200 {
+		PrintUsage(os.Stderr, "usage: gregale build list --limit N (1 <= N <= 200)", "build")
 		return 1
 	}
 	client, err := authedClient()

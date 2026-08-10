@@ -3215,12 +3215,69 @@ func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct st
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// parseBuildCursor parses the opaque tuple cursor used by
+// GET /v1/builds. The wire format is "<started_at_rfc3339nano>|<id_hex>"
+// (pipe-separated). An empty started_at segment means "queued tail"
+// and the store falls back to id-only keyset in that branch.
+//
+// Returns (started_at, id, true) on success; (zero, "", false) on
+// any malformed input. url.Query parses `|` verbatim — no
+// encoding needed.
+//
+// The id is the Build.ID (uuid hex string). We do NOT re-parse
+// it as a uuid here on purpose: the store uses string equality
+// for the id tiebreaker so the wire shape doesn't need to be
+// canonicalized.
+func parseBuildCursor(v string) (time.Time, string, bool) {
+	parts := strings.SplitN(v, "|", 2)
+	if len(parts) != 2 {
+		return time.Time{}, "", false
+	}
+	startedRaw, id := parts[0], parts[1]
+	if id == "" {
+		return time.Time{}, "", false
+	}
+	// Queued-tail cursor: started_at is empty, fall back to id-only.
+	if startedRaw == "" {
+		return time.Time{}, id, true
+	}
+	var t time.Time
+	if parsed, err := time.Parse(time.RFC3339Nano, startedRaw); err == nil {
+		t = parsed
+	} else if parsed, err := time.Parse(time.RFC3339, startedRaw); err == nil {
+		t = parsed
+	} else {
+		return time.Time{}, "", false
+	}
+	return t, id, true
+}
+
+// formatBuildCursor renders the opaque tuple cursor from the
+// last row on a page. The started_at is the wire-form RFC3339
+// string (whole-second precision — exactly what buildResponse
+// emits); an empty StartedAt means the last row is queued, so
+// the encoded started_at segment is empty and the store will
+// keyset on id alone.
+//
+// The id is the Build.ID hex string. Stable across the
+// journey from store → SDK → handler because PostgreSQL text
+// casts uuid without reformatting.
+func formatBuildCursor(startedAtWire, id string) string {
+	if startedAtWire == "" {
+		// Queued tail — encode an empty started_at segment.
+		// pgstore's keyset handles (`b.started_at IS NULL` AND
+		// `b.id < beforeID`) for this branch.
+		return "|" + id
+	}
+	return startedAtWire + "|" + id
+}
+
 // listBuilds serves GET /v1/builds — every build the account owns,
 // in started_at desc nulls last order (DEPLOY-PROV-6 follow-up /
 // ADR-091, issue #741 close-out). Optional ?app=<slug> narrows
 // to one app; optional ?status=<s> filters to the 4-value status
-// enum. Cursor pagination via ?before=<RFC3339Nano>; limit
-// defaults to 50, capped at 200.
+// enum. Cursor pagination via ?before=<opaque tuple cursor>;
+// limit defaults to 50, capped at 200.
 //
 // IDOR: when ?app=<slug> is set, AppBySlug + App.AccountID == acct.ID
 // gates the query (cross-account slug renders 404 app_not_found,
@@ -3248,16 +3305,24 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 		}
 	}
 	var before time.Time
+	var beforeID string
 	if v := r.URL.Query().Get("before"); v != "" {
-		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
-			before = t
-		} else if t, err := time.Parse(time.RFC3339, v); err == nil {
-			before = t
-		} else {
+		// Cursor is "<started_at_rfc3339nano>|<id_hex>" — opaque
+		// token, pipe-separated so URL encoding stays simple.
+		// started_at alone was insufficient because (a) queued
+		// builds have NULL started_at (no cursor possible), and
+		// (b) wire RFC3339 truncates sub-second DB precision so
+		// rows whose sub-second started_at falls in the cursor's
+		// wall-clock second were silently dropped past page 1.
+		// The id tiebreaker solves both — see ADR-091 §3 + the
+		// code-review follow-up.
+		t, id, ok := parseBuildCursor(v)
+		if !ok {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-				"Bad cursor", "expected RFC3339 timestamp"))
+				"Bad cursor", "expected '<rfc3339nano>|<id_hex>' (opaque)"))
 			return
 		}
+		before, beforeID = t, id
 	}
 	statusFilter := r.URL.Query().Get("status")
 	if statusFilter != "" {
@@ -3281,7 +3346,7 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 		appIDFilter = app.ID
 	}
 	rows, err := s.store.ListBuildsForAccountPaged(
-		r.Context(), acct.ID, statusFilter, appIDFilter, before, limit)
+		r.Context(), acct.ID, statusFilter, appIDFilter, before, beforeID, limit)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list builds"))
 		return
@@ -3291,27 +3356,25 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 		resp.Items = append(resp.Items, s.buildResponse(b))
 	}
 	if len(rows) == limit && limit > 0 && len(resp.Items) > 0 {
-		// NextBefore = started_at of the LAST row that has a non-null
-		// started_at (queued builds at the tail can't be a cursor —
-		// passing them would skip the running/succeeded rows behind).
-		// BuildResponse.StartedAt is the RFC3339 string (whole-second
-		// precision) per buildResponse at line 2994; sub-second
-		// precision is intentionally not exposed on the wire. The
-		// cursor is therefore always whole-second-aligned — passing
-		// it back with `<` semantics means rows whose wall-clock
-		// second equals the cursor are dropped (same second as the
-		// last row on this page = already returned). Tests that
-		// want second-precise equality should use RFC3339Nano on
-		// the store side, but the handler contract is second-
-		// aligned by design (matches buildResponse's wire shape).
-		for i := len(resp.Items) - 1; i >= 0; i-- {
-			if resp.Items[i].StartedAt != "" {
-				if t, err := time.Parse(time.RFC3339, resp.Items[i].StartedAt); err == nil {
-					resp.NextBefore = t.UTC().Format(time.RFC3339Nano)
-				}
-				break
-			}
-		}
+		// NextBefore = opaque cursor pointing at the LAST row
+		// on this page. The cursor anchor is the last RETURNED
+		// row's (started_at, id) tuple — under the post-review
+		// SQL fix in pkg/state/pgstore.go::ListBuildsForAccountPaged
+		// the next-page keyset handles all three ordering cases
+		// (older started_at, equal-started_at + smaller id,
+		// NULL-started_at + smaller id).
+		//
+		// Caveat (intentional, documented in ADR-091): when
+		// the page exactly fills to the last row in the
+		// dataset, the next-page request returns 0 rows but the
+		// client has already received a cursor. Clients should
+		// treat an empty items[] as the terminal signal and
+		// NOT continue to next_page with the cursor. The fix
+		// here matches ListDeploymentsForAccount's behavior
+		// (no peek-trim); introducing one would require an
+		// extra DB roundtrip per page.
+		last := resp.Items[len(resp.Items)-1]
+		resp.NextBefore = formatBuildCursor(last.StartedAt, last.ID)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

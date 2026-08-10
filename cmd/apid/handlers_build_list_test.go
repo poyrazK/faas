@@ -232,6 +232,12 @@ func TestListBuilds_OK_StatusFilter(t *testing.T) {
 // (limit=2 + before=cursor) returns the next 2; page 3 returns
 // the last 1 with no next_before.
 //
+// Cursor shape (post-review fix): the cursor is the opaque
+// tuple "<started_at_rfc3339>|<id_hex>" (post-review fix). The
+// id tiebreaker is what makes the round-trip deterministic even
+// when the wire emits whole-second precision against sub-second
+// DB timestamps. See ADR-091 §3 + parseBuildCursor.
+//
 // Sleep budget: 1.1s between stamps × 5 builds ≈ 4.5s wall-time.
 // The test is intentionally slow but the alternative (relaxing
 // to ms-level timestamps with second-aligned cursors) introduces
@@ -386,10 +392,14 @@ func TestListBuilds_OK_NullsLast(t *testing.T) {
 // row (b1), NOT the queued build, so passing next_before never
 // skips b1.
 //
-// Cursor contract: BuildResponse.StartedAt is RFC3339 (whole-
-// second precision) — see buildResponse at handlers_ext.go:2994.
-// The cursor we emit on the wire is therefore second-aligned;
-// we compare at second-precision here, NOT nanosecond.
+// Cursor contract (post-review fix): the cursor is the opaque
+// tuple "<started_at_rfc3339>|<id_hex>" — pipe-separated. The id
+// is the LAST row's Build.ID. For non-null rows the started_at
+// segment is RFC3339 (whole-second precision — see buildResponse
+// at handlers_ext.go:2994); for queued tails the started_at
+// segment is empty and the id tiebreaker alone resolves the
+// keyset. We therefore split the cursor on '|' and assert both
+// halves. See ADR-091 §3 + parseBuildCursor.
 func TestListBuilds_OK_Pagination_NullsLast(t *testing.T) {
 	h, key, store, acct := listBuildsTestServer(t)
 	dep := seedBuildListDeploy(t, store, acct, "list-pg-nl-app")
@@ -416,14 +426,25 @@ func TestListBuilds_OK_Pagination_NullsLast(t *testing.T) {
 		t.Errorf("page1 order = [%s %s], want [b2 b1]",
 			resp.Items[0].ID, resp.Items[1].ID)
 	}
-	// NextBefore must use b1's started_at (truncated to seconds),
-	// NOT the queued row's started_at (empty string, unparseable).
+	// NextBefore must use b1's started_at (truncated to seconds)
+	// + b1's id, NOT the queued row's started_at (empty string,
+	// unparseable).
 	if resp.NextBefore == "" {
 		t.Fatalf("NextBefore empty; want cursor derived from b1")
 	}
-	cursorT, err := time.Parse(time.RFC3339Nano, resp.NextBefore)
+	parts := strings.SplitN(resp.NextBefore, "|", 2)
+	if len(parts) != 2 {
+		t.Fatalf("cursor %q not '<started_at>|<id>' shape", resp.NextBefore)
+	}
+	cursorStarted, cursorID := parts[0], parts[1]
+	cursorT, err := time.Parse(time.RFC3339, cursorStarted)
 	if err != nil {
-		t.Fatalf("cursor not RFC3339Nano: %v", err)
+		// RFC3339Nano fallback for clients that emit sub-second
+		// (the server does not, but the symbol parsing is
+		// forward-compatible).
+		if cursorT, err = time.Parse(time.RFC3339Nano, cursorStarted); err != nil {
+			t.Fatalf("cursor segment %q not RFC3339[Nano]: %v", cursorStarted, err)
+		}
 	}
 	// Re-fetch b1 and compare at SECOND precision (the cursor
 	// contract — see handler comment). b1Row.StartedAt may carry
@@ -434,10 +455,139 @@ func TestListBuilds_OK_Pagination_NullsLast(t *testing.T) {
 	}
 	wantSec := b1Row.StartedAt.UTC().Truncate(time.Second)
 	if !cursorT.Equal(wantSec) {
-		t.Errorf("cursor = %v, want b1.StartedAt (truncated to sec) = %v",
+		t.Errorf("cursor started_at = %v, want b1.StartedAt (truncated to sec) = %v",
 			cursorT, wantSec)
 	}
+	// id segment must be b1's id (the LAST row on the page).
+	if cursorID != b1 {
+		t.Errorf("cursor id = %q, want b1 (%s)", cursorID, b1)
+	}
 	_ = bQueued
+}
+
+// TestListBuilds_OK_Pagination_QueuedTail pins the queued-tail
+// cursor + page-boundary case: page 1 = [running, queued]
+// (limit=2 of 2 builds). The cursor must encode the queued
+// row's id with an empty started_at segment. Page 2 with that
+// cursor reaches end-of-list (no rows after the queued id).
+//
+// This is the regression tripwire for code-review Issue #1:
+// under the original cursor (single started_at, no id
+// tiebreaker) the queued tail could not anchor a cursor at
+// all (NULL started_at), so a paginating client walking the
+// list would never see queued rows past page 1. The id
+// tiebreaker fixes that.
+func TestListBuilds_OK_Pagination_QueuedTail(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping queued-tail pagination test in -short mode")
+	}
+	h, key, store, acct := listBuildsTestServer(t)
+	dep := seedBuildListDeploy(t, store, acct, "list-pg-qt-app")
+	bRunning := seedBuildListBuild(t, store, dep)
+	_ = advanceBuild(t, store, bRunning, state.BuildSucceeded)
+	bQueued := seedBuildListBuild(t, store, dep) // stays queued
+
+	// Page 1: limit=2 → both rows (running first, queued last).
+	rec := listBuildsGet(t, h, key, "/v1/builds?limit=2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var p1 api.BuildListResponse
+	if err := json.NewDecoder(rec.Body).Decode(&p1); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(p1.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(p1.Items))
+	}
+	if p1.Items[0].ID != bRunning {
+		t.Errorf("items[0] = %s, want bRunning (%s)", p1.Items[0].ID, bRunning)
+	}
+	if p1.Items[1].ID != bQueued || p1.Items[1].StartedAt != "" {
+		t.Errorf("items[1] = %+v, want queued (no started_at)", p1.Items[1])
+	}
+	if p1.NextBefore == "" {
+		t.Fatalf("NextBefore empty; want queued-tail cursor")
+	}
+	parts := strings.SplitN(p1.NextBefore, "|", 2)
+	if len(parts) != 2 {
+		t.Fatalf("cursor %q not '<started_at>|<id>' shape", p1.NextBefore)
+	}
+	if parts[0] != "" {
+		t.Errorf("cursor started_at segment = %q, want empty (queued tail)", parts[0])
+	}
+	if parts[1] != bQueued {
+		t.Errorf("cursor id = %q, want bQueued (%s)", parts[1], bQueued)
+	}
+
+	// Page 2: cursor = "|bQueued" → no rows after bQueued
+	// (end of list). Empty items means "no more data"; the
+	// clients should treat this as terminal.
+	rec = listBuildsGet(t, h, key, "/v1/builds?limit=2&before="+p1.NextBefore)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page2 status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var p2 api.BuildListResponse
+	if err := json.NewDecoder(rec.Body).Decode(&p2); err != nil {
+		t.Fatalf("decode p2: %v", err)
+	}
+	if len(p2.Items) != 0 {
+		t.Errorf("page2 items = %v, want [] (end of list)", p2.Items)
+	}
+}
+
+// TestListBuilds_OK_Pagination_QueuedTailCursor pins the
+// queued-tail cursor WALK-BACK: when the page ends ON a queued
+// row (started_at IS NULL), the cursor MUST encode the queued
+// row with an empty started_at segment + the row's id — the
+// "|id_hex" shape. This is the regression tripwire for the
+// handler emitting a non-null started_at segment for queued
+// rows (which would then fail to parse on the round-trip and
+// 400 in parseBuildCursor).
+//
+// Setup: 1 running build + 1 queued build, limit=2. Page 1
+// returns both rows ordered (running, queued) under DESC
+// NULLS LAST. The cursor encodes the queued row's id with an
+// empty started_at.
+func TestListBuilds_OK_Pagination_QueuedTailCursor(t *testing.T) {
+	h, key, store, acct := listBuildsTestServer(t)
+	dep := seedBuildListDeploy(t, store, acct, "list-pg-qtc-app")
+	bRunning := seedBuildListBuild(t, store, dep)
+	bQueued := seedBuildListBuild(t, store, dep) // stays queued
+	_ = advanceBuild(t, store, bRunning, state.BuildSucceeded)
+
+	// Page 1: limit=2 → both rows (running first, queued last).
+	rec := listBuildsGet(t, h, key, "/v1/builds?limit=2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp api.BuildListResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(resp.Items))
+	}
+	if resp.Items[0].ID != bRunning {
+		t.Errorf("items[0] = %s, want bRunning (%s)", resp.Items[0].ID, bRunning)
+	}
+	if resp.Items[1].ID != bQueued || resp.Items[1].StartedAt != "" {
+		t.Errorf("items[1] = %+v, want queued (no started_at)", resp.Items[1])
+	}
+	if resp.NextBefore == "" {
+		t.Fatalf("NextBefore empty; want queued-tail cursor")
+	}
+	parts := strings.SplitN(resp.NextBefore, "|", 2)
+	if len(parts) != 2 {
+		t.Fatalf("cursor %q not '<started_at>|<id>' shape", resp.NextBefore)
+	}
+	// Started_at segment MUST be empty (last row is queued).
+	if parts[0] != "" {
+		t.Errorf("cursor started_at segment = %q, want empty (queued tail)", parts[0])
+	}
+	// id segment MUST be the queued row's id.
+	if parts[1] != bQueued {
+		t.Errorf("cursor id = %q, want bQueued (%s)", parts[1], bQueued)
+	}
 }
 
 // TestListBuilds_AppIDOR_OtherAccount pins the IDOR contract: a
@@ -532,8 +682,15 @@ func TestListBuilds_BadCursor(t *testing.T) {
 // listDeployments). A limit > 200 is clamped to 200 (server-side
 // cap). limit=0 also falls back to the default.
 //
-// Tripwire: the request must NOT 400 — the surface is
+// Tripwire: the request must NOT 400 — the HTTP surface is
 // intentionally lenient, matching /v1/deployments.
+//
+// NOTE: the CLI (`gregale build list --limit 0`) is intentionally
+// strict and exits 1 on --limit 0. The CLI surfaces the help
+// contract directly and rejects out-of-range values rather than
+// silently falling back. The two surfaces have different UX
+// goals — see cmd/gregale/commands_builds_test.go
+// TestCmdBuildList_InvalidLimit for the CLI guard.
 func TestListBuilds_BadLimit(t *testing.T) {
 	h, key, store, acct := listBuildsTestServer(t)
 	dep := seedBuildListDeploy(t, store, acct, "list-bl-app")

@@ -8612,17 +8612,30 @@ func (m *MemStore) ListBuildsForAccount(_ context.Context, accountID string) ([]
 }
 
 // ListBuildsForAccountPaged returns one page of builds across the
-// account's deployments, ordered started_at desc nulls last
-// (DEPLOY-PROV-6 follow-up / ADR-091, issue #741 close-out).
+// account's deployments, ordered started_at desc nulls last with
+// id DESC as the tiebreaker (DEPLOY-PROV-6 follow-up / ADR-091,
+// issue #741 close-out, post-review fix).
 //
 // statusFilter="" matches any status; appIDFilter="" matches any
-// app. before.IsZero() = first page. limit is the page size
-// (server-side handler clamps at 200). The result ordering +
-// nulls-last semantics mirror the PgStore impl + the
-// builds_deployment_started_idx migration.
+// app. before.IsZero() = first page (beforeID ignored). limit is
+// the page size (server-side handler clamps at 200). The result
+// ordering + nulls-last + id-tiebreaker semantics mirror the
+// PgStore impl + the builds_deployment_started_idx migration.
+//
+// The id tiebreaker is load-bearing for two failure modes the
+// single-column cursor had:
+//  1. queued (started_at NULL) rows past the first page boundary
+//     were silently dropped — `started_at < before` excluded them
+//     because NULL is never less than any value.
+//  2. sub-second collisions on started_at — DB precision is
+//     sub-second, wire format is RFC3339 (whole-second), so rows
+//     whose DB sub-second value lands in the cursor's wall-clock
+//     second were dropped.
+//
+// The (started_at, id) tuple makes both cases deterministic.
 func (m *MemStore) ListBuildsForAccountPaged(
 	_ context.Context, accountID, statusFilter, appIDFilter string,
-	before time.Time, limit int,
+	before time.Time, beforeID string, limit int,
 ) ([]Build, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -8645,25 +8658,75 @@ func (m *MemStore) ListBuildsForAccountPaged(
 		if statusFilter != "" && string(b.Status) != statusFilter {
 			continue
 		}
-		if !before.IsZero() && !b.StartedAt.Before(before) {
-			// StartedAt == before or > before are excluded. Zero
-			// StartedAt (queued builds) is treated as the smallest
-			// possible value, so it never satisfies b.StartedAt <
-			// before — queued builds drop off the cursor as soon
-			// as before is set. This matches the SQL semantics.
-			continue
+		if !before.IsZero() || beforeID != "" {
+			// Keyset applies when EITHER `before` is set
+			// (non-zero started_at segment in the cursor) OR
+			// `beforeID` is set (queued-tail cursor with empty
+			// started_at segment). The four cases cover every
+			// (started_at zone, cursor zone) combination under
+			// the DESC NULLS LAST + id DESC ordering.
+			//
+			// Tuple ordering under nulls-last: zero started_at
+			// sorts AFTER all non-zero started_at (DESC NULLS
+			// LAST), so queued rows are at the bottom of every
+			// page. The id tiebreaker breaks ties between
+			// queued rows themselves.
+			less := false
+			switch {
+			case b.StartedAt.IsZero() && !before.IsZero():
+				// queued vs. non-queued cursor — queued sorts
+				// AFTER (started_at desc nulls last) every
+				// non-zero started_at, so ALL queued rows fall
+				// into the strictly-less set when the cursor
+				// is non-zero. The id DESC tiebreaker inside
+				// the NULL zone then orders the queued tail
+				// from newest-id to oldest-id. The page-2
+				// cursor advances to the queued row with the
+				// smallest id; subsequent pages walk back
+				// through the queue via the third branch.
+				less = true
+			case b.StartedAt.IsZero() && before.IsZero() && beforeID != "":
+				// Queued-tail cursor contract: the wire format
+				// encodes "|id" when the cursor is a queued
+				// row. before.IsZero() = "started_at segment
+				// empty", beforeID != "" = "id anchor is set".
+				// The page-2 keyset only considers rows in the
+				// NULL zone (queued) with id < beforeID.
+				less = b.ID < beforeID
+			case b.StartedAt.IsZero() && before.IsZero() && beforeID == "":
+				// First page + queued row: no cursor at all,
+				// queued rows are valid candidates. less=false
+				// keeps them in the candidate set.
+				less = false
+			default:
+				// Both non-zero: standard tuple comparison.
+				if b.StartedAt.Before(before) {
+					less = true
+				} else if b.StartedAt.Equal(before) && b.ID < beforeID {
+					less = true
+				}
+			}
+			if !less {
+				continue
+			}
 		}
 		out = append(out, b)
 	}
-	// started_at desc nulls last — queued (zero) at the bottom.
+	// Sort: started_at desc nulls last, then id desc as tiebreaker.
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].StartedAt.IsZero() {
+		if out[i].StartedAt.IsZero() && !out[j].StartedAt.IsZero() {
 			return false
 		}
-		if out[j].StartedAt.IsZero() {
+		if !out[i].StartedAt.IsZero() && out[j].StartedAt.IsZero() {
 			return true
 		}
-		return out[i].StartedAt.After(out[j].StartedAt)
+		if out[i].StartedAt.IsZero() && out[j].StartedAt.IsZero() {
+			return out[i].ID > out[j].ID
+		}
+		if !out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].StartedAt.After(out[j].StartedAt)
+		}
+		return out[i].ID > out[j].ID
 	})
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
