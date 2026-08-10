@@ -343,13 +343,18 @@ func TestPg_ListBuildsForAccountPaged(t *testing.T) {
 		t.Errorf("page3[0] = %s, want queued (%s)", page3[0].ID, queued.ID)
 	}
 
-	// (4) Sanity: filter — app=app2.ID on a different owned app
-	// drops the seeded builds entirely. (We didn't seed any build
-	// under app2, so result is empty.)
-	if _, err := s.CreateApp(ctx, state.App{ID: "00000000-0000-0000-0000-00000000bldgap", AccountID: account.ID, Slug: "pg-bld-empty-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60}); err != nil {
+	// (4) Sanity: filter — app=<empty-app UUID> drops the seeded
+	// builds entirely. (We didn't seed any build under the
+	// empty app, so result is empty.) The empty-app ID MUST be
+	// a valid UUID — the SQL casts the filter to uuid via
+	// `d.app_id = $3::uuid`, and a non-hex last segment (e.g.
+	// `bldgap`) raises SQLSTATE 22P02 "invalid input syntax for
+	// type uuid".
+	emptyAppID := uuid.NewString()
+	if _, err := s.CreateApp(ctx, state.App{ID: emptyAppID, AccountID: account.ID, Slug: "pg-bld-empty-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60}); err != nil {
 		t.Fatal(err)
 	}
-	appFilter, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "00000000-0000-0000-0000-00000000bldgap", time.Time{}, "", 50)
+	appFilter, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", emptyAppID, time.Time{}, "", 50)
 	if err != nil {
 		t.Fatalf("app filter: %v", err)
 	}
