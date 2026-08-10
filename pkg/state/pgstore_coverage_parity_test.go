@@ -306,7 +306,8 @@ func TestPg_ListBuildsForAccountPaged(t *testing.T) {
 	// into the first-page branch and returned the full list
 	// again. Post-fix, this hits the queued-tail branch and
 	// returns 0 rows (no queued rows with id < queued.id).
-	page2, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, queued.ID, 0)
+	// Limit=50 mirrors page1/page3 (see comment at line 277).
+	page2, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, queued.ID, 50)
 	if err != nil {
 		t.Fatalf("page2 queued-tail: %v", err)
 	}
@@ -318,7 +319,10 @@ func TestPg_ListBuildsForAccountPaged(t *testing.T) {
 	// running.StartedAt, beforeID is running.ID. Returns the
 	// queued row only (under DESC NULLS LAST the queued row
 	// sorts AFTER the running row in the desc ordering).
-	page3, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "", running.StartedAt, running.ID, 0)
+	// Limit=50 (mirrors page1's fix at line 277) — the pgstore
+	// passes limit directly to SQL, and limit=0 short-circuits
+	// the query to 0 rows.
+	page3, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "", running.StartedAt, running.ID, 50)
 	if err != nil {
 		t.Fatalf("page3 keyset: %v", err)
 	}
@@ -335,7 +339,7 @@ func TestPg_ListBuildsForAccountPaged(t *testing.T) {
 	if _, err := s.CreateApp(ctx, state.App{ID: "00000000-0000-0000-0000-00000000bldgap", AccountID: account.ID, Slug: "pg-bld-empty-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60}); err != nil {
 		t.Fatal(err)
 	}
-	appFilter, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "00000000-0000-0000-0000-00000000bldgap", time.Time{}, "", 0)
+	appFilter, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "00000000-0000-0000-0000-00000000bldgap", time.Time{}, "", 50)
 	if err != nil {
 		t.Fatalf("app filter: %v", err)
 	}
