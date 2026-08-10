@@ -1,0 +1,44 @@
+-- filename: 00166_builds_deployment_started_idx.sql
+-- +goose Up
+-- +goose StatementBegin
+-- DEPLOY-PROV-6 follow-up (ADR-091, issue #741 close-out).
+-- Composite index on builds(deployment_id, started_at desc nulls
+-- last) supports BOTH the new GET /v1/builds keyset filter AND
+-- the existing BuildByDeployment single-id lookup
+-- (pkg/state/queries.sql:353).
+--
+-- Why (deployment_id, started_at) and not (started_at):
+-- the planner's most likely strategy for GET /v1/builds is
+-- nested-loop through apps (via apps_account_idx) →
+-- deployments (via deployments_app_idx) → builds. The inner
+-- step satisfies BOTH the join probe AND the
+-- `started_at < $before` filter + `ORDER BY started_at desc
+-- nulls last` from the index alone. A pure (started_at)
+-- index would force the inner step to fetch each row and
+-- filter in-memory; with deployment_id first, the probe
+-- becomes a bounded range scan per outer deployment row.
+--
+-- Why DESC NULLS LAST: matches the SQL surface
+-- (queued builds stay at the bottom; the keyset filter
+-- excludes them once the page crosses into the non-null
+-- range). The deployments table is NOT NULL DEFAULT now()
+-- so its deployments_app_idx doesn't need this — but
+-- builds.started_at is nullable (set by builderd's
+-- markRunning; queued builds leave it NULL until that fires),
+-- so the NULLS LAST ordering is load-bearing for the
+-- pagination cursor (the handler walks the page backward
+-- to find the LAST non-null started_at for the cursor;
+-- queued rows at the tail don't qualify).
+--
+-- Replay-safe (ADR-041): CREATE INDEX IF NOT EXISTS makes a
+-- second MigrateUp a no-op; the apply_walk_test pins this
+-- at the directory level and the per-migration test below
+-- is defence in depth.
+CREATE INDEX IF NOT EXISTS builds_deployment_started_idx
+  ON builds (deployment_id, started_at DESC NULLS LAST);
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+DROP INDEX IF EXISTS builds_deployment_started_idx;
+-- +goose StatementEnd
