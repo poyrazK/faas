@@ -89,7 +89,7 @@ are the canonical reference shape.
    New index supports both the keyset filter AND the existing
    `BuildByDeployment` single-id lookup (`queries.sql:353`).
    Forward-only addition in `Up`; `DROP INDEX` in `Down`. The
-   migration is `migrations/00166_builds_deployment_started_idx.sql`.
+   migration is `migrations/00174_builds_deployment_started_idx.sql`.
    Rationale for the column order: the planner's most likely
    strategy is nested-loop through `apps` (via
    `apps_account_idx`) → `deployments` (via
@@ -133,8 +133,24 @@ are the canonical reference shape.
 | Layer | File | Change |
 |-------|------|--------|
 | ADR | `docs/adr/091-build-list-endpoint.md` | This file. |
-| Migration | `migrations/00166_builds_deployment_started_idx.sql` | NEW. Index. |
-| Migration test | `migrations/00166_builds_deployment_started_idx_test.go` | NEW. Apply-walk pins it. |
+| Migration | `migrations/00174_builds_deployment_started_idx.sql` | NEW. Index. |
+| Migration test | `migrations/00174_builds_deployment_started_idx_test.go` | NEW. Apply-walk pins it. |
+
+> **Renumber note (PR #803):** this migration was originally
+> written as `00166` in the pre-review draft. During the post-
+> review CI investigation, the sibling fence
+> `00166_reserve_slot.sql` from another PR appeared on
+> `origin/main` (alongside `00167_apps_overflow_node.sql`),
+> colliding with the slot. Per the cross-PR fence pattern
+> (memory: `cross-pr-slot-gate-reservation-fence-pattern.md`),
+> the migration was renumbered to `00168` (the next free slot
+> after 167). A re-test of the renumber against
+> `origin/main` showed 168 was also fenced (and 169, 170, 171,
+> 172 fences + 173 real), so a second renumber landed at
+> `00174` — the next free slot after 173. The test corpus +
+> this ADR were updated. The index name
+> `builds_deployment_started_idx` is unchanged, so no code
+> beyond the file rename was touched.
 | State interface | `pkg/state/store.go` | ADD `ListBuildsForAccountPaged`. |
 | State impl | `pkg/state/pgstore.go` | ADD keyset SQL impl. |
 | State impl | `pkg/state/memstore.go` | ADD slice-filter impl. |
@@ -179,7 +195,7 @@ are the canonical reference shape.
 - `daemonunit-check (generated drift)` — green. No daemon unit
   change.
 - `migrations (contiguity + apply)` — green. The new
-  `00166_builds_deployment_started_idx.sql` runs cleanly forward
+  `00174_builds_deployment_started_idx.sql` runs cleanly forward
   + back. Apply-walk test pins it.
 - `e2e (4 shards)` — green. Blackbox e2e untouched.
 
