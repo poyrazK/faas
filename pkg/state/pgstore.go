@@ -11461,10 +11461,11 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 // cursor entirely (no non-null started_at to anchor it on).
 //
 // The query is supported by builds_deployment_started_idx
-// (migrations/00174, originally renumbered from 166 mid-PR
+// (migrations/00191, originally renumbered from 166 mid-PR
 // after a sibling-PR fence took slot 166; 168 was also fenced
-// on main, so a second renumber landed at 174) — the leading
-// deployment_id column lets
+// on main, then 174 too, so the renumber landed at 191 —
+// the next free slot beyond main's 190_admin_obs_index) —
+// the leading deployment_id column lets
 // the planner's nested-loop strategy probe each outer deployment
 // row's builds via a bounded range scan instead of fetching +
 // filtering in-memory. The DESC NULLS LAST ordering matches the
