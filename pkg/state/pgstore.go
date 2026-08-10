@@ -11988,6 +11988,81 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 	return out, rows.Err()
 }
 
+// ListBuildsForAccountPaged returns one page of builds across the
+// account's deployments, ordered started_at desc nulls last
+// (DEPLOY-PROV-6 follow-up / ADR-091, issue #741 close-out).
+//
+// Keyset pagination: pass the previous response's last started_at
+// as `before` to page backwards. before.IsZero() = first page.
+// The optional statusFilter and appIDFilter narrow the result;
+// empty string means "any status" / "any app" respectively.
+//
+// The query is supported by builds_deployment_started_idx
+// (migrations/00166) — the leading deployment_id column lets
+// the planner's nested-loop strategy probe each outer deployment
+// row's builds via a bounded range scan instead of fetching +
+// filtering in-memory. The DESC NULLS LAST ordering matches the
+// SQL surface so queued builds (started_at IS NULL) stay at the
+// bottom of every page; the handler's pagination cursor walks
+// the page backward to find the LAST non-null started_at.
+//
+// limit is clamped server-side by the handler (1..200).
+func (s *PgStore) ListBuildsForAccountPaged(
+	ctx context.Context, accountID, statusFilter, appIDFilter string,
+	before time.Time, limit int,
+) ([]Build, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if before.IsZero() {
+		rows, err = s.pool.Query(ctx,
+			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
+			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
+			        b.started_at, b.finished_at, b.enqueued_at
+			 from builds b
+			 join deployments d on d.id = b.deployment_id
+			 join apps a on a.id = d.app_id
+			 where a.account_id = $1
+			   and ($2 = '' or b.status = $2)
+			   and ($3 = '' or d.app_id = $3::uuid)
+			 order by b.started_at desc nulls last
+			 limit $4`, accountID, statusFilter, appIDFilter, limit)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
+			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
+			        b.started_at, b.finished_at, b.enqueued_at
+			 from builds b
+			 join deployments d on d.id = b.deployment_id
+			 join apps a on a.id = d.app_id
+			 where a.account_id = $1
+			   and ($2 = '' or b.status = $2)
+			   and ($3 = '' or d.app_id = $3::uuid)
+			   and b.started_at < $4
+			 order by b.started_at desc nulls last
+			 limit $5`, accountID, statusFilter, appIDFilter, before, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Build
+	for rows.Next() {
+		b := Build{}
+		var kind, statusStr, fc string
+		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes,
+			&statusStr, &fc, &b.LogPath, &b.StartedAt, &b.FinishedAt, &b.EnqueuedAt); err != nil {
+			return nil, err
+		}
+		b.Kind = DeploymentKind(kind)
+		b.Status = BuildStatus(statusStr)
+		b.FailureClass = FailureClass(fc)
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // ListCronsForAccount walks every cron tied to the account's apps.
 // Used by the GDPR export bundle. Ordered by created_at desc so the
 // newest crons surface first.
