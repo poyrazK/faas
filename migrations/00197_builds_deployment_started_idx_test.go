@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// Migration-apply test for 00195_builds_deployment_started_idx.sql
+// Migration-apply test for 00197_builds_deployment_started_idx.sql
 // (DEPLOY-PROV-6 follow-up / ADR-091, issue #741 close-out).
 // Pins the keyset-filter index for the new GET /v1/builds
 // route:
@@ -40,7 +40,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func TestMigrations_00195_BuildsDeploymentStartedIdx(t *testing.T) {
+func TestMigrations_00197_BuildsDeploymentStartedIdx(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 
@@ -96,7 +96,7 @@ func TestMigrations_00195_BuildsDeploymentStartedIdx(t *testing.T) {
 	// newer one first. The test trips if a future refactor
 	// silently flips the index column order or the sort
 	// direction.
-	slot := "00000000-0000-0000-0000-000000000195"
+	slot := "00000000-0000-0000-0000-000000000197"
 	if _, err := pool.Exec(ctx, `
 		insert into accounts (id, plan, email)
 		values ($1, 'scale', 'deployment-started-idx-test@example.com')
@@ -116,7 +116,7 @@ func TestMigrations_00195_BuildsDeploymentStartedIdx(t *testing.T) {
 		insert into deployments (id, app_id, image_digest, kind, status)
 		values ($1, $2, 'sha256:' || repeat('a', 64), 'railpack', 'pending')
 		on conflict (id) do nothing
-	`, "00000000-0000-0000-0000-000000000195", slot); err != nil {
+	`, "00000000-0000-0000-0000-000000000197", slot); err != nil {
 		t.Fatalf("seed deployments: %v", err)
 	}
 	// Three builds: queued (NULL started_at) + running (older)
@@ -125,11 +125,11 @@ func TestMigrations_00195_BuildsDeploymentStartedIdx(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		insert into builds (id, deployment_id, kind, source_bytes, status, started_at, finished_at)
 		values
-		  ('00000000-0000-0000-0000-000000019501', $1, 'railpack', 100, 'queued',  null,                  null),
-		  ('00000000-0000-0000-0000-000000019502', $1, 'railpack', 200, 'running', now() - interval '5 minutes', null),
-		  ('00000000-0000-0000-0000-000000019503', $1, 'railpack', 300, 'running', now() - interval '1 minute',  null)
+		  ('00000000-0000-0000-0000-000000019701', $1, 'railpack', 100, 'queued',  null,                  null),
+		  ('00000000-0000-0000-0000-000000019702', $1, 'railpack', 200, 'running', now() - interval '5 minutes', null),
+		  ('00000000-0000-0000-0000-000000019703', $1, 'railpack', 300, 'running', now() - interval '1 minute',  null)
 		on conflict (id) do nothing
-	`, "00000000-0000-0000-0000-000000000195"); err != nil {
+	`, "00000000-0000-0000-0000-000000000197"); err != nil {
 		t.Fatalf("seed builds: %v", err)
 	}
 
@@ -137,7 +137,7 @@ func TestMigrations_00195_BuildsDeploymentStartedIdx(t *testing.T) {
 		select id from builds
 		 where deployment_id = $1
 		 order by started_at desc nulls last
-	`, "00000000-0000-0000-0000-000000000195")
+	`, "00000000-0000-0000-0000-000000000197")
 	if err != nil {
 		t.Fatalf("select builds ordered: %v", err)
 	}
@@ -154,9 +154,9 @@ func TestMigrations_00195_BuildsDeploymentStartedIdx(t *testing.T) {
 		t.Fatalf("rows.Err: %v", err)
 	}
 	want := []string{
-		"00000000-0000-0000-0000-000000019503", // newer running
-		"00000000-0000-0000-0000-000000019502", // older running
-		"00000000-0000-0000-0000-000000019501", // queued (NULL last)
+		"00000000-0000-0000-0000-000000019703", // newer running
+		"00000000-0000-0000-0000-000000019702", // older running
+		"00000000-0000-0000-0000-000000019701", // queued (NULL last)
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d builds, want %d (DESC NULLS LAST tripwire): %v", len(got), len(want), got)
@@ -177,7 +177,7 @@ func TestMigrations_00195_BuildsDeploymentStartedIdx(t *testing.T) {
 		 where deployment_id = $1
 		 order by started_at desc nulls last
 		 limit 50
-	`, "00000000-0000-0000-0000-000000000195").Scan(&plan); err != nil {
+	`, "00000000-0000-0000-0000-000000000197").Scan(&plan); err != nil {
 		t.Fatalf("explain: %v", err)
 	}
 	if !strings.Contains(plan, "builds_deployment_started_idx") {

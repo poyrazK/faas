@@ -12032,19 +12032,19 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 // cursor entirely (no non-null started_at to anchor it on).
 //
 // The query is supported by builds_deployment_started_idx
-// (migrations/00195, originally renumbered 166 → 191 → 193 → 195
-// during cross-PR reviews — each renumber was forced by a sibling
-// PR's reservation fence landing in the same slot mid-rebase;
-// the slot family uses the canonical cross-pr-slot-gate-reservation-
-// fence-pattern + drop-on-rebase cleanup; the latest cycle is
-// 193 → 195 after main landed 193_reserve_slot + 194_cron_fire_now
-// when PR #813/815 settled cross-PR — so the renumber landed at
-// 195, the next free slot beyond main's 194_cron_fire_now_requests).
-// The leading deployment_id column lets the planner's nested-loop
-// strategy probe each outer deployment row's builds via a bounded
-// range scan instead of fetching + filtering in-memory. The DESC
-// NULLS LAST ordering matches the SQL surface so queued builds
-// stay at the bottom of every page.
+// (migrations/00197, originally renumbered 166 → 191 → 193 → 195
+// → 197 during cross-PR reviews — each renumber was forced by a
+// sibling PR's reservation fence landing in the same slot mid-
+// rebase; the slot family uses the canonical cross-pr-slot-gate-
+// reservation-fence-pattern + drop-on-rebase cleanup; the latest
+// cycle is 195 → 197 after PR #819 placed a 195_reserve_slot fence
+// + 196 webhook_event_allowlist_cron_fired_manually real migration
+// on its branch, so PR #803 jumped to 197, the next free slot beyond
+// PR #819's 196). The leading deployment_id column lets the planner's
+// nested-loop strategy probe each outer deployment row's builds via
+// a bounded range scan instead of fetching + filtering in-memory.
+// The DESC NULLS LAST ordering matches the SQL surface so queued
+// builds stay at the bottom of every page.
 //
 // limit is clamped server-side by the handler (1..200).
 func (s *PgStore) ListBuildsForAccountPaged(
