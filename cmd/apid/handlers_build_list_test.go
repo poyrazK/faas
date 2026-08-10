@@ -446,17 +446,20 @@ func TestListBuilds_OK_Pagination_NullsLast(t *testing.T) {
 			t.Fatalf("cursor segment %q not RFC3339[Nano]: %v", cursorStarted, err)
 		}
 	}
-	// Re-fetch b1 and compare at SECOND precision (the cursor
-	// contract — see handler comment). b1Row.StartedAt may carry
-	// sub-second nanoseconds that the wire format drops.
+	// Re-fetch b1 and compare at FULL precision (post-review
+	// fix #87: the cursor now carries RFC3339Nano from
+	// state.Build.StartedAt so the keyset sub-second clause
+	// is reachable). The whole-second wire format on
+	// BuildResponse.StartedAt stays unchanged for backward
+	// compat with GET /v1/builds/{id}.
 	b1Row, err := store.BuildByID(context.Background(), b1)
 	if err != nil {
 		t.Fatalf("BuildByID: %v", err)
 	}
-	wantSec := b1Row.StartedAt.UTC().Truncate(time.Second)
-	if !cursorT.Equal(wantSec) {
-		t.Errorf("cursor started_at = %v, want b1.StartedAt (truncated to sec) = %v",
-			cursorT, wantSec)
+	wantFull := b1Row.StartedAt.UTC()
+	if !cursorT.Equal(wantFull) {
+		t.Errorf("cursor started_at = %v, want b1.StartedAt (full precision) = %v",
+			cursorT, wantFull)
 	}
 	// id segment must be b1's id (the LAST row on the page).
 	if cursorID != b1 {

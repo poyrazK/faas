@@ -438,37 +438,34 @@ type Store interface {
 	FindGdprRequestByRequestID(ctx context.Context, accountID, requestID string) (GdprRequest, error)
 	ListBuildsForAccount(ctx context.Context, accountID string) ([]Build, error)
 	// ListBuildsForAccountPaged returns one page of builds across
-	// the account's deployments, ordered started_at desc nulls
-	// last. Keyset pagination via started_at < before. statusFilter=""
-	// means "any status". appIDFilter="" means "any app". When
-	// appIDFilter is set, restricts to deployments.app_id =
-	// appIDFilter. limit clamps at 200 server-side (cmd/apid
-	// handler does the same clamp).
+	// the account's deployments, ordered `started_at DESC NULLS
+	// LAST, id DESC` (so queued builds sort to the bottom and
+	// the id tiebreaker is deterministic on sub-second
+	// collisions). statusFilter="" means "any status";
+	// appIDFilter="" means "any app". When appIDFilter is set,
+	// restricts to deployments.app_id = appIDFilter.
 	//
-	// Used by GET /v1/builds (ADR-091, issue #741 close-out).
-	// The unlimited ListBuildsForAccount(ctx, accountID) sibling
-	// stays intact for the GDPR export at
-	// cmd/apid/handlers_account.go:643.
-	// ListBuildsForAccountPaged returns one page of builds across the
-	// account's deployments, ordered started_at desc nulls last with
-	// id DESC as the tiebreaker (so queued builds at the tail — and
-	// sub-second collisions on started_at — paginate deterministically).
-	// Keyset pagination via (before.Time, beforeID): rows where
-	//   (started_at, id) < (before.Time, beforeID)
-	// under the nulls-last ordering. statusFilter="" means "any
-	// status". appIDFilter="" means "any app". When appIDFilter is
-	// set, restricts to deployments.app_id = appIDFilter.
+	// Cursor contract (post-review fix, 6th commit, ADR-091 §3):
+	// the keyset tuple is `(before.Time, beforeID)` under the
+	// DESC NULLS LAST, id DESC ordering. Branch order on the
+	// store is load-bearing:
+	//   - before.IsZero() && beforeID != "" → queued-tail
+	//     cursor ("|id_hex" wire format). Caller is paging
+	//     through the queued tail via id alone.
+	//   - before.IsZero() && beforeID == "" → first page; no
+	//     keyset predicate.
+	//   - before non-zero → keyset `(started_at, id) <
+	//     (before, beforeID)` with an SQL disjunction that
+	//     reaches the queued zone regardless of NULL semantics.
+	// See pkg/state/pgstore.go::ListBuildsForAccountPaged for
+	// the SQL implementation; pkg/state/memstore.go for the
+	// memstore mirror.
 	//
 	// Mirrors ListDeploymentsForAccount (pkg/state/pgstore.go:4435).
 	//
 	// Used by GET /v1/builds (ADR-091, issue #741 close-out). The
 	// unlimited ListBuildsForAccount(ctx, accountID) sibling stays
 	// intact for the GDPR export at cmd/apid/handlers_account.go:643.
-	//
-	// Empty before.Time = first page; the beforeID is ignored in that
-	// case. Negative before.ID (zero value) is treated as "no id
-	// constraint" so callers can page through queued-only rows by
-	// id alone.
 	ListBuildsForAccountPaged(ctx context.Context, accountID, statusFilter, appIDFilter string, before time.Time, beforeID string, limit int) ([]Build, error)
 	ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error)
 	// UsageByAccount aggregates every per-minute usage_minutes row that

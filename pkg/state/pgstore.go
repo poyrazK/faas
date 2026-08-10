@@ -12019,7 +12019,40 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		rows pgx.Rows
 		err  error
 	)
-	if before.IsZero() {
+	// Branch order is load-bearing (post-review fix): the
+	// "queued-tail cursor" case has `before.IsZero() &&
+	// beforeID != ""` — the started_at segment is empty but the
+	// id segment anchors the boundary in the NULL zone. If we
+	// tested `before.IsZero()` FIRST it would swallow that case
+	// (the very first page branch has no keyset predicate, and
+	// "no started_at" doesn't mean "no cursor"). So the queued-
+	// tail branch is checked before the "first page" branch.
+	switch {
+	case before.IsZero() && beforeID != "":
+		// Queued-tail cursor contract: empty started_at segment
+		// in the opaque cursor — caller is asking for rows
+		// AFTER a queued tail boundary. The keyset becomes id-
+		// only in the NULL zone: "rows with started_at IS NULL
+		// AND id < beforeID". All non-NULL rows (started_at
+		// set) have already been returned in pages with non-
+		// empty started_at cursors; the queued tail is the
+		// last zone to walk. ORDER BY id DESC walks the queued
+		// tail from newest-id to oldest-id.
+		rows, err = s.pool.Query(ctx,
+			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
+			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
+			        b.started_at, b.finished_at, b.enqueued_at
+			 from builds b
+			 join deployments d on d.id = b.deployment_id
+			 join apps a on a.id = d.app_id
+			 where a.account_id = $1
+			   and ($2 = '' or b.status = $2)
+			   and ($3 = '' or d.app_id = $3::uuid)
+			   and b.started_at is null
+			   and b.id < $4
+			 order by b.id desc
+			 limit $5`, accountID, statusFilter, appIDFilter, beforeID, limit)
+	case before.IsZero() && beforeID == "":
 		// First page: no keyset predicate, just the ordering +
 		// limit. id DESC is the stable tiebreaker that makes
 		// page-2's WHERE clause deterministic.
@@ -12035,38 +12068,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 			   and ($3 = '' or d.app_id = $3::uuid)
 			 order by b.started_at desc nulls last, b.id desc
 			 limit $4`, accountID, statusFilter, appIDFilter, limit)
-	} else if beforeID == "" {
-		// Queued-only cursor contract: empty started_at segment
-		// in the opaque cursor — caller is asking for rows
-		// STRICTLY AFTER a queued tail (the cursor's id is the
-		// boundary). The keyset becomes id-only in the NULL zone:
-		// "rows with started_at IS NULL AND id < beforeID".
-		// There are no other queued-zone rows beyond this branch
-		// because all non-NULL rows (started_at set) have already
-		// been returned in pages with non-empty started_at
-		// cursors.
-		//
-		// `before.IsZero()` is NOT enough to detect this branch
-		// because we need beforeID to be passed in. So the
-		// "first page" detection is `before.IsZero()`, and the
-		// "queued-tail" branch is `beforeID != "" && before.
-		// IsZero()`. The first-page case (no cursor at all)
-		// is `before.IsZero() && beforeID == ""`.
-		rows, err = s.pool.Query(ctx,
-			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
-			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
-			        b.started_at, b.finished_at, b.enqueued_at
-			 from builds b
-			 join deployments d on d.id = b.deployment_id
-			 join apps a on a.id = d.app_id
-			 where a.account_id = $1
-			   and ($2 = '' or b.status = $2)
-			   and ($3 = '' or d.app_id = $3::uuid)
-			   and b.started_at is null
-			   and b.id < $4
-			 order by b.id desc
-			 limit $5`, accountID, statusFilter, appIDFilter, beforeID, limit)
-	} else {
+	default:
 		// Keyset (started_at, id) < (before, beforeID) under
 		// the DESC NULLS LAST ordering. Naively encoded as a
 		// row-value comparison it WOULD be `(b.started_at,
@@ -12088,10 +12090,8 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		// NULL zone, the ordering is by id DESC. The page-2
 		// result, in id-DESC order, advances the cursor to
 		// the SMALLEST queued id, which then anchors the
-		// queued-tail branch (case 3 + id < cursor.id) on
-		// subsequent pages. See pkg/state/pgstore.go's third
-		// branch (`before.IsZero() && beforeID != ""`) for
-		// the queued-tail cursor contract.
+		// queued-tail branch (case 1 of the switch above)
+		// on subsequent pages.
 		rows, err = s.pool.Query(ctx,
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
