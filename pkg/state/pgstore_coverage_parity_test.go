@@ -246,9 +246,19 @@ func TestPg_ListBuildsForAccountPaged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateBuild running: %v", err)
 	}
-	if _, err := s.ClaimQueuedBuild(ctx, running.ID); err != nil {
+	// ClaimQueuedBuild is the row that sets started_at = now();
+	// the returned Build is the post-claim row. The test must
+	// rebind `running` to the returned value so the keyset
+	// cursor (running.StartedAt, running.ID) below anchors on
+	// a non-zero timestamp, otherwise the keyset branch's
+	// `b.started_at < $4` comparison fails to match the queued
+	// row (queued.StartedAt is zero, not strictly less than a
+	// zero cursor).
+	runningClaimed, err := s.ClaimQueuedBuild(ctx, running.ID)
+	if err != nil {
 		t.Fatalf("ClaimQueuedBuild: %v", err)
 	}
+	running = runningClaimed
 	queued, err := s.CreateBuild(ctx, deployment.ID, state.DeploymentKindDockerfile, 1024, "/tmp/q2.log")
 	if err != nil {
 		t.Fatalf("CreateBuild queued: %v", err)
