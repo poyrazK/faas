@@ -3150,24 +3150,32 @@ func parseBuildCursor(v string) (time.Time, string, bool) {
 	return t, id, true
 }
 
-// formatBuildCursor renders the opaque tuple cursor from the
-// last row on a page. The started_at is the wire-form RFC3339
-// string (whole-second precision — exactly what buildResponse
-// emits); an empty StartedAt means the last row is queued, so
-// the encoded started_at segment is empty and the store will
-// keyset on id alone.
+// formatBuildCursorNano renders the opaque tuple cursor from
+// the state.Build that the store returned. We use the SOURCE
+// time.Time (sub-second precision preserved) rather than the
+// wire BuildResponse.StartedAt (whole-second RFC3339 for back-
+// compat with GET /v1/builds/{id}). Sub-second precision in the
+// cursor segment is what makes the keyset's
+// `(b.started_at = $4 AND b.id < $5)` clause reachable on rows
+// whose sub-second started_at falls in the same wall-clock
+// second as the last row on the page. Without sub-second, that
+// clause's `=` match only fires on rows whose DB started_at is
+// EQUAL to the cursor at whole-second precision — the in-between
+// sub-second rows would slip past the strict-less-than and
+// reappear on the next page as duplicates.
 //
-// The id is the Build.ID hex string. Stable across the
-// journey from store → SDK → handler because PostgreSQL text
-// casts uuid without reformatting.
-func formatBuildCursor(startedAtWire, id string) string {
-	if startedAtWire == "" {
-		// Queued tail — encode an empty started_at segment.
-		// pgstore's keyset handles (`b.started_at IS NULL` AND
-		// `b.id < beforeID`) for this branch.
+// The id is the Build.ID hex string. PostgreSQL text-casts uuid
+// without reformatting, so it's stable across
+// store → SDK → handler → CLI → cursor round-trip.
+//
+// Empty started_at (queued row) encodes as "|id" — the pgstore
+// queued-tail branch handles the id-only keyset for the NULL
+// zone.
+func formatBuildCursorNano(b state.Build, id string) string {
+	if b.StartedAt.IsZero() {
 		return "|" + id
 	}
-	return startedAtWire + "|" + id
+	return b.StartedAt.UTC().Format(time.RFC3339Nano) + "|" + id
 }
 
 // listBuilds serves GET /v1/builds — every build the account owns,
@@ -3255,12 +3263,24 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	if len(rows) == limit && limit > 0 && len(resp.Items) > 0 {
 		// NextBefore = opaque cursor pointing at the LAST row
-		// on this page. The cursor anchor is the last RETURNED
-		// row's (started_at, id) tuple — under the post-review
-		// SQL fix in pkg/state/pgstore.go::ListBuildsForAccountPaged
-		// the next-page keyset handles all three ordering cases
-		// (older started_at, equal-started_at + smaller id,
-		// NULL-started_at + smaller id).
+		// on this page. The cursor anchor uses the SOURCE
+		// `state.Build.StartedAt` (NOT `BuildResponse.StartedAt`)
+		// so we preserve DB precision. BuildResponse emits
+		// RFC3339 (whole-second) for backward-compat with the
+		// single-id endpoint at GET /v1/builds/{id}; the
+		// cursor's started_at segment, by contrast, MUST be
+		// RFC3339Nano so the keyset sub-second comparison
+		// `(b.started_at = $4 AND b.id < $5)` is reachable on
+		// rows whose sub-second started_at falls between the
+		// cursor's nanosecond and the next whole second (this
+		// was code-review Finding 2 — see ADR-091 §3).
+		//
+		// The cursor segment is opaque to clients per the
+		// `before` query-parameter docstring; only the SDK
+		// `GetBuilds` + CLI `gregale build list --before`
+		// thread it verbatim. No backward-compat impact on
+		// the wire response (BuildResponse.StartedAt is
+		// unchanged at whole-second RFC3339).
 		//
 		// Caveat (intentional, documented in ADR-091): when
 		// the page exactly fills to the last row in the
@@ -3271,8 +3291,8 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 		// here matches ListDeploymentsForAccount's behavior
 		// (no peek-trim); introducing one would require an
 		// extra DB roundtrip per page.
-		last := resp.Items[len(resp.Items)-1]
-		resp.NextBefore = formatBuildCursor(last.StartedAt, last.ID)
+		last := rows[len(rows)-1]
+		resp.NextBefore = formatBuildCursorNano(last, last.ID)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

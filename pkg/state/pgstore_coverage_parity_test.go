@@ -225,3 +225,111 @@ func TestPg_CoverageInstanceStatePaths(t *testing.T) {
 		t.Fatalf("live deployment after mark = %+v, %v", got, err)
 	}
 }
+
+// TestPg_ListBuildsForAccountPaged covers the three-way branch in
+// PgStore.ListBuildsForAccountPaged (first-page / keyset / queued-
+// tail cursor). The reviewer flagged that the whitebox handler
+// tests use memstore only — pgstore's branch order is the same
+// shape but unverified. The order is load-bearing for the
+// queued-tail case (before.IsZero() && beforeID != "" must hit
+// the queued-tail branch, NOT the first-page branch) — see
+// pkg/state/pgstore.go::ListBuildsForAccountPaged.
+func TestPg_ListBuildsForAccountPaged(t *testing.T) {
+	s, ctx, account, _, deployment := pgCoverageFixture(t)
+
+	// Seed: 1 running build (started_at set) + 1 queued build
+	// (started_at NULL) + 1 cross-account build (must NOT surface).
+	running, err := s.CreateBuild(ctx, deployment.ID, state.DeploymentKindImage, 1024, "/tmp/q.log")
+	if err != nil {
+		t.Fatalf("CreateBuild running: %v", err)
+	}
+	if _, err := s.ClaimQueuedBuild(ctx, running.ID); err != nil {
+		t.Fatalf("ClaimQueuedBuild: %v", err)
+	}
+	queued, err := s.CreateBuild(ctx, deployment.ID, state.DeploymentKindImage, 1024, "/tmp/q2.log")
+	if err != nil {
+		t.Fatalf("CreateBuild queued: %v", err)
+	}
+	// Cross-account noise: another account's build under a different
+	// deployment. Must never appear in any paged query for acct 1.
+	other, err := s.CreateAccount(ctx, "pg-bld-other-"+uuid.NewString()+"@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherApp, err := s.CreateApp(ctx, state.App{AccountID: other.ID, Slug: "pg-bld-other-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherDep, err := s.CreateDeployment(ctx, state.Deployment{AppID: otherApp.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + uuid.NewString(), Status: state.DeployPending, CreatedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateBuild(ctx, otherDep.ID, state.DeploymentKindImage, 999, "/tmp/x.log"); err != nil {
+		t.Fatal(err)
+	}
+
+	// (1) First page — no cursor. Returns both owned builds
+	// ordered (running first, queued last NULLS LAST). Cross-
+	// account row excluded by a.account_id = $1 in the SQL.
+	page1, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, "", 0)
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1) != 2 {
+		t.Fatalf("page1 len = %d, want 2 (running + queued): %+v", len(page1), page1)
+	}
+	if page1[0].ID != running.ID {
+		t.Errorf("page1[0] = %s, want running (%s)", page1[0].ID, running.ID)
+	}
+	if page1[0].StartedAt.IsZero() {
+		t.Errorf("page1[0] started_at is zero, want non-zero")
+	}
+	if page1[1].ID != queued.ID {
+		t.Errorf("page1[1] = %s, want queued (%s)", page1[1].ID, queued.ID)
+	}
+	if !page1[1].StartedAt.IsZero() {
+		t.Errorf("page1[1] started_at = %v, want zero (queued)", page1[1].StartedAt)
+	}
+
+	// (2) Queued-tail cursor: before=zero, beforeID=queued.ID.
+	// This is the branch order tripwire — pre-fix, this fell
+	// into the first-page branch and returned the full list
+	// again. Post-fix, this hits the queued-tail branch and
+	// returns 0 rows (no queued rows with id < queued.id).
+	page2, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "", time.Time{}, queued.ID, 0)
+	if err != nil {
+		t.Fatalf("page2 queued-tail: %v", err)
+	}
+	if len(page2) != 0 {
+		t.Fatalf("page2 queued-tail len = %d, want 0 (queued tail exhaustion): %+v", len(page2), page2)
+	}
+
+	// (3) Keyset cursor pointing at the running row: before is
+	// running.StartedAt, beforeID is running.ID. Returns the
+	// queued row only (under DESC NULLS LAST the queued row
+	// sorts AFTER the running row in the desc ordering).
+	page3, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "", running.StartedAt, running.ID, 0)
+	if err != nil {
+		t.Fatalf("page3 keyset: %v", err)
+	}
+	if len(page3) != 1 {
+		t.Fatalf("page3 keyset len = %d, want 1 (queued): %+v", len(page3), page3)
+	}
+	if page3[0].ID != queued.ID {
+		t.Errorf("page3[0] = %s, want queued (%s)", page3[0].ID, queued.ID)
+	}
+
+	// (4) Sanity: filter — app=app2.ID on a different owned app
+	// drops the seeded builds entirely. (We didn't seed any build
+	// under app2, so result is empty.)
+	if _, err := s.CreateApp(ctx, state.App{ID: "00000000-0000-0000-0000-00000000bldgap", AccountID: account.ID, Slug: "pg-bld-empty-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60}); err != nil {
+		t.Fatal(err)
+	}
+	appFilter, err := s.ListBuildsForAccountPaged(ctx, account.ID, "", "00000000-0000-0000-0000-00000000bldgap", time.Time{}, "", 0)
+	if err != nil {
+		t.Fatalf("app filter: %v", err)
+	}
+	if len(appFilter) != 0 {
+		t.Errorf("app filter len = %d, want 0 (no builds under that app): %+v", len(appFilter), appFilter)
+	}
+}
