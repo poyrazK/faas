@@ -809,6 +809,15 @@ func (s *server) handler() http.Handler {
 	// 4-state enum (queued|running|succeeded|failed); see ADR-089
 	// §1 for why 'cancelled' is out of scope.
 	mux.HandleFunc("GET /v1/builds/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getBuild)))
+	// Builds list (DEPLOY-PROV-6 follow-up / ADR-091, issue #741
+	// close-out). Companion to GET /v1/builds/{id} — same auth +
+	// scope chain (intentionally NO requireMFA per ADR-089 §6;
+	// GET /v1/deployments does use requireMFA but the builds
+	// family deliberately does not — see ADR-089). The IDOR
+	// chain for ?app=<slug> is AppBySlug + App.AccountID == acct.ID
+	// (cross-account slug → 404 app_not_found). Cursor pagination
+	// + status filter mirror GET /v1/deployments.
+	mux.HandleFunc("GET /v1/builds", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listBuilds)))
 	// Builds (ADR-038). The provenance route is the only /v1/builds
 	// surface today; deployments.id remains the parent resource.
 	// Build:read scope (api.ScopesReadSurface) gates the read.

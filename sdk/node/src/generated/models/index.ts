@@ -46,6 +46,7 @@ export type { BillingPortalResponse } from './BillingPortalResponse.js';
 export type { BillingReconcileResponse } from './BillingReconcileResponse.js';
 export type { BillingRetryResponse } from './BillingRetryResponse.js';
 export type { BuildExportResponse } from './BuildExportResponse.js';
+export type { BuildListResponse } from './BuildListResponse.js';
 export type { BuildProvenanceResponse } from './BuildProvenanceResponse.js';
 export type { BuildResponse } from './BuildResponse.js';
 export type { ChangeMemberRoleRequest } from './ChangeMemberRoleRequest.js';

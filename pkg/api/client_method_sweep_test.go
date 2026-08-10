@@ -148,6 +148,29 @@ func TestSweep_GetBuildsId(t *testing.T) {
 	}
 }
 
+func TestSweep_GetBuilds(t *testing.T) {
+	// DEPLOY-PROV-6 follow-up / ADR-091 (issue #741 close-out):
+	// the /v1/builds list surface. Body pins the page envelope
+	// (items + next_before) so the JSON deserialise side stays
+	// covered by the sweep. The query-string encoding path is
+	// exercised implicitly via NewClient.do — the test pins the
+	// happy-path round-trip, not the URL shape (sdk-coverage
+	// gate covers the latter).
+	body := `{"items":[{"id":"b1","deployment_id":"d1","kind":"railpack","source_bytes":12345,"status":"running","enqueued_at":"2026-08-10T12:34:56Z","started_at":"2026-08-10T12:34:58Z"}],"next_before":"2026-08-10T12:34:58Z"}`
+	srv, _ := newSweepServer(t, 200, body)
+	c := NewClient(srv.URL, "fp_test")
+	got, err := c.GetBuilds(context.Background(), "myapp", "running", "", 50)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].ID != "b1" {
+		t.Errorf("items = %+v", got.Items)
+	}
+	if got.NextBefore != "2026-08-10T12:34:58Z" {
+		t.Errorf("NextBefore = %q", got.NextBefore)
+	}
+}
+
 func TestSweep_GetEgressAllowlistExtra(t *testing.T) {
 	srv, _ := newSweepServer(t, 200, `{}`)
 	c := NewClient(srv.URL, "fp_test")

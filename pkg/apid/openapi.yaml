@@ -2519,6 +2519,64 @@ paths:
   # the LIFECYCLE surface (status, timestamps, failure_class,
   # duration). Companion to /provenance (post-mortem export) and
   # /sbom (post-mortem blob). Same auth + same IDOR chain.
+  #
+  # DEPLOY-PROV-6 follow-up / ADR-091 (issue #741 close-out) added
+  # /v1/builds as the LIST surface — operator "what's building now?"
+  # view. Same auth + IDOR chain (account-scoped by default; ?app=
+  # narrows to one app via AppBySlug + AccountID). Cursor
+  # pagination + status filter mirror /v1/deployments.
+
+  /v1/builds:
+    parameters:
+      - { name: app, in: query, schema: { type: string }, required: false,
+          description: "Filter to a single app slug. Cross-account slug renders 404." }
+      - { name: status, in: query, schema: { type: string, enum: [queued, running, succeeded, failed] },
+          required: false, description: "Filter to a single status. Omit for any status." }
+      - { name: before, in: query, schema: { type: string, format: date-time },
+          required: false, description: "Cursor: fetch rows started strictly before this RFC3339Nano timestamp." }
+      - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 },
+          required: false, description: "Page size (default 50, capped at 200)." }
+    get:
+      tags: [deployments]
+      operationId: getBuilds
+      summary: List builds (operator view).
+      description: |
+        Returns every build the authenticated account owns, ordered
+        started_at DESC (nulls last — queued builds stay at the
+        bottom of the first page). Optional ?app=<slug> narrows to
+        one app; optional ?status=<s> filters to the 4-value status
+        enum (queued|running|succeeded|failed; omit for any status).
+        Cursor pagination via ?before=<RFC3339Nano>; limit defaults
+        to 50, capped at 200.
+
+        The response shape mirrors /v1/deployments: items + a
+        next_before cursor (empty when end of list). The cursor is
+        the started_at of the LAST row with a non-null started_at
+        on this page, so passing next_before never skips the
+        running/succeeded rows behind queued builds at the tail of
+        the previous page.
+      responses:
+        '200':
+          description: A page of builds (ordered started_at DESC, nulls last).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuildListResponse' }
+        '400':
+          description: |
+            `400 Bad Request` — bad cursor (not RFC3339), bad status
+            filter (not one of queued|running|succeeded|failed), or
+            bad limit (non-numeric / out of range). Stable code
+            `validation_failed`.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: |
+            `404 Not Found` — only raised when ?app=<slug> is set
+            and the slug is unknown OR belongs to another account
+            (uniform 404 so cross-account probes can't enumerate).
+            Stable code `app_not_found`.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/builds/{id}:
     parameters:
@@ -7552,6 +7610,33 @@ components:
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time }
         duration_seconds: { type: integer, description: "Server-computed FinishedAt − StartedAt in whole seconds. Absent until the build reaches a terminal state." }
+
+    BuildListResponse:
+      description: |
+        DEPLOY-PROV-6 follow-up / ADR-091 (issue #741 close-out):
+        the page shape for GET /v1/builds. Items is one page of
+        builds ordered started_at DESC NULLS LAST — queued builds
+        (started_at IS NULL) sink to the bottom of the first page
+        per the new index builds_deployment_started_idx. The
+        next_before cursor is the started_at of the OLDEST
+        non-null-started row on this page, formatted as RFC3339Nano
+        (mirror of DeploymentListResponse). An empty next_before
+        signals end-of-list.
+
+        Mirrors DeploymentListResponse. The new index and the
+        sibling ListBuildsForAccountPaged method (state layer)
+        make this O(page-size) regardless of account size; the
+        unlimited ListBuildsForAccount(ctx, accountID) stays
+        intact for the GDPR export at cmd/apid/handlers_account.go.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BuildResponse' }
+        next_before:
+          type: string
+          description: Cursor for the next page (RFC3339Nano). Empty string signals end-of-list.
 
     AccountCreditResponse:
       description: |

@@ -545,6 +545,45 @@ func (c *Client) GetBuildsId(ctx context.Context, id string) (BuildResponse, err
 	return out, c.do(ctx, "GET", "/v1/builds/"+id, nil, &out)
 }
 
+// GetBuilds returns a single page of builds across the
+// authenticated account's deployments, ordered started_at DESC
+// (nulls last; queued builds stay at the bottom of the first
+// page). status="" means "any status". app="" means "any app".
+// before is the RFC3339Nano cursor ("" for first page); limit is
+// the page size (server clamps at 200, 0 means default).
+//
+// Backs `gregale build list` and any CI script that wants
+// "what's still running for app X" without scraping SSE
+// (DEPLOY-PROV-6 follow-up / ADR-091, issue #741 close-out).
+//
+// Method name: derived by cmd/sdk-coverage/main.go::deriveMethodName
+// from `GET /v1/builds` → GetBuilds. Matches the existing
+// aggregate-from-all-apps convention (/v1/instances → GetInstances,
+// /v1/secrets → GetSecrets, /v1/apps/metrics → GetAppsMetrics —
+// see cmd/sdk-coverage/main.go:306-310). No methodRouteMap entry
+// needed; sdk-check fails if the derived name doesn't match.
+func (c *Client) GetBuilds(ctx context.Context, app, status, before string, limit int) (BuildListResponse, error) {
+	var out BuildListResponse
+	v := url.Values{}
+	if app != "" {
+		v.Set("app", app)
+	}
+	if status != "" {
+		v.Set("status", status)
+	}
+	if before != "" {
+		v.Set("before", before)
+	}
+	if limit > 0 {
+		v.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	path := "/v1/builds"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // DeployMultipart ships a source tarball (with optional runtime +
 // handler) to the multipart deploy endpoint. sourceName is the form
 // filename apid sees in the multipart "source" part; pass the
