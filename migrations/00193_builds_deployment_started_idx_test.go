@@ -1,11 +1,11 @@
 //go:build !no_pg
 
-// Migration-apply test for 00191_builds_deployment_started_idx.sql
+// Migration-apply test for 00193_builds_deployment_started_idx.sql
 // (DEPLOY-PROV-6 follow-up / ADR-091, issue #741 close-out).
 // Pins the keyset-filter index for the new GET /v1/builds
 // route:
 //
-//  1. Migration set applies cleanly through 00191.
+//  1. Migration set applies cleanly through 00193.
 //  2. The composite index builds_deployment_started_idx exists
 //     on builds(deployment_id, started_at DESC NULLS LAST).
 //  3. DESC NULLS LAST is preserved in the indexdef — a future
@@ -20,11 +20,13 @@
 //
 // Build tag mirrors 00162's; FAAS_SKIP_PG_TESTS=1 skips locally.
 //
-// Slot 191 (renumbered from 166 → 174 → 191 mid-PR review after
-// sibling-PR reservation fences took 166, 168–172, 174–189 on
-// origin/main, and 173 + 190 are real migrations. The cleanest
-// available slot beyond main's 190_admin_obs_index is 191).
-// See PR #803 thread and
+// Slot 193 (renumbered four times mid-PR review: 166 → 168 →
+// 174 → 191 → 193). Each renumber was forced by a sibling-PR
+// reservation fence landing on origin/main. The 191→193 hop
+// came after PR #799 (feat+edge-rules-pr1-foundation) merged
+// a real 191_app_secrets_kid.sql migration while PR #803 was
+// in review. Slot 192 was already taken by 192_edge_rules.sql,
+// so 193 is the next free slot. See PR #803 thread and
 // cross-pr-slot-gate-reservation-fence-pattern.md.
 
 package migrations_test
@@ -38,15 +40,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func TestMigrations_00191_BuildsDeploymentStartedIdx(t *testing.T) {
+func TestMigrations_00193_BuildsDeploymentStartedIdx(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 
-	// (1) Run the full migration set. 00191 lands last on this
+	// (1) Run the full migration set. 00193 lands last on this
 	// branch; the apply_walk_test pins contiguity at the directory
 	// level.
 	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("db.MigrateUp: %v (ADR-091 slot 191 broken: missing migration slot between 1 and 191)", err)
+		t.Fatalf("db.MigrateUp: %v (ADR-091 slot 193 broken: missing migration slot between 1 and 193)", err)
 	}
 
 	// (2) The index exists on the right table + column list.
@@ -94,7 +96,7 @@ func TestMigrations_00191_BuildsDeploymentStartedIdx(t *testing.T) {
 	// newer one first. The test trips if a future refactor
 	// silently flips the index column order or the sort
 	// direction.
-	slot := "00000000-0000-0000-0000-000000000191"
+	slot := "00000000-0000-0000-0000-000000000193"
 	if _, err := pool.Exec(ctx, `
 		insert into accounts (id, plan, email)
 		values ($1, 'scale', 'deployment-started-idx-test@example.com')
@@ -114,7 +116,7 @@ func TestMigrations_00191_BuildsDeploymentStartedIdx(t *testing.T) {
 		insert into deployments (id, app_id, image_digest, kind, status)
 		values ($1, $2, 'sha256:' || repeat('a', 64), 'railpack', 'pending')
 		on conflict (id) do nothing
-	`, "00000000-0000-0000-0000-000000000191", slot); err != nil {
+	`, "00000000-0000-0000-0000-000000000193", slot); err != nil {
 		t.Fatalf("seed deployments: %v", err)
 	}
 	// Three builds: queued (NULL started_at) + running (older)
@@ -123,11 +125,11 @@ func TestMigrations_00191_BuildsDeploymentStartedIdx(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		insert into builds (id, deployment_id, kind, source_bytes, status, started_at, finished_at)
 		values
-		  ('00000000-0000-0000-0000-000000019101', $1, 'railpack', 100, 'queued',  null,                  null),
-		  ('00000000-0000-0000-0000-000000019102', $1, 'railpack', 200, 'running', now() - interval '5 minutes', null),
-		  ('00000000-0000-0000-0000-000000019103', $1, 'railpack', 300, 'running', now() - interval '1 minute',  null)
+		  ('00000000-0000-0000-0000-000000019301', $1, 'railpack', 100, 'queued',  null,                  null),
+		  ('00000000-0000-0000-0000-000000019302', $1, 'railpack', 200, 'running', now() - interval '5 minutes', null),
+		  ('00000000-0000-0000-0000-000000019303', $1, 'railpack', 300, 'running', now() - interval '1 minute',  null)
 		on conflict (id) do nothing
-	`, "00000000-0000-0000-0000-000000000191"); err != nil {
+	`, "00000000-0000-0000-0000-000000000193"); err != nil {
 		t.Fatalf("seed builds: %v", err)
 	}
 
@@ -135,7 +137,7 @@ func TestMigrations_00191_BuildsDeploymentStartedIdx(t *testing.T) {
 		select id from builds
 		 where deployment_id = $1
 		 order by started_at desc nulls last
-	`, "00000000-0000-0000-0000-000000000191")
+	`, "00000000-0000-0000-0000-000000000193")
 	if err != nil {
 		t.Fatalf("select builds ordered: %v", err)
 	}
@@ -152,9 +154,9 @@ func TestMigrations_00191_BuildsDeploymentStartedIdx(t *testing.T) {
 		t.Fatalf("rows.Err: %v", err)
 	}
 	want := []string{
-		"00000000-0000-0000-0000-000000019103", // newer running
-		"00000000-0000-0000-0000-000000019102", // older running
-		"00000000-0000-0000-0000-000000019101", // queued (NULL last)
+		"00000000-0000-0000-0000-000000019303", // newer running
+		"00000000-0000-0000-0000-000000019302", // older running
+		"00000000-0000-0000-0000-000000019301", // queued (NULL last)
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d builds, want %d (DESC NULLS LAST tripwire): %v", len(got), len(want), got)
@@ -175,7 +177,7 @@ func TestMigrations_00191_BuildsDeploymentStartedIdx(t *testing.T) {
 		 where deployment_id = $1
 		 order by started_at desc nulls last
 		 limit 50
-	`, "00000000-0000-0000-0000-000000000191").Scan(&plan); err != nil {
+	`, "00000000-0000-0000-0000-000000000193").Scan(&plan); err != nil {
 		t.Fatalf("explain: %v", err)
 	}
 	if !strings.Contains(plan, "builds_deployment_started_idx") {

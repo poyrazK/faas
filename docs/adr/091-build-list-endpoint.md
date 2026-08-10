@@ -89,7 +89,7 @@ are the canonical reference shape.
    New index supports both the keyset filter AND the existing
    `BuildByDeployment` single-id lookup (`queries.sql:353`).
    Forward-only addition in `Up`; `DROP INDEX` in `Down`. The
-   migration is `migrations/00191_builds_deployment_started_idx.sql`.
+   migration is `migrations/00193_builds_deployment_started_idx.sql`.
    Rationale for the column order: the planner's most likely
    strategy is nested-loop through `apps` (via
    `apps_account_idx`) → `deployments` (via
@@ -133,8 +133,8 @@ are the canonical reference shape.
 | Layer | File | Change |
 |-------|------|--------|
 | ADR | `docs/adr/091-build-list-endpoint.md` | This file. |
-| Migration | `migrations/00191_builds_deployment_started_idx.sql` | NEW. Index. |
-| Migration test | `migrations/00191_builds_deployment_started_idx_test.go` | NEW. Apply-walk pins it. |
+| Migration | `migrations/00193_builds_deployment_started_idx.sql` | NEW. Index. |
+| Migration test | `migrations/00193_builds_deployment_started_idx_test.go` | NEW. Apply-walk pins it. |
 | State interface | `pkg/state/store.go` | ADD `ListBuildsForAccountPaged`. |
 | State impl | `pkg/state/pgstore.go` | ADD keyset SQL impl. |
 | State impl | `pkg/state/memstore.go` | ADD slice-filter impl. |
@@ -155,7 +155,7 @@ are the canonical reference shape.
 
 > **Renumber note (PR #803):** this migration was originally
 > written as `00166` in the pre-review draft. The CI investigation
-> after review#2 discovered three sequential slot collisions on
+> after review#2 discovered four sequential slot collisions on
 > `origin/main`:
 >
 > 1. `00166_reserve_slot.sql` (sibling-PR fence) → renumber to `00168`.
@@ -163,15 +163,23 @@ are the canonical reference shape.
 >    172 fences + 173 real migration → renumber to `00174`.
 > 3. `00174_reserve_slot.sql` (yet another fence) + 175, 176, 177, 178,
 >    179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189 fences + 190
->    real migration → final renumber to `00191` (the next free slot
->    beyond main's `190_admin_obs_index`).
+>    real migration → renumber to `00191`.
+> 4. While PR #803 was in review, PR #799
+>    (`feat+edge-rules-pr1-foundation`) merged — it added a real
+>    `00191_app_secrets_kid.sql` migration. Slot 191 is now
+>    double-claimed. Final renumber to `00193` (the next free slot
+>    beyond main's `00192_edge_rules.sql`).
 >
 > Per the cross-PR fence pattern (memory:
 > `cross-pr-slot-gate-reservation-fence-pattern.md`), the migration
 > lands at the highest free slot to outpace sibling fences. The
 > index name `builds_deployment_started_idx` is unchanged, so no
 > code beyond the file rename + slot UUIDs in the test corpus was
-> touched.
+> touched. PR #809 (chore/fix-stale-174-fence) cleans up the
+> leftover 190/191 fence files from PR #799's renumber chain
+> alongside an unrelated Tier A9 prebalancer test wallclock fix —
+> once that PR merges, main's slot sequence is contiguous through
+> 192 and PR #803's slot 193 lands cleanly.
 
 ## Verification
 
@@ -199,7 +207,7 @@ are the canonical reference shape.
 - `daemonunit-check (generated drift)` — green. No daemon unit
   change.
 - `migrations (contiguity + apply)` — green. The new
-  `00191_builds_deployment_started_idx.sql` runs cleanly forward
+  `00193_builds_deployment_started_idx.sql` runs cleanly forward
   + back. Apply-walk test pins it.
 - `e2e (4 shards)` — green. Blackbox e2e untouched.
 

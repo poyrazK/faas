@@ -12004,7 +12004,7 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 // cursor entirely (no non-null started_at to anchor it on).
 //
 // The query is supported by builds_deployment_started_idx
-// (migrations/00191, originally renumbered from 166 mid-PR
+// (migrations/00193, originally renumbered from 166 mid-PR
 // after a sibling-PR fence took slot 166; 168 was also fenced
 // on main, then 174 too, so the renumber landed at 191 —
 // the next free slot beyond main's 190_admin_obs_index) —
