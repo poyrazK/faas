@@ -199,3 +199,18 @@ func (a *PressureAggregator) ResetAll() {
 	defer a.mu.Unlock()
 	a.events = make(map[string][]time.Time)
 }
+
+// Now returns the aggregator's current clock value. Exposed so
+// sibling components (the pressure-rebalancer watcher, the
+// engine's debug paths) can anchor windowed reads to the same
+// clock the aggregator uses internally — production wires
+// time.Now, tests inject a frozen clock; reading wall-clock
+// time.Now in a watcher would silently bypass the test seam
+// and GC every seeded event once the wall clock advances past
+// the window.
+func (a *PressureAggregator) Now() time.Time {
+	if a == nil {
+		return time.Time{}
+	}
+	return a.now()
+}
