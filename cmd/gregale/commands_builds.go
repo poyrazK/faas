@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -37,7 +38,7 @@ const dispatchBuild = "build"
 func cmdBuild(args []string) int {
 	parent, _ := lookupCliCommand("build")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale build <subcommand> [flags]\n  subcommands: status, provenance, sbom", "build")
+		PrintUsage(os.Stderr, "usage: gregale build <subcommand> [flags]\n  subcommands: status, list, provenance, sbom", "build")
 		return 1
 	}
 	switch args[0] {
@@ -47,9 +48,11 @@ func cmdBuild(args []string) int {
 		return cmdBuildProvenance(args[1:])
 	case "sbom":
 		return cmdBuildSbom(args[1:])
+	case "list":
+		return cmdBuildList(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregale build: unknown subcommand %q (known: status, provenance, sbom)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregale build: unknown subcommand %q (known: status, provenance, sbom, list)\n", args[0])
 		maybeSuggestSub(sug)
 		return 1
 	}
@@ -275,4 +278,124 @@ func durationSecondsForDisplay(b api.BuildResponse) string {
 		return ""
 	}
 	return strconv.Itoa(b.DurationSeconds)
+}
+
+// buildListRowFmt is the human list-table column layout (DEPLOY-PROV-6
+// follow-up / ADR-091, issue #741 close-out). 6 columns: ID
+// (32-hex prefix), DEPLOY (32-hex prefix), STATUS (10), KIND (10),
+// SOURCE_BYTES (right-aligned 10), STARTED (RFC3339). Mirrors the
+// deployment row format string's column count so a customer
+// pasting both into a spreadsheet sees the same shape.
+const buildListRowFmt = "%-32s %-32s %-10s %-10s %10s %s\n"
+
+// renderBuildListRow writes one build row to w. The Fprintf
+// return is intentionally discarded (matching renderDeploymentRow's
+// convention): writer failures (closed pipe, broken TTY) are
+// unrecoverable here.
+func renderBuildListRow(w io.Writer, b api.BuildResponse) {
+	started := b.StartedAt
+	if started == "" {
+		// Queued builds have no started_at — surface the dash
+		// explicitly so the column stays aligned.
+		started = "—"
+	}
+	_, _ = fmt.Fprintf(w, buildListRowFmt,
+		b.ID, b.DeploymentID, b.Status, b.Kind,
+		strconv.FormatInt(b.SourceBytes, 10), started)
+}
+
+// cmdBuildList implements `gregale build list [--app SLUG] [--status S] [--limit N] [--before C] [--all]`.
+// Wire shape: GET /v1/builds. Mirrors cmdDeployments exactly
+// (commands_deployments.go:65) — pagination defaults to 50,
+// --all walks every page via Client.GetBuildsAll.
+//
+// Filter validation: status must be one of queued|running|succeeded|
+// failed (matches the API's CHECK constraint + the BuildStatus*
+// constants in pkg/api/dto.go). Bad values → usage hint, exit 1,
+// no API round-trip.
+//
+// JSON output emits the page envelope (items + next_before) so
+// automation can re-issue the cursor — mirrors cmdDeployments'
+// deliberate break from the apps/crons/keys NDJSON convention.
+func cmdBuildList(args []string) int {
+	fs := flag.NewFlagSet("build-list", flag.ContinueOnError)
+	app := fs.String("app", "", "filter to one app slug")
+	status := fs.String("status", "", "filter to status (queued|running|succeeded|failed)")
+	limit := fs.Int("limit", 50, "page size (1-200)")
+	before := fs.String("before", "", "pagination cursor (RFC3339Nano)")
+	all := fs.Bool("all", false, "walk every page (ignores --limit/--before)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 {
+		PrintUsage(os.Stderr, "usage: gregale build list [--app SLUG] [--status S] [--limit N] [--before C] [--all]", "build")
+		return 1
+	}
+	if *status != "" {
+		switch *status {
+		case api.BuildStatusQueued, api.BuildStatusRunning,
+			api.BuildStatusSucceeded, api.BuildStatusFailed:
+			// ok
+		default:
+			PrintUsage(os.Stderr, "usage: gregale build list --status (queued|running|succeeded|failed)", "build")
+			return 1
+		}
+	}
+	if *limit < 0 || *limit > 200 {
+		PrintUsage(os.Stderr, "usage: gregale build list --limit N (0 < N <= 200)", "build")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx := context.Background()
+	if *all {
+		return cmdBuildListAll(ctx, client, *app, *status)
+	}
+	page, err := client.GetBuilds(ctx, *app, *status, *before, *limit)
+	if err != nil {
+		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		// Envelope (not NDJSON) so `next_before` survives; see file header.
+		return jsonOut(writeJSON(page))
+	}
+	if len(page.Items) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "No builds match.")
+		return 0
+	}
+	for _, b := range page.Items {
+		renderBuildListRow(osStdout, b)
+	}
+	if page.NextBefore != "" {
+		// Em-dash (U+2014) matches cmdDeployments' cursor hint
+		// byte-for-byte — tests pin this in commands_builds_test.go.
+		_, _ = fmt.Fprintf(osStdout, "... more — pass --before %s\n", page.NextBefore)
+	}
+	return 0
+}
+
+// cmdBuildListAll walks every page via the SDK helper and renders
+// the full list. Refuses to share a single envelope with the
+// one-page path (no `next_before` to surface), so JSON output is
+// the bare slice — matching how deployments / apps / crons emit
+// NDJSON for non-paginated lists. Mirrors cmdDeploymentsAll
+// (commands_deployments.go:114-134) exactly.
+func cmdBuildListAll(ctx context.Context, client *api.Client, app, status string) int {
+	items, err := client.GetBuildsAll(ctx, app, status)
+	if err != nil {
+		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(items))
+	}
+	if len(items) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "No builds match.")
+		return 0
+	}
+	for _, b := range items {
+		renderBuildListRow(osStdout, b)
+	}
+	return 0
 }

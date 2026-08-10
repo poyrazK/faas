@@ -36,6 +36,39 @@ func (c *Client) ListDeploymentsAll(ctx context.Context) ([]DeploymentResponse, 
 	}
 }
 
+// GetBuildsAll walks the next_before cursor on GET /v1/builds
+// until the server returns an empty cursor, returning every
+// build the account owns in started_at DESC NULLS LAST order
+// (DEPLOY-PROV-6 follow-up / ADR-091, issue #741 close-out).
+// Mirrors ListDeploymentsAll above.
+//
+// The server caps each page at 200 rows (handled by GetBuilds);
+// this method requests max page size when walking. The
+// `app`, `status`, and empty-cursor termination conditions all
+// propagate through GetBuilds — callers that pass `app` /
+// `status` only see the filtered slice walked to completion.
+//
+// Cancelling ctx stops the walk at the next page boundary — the
+// current page's rows are returned up to the cancellation point.
+func (c *Client) GetBuildsAll(ctx context.Context, app, status string) ([]BuildResponse, error) {
+	var out []BuildResponse
+	cursor := ""
+	for {
+		page, err := c.GetBuilds(ctx, app, status, cursor, 200)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, page.Items...)
+		if page.NextBefore == "" {
+			return out, nil
+		}
+		cursor = page.NextBefore
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+	}
+}
+
 // ParseLimit parses a ?limit= query value with a strict 400 contract
 // (issue #393 — matches /v1/invoices' parseInvoiceListParams shape).
 // Returns:
