@@ -109,6 +109,13 @@ func TestPgStore_EdgeRule_RoundTrip(t *testing.T) {
 	}
 
 	// Action wholesale replace: route → rewrite.
+	// The top-level kind column is intentionally NOT touched by
+	// UpdateEdgeRule (see pgstore.go:UpdateEdgeRule — kind is
+	// immutable across updates because rotating kind mid-life
+	// would break the action union). The customer's only path
+	// to change kind is delete + recreate. The action JSON's
+	// inner `kind` field CAN change (the next two assertions
+	// verify that); the top-level `kind` column stays.
 	newAction := state.EdgeRuleAction{
 		Kind: state.EdgeRuleKindRewrite,
 		Rewrite: &state.EdgeRuleRewriteAction{
@@ -122,8 +129,8 @@ func TestPgStore_EdgeRule_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateEdgeRule action: %v", err)
 	}
-	if updated2.Kind != state.EdgeRuleKindRewrite {
-		t.Errorf("kind after action update = %q, want rewrite", updated2.Kind)
+	if updated2.Kind != state.EdgeRuleKindRoute {
+		t.Errorf("kind after action update = %q, want %q (kind is immutable across UpdateEdgeRule)", updated2.Kind, state.EdgeRuleKindRoute)
 	}
 	if updated2.Action.Rewrite == nil || updated2.Action.Rewrite.From != "/api" {
 		t.Errorf("action.rewrite = %+v, want From=/api", updated2.Action.Rewrite)
