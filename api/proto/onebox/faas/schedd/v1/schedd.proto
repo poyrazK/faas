@@ -206,6 +206,39 @@ service Schedd {
   // Additive per ADR-016: new RPC + new messages append at the
   // end; existing field tags are untouched.
   rpc ReportLivenessFailed(LivenessFailedReport) returns (LivenessFailedAck);
+
+  // EnsureWake (ADR-095) is the single-flight-friendly wake entry
+  // point. Unlike Wake, it serialises the wake hot path through the
+  // engine's per-app wake coordinator (pkg/sched/wake_coord.go) so a
+  // concurrent gateway request + cron tick + floor trigger + scaleup
+  // trigger + targets trigger all coalesce into one boot. The first
+  // caller becomes the leader; followers block on the leader's
+  // outcome and inherit the same (RunningInstance, error) they would
+  // have seen had they called Engine.Wake / Engine.AdmitInstance
+  // directly.
+  //
+  // Three outcomes:
+  //
+  //   - already-running: a Row with state RUNNING already exists for
+  //     the app. The leader and all followers see the same
+  //     EnsureWakeResponse. instance_id / node_id / wake_id are
+  //     populated. No vmm RPC fires.
+  //   - leader-boot: the leader schedules a new wake via the existing
+  //     engine path. Followers wait on the leader's outcome. The
+  //     leader's response carries the freshly-minted instance_id /
+  //     node_id / wake_id once vmmd returns RUNNING.
+  //   - failure: ledger / chooser / store error. ResourceExhausted or
+  //     Internal status carrying the RFC 7807 problem in `problem`.
+  //     Followers see the same error. A leader that fails to commit
+  //     Phase 4 returns FailedPrecondition so the gateway can
+  //     distinguish "deliberately reduced" from "VM came up but lost
+  //     the race" - the former is retryable, the latter is not.
+  //
+  // Stability: the wire is additive per ADR-016. Wake / AdmitInstance
+  // are unchanged; pre-PR-95 callers observe identical behaviour.
+  // Empty WakeMethod in the response means the engine returned the
+  // existing-instance fast path (no new boot happened).
+  rpc EnsureWake(EnsureWakeRequest) returns (EnsureWakeResponse);
 }
 
 message LivenessFailedReport {
@@ -356,6 +389,19 @@ message AdmitInstanceResponse {
   // Empty on the at-capacity path (no instance was admitted).
   // Additive per ADR-016.
   string deployment_id = 8;
+  // request_count (ADR-095) is the cumulative per-instance request
+  // count schedd has observed via the batched ReportActivity /
+  // ensure-wake path. The engine stamps it on the admitted path so
+  // the gateway's per-instance cache can show "warming up" vs
+  // "warmed" without a second round-trip onto the ledger. Read on
+  // the warm-snapshot 5th promotion gate (engine.go:3876) which
+  // gates promotion to the warm tier until the instance has served
+  // a meaningful number of requests.
+  //
+  // 0 = not yet bumped (post-restore or freshly cold-booted) or the
+  // conjoined ReportActivity batch has not yet flushed. Pre-PR
+  // callers ignore the field; wire is additive per ADR-016.
+  int32  request_count = 9;
 }
 
 // Touch is one instance's most-recent request time.
@@ -656,5 +702,56 @@ message CapacityReport {
 //
 // Additive per ADR-016.
 message ReportCapacityAck {
+}
+
+// EnsureWakeRequest (ADR-095) is the request shape for the
+// single-flight-safe wake RPC. Mirrors WakeRequest's `app_id` field
+// for consistency. Kept as a separate message so future per-app
+// coalescing hints (e.g. a "leading or follow" marker for testing
+// observability) can land on the request without breaking Wake's
+// contract.
+//
+// Additive per ADR-016.
+message EnsureWakeRequest {
+  string app_id = 1;
+}
+
+// EnsureWakeResponse (ADR-095) is the typed result of
+// Engine.EnsureWake. On the already-running path it mirrors
+// WakeResponse field-for-field. On the leader-boot path it carries
+// the freshly-minted instance_id / node_id / wake_id once the
+// leader's vmmd RPC returns RUNNING. On failure the gRPC status
+// carries the RFC 7807 problem and `problem` is populated; the
+// non-error fields are unset.
+//
+// Empty WakeMethod means the engine returned the existing-instance
+// fast path (no new boot happened). The dashboard / CLI surfaces
+// WakeMethod=WakeMethod_WAKE_COLD_BOOT / WAKE_RESTORE for the
+// leader-boot path; the fast-path is implicit when WakeMethod is
+// unset, which keeps dashboards from regressing on the additive
+// field-empty = not-boot contract.
+//
+// Wire is additive per ADR-016.
+message EnsureWakeResponse {
+  string instance_id = 1;
+  string node_id     = 2;
+  WakeMethod method  = 3;
+  // problem carries the RFC 7807 fields on failure. The status code
+  // itself is google.rpc.Status via
+  // google.golang.org/grpc/status; see pkg/grpcerr. Mirrors
+  // WakeResponse and stays unset on success.
+  google.protobuf.Struct problem = 4;
+  // wake_id is the per-wake-attempt correlation handle (gaps
+  // analysis 2026-07-23). Empty on the already-running path.
+  string wake_id     = 5;
+  // port (issue #460 / ADR-053, PR-C) is the per-deployment override
+  // port copied from deployments.override_port (0 = legacy 8080).
+  // Mirrors AdmitInstanceResponse.port; populated on the leader-boot
+  // path and the already-running non-error path. 0 on failure.
+  int32  port        = 6;
+  // deployment_id is the live deployment the wake landed on (or the
+  // existing instance was admitted for). Mirrors
+  // AdmitInstanceResponse.deployment_id. Empty on failure.
+  string deployment_id = 7;
 }
 

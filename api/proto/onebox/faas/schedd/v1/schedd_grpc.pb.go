@@ -37,6 +37,7 @@ const (
 	Schedd_StreamWarmHints_FullMethodName      = "/onebox.faas.schedd.v1.Schedd/StreamWarmHints"
 	Schedd_ReportCapacity_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ReportCapacity"
 	Schedd_ReportLivenessFailed_FullMethodName = "/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed"
+	Schedd_EnsureWake_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/EnsureWake"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -223,6 +224,38 @@ type ScheddClient interface {
 	// Additive per ADR-016: new RPC + new messages append at the
 	// end; existing field tags are untouched.
 	ReportLivenessFailed(ctx context.Context, in *LivenessFailedReport, opts ...grpc.CallOption) (*LivenessFailedAck, error)
+	// EnsureWake (ADR-095) is the single-flight-friendly wake entry
+	// point. Unlike Wake, it serialises the wake hot path through the
+	// engine's per-app wake coordinator (pkg/sched/wake_coord.go) so a
+	// concurrent gateway request + cron tick + floor trigger + scaleup
+	// trigger + targets trigger all coalesce into one boot. The first
+	// caller becomes the leader; followers block on the leader's
+	// outcome and inherit the same (RunningInstance, error) they would
+	// have seen had they called Engine.Wake / Engine.AdmitInstance
+	// directly.
+	//
+	// Three outcomes:
+	//
+	//   - already-running: a Row with state RUNNING already exists for
+	//     the app. The leader and all followers see the same
+	//     EnsureWakeResponse. instance_id / node_id / wake_id are
+	//     populated. No vmm RPC fires.
+	//   - leader-boot: the leader schedules a new wake via the existing
+	//     engine path. Followers wait on the leader's outcome. The
+	//     leader's response carries the freshly-minted instance_id /
+	//     node_id / wake_id once vmmd returns RUNNING.
+	//   - failure: ledger / chooser / store error. ResourceExhausted or
+	//     Internal status carrying the RFC 7807 problem in `problem`.
+	//     Followers see the same error. A leader that fails to commit
+	//     Phase 4 returns FailedPrecondition so the gateway can
+	//     distinguish "deliberately reduced" from "VM came up but lost
+	//     the race" - the former is retryable, the latter is not.
+	//
+	// Stability: the wire is additive per ADR-016. Wake / AdmitInstance
+	// are unchanged; pre-PR-95 callers observe identical behaviour.
+	// Empty WakeMethod in the response means the engine returned the
+	// existing-instance fast path (no new boot happened).
+	EnsureWake(ctx context.Context, in *EnsureWakeRequest, opts ...grpc.CallOption) (*EnsureWakeResponse, error)
 }
 
 type scheddClient struct {
@@ -338,6 +371,16 @@ func (c *scheddClient) ReportLivenessFailed(ctx context.Context, in *LivenessFai
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LivenessFailedAck)
 	err := c.cc.Invoke(ctx, Schedd_ReportLivenessFailed_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) EnsureWake(ctx context.Context, in *EnsureWakeRequest, opts ...grpc.CallOption) (*EnsureWakeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnsureWakeResponse)
+	err := c.cc.Invoke(ctx, Schedd_EnsureWake_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -528,6 +571,38 @@ type ScheddServer interface {
 	// Additive per ADR-016: new RPC + new messages append at the
 	// end; existing field tags are untouched.
 	ReportLivenessFailed(context.Context, *LivenessFailedReport) (*LivenessFailedAck, error)
+	// EnsureWake (ADR-095) is the single-flight-friendly wake entry
+	// point. Unlike Wake, it serialises the wake hot path through the
+	// engine's per-app wake coordinator (pkg/sched/wake_coord.go) so a
+	// concurrent gateway request + cron tick + floor trigger + scaleup
+	// trigger + targets trigger all coalesce into one boot. The first
+	// caller becomes the leader; followers block on the leader's
+	// outcome and inherit the same (RunningInstance, error) they would
+	// have seen had they called Engine.Wake / Engine.AdmitInstance
+	// directly.
+	//
+	// Three outcomes:
+	//
+	//   - already-running: a Row with state RUNNING already exists for
+	//     the app. The leader and all followers see the same
+	//     EnsureWakeResponse. instance_id / node_id / wake_id are
+	//     populated. No vmm RPC fires.
+	//   - leader-boot: the leader schedules a new wake via the existing
+	//     engine path. Followers wait on the leader's outcome. The
+	//     leader's response carries the freshly-minted instance_id /
+	//     node_id / wake_id once vmmd returns RUNNING.
+	//   - failure: ledger / chooser / store error. ResourceExhausted or
+	//     Internal status carrying the RFC 7807 problem in `problem`.
+	//     Followers see the same error. A leader that fails to commit
+	//     Phase 4 returns FailedPrecondition so the gateway can
+	//     distinguish "deliberately reduced" from "VM came up but lost
+	//     the race" - the former is retryable, the latter is not.
+	//
+	// Stability: the wire is additive per ADR-016. Wake / AdmitInstance
+	// are unchanged; pre-PR-95 callers observe identical behaviour.
+	// Empty WakeMethod in the response means the engine returned the
+	// existing-instance fast path (no new boot happened).
+	EnsureWake(context.Context, *EnsureWakeRequest) (*EnsureWakeResponse, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -564,6 +639,9 @@ func (UnimplementedScheddServer) ReportCapacity(grpc.ClientStreamingServer[Capac
 }
 func (UnimplementedScheddServer) ReportLivenessFailed(context.Context, *LivenessFailedReport) (*LivenessFailedAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportLivenessFailed not implemented")
+}
+func (UnimplementedScheddServer) EnsureWake(context.Context, *EnsureWakeRequest) (*EnsureWakeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EnsureWake not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -723,6 +801,24 @@ func _Schedd_ReportLivenessFailed_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_EnsureWake_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnsureWakeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).EnsureWake(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_EnsureWake_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).EnsureWake(ctx, req.(*EnsureWakeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -753,6 +849,10 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportLivenessFailed",
 			Handler:    _Schedd_ReportLivenessFailed_Handler,
+		},
+		{
+			MethodName: "EnsureWake",
+			Handler:    _Schedd_EnsureWake_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
