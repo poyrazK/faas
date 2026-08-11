@@ -5445,6 +5445,24 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 	return nil
 }
 
+// IncInstanceRequestCount (ADR-095 C8) bumps the per-instance
+// request_count column by delta. Mirrors PgStore's behaviour:
+// idempotent on Phase-4-loser re-applies (the writer is additive),
+// returns -1 when the row is gone. The memstore mirrors the column
+// on the Instance struct so the gate can read the value without
+// a SQL hop; C10 wires the gate-side reader.
+func (m *MemStore) IncInstanceRequestCount(_ context.Context, id string, delta int64) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return -1, nil
+	}
+	ins.RequestCount += delta
+	m.instances[id] = ins
+	return ins.RequestCount, nil
+}
+
 // UpdateInstanceStateWithTimestamp mirrors PgStore's variant. Mirrors
 // the §6.1 watchdog's need to know "time of entry into current
 // state" for SNAPSHOTTING rows; parked_at is the column the watchdog

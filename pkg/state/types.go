@@ -1893,6 +1893,18 @@ type Instance struct {
 	// untouched. NOT NULL DEFAULT 0 enforced by migration 00151;
 	// pre-existing rows are backfilled to 0 on apply.
 	TailCount int
+	// RequestCount is the per-instance monotonically-increasing
+	// request counter (ADR-095 C8/C9/C10). Persisted in the
+	// `request_count` column added by migrations/00219_instances_request_count.sql.
+	// The counter is the gate for warm-snapshot promotion (C10):
+	// when count >= WarmSnapshotMinRequests (per-app config), the
+	// captured snapshot is promoted to a permanent warm key. Bigint
+	// even at 100 RPS sustained — a 73-day-running instance
+	// accumulates ~6.3e8 rows; int4's 2.1e9 ceiling would be the
+	// next upgrade cycle's blocker. Mirrored here so the warm-gate
+	// reads request_count alongside TailCount without a second SQL
+	// hop. NOT NULL DEFAULT 0 enforced by migration 00219.
+	RequestCount int64
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis

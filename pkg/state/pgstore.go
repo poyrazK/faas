@@ -7446,6 +7446,53 @@ func (s *PgStore) UpdateInstanceStateToTerminal(ctx context.Context, id, state s
 	return nil
 }
 
+// IncInstanceRequestCount (ADR-095 C8) bumps the per-instance
+// request_count column by the supplied delta. The writer is
+// additive ("request_count = request_count + delta") on purpose:
+// schedd batches 250ms of per-instance request events into a
+// single UPDATE, and a Phase-4-loser re-apply (the same delta
+// computed twice) must be idempotent on the row. The batched
+// flush path (C9) is the only caller; the writer is deliberately
+// not used at single-request granularity because that would
+// re-create the per-request UPDATE hot-path the gate's
+// amortization is closing.
+//
+// The writer returns the post-increment total so the caller can
+// spot instances that have crossed the per-app WarmSnapshotMinRequests
+// threshold without a separate SELECT — the gate's
+// "count >= min" comparison is a single conditional on the
+// returned value. Returns int64(-1) when the row is gone (Phase-4
+// loser landed after the instance was evicted); the caller
+// treats this as a no-op (the gate falls through to the cold-boot
+// path and the next instance will start fresh at request_count=0).
+func (s *PgStore) IncInstanceRequestCount(ctx context.Context, id string, delta int64) (int64, error) {
+	if delta == 0 {
+		// The writer is additive; a zero delta is a spare round-trip
+		// we can skip. But callers may still want the post-increment
+		// value, so we read it.
+		var cur int64
+		err := s.pool.QueryRow(ctx, `select request_count from instances where id = $1`, id).Scan(&cur)
+		if err != nil {
+			return -1, err
+		}
+		return cur, nil
+	}
+	tag, err := s.pool.Exec(ctx,
+		`update instances set request_count = request_count + $2 where id = $1`,
+		id, delta)
+	if err != nil {
+		return -1, err
+	}
+	if tag.RowsAffected() == 0 {
+		return -1, nil //nolint:nilerr // row gone; not a hard error
+	}
+	var cur int64
+	if err := s.pool.QueryRow(ctx, `select request_count from instances where id = $1`, id).Scan(&cur); err != nil {
+		return -1, err
+	}
+	return cur, nil
+}
+
 // SetInstanceFrameworkReadyAt stamps `framework_ready_at` on the
 // instances row for the vmmd gRPC `FrameworkReady` handler
 // (PR #470-FU-B). Mirrors the no-op-on-missing-row convention of

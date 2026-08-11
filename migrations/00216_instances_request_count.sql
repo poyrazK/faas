@@ -1,0 +1,62 @@
+-- +goose Up
+-- +goose StatementBegin
+-- filename: 00216_instances_request_count.sql
+--
+-- ADR-095 instances.request_count — C8/C9/C10 of the scale-to-zero
+-- Tier-1 PR. Adds a per-instance monotonically-increasing request
+-- counter that backs gate #5 in the warm-snapshot engine hot path
+-- (ADR-071, superseded by ADR-074). schedd's writer flushes the
+-- counter in 250ms batches (issue #543 framework_ready_at stamp
+-- pattern); the gate consults request_count vs WarmSnapshotMinRequests
+-- before promoting a captured snapshot to a permanent warm key.
+--
+-- Why bigint NOT NULL DEFAULT 0:
+--
+--   - bigint: even at 100 RPS sustained, a 73-day-running instance
+--     accumulates ~6.3e8 rows; integer (int4) tops at 2.1e9 and
+--     would be the next upgrade cycle's blocker. bigint is the
+--     ceiling without being absurd.
+--   - NOT NULL DEFAULT 0: replay-safe (the IF NOT EXISTS guard
+--     below already prevents the column from being re-added, but
+--     NOT NULL DEFAULT 0 lets pre-existing rows backfill to 0 on
+--     apply without a separate UPDATE pass). The schedd gate
+--     consults request_count == 0 vs < WarmSnapshotMinRequests
+--     (which is a per-app config — see pgstore.go WarmSnapshotMinRequests),
+--     so 0 is a valid starting state for a freshly-rolled instance.
+--   - No backfill: existing parked/running instances all start at
+--     0; the gate compares against the per-app threshold, so the
+--     promotion decision is `count >= min` and counts grow from 0.
+--     A "missed first request" cannot happen because the writer is
+--     rate-limited (only running instances count, and only those
+--     that serve at least one request increment).
+--
+-- Idempotency / replay-safety:
+--
+--   - ADD COLUMN IF NOT EXISTS protects against accidental re-runs
+--     on the same DB (rare; the goose row guards against this
+--     normally, but the IF NOT EXISTS is the belt-and-braces).
+--   - No table constraint is added — the column is a free counter
+--     with no range check (the gate-side comparison uses the
+--     per-app WarmSnapshotMinRequests value, not a SQL constraint).
+--   - No index: the column is read by primary-key lookup (id) only;
+--     the warm-gate query is `WHERE id = $1` and that hits the
+--     pkey. A separate index would be dead weight.
+--
+-- Cross-PR slot fence (00215):
+--
+--   The real migration lands at 00216. The 00215 slot is held
+--   under a SELECT 1; reservation fence (see 00215_reserve_slot.sql).
+--   Always re-verify next free via `git ls-tree origin/main migrations/`
+--   after rebase — siblings owning 00215-00217 can collide.
+--
+-- Wiring (C9 reader, C10 gate):
+--
+--   - pkg/state/pgstore.go: IncInstanceRequestCount(ctx, insID, delta int64)
+--     is the writer; batched (250ms) and idempotent on Phase-4 losers.
+--   - pkg/sched/engine.go: warm-snapshot gate consults request_count
+--     before promoting a captured snapshot. min=0 (Free/Hobby) →
+--     gate never opens; min=5 (Pro default) → promotion after
+--     5 requests on the same instance.
+alter table public.instances
+    add column if not exists request_count bigint not null default 0;
+-- +goose StatementEnd

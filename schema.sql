@@ -1048,6 +1048,7 @@ CREATE TABLE public.instances (
     lease_token text,
     framework_ready_at timestamp with time zone,
     tail_count integer DEFAULT 0 NOT NULL,
+    request_count bigint DEFAULT 0 NOT NULL,
     CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'migrating'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
 );

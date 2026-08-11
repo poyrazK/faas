@@ -2150,6 +2150,15 @@ type Store interface {
 	// entered current state"), so the engine must stamp it on entry.
 	// Non-SNAPSHOTTING transitions should still use UpdateInstanceState.
 	UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error
+	// IncInstanceRequestCount bumps the per-instance request_count
+	// column by delta (ADR-095 C8). The writer is additive
+	// ("request_count = request_count + delta") so a Phase-4-loser
+	// re-apply is idempotent. Returns the post-increment total, or
+	// -1 when the row is gone (Phase-4 loser landed after the
+	// instance was evicted). The batched flush path (C9) is the only
+	// caller; the writer is deliberately not used at single-request
+	// granularity.
+	IncInstanceRequestCount(ctx context.Context, id string, delta int64) (int64, error)
 	// UpdateInstanceStateToTerminal writes state AND stamps terminal_at
 	// on the same UPDATE (PR #74, spec §17 follow-up). terminal_at is
 	// the dedicated retention anchor the daily sweep (pkg/sched.Retention)
