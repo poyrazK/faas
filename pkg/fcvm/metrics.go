@@ -219,6 +219,71 @@ func (m *FrameworkReadyMetrics) ObserveWarmup(runtime, app string, seconds float
 	m.warmup.WithLabelValues(runtime, app).Observe(seconds)
 }
 
+// WakePhaseMetrics owns the vmmd_wake_phase_duration_seconds
+// histogram (ADR-095 C11). Three phase labels — restore_ms /
+// netns_tap_ms / guest_ready_ms — match the typed scalars on
+// api/proto/onebox/faas/vmmd/v1/vmmd.proto WakeResponse (tags 11,
+// 12, 13). Stays on a dedicated per-vmmd registry so the vmmd's
+// own /metrics surfaces the wake-phase breakdown alongside the
+// shared wire.OpsMetrics.wakePhaseDur vector (the schedd-side 15
+// phases from pkg/wire/metrics.go are a superset; vmmd populates
+// the three vmmd-side phases and stays quiet on the rest).
+//
+// Nil-safe — Manager.Wake calls Observe* on a nil-check so unit
+// tests can construct a Manager without wiring metrics.
+type WakePhaseMetrics struct {
+	reg    *prometheus.Registry
+	phases *prometheus.HistogramVec
+}
+
+// NewWakePhaseMetrics registers vmmd_wake_phase_duration_seconds on
+// a fresh per-daemon registry. Pass to Manager.SetWakePhaseMetrics
+// (the writer) AND to the http mux (the reader).
+func NewWakePhaseMetrics() *WakePhaseMetrics {
+	reg := prometheus.NewRegistry()
+	m := &WakePhaseMetrics{
+		reg: reg,
+		phases: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "vmmd_wake_phase_duration_seconds",
+			Help: "Phase-decomposed wake duration (ADR-095 C11). Phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms}. Mirrors the typed scalars on api/proto/onebox/faas/vmmd/v1/vmmd.proto WakeResponse (tags 11, 12, 13).",
+			Buckets: []float64{
+				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
+			},
+		}, []string{"phase"}),
+	}
+	// Pre-instantiate the closed phase set so /metrics surfaces
+	// zero-valued series from the moment the daemon binds (mirrors
+	// the wakePhaseDur / wakePhaseEmitted pre-instantiation in
+	// pkg/wire/metrics.go). An idle box renders zero, not absent.
+	for _, phase := range []string{"restore_ms", "netns_tap_ms", "guest_ready_ms"} {
+		m.phases.WithLabelValues(phase)
+	}
+	reg.MustRegister(m.phases)
+	return m
+}
+
+// Registry exposes the underlying registry — vmmd's mux mounts this
+// alongside the OpsMetrics + ColdBootMetrics + FrameworkReadyMetrics
+// registries via promhttp.HandlerFor.
+func (m *WakePhaseMetrics) Registry() *prometheus.Registry { return m.reg }
+
+// Handler returns an http.Handler serving the wake-phase histogram.
+func (m *WakePhaseMetrics) Handler() http.Handler {
+	return promhttp.HandlerFor(m.reg, promhttp.HandlerOpts{Registry: m.reg})
+}
+
+// ObserveWakePhase records one wake-phase measurement in seconds.
+// phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms}. ms is the
+// raw millisecond value off the WakeResponse typed scalars; the
+// conversion to seconds matches the histogram unit. Safe on a nil
+// receiver.
+func (m *WakePhaseMetrics) ObserveWakePhase(phase string, ms int64) {
+	if m == nil {
+		return
+	}
+	m.phases.WithLabelValues(phase).Observe(float64(ms) / 1000.0)
+}
+
 // LivenessMetrics owns the vmmd_guest_liveness_* Prometheus collectors
 // (issue #554 / ADR-078). Two collectors on a single per-daemon
 // registry:

@@ -317,6 +317,19 @@ func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.
 		VethPeer:        inst.Net.VethPeer,
 		Method:          wakeMethodFrom(inst.Method),
 		RequestedMethod: requestMethod,
+		// ADR-095 C11: phase-decomposed wake timings. RestoreMs is
+		// 0 on cold boot (no /snapshot/load ran) and on any restore
+		// that errored before /snapshot/load returned. NetnsTapMs
+		// is stamped for both methods; the netns+TAP setup runs
+		// every wake. GuestReadyMs is 0 on restore (the framework-
+		// ready stamp is inherited from the original cold-boot's
+		// row) and on cold-boot deadline-elapsed (guest never
+		// reached ready). Schedd threads these onto the per-phase
+		// wakePhaseDur histogram on the schedd side (issue #517 /
+		// PR-C / ADR-064).
+		RestoreMs:    inst.RestoreMs,
+		NetnsTapMs:   inst.NetnsTapMs,
+		GuestReadyMs: inst.GuestReadyMs,
 	}
 	if inst.Method == fcvm.WakeColdBoot {
 		if structVal, ok := characterizationToStruct(inst.Characterization); ok {

@@ -1158,8 +1158,9 @@ type OpsMetrics struct {
 	// registered on every daemon so the struct stays a single
 	// registry — only schedd / vmmd / gatewayd-internal / builderd / apid
 	// increment via Platform.Emit in production; other daemons
-	// sit at zero. Closed set is the 13 phases from
-	// pkg/events/wake.go.
+	// sit at zero. Closed set is the 15 phases from
+	// pkg/events/wake.go (extended by ADR-095 C11 to surface
+	// the three vmmd-side phase-decomposed wake timings).
 	wakePhaseEmitted *prometheus.CounterVec
 	// wakePhaseDur: lifecycle histogram for wake phases. Same
 	// (phase, result) tuple as wakePhaseEmitted. Buckets sized
@@ -2523,7 +2524,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		deadNodeReconcileDecisions.WithLabelValues(outcome)
 	}
 	// Issue #517 / PR-C / ADR-064: pre-instantiate the closed
-	// 13-phase × 2-result label set for wakePhaseEmitted and
+	// 15-phase × 2-result label set for wakePhaseEmitted and
 	// wakePhaseDur so the §12 wake-latency panel surfaces zero
 	// on an idle daemon (mirrors the buildDuration / stripePush
 	// pre-instantiation precedents above). The phase list mirrors
@@ -2535,6 +2536,16 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		"boot_failed", "readiness_200", "proxy_first_byte",
 		"park_started", "park_completed", "stalled",
 		"build_succeeded", "build_failed", "deploy_failed",
+		// ADR-095 C11: vmmd-side phase-decomposed wake timings
+		// (mirrors the three typed scalars on
+		// api/proto/onebox/faas/vmmd/v1/vmmd.proto WakeResponse).
+		// result=ok on measurement, result=failed on the boundary
+		// exception path. result=failed on `restore_ms` is a
+		// separate signal from result=failed on `boot_failed` —
+		// restore_ms surfaces the /snapshot/load sub-window so
+		// the §12 panel can split "restore slow" from "guest
+		// init slow" without collapsing them.
+		"restore_ms", "netns_tap_ms", "guest_ready_ms",
 	} {
 		for _, result := range []string{"ok", "failed"} {
 			wakePhaseEmitted.WithLabelValues(phase, result)

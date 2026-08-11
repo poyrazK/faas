@@ -570,6 +570,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Manager side, so a producer binary that doesn't wire
 	// metrics still runs.
 	frm := fcvm.NewFrameworkReadyMetrics()
+	// ADR-095 C11: wake-phase histogram (vmmd_wake_phase_duration_seconds).
+	// Mirrors frm / cbm — dedicated per-vmmd registry, mounted
+	// alongside on the cmd-side mux below.
+	wpm := fcvm.NewWakePhaseMetrics()
 	// #96 / ADR-025 axis 2: vmmd publishes the mem blob via the configured
 	// StorageBackend after a successful Snapshot, and resolves it back
 	// from the key on Restore. The env-driven fork (FAAS_STORAGE_BACKEND)
@@ -643,6 +647,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log,
 		cbm,
 	).WithFrameworkReady(frm).
+		SetWakePhaseMetrics(wpm).
 		// Issue #470 / PR #470-FU-B: attach the SQL persistence
 		// seam so the framework_ready DGRAM receipt path can
 		// stamp the `instances.framework_ready_at` column. A
@@ -942,6 +947,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// = Prometheus). Mount at /metrics/framework-warmup so the
 		// dashboard panel picks it up without polluting /metrics.
 		mux.Handle(metricsPath+"/framework-warmup", frm.Handler())
+		// ADR-095 C11: wake-phase histogram on its own
+		// dedicated registry, mirroring the framework-warmup
+		// pattern. Single writer (Manager.Wake), single reader
+		// (Prometheus). Mounted at /metrics/wake-phase so the
+		// §12 wake-phase-breakdown panel can scrape it
+		// directly without polluting the main /metrics scrape
+		// (which is the wire-side OpsMetrics registry).
+		mux.Handle(metricsPath+"/wake-phase", wpm.Handler())
 		httpSrv = &http.Server{
 			Addr:              cfg.MetricsAddr,
 			Handler:           mux,

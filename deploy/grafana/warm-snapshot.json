@@ -347,6 +347,63 @@
         "textMode": "auto",
         "wideLayout": true
       }
+    },
+    {
+      "type": "timeseries",
+      "title": "Wake phase breakdown (s, p95 / 5m)",
+      "id": 5,
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "ADR-095 C11 phase-decomposed wake latency. Phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms, queue_wait, coordinator_wait, schedd_admit, vmmd_wake, cold_fallback_reason}. The aggregate gateway_wake_latency_seconds histogram is unchanged.",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, phase) (rate(schedd_wake_phase_duration_seconds_bucket{phase=~\"restore_ms|netns_tap_ms|guest_ready_ms\"}[5m])))",
+          "legendFormat": "vmmd/{{phase}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, phase) (rate(gateway_wake_phase_duration_seconds_bucket{phase=~\"queue_wait|coordinator_wait|schedd_admit|vmmd_wake|guest_ready|cold_fallback_reason\"}[5m])))",
+          "legendFormat": "gw/{{phase}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
     }
   ],
   "refresh": "30s",

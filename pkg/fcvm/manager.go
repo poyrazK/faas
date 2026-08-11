@@ -219,10 +219,34 @@ type AdvisoryForwarder interface {
 }
 
 // Instance is a live (or booting) microVM tracked by the Manager.
+// bringUpTimings (ADR-095 C11) is the wake-phase scratchpad the
+// Manager.Wake caller allocates on the stack and threads through
+// to Manager.bringUp. Restored onto Instance immediately after
+// bringUp returns so the vmmd WakeResponse can carry the typed
+// scalars. Stays on the stack — never crosses a goroutine boundary.
+type bringUpTimings struct {
+	restoreMs  int64
+	netnsTapMs int64
+}
+
 type Instance struct {
 	Lease  Lease
 	Net    netns.Config
 	Method WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	// ADR-095 C11: phase-decomposed wake timings stamped at the
+	// three boundary sites inside Wake / bringUp so the vmmd
+	// WakeResponse can carry the typed scalars (restore_ms /
+	// netns_tap_ms / guest_ready_ms). 0 means "not measured"
+	// (the gate from the previous version is non-additive).
+	// RestoreMs is non-zero only on Method == WakeRestore.
+	// NetnsTapMs is non-zero for both methods; the netns + TAP
+	// setup runs in every wake. GuestReadyMs is the round-trip
+	// from wake RPC return to the guest-init framework-ready
+	// DGRAM (issue #470 / PR #543) — it carries the cost the
+	// aggregate wake latency has been hiding.
+	RestoreMs    int64
+	NetnsTapMs   int64
+	GuestReadyMs int64
 	// AppID is the apps.id UUID the instance was woken for.
 	// UpdateEgressAllowlist (PR-B, ADR-031+033) uses it to walk
 	// the live map keyed by app instead of by instance, so a
@@ -426,6 +450,12 @@ type Manager struct {
 	// receiver so unit tests that drive Manager directly without
 	// metrics don't need a stub.
 	frameworkReadyMetrics *FrameworkReadyMetrics
+	// wakePhaseMetrics (ADR-095 C11) is the optional
+	// `vmmd_wake_phase_duration_seconds` histogram the vmmd cmd
+	// wires via SetWakePhaseMetrics. nil-safe: Wake calls
+	// ObserveWakePhase on a nil-safe receiver so unit tests that
+	// drive Manager directly without metrics don't need a stub.
+	wakePhaseMetrics *WakePhaseMetrics
 	// frameworkReadyStamper (issue #470 / PR #470-FU-B) is the
 	// optional SQL persistence seam the vmmd cmd wires via
 	// WithFrameworkReadyStamper. nil-safe:
@@ -717,6 +747,16 @@ func (m *Manager) SetParentMountRegistry(r *vmmdmount.Registry) {
 // receiver so callers can chain (`m, ok := NewManager(...).WithMux(...)`).
 func (m *Manager) WithFrameworkReady(fm *FrameworkReadyMetrics) *Manager {
 	m.frameworkReadyMetrics = fm
+	return m
+}
+
+// SetWakePhaseMetrics (ADR-095 C11) wires the optional
+// vmmd_wake_phase_duration_seconds histogram. nil-safe — Wake
+// observes on a nil-check. The vmmd cmd constructs a fresh
+// registry via NewWakePhaseMetrics and passes it here.
+// Returns m for fluent chain continuation.
+func (m *Manager) SetWakePhaseMetrics(wpm *WakePhaseMetrics) *Manager {
+	m.wakePhaseMetrics = wpm
 	return m
 }
 
@@ -2047,12 +2087,24 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// in the rendered anonymous daddr-set).
 	nc.EgressAllowlist = m.mergeOperatorBundle(nc.EgressAllowlist)
 
+	// ADR-095 C11: capture the per-boundary timings (netns+TAP /
+	// restore / guest-ready) on a private struct that bringUp
+	// mutates in-place. Stays on the stack — never crosses the
+	// goroutine boundary. Restored onto inst immediately below.
+	var timings bringUpTimings
+	var method WakeMethod
+
+	// ADR-095 C11: capture the netns+TAP timing at the boundary
+	// (issue #574). setupNetwork wraps netns creation + TAP setup
+	// + veth pair wiring. Stays roughly constant per shape, so a
+	// sudden spike is a host-level signal not a workload signal.
+	netnsStart := time.Now()
 	if err = m.setupNetwork(ctx, nc); err != nil {
 		return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
 	}
+	timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
 
-	var method WakeMethod
-	method, err = m.bringUp(ctx, lease, nc, req)
+	method, err = m.bringUp(ctx, lease, nc, req, &timings)
 	if err != nil {
 		return nil, err
 	}
@@ -2235,16 +2287,42 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// the wake, that's strictly worse than today's `:8080` accept
 	// failure path (the operator gets no signal). Restore inherits
 	// the class from the apps row captured in the original cold boot.
+	//
+	// ADR-095 C11: stamp the GuestReadyMs = round-trip from wake RPC
+	// return to the framework-ready DGRAM (issue #470 / PR #543).
+	// WaitCharacterizationReport IS the framework-ready handshake —
+	// measuring around it captures the guest-ready tail that the
+	// aggregate wake latency has been hiding. The deadline-elapsed
+	// path returns immediately with stamp = characterizationWait,
+	// signalling "guest never reached ready" rather than fabricating a
+	// value. Restore inherits the framework-ready stamp from the
+	// original cold-boot's row, but the restore window itself is
+	// already on RestoreMs below, so this field on restore reads as
+	// 0 (= not measured) and the wire emits it accordingly.
 	var report api.CharacterizationReport
+	var guestReadyMs int64
 	if method == WakeColdBoot {
+		readyStart := time.Now()
 		report, _ = m.vmm.WaitCharacterizationReport(ctx, lease, m.characterizationWait)
+		guestReadyMs = time.Since(readyStart).Milliseconds()
 		m.log.Info("wake: characterization report",
 			"instance", req.Instance, "observed_class", report.ObservedClass,
 			"observed_port", report.ObservedPort, "exit", report.ExitCode,
 			"port_norm_mode", report.PortNormalizationMode)
 	}
-
-	inst := &Instance{Lease: lease, Net: nc, Method: method, AppID: req.AppID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime}
+	inst := &Instance{Lease: lease, Net: nc, Method: method, AppID: req.AppID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs}
+	// ADR-095 C11: emit the three vmmd-side wake phases onto the
+	// dedicated histogram. nil-receiver safe. RestoreMs is 0 on
+	// cold boot (no /snapshot/load ran) — the histogram's
+	// WithLabelValues will still register the series at 0
+	// observations, which is the intended behaviour (a future
+	// regression that hits a slow /snapshot/load will surface as
+	// a populated restore_ms series, not a missing one).
+	if m.wakePhaseMetrics != nil {
+		m.wakePhaseMetrics.ObserveWakePhase("restore_ms", timings.restoreMs)
+		m.wakePhaseMetrics.ObserveWakePhase("netns_tap_ms", timings.netnsTapMs)
+		m.wakePhaseMetrics.ObserveWakePhase("guest_ready_ms", guestReadyMs)
+	}
 	// tailSecondsAccum (issue #667 / ADR-078) starts at 0 on
 	// every Wake; MarkInstanceTailTerminal accumulates into it
 	// and the meterd Sampler reads+resets via
@@ -2299,7 +2377,14 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 // The returned method is what actually happened: a restore that fell back reads
 // WakeColdBoot, so schedd can mark the snapshot stale and schedule a re-snapshot.
 // A non-nil error means even cold boot failed (a real wake failure).
-func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest) (WakeMethod, error) {
+//
+// ADR-095 C11: timings (if non-nil) is the wake-phase scratchpad the
+// caller allocates on the stack; bringUp writes restoreMs (and
+// never guest-ready / netns — those are stamped at the surrounding
+// boundaries inside Wake). The Wake caller reads back via timings
+// when constructing the Instance. timings is optional for tests
+// that wire bringUp directly without a Wake frame.
+func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest, timings *bringUpTimings) (WakeMethod, error) {
 	// issue #299: refuse to bring up an instance whose base ext4
 	// staged with a CRITICAL Grype finding. Runs BEFORE the restore
 	// decision tree because a scan refusal is a policy gate, not a
@@ -2350,7 +2435,21 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// the main workload's drive1). Additive per ADR-016.
 			Workloads: buildWorkloadsForRestore(req),
 		}
-		if rErr := m.vmm.Restore(ctx, lease, rs); rErr == nil {
+		// ADR-095 C11: stamp the RestoreMs (issue #470 / PR #543).
+		// vmm.Restore wraps /snapshot/load + waitReady for the
+		// snapshot state machine. On a successful restore this is
+		// the dominant sub-window of the §6.3 350 ms warm-wake
+		// budget; surfacing it on its own histogram lets the §12
+		// panel split restore slowness from guest-init slowness.
+		// The duration is captured locally; the Wake() caller reads
+		// it back via the optional bringUpTimings closure parameter
+		// (defined on Wake — non-breaking on internal bringUp).
+		restoreStart := time.Now()
+		rErr := m.vmm.Restore(ctx, lease, rs)
+		if rErr == nil && timings != nil {
+			timings.restoreMs = time.Since(restoreStart).Milliseconds()
+		}
+		if rErr == nil {
 			return WakeRestore, nil
 		} else {
 			// Fall back to cold boot into the same netns; kill any half-restored VM.

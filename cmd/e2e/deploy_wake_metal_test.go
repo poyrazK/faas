@@ -22,6 +22,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -302,6 +303,21 @@ func TestDeployWakeMetal(t *testing.T) {
 		if p95 > p95Budget {
 			t.Errorf("wake_latency p95 = %v, want <= %v (spec §6.3 / Appendix D V2)", p95, p95Budget)
 		}
+
+		// ADR-095 C11: phase-decomposed wake telemetry. The
+		// aggregate gateway_wake_latency_seconds is unchanged;
+		// this is a separate scrape that asserts the new
+		// gateway_wake_phase_duration_seconds{phase="queue_wait"}
+		// series surfaced at least one observation during the
+		// loop (every wake fires ObserveWakePhase via the
+		// dual-write in ObserveWakeQueueWait). The other phases
+		// (coordinator_wait, schedd_admit, vmmd_wake,
+		// guest_ready, cold_fallback_reason) are pre-instantiated
+		// at zero from boot and only surface non-zero on the
+		// first request that hits the matching boundary —
+		// coverage depends on load shape, so the assertion is
+		// gated on a per-phase minObservations floor.
+		assertWakePhaseQueueWaitObserved(t, h.GatewayControlURL, 1)
 	})
 
 	// -- 4. idle-park ----------------------------------------------------------
@@ -435,6 +451,48 @@ func assertWakeLatencyObserved(t *testing.T, controlURL string) {
 	// histogram would look like.
 	if len(sc.BucketLE) == 0 {
 		t.Fatalf("wake_latency histogram has no _bucket lines; observation may not be first-byte (Part A regression)")
+	}
+}
+
+// assertWakePhaseQueueWaitObserved (ADR-095 C11) scrapes /metrics for
+// the new phase-decomposed wake histogram
+// (gateway_wake_phase_duration_seconds) and asserts that the
+// phase="queue_wait" series observed at least minObservations samples.
+//
+// The aggregate gateway_wake_latency_seconds histogram is unchanged
+// — that test stays in assertWakeLatencyObserved above. The phase
+// histogram is a sibling vector, pre-instantiated at boot with the
+// closed phase set {queue_wait, coordinator_wait, schedd_admit,
+// vmmd_wake, guest_ready, cold_fallback_reason}. ObserveWakeQueueWait
+// dual-writes into both the legacy scalar (gateway_wake_queue_wait_seconds)
+// and the new phase vector under phase="queue_wait" — so every wake
+// that hits the gate bumps this series by 1.
+func assertWakePhaseQueueWaitObserved(t *testing.T, controlURL string, minObservations uint64) {
+	t.Helper()
+	if controlURL == "" {
+		t.Skip("gatewayd control URL not exposed by harness")
+	}
+	text := scrapeMetricsBody(t, controlURL)
+	sc, err := testhist.SnapshotFromText(text, "gateway_wake_phase_duration_seconds")
+	if err != nil {
+		t.Fatalf("assertWakePhaseQueueWaitObserved: %v\n/metrics excerpt:\n%s", err, excerpt(text))
+	}
+	// The closed phase set must be present at zero from boot (see
+	// the pre-instantiation loop in pkg/gateway/metrics.go). If any
+	// phase is missing from the scrape body, the pre-instantiation
+	// loop regressed — fail loud with a body excerpt for diagnosis.
+	for _, phase := range []string{"queue_wait", "coordinator_wait", "schedd_admit", "vmmd_wake", "guest_ready", "cold_fallback_reason"} {
+		if !strings.Contains(text, fmt.Sprintf(`gateway_wake_phase_duration_seconds_count{phase=%q}`, phase)) {
+			t.Fatalf("phase=%q missing from /metrics body (pre-instantiation regression):\n%s", phase, excerpt(text))
+		}
+	}
+	// queue_wait is the dual-written series (every wake fires it);
+	// coordinator_wait / schedd_admit / vmmd_wake / guest_ready /
+	// cold_fallback_reason only surface non-zero when their
+	// respective boundary fires, which depends on load shape —
+	// don't assert a minimum on those.
+	if sc.SampleCount < minObservations {
+		t.Fatalf("wake_phase_duration_seconds SampleCount = %d, want >= %d (dual-write from ObserveWakeQueueWait)", sc.SampleCount, minObservations)
 	}
 }
 

@@ -644,6 +644,59 @@ func TestMetricsWakeSnapshotTierPreinstantiated(t *testing.T) {
 	}
 }
 
+// TestMetricsWakePhaseDurationPreinstantiated (ADR-095 C11) pins the
+// closed phase set on the new phase-decomposed wake histogram at
+// zero from the moment the daemon binds, so the §12 panel surfaces
+// from boot. Catches a future change that drops the pre-instantiation
+// loop or renames a phase value. The aggregate
+// gateway_wake_latency_seconds histogram is NOT changed here — that
+// series stays byte-identical (tested in pkg/gateway/testhist/...).
+func TestMetricsWakePhaseDurationPreinstantiated(t *testing.T) {
+	m := NewMetrics()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	m.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, phase := range []string{
+		"queue_wait", "coordinator_wait", "schedd_admit",
+		"vmmd_wake", "guest_ready", "cold_fallback_reason",
+	} {
+		want := fmt.Sprintf(`gateway_wake_phase_duration_seconds_count{phase=%q} 0`, phase)
+		if !strings.Contains(body, want) {
+			t.Errorf("pre-instantiated %s missing from /metrics body:\n%s", want, body)
+		}
+	}
+}
+
+// TestMetricsObserveWakePhaseRoundTrip (ADR-095 C11) asserts that
+// ObserveWakePhase increments the labelled histogram and that the
+// scalar (legacy) ObserveWakeQueueWait dual-writes into the
+// phase="queue_wait" series. Pinning both halves of the dual-write
+// here keeps the §12 panel honest through a future refactor that
+// drops either the scalar or the vector.
+func TestMetricsObserveWakePhaseRoundTrip(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveWakePhase("vmmd_wake", 250*time.Millisecond)
+	m.ObserveWakeQueueWait(120 * time.Millisecond)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	m.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{
+		`gateway_wake_phase_duration_seconds_count{phase="vmmd_wake"} 1`,
+		`gateway_wake_phase_duration_seconds_count{phase="queue_wait"} 1`,
+		// Legacy scalar stays byte-identical for one release.
+		// ObserveWakeQueueWait dual-writes into the vector AND
+		// into the scalar; only the queue_wait call counts here.
+		`gateway_wake_queue_wait_seconds_count 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing exposition line %q in body:\n%s", want, body)
+		}
+	}
+}
+
 // TestMetricsWakeLocalityObserved asserts the counter increments per
 // outcome and that an unknown outcome is passed through (Prometheus
 // default behaviour — the closed set is closed by the pre-instantiation

@@ -565,6 +565,30 @@ message WakeResponse {
   // the codegen pipeline for a single optional payload — only
   // schedd consumes this and it decodes via pkg/api on the way in.
   google.protobuf.Struct characterization = 10;
+  // Phase-decomposed wake duration (ADR-095 C11). Schedd's
+  // wake_phase_duration_seconds histogram (wire/metrics.go) is
+  // fed by these three typed scalars so a regression in any one
+  // phase surfaces on the §12 dashboard without collapsing into
+  // the aggregate wake latency. All three are millisecond
+  // durations; 0 means "not yet measured" (the gate from the
+  // previous version is non-additive — ADding fields is fine
+  // per ADR-016, but a 0 value is the unset sentinel so old
+  // callers don't fabricate a 0ms observation).
+  //
+  // restore_ms is the duration of /snapshot/load (CreateFromSnapshot)
+  // or the corresponding restore path. 0 on cold boot.
+  int64  restore_ms     = 11;
+  // netns_tap_ms is the duration of netns creation + TAP setup +
+  // veth pair wiring. Stays roughly constant per shape (issue
+  // #574) so a sudden spike is a host-level signal not a workload
+  // signal.
+  int64  netns_tap_ms   = 12;
+  // guest_ready_ms is the duration from wake RPC return to the
+  // guest-init framework-ready DGRAM (issue #470 / PR #543). The
+  // gating signal for "wake until ready" — without this, the
+  // aggregate wake latency hides whether the slowness is on the
+  // host (restore / netns) or in the guest (init handshake).
+  int64  guest_ready_ms = 13;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.
