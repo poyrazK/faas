@@ -140,6 +140,17 @@ type SchedAPI interface {
 	// single-deployment path. Non-empty asks the engine to admit on
 	// that specific live deployment. Additive per ADR-016.
 	AdmitInstance(ctx context.Context, appID, deploymentID string) (sched.WakeResult, error)
+	// EnsureWake (ADR-095) is the single-flight-safe wake RPC. The engine
+	// coalesces every concurrent EnsureWake call for the same app into one
+	// virtual boot; followers see the leader's outcome. The leader runs
+	// on a detached ctx (context.Background + WakeQueueTTLSeconds); only
+	// followers see the caller's ctx.
+	//
+	// Returns sched.ErrQueueFull when the per-app follower cap is exceeded
+	// (handlers map to ResourceExhausted / wake_queue_full) and
+	// sched.ErrAppDeleted when the app was deleted while a wake was in
+	// flight (Forget route; C6 wires the pg-notify channel).
+	EnsureWake(ctx context.Context, appID string) (sched.CoordOutcome, error)
 	ReportActivity(ctx context.Context, touches []state.InstanceTouch) (int, error)
 	// ParkWithReason is the meterd-triggered variant (M7, spec §4.7).
 	// The reason string is for the audit log; the park semantics are
@@ -357,7 +368,60 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 		// see empty and the gateway treats that as "single-deployment
 		// legacy mode" (Target.DeploymentID empty, picker collapses).
 		DeploymentId: res.DeploymentID,
+		// request_count (ADR-095) — populated by C9's batched writer;
+		// 0 pre-C9 callers observe the legacy wire (no behaviour change).
+		RequestCount: 0,
 	}, nil
+}
+
+// EnsureWake (ADR-095) is the single-flight-safe wake RPC. The engine
+// coalesces every concurrent EnsureWake call for the same app into one
+// virtual boot; followers see the leader's outcome.
+//
+// Pre-ADR-095 callers continue to use Wake / AdmitInstance on the
+// legacy wire — this method is additive per ADR-016.
+func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest) (*scheddpb.EnsureWakeResponse, error) {
+	const op = "EnsureWake"
+	if _, err := authorizeApp(ctx, s.owner, s.resolver, req.GetAppId()); err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	out, err := s.engine.EnsureWake(ctx, req.GetAppId())
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		// Per-app queue-full is a 503; the engine returns the typed
+		// sentinel. Other failures (ErrAppDeleted, ledger, chooser,
+		// store) are forwarded as RFC 7807 problems via toProblem.
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	if out.Instance == nil {
+		// Defensive: a successful EnsureWake with nil instance is a
+		// bug — surface it as an internal problem so the gateway
+		// sees a 500 rather than a phantom 200.
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Internal), "ensure_wake_nil_instance",
+			"engine EnsureWake returned nil instance without error", ""))
+	}
+	return &scheddpb.EnsureWakeResponse{
+		InstanceId:   out.Instance.InstanceID,
+		NodeId:       out.Instance.NodeID,
+		Method:       coordMethodToWakeMethod(out.Instance),
+		WakeId:       out.Instance.WakeID,
+		Port:         out.Instance.Port,
+		DeploymentId: out.Instance.DeploymentID,
+	}, nil
+}
+
+// coordMethodToWakeMethod maps the coordinator's ColdBoot bool to the
+// WakeMethod enum. The legacy Wake / AdmitInstance paths go through
+// mapMethod (see below) which copies the vmmdpb.WakeMethod verbatim;
+// the coordinator collapses to a bool because the per-caller awaiting
+// approach doesn't need to round-trip the original WakeMethod through
+// the vmmd RPC layer.
+func coordMethodToWakeMethod(ci *sched.CoordInstance) scheddpb.WakeMethod {
+	if ci.ColdBoot {
+		return scheddpb.WakeMethod_WAKE_COLD_BOOT
+	}
+	return scheddpb.WakeMethod_WAKE_RESTORE
 }
 
 // ReportActivity persists a last_request_at batch from the gateway.
@@ -943,6 +1007,14 @@ func mapMethod(m vmmdpb.WakeMethod) scheddpb.WakeMethod {
 func toProblem(err error) *api.Problem {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, sched.ErrQueueFull) {
+		return api.NewProblem(int(codes.ResourceExhausted), "wake_queue_full",
+			"schedd per-app wake queue is full", err.Error())
+	}
+	if errors.Is(err, sched.ErrAppDeleted) {
+		return api.NewProblem(int(codes.FailedPrecondition), "app_deleted",
+			"app was deleted while wake was in flight", err.Error())
 	}
 	if p := api.AsProblem(err); p != nil {
 		return p

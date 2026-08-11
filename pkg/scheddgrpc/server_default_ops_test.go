@@ -33,6 +33,9 @@ func (noopEngine) Wake(context.Context, string, string) (sched.WakeResult, error
 func (noopEngine) AdmitInstance(context.Context, string, string) (sched.WakeResult, error) {
 	return sched.WakeResult{}, nil
 }
+func (noopEngine) EnsureWake(context.Context, string) (sched.CoordOutcome, error) {
+	return sched.CoordOutcome{}, nil
+}
 func (noopEngine) ReportActivity(context.Context, []state.InstanceTouch) (int, error) {
 	return 0, nil
 }

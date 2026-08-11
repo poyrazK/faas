@@ -287,6 +287,10 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	// wakeCoord is the per-app single-flight coordinator (ADR-095).
+	// Lazily initialised in NewEngine. Lock discipline is a LEAF:
+	// wakeCoord.mu is taken and released BEFORE e.lockApp(appID).
+	wakeCoord *wakeCoord
 
 	// warmAffinity is the sticky-warm cache (placement scheduler PR,
 	// ADR-025). Defaults to a zero-TTL cache that always returns "no
@@ -428,6 +432,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		fcVer:           fcVer,
 		log:             log,
 		appMu:           map[string]*sync.Mutex{},
+		wakeCoord:       newWakeCoord(),
 		warmBroadcaster: newWarmHintBroadcaster(),
 		capacityTable:   newNodeCapacityTable(),
 		now:             time.Now, // tests override post-construction
@@ -1022,6 +1027,77 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID string) (WakeResu
 	// capacity refusal happens INSIDE admitAndDispatch; we forward
 	// rather than lift into the typed AtCapacity result.
 	return e.admitAndDispatch(ctx, appID, false)
+}
+
+// EnsureWake (ADR-095) is the single-flight-safe wake entry point.
+// Every wake producer (gateway, cron, floor, scaleup, targets) routes
+// through this method so a concurrent burst coalesces into one virtual
+// boot per parked app.
+//
+// Three phases for the leader:
+//
+//   1. Reserve a slot in the wake coordinator (under wakeCoord.mu only).
+//   2. Defer Complete() so all five completion paths in e.Wake
+//      (engine.go:1435 ledger refusal, :1818 re-read failure, :1823
+//      state-stolen, :1830-1831 record-runtime, :1892 commit) hand
+//      their outcome to followers via one source of truth.
+//   3. Run e.Wake. The deferred Complete fires when the function
+//      returns, regardless of which path it took.
+//
+// Followers block on the leader's Complete and inherit the outcome.
+//
+// Lock discipline: wakeCoord.mu is acquired and released BEFORE
+// e.lockApp(appID) is touched. The defer-close pattern keeps the
+// decrement site count at one — no hand-placed release at any of the
+// five completion paths.
+//
+// Errors that surface to the caller:
+//
+//   - ErrQueueFull: per-app follower cap exceeded.
+//   - ErrAppDeleted: the app was deleted while we were waiting.
+//   - ctx.Err(): the caller's ctx was cancelled before the leader finished.
+//   - leader's *api.Problem: ledger / chooser / store error.
+//   - nil: the wake succeeded; Outcome.Instance is populated.
+func (e *Engine) EnsureWake(ctx context.Context, appID string) (CoordOutcome, error) {
+	if e == nil || e.wakeCoord == nil {
+		return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: engine not fully constructed")
+	}
+	call, isLeader, err := e.wakeCoord.Enter(appID)
+	if err != nil {
+		return CoordOutcome{}, err
+	}
+	// Follower path: block on the leader's outcome. The leader's
+	// Complete() is the single source of truth.
+	if !isLeader {
+		out := call.Await(ctx)
+		e.wakeCoord.Release(appID, call)
+		return out, nil
+	}
+	// Leader path: run e.Wake on a detached ctx bounded by the
+	// coordinator's TTL so a cancelled triggering request cannot kill
+	// the in-flight boot. The deferred Complete is the single
+	// decrement site for all five completion paths inside e.Wake.
+	leaderCtx, cancel := context.WithTimeout(context.Background(), e.wakeCoord.TTL())
+	defer cancel()
+	out := CoordOutcome{}
+	defer func() {
+		call.Complete(out)
+		e.wakeCoord.Release(appID, call)
+	}()
+	res, err := e.Wake(leaderCtx, appID, "")
+	if err != nil {
+		out.Err = err
+		return out, err
+	}
+	out.Instance = &CoordInstance{
+		InstanceID:   res.InstanceID,
+		NodeID:       res.NodeID,
+		DeploymentID: res.DeploymentID,
+		WakeID:       res.WakeID,
+		Port:         int32(res.Port),
+		ColdBoot:     res.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT,
+	}
+	return out, nil
 }
 
 // AdmitInstance attempts to admit one additional instance for appID,

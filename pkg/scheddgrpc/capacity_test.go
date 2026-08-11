@@ -74,6 +74,15 @@ func (c *capturingEngine) Wake(_ context.Context, _, _ string) (sched.WakeResult
 func (c *capturingEngine) AdmitInstance(_ context.Context, _, _ string) (sched.WakeResult, error) {
 	return sched.WakeResult{}, nil
 }
+
+// EnsureWake (ADR-095): capacity tests don't exercise single-flight, so
+// this delegates straight through to Wake. Returning a zero CoordOutcome
+// with nil Instance triggers the defensive nil-instance branch in the
+// handler only on success; no capacity test relies on a non-nil
+// Instance, so the zero value is sufficient.
+func (c *capturingEngine) EnsureWake(_ context.Context, _ string) (sched.CoordOutcome, error) {
+	return sched.CoordOutcome{}, nil
+}
 func (c *capturingEngine) ReportActivity(_ context.Context, _ []state.InstanceTouch) (int, error) {
 	return 0, nil
 }
