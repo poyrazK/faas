@@ -4033,7 +4033,7 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 // captureWarmSnapshotLocked (issue #470 / PR A / ADR-070) is the
 // warm-tier counterpart to snapshotAndPark's init-tier capture. It
 // runs under appMu inside the Park site — caller already holds the
-// lock. The four gates (any one fails → no warm capture) are:
+// lock. The five gates (any one fails → no warm capture) are:
 //  1. app.WarmSnapshotEnabled (the operator-opt-in flag — sticky on
 //     plan downgrade per ADR-070 §Plan gate)
 //  2. acct.Plan.WarmSnapshotAllowed() (the plan-gate that rejects
@@ -4044,7 +4044,13 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 //     between the manual Prime path and the reaper-driven Park path)
 //  4. now - FrameworkReadyAt >= app.WarmSnapshotMinMs (the
 //     time-since-first-ready floor; A.3 covers the time half of
-//     the gate, the request-count half is PR C's audit work)
+//     the gate)
+//  5. ins.RequestCount >= app.WarmSnapshotMinRequests (ADR-095
+//     C10, supersedes ADR-071 PR-C). The per-instance request-
+//     count half of the gate. min == 0 is the "disabled" label
+//     case (Free/Hobby default) — the gate never opens. The
+//     comparison is `count < min` (threshold), not
+//     `count % min == 0` (multiple-of-5 regression).
 //
 // On success: returns (nil, info) after emitting snapshot_written
 // {tier:warm}. imaged's snapshot_written subscriber (PR #525) is
@@ -4094,6 +4100,36 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 		if time.Since(*ins.FrameworkReadyAt) < minAge {
 			return SnapshotBytes{}, nil
 		}
+	}
+
+	// Gate 5 (ADR-095 C10, supersedes ADR-071 PR-C): per-instance
+	// request-count floor. The plan is the load-bearing knob: with
+	// min > 0 the promotion only fires once the instance has served
+	// at least `min` requests. min == 0 is the "disabled" label
+	// case (Free/Hobby default) — the gate never opens, AND the
+	// engine does NOT spin a warm snapshot, so a Free app with
+	// min=0 never sees a warm tier (per ADR-071 §Plan gate, the
+	// plan forbids it anyway, but the explicit zero guard is
+	// belt-and-braces against a Free app that somehow reaches
+	// here).
+	//
+	// The comparison is `count < min` not `count % min == 0`. The
+	// latter is the multiple-of-5 regression (issue #675 review
+	// finding): a cold app requests_count=3 with min=5 would
+	// never promote (3 % 5 = 3, not 0), and the warm tier would
+	// stay cold indefinitely. The threshold is a "have we
+	// crossed the threshold?" comparison, not a "is this a
+	// multiple?" one.
+	//
+	// Why mirror on the instance row (not an engine cache):
+	//   The column is the authoritative counter; the engine
+	//   reads ins.RequestCount (mirror on the Instance struct)
+	//   on every park site. The batched writer flushes
+	//   gateway-side per-instance counts every 1–2s (C9), and
+	//   the engine reads the latest value at gate time. There
+	//   is no in-process cache to drift.
+	if app.WarmSnapshotMinRequests > 0 && ins.RequestCount < int64(app.WarmSnapshotMinRequests) {
+		return SnapshotBytes{}, nil
 	}
 
 	// Compute the per-tier storage keys. The /warm/ segment keeps
@@ -4156,6 +4192,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 			"deployment_id":              ins.DeploymentID,
 			"warm_min_requests":          app.WarmSnapshotMinRequests,
 			"warm_min_ms":                app.WarmSnapshotMinMs,
+			"request_count":              ins.RequestCount,
 			"mem_bytes":                  b.MemBytes,
 			"tier":                       state.SnapshotTierWarm,
 			"framework_ready_to_park_ms": readyToParkMs,

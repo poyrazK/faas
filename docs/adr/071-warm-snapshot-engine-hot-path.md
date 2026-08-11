@@ -1,6 +1,6 @@
 # ADR-071 · Warm-snapshot engine hot-path
 
-- **Status:** proposed
+- **Status:** superseded-by: ADR-074 (and the request-count gate realised by ADR-095 C10)
 - **Date:** 2026-08-03
 - **Issue:** #470 / PR A (extends PR #525 / PR #543)
 - **Supersedes:** vmmd-side pause/snapshot/resume plan from PR #525 (the data layer); the engine hot-path was deferred.
@@ -45,11 +45,21 @@ The Firecracker primitive gap makes this non-trivial: there is no `pause-snapsho
 | Gate | Source | Failure |
 |---|---|---|
 | 1. app.WarmSnapshotEnabled | `apps.warm_snapshot_enabled` | silently skip |
-| 2. acct.Plan.WarmSnapshotAllowed() | `pkg/api/limits.go:1437` | silently skip |
+| 2. acct.Plan.WarmSnapshotAllowed() | `pkg/api/limits.go` | silently skip |
 | 3. ins.FrameworkReadyAt != NULL | PR #543 stamp | silently skip (freshly primed instance, not warm) |
 | 4. now - FrameworkReadyAt >= app.WarmSnapshotMinMs | `apps.warm_snapshot_min_ms` | silently skip (not warm long enough) |
+| 5. ins.RequestCount >= app.WarmSnapshotMinRequests | `apps.warm_snapshot_min_requests` (ADR-095 C10) | silently skip (served too few requests) |
 
-The fifth gate (request count) is PR C's audit work. PR A covers the time-side half; operators tune `warm_snapshot_min_ms=0` to capture immediately on first ready.
+The fifth gate (request count) is the second half of the warm-snapshot
+floor alongside the time-since-first-ready half. Together the two
+halves pin the "warm path is the steady-state, cold-boot is the
+exception" invariant: a freshly-primed instance, regardless of how
+long the runner has been alive, must serve at least N requests before
+the engine promotes it to a warm-tier snapshot. ADR-095 C10 closes
+this gate; the column lives at `instances.request_count` (migration
+00216) and is surfaced on `WakeResult.RequestCount` so the gateway
+per-instance cache can render "warming up" vs "warmed" without a
+second round-trip.
 
 ## Engine invariants preserved
 
@@ -60,11 +70,11 @@ The fifth gate (request count) is PR C's audit work. PR A covers the time-side h
 
 ## Out of scope (deferred to PR C)
 
-- Audit kind `app.warm_snapshot_promoted` / `app.warm_snapshot_stale` / `app.warm_snapshot_disabled`.
-- `cmd/gregale --warm-snapshot / --no-warm-snapshot / --warm-snapshot-min-requests N / --warm-snapshot-min-ms N` flags.
-- `pkg/imaged/gc.go` per-tier keep-current-previous (2+2 floor).
-- `deploy/grafana/dashboards/warm-snapshot.json` panels.
-- Request-count-based promotion gate (the 5th gate above).
+The PR-C list originally enumerated in this section shipped in
+ADR-074 (audit kinds, CLI flags, per-tier GC, dashboard panels).
+The 5th gate — request-count-based promotion — shipped in ADR-095
+C10. The list is kept here as a historical marker; the current
+status of each item is documented in ADR-074 and ADR-095.
 
 ## Consequences
 
@@ -85,9 +95,9 @@ The fifth gate (request count) is PR C's audit work. PR A covers the time-side h
 
 | Concern | Path |
 |---|---|
-| Park core (PR A adds warm capture before PARKED) | `pkg/sched/engine.go:2652` |
-| Warm capture helper | `pkg/sched/engine.go` (new) |
-| Plan-gated wake tier selection | `pkg/sched/engine.go:2933` (`usableSnapshotForWake`) |
+| Park core (PR A adds warm capture before PARKED) | `pkg/sched/engine.go` (`snapshotAndPark`) |
+| Warm capture helper | `pkg/sched/engine.go` (`captureWarmSnapshotLocked`) |
+| Plan-gated wake tier selection | `pkg/sched/engine.go` (`usableSnapshotForWake`) |
 | VM lifecycle (Pause + Snapshot + Resume) | `pkg/fcvm/vmm.go` (`SnapshotKeepAlive`, `ResumeVM`) |
 | Manager entry (no teardown) | `pkg/fcvm/manager.go` (`Manager.WarmSnapshot`) |
 | Wire shape | `api/proto/onebox/faas/vmmd/v1/vmmd.proto` (`WarmSnapshot`) |
