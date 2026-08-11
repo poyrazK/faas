@@ -148,7 +148,7 @@ func TestWakeGateObservesWaitDuration(t *testing.T) {
 			func(ctx context.Context) error {
 				<-release
 				return nil
-			})
+			}, nil, nil)
 	}()
 	// Yield so the leader is committed before the follower joins.
 	time.Sleep(20 * time.Millisecond)
@@ -156,7 +156,7 @@ func TestWakeGateObservesWaitDuration(t *testing.T) {
 		defer done.Done()
 		_ = g.Wait(context.Background(), "appA",
 			func() bool { return false }, // would-wake check is leader-only; follower ignores it
-			func(ctx context.Context) error { return nil })
+			func(ctx context.Context) error { return nil }, nil, nil)
 	}()
 
 	// Hold the leader parked so the follower accumulates wait.
@@ -201,14 +201,14 @@ func TestWakeGateSkipsObservationOnErrQueueFull(t *testing.T) {
 		defer done.Done()
 		_ = g.Wait(context.Background(), "appB",
 			func() bool { return true },
-			func(ctx context.Context) error { <-release; return nil })
+			func(ctx context.Context) error { <-release; return nil }, nil, nil)
 	}()
 	time.Sleep(20 * time.Millisecond) // leader commits first
 
 	// Synchronous next caller — gate rejects with ErrQueueFull.
 	err := g.Wait(context.Background(), "appB",
 		func() bool { return false },
-		func(ctx context.Context) error { return nil })
+		func(ctx context.Context) error { return nil }, nil, nil)
 	if !errors.Is(err, ErrQueueFull) {
 		t.Fatalf("err = %v, want ErrQueueFull", err)
 	}
@@ -252,7 +252,7 @@ func TestWakeGateSkipsObservationOnCtxCancel(t *testing.T) {
 		defer done.Done()
 		_ = g.Wait(context.Background(), "appC",
 			func() bool { return true },
-			func(ctx context.Context) error { <-release; return nil })
+			func(ctx context.Context) error { <-release; return nil }, nil, nil)
 	}()
 
 	// Follower with a cancelled context — must be queued behind the
@@ -265,7 +265,7 @@ func TestWakeGateSkipsObservationOnCtxCancel(t *testing.T) {
 		defer done.Done()
 		_ = g.Wait(cancelledCtx, "appC",
 			func() bool { return false },
-			func(ctx context.Context) error { return nil })
+			func(ctx context.Context) error { return nil }, nil, nil)
 		// Tell the test driver we've entered Wait (even if it returned
 		// immediately — the gate has serialized us).
 		close(followerCommitted)

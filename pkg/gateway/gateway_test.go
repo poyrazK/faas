@@ -293,7 +293,7 @@ func TestWakeGateSingleFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := g.Wait(context.Background(), "app", shouldWake, ensure); err != nil {
+			if err := g.Wait(context.Background(), "app", shouldWake, ensure, nil, nil); err != nil {
 				t.Errorf("wait: %v", err)
 			}
 		}()
@@ -309,7 +309,7 @@ func TestWakeGatePropagatesEnsureError(t *testing.T) {
 	shouldWake := func() bool { return true }
 	err := g.Wait(context.Background(), "app", shouldWake, func(context.Context) error {
 		return fmt.Errorf("no capacity")
-	})
+	}, nil, nil)
 	if err == nil {
 		t.Error("ensure error should propagate to the waiter (→ 503)")
 	}
@@ -324,7 +324,7 @@ func TestWakeGateCapReturnsQueueFull(t *testing.T) {
 		_ = g.Wait(context.Background(), "app", shouldWake, func(context.Context) error {
 			<-release
 			return nil
-		})
+		}, nil, nil)
 	}()
 	// Wait for the leader to register.
 	for g.InflightWaiters("app") < 1 {
@@ -338,7 +338,7 @@ func TestWakeGateCapReturnsQueueFull(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs[i] = g.Wait(context.Background(), "app", shouldWake, func(context.Context) error { return nil })
+			errs[i] = g.Wait(context.Background(), "app", shouldWake, func(context.Context) error { return nil }, nil, nil)
 		}(i)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -364,7 +364,7 @@ func TestWakeGateRespectsCallerCancel(t *testing.T) {
 	err := g.Wait(ctx, "app", shouldWake, func(context.Context) error {
 		time.Sleep(time.Second)
 		return nil
-	})
+	}, nil, nil)
 	if err == nil {
 		t.Error("a cancelled caller should stop waiting")
 	}
@@ -375,7 +375,7 @@ func TestWakeGateLeaderSkipsEnsureWhenShouldWakeIsFalse(t *testing.T) {
 	calls := 0
 	shouldWake := func() bool { return false }
 	ensure := func(ctx context.Context) error { calls++; return nil }
-	if err := g.Wait(context.Background(), "app", shouldWake, ensure); err != nil {
+	if err := g.Wait(context.Background(), "app", shouldWake, ensure, nil, nil); err != nil {
 		t.Fatalf("Wait err = %v", err)
 	}
 	if calls != 0 {
@@ -401,7 +401,7 @@ func TestInvariant1_CapPlusOneReturnsQueueFull(t *testing.T) {
 		_ = g.Wait(context.Background(), "app", shouldWake, func(context.Context) error {
 			<-block
 			return nil
-		})
+		}, nil, nil)
 	}()
 	for g.InflightWaiters("app") < 1 {
 		time.Sleep(time.Millisecond)
@@ -413,7 +413,7 @@ func TestInvariant1_CapPlusOneReturnsQueueFull(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			errs[i] = g.Wait(context.Background(), "app", shouldWake,
-				func(context.Context) error { return nil })
+				func(context.Context) error { return nil }, nil, nil)
 		}(i)
 	}
 	// Give the followers time to all reach the gate and overflow.
@@ -445,7 +445,7 @@ func TestInvariant4_InflightZeroAfterDrain(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			if err := g.Wait(context.Background(), "app", shouldWake,
-				func(context.Context) error { return nil }); err != nil {
+				func(context.Context) error { return nil }, nil, nil); err != nil {
 				t.Errorf("wait: %v", err)
 			}
 		}()
@@ -473,7 +473,7 @@ func TestInvariant5_NoSecondWakeAfterShouldWakeFalse(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := g.Wait(context.Background(), "app", shouldWake, ensure); err != nil {
+			if err := g.Wait(context.Background(), "app", shouldWake, ensure, nil, nil); err != nil {
 				t.Errorf("wait: %v", err)
 			}
 		}()

@@ -108,6 +108,22 @@ type Metrics struct {
 	wakeQueueWait     prometheus.Histogram
 	queueDepth        *prometheus.GaugeVec
 	rateLimited       *prometheus.CounterVec
+	// leaderBootstrapAborts (ADR-095 C7): counter labelled by
+	// reason — closed set {queue_empty_no_instance, ttl_expired,
+	// app_deleted}. Pre-instantiated in NewMetrics so the §12
+	// dashboard chip surfaces from first scrape.
+	leaderBootstrapAborts *prometheus.CounterVec
+	// edgeRuleMatch: ADR-089 PR 3. Counter labelled by
+	// (kind, outcome) — `kind` is the EdgeRuleKind
+	// (route|rewrite|redirect|headers|cors|jwt|ip; closed set
+	// per migrations/00192_edge_rules.sql:49-51), `outcome` is
+	// one of {match, miss, blocked}. The handler increments
+	// from matchAndSubstituteRoute (handler.go:1449-1451) so the
+	// §12 dashboard panel "edge rule match rate" surfaces from
+	// first scrape — the closed label set is pre-instantiated
+	// at boot below. PR 4-7 extend kind; the outcome set is
+	// stable across all kinds.
+	edgeRuleMatch *prometheus.CounterVec
 	// edgeRuleApply (ADR-091 hardening PR-A): counter of apply-path
 	// outcomes, distinct from edgeRuleMatch (which counts the
 	// matcher's pick). A rule can MATCH the matcher but FAIL at apply
@@ -458,6 +474,14 @@ func NewMetrics() *Metrics {
 			Name: "gateway_queue_depth",
 			Help: "Current number of waiters per app's wake queue (sampled).",
 		}, []string{"app"}),
+		// ADR-095 C7: closed-set reasons pre-instantiated so the
+		// §12 dashboard chip "leader bootstrap aborts" surfaces
+		// zero rows from boot. Adding a new reason is a code +
+		// dashboard change.
+		leaderBootstrapAborts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_leader_bootstrap_aborts_total",
+			Help: "Detached leader goroutine aborts on the bootstrap cap, labelled by reason (queue_empty_no_instance|ttl_expired|app_deleted). ADR-095 C7.",
+		}, []string{"reason"}),
 		rateLimited: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_rate_limited_total",
 			Help: "Requests rejected by the per-app rate limiter.",
@@ -689,6 +713,13 @@ func NewMetrics() *Metrics {
 	for _, tier := range []string{tierWarm, tierInit, tierCold} {
 		m.wakeSnapshotTier.WithLabelValues(tier)
 	}
+	// ADR-095 C7: pre-instantiate the closed (reason) set on the
+	// leader-bootstrap-aborts counter so the §12 dashboard chip
+	// "leader bootstrap aborts" surfaces every reason from boot.
+	// Adding a new reason is a code + dashboard change.
+	for _, reason := range []string{"queue_empty_no_instance", "ttl_expired", "app_deleted"} {
+		m.leaderBootstrapAborts.WithLabelValues(reason)
+	}
 	// ADR-024 H3 follow-up (Finding 2): pre-instantiate the closed
 	// (result) set on the walk-completeness counter so the §12
 	// dashboard panel surfaces from boot. result="partial" is the
@@ -721,7 +752,7 @@ func NewMetrics() *Metrics {
 		}
 		m.edgeRuleCompileError.WithLabelValues(kind)
 	}
-	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.queueDepth, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleCompileError, m.requestsByRoute, m.durationByRoute, m.failuresByRoute)
+	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.queueDepth, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleCompileError, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts)
 	return m
 }
 
@@ -932,6 +963,17 @@ func (m *Metrics) ObserveAccountRateLimit(accountID, plan string) {
 // without polluting the per-node quantiles — the unknown bucket
 // is excluded from per-node PromQL by the obsNodeWakeLatency
 // handler's matcher.
+
+// ObserveLeaderBootstrapAbort (ADR-095 C7) records a detached-leader
+// goroutine abort under the bootstrap cap. Closed (reason) set
+// pre-instantiated in NewMetrics; nil-safe on the receiver.
+func (m *Metrics) ObserveLeaderBootstrapAbort(reason string) {
+	if m == nil {
+		return
+	}
+	m.leaderBootstrapAborts.WithLabelValues(reason).Inc()
+}
+
 func (m *Metrics) ObserveColdBoot(appID string, latency time.Duration, nodeID string) {
 	m.coldBoot.WithLabelValues(appID).Inc()
 	m.wakeLatency.Observe(latency.Seconds())

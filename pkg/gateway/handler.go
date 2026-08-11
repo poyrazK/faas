@@ -4369,6 +4369,23 @@ func (h *Handler) coldStart(ctx context.Context, appID string, maxConcurrency in
 			cold = true
 			return nil
 		},
+		// ADR-095 C7: bootstrap-cap predicate. The detached leader
+		// polls this on a 1s tick; if the queue drained (the gate
+		// itself tracks waiters) and there's still no live instance,
+		// the leader aborts with reason "queue_empty_no_instance"
+		// instead of staying alive for the full TTL. The plan
+		// MaxMinInstances check would require the coldStart path to
+		// re-resolve the app; the gate's own waiter count already
+		// reflects the relevant signal — coldStart only runs when
+		// the picker fast-path found no live instance. onAbort bumps
+		// the gateway_leader_bootstrap_aborts_total counter and
+		// surfaces the abort reason on the §12 dashboard chip.
+		func() bool {
+			return h.gate.InflightWaiters(appID) == 0 && h.backend.HealthyCount(appID) == 0
+		},
+		func(reason string) {
+			h.metrics.ObserveLeaderBootstrapAbort(reason)
+		},
 	)
 	if werr != nil {
 		return false, "", WakeMethodUnspecified, werr
@@ -4382,6 +4399,14 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", "5")
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Briefly at capacity", "the wake queue is full; retry shortly"))
+	case errors.Is(err, ErrBootstrapAborted):
+		// ADR-095 C7: the leader aborted under the bootstrap cap
+		// (queue empty AND no live instance). The customer should
+		// retry — the next request finds the picker fast-path
+		// still empty, so a fresh wake fires immediately.
+		w.Header().Set("Retry-After", "1")
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Leader bootstrap aborted", "no live instance and no plan floor; retry to wake"))
 	default:
 		var prob *api.Problem
 		if errors.As(err, &prob) {

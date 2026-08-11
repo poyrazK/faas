@@ -48,6 +48,12 @@ type wakeCall struct {
 // ErrQueueFull is returned when the per-app waiter cap is exceeded (→ 503).
 var ErrQueueFull = errors.New("gateway: wake queue full")
 
+// ErrBootstrapAborted (ADR-095 C7) is returned when the detached-leader
+// goroutine aborts under the bootstrap cap (queue empty AND no live
+// instance AND plan.MaxMinInstances == 0). The followers see this
+// rather than waiting for the gate TTL.
+var ErrBootstrapAborted = errors.New("gateway: leader bootstrap aborted")
+
 // NewWakeGate returns a gate with the given per-app waiter cap and wake TTL
 // (spec §4.1: 512 / 30 s).
 func NewWakeGate(capacity int, ttl time.Duration) *WakeGate {
@@ -73,6 +79,14 @@ func NewWakeGate(capacity int, ttl time.Duration) *WakeGate {
 // This closes the race where a goroutine reaches Wait after the previous wake
 // has set the instance running but before its old Target read sees it.
 //
+// shouldAbort (ADR-095 C7) is the optional detached-leader bootstrap
+// cap predicate. The leader goroutine polls it on a 1s tick; when it
+// returns true the goroutine aborts without calling ensure. The
+// intended condition is: queue empty AND no live instance AND the
+// app's plan has MaxMinInstances == 0. nil = leader never polls (the
+// legacy behaviour). onAbort is the side-effect callback the leader
+// fires before closing done — nil = no side effect.
+//
 // A completed but un-drained entry stays in the map until the last follower
 // departs, so a follow-on request that arrives microseconds after ensure()
 // returns cannot trigger a second wake (regression test:
@@ -90,6 +104,8 @@ func (g *WakeGate) Wait(
 	appID string,
 	shouldWake func() bool,
 	ensure func(context.Context) error,
+	shouldAbort func() bool,
+	onAbort func(reason string),
 ) error {
 	start := time.Now()
 	// observed is set true only on the paths where the caller actually
@@ -157,14 +173,106 @@ func (g *WakeGate) Wait(
 	// caller's ctx via context.Background() — the wake must outlive the
 	// triggering request so other queued waiters get the same instance.
 	// This is the load-bearing single-flight coalescing invariant (spec §4.1).
+	//
+	// ADR-095 C7: bootstrap-cap abort. When shouldAbort is non-nil, the
+	// leader races ensure() against a poller that closes abortCh when
+	// shouldAbort becomes true. The poller fires on a 1s ticker. The
+	// intended condition (coldStart) is: queue empty AND no live instance
+	// AND plan.MaxMinInstances == 0. That predicate is true exactly when
+	// the leader's caller has bailed (waiters dropped to 0) and the
+	// wake hasn't produced a target yet — so the abort is for orphaned
+	// wakes, not for the leader's own initial entry.
+	//
+	// Race semantics:
+	//   - abortCh closes first → leader writes ErrBootstrapAborted, closes
+	//     done. Followers see ErrBootstrapAborted via await.
+	//   - ensure() returns first → leader writes ensure's err, closes done.
+	//     Poller exits on ectx.Done().
+	//
+	// Exactly one close(call.done) — write is guarded by `g.mu`. The
+	// orphan-detach invariant (the leader's caller-ctx doesn't kill the
+	// wake) is preserved; the abort is opt-in via shouldAbort.
 	go func() {
 		ectx, cancel := context.WithTimeout(context.Background(), g.ttl)
 		defer cancel()
-		call.err = ensure(ectx)
-		g.mu.Lock()
-		call.completed = true
-		g.mu.Unlock()
-		close(call.done)
+
+		// Optional bootstrap-cap poller. Lifecycle:
+		//   - spawned only when shouldAbort != nil
+		//   - fires at most once (close(abortCh)) on the first tick
+		//     where shouldAbort() returns true
+		//   - exits on ectx.Done() (TTL hit) before firing
+		// This is the only goroutine that closes abortCh.
+		var abortCh chan struct{}
+		var pollerDone chan struct{}
+		if shouldAbort != nil {
+			abortCh = make(chan struct{})
+			pollerDone = make(chan struct{})
+			go func() {
+				defer close(pollerDone)
+				ticker := time.NewTicker(1 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ticker.C:
+						if shouldAbort() {
+							close(abortCh)
+							return
+						}
+					case <-ectx.Done():
+						return
+					}
+				}
+			}()
+		}
+
+		// Race ensure against abortCh. Whichever fires first owns
+		// the close(call.done).
+		ensureDone := make(chan error, 1)
+		go func() {
+			ensureDone <- ensure(ectx)
+		}()
+
+		select {
+		case err := <-ensureDone:
+			// Poller may still be running (it has its own ticker
+			// and exits on ectx.Done()). We DON'T join it here —
+			// the gate contract is "done is closed when the
+			// leader has the result"; the poller is an internal
+			// orphan-detector, not a gate observer. Reap at
+			// ectx.Done() via a separate drain below.
+			g.mu.Lock()
+			call.err = err
+			call.completed = true
+			g.mu.Unlock()
+			close(call.done)
+		case <-abortCh:
+			if onAbort != nil {
+				onAbort("queue_empty_no_instance")
+			}
+			// The ensure goroutine is still running; we accept
+			// the orphan: it'll exit on ectx.Done() (the TTL).
+			// The follower-facing contract is satisfied.
+			<-pollerDone
+			g.mu.Lock()
+			call.err = ErrBootstrapAborted
+			call.completed = true
+			g.mu.Unlock()
+			close(call.done)
+		case <-ectx.Done():
+			// TTL hit before either fired. The poller has exited
+			// on the same ectx; reap it. ensure is still running
+			// (it's blocked on ectx from inside the user func);
+			// accept the orphan.
+			if pollerDone != nil {
+				<-pollerDone
+			}
+			err := <-ensureDone
+			g.mu.Lock()
+			call.err = err
+			call.completed = true
+			g.mu.Unlock()
+			close(call.done)
+		}
 	}()
 
 	observed = true
