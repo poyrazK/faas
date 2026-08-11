@@ -45,6 +45,16 @@ func (r *rotatingScheduler) AdmitInstance(context.Context, string, string) (stri
 	return "i-" + strconv.FormatInt(idx, 10), nodeID, "", "wake-" + strconv.FormatInt(idx, 10), r.method, false, 0, nil
 }
 
+// EnsureWake (ADR-095) mirrors AdmitInstance. The FakeScheduler-style
+// "fresh identity per call" is exactly what per-node multi-box tests
+// want — the schedd-side leader/follower contract is pinned by the
+// property-based test on the Engine side, not here.
+func (r *rotatingScheduler) EnsureWake(context.Context, string) (string, string, string, string, int32, int, error) {
+	idx := r.calls.Add(1)
+	nodeID := r.nextNodeID()
+	return "i-" + strconv.FormatInt(idx, 10), nodeID, "", "wake-" + strconv.FormatInt(idx, 10), r.method, 0, nil
+}
+
 // TestPGBackend_PickRotatesWithinWinningNode seeds two nodes with
 // different healthy counts (a has 3, b has 1) and asserts the picker
 // round-robins WITHIN a — never returning the b node's instance

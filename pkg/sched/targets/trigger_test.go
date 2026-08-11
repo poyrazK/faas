@@ -61,6 +61,19 @@ func (e *fakeEngine) AdmitInstance(_ context.Context, appID string) (AdmitResult
 	return AdmitResult{InstanceID: "ins-" + appID}, nil
 }
 
+// EnsureWake (ADR-095): targets' trigger-local WakeOutcome mirrors
+// the canned AdmitResult. The fake records a parallel call so tests
+// that need to count EnsureWake vs AdmitInstance calls can do so.
+func (e *fakeEngine) EnsureWake(_ context.Context, appID string) (WakeOutcome, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.calls = append(e.calls, appID)
+	if err, ok := e.errs[appID]; ok {
+		return WakeOutcome{}, err
+	}
+	return WakeOutcome{InstanceID: "ins-" + appID}, nil
+}
+
 // fakeInstats is a minimal InstatsReader. Returns the per-app max
 // inflight from byApp.
 type fakeInstats struct {

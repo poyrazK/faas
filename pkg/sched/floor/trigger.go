@@ -25,6 +25,16 @@ type AdmitResult struct {
 	AtCapacity bool
 }
 
+// WakeOutcome (ADR-095) is the trigger's local projection of
+// sched.CoordOutcome. AtCapacity is dropped because the per-app
+// leader's ledger already enforces max_concurrency and the trigger
+// observes the at-capacity path via the bus, not the return value.
+type WakeOutcome struct {
+	InstanceID string
+	WakeID     string
+	ColdBoot   bool
+}
+
 // Outcome is the closed set of floor-reconcile decision outcomes.
 // Pre-instantiated in pkg/wire.NewOpsMetrics so the counter rows
 // surface in /metrics from boot. Adding a new outcome requires
@@ -111,6 +121,13 @@ type Ledger interface {
 type Engine interface {
 	AdmitInstance(ctx context.Context, appID string) (AdmitResult, error)
 	AdmitInstanceForDeployment(ctx context.Context, appID, deploymentID string) (AdmitResult, error)
+	// EnsureWake (ADR-095): the single-flight wake entry. The trigger
+	// routes through this so a floor tick racing the gateway, cron,
+	// scaleup, or targets triggers on the same parked app coalesces
+	// into one virtual boot. The WakeOutcome is the trigger's local
+	// projection of sched.CoordOutcome (kept in this package so we
+	// don't import pkg/sched from pkg/sched/floor — would be a cycle).
+	EnsureWake(ctx context.Context, appID string) (WakeOutcome, error)
 }
 
 // Auditor is the seam the trigger uses to emit `floor.wake` audit
@@ -617,7 +634,7 @@ func (t *Trigger) tickPerApp(ctx context.Context) error {
 		if !decision.AdmitNow {
 			continue
 		}
-		result, err := t.engine.AdmitInstance(ctx, app.ID)
+		result, err := t.engine.EnsureWake(ctx, app.ID)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
@@ -630,10 +647,6 @@ func (t *Trigger) tickPerApp(ctx context.Context) error {
 			continue
 		}
 		t.recordSuccess(app.ID)
-		if result.AtCapacity {
-			t.observe(app.ID, OutcomeAtCapacity)
-			continue
-		}
 		t.incAdmitted()
 		if t.auditor != nil {
 			acctID := app.AccountID

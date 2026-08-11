@@ -578,3 +578,87 @@ func TestProperty_EngineWake_OverageCapReached(t *testing.T) {
 		t.Errorf("RecordReached count = %d, want %d", reached, goroutines)
 	}
 }
+
+// TestProperty_EnsureWake_BurstCoalescesToOneBoot (ADR-095 §6.2-1):
+//
+// A burst of N concurrent EnsureWake calls for one parked app must
+// collapse into exactly ONE virtual boot (one CreateColdBoot on the
+// fakeVMM). Pre-ADR-095 the per-app appMu serialised Wakes, so a
+// burst of N produced N sequential Boots — each Wake raced the
+// ledger and one became the winner, but N-1 still booted and
+// tore themselves down in Phase 4. The single-flight coordinator
+// collapses the burst before the leader's Wake call lands.
+//
+// Properties the test asserts:
+//
+//   - exactly one fakeVMM.CreateColdBoot fires (the coordinator's
+//     leader is the only goroutine that runs Engine.Wake)
+//   - all N goroutines see a non-nil CoordOutcome.Instance
+//     (the leader's outcome is propagated to every follower)
+//   - all N CoordOutcome.Instance values share the same InstanceID
+//     (followers must inherit the leader's identity verbatim —
+//     not a fresh mint per follower)
+//   - the wake-coord entry is gone after the last follower releases
+//     (no leaked entries; the Forget path is exercised on shutdown)
+//
+// fakeVMM.CreateColdBoot sleeps sleepFor=10ms so the leader is
+// observable as a leader (followers queue behind, the leader's
+// outcome is shared). The test holds N=8 — comfortably above the
+// appMu-cascade floor of 1 and below the wake-coord cap (512).
+func TestProperty_EnsureWake_BurstCoalescesToOneBoot(t *testing.T) {
+	store := state.NewMemStore()
+	const maxConc = 8
+	_, app, _ := seedApp(t, store, api.PlanPro, 128, maxConc)
+
+	vmm := &fakeVMM{sleepFor: 10 * time.Millisecond}
+	notif := &fakeNotifier{}
+	engine := newEngine(t, store, vmm, notif, "1.0")
+
+	const goroutines = 8
+	var (
+		wg      sync.WaitGroup
+		insMu   sync.Mutex
+		gotInst []string
+		errs    []error
+	)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			out, err := engine.EnsureWake(context.Background(), app.ID)
+			insMu.Lock()
+			defer insMu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+				return
+			}
+			if out.Instance == nil {
+				errs = append(errs, errors.New("nil CoordOutcome.Instance"))
+				return
+			}
+			gotInst = append(gotInst, out.Instance.InstanceID)
+		}()
+	}
+	wg.Wait()
+
+	if len(errs) != 0 {
+		t.Fatalf("goroutine errors: %v", errs)
+	}
+	if len(gotInst) != goroutines {
+		t.Fatalf("got %d InstanceIDs, want %d", len(gotInst), goroutines)
+	}
+	if bootCount := vmm.coldBoots; bootCount != 1 {
+		t.Fatalf("CreateColdBoot fired %d times, want exactly 1 (single-flight)", bootCount)
+	}
+	// All followers must see the leader's instance identity.
+	first := gotInst[0]
+	for i, id := range gotInst {
+		if id != first {
+			t.Errorf("outcome[%d].InstanceID = %q, want %q (leader's)", i, id, first)
+		}
+	}
+	// The wake-coord entry must be gone — no leaked map rows.
+	if _, ok := engine.wakeCoord.inflight[app.ID]; ok {
+		t.Errorf("wake-coord entry for %q still present after final release", app.ID)
+	}
+}

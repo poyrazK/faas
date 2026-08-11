@@ -194,6 +194,17 @@ type Scheduler interface {
 	// schedd to admit on that specific live deployment. Additive
 	// per ADR-016.
 	AdmitInstance(ctx context.Context, appID, deploymentID string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, atCapacity bool, port int, err error)
+	// EnsureWake (ADR-095) is the schedd-side single-flight wake
+	// entry. Schedd coalesces every concurrent EnsureWake for the
+	// same app into one virtual boot; followers see the leader's
+	// outcome. Pre-ADR-095 callers continue to use Wake / AdmitInstance
+	// on the legacy wire — this method is additive per ADR-016.
+	//
+	// On the at-cap path the leader's ledger returns an admitted
+	// row pointing at the last live slot; the WakeGate pre-filter
+	// above (an in-process cache) keeps the RPC from firing when
+	// the gateway already has a live instance cached for the app.
+	EnsureWake(ctx context.Context, appID string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, port int, err error)
 }
 
 // ErrSchedulerUnconfigured is returned by NoopScheduler.AdmitInstance.
@@ -206,6 +217,10 @@ type NoopScheduler struct{}
 
 func (NoopScheduler) AdmitInstance(context.Context, string, string) (string, string, string, string, int32, bool, int, error) {
 	return "", "", "", "", 0, false, 0, ErrSchedulerUnconfigured
+}
+
+func (NoopScheduler) EnsureWake(context.Context, string) (string, string, string, string, int32, int, error) {
+	return "", "", "", "", 0, 0, ErrSchedulerUnconfigured
 }
 
 // FakeScheduler is the in-process scheduler used by handler/cmd/gatewayd-internal/
@@ -394,6 +409,55 @@ func (f *FakeScheduler) AdmitInstance(ctx context.Context, appID, deploymentIDHi
 		rawMethod = WireWakeColdBoot
 	}
 	return instanceID, nodeID, deploymentID, wakeID, rawMethod, false, port, err
+}
+
+// EnsureWake (ADR-095): the FakeScheduler isn't a real single-flight
+// coalescer — every call returns a fresh identity, which is what
+// handler unit tests want (they're not exercising the schedd-side
+// leader/follower contract; the property-based test at C5 pins that
+// on the Engine side). The Scheduler interface keeps the WakeGate
+// pre-filter layer intact, so concurrent handler calls still
+// coalesce in-process.
+func (f *FakeScheduler) EnsureWake(ctx context.Context, appID string) (string, string, string, string, int32, int, error) {
+	f.mu.Lock()
+	f.admitsByApp[appID]++
+	latency := time.Duration(f.latencyMs) * time.Millisecond
+	err := f.errOnAdmit
+	nodeID := f.nodeID
+	instanceOverride := f.instanceID
+	wakeOverride := f.wakeID
+	method := f.method
+	port := f.port
+	deploymentID := f.deploymentID
+	f.mu.Unlock()
+
+	if latency > 0 {
+		select {
+		case <-time.After(latency):
+		case <-ctx.Done():
+			return "", "", "", "", 0, 0, ctx.Err()
+		}
+	}
+
+	seq := f.nextID.Add(1)
+	f.totalCalls.Add(1)
+
+	instanceID := instanceOverride
+	if instanceID == "" {
+		instanceID = "i-" + itoa(seq)
+	}
+	wakeID := wakeOverride
+	if wakeID == "" {
+		wakeID = instanceID
+	}
+	var rawMethod int32
+	switch method {
+	case WakeMethodSnapshotRestore:
+		rawMethod = WireWakeRestore
+	default:
+		rawMethod = WireWakeColdBoot
+	}
+	return instanceID, nodeID, deploymentID, wakeID, rawMethod, port, err
 }
 
 // itoa renders a uint64 as a base-10 string without importing strconv into

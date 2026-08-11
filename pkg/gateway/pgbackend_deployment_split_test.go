@@ -79,6 +79,18 @@ func (r *rotatingDeployScheduler) AdmitInstance(ctx context.Context, appID, _ st
 	return r.FakeScheduler.AdmitInstance(ctx, appID, "")
 }
 
+// EnsureWake (ADR-095) mirrors AdmitInstance. PGBackend now calls
+// EnsureWake instead of AdmitInstance; without this override the
+// picker wouldn't seed multi-bucket targets and Pick would return
+// !ok. Mirrors the per-deployment round-robin above so the test
+// continues to seed dep-25 / dep-75 in the configured ratio.
+func (r *rotatingDeployScheduler) EnsureWake(ctx context.Context, appID string) (string, string, string, string, int32, int, error) {
+	dep := r.deployments[r.idx%len(r.deployments)]
+	r.idx++
+	r.FakeScheduler.WithDeploymentID(dep)
+	return r.FakeScheduler.EnsureWake(ctx, appID)
+}
+
 // TestPGBackend_PickWeighted_AcrossTwoDeployments (PR-B / issue #556):
 // 1000 calls against a 25/75 split land within 1% of the expected
 // ratio. The weighted stride + cumulative-weight binary search

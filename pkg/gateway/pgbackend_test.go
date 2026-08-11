@@ -209,6 +209,10 @@ func (atCapScheduler) AdmitInstance(context.Context, string, string) (string, st
 	return "", "", "", "", 0, true, 0, nil
 }
 
+func (atCapScheduler) EnsureWake(context.Context, string) (string, string, string, string, int32, int, error) {
+	return "", "", "", "", 0, 0, nil
+}
+
 // TestPGBackend_AdmitForwardsWakeMethod (PR scale-out readiness) — the
 // raw wire-method value the Scheduler returns must reach PGBackend.Admit's
 // caller unchanged. This is the load-bearing step that lets the
@@ -277,6 +281,10 @@ type controllableScheduler struct {
 
 func (c *controllableScheduler) AdmitInstance(context.Context, string, string) (string, string, string, string, int32, bool, int, error) {
 	return "i-test", "n-test", "", "w-test", c.rawMethod, false, 0, nil
+}
+
+func (c *controllableScheduler) EnsureWake(context.Context, string) (string, string, string, string, int32, int, error) {
+	return "i-test", "n-test", "", "w-test", c.rawMethod, 0, nil
 }
 
 func TestPGBackend_FlushRoutesForcesReresolve(t *testing.T) {
@@ -370,6 +378,11 @@ type capturingScheduler struct {
 func (c *capturingScheduler) AdmitInstance(_ context.Context, _, _ string) (string, string, string, string, int32, bool, int, error) {
 	c.admitted++
 	return "fake-instance-" + c.id, "127.0.0.1", "", "w-1", 8080, true, 0, nil
+}
+
+func (c *capturingScheduler) EnsureWake(_ context.Context, _ string) (string, string, string, string, int32, int, error) {
+	c.admitted++
+	return "fake-instance-" + c.id, "127.0.0.1", "", "w-1", 8080, 0, nil
 }
 
 // TestPGBackend_ResolveSched_MultiBox_RejectsTransientMiss covers

@@ -4,13 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // WarmHintFunc is the sticky-warm affinity source for the picker
@@ -710,7 +707,14 @@ func (b *PGBackend) Admit(ctx context.Context, appID, deploymentID string, maxCo
 	// live deployment the picker landed on. Empty falls through
 	// to schedd's default (newest live deployment) — the legacy
 	// single-deployment path.
-	instanceID, nodeID, returnedDeploymentID, wakeID, rawMethod, atCapacity, port, err := sched.AdmitInstance(ctx, appID, deploymentID)
+	//
+	// ADR-095: replaced AdmitInstance with EnsureWake so every
+	// concurrent wake landing on this gateway for the same parked
+	// app coalesces into one virtual boot on the schedd side. The
+	// in-process WakeGate above still pre-filters by live
+	// instances (it remains a cache in front of the authority),
+	// but the authority now lives on schedd.
+	instanceID, nodeID, returnedDeploymentID, wakeID, rawMethod, port, err := sched.EnsureWake(ctx, appID)
 	if err != nil {
 		return "", WakeMethodUnspecified, false, err
 	}
@@ -721,13 +725,20 @@ func (b *PGBackend) Admit(ctx context.Context, appID, deploymentID string, maxCo
 		deploymentID = returnedDeploymentID
 	}
 	method := scheddWakeMethodToGateway(rawMethod)
-	if atCapacity {
-		return "", WakeMethodUnspecified, true, nil
-	}
+	// EnsureWake's leader runs Engine.Wake which honours the
+	// per-app max_concurrency ledger; a follower that arrives
+	// after the leader fills the last slot still sees a
+	// successful boot pointing at that slot — the WakeGate
+	// fast path above + the leader's ledger together close
+	// the at-capacity loop.
 	if nodeID == "" || instanceID == "" {
-		return "", WakeMethodUnspecified, false, api.NewProblem(http.StatusInternalServerError,
-			api.CodeCapacity, "schedd admit returned empty ids",
-			fmt.Sprintf("instance=%q node=%q wake=%q", instanceID, nodeID, wakeID))
+		// Empty IDs from EnsureWake: the per-app leader's ledger
+		// refused the admit (already at max_concurrency or no
+		// live deployment). Surface as the typed at-capacity
+		// outcome the gateway treats as a benign no-op — the
+		// WakeGate pre-filter and the leader's ledger together
+		// close the at-cap loop.
+		return "", WakeMethodUnspecified, true, nil
 	}
 	// Pre-PR-B fallback: a pre-PR-B schedd returns deploymentID="".
 	// The picker collapses to single-targetSet behaviour when there

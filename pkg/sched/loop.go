@@ -1973,7 +1973,12 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		}
 		l.audit.Emit(ctx, eventName, &acct.ID, payload)
 	}()
-	if _, err := l.engine.Wake(ctx, c.AppID, ""); err != nil {
+	// ADR-095: cron now goes through EnsureWake so a cron tick racing
+	// a gateway burst (or a floor / scaleup / targets trigger on the
+	// same parked app) coalesces into one virtual boot. The detached
+	// leader ctx means a cancelled triggering cron doesn't kill the
+	// boot the next follow-on caller still needs.
+	if _, err := l.engine.EnsureWake(ctx, c.AppID); err != nil {
 		l.log.Warn("cron: wake", "cron_id", c.ID, "err", err)
 		return CronRun{}, true
 	}

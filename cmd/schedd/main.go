@@ -1595,6 +1595,26 @@ func (s schedScaleUpEngine) AdmitInstance(ctx context.Context, appID string) (sc
 	return scaleup.AdmitResult{InstanceID: r.InstanceID, AtCapacity: r.AtCapacity}, nil
 }
 
+// EnsureWake (ADR-095) implements scaleup.Engine: delegates to the
+// wrapped engine's single-flight wake entry and lifts the relevant
+// fields into the thinned scaleup.WakeOutcome. AtCapacity is dropped
+// because the leader's ledger closes the at-cap loop; the trigger
+// observes the path via the bus, not the return value.
+func (s schedScaleUpEngine) EnsureWake(ctx context.Context, appID string) (scaleup.WakeOutcome, error) {
+	r, err := s.engine.EnsureWake(ctx, appID)
+	if err != nil {
+		return scaleup.WakeOutcome{}, err
+	}
+	if r.Instance == nil {
+		return scaleup.WakeOutcome{}, nil
+	}
+	return scaleup.WakeOutcome{
+		InstanceID: r.Instance.InstanceID,
+		WakeID:     r.Instance.WakeID,
+		ColdBoot:   r.Instance.ColdBoot,
+	}, nil
+}
+
 // schedTargetsEngine (PR-C, issue #462) adapts *sched.Engine to
 // the targets.Engine interface. Mirrors schedScaleUpEngine above
 // but lifts into the thinned targets.AdmitResult shape (which only
@@ -1621,6 +1641,25 @@ func (s schedTargetsEngine) AdmitInstance(ctx context.Context, appID string) (ta
 		return targets.AdmitResult{}, err
 	}
 	return targets.AdmitResult{InstanceID: r.InstanceID, AtCapacity: r.AtCapacity}, nil
+}
+
+// EnsureWake (ADR-095) implements targets.Engine: delegates to the
+// wrapped engine's single-flight wake entry and lifts the relevant
+// fields into the thinned targets.WakeOutcome. AtCapacity is dropped
+// because the leader's ledger closes the at-cap loop.
+func (s schedTargetsEngine) EnsureWake(ctx context.Context, appID string) (targets.WakeOutcome, error) {
+	r, err := s.engine.EnsureWake(ctx, appID)
+	if err != nil {
+		return targets.WakeOutcome{}, err
+	}
+	if r.Instance == nil {
+		return targets.WakeOutcome{}, nil
+	}
+	return targets.WakeOutcome{
+		InstanceID: r.Instance.InstanceID,
+		WakeID:     r.Instance.WakeID,
+		ColdBoot:   r.Instance.ColdBoot,
+	}, nil
 }
 
 // schedFloorEngine (issue #557 / ADR-071) adapts *sched.Engine to
@@ -1651,6 +1690,26 @@ func (s schedFloorEngine) AdmitInstanceForDeployment(ctx context.Context, appID,
 		return floor.AdmitResult{}, err
 	}
 	return floor.AdmitResult{InstanceID: r.InstanceID, AtCapacity: r.AtCapacity}, nil
+}
+
+// EnsureWake (ADR-095) implements floor.Engine: delegates to the
+// wrapped engine's single-flight wake entry and lifts the relevant
+// fields into the thinned floor.WakeOutcome. AtCapacity is dropped
+// because the leader's ledger closes the at-cap loop; the trigger
+// observes the path via the bus, not the return value.
+func (s schedFloorEngine) EnsureWake(ctx context.Context, appID string) (floor.WakeOutcome, error) {
+	r, err := s.engine.EnsureWake(ctx, appID)
+	if err != nil {
+		return floor.WakeOutcome{}, err
+	}
+	if r.Instance == nil {
+		return floor.WakeOutcome{}, nil
+	}
+	return floor.WakeOutcome{
+		InstanceID: r.Instance.InstanceID,
+		WakeID:     r.Instance.WakeID,
+		ColdBoot:   r.Instance.ColdBoot,
+	}, nil
 }
 
 // schedFloorPlanResolver (issue #557 / ADR-071) adapts

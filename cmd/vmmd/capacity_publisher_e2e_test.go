@@ -106,6 +106,9 @@ func (f *fakeSinkSchedAPI) Wake(context.Context, string, string) (sched.WakeResu
 func (f *fakeSinkSchedAPI) AdmitInstance(context.Context, string, string) (sched.WakeResult, error) {
 	return sched.WakeResult{}, nil
 }
+func (f *fakeSinkSchedAPI) EnsureWake(context.Context, string) (sched.CoordOutcome, error) {
+	return sched.CoordOutcome{}, nil
+}
 func (f *fakeSinkSchedAPI) ReportActivity(context.Context, []state.InstanceTouch) (int, error) {
 	return 0, nil
 }

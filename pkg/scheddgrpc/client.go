@@ -31,6 +31,12 @@ type ScheddClient interface {
 	// deploymentIDOut (the deployment schedd actually woke onto;
 	// "" on error).
 	Wake(ctx context.Context, appID, deploymentID string) (instanceID, nodeID, deploymentIDOut, wakeID string, port int, err error)
+	// EnsureWake (ADR-095) is the schedd-side single-flight wake entry.
+	// Schedd coalesces every concurrent EnsureWake for the same app into
+	// one virtual boot; followers see the leader's outcome. Pre-ADR-095
+	// callers continue to use Wake / AdmitInstance on the legacy wire —
+	// this method is additive per ADR-016.
+	EnsureWake(ctx context.Context, appID string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, port int, err error)
 	ReportActivity(ctx context.Context, touches []state.InstanceTouch) (int, error)
 	ParkInstance(ctx context.Context, instanceID, reason string) error
 	// StreamAppLogs (issue #309 / tier-2 DX): level + grep are
@@ -164,6 +170,19 @@ func (c *Client) AdmitInstance(ctx context.Context, appID, deploymentID string) 
 		return "", "", "", "", 0, false, 0, liftErr(err)
 	}
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), resp.GetAtCapacity(), int(resp.GetPort()), nil
+}
+
+// EnsureWake (ADR-095) is the schedd-side single-flight wake entry.
+// Mirrors Engine.EnsureWake on the wire. Schedd coalesces every concurrent
+// EnsureWake for the same app into one virtual boot; followers see the
+// leader's outcome. Pre-ADR-095 callers continue to use Wake / AdmitInstance
+// on the legacy wire — this method is additive per ADR-016.
+func (c *Client) EnsureWake(ctx context.Context, appID string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, port int, err error) {
+	resp, err := c.cli.EnsureWake(ctx, &scheddpb.EnsureWakeRequest{AppId: appID})
+	if err != nil {
+		return "", "", "", "", 0, 0, liftErr(err)
+	}
+	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), int(resp.GetPort()), nil
 }
 
 // ReportActivity flushes a batch of last_request_at touches to schedd. Returns

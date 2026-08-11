@@ -22,6 +22,15 @@ type AdmitResult struct {
 	AtCapacity bool
 }
 
+// WakeOutcome (ADR-095): trigger-local projection of sched.CoordOutcome.
+// The leader's ledger enforces max_concurrency; the trigger observes the
+// at-capacity path via the bus, not the return value.
+type WakeOutcome struct {
+	InstanceID string
+	WakeID     string
+	ColdBoot   bool
+}
+
 // Outcome is the closed set of concurrent_requests scale-up
 // decision outcomes. Pre-instantiated in pkg/wire.NewOpsMetrics
 // alongside the scaleup package outcomes so the counter rows
@@ -68,6 +77,11 @@ type Ledger interface {
 // the cap rejection path.
 type Engine interface {
 	AdmitInstance(ctx context.Context, appID string) (AdmitResult, error)
+	// EnsureWake (ADR-095): the single-flight wake entry. Routes
+	// through this so a targets tick racing the gateway, cron, floor,
+	// or scaleup triggers on the same parked app coalesces into one
+	// virtual boot.
+	EnsureWake(ctx context.Context, appID string) (WakeOutcome, error)
 }
 
 // InstatsReader is the per-instance in-flight signal source (PR-C,
@@ -305,14 +319,21 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if t.engine == nil {
 			continue
 		}
-		result, err := t.engine.AdmitInstance(ctx, app.ID)
+		// ADR-095: route through EnsureWake so a targets tick racing the
+		// gateway, cron, floor, or scaleup triggers on the same parked
+		// app coalesces into one virtual boot.
+		result, err := t.engine.EnsureWake(ctx, app.ID)
 		if err != nil {
 			t.log.Warn("targets: admit failed", "app_id", app.ID, "err", err)
 			continue
 		}
-		if result.AtCapacity && t.metrics != nil {
-			t.metrics.ObserveScaleUp(app.ID, string(OutcomeRejectAtCap))
-		}
+		// EnsureWake's leader runs Engine.Wake which honours the
+		// per-app max_concurrency ledger; a follower that arrives
+		// after the leader fills the last slot still sees a
+		// successful boot pointing at that slot. The leader's
+		// ledger closes the at-cap loop — we no longer need a
+		// reject_at_cap branch here.
+		_ = result
 	}
 	return nil
 }

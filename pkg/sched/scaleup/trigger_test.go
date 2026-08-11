@@ -71,6 +71,19 @@ func (e *fakeEngine) AdmitInstance(_ context.Context, appID string) (AdmitResult
 	return AdmitResult{InstanceID: "ins-" + appID}, nil
 }
 
+// EnsureWake (ADR-095): scaleup's trigger-local WakeOutcome mirrors
+// the canned AdmitResult. The fake records a parallel call so tests
+// that need to count EnsureWake vs AdmitInstance calls can do so.
+func (e *fakeEngine) EnsureWake(_ context.Context, appID string) (WakeOutcome, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.calls = append(e.calls, appID)
+	if err, ok := e.errs[appID]; ok {
+		return WakeOutcome{}, err
+	}
+	return WakeOutcome{InstanceID: "ins-" + appID}, nil
+}
+
 // fakeScraper is a minimal PromScraper. Returns a fixed app→count
 // map. The trigger calls Scrape once per Tick.
 type fakeScraper struct {
@@ -244,16 +257,24 @@ func TestTrigger_NilReceiver(t *testing.T) {
 
 // TestTrigger_EngineReturnsAtCapacityObservesRejectAtCap verifies
 // the race: the decide() check says headroom > 0, but between that
-// check and the engine call the ledger hits the cap. The trigger
-// must observe this as OutcomeRejectAtCap, NOT OutcomeAdmit.
+// check and the engine call the ledger hits the cap. ADR-095:
+//
+//	under the single-flight model the trigger no longer receives a
+//	typed AtCapacity=true return value from EnsureWake. The leader's
+//	ledger closes the at-cap loop (it returns a successful admit
+//	pointing at the last live slot, OR the typed at-cap ErrQueueFull
+//	path that the trigger treats as a non-fatal error). The
+//	admit-RPS histogram still must NOT observe in the error case —
+//	a rejected admit has no observed RPS. This test pins the
+//	err-path contract under the new wire.
 func TestTrigger_EngineReturnsAtCapacityObservesRejectAtCap(t *testing.T) {
 	store := &fakeStore{apps: []state.App{
 		{ID: "app1", AutoscaleTargetRPS: 50, MaxConcurrency: 5},
 	}}
 	ledger := &fakeLedger{conc: map[string]int{"app1": 2}}
 	engine := &fakeEngine{
-		results: map[string]AdmitResult{
-			"app1": {AtCapacity: true},
+		errs: map[string]error{
+			"app1": errAtCapacitySentinel,
 		},
 	}
 	m := wire.NewOpsMetrics("test")
@@ -281,6 +302,18 @@ func TestTrigger_EngineReturnsAtCapacityObservesRejectAtCap(t *testing.T) {
 		}
 	}
 }
+
+// errAtCapacitySentinel is a stand-in for the leader-ledger "no slot
+// left" error path. Under ADR-095 the per-app ledger closes the
+// at-cap loop; the trigger treats any non-context-cancelled error
+// from EnsureWake as a non-fatal skip (matches the AdmitInstance
+// path's behaviour). The trigger still records the per-tick call so
+// the admit-RPS histogram stays unobserved.
+var errAtCapacitySentinel = errAtCap("at-capacity")
+
+type errAtCap string
+
+func (e errAtCap) Error() string { return string(e) }
 
 // TestTrigger_EngineErrorLogsNotPropagates verifies that a
 // transient engine error (e.g. vmmd dial failure) is logged but
