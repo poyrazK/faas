@@ -66,13 +66,14 @@ func TestEnvOrAndDefaultDeps(t *testing.T) {
 		deps.subscribeLiveMigrator,
 		deps.subscribeNodeKeyChanges,
 		deps.subscribeRouterRefresh,
+		deps.subscribeAppDelete,
 	} {
 		if f != nil {
 			wireCount++
 		}
 	}
-	if wireCount != 7 {
-		t.Errorf("defaultDeps subscribe seams populated = %d, want 7", wireCount)
+	if wireCount != 8 {
+		t.Errorf("defaultDeps subscribe seams populated = %d, want 8", wireCount)
 	}
 }
 

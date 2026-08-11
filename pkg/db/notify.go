@@ -143,6 +143,14 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         Anything that kept an in-memory cache (the
 //	                         gateway's route table, meterd's per-account
 //	                         usage map) re-reads on this signal.
+//	NotifyAppDelete         {"app_id":uuid}
+//	                         apid → schedd: an app was deleted (spec
+//	                         §6.2 / ADR-095). schedd's app-delete
+//	                         subscriber (pkg/sched/app_delete_subscriber.go)
+//	                         calls Engine.wakeCoord.Forget(appID) so any
+//	                         in-flight wake on the deleted app unwinds
+//	                         with ErrAppDeleted instead of waiting for
+//	                         the wake-coord TTL.
 //	NotifySnapshotBoot      {"app_id":uuid, "deployment_id":uuid}
 //	                         builderd → imaged: a build VM has produced an
 //	                         OCI image tarball and stamped it on
@@ -177,6 +185,12 @@ const (
 	NotifyCronRunNow             = "cron_run_now"
 	NotifyAccountDeletionPending = "account_deletion_pending"
 	NotifyAccountDeleted         = "account_deleted"
+	// NotifyAppDelete is emitted by apid on app deletion (spec §6.2
+	// / ADR-095). schedd's app-delete subscriber consumes it and
+	// evicts any in-flight wake for the deleted app via
+	// Engine.wakeCoord.Forget so followers unwind promptly
+	// instead of waiting for the wake-coord TTL.
+	NotifyAppDelete = "app_delete"
 	// NotifyCliAuthCodeActivated fires when a dashboard /cli-auth
 	// POST successfully claims a pending code (binds it to an
 	// account_id). Reserved for a follow-up SSE push from apid to

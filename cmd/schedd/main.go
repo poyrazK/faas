@@ -79,6 +79,11 @@ type runDeps struct {
 	// existing app_changed consumer stays as the logging-only
 	// fallback. Tests inject a fake channel.
 	subscribeEgressDrift func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
+	// subscribeAppDelete (ADR-095) is the producer-side seam for
+	// the app_delete consumer that evicts any in-flight wake for
+	// a deleted app via Engine.wakeCoord.Forget. nil = the
+	// subscriber is not started; tests inject a fake channel.
+	subscribeAppDelete func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 	// subscribePlacementClaim (Phase 2 / Gate A, migration 00084)
 	// is the producer-side seam for the app_changed consumer that
 	// atomically stamps apps.node_id via Engine.ClaimUnplaced.
@@ -179,6 +184,13 @@ func defaultDeps() runDeps {
 		// subscribeEgressDrift comment).
 		subscribePlacementClaim: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
 			return db.Subscribe(ctx, p, []string{db.NotifyAppChanged})
+		},
+		// ADR-095: subscribe to app_delete so the wake coordinator
+		// forgets in-flight wakes the moment apid deletes the app.
+		// Mirrors subscribeDeletion's shape (one channel, db.Subscribe
+		// is the production adapter, nil seam skips in tests).
+		subscribeAppDelete: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
+			return db.Subscribe(ctx, p, []string{db.NotifyAppDelete})
 		},
 		// Tier A4 / ADR-064: subscribe to compute_node_changed
 		// and let Rebalancer filter to active=false. The router
@@ -765,6 +777,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.subscribeDeletion != nil {
 		sub := sched.NewDeletionSubscriber(engine, log)
 		go subscribeWithReconnect(ctx, "deletion", log, deps.subscribeDeletion, pool, sub.Run)
+	}
+
+	// ADR-095: app-delete subscriber. Long-lived goroutine under the
+	// same ctx as loop.Run. Drains the app_delete pg_notify channel
+	// and forgets in-flight wakes for the deleted app so followers
+	// unwind with ErrAppDeleted instead of waiting for the
+	// wake-coord TTL. nil seam = skip in tests that don't want a
+	// fake channel.
+	if deps.subscribeAppDelete != nil {
+		appDelSub := sched.NewAppDeleteSubscriber(engine, log)
+		go subscribeWithReconnect(ctx, "app_delete", log, deps.subscribeAppDelete, pool, appDelSub.Run)
 	}
 
 	// tier-2 PR-B (ADR-031 + ADR-033): egress drift subscriber.
