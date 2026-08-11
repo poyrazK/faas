@@ -2033,6 +2033,19 @@ type PerNodeStats struct {
 type InstanceTouch struct {
 	InstanceID  string
 	LastRequest time.Time
+	// RequestDelta (ADR-095 C9) is the per-instance request count
+	// delta the gateway has observed since the last touch. The
+	// gateway's per-instance cache (Target.RequestCount) is the
+	// authoritative hot path; the engine batched-writer flushes
+	// per-instance deltas into the instances.request_count column
+	// in the same transaction as last_request_at. 0 = no delta
+	// (the gateway observed a request but the per-instance counter
+	// already moved — the explicit zero avoids a no-op UPDATE).
+	// The increment is additive ("request_count = request_count +
+	// delta") so a re-delivered batch is idempotent on
+	// Phase-4-loser re-applies, mirroring the writer in
+	// pkg/state/pgstore.go::IncInstanceRequestCount.
+	RequestDelta int64
 }
 
 // Event is one row in the append-only audit log (spec §6.1).

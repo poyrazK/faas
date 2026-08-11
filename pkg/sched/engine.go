@@ -906,6 +906,20 @@ type WakeResult struct {
 	// (Target.DeploymentID empty, picker collapses to today's
 	// behaviour).
 	DeploymentID string
+	// RequestCount (ADR-095 C9) is the per-instance request counter
+	// schedd has observed via the batched ReportActivity path. The
+	// engine stamps it on the admitted path so the gateway's
+	// per-instance cache can show "warming up" vs "warmed" without
+	// a second round-trip onto the ledger. Read on the warm-snapshot
+	// 5th promotion gate (C10) which gates promotion to the warm
+	// tier until the instance has served a meaningful number of
+	// requests. 0 on the at-capacity path (no instance was admitted)
+	// and on freshly-cold-booted instances (the writer hasn't yet
+	// flushed the first batch).
+	//
+	// Mirrors AdmitInstanceResponse.request_count (tag 9) on the
+	// wire — additive per ADR-016, pre-PR callers see 0.
+	RequestCount int64
 }
 
 // Wake ensures a running instance for appID and returns its address (spec §4.3
@@ -1016,7 +1030,7 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID string) (WakeResu
 		// brought the instance up; an operator tailing a warm request
 		// can still pin it back to the schedd slog line that stamped
 		// it (gaps analysis 2026-07-23 review finding #1).
-		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID, Port: port, DeploymentID: resolvedDeploymentID}, nil
+		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID, Port: port, DeploymentID: resolvedDeploymentID, RequestCount: ins.RequestCount}, nil
 	} else if !errors.Is(err, state.ErrNotFound) {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: running lookup: %w", err)
@@ -1259,7 +1273,7 @@ func (e *Engine) admitAndDispatchForDeployment(ctx context.Context, appID, deplo
 	}
 
 	release()
-	return WakeResult{InstanceID: ins.ID}, nil
+	return WakeResult{InstanceID: ins.ID, RequestCount: ins.RequestCount}, nil
 }
 
 // admitAndDispatch is the shared Phase 2–4 body used by both Wake and
@@ -2088,7 +2102,7 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID string, liftCapacit
 		})
 	}
 
-	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID}, nil
+	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount}, nil
 }
 
 // bootInput is the immutable bundle of values needed across the
@@ -3614,8 +3628,48 @@ func (e *Engine) lockedRunning(ctx context.Context, instanceID string) (*state.I
 // ReportActivity persists a batch of last_request_at touches from the gateway
 // (spec §4.1, ADR-018). schedd is the sole writer to instances, so the gateway
 // hands it the batch instead of writing directly.
+//
+// ADR-095 C9: the gateway's per-instance cache (Target.RequestCount)
+// ships the per-instance request_count delta on the same touch
+// batch. The engine flushes both last_request_at and the delta
+// atomically via TouchInstancesWithRequestDelta. The delta is
+// additive ("request_count = request_count + delta") so a
+// re-delivered batch is idempotent on Phase-4-loser re-applies.
+//
+// Why piggyback on ReportActivity rather than spin a separate
+// 250ms goroutine:
+//   - The gateway already batches touches every 1–2s (per
+//     gateway's own batched timer); a per-instance delta on the
+//     same touch turns the writer into a one-round-trip UPDATE
+//     instead of N per-instance ORMs.
+//   - The "batched on the gateway" cadence is the load-bearing
+//     amortization: the same gateway-side timer that absorbs
+//     last_request_at noise also absorbs request_count noise.
+//   - Production test (issue #543, framework_ready_at) uses the
+//     same pattern: stateful stamp piggybacked on a batched RW
+//     rather than a hot-loop per-instance ORM.
+//
+// Metric: schedd_instance_request_count_flushed_delta_total is
+// bumped with the post-flush delta count, tagged by outcome
+// (success / dropped-or-error). Dropped flushes are visible on
+// the §12 dashboard.
 func (e *Engine) ReportActivity(ctx context.Context, touches []state.InstanceTouch) (int, error) {
-	return e.store.TouchInstancesLastSeen(ctx, touches)
+	// Pre-filter: touches with RequestDelta == 0 fall back to the
+	// legacy last_request_at-only path. The split keeps the
+	// existing ORM narrow for the case where the gateway's
+	// per-instance cache is fresh (no incremental delta yet).
+	needDelta := false
+	for _, t := range touches {
+		if t.RequestDelta != 0 {
+			needDelta = true
+			break
+		}
+	}
+	if !needDelta {
+		return e.store.TouchInstancesLastSeen(ctx, touches)
+	}
+	n, err := e.store.TouchInstancesWithRequestDelta(ctx, touches)
+	return n, err
 }
 
 // SeedLedger rebuilds the admission ledger from live instance rows at startup so

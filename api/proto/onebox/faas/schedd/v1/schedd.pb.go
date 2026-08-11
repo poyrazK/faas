@@ -600,7 +600,22 @@ type Touch struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	InstanceId string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	// unix_ms is the request time in Unix milliseconds.
-	UnixMs        int64 `protobuf:"varint,2,opt,name=unix_ms,json=unixMs,proto3" json:"unix_ms,omitempty"`
+	UnixMs int64 `protobuf:"varint,2,opt,name=unix_ms,json=unixMs,proto3" json:"unix_ms,omitempty"`
+	// request_delta (ADR-095 C9) is the per-instance request count
+	// delta the gateway has observed since the last touch. The
+	// gateway's per-instance cache (Target.RequestCount) is the
+	// authoritative hot path; the engine batched-writer flushes
+	// per-instance deltas into the instances.request_count column
+	// in the same transaction as last_request_at. 0 = no delta
+	// (the gateway observed a request but the per-instance counter
+	// already moved — the explicit zero avoids a no-op UPDATE).
+	// The increment is additive ("request_count = request_count +
+	// delta") so a re-delivered batch is idempotent on
+	// Phase-4-loser re-applies, mirroring the writer in
+	// pkg/state/pgstore.go::IncInstanceRequestCount.
+	// Additive per ADR-016; pre-C9 callers see 0 and the engine
+	// falls back to the legacy last_request_at-only path.
+	RequestDelta  int64 `protobuf:"varint,3,opt,name=request_delta,json=requestDelta,proto3" json:"request_delta,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -645,6 +660,13 @@ func (x *Touch) GetInstanceId() string {
 func (x *Touch) GetUnixMs() int64 {
 	if x != nil {
 		return x.UnixMs
+	}
+	return 0
+}
+
+func (x *Touch) GetRequestDelta() int64 {
+	if x != nil {
+		return x.RequestDelta
 	}
 	return 0
 }
@@ -1860,11 +1882,12 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\aproblem\x18\x06 \x01(\v2\x17.google.protobuf.StructR\aproblem\x12\x12\n" +
 	"\x04port\x18\a \x01(\x05R\x04port\x12#\n" +
 	"\rdeployment_id\x18\b \x01(\tR\fdeploymentId\x12#\n" +
-	"\rrequest_count\x18\t \x01(\x05R\frequestCount\"A\n" +
+	"\rrequest_count\x18\t \x01(\x05R\frequestCount\"f\n" +
 	"\x05Touch\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x17\n" +
-	"\aunix_ms\x18\x02 \x01(\x03R\x06unixMs\"O\n" +
+	"\aunix_ms\x18\x02 \x01(\x03R\x06unixMs\x12#\n" +
+	"\rrequest_delta\x18\x03 \x01(\x03R\frequestDelta\"O\n" +
 	"\x15ReportActivityRequest\x126\n" +
 	"\atouches\x18\x01 \x03(\v2\x1c.onebox.faas.schedd.v1.TouchR\atouches\"2\n" +
 	"\x16ReportActivityResponse\x12\x18\n" +

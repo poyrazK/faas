@@ -2159,6 +2159,14 @@ type Store interface {
 	// caller; the writer is deliberately not used at single-request
 	// granularity.
 	IncInstanceRequestCount(ctx context.Context, id string, delta int64) (int64, error)
+	// TouchInstancesWithRequestDelta (ADR-095 C9) is the batched
+	// version of IncInstanceRequestCount: same per-instance delta
+	// increment, but applied across a whole touch batch in one
+	// round-trip via unnest. Mirrors TouchInstancesLastSeen — the
+	// gateway's ReportActivity batch carries both last_request_at
+	// AND the per-instance request_count delta, and the engine
+	// stamps both atomically. Returns the number of rows updated.
+	TouchInstancesWithRequestDelta(ctx context.Context, touches []InstanceTouch) (int, error)
 	// UpdateInstanceStateToTerminal writes state AND stamps terminal_at
 	// on the same UPDATE (PR #74, spec §17 follow-up). terminal_at is
 	// the dedicated retention anchor the daily sweep (pkg/sched.Retention)

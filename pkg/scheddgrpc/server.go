@@ -368,9 +368,12 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 		// see empty and the gateway treats that as "single-deployment
 		// legacy mode" (Target.DeploymentID empty, picker collapses).
 		DeploymentId: res.DeploymentID,
-		// request_count (ADR-095) — populated by C9's batched writer;
-		// 0 pre-C9 callers observe the legacy wire (no behaviour change).
-		RequestCount: 0,
+		// request_count (ADR-095 C9) — populated by the batched
+		// writer (request_count column added by 00216). 0 on
+		// at-capacity paths; the engine's WakeResult.RequestCount
+		// is read after the Ledger admit and stamped on the
+		// wire for the gateway's per-instance cache.
+		RequestCount: int32(res.RequestCount),
 	}, nil
 }
 
@@ -445,8 +448,9 @@ func (s *Server) ReportActivity(ctx context.Context, req *scheddpb.ReportActivit
 			continue
 		}
 		touches = append(touches, state.InstanceTouch{
-			InstanceID:  t.GetInstanceId(),
-			LastRequest: time.UnixMilli(t.GetUnixMs()),
+			InstanceID:   t.GetInstanceId(),
+			LastRequest:  time.UnixMilli(t.GetUnixMs()),
+			RequestDelta: t.GetRequestDelta(),
 		})
 	}
 	start := time.Now()

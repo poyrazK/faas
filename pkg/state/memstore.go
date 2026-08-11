@@ -5722,6 +5722,29 @@ func (m *MemStore) TouchInstancesLastSeen(_ context.Context, touches []InstanceT
 	return applied, nil
 }
 
+// TouchInstancesWithRequestDelta (ADR-095 C9) applies both
+// last_request_at and the per-instance request_count delta. The
+// memstore mirrors the writer contract: additive
+// (`request_count = request_count + delta`), idempotent on
+// Phase-4-loser re-applies, and rows that no longer exist are
+// silently dropped (the touch is a no-op).
+func (m *MemStore) TouchInstancesWithRequestDelta(_ context.Context, touches []InstanceTouch) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	applied := 0
+	for _, t := range touches {
+		ins, ok := m.instances[t.InstanceID]
+		if !ok {
+			continue
+		}
+		ins.LastRequestAt = t.LastRequest
+		ins.RequestCount += t.RequestDelta
+		m.instances[t.InstanceID] = ins
+		applied++
+	}
+	return applied, nil
+}
+
 // --- snapshots --------------------------------------------------------------
 //
 // MemStore's snapshot table mirrors the Postgres semantics: First row wins,

@@ -7805,6 +7805,49 @@ func (s *PgStore) TouchInstancesLastSeen(ctx context.Context, touches []Instance
 	return int(tag.RowsAffected()), nil
 }
 
+// TouchInstancesWithRequestDelta (ADR-095 C9) is the batched
+// request_count writer. Same shape as TouchInstancesLastSeen
+// (unnest, single round-trip) but additionally bumps
+// request_count by the supplied delta on each row. The delta is
+// additive ("request_count = request_count + delta") so a
+// re-delivered batch is idempotent on Phase-4-loser re-applies.
+//
+// Mirrors IncInstanceRequestCount's writer contract — the engine
+// prefers this batched path because ReportActivity already carries
+// a per-instance touch batch; piggybacking avoids a separate
+// per-instance UPDATE round-trip.
+//
+// Returns the number of rows updated. Rows whose instance_id is
+// gone (a reaped instance) are silently dropped — the SQL filter
+// `i.id = b.id` does not match deleted rows, so a re-delivered
+// batch loses that delta. Same shape as TouchInstancesLastSeen.
+func (s *PgStore) TouchInstancesWithRequestDelta(ctx context.Context, touches []InstanceTouch) (int, error) {
+	if len(touches) == 0 {
+		return 0, nil
+	}
+	ids := make([]string, len(touches))
+	ts := make([]time.Time, len(touches))
+	deltas := make([]int64, len(touches))
+	for i, t := range touches {
+		ids[i] = t.InstanceID
+		ts[i] = t.LastRequest
+		deltas[i] = t.RequestDelta
+	}
+	tag, err := s.pool.Exec(ctx,
+		`update instances i
+			set last_request_at = b.ts,
+			    request_count   = coalesce(i.request_count, 0) + b.delta
+		 from (select unnest($1::uuid[]) as id,
+		              unnest($2::timestamptz[]) as ts,
+		              unnest($3::bigint[]) as delta) b
+		 where i.id = b.id`,
+		ids, ts, deltas)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // --- snapshots --------------------------------------------------------------
 
 // CreateSnapshot writes the immutable snapshot row imaged produces after the
