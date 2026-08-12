@@ -117,6 +117,12 @@ type wakeCoord struct {
 }
 
 type wakeCoordCall struct {
+	// coord is a back-pointer to the owning coordinator so Complete
+	// and Release can take its mutex. Without it, Complete mutates
+	// the (outcome, completed) tuple outside any lock, racing with
+	// Enter and Release reads. ADR-095 C12 review fix (data race
+	// exposed only under -race).
+	coord     *wakeCoord
 	done      chan struct{}
 	outcome   CoordOutcome
 	waiters   int
@@ -175,7 +181,7 @@ func (c *wakeCoord) Enter(appID string) (*wakeCoordCall, bool /*leader*/, error)
 			return call, false, nil
 		}
 	}
-	call := &wakeCoordCall{done: make(chan struct{}), waiters: 1}
+	call := &wakeCoordCall{coord: c, done: make(chan struct{}), waiters: 1}
 	c.inflight[appID] = call
 	return call, true, nil
 }
@@ -186,16 +192,37 @@ func (c *wakeCoord) Enter(appID string) (*wakeCoordCall, bool /*leader*/, error)
 // (engine.go:1435, 1818, 1823, 1830-1831, ~1892) cannot double-close.
 //
 // Sets c.completed=true so the Release() path can drop the entry once
-// the last follower has drained.
+// the last follower has drained. ADR-095 C12 review fix (data
+// race): the (outcome, completed) write pair was unprotected;
+// Enter reads completed under coord.mu (the "drop completed entry,
+// take fresh leadership" branch), Release reads completed under
+// coord.mu, but Complete wrote under no lock. Take the lock
+// here too. close(c.done) is a one-way channel close and stays
+// outside the lock; the lock release happens-before any
+// subsequent Enter / Release that observes completed=true.
 func (c *wakeCoordCall) Complete(out CoordOutcome) {
+	if c.coord != nil {
+		c.coord.mu.Lock()
+	}
 	select {
 	case <-c.done:
+		if c.coord != nil {
+			c.coord.mu.Unlock()
+		}
 		// Already closed; ignore.
 		return
 	default:
 		c.outcome = out
 		c.completed = true
+		// close(c.done) is one-way and serialized through the
+		// channel — no race possible on the close itself, but
+		// callers must observe c.outcome AFTER the unlock so
+		// they see the updated value. Release the lock after
+		// the close to keep the synchronization point tight.
 		close(c.done)
+	}
+	if c.coord != nil {
+		c.coord.mu.Unlock()
 	}
 }
 
