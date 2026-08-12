@@ -1050,13 +1050,13 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID string) (WakeResu
 //
 // Three phases for the leader:
 //
-//   1. Reserve a slot in the wake coordinator (under wakeCoord.mu only).
-//   2. Defer Complete() so all five completion paths in e.Wake
-//      (engine.go:1435 ledger refusal, :1818 re-read failure, :1823
-//      state-stolen, :1830-1831 record-runtime, :1892 commit) hand
-//      their outcome to followers via one source of truth.
-//   3. Run e.Wake. The deferred Complete fires when the function
-//      returns, regardless of which path it took.
+//  1. Reserve a slot in the wake coordinator (under wakeCoord.mu only).
+//  2. Defer Complete() so all five completion paths in e.Wake
+//     (engine.go:1435 ledger refusal, :1818 re-read failure, :1823
+//     state-stolen, :1830-1831 record-runtime, :1892 commit) hand
+//     their outcome to followers via one source of truth.
+//  3. Run e.Wake. The deferred Complete fires when the function
+//     returns, regardless of which path it took.
 //
 // Followers block on the leader's Complete and inherit the outcome.
 //
@@ -1102,6 +1102,18 @@ func (e *Engine) EnsureWake(ctx context.Context, appID string) (CoordOutcome, er
 	if err != nil {
 		out.Err = err
 		return out, err
+	}
+	// AtCapacity (issue #168) — the engine admits benignly (no error)
+	// but no instance was created. Returning an empty-but-non-nil
+	// Instance would have the gRPC server emit a phantom 200 with
+	// zero-valued fields; the gateway fast-path would treat that as
+	// "wake succeeded with empty IDs" and re-attempt the same backend
+	// query. Forward the typed sentinel so the gateway retries
+	// against the existing live targets (per the AdmitInstance
+	// AtCapacity contract).
+	if res.AtCapacity {
+		out.Err = ErrAtCapacity
+		return out, ErrAtCapacity
 	}
 	out.Instance = &CoordInstance{
 		InstanceID:   res.InstanceID,

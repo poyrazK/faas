@@ -295,6 +295,30 @@ func (g *WakeGate) InflightWaiters(appID string) int {
 	return 0
 }
 
+// InflightFollowers returns the count of *followers* (waiters minus
+// the leader's own registration) for appID. The leader is created
+// with waiters=1, so this returns 0 when only the leader is alive —
+// which is the signal the bootstrap-cap abort predicate needs:
+//
+//	"queue empty AND no live instance AND no plan floor"
+//
+// Here "queue empty" means "no followers", not "the leader also
+// gone" — the leader is necessarily alive at this point
+// (otherwise no bootstrap is happening). ADR-095 C7 review fix:
+// without the -1, the predicate is unsatisfiable while the leader's
+// caller awaits done. Returns 0 if no entry.
+func (g *WakeGate) InflightFollowers(appID string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if call, ok := g.inflight[appID]; ok {
+		if call.waiters > 0 {
+			return call.waiters - 1
+		}
+		return 0
+	}
+	return 0
+}
+
 // release decrements the waiter count and, if the leader's ensure has finished
 // and no other follower is still waiting, removes the entry. Done on the
 // leader's path AND every follower's path so a completed wake is observable to

@@ -4381,7 +4381,7 @@ func (h *Handler) coldStart(ctx context.Context, appID string, maxConcurrency in
 		// the gateway_leader_bootstrap_aborts_total counter and
 		// surfaces the abort reason on the §12 dashboard chip.
 		func() bool {
-			return h.gate.InflightWaiters(appID) == 0 && h.backend.HealthyCount(appID) == 0
+			return h.gate.InflightFollowers(appID) == 0 && h.backend.HealthyCount(appID) == 0
 		},
 		func(reason string) {
 			h.metrics.ObserveLeaderBootstrapAbort(reason)

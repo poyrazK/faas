@@ -397,6 +397,15 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 		// store) are forwarded as RFC 7807 problems via toProblem.
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	// CoordOutcome can carry a non-nil Err even when the engine's
+	// direct return is nil — the leader's ensure path encodes
+	// wake-level failures (ErrAppDeleted, ErrQueueFull, ledger
+	// errors set by Forget) onto out.Err so followers inherit
+	// them. Otherwise the gateway would observe a phantom 200
+	// with empty Instance fields.
+	if out.Err != nil {
+		return nil, grpcerr.ToStatus(toProblem(out.Err))
+	}
 	if out.Instance == nil {
 		// Defensive: a successful EnsureWake with nil instance is a
 		// bug — surface it as an internal problem so the gateway

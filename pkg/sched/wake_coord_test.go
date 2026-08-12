@@ -243,3 +243,59 @@ func TestWakeCoord_ForgetOnAbsentAppIsNoOp(t *testing.T) {
 	// No panic on a missing entry.
 	coord.Forget("never-existed")
 }
+
+// TestWakeCoord_EnterAfterCompleteStartsFreshWake (ADR-095 C11
+// review fix) pins the bug where Enter returned a follower
+// handle for an already-completed entry: between Complete and the
+// last Release, the previous wake's entry was still in
+// c.inflight. A new caller landing here got the cached prior
+// outcome — possibly a stale instance ID if the underlying
+// instance has parked since. The fix is to detect completion in
+// Enter and take leadership of a fresh wake.
+func TestWakeCoord_EnterAfterCompleteStartsFreshWake(t *testing.T) {
+	coord := newWakeCoord()
+	// Leader wakes, completes, and is the only entry.
+	leader, isLeader, err := coord.Enter("app1")
+	if err != nil || !isLeader {
+		t.Fatalf("first Enter err=%v isLeader=%v", err, isLeader)
+	}
+	leader.Complete(CoordOutcome{
+		Instance: &CoordInstance{InstanceID: "parked-1"},
+	})
+	// Pre-fix: a new caller would land here as a follower and
+	// receive {InstanceID: "parked-1"} — possibly stale. Post-fix:
+	// Enter detects completed=true, drops the entry, returns a new
+	// (true) leader.
+	leader2, isLeader2, err := coord.Enter("app1")
+	if err != nil {
+		t.Fatalf("second Enter err=%v", err)
+	}
+	if !isLeader2 {
+		t.Fatalf("second Enter: expected to take leadership of fresh entry (completed entry should be replaced), got isLeader=false (cached follower)")
+	}
+	if leader2 == leader {
+		t.Fatalf("second Enter returned the same completed wakeCoordCall; expected a fresh one")
+	}
+	// The fresh entry's outcome is the zero value until its
+	// leader calls Complete. Verify Await with a short timeout
+	// returns the ctx error (done not yet closed) rather than
+	// the stale outcome from the prior wake. Then Complete and
+	// Await again to confirm the fresh entry produces its own
+	// outcome, not a cached prior.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if out := leader2.Await(ctx); !errors.Is(out.Err, context.DeadlineExceeded) {
+		t.Fatalf("fresh entry's pre-Complete Await = %+v, want DeadlineExceeded (pre-Complete done is closed)", out)
+	}
+	leader2.Complete(CoordOutcome{Instance: &CoordInstance{InstanceID: "fresh"}})
+	out := leader2.Await(context.Background())
+	if out.Err != nil {
+		t.Fatalf("fresh entry outcome err = %v", out.Err)
+	}
+	if out.Instance == nil || out.Instance.InstanceID != "fresh" {
+		t.Fatalf("fresh entry outcome = %+v, want InstanceID=fresh", out.Instance)
+	}
+	// Drain.
+	coord.Release("app1", leader)
+	coord.Release("app1", leader2)
+}

@@ -64,6 +64,16 @@ var ErrQueueFull = errors.New("sched: wake coordinator queue full")
 // leader's followers unwind without waiting for the TTL.
 var ErrAppDeleted = errors.New("sched: app deleted")
 
+// ErrAtCapacity is a typed sentinel the leader's EnsureWake path
+// returns when Wake() reports {AtCapacity: true} — the app is at
+// max_concurrency (issue #168), so no instance was created. The
+// gateway uses this to distinguish "wake hit ceiling, retry against
+// existing live targets" from a real admit failure. ADR-095 C11
+// review fix: previously the leader set out.Instance =
+// &CoordInstance{} (empty fields) which the gRPC server happily
+// forwarded as a 200 with zero-valued Instance.
+var ErrAtCapacity = errors.New("sched: at capacity")
+
 // CoordOutcome is the result of a single-flight wake. On success
 // Instance is non-nil and Err is nil. On failure Instance is nil and Err
 // is one of ErrQueueFull / ErrAppDeleted / ctx.Err() / the leader's
@@ -146,11 +156,24 @@ func (c *wakeCoord) Enter(appID string) (*wakeCoordCall, bool /*leader*/, error)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if call, ok := c.inflight[appID]; ok {
-		if call.waiters >= c.cap {
+		// ADR-095 C11 review fix: between Complete and the last
+		// Release, the entry still lives in c.inflight. A new
+		// caller landing here used to receive the cached prior
+		// outcome — which can be a stale instance ID if the
+		// instance has parked since. Detect completion and
+		// fast-path a fresh entry: if the previous wake is
+		// already done, drop the entry, take leadership of a
+		// new wake. Followers arriving in the same window
+		// (release-pending) still see the prior wake's
+		// outcome — Release will drop them on a closed done.
+		if call.completed {
+			delete(c.inflight, appID)
+		} else if call.waiters >= c.cap {
 			return nil, false, ErrQueueFull
+		} else {
+			call.waiters++
+			return call, false, nil
 		}
-		call.waiters++
-		return call, false, nil
 	}
 	call := &wakeCoordCall{done: make(chan struct{}), waiters: 1}
 	c.inflight[appID] = call

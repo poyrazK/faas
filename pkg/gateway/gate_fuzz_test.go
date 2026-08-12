@@ -193,3 +193,69 @@ func TestWakeGateDetachedLeaderBootstrapCapAbort(t *testing.T) {
 		t.Errorf("inflight after abort = %d, want 0", got)
 	}
 }
+
+// TestInflightFollowersMinusLeader (ADR-095 C11 review fix) pins
+// the unsatisfiable-predicate bug: the bootstrap-cap abort predicate
+// must check follower count, not total waiter count. The leader's
+// own registration keeps the total at >=1 for the entire bootstrap
+// duration. A pre-fix check `call.waiters == 0` is unsatisfiable
+// while the leader's caller awaits done, so the abort never fires.
+//
+// The helper returns 0 when only the leader is alive (the case the
+// bootstrap-cap abort wants), and the full count when followers are
+// queued. Verifies that a leader-only entry reads 0 followers so the
+// predicate triggers when HealthyCount == 0 and the queue is empty.
+func TestInflightFollowersMinusLeader(t *testing.T) {
+	const cap = 8
+	g := NewWakeGate(cap, 1500*time.Millisecond)
+
+	// 1 leader: blocks in ensure, no followers. With the buggy
+	// InflightWaiters==0 predicate, the abort never fires. With
+	// InflightFollowers, the predicate returns true at the moment
+	// the leader is alone.
+	leaderDone := make(chan error, 1)
+	go func() {
+		leaderDone <- g.Wait(
+			context.Background(),
+			"app",
+			func() bool { return true },
+			func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
+			func() bool { return g.InflightFollowers("app") == 0 },
+			nil,
+		)
+	}()
+	// Wait for leader to register.
+	deadline := time.Now().Add(time.Second)
+	for g.InflightWaiters("app") < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := g.InflightWaiters("app"); got != 1 {
+		t.Fatalf("leader alone: InflightWaiters = %d, want 1", got)
+	}
+	if got := g.InflightFollowers("app"); got != 0 {
+		t.Fatalf("leader alone: InflightFollowers = %d, want 0", got)
+	}
+	// Add a follower — total goes to 2, followers to 1.
+	followerDone := make(chan error, 1)
+	go func() {
+		followerDone <- g.Wait(
+			context.Background(),
+			"app",
+			func() bool { return true },
+			func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
+			nil, nil,
+		)
+	}()
+	for g.InflightWaiters("app") < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := g.InflightWaiters("app"); got != 2 {
+		t.Fatalf("leader+follower: InflightWaiters = %d, want 2", got)
+	}
+	if got := g.InflightFollowers("app"); got != 1 {
+		t.Fatalf("leader+follower: InflightFollowers = %d, want 1", got)
+	}
+	// Drain.
+	go func() { leaderDone <- <-leaderDone }() //nolint
+	go func() { followerDone <- <-followerDone }()
+}
