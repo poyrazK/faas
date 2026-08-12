@@ -7,6 +7,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -20,9 +21,9 @@ import (
 // channel. Tests use this to drive the subscriber's Run loop
 // without standing up Postgres.
 type fakeSubscription struct {
-	mu      sync.Mutex
-	ch      chan db.Notification
-	closed  bool
+	mu     sync.Mutex
+	ch     chan db.Notification
+	closed bool
 }
 
 func newFakeSubscription() *fakeSubscription {
@@ -187,11 +188,5 @@ func TestAppDeleteSubscriber_BadPayloadIsLoggedNotPanicked(t *testing.T) {
 // in the test assertions. Matches the pkg/sched style (errors.Is
 // imports might pull stdlib transitively in tests).
 func errorsIs(err, target error) bool {
-	if err == nil && target == nil {
-		return true
-	}
-	if err == nil || target == nil {
-		return false
-	}
-	return err.Error() == target.Error() || err == target
+	return errors.Is(err, target)
 }

@@ -57,6 +57,6 @@
 --     before promoting a captured snapshot. min=0 (Free/Hobby) →
 --     gate never opens; min=5 (Pro default) → promotion after
 --     5 requests on the same instance.
-alter table public.instances
+alter table instances
     add column if not exists request_count bigint not null default 0;
 -- +goose StatementEnd

@@ -126,8 +126,6 @@ func TestWakeCoord_CompletedStaysParkedUntilLastFollowerDrains(t *testing.T) {
 	if _, ok := coord.inflight[app]; !ok {
 		t.Fatalf("entry removed after leader release; follower still parked")
 	}
-	followerCall = followerCall
-	_ = followerCall
 	// Await followed by release.
 	out := followerCall.Await(context.Background())
 	if out.Err != nil {

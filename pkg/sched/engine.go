@@ -1091,6 +1091,13 @@ func (e *Engine) EnsureWake(ctx context.Context, appID string) (CoordOutcome, er
 	// coordinator's TTL so a cancelled triggering request cannot kill
 	// the in-flight boot. The deferred Complete is the single
 	// decrement site for all five completion paths inside e.Wake.
+	//
+	//nolint:contextcheck // leader's ensure deliberately detaches from the
+	// caller's ctx via context.Background() + TTL — the wake must outlive
+	// the triggering request so other queued waiters get the same instance.
+	// This is the load-bearing single-flight coalescing invariant (spec
+	// §4.1, ADR-095 §Decision). Mirror of pkg/gateway/gate.go Wait
+	// goroutine detach.
 	leaderCtx, cancel := context.WithTimeout(context.Background(), e.wakeCoord.TTL())
 	defer cancel()
 	out := CoordOutcome{}
@@ -1098,6 +1105,12 @@ func (e *Engine) EnsureWake(ctx context.Context, appID string) (CoordOutcome, er
 		call.Complete(out)
 		e.wakeCoord.Release(appID, call)
 	}()
+	//nolint:contextcheck // leader's ensure deliberately detaches from the
+	// caller's ctx via context.Background() + TTL — the wake must outlive
+	// the triggering request so other queued waiters get the same instance.
+	// This is the load-bearing single-flight coalescing invariant (spec
+	// §4.1, ADR-095 §Decision). Mirror of pkg/gateway/gate.go Wait
+	// goroutine detach.
 	res, err := e.Wake(leaderCtx, appID, "")
 	if err != nil {
 		out.Err = err
