@@ -285,13 +285,6 @@ func (c *wakeCoord) Forget(appID string) {
 	}
 }
 
-// markComplete is the leader-side completion hook. The engine's leader
-// goroutine calls this exactly once from a defer, before Close, so the
-// entry is eligible for deletion once the last follower releases.
-func (c *wakeCoordCall) markComplete() {
-	c.completed = true
-}
-
 // TTL exposes the leader-detached ctx timeout so the engine can mint it
 // once at the top of the leader's goroutine and reuse it for the
 // ensure call.

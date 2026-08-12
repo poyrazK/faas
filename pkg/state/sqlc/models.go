@@ -501,6 +501,7 @@ type Instance struct {
 	LeaseToken         pgtype.Text
 	FrameworkReadyAt   pgtype.Timestamptz
 	TailCount          int32
+	RequestCount       int64
 }
 
 type Invocation struct {
