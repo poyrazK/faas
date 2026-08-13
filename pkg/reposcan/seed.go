@@ -45,6 +45,54 @@ func (d detector) priority() uint8 {
 	return 0 // convention / workspaces / root floor
 }
 
+// String is the wire name for the detector (issue #742). It is a
+// CLOSED vocabulary surfaced on PlanWorkload.detected_by.detector
+// and pinned by the OpenAPI enum in api/openapi.yaml — renaming a
+// value is a wire-contract change, not a refactor.
+//
+// detOther is the floor bucket (convention scan, workspace graph,
+// root Dockerfile). It reports "other" rather than "" so a consumer
+// never has to distinguish "no detector" from "the floor detector";
+// every workload the scanner emits came from some detector.
+func (d detector) String() string {
+	switch d {
+	case detCompose:
+		return detNameCompose
+	case detProcfile:
+		return detNameProcfile
+	case detK8s:
+		return detNameK8s
+	case detRender:
+		return detNameRender
+	case detFly:
+		return detNameFly
+	case detServerless:
+		return detNameServerless
+	case detAppYaml:
+		return detNameAppYaml
+	case detOther:
+		return detNameOther
+	}
+	return detNameOther
+}
+
+// Detector wire names. Kept as named constants rather than inline
+// literals because `compose` also appears as a Tier name
+// (scan.go::Tier.String) and as a YAML tag (compose.go) — three
+// unrelated vocabularies sharing a spelling. Naming them makes a
+// future rename of ONE of the three a compile-scoped edit instead of
+// a grep-and-hope, and satisfies goconst.
+const (
+	detNameCompose    = "compose"
+	detNameProcfile   = "procfile"
+	detNameK8s        = "k8s"
+	detNameRender     = "render"
+	detNameFly        = "fly"
+	detNameServerless = "serverless"
+	detNameAppYaml    = "app_yaml"
+	detNameOther      = "other"
+)
+
 // workloadSeed is the internal carrier produced by each tier
 // detector before merge.go collapses them into a sorted
 // []Workload. Keeping it lighter than Workload makes per-tier

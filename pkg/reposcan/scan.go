@@ -34,19 +34,36 @@ const (
 	TierCompose Tier = 8
 )
 
+// Tier wire names, pinned by the OpenAPI PlanWorkload.tier enum.
+//
+// These are a SEPARATE vocabulary from the detector names in
+// seed.go, even though `compose` appears in both: a tier is the
+// confidence class of the scan, a detector is the file that produced
+// the seed. They are named here so the collision is explicit — a
+// future rename of one must not silently rename the other, and
+// goconst cannot suggest sharing a constant across the two
+// (issue #742 added the detector vocabulary and surfaced the clash).
+const (
+	tierNameSingle     = "single"
+	tierNameConvention = "convention"
+	tierNameWorkspace  = "workspace"
+	tierNameCompose    = "compose"
+	tierNameUnknown    = "unknown"
+)
+
 // String makes Tier printable for confirm tables and warning logs.
 func (t Tier) String() string {
 	switch t {
 	case TierSingle:
-		return "single"
+		return tierNameSingle
 	case TierConvention:
-		return "convention"
+		return tierNameConvention
 	case TierWorkspace:
-		return "workspace"
+		return tierNameWorkspace
 	case TierCompose:
-		return "compose"
+		return tierNameCompose
 	default:
-		return "unknown"
+		return tierNameUnknown
 	}
 }
 
@@ -82,6 +99,43 @@ type Workload struct {
 	EnvKeys    []string // KEYS only — never values; spec §11 forbids logging secrets
 	Source     string   // "compose.yaml: api" (provenance; shown in confirm)
 	Tier       Tier
+	// DetectedBy is the explainability trace (issue #742). Source
+	// already carries human-readable provenance ("compose.yaml: api");
+	// this is the STRUCTURED form a client can branch on without
+	// parsing that string. Populated by mergeByKey.
+	DetectedBy Detection
+}
+
+// Detection is the structured answer to "why does this workload
+// exist?" (issue #742). Before this, the detector that produced a
+// seed was used purely as a merge tiebreak (merge.go) and then
+// discarded — a user whose repo has a Dockerfile AND a package.json
+// AND a docker-compose.yml had to read detector source to find out
+// which one won.
+//
+// Detector/Priority describe the seed that won IDENTITY for this
+// workload (name, root dir, tier, source, dockerfile). MergedFrom
+// names the other detectors that contributed per-field values under
+// the merge rule. Together they explain both halves of the merge:
+// who won, and who else was in the room.
+type Detection struct {
+	// Detector is the closed-vocabulary name of the winning
+	// detector (detector.String()).
+	Detector string
+	// Priority is the winning detector's tiebreak weight
+	// (detector.priority()). Surfaced so a client can explain an
+	// ordering to the user without hard-coding our precedence
+	// table, and so a precedence change is visible on the wire.
+	Priority uint8
+	// MergedFrom names the OTHER detectors whose seeds collapsed
+	// into this workload under the (RootDir, Name) merge key,
+	// deduplicated and sorted for determinism. Empty when the
+	// workload came from exactly one seed — the common case.
+	//
+	// This is the field that answers "why did my Procfile `web`
+	// not get its own workload?": it merged into the compose
+	// `web`, and compose won identity on priority.
+	MergedFrom []string
 }
 
 // Key returns the merge key described in impl plan §3: pair
