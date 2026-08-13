@@ -147,17 +147,6 @@ type Metrics struct {
 	// kinds; the counter surfaces the signal even when the
 	// loader's WARN log is drowned by other gatewayd-internal noise.
 	edgeRuleCompileError *prometheus.CounterVec
-	// edgeRuleMatch: ADR-089 PR 3. Counter labelled by
-	// (kind, outcome) — `kind` is the EdgeRuleKind
-	// (route|rewrite|redirect|headers|cors|jwt|ip; closed set
-	// per migrations/00192_edge_rules.sql:49-51), `outcome` is
-	// one of {match, miss, blocked}. The handler increments
-	// from matchAndSubstituteRoute (handler.go:1449-1451) so the
-	// §12 dashboard panel "edge rule match rate" surfaces from
-	// first scrape — the closed label set is pre-instantiated
-	// at boot below. PR 4-7 extend kind; the outcome set is
-	// stable across all kinds.
-	edgeRuleMatch *prometheus.CounterVec
 	// responseBytes: ADR-046 PR-2 producer observability.
 	// Counter labelled by app (UUID, bounded by per-plan app
 	// quotas) and plan (Free|Hobby|Pro|Scale — closed set). The
