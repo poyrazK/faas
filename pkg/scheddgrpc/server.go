@@ -140,7 +140,7 @@ type SchedAPI interface {
 	// single-deployment path. Non-empty asks the engine to admit on
 	// that specific live deployment. Additive per ADR-016.
 	AdmitInstance(ctx context.Context, appID, deploymentID string) (sched.WakeResult, error)
-	// EnsureWake (ADR-095) is the single-flight-safe wake RPC. The engine
+	// EnsureWake (ADR-098) is the single-flight-safe wake RPC. The engine
 	// coalesces every concurrent EnsureWake call for the same app into one
 	// virtual boot; followers see the leader's outcome. The leader runs
 	// on a detached ctx (context.Background + WakeQueueTTLSeconds); only
@@ -368,7 +368,7 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 		// see empty and the gateway treats that as "single-deployment
 		// legacy mode" (Target.DeploymentID empty, picker collapses).
 		DeploymentId: res.DeploymentID,
-		// request_count (ADR-095 C9) — populated by the batched
+		// request_count (ADR-098 C9) — populated by the batched
 		// writer (request_count column added by 00216). 0 on
 		// at-capacity paths; the engine's WakeResult.RequestCount
 		// is read after the Ledger admit and stamped on the
@@ -377,11 +377,11 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 	}, nil
 }
 
-// EnsureWake (ADR-095) is the single-flight-safe wake RPC. The engine
+// EnsureWake (ADR-098) is the single-flight-safe wake RPC. The engine
 // coalesces every concurrent EnsureWake call for the same app into one
 // virtual boot; followers see the leader's outcome.
 //
-// Pre-ADR-095 callers continue to use Wake / AdmitInstance on the
+// Pre-ADR-098 callers continue to use Wake / AdmitInstance on the
 // legacy wire — this method is additive per ADR-016.
 func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest) (*scheddpb.EnsureWakeResponse, error) {
 	const op = "EnsureWake"

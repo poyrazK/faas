@@ -579,11 +579,11 @@ func TestProperty_EngineWake_OverageCapReached(t *testing.T) {
 	}
 }
 
-// TestProperty_EnsureWake_BurstCoalescesToOneBoot (ADR-095 §6.2-1):
+// TestProperty_EnsureWake_BurstCoalescesToOneBoot (ADR-098 §6.2-1):
 //
 // A burst of N concurrent EnsureWake calls for one parked app must
 // collapse into exactly ONE virtual boot (one CreateColdBoot on the
-// fakeVMM). Pre-ADR-095 the per-app appMu serialised Wakes, so a
+// fakeVMM). Pre-ADR-098 the per-app appMu serialised Wakes, so a
 // burst of N produced N sequential Boots — each Wake raced the
 // ledger and one became the winner, but N-1 still booted and
 // tore themselves down in Phase 4. The single-flight coordinator

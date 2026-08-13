@@ -93,7 +93,7 @@ func (e *fakeEngine) AdmitInstance(_ context.Context, appID string) (AdmitResult
 	return AdmitResult{InstanceID: "ins-" + appID}, nil
 }
 
-// EnsureWake (ADR-095): floor's trigger-local WakeOutcome mirrors
+// EnsureWake (ADR-098): floor's trigger-local WakeOutcome mirrors
 // the canned AdmitResult. The fake records a parallel call so tests
 // that need to count EnsureWake vs AdmitInstance calls can do so.
 // Honours canned results (instance_id echo) so tests that pre-load

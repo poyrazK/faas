@@ -224,7 +224,7 @@ type ScheddClient interface {
 	// Additive per ADR-016: new RPC + new messages append at the
 	// end; existing field tags are untouched.
 	ReportLivenessFailed(ctx context.Context, in *LivenessFailedReport, opts ...grpc.CallOption) (*LivenessFailedAck, error)
-	// EnsureWake (ADR-095) is the single-flight-friendly wake entry
+	// EnsureWake (ADR-098) is the single-flight-friendly wake entry
 	// point. Unlike Wake, it serialises the wake hot path through the
 	// engine's per-app wake coordinator (pkg/sched/wake_coord.go) so a
 	// concurrent gateway request + cron tick + floor trigger + scaleup
@@ -571,7 +571,7 @@ type ScheddServer interface {
 	// Additive per ADR-016: new RPC + new messages append at the
 	// end; existing field tags are untouched.
 	ReportLivenessFailed(context.Context, *LivenessFailedReport) (*LivenessFailedAck, error)
-	// EnsureWake (ADR-095) is the single-flight-friendly wake entry
+	// EnsureWake (ADR-098) is the single-flight-friendly wake entry
 	// point. Unlike Wake, it serialises the wake hot path through the
 	// engine's per-app wake coordinator (pkg/sched/wake_coord.go) so a
 	// concurrent gateway request + cron tick + floor trigger + scaleup

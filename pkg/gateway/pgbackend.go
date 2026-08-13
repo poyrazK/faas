@@ -708,7 +708,7 @@ func (b *PGBackend) Admit(ctx context.Context, appID, deploymentID string, maxCo
 	// to schedd's default (newest live deployment) — the legacy
 	// single-deployment path.
 	//
-	// ADR-095: replaced AdmitInstance with EnsureWake so every
+	// ADR-098: replaced AdmitInstance with EnsureWake so every
 	// concurrent wake landing on this gateway for the same parked
 	// app coalesces into one virtual boot on the schedd side. The
 	// in-process WakeGate above still pre-filters by live

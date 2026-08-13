@@ -45,7 +45,7 @@ func (r *rotatingScheduler) AdmitInstance(context.Context, string, string) (stri
 	return "i-" + strconv.FormatInt(idx, 10), nodeID, "", "wake-" + strconv.FormatInt(idx, 10), r.method, false, 0, nil
 }
 
-// EnsureWake (ADR-095) mirrors AdmitInstance. The FakeScheduler-style
+// EnsureWake (ADR-098) mirrors AdmitInstance. The FakeScheduler-style
 // "fresh identity per call" is exactly what per-node multi-box tests
 // want — the schedd-side leader/follower contract is pinned by the
 // property-based test on the Engine side, not here.

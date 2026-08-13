@@ -106,13 +106,13 @@ type Metrics struct {
 	// §3.6 documents the label cardinality constraint.
 	wakeLatencyByNode *prometheus.HistogramVec
 	wakeQueueWait     prometheus.Histogram
-	// wakePhaseDuration (ADR-095 C11): phase-decomposed wake
+	// wakePhaseDuration (ADR-098 C11): phase-decomposed wake
 	// latency vector. Closed phase set pre-instantiated below so
 	// the §12 panel surfaces zero on an idle gateway.
 	wakePhaseDuration *prometheus.HistogramVec
 	queueDepth        *prometheus.GaugeVec
 	rateLimited       *prometheus.CounterVec
-	// leaderBootstrapAborts (ADR-095 C7): counter labelled by
+	// leaderBootstrapAborts (ADR-098 C7): counter labelled by
 	// reason — closed set {queue_empty_no_instance, ttl_expired,
 	// app_deleted}. Pre-instantiated in NewMetrics so the §12
 	// dashboard chip surfaces from first scrape.
@@ -463,7 +463,7 @@ func NewMetrics() *Metrics {
 				0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.35, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0,
 			},
 		}),
-		// ADR-095 C11: phase-decomposed wake telemetry. Sibling of
+		// ADR-098 C11: phase-decomposed wake telemetry. Sibling of
 		// wakeLatency (gateway_wake_latency_seconds). The aggregate
 		// histogram stays byte-identical to pre-C11 buckets — that
 		// series is the §12 SLO source-of-truth (p50 ≤ 0.35 s,
@@ -479,7 +479,7 @@ func NewMetrics() *Metrics {
 		// §12 panel surfaces zero on an idle gateway.
 		wakePhaseDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "gateway_wake_phase_duration_seconds",
-			Help: "Phase-decomposed wake latency (ADR-095 C11). Each phase is observed once per request at the boundary it measures. The aggregate gateway_wake_latency_seconds is unchanged.",
+			Help: "Phase-decomposed wake latency (ADR-098 C11). Each phase is observed once per request at the boundary it measures. The aggregate gateway_wake_latency_seconds is unchanged.",
 			// Same bucket envelope as wakeLatency so the dashboards
 			// can compare phase histograms to the aggregate without
 			// re-bucketing.
@@ -491,13 +491,13 @@ func NewMetrics() *Metrics {
 			Name: "gateway_queue_depth",
 			Help: "Current number of waiters per app's wake queue (sampled).",
 		}, []string{"app"}),
-		// ADR-095 C7: closed-set reasons pre-instantiated so the
+		// ADR-098 C7: closed-set reasons pre-instantiated so the
 		// §12 dashboard chip "leader bootstrap aborts" surfaces
 		// zero rows from boot. Adding a new reason is a code +
 		// dashboard change.
 		leaderBootstrapAborts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_leader_bootstrap_aborts_total",
-			Help: "Detached leader goroutine aborts on the bootstrap cap, labelled by reason (queue_empty_no_instance|ttl_expired|app_deleted). ADR-095 C7.",
+			Help: "Detached leader goroutine aborts on the bootstrap cap, labelled by reason (queue_empty_no_instance|ttl_expired|app_deleted). ADR-098 C7.",
 		}, []string{"reason"}),
 		rateLimited: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_rate_limited_total",
@@ -730,7 +730,7 @@ func NewMetrics() *Metrics {
 	for _, tier := range []string{tierWarm, tierInit, tierCold} {
 		m.wakeSnapshotTier.WithLabelValues(tier)
 	}
-	// ADR-095 C7: pre-instantiate the closed (reason) set on the
+	// ADR-098 C7: pre-instantiate the closed (reason) set on the
 	// leader-bootstrap-aborts counter so the §12 dashboard chip
 	// "leader bootstrap aborts" surfaces every reason from boot.
 	// Adding a new reason is a code + dashboard change.
@@ -769,7 +769,7 @@ func NewMetrics() *Metrics {
 		}
 		m.edgeRuleCompileError.WithLabelValues(kind)
 	}
-	// ADR-095 C11: pre-instantiate the closed phase set so the §12
+	// ADR-098 C11: pre-instantiate the closed phase set so the §12
 	// panel reads zero on an idle gateway. queue_wait is the
 	// legacy scalar (gateway_wake_queue_wait_seconds) folded into
 	// a labelled histogram here; the scalar stays for one release
@@ -998,7 +998,7 @@ func (m *Metrics) ObserveAccountRateLimit(accountID, plan string) {
 // is excluded from per-node PromQL by the obsNodeWakeLatency
 // handler's matcher.
 
-// ObserveLeaderBootstrapAbort (ADR-095 C7) records a detached-leader
+// ObserveLeaderBootstrapAbort (ADR-098 C7) records a detached-leader
 // goroutine abort under the bootstrap cap. Closed (reason) set
 // pre-instantiated in NewMetrics; nil-safe on the receiver.
 func (m *Metrics) ObserveLeaderBootstrapAbort(reason string) {
@@ -1027,19 +1027,19 @@ func (m *Metrics) ObserveColdBoot(appID string, latency time.Duration, nodeID st
 //
 // Deprecated: also observed via gateway_wake_phase_duration_seconds{phase="queue_wait"}.
 // The scalar here stays for one release — dashboards migrate in
-// the follow-up. ADR-095 C11.
+// the follow-up. ADR-098 C11.
 func (m *Metrics) ObserveWakeQueueWait(d time.Duration) {
 	if m == nil {
 		return
 	}
 	m.wakeQueueWait.Observe(d.Seconds())
-	// ADR-095 C11: dual-write into the labelled phase histogram so
+	// ADR-098 C11: dual-write into the labelled phase histogram so
 	// dashboards querying the new name see the same series shape.
 	m.wakePhaseDuration.WithLabelValues("queue_wait").Observe(d.Seconds())
 }
 
 // ObserveWakePhase records a single phase-decomposed wake boundary
-// measurement (ADR-095 C11). phase ∈ {"queue_wait", "coordinator_wait",
+// measurement (ADR-098 C11). phase ∈ {"queue_wait", "coordinator_wait",
 // "schedd_admit", "vmmd_wake", "guest_ready", "cold_fallback_reason"}.
 // Closed set is pre-instantiated in NewMetrics. Nil-safe so the
 // gateway hot path doesn't branch.

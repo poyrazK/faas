@@ -2151,7 +2151,7 @@ type Store interface {
 	// Non-SNAPSHOTTING transitions should still use UpdateInstanceState.
 	UpdateInstanceStateWithTimestamp(ctx context.Context, id, state string, parkedAt time.Time) error
 	// IncInstanceRequestCount bumps the per-instance request_count
-	// column by delta (ADR-095 C8). The writer is additive
+	// column by delta (ADR-098 C8). The writer is additive
 	// ("request_count = request_count + delta") so a Phase-4-loser
 	// re-apply is idempotent. Returns the post-increment total, or
 	// -1 when the row is gone (Phase-4 loser landed after the
@@ -2159,7 +2159,7 @@ type Store interface {
 	// caller; the writer is deliberately not used at single-request
 	// granularity.
 	IncInstanceRequestCount(ctx context.Context, id string, delta int64) (int64, error)
-	// TouchInstancesWithRequestDelta (ADR-095 C9) is the batched
+	// TouchInstancesWithRequestDelta (ADR-098 C9) is the batched
 	// version of IncInstanceRequestCount: same per-instance delta
 	// increment, but applied across a whole touch batch in one
 	// round-trip via unnest. Mirrors TouchInstancesLastSeen — the

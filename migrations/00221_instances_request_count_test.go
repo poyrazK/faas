@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // Migration-apply test for 00221_instances_request_count.sql
-// (ADR-095 C8 — instances.request_count column for the warm-snapshot
+// (ADR-098 C8 — instances.request_count column for the warm-snapshot
 // gate).
 //
 // Pins:

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Wake coordinator (ADR-095): per-app single-flight for the wake hot path.
+// Wake coordinator (ADR-098): per-app single-flight for the wake hot path.
 //
 // This is the schedd-side mirror of pkg/gateway/gate.go (the per-process
 // gateway wake gate). The gateway gate only coalesces requests landing on
@@ -16,7 +16,7 @@ import (
 // per-app "wake in progress" state onto the Engine collapses all five
 // wake producers into one virtual boot per parked app.
 //
-// Lock discipline (load-bearing — see ADR-095 §Decision):
+// Lock discipline (load-bearing — see ADR-098 §Decision):
 //
 //	wakeCoord.mu is a LEAF lock. It is acquired and released BEFORE
 //	e.lockApp(appID) is touched. The reverse order risks permanent
@@ -68,7 +68,7 @@ var ErrAppDeleted = errors.New("sched: app deleted")
 // returns when Wake() reports {AtCapacity: true} — the app is at
 // max_concurrency (issue #168), so no instance was created. The
 // gateway uses this to distinguish "wake hit ceiling, retry against
-// existing live targets" from a real admit failure. ADR-095 C11
+// existing live targets" from a real admit failure. ADR-098 C11
 // review fix: previously the leader set out.Instance =
 // &CoordInstance{} (empty fields) which the gRPC server happily
 // forwarded as a 200 with zero-valued Instance.
@@ -120,7 +120,7 @@ type wakeCoordCall struct {
 	// coord is a back-pointer to the owning coordinator so Complete
 	// and Release can take its mutex. Without it, Complete mutates
 	// the (outcome, completed) tuple outside any lock, racing with
-	// Enter and Release reads. ADR-095 C12 review fix (data race
+	// Enter and Release reads. ADR-098 C12 review fix (data race
 	// exposed only under -race).
 	coord     *wakeCoord
 	done      chan struct{}
@@ -162,7 +162,7 @@ func (c *wakeCoord) Enter(appID string) (*wakeCoordCall, bool /*leader*/, error)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if call, ok := c.inflight[appID]; ok {
-		// ADR-095 C11 review fix: between Complete and the last
+		// ADR-098 C11 review fix: between Complete and the last
 		// Release, the entry still lives in c.inflight. A new
 		// caller landing here used to receive the cached prior
 		// outcome — which can be a stale instance ID if the
@@ -192,7 +192,7 @@ func (c *wakeCoord) Enter(appID string) (*wakeCoordCall, bool /*leader*/, error)
 // (engine.go:1435, 1818, 1823, 1830-1831, ~1892) cannot double-close.
 //
 // Sets c.completed=true so the Release() path can drop the entry once
-// the last follower has drained. ADR-095 C12 review fix (data
+// the last follower has drained. ADR-098 C12 review fix (data
 // race): the (outcome, completed) write pair was unprotected;
 // Enter reads completed under coord.mu (the "drop completed entry,
 // take fresh leadership" branch), Release reads completed under

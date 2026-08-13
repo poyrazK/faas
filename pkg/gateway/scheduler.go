@@ -194,10 +194,10 @@ type Scheduler interface {
 	// schedd to admit on that specific live deployment. Additive
 	// per ADR-016.
 	AdmitInstance(ctx context.Context, appID, deploymentID string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, atCapacity bool, port int, err error)
-	// EnsureWake (ADR-095) is the schedd-side single-flight wake
+	// EnsureWake (ADR-098) is the schedd-side single-flight wake
 	// entry. Schedd coalesces every concurrent EnsureWake for the
 	// same app into one virtual boot; followers see the leader's
-	// outcome. Pre-ADR-095 callers continue to use Wake / AdmitInstance
+	// outcome. Pre-ADR-098 callers continue to use Wake / AdmitInstance
 	// on the legacy wire — this method is additive per ADR-016.
 	//
 	// On the at-cap path the leader's ledger returns an admitted
@@ -411,7 +411,7 @@ func (f *FakeScheduler) AdmitInstance(ctx context.Context, appID, deploymentIDHi
 	return instanceID, nodeID, deploymentID, wakeID, rawMethod, false, port, err
 }
 
-// EnsureWake (ADR-095): the FakeScheduler isn't a real single-flight
+// EnsureWake (ADR-098): the FakeScheduler isn't a real single-flight
 // coalescer — every call returns a fresh identity, which is what
 // handler unit tests want (they're not exercising the schedd-side
 // leader/follower contract; the property-based test at C5 pins that

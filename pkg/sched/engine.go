@@ -287,7 +287,7 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
-	// wakeCoord is the per-app single-flight coordinator (ADR-095).
+	// wakeCoord is the per-app single-flight coordinator (ADR-098).
 	// Lazily initialised in NewEngine. Lock discipline is a LEAF:
 	// wakeCoord.mu is taken and released BEFORE e.lockApp(appID).
 	wakeCoord *wakeCoord
@@ -906,7 +906,7 @@ type WakeResult struct {
 	// (Target.DeploymentID empty, picker collapses to today's
 	// behaviour).
 	DeploymentID string
-	// RequestCount (ADR-095 C9) is the per-instance request counter
+	// RequestCount (ADR-098 C9) is the per-instance request counter
 	// schedd has observed via the batched ReportActivity path. The
 	// engine stamps it on the admitted path so the gateway's
 	// per-instance cache can show "warming up" vs "warmed" without
@@ -1043,7 +1043,7 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID string) (WakeResu
 	return e.admitAndDispatch(ctx, appID, false)
 }
 
-// EnsureWake (ADR-095) is the single-flight-safe wake entry point.
+// EnsureWake (ADR-098) is the single-flight-safe wake entry point.
 // Every wake producer (gateway, cron, floor, scaleup, targets) routes
 // through this method so a concurrent burst coalesces into one virtual
 // boot per parked app.
@@ -1096,7 +1096,7 @@ func (e *Engine) EnsureWake(ctx context.Context, appID string) (CoordOutcome, er
 	// caller's ctx via context.Background() + TTL — the wake must outlive
 	// the triggering request so other queued waiters get the same instance.
 	// This is the load-bearing single-flight coalescing invariant (spec
-	// §4.1, ADR-095 §Decision). Mirror of pkg/gateway/gate.go Wait
+	// §4.1, ADR-098 §Decision). Mirror of pkg/gateway/gate.go Wait
 	// goroutine detach.
 	leaderCtx, cancel := context.WithTimeout(context.Background(), e.wakeCoord.TTL())
 	defer cancel()
@@ -1109,7 +1109,7 @@ func (e *Engine) EnsureWake(ctx context.Context, appID string) (CoordOutcome, er
 	// caller's ctx via context.Background() + TTL — the wake must outlive
 	// the triggering request so other queued waiters get the same instance.
 	// This is the load-bearing single-flight coalescing invariant (spec
-	// §4.1, ADR-095 §Decision). Mirror of pkg/gateway/gate.go Wait
+	// §4.1, ADR-098 §Decision). Mirror of pkg/gateway/gate.go Wait
 	// goroutine detach.
 	res, err := e.Wake(leaderCtx, appID, "")
 	if err != nil {
@@ -3654,7 +3654,7 @@ func (e *Engine) lockedRunning(ctx context.Context, instanceID string) (*state.I
 // (spec §4.1, ADR-018). schedd is the sole writer to instances, so the gateway
 // hands it the batch instead of writing directly.
 //
-// ADR-095 C9: the gateway's per-instance cache (Target.RequestCount)
+// ADR-098 C9: the gateway's per-instance cache (Target.RequestCount)
 // ships the per-instance request_count delta on the same touch
 // batch. The engine flushes both last_request_at and the delta
 // atomically via TouchInstancesWithRequestDelta. The delta is
@@ -4070,7 +4070,7 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 //  4. now - FrameworkReadyAt >= app.WarmSnapshotMinMs (the
 //     time-since-first-ready floor; A.3 covers the time half of
 //     the gate)
-//  5. ins.RequestCount >= app.WarmSnapshotMinRequests (ADR-095
+//  5. ins.RequestCount >= app.WarmSnapshotMinRequests (ADR-098
 //     C10, supersedes ADR-071 PR-C). The per-instance request-
 //     count half of the gate. min == 0 is the "disabled" label
 //     case (Free/Hobby default) — the gate never opens. The
@@ -4127,7 +4127,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 		}
 	}
 
-	// Gate 5 (ADR-095 C10, supersedes ADR-071 PR-C): per-instance
+	// Gate 5 (ADR-098 C10, supersedes ADR-071 PR-C): per-instance
 	// request-count floor. The plan is the load-bearing knob: with
 	// min > 0 the promotion only fires once the instance has served
 	// at least `min` requests. min == 0 is the "disabled" label

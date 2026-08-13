@@ -485,7 +485,7 @@ type AdmitInstanceResponse struct {
 	// Empty on the at-capacity path (no instance was admitted).
 	// Additive per ADR-016.
 	DeploymentId string `protobuf:"bytes,8,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
-	// request_count (ADR-095) is the cumulative per-instance request
+	// request_count (ADR-098) is the cumulative per-instance request
 	// count schedd has observed via the batched ReportActivity /
 	// ensure-wake path. The engine stamps it on the admitted path so
 	// the gateway's per-instance cache can show "warming up" vs
@@ -601,7 +601,7 @@ type Touch struct {
 	InstanceId string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	// unix_ms is the request time in Unix milliseconds.
 	UnixMs int64 `protobuf:"varint,2,opt,name=unix_ms,json=unixMs,proto3" json:"unix_ms,omitempty"`
-	// request_delta (ADR-095 C9) is the per-instance request count
+	// request_delta (ADR-098 C9) is the per-instance request count
 	// delta the gateway has observed since the last touch. The
 	// gateway's per-instance cache (Target.RequestCount) is the
 	// authoritative hot path; the engine batched-writer flushes
@@ -1672,7 +1672,7 @@ func (*ReportCapacityAck) Descriptor() ([]byte, []int) {
 	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{19}
 }
 
-// EnsureWakeRequest (ADR-095) is the request shape for the
+// EnsureWakeRequest (ADR-098) is the request shape for the
 // single-flight-safe wake RPC. Mirrors WakeRequest's `app_id` field
 // for consistency. Kept as a separate message so future per-app
 // coalescing hints (e.g. a "leading or follow" marker for testing
@@ -1724,7 +1724,7 @@ func (x *EnsureWakeRequest) GetAppId() string {
 	return ""
 }
 
-// EnsureWakeResponse (ADR-095) is the typed result of
+// EnsureWakeResponse (ADR-098) is the typed result of
 // Engine.EnsureWake. On the already-running path it mirrors
 // WakeResponse field-for-field. On the leader-boot path it carries
 // the freshly-minted instance_id / node_id / wake_id once the

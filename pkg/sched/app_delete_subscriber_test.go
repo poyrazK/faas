@@ -1,6 +1,6 @@
 package sched
 
-// Whitebox tests for pkg/sched/app_delete_subscriber.go (ADR-095).
+// Whitebox tests for pkg/sched/app_delete_subscriber.go (ADR-098).
 // Modeled line-for-line on pkg/sched/deletion_subscriber_test.go.
 // Tests run against an Engine-with-wakeCoord and inject a fake
 // pg_notify producer via the db.Notification channel.

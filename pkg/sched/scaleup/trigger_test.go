@@ -71,7 +71,7 @@ func (e *fakeEngine) AdmitInstance(_ context.Context, appID string) (AdmitResult
 	return AdmitResult{InstanceID: "ins-" + appID}, nil
 }
 
-// EnsureWake (ADR-095): scaleup's trigger-local WakeOutcome mirrors
+// EnsureWake (ADR-098): scaleup's trigger-local WakeOutcome mirrors
 // the canned AdmitResult. The fake records a parallel call so tests
 // that need to count EnsureWake vs AdmitInstance calls can do so.
 func (e *fakeEngine) EnsureWake(_ context.Context, appID string) (WakeOutcome, error) {
@@ -257,7 +257,7 @@ func TestTrigger_NilReceiver(t *testing.T) {
 
 // TestTrigger_EngineReturnsAtCapacityObservesRejectAtCap verifies
 // the race: the decide() check says headroom > 0, but between that
-// check and the engine call the ledger hits the cap. ADR-095:
+// check and the engine call the ledger hits the cap. ADR-098:
 //
 //	under the single-flight model the trigger no longer receives a
 //	typed AtCapacity=true return value from EnsureWake. The leader's
@@ -304,7 +304,7 @@ func TestTrigger_EngineReturnsAtCapacityObservesRejectAtCap(t *testing.T) {
 }
 
 // errAtCapacitySentinel is a stand-in for the leader-ledger "no slot
-// left" error path. Under ADR-095 the per-app ledger closes the
+// left" error path. Under ADR-098 the per-app ledger closes the
 // at-cap loop; the trigger treats any non-context-cancelled error
 // from EnsureWake as a non-fatal skip (matches the AdmitInstance
 // path's behaviour). The trigger still records the per-tick call so

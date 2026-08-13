@@ -219,7 +219,7 @@ type AdvisoryForwarder interface {
 }
 
 // Instance is a live (or booting) microVM tracked by the Manager.
-// bringUpTimings (ADR-095 C11) is the wake-phase scratchpad the
+// bringUpTimings (ADR-098 C11) is the wake-phase scratchpad the
 // Manager.Wake caller allocates on the stack and threads through
 // to Manager.bringUp. Restored onto Instance immediately after
 // bringUp returns so the vmmd WakeResponse can carry the typed
@@ -233,7 +233,7 @@ type Instance struct {
 	Lease  Lease
 	Net    netns.Config
 	Method WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
-	// ADR-095 C11: phase-decomposed wake timings stamped at the
+	// ADR-098 C11: phase-decomposed wake timings stamped at the
 	// three boundary sites inside Wake / bringUp so the vmmd
 	// WakeResponse can carry the typed scalars (restore_ms /
 	// netns_tap_ms / guest_ready_ms). 0 means "not measured"
@@ -450,7 +450,7 @@ type Manager struct {
 	// receiver so unit tests that drive Manager directly without
 	// metrics don't need a stub.
 	frameworkReadyMetrics *FrameworkReadyMetrics
-	// wakePhaseMetrics (ADR-095 C11) is the optional
+	// wakePhaseMetrics (ADR-098 C11) is the optional
 	// `vmmd_wake_phase_duration_seconds` histogram the vmmd cmd
 	// wires via SetWakePhaseMetrics. nil-safe: Wake calls
 	// ObserveWakePhase on a nil-safe receiver so unit tests that
@@ -750,7 +750,7 @@ func (m *Manager) WithFrameworkReady(fm *FrameworkReadyMetrics) *Manager {
 	return m
 }
 
-// SetWakePhaseMetrics (ADR-095 C11) wires the optional
+// SetWakePhaseMetrics (ADR-098 C11) wires the optional
 // vmmd_wake_phase_duration_seconds histogram. nil-safe — Wake
 // observes on a nil-check. The vmmd cmd constructs a fresh
 // registry via NewWakePhaseMetrics and passes it here.
@@ -2087,14 +2087,14 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// in the rendered anonymous daddr-set).
 	nc.EgressAllowlist = m.mergeOperatorBundle(nc.EgressAllowlist)
 
-	// ADR-095 C11: capture the per-boundary timings (netns+TAP /
+	// ADR-098 C11: capture the per-boundary timings (netns+TAP /
 	// restore / guest-ready) on a private struct that bringUp
 	// mutates in-place. Stays on the stack — never crosses the
 	// goroutine boundary. Restored onto inst immediately below.
 	var timings bringUpTimings
 	var method WakeMethod
 
-	// ADR-095 C11: capture the netns+TAP timing at the boundary
+	// ADR-098 C11: capture the netns+TAP timing at the boundary
 	// (issue #574). setupNetwork wraps netns creation + TAP setup
 	// + veth pair wiring. Stays roughly constant per shape, so a
 	// sudden spike is a host-level signal not a workload signal.
@@ -2288,7 +2288,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 	// failure path (the operator gets no signal). Restore inherits
 	// the class from the apps row captured in the original cold boot.
 	//
-	// ADR-095 C11: stamp the GuestReadyMs = round-trip from wake RPC
+	// ADR-098 C11: stamp the GuestReadyMs = round-trip from wake RPC
 	// return to the framework-ready DGRAM (issue #470 / PR #543).
 	// WaitCharacterizationReport IS the framework-ready handshake —
 	// measuring around it captures the guest-ready tail that the
@@ -2311,7 +2311,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 			"port_norm_mode", report.PortNormalizationMode)
 	}
 	inst := &Instance{Lease: lease, Net: nc, Method: method, AppID: req.AppID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs}
-	// ADR-095 C11: emit the three vmmd-side wake phases onto the
+	// ADR-098 C11: emit the three vmmd-side wake phases onto the
 	// dedicated histogram. nil-receiver safe. RestoreMs is 0 on
 	// cold boot (no /snapshot/load ran) — the histogram's
 	// WithLabelValues will still register the series at 0
@@ -2378,7 +2378,7 @@ func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err e
 // WakeColdBoot, so schedd can mark the snapshot stale and schedule a re-snapshot.
 // A non-nil error means even cold boot failed (a real wake failure).
 //
-// ADR-095 C11: timings (if non-nil) is the wake-phase scratchpad the
+// ADR-098 C11: timings (if non-nil) is the wake-phase scratchpad the
 // caller allocates on the stack; bringUp writes restoreMs (and
 // never guest-ready / netns — those are stamped at the surrounding
 // boundaries inside Wake). The Wake caller reads back via timings
@@ -2435,7 +2435,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// the main workload's drive1). Additive per ADR-016.
 			Workloads: buildWorkloadsForRestore(req),
 		}
-		// ADR-095 C11: stamp the RestoreMs (issue #470 / PR #543).
+		// ADR-098 C11: stamp the RestoreMs (issue #470 / PR #543).
 		// vmm.Restore wraps /snapshot/load + waitReady for the
 		// snapshot state machine. On a successful restore this is
 		// the dominant sub-window of the §6.3 350 ms warm-wake

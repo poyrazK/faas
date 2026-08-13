@@ -570,7 +570,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Manager side, so a producer binary that doesn't wire
 	// metrics still runs.
 	frm := fcvm.NewFrameworkReadyMetrics()
-	// ADR-095 C11: wake-phase histogram (vmmd_wake_phase_duration_seconds).
+	// ADR-098 C11: wake-phase histogram (vmmd_wake_phase_duration_seconds).
 	// Mirrors frm / cbm — dedicated per-vmmd registry, mounted
 	// alongside on the cmd-side mux below.
 	wpm := fcvm.NewWakePhaseMetrics()
@@ -947,7 +947,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// = Prometheus). Mount at /metrics/framework-warmup so the
 		// dashboard panel picks it up without polluting /metrics.
 		mux.Handle(metricsPath+"/framework-warmup", frm.Handler())
-		// ADR-095 C11: wake-phase histogram on its own
+		// ADR-098 C11: wake-phase histogram on its own
 		// dedicated registry, mirroring the framework-warmup
 		// pattern. Single writer (Manager.Wake), single reader
 		// (Prometheus). Mounted at /metrics/wake-phase so the

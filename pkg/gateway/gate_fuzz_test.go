@@ -86,7 +86,7 @@ func FuzzWakeGate(f *testing.F) {
 	})
 }
 
-// TestWakeGateDetachedLeaderBootstrapCapAbort (ADR-095 C7) covers the
+// TestWakeGateDetachedLeaderBootstrapCapAbort (ADR-098 C7) covers the
 // detached-leader bootstrap cap: when the predicate shouldAbort fires
 // (queue empty AND no live instance AND plan.MaxMinInstances == 0),
 // the leader goroutine's poller closes abortCh and the leader surfaces
@@ -194,7 +194,7 @@ func TestWakeGateDetachedLeaderBootstrapCapAbort(t *testing.T) {
 	}
 }
 
-// TestInflightFollowersMinusLeader (ADR-095 C11 review fix) pins
+// TestInflightFollowersMinusLeader (ADR-098 C11 review fix) pins
 // the unsatisfiable-predicate bug: the bootstrap-cap abort predicate
 // must check follower count, not total waiter count. The leader's
 // own registration keeps the total at >=1 for the entire bootstrap

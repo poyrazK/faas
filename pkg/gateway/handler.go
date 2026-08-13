@@ -4369,7 +4369,7 @@ func (h *Handler) coldStart(ctx context.Context, appID string, maxConcurrency in
 			cold = true
 			return nil
 		},
-		// ADR-095 C7: bootstrap-cap predicate. The detached leader
+		// ADR-098 C7: bootstrap-cap predicate. The detached leader
 		// polls this on a 1s tick; if the queue drained (the gate
 		// itself tracks waiters) and there's still no live instance,
 		// the leader aborts with reason "queue_empty_no_instance"
@@ -4400,7 +4400,7 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Briefly at capacity", "the wake queue is full; retry shortly"))
 	case errors.Is(err, ErrBootstrapAborted):
-		// ADR-095 C7: the leader aborted under the bootstrap cap
+		// ADR-098 C7: the leader aborted under the bootstrap cap
 		// (queue empty AND no live instance). The customer should
 		// retry — the next request finds the picker fast-path
 		// still empty, so a fresh wake fires immediately.

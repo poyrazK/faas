@@ -1,6 +1,6 @@
 package sched
 
-// ADR-095: schedd consumes the app_delete pg_notify channel published
+// ADR-098: schedd consumes the app_delete pg_notify channel published
 // by apid (handlers_apps.go::deleteApp) and evicts any in-flight
 // wake for the deleted app. The wake coordinator's Forget(appID)
 // closes the leader's done channel with ErrAppDeleted so followers
@@ -23,7 +23,7 @@ import (
 // AppDeleteSubscriber consumes NotifyAppDelete and evicts any
 // in-flight wake for the deleted app via the wake coordinator.
 //
-// Lock discipline (load-bearing — see ADR-095 §Decision):
+// Lock discipline (load-bearing — see ADR-098 §Decision):
 //
 //	wakeCoord.Forget takes only wakeCoord.mu; it NEVER touches appMu.
 //	pg-notify goroutines have no business holding appMu; the leader,

@@ -79,7 +79,7 @@ func (r *rotatingDeployScheduler) AdmitInstance(ctx context.Context, appID, _ st
 	return r.FakeScheduler.AdmitInstance(ctx, appID, "")
 }
 
-// EnsureWake (ADR-095) mirrors AdmitInstance. PGBackend now calls
+// EnsureWake (ADR-098) mirrors AdmitInstance. PGBackend now calls
 // EnsureWake instead of AdmitInstance; without this override the
 // picker wouldn't seed multi-bucket targets and Pick would return
 // !ok. Mirrors the per-deployment round-robin above so the test

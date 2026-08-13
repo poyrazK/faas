@@ -317,7 +317,7 @@ func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.
 		VethPeer:        inst.Net.VethPeer,
 		Method:          wakeMethodFrom(inst.Method),
 		RequestedMethod: requestMethod,
-		// ADR-095 C11: phase-decomposed wake timings. RestoreMs is
+		// ADR-098 C11: phase-decomposed wake timings. RestoreMs is
 		// 0 on cold boot (no /snapshot/load ran) and on any restore
 		// that errored before /snapshot/load returned. NetnsTapMs
 		// is stamped for both methods; the netns+TAP setup runs

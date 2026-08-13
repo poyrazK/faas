@@ -242,7 +242,7 @@ func TestWakeCoord_ForgetOnAbsentAppIsNoOp(t *testing.T) {
 	coord.Forget("never-existed")
 }
 
-// TestWakeCoord_EnterAfterCompleteStartsFreshWake (ADR-095 C11
+// TestWakeCoord_EnterAfterCompleteStartsFreshWake (ADR-098 C11
 // review fix) pins the bug where Enter returned a follower
 // handle for an already-completed entry: between Complete and the
 // last Release, the previous wake's entry was still in

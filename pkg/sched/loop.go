@@ -56,7 +56,7 @@ type Loop struct {
 	floor              *floor.Trigger         // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
 	recentLoad         *recentload.RecentLoad // issue #171 aggressive-reaper signal mirror; nil opts out
 	livenessWindow     *LivenessWindow        // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
-	appDelete          *AppDeleteSubscriber   // ADR-095 app_delete handler; nil = no-op dispatch (tests / opt-out)
+	appDelete          *AppDeleteSubscriber   // ADR-098 app_delete handler; nil = no-op dispatch (tests / opt-out)
 	reaperAggressive   bool                   // issue #171 FAAS_REAPER_AGGRESSIVE; default ON; false = skip the new path
 	reaperParkCap      int                    // issue #171 per-app per-tick park cap; default MaxParksPerTickPerApp
 	// lastFloorByApp (issue #557 closure / ADR-072): per-app
@@ -110,7 +110,7 @@ func (l *Loop) WithRetention(r *Retention) *Loop {
 	return l
 }
 
-// WithAppDeleteSubscriber attaches the ADR-095 app_delete handler
+// WithAppDeleteSubscriber attaches the ADR-098 app_delete handler
 // that evicts any in-flight wake for a deleted app via the wake
 // coordinator (Engine.wakeCoord.Forget). The notification is
 // consumed off the loop's existing LISTEN (db.NotifyAppDelete is
@@ -368,7 +368,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifyDeploymentChanged,
 		db.NotifySnapshotPrime,
 		db.NotifyCronRunNow, // PR-D / issue #791: multiplexed on the cron loop's existing LISTEN; zero extra pool connections.
-		db.NotifyAppDelete,  // ADR-095: multiplexed on the cron loop's existing LISTEN; same zero-cost pattern as NotifyCronRunNow. Saves a 7th long-term pool subscriber (the standalone one tipped pool.MaxConns=8 over the edge and starved the async-invoke drain's BeginTx under e2e query bursts).
+		db.NotifyAppDelete,  // ADR-098: multiplexed on the cron loop's existing LISTEN; same zero-cost pattern as NotifyCronRunNow. Saves a 7th long-term pool subscriber (the standalone one tipped pool.MaxConns=8 over the edge and starved the async-invoke drain's BeginTx under e2e query bursts).
 	}, l.log)
 	if err != nil {
 		return err
@@ -996,7 +996,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// (cmd/imaged consumer: subscriber re-reads the row).
 		l.drainPendingFireNowRequests(ctx)
 	case db.NotifyAppDelete:
-		// ADR-095: app was deleted. Evict any in-flight wake for
+		// ADR-098: app was deleted. Evict any in-flight wake for
 		// the deleted app via the wake coordinator's Forget so
 		// followers unwind with ErrAppDeleted instead of waiting
 		// for the wake-coord TTL. Multiplexed onto this loop's
@@ -2014,7 +2014,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		}
 		l.audit.Emit(ctx, eventName, &acct.ID, payload)
 	}()
-	// ADR-095: cron now goes through EnsureWake so a cron tick racing
+	// ADR-098: cron now goes through EnsureWake so a cron tick racing
 	// a gateway burst (or a floor / scaleup / targets trigger on the
 	// same parked app) coalesces into one virtual boot. The detached
 	// leader ctx means a cancelled triggering cron doesn't kill the

@@ -25,7 +25,7 @@ type AdmitResult struct {
 	AtCapacity bool
 }
 
-// WakeOutcome (ADR-095) is the trigger's local projection of
+// WakeOutcome (ADR-098) is the trigger's local projection of
 // sched.CoordOutcome. AtCapacity is dropped because the per-app
 // leader's ledger already enforces max_concurrency and the trigger
 // observes the at-capacity path via the bus, not the return value.
@@ -121,7 +121,7 @@ type Ledger interface {
 type Engine interface {
 	AdmitInstance(ctx context.Context, appID string) (AdmitResult, error)
 	AdmitInstanceForDeployment(ctx context.Context, appID, deploymentID string) (AdmitResult, error)
-	// EnsureWake (ADR-095): the single-flight wake entry. The trigger
+	// EnsureWake (ADR-098): the single-flight wake entry. The trigger
 	// routes through this so a floor tick racing the gateway, cron,
 	// scaleup, or targets triggers on the same parked app coalesces
 	// into one virtual boot. The WakeOutcome is the trigger's local

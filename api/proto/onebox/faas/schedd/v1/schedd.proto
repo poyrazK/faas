@@ -207,7 +207,7 @@ service Schedd {
   // end; existing field tags are untouched.
   rpc ReportLivenessFailed(LivenessFailedReport) returns (LivenessFailedAck);
 
-  // EnsureWake (ADR-095) is the single-flight-friendly wake entry
+  // EnsureWake (ADR-098) is the single-flight-friendly wake entry
   // point. Unlike Wake, it serialises the wake hot path through the
   // engine's per-app wake coordinator (pkg/sched/wake_coord.go) so a
   // concurrent gateway request + cron tick + floor trigger + scaleup
@@ -389,7 +389,7 @@ message AdmitInstanceResponse {
   // Empty on the at-capacity path (no instance was admitted).
   // Additive per ADR-016.
   string deployment_id = 8;
-  // request_count (ADR-095) is the cumulative per-instance request
+  // request_count (ADR-098) is the cumulative per-instance request
   // count schedd has observed via the batched ReportActivity /
   // ensure-wake path. The engine stamps it on the admitted path so
   // the gateway's per-instance cache can show "warming up" vs
@@ -409,7 +409,7 @@ message Touch {
   string instance_id = 1;
   // unix_ms is the request time in Unix milliseconds.
   int64  unix_ms     = 2;
-  // request_delta (ADR-095 C9) is the per-instance request count
+  // request_delta (ADR-098 C9) is the per-instance request count
   // delta the gateway has observed since the last touch. The
   // gateway's per-instance cache (Target.RequestCount) is the
   // authoritative hot path; the engine batched-writer flushes
@@ -719,7 +719,7 @@ message CapacityReport {
 message ReportCapacityAck {
 }
 
-// EnsureWakeRequest (ADR-095) is the request shape for the
+// EnsureWakeRequest (ADR-098) is the request shape for the
 // single-flight-safe wake RPC. Mirrors WakeRequest's `app_id` field
 // for consistency. Kept as a separate message so future per-app
 // coalescing hints (e.g. a "leading or follow" marker for testing
@@ -731,7 +731,7 @@ message EnsureWakeRequest {
   string app_id = 1;
 }
 
-// EnsureWakeResponse (ADR-095) is the typed result of
+// EnsureWakeResponse (ADR-098) is the typed result of
 // Engine.EnsureWake. On the already-running path it mirrors
 // WakeResponse field-for-field. On the leader-boot path it carries
 // the freshly-minted instance_id / node_id / wake_id once the

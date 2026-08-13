@@ -48,7 +48,7 @@ type wakeCall struct {
 // ErrQueueFull is returned when the per-app waiter cap is exceeded (→ 503).
 var ErrQueueFull = errors.New("gateway: wake queue full")
 
-// ErrBootstrapAborted (ADR-095 C7) is returned when the detached-leader
+// ErrBootstrapAborted (ADR-098 C7) is returned when the detached-leader
 // goroutine aborts under the bootstrap cap (queue empty AND no live
 // instance AND plan.MaxMinInstances == 0). The followers see this
 // rather than waiting for the gate TTL.
@@ -79,7 +79,7 @@ func NewWakeGate(capacity int, ttl time.Duration) *WakeGate {
 // This closes the race where a goroutine reaches Wait after the previous wake
 // has set the instance running but before its old Target read sees it.
 //
-// shouldAbort (ADR-095 C7) is the optional detached-leader bootstrap
+// shouldAbort (ADR-098 C7) is the optional detached-leader bootstrap
 // cap predicate. The leader goroutine polls it on a 1s tick; when it
 // returns true the goroutine aborts without calling ensure. The
 // intended condition is: queue empty AND no live instance AND the
@@ -174,7 +174,7 @@ func (g *WakeGate) Wait(
 	// triggering request so other queued waiters get the same instance.
 	// This is the load-bearing single-flight coalescing invariant (spec §4.1).
 	//
-	// ADR-095 C7: bootstrap-cap abort. When shouldAbort is non-nil, the
+	// ADR-098 C7: bootstrap-cap abort. When shouldAbort is non-nil, the
 	// leader races ensure() against a poller that closes abortCh when
 	// shouldAbort becomes true. The poller fires on a 1s ticker. The
 	// intended condition (coldStart) is: queue empty AND no live instance
@@ -304,7 +304,7 @@ func (g *WakeGate) InflightWaiters(appID string) int {
 //
 // Here "queue empty" means "no followers", not "the leader also
 // gone" — the leader is necessarily alive at this point
-// (otherwise no bootstrap is happening). ADR-095 C7 review fix:
+// (otherwise no bootstrap is happening). ADR-098 C7 review fix:
 // without the -1, the predicate is unsatisfiable while the leader's
 // caller awaits done. Returns 0 if no entry.
 func (g *WakeGate) InflightFollowers(appID string) int {

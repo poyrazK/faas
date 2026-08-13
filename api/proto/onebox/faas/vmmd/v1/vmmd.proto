@@ -565,7 +565,7 @@ message WakeResponse {
   // the codegen pipeline for a single optional payload — only
   // schedd consumes this and it decodes via pkg/api on the way in.
   google.protobuf.Struct characterization = 10;
-  // Phase-decomposed wake duration (ADR-095 C11). Schedd's
+  // Phase-decomposed wake duration (ADR-098 C11). Schedd's
   // wake_phase_duration_seconds histogram (wire/metrics.go) is
   // fed by these three typed scalars so a regression in any one
   // phase surfaces on the §12 dashboard without collapsing into

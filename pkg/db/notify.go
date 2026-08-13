@@ -145,7 +145,7 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         usage map) re-reads on this signal.
 //	NotifyAppDelete         {"app_id":uuid}
 //	                         apid → schedd: an app was deleted (spec
-//	                         §6.2 / ADR-095). schedd's app-delete
+//	                         §6.2 / ADR-098). schedd's app-delete
 //	                         subscriber (pkg/sched/app_delete_subscriber.go)
 //	                         calls Engine.wakeCoord.Forget(appID) so any
 //	                         in-flight wake on the deleted app unwinds
@@ -186,7 +186,7 @@ const (
 	NotifyAccountDeletionPending = "account_deletion_pending"
 	NotifyAccountDeleted         = "account_deleted"
 	// NotifyAppDelete is emitted by apid on app deletion (spec §6.2
-	// / ADR-095). schedd's app-delete subscriber consumes it and
+	// / ADR-098). schedd's app-delete subscriber consumes it and
 	// evicts any in-flight wake for the deleted app via
 	// Engine.wakeCoord.Forget so followers unwind promptly
 	// instead of waiting for the wake-coord TTL.

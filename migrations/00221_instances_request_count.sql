@@ -2,7 +2,7 @@
 -- +goose StatementBegin
 -- filename: 00221_instances_request_count.sql
 --
--- ADR-095 instances.request_count — C8/C9/C10 of the scale-to-zero
+-- ADR-098 instances.request_count — C8/C9/C10 of the scale-to-zero
 -- Tier-1 PR. Adds a per-instance monotonically-increasing request
 -- counter that backs gate #5 in the warm-snapshot engine hot path
 -- (ADR-071, superseded by ADR-074). schedd's writer flushes the
@@ -42,7 +42,7 @@
 --     the warm-gate query is `WHERE id = $1` and that hits the
 --     pkey. A separate index would be dead weight.
 --
--- Slot rebase history (ADR-095 C8 migration):
+-- Slot rebase history (ADR-098 C8 migration):
 --
 --   Originally landed at slot 00216 (with 00215 as a fence).
 --   Renumbered to 00221 on 2026-08-13 after main took 00215

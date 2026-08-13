@@ -1,6 +1,6 @@
-# ADR-095 · Wake single-flight coordinator on `sched.Engine`
+# ADR-098 · Wake single-flight coordinator on `sched.Engine`
 
-- **Status:** proposed
+- **Status:** accepted (merged as PR #854 / commit 93059ff4)
 - **Date:** 2026-08-11
 - **Decision:** Hoist the per-app "wake in progress" coordination out of
   `pkg/gateway/WakeGate` (per-process in `gatewayd-internal`) and into
@@ -126,7 +126,7 @@ with `ErrAppDeleted` so followers unwind promptly.
   the ledger admit anyway (one PG round-trip). Adding a second
   round-trip to wake is wasted; the in-memory coordinator amortises to
   zero additional wire hops under steady state.
-- **Defer the coordinator to a separate PR.** Rejected: ADR-095 is on
+- **Defer the coordinator to a separate PR.** Rejected: ADR-098 is on
   the critical path for the §6.2-1 property test. It belongs with the
   producers' switchover (C5) and the vmmd-internal phase telemetry
   (C11) in one PR-cluster.

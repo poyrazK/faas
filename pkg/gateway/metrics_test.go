@@ -644,7 +644,7 @@ func TestMetricsWakeSnapshotTierPreinstantiated(t *testing.T) {
 	}
 }
 
-// TestMetricsWakePhaseDurationPreinstantiated (ADR-095 C11) pins the
+// TestMetricsWakePhaseDurationPreinstantiated (ADR-098 C11) pins the
 // closed phase set on the new phase-decomposed wake histogram at
 // zero from the moment the daemon binds, so the §12 panel surfaces
 // from boot. Catches a future change that drops the pre-instantiation
@@ -668,7 +668,7 @@ func TestMetricsWakePhaseDurationPreinstantiated(t *testing.T) {
 	}
 }
 
-// TestMetricsObserveWakePhaseRoundTrip (ADR-095 C11) asserts that
+// TestMetricsObserveWakePhaseRoundTrip (ADR-098 C11) asserts that
 // ObserveWakePhase increments the labelled histogram and that the
 // scalar (legacy) ObserveWakeQueueWait dual-writes into the
 // phase="queue_wait" series. Pinning both halves of the dual-write

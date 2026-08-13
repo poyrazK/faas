@@ -75,7 +75,7 @@ func (c *capturingEngine) AdmitInstance(_ context.Context, _, _ string) (sched.W
 	return sched.WakeResult{}, nil
 }
 
-// EnsureWake (ADR-095): capacity tests don't exercise single-flight, so
+// EnsureWake (ADR-098): capacity tests don't exercise single-flight, so
 // this delegates straight through to Wake. Returning a zero CoordOutcome
 // with nil Instance triggers the defensive nil-instance branch in the
 // handler only on success; no capacity test relies on a non-nil

@@ -5445,7 +5445,7 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 	return nil
 }
 
-// IncInstanceRequestCount (ADR-095 C8) bumps the per-instance
+// IncInstanceRequestCount (ADR-098 C8) bumps the per-instance
 // request_count column by delta. Mirrors PgStore's behaviour:
 // idempotent on Phase-4-loser re-applies (the writer is additive),
 // returns -1 when the row is gone. The memstore mirrors the column
@@ -5722,7 +5722,7 @@ func (m *MemStore) TouchInstancesLastSeen(_ context.Context, touches []InstanceT
 	return applied, nil
 }
 
-// TouchInstancesWithRequestDelta (ADR-095 C9) applies both
+// TouchInstancesWithRequestDelta (ADR-098 C9) applies both
 // last_request_at and the per-instance request_count delta. The
 // memstore mirrors the writer contract: additive
 // (`request_count = request_count + delta`), idempotent on

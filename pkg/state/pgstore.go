@@ -7446,7 +7446,7 @@ func (s *PgStore) UpdateInstanceStateToTerminal(ctx context.Context, id, state s
 	return nil
 }
 
-// IncInstanceRequestCount (ADR-095 C8) bumps the per-instance
+// IncInstanceRequestCount (ADR-098 C8) bumps the per-instance
 // request_count column by the supplied delta. The writer is
 // additive ("request_count = request_count + delta") on purpose:
 // schedd batches 250ms of per-instance request events into a
@@ -7805,7 +7805,7 @@ func (s *PgStore) TouchInstancesLastSeen(ctx context.Context, touches []Instance
 	return int(tag.RowsAffected()), nil
 }
 
-// TouchInstancesWithRequestDelta (ADR-095 C9) is the batched
+// TouchInstancesWithRequestDelta (ADR-098 C9) is the batched
 // request_count writer. Same shape as TouchInstancesLastSeen
 // (unnest, single round-trip) but additionally bumps
 // request_count by the supplied delta on each row. The delta is

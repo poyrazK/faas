@@ -1,6 +1,6 @@
 # ADR-071 · Warm-snapshot engine hot-path
 
-- **Status:** superseded-by: ADR-074 (and the request-count gate realised by ADR-095 C10)
+- **Status:** superseded-by: ADR-074 (and the request-count gate realised by ADR-098 C10)
 - **Date:** 2026-08-03
 - **Issue:** #470 / PR A (extends PR #525 / PR #543)
 - **Supersedes:** vmmd-side pause/snapshot/resume plan from PR #525 (the data layer); the engine hot-path was deferred.
@@ -48,14 +48,14 @@ The Firecracker primitive gap makes this non-trivial: there is no `pause-snapsho
 | 2. acct.Plan.WarmSnapshotAllowed() | `pkg/api/limits.go` | silently skip |
 | 3. ins.FrameworkReadyAt != NULL | PR #543 stamp | silently skip (freshly primed instance, not warm) |
 | 4. now - FrameworkReadyAt >= app.WarmSnapshotMinMs | `apps.warm_snapshot_min_ms` | silently skip (not warm long enough) |
-| 5. ins.RequestCount >= app.WarmSnapshotMinRequests | `apps.warm_snapshot_min_requests` (ADR-095 C10) | silently skip (served too few requests) |
+| 5. ins.RequestCount >= app.WarmSnapshotMinRequests | `apps.warm_snapshot_min_requests` (ADR-098 C10) | silently skip (served too few requests) |
 
 The fifth gate (request count) is the second half of the warm-snapshot
 floor alongside the time-since-first-ready half. Together the two
 halves pin the "warm path is the steady-state, cold-boot is the
 exception" invariant: a freshly-primed instance, regardless of how
 long the runner has been alive, must serve at least N requests before
-the engine promotes it to a warm-tier snapshot. ADR-095 C10 closes
+the engine promotes it to a warm-tier snapshot. ADR-098 C10 closes
 this gate; the column lives at `instances.request_count` (migration
 00216) and is surfaced on `WakeResult.RequestCount` so the gateway
 per-instance cache can render "warming up" vs "warmed" without a
@@ -72,9 +72,9 @@ second round-trip.
 
 The PR-C list originally enumerated in this section shipped in
 ADR-074 (audit kinds, CLI flags, per-tier GC, dashboard panels).
-The 5th gate — request-count-based promotion — shipped in ADR-095
+The 5th gate — request-count-based promotion — shipped in ADR-098
 C10. The list is kept here as a historical marker; the current
-status of each item is documented in ADR-074 and ADR-095.
+status of each item is documented in ADR-074 and ADR-098.
 
 ## Consequences
 

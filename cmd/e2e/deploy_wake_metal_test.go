@@ -304,7 +304,7 @@ func TestDeployWakeMetal(t *testing.T) {
 			t.Errorf("wake_latency p95 = %v, want <= %v (spec §6.3 / Appendix D V2)", p95, p95Budget)
 		}
 
-		// ADR-095 C11: phase-decomposed wake telemetry. The
+		// ADR-098 C11: phase-decomposed wake telemetry. The
 		// aggregate gateway_wake_latency_seconds is unchanged;
 		// this is a separate scrape that asserts the new
 		// gateway_wake_phase_duration_seconds{phase="queue_wait"}
@@ -454,7 +454,7 @@ func assertWakeLatencyObserved(t *testing.T, controlURL string) {
 	}
 }
 
-// assertWakePhaseQueueWaitObserved (ADR-095 C11) scrapes /metrics for
+// assertWakePhaseQueueWaitObserved (ADR-098 C11) scrapes /metrics for
 // the new phase-decomposed wake histogram
 // (gateway_wake_phase_duration_seconds) and asserts that the
 // phase="queue_wait" series observed at least minObservations samples.

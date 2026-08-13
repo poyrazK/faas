@@ -220,7 +220,7 @@ func (m *FrameworkReadyMetrics) ObserveWarmup(runtime, app string, seconds float
 }
 
 // WakePhaseMetrics owns the vmmd_wake_phase_duration_seconds
-// histogram (ADR-095 C11). Three phase labels — restore_ms /
+// histogram (ADR-098 C11). Three phase labels — restore_ms /
 // netns_tap_ms / guest_ready_ms — match the typed scalars on
 // api/proto/onebox/faas/vmmd/v1/vmmd.proto WakeResponse (tags 11,
 // 12, 13). Stays on a dedicated per-vmmd registry so the vmmd's
@@ -245,7 +245,7 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 		reg: reg,
 		phases: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "vmmd_wake_phase_duration_seconds",
-			Help: "Phase-decomposed wake duration (ADR-095 C11). Phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms}. Mirrors the typed scalars on api/proto/onebox/faas/vmmd/v1/vmmd.proto WakeResponse (tags 11, 12, 13).",
+			Help: "Phase-decomposed wake duration (ADR-098 C11). Phase ∈ {restore_ms, netns_tap_ms, guest_ready_ms}. Mirrors the typed scalars on api/proto/onebox/faas/vmmd/v1/vmmd.proto WakeResponse (tags 11, 12, 13).",
 			Buckets: []float64{
 				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
 			},

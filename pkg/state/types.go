@@ -1894,7 +1894,7 @@ type Instance struct {
 	// pre-existing rows are backfilled to 0 on apply.
 	TailCount int
 	// RequestCount is the per-instance monotonically-increasing
-	// request counter (ADR-095 C8/C9/C10). Persisted in the
+	// request counter (ADR-098 C8/C9/C10). Persisted in the
 	// `request_count` column added by migrations/00221_instances_request_count.sql.
 	// The counter is the gate for warm-snapshot promotion (C10):
 	// when count >= WarmSnapshotMinRequests (per-app config), the
@@ -2033,7 +2033,7 @@ type PerNodeStats struct {
 type InstanceTouch struct {
 	InstanceID  string
 	LastRequest time.Time
-	// RequestDelta (ADR-095 C9) is the per-instance request count
+	// RequestDelta (ADR-098 C9) is the per-instance request count
 	// delta the gateway has observed since the last touch. The
 	// gateway's per-instance cache (Target.RequestCount) is the
 	// authoritative hot path; the engine batched-writer flushes
