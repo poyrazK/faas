@@ -1,0 +1,40 @@
+[Unit]
+Description=Prometheus (faas SLO dashboard pipeline)
+Documentation=https://github.com/onebox-faas/faas
+Wants=network-online.target
+After=network-online.target
+# Alertmanager runs on loopback; Prometheus dials it for evaluate→notify.
+# `Wants=` (not `Requires=`) so a failed Alertmanager still allows Prometheus
+# to start — rules evaluate, the page-severity alerts pile up in the
+# notifier queue, and the operator sees degraded state in `promtool` /
+# the status-page degraded flag.
+Wants=alertmanager.service
+After=alertmanager.service
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/var/lib/prometheus \
+  --storage.tsdb.retention.time=15d \
+  --web.listen-address=10.0.0.1:9090 \
+  --web.console.libraries=/usr/share/prometheus/console_libraries \
+  --web.console.templates=/usr/share/prometheus/consoles
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Hardening (spec §11 baseline).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/prometheus
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

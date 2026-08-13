@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -116,6 +117,43 @@ func TestEnsureBaseStagingRootsOwnership(t *testing.T) {
 		}
 		if int(sys.Uid) != uid || int(sys.Gid) != gid {
 			t.Errorf("%s owned by %d:%d, want %d:%d", root, sys.Uid, sys.Gid, uid, gid)
+		}
+	}
+}
+
+// TestActivateObservabilityInstallsBundleAssets verifies that the
+// release bundle's observability files are installed into the runtime
+// paths atomically. It uses a temp runtime dir via the hostRuntime
+// unitDir seam and a release root that mirrors the CI bundle layout;
+// the systemd reload is exercised only where systemd exists.
+func TestActivateObservabilityInstallsBundleAssets(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("installing /etc/prometheus requires root; file-install contract covered by CI bundle + runtime on the host")
+	}
+	if _, err := os.Stat("/etc/systemd/system"); err != nil {
+		t.Skip("no systemd unit dir on this host")
+	}
+	if _, err := os.Stat("/usr/local/bin/promtool"); err != nil {
+		t.Skip("promtool not installed; validation step requires it")
+	}
+
+	releaseRoot := t.TempDir()
+	obs := filepath.Join(releaseRoot, "observability")
+	if err := os.MkdirAll(obs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"prometheus.yml", "faas.rules.yml", "pg_backup.rules.yml", "prometheus.service", "alertmanager.service"} {
+		if err := os.WriteFile(filepath.Join(obs, f), []byte(f), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := hostRuntime{unitDir: t.TempDir()}
+	if err := r.activateObservability(context.Background(), releaseRoot); err != nil {
+		t.Fatalf("activateObservability: %v", err)
+	}
+	for _, f := range []string{"prometheus.yml", "faas.rules.yml", "pg_backup.rules.yml"} {
+		if _, err := os.Stat(filepath.Join("/etc/prometheus", f)); err != nil {
+			t.Errorf("expected /etc/prometheus/%s installed: %v", f, err)
 		}
 	}
 }
