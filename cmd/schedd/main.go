@@ -779,16 +779,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		go subscribeWithReconnect(ctx, "deletion", log, deps.subscribeDeletion, pool, sub.Run)
 	}
 
-	// ADR-095: app-delete subscriber. Long-lived goroutine under the
-	// same ctx as loop.Run. Drains the app_delete pg_notify channel
-	// and forgets in-flight wakes for the deleted app so followers
-	// unwind with ErrAppDeleted instead of waiting for the
-	// wake-coord TTL. nil seam = skip in tests that don't want a
-	// fake channel.
-	if deps.subscribeAppDelete != nil {
-		appDelSub := sched.NewAppDeleteSubscriber(engine, log)
-		go subscribeWithReconnect(ctx, "app_delete", log, deps.subscribeAppDelete, pool, appDelSub.Run)
-	}
+	// ADR-095: app-delete dispatch is folded into loop.Run's
+	// existing LISTEN (see loop.go's NotifyAppDelete case in
+	// handleNotification). No standalone goroutine, no extra pool
+	// connection — same zero-cost multiplexing pattern as
+	// NotifyCronRunNow (PR-D / issue #791). The AppDeleteSubscriber
+	// is constructed and passed to the loop via
+	// WithAppDeleteSubscriber below so loop.handleNotification can
+	// call evictApp on every NotifyAppDelete delivery.
 
 	// tier-2 PR-B (ADR-031 + ADR-033): egress drift subscriber.
 	// Same dial-loop shape as the deletion subscriber above
@@ -1190,7 +1188,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// floor trigger can share the same actor="schedd" instance
 	// and emit `floor.wake` audit rows on every proactive admit.
 	schedulerAuditor := audit.New(store, log, ops, "schedd")
+	// ADR-095: app-delete handler. Built here (not via the
+	// runDeps.subscribeAppDelete seam — that seam's now a stub
+	// retained only for the main_coverage_smoke_test defaultDeps
+	// assertion) and dispatched from loop.Run's existing LISTEN
+	// so we don't add a 7th long-term pool subscriber on top of
+	// pool.MaxConns=8 (which tips the async-invoke drain's
+	// BeginTx into starvation under e2e query bursts).
+	appDeleteSub := sched.NewAppDeleteSubscriber(engine, log)
 	loop := sched.NewLoop(pool, engine, log).
+		WithAppDeleteSubscriber(appDeleteSub).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
 		WithWatchdog(sched.NewWatchdog(store, engine, log)).
 		// PR #74: §17 retention sweep — DELETEs STOPPED/FAILED rows older
