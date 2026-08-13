@@ -99,7 +99,9 @@ with `ErrAppDeleted` so followers unwind promptly.
 - **New RPC `schedd.EnsureWake`** + additive `AdmitInstanceResponse.request_count`
   field at tag 9.
 - **Per-instance `request_count` column** on `instances` (migration at
-  slot 00216 fence / 00217 real, names ADR-095 in the SQL comment); the
+  slot 00221, originally 00216 fence / 00217 real — renumbered after
+  main absorbed 00215/00216 on 2026-08-13; the fence was dropped
+  per memory `cross-pr-rebase-fence-deletion-hazard`); the
   warm-snapshot 5th promotion gate (gate #5 after
   `engine.go:3870-3875` MinMs gate) reads from this column.
 - **`gateway_leader_bootstrap_aborts_total{reason}`** counter on the

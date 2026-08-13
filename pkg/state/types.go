@@ -1895,7 +1895,7 @@ type Instance struct {
 	TailCount int
 	// RequestCount is the per-instance monotonically-increasing
 	// request counter (ADR-095 C8/C9/C10). Persisted in the
-	// `request_count` column added by migrations/00219_instances_request_count.sql.
+	// `request_count` column added by migrations/00221_instances_request_count.sql.
 	// The counter is the gate for warm-snapshot promotion (C10):
 	// when count >= WarmSnapshotMinRequests (per-app config), the
 	// captured snapshot is promoted to a permanent warm key. Bigint
@@ -1903,7 +1903,7 @@ type Instance struct {
 	// accumulates ~6.3e8 rows; int4's 2.1e9 ceiling would be the
 	// next upgrade cycle's blocker. Mirrored here so the warm-gate
 	// reads request_count alongside TailCount without a second SQL
-	// hop. NOT NULL DEFAULT 0 enforced by migration 00219.
+	// hop. NOT NULL DEFAULT 0 enforced by migration 00221.
 	RequestCount int64
 }
 

@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- filename: 00216_instances_request_count.sql
+-- filename: 00221_instances_request_count.sql
 --
 -- ADR-095 instances.request_count — C8/C9/C10 of the scale-to-zero
 -- Tier-1 PR. Adds a per-instance monotonically-increasing request
@@ -42,12 +42,17 @@
 --     the warm-gate query is `WHERE id = $1` and that hits the
 --     pkey. A separate index would be dead weight.
 --
--- Cross-PR slot fence (00215):
+-- Slot rebase history (ADR-095 C8 migration):
 --
---   The real migration lands at 00216. The 00215 slot is held
---   under a SELECT 1; reservation fence (see 00215_reserve_slot.sql).
---   Always re-verify next free via `git ls-tree origin/main migrations/`
---   after rebase — siblings owning 00215-00217 can collide.
+--   Originally landed at slot 00216 (with 00215 as a fence).
+--   Renumbered to 00221 on 2026-08-13 after main took 00215
+--   (compute_node_heartbeats_stats.sql) and 00216
+--   (apps_route_metrics_enabled.sql). The 00215 fence was deleted
+--   per memory cross-pr-rebase-fence-deletion-hazard (fence slot
+--   became a real migration on a sibling branch). Per memory
+--   migration-slot-renumber-at-pr-creation the next free slot is
+--   re-verified via gh api '.../contents/migrations?ref=main' at
+--   push time.
 --
 -- Wiring (C9 reader, C10 gate):
 --

@@ -1,19 +1,20 @@
 //go:build !no_pg
 
-// Migration-apply test for 00216_instances_request_count.sql
+// Migration-apply test for 00221_instances_request_count.sql
 // (ADR-095 C8 — instances.request_count column for the warm-snapshot
 // gate).
 //
 // Pins:
 //
-//  1. Migration set applies cleanly through 00216 (with 00215
-//     fence). The cross-PR slot fence convention requires that
-//     the fence file exist at the byte-position immediately
-//     before the real migration; TestMigrationsContiguous (in
-//     apply_walk_test.go) enforces position-by-position
-//     contiguity. If you renumber 00216 away, renumber 00215
-//     with it and re-verify after rebase via `git ls-tree
-//     origin/main migrations/ | grep -E '0021[5-9]'`.
+//  1. Migration set applies cleanly through 00221. Originally
+//     landed at slot 00216 with a 00215 fence; renumbered to 00221
+//     on 2026-08-13 after main absorbed 00215 (compute_node_heartbeats_stats)
+//     and 00216 (apps_route_metrics_enabled). The fence was dropped
+//     per memory cross-pr-rebase-fence-deletion-hazard. TestMigrationsContiguous
+//     (in apply_walk_test.go) enforces position-by-position
+//     contiguity — re-verify next-free slot via
+//     `gh api 'repos/poyrazK/faas/contents/migrations?ref=main'`
+//     before pushing.
 //  2. instances.request_count column exists, is bigint NOT NULL,
 //     and has DEFAULT 0. PG introspected via information_schema
 //     — a typo in the column name would otherwise fail at
@@ -48,7 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func TestMigrations_00216_InstancesRequestCount(t *testing.T) {
+func TestMigrations_00221_InstancesRequestCount(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 
@@ -84,7 +85,7 @@ func TestMigrations_00216_InstancesRequestCount(t *testing.T) {
 	// Phase-4-loser re-applies).
 	var (
 		appIDTag, orgIDTag, deploymentIDTag, nodeIDTag string
-		ramMB                                         int
+		ramMB                                          int
 	)
 	err = pool.QueryRow(ctx, `
 		insert into instances (app_id, deployment_id, state, ram_mb, node_id)
