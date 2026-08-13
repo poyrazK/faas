@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 )
 
 // Compute is the engine entry point. Walks every field in
@@ -53,8 +54,17 @@ func Compute(slug string, plan Plan, baseline Baseline, pending Pending) Diff {
 	// 5. Deployment-level (immutable changes → Break, not Change).
 	diffDeployment(&out, baseline.LatestDeployment, pending)
 
-	// 6. Schema-break signal (PR-0: text-only).
-	detectSchemaBreak(&out, baseline.LatestDeployment, pending)
+	// 6. Schema-break signal. PR-2: structural OpenAPI diff in
+	// addition to the PR-0 text-only behaviour/env signals.
+	// The structural pass needs both the baseline and pending
+	// edge-rule lists to project route paths onto the embedded
+	// OpenAPI spec; the differ then walks the two projected
+	// specs and emits one Break per SchemaBreak. The baseline
+	// list is read from the store (EdgeRuleResponse), so we
+	// project it to the wire shape (CreateEdgeRuleRequest) via
+	// edgeRulesToWire before the structural pass.
+	detectSchemaBreak(&out, baseline.LatestDeployment, pending,
+		edgeRulesToWire(baseline.EdgeRules), pending.EdgeRules)
 
 	return out
 }
@@ -521,73 +531,160 @@ func diffDeployment(out *Diff, base *api.DeploymentResponse, p Pending) {
 	}
 }
 
-// detectSchemaBreak is the PR-0 text-only schema-break signal.
-// When handler / entrypoint / AppManifest.Env / AppManifest.EnvSecrets
-// would change, the diff emits a Break with code
-// "schema_response_changed". The full structural OpenAPI diff
-// (Path/Method/Status/Schema walks) is PR-2.
+// detectSchemaBreak is the schema-break signal. PR-0 was text-only;
+// PR-2 adds a structural OpenAPI diff pass on top.
+//
+// Two passes:
+//
+//  1. PR-0 text-only — handler / entrypoint / AppManifest.Env /
+//     AppManifest.EnvSecrets would change. SeverityWarn: these
+//     indicate *behaviour* shifts, not guaranteed wire-shape
+//     breaks. Gated on `base != nil && p.Manifest != nil` so a
+//     fresh-app deploy (no baseline deployment) doesn't fire a
+//     false positive.
+//
+//  2. PR-2 structural — pkg/openapidiff.Compare on the embedded
+//     OpenAPI spec projected with both edge-rule lists. This
+//     pass is unconditional: a customer removing a route edge
+//     rule is a structural break even when no deployment is
+//     changing. SeverityError: structural breaks are wire-shape
+//     breaks customers must react to.
 //
 // We deliberately emit one Break per affected field path so the
 // renderer can show the customer exactly which response shapes
 // might break. Multiple Break rows for one deploy is normal — the
 // gate fires on the union.
-func detectSchemaBreak(out *Diff, base *api.DeploymentResponse, p Pending) {
-	if base == nil {
+func detectSchemaBreak(out *Diff, base *api.DeploymentResponse, p Pending,
+	baseRules, pendingRules []api.CreateEdgeRuleRequest) {
+	// PR-0 text-only pass. Behavioural signals, severity warn.
+	if base != nil && p.Manifest != nil {
+		// Entrypoint change → process argv shifts; behaviour change is
+		// possible.
+		if !stringSliceEqual(p.Manifest.Entrypoint, base.OverrideEntrypoint) {
+			out.Breaks = append(out.Breaks, Break{
+				Code:     "schema_response_changed",
+				Severity: SeverityWarn, // softer than handler — entrypoint
+				// shifts don't always change response shape
+				Reason: "entrypoint change can alter process behaviour",
+				Field:  "entrypoint",
+			})
+		}
+		// Env change → behaviour, not response shape — emit a warn so
+		// the customer sees the env delta is meaningful, but don't
+		// gate the deploy on it. We compare KEYS, not values: per
+		// ADR-053 §Decision 4 the values are never echoed on the
+		// deployment row (sealed / non-secret by contract), only the
+		// OverrideEnvKeys []string set is wire-visible. A key add /
+		// remove is the customer-visible signal.
+		//
+		// We emit whenever the manifest is present — including when
+		// the customer removes every key from Env (a previous review
+		// found the `len(...) > 0` guard silently dropped that case).
+		pendKeys := make([]string, 0, len(p.Manifest.Env))
+		for k := range p.Manifest.Env {
+			pendKeys = append(pendKeys, k)
+		}
+		if !stringSliceEqualAsSet(pendKeys, base.OverrideEnvKeys) {
+			out.Breaks = append(out.Breaks, Break{
+				Code:     "schema_env_changed",
+				Severity: SeverityWarn,
+				Reason:   "environment key set change can alter process behaviour",
+				Field:    "manifest.env",
+			})
+		}
+		// EnvSecrets change → sealed-secret ref change. The wire form
+		// carries OverrideEnvSecretRefs (map[string]string) — refs are
+		// non-secret by design, so we CAN compare values here.
+		//
+		// We emit whenever the manifest is present — including when
+		// the customer removes every sealed-secret ref (the previous
+		// `len(...) > 0` guard silently dropped that case, mirroring
+		// the Env-path bug noted above).
+		pendSecretRefs := p.Manifest.EnvSecrets
+		if !stringMapsEqual(pendSecretRefs, base.OverrideEnvSecretRefs) {
+			out.Breaks = append(out.Breaks, Break{
+				Code:     "schema_env_changed",
+				Severity: SeverityWarn,
+				Reason:   "sealed-secret ref change can alter process behaviour",
+				Field:    "manifest.env_secrets",
+			})
+		}
+	}
+	// PR-2 structural pass. Run unconditionally so a route-only
+	// removal still fires a break. baseRules/pendingRules may be
+	// nil — pkg/openapidiff treats nil slices as empty.
+	detectStructuralSchemaBreak(out, baseRules, pendingRules)
+}
+
+// detectStructuralSchemaBreak projects the baseline and pending
+// edge-rule lists onto the embedded OpenAPI spec and runs the
+// structural differ on the two projected specs. Each SchemaBreak
+// becomes one Break with Code "schema_response_changed",
+// SeverityError (structural breaks are wire-shape breaks
+// customers must react to), and Field set to the path/method/
+// status anchor so the customer sees exactly which endpoint
+// changed.
+//
+// Failures from openapidiff.Load / GenerateFromEdgeRules are
+// swallowed silently: the package's contract is that the embedded
+// spec always parses (pkg/apid.spec_compliance_test.go pins
+// that invariant at PR time), so reaching an error here is a
+// build-time invariant violation — surfacing it would inflate
+// every diff with a "schema differ broken" break that masks the
+// real signal.
+func detectStructuralSchemaBreak(out *Diff, baseRules, pendingRules []api.CreateEdgeRuleRequest) {
+	embedded, err := openapidiff.Load()
+	if err != nil {
 		return
 	}
-	if p.Manifest == nil {
+	// Baseline spec: embedded + previous deploy's route edges.
+	baselineSpec, err := openapidiff.GenerateFromEdgeRules(embedded, baseRules, baseRules)
+	if err != nil {
 		return
 	}
-	// Entrypoint change → process argv shifts; behaviour change is
-	// possible.
-	if !stringSliceEqual(p.Manifest.Entrypoint, base.OverrideEntrypoint) {
+	// Proposed spec: embedded + new deploy's route edges.
+	proposedSpec, err := openapidiff.GenerateFromEdgeRules(embedded, baseRules, pendingRules)
+	if err != nil {
+		return
+	}
+	breaks := openapidiff.Compare(baselineSpec, proposedSpec)
+	for _, sb := range breaks {
+		field := sb.Path
+		if sb.Method != "" {
+			field = field + " " + sb.Method
+		}
+		if sb.Status != "" {
+			field = field + " " + sb.Status
+		}
+		if sb.PathInSchema != "" {
+			field = field + " " + sb.PathInSchema
+		}
 		out.Breaks = append(out.Breaks, Break{
 			Code:     "schema_response_changed",
-			Severity: SeverityWarn, // softer than handler — entrypoint
-			// shifts don't always change response shape
-			Reason: "entrypoint change can alter process behaviour",
-			Field:  "entrypoint",
+			Severity: SeverityError,
+			Reason:   schemaBreakReason(sb),
+			Field:    field,
+			Observed: AsAny(sb.After),
+			Limit:    AsAny(sb.Before),
 		})
 	}
-	// Env change → behaviour, not response shape — emit a warn so
-	// the customer sees the env delta is meaningful, but don't
-	// gate the deploy on it. We compare KEYS, not values: per
-	// ADR-053 §Decision 4 the values are never echoed on the
-	// deployment row (sealed / non-secret by contract), only the
-	// OverrideEnvKeys []string set is wire-visible. A key add /
-	// remove is the customer-visible signal.
-	//
-	// We emit whenever the manifest is present — including when
-	// the customer removes every key from Env (a previous review
-	// found the `len(...) > 0` guard silently dropped that case).
-	pendKeys := make([]string, 0, len(p.Manifest.Env))
-	for k := range p.Manifest.Env {
-		pendKeys = append(pendKeys, k)
-	}
-	if !stringSliceEqualAsSet(pendKeys, base.OverrideEnvKeys) {
-		out.Breaks = append(out.Breaks, Break{
-			Code:     "schema_env_changed",
-			Severity: SeverityWarn,
-			Reason:   "environment key set change can alter process behaviour",
-			Field:    "manifest.env",
-		})
-	}
-	// EnvSecrets change → sealed-secret ref change. The wire form
-	// carries OverrideEnvSecretRefs (map[string]string) — refs are
-	// non-secret by design, so we CAN compare values here.
-	//
-	// We emit whenever the manifest is present — including when
-	// the customer removes every sealed-secret ref (the previous
-	// `len(...) > 0` guard silently dropped that case, mirroring
-	// the Env-path bug noted above).
-	pendSecretRefs := p.Manifest.EnvSecrets
-	if !stringMapsEqual(pendSecretRefs, base.OverrideEnvSecretRefs) {
-		out.Breaks = append(out.Breaks, Break{
-			Code:     "schema_env_changed",
-			Severity: SeverityWarn,
-			Reason:   "sealed-secret ref change can alter process behaviour",
-			Field:    "manifest.env_secrets",
-		})
+}
+
+// schemaBreakReason renders a one-line customer-facing reason
+// for a SchemaBreak. Kept short so the CLI's text renderer
+// stays readable.
+func schemaBreakReason(sb openapidiff.SchemaBreak) string {
+	switch sb.Kind {
+	case openapidiff.SchemaKindTypeChange:
+		return "schema type changed"
+	case openapidiff.SchemaKindFieldRemoved:
+		return "schema field removed"
+	case openapidiff.SchemaKindRequiredAdded:
+		return "schema field required"
+	case openapidiff.SchemaKindNullabilityChange:
+		return "schema nullability changed"
+	default:
+		return "schema changed"
 	}
 }
 
@@ -648,4 +745,31 @@ func stringMapsEqual(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// edgeRulesToWire projects a read-shape EdgeRuleResponse slice
+// (the store's view) onto the wire-shape CreateEdgeRuleRequest
+// slice the structural differ consumes. Only the fields the
+// differ walks are populated: Kind, MatchHost, MatchPath,
+// MatchMethods, Action. Other EdgeRuleResponse fields (ID,
+// Priority, Enabled, CreatedAt, …) are irrelevant for the
+// structural diff — they're the deploy-time identity, not the
+// OpenAPI surface.
+//
+// nil input → nil output so the call site stays unconditional.
+func edgeRulesToWire(in []api.EdgeRuleResponse) []api.CreateEdgeRuleRequest {
+	if in == nil {
+		return nil
+	}
+	out := make([]api.CreateEdgeRuleRequest, len(in))
+	for i, r := range in {
+		out[i] = api.CreateEdgeRuleRequest{
+			Kind:         r.Kind,
+			MatchHost:    r.MatchHost,
+			MatchPath:    r.MatchPath,
+			MatchMethods: r.MatchMethods,
+			Action:       r.Action,
+		}
+	}
+	return out
 }
