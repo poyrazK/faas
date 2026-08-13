@@ -392,7 +392,7 @@ func (h *ArchiveLogsHandler) serveArchive(ctx_ context.Context, w http.ResponseW
 	// archive exists, just isn't readable.
 	gz, gzErr := gzip.NewReader(&body)
 	if gzErr != nil {
-		renderArchiveTerminal(w, flusher, "archive_degraded")
+		renderArchiveTerminal(w, flusher, archiveReasonDegraded)
 		return
 	}
 	defer func() { _ = gz.Close() }()
@@ -414,7 +414,7 @@ func (h *ArchiveLogsHandler) serveArchive(ctx_ context.Context, w http.ResponseW
 		case <-ctx_.Done():
 			return
 		case <-backstopTimer.C:
-			renderArchiveTerminal(w, flusher, "archive_degraded")
+			renderArchiveTerminal(w, flusher, archiveReasonDegraded)
 			return
 		case <-heartbeatCh:
 			_, _ = fmt.Fprint(w, ":\n\n")
@@ -433,7 +433,7 @@ func (h *ArchiveLogsHandler) serveArchive(ctx_ context.Context, w http.ResponseW
 			// shouldn't generate these, but a third-party
 			// tool writing into the bucket could. Render
 			// a degraded terminal + return.
-			renderArchiveTerminal(w, flusher, "archive_degraded")
+			renderArchiveTerminal(w, flusher, archiveReasonDegraded)
 			return
 		}
 	}
@@ -446,11 +446,11 @@ func (h *ArchiveLogsHandler) serveArchive(ctx_ context.Context, w http.ResponseW
 				h.Log.Warn("logarchive.readback.scan_error",
 					"app", appID, "instance", instance, "day", day, "err", err)
 			}
-			renderArchiveTerminal(w, flusher, "archive_degraded")
+			renderArchiveTerminal(w, flusher, archiveReasonDegraded)
 			return
 		}
 	}
-	renderArchiveTerminal(w, flusher, "archive_complete")
+	renderArchiveTerminal(w, flusher, archiveReasonComplete)
 }
 
 // archiveObjectKey mirrors pkg/logarchive.Shipper.bucketKey's
