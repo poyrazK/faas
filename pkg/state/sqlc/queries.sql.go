@@ -423,6 +423,59 @@ func (q *Queries) BumpInstanceTailCount(ctx context.Context, db DBTX, arg BumpIn
 	return tail_count, err
 }
 
+const claimJobTasks = `-- name: ClaimJobTasks :many
+SELECT run_id, task_index FROM job_tasks
+WHERE (run_id, task_index) IN (
+    SELECT candidate.run_id, candidate.task_index FROM job_tasks AS candidate
+    WHERE candidate.run_id = $1 AND candidate.status = 'queued'
+    ORDER BY candidate.task_index
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+ORDER BY task_index
+`
+
+type ClaimJobTasksParams struct {
+	RunID pgtype.UUID
+	Limit int32
+}
+
+type ClaimJobTasksRow struct {
+	RunID     pgtype.UUID
+	TaskIndex int32
+}
+
+// Atomically claim up to N queued tasks for a run. The schedd
+// dispatch tick (PR-C) calls this in a loop until it has filled
+// max_parallelism slots. FOR UPDATE SKIP LOCKED is the canonical
+// shape; two schedd instances never grab the same task row.
+// Returns the claimed (run_id, task_index) pairs; the caller
+// flips status to 'claimed' via MarkJobTaskClaimed below.
+//
+// This is a TWO-step pattern in PR-B: claim + update. PR-C may
+// collapse it into a single CTE if the schedd hot-path profiling
+// shows the round-trip matters (it doesn't at the per-second tick
+// rate, but the dispatch tick is the load-bearing surface).
+func (q *Queries) ClaimJobTasks(ctx context.Context, db DBTX, arg ClaimJobTasksParams) ([]ClaimJobTasksRow, error) {
+	rows, err := db.Query(ctx, claimJobTasks, arg.RunID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimJobTasksRow{}
+	for rows.Next() {
+		var i ClaimJobTasksRow
+		if err := rows.Scan(&i.RunID, &i.TaskIndex); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countDeployedApps = `-- name: CountDeployedApps :one
 select count(*) from apps where account_id = $1 and status in ('active', 'evicted_cold')
 `
@@ -432,6 +485,22 @@ func (q *Queries) CountDeployedApps(ctx context.Context, db DBTX, accountID pgty
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countJobsForAccount = `-- name: CountJobsForAccount :one
+SELECT COUNT(*)::int4 FROM jobs
+WHERE account_id = $1 AND status != 'deleted'
+`
+
+// Per-account quota check (mirrors CountCronsForAccount in the
+// Cron domain). PR-D's CreateJob handler calls this BEFORE CreateJob
+// to enforce JobMaxPerAccount. Returns int4 so it matches the
+// pgx int4 scan convention.
+func (q *Queries) CountJobsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error) {
+	row := db.QueryRow(ctx, countJobsForAccount, accountID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const createAPIKey = `-- name: CreateAPIKey :one
@@ -796,6 +865,138 @@ func (q *Queries) CreateInstance(ctx context.Context, db DBTX, arg CreateInstanc
 	return i, err
 }
 
+const createJob = `-- name: CreateJob :one
+
+INSERT INTO jobs (
+    account_id, kind, name, image_ref, ram_mb,
+    task_timeout_s, max_parallelism, retry_max, env_overrides
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, account_id, kind, name, image_ref, ram_mb,
+          task_timeout_s, max_parallelism, retry_max,
+          env_overrides, status, created_at, updated_at
+`
+
+type CreateJobParams struct {
+	AccountID      pgtype.UUID
+	Kind           string
+	Name           string
+	ImageRef       string
+	RamMb          int32
+	TaskTimeoutS   int32
+	MaxParallelism int32
+	RetryMax       int32
+	EnvOverrides   []byte
+}
+
+// --------------------------------------------------------------------
+// ADR-099 jobs (run-to-completion workloads) — PR-B surface.
+//
+// These queries are the read/write boundary for the jobs cluster.
+// Schedd (PR-C) and apid (PR-D) call them via the Store interface
+// (see pkg/state/store.go JobStore methods); pgstore.go and
+// memstore.go implement them. The schema is in migrations/00255
+// (jobs/job_runs/job_tasks). The default-OFF invariant holds until
+// PR-D lands the customer-facing routes (FAAS_JOBS_Hobby=true).
+// --------------------------------------------------------------------
+// Inserts a new job definition. The caller validates plan caps
+// (JobMaxPerAccount etc.) BEFORE invoking this; the migration's
+// CHECK constraints catch the remaining malformed-input cases
+// (ram_mb > 0, max_parallelism in [1, 1000], retry_max in [0, 10],
+// task_timeout_s in [1, 86400], name regex).
+func (q *Queries) CreateJob(ctx context.Context, db DBTX, arg CreateJobParams) (Job, error) {
+	row := db.QueryRow(ctx, createJob,
+		arg.AccountID,
+		arg.Kind,
+		arg.Name,
+		arg.ImageRef,
+		arg.RamMb,
+		arg.TaskTimeoutS,
+		arg.MaxParallelism,
+		arg.RetryMax,
+		arg.EnvOverrides,
+	)
+	var i Job
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Kind,
+		&i.Name,
+		&i.ImageRef,
+		&i.RamMb,
+		&i.TaskTimeoutS,
+		&i.MaxParallelism,
+		&i.RetryMax,
+		&i.EnvOverrides,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createJobRun = `-- name: CreateJobRun :one
+INSERT INTO job_runs (
+    job_id, account_id, trigger_kind, env_overrides,
+    tasks, parallelism, retry_max, task_timeout_s
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, job_id, account_id, trigger_kind, env_overrides,
+          tasks, parallelism, retry_max, task_timeout_s,
+          aggregate_status, tasks_succeeded, tasks_failed,
+          tasks_cancelled, tasks_running, started_at,
+          finished_at, created_at
+`
+
+type CreateJobRunParams struct {
+	JobID        pgtype.UUID
+	AccountID    pgtype.UUID
+	TriggerKind  string
+	EnvOverrides []byte
+	Tasks        int32
+	Parallelism  int32
+	RetryMax     pgtype.Int4
+	TaskTimeoutS pgtype.Int4
+}
+
+// Materialises a run + its tasks in one shot via INSERT ... SELECT.
+// The fan-out row generator uses generate_series to produce N
+// task rows with task_index 0..N-1. Returns the run row; the
+// caller reads the task rows separately via ListJobTasksForRun.
+// Per ADR-099 §Decision 6, the run is queued and the dispatch
+// tick (PR-C) claims tasks from job_tasks_ready_idx.
+func (q *Queries) CreateJobRun(ctx context.Context, db DBTX, arg CreateJobRunParams) (JobRun, error) {
+	row := db.QueryRow(ctx, createJobRun,
+		arg.JobID,
+		arg.AccountID,
+		arg.TriggerKind,
+		arg.EnvOverrides,
+		arg.Tasks,
+		arg.Parallelism,
+		arg.RetryMax,
+		arg.TaskTimeoutS,
+	)
+	var i JobRun
+	err := row.Scan(
+		&i.ID,
+		&i.JobID,
+		&i.AccountID,
+		&i.TriggerKind,
+		&i.EnvOverrides,
+		&i.Tasks,
+		&i.Parallelism,
+		&i.RetryMax,
+		&i.TaskTimeoutS,
+		&i.AggregateStatus,
+		&i.TasksSucceeded,
+		&i.TasksFailed,
+		&i.TasksCancelled,
+		&i.TasksRunning,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createOrg = `-- name: CreateOrg :one
 
 insert into orgs (
@@ -1129,6 +1330,26 @@ func (q *Queries) DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype
 	return err
 }
 
+const deleteJob = `-- name: DeleteJob :exec
+UPDATE jobs SET status = 'deleted', updated_at = now()
+WHERE id = $1 AND account_id = $2
+`
+
+type DeleteJobParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// Soft-delete via the 'deleted' status (the migration sets the
+// CHECK to admit 'active' | 'paused' | 'deleted'). Hard-delete
+// cascades to job_runs + job_tasks per the FK definitions; the
+// soft path lets the customer undelete within a 7-day window
+// (PR-D wires the recovery endpoint).
+func (q *Queries) DeleteJob(ctx context.Context, db DBTX, arg DeleteJobParams) error {
+	_, err := db.Exec(ctx, deleteJob, arg.ID, arg.AccountID)
+	return err
+}
+
 const deploymentByID = `-- name: DeploymentByID :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_bytes, 0),
@@ -1346,6 +1567,118 @@ func (q *Queries) GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.U
 	var tail_count int32
 	err := row.Scan(&tail_count)
 	return tail_count, err
+}
+
+const getJob = `-- name: GetJob :one
+SELECT id, account_id, kind, name, image_ref, ram_mb,
+       task_timeout_s, max_parallelism, retry_max,
+       env_overrides, status, created_at, updated_at
+FROM jobs WHERE id = $1 AND account_id = $2
+`
+
+type GetJobParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// Reads a job by primary key. Caller passes account_id for
+// authorisation (the 404 / not-found is returned uniformly so a
+// cross-account probe doesn't leak the existence of someone else's
+// job — the row is filtered before reaching the row scan).
+func (q *Queries) GetJob(ctx context.Context, db DBTX, arg GetJobParams) (Job, error) {
+	row := db.QueryRow(ctx, getJob, arg.ID, arg.AccountID)
+	var i Job
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Kind,
+		&i.Name,
+		&i.ImageRef,
+		&i.RamMb,
+		&i.TaskTimeoutS,
+		&i.MaxParallelism,
+		&i.RetryMax,
+		&i.EnvOverrides,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getJobByName = `-- name: GetJobByName :one
+SELECT id, account_id, kind, name, image_ref, ram_mb,
+       task_timeout_s, max_parallelism, retry_max,
+       env_overrides, status, created_at, updated_at
+FROM jobs WHERE account_id = $1 AND name = $2
+`
+
+type GetJobByNameParams struct {
+	AccountID pgtype.UUID
+	Name      string
+}
+
+// Slug-based lookup (the dashboard + CLI render by name; the
+// apid handlers in PR-D accept name OR id). Unique-per-account is
+// enforced by migrations/00255's jobs_account_name_uniq_idx.
+func (q *Queries) GetJobByName(ctx context.Context, db DBTX, arg GetJobByNameParams) (Job, error) {
+	row := db.QueryRow(ctx, getJobByName, arg.AccountID, arg.Name)
+	var i Job
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Kind,
+		&i.Name,
+		&i.ImageRef,
+		&i.RamMb,
+		&i.TaskTimeoutS,
+		&i.MaxParallelism,
+		&i.RetryMax,
+		&i.EnvOverrides,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getJobRun = `-- name: GetJobRun :one
+SELECT id, job_id, account_id, trigger_kind, env_overrides,
+       tasks, parallelism, retry_max, task_timeout_s,
+       aggregate_status, tasks_succeeded, tasks_failed,
+       tasks_cancelled, tasks_running, started_at,
+       finished_at, created_at
+FROM job_runs WHERE id = $1 AND account_id = $2
+`
+
+type GetJobRunParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) GetJobRun(ctx context.Context, db DBTX, arg GetJobRunParams) (JobRun, error) {
+	row := db.QueryRow(ctx, getJobRun, arg.ID, arg.AccountID)
+	var i JobRun
+	err := row.Scan(
+		&i.ID,
+		&i.JobID,
+		&i.AccountID,
+		&i.TriggerKind,
+		&i.EnvOverrides,
+		&i.Tasks,
+		&i.Parallelism,
+		&i.RetryMax,
+		&i.TaskTimeoutS,
+		&i.AggregateStatus,
+		&i.TasksSucceeded,
+		&i.TasksFailed,
+		&i.TasksCancelled,
+		&i.TasksRunning,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getSession = `-- name: GetSession :one
@@ -1665,6 +1998,11 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 		arg.ProbeNode,
 	)
 	return err
+}
+
+type InsertJobTasksParams struct {
+	RunID     pgtype.UUID
+	TaskIndex int32
 }
 
 const instanceByID = `-- name: InstanceByID :one
@@ -2795,6 +3133,106 @@ func (q *Queries) ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype
 	return items, nil
 }
 
+const listJobRunsForJob = `-- name: ListJobRunsForJob :many
+SELECT id, job_id, account_id, trigger_kind, env_overrides,
+       tasks, parallelism, retry_max, task_timeout_s,
+       aggregate_status, tasks_succeeded, tasks_failed,
+       tasks_cancelled, tasks_running, started_at,
+       finished_at, created_at
+FROM job_runs
+WHERE job_id = $1 AND account_id = $2
+ORDER BY created_at DESC
+`
+
+type ListJobRunsForJobParams struct {
+	JobID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ListJobRunsForJob(ctx context.Context, db DBTX, arg ListJobRunsForJobParams) ([]JobRun, error) {
+	rows, err := db.Query(ctx, listJobRunsForJob, arg.JobID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []JobRun{}
+	for rows.Next() {
+		var i JobRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.JobID,
+			&i.AccountID,
+			&i.TriggerKind,
+			&i.EnvOverrides,
+			&i.Tasks,
+			&i.Parallelism,
+			&i.RetryMax,
+			&i.TaskTimeoutS,
+			&i.AggregateStatus,
+			&i.TasksSucceeded,
+			&i.TasksFailed,
+			&i.TasksCancelled,
+			&i.TasksRunning,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listJobsForAccount = `-- name: ListJobsForAccount :many
+SELECT id, account_id, kind, name, image_ref, ram_mb,
+       task_timeout_s, max_parallelism, retry_max,
+       env_overrides, status, created_at, updated_at
+FROM jobs WHERE account_id = $1 ORDER BY created_at DESC
+`
+
+// Reads all jobs in an account ordered by created_at DESC.
+// Used by GET /v1/jobs (PR-D). No pagination cursor in PR-B —
+// JobMaxPerAccount (per plan) bounds the result size well below
+// 1000 rows even at Scale plan; PR-D adds a cursor if usage
+// data shows we ever approach that ceiling.
+func (q *Queries) ListJobsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Job, error) {
+	rows, err := db.Query(ctx, listJobsForAccount, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Job{}
+	for rows.Next() {
+		var i Job
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Kind,
+			&i.Name,
+			&i.ImageRef,
+			&i.RamMb,
+			&i.TaskTimeoutS,
+			&i.MaxParallelism,
+			&i.RetryMax,
+			&i.EnvOverrides,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrgInvitationsForOrg = `-- name: ListOrgInvitationsForOrg :many
 select
     id,
@@ -2969,6 +3407,44 @@ func (q *Queries) ListOrgsForAccount(ctx context.Context, db DBTX, accountID pgt
 	return items, nil
 }
 
+const listReadyJobTasks = `-- name: ListReadyJobTasks :many
+SELECT run_id, task_index FROM job_tasks
+WHERE status = 'queued'
+ORDER BY run_id, task_index
+LIMIT $1
+`
+
+type ListReadyJobTasksRow struct {
+	RunID     pgtype.UUID
+	TaskIndex int32
+}
+
+// Schedd dispatch-tick hot path (PR-C). Returns N queued tasks
+// across all runs, ordered by run_id + task_index. Backed by the
+// job_tasks_ready_idx partial index (WHERE status = 'queued').
+// Used by the dispatch tick to surface candidate work without
+// joining to job_runs; the per-run ClaimJobTasks above does the
+// fine-grained claim once a run is selected.
+func (q *Queries) ListReadyJobTasks(ctx context.Context, db DBTX, limit int32) ([]ListReadyJobTasksRow, error) {
+	rows, err := db.Query(ctx, listReadyJobTasks, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListReadyJobTasksRow{}
+	for rows.Next() {
+		var i ListReadyJobTasksRow
+		if err := rows.Scan(&i.RunID, &i.TaskIndex); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentEventsForAccount = `-- name: ListRecentEventsForAccount :many
 select id, at, actor, kind, subject, data
 from events
@@ -3109,6 +3585,144 @@ update custom_domains set verified_at = now() where domain = $1
 
 func (q *Queries) MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error {
 	_, err := db.Exec(ctx, markDomainVerified, domain)
+	return err
+}
+
+const markJobTaskCancelled = `-- name: MarkJobTaskCancelled :exec
+UPDATE job_tasks SET
+    status = 'cancelled',
+    finished_at = now()
+WHERE run_id = $1 AND task_index = $2
+  AND status IN ('queued', 'claimed')
+`
+
+type MarkJobTaskCancelledParams struct {
+	RunID     pgtype.UUID
+	TaskIndex int32
+}
+
+// User-initiated cancel via DELETE /v1/jobs/{name}/runs/{id}.
+// Only flips if status is queued or claimed (not already
+// terminal) — terminal tasks stay terminal.
+func (q *Queries) MarkJobTaskCancelled(ctx context.Context, db DBTX, arg MarkJobTaskCancelledParams) error {
+	_, err := db.Exec(ctx, markJobTaskCancelled, arg.RunID, arg.TaskIndex)
+	return err
+}
+
+const markJobTaskClaimed = `-- name: MarkJobTaskClaimed :exec
+UPDATE job_tasks SET
+    status = 'claimed',
+    instance_id = $3,
+    started_at = now()
+WHERE run_id = $1 AND task_index = $2 AND status = 'queued'
+`
+
+type MarkJobTaskClaimedParams struct {
+	RunID      pgtype.UUID
+	TaskIndex  int32
+	InstanceID pgtype.UUID
+}
+
+// Flips status queued → claimed and stamps instance_id. instance_id
+// is set by the schedd to the newly-created job_task instance row
+// (see pkg/state/jobs.go's WriteJobInstance helper in PR-C).
+func (q *Queries) MarkJobTaskClaimed(ctx context.Context, db DBTX, arg MarkJobTaskClaimedParams) error {
+	_, err := db.Exec(ctx, markJobTaskClaimed, arg.RunID, arg.TaskIndex, arg.InstanceID)
+	return err
+}
+
+const markJobTaskFailed = `-- name: MarkJobTaskFailed :exec
+UPDATE job_tasks SET
+    status = 'failed',
+    error_class = $3,
+    error_message = $4,
+    attempt = attempt + 1,
+    finished_at = now()
+WHERE run_id = $1 AND task_index = $2 AND status = 'claimed'
+`
+
+type MarkJobTaskFailedParams struct {
+	RunID        pgtype.UUID
+	TaskIndex    int32
+	ErrorClass   pgtype.Text
+	ErrorMessage pgtype.Text
+}
+
+// Marks a task as failed with an error_class + error_message.
+// The run-level fan-in (RecomputeJobRunStatus) decides whether
+// to retry (increment attempt) or dead-letter based on retry_max.
+// attempt is bumped atomically here so the next claim picks up
+// the next attempt.
+func (q *Queries) MarkJobTaskFailed(ctx context.Context, db DBTX, arg MarkJobTaskFailedParams) error {
+	_, err := db.Exec(ctx, markJobTaskFailed,
+		arg.RunID,
+		arg.TaskIndex,
+		arg.ErrorClass,
+		arg.ErrorMessage,
+	)
+	return err
+}
+
+const markJobTaskOOM = `-- name: MarkJobTaskOOM :exec
+UPDATE job_tasks SET
+    status = 'oom',
+    error_class = 'oom',
+    finished_at = now()
+WHERE run_id = $1 AND task_index = $2 AND status = 'claimed'
+`
+
+type MarkJobTaskOOMParams struct {
+	RunID     pgtype.UUID
+	TaskIndex int32
+}
+
+// Guest-init's OOM watchdog (PR-C job_supervisor) reports OOM
+// exits; the task is marked terminal with the 'oom' error_class
+// for billing exemption (a task that OOM'd before doing useful
+// work shouldn't be charged). PR-D's usage_minutes rollup (PR-A
+// 00257) honours this.
+func (q *Queries) MarkJobTaskOOM(ctx context.Context, db DBTX, arg MarkJobTaskOOMParams) error {
+	_, err := db.Exec(ctx, markJobTaskOOM, arg.RunID, arg.TaskIndex)
+	return err
+}
+
+const markJobTaskSucceeded = `-- name: MarkJobTaskSucceeded :exec
+UPDATE job_tasks SET
+    status = 'succeeded',
+    finished_at = now()
+WHERE run_id = $1 AND task_index = $2 AND status = 'claimed'
+`
+
+type MarkJobTaskSucceededParams struct {
+	RunID     pgtype.UUID
+	TaskIndex int32
+}
+
+func (q *Queries) MarkJobTaskSucceeded(ctx context.Context, db DBTX, arg MarkJobTaskSucceededParams) error {
+	_, err := db.Exec(ctx, markJobTaskSucceeded, arg.RunID, arg.TaskIndex)
+	return err
+}
+
+const markJobTaskTimeout = `-- name: MarkJobTaskTimeout :exec
+UPDATE job_tasks SET
+    status = 'timeout',
+    error_class = 'timeout',
+    attempt = attempt + 1,
+    finished_at = now()
+WHERE run_id = $1 AND task_index = $2 AND status = 'claimed'
+`
+
+type MarkJobTaskTimeoutParams struct {
+	RunID     pgtype.UUID
+	TaskIndex int32
+}
+
+// Distinct from MarkJobTaskFailed because the watchdog exit
+// code (PR-C's job_supervisor) classifies timeouts separately
+// for retry policy. PR-D's dead-letter endpoint surfaces the
+// error_class breakdown.
+func (q *Queries) MarkJobTaskTimeout(ctx context.Context, db DBTX, arg MarkJobTaskTimeoutParams) error {
+	_, err := db.Exec(ctx, markJobTaskTimeout, arg.RunID, arg.TaskIndex)
 	return err
 }
 
@@ -3419,6 +4033,87 @@ DELETE FROM data_upstream_probes WHERE sampled_at < $1
 func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error {
 	_, err := db.Exec(ctx, pruneDataUpstreamProbesOlderThan, sampledAt)
 	return err
+}
+
+const recomputeJobRunStatus = `-- name: RecomputeJobRunStatus :one
+WITH counts AS (
+    SELECT
+        COUNT(*) FILTER (WHERE status = 'succeeded') AS s,
+        COUNT(*) FILTER (WHERE status IN ('failed', 'timeout', 'oom')) AS f,
+        COUNT(*) FILTER (WHERE status = 'cancelled') AS c,
+        COUNT(*) FILTER (WHERE status = 'claimed') AS r,
+        COUNT(*) AS total
+    FROM job_tasks WHERE run_id = $1
+),
+target AS (
+    SELECT id FROM job_runs WHERE id = $1
+)
+UPDATE job_runs SET
+    tasks_succeeded = counts.s,
+    tasks_failed     = counts.f,
+    tasks_cancelled  = counts.c,
+    tasks_running    = counts.r,
+    aggregate_status = CASE
+        WHEN counts.total = 0                    THEN 'queued'::text
+        WHEN counts.s + counts.f + counts.c = counts.total
+             AND counts.s = counts.total          THEN 'succeeded'
+        WHEN counts.s + counts.f + counts.c = counts.total
+             AND counts.f > 0                     THEN 'dead_letter'
+        WHEN counts.c = counts.total              THEN 'cancelled'
+        WHEN counts.r > 0                         THEN 'running'
+        ELSE 'queued'
+    END,
+    finished_at = CASE
+        WHEN counts.s + counts.f + counts.c = counts.total THEN now()
+        ELSE finished_at
+    END,
+    started_at = CASE
+        WHEN counts.r > 0 AND started_at IS NULL THEN now()
+        ELSE started_at
+    END
+FROM counts, target
+WHERE job_runs.id = target.id
+RETURNING job_runs.id, job_runs.job_id, job_runs.account_id, job_runs.trigger_kind,
+          job_runs.env_overrides, job_runs.tasks, job_runs.parallelism,
+          job_runs.retry_max, job_runs.task_timeout_s,
+          job_runs.aggregate_status, job_runs.tasks_succeeded,
+          job_runs.tasks_failed, job_runs.tasks_cancelled,
+          job_runs.tasks_running, job_runs.started_at,
+          job_runs.finished_at, job_runs.created_at
+`
+
+// The run-level fan-in. Called after every task transition. Reads
+// the live task counters and updates the aggregate_status +
+// tasks_* fields on the run row. Pure SQL — no app code involved.
+// The CHECK constraint job_runs_terminal_pair_chk enforces that
+// finished_at is set iff aggregate_status is terminal, so we set
+// finished_at inside the same UPDATE when the run just terminated.
+//
+// Returns the updated run row so the caller can emit a
+// job_run.terminal event (PR-C) without a second round-trip.
+func (q *Queries) RecomputeJobRunStatus(ctx context.Context, db DBTX, runID pgtype.UUID) (JobRun, error) {
+	row := db.QueryRow(ctx, recomputeJobRunStatus, runID)
+	var i JobRun
+	err := row.Scan(
+		&i.ID,
+		&i.JobID,
+		&i.AccountID,
+		&i.TriggerKind,
+		&i.EnvOverrides,
+		&i.Tasks,
+		&i.Parallelism,
+		&i.RetryMax,
+		&i.TaskTimeoutS,
+		&i.AggregateStatus,
+		&i.TasksSucceeded,
+		&i.TasksFailed,
+		&i.TasksCancelled,
+		&i.TasksRunning,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const revokeAllSessions = `-- name: RevokeAllSessions :many
@@ -4065,6 +4760,78 @@ type UpdateInstanceStateParams struct {
 func (q *Queries) UpdateInstanceState(ctx context.Context, db DBTX, arg UpdateInstanceStateParams) error {
 	_, err := db.Exec(ctx, updateInstanceState, arg.ID, arg.State)
 	return err
+}
+
+const updateJob = `-- name: UpdateJob :one
+UPDATE jobs SET
+    name            = COALESCE($3::text,            name),
+    image_ref       = COALESCE($4::text,       image_ref),
+    ram_mb          = COALESCE($5::int4,          ram_mb),
+    task_timeout_s  = COALESCE($6::int4,  task_timeout_s),
+    max_parallelism = COALESCE($7::int4, max_parallelism),
+    retry_max       = COALESCE($8::int4,       retry_max),
+    env_overrides   = COALESCE($9::jsonb,  env_overrides),
+    status          = COALESCE($10::text,          status),
+    updated_at      = now()
+WHERE id = $1 AND account_id = $2
+RETURNING id, account_id, kind, name, image_ref, ram_mb,
+          task_timeout_s, max_parallelism, retry_max,
+          env_overrides, status, created_at, updated_at
+`
+
+type UpdateJobParams struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	Name           pgtype.Text
+	ImageRef       pgtype.Text
+	RamMb          pgtype.Int4
+	TaskTimeoutS   pgtype.Int4
+	MaxParallelism pgtype.Int4
+	RetryMax       pgtype.Int4
+	EnvOverrides   []byte
+	Status         pgtype.Text
+}
+
+// Patches the mutable fields. NULL parameters mean "leave alone"
+// (the coalesce() pattern matches UpdateCron). The unique name
+// constraint catches rename collisions; a duplicate-name failure
+// surfaces as a mapErr(unique_violation) at the pgstore layer.
+//
+// sqlc.narg(name) emits nullable pgtype.Text / pgtype.Int4 /
+// pgtype.JSONB fields at the Go boundary; nil maps to SQL NULL
+// and COALESCE leaves the column untouched. sqlc.narg is the
+// nullable variant of sqlc.arg — it always returns NULL when the
+// Go caller passes a zero/empty pgtype wrapper.
+func (q *Queries) UpdateJob(ctx context.Context, db DBTX, arg UpdateJobParams) (Job, error) {
+	row := db.QueryRow(ctx, updateJob,
+		arg.ID,
+		arg.AccountID,
+		arg.Name,
+		arg.ImageRef,
+		arg.RamMb,
+		arg.TaskTimeoutS,
+		arg.MaxParallelism,
+		arg.RetryMax,
+		arg.EnvOverrides,
+		arg.Status,
+	)
+	var i Job
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Kind,
+		&i.Name,
+		&i.ImageRef,
+		&i.RamMb,
+		&i.TaskTimeoutS,
+		&i.MaxParallelism,
+		&i.RetryMax,
+		&i.EnvOverrides,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateOrgPlan = `-- name: UpdateOrgPlan :exec
