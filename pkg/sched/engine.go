@@ -125,6 +125,30 @@ type Notifier interface {
 	Notify(ctx context.Context, channel, payload string) error
 }
 
+// LocalJobExitWaiter (ADR-099 PR-C) is the local-host seam schedd
+// uses to read the job_task supervisor's vsock DGRAM (port 1026,
+// msg_type=4). Distinct from RoutedVMM because the vsock UDS is
+// per-host — a multi-box deployment still needs schedd to wait on
+// the box the VM lives on. In single-box deployments the
+// production implementation is *fcvm.JailerVMM (the same handle
+// that runs TriggerResumeHook). Returns (-1, -1, err) on error;
+// the engine treats context.DeadlineExceeded as DeadlineExceeded.
+type LocalJobExitWaiter interface {
+	WaitJobExit(ctx context.Context, instance string, deadline time.Duration) (exitCode int, signal int, err error)
+}
+
+// WithJobExitWaiter wires the local-host vsock waiter. Called by
+// cmd/schedd after NewEngine returns (matches the late-bound
+// dependency pattern of WithVerifier / WithAudit). Returns the
+// receiver for fluent wiring.
+func (e *Engine) WithJobExitWaiter(w LocalJobExitWaiter) *Engine {
+	if e == nil {
+		return e
+	}
+	e.jobExitWaiter = w
+	return e
+}
+
 // Engine drives wakes and parks. It is safe for concurrent use: all mutation of
 // one app's instances is serialised by a per-app lock so a Wake and a reaper
 // Park for the same app never race the ledger or the state machine.
@@ -145,6 +169,16 @@ type Engine struct {
 	// fan-out (cron storm, jobs burst) cannot OOM the control
 	// plane on cold-boot.
 	wakeLimiter *WakeRateLimiter
+	// jobExitWaiter (ADR-099 PR-C) is the local-host vsock UDS
+	// waiter for the job-task supervisor's job_exit DGRAM (port
+	// 1026, msg_type=4). Distinct from vmm because the vsock UDS
+	// is per-host (RoutedVMM forwards lifecycle RPCs to a
+	// possibly-remote vmmd, but the supervisor's DGRAM must be
+	// read on the box that hosts the VM). Nil-safe: nil is a
+	// no-op and WakeJob returns JobOutcomeBootFail rather than
+	// dereferencing. Production cmd/schedd wires a *fcvm.JailerVMM
+	// wrapper that satisfies the interface.
+	jobExitWaiter LocalJobExitWaiter
 	// verifier is the build-attestation verifier (ADR-038 / Tier 3
 	// phase 3). Wired via WithVerifier after NewEngine returns;
 	// nil means "skip verification" — kept for the unit tests

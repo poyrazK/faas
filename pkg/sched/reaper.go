@@ -134,6 +134,32 @@ type InstanceInfo struct {
 	// ScalingPolicyOrDefault; identical across rows of one app. Zero
 	// disables cooldown enforcement (the customer has not opted in).
 	ScaleInCooldownS int
+	// Kind is the instances.kind discriminator (ADR-099 / migration
+	// 00256). Carrier semantics: sourced from state.Instance.Kind
+	// in the loop's runReaper snapshot walk. Closed vocabulary:
+	// 'wake' | 'build' | 'job_task'. The reaper GATES on Kind:
+	//   - 'job_task' is reaper-exempt (ReapIdle / ReapAggressive
+	//     skip). Job tasks are run-to-completion — the supervisor
+	//     reports job_exit via vsock, the engine transitions the
+	//     instance to STOPPED, and the row never parks. LastRequest
+	//     is meaningless (no HTTP server); the idle-timeout gate
+	//     would otherwise park them on the next tick. SelectEvictions
+	//     (RAM pressure) still wins — invariant §6.2-2 is the
+	//     ceiling and the ceiling doesn't know about kind. In
+	//     practice a job_task instance exists for ≤ task.TaskTimeoutS
+	//     (+ 30 s grace) so RAM pressure on a job burst is short.
+	//   - 'wake' (default) — reaped per the existing rules.
+	//   - 'build' — reaped per the existing rules (builder VMs are
+	//     ephemeral and don't park; the reaper is irrelevant to
+	//     them but the field is here for the closed-set).
+	Kind string
+	// JobID is the jobs.id FK for a kind='job_task' instance
+	// (ADR-099 / migration 00256). Empty for kind='wake' / kind='build'.
+	// Carrier semantics: stamped from state.Instance.JobID by the
+	// loop's snapshot walk. Not consulted by the selectors today;
+	// present so future reaper slices (per-job fan-out reaping on
+	// cancel) can route without re-reading the row.
+	JobID string
 }
 
 func (i InstanceInfo) admissionMB() int {
@@ -275,6 +301,19 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		// don't enter the candidate set. RAM pressure still
 		// wins via SelectEvictions.
 		if in.WorkloadClass == state.WorkloadClassWorker {
+			continue
+		}
+		// ADR-099 PR-C: job_task instances are reaper-exempt
+		// (ReapIdle path). They are run-to-completion — the
+		// supervisor reports job_exit via vsock (port 1026,
+		// msg_type=4) and the engine transitions the row to
+		// STOPPED; the instance never parks. LastRequest is
+		// always stale (no HTTP server in the task VM), so the
+		// idle-timeout gate would otherwise park them on the
+		// next tick. Skip entirely; SelectEvictions (RAM
+		// pressure) is the only path that may touch a job
+		// task instance — invariant §6.2-2 is the ceiling.
+		if in.Kind == "job_task" {
 			continue
 		}
 		g.running++
@@ -419,6 +458,17 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 		// extra = running - 1 (limit = max(floor, 0+1)) and want to
 		// park everything above the first. We don't want that.
 		if in.WorkloadClass == state.WorkloadClassWorker {
+			continue
+		}
+		// ADR-099 PR-C: job_task instances are reaper-exempt
+		// (ReapAggressive path). Mirrors the ReapIdle gate —
+		// autoscaling target is undefined for run-to-completion
+		// workloads, so desired = ceil(0 / target) = 0 and the
+		// loop would compute extra = running - 1 and want to
+		// park everything above the first. Skip entirely;
+		// SelectEvictions remains the only path that may touch a
+		// job task instance.
+		if in.Kind == "job_task" {
 			continue
 		}
 		g, ok := byApp[in.AppID]
