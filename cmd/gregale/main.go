@@ -58,6 +58,7 @@ Commands:
   invocations  Per-account invocation ledger (invocations list|get <id> [--replay])
   invitations  Standalone invitation actions (invitations peek <token>|accept <token>)
   invoices     List issued invoices
+  jobs         Manage run-to-completion jobs (jobs list|create|info|update|rm|run|runs|cancel)
   keys         Manage API keys (keys list|add|rm|rotate|grace-window)
   login        Authenticate this machine (--token for CI)
   logout       Remove the stored token
@@ -273,6 +274,15 @@ func run(args []string) int {
 		return cmdCors(args[1:])
 	case "crons":
 		return cmdCrons(args[1:])
+	case "jobs":
+		// ADR-099 PR-E: jobs cluster. The wire surface ships in PR-D
+		// (handlers_jobs.go, pkg/api/client.go). This dispatcher routes
+		// to cmdJobs in commands_jobs.go — eight verbs share the
+		// crons dispatcher shape (list|create|info|update|rm|run|runs|
+		// cancel). The cli_meta.go entry drives bash/zsh/fish/
+		// powershell completion; the manifest-drift test asserts both
+		// arms stay in sync.
+		return cmdJobs(args[1:])
 	case "delayed-task":
 		// Tier D: scheduled-at deferred invocations (issue #557 /
 		// ADR-072 sibling). Mirrors crons for dispatcher shape
