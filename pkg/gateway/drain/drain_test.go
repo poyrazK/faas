@@ -198,62 +198,60 @@ func TestDrain_CtxCancelled(t *testing.T) {
 // Drain (in a separate goroutine) must end with Inflight==0.
 // Stress surface for the atomic + WaitGroup combo under -race.
 //
-// The "max in-flight observed" assertion is a soft degeneracy
-// check, not a hard requirement: under -race on a single-CPU
-// CI runner, the goroutines may serialise and each observe
-// Inflight()==1, so we assert ≥ 2 (the test is non-degenerate if
-// any reader ever saw two people in flight at once).
+// The "max in-flight observed" assertion is a degeneracy check: it
+// catches a run that raced past every Begin without ever seeing
+// contention, which would make the clean-Drain assertion vacuous.
 //
-// The actual load-bearing assertions are the clean Drain outcome
-// + Inflight()==0 after Drain (those would fail under any
-// Begin/Done asymmetry). The local HWM observation only catches
-// a test that races past every Begin without ever seeing
-// contention — i.e. a no-op.
+// Synchronisation is load-bearing, not defensive tidiness. Begin is
+// a NO-OP once Drain has started (drain.go: `if t.draining { return
+// func(){} }`) — correct production behaviour, since a draining
+// gateway must refuse new work. Without a barrier, the main
+// goroutine could reach Drain before the spawned goroutines were
+// scheduled; all N Begin calls would then no-op, Inflight would
+// never leave 0, and the degeneracy guard would fire with
+// maxObserved=0. That is not hypothetical: it reproduces 5/5 under
+// `-cpu=1` and was the observed CI failure on unrelated PRs.
 //
-// The previous shape ("loop until CAS fails") lost on a single-CPU
-// runner because the first goroutine to read the HWM exits the
-// loop before any other reader has a chance to observe a higher
-// value. The new shape reads N_SAMPLES per goroutine on a fixed
-// jitter interval so the global HWM is the actual peak reached
-// across all readers, not the peak any one reader hoisted to
-// before its peers were scheduled. PR #880 (c6f3242d) raised the
-// threshold to N/4=50 and the runner still lost — the threshold
-// is unreachable on a serial runtime. The right fix is to make
-// the assertion reach ≤ 2 (one reader past Inflight()==1) and
-// stop pretending the test can prove HWM on a single-CPU runtime.
+// So: `begun` guarantees every Begin has landed before Drain arms
+// the no-op path, and `observe` holds each goroutine until ALL of
+// them are in flight, so the HWM is measured against real overlap
+// rather than whatever prefix happened to be scheduled.
 func TestTracker_HighConcurrency(t *testing.T) {
 	tr := NewTracker()
-	const (
-		N         = 200
-		NSAMPLES  = 32
-		SAMPLEPER = 50 * time.Microsecond
-	)
+	const N = 200
 	var wg sync.WaitGroup
+	var begun sync.WaitGroup
+	observe := make(chan struct{})
 	var maxObserved atomic.Int64
 
+	begun.Add(N)
 	for i := 0; i < N; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			done := tr.Begin("http")
 			defer done()
-			// Read the in-flight counter NSAMPLES times with a
-			// small jitter so all readers contribute to the global
-			// HWM (the previous "CAS exit on first loss" shape
-			// serialised on a single-CPU runtime and pinned
-			// maxObserved at 1).
-			for j := 0; j < NSAMPLES; j++ {
+			begun.Done()
+			<-observe // all N are in flight before anyone measures
+			// Track the highest in-flight we ever saw locally.
+			for {
 				cur := tr.Inflight()
-				for {
-					prev := maxObserved.Load()
-					if cur <= prev || maxObserved.CompareAndSwap(prev, cur) {
-						break
-					}
+				// Compare-and-swap against the value we just read;
+				// re-loading inside the CAS would compare against a
+				// different snapshot than the guard above tested.
+				prev := maxObserved.Load()
+				if cur <= prev {
+					break
 				}
-				time.Sleep(SAMPLEPER)
+				if maxObserved.CompareAndSwap(prev, cur) {
+					break
+				}
 			}
 		}()
 	}
+
+	begun.Wait()   // every Begin has incremented the tracker
+	close(observe) // release the observers
 
 	outcome, err := tr.Drain(context.Background(), 5*time.Second)
 	wg.Wait()
