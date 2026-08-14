@@ -34,7 +34,7 @@ permissions:
   security-events: write
 
 env:
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.26.6"
   # vacuum is the OpenAPI ruleset linter used by `make spec-check`.
   # Both the version and the SHA-256 pin are mirrored from the upstream
   # checksum file at https://github.com/daveshanley/vacuum/releases — never
@@ -49,9 +49,9 @@ env:
   # GitHub release — never bump one without the other. The Makefile also
   # has a `make sqlc` guard for local devs; CI uses the binary download
   # because the `go install` path cross-compiles sqlc (with its cgo
-  # pganalyze/pg_query_go tree) from source on every cold runner (~30 s)
-  # and v1.31.1's go.mod requires Go >= 1.26, which the ubuntu-latest
-  # runner (Go 1.25.12) cannot satisfy under GOTOOLCHAIN=local.
+  # pganalyze/pg_query_go tree) from source on every cold runner (~30 s).
+  # v1.31.1's go.mod requires Go >= 1.26; GO_VERSION above satisfies
+  # this directly, but the binary download stays for cold-runner speed.
   # Same supply-chain pin pattern as vacuum above and every binary in the
   # EX44 ansible roles.
   SQLC_VERSION: "1.31.1"
@@ -104,14 +104,14 @@ jobs:
           cache-dependency-path: go.sum
 
       # golangci-lint replaces bare gofmt + go vet with a curated set of
-      # checks. v2.4.0+ is built with Go 1.25 and supports a go.mod
-      # targeting Go 1.25 (golangci-lint v1.x is built with Go 1.23 and
-      # refuses go.mod 'go 1.25.0' — see golangci/golangci-lint#5873).
-      # action v8 requires golangci-lint >= v2.1.0; v9 is current.
+      # checks. v2.9.0+ is built with Go 1.26 and supports a go.mod
+      # targeting Go 1.26 (golangci-lint v2.4.0 is built with Go 1.25
+      # and refuses go.mod 'go 1.26.0' — see golangci/golangci-lint#5873,
+      # #6272). action v9 is current.
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.4.0
+          version: v2.12.2
           args: --timeout=3m
           # Cache is built into the action; default cache key works.
 

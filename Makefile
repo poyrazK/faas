@@ -2,9 +2,11 @@
 # Go >= 1.24. One binary per cmd/ dir.
 # (Bumped from 1.23: cmd/vmmd-stream-bridge uses the Go 1.24+
 # http.Protocols API for H2C — srv.Protocols.SetUnencryptedHTTP2(true).
-# go.mod pins 1.25.7; this comment is the floor for the toolchain
+# go.mod pins 1.26.6; this comment is the floor for the toolchain
 # so a developer on 1.23.x sees a clean compile error rather than
-# a runtime panic.)
+# a runtime panic. The 1.25.7 → 1.26.6 bump closes GO-2026-5942
+# in golang.org/x/net/dns/dnsmessage (SVCB/HTTPS RR parser panic),
+# fixed in net@go1.26.6.)
 
 GO      ?= go
 GOOS    ?= $(shell $(GO) env GOOS)
@@ -378,7 +380,7 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods ## golangci-lint via go tool (matches CI version v2.4.0) + egress artifact drift + +incompatible direct-dep gate
+lint: egress-check lint-incompatible-mods ## golangci-lint via go tool (matches CI version v2.12.2) + egress artifact drift + +incompatible direct-dep gate
 	@$(GO) tool golangci-lint run
 
 .PHONY: scan
