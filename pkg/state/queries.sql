@@ -1190,3 +1190,296 @@ LIMIT $4;
 -- partition tail (rows in the default partition or
 -- the current month that are older than cutoff).
 DELETE FROM data_upstream_probes WHERE sampled_at < $1;
+
+----------------------------------------------------------------------
+-- ADR-099 jobs (run-to-completion workloads) — PR-B surface.
+--
+-- These queries are the read/write boundary for the jobs cluster.
+-- Schedd (PR-C) and apid (PR-D) call them via the Store interface
+-- (see pkg/state/store.go JobStore methods); pgstore.go and
+-- memstore.go implement them. The schema is in migrations/00255
+-- (jobs/job_runs/job_tasks). The default-OFF invariant holds until
+-- PR-D lands the customer-facing routes (FAAS_JOBS_Hobby=true).
+----------------------------------------------------------------------
+
+-- name: CreateJob :one
+-- Inserts a new job definition. The caller validates plan caps
+-- (JobMaxPerAccount etc.) BEFORE invoking this; the migration's
+-- CHECK constraints catch the remaining malformed-input cases
+-- (ram_mb > 0, max_parallelism in [1, 1000], retry_max in [0, 10],
+-- task_timeout_s in [1, 86400], name regex).
+INSERT INTO jobs (
+    account_id, kind, name, image_ref, ram_mb,
+    task_timeout_s, max_parallelism, retry_max, env_overrides
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, account_id, kind, name, image_ref, ram_mb,
+          task_timeout_s, max_parallelism, retry_max,
+          env_overrides, status, created_at, updated_at;
+
+-- name: GetJob :one
+-- Reads a job by primary key. Caller passes account_id for
+-- authorisation (the 404 / not-found is returned uniformly so a
+-- cross-account probe doesn't leak the existence of someone else's
+-- job — the row is filtered before reaching the row scan).
+SELECT id, account_id, kind, name, image_ref, ram_mb,
+       task_timeout_s, max_parallelism, retry_max,
+       env_overrides, status, created_at, updated_at
+FROM jobs WHERE id = $1 AND account_id = $2;
+
+-- name: GetJobByName :one
+-- Slug-based lookup (the dashboard + CLI render by name; the
+-- apid handlers in PR-D accept name OR id). Unique-per-account is
+-- enforced by migrations/00255's jobs_account_name_uniq_idx.
+SELECT id, account_id, kind, name, image_ref, ram_mb,
+       task_timeout_s, max_parallelism, retry_max,
+       env_overrides, status, created_at, updated_at
+FROM jobs WHERE account_id = $1 AND name = $2;
+
+-- name: ListJobsForAccount :many
+-- Reads all jobs in an account ordered by created_at DESC.
+-- Used by GET /v1/jobs (PR-D). No pagination cursor in PR-B —
+-- JobMaxPerAccount (per plan) bounds the result size well below
+-- 1000 rows even at Scale plan; PR-D adds a cursor if usage
+-- data shows we ever approach that ceiling.
+SELECT id, account_id, kind, name, image_ref, ram_mb,
+       task_timeout_s, max_parallelism, retry_max,
+       env_overrides, status, created_at, updated_at
+FROM jobs WHERE account_id = $1 ORDER BY created_at DESC;
+
+-- name: UpdateJob :one
+-- Patches the mutable fields. NULL parameters mean "leave alone"
+-- (the coalesce() pattern matches UpdateCron). The unique name
+-- constraint catches rename collisions; a duplicate-name failure
+-- surfaces as a mapErr(unique_violation) at the pgstore layer.
+--
+-- sqlc.narg(name) emits nullable pgtype.Text / pgtype.Int4 /
+-- pgtype.JSONB fields at the Go boundary; nil maps to SQL NULL
+-- and COALESCE leaves the column untouched. sqlc.narg is the
+-- nullable variant of sqlc.arg — it always returns NULL when the
+-- Go caller passes a zero/empty pgtype wrapper.
+UPDATE jobs SET
+    name            = COALESCE(sqlc.narg('name')::text,            name),
+    image_ref       = COALESCE(sqlc.narg('image_ref')::text,       image_ref),
+    ram_mb          = COALESCE(sqlc.narg('ram_mb')::int4,          ram_mb),
+    task_timeout_s  = COALESCE(sqlc.narg('task_timeout_s')::int4,  task_timeout_s),
+    max_parallelism = COALESCE(sqlc.narg('max_parallelism')::int4, max_parallelism),
+    retry_max       = COALESCE(sqlc.narg('retry_max')::int4,       retry_max),
+    env_overrides   = COALESCE(sqlc.narg('env_overrides')::jsonb,  env_overrides),
+    status          = COALESCE(sqlc.narg('status')::text,          status),
+    updated_at      = now()
+WHERE id = $1 AND account_id = $2
+RETURNING id, account_id, kind, name, image_ref, ram_mb,
+          task_timeout_s, max_parallelism, retry_max,
+          env_overrides, status, created_at, updated_at;
+
+-- name: DeleteJob :exec
+-- Soft-delete via the 'deleted' status (the migration sets the
+-- CHECK to admit 'active' | 'paused' | 'deleted'). Hard-delete
+-- cascades to job_runs + job_tasks per the FK definitions; the
+-- soft path lets the customer undelete within a 7-day window
+-- (PR-D wires the recovery endpoint).
+UPDATE jobs SET status = 'deleted', updated_at = now()
+WHERE id = $1 AND account_id = $2;
+
+-- name: CreateJobRun :one
+-- Materialises a run + its tasks in one shot via INSERT ... SELECT.
+-- The fan-out row generator uses generate_series to produce N
+-- task rows with task_index 0..N-1. Returns the run row; the
+-- caller reads the task rows separately via ListJobTasksForRun.
+-- Per ADR-099 §Decision 6, the run is queued and the dispatch
+-- tick (PR-C) claims tasks from job_tasks_ready_idx.
+INSERT INTO job_runs (
+    job_id, account_id, trigger_kind, env_overrides,
+    tasks, parallelism, retry_max, task_timeout_s
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, job_id, account_id, trigger_kind, env_overrides,
+          tasks, parallelism, retry_max, task_timeout_s,
+          aggregate_status, tasks_succeeded, tasks_failed,
+          tasks_cancelled, tasks_running, started_at,
+          finished_at, created_at;
+
+-- name: InsertJobTasks :copyfrom
+-- Materialises the task rows for a newly-created run. Runs as a
+-- pgx.CopyFrom in pgstore (one round-trip for N rows). The
+-- (run_id, task_index) PK catches duplicate inserts so a retry
+-- after a partial failure is safe.
+INSERT INTO job_tasks (run_id, task_index) VALUES ($1, $2);
+
+-- name: GetJobRun :one
+SELECT id, job_id, account_id, trigger_kind, env_overrides,
+       tasks, parallelism, retry_max, task_timeout_s,
+       aggregate_status, tasks_succeeded, tasks_failed,
+       tasks_cancelled, tasks_running, started_at,
+       finished_at, created_at
+FROM job_runs WHERE id = $1 AND account_id = $2;
+
+-- name: ListJobRunsForJob :many
+SELECT id, job_id, account_id, trigger_kind, env_overrides,
+       tasks, parallelism, retry_max, task_timeout_s,
+       aggregate_status, tasks_succeeded, tasks_failed,
+       tasks_cancelled, tasks_running, started_at,
+       finished_at, created_at
+FROM job_runs
+WHERE job_id = $1 AND account_id = $2
+ORDER BY created_at DESC;
+
+-- name: ClaimJobTasks :many
+-- Atomically claim up to N queued tasks for a run. The schedd
+-- dispatch tick (PR-C) calls this in a loop until it has filled
+-- max_parallelism slots. FOR UPDATE SKIP LOCKED is the canonical
+-- shape; two schedd instances never grab the same task row.
+-- Returns the claimed (run_id, task_index) pairs; the caller
+-- flips status to 'claimed' via MarkJobTaskClaimed below.
+--
+-- This is a TWO-step pattern in PR-B: claim + update. PR-C may
+-- collapse it into a single CTE if the schedd hot-path profiling
+-- shows the round-trip matters (it doesn't at the per-second tick
+-- rate, but the dispatch tick is the load-bearing surface).
+SELECT run_id, task_index FROM job_tasks
+WHERE (run_id, task_index) IN (
+    SELECT candidate.run_id, candidate.task_index FROM job_tasks AS candidate
+    WHERE candidate.run_id = $1 AND candidate.status = 'queued'
+    ORDER BY candidate.task_index
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+ORDER BY task_index;
+
+-- name: MarkJobTaskClaimed :exec
+-- Flips status queued → claimed and stamps instance_id. instance_id
+-- is set by the schedd to the newly-created job_task instance row
+-- (see pkg/state/jobs.go's WriteJobInstance helper in PR-C).
+UPDATE job_tasks SET
+    status = 'claimed',
+    instance_id = $3,
+    started_at = now()
+WHERE run_id = $1 AND task_index = $2 AND status = 'queued';
+
+-- name: MarkJobTaskSucceeded :exec
+UPDATE job_tasks SET
+    status = 'succeeded',
+    finished_at = now()
+WHERE run_id = $1 AND task_index = $2 AND status = 'claimed';
+
+-- name: MarkJobTaskFailed :exec
+-- Marks a task as failed with an error_class + error_message.
+-- The run-level fan-in (RecomputeJobRunStatus) decides whether
+-- to retry (increment attempt) or dead-letter based on retry_max.
+-- attempt is bumped atomically here so the next claim picks up
+-- the next attempt.
+UPDATE job_tasks SET
+    status = 'failed',
+    error_class = $3,
+    error_message = $4,
+    attempt = attempt + 1,
+    finished_at = now()
+WHERE run_id = $1 AND task_index = $2 AND status = 'claimed';
+
+-- name: MarkJobTaskTimeout :exec
+-- Distinct from MarkJobTaskFailed because the watchdog exit
+-- code (PR-C's job_supervisor) classifies timeouts separately
+-- for retry policy. PR-D's dead-letter endpoint surfaces the
+-- error_class breakdown.
+UPDATE job_tasks SET
+    status = 'timeout',
+    error_class = 'timeout',
+    attempt = attempt + 1,
+    finished_at = now()
+WHERE run_id = $1 AND task_index = $2 AND status = 'claimed';
+
+-- name: MarkJobTaskCancelled :exec
+-- User-initiated cancel via DELETE /v1/jobs/{name}/runs/{id}.
+-- Only flips if status is queued or claimed (not already
+-- terminal) — terminal tasks stay terminal.
+UPDATE job_tasks SET
+    status = 'cancelled',
+    finished_at = now()
+WHERE run_id = $1 AND task_index = $2
+  AND status IN ('queued', 'claimed');
+
+-- name: MarkJobTaskOOM :exec
+-- Guest-init's OOM watchdog (PR-C job_supervisor) reports OOM
+-- exits; the task is marked terminal with the 'oom' error_class
+-- for billing exemption (a task that OOM'd before doing useful
+-- work shouldn't be charged). PR-D's usage_minutes rollup (PR-A
+-- 00257) honours this.
+UPDATE job_tasks SET
+    status = 'oom',
+    error_class = 'oom',
+    finished_at = now()
+WHERE run_id = $1 AND task_index = $2 AND status = 'claimed';
+
+-- name: RecomputeJobRunStatus :one
+-- The run-level fan-in. Called after every task transition. Reads
+-- the live task counters and updates the aggregate_status +
+-- tasks_* fields on the run row. Pure SQL — no app code involved.
+-- The CHECK constraint job_runs_terminal_pair_chk enforces that
+-- finished_at is set iff aggregate_status is terminal, so we set
+-- finished_at inside the same UPDATE when the run just terminated.
+--
+-- Returns the updated run row so the caller can emit a
+-- job_run.terminal event (PR-C) without a second round-trip.
+WITH counts AS (
+    SELECT
+        COUNT(*) FILTER (WHERE status = 'succeeded') AS s,
+        COUNT(*) FILTER (WHERE status IN ('failed', 'timeout', 'oom')) AS f,
+        COUNT(*) FILTER (WHERE status = 'cancelled') AS c,
+        COUNT(*) FILTER (WHERE status = 'claimed') AS r,
+        COUNT(*) AS total
+    FROM job_tasks WHERE run_id = $1
+),
+target AS (
+    SELECT id FROM job_runs WHERE id = $1
+)
+UPDATE job_runs SET
+    tasks_succeeded = counts.s,
+    tasks_failed     = counts.f,
+    tasks_cancelled  = counts.c,
+    tasks_running    = counts.r,
+    aggregate_status = CASE
+        WHEN counts.total = 0                    THEN 'queued'::text
+        WHEN counts.s + counts.f + counts.c = counts.total
+             AND counts.s = counts.total          THEN 'succeeded'
+        WHEN counts.s + counts.f + counts.c = counts.total
+             AND counts.f > 0                     THEN 'dead_letter'
+        WHEN counts.c = counts.total              THEN 'cancelled'
+        WHEN counts.r > 0                         THEN 'running'
+        ELSE 'queued'
+    END,
+    finished_at = CASE
+        WHEN counts.s + counts.f + counts.c = counts.total THEN now()
+        ELSE finished_at
+    END,
+    started_at = CASE
+        WHEN counts.r > 0 AND started_at IS NULL THEN now()
+        ELSE started_at
+    END
+FROM counts, target
+WHERE job_runs.id = target.id
+RETURNING job_runs.id, job_runs.job_id, job_runs.account_id, job_runs.trigger_kind,
+          job_runs.env_overrides, job_runs.tasks, job_runs.parallelism,
+          job_runs.retry_max, job_runs.task_timeout_s,
+          job_runs.aggregate_status, job_runs.tasks_succeeded,
+          job_runs.tasks_failed, job_runs.tasks_cancelled,
+          job_runs.tasks_running, job_runs.started_at,
+          job_runs.finished_at, job_runs.created_at;
+
+-- name: CountJobsForAccount :one
+-- Per-account quota check (mirrors CountCronsForAccount in the
+-- Cron domain). PR-D's CreateJob handler calls this BEFORE CreateJob
+-- to enforce JobMaxPerAccount. Returns int4 so it matches the
+-- pgx int4 scan convention.
+SELECT COUNT(*)::int4 FROM jobs
+WHERE account_id = $1 AND status != 'deleted';
+
+-- name: ListReadyJobTasks :many
+-- Schedd dispatch-tick hot path (PR-C). Returns N queued tasks
+-- across all runs, ordered by run_id + task_index. Backed by the
+-- job_tasks_ready_idx partial index (WHERE status = 'queued').
+-- Used by the dispatch tick to surface candidate work without
+-- joining to job_runs; the per-run ClaimJobTasks above does the
+-- fine-grained claim once a run is selected.
+SELECT run_id, task_index FROM job_tasks
+WHERE status = 'queued'
+ORDER BY run_id, task_index
+LIMIT $1;
