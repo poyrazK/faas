@@ -586,12 +586,11 @@ const testDomain = "apps.test.example"
 // kept as a no-op so the contiguity gate doesn't trip on the
 // renumber chain).
 //
-// PR-B (this PR, #875, ADR-096 handlers + SDK + OpenAPI) adds
-// NO migration; the head stays at 237 against main at merge.
-// PR-C (e2e + ADR-096 docs) will need its own slot fence —
-// pre-check via `gh api .../contents/migrations?ref=main`
-// before opening the PR per the cross-PR slot precheck pattern.
-const e2eMigrationTarget = 237
+// ADR-099 jobs cluster (PR-A landed 00243_tenant_surfaces etc., PR-A
+// schema at 00244 on this branch, PR-870 secretscan at 00264): head
+// migrated to 264 against main at merge. The jobs e2e boots apid +
+// meterd; schedd + vmmd need metal (separate suite).
+const e2eMigrationTarget = 264
 
 // StartWithEnv is the G2-aware entrypoint used by the secrets e2e:
 // the test wants apid to load a specific host.age.pub (FAAS_HOST_AGE_
