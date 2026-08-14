@@ -383,6 +383,70 @@ three SDKs. `make spec-sync` is the gate (per ADR-085).
 - [ ] Dashboard renders `job.run.finished` rows in the run
       history view.
 
+### Implementation notes (mega-PR landed; deltas vs the planned file list)
+
+The v1 cluster shipped as a single mega-PR on
+`worktree-jobs-pr-b-state` consolidating PR-0 (rate-limit
+separation) → PR-A (schema, §6 widening) → PR-B (pkg/state CRUD
++ sqlc) → PR-C (schedd `runJobsTick` + `Engine.WakeJob` +
+vsock `job_exit` decode + guest-init supervisor + reaper kind
+filter) → PR-D (apid handlers + OpenAPI + SDK regen) → PR-E
+(CLI + e2e + harness migration head) → PR-F (this section,
+spec §4.7.4, runbooks, STATUS). As-built deltas:
+
+- **Wake path factoring (§Decision 9 carrier)**. `Engine.Wake`
+  body was extracted into `Engine.bootInstance` so both the
+  app-wake and `Engine.WakeJob` paths share the
+  VM-creation harness. The app path keeps the snapshot
+  restore; the job path skips `SnapLoad=Yes` and uses
+  `instanceKind='job_task'` to drive the cgroup scope +
+  reaper filter. The migration that added `instances.kind`
+  CHECK has a side-effect of FORCING every existing writer to
+  stamp `'app'` explicitly — that was the intended
+  consequence and landed cleanly.
+- **Vsock discriminator (§Decision 9 carry-over)**. `port=1026`
+  carries two `msg_type`s: `3` (pre-existing characterization)
+  and `4` (new `job_exit`). Both share the conn but the
+  `msg_type` byte disambiguates. `pkg/fcvm/vmm.go::WaitJobExit`
+  is the new entry point; the legacy `WaitCharacterization`
+  (msg_type=3) is unchanged.
+- **CLI location** (§Decision 9 originally cited
+  `cmd/gregale/cmd/jobs.go`). Corrected to
+  `cmd/gregale/commands_jobs.go` — `cmd/gregale` is the package
+  root; no `cmd/` subdirectory exists.
+- **E2E harness migration head** (§Decision 5). `pkg/e2etest/harness.go`
+  bumps `e2eMigrationTarget` from 237 → 264 over the merge;
+  the seams that matter: FAAS_JOBS_ENABLED=1 stamped on the
+  harness, `APID | Meterd` boot (no schedd/vmmd — those need
+  metal). The Free-plan gate (404 jobs_not_allowed) is
+  exercised in `TestJobsCRUDMatrixPg`; the Hobby cap
+  (= 5 in `pkg/api/limits.go::PlanHobby.JobMaxPerAccount`) is
+  exercised in `TestJobRunQuotaBreach`.
+- **kind naming**: `instances.kind='job'` is the wire value
+  (the plan picked `'job'` for the column discriminator). The
+  SCHEDULER-side `Kind` carrier uses the same vocabulary
+  (`wake | build | job_task`); `job_task` is the schedd path
+  label, `job` is the wire label — the carrier↔wire map is in
+  `pkg/sched/loop.go::kindForInstance`. ADR-099 §Decision 9
+  pin: a future name change is an ADR-bound decision, not a
+  free refactor.
+- **Spec drift**: §6 (state machine) and §4.7.4 (this
+  ADR's v1 appendage) updated in the same PR cluster as
+  the `instances_kind_check` migration. The CI spec-sync
+  drift gate would otherwise fail.
+
+### Out of scope landed as deferred (separate ADRs required)
+
+- **meterd rollup widening** — `usage_minutes.meter_kind='job'`
+  rows are flushed per-minute but not yet rolled up to
+  `usage_daily` against the `(account_id, NULL, day)` bucket.
+  Functions correctly for billing (per-second `mb_seconds`
+  meter is correct), but dashboards show NULL-app-id daily
+  rows. Tracking issue: separate ADR.
+- **jobs_minutes_metered_total Prometheus metric** —
+  referenced in this ADR §Decision 10 / Acceptance but the
+  wiring belongs in a meterd follow-up PR.
+
 ### Risk register
 
 1. **Cold-boot wake-storm on task fan-out** (mirrors ADR-080
