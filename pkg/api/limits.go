@@ -340,6 +340,18 @@ type Limits struct {
 	CronLimitPerApp     int
 	CronLimitPerAccount int
 
+	// JobMaxPerAccount caps how many job definitions an account
+	// may hold (ADR-099, migrations/00255). Soft-enforced in
+	// pkg/state.PgStore.CreateJobIfUnderQuota. Per-plan shape
+	// (mirrors CronLimitPerAccount but a single number — there is
+	// no per-app cron analogue for jobs):
+	//   Free 0 · Hobby 5 · Pro 25 · Scale 100.
+	// Free = 0 because jobs are a paid workload (the budget is the
+	// GB-h bill, not the count); the dashboard surfaces "Upgrade to
+	// create jobs" on Free. Reconciled with the financial model in
+	// task #19.
+	JobMaxPerAccount int
+
 	// EvictionPriorityReservedAllowed (issue #475) gates the per-app
 	// reserved eviction tier. Free = false (no reserved apps on the
 	// abuse-floor tier); Hobby+ = true. apid's updateApp handler
@@ -877,6 +889,9 @@ var planLimits = map[Plan]Limits{
 		// value the store still reads.
 		CronLimitPerApp:     0,
 		CronLimitPerAccount: 0,
+		// ADR-099: Free plan ships 0 jobs. The dashboard renders
+		// "Upgrade to create jobs" on POST /v1/jobs (PR-D).
+		JobMaxPerAccount: 0,
 		// Issue #475: Free stays off the reserved eviction tier. The
 		// abuse-floor tier has no reserved-tier entitlement; per-account
 		// cap is 0 so the gate fails closed.
@@ -1113,6 +1128,8 @@ var planLimits = map[Plan]Limits{
 		// template's tutorials.
 		CronLimitPerApp:     5,
 		CronLimitPerAccount: 10,
+		// ADR-099: Hobby plan ships 5 jobs (CI nightly + scrapers).
+		JobMaxPerAccount: 5,
 		// Issue #475: Hobby gets 1 reserved-tier app. One healthcheck-
 		// critical service (status page, uptime probe) is the typical
 		// Hobby workload that needs cross-account RAM-pressure
@@ -1350,6 +1367,8 @@ var planLimits = map[Plan]Limits{
 		// run more apps (25) than Hobby (5).
 		CronLimitPerApp:     20,
 		CronLimitPerAccount: 50,
+		// ADR-099: Pro plan ships 25 jobs (parity with DeployedApps).
+		JobMaxPerAccount: 25,
 		// Issue #475: Pro gets 2 reserved-tier apps. Pro customers
 		// run customer-facing APIs + background workers; the +1 vs
 		// Hobby tracks the +5 Pro app budget. Reserved-tier RAM cost
@@ -1572,6 +1591,8 @@ var planLimits = map[Plan]Limits{
 		// at the per-app cap, the typical SaaS fan-out.
 		CronLimitPerApp:     100,
 		CronLimitPerAccount: 500,
+		// ADR-099: Scale plan ships 100 jobs (parity with DeployedApps).
+		JobMaxPerAccount: 100,
 		// Issue #475: Scale gets 4 reserved-tier apps. 2× Pro tracks
 		// the doubling in DeployedApps (25 → 100) and the doubling in
 		// MaxConcurrency (5 → 20). At Scale's 1024 MB instance RAM +
