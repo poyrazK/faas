@@ -4826,3 +4826,146 @@ type AppErrorSampleResponse struct {
 	HeadersSample     map[string]string `json:"headers_sample"`
 	RedactionsApplied []string          `json:"redactions_applied"`
 }
+
+// --- Jobs (ADR-099 PR-D) --------------------------------------------------
+//
+// Job / JobRun / JobTask wire shapes. The customer-facing API uses
+// Name as the slug (NOT the row UUID); the row UUIDs are surfaced
+// as `id` on every JobResponse. This mirrors the App/Deployment split
+// (apps have a slug, deployments have an opaque UUID) so a customer's
+// `gregale jobs list` reads naturally.
+//
+// The DTOs live in pkg/api (no pkg/state import) per the
+// pkg-api-cannot-import-pkg-state contract. Boundary conversion
+// from state.Job → api.JobResponse happens in cmd/apid/handlers_jobs.go.
+
+// JobResponse is the read-only view of one job. The Kind/Status
+// fields use the closed vocabulary (JobKind / JobStatus enum
+// strings); env_overrides is the per-job overlay (ADR-090
+// sealed-blob convention; the wire returns plaintext because
+// secrets are NOT supported here — env_overrides is plaintext
+// key=value pairs only, surfaced for inspection).
+type JobResponse struct {
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Kind           string            `json:"kind"`
+	ImageRef       string            `json:"image_ref"`
+	RAMMB          int32             `json:"ram_mb"`
+	TaskTimeoutS   int32             `json:"task_timeout_s"`
+	MaxParallelism int32             `json:"max_parallelism"`
+	RetryMax       int32             `json:"retry_max"`
+	EnvOverrides   map[string]string `json:"env_overrides"`
+	Status         string            `json:"status"`
+	CreatedAt      string            `json:"created_at"`
+	UpdatedAt      string            `json:"updated_at"`
+}
+
+// CreateJobRequest is the body of POST /v1/jobs. Every field is
+// required EXCEPT env_overrides (default {}). The Name is the
+// slug — k8s-style lowercase + dashes, max 63 chars (validated
+// server-side via the same ValidateAppSlug helper the apps path
+// uses).
+type CreateJobRequest struct {
+	Name           string            `json:"name"`
+	ImageRef       string            `json:"image_ref"`
+	RAMMB          int32             `json:"ram_mb"`
+	TaskTimeoutS   int32             `json:"task_timeout_s"`
+	MaxParallelism int32             `json:"max_parallelism"`
+	RetryMax       int32             `json:"retry_max"`
+	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
+}
+
+// UpdateJobRequest is a partial update — every field is a pointer
+// so absent vs zero is distinguishable. nil = leave unchanged;
+// non-nil = replace. The CLI uses fs.Visit to build the request
+// from the user's --flag set; the wire shape is uniform across
+// crons / jobs / alerts.
+type UpdateJobRequest struct {
+	ImageRef       *string           `json:"image_ref,omitempty"`
+	RAMMB          *int32            `json:"ram_mb,omitempty"`
+	TaskTimeoutS   *int32            `json:"task_timeout_s,omitempty"`
+	MaxParallelism *int32            `json:"max_parallelism,omitempty"`
+	RetryMax       *int32            `json:"retry_max,omitempty"`
+	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
+}
+
+// ListJobsResponse is the page shape for GET /v1/jobs. Cursor
+// is the jobs.id UUIDv7 — handler emits the last row's id as
+// NextBefore when len(Jobs) == limit. Empty NextBefore = end of
+// page. Quota carries JobMaxPerAccount so the CLI can render a
+// "3/25 jobs" progress bar without a separate call.
+type ListJobsResponse struct {
+	Jobs       []JobResponse `json:"jobs"`
+	NextBefore string        `json:"next_before,omitempty"`
+	Quota      int           `json:"quota_max"`
+	Count      int           `json:"count"`
+}
+
+// JobRunResponse is the read-only view of one run. aggregate_status
+// is the closed JobRunStatus vocabulary; tasks_* counters reflect
+// the per-task fan-in the dispatch tick writes. started_at /
+// finished_at are RFC3339 strings (omitted when NULL — a run that
+// hasn't started yet has no started_at).
+type JobRunResponse struct {
+	ID              string            `json:"id"`
+	JobID           string            `json:"job_id"`
+	TriggerKind     string            `json:"trigger_kind"`
+	Tasks           int32             `json:"tasks"`
+	Parallelism     int32             `json:"parallelism"`
+	EnvOverrides    map[string]string `json:"env_overrides,omitempty"`
+	AggregateStatus string            `json:"aggregate_status"`
+	TasksSucceeded  int32             `json:"tasks_succeeded"`
+	TasksFailed     int32             `json:"tasks_failed"`
+	TasksCancelled  int32             `json:"tasks_cancelled"`
+	TasksRunning    int32             `json:"tasks_running"`
+	StartedAt       string            `json:"started_at,omitempty"`
+	FinishedAt      string            `json:"finished_at,omitempty"`
+	CreatedAt       string            `json:"created_at"`
+}
+
+// CreateRunRequest is the body of POST /v1/jobs/{name}/runs.
+// Tasks is required; parallelism + env_overrides default to the
+// job's configured values (parallelism = job.max_parallelism,
+// env_overrides = job.env_overrides).
+type CreateRunRequest struct {
+	Tasks        int32             `json:"tasks"`
+	Parallelism  *int32            `json:"parallelism,omitempty"`
+	EnvOverrides map[string]string `json:"env_overrides,omitempty"`
+}
+
+// ListRunsResponse is the page shape for GET /v1/jobs/{name}/runs.
+type ListRunsResponse struct {
+	Runs       []JobRunResponse `json:"runs"`
+	NextBefore string           `json:"next_before,omitempty"`
+}
+
+// JobTaskResponse is the read-only view of one task row. error_class
+// + error_message are populated when status is failed/timeout/oom
+// (closed vocabulary; nil when status is queued/claimed/succeeded).
+// instance_id is the per-task VM's instances.id (PR-A widening) —
+// nil until the schedd claims the task.
+type JobTaskResponse struct {
+	TaskIndex    int32   `json:"task_index"`
+	Status       string  `json:"status"`
+	Attempt      int32   `json:"attempt"`
+	InstanceID   *string `json:"instance_id,omitempty"`
+	ErrorClass   *string `json:"error_class,omitempty"`
+	ErrorMessage *string `json:"error_message,omitempty"`
+	StartedAt    string  `json:"started_at,omitempty"`
+	FinishedAt   string  `json:"finished_at,omitempty"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+// ListRunTasksResponse is the page shape for GET /v1/jobs/{name}/runs/{run_id}/tasks.
+type ListRunTasksResponse struct {
+	Tasks      []JobTaskResponse `json:"tasks"`
+	NextBefore string            `json:"next_before,omitempty"`
+}
+
+// RetryTaskRequest is the body of POST /v1/jobs/{name}/runs/{run_id}/tasks/{idx}/retry.
+// Manual retry of a failed/deadline task — the dispatch tick picks up
+// the new attempt on the next runJobsTick. Reset is the per-task
+// attempt counter reset flag (default true).
+type RetryTaskRequest struct {
+	ResetAttempt *bool `json:"reset_attempt,omitempty"`
+}

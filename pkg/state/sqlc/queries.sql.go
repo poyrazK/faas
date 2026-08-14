@@ -3513,6 +3513,58 @@ func (q *Queries) ListRecentEventsForAccount(ctx context.Context, db DBTX, arg L
 	return items, nil
 }
 
+const listRunTasksForRun = `-- name: ListRunTasksForRun :many
+SELECT run_id, task_index, status, attempt, instance_id,
+       error_class, error_message, started_at, finished_at, created_at
+FROM job_tasks
+WHERE run_id = $1
+  AND ($2 = '' OR task_index > $2::int)
+ORDER BY task_index ASC
+LIMIT $3
+`
+
+type ListRunTasksForRunParams struct {
+	RunID   pgtype.UUID
+	Column2 interface{}
+	Limit   int32
+}
+
+// ADR-099 PR-D page the child task rows for one run in
+// task_index order. before is the cursor (rows with task_index
+// > before are returned); empty before = first page. Limit
+// caps the page size; the apid handler clamps limit to
+// jobsMaxLimit (500).
+func (q *Queries) ListRunTasksForRun(ctx context.Context, db DBTX, arg ListRunTasksForRunParams) ([]JobTask, error) {
+	rows, err := db.Query(ctx, listRunTasksForRun, arg.RunID, arg.Column2, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []JobTask{}
+	for rows.Next() {
+		var i JobTask
+		if err := rows.Scan(
+			&i.RunID,
+			&i.TaskIndex,
+			&i.Status,
+			&i.Attempt,
+			&i.InstanceID,
+			&i.ErrorClass,
+			&i.ErrorMessage,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessions = `-- name: ListSessions :many
 select id, account_id,
        coalesce(host(issued_ip), '') as issued_ip,
@@ -3585,6 +3637,25 @@ update custom_domains set verified_at = now() where domain = $1
 
 func (q *Queries) MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error {
 	_, err := db.Exec(ctx, markDomainVerified, domain)
+	return err
+}
+
+const markJobRunCancelled = `-- name: MarkJobRunCancelled :exec
+UPDATE job_runs SET
+    aggregate_status = 'cancelled',
+    finished_at = now()
+WHERE id = $1 AND aggregate_status IN ('queued', 'running')
+`
+
+// ADR-099 PR-D user-initiated bulk cancel. Non-terminal runs
+// only — calling on an already-succeeded/dead_letter/cancelled
+// run is a no-op (the dispatch tick is the single source of
+// truth for terminal-status flips). Caller (apid's cancelRun
+// handler) emits pg_notify after this UPDATE so schedd can
+// fan out per-task MarkJobTaskCancelled on in-flight tasks and
+// call RecomputeJobRunStatus to settle the aggregate.
+func (q *Queries) MarkJobRunCancelled(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, markJobRunCancelled, id)
 	return err
 }
 
@@ -3703,6 +3774,38 @@ type MarkJobTaskRequeuedParams struct {
 // it. Mirrors the cron tick's AtCapacity backoff shape.
 func (q *Queries) MarkJobTaskRequeued(ctx context.Context, db DBTX, arg MarkJobTaskRequeuedParams) error {
 	_, err := db.Exec(ctx, markJobTaskRequeued, arg.RunID, arg.TaskIndex)
+	return err
+}
+
+const markJobTaskRetried = `-- name: MarkJobTaskRetried :exec
+UPDATE job_tasks SET
+    status = 'queued',
+    instance_id = NULL,
+    error_class = NULL,
+    error_message = NULL,
+    started_at = NULL,
+    finished_at = NULL,
+    attempt = CASE WHEN $3::int = 1 THEN 0 ELSE attempt END
+WHERE run_id = $1 AND task_index = $2
+  AND status IN ('failed', 'timeout', 'oom', 'cancelled')
+`
+
+type MarkJobTaskRetriedParams struct {
+	RunID     pgtype.UUID
+	TaskIndex int32
+	Column3   int32
+}
+
+// ADR-099 PR-D manual retry. Flips a terminal-failure task back
+// to 'queued' so the dispatch tick re-claims it. The status
+// whitelist mirrors the retryTask handler's pre-check; the
+// SQL-side gate prevents a parallel dispatch tick from racing
+// the manual retry (the row is only flipped when the status is
+// already terminal-failure). reset_attempt=true (sqlc param 3,
+// 0/1) zeroes the per-task attempt counter; false leaves it for
+// retry_max enforcement on the dispatch path.
+func (q *Queries) MarkJobTaskRetried(ctx context.Context, db DBTX, arg MarkJobTaskRetriedParams) error {
+	_, err := db.Exec(ctx, markJobTaskRetried, arg.RunID, arg.TaskIndex, arg.Column3)
 	return err
 }
 

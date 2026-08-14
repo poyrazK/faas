@@ -2767,3 +2767,150 @@ func (c *Client) GetRekeyProgress(ctx context.Context) (RekeyProgress, error) {
 	var out RekeyProgress
 	return out, c.do(ctx, "GET", "/v1/admin/secrets/rekey-progress", nil, &out)
 }
+
+// --- ADR-099 PR-D jobs (run-to-completion workloads) ------------------------
+//
+// The jobs surface mirrors the apps surface: a job has a slug
+// (`name`), immutable `image_ref`, and per-task RAM/timeout knobs;
+// runs are execution instances with task fan-out. The wire shape
+// uses Name as the slug (matching `gregale jobs create <name>`),
+// not the row UUID — UUIDs surface as `id` on every JobResponse
+// (parallel to App vs Deployment split).
+//
+// Auth: same as the apps surface — bearer key for the account.
+// 404 with code=jobs_not_allowed when FAAS_JOBS_ENABLED=0 or the
+// plan has JobMaxPerAccount == 0 (Free today). 403 with
+// code=job_quota_exceeded when the per-account cap is hit.
+
+// ListJobs returns every job on the account. before is the cursor
+// (jobs.id UUIDv7); pass empty for the first page. limit <= 0 falls
+// back to the server default (50, matches the crons/alerts limit
+// helper). Quota carries JobMaxPerAccount so the CLI can render a
+// progress bar without a second call.
+func (c *Client) ListJobs(ctx context.Context, before string, limit int) (ListJobsResponse, error) {
+	path := "/v1/jobs"
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	var out ListJobsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// CreateJob registers a new job definition. Returns the created
+// JobResponse with id (UUIDv7) and timestamps stamped by apid.
+// 400 with code=job_invalid / job_ram_too_large / job_timeout_too_long
+// on shape failures; 403 with code=job_quota_exceeded on the
+// per-account cap; 404 with code=jobs_not_allowed on Free /
+// dark-launch.
+func (c *Client) CreateJob(ctx context.Context, req CreateJobRequest) (JobResponse, error) {
+	var out JobResponse
+	return out, c.do(ctx, "POST", "/v1/jobs", req, &out)
+}
+
+// GetJob returns one job by id. IDOR-safe — the server returns 404
+// job_not_found on missing OR cross-account so the SDK does not
+// need a local branch that could leak existence.
+func (c *Client) GetJob(ctx context.Context, id string) (JobResponse, error) {
+	var out JobResponse
+	return out, c.do(ctx, "GET", "/v1/jobs/"+id, nil, &out)
+}
+
+// UpdateJob applies a partial update. Pointer-based fields let the
+// caller distinguish "unset" from "explicit zero" — matches the
+// UpdateApp / UpdateCron / UpdateAlertRule partial-update shape.
+// PATCH; idempotency-key auto-mint covers this call.
+func (c *Client) UpdateJob(ctx context.Context, id string, req UpdateJobRequest) (JobResponse, error) {
+	var out JobResponse
+	return out, c.do(ctx, "PATCH", "/v1/jobs/"+id, req, &out)
+}
+
+// DeleteJob removes a job definition. Returns nil on 204; the
+// server rejects with 409 if any non-terminal run still references
+// the job (the CLI prints "cancel runs first" on this case).
+func (c *Client) DeleteJob(ctx context.Context, id string) error {
+	return c.do(ctx, "DELETE", "/v1/jobs/"+id, nil, nil)
+}
+
+// CreateRun schedules a new run of an existing job. tasks is
+// required; parallelism + env_overrides default to the job's
+// configured values when omitted. 202 with the new JobRunResponse
+// (aggregate_status='queued'); the dispatch tick picks up ready
+// tasks on the next runJobsTick (default 1s).
+func (c *Client) CreateRun(ctx context.Context, jobID string, req CreateRunRequest) (JobRunResponse, error) {
+	var out JobRunResponse
+	return out, c.do(ctx, "POST", "/v1/jobs/"+jobID+"/runs", req, &out)
+}
+
+// GetRun returns one run by id. IDOR-safe (404 run_not_found on
+// missing OR cross-account).
+func (c *Client) GetRun(ctx context.Context, runID string) (JobRunResponse, error) {
+	var out JobRunResponse
+	return out, c.do(ctx, "GET", "/v1/runs/"+runID, nil, &out)
+}
+
+// ListRuns pages the runs for a job. before is the cursor (runs.id
+// UUIDv7); pass empty for the first page. limit <= 0 falls back to
+// the server default (50, matches the cron-runs / alert-runs shape).
+func (c *Client) ListRuns(ctx context.Context, jobID, before string, limit int) (ListRunsResponse, error) {
+	path := "/v1/jobs/" + jobID + "/runs"
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	var out ListRunsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// CancelRun stops a non-terminal run. 409 job_run_cancelled if the
+// run is already in a terminal state (the dispatch tick has
+// stamped succeeded / failed / deadline_exceeded). 202 with the
+// updated JobRunResponse on success — aggregate_status flips to
+// 'cancelling' immediately, 'cancelled' once all in-flight tasks
+// report back.
+func (c *Client) CancelRun(ctx context.Context, runID string) (JobRunResponse, error) {
+	var out JobRunResponse
+	return out, c.do(ctx, "POST", "/v1/runs/"+runID+"/cancel", nil, &out)
+}
+
+// ListRunTasks pages the task rows for a run. before is the cursor
+// (job_tasks.task_index); the tasks are stored in task_index order
+// so the cursor is the last-seen index + 1.
+func (c *Client) ListRunTasks(ctx context.Context, runID, before string, limit int) (ListRunTasksResponse, error) {
+	path := "/v1/runs/" + runID + "/tasks"
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	var out ListRunTasksResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// RetryTask manually retries a failed/deadline task. The dispatch
+// tick picks up the new attempt on the next runJobsTick.
+// reset_attempt (default true) zeroes the per-task attempt counter;
+// the retry_max cap is still enforced by the dispatch path. 404
+// job_task_not_found when the run id or task_index is unknown OR
+// cross-account.
+func (c *Client) RetryTask(ctx context.Context, runID string, taskIndex int, req RetryTaskRequest) (JobTaskResponse, error) {
+	var out JobTaskResponse
+	return out, c.do(ctx, "POST", fmt.Sprintf("/v1/runs/%s/tasks/%d/retry", runID, taskIndex), req, &out)
+}

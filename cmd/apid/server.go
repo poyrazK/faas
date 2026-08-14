@@ -1034,6 +1034,26 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/apps/{slug}/alerts/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAlertRule))))
 	mux.HandleFunc("POST /v1/apps/{slug}/alerts/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAlertRuleSecret))))
 
+	// ADR-099 PR-D jobs (run-to-completion workloads). Mirror the
+	// crons decorator chain: authLimited → requireMFA → requireScope
+	// → idempotent (writes only). The FAAS_JOBS_ENABLED gate is
+	// enforced inside each handler (gateJobsEnabled) so a Free
+	// customer or a dark-launch rollout gets a clean 404 with
+	// code=jobs_not_allowed instead of 402 plan upgrade copy —
+	// the dark-launch copy is deliberately different from the cron
+	// "upgrade to Hobby" upsell.
+	mux.HandleFunc("GET /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobs))))
+	mux.HandleFunc("POST /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createJob)))))
+	mux.HandleFunc("GET /v1/jobs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJob))))
+	mux.HandleFunc("PATCH /v1/jobs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateJob)))))
+	mux.HandleFunc("DELETE /v1/jobs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteJob))))
+	mux.HandleFunc("POST /v1/jobs/{id}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createRun)))))
+	mux.HandleFunc("GET /v1/jobs/{id}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listRuns))))
+	mux.HandleFunc("GET /v1/runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRun))))
+	mux.HandleFunc("POST /v1/runs/{run_id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelRun))))
+	mux.HandleFunc("GET /v1/runs/{run_id}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listRunTasks))))
+	mux.HandleFunc("POST /v1/runs/{run_id}/tasks/{idx}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryTask))))
+
 	// Edge rules (ADR-089, planned). Customer-facing resource that
 	// runs in pkg/gateway BEFORE host→app resolution. Mirrors the
 	// alert-rules decorator chain: authLimited → requireMFA →

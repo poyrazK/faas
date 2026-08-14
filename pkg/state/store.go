@@ -1983,10 +1983,34 @@ type Store interface {
 	MarkJobTaskTimeout(ctx context.Context, runID string, taskIndex int32) error
 	MarkJobTaskOOM(ctx context.Context, runID string, taskIndex int32) error
 	MarkJobTaskCancelled(ctx context.Context, runID string, taskIndex int32) error
+	// MarkJobTaskRetried (ADR-099 PR-D) flips a terminal-failure
+	// task back to 'queued' for re-dispatch. Caller must verify
+	// the current status is one of failed/timeout/oom/cancelled
+	// (handlers_jobs.go::retryTask does this); the store's gate
+	// is the `WHERE status IN (...)` clause. resetAttempt=true
+	// zeroes the per-task attempt counter; false leaves it for
+	// retry_max enforcement on the dispatch path. Returns
+	// ErrConflict when the current status is not retryable (so
+	// a parallel dispatch tick can't race the manual retry).
+	MarkJobTaskRetried(ctx context.Context, runID string, taskIndex int32, resetAttempt bool) error
 	// RecomputeJobRunStatus is the pure-SQL run-level fan-in. Reads
 	// the live task counters, updates the aggregate_status +
 	// tasks_* fields + finished_at in one UPDATE.
 	RecomputeJobRunStatus(ctx context.Context, runID string) (JobRun, error)
+	// MarkJobRunCancelled (ADR-099 PR-D) is the user-initiated
+	// bulk-cancel gate. Sets aggregate_status='cancelled' on the
+	// run row and signals schedd (via pg_notify from the caller)
+	// to fan-out per-task MarkJobTaskCancelled on the in-flight
+	// tasks. Non-terminal runs only — calling on a terminal run
+	// returns ErrConflict. The dispatch tick is the only writer
+	// that flips aggregate_status once a run is terminal.
+	MarkJobRunCancelled(ctx context.Context, runID string) error
+	// ListRunTasksForRun (ADR-099 PR-D) pages the child task
+	// rows in task_index order. before is the task_index cursor
+	// (rows with task_index > before are returned); empty
+	// before = first page. The order is stable so the cursor
+	// pagination is well-defined.
+	ListRunTasksForRun(ctx context.Context, runID, before string, limit int) ([]JobTask, error)
 
 	// Fire-now request queue (ADR-090 PR-C / migrations/00193).
 	// apid inserts on POST /v1/crons/{id}/run; schedd claims +

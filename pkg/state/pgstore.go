@@ -16499,6 +16499,117 @@ func (s *PgStore) RecomputeJobRunStatus(ctx context.Context, runID string) (JobR
 	return jobRunFromPgtype(row), nil
 }
 
+// MarkJobTaskRetried (ADR-099 PR-D) flips a terminal-failure
+// task back to 'queued' for re-dispatch. The status whitelist
+// in the SQL is the gate that prevents a parallel dispatch tick
+// from racing the manual retry; reset_attempt=true zeroes the
+// per-task attempt counter.
+func (s *PgStore) MarkJobTaskRetried(ctx context.Context, runID string, taskIndex int32, resetAttempt bool) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	// The sqlc params field is named `Attempt` (not `ResetAttempt`)
+	// because sqlc derives it from the SQL placeholder $3 — we use
+	// it as a 0/1 flag to keep the SQL portable across versions.
+	flag := int32(0)
+	if resetAttempt {
+		flag = 1
+	}
+	err = s.jobsQueries().MarkJobTaskRetried(ctx, s.pool, sqlc.MarkJobTaskRetriedParams{
+		RunID:     pgtypeFromUUID(runUUID),
+		TaskIndex: taskIndex,
+		Column3:   flag,
+	})
+	if err != nil {
+		return fmt.Errorf("mark job task retried: %w", err)
+	}
+	return nil
+}
+
+// MarkJobRunCancelled (ADR-099 PR-D) flips a non-terminal run to
+// 'cancelled'. The status whitelist in the SQL is the gate; the
+// dispatch tick is the single source of truth for terminal-status
+// flips, so a cancel against an already-terminal run is a no-op.
+func (s *PgStore) MarkJobRunCancelled(ctx context.Context, runID string) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	if err := s.jobsQueries().MarkJobRunCancelled(ctx, s.pool, pgtypeFromUUID(runUUID)); err != nil {
+		return fmt.Errorf("mark job run cancelled: %w", err)
+	}
+	return nil
+}
+
+// ListRunTasksForRun (ADR-099 PR-D) pages the child task rows
+// for one run in task_index order. before is the task_index
+// cursor; limit <= 0 falls back to 50 (matches the MemStore
+// default + apid's jobsDefaultLimit).
+func (s *PgStore) ListRunTasksForRun(ctx context.Context, runID, before string, limit int) ([]JobTask, error) {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.jobsQueries().ListRunTasksForRun(ctx, s.pool, sqlc.ListRunTasksForRunParams{
+		RunID:   pgtypeFromUUID(runUUID),
+		Column2: before,
+		Limit:   int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list run tasks: %w", err)
+	}
+	out := make([]JobTask, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, jobTaskFromSqlc(r))
+	}
+	return out, nil
+}
+
+// jobTaskFromSqlc projects sqlc.JobTask (pgtype-heavy) onto the
+// pkg/state.JobTask boundary shape. Mirrors jobRunFromPgtype's
+// conversion: pgtype.UUID → string (via uuidFromPgtype), pgtype.Text
+// → *string, pgtype.Timestamptz → *time.Time.
+func jobTaskFromSqlc(r sqlc.JobTask) JobTask {
+	t := JobTask{
+		TaskIndex: r.TaskIndex,
+		Status:    JobTaskStatus(r.Status),
+		Attempt:   r.Attempt,
+	}
+	if uid := uuidFromPgtype(r.RunID); uid != uuid.Nil {
+		t.RunID = uid.String()
+	}
+	if r.InstanceID.Valid {
+		if uid := uuidFromPgtype(r.InstanceID); uid != uuid.Nil {
+			s := uid.String()
+			t.InstanceID = &s
+		}
+	}
+	if r.ErrorClass.Valid {
+		s := r.ErrorClass.String
+		t.ErrorClass = &s
+	}
+	if r.ErrorMessage.Valid {
+		s := r.ErrorMessage.String
+		t.ErrorMessage = &s
+	}
+	if r.StartedAt.Valid {
+		v := r.StartedAt.Time
+		t.StartedAt = &v
+	}
+	if r.FinishedAt.Valid {
+		v := r.FinishedAt.Time
+		t.FinishedAt = &v
+	}
+	if r.CreatedAt.Valid {
+		t.CreatedAt = r.CreatedAt.Time
+	}
+	return t
+}
+
 // pgtypeFromText wraps a string into pgtype.Text with
 // Valid=true. Used by the MarkJobTask* writers to pass
 // error_class / error_message.

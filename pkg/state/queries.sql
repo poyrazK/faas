@@ -1418,6 +1418,53 @@ UPDATE job_tasks SET
     finished_at = now()
 WHERE run_id = $1 AND task_index = $2 AND status = 'claimed';
 
+-- name: MarkJobTaskRetried :exec
+-- ADR-099 PR-D manual retry. Flips a terminal-failure task back
+-- to 'queued' so the dispatch tick re-claims it. The status
+-- whitelist mirrors the retryTask handler's pre-check; the
+-- SQL-side gate prevents a parallel dispatch tick from racing
+-- the manual retry (the row is only flipped when the status is
+-- already terminal-failure). reset_attempt=true (sqlc param 3,
+-- 0/1) zeroes the per-task attempt counter; false leaves it for
+-- retry_max enforcement on the dispatch path.
+UPDATE job_tasks SET
+    status = 'queued',
+    instance_id = NULL,
+    error_class = NULL,
+    error_message = NULL,
+    started_at = NULL,
+    finished_at = NULL,
+    attempt = CASE WHEN $3::int = 1 THEN 0 ELSE attempt END
+WHERE run_id = $1 AND task_index = $2
+  AND status IN ('failed', 'timeout', 'oom', 'cancelled');
+
+-- name: MarkJobRunCancelled :exec
+-- ADR-099 PR-D user-initiated bulk cancel. Non-terminal runs
+-- only — calling on an already-succeeded/dead_letter/cancelled
+-- run is a no-op (the dispatch tick is the single source of
+-- truth for terminal-status flips). Caller (apid's cancelRun
+-- handler) emits pg_notify after this UPDATE so schedd can
+-- fan out per-task MarkJobTaskCancelled on in-flight tasks and
+-- call RecomputeJobRunStatus to settle the aggregate.
+UPDATE job_runs SET
+    aggregate_status = 'cancelled',
+    finished_at = now()
+WHERE id = $1 AND aggregate_status IN ('queued', 'running');
+
+-- name: ListRunTasksForRun :many
+-- ADR-099 PR-D page the child task rows for one run in
+-- task_index order. before is the cursor (rows with task_index
+-- > before are returned); empty before = first page. Limit
+-- caps the page size; the apid handler clamps limit to
+-- jobsMaxLimit (500).
+SELECT run_id, task_index, status, attempt, instance_id,
+       error_class, error_message, started_at, finished_at, created_at
+FROM job_tasks
+WHERE run_id = $1
+  AND ($2 = '' OR task_index > $2::int)
+ORDER BY task_index ASC
+LIMIT $3;
+
 -- name: RecomputeJobRunStatus :one
 -- The run-level fan-in. Called after every task transition. Reads
 -- the live task counters and updates the aggregate_status +

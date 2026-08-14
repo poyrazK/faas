@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -12296,4 +12297,105 @@ func (m *MemStore) RecomputeJobRunStatus(_ context.Context, runID string) (JobRu
 	}
 	m.jobRuns[runID] = r
 	return r, nil
+}
+
+// MarkJobTaskRetried (ADR-099 PR-D) flips a terminal-failure task
+// back to 'queued' for re-dispatch. The handler verifies the
+// current status before calling; the store's gate is the explicit
+// status list so a parallel dispatch tick can't race the manual
+// retry. resetAttempt=true zeroes the attempt counter; false
+// leaves it for retry_max enforcement on the dispatch path.
+//
+// Returns ErrConflict when the current status is queued/claimed/
+// succeeded (the same shape the dispatch tick would expect from a
+// race-with-retry failure).
+func (m *MemStore) MarkJobTaskRetried(_ context.Context, runID string, taskIndex int32, resetAttempt bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.jobTasks[jobTaskKey(runID, taskIndex)]
+	if !ok {
+		return ErrNotFound
+	}
+	switch t.Status {
+	case JobTaskStatusFailed, JobTaskStatusTimeout, JobTaskStatusOOM, JobTaskStatusCancelled:
+		// retryable
+	default:
+		return ErrConflict
+	}
+	t.Status = JobTaskStatusQueued
+	t.InstanceID = nil
+	t.ErrorClass = nil
+	t.ErrorMessage = nil
+	t.StartedAt = nil
+	t.FinishedAt = nil
+	if resetAttempt {
+		t.Attempt = 0
+	}
+	m.jobTasks[jobTaskKey(runID, taskIndex)] = t
+	return nil
+}
+
+// MarkJobRunCancelled (ADR-099 PR-D) is the user-initiated bulk-
+// cancel gate. Non-terminal runs only — the dispatch tick is the
+// single source of truth for terminal-status flips, so a cancel
+// against an already-succeeded/dead_letter/cancelled run is
+// ErrConflict. Caller (apid's cancelRun handler) emits the pg_notify
+// that schedd listens on; schedd fans out per-task cancellation +
+// re-runs RecomputeJobRunStatus to settle the aggregate.
+//
+// The atomic m.mu.Lock covers the read+write pair so a parallel
+// dispatch tick can't observe a half-flipped run row.
+func (m *MemStore) MarkJobRunCancelled(_ context.Context, runID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.jobRuns[runID]
+	if !ok {
+		return ErrNotFound
+	}
+	switch r.AggregateStatus {
+	case JobRunStatusQueued, JobRunStatusRunning:
+		// cancellable
+	default:
+		return ErrConflict
+	}
+	r.AggregateStatus = JobRunStatusCancelled
+	now := time.Now()
+	r.FinishedAt = &now
+	m.jobRuns[runID] = r
+	return nil
+}
+
+// ListRunTasksForRun (ADR-099 PR-D) pages the child task rows in
+// task_index order. before is the task_index cursor (rows with
+// task_index > before are returned); empty before = first page.
+// limit <= 0 falls back to 50 (matches jobsDefaultLimit).
+func (m *MemStore) ListRunTasksForRun(_ context.Context, runID, before string, limit int) ([]JobTask, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	out := make([]JobTask, 0)
+	for _, t := range m.jobTasks {
+		if t.RunID != runID {
+			continue
+		}
+		if before != "" {
+			idx, err := strconv.Atoi(before)
+			if err != nil {
+				return nil, ErrNotFound
+			}
+			if int32(idx) >= t.TaskIndex {
+				continue
+			}
+		}
+		out = append(out, t)
+	}
+	// Stable sort by task_index ascending so the cursor pagination
+	// walks the rows in insertion order regardless of map iteration.
+	sort.Slice(out, func(i, j int) bool { return out[i].TaskIndex < out[j].TaskIndex })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }

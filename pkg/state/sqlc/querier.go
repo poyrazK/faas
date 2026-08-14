@@ -428,11 +428,25 @@ type Querier interface {
 	// per-account projections; the broader ?actor + ?subject filter
 	// shape lives on ListAllEventsPaged.
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
+	// ADR-099 PR-D page the child task rows for one run in
+	// task_index order. before is the cursor (rows with task_index
+	// > before are returned); empty before = first page. Limit
+	// caps the page size; the apid handler clamps limit to
+	// jobsMaxLimit (500).
+	ListRunTasksForRun(ctx context.Context, db DBTX, arg ListRunTasksForRunParams) ([]JobTask, error)
 	// Active rows only, newest first. Partial index keeps the scan tight.
 	ListSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListSessionsRow, error)
 	MarkDeploymentLive(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDeploymentSuperseded(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error
+	// ADR-099 PR-D user-initiated bulk cancel. Non-terminal runs
+	// only — calling on an already-succeeded/dead_letter/cancelled
+	// run is a no-op (the dispatch tick is the single source of
+	// truth for terminal-status flips). Caller (apid's cancelRun
+	// handler) emits pg_notify after this UPDATE so schedd can
+	// fan out per-task MarkJobTaskCancelled on in-flight tasks and
+	// call RecomputeJobRunStatus to settle the aggregate.
+	MarkJobRunCancelled(ctx context.Context, db DBTX, id pgtype.UUID) error
 	// User-initiated cancel via DELETE /v1/jobs/{name}/runs/{id}.
 	// Only flips if status is queued or claimed (not already
 	// terminal) — terminal tasks stay terminal.
@@ -458,6 +472,15 @@ type Querier interface {
 	// ready-queue (job_tasks_ready_idx) and the next tick re-claims
 	// it. Mirrors the cron tick's AtCapacity backoff shape.
 	MarkJobTaskRequeued(ctx context.Context, db DBTX, arg MarkJobTaskRequeuedParams) error
+	// ADR-099 PR-D manual retry. Flips a terminal-failure task back
+	// to 'queued' so the dispatch tick re-claims it. The status
+	// whitelist mirrors the retryTask handler's pre-check; the
+	// SQL-side gate prevents a parallel dispatch tick from racing
+	// the manual retry (the row is only flipped when the status is
+	// already terminal-failure). reset_attempt=true (sqlc param 3,
+	// 0/1) zeroes the per-task attempt counter; false leaves it for
+	// retry_max enforcement on the dispatch path.
+	MarkJobTaskRetried(ctx context.Context, db DBTX, arg MarkJobTaskRetriedParams) error
 	MarkJobTaskSucceeded(ctx context.Context, db DBTX, arg MarkJobTaskSucceededParams) error
 	// Distinct from MarkJobTaskFailed because the watchdog exit
 	// code (PR-C's job_supervisor) classifies timeouts separately
