@@ -676,6 +676,13 @@ func loadSpec(path string) (map[string]map[string]any, error) {
 // names declared on *Client (the public SDK surface).
 func loadClientMethods(dir string) (map[string]bool, error) {
 	fset := token.NewFileSet()
+	//nolint:staticcheck // SA1019: parser.ParseDir is the right tool here.
+	// The sdk-coverage walk intentionally ignores build tags so it can
+	// scan the exported surface across all GOOS/GOARCH archetypes that
+	// the SDK targets. Switching to golang.org/x/tools/go/packages would
+	// conflate this script's intent (exported-surface enumeration) with
+	// type-checking, which it doesn't need and which would balloon
+	// run-time from <50ms to ~3s on the CI cold-cache path.
 	pkgs, err := parser.ParseDir(fset, dir, func(os.FileInfo) bool { return true }, parser.ParseComments)
 	if err != nil {
 		return nil, err
