@@ -16,62 +16,6 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: faas_inspect; Type: SCHEMA; Schema: -; Owner: -
---
-
-CREATE SCHEMA faas_inspect;
-
-
---
--- Name: faas_inspect2; Type: SCHEMA; Schema: -; Owner: -
---
-
-CREATE SCHEMA faas_inspect2;
-
-
---
--- Name: faas_test_0d7dd5ed218441b0; Type: SCHEMA; Schema: -; Owner: -
---
-
-CREATE SCHEMA faas_test_0d7dd5ed218441b0;
-
-
---
--- Name: faas_test_8bb6532d29f5dda2; Type: SCHEMA; Schema: -; Owner: -
---
-
-CREATE SCHEMA faas_test_8bb6532d29f5dda2;
-
-
---
--- Name: faas_test_a9b6b26c0b5653b3; Type: SCHEMA; Schema: -; Owner: -
---
-
-CREATE SCHEMA faas_test_a9b6b26c0b5653b3;
-
-
---
--- Name: probe_schema_test_xyz; Type: SCHEMA; Schema: -; Owner: -
---
-
-CREATE SCHEMA probe_schema_test_xyz;
-
-
---
--- Name: public; Type: SCHEMA; Schema: -; Owner: -
---
-
--- *not* creating schema, since initdb creates it
-
-
---
--- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: -
---
-
-COMMENT ON SCHEMA public IS '';
-
-
---
 -- Name: citext; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -83,378 +27,6 @@ CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;
 --
 
 COMMENT ON EXTENSION citext IS 'data type for case-insensitive character strings';
-
-
---
--- Name: apps_egress_allowlist_cidr_check(); Type: FUNCTION; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE FUNCTION faas_test_8bb6532d29f5dda2.apps_egress_allowlist_cidr_check() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-declare
-  bad cidr;
-begin
-  if new.egress_allowlist is null or cardinality(new.egress_allowlist) = 0 then
-    return new;
-  end if;
-  -- Per-entry guards: family must be v4 or v6, mask must be non-zero.
-  -- The /0 reject closes the same hole as the v4-only trigger's
-  -- `prefix.Bits() == 0` reject at the wire + apid layers: an
-  -- operator cannot pin "the entire address space" — that is the
-  -- chain-policy accept's job, not the allowlist's. Two narrow
-  -- selects (one per guard) keep the error messages specific; a
-  -- combined select with bool_or would conflate family and masklen
-  -- failures and force a parser to guess.
-  for bad in
-    select c
-      from unnest(new.egress_allowlist) c
-     where family(c) not in (4, 6)
-     limit 1
-  loop
-    raise exception 'apps_egress_allowlist: only v4 or v6 CIDRs (got family % for %)', family(bad), bad
-      using errcode = '23514',
-            constraint = 'apps_egress_allowlist_cidr';
-  end loop;
-  for bad in
-    select c
-      from unnest(new.egress_allowlist) c
-     where masklen(c) = 0
-     limit 1
-  loop
-    raise exception 'apps_egress_allowlist: rejected % (masklen /0; ADR-032 non-/0 contract)', bad
-      using errcode = '23514',
-            constraint = 'apps_egress_allowlist_cidr';
-  end loop;
-  return new;
-end;
-$$;
-
-
---
--- Name: compute_node_keys_notify(); Type: FUNCTION; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE FUNCTION faas_test_8bb6532d29f5dda2.compute_node_keys_notify() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-begin
-    perform pg_notify('compute_node_changed', TG_TABLE_NAME);
-    return null;
-end;
-$$;
-
-
---
--- Name: compute_node_notify(); Type: FUNCTION; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE FUNCTION faas_test_8bb6532d29f5dda2.compute_node_notify() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-declare
-    payload jsonb;
-begin
-    payload := jsonb_build_object(
-        'node_id', new.id::text,
-        'active', new.active
-    );
-    perform pg_notify('compute_node_changed', payload::text);
-    return new;
-end;
-$$;
-
-
---
--- Name: egress_policy_notify(); Type: FUNCTION; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE FUNCTION faas_test_8bb6532d29f5dda2.egress_policy_notify() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-begin
-    perform pg_notify(
-        'egress_policy_changed',
-        json_build_object(
-            'policy_id', new.id,
-            'public_iface', new.public_iface,
-            'masquerade_cidr', new.masquerade_cidr,
-            'changed_at', new.changed_at
-        )::text
-    );
-    return null;
-end;
-$$;
-
-
---
--- Name: instances_started_at_set(); Type: FUNCTION; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE FUNCTION faas_test_8bb6532d29f5dda2.instances_started_at_set() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-begin
-  if new.started_at is null then
-    new.started_at = now();
-  end if;
-  return new;
-end
-$$;
-
-
---
--- Name: invocation_done_notify(); Type: FUNCTION; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE FUNCTION faas_test_8bb6532d29f5dda2.invocation_done_notify() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-declare
-    payload jsonb;
-begin
-    if (tg_op = 'UPDATE' and old.state in ('pending','dispatching')
-        and new.state in ('completed','failed','cancelled')) then
-        payload := jsonb_build_object(
-            'invocation_id', new.id::text,
-            'app_id', new.app_id::text,
-            'source', new.source,
-            'state', new.state
-        );
-        perform pg_notify('invocation_done', payload::text);
-    end if;
-    return new;
-end;
-$$;
-
-
---
--- Name: invocation_due_notify(); Type: FUNCTION; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE FUNCTION faas_test_8bb6532d29f5dda2.invocation_due_notify() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-declare
-    payload jsonb;
-begin
-    payload := jsonb_build_object(
-        'invocation_id', new.id::text,
-        'app_id', new.app_id::text,
-        'source', new.source
-    );
-    perform pg_notify('invocation_due', payload::text);
-    return new;
-end;
-$$;
-
-
---
--- Name: pg_tier_rank(text); Type: FUNCTION; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE FUNCTION faas_test_8bb6532d29f5dda2.pg_tier_rank(tier text) RETURNS integer
-    LANGUAGE sql IMMUTABLE
-    AS $$
-    SELECT CASE tier
-        WHEN 'compose'    THEN 8
-        WHEN 'k8s'        THEN 8
-        WHEN 'render'     THEN 8
-        WHEN 'fly'        THEN 8
-        WHEN 'serverless' THEN 8
-        WHEN 'procfile'   THEN 6
-        WHEN 'workspace'  THEN 4
-        WHEN 'convention' THEN 2
-        WHEN 'single'     THEN 1
-        ELSE 0
-    END
-$$;
-
-
---
--- Name: apps_egress_allowlist_cidr_check(); Type: FUNCTION; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE FUNCTION faas_test_a9b6b26c0b5653b3.apps_egress_allowlist_cidr_check() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-declare
-  bad cidr;
-begin
-  if new.egress_allowlist is null or cardinality(new.egress_allowlist) = 0 then
-    return new;
-  end if;
-  -- Per-entry guards: family must be v4 or v6, mask must be non-zero.
-  -- The /0 reject closes the same hole as the v4-only trigger's
-  -- `prefix.Bits() == 0` reject at the wire + apid layers: an
-  -- operator cannot pin "the entire address space" — that is the
-  -- chain-policy accept's job, not the allowlist's. Two narrow
-  -- selects (one per guard) keep the error messages specific; a
-  -- combined select with bool_or would conflate family and masklen
-  -- failures and force a parser to guess.
-  for bad in
-    select c
-      from unnest(new.egress_allowlist) c
-     where family(c) not in (4, 6)
-     limit 1
-  loop
-    raise exception 'apps_egress_allowlist: only v4 or v6 CIDRs (got family % for %)', family(bad), bad
-      using errcode = '23514',
-            constraint = 'apps_egress_allowlist_cidr';
-  end loop;
-  for bad in
-    select c
-      from unnest(new.egress_allowlist) c
-     where masklen(c) = 0
-     limit 1
-  loop
-    raise exception 'apps_egress_allowlist: rejected % (masklen /0; ADR-032 non-/0 contract)', bad
-      using errcode = '23514',
-            constraint = 'apps_egress_allowlist_cidr';
-  end loop;
-  return new;
-end;
-$$;
-
-
---
--- Name: compute_node_keys_notify(); Type: FUNCTION; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE FUNCTION faas_test_a9b6b26c0b5653b3.compute_node_keys_notify() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-begin
-    perform pg_notify('compute_node_changed', TG_TABLE_NAME);
-    return null;
-end;
-$$;
-
-
---
--- Name: compute_node_notify(); Type: FUNCTION; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE FUNCTION faas_test_a9b6b26c0b5653b3.compute_node_notify() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-declare
-    payload jsonb;
-begin
-    payload := jsonb_build_object(
-        'node_id', new.id::text,
-        'active', new.active
-    );
-    perform pg_notify('compute_node_changed', payload::text);
-    return new;
-end;
-$$;
-
-
---
--- Name: egress_policy_notify(); Type: FUNCTION; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE FUNCTION faas_test_a9b6b26c0b5653b3.egress_policy_notify() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-begin
-    perform pg_notify(
-        'egress_policy_changed',
-        json_build_object(
-            'policy_id', new.id,
-            'public_iface', new.public_iface,
-            'masquerade_cidr', new.masquerade_cidr,
-            'changed_at', new.changed_at
-        )::text
-    );
-    return null;
-end;
-$$;
-
-
---
--- Name: instances_started_at_set(); Type: FUNCTION; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE FUNCTION faas_test_a9b6b26c0b5653b3.instances_started_at_set() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-begin
-  if new.started_at is null then
-    new.started_at = now();
-  end if;
-  return new;
-end
-$$;
-
-
---
--- Name: invocation_done_notify(); Type: FUNCTION; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE FUNCTION faas_test_a9b6b26c0b5653b3.invocation_done_notify() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-declare
-    payload jsonb;
-begin
-    if (tg_op = 'UPDATE' and old.state in ('pending','dispatching')
-        and new.state in ('completed','failed','cancelled')) then
-        payload := jsonb_build_object(
-            'invocation_id', new.id::text,
-            'app_id', new.app_id::text,
-            'source', new.source,
-            'state', new.state
-        );
-        perform pg_notify('invocation_done', payload::text);
-    end if;
-    return new;
-end;
-$$;
-
-
---
--- Name: invocation_due_notify(); Type: FUNCTION; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE FUNCTION faas_test_a9b6b26c0b5653b3.invocation_due_notify() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-declare
-    payload jsonb;
-begin
-    payload := jsonb_build_object(
-        'invocation_id', new.id::text,
-        'app_id', new.app_id::text,
-        'source', new.source
-    );
-    perform pg_notify('invocation_due', payload::text);
-    return new;
-end;
-$$;
-
-
---
--- Name: pg_tier_rank(text); Type: FUNCTION; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE FUNCTION faas_test_a9b6b26c0b5653b3.pg_tier_rank(tier text) RETURNS integer
-    LANGUAGE sql IMMUTABLE
-    AS $$
-    SELECT CASE tier
-        WHEN 'compose'    THEN 8
-        WHEN 'k8s'        THEN 8
-        WHEN 'render'     THEN 8
-        WHEN 'fly'        THEN 8
-        WHEN 'serverless' THEN 8
-        WHEN 'procfile'   THEN 6
-        WHEN 'workspace'  THEN 4
-        WHEN 'convention' THEN 2
-        WHEN 'single'     THEN 1
-        ELSE 0
-    END
-$$;
 
 
 --
@@ -504,6 +76,22 @@ $$;
 
 
 --
+-- Name: apps_maintenance_mode_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_maintenance_mode_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (TG_OP = 'UPDATE' AND NEW.maintenance_mode IS DISTINCT FROM OLD.maintenance_mode) THEN
+        PERFORM pg_notify('app_changed', NEW.id::text);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: compute_node_keys_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -548,9 +136,16 @@ BEGIN
     PERFORM pg_notify(
         'data_upstreams_changed',
         format('%s|%s|%s|%s|%s|%s',
-            NEW.app_id::text, NEW.scope, NEW.kind,
-            NEW.host, NEW.port::text, TG_OP)
+            COALESCE(NEW.app_id, OLD.app_id)::text,
+            COALESCE(NEW.scope, OLD.scope),
+            COALESCE(NEW.kind, OLD.kind),
+            COALESCE(NEW.host, OLD.host),
+            COALESCE(NEW.port, OLD.port)::text,
+            TG_OP)
     );
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
     RETURN NEW;
 END;
 $$;
@@ -711,6 +306,61 @@ $$;
 
 
 --
+-- Name: job_tasks_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.job_tasks_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Only notify on transitions INTO queued (initial
+    -- INSERT) or from queued (claim by the dispatch
+    -- tick). Other transitions don't need to wake the
+    -- LISTEN worker because they're responses to the
+    -- worker's own batch.
+    IF (TG_OP = 'INSERT' AND NEW.status = 'queued')
+       OR (TG_OP = 'UPDATE' AND OLD.status = 'queued'
+           AND NEW.status <> 'queued') THEN
+        PERFORM pg_notify(
+            'job_tasks_queued',
+            format('%s|%s|%s', NEW.run_id, NEW.task_index, TG_OP)
+        );
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: notify_tenant_surface_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notify_tenant_surface_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM pg_notify('tenant_surface_changed', OLD.surface_id::text);
+        RETURN OLD;
+    ELSIF TG_OP = 'UPDATE' THEN
+        -- surface row updates (status, cert_state, cert_not_after, …)
+        -- bubble up the surface id directly; this trigger is also
+        -- responsible for the surface's row-level changes.
+        PERFORM pg_notify('tenant_surface_changed', NEW.id::text);
+        RETURN NEW;
+    ELSE
+        -- INSERT on tenant_surfaces
+        PERFORM pg_notify('tenant_surface_changed', NEW.id::text);
+        RETURN NEW;
+    END IF;
+END
+$$;
+
+
+--
 -- Name: pg_tier_rank(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -733,2259 +383,6 @@ $$;
 
 
 SET default_table_access_method = heap;
-
---
--- Name: usage_minutes; Type: TABLE; Schema: faas_inspect; Owner: -
---
-
-CREATE TABLE faas_inspect.usage_minutes (
-    account_id uuid,
-    app_id uuid,
-    instance_id uuid NOT NULL,
-    minute timestamp with time zone NOT NULL,
-    mb_seconds bigint,
-    requests integer DEFAULT 0
-);
-
-
---
--- Name: usage_monthly; Type: VIEW; Schema: faas_inspect; Owner: -
---
-
-CREATE VIEW faas_inspect.usage_monthly AS
- SELECT account_id,
-    app_id,
-    date_trunc('month'::text, minute) AS month,
-    sum(mb_seconds) AS mb_seconds,
-    sum(requests) AS requests
-   FROM faas_inspect.usage_minutes
-  GROUP BY account_id, app_id, (date_trunc('month'::text, minute));
-
-
---
--- Name: usage_minutes; Type: TABLE; Schema: faas_inspect2; Owner: -
---
-
-CREATE TABLE faas_inspect2.usage_minutes (
-    minute timestamp with time zone
-);
-
-
---
--- Name: account_credits; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.account_credits (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    cents_remaining bigint NOT NULL,
-    reason text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    expires_at timestamp with time zone,
-    CONSTRAINT account_credits_cents_remaining_check CHECK ((cents_remaining >= 0)),
-    CONSTRAINT account_credits_reason_check CHECK (((char_length(reason) >= 3) AND (char_length(reason) <= 500)))
-);
-
-
---
--- Name: account_passwords; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.account_passwords (
-    account_id uuid NOT NULL,
-    hash text NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: accounts; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.accounts (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    email public.citext NOT NULL,
-    plan text DEFAULT 'free'::text NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    provider_customer_id text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    deletion_requested_at timestamp with time zone,
-    stripe_subscription_item text,
-    last_quota_warning_at timestamp with time zone,
-    past_due_at timestamp with time zone,
-    mfa_enrolled_at timestamp with time zone,
-    mfa_secret_encrypted bytea,
-    mfa_recovery_codes_hash bytea[],
-    mfa_required boolean DEFAULT false NOT NULL,
-    overage_cap_cents bigint,
-    CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
-    CONSTRAINT accounts_overage_cap_cents_chk CHECK (((overage_cap_cents IS NULL) OR (overage_cap_cents >= 0))),
-    CONSTRAINT accounts_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
-    CONSTRAINT accounts_status_check CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text])))
-);
-
-
---
--- Name: alert_deliveries; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.alert_deliveries (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    rule_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid,
-    idempotency_key text NOT NULL,
-    payload jsonb NOT NULL,
-    status text DEFAULT 'pending'::text NOT NULL,
-    attempt_count integer DEFAULT 0 NOT NULL,
-    last_status_code integer,
-    last_error text,
-    observed_value double precision NOT NULL,
-    fired_at timestamp with time zone DEFAULT now() NOT NULL,
-    delivered_at timestamp with time zone,
-    CONSTRAINT alert_deliveries_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text])))
-);
-
-
---
--- Name: alert_rules; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.alert_rules (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid,
-    name text NOT NULL,
-    enabled boolean DEFAULT true NOT NULL,
-    metric text NOT NULL,
-    comparison text NOT NULL,
-    threshold double precision NOT NULL,
-    window_spec text NOT NULL,
-    failure_source text,
-    webhook_url text NOT NULL,
-    webhook_secret_sealed bytea NOT NULL,
-    cooldown_minutes integer DEFAULT 30 NOT NULL,
-    state text DEFAULT 'ok'::text NOT NULL,
-    last_fired_at timestamp with time zone,
-    last_evaluated_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
-    CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
-    CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text])))),
-    CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text]))),
-    CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
-    CONSTRAINT alert_rules_state_chk CHECK ((state = ANY (ARRAY['ok'::text, 'firing'::text]))),
-    CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
-);
-
-
---
--- Name: api_keys; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.api_keys (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    key_sha256 bytea NOT NULL,
-    label text,
-    last_used_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    scopes text[] DEFAULT '{admin}'::text[] NOT NULL,
-    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'apps:read'::text, 'env:read'::text, 'env:write'::text]) AND (cardinality(scopes) > 0)))
-);
-
-
---
--- Name: app_envs; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.app_envs (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    key text NOT NULL,
-    value text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_envs_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128)))
-);
-
-
---
--- Name: app_registry_credentials; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.app_registry_credentials (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    registry text NOT NULL,
-    username text NOT NULL,
-    password_encrypted bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_used_at timestamp with time zone,
-    CONSTRAINT app_registry_credentials_password_chk CHECK ((length(password_encrypted) > 0)),
-    CONSTRAINT app_registry_credentials_registry_chk CHECK (((length(registry) > 0) AND (length(registry) <= 253))),
-    CONSTRAINT app_registry_credentials_username_chk CHECK (((length(username) > 0) AND (length(username) <= 256)))
-);
-
-
---
--- Name: app_secrets; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.app_secrets (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    key text NOT NULL,
-    ciphertext bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128)))
-);
-
-
---
--- Name: app_trusted_signers; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.app_trusted_signers (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    signer_name text NOT NULL,
-    cosign_public_key bytea NOT NULL,
-    added_at timestamp with time zone DEFAULT now() NOT NULL,
-    added_by_account_id uuid NOT NULL,
-    CONSTRAINT app_trusted_signers_name_shape CHECK ((signer_name ~ '^[a-z0-9][a-z0-9_-]{0,63}$'::text)),
-    CONSTRAINT app_trusted_signers_pem_shape CHECK (((octet_length(cosign_public_key) >= 64) AND (octet_length(cosign_public_key) <= 1024)))
-);
-
-
---
--- Name: apps; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.apps (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    slug text NOT NULL,
-    type text DEFAULT 'app'::text NOT NULL,
-    runtime text,
-    ram_mb integer NOT NULL,
-    idle_timeout_s integer,
-    max_concurrency integer DEFAULT 1 NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
-    github_install_id bigint,
-    github_repo_full_name text,
-    github_production_branch text,
-    min_instances integer DEFAULT 0 NOT NULL,
-    egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
-    autoscale_target_rps integer,
-    autoscale_target_cpu_pct integer,
-    github_install_binding_id text,
-    github_install_account_id uuid,
-    github_install_linked_at timestamp with time zone,
-    project_id uuid,
-    root_dir text DEFAULT ''::text NOT NULL,
-    workload_name text DEFAULT ''::text NOT NULL,
-    workload_class text DEFAULT 'http'::text NOT NULL,
-    start_command text,
-    streaming_enabled boolean DEFAULT false NOT NULL,
-    scaling_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
-    last_scale_out_at timestamp with time zone,
-    last_scale_in_at timestamp with time zone,
-    require_signed boolean DEFAULT false NOT NULL,
-    node_id uuid,
-    reassigned_at timestamp with time zone,
-    CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
-    CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
-    CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
-    CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
-    CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
-    CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
-    CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
-    CONSTRAINT apps_node_id_nonempty_chk CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
-    CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
-    CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
-    CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
-    CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
-);
-
-
---
--- Name: COLUMN apps.autoscale_target_rps; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.apps.autoscale_target_rps IS 'Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).';
-
-
---
--- Name: COLUMN apps.autoscale_target_cpu_pct; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.apps.autoscale_target_cpu_pct IS 'Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.';
-
-
---
--- Name: build_provenance; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.build_provenance (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    build_id uuid NOT NULL,
-    buildkit_version text,
-    railpack_version text,
-    base_digest text,
-    source_sha256 text NOT NULL,
-    source_url text,
-    commit_sha text,
-    plan text,
-    runner_digest text,
-    builder_node_id text,
-    started_at timestamp with time zone NOT NULL,
-    finished_at timestamp with time zone NOT NULL,
-    sbom_storage_key text
-);
-
-
---
--- Name: builder_usage; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.builder_usage (
-    build_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    finished_at timestamp with time zone NOT NULL,
-    kind text DEFAULT 'none'::text NOT NULL,
-    seconds bigint DEFAULT 0 NOT NULL
-);
-
-
---
--- Name: TABLE builder_usage; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON TABLE faas_test_8bb6532d29f5dda2.builder_usage IS 'Per-build wall-clock seconds, one row per terminal build. Source: cmd/builderd reaper + markSucceeded/markFailed adapters. ADR-048. Informational only — not billed.';
-
-
---
--- Name: COLUMN builder_usage.kind; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.builder_usage.kind IS 'build kind (railpack|dockerfile|tarball). Mirrors builds.kind. ADR-048.';
-
-
---
--- Name: builds; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.builds (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    deployment_id uuid NOT NULL,
-    kind text NOT NULL,
-    source_bytes bigint NOT NULL,
-    status text NOT NULL,
-    failure_class text,
-    log_path text,
-    started_at timestamp with time zone,
-    finished_at timestamp with time zone,
-    enqueued_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT builds_failure_class_check CHECK (((failure_class IS NULL) OR (failure_class = ANY (ARRAY['oom'::text, 'timeout'::text, 'user_error'::text, 'infra'::text])))),
-    CONSTRAINT builds_kind_check CHECK ((kind = ANY (ARRAY['railpack'::text, 'dockerfile'::text, 'tarball'::text, 'github'::text]))),
-    CONSTRAINT builds_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text])))
-);
-
-
---
--- Name: cli_auth_codes; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.cli_auth_codes (
-    token_hash bytea NOT NULL,
-    account_id uuid,
-    status text DEFAULT 'pending'::text NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    consumed_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT cli_auth_codes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'consumed'::text, 'expired'::text])))
-);
-
-
---
--- Name: compute_node_heartbeats; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.compute_node_heartbeats (
-    id bigint NOT NULL,
-    node_id uuid NOT NULL,
-    received_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_heartbeat_at timestamp with time zone NOT NULL,
-    source text NOT NULL,
-    CONSTRAINT compute_node_heartbeats_source_check CHECK ((source = ANY (ARRAY['heartbeat_tick'::text, 'deactivation'::text, 'reactivation'::text])))
-);
-
-
---
--- Name: compute_node_heartbeats_id_seq; Type: SEQUENCE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE SEQUENCE faas_test_8bb6532d29f5dda2.compute_node_heartbeats_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: compute_node_heartbeats_id_seq; Type: SEQUENCE OWNED BY; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER SEQUENCE faas_test_8bb6532d29f5dda2.compute_node_heartbeats_id_seq OWNED BY faas_test_8bb6532d29f5dda2.compute_node_heartbeats.id;
-
-
---
--- Name: compute_node_keys; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.compute_node_keys (
-    compute_node_id uuid NOT NULL,
-    key_id text NOT NULL,
-    public_key_pem text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT compute_node_keys_key_id_shape CHECK ((key_id ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT compute_node_keys_pem_shape CHECK ((public_key_pem ~~ '-----BEGIN PUBLIC KEY-----%'::text))
-);
-
-
---
--- Name: compute_nodes; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.compute_nodes (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name text NOT NULL,
-    target_url text NOT NULL,
-    vpcpus integer NOT NULL,
-    mem_mb integer NOT NULL,
-    max_concurrency integer NOT NULL,
-    admission_ceiling_mb integer NOT NULL,
-    active boolean DEFAULT true NOT NULL,
-    last_heartbeat_at timestamp with time zone DEFAULT now() NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    region text,
-    zone text,
-    schedd_target_url text,
-    CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
-    CONSTRAINT compute_nodes_max_concurrency_check CHECK ((max_concurrency > 0)),
-    CONSTRAINT compute_nodes_mem_mb_check CHECK ((mem_mb > 0)),
-    CONSTRAINT compute_nodes_schedd_target_url_scheme_chk CHECK (((schedd_target_url IS NULL) OR (schedd_target_url ~ '^(unix|tcp)://'::text))),
-    CONSTRAINT compute_nodes_target_url_check CHECK ((target_url ~ '^(unix|tcp|dns)://'::text)),
-    CONSTRAINT compute_nodes_vpcpus_check CHECK ((vpcpus > 0))
-);
-
-
---
--- Name: COLUMN compute_nodes.region; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.compute_nodes.region IS 'Locality label for the chooser tie-break (pkg/sched/placement.go). Free-form text; nullable so pre-00072 rows accept the schema. The seeded default-local row is backfilled to ''local''. ADR-025.';
-
-
---
--- Name: COLUMN compute_nodes.zone; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.compute_nodes.zone IS 'Finer locality inside region. Currently informational; nullable. ADR-025.';
-
-
---
--- Name: credit_ledger; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.credit_ledger (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    credit_id uuid NOT NULL,
-    delta_cents bigint NOT NULL,
-    reason text NOT NULL,
-    actor text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    provider_invoice_id text,
-    CONSTRAINT credit_ledger_delta_cents_check CHECK ((delta_cents <> 0))
-);
-
-
---
--- Name: crons; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.crons (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    schedule text NOT NULL,
-    path text DEFAULT '/'::text NOT NULL,
-    enabled boolean DEFAULT true NOT NULL,
-    last_fired_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: custom_domains; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.custom_domains (
-    domain public.citext NOT NULL,
-    app_id uuid NOT NULL,
-    verified_at timestamp with time zone,
-    challenge_token text DEFAULT ''::text NOT NULL,
-    app_id_redirect uuid
-);
-
-
---
--- Name: deployment_logs; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.deployment_logs (
-    deployment_id uuid NOT NULL,
-    seq bigint NOT NULL,
-    stream text DEFAULT 'stdout'::text NOT NULL,
-    line text NOT NULL,
-    written_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: deployment_logs_seq_seq; Type: SEQUENCE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE SEQUENCE faas_test_8bb6532d29f5dda2.deployment_logs_seq_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: deployment_logs_seq_seq; Type: SEQUENCE OWNED BY; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER SEQUENCE faas_test_8bb6532d29f5dda2.deployment_logs_seq_seq OWNED BY faas_test_8bb6532d29f5dda2.deployment_logs.seq;
-
-
---
--- Name: deployments; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.deployments (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    build_id uuid,
-    image_digest text NOT NULL,
-    rootfs_path text,
-    rootfs_bytes bigint,
-    status text NOT NULL,
-    error text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    kind text DEFAULT 'image'::text NOT NULL,
-    source_path text,
-    source_bytes bigint,
-    handler text,
-    log_path text,
-    error_code text,
-    rootfs_key text DEFAULT ''::text NOT NULL,
-    source_url text,
-    commit_sha text,
-    override_entrypoint text[],
-    override_cmd text[],
-    override_env jsonb,
-    override_env_secrets jsonb,
-    override_port integer,
-    override_healthcheck jsonb,
-    CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
-    CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text]))),
-    CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text])))
-);
-
-
---
--- Name: egress_policy; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.egress_policy (
-    id text NOT NULL,
-    public_iface text NOT NULL,
-    masquerade_cidr text NOT NULL,
-    changed_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT egress_policy_singleton CHECK ((id = 'singleton'::text))
-);
-
-
---
--- Name: events; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.events (
-    id bigint NOT NULL,
-    at timestamp with time zone DEFAULT now() NOT NULL,
-    actor text NOT NULL,
-    kind text NOT NULL,
-    subject uuid,
-    data jsonb
-);
-
-
---
--- Name: events_id_seq; Type: SEQUENCE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE faas_test_8bb6532d29f5dda2.events ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
-    SEQUENCE NAME faas_test_8bb6532d29f5dda2.events_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1
-);
-
-
---
--- Name: gdpr_requests; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.gdpr_requests (
-    id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    account_email text NOT NULL,
-    action text NOT NULL,
-    requested_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone,
-    CONSTRAINT gdpr_requests_action_check CHECK ((action = ANY (ARRAY['export'::text, 'delete'::text, 'restore'::text])))
-);
-
-
---
--- Name: github_installations; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.github_installations (
-    account_id uuid NOT NULL,
-    installation_id bigint NOT NULL,
-    default_branch text NOT NULL,
-    sealed_install_token bytea NOT NULL,
-    token_expires_at timestamp with time zone NOT NULL,
-    sealed_at timestamp with time zone DEFAULT now() NOT NULL,
-    audit_github_login text NOT NULL
-);
-
-
---
--- Name: goose_db_version; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.goose_db_version (
-    id integer NOT NULL,
-    version_id bigint NOT NULL,
-    is_applied boolean NOT NULL,
-    tstamp timestamp without time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: goose_db_version_id_seq; Type: SEQUENCE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE faas_test_8bb6532d29f5dda2.goose_db_version ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
-    SEQUENCE NAME faas_test_8bb6532d29f5dda2.goose_db_version_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1
-);
-
-
---
--- Name: idempotency_keys; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.idempotency_keys (
-    key text NOT NULL,
-    account_id uuid NOT NULL,
-    response_status integer NOT NULL,
-    response_body bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: instances; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.instances (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL,
-    state text NOT NULL,
-    netns text,
-    guest_uid integer,
-    host_ip inet,
-    ram_mb integer NOT NULL,
-    started_at timestamp with time zone,
-    last_request_at timestamp with time zone,
-    parked_at timestamp with time zone,
-    terminal_at timestamp with time zone,
-    node_id uuid NOT NULL,
-    wake_id uuid DEFAULT gen_random_uuid() NOT NULL,
-    CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
-);
-
-
---
--- Name: invocations; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.invocations (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    source text NOT NULL,
-    state text DEFAULT 'pending'::text NOT NULL,
-    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
-    headers jsonb DEFAULT '{}'::jsonb NOT NULL,
-    due_at timestamp with time zone DEFAULT now() NOT NULL,
-    method text DEFAULT 'POST'::text NOT NULL,
-    path text DEFAULT '/'::text NOT NULL,
-    cron_id uuid,
-    scheduled_at timestamp with time zone,
-    ack_url text,
-    result jsonb,
-    lease_expires_at timestamp with time zone,
-    received_at timestamp with time zone,
-    completed_at timestamp with time zone,
-    instance_id text,
-    attempts integer DEFAULT 0 NOT NULL,
-    last_error text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text]))),
-    CONSTRAINT invocations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text])))
-);
-
-
---
--- Name: invocations_pending_per_app; Type: VIEW; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE VIEW faas_test_8bb6532d29f5dda2.invocations_pending_per_app AS
- SELECT app_id,
-    source,
-    count(*) AS pending
-   FROM faas_test_8bb6532d29f5dda2.invocations
-  WHERE (state = ANY (ARRAY['pending'::text, 'dispatching'::text]))
-  GROUP BY app_id, source;
-
-
---
--- Name: invoices; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.invoices (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    provider text NOT NULL,
-    provider_invoice_id text NOT NULL,
-    number text DEFAULT ''::text NOT NULL,
-    status text NOT NULL,
-    period_start timestamp with time zone NOT NULL,
-    period_end timestamp with time zone NOT NULL,
-    subtotal_cents bigint DEFAULT 0 NOT NULL,
-    tax_cents bigint DEFAULT 0 NOT NULL,
-    total_cents bigint DEFAULT 0 NOT NULL,
-    amount_paid_cents bigint DEFAULT 0 NOT NULL,
-    currency text DEFAULT 'eur'::text NOT NULL,
-    pdf_available boolean DEFAULT false NOT NULL,
-    hosted_url text DEFAULT ''::text NOT NULL,
-    raw jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT invoices_amount_paid_cents_check CHECK ((amount_paid_cents >= 0)),
-    CONSTRAINT invoices_currency_check CHECK ((currency = 'eur'::text)),
-    CONSTRAINT invoices_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text]))),
-    CONSTRAINT invoices_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'uncollectible'::text, 'void'::text]))),
-    CONSTRAINT invoices_subtotal_cents_check CHECK ((subtotal_cents >= 0)),
-    CONSTRAINT invoices_tax_cents_check CHECK ((tax_cents >= 0)),
-    CONSTRAINT invoices_total_cents_check CHECK ((total_cents >= 0))
-);
-
-
---
--- Name: login_tokens; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.login_tokens (
-    token_hash bytea NOT NULL,
-    account_id uuid NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    consumed_at timestamp with time zone
-);
-
-
---
--- Name: oauth_links; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.oauth_links (
-    provider text NOT NULL,
-    provider_subject text NOT NULL,
-    account_id uuid NOT NULL,
-    email text NOT NULL,
-    email_verified boolean NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: paddle_overage_dedupe; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.paddle_overage_dedupe (
-    account_id uuid NOT NULL,
-    month timestamp with time zone,
-    pushed_at timestamp with time zone DEFAULT now() NOT NULL,
-    window_start timestamp with time zone NOT NULL,
-    state text DEFAULT 'completed'::text NOT NULL,
-    claimed_at timestamp with time zone,
-    claimed_by text,
-    CONSTRAINT paddle_overage_dedupe_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'completed'::text])))
-);
-
-
---
--- Name: projects; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.projects (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    slug text NOT NULL,
-    repo_full_name text,
-    production_branch text,
-    install_id bigint,
-    scan_source text DEFAULT 'unknown'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT projects_scan_source_chk CHECK ((scan_source = ANY (ARRAY['compose'::text, 'procfile'::text, 'k8s'::text, 'render'::text, 'fly'::text, 'serverless'::text, 'workspace'::text, 'convention'::text, 'single'::text, 'unknown'::text]))),
-    CONSTRAINT projects_slug_shape CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
-);
-
-
---
--- Name: recent_build_claims; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.recent_build_claims (
-    account_id uuid NOT NULL,
-    claimed_at timestamp with time zone DEFAULT now() NOT NULL,
-    build_id uuid NOT NULL
-);
-
-
---
--- Name: sessions; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.sessions (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    issued_ip inet,
-    issued_ua text,
-    issued_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_seen_at timestamp with time zone,
-    revoked_at timestamp with time zone
-);
-
-
---
--- Name: snapshot_storage_daily; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.snapshot_storage_daily (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    day date NOT NULL,
-    snapshot_bytes bigint DEFAULT 0 NOT NULL,
-    layer_bytes bigint DEFAULT 0 NOT NULL,
-    computed_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: TABLE snapshot_storage_daily; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON TABLE faas_test_8bb6532d29f5dda2.snapshot_storage_daily IS 'Per-(account, app, day) byte totals from snapshots.mem_bytes + disk_bytes + overlay staging. Source: pkg/meter/storage.go cron tick. ADR-049 §B.3. Informational only — not billed today; the future "Pro plan 1 GB included" PR consumes this surface.';
-
-
---
--- Name: COLUMN snapshot_storage_daily.snapshot_bytes; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.snapshot_storage_daily.snapshot_bytes IS 'Σ snapshots.mem_bytes + snapshots.disk_bytes (latest non-stale row per app per day). ADR-049 §B.3. Informational.';
-
-
---
--- Name: COLUMN snapshot_storage_daily.layer_bytes; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.snapshot_storage_daily.layer_bytes IS 'Σ overlay staging bytes per app per day. ADR-049 §B.3. Informational.';
-
-
---
--- Name: snapshots; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.snapshots (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    deployment_id uuid NOT NULL,
-    fc_version text NOT NULL,
-    mem_bytes bigint NOT NULL,
-    disk_bytes bigint NOT NULL,
-    stale boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    storage_key text DEFAULT ''::text NOT NULL
-);
-
-
---
--- Name: stripe_push_dedupe; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.stripe_push_dedupe (
-    account_id uuid NOT NULL,
-    hour timestamp with time zone NOT NULL,
-    pushed_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: usage_daily; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.usage_daily (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    day date NOT NULL,
-    mb_seconds bigint DEFAULT 0 NOT NULL,
-    requests bigint DEFAULT 0 NOT NULL,
-    cpu_usec bigint DEFAULT 0 NOT NULL,
-    tx_bytes bigint DEFAULT 0 NOT NULL,
-    net_tx_bytes bigint DEFAULT 0 NOT NULL,
-    net_rx_bytes bigint DEFAULT 0 NOT NULL,
-    cold_boot_count bigint DEFAULT 0 NOT NULL,
-    builder_seconds bigint DEFAULT 0 NOT NULL,
-    rolled_up_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: TABLE usage_daily; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON TABLE faas_test_8bb6532d29f5dda2.usage_daily IS 'Per-(account, app, day) materialised rollup of usage_minutes. Populated by the meterd cron tick FAAS_ROLLUP_INTERVAL (default 5 min) via INSERT ... SELECT ... GROUP BY with ON CONFLICT additive merge. Read by GET /v1/usage/daily. ADR-048. Informational — not billed.';
-
-
---
--- Name: COLUMN usage_daily.cold_boot_count; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.usage_daily.cold_boot_count IS 'Per-day sum of usage_minutes.cold_boot_count for this (account, app, day). ADR-048. Informational — not billed.';
-
-
---
--- Name: COLUMN usage_daily.rolled_up_at; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.usage_daily.rolled_up_at IS 'Timestamp the meterd cron last wrote this row. Stamped on every ON CONFLICT update so a stuck cron is visible in /v1/usage/daily metadata.';
-
-
---
--- Name: usage_minutes; Type: TABLE; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TABLE faas_test_8bb6532d29f5dda2.usage_minutes (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    instance_id uuid NOT NULL,
-    minute timestamp with time zone NOT NULL,
-    mb_seconds bigint NOT NULL,
-    requests integer DEFAULT 0 NOT NULL,
-    cpu_usec bigint DEFAULT 0 NOT NULL,
-    tx_bytes bigint DEFAULT 0 NOT NULL,
-    net_tx_bytes bigint DEFAULT 0 NOT NULL,
-    net_rx_bytes bigint DEFAULT 0 NOT NULL,
-    cold_boot_count integer DEFAULT 0 NOT NULL,
-    builder_seconds bigint DEFAULT 0 NOT NULL,
-    builder_kind text DEFAULT 'none'::text NOT NULL
-);
-
-
---
--- Name: COLUMN usage_minutes.cpu_usec; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.usage_minutes.cpu_usec IS 'Cumulative host cgroup CPU-µs consumed by the instance during this minute. Source: vmmd cpustats.Cache (cpu.stat usage_usec delta) → schedd instancestats.Poller → meterd Sampler. Measurement only — billing is on plan RAM. issue #279 / PR-B.';
-
-
---
--- Name: COLUMN usage_minutes.tx_bytes; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.usage_minutes.tx_bytes IS 'Cumulative HTTP response body bytes the gateway forwarded for this instance in this minute. Source: pkg/gateway/handler.go statusRecorder.Bytes → per-(instance, minute) ring buffer → meterd Sampler.SampleAndRoll → AppendUsage. ADR-046. Informational — not billed.';
-
-
---
--- Name: COLUMN usage_minutes.net_tx_bytes; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.usage_minutes.net_tx_bytes IS 'Cumulative byte delta on root-side vethHost.rx_bytes for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache reading /sys/class/net/<vethHost>/statistics/rx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-046. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).';
-
-
---
--- Name: COLUMN usage_minutes.net_rx_bytes; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.usage_minutes.net_rx_bytes IS 'Cumulative byte delta on root-side vethHost.tx_bytes (root→guest = ingress) for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache TX path reading /sys/class/net/<vethHost>/statistics/tx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-048. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).';
-
-
---
--- Name: COLUMN usage_minutes.cold_boot_count; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.usage_minutes.cold_boot_count IS 'Per-minute count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed for this instance. Source: scheddgrpc.InstanceStatsRow.LastWakeMethod, sampled by meterd Sampler.SampleAndRoll. ADR-048. Informational — not billed. Idempotent on a redelivered tick within the same minute (only the transition counts).';
-
-
---
--- Name: COLUMN usage_minutes.builder_seconds; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.usage_minutes.builder_seconds IS 'Billable builder VM seconds (2-vCPU / 2048-MB per spec §4.5), written once per build at build completion via state.Store.AppendBuilderUsage keyed by build_id. ADR-048. Informational — not billed. NOT counted in CountsForRAM() — runtime GB-RAM-hour billing is unchanged.';
-
-
---
--- Name: COLUMN usage_minutes.builder_kind; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON COLUMN faas_test_8bb6532d29f5dda2.usage_minutes.builder_kind IS 'Build kind parallel to builds.kind (railpack / dockerfile / tarball); ''none'' for non-build rows. ADR-048. Informational — not billed.';
-
-
---
--- Name: usage_monthly; Type: VIEW; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE VIEW faas_test_8bb6532d29f5dda2.usage_monthly AS
- SELECT account_id,
-    app_id,
-    date_trunc('month'::text, minute) AS month,
-    sum(mb_seconds) AS mb_seconds,
-    sum(cpu_usec) AS cpu_usec,
-    sum(requests) AS requests,
-    sum(tx_bytes) AS tx_bytes,
-    sum(net_tx_bytes) AS net_tx_bytes,
-    sum(net_rx_bytes) AS net_rx_bytes,
-    sum(cold_boot_count) AS cold_boot_count,
-    sum(
-        CASE
-            WHEN (builder_kind <> 'none'::text) THEN builder_seconds
-            ELSE (0)::bigint
-        END) AS builder_seconds
-   FROM faas_test_8bb6532d29f5dda2.usage_minutes
-  GROUP BY account_id, app_id, (date_trunc('month'::text, minute));
-
-
---
--- Name: account_credits; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.account_credits (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    cents_remaining bigint NOT NULL,
-    reason text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    expires_at timestamp with time zone,
-    CONSTRAINT account_credits_cents_remaining_check CHECK ((cents_remaining >= 0)),
-    CONSTRAINT account_credits_reason_check CHECK (((char_length(reason) >= 3) AND (char_length(reason) <= 500)))
-);
-
-
---
--- Name: account_passwords; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.account_passwords (
-    account_id uuid NOT NULL,
-    hash text NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: accounts; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.accounts (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    email public.citext NOT NULL,
-    plan text DEFAULT 'free'::text NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    provider_customer_id text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    deletion_requested_at timestamp with time zone,
-    stripe_subscription_item text,
-    last_quota_warning_at timestamp with time zone,
-    past_due_at timestamp with time zone,
-    mfa_enrolled_at timestamp with time zone,
-    mfa_secret_encrypted bytea,
-    mfa_recovery_codes_hash bytea[],
-    mfa_required boolean DEFAULT false NOT NULL,
-    overage_cap_cents bigint,
-    key_grace_window_days integer,
-    CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
-    CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
-    CONSTRAINT accounts_overage_cap_cents_chk CHECK (((overage_cap_cents IS NULL) OR (overage_cap_cents >= 0))),
-    CONSTRAINT accounts_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
-    CONSTRAINT accounts_status_check CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text])))
-);
-
-
---
--- Name: alert_deliveries; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.alert_deliveries (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    rule_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid,
-    idempotency_key text NOT NULL,
-    payload jsonb NOT NULL,
-    status text DEFAULT 'pending'::text NOT NULL,
-    attempt_count integer DEFAULT 0 NOT NULL,
-    last_status_code integer,
-    last_error text,
-    observed_value double precision NOT NULL,
-    fired_at timestamp with time zone DEFAULT now() NOT NULL,
-    delivered_at timestamp with time zone,
-    CONSTRAINT alert_deliveries_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text])))
-);
-
-
---
--- Name: alert_rules; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.alert_rules (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid,
-    name text NOT NULL,
-    enabled boolean DEFAULT true NOT NULL,
-    metric text NOT NULL,
-    comparison text NOT NULL,
-    threshold double precision NOT NULL,
-    window_spec text NOT NULL,
-    failure_source text,
-    webhook_url text NOT NULL,
-    webhook_secret_sealed bytea NOT NULL,
-    cooldown_minutes integer DEFAULT 30 NOT NULL,
-    state text DEFAULT 'ok'::text NOT NULL,
-    last_fired_at timestamp with time zone,
-    last_evaluated_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid,
-    CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
-    CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
-    CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text])))),
-    CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text]))),
-    CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
-    CONSTRAINT alert_rules_state_chk CHECK ((state = ANY (ARRAY['ok'::text, 'firing'::text]))),
-    CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
-);
-
-
---
--- Name: api_keys; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.api_keys (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    key_sha256 bytea NOT NULL,
-    label text,
-    last_used_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    scopes text[] DEFAULT '{admin}'::text[] NOT NULL,
-    org_id uuid NOT NULL,
-    expires_at timestamp with time zone,
-    status text DEFAULT 'active'::text NOT NULL,
-    revoked_at timestamp with time zone,
-    rotated_from_id uuid,
-    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'apps:read'::text, 'env:read'::text, 'env:write'::text]) AND (cardinality(scopes) > 0))),
-    CONSTRAINT api_keys_status_check CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
-);
-
-
---
--- Name: app_envs; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.app_envs (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    key text NOT NULL,
-    value text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid,
-    CONSTRAINT app_envs_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128)))
-);
-
-
---
--- Name: app_registry_credentials; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.app_registry_credentials (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    registry text NOT NULL,
-    username text NOT NULL,
-    password_encrypted bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_used_at timestamp with time zone,
-    CONSTRAINT app_registry_credentials_password_chk CHECK ((length(password_encrypted) > 0)),
-    CONSTRAINT app_registry_credentials_registry_chk CHECK (((length(registry) > 0) AND (length(registry) <= 253))),
-    CONSTRAINT app_registry_credentials_username_chk CHECK (((length(username) > 0) AND (length(username) <= 256)))
-);
-
-
---
--- Name: app_secrets; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.app_secrets (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    key text NOT NULL,
-    ciphertext bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid,
-    CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128)))
-);
-
-
---
--- Name: app_trusted_signers; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.app_trusted_signers (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    signer_name text NOT NULL,
-    cosign_public_key bytea NOT NULL,
-    added_at timestamp with time zone DEFAULT now() NOT NULL,
-    added_by_account_id uuid NOT NULL,
-    CONSTRAINT app_trusted_signers_name_shape CHECK ((signer_name ~ '^[a-z0-9][a-z0-9_-]{0,63}$'::text)),
-    CONSTRAINT app_trusted_signers_pem_shape CHECK (((octet_length(cosign_public_key) >= 64) AND (octet_length(cosign_public_key) <= 1024)))
-);
-
-
---
--- Name: apps; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.apps (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    slug text NOT NULL,
-    type text DEFAULT 'app'::text NOT NULL,
-    runtime text,
-    ram_mb integer NOT NULL,
-    idle_timeout_s integer,
-    max_concurrency integer DEFAULT 1 NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
-    github_install_id bigint,
-    github_repo_full_name text,
-    github_production_branch text,
-    min_instances integer DEFAULT 0 NOT NULL,
-    egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
-    autoscale_target_rps integer,
-    autoscale_target_cpu_pct integer,
-    github_install_binding_id text,
-    github_install_account_id uuid,
-    github_install_linked_at timestamp with time zone,
-    project_id uuid,
-    root_dir text DEFAULT ''::text NOT NULL,
-    workload_name text DEFAULT ''::text NOT NULL,
-    workload_class text DEFAULT 'http'::text NOT NULL,
-    start_command text,
-    streaming_enabled boolean DEFAULT false NOT NULL,
-    scaling_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
-    last_scale_out_at timestamp with time zone,
-    last_scale_in_at timestamp with time zone,
-    require_signed boolean DEFAULT false NOT NULL,
-    node_id uuid,
-    reassigned_at timestamp with time zone,
-    org_id uuid,
-    migrated_at timestamp with time zone,
-    warm_snapshot_enabled boolean DEFAULT false NOT NULL,
-    warm_snapshot_min_requests integer DEFAULT 5 NOT NULL,
-    warm_snapshot_min_ms integer DEFAULT 2000 NOT NULL,
-    CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
-    CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
-    CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
-    CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
-    CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
-    CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
-    CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
-    CONSTRAINT apps_node_id_nonempty_chk CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
-    CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
-    CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
-    CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
-    CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
-    CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
-    CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
-);
-
-
---
--- Name: COLUMN apps.autoscale_target_rps; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.apps.autoscale_target_rps IS 'Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).';
-
-
---
--- Name: COLUMN apps.autoscale_target_cpu_pct; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.apps.autoscale_target_cpu_pct IS 'Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.';
-
-
---
--- Name: build_provenance; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.build_provenance (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    build_id uuid NOT NULL,
-    buildkit_version text,
-    railpack_version text,
-    base_digest text,
-    source_sha256 text NOT NULL,
-    source_url text,
-    commit_sha text,
-    plan text,
-    runner_digest text,
-    builder_node_id text,
-    started_at timestamp with time zone NOT NULL,
-    finished_at timestamp with time zone NOT NULL,
-    sbom_storage_key text
-);
-
-
---
--- Name: builder_usage; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.builder_usage (
-    build_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    finished_at timestamp with time zone NOT NULL,
-    kind text DEFAULT 'none'::text NOT NULL,
-    seconds bigint DEFAULT 0 NOT NULL,
-    org_id uuid
-);
-
-
---
--- Name: TABLE builder_usage; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON TABLE faas_test_a9b6b26c0b5653b3.builder_usage IS 'Per-build wall-clock seconds, one row per terminal build. Source: cmd/builderd reaper + markSucceeded/markFailed adapters. ADR-048. Informational only — not billed.';
-
-
---
--- Name: COLUMN builder_usage.kind; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.builder_usage.kind IS 'build kind (railpack|dockerfile|tarball). Mirrors builds.kind. ADR-048.';
-
-
---
--- Name: builds; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.builds (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    deployment_id uuid NOT NULL,
-    kind text NOT NULL,
-    source_bytes bigint NOT NULL,
-    status text NOT NULL,
-    failure_class text,
-    log_path text,
-    started_at timestamp with time zone,
-    finished_at timestamp with time zone,
-    enqueued_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT builds_failure_class_check CHECK (((failure_class IS NULL) OR (failure_class = ANY (ARRAY['oom'::text, 'timeout'::text, 'user_error'::text, 'infra'::text])))),
-    CONSTRAINT builds_kind_check CHECK ((kind = ANY (ARRAY['railpack'::text, 'dockerfile'::text, 'tarball'::text, 'github'::text]))),
-    CONSTRAINT builds_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text])))
-);
-
-
---
--- Name: cli_auth_codes; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.cli_auth_codes (
-    token_hash bytea NOT NULL,
-    account_id uuid,
-    status text DEFAULT 'pending'::text NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    consumed_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT cli_auth_codes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'consumed'::text, 'expired'::text])))
-);
-
-
---
--- Name: compute_node_heartbeats; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.compute_node_heartbeats (
-    id bigint NOT NULL,
-    node_id uuid NOT NULL,
-    received_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_heartbeat_at timestamp with time zone NOT NULL,
-    source text NOT NULL,
-    CONSTRAINT compute_node_heartbeats_source_check CHECK ((source = ANY (ARRAY['heartbeat_tick'::text, 'deactivation'::text, 'reactivation'::text])))
-);
-
-
---
--- Name: compute_node_heartbeats_id_seq; Type: SEQUENCE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE SEQUENCE faas_test_a9b6b26c0b5653b3.compute_node_heartbeats_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: compute_node_heartbeats_id_seq; Type: SEQUENCE OWNED BY; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER SEQUENCE faas_test_a9b6b26c0b5653b3.compute_node_heartbeats_id_seq OWNED BY faas_test_a9b6b26c0b5653b3.compute_node_heartbeats.id;
-
-
---
--- Name: compute_node_keys; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.compute_node_keys (
-    compute_node_id uuid NOT NULL,
-    key_id text NOT NULL,
-    public_key_pem text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT compute_node_keys_key_id_shape CHECK ((key_id ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT compute_node_keys_pem_shape CHECK ((public_key_pem ~~ '-----BEGIN PUBLIC KEY-----%'::text))
-);
-
-
---
--- Name: compute_nodes; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.compute_nodes (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name text NOT NULL,
-    target_url text NOT NULL,
-    vpcpus integer NOT NULL,
-    mem_mb integer NOT NULL,
-    max_concurrency integer NOT NULL,
-    admission_ceiling_mb integer NOT NULL,
-    active boolean DEFAULT true NOT NULL,
-    last_heartbeat_at timestamp with time zone DEFAULT now() NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    region text,
-    zone text,
-    schedd_target_url text,
-    vcpu_budget integer DEFAULT 160 NOT NULL,
-    CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
-    CONSTRAINT compute_nodes_max_concurrency_check CHECK ((max_concurrency > 0)),
-    CONSTRAINT compute_nodes_mem_mb_check CHECK ((mem_mb > 0)),
-    CONSTRAINT compute_nodes_schedd_target_url_scheme_chk CHECK (((schedd_target_url IS NULL) OR (schedd_target_url ~ '^(unix|tcp)://'::text))),
-    CONSTRAINT compute_nodes_target_url_check CHECK ((target_url ~ '^(unix|tcp|dns)://'::text)),
-    CONSTRAINT compute_nodes_vcpu_budget_check CHECK ((vcpu_budget > 0)),
-    CONSTRAINT compute_nodes_vpcpus_check CHECK ((vpcpus > 0))
-);
-
-
---
--- Name: COLUMN compute_nodes.region; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.compute_nodes.region IS 'Locality label for the chooser tie-break (pkg/sched/placement.go). Free-form text; nullable so pre-00072 rows accept the schema. The seeded default-local row is backfilled to ''local''. ADR-025.';
-
-
---
--- Name: COLUMN compute_nodes.zone; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.compute_nodes.zone IS 'Finer locality inside region. Currently informational; nullable. ADR-025.';
-
-
---
--- Name: credit_ledger; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.credit_ledger (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    credit_id uuid NOT NULL,
-    delta_cents bigint NOT NULL,
-    reason text NOT NULL,
-    actor text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    provider_invoice_id text,
-    CONSTRAINT credit_ledger_delta_cents_check CHECK ((delta_cents <> 0))
-);
-
-
---
--- Name: crons; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.crons (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    schedule text NOT NULL,
-    path text DEFAULT '/'::text NOT NULL,
-    enabled boolean DEFAULT true NOT NULL,
-    last_fired_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid
-);
-
-
---
--- Name: custom_domains; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.custom_domains (
-    domain public.citext NOT NULL,
-    app_id uuid NOT NULL,
-    verified_at timestamp with time zone,
-    challenge_token text DEFAULT ''::text NOT NULL,
-    app_id_redirect uuid,
-    org_id uuid
-);
-
-
---
--- Name: deployment_logs; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.deployment_logs (
-    deployment_id uuid NOT NULL,
-    seq bigint NOT NULL,
-    stream text DEFAULT 'stdout'::text NOT NULL,
-    line text NOT NULL,
-    written_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: deployment_logs_seq_seq; Type: SEQUENCE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE SEQUENCE faas_test_a9b6b26c0b5653b3.deployment_logs_seq_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: deployment_logs_seq_seq; Type: SEQUENCE OWNED BY; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER SEQUENCE faas_test_a9b6b26c0b5653b3.deployment_logs_seq_seq OWNED BY faas_test_a9b6b26c0b5653b3.deployment_logs.seq;
-
-
---
--- Name: deployments; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.deployments (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    build_id uuid,
-    image_digest text NOT NULL,
-    rootfs_path text,
-    rootfs_bytes bigint,
-    status text NOT NULL,
-    error text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    kind text DEFAULT 'image'::text NOT NULL,
-    source_path text,
-    source_bytes bigint,
-    handler text,
-    log_path text,
-    error_code text,
-    rootfs_key text DEFAULT ''::text NOT NULL,
-    source_url text,
-    commit_sha text,
-    override_entrypoint text[],
-    override_cmd text[],
-    override_env jsonb,
-    override_env_secrets jsonb,
-    override_port integer,
-    override_healthcheck jsonb,
-    sidecars jsonb DEFAULT '[]'::jsonb NOT NULL,
-    CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
-    CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text]))),
-    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 2)),
-    CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text])))
-);
-
-
---
--- Name: egress_policy; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.egress_policy (
-    id text NOT NULL,
-    public_iface text NOT NULL,
-    masquerade_cidr text NOT NULL,
-    changed_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT egress_policy_singleton CHECK ((id = 'singleton'::text))
-);
-
-
---
--- Name: events; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.events (
-    id bigint NOT NULL,
-    at timestamp with time zone DEFAULT now() NOT NULL,
-    actor text NOT NULL,
-    kind text NOT NULL,
-    subject uuid,
-    data jsonb,
-    actor_account_id uuid
-);
-
-
---
--- Name: events_id_seq; Type: SEQUENCE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE faas_test_a9b6b26c0b5653b3.events ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
-    SEQUENCE NAME faas_test_a9b6b26c0b5653b3.events_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1
-);
-
-
---
--- Name: gdpr_requests; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.gdpr_requests (
-    id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    account_email text NOT NULL,
-    action text NOT NULL,
-    requested_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone,
-    org_id uuid,
-    CONSTRAINT gdpr_requests_action_check CHECK ((action = ANY (ARRAY['export'::text, 'delete'::text, 'restore'::text])))
-);
-
-
---
--- Name: github_installations; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.github_installations (
-    account_id uuid NOT NULL,
-    installation_id bigint NOT NULL,
-    default_branch text NOT NULL,
-    sealed_install_token bytea NOT NULL,
-    token_expires_at timestamp with time zone NOT NULL,
-    sealed_at timestamp with time zone DEFAULT now() NOT NULL,
-    audit_github_login text NOT NULL,
-    org_id uuid
-);
-
-
---
--- Name: goose_db_version; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.goose_db_version (
-    id integer NOT NULL,
-    version_id bigint NOT NULL,
-    is_applied boolean NOT NULL,
-    tstamp timestamp without time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: goose_db_version_id_seq; Type: SEQUENCE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE faas_test_a9b6b26c0b5653b3.goose_db_version ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
-    SEQUENCE NAME faas_test_a9b6b26c0b5653b3.goose_db_version_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1
-);
-
-
---
--- Name: idempotency_keys; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.idempotency_keys (
-    key text NOT NULL,
-    account_id uuid NOT NULL,
-    response_status integer NOT NULL,
-    response_body bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: instances; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.instances (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL,
-    state text NOT NULL,
-    netns text,
-    guest_uid integer,
-    host_ip inet,
-    ram_mb integer NOT NULL,
-    started_at timestamp with time zone,
-    last_request_at timestamp with time zone,
-    parked_at timestamp with time zone,
-    terminal_at timestamp with time zone,
-    node_id uuid NOT NULL,
-    wake_id uuid DEFAULT gen_random_uuid() NOT NULL,
-    org_id uuid,
-    migrated_from_node_id uuid,
-    migrated_at timestamp with time zone,
-    lease_token text,
-    framework_ready_at timestamp with time zone,
-    CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'migrating'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
-);
-
-
---
--- Name: invocations; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.invocations (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    source text NOT NULL,
-    state text DEFAULT 'pending'::text NOT NULL,
-    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
-    headers jsonb DEFAULT '{}'::jsonb NOT NULL,
-    due_at timestamp with time zone DEFAULT now() NOT NULL,
-    method text DEFAULT 'POST'::text NOT NULL,
-    path text DEFAULT '/'::text NOT NULL,
-    cron_id uuid,
-    scheduled_at timestamp with time zone,
-    ack_url text,
-    result jsonb,
-    lease_expires_at timestamp with time zone,
-    received_at timestamp with time zone,
-    completed_at timestamp with time zone,
-    instance_id text,
-    attempts integer DEFAULT 0 NOT NULL,
-    last_error text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid,
-    CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text]))),
-    CONSTRAINT invocations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text])))
-);
-
-
---
--- Name: invocations_pending_per_app; Type: VIEW; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE VIEW faas_test_a9b6b26c0b5653b3.invocations_pending_per_app AS
- SELECT app_id,
-    source,
-    count(*) AS pending
-   FROM faas_test_a9b6b26c0b5653b3.invocations
-  WHERE (state = ANY (ARRAY['pending'::text, 'dispatching'::text]))
-  GROUP BY app_id, source;
-
-
---
--- Name: invoices; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.invoices (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    provider text NOT NULL,
-    provider_invoice_id text NOT NULL,
-    number text DEFAULT ''::text NOT NULL,
-    status text NOT NULL,
-    period_start timestamp with time zone NOT NULL,
-    period_end timestamp with time zone NOT NULL,
-    subtotal_cents bigint DEFAULT 0 NOT NULL,
-    tax_cents bigint DEFAULT 0 NOT NULL,
-    total_cents bigint DEFAULT 0 NOT NULL,
-    amount_paid_cents bigint DEFAULT 0 NOT NULL,
-    currency text DEFAULT 'eur'::text NOT NULL,
-    pdf_available boolean DEFAULT false NOT NULL,
-    hosted_url text DEFAULT ''::text NOT NULL,
-    raw jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid,
-    CONSTRAINT invoices_amount_paid_cents_check CHECK ((amount_paid_cents >= 0)),
-    CONSTRAINT invoices_currency_check CHECK ((currency = 'eur'::text)),
-    CONSTRAINT invoices_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text]))),
-    CONSTRAINT invoices_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'uncollectible'::text, 'void'::text]))),
-    CONSTRAINT invoices_subtotal_cents_check CHECK ((subtotal_cents >= 0)),
-    CONSTRAINT invoices_tax_cents_check CHECK ((tax_cents >= 0)),
-    CONSTRAINT invoices_total_cents_check CHECK ((total_cents >= 0))
-);
-
-
---
--- Name: login_tokens; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.login_tokens (
-    token_hash bytea NOT NULL,
-    account_id uuid NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    consumed_at timestamp with time zone
-);
-
-
---
--- Name: oauth_links; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.oauth_links (
-    provider text NOT NULL,
-    provider_subject text NOT NULL,
-    account_id uuid NOT NULL,
-    email text NOT NULL,
-    email_verified boolean NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: org_invitations; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.org_invitations (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    org_id uuid NOT NULL,
-    email public.citext NOT NULL,
-    role text NOT NULL,
-    token_hash bytea NOT NULL,
-    invited_by_account_id uuid,
-    expires_at timestamp with time zone NOT NULL,
-    consumed_at timestamp with time zone,
-    revoked_at timestamp with time zone,
-    accepting_account_id uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT org_invitations_role_chk CHECK ((role = ANY (ARRAY['admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text]))),
-    CONSTRAINT org_invitations_state_chk CHECK ((((consumed_at IS NULL) AND (revoked_at IS NULL)) OR ((consumed_at IS NOT NULL) AND (revoked_at IS NULL)) OR ((consumed_at IS NULL) AND (revoked_at IS NOT NULL))))
-);
-
-
---
--- Name: org_memberships; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.org_memberships (
-    org_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    role text NOT NULL,
-    invited_by_account_id uuid,
-    joined_at timestamp with time zone DEFAULT now() NOT NULL,
-    removed_at timestamp with time zone,
-    CONSTRAINT org_memberships_removed_role_chk CHECK (((removed_at IS NULL) OR (role = ANY (ARRAY['admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))),
-    CONSTRAINT org_memberships_role_chk CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))
-);
-
-
---
--- Name: orgs; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.orgs (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    slug text NOT NULL,
-    name text NOT NULL,
-    personal_org boolean DEFAULT false NOT NULL,
-    personal_owner_account_id uuid,
-    plan text DEFAULT 'free'::text NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    provider_customer_id text,
-    stripe_subscription_item text,
-    deleted_pending boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
-    CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
-    CONSTRAINT orgs_slug_shape CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$'::text)),
-    CONSTRAINT orgs_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text])))
-);
-
-
---
--- Name: paddle_overage_dedupe; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.paddle_overage_dedupe (
-    account_id uuid NOT NULL,
-    month timestamp with time zone,
-    pushed_at timestamp with time zone DEFAULT now() NOT NULL,
-    window_start timestamp with time zone NOT NULL,
-    state text DEFAULT 'completed'::text NOT NULL,
-    claimed_at timestamp with time zone,
-    claimed_by text,
-    org_id uuid,
-    CONSTRAINT paddle_overage_dedupe_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'completed'::text])))
-);
-
-
---
--- Name: pg_ratelimit_counters; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.pg_ratelimit_counters (
-    scope text NOT NULL,
-    subject_id uuid NOT NULL,
-    plan text NOT NULL,
-    tokens bigint NOT NULL,
-    last_refill timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT pg_ratelimit_counters_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
-    CONSTRAINT pg_ratelimit_counters_scope_check CHECK ((scope = ANY (ARRAY['app'::text, 'account'::text]))),
-    CONSTRAINT pg_ratelimit_counters_tokens_check CHECK ((tokens >= 0))
-);
-
-
---
--- Name: projects; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.projects (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    slug text NOT NULL,
-    repo_full_name text,
-    production_branch text,
-    install_id bigint,
-    scan_source text DEFAULT 'unknown'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid,
-    CONSTRAINT projects_scan_source_chk CHECK ((scan_source = ANY (ARRAY['compose'::text, 'procfile'::text, 'k8s'::text, 'render'::text, 'fly'::text, 'serverless'::text, 'workspace'::text, 'convention'::text, 'single'::text, 'unknown'::text]))),
-    CONSTRAINT projects_slug_shape CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
-);
-
-
---
--- Name: recent_build_claims; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.recent_build_claims (
-    account_id uuid NOT NULL,
-    claimed_at timestamp with time zone DEFAULT now() NOT NULL,
-    build_id uuid NOT NULL,
-    org_id uuid
-);
-
-
---
--- Name: sessions; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.sessions (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    issued_ip inet,
-    issued_ua text,
-    issued_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_seen_at timestamp with time zone,
-    revoked_at timestamp with time zone
-);
-
-
---
--- Name: snapshot_storage_daily; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.snapshot_storage_daily (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    day date NOT NULL,
-    snapshot_bytes bigint DEFAULT 0 NOT NULL,
-    layer_bytes bigint DEFAULT 0 NOT NULL,
-    computed_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: TABLE snapshot_storage_daily; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON TABLE faas_test_a9b6b26c0b5653b3.snapshot_storage_daily IS 'Per-(account, app, day) byte totals from snapshots.mem_bytes + disk_bytes + overlay staging. Source: pkg/meter/storage.go cron tick. ADR-049 §B.3. Informational only — not billed today; the future "Pro plan 1 GB included" PR consumes this surface.';
-
-
---
--- Name: COLUMN snapshot_storage_daily.snapshot_bytes; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.snapshot_storage_daily.snapshot_bytes IS 'Σ snapshots.mem_bytes + snapshots.disk_bytes (latest non-stale row per app per day). ADR-049 §B.3. Informational.';
-
-
---
--- Name: COLUMN snapshot_storage_daily.layer_bytes; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.snapshot_storage_daily.layer_bytes IS 'Σ overlay staging bytes per app per day. ADR-049 §B.3. Informational.';
-
-
---
--- Name: snapshots; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.snapshots (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    deployment_id uuid NOT NULL,
-    fc_version text NOT NULL,
-    mem_bytes bigint NOT NULL,
-    disk_bytes bigint NOT NULL,
-    stale boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    storage_key text DEFAULT ''::text NOT NULL,
-    tier text DEFAULT 'init'::text NOT NULL,
-    CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
-);
-
-
---
--- Name: stripe_push_dedupe; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.stripe_push_dedupe (
-    account_id uuid NOT NULL,
-    hour timestamp with time zone NOT NULL,
-    pushed_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid
-);
-
-
---
--- Name: usage_daily; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.usage_daily (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    day date NOT NULL,
-    mb_seconds bigint DEFAULT 0 NOT NULL,
-    requests bigint DEFAULT 0 NOT NULL,
-    cpu_usec bigint DEFAULT 0 NOT NULL,
-    tx_bytes bigint DEFAULT 0 NOT NULL,
-    net_tx_bytes bigint DEFAULT 0 NOT NULL,
-    net_rx_bytes bigint DEFAULT 0 NOT NULL,
-    cold_boot_count bigint DEFAULT 0 NOT NULL,
-    builder_seconds bigint DEFAULT 0 NOT NULL,
-    rolled_up_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid
-);
-
-
---
--- Name: TABLE usage_daily; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON TABLE faas_test_a9b6b26c0b5653b3.usage_daily IS 'Per-(account, app, day) materialised rollup of usage_minutes. Populated by the meterd cron tick FAAS_ROLLUP_INTERVAL (default 5 min) via INSERT ... SELECT ... GROUP BY with ON CONFLICT additive merge. Read by GET /v1/usage/daily. ADR-048. Informational — not billed.';
-
-
---
--- Name: COLUMN usage_daily.cold_boot_count; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.usage_daily.cold_boot_count IS 'Per-day sum of usage_minutes.cold_boot_count for this (account, app, day). ADR-048. Informational — not billed.';
-
-
---
--- Name: COLUMN usage_daily.rolled_up_at; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.usage_daily.rolled_up_at IS 'Timestamp the meterd cron last wrote this row. Stamped on every ON CONFLICT update so a stuck cron is visible in /v1/usage/daily metadata.';
-
-
---
--- Name: usage_minutes; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.usage_minutes (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    instance_id uuid NOT NULL,
-    minute timestamp with time zone NOT NULL,
-    mb_seconds bigint NOT NULL,
-    requests integer DEFAULT 0 NOT NULL,
-    cpu_usec bigint DEFAULT 0 NOT NULL,
-    tx_bytes bigint DEFAULT 0 NOT NULL,
-    net_tx_bytes bigint DEFAULT 0 NOT NULL,
-    net_rx_bytes bigint DEFAULT 0 NOT NULL,
-    cold_boot_count integer DEFAULT 0 NOT NULL,
-    builder_seconds bigint DEFAULT 0 NOT NULL,
-    builder_kind text DEFAULT 'none'::text NOT NULL,
-    org_id uuid
-);
-
-
---
--- Name: COLUMN usage_minutes.cpu_usec; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.usage_minutes.cpu_usec IS 'Cumulative host cgroup CPU-µs consumed by the instance during this minute. Source: vmmd cpustats.Cache (cpu.stat usage_usec delta) → schedd instancestats.Poller → meterd Sampler. Measurement only — billing is on plan RAM. issue #279 / PR-B.';
-
-
---
--- Name: COLUMN usage_minutes.tx_bytes; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.usage_minutes.tx_bytes IS 'Cumulative HTTP response body bytes the gateway forwarded for this instance in this minute. Source: pkg/gateway/handler.go statusRecorder.Bytes → per-(instance, minute) ring buffer → meterd Sampler.SampleAndRoll → AppendUsage. ADR-046. Informational — not billed.';
-
-
---
--- Name: COLUMN usage_minutes.net_tx_bytes; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.usage_minutes.net_tx_bytes IS 'Cumulative byte delta on root-side vethHost.rx_bytes for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache reading /sys/class/net/<vethHost>/statistics/rx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-046. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).';
-
-
---
--- Name: COLUMN usage_minutes.net_rx_bytes; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.usage_minutes.net_rx_bytes IS 'Cumulative byte delta on root-side vethHost.tx_bytes (root→guest = ingress) for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache TX path reading /sys/class/net/<vethHost>/statistics/tx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-048. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).';
-
-
---
--- Name: COLUMN usage_minutes.cold_boot_count; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.usage_minutes.cold_boot_count IS 'Per-minute count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed for this instance. Source: scheddgrpc.InstanceStatsRow.LastWakeMethod, sampled by meterd Sampler.SampleAndRoll. ADR-048. Informational — not billed. Idempotent on a redelivered tick within the same minute (only the transition counts).';
-
-
---
--- Name: COLUMN usage_minutes.builder_seconds; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.usage_minutes.builder_seconds IS 'Billable builder VM seconds (2-vCPU / 2048-MB per spec §4.5), written once per build at build completion via state.Store.AppendBuilderUsage keyed by build_id. ADR-048. Informational — not billed. NOT counted in CountsForRAM() — runtime GB-RAM-hour billing is unchanged.';
-
-
---
--- Name: COLUMN usage_minutes.builder_kind; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON COLUMN faas_test_a9b6b26c0b5653b3.usage_minutes.builder_kind IS 'Build kind parallel to builds.kind (railpack / dockerfile / tarball); ''none'' for non-build rows. ADR-048. Informational — not billed.';
-
-
---
--- Name: usage_monthly; Type: VIEW; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE VIEW faas_test_a9b6b26c0b5653b3.usage_monthly AS
- SELECT account_id,
-    app_id,
-    date_trunc('month'::text, minute) AS month,
-    sum(mb_seconds) AS mb_seconds,
-    sum(cpu_usec) AS cpu_usec,
-    sum(requests) AS requests,
-    sum(tx_bytes) AS tx_bytes,
-    sum(net_tx_bytes) AS net_tx_bytes,
-    sum(net_rx_bytes) AS net_rx_bytes,
-    sum(cold_boot_count) AS cold_boot_count,
-    sum(
-        CASE
-            WHEN (builder_kind <> 'none'::text) THEN builder_seconds
-            ELSE (0)::bigint
-        END) AS builder_seconds
-   FROM faas_test_a9b6b26c0b5653b3.usage_minutes
-  GROUP BY account_id, app_id, (date_trunc('month'::text, minute));
-
-
---
--- Name: warm_hint; Type: TABLE; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TABLE faas_test_a9b6b26c0b5653b3.warm_hint (
-    app_id uuid NOT NULL,
-    node_id uuid NOT NULL,
-    written_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT warm_hint_written_at_chk CHECK ((written_at <= (now() + '00:01:00'::interval)))
-);
-
 
 --
 -- Name: account_credits; Type: TABLE; Schema: public; Owner: -
@@ -3352,6 +749,7 @@ CREATE TABLE public.apps (
     preview_expires_at timestamp with time zone,
     cors_default_enabled boolean DEFAULT false NOT NULL,
     cors_default_origins text[],
+    maintenance_mode boolean DEFAULT false NOT NULL,
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
     CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
     CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
@@ -3717,7 +1115,7 @@ CREATE TABLE public.data_upstreams (
     last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT data_upstreams_declared_region_check CHECK (((declared_region IS NULL) OR (declared_region ~ '^[a-z0-9_-]{1,32}$'::text))),
-    CONSTRAINT data_upstreams_host_check CHECK (((host ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'::text) AND ((length(host) >= 1) AND (length(host) <= 253)))),
+    CONSTRAINT data_upstreams_host_check CHECK (((host ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'::text) AND (host !~ '^[0-9]+(\.[0-9]+)+$'::text) AND ((length(host) >= 1) AND (length(host) <= 253)))),
     CONSTRAINT data_upstreams_host_redacted_hash_check CHECK (((host_redacted_hash ~ '^[a-f0-9]{64}$'::text) OR (host_redacted_hash = '__unsalted__'::text))),
     CONSTRAINT data_upstreams_kind_check CHECK ((kind = ANY (ARRAY['postgres'::text, 'redis'::text, 'mongo'::text, 'cassandra'::text, 'clickhouse'::text, 'elasticsearch'::text, 'opensearch'::text, 'rabbitmq'::text, 'kafka'::text, 'nats'::text, 'minio'::text, 'memcached'::text, 'etcd'::text, 's3'::text, 'https_api'::text]))),
     CONSTRAINT data_upstreams_last_probed_pair_chk CHECK ((((last_rtt_ms IS NULL) AND (last_probed_at IS NULL)) OR ((last_rtt_ms IS NOT NULL) AND (last_probed_at IS NOT NULL)))),
@@ -3815,11 +1213,13 @@ CREATE TABLE public.deployments (
     parked_at timestamp with time zone,
     traffic_percent integer DEFAULT 100 NOT NULL,
     scope text DEFAULT 'default'::text NOT NULL,
+    secret_findings jsonb DEFAULT '[]'::jsonb NOT NULL,
+    secret_scanned_at timestamp with time zone,
     CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
     CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
     CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
     CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text])))),
-    CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text])))),
+    CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
     CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 2)),
     CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text]))),
@@ -3844,7 +1244,7 @@ CREATE TABLE public.edge_rules (
     action jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text]))),
+    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text]))),
     CONSTRAINT edge_rules_priority_check CHECK (((priority >= 0) AND (priority <= 10000)))
 );
 
@@ -3981,7 +1381,7 @@ CREATE TABLE public.idempotency_keys (
 
 CREATE TABLE public.instances (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
+    app_id uuid,
     deployment_id uuid NOT NULL,
     state text NOT NULL,
     netns text,
@@ -4001,6 +1401,10 @@ CREATE TABLE public.instances (
     framework_ready_at timestamp with time zone,
     tail_count integer DEFAULT 0 NOT NULL,
     request_count bigint DEFAULT 0 NOT NULL,
+    kind text DEFAULT 'wake'::text NOT NULL,
+    job_id uuid,
+    CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
+    CONSTRAINT instances_kind_check CHECK ((kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
     CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'migrating'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
 );
@@ -4084,6 +1488,91 @@ CREATE TABLE public.invoices (
     CONSTRAINT invoices_subtotal_cents_check CHECK ((subtotal_cents >= 0)),
     CONSTRAINT invoices_tax_cents_check CHECK ((tax_cents >= 0)),
     CONSTRAINT invoices_total_cents_check CHECK ((total_cents >= 0))
+);
+
+
+--
+-- Name: job_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.job_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    job_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    trigger_kind text NOT NULL,
+    env_overrides jsonb DEFAULT '{}'::jsonb NOT NULL,
+    tasks integer NOT NULL,
+    parallelism integer NOT NULL,
+    retry_max integer,
+    task_timeout_s integer,
+    aggregate_status text DEFAULT 'queued'::text NOT NULL,
+    tasks_succeeded integer DEFAULT 0 NOT NULL,
+    tasks_failed integer DEFAULT 0 NOT NULL,
+    tasks_cancelled integer DEFAULT 0 NOT NULL,
+    tasks_running integer DEFAULT 0 NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT job_runs_aggregate_status_check CHECK ((aggregate_status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text]))),
+    CONSTRAINT job_runs_counters_check CHECK (((tasks_succeeded >= 0) AND (tasks_failed >= 0) AND (tasks_cancelled >= 0) AND (tasks_running >= 0) AND ((((tasks_succeeded + tasks_failed) + tasks_cancelled) + tasks_running) <= tasks))),
+    CONSTRAINT job_runs_parallelism_check CHECK (((parallelism >= 1) AND (parallelism <= 1000))),
+    CONSTRAINT job_runs_retry_max_check CHECK (((retry_max IS NULL) OR ((retry_max >= 0) AND (retry_max <= 10)))),
+    CONSTRAINT job_runs_task_timeout_s_check CHECK (((task_timeout_s IS NULL) OR ((task_timeout_s >= 1) AND (task_timeout_s <= 86400)))),
+    CONSTRAINT job_runs_tasks_check CHECK (((tasks >= 1) AND (tasks <= 100000))),
+    CONSTRAINT job_runs_terminal_pair_chk CHECK ((((finished_at IS NULL) AND (aggregate_status = ANY (ARRAY['queued'::text, 'running'::text]))) OR ((finished_at IS NOT NULL) AND (aggregate_status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text]))))),
+    CONSTRAINT job_runs_trigger_kind_check CHECK ((trigger_kind = ANY (ARRAY['manual'::text, 'scheduled'::text, 'triggered'::text])))
+);
+
+
+--
+-- Name: job_tasks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.job_tasks (
+    run_id uuid NOT NULL,
+    task_index integer NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    attempt integer DEFAULT 1 NOT NULL,
+    instance_id uuid,
+    error_class text,
+    error_message text,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT job_tasks_attempt_check CHECK (((attempt >= 1) AND (attempt <= 11))),
+    CONSTRAINT job_tasks_error_class_check CHECK (((error_class IS NULL) OR (error_class = ANY (ARRAY['timeout'::text, 'refused'::text, 'tls_handshake'::text, 'dns'::text, 'unreachable'::text, 'oom'::text, 'user_error'::text, 'infra'::text])))),
+    CONSTRAINT job_tasks_instance_pair_chk CHECK ((((instance_id IS NULL) AND (status = 'queued'::text)) OR (instance_id IS NOT NULL))),
+    CONSTRAINT job_tasks_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'claimed'::text, 'succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text]))),
+    CONSTRAINT job_tasks_task_index_check CHECK ((task_index >= 0)),
+    CONSTRAINT job_tasks_terminal_pair_chk CHECK ((((finished_at IS NULL) AND (status = ANY (ARRAY['queued'::text, 'claimed'::text]))) OR ((finished_at IS NOT NULL) AND (status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text])))))
+);
+
+
+--
+-- Name: jobs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    name text NOT NULL,
+    image_ref text NOT NULL,
+    ram_mb integer NOT NULL,
+    task_timeout_s integer NOT NULL,
+    max_parallelism integer NOT NULL,
+    retry_max integer NOT NULL,
+    env_overrides jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['app'::text, 'function'::text]))),
+    CONSTRAINT jobs_max_parallelism_check CHECK (((max_parallelism >= 1) AND (max_parallelism <= 1000))),
+    CONSTRAINT jobs_name_check CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT jobs_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT jobs_retry_max_check CHECK (((retry_max >= 0) AND (retry_max <= 10))),
+    CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'deleted'::text]))),
+    CONSTRAINT jobs_task_timeout_s_check CHECK (((task_timeout_s >= 1) AND (task_timeout_s <= 86400)))
 );
 
 
@@ -4321,6 +1810,46 @@ CREATE TABLE public.stripe_push_dedupe (
 
 
 --
+-- Name: tenant_hostnames; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tenant_hostnames (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    surface_id uuid NOT NULL,
+    hostname public.citext NOT NULL,
+    challenge_token text DEFAULT ''::text NOT NULL,
+    verified_at timestamp with time zone,
+    last_check_at timestamp with time zone,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT tenant_hostnames_hostname_len_chk CHECK (((hostname OPERATOR(public.<>) ''::public.citext) AND (length((hostname)::text) <= 253)))
+);
+
+
+--
+-- Name: tenant_surfaces; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tenant_surfaces (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid,
+    name public.citext NOT NULL,
+    cert_kind text DEFAULT 'per_host_san'::text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    cert_state text DEFAULT 'none'::text NOT NULL,
+    cert_not_after timestamp with time zone,
+    cert_last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT tenant_surfaces_app_or_not_chk CHECK ((app_id IS NOT NULL)),
+    CONSTRAINT tenant_surfaces_cert_kind_check CHECK ((cert_kind = ANY (ARRAY['per_host_san'::text, 'shared_wildcard'::text]))),
+    CONSTRAINT tenant_surfaces_cert_state_check CHECK ((cert_state = ANY (ARRAY['none'::text, 'pending'::text, 'issued'::text, 'failed'::text]))),
+    CONSTRAINT tenant_surfaces_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'suspended'::text, 'deleted'::text])))
+);
+
+
+--
 -- Name: usage_daily; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4369,7 +1898,7 @@ COMMENT ON COLUMN public.usage_daily.rolled_up_at IS 'Timestamp the meterd cron 
 
 CREATE TABLE public.usage_minutes (
     account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
+    app_id uuid,
     instance_id uuid NOT NULL,
     minute timestamp with time zone NOT NULL,
     mb_seconds bigint NOT NULL,
@@ -4382,7 +1911,11 @@ CREATE TABLE public.usage_minutes (
     builder_seconds bigint DEFAULT 0 NOT NULL,
     builder_kind text DEFAULT 'none'::text NOT NULL,
     org_id uuid,
-    tail_seconds bigint DEFAULT 0 NOT NULL
+    tail_seconds bigint DEFAULT 0 NOT NULL,
+    meter_kind text DEFAULT 'app'::text NOT NULL,
+    job_id uuid,
+    CONSTRAINT usage_minutes_app_or_job_chk CHECK ((((meter_kind = 'app'::text) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((meter_kind = 'job'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
+    CONSTRAINT usage_minutes_meter_kind_check CHECK ((meter_kind = ANY (ARRAY['app'::text, 'job'::text])))
 );
 
 
@@ -4492,34 +2025,6 @@ ALTER TABLE ONLY public.data_upstream_probes ATTACH PARTITION public.data_upstre
 
 
 --
--- Name: compute_node_heartbeats id; Type: DEFAULT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.compute_node_heartbeats ALTER COLUMN id SET DEFAULT nextval('faas_test_8bb6532d29f5dda2.compute_node_heartbeats_id_seq'::regclass);
-
-
---
--- Name: deployment_logs seq; Type: DEFAULT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.deployment_logs ALTER COLUMN seq SET DEFAULT nextval('faas_test_8bb6532d29f5dda2.deployment_logs_seq_seq'::regclass);
-
-
---
--- Name: compute_node_heartbeats id; Type: DEFAULT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.compute_node_heartbeats ALTER COLUMN id SET DEFAULT nextval('faas_test_a9b6b26c0b5653b3.compute_node_heartbeats_id_seq'::regclass);
-
-
---
--- Name: deployment_logs seq; Type: DEFAULT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.deployment_logs ALTER COLUMN seq SET DEFAULT nextval('faas_test_a9b6b26c0b5653b3.deployment_logs_seq_seq'::regclass);
-
-
---
 -- Name: compute_node_heartbeats id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -4531,894 +2036,6 @@ ALTER TABLE ONLY public.compute_node_heartbeats ALTER COLUMN id SET DEFAULT next
 --
 
 ALTER TABLE ONLY public.deployment_logs ALTER COLUMN seq SET DEFAULT nextval('public.deployment_logs_seq_seq'::regclass);
-
-
---
--- Name: usage_minutes usage_minutes_pkey; Type: CONSTRAINT; Schema: faas_inspect; Owner: -
---
-
-ALTER TABLE ONLY faas_inspect.usage_minutes
-    ADD CONSTRAINT usage_minutes_pkey PRIMARY KEY (instance_id, minute);
-
-
---
--- Name: account_credits account_credits_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.account_credits
-    ADD CONSTRAINT account_credits_pkey PRIMARY KEY (id);
-
-
---
--- Name: account_passwords account_passwords_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.account_passwords
-    ADD CONSTRAINT account_passwords_pkey PRIMARY KEY (account_id);
-
-
---
--- Name: accounts accounts_email_key; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.accounts
-    ADD CONSTRAINT accounts_email_key UNIQUE (email);
-
-
---
--- Name: accounts accounts_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.accounts
-    ADD CONSTRAINT accounts_pkey PRIMARY KEY (id);
-
-
---
--- Name: accounts accounts_stripe_customer_id_key; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.accounts
-    ADD CONSTRAINT accounts_stripe_customer_id_key UNIQUE (provider_customer_id);
-
-
---
--- Name: alert_deliveries alert_deliveries_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.alert_deliveries
-    ADD CONSTRAINT alert_deliveries_pkey PRIMARY KEY (id);
-
-
---
--- Name: alert_rules alert_rules_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.alert_rules
-    ADD CONSTRAINT alert_rules_pkey PRIMARY KEY (id);
-
-
---
--- Name: api_keys api_keys_key_sha256_key; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.api_keys
-    ADD CONSTRAINT api_keys_key_sha256_key UNIQUE (key_sha256);
-
-
---
--- Name: api_keys api_keys_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.api_keys
-    ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
-
-
---
--- Name: app_envs app_envs_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.app_envs
-    ADD CONSTRAINT app_envs_pkey PRIMARY KEY (app_id, key);
-
-
---
--- Name: app_registry_credentials app_registry_credentials_app_registry_uq; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.app_registry_credentials
-    ADD CONSTRAINT app_registry_credentials_app_registry_uq UNIQUE (app_id, registry);
-
-
---
--- Name: app_registry_credentials app_registry_credentials_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.app_registry_credentials
-    ADD CONSTRAINT app_registry_credentials_pkey PRIMARY KEY (id);
-
-
---
--- Name: app_secrets app_secrets_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.app_secrets
-    ADD CONSTRAINT app_secrets_pkey PRIMARY KEY (app_id, key);
-
-
---
--- Name: app_trusted_signers app_trusted_signers_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.app_trusted_signers
-    ADD CONSTRAINT app_trusted_signers_pkey PRIMARY KEY (app_id, signer_name);
-
-
---
--- Name: apps apps_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.apps
-    ADD CONSTRAINT apps_pkey PRIMARY KEY (id);
-
-
---
--- Name: apps apps_slug_key; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.apps
-    ADD CONSTRAINT apps_slug_key UNIQUE (slug);
-
-
---
--- Name: build_provenance build_provenance_build_id_key; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.build_provenance
-    ADD CONSTRAINT build_provenance_build_id_key UNIQUE (build_id);
-
-
---
--- Name: build_provenance build_provenance_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.build_provenance
-    ADD CONSTRAINT build_provenance_pkey PRIMARY KEY (id);
-
-
---
--- Name: builder_usage builder_usage_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.builder_usage
-    ADD CONSTRAINT builder_usage_pkey PRIMARY KEY (build_id);
-
-
---
--- Name: builds builds_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.builds
-    ADD CONSTRAINT builds_pkey PRIMARY KEY (id);
-
-
---
--- Name: cli_auth_codes cli_auth_codes_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.cli_auth_codes
-    ADD CONSTRAINT cli_auth_codes_pkey PRIMARY KEY (token_hash);
-
-
---
--- Name: compute_node_heartbeats compute_node_heartbeats_node_at_uniq; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.compute_node_heartbeats
-    ADD CONSTRAINT compute_node_heartbeats_node_at_uniq UNIQUE (node_id, received_at);
-
-
---
--- Name: compute_node_heartbeats compute_node_heartbeats_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.compute_node_heartbeats
-    ADD CONSTRAINT compute_node_heartbeats_pkey PRIMARY KEY (id);
-
-
---
--- Name: compute_node_keys compute_node_keys_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.compute_node_keys
-    ADD CONSTRAINT compute_node_keys_pkey PRIMARY KEY (compute_node_id, key_id);
-
-
---
--- Name: compute_nodes compute_nodes_name_key; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.compute_nodes
-    ADD CONSTRAINT compute_nodes_name_key UNIQUE (name);
-
-
---
--- Name: compute_nodes compute_nodes_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.compute_nodes
-    ADD CONSTRAINT compute_nodes_pkey PRIMARY KEY (id);
-
-
---
--- Name: credit_ledger credit_ledger_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.credit_ledger
-    ADD CONSTRAINT credit_ledger_pkey PRIMARY KEY (id);
-
-
---
--- Name: crons crons_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.crons
-    ADD CONSTRAINT crons_pkey PRIMARY KEY (id);
-
-
---
--- Name: custom_domains custom_domains_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.custom_domains
-    ADD CONSTRAINT custom_domains_pkey PRIMARY KEY (domain);
-
-
---
--- Name: deployment_logs deployment_logs_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.deployment_logs
-    ADD CONSTRAINT deployment_logs_pkey PRIMARY KEY (deployment_id, seq);
-
-
---
--- Name: deployments deployments_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.deployments
-    ADD CONSTRAINT deployments_pkey PRIMARY KEY (id);
-
-
---
--- Name: egress_policy egress_policy_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.egress_policy
-    ADD CONSTRAINT egress_policy_pkey PRIMARY KEY (id);
-
-
---
--- Name: events events_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.events
-    ADD CONSTRAINT events_pkey PRIMARY KEY (id);
-
-
---
--- Name: gdpr_requests gdpr_requests_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.gdpr_requests
-    ADD CONSTRAINT gdpr_requests_pkey PRIMARY KEY (id);
-
-
---
--- Name: github_installations github_installations_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.github_installations
-    ADD CONSTRAINT github_installations_pkey PRIMARY KEY (account_id);
-
-
---
--- Name: goose_db_version goose_db_version_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.goose_db_version
-    ADD CONSTRAINT goose_db_version_pkey PRIMARY KEY (id);
-
-
---
--- Name: idempotency_keys idempotency_keys_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.idempotency_keys
-    ADD CONSTRAINT idempotency_keys_pkey PRIMARY KEY (account_id, key);
-
-
---
--- Name: instances instances_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.instances
-    ADD CONSTRAINT instances_pkey PRIMARY KEY (id);
-
-
---
--- Name: invocations invocations_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.invocations
-    ADD CONSTRAINT invocations_pkey PRIMARY KEY (id);
-
-
---
--- Name: invoices invoices_account_id_provider_provider_invoice_id_key; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.invoices
-    ADD CONSTRAINT invoices_account_id_provider_provider_invoice_id_key UNIQUE (account_id, provider, provider_invoice_id);
-
-
---
--- Name: invoices invoices_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.invoices
-    ADD CONSTRAINT invoices_pkey PRIMARY KEY (id);
-
-
---
--- Name: login_tokens login_tokens_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.login_tokens
-    ADD CONSTRAINT login_tokens_pkey PRIMARY KEY (token_hash);
-
-
---
--- Name: oauth_links oauth_links_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.oauth_links
-    ADD CONSTRAINT oauth_links_pkey PRIMARY KEY (provider, provider_subject);
-
-
---
--- Name: paddle_overage_dedupe paddle_overage_dedupe_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.paddle_overage_dedupe
-    ADD CONSTRAINT paddle_overage_dedupe_pkey PRIMARY KEY (account_id, window_start);
-
-
---
--- Name: projects projects_account_slug_uniq; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.projects
-    ADD CONSTRAINT projects_account_slug_uniq UNIQUE (account_id, slug);
-
-
---
--- Name: projects projects_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.projects
-    ADD CONSTRAINT projects_pkey PRIMARY KEY (id);
-
-
---
--- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.sessions
-    ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
-
-
---
--- Name: snapshot_storage_daily snapshot_storage_daily_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.snapshot_storage_daily
-    ADD CONSTRAINT snapshot_storage_daily_pkey PRIMARY KEY (account_id, app_id, day);
-
-
---
--- Name: snapshots snapshots_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.snapshots
-    ADD CONSTRAINT snapshots_pkey PRIMARY KEY (id);
-
-
---
--- Name: stripe_push_dedupe stripe_push_dedupe_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.stripe_push_dedupe
-    ADD CONSTRAINT stripe_push_dedupe_pkey PRIMARY KEY (account_id, hour);
-
-
---
--- Name: usage_daily usage_daily_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.usage_daily
-    ADD CONSTRAINT usage_daily_pkey PRIMARY KEY (account_id, app_id, day);
-
-
---
--- Name: usage_minutes usage_minutes_pkey; Type: CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.usage_minutes
-    ADD CONSTRAINT usage_minutes_pkey PRIMARY KEY (instance_id, minute);
-
-
---
--- Name: account_credits account_credits_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.account_credits
-    ADD CONSTRAINT account_credits_pkey PRIMARY KEY (id);
-
-
---
--- Name: account_passwords account_passwords_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.account_passwords
-    ADD CONSTRAINT account_passwords_pkey PRIMARY KEY (account_id);
-
-
---
--- Name: accounts accounts_email_key; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.accounts
-    ADD CONSTRAINT accounts_email_key UNIQUE (email);
-
-
---
--- Name: accounts accounts_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.accounts
-    ADD CONSTRAINT accounts_pkey PRIMARY KEY (id);
-
-
---
--- Name: accounts accounts_stripe_customer_id_key; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.accounts
-    ADD CONSTRAINT accounts_stripe_customer_id_key UNIQUE (provider_customer_id);
-
-
---
--- Name: alert_deliveries alert_deliveries_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.alert_deliveries
-    ADD CONSTRAINT alert_deliveries_pkey PRIMARY KEY (id);
-
-
---
--- Name: alert_rules alert_rules_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.alert_rules
-    ADD CONSTRAINT alert_rules_pkey PRIMARY KEY (id);
-
-
---
--- Name: api_keys api_keys_key_sha256_key; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.api_keys
-    ADD CONSTRAINT api_keys_key_sha256_key UNIQUE (key_sha256);
-
-
---
--- Name: api_keys api_keys_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.api_keys
-    ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
-
-
---
--- Name: app_envs app_envs_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_envs
-    ADD CONSTRAINT app_envs_pkey PRIMARY KEY (app_id, key);
-
-
---
--- Name: app_registry_credentials app_registry_credentials_app_registry_uq; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_registry_credentials
-    ADD CONSTRAINT app_registry_credentials_app_registry_uq UNIQUE (app_id, registry);
-
-
---
--- Name: app_registry_credentials app_registry_credentials_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_registry_credentials
-    ADD CONSTRAINT app_registry_credentials_pkey PRIMARY KEY (id);
-
-
---
--- Name: app_secrets app_secrets_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_secrets
-    ADD CONSTRAINT app_secrets_pkey PRIMARY KEY (app_id, key);
-
-
---
--- Name: app_trusted_signers app_trusted_signers_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_trusted_signers
-    ADD CONSTRAINT app_trusted_signers_pkey PRIMARY KEY (app_id, signer_name);
-
-
---
--- Name: apps apps_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.apps
-    ADD CONSTRAINT apps_pkey PRIMARY KEY (id);
-
-
---
--- Name: apps apps_slug_key; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.apps
-    ADD CONSTRAINT apps_slug_key UNIQUE (slug);
-
-
---
--- Name: build_provenance build_provenance_build_id_key; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.build_provenance
-    ADD CONSTRAINT build_provenance_build_id_key UNIQUE (build_id);
-
-
---
--- Name: build_provenance build_provenance_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.build_provenance
-    ADD CONSTRAINT build_provenance_pkey PRIMARY KEY (id);
-
-
---
--- Name: builder_usage builder_usage_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.builder_usage
-    ADD CONSTRAINT builder_usage_pkey PRIMARY KEY (build_id);
-
-
---
--- Name: builds builds_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.builds
-    ADD CONSTRAINT builds_pkey PRIMARY KEY (id);
-
-
---
--- Name: cli_auth_codes cli_auth_codes_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.cli_auth_codes
-    ADD CONSTRAINT cli_auth_codes_pkey PRIMARY KEY (token_hash);
-
-
---
--- Name: compute_node_heartbeats compute_node_heartbeats_node_at_uniq; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.compute_node_heartbeats
-    ADD CONSTRAINT compute_node_heartbeats_node_at_uniq UNIQUE (node_id, received_at);
-
-
---
--- Name: compute_node_heartbeats compute_node_heartbeats_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.compute_node_heartbeats
-    ADD CONSTRAINT compute_node_heartbeats_pkey PRIMARY KEY (id);
-
-
---
--- Name: compute_node_keys compute_node_keys_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.compute_node_keys
-    ADD CONSTRAINT compute_node_keys_pkey PRIMARY KEY (compute_node_id, key_id);
-
-
---
--- Name: compute_nodes compute_nodes_name_key; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.compute_nodes
-    ADD CONSTRAINT compute_nodes_name_key UNIQUE (name);
-
-
---
--- Name: compute_nodes compute_nodes_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.compute_nodes
-    ADD CONSTRAINT compute_nodes_pkey PRIMARY KEY (id);
-
-
---
--- Name: credit_ledger credit_ledger_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.credit_ledger
-    ADD CONSTRAINT credit_ledger_pkey PRIMARY KEY (id);
-
-
---
--- Name: crons crons_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.crons
-    ADD CONSTRAINT crons_pkey PRIMARY KEY (id);
-
-
---
--- Name: custom_domains custom_domains_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.custom_domains
-    ADD CONSTRAINT custom_domains_pkey PRIMARY KEY (domain);
-
-
---
--- Name: deployment_logs deployment_logs_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.deployment_logs
-    ADD CONSTRAINT deployment_logs_pkey PRIMARY KEY (deployment_id, seq);
-
-
---
--- Name: deployments deployments_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.deployments
-    ADD CONSTRAINT deployments_pkey PRIMARY KEY (id);
-
-
---
--- Name: egress_policy egress_policy_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.egress_policy
-    ADD CONSTRAINT egress_policy_pkey PRIMARY KEY (id);
-
-
---
--- Name: events events_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.events
-    ADD CONSTRAINT events_pkey PRIMARY KEY (id);
-
-
---
--- Name: gdpr_requests gdpr_requests_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.gdpr_requests
-    ADD CONSTRAINT gdpr_requests_pkey PRIMARY KEY (id);
-
-
---
--- Name: github_installations github_installations_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.github_installations
-    ADD CONSTRAINT github_installations_pkey PRIMARY KEY (account_id);
-
-
---
--- Name: goose_db_version goose_db_version_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.goose_db_version
-    ADD CONSTRAINT goose_db_version_pkey PRIMARY KEY (id);
-
-
---
--- Name: idempotency_keys idempotency_keys_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.idempotency_keys
-    ADD CONSTRAINT idempotency_keys_pkey PRIMARY KEY (account_id, key);
-
-
---
--- Name: instances instances_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.instances
-    ADD CONSTRAINT instances_pkey PRIMARY KEY (id);
-
-
---
--- Name: invocations invocations_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.invocations
-    ADD CONSTRAINT invocations_pkey PRIMARY KEY (id);
-
-
---
--- Name: invoices invoices_account_id_provider_provider_invoice_id_key; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.invoices
-    ADD CONSTRAINT invoices_account_id_provider_provider_invoice_id_key UNIQUE (account_id, provider, provider_invoice_id);
-
-
---
--- Name: invoices invoices_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.invoices
-    ADD CONSTRAINT invoices_pkey PRIMARY KEY (id);
-
-
---
--- Name: login_tokens login_tokens_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.login_tokens
-    ADD CONSTRAINT login_tokens_pkey PRIMARY KEY (token_hash);
-
-
---
--- Name: oauth_links oauth_links_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.oauth_links
-    ADD CONSTRAINT oauth_links_pkey PRIMARY KEY (provider, provider_subject);
-
-
---
--- Name: org_invitations org_invitations_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.org_invitations
-    ADD CONSTRAINT org_invitations_pkey PRIMARY KEY (id);
-
-
---
--- Name: org_invitations org_invitations_token_uniq; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.org_invitations
-    ADD CONSTRAINT org_invitations_token_uniq UNIQUE (token_hash);
-
-
---
--- Name: org_memberships org_memberships_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.org_memberships
-    ADD CONSTRAINT org_memberships_pkey PRIMARY KEY (org_id, account_id);
-
-
---
--- Name: orgs orgs_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.orgs
-    ADD CONSTRAINT orgs_pkey PRIMARY KEY (id);
-
-
---
--- Name: paddle_overage_dedupe paddle_overage_dedupe_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.paddle_overage_dedupe
-    ADD CONSTRAINT paddle_overage_dedupe_pkey PRIMARY KEY (account_id, window_start);
-
-
---
--- Name: pg_ratelimit_counters pg_ratelimit_counters_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.pg_ratelimit_counters
-    ADD CONSTRAINT pg_ratelimit_counters_pkey PRIMARY KEY (scope, subject_id, plan);
-
-
---
--- Name: projects projects_account_slug_uniq; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.projects
-    ADD CONSTRAINT projects_account_slug_uniq UNIQUE (account_id, slug);
-
-
---
--- Name: projects projects_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.projects
-    ADD CONSTRAINT projects_pkey PRIMARY KEY (id);
-
-
---
--- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.sessions
-    ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
-
-
---
--- Name: snapshot_storage_daily snapshot_storage_daily_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.snapshot_storage_daily
-    ADD CONSTRAINT snapshot_storage_daily_pkey PRIMARY KEY (account_id, app_id, day);
-
-
---
--- Name: snapshots snapshots_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.snapshots
-    ADD CONSTRAINT snapshots_pkey PRIMARY KEY (id);
-
-
---
--- Name: stripe_push_dedupe stripe_push_dedupe_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.stripe_push_dedupe
-    ADD CONSTRAINT stripe_push_dedupe_pkey PRIMARY KEY (account_id, hour);
-
-
---
--- Name: usage_daily usage_daily_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.usage_daily
-    ADD CONSTRAINT usage_daily_pkey PRIMARY KEY (account_id, app_id, day);
-
-
---
--- Name: usage_minutes usage_minutes_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.usage_minutes
-    ADD CONSTRAINT usage_minutes_pkey PRIMARY KEY (instance_id, minute);
-
-
---
--- Name: warm_hint warm_hint_pkey; Type: CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.warm_hint
-    ADD CONSTRAINT warm_hint_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -5854,6 +2471,30 @@ ALTER TABLE ONLY public.invoices
 
 
 --
+-- Name: job_runs job_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.job_runs
+    ADD CONSTRAINT job_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: job_tasks job_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.job_tasks
+    ADD CONSTRAINT job_tasks_pkey PRIMARY KEY (run_id, task_index);
+
+
+--
+-- Name: jobs jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.jobs
+    ADD CONSTRAINT jobs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: login_tokens login_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5966,6 +2607,22 @@ ALTER TABLE ONLY public.stripe_push_dedupe
 
 
 --
+-- Name: tenant_hostnames tenant_hostnames_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tenant_hostnames
+    ADD CONSTRAINT tenant_hostnames_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tenant_surfaces tenant_surfaces_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tenant_surfaces
+    ADD CONSTRAINT tenant_surfaces_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: usage_daily usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5995,1238 +2652,6 @@ ALTER TABLE ONLY public.warm_hint
 
 ALTER TABLE ONLY public.webhook_deliveries
     ADD CONSTRAINT webhook_deliveries_pkey PRIMARY KEY (provider, delivery_id);
-
-
---
--- Name: account_credits_account_active_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX account_credits_account_active_idx ON faas_test_8bb6532d29f5dda2.account_credits USING btree (account_id, expires_at, cents_remaining) WHERE (cents_remaining > 0);
-
-
---
--- Name: accounts_deletion_pending_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX accounts_deletion_pending_idx ON faas_test_8bb6532d29f5dda2.accounts USING btree (deletion_requested_at) WHERE (status = 'deleted_pending'::text);
-
-
---
--- Name: accounts_mfa_required_pending_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX accounts_mfa_required_pending_idx ON faas_test_8bb6532d29f5dda2.accounts USING btree (id) WHERE ((mfa_required = true) AND (mfa_enrolled_at IS NULL));
-
-
---
--- Name: accounts_past_due_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX accounts_past_due_idx ON faas_test_8bb6532d29f5dda2.accounts USING btree (past_due_at) WHERE (status = 'past_due'::text);
-
-
---
--- Name: alert_deliveries_idempotency_uniq; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE UNIQUE INDEX alert_deliveries_idempotency_uniq ON faas_test_8bb6532d29f5dda2.alert_deliveries USING btree (idempotency_key);
-
-
---
--- Name: alert_deliveries_rule_fired_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX alert_deliveries_rule_fired_idx ON faas_test_8bb6532d29f5dda2.alert_deliveries USING btree (rule_id, fired_at DESC);
-
-
---
--- Name: alert_rules_account_name_uniq; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE UNIQUE INDEX alert_rules_account_name_uniq ON faas_test_8bb6532d29f5dda2.alert_rules USING btree (account_id, name);
-
-
---
--- Name: alert_rules_enabled_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX alert_rules_enabled_idx ON faas_test_8bb6532d29f5dda2.alert_rules USING btree (account_id) WHERE (enabled = true);
-
-
---
--- Name: api_keys_account_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX api_keys_account_idx ON faas_test_8bb6532d29f5dda2.api_keys USING btree (account_id);
-
-
---
--- Name: app_envs_account_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX app_envs_account_idx ON faas_test_8bb6532d29f5dda2.app_envs USING btree (account_id);
-
-
---
--- Name: app_envs_app_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX app_envs_app_idx ON faas_test_8bb6532d29f5dda2.app_envs USING btree (app_id);
-
-
---
--- Name: app_registry_credentials_account_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX app_registry_credentials_account_idx ON faas_test_8bb6532d29f5dda2.app_registry_credentials USING btree (account_id);
-
-
---
--- Name: app_secrets_account_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX app_secrets_account_idx ON faas_test_8bb6532d29f5dda2.app_secrets USING btree (account_id);
-
-
---
--- Name: app_secrets_app_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX app_secrets_app_idx ON faas_test_8bb6532d29f5dda2.app_secrets USING btree (app_id);
-
-
---
--- Name: app_trusted_signers_app_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX app_trusted_signers_app_idx ON faas_test_8bb6532d29f5dda2.app_trusted_signers USING btree (app_id);
-
-
---
--- Name: apps_account_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX apps_account_idx ON faas_test_8bb6532d29f5dda2.apps USING btree (account_id, status);
-
-
---
--- Name: apps_github_install_account_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX apps_github_install_account_idx ON faas_test_8bb6532d29f5dda2.apps USING btree (github_install_account_id) WHERE (github_install_account_id IS NOT NULL);
-
-
---
--- Name: apps_github_install_account_uniq; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE UNIQUE INDEX apps_github_install_account_uniq ON faas_test_8bb6532d29f5dda2.apps USING btree (github_install_account_id, github_install_binding_id) WHERE ((github_install_account_id IS NOT NULL) AND (github_install_binding_id IS NOT NULL));
-
-
---
--- Name: apps_github_install_id_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX apps_github_install_id_idx ON faas_test_8bb6532d29f5dda2.apps USING btree (github_install_id) WHERE (github_install_id IS NOT NULL);
-
-
---
--- Name: apps_github_install_repo_branch_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX apps_github_install_repo_branch_idx ON faas_test_8bb6532d29f5dda2.apps USING btree (github_repo_full_name, github_production_branch) WHERE ((github_repo_full_name IS NOT NULL) AND (github_production_branch IS NOT NULL));
-
-
---
--- Name: apps_node_id_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX apps_node_id_idx ON faas_test_8bb6532d29f5dda2.apps USING btree (node_id);
-
-
---
--- Name: apps_node_id_status_partial_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX apps_node_id_status_partial_idx ON faas_test_8bb6532d29f5dda2.apps USING btree (node_id, status) WHERE ((node_id IS NOT NULL) AND (status = ANY (ARRAY['active'::text, 'evicted_cold'::text])));
-
-
---
--- Name: apps_project_workload_uniq; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE UNIQUE INDEX apps_project_workload_uniq ON faas_test_8bb6532d29f5dda2.apps USING btree (project_id, workload_name) WHERE (project_id IS NOT NULL);
-
-
---
--- Name: apps_reassigned_at_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX apps_reassigned_at_idx ON faas_test_8bb6532d29f5dda2.apps USING btree (reassigned_at) WHERE (reassigned_at IS NOT NULL);
-
-
---
--- Name: apps_streaming_enabled_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX apps_streaming_enabled_idx ON faas_test_8bb6532d29f5dda2.apps USING btree (streaming_enabled) WHERE (streaming_enabled = true);
-
-
---
--- Name: build_provenance_build_id_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX build_provenance_build_id_idx ON faas_test_8bb6532d29f5dda2.build_provenance USING btree (build_id);
-
-
---
--- Name: builder_usage_account_finished_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX builder_usage_account_finished_idx ON faas_test_8bb6532d29f5dda2.builder_usage USING btree (account_id, finished_at DESC);
-
-
---
--- Name: builds_running_started_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX builds_running_started_idx ON faas_test_8bb6532d29f5dda2.builds USING btree (started_at) WHERE (status = 'running'::text);
-
-
---
--- Name: cli_auth_codes_pending_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX cli_auth_codes_pending_idx ON faas_test_8bb6532d29f5dda2.cli_auth_codes USING btree (status, expires_at) WHERE (status = 'pending'::text);
-
-
---
--- Name: compute_node_heartbeats_node_at_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX compute_node_heartbeats_node_at_idx ON faas_test_8bb6532d29f5dda2.compute_node_heartbeats USING btree (node_id, received_at DESC);
-
-
---
--- Name: compute_node_keys_node_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX compute_node_keys_node_idx ON faas_test_8bb6532d29f5dda2.compute_node_keys USING btree (compute_node_id);
-
-
---
--- Name: compute_nodes_active_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX compute_nodes_active_idx ON faas_test_8bb6532d29f5dda2.compute_nodes USING btree (name) WHERE (active = true);
-
-
---
--- Name: compute_nodes_region_zone_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX compute_nodes_region_zone_idx ON faas_test_8bb6532d29f5dda2.compute_nodes USING btree (region, zone) WHERE (active = true);
-
-
---
--- Name: credit_ledger_account_created_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX credit_ledger_account_created_idx ON faas_test_8bb6532d29f5dda2.credit_ledger USING btree (account_id, created_at DESC);
-
-
---
--- Name: credit_ledger_invoice_credit_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE UNIQUE INDEX credit_ledger_invoice_credit_idx ON faas_test_8bb6532d29f5dda2.credit_ledger USING btree (provider_invoice_id, credit_id) WHERE (provider_invoice_id IS NOT NULL);
-
-
---
--- Name: crons_app_full_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX crons_app_full_idx ON faas_test_8bb6532d29f5dda2.crons USING btree (app_id);
-
-
---
--- Name: crons_app_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX crons_app_idx ON faas_test_8bb6532d29f5dda2.crons USING btree (app_id) WHERE enabled;
-
-
---
--- Name: custom_domains_unverified_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX custom_domains_unverified_idx ON faas_test_8bb6532d29f5dda2.custom_domains USING btree (domain) WHERE (verified_at IS NULL);
-
-
---
--- Name: deployment_logs_seq_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX deployment_logs_seq_idx ON faas_test_8bb6532d29f5dda2.deployment_logs USING btree (deployment_id, seq DESC);
-
-
---
--- Name: deployments_app_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX deployments_app_idx ON faas_test_8bb6532d29f5dda2.deployments USING btree (app_id, created_at DESC);
-
-
---
--- Name: deployments_failed_error_code_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX deployments_failed_error_code_idx ON faas_test_8bb6532d29f5dda2.deployments USING btree (error_code) WHERE (status = 'failed'::text);
-
-
---
--- Name: events_subject_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX events_subject_idx ON faas_test_8bb6532d29f5dda2.events USING btree (subject, at DESC);
-
-
---
--- Name: gdpr_requests_account_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX gdpr_requests_account_idx ON faas_test_8bb6532d29f5dda2.gdpr_requests USING btree (account_id, requested_at DESC);
-
-
---
--- Name: github_installations_login_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX github_installations_login_idx ON faas_test_8bb6532d29f5dda2.github_installations USING btree (audit_github_login);
-
-
---
--- Name: instances_app_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX instances_app_idx ON faas_test_8bb6532d29f5dda2.instances USING btree (app_id, state);
-
-
---
--- Name: instances_reaper_state_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX instances_reaper_state_idx ON faas_test_8bb6532d29f5dda2.instances USING btree (started_at DESC) WHERE (state = ANY (ARRAY['running'::text, 'waking'::text, 'cold_booting'::text, 'snapshotting'::text]));
-
-
---
--- Name: instances_terminal_at_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX instances_terminal_at_idx ON faas_test_8bb6532d29f5dda2.instances USING btree (terminal_at) WHERE (state = ANY (ARRAY['stopped'::text, 'failed'::text]));
-
-
---
--- Name: instances_wake_id_app_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX instances_wake_id_app_idx ON faas_test_8bb6532d29f5dda2.instances USING btree (app_id, wake_id) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'parked'::text]));
-
-
---
--- Name: instances_watchdog_state_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX instances_watchdog_state_idx ON faas_test_8bb6532d29f5dda2.instances USING btree (state, started_at) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'snapshotting'::text]));
-
-
---
--- Name: invocations_app_dead_letter_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX invocations_app_dead_letter_idx ON faas_test_8bb6532d29f5dda2.invocations USING btree (app_id, created_at DESC) WHERE (state = 'dead_letter'::text);
-
-
---
--- Name: invocations_app_pending_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX invocations_app_pending_idx ON faas_test_8bb6532d29f5dda2.invocations USING btree (app_id, source, state) WHERE (state = ANY (ARRAY['pending'::text, 'dispatching'::text]));
-
-
---
--- Name: invocations_delayed_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX invocations_delayed_idx ON faas_test_8bb6532d29f5dda2.invocations USING btree (app_id, scheduled_at) WHERE (source = 'delayed_task'::text);
-
-
---
--- Name: invocations_due_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX invocations_due_idx ON faas_test_8bb6532d29f5dda2.invocations USING btree (due_at) WHERE (state = 'pending'::text);
-
-
---
--- Name: invocations_instance_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX invocations_instance_idx ON faas_test_8bb6532d29f5dda2.invocations USING btree (instance_id, due_at) WHERE (state = 'dispatching'::text);
-
-
---
--- Name: invoices_account_period_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX invoices_account_period_idx ON faas_test_8bb6532d29f5dda2.invoices USING btree (account_id, period_end DESC, id DESC);
-
-
---
--- Name: login_tokens_account_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX login_tokens_account_idx ON faas_test_8bb6532d29f5dda2.login_tokens USING btree (account_id, expires_at);
-
-
---
--- Name: oauth_links_account_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX oauth_links_account_idx ON faas_test_8bb6532d29f5dda2.oauth_links USING btree (account_id);
-
-
---
--- Name: paddle_overage_dedupe_month_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX paddle_overage_dedupe_month_idx ON faas_test_8bb6532d29f5dda2.paddle_overage_dedupe USING btree (month);
-
-
---
--- Name: paddle_overage_dedupe_pending_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX paddle_overage_dedupe_pending_idx ON faas_test_8bb6532d29f5dda2.paddle_overage_dedupe USING btree (claimed_at) WHERE (state = 'pending'::text);
-
-
---
--- Name: projects_install_repo_uniq; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE UNIQUE INDEX projects_install_repo_uniq ON faas_test_8bb6532d29f5dda2.projects USING btree (install_id, repo_full_name) WHERE ((install_id IS NOT NULL) AND (repo_full_name IS NOT NULL));
-
-
---
--- Name: recent_build_claims_account_id_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX recent_build_claims_account_id_idx ON faas_test_8bb6532d29f5dda2.recent_build_claims USING btree (account_id);
-
-
---
--- Name: recent_build_claims_claimed_at_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX recent_build_claims_claimed_at_idx ON faas_test_8bb6532d29f5dda2.recent_build_claims USING btree (claimed_at);
-
-
---
--- Name: sessions_active_account_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX sessions_active_account_idx ON faas_test_8bb6532d29f5dda2.sessions USING btree (account_id, issued_at DESC) WHERE (revoked_at IS NULL);
-
-
---
--- Name: snapshot_storage_daily_account_day_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX snapshot_storage_daily_account_day_idx ON faas_test_8bb6532d29f5dda2.snapshot_storage_daily USING btree (account_id, day DESC);
-
-
---
--- Name: snapshots_deployment_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX snapshots_deployment_idx ON faas_test_8bb6532d29f5dda2.snapshots USING btree (deployment_id);
-
-
---
--- Name: snapshots_live_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX snapshots_live_idx ON faas_test_8bb6532d29f5dda2.snapshots USING btree (deployment_id) WHERE (stale = false);
-
-
---
--- Name: INDEX snapshots_live_idx; Type: COMMENT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-COMMENT ON INDEX faas_test_8bb6532d29f5dda2.snapshots_live_idx IS 'Supports pkg/state/pgstore.go::LatestSnapshotBytes inner scan — bounds to non-stale rows under live deployments. ADR-049 §B.3 + PR #428 review blocker #3.';
-
-
---
--- Name: stripe_push_dedupe_hour_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX stripe_push_dedupe_hour_idx ON faas_test_8bb6532d29f5dda2.stripe_push_dedupe USING btree (hour);
-
-
---
--- Name: usage_daily_account_day_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX usage_daily_account_day_idx ON faas_test_8bb6532d29f5dda2.usage_daily USING btree (account_id, day DESC);
-
-
---
--- Name: usage_minutes_account_minute_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX usage_minutes_account_minute_idx ON faas_test_8bb6532d29f5dda2.usage_minutes USING btree (account_id, minute DESC);
-
-
---
--- Name: usage_minutes_minute_idx; Type: INDEX; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE INDEX usage_minutes_minute_idx ON faas_test_8bb6532d29f5dda2.usage_minutes USING btree (minute);
-
-
---
--- Name: account_credits_account_active_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX account_credits_account_active_idx ON faas_test_a9b6b26c0b5653b3.account_credits USING btree (account_id, expires_at, cents_remaining) WHERE (cents_remaining > 0);
-
-
---
--- Name: accounts_deletion_pending_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX accounts_deletion_pending_idx ON faas_test_a9b6b26c0b5653b3.accounts USING btree (deletion_requested_at) WHERE (status = 'deleted_pending'::text);
-
-
---
--- Name: accounts_mfa_required_pending_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX accounts_mfa_required_pending_idx ON faas_test_a9b6b26c0b5653b3.accounts USING btree (id) WHERE ((mfa_required = true) AND (mfa_enrolled_at IS NULL));
-
-
---
--- Name: accounts_past_due_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX accounts_past_due_idx ON faas_test_a9b6b26c0b5653b3.accounts USING btree (past_due_at) WHERE (status = 'past_due'::text);
-
-
---
--- Name: alert_deliveries_idempotency_uniq; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE UNIQUE INDEX alert_deliveries_idempotency_uniq ON faas_test_a9b6b26c0b5653b3.alert_deliveries USING btree (idempotency_key);
-
-
---
--- Name: alert_deliveries_rule_fired_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX alert_deliveries_rule_fired_idx ON faas_test_a9b6b26c0b5653b3.alert_deliveries USING btree (rule_id, fired_at DESC);
-
-
---
--- Name: alert_rules_account_name_uniq; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE UNIQUE INDEX alert_rules_account_name_uniq ON faas_test_a9b6b26c0b5653b3.alert_rules USING btree (account_id, name);
-
-
---
--- Name: alert_rules_enabled_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX alert_rules_enabled_idx ON faas_test_a9b6b26c0b5653b3.alert_rules USING btree (account_id) WHERE (enabled = true);
-
-
---
--- Name: alert_rules_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX alert_rules_org_id_idx ON faas_test_a9b6b26c0b5653b3.alert_rules USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: api_keys_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX api_keys_account_idx ON faas_test_a9b6b26c0b5653b3.api_keys USING btree (account_id);
-
-
---
--- Name: api_keys_account_status_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX api_keys_account_status_idx ON faas_test_a9b6b26c0b5653b3.api_keys USING btree (account_id, status);
-
-
---
--- Name: api_keys_active_grace_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX api_keys_active_grace_idx ON faas_test_a9b6b26c0b5653b3.api_keys USING btree (account_id) WHERE (status = ANY (ARRAY['active'::text, 'grace'::text]));
-
-
---
--- Name: api_keys_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX api_keys_org_id_idx ON faas_test_a9b6b26c0b5653b3.api_keys USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: api_keys_rotated_from_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX api_keys_rotated_from_idx ON faas_test_a9b6b26c0b5653b3.api_keys USING btree (rotated_from_id) WHERE (rotated_from_id IS NOT NULL);
-
-
---
--- Name: app_envs_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX app_envs_account_idx ON faas_test_a9b6b26c0b5653b3.app_envs USING btree (account_id);
-
-
---
--- Name: app_envs_app_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX app_envs_app_idx ON faas_test_a9b6b26c0b5653b3.app_envs USING btree (app_id);
-
-
---
--- Name: app_envs_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX app_envs_org_id_idx ON faas_test_a9b6b26c0b5653b3.app_envs USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: app_registry_credentials_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX app_registry_credentials_account_idx ON faas_test_a9b6b26c0b5653b3.app_registry_credentials USING btree (account_id);
-
-
---
--- Name: app_secrets_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX app_secrets_account_idx ON faas_test_a9b6b26c0b5653b3.app_secrets USING btree (account_id);
-
-
---
--- Name: app_secrets_app_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX app_secrets_app_idx ON faas_test_a9b6b26c0b5653b3.app_secrets USING btree (app_id);
-
-
---
--- Name: app_secrets_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX app_secrets_org_id_idx ON faas_test_a9b6b26c0b5653b3.app_secrets USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: app_trusted_signers_app_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX app_trusted_signers_app_idx ON faas_test_a9b6b26c0b5653b3.app_trusted_signers USING btree (app_id);
-
-
---
--- Name: apps_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX apps_account_idx ON faas_test_a9b6b26c0b5653b3.apps USING btree (account_id, status);
-
-
---
--- Name: apps_github_install_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX apps_github_install_account_idx ON faas_test_a9b6b26c0b5653b3.apps USING btree (github_install_account_id) WHERE (github_install_account_id IS NOT NULL);
-
-
---
--- Name: apps_github_install_account_uniq; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE UNIQUE INDEX apps_github_install_account_uniq ON faas_test_a9b6b26c0b5653b3.apps USING btree (github_install_account_id, github_install_binding_id) WHERE ((github_install_account_id IS NOT NULL) AND (github_install_binding_id IS NOT NULL));
-
-
---
--- Name: apps_github_install_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX apps_github_install_id_idx ON faas_test_a9b6b26c0b5653b3.apps USING btree (github_install_id) WHERE (github_install_id IS NOT NULL);
-
-
---
--- Name: apps_github_install_repo_branch_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX apps_github_install_repo_branch_idx ON faas_test_a9b6b26c0b5653b3.apps USING btree (github_repo_full_name, github_production_branch) WHERE ((github_repo_full_name IS NOT NULL) AND (github_production_branch IS NOT NULL));
-
-
---
--- Name: apps_node_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX apps_node_id_idx ON faas_test_a9b6b26c0b5653b3.apps USING btree (node_id);
-
-
---
--- Name: apps_node_id_status_partial_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX apps_node_id_status_partial_idx ON faas_test_a9b6b26c0b5653b3.apps USING btree (node_id, status) WHERE ((node_id IS NOT NULL) AND (status = ANY (ARRAY['active'::text, 'evicted_cold'::text])));
-
-
---
--- Name: apps_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX apps_org_id_idx ON faas_test_a9b6b26c0b5653b3.apps USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: apps_project_workload_uniq; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE UNIQUE INDEX apps_project_workload_uniq ON faas_test_a9b6b26c0b5653b3.apps USING btree (project_id, workload_name) WHERE (project_id IS NOT NULL);
-
-
---
--- Name: apps_reassigned_at_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX apps_reassigned_at_idx ON faas_test_a9b6b26c0b5653b3.apps USING btree (reassigned_at) WHERE (reassigned_at IS NOT NULL);
-
-
---
--- Name: apps_streaming_enabled_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX apps_streaming_enabled_idx ON faas_test_a9b6b26c0b5653b3.apps USING btree (streaming_enabled) WHERE (streaming_enabled = true);
-
-
---
--- Name: build_provenance_build_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX build_provenance_build_id_idx ON faas_test_a9b6b26c0b5653b3.build_provenance USING btree (build_id);
-
-
---
--- Name: builder_usage_account_finished_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX builder_usage_account_finished_idx ON faas_test_a9b6b26c0b5653b3.builder_usage USING btree (account_id, finished_at DESC);
-
-
---
--- Name: builder_usage_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX builder_usage_org_id_idx ON faas_test_a9b6b26c0b5653b3.builder_usage USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: builds_running_started_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX builds_running_started_idx ON faas_test_a9b6b26c0b5653b3.builds USING btree (started_at) WHERE (status = 'running'::text);
-
-
---
--- Name: cli_auth_codes_pending_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX cli_auth_codes_pending_idx ON faas_test_a9b6b26c0b5653b3.cli_auth_codes USING btree (status, expires_at) WHERE (status = 'pending'::text);
-
-
---
--- Name: compute_node_heartbeats_node_at_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX compute_node_heartbeats_node_at_idx ON faas_test_a9b6b26c0b5653b3.compute_node_heartbeats USING btree (node_id, received_at DESC);
-
-
---
--- Name: compute_node_keys_node_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX compute_node_keys_node_idx ON faas_test_a9b6b26c0b5653b3.compute_node_keys USING btree (compute_node_id);
-
-
---
--- Name: compute_nodes_active_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX compute_nodes_active_idx ON faas_test_a9b6b26c0b5653b3.compute_nodes USING btree (name) WHERE (active = true);
-
-
---
--- Name: compute_nodes_region_zone_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX compute_nodes_region_zone_idx ON faas_test_a9b6b26c0b5653b3.compute_nodes USING btree (region, zone) WHERE (active = true);
-
-
---
--- Name: credit_ledger_account_created_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX credit_ledger_account_created_idx ON faas_test_a9b6b26c0b5653b3.credit_ledger USING btree (account_id, created_at DESC);
-
-
---
--- Name: credit_ledger_invoice_credit_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE UNIQUE INDEX credit_ledger_invoice_credit_idx ON faas_test_a9b6b26c0b5653b3.credit_ledger USING btree (provider_invoice_id, credit_id) WHERE (provider_invoice_id IS NOT NULL);
-
-
---
--- Name: crons_app_full_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX crons_app_full_idx ON faas_test_a9b6b26c0b5653b3.crons USING btree (app_id);
-
-
---
--- Name: crons_app_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX crons_app_idx ON faas_test_a9b6b26c0b5653b3.crons USING btree (app_id) WHERE enabled;
-
-
---
--- Name: crons_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX crons_org_id_idx ON faas_test_a9b6b26c0b5653b3.crons USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: custom_domains_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX custom_domains_org_id_idx ON faas_test_a9b6b26c0b5653b3.custom_domains USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: custom_domains_unverified_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX custom_domains_unverified_idx ON faas_test_a9b6b26c0b5653b3.custom_domains USING btree (domain) WHERE (verified_at IS NULL);
-
-
---
--- Name: deployment_logs_seq_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX deployment_logs_seq_idx ON faas_test_a9b6b26c0b5653b3.deployment_logs USING btree (deployment_id, seq DESC);
-
-
---
--- Name: deployments_app_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX deployments_app_idx ON faas_test_a9b6b26c0b5653b3.deployments USING btree (app_id, created_at DESC);
-
-
---
--- Name: deployments_failed_error_code_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX deployments_failed_error_code_idx ON faas_test_a9b6b26c0b5653b3.deployments USING btree (error_code) WHERE (status = 'failed'::text);
-
-
---
--- Name: events_actor_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX events_actor_account_idx ON faas_test_a9b6b26c0b5653b3.events USING btree (actor_account_id) WHERE (actor_account_id IS NOT NULL);
-
-
---
--- Name: events_subject_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX events_subject_idx ON faas_test_a9b6b26c0b5653b3.events USING btree (subject, at DESC);
-
-
---
--- Name: events_wake_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX events_wake_id_idx ON faas_test_a9b6b26c0b5653b3.events USING btree (((data ->> 'wake_id'::text))) WHERE ((data ->> 'wake_id'::text) IS NOT NULL);
-
-
---
--- Name: gdpr_requests_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX gdpr_requests_account_idx ON faas_test_a9b6b26c0b5653b3.gdpr_requests USING btree (account_id, requested_at DESC);
-
-
---
--- Name: gdpr_requests_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX gdpr_requests_org_id_idx ON faas_test_a9b6b26c0b5653b3.gdpr_requests USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: github_installations_login_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX github_installations_login_idx ON faas_test_a9b6b26c0b5653b3.github_installations USING btree (audit_github_login);
-
-
---
--- Name: github_installations_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX github_installations_org_id_idx ON faas_test_a9b6b26c0b5653b3.github_installations USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: instances_app_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX instances_app_idx ON faas_test_a9b6b26c0b5653b3.instances USING btree (app_id, state);
-
-
---
--- Name: instances_migrated_from_node_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX instances_migrated_from_node_id_idx ON faas_test_a9b6b26c0b5653b3.instances USING btree (migrated_from_node_id) WHERE (migrated_from_node_id IS NOT NULL);
-
-
---
--- Name: instances_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX instances_org_id_idx ON faas_test_a9b6b26c0b5653b3.instances USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: instances_reaper_state_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX instances_reaper_state_idx ON faas_test_a9b6b26c0b5653b3.instances USING btree (started_at DESC) WHERE (state = ANY (ARRAY['running'::text, 'waking'::text, 'cold_booting'::text, 'snapshotting'::text]));
-
-
---
--- Name: instances_terminal_at_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX instances_terminal_at_idx ON faas_test_a9b6b26c0b5653b3.instances USING btree (terminal_at) WHERE (state = ANY (ARRAY['stopped'::text, 'failed'::text]));
-
-
---
--- Name: instances_wake_id_app_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX instances_wake_id_app_idx ON faas_test_a9b6b26c0b5653b3.instances USING btree (app_id, wake_id) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'parked'::text]));
-
-
---
--- Name: instances_watchdog_state_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX instances_watchdog_state_idx ON faas_test_a9b6b26c0b5653b3.instances USING btree (state, started_at) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'snapshotting'::text]));
-
-
---
--- Name: invocations_app_dead_letter_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX invocations_app_dead_letter_idx ON faas_test_a9b6b26c0b5653b3.invocations USING btree (app_id, created_at DESC) WHERE (state = 'dead_letter'::text);
-
-
---
--- Name: invocations_app_pending_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX invocations_app_pending_idx ON faas_test_a9b6b26c0b5653b3.invocations USING btree (app_id, source, state) WHERE (state = ANY (ARRAY['pending'::text, 'dispatching'::text]));
-
-
---
--- Name: invocations_delayed_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX invocations_delayed_idx ON faas_test_a9b6b26c0b5653b3.invocations USING btree (app_id, scheduled_at) WHERE (source = 'delayed_task'::text);
-
-
---
--- Name: invocations_due_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX invocations_due_idx ON faas_test_a9b6b26c0b5653b3.invocations USING btree (due_at) WHERE (state = 'pending'::text);
-
-
---
--- Name: invocations_instance_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX invocations_instance_idx ON faas_test_a9b6b26c0b5653b3.invocations USING btree (instance_id, due_at) WHERE (state = 'dispatching'::text);
-
-
---
--- Name: invocations_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX invocations_org_id_idx ON faas_test_a9b6b26c0b5653b3.invocations USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: invoices_account_period_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX invoices_account_period_idx ON faas_test_a9b6b26c0b5653b3.invoices USING btree (account_id, period_end DESC, id DESC);
-
-
---
--- Name: invoices_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX invoices_org_id_idx ON faas_test_a9b6b26c0b5653b3.invoices USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: login_tokens_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX login_tokens_account_idx ON faas_test_a9b6b26c0b5653b3.login_tokens USING btree (account_id, expires_at);
-
-
---
--- Name: oauth_links_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX oauth_links_account_idx ON faas_test_a9b6b26c0b5653b3.oauth_links USING btree (account_id);
-
-
---
--- Name: org_invitations_email_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX org_invitations_email_idx ON faas_test_a9b6b26c0b5653b3.org_invitations USING btree (org_id, email) WHERE (consumed_at IS NULL);
-
-
---
--- Name: org_invitations_pending_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX org_invitations_pending_idx ON faas_test_a9b6b26c0b5653b3.org_invitations USING btree (org_id) WHERE ((consumed_at IS NULL) AND (revoked_at IS NULL));
-
-
---
--- Name: org_memberships_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX org_memberships_account_idx ON faas_test_a9b6b26c0b5653b3.org_memberships USING btree (account_id) WHERE (removed_at IS NULL);
-
-
---
--- Name: org_memberships_one_owner_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE UNIQUE INDEX org_memberships_one_owner_idx ON faas_test_a9b6b26c0b5653b3.org_memberships USING btree (org_id) WHERE ((role = 'owner'::text) AND (removed_at IS NULL));
-
-
---
--- Name: orgs_one_personal_per_account_uniq; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE UNIQUE INDEX orgs_one_personal_per_account_uniq ON faas_test_a9b6b26c0b5653b3.orgs USING btree (personal_owner_account_id) WHERE (personal_org = true);
-
-
---
--- Name: orgs_slug_uniq; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE UNIQUE INDEX orgs_slug_uniq ON faas_test_a9b6b26c0b5653b3.orgs USING btree (lower(slug));
-
-
---
--- Name: paddle_overage_dedupe_month_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX paddle_overage_dedupe_month_idx ON faas_test_a9b6b26c0b5653b3.paddle_overage_dedupe USING btree (month);
-
-
---
--- Name: paddle_overage_dedupe_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX paddle_overage_dedupe_org_id_idx ON faas_test_a9b6b26c0b5653b3.paddle_overage_dedupe USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: paddle_overage_dedupe_pending_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX paddle_overage_dedupe_pending_idx ON faas_test_a9b6b26c0b5653b3.paddle_overage_dedupe USING btree (claimed_at) WHERE (state = 'pending'::text);
-
-
---
--- Name: pg_ratelimit_counters_subject_id_app_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX pg_ratelimit_counters_subject_id_app_idx ON faas_test_a9b6b26c0b5653b3.pg_ratelimit_counters USING btree (subject_id) WHERE (scope = 'app'::text);
-
-
---
--- Name: projects_install_repo_uniq; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE UNIQUE INDEX projects_install_repo_uniq ON faas_test_a9b6b26c0b5653b3.projects USING btree (install_id, repo_full_name) WHERE ((install_id IS NOT NULL) AND (repo_full_name IS NOT NULL));
-
-
---
--- Name: projects_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX projects_org_id_idx ON faas_test_a9b6b26c0b5653b3.projects USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: recent_build_claims_account_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX recent_build_claims_account_id_idx ON faas_test_a9b6b26c0b5653b3.recent_build_claims USING btree (account_id);
-
-
---
--- Name: recent_build_claims_claimed_at_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX recent_build_claims_claimed_at_idx ON faas_test_a9b6b26c0b5653b3.recent_build_claims USING btree (claimed_at);
-
-
---
--- Name: recent_build_claims_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX recent_build_claims_org_id_idx ON faas_test_a9b6b26c0b5653b3.recent_build_claims USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: sessions_active_account_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX sessions_active_account_idx ON faas_test_a9b6b26c0b5653b3.sessions USING btree (account_id, issued_at DESC) WHERE (revoked_at IS NULL);
-
-
---
--- Name: snapshot_storage_daily_account_day_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX snapshot_storage_daily_account_day_idx ON faas_test_a9b6b26c0b5653b3.snapshot_storage_daily USING btree (account_id, day DESC);
-
-
---
--- Name: snapshots_deployment_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX snapshots_deployment_idx ON faas_test_a9b6b26c0b5653b3.snapshots USING btree (deployment_id);
-
-
---
--- Name: snapshots_deployment_tier_key; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE UNIQUE INDEX snapshots_deployment_tier_key ON faas_test_a9b6b26c0b5653b3.snapshots USING btree (deployment_id, tier) WHERE (stale = false);
-
-
---
--- Name: snapshots_live_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX snapshots_live_idx ON faas_test_a9b6b26c0b5653b3.snapshots USING btree (deployment_id) WHERE (stale = false);
-
-
---
--- Name: INDEX snapshots_live_idx; Type: COMMENT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-COMMENT ON INDEX faas_test_a9b6b26c0b5653b3.snapshots_live_idx IS 'Supports pkg/state/pgstore.go::LatestSnapshotBytes inner scan — bounds to non-stale rows under live deployments. ADR-049 §B.3 + PR #428 review blocker #3.';
-
-
---
--- Name: stripe_push_dedupe_hour_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX stripe_push_dedupe_hour_idx ON faas_test_a9b6b26c0b5653b3.stripe_push_dedupe USING btree (hour);
-
-
---
--- Name: stripe_push_dedupe_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX stripe_push_dedupe_org_id_idx ON faas_test_a9b6b26c0b5653b3.stripe_push_dedupe USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: usage_daily_account_day_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX usage_daily_account_day_idx ON faas_test_a9b6b26c0b5653b3.usage_daily USING btree (account_id, day DESC);
-
-
---
--- Name: usage_daily_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX usage_daily_org_id_idx ON faas_test_a9b6b26c0b5653b3.usage_daily USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: usage_minutes_account_minute_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX usage_minutes_account_minute_idx ON faas_test_a9b6b26c0b5653b3.usage_minutes USING btree (account_id, minute DESC);
-
-
---
--- Name: usage_minutes_minute_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX usage_minutes_minute_idx ON faas_test_a9b6b26c0b5653b3.usage_minutes USING btree (minute);
-
-
---
--- Name: usage_minutes_org_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX usage_minutes_org_id_idx ON faas_test_a9b6b26c0b5653b3.usage_minutes USING btree (org_id) WHERE (org_id IS NOT NULL);
-
-
---
--- Name: warm_hint_node_id_idx; Type: INDEX; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE INDEX warm_hint_node_id_idx ON faas_test_a9b6b26c0b5653b3.warm_hint USING btree (node_id);
 
 
 --
@@ -7493,6 +2918,13 @@ CREATE INDEX apps_github_install_id_idx ON public.apps USING btree (github_insta
 --
 
 CREATE INDEX apps_github_install_repo_branch_idx ON public.apps USING btree (github_repo_full_name, github_production_branch) WHERE ((github_repo_full_name IS NOT NULL) AND (github_production_branch IS NOT NULL));
+
+
+--
+-- Name: apps_maintenance_mode_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX apps_maintenance_mode_idx ON public.apps USING btree (maintenance_mode) WHERE (maintenance_mode = true);
 
 
 --
@@ -7909,6 +3341,20 @@ CREATE INDEX instances_app_idx ON public.instances USING btree (app_id, state);
 
 
 --
+-- Name: instances_job_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instances_job_id_idx ON public.instances USING btree (job_id) WHERE (job_id IS NOT NULL);
+
+
+--
+-- Name: instances_kind_job_task_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instances_kind_job_task_idx ON public.instances USING btree (job_id) WHERE (kind = 'job_task'::text);
+
+
+--
 -- Name: instances_migrated_from_node_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -8011,6 +3457,55 @@ CREATE INDEX invoices_account_period_idx ON public.invoices USING btree (account
 --
 
 CREATE INDEX invoices_org_id_idx ON public.invoices USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: job_runs_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX job_runs_account_idx ON public.job_runs USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: job_runs_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX job_runs_active_idx ON public.job_runs USING btree (account_id, id) WHERE (aggregate_status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: job_runs_job_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX job_runs_job_idx ON public.job_runs USING btree (job_id, created_at DESC);
+
+
+--
+-- Name: job_tasks_ready_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX job_tasks_ready_idx ON public.job_tasks USING btree (created_at, run_id, task_index) WHERE (status = 'queued'::text);
+
+
+--
+-- Name: job_tasks_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX job_tasks_run_idx ON public.job_tasks USING btree (run_id, task_index);
+
+
+--
+-- Name: jobs_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX jobs_account_idx ON public.jobs USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: jobs_account_name_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX jobs_account_name_uniq ON public.jobs USING btree (account_id, name) WHERE (status <> 'deleted'::text);
 
 
 --
@@ -8203,6 +3698,69 @@ CREATE INDEX stripe_push_dedupe_org_id_idx ON public.stripe_push_dedupe USING bt
 
 
 --
+-- Name: tenant_hostnames_hostname_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX tenant_hostnames_hostname_uniq ON public.tenant_hostnames USING btree (hostname);
+
+
+--
+-- Name: tenant_hostnames_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tenant_hostnames_pending_idx ON public.tenant_hostnames USING btree (last_check_at) WHERE (verified_at IS NULL);
+
+
+--
+-- Name: tenant_hostnames_surface_hostname_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX tenant_hostnames_surface_hostname_uniq ON public.tenant_hostnames USING btree (surface_id, hostname);
+
+
+--
+-- Name: tenant_hostnames_surface_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tenant_hostnames_surface_idx ON public.tenant_hostnames USING btree (surface_id);
+
+
+--
+-- Name: tenant_hostnames_verified_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tenant_hostnames_verified_idx ON public.tenant_hostnames USING btree (surface_id) WHERE (verified_at IS NOT NULL);
+
+
+--
+-- Name: tenant_surfaces_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tenant_surfaces_account_idx ON public.tenant_surfaces USING btree (account_id) WHERE (status <> 'deleted'::text);
+
+
+--
+-- Name: tenant_surfaces_account_name_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX tenant_surfaces_account_name_uniq ON public.tenant_surfaces USING btree (account_id, name) WHERE (status <> 'deleted'::text);
+
+
+--
+-- Name: tenant_surfaces_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tenant_surfaces_app_idx ON public.tenant_surfaces USING btree (app_id) WHERE (app_id IS NOT NULL);
+
+
+--
+-- Name: tenant_surfaces_cert_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tenant_surfaces_cert_expiry_idx ON public.tenant_surfaces USING btree (cert_not_after) WHERE (cert_state = 'issued'::text);
+
+
+--
 -- Name: usage_daily_account_day_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -8221,6 +3779,13 @@ CREATE INDEX usage_daily_org_id_idx ON public.usage_daily USING btree (org_id) W
 --
 
 CREATE INDEX usage_minutes_account_minute_idx ON public.usage_minutes USING btree (account_id, minute DESC);
+
+
+--
+-- Name: usage_minutes_job_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX usage_minutes_job_idx ON public.usage_minutes USING btree (account_id, minute DESC) WHERE (meter_kind = 'job'::text);
 
 
 --
@@ -8259,108 +3824,17 @@ ALTER INDEX public.data_upstream_probes_pkey ATTACH PARTITION public.data_upstre
 
 
 --
--- Name: apps apps_egress_allowlist_cidr; Type: TRIGGER; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TRIGGER apps_egress_allowlist_cidr BEFORE INSERT OR UPDATE OF egress_allowlist ON faas_test_8bb6532d29f5dda2.apps FOR EACH ROW EXECUTE FUNCTION faas_test_8bb6532d29f5dda2.apps_egress_allowlist_cidr_check();
-
-
---
--- Name: compute_nodes compute_node_changed_trg; Type: TRIGGER; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TRIGGER compute_node_changed_trg AFTER INSERT OR UPDATE ON faas_test_8bb6532d29f5dda2.compute_nodes FOR EACH ROW EXECUTE FUNCTION faas_test_8bb6532d29f5dda2.compute_node_notify();
-
-
---
--- Name: compute_node_keys compute_node_keys_changed_trg; Type: TRIGGER; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON faas_test_8bb6532d29f5dda2.compute_node_keys FOR EACH STATEMENT EXECUTE FUNCTION faas_test_8bb6532d29f5dda2.compute_node_keys_notify();
-
-
---
--- Name: egress_policy egress_policy_changed_trg; Type: TRIGGER; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TRIGGER egress_policy_changed_trg AFTER INSERT OR UPDATE ON faas_test_8bb6532d29f5dda2.egress_policy FOR EACH ROW EXECUTE FUNCTION faas_test_8bb6532d29f5dda2.egress_policy_notify();
-
-
---
--- Name: instances instances_started_at_set_trg; Type: TRIGGER; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TRIGGER instances_started_at_set_trg BEFORE INSERT ON faas_test_8bb6532d29f5dda2.instances FOR EACH ROW EXECUTE FUNCTION faas_test_8bb6532d29f5dda2.instances_started_at_set();
-
-
---
--- Name: invocations invocation_done_trg; Type: TRIGGER; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TRIGGER invocation_done_trg AFTER UPDATE ON faas_test_8bb6532d29f5dda2.invocations FOR EACH ROW EXECUTE FUNCTION faas_test_8bb6532d29f5dda2.invocation_done_notify();
-
-
---
--- Name: invocations invocation_due_trg; Type: TRIGGER; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-CREATE TRIGGER invocation_due_trg AFTER INSERT OR UPDATE OF state ON faas_test_8bb6532d29f5dda2.invocations FOR EACH ROW WHEN ((new.state = 'pending'::text)) EXECUTE FUNCTION faas_test_8bb6532d29f5dda2.invocation_due_notify();
-
-
---
--- Name: apps apps_egress_allowlist_cidr; Type: TRIGGER; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TRIGGER apps_egress_allowlist_cidr BEFORE INSERT OR UPDATE OF egress_allowlist ON faas_test_a9b6b26c0b5653b3.apps FOR EACH ROW EXECUTE FUNCTION faas_test_a9b6b26c0b5653b3.apps_egress_allowlist_cidr_check();
-
-
---
--- Name: compute_nodes compute_node_changed_trg; Type: TRIGGER; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TRIGGER compute_node_changed_trg AFTER INSERT OR UPDATE ON faas_test_a9b6b26c0b5653b3.compute_nodes FOR EACH ROW EXECUTE FUNCTION faas_test_a9b6b26c0b5653b3.compute_node_notify();
-
-
---
--- Name: compute_node_keys compute_node_keys_changed_trg; Type: TRIGGER; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON faas_test_a9b6b26c0b5653b3.compute_node_keys FOR EACH STATEMENT EXECUTE FUNCTION faas_test_a9b6b26c0b5653b3.compute_node_keys_notify();
-
-
---
--- Name: egress_policy egress_policy_changed_trg; Type: TRIGGER; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TRIGGER egress_policy_changed_trg AFTER INSERT OR UPDATE ON faas_test_a9b6b26c0b5653b3.egress_policy FOR EACH ROW EXECUTE FUNCTION faas_test_a9b6b26c0b5653b3.egress_policy_notify();
-
-
---
--- Name: instances instances_started_at_set_trg; Type: TRIGGER; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TRIGGER instances_started_at_set_trg BEFORE INSERT ON faas_test_a9b6b26c0b5653b3.instances FOR EACH ROW EXECUTE FUNCTION faas_test_a9b6b26c0b5653b3.instances_started_at_set();
-
-
---
--- Name: invocations invocation_done_trg; Type: TRIGGER; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TRIGGER invocation_done_trg AFTER UPDATE ON faas_test_a9b6b26c0b5653b3.invocations FOR EACH ROW EXECUTE FUNCTION faas_test_a9b6b26c0b5653b3.invocation_done_notify();
-
-
---
--- Name: invocations invocation_due_trg; Type: TRIGGER; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-CREATE TRIGGER invocation_due_trg AFTER INSERT OR UPDATE OF state ON faas_test_a9b6b26c0b5653b3.invocations FOR EACH ROW WHEN ((new.state = 'pending'::text)) EXECUTE FUNCTION faas_test_a9b6b26c0b5653b3.invocation_due_notify();
-
-
---
 -- Name: apps apps_egress_allowlist_cidr; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER apps_egress_allowlist_cidr BEFORE INSERT OR UPDATE OF egress_allowlist ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_egress_allowlist_cidr_check();
+
+
+--
+-- Name: apps apps_maintenance_mode_notify; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_maintenance_mode_notify AFTER UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_maintenance_mode_notify();
 
 
 --
@@ -8434,955 +3908,24 @@ CREATE TRIGGER invocation_due_trg AFTER INSERT OR UPDATE OF state ON public.invo
 
 
 --
--- Name: account_credits account_credits_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
+-- Name: job_tasks job_tasks_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.account_credits
-    ADD CONSTRAINT account_credits_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
+CREATE TRIGGER job_tasks_notify_trg AFTER INSERT OR DELETE OR UPDATE ON public.job_tasks FOR EACH ROW EXECUTE FUNCTION public.job_tasks_notify();
 
 
 --
--- Name: account_passwords account_passwords_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
+-- Name: tenant_hostnames tenant_hostnames_emit_change; Type: TRIGGER; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.account_passwords
-    ADD CONSTRAINT account_passwords_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
+CREATE TRIGGER tenant_hostnames_emit_change AFTER INSERT OR DELETE OR UPDATE ON public.tenant_hostnames FOR EACH ROW EXECUTE FUNCTION public.notify_tenant_surface_changed();
 
 
 --
--- Name: alert_deliveries alert_deliveries_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
+-- Name: tenant_surfaces tenant_surfaces_emit_change; Type: TRIGGER; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.alert_deliveries
-    ADD CONSTRAINT alert_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: alert_deliveries alert_deliveries_rule_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.alert_deliveries
-    ADD CONSTRAINT alert_deliveries_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES faas_test_8bb6532d29f5dda2.alert_rules(id) ON DELETE CASCADE;
-
-
---
--- Name: alert_rules alert_rules_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.alert_rules
-    ADD CONSTRAINT alert_rules_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: alert_rules alert_rules_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.alert_rules
-    ADD CONSTRAINT alert_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_8bb6532d29f5dda2.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: api_keys api_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.api_keys
-    ADD CONSTRAINT api_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: app_envs app_envs_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.app_envs
-    ADD CONSTRAINT app_envs_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: app_registry_credentials app_registry_credentials_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.app_registry_credentials
-    ADD CONSTRAINT app_registry_credentials_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: app_registry_credentials app_registry_credentials_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.app_registry_credentials
-    ADD CONSTRAINT app_registry_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_8bb6532d29f5dda2.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: app_secrets app_secrets_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.app_secrets
-    ADD CONSTRAINT app_secrets_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: app_trusted_signers app_trusted_signers_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.app_trusted_signers
-    ADD CONSTRAINT app_trusted_signers_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: apps apps_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.apps
-    ADD CONSTRAINT apps_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id);
-
-
---
--- Name: apps apps_github_install_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.apps
-    ADD CONSTRAINT apps_github_install_account_id_fkey FOREIGN KEY (github_install_account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE SET NULL;
-
-
---
--- Name: apps apps_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.apps
-    ADD CONSTRAINT apps_node_id_fkey FOREIGN KEY (node_id) REFERENCES faas_test_8bb6532d29f5dda2.compute_nodes(id) ON DELETE RESTRICT;
-
-
---
--- Name: apps apps_project_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.apps
-    ADD CONSTRAINT apps_project_id_fkey FOREIGN KEY (project_id) REFERENCES faas_test_8bb6532d29f5dda2.projects(id) ON DELETE SET NULL;
-
-
---
--- Name: build_provenance build_provenance_build_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.build_provenance
-    ADD CONSTRAINT build_provenance_build_id_fkey FOREIGN KEY (build_id) REFERENCES faas_test_8bb6532d29f5dda2.builds(id);
-
-
---
--- Name: builds builds_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.builds
-    ADD CONSTRAINT builds_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_8bb6532d29f5dda2.deployments(id);
-
-
---
--- Name: cli_auth_codes cli_auth_codes_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.cli_auth_codes
-    ADD CONSTRAINT cli_auth_codes_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: compute_node_heartbeats compute_node_heartbeats_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.compute_node_heartbeats
-    ADD CONSTRAINT compute_node_heartbeats_node_id_fkey FOREIGN KEY (node_id) REFERENCES faas_test_8bb6532d29f5dda2.compute_nodes(id) ON DELETE CASCADE;
-
-
---
--- Name: compute_node_keys compute_node_keys_compute_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.compute_node_keys
-    ADD CONSTRAINT compute_node_keys_compute_node_id_fkey FOREIGN KEY (compute_node_id) REFERENCES faas_test_8bb6532d29f5dda2.compute_nodes(id) ON DELETE CASCADE;
-
-
---
--- Name: credit_ledger credit_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.credit_ledger
-    ADD CONSTRAINT credit_ledger_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: credit_ledger credit_ledger_credit_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.credit_ledger
-    ADD CONSTRAINT credit_ledger_credit_id_fkey FOREIGN KEY (credit_id) REFERENCES faas_test_8bb6532d29f5dda2.account_credits(id) ON DELETE CASCADE;
-
-
---
--- Name: crons crons_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.crons
-    ADD CONSTRAINT crons_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_8bb6532d29f5dda2.apps(id);
-
-
---
--- Name: custom_domains custom_domains_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.custom_domains
-    ADD CONSTRAINT custom_domains_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_8bb6532d29f5dda2.apps(id);
-
-
---
--- Name: custom_domains custom_domains_app_id_redirect_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.custom_domains
-    ADD CONSTRAINT custom_domains_app_id_redirect_fkey FOREIGN KEY (app_id_redirect) REFERENCES faas_test_8bb6532d29f5dda2.apps(id);
-
-
---
--- Name: deployment_logs deployment_logs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.deployment_logs
-    ADD CONSTRAINT deployment_logs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_8bb6532d29f5dda2.deployments(id) ON DELETE CASCADE;
-
-
---
--- Name: deployments deployments_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.deployments
-    ADD CONSTRAINT deployments_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_8bb6532d29f5dda2.apps(id);
-
-
---
--- Name: github_installations github_installations_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.github_installations
-    ADD CONSTRAINT github_installations_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: idempotency_keys idempotency_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.idempotency_keys
-    ADD CONSTRAINT idempotency_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id);
-
-
---
--- Name: instances instances_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.instances
-    ADD CONSTRAINT instances_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_8bb6532d29f5dda2.apps(id);
-
-
---
--- Name: instances instances_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.instances
-    ADD CONSTRAINT instances_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_8bb6532d29f5dda2.deployments(id);
-
-
---
--- Name: instances instances_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.instances
-    ADD CONSTRAINT instances_node_id_fkey FOREIGN KEY (node_id) REFERENCES faas_test_8bb6532d29f5dda2.compute_nodes(id);
-
-
---
--- Name: invocations invocations_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.invocations
-    ADD CONSTRAINT invocations_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id);
-
-
---
--- Name: invocations invocations_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.invocations
-    ADD CONSTRAINT invocations_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_8bb6532d29f5dda2.apps(id);
-
-
---
--- Name: invocations invocations_cron_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.invocations
-    ADD CONSTRAINT invocations_cron_id_fkey FOREIGN KEY (cron_id) REFERENCES faas_test_8bb6532d29f5dda2.crons(id);
-
-
---
--- Name: invoices invoices_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.invoices
-    ADD CONSTRAINT invoices_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: login_tokens login_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.login_tokens
-    ADD CONSTRAINT login_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: oauth_links oauth_links_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.oauth_links
-    ADD CONSTRAINT oauth_links_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: paddle_overage_dedupe paddle_overage_dedupe_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.paddle_overage_dedupe
-    ADD CONSTRAINT paddle_overage_dedupe_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: projects projects_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.projects
-    ADD CONSTRAINT projects_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: recent_build_claims recent_build_claims_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.recent_build_claims
-    ADD CONSTRAINT recent_build_claims_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: sessions sessions_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.sessions
-    ADD CONSTRAINT sessions_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: snapshots snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.snapshots
-    ADD CONSTRAINT snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_8bb6532d29f5dda2.deployments(id);
-
-
---
--- Name: stripe_push_dedupe stripe_push_dedupe_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_8bb6532d29f5dda2; Owner: -
---
-
-ALTER TABLE ONLY faas_test_8bb6532d29f5dda2.stripe_push_dedupe
-    ADD CONSTRAINT stripe_push_dedupe_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_8bb6532d29f5dda2.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: account_credits account_credits_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.account_credits
-    ADD CONSTRAINT account_credits_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: account_passwords account_passwords_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.account_passwords
-    ADD CONSTRAINT account_passwords_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: alert_deliveries alert_deliveries_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.alert_deliveries
-    ADD CONSTRAINT alert_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: alert_deliveries alert_deliveries_rule_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.alert_deliveries
-    ADD CONSTRAINT alert_deliveries_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES faas_test_a9b6b26c0b5653b3.alert_rules(id) ON DELETE CASCADE;
-
-
---
--- Name: alert_rules alert_rules_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.alert_rules
-    ADD CONSTRAINT alert_rules_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: alert_rules alert_rules_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.alert_rules
-    ADD CONSTRAINT alert_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_a9b6b26c0b5653b3.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: alert_rules alert_rules_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.alert_rules
-    ADD CONSTRAINT alert_rules_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: api_keys api_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.api_keys
-    ADD CONSTRAINT api_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: api_keys api_keys_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.api_keys
-    ADD CONSTRAINT api_keys_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: api_keys api_keys_rotated_from_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.api_keys
-    ADD CONSTRAINT api_keys_rotated_from_id_fkey FOREIGN KEY (rotated_from_id) REFERENCES faas_test_a9b6b26c0b5653b3.api_keys(id);
-
-
---
--- Name: app_envs app_envs_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_envs
-    ADD CONSTRAINT app_envs_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: app_envs app_envs_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_envs
-    ADD CONSTRAINT app_envs_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: app_registry_credentials app_registry_credentials_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_registry_credentials
-    ADD CONSTRAINT app_registry_credentials_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: app_registry_credentials app_registry_credentials_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_registry_credentials
-    ADD CONSTRAINT app_registry_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_a9b6b26c0b5653b3.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: app_secrets app_secrets_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_secrets
-    ADD CONSTRAINT app_secrets_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: app_secrets app_secrets_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_secrets
-    ADD CONSTRAINT app_secrets_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: app_trusted_signers app_trusted_signers_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.app_trusted_signers
-    ADD CONSTRAINT app_trusted_signers_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: apps apps_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.apps
-    ADD CONSTRAINT apps_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id);
-
-
---
--- Name: apps apps_github_install_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.apps
-    ADD CONSTRAINT apps_github_install_account_id_fkey FOREIGN KEY (github_install_account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE SET NULL;
-
-
---
--- Name: apps apps_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.apps
-    ADD CONSTRAINT apps_node_id_fkey FOREIGN KEY (node_id) REFERENCES faas_test_a9b6b26c0b5653b3.compute_nodes(id) ON DELETE RESTRICT;
-
-
---
--- Name: apps apps_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.apps
-    ADD CONSTRAINT apps_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: apps apps_project_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.apps
-    ADD CONSTRAINT apps_project_id_fkey FOREIGN KEY (project_id) REFERENCES faas_test_a9b6b26c0b5653b3.projects(id) ON DELETE SET NULL;
-
-
---
--- Name: build_provenance build_provenance_build_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.build_provenance
-    ADD CONSTRAINT build_provenance_build_id_fkey FOREIGN KEY (build_id) REFERENCES faas_test_a9b6b26c0b5653b3.builds(id);
-
-
---
--- Name: builder_usage builder_usage_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.builder_usage
-    ADD CONSTRAINT builder_usage_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: builds builds_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.builds
-    ADD CONSTRAINT builds_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_a9b6b26c0b5653b3.deployments(id);
-
-
---
--- Name: cli_auth_codes cli_auth_codes_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.cli_auth_codes
-    ADD CONSTRAINT cli_auth_codes_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: compute_node_heartbeats compute_node_heartbeats_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.compute_node_heartbeats
-    ADD CONSTRAINT compute_node_heartbeats_node_id_fkey FOREIGN KEY (node_id) REFERENCES faas_test_a9b6b26c0b5653b3.compute_nodes(id) ON DELETE CASCADE;
-
-
---
--- Name: compute_node_keys compute_node_keys_compute_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.compute_node_keys
-    ADD CONSTRAINT compute_node_keys_compute_node_id_fkey FOREIGN KEY (compute_node_id) REFERENCES faas_test_a9b6b26c0b5653b3.compute_nodes(id) ON DELETE CASCADE;
-
-
---
--- Name: credit_ledger credit_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.credit_ledger
-    ADD CONSTRAINT credit_ledger_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: credit_ledger credit_ledger_credit_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.credit_ledger
-    ADD CONSTRAINT credit_ledger_credit_id_fkey FOREIGN KEY (credit_id) REFERENCES faas_test_a9b6b26c0b5653b3.account_credits(id) ON DELETE CASCADE;
-
-
---
--- Name: crons crons_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.crons
-    ADD CONSTRAINT crons_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_a9b6b26c0b5653b3.apps(id);
-
-
---
--- Name: crons crons_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.crons
-    ADD CONSTRAINT crons_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: custom_domains custom_domains_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.custom_domains
-    ADD CONSTRAINT custom_domains_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_a9b6b26c0b5653b3.apps(id);
-
-
---
--- Name: custom_domains custom_domains_app_id_redirect_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.custom_domains
-    ADD CONSTRAINT custom_domains_app_id_redirect_fkey FOREIGN KEY (app_id_redirect) REFERENCES faas_test_a9b6b26c0b5653b3.apps(id);
-
-
---
--- Name: custom_domains custom_domains_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.custom_domains
-    ADD CONSTRAINT custom_domains_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: deployment_logs deployment_logs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.deployment_logs
-    ADD CONSTRAINT deployment_logs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_a9b6b26c0b5653b3.deployments(id) ON DELETE CASCADE;
-
-
---
--- Name: deployments deployments_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.deployments
-    ADD CONSTRAINT deployments_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_a9b6b26c0b5653b3.apps(id);
-
-
---
--- Name: events events_actor_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.events
-    ADD CONSTRAINT events_actor_account_id_fkey FOREIGN KEY (actor_account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE SET NULL;
-
-
---
--- Name: gdpr_requests gdpr_requests_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.gdpr_requests
-    ADD CONSTRAINT gdpr_requests_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: github_installations github_installations_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.github_installations
-    ADD CONSTRAINT github_installations_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: github_installations github_installations_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.github_installations
-    ADD CONSTRAINT github_installations_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: idempotency_keys idempotency_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.idempotency_keys
-    ADD CONSTRAINT idempotency_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id);
-
-
---
--- Name: instances instances_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.instances
-    ADD CONSTRAINT instances_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_a9b6b26c0b5653b3.apps(id);
-
-
---
--- Name: instances instances_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.instances
-    ADD CONSTRAINT instances_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_a9b6b26c0b5653b3.deployments(id);
-
-
---
--- Name: instances instances_migrated_from_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.instances
-    ADD CONSTRAINT instances_migrated_from_node_id_fkey FOREIGN KEY (migrated_from_node_id) REFERENCES faas_test_a9b6b26c0b5653b3.compute_nodes(id) ON DELETE SET NULL;
-
-
---
--- Name: instances instances_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.instances
-    ADD CONSTRAINT instances_node_id_fkey FOREIGN KEY (node_id) REFERENCES faas_test_a9b6b26c0b5653b3.compute_nodes(id);
-
-
---
--- Name: instances instances_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.instances
-    ADD CONSTRAINT instances_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: invocations invocations_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.invocations
-    ADD CONSTRAINT invocations_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id);
-
-
---
--- Name: invocations invocations_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.invocations
-    ADD CONSTRAINT invocations_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_a9b6b26c0b5653b3.apps(id);
-
-
---
--- Name: invocations invocations_cron_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.invocations
-    ADD CONSTRAINT invocations_cron_id_fkey FOREIGN KEY (cron_id) REFERENCES faas_test_a9b6b26c0b5653b3.crons(id);
-
-
---
--- Name: invocations invocations_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.invocations
-    ADD CONSTRAINT invocations_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: invoices invoices_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.invoices
-    ADD CONSTRAINT invoices_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: invoices invoices_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.invoices
-    ADD CONSTRAINT invoices_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: login_tokens login_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.login_tokens
-    ADD CONSTRAINT login_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: oauth_links oauth_links_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.oauth_links
-    ADD CONSTRAINT oauth_links_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: org_invitations org_invitations_accepting_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.org_invitations
-    ADD CONSTRAINT org_invitations_accepting_account_id_fkey FOREIGN KEY (accepting_account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE SET NULL;
-
-
---
--- Name: org_invitations org_invitations_invited_by_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.org_invitations
-    ADD CONSTRAINT org_invitations_invited_by_account_id_fkey FOREIGN KEY (invited_by_account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE SET NULL;
-
-
---
--- Name: org_invitations org_invitations_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.org_invitations
-    ADD CONSTRAINT org_invitations_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE CASCADE;
-
-
---
--- Name: org_memberships org_memberships_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.org_memberships
-    ADD CONSTRAINT org_memberships_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: org_memberships org_memberships_invited_by_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.org_memberships
-    ADD CONSTRAINT org_memberships_invited_by_account_id_fkey FOREIGN KEY (invited_by_account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE SET NULL;
-
-
---
--- Name: org_memberships org_memberships_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.org_memberships
-    ADD CONSTRAINT org_memberships_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE CASCADE;
-
-
---
--- Name: orgs orgs_personal_owner_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.orgs
-    ADD CONSTRAINT orgs_personal_owner_account_id_fkey FOREIGN KEY (personal_owner_account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: paddle_overage_dedupe paddle_overage_dedupe_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.paddle_overage_dedupe
-    ADD CONSTRAINT paddle_overage_dedupe_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: paddle_overage_dedupe paddle_overage_dedupe_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.paddle_overage_dedupe
-    ADD CONSTRAINT paddle_overage_dedupe_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: projects projects_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.projects
-    ADD CONSTRAINT projects_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: projects projects_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.projects
-    ADD CONSTRAINT projects_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: recent_build_claims recent_build_claims_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.recent_build_claims
-    ADD CONSTRAINT recent_build_claims_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: recent_build_claims recent_build_claims_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.recent_build_claims
-    ADD CONSTRAINT recent_build_claims_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: sessions sessions_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.sessions
-    ADD CONSTRAINT sessions_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: snapshots snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.snapshots
-    ADD CONSTRAINT snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_a9b6b26c0b5653b3.deployments(id);
-
-
---
--- Name: stripe_push_dedupe stripe_push_dedupe_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.stripe_push_dedupe
-    ADD CONSTRAINT stripe_push_dedupe_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_a9b6b26c0b5653b3.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: stripe_push_dedupe stripe_push_dedupe_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.stripe_push_dedupe
-    ADD CONSTRAINT stripe_push_dedupe_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: usage_daily usage_daily_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.usage_daily
-    ADD CONSTRAINT usage_daily_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
-
-
---
--- Name: usage_minutes usage_minutes_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_a9b6b26c0b5653b3; Owner: -
---
-
-ALTER TABLE ONLY faas_test_a9b6b26c0b5653b3.usage_minutes
-    ADD CONSTRAINT usage_minutes_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_a9b6b26c0b5653b3.orgs(id) ON DELETE RESTRICT;
+CREATE TRIGGER tenant_surfaces_emit_change AFTER INSERT OR DELETE OR UPDATE ON public.tenant_surfaces FOR EACH ROW EXECUTE FUNCTION public.notify_tenant_surface_changed();
 
 
 --
@@ -9890,6 +4433,14 @@ ALTER TABLE ONLY public.instances
 
 
 --
+-- Name: instances instances_job_id_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instances
+    ADD CONSTRAINT instances_job_id_fk FOREIGN KEY (job_id) REFERENCES public.jobs(id) ON DELETE SET NULL;
+
+
+--
 -- Name: instances instances_migrated_from_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9959,6 +4510,46 @@ ALTER TABLE ONLY public.invoices
 
 ALTER TABLE ONLY public.invoices
     ADD CONSTRAINT invoices_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: job_runs job_runs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.job_runs
+    ADD CONSTRAINT job_runs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: job_runs job_runs_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.job_runs
+    ADD CONSTRAINT job_runs_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: job_tasks job_tasks_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.job_tasks
+    ADD CONSTRAINT job_tasks_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id);
+
+
+--
+-- Name: job_tasks job_tasks_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.job_tasks
+    ADD CONSTRAINT job_tasks_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.job_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: jobs jobs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.jobs
+    ADD CONSTRAINT jobs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -10111,6 +4702,30 @@ ALTER TABLE ONLY public.stripe_push_dedupe
 
 ALTER TABLE ONLY public.stripe_push_dedupe
     ADD CONSTRAINT stripe_push_dedupe_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: tenant_hostnames tenant_hostnames_surface_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tenant_hostnames
+    ADD CONSTRAINT tenant_hostnames_surface_id_fkey FOREIGN KEY (surface_id) REFERENCES public.tenant_surfaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tenant_surfaces tenant_surfaces_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tenant_surfaces
+    ADD CONSTRAINT tenant_surfaces_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tenant_surfaces tenant_surfaces_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tenant_surfaces
+    ADD CONSTRAINT tenant_surfaces_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
