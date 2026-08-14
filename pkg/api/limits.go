@@ -352,6 +352,34 @@ type Limits struct {
 	// task #19.
 	JobMaxPerAccount int
 
+	// JobMaxConcurrentPerAccount (ADR-099 PR-C) caps the number
+	// of kind='job_task' instances an account may have in {WAKING,
+	// COLD_BOOTING, RUNNING} concurrently. schedd's WakeJob consults
+	// this against CountLiveJobTasksForAccount BEFORE admitting a
+	// new task; the apid route gates CreateJobRequest at this
+	// ceiling too. Free = 0 (fail-closed: the apid side returns
+	// CodeJobsNotAllowed; schedd's consult is the backstop). Per-
+	// plan shape:
+	//   Free 0 · Hobby 3 · Pro 8 · Scale 32.
+	JobMaxConcurrentPerAccount int
+
+	// JobWakeBurstPerAccount (ADR-099 PR-C) is the per-minute
+	// wake-admission ceiling for the job-side rate-limit bucket
+	// (pkg/sched.WakeRateLimiter.jobBuckets). Distinct from
+	// WakeBurstPerAccount so a customer's job burst cannot drain
+	// the same bucket their app wake path uses (Option B — the
+	// separate-buckets direction in the implementation plan).
+	// Per-plan shape:
+	//   Free 0 · Hobby 5 · Pro 25 · Scale 100.
+	JobWakeBurstPerAccount int
+
+	// JobMaxRAMMB (ADR-099 PR-C) caps the per-task RAM ceiling at
+	// the apid gate. The dispatch tick and schedd's WakeJob do NOT
+	// consult this — WakeJob trusts the validated request shape.
+	// Per-plan shape:
+	//   Free 0 · Hobby 512 · Pro 2048 · Scale 4096.
+	JobMaxRAMMB int
+
 	// EvictionPriorityReservedAllowed (issue #475) gates the per-app
 	// reserved eviction tier. Free = false (no reserved apps on the
 	// abuse-floor tier); Hobby+ = true. apid's updateApp handler
@@ -892,6 +920,14 @@ var planLimits = map[Plan]Limits{
 		// ADR-099: Free plan ships 0 jobs. The dashboard renders
 		// "Upgrade to create jobs" on POST /v1/jobs (PR-D).
 		JobMaxPerAccount: 0,
+		// PR-C: Free — fail-closed on every jobs surface. The apid
+		// route returns CodeJobsNotAllowed (PR-D), schedd's per-
+		// account concurrency consult is the backstop. Wake-burst=0
+		// means even an operator-only force-bypass path returns
+		// false from AllowWakeJobAccount.
+		JobMaxConcurrentPerAccount: 0,
+		JobWakeBurstPerAccount:     0,
+		JobMaxRAMMB:                0,
 		// Issue #475: Free stays off the reserved eviction tier. The
 		// abuse-floor tier has no reserved-tier entitlement; per-account
 		// cap is 0 so the gate fails closed.
@@ -1130,6 +1166,15 @@ var planLimits = map[Plan]Limits{
 		CronLimitPerAccount: 10,
 		// ADR-099: Hobby plan ships 5 jobs (CI nightly + scrapers).
 		JobMaxPerAccount: 5,
+		// PR-C: Hobby — 3 concurrent tasks (a Hobby customer's
+		// scraper + nightly + a one-off migration run fits). 5/min
+		// burst accommodates the cron-tick firing N wakes in one
+		// second (the wake-burst bucket refills at per-minute
+		// granularity — see rate_limit.go). 512 MB / task covers
+		// typical data-processing workloads.
+		JobMaxConcurrentPerAccount: 3,
+		JobWakeBurstPerAccount:     5,
+		JobMaxRAMMB:                512,
 		// Issue #475: Hobby gets 1 reserved-tier app. One healthcheck-
 		// critical service (status page, uptime probe) is the typical
 		// Hobby workload that needs cross-account RAM-pressure
@@ -1369,6 +1414,14 @@ var planLimits = map[Plan]Limits{
 		CronLimitPerAccount: 50,
 		// ADR-099: Pro plan ships 25 jobs (parity with DeployedApps).
 		JobMaxPerAccount: 25,
+		// PR-C: Pro — 8 concurrent tasks (Pro customers run fan-out
+		// ETL pipelines; 8 covers the typical data-warehouse
+		// staging-area workload without saturating the per-VM
+		// concurrency bound of 25). 25/min burst matches the
+		// per-account wake-burst ceiling the wake side uses.
+		JobMaxConcurrentPerAccount: 8,
+		JobWakeBurstPerAccount:     25,
+		JobMaxRAMMB:                2048,
 		// Issue #475: Pro gets 2 reserved-tier apps. Pro customers
 		// run customer-facing APIs + background workers; the +1 vs
 		// Hobby tracks the +5 Pro app budget. Reserved-tier RAM cost
@@ -1593,6 +1646,13 @@ var planLimits = map[Plan]Limits{
 		CronLimitPerAccount: 500,
 		// ADR-099: Scale plan ships 100 jobs (parity with DeployedApps).
 		JobMaxPerAccount: 100,
+		// PR-C: Scale — large. 32 concurrent tasks (twice the per-VM
+		// ConcurrencyPerVMBound of 80 — a Scale customer can saturate
+		// 2 cold-boot task VMs at once). 4 GB per task covers heavy
+		// data-processing pipelines.
+		JobMaxConcurrentPerAccount: 32,
+		JobWakeBurstPerAccount:     100,
+		JobMaxRAMMB:                4096,
 		// Issue #475: Scale gets 4 reserved-tier apps. 2× Pro tracks
 		// the doubling in DeployedApps (25 → 100) and the doubling in
 		// MaxConcurrency (5 → 20). At Scale's 1024 MB instance RAM +

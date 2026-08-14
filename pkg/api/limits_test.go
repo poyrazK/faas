@@ -156,6 +156,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			CronLimitPerApp: 5, CronLimitPerAccount: 10,
 			// ADR-099 PR-B: Hobby plan ships 5 jobs.
 			JobMaxPerAccount: 5,
+			// PR-C: Hobby — 3 concurrent tasks / 5 burst / 512 MB max.
+			JobMaxConcurrentPerAccount: 3,
+			JobWakeBurstPerAccount:     5,
+			JobMaxRAMMB:                512,
 			// Issue #475: Hobby gets 1 reserved-tier app.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 1,
 			// Issue #477 / ADR-079: Hobby unlocks bearer (admin
@@ -265,6 +269,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			CronLimitPerApp: 20, CronLimitPerAccount: 50,
 			// ADR-099 PR-B: Pro plan ships 25 jobs.
 			JobMaxPerAccount: 25,
+			// PR-C: Pro — 8 concurrent / 25 burst / 2 GB max.
+			JobMaxConcurrentPerAccount: 8,
+			JobWakeBurstPerAccount:     25,
+			JobMaxRAMMB:                2048,
 			// Issue #475: Pro gets 2 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 2,
 			// Issue #477 / ADR-079: Pro unlocks both bearer + basic.
@@ -376,6 +384,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			CronLimitPerApp: 100, CronLimitPerAccount: 500,
 			// ADR-099 PR-B: Scale plan ships 100 jobs.
 			JobMaxPerAccount: 100,
+			// PR-C: Scale — 32 concurrent / 100 burst / 4 GB max.
+			JobMaxConcurrentPerAccount: 32,
+			JobWakeBurstPerAccount:     100,
+			JobMaxRAMMB:                4096,
 			// Issue #475: Scale gets 4 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 4,
 			// Issue #477 / ADR-079: Scale unlocks both bearer + basic.
