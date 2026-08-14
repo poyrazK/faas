@@ -27,9 +27,10 @@
 //     reach S3.
 //   - FutureDate: ?date=tomorrow → 403 + log_archive_retention_exceeded.
 //     A customer can't probe beyond today.
-//   - RetentionCap: a date just past the Hobby cap (8 days
-//     ago) → 403; a date inside the cap (1 day ago) → happy
-//     path. Pins the per-plan boundary.
+//   - RetentionCap: TestArchiveStream_RetentionCap_HobbyBoundary
+//     pins the boundary (today-6d → 200, today-8d → 403).
+//     All other tests use dateForInsideCap (today-1d) so they
+//     stay date-proof regardless of when CI runs them.
 
 package main
 
@@ -145,6 +146,19 @@ func driveStream(t *testing.T, h *ArchiveLogsHandler, account state.Account, que
 	return rec.body.String()
 }
 
+// dateForInsideCap returns a YYYY-MM-DD string that
+// withinRetention will accept for any plan with a non-zero
+// LogArchiveRetentionDaysMax (Hobby=7, Pro=30, Scale=90).
+// Always picks today-1d so tests stay date-proof: a fixture
+// written today still satisfies the per-plan window tomorrow,
+// next week, and next year. Mirrors the relative-date
+// convention already in use at lines 322-325 (boundary test)
+// and line 358 (future-date test), plus
+// pkg/meter/dunning_test.go:135/162/210 and friends.
+func dateForInsideCap() string {
+	return time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+}
+
 // TestArchiveStream_HappyPath is the smoke test: gzipped JSONL
 // in, three `event: log` SSE frames + a terminal
 // `event: end archive_complete` out. The instance id +
@@ -173,11 +187,14 @@ func TestArchiveStream_HappyPath(t *testing.T) {
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Backstop: 5 * time.Second,
 	}
+	day := dateForInsideCap()
 	body_out := driveStream(t, h, state.Account{ID: "acct-1", Plan: api.PlanHobby},
-		"archive=1&instance=inst-abc&date=2026-08-07")
+		"archive=1&instance=inst-abc&date="+day)
 
 	// The key shape is {prefix}/{instance}/{YYYY}/{MM}/{DD}.jsonl.gz.
-	wantPath := "/test-bucket/faas-logs/inst-abc/2026/08/2026-08-07.jsonl.gz"
+	// archiveObjectKey slices day for YYYY/MM; reuse the same value
+	// here so a fixture rewrite stays consistent.
+	wantPath := "/test-bucket/faas-logs/inst-abc/" + day[:4] + "/" + day[5:7] + "/" + day + ".jsonl.gz"
 	if gotPath != wantPath {
 		t.Errorf("S3 key: got %q, want %q", gotPath, wantPath)
 	}
@@ -243,7 +260,7 @@ func TestArchiveStream_S3NotFound_ArchiveMissing(t *testing.T) {
 		Backstop: 5 * time.Second,
 	}
 	body_out := driveStream(t, h, state.Account{ID: "acct-1", Plan: api.PlanHobby},
-		"archive=1&instance=inst-abc&date=2026-08-07")
+		"archive=1&instance=inst-abc&date="+dateForInsideCap())
 
 	if !strings.Contains(body_out, `"reason":"archive_missing"`) {
 		t.Errorf("body missing archive_missing: %s", body_out)
@@ -263,7 +280,7 @@ func TestArchiveStream_S3ServerError_ArchiveDegraded(t *testing.T) {
 		Backstop: 5 * time.Second,
 	}
 	body_out := driveStream(t, h, state.Account{ID: "acct-1", Plan: api.PlanHobby},
-		"archive=1&instance=inst-abc&date=2026-08-07")
+		"archive=1&instance=inst-abc&date="+dateForInsideCap())
 
 	if !strings.Contains(body_out, `"reason":"archive_degraded"`) {
 		t.Errorf("body missing archive_degraded: %s", body_out)
@@ -419,7 +436,7 @@ func TestArchiveStream_MalformedJSONLine(t *testing.T) {
 		Backstop: 5 * time.Second,
 	}
 	body_out := driveStream(t, h, state.Account{ID: "acct-1", Plan: api.PlanHobby},
-		"archive=1&instance=inst-abc&date=2026-08-07")
+		"archive=1&instance=inst-abc&date="+dateForInsideCap())
 
 	if !strings.Contains(body_out, `"reason":"archive_degraded"`) {
 		t.Errorf("malformed JSON should degrade: %s", body_out)
@@ -516,7 +533,7 @@ func TestArchiveStream_FramePayloadShape(t *testing.T) {
 		Backstop: 5 * time.Second,
 	}
 	body_out := driveStream(t, h, state.Account{ID: "acct-1", Plan: api.PlanHobby},
-		"archive=1&instance=inst-abc&date=2026-08-07")
+		"archive=1&instance=inst-abc&date="+dateForInsideCap())
 
 	// Extract the first event: log payload to inspect the keys.
 	i := strings.Index(body_out, "data: {")
