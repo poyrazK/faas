@@ -1895,6 +1895,73 @@ type Store interface {
 	// lastFiredAt map; PgStore uses a column added in migration 00003.
 	MarkCronFired(ctx context.Context, cronID string, at time.Time) error
 
+	// Jobs (ADR-099). apid is the only writer to jobs; schedd (PR-C)
+	// writes job_runs + job_tasks on every dispatch and reads them on
+	// every tick. The interface is the single seam between PR-D's
+	// HTTP handlers and the underlying store; MemStore keeps an
+	// in-memory map (sufficient for unit tests, never wired to a
+	// real control plane) and PgStore uses the jobs/job_runs/job_tasks
+	// tables from migrations/00255.
+	//
+	// CreateJob is the un-capped insert path used by tests. The
+	// customer-facing handler always calls CreateJobIfUnderQuota
+	// (same TOCTOU-defence pattern as CreateCronIfUnderQuota).
+	CreateJob(ctx context.Context, j Job) (Job, error)
+	// CreateJobIfUnderQuota inserts a job iff the per-account cap
+	// (limits.JobMaxPerAccount) is not yet reached. Returns:
+	//   - (Job{}, *JobQuotaError) when the cap trips
+	//   - (Job{}, ErrNotFound) when account row is missing or deleted
+	//   - (Job{}, ErrConflict) on a duplicate (account_id, name)
+	CreateJobIfUnderQuota(ctx context.Context, j Job, limits api.Limits) (Job, error)
+	GetJob(ctx context.Context, id, accountID string) (Job, error)
+	GetJobByName(ctx context.Context, accountID, name string) (Job, error)
+	ListJobsForAccount(ctx context.Context, accountID string) ([]Job, error)
+	// UpdateJob mutates the optional fields of a job row. nil pointers
+	// (and nil maps) leave the field untouched, matching UpdateCron /
+	// UpdateAlertRule. The *JobStatus parameter lets PR-D's pause
+	// endpoint flip active ⇄ paused; nil means "don't change".
+	UpdateJob(ctx context.Context, id, accountID string, name, imageRef *string, ramMb, taskTimeoutS, maxParallelism, retryMax *int32, envOverrides *map[string]string, status *JobStatus) (Job, error)
+	// DeleteJob soft-deletes via status='deleted' (matches the
+	// soft-tombstone pattern in DeleteCron). Counts in
+	// CountJobsForAccount exclude 'deleted' rows.
+	DeleteJob(ctx context.Context, id, accountID string) error
+	CountJobsForAccount(ctx context.Context, accountID string) (int32, error)
+
+	// Job runs (ADR-099). Created by schedd (PR-C) on POST
+	// /v1/jobs/{name}/runs (PR-D). CreateJobRun materialises the
+	// run row; InsertJobTasks bulk-inserts N task rows in one
+	// round-trip (pgx CopyFrom). Caller passes in a transaction
+	// boundary in pgstore.go.
+	CreateJobRun(ctx context.Context, r JobRun) (JobRun, error)
+	InsertJobTasks(ctx context.Context, runID string, taskIndices []int32) error
+	GetJobRun(ctx context.Context, id, accountID string) (JobRun, error)
+	ListJobRunsForJob(ctx context.Context, jobID, accountID string) ([]JobRun, error)
+	// ClaimJobTasks atomically claims up to N queued tasks for a
+	// run. FOR UPDATE SKIP LOCKED is the canonical shape; two
+	// schedd instances never grab the same task row. Caller then
+	// flips status queued → claimed via MarkJobTaskClaimed.
+	ClaimJobTasks(ctx context.Context, runID string, limit int32) ([]ClaimedJobTask, error)
+	// ListReadyJobTasks surfaces queued tasks across all runs for
+	// the schedd dispatch-tick hot path. Backed by the
+	// job_tasks_ready_idx partial index. PR-C may batch up to
+	// `limit` rows per tick.
+	ListReadyJobTasks(ctx context.Context, limit int32) ([]ListReadyJobTask, error)
+
+	// MarkJobTask* are the per-task state transitions. PR-C's
+	// job_supervisor + dispatch tick emit them; the run-level
+	// fan-in (RecomputeJobRunStatus) is called by the caller
+	// AFTER each terminal mark.
+	MarkJobTaskClaimed(ctx context.Context, runID string, taskIndex int32, instanceID string) error
+	MarkJobTaskSucceeded(ctx context.Context, runID string, taskIndex int32) error
+	MarkJobTaskFailed(ctx context.Context, runID string, taskIndex int32, errorClass, errorMessage string) error
+	MarkJobTaskTimeout(ctx context.Context, runID string, taskIndex int32) error
+	MarkJobTaskOOM(ctx context.Context, runID string, taskIndex int32) error
+	MarkJobTaskCancelled(ctx context.Context, runID string, taskIndex int32) error
+	// RecomputeJobRunStatus is the pure-SQL run-level fan-in. Reads
+	// the live task counters, updates the aggregate_status +
+	// tasks_* fields + finished_at in one UPDATE.
+	RecomputeJobRunStatus(ctx context.Context, runID string) (JobRun, error)
+
 	// Fire-now request queue (ADR-090 PR-C / migrations/00193).
 	// apid inserts on POST /v1/crons/{id}/run; schedd claims +
 	// dispatches via RunCronNow. The interface is the single seam
