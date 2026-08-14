@@ -1935,7 +1935,24 @@ type Store interface {
 	CreateJobRun(ctx context.Context, r JobRun) (JobRun, error)
 	InsertJobTasks(ctx context.Context, runID string, taskIndices []int32) error
 	GetJobRun(ctx context.Context, id, accountID string) (JobRun, error)
+	// GetJobRunInternal (ADR-099 PR-C) reads a run row by id,
+	// bypassing the per-account ACL check. schedd is a trusted
+	// internal caller: the dispatch tick (dispatch_jobs.go) walks
+	// (runID, taskIndex) tuples via ClaimJobTasks and resolves the
+	// full run row to drive WakeJob. The customer-facing apid
+	// handlers must NOT use this getter — they go through
+	// GetJobRun with the customer-supplied accountID so a wrong
+	// id surfaces as 404 rather than a cross-account leak.
+	GetJobRunInternal(ctx context.Context, id string) (JobRun, error)
 	ListJobRunsForJob(ctx context.Context, jobID, accountID string) ([]JobRun, error)
+	// JobTaskByRunAndIndex (ADR-099 PR-C) reads a single task
+	// row by (runID, taskIndex). Used by schedd's dispatch tick
+	// after ClaimJobTasks returns the (runID, taskIndex) tuple;
+	// WakeJob needs the task's ImageRef + TaskTimeoutS +
+	// per-task env. The composite primary key is
+	// (run_id, task_index) (migrations/00255) so this is an
+	// index-only lookup.
+	JobTaskByRunAndIndex(ctx context.Context, runID string, taskIndex int32) (JobTask, error)
 	// ClaimJobTasks atomically claims up to N queued tasks for a
 	// run. FOR UPDATE SKIP LOCKED is the canonical shape; two
 	// schedd instances never grab the same task row. Caller then
@@ -1952,6 +1969,15 @@ type Store interface {
 	// fan-in (RecomputeJobRunStatus) is called by the caller
 	// AFTER each terminal mark.
 	MarkJobTaskClaimed(ctx context.Context, runID string, taskIndex int32, instanceID string) error
+	// MarkJobTaskRequeued flips status claimed → queued. The
+	// dispatch tick uses this on ErrJobAdmissionRefused: the
+	// per-account concurrency cap refused the wake, so the
+	// task row needs to land back on the ready-queue so the
+	// next tick re-claims it. Without this, the row stays in
+	// 'claimed' forever (ListReadyJobTasks only returns
+	// 'queued' rows) and the dispatch tick silently drops the
+	// task. Mirrors the cron tick's AtCapacity backoff shape.
+	MarkJobTaskRequeued(ctx context.Context, runID string, taskIndex int32) error
 	MarkJobTaskSucceeded(ctx context.Context, runID string, taskIndex int32) error
 	MarkJobTaskFailed(ctx context.Context, runID string, taskIndex int32, errorClass, errorMessage string) error
 	MarkJobTaskTimeout(ctx context.Context, runID string, taskIndex int32) error
@@ -2493,6 +2519,27 @@ type Store interface {
 	// calls this between a successful vmmd boot and the RUNNING transition so the
 	// gateway can route to host_ip:8080 (spec §7).
 	SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error
+	// CreateJobInstance (ADR-099 / PR-C) stamps a kind='job_task'
+	// instance row with app_id=NULL, job_id=$1, and the cold-boot
+	// state. The pair-CHECK instances_app_or_job_chk (migration
+	// 00256) enforces the app_id/job_id XOR at the schema layer so a
+	// future caller cannot bypass this contract by passing a
+	// non-empty appID. wakeID follows the same gen_random_uuid()
+	// fallback as CreateInstance. schedd's WakeJob is the only
+	// caller; the dispatch tick (dispatch_jobs.go::runJobsTick)
+	// invokes WakeJob after FOR UPDATE SKIP LOCKED claims the
+	// job_tasks row, so concurrent claims cannot race the INSERT.
+	CreateJobInstance(ctx context.Context, jobID, state string, ramMB int, nodeID, wakeID string) (Instance, error)
+	// CountLiveJobTasksForAccount (ADR-099 / PR-C) returns the
+	// number of kind='job_task' instances currently in {WAKING,
+	// COLD_BOOTING, RUNNING} for the given account. schedd
+	// consults this against JobMaxConcurrentPerAccount before
+	// admitting a new task; the partial index
+	// instances_job_id_idx WHERE job_id IS NOT NULL (migration
+	// 00256) keeps the count O(log N) rather than a seq-scan.
+	// Returns 0 when no live task instances exist (the common case
+	// on a Hobby account with no in-flight runs).
+	CountLiveJobTasksForAccount(ctx context.Context, accountID string) (int, error)
 	// RunningInstanceForApp returns the newest RUNNING instance for an app, or
 	// ErrNotFound when none is live. schedd uses it to make Wake idempotent and
 	// the gateway to seed its route target on startup.

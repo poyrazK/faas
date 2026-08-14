@@ -123,9 +123,9 @@ type MemStore struct {
 	// MemStore holds the same UNIQUE(account_id, name) invariant
 	// the Postgres index enforces — CreateJob rejects a duplicate
 	// before insert.
-	jobs           map[string]Job
-	jobRuns        map[string]JobRun
-	jobTasks       map[string]JobTask // key: fmt.Sprintf("%s/%d", runID, taskIndex)
+	jobs     map[string]Job
+	jobRuns  map[string]JobRun
+	jobTasks map[string]JobTask // key: fmt.Sprintf("%s/%d", runID, taskIndex)
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -5314,6 +5314,9 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 		RAMMB:        ramMB,
 		NodeID:       nodeID,
 		StartedAt:    time.Now(),
+		// ADR-099 / PR-A migration 00256. Pre-00256 fixtures read
+		// kind='wake' (the default), preserving byte-identical behaviour.
+		Kind: "wake",
 	}
 	if wakeID != "" {
 		ins.WakeID = wakeID
@@ -5804,6 +5807,71 @@ func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP strin
 	ins.StartedAt = time.Now()
 	m.instances[id] = ins
 	return nil
+}
+
+// CreateJobInstance (ADR-099 / PR-C) stamps a kind='job_task'
+// MemStore row. Mirrors PgStore.CreateJobInstance: appID=NULL
+// (JobID is set instead), DeploymentID=NULL (no deployment row for
+// jobs), Kind='job_task'. The pair-CHECK instances_app_or_job_chk
+// lives at the schema layer only; MemStore doesn't enforce it but
+// the closed vocabulary (Kind in {wake, build, job_task}) is
+// asserted by the test fixtures. wakeID follows the same UUIDv4
+// fallback as CreateInstance.
+func (m *MemStore) CreateJobInstance(_ context.Context, jobID, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins := Instance{
+		ID:        newID(),
+		JobID:     jobID,
+		State:     state,
+		RAMMB:     ramMB,
+		NodeID:    nodeID,
+		StartedAt: time.Now(),
+		Kind:      "job_task",
+	}
+	if wakeID != "" {
+		ins.WakeID = wakeID
+	} else {
+		// Mirror PgStore's gen_random_uuid() fallback for MemStore.
+		ins.WakeID = uuid.NewString()
+	}
+	m.instances[ins.ID] = ins
+	return ins, nil
+}
+
+// CountLiveJobTasksForAccount (ADR-099 / PR-C) walks the
+// instances map and counts kind='job_task' rows in the live
+// state set. The lookup requires the per-row job → account join;
+// MemStore does the join by reading m.jobs[jobID].accountID. The
+// scan is O(N) on the instances map (small in unit tests; production
+// uses PgStore where the partial index keeps the count O(log N)).
+// Returns 0 when no live task instances exist — matches PgStore.
+func (m *MemStore) CountLiveJobTasksForAccount(_ context.Context, accountID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	live := map[State]bool{
+		"waking":       true,
+		"cold_booting": true,
+		"running":      true,
+	}
+	n := 0
+	for _, ins := range m.instances {
+		if ins.Kind != "job_task" {
+			continue
+		}
+		if !live[State(ins.State)] {
+			continue
+		}
+		j, ok := m.jobs[ins.JobID]
+		if !ok {
+			continue
+		}
+		if string(j.AccountID) != accountID {
+			continue
+		}
+		n++
+	}
+	return n, nil
 }
 
 func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Instance, error) {
@@ -11944,6 +12012,23 @@ func (m *MemStore) GetJobRun(_ context.Context, id, accountID string) (JobRun, e
 	return r, nil
 }
 
+// GetJobRunInternal (ADR-099 PR-C) reads a run row by id
+// WITHOUT the per-account ACL check. schedd-internal only — the
+// dispatch tick needs the full run row to drive WakeJob, but the
+// customer-facing GetJobRun requires the caller to know the
+// run's accountID, which the dispatch tick doesn't have at
+// ClaimJobTasks time (the response carries (runID, taskIndex)
+// only). See the store.go doc for the full rationale.
+func (m *MemStore) GetJobRunInternal(_ context.Context, id string) (JobRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.jobRuns[id]
+	if !ok {
+		return JobRun{}, ErrNotFound
+	}
+	return r, nil
+}
+
 func (m *MemStore) ListJobRunsForJob(_ context.Context, jobID, accountID string) ([]JobRun, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -12017,6 +12102,32 @@ func (m *MemStore) ListReadyJobTasks(_ context.Context, limit int32) ([]ListRead
 	return out, nil
 }
 
+// MarkJobTaskRequeued (ADR-099 PR-C) flips status claimed →
+// queued. The dispatch tick calls this when WakeJob returns
+// ErrJobAdmissionRefused — the per-account concurrency cap
+// refused the wake, and the task row needs to land back on
+// the ready-queue so the next tick re-claims it. Mirrors the
+// cron tick's AtCapacity backoff shape.
+//
+// Idempotent: a second call on an already-queued row is a
+// no-op (the precondition is status=claimed; the second call
+// gets the standard "not in claimed state" error and the
+// dispatch tick logs+ignores).
+func (m *MemStore) MarkJobTaskRequeued(_ context.Context, runID string, taskIndex int32) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.jobTasks[jobTaskKey(runID, taskIndex)]
+	if !ok {
+		return ErrNotFound
+	}
+	if t.Status != JobTaskStatusClaimed {
+		return fmt.Errorf("state: job task %s/%d not in claimed state (got %s)", runID, taskIndex, t.Status)
+	}
+	t.Status = JobTaskStatusQueued
+	m.jobTasks[jobTaskKey(runID, taskIndex)] = t
+	return nil
+}
+
 // MarkJobTaskClaimed flips status queued → claimed and stamps
 // instance_id. Mirrors pgstore semantics exactly.
 func (m *MemStore) MarkJobTaskClaimed(_ context.Context, runID string, taskIndex int32, instanceID string) error {
@@ -12030,12 +12141,34 @@ func (m *MemStore) MarkJobTaskClaimed(_ context.Context, runID string, taskIndex
 		return fmt.Errorf("state: job task %s/%d not in queued state (got %s)", runID, taskIndex, t.Status)
 	}
 	t.Status = JobTaskStatusClaimed
-	idCopy := instanceID
-	t.InstanceID = &idCopy
+	// ADR-099 PR-C: empty instanceID is the valid shape when the
+	// dispatch tick flips status BEFORE WakeJob creates the
+	// instances row. Leave InstanceID as a nil pointer; a future
+	// post-exit update can re-stamp the instance_id from
+	// instances.job_id lookup.
+	if instanceID != "" {
+		idCopy := instanceID
+		t.InstanceID = &idCopy
+	} else {
+		t.InstanceID = nil
+	}
 	now := time.Now()
 	t.StartedAt = &now
 	m.jobTasks[jobTaskKey(runID, taskIndex)] = t
 	return nil
+}
+
+// JobTaskByRunAndIndex (ADR-099 PR-C) is the dispatch-tick's
+// per-task getter. Composite-PK lookup against m.jobTasks;
+// returns ErrNotFound on a miss (matches PgStore).
+func (m *MemStore) JobTaskByRunAndIndex(_ context.Context, runID string, taskIndex int32) (JobTask, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.jobTasks[jobTaskKey(runID, taskIndex)]
+	if !ok {
+		return JobTask{}, ErrNotFound
+	}
+	return t, nil
 }
 
 func (m *MemStore) MarkJobTaskSucceeded(_ context.Context, runID string, taskIndex int32) error {

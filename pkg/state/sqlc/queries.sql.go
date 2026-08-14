@@ -3686,6 +3686,26 @@ func (q *Queries) MarkJobTaskOOM(ctx context.Context, db DBTX, arg MarkJobTaskOO
 	return err
 }
 
+const markJobTaskRequeued = `-- name: MarkJobTaskRequeued :exec
+UPDATE job_tasks SET
+    status = 'queued'
+WHERE run_id = $1 AND task_index = $2 AND status = 'claimed'
+`
+
+type MarkJobTaskRequeuedParams struct {
+	RunID     pgtype.UUID
+	TaskIndex int32
+}
+
+// Flips status claimed → queued. The dispatch tick calls this on
+// ErrJobAdmissionRefused so the task row lands back on the
+// ready-queue (job_tasks_ready_idx) and the next tick re-claims
+// it. Mirrors the cron tick's AtCapacity backoff shape.
+func (q *Queries) MarkJobTaskRequeued(ctx context.Context, db DBTX, arg MarkJobTaskRequeuedParams) error {
+	_, err := db.Exec(ctx, markJobTaskRequeued, arg.RunID, arg.TaskIndex)
+	return err
+}
+
 const markJobTaskSucceeded = `-- name: MarkJobTaskSucceeded :exec
 UPDATE job_tasks SET
     status = 'succeeded',

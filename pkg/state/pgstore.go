@@ -2008,7 +2008,7 @@ func (s *PgStore) ListAppsByNodeID(ctx context.Context, nodeID string) ([]App, e
 // last_request_at, parked_at, node_id, wake_id).
 func (s *PgStore) ListInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error) {
 	sel := `select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.kind, i.job_id
 		   from instances i
 		   join apps a on a.id = i.app_id
 		  where a.node_id = $1`
@@ -7434,15 +7434,62 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at)
 		 values ($1, $2, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else $6::uuid end, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count`,
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id`,
 		appID, deploymentID, state, ramMB, nodeID, wakeID)
 	return scanInstance(row)
+}
+
+// CreateJobInstance (ADR-099 / PR-C) stamps a kind='job_task'
+// instance row. The pair-CHECK instances_app_or_job_chk (migration
+// 00256) enforces app_id IS NULL + job_id IS NOT NULL for kind =
+// 'job_task'; we pass appID=NULL explicitly (defaulting the column
+// to NULL rather than relying on COALESCE) so a Postgres error
+// surfaces immediately if a future caller bypasses the contract.
+// The literal 'job_task' is hard-coded — the closed vocabulary
+// ('wake' | 'build' | 'job_task') is enforced by the kind CHECK,
+// so a typo here surfaces as SQLSTATE 23514 on the INSERT.
+func (s *PgStore) CreateJobInstance(ctx context.Context, jobID, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+	row := s.pool.QueryRow(ctx,
+		`insert into instances (app_id, deployment_id, job_id, kind, state, ram_mb, node_id, wake_id, started_at)
+		 values (NULL, NULL, $1::uuid, 'job_task', $2, $3, $4, case when $5::text = '' then gen_random_uuid() else $5::uuid end, now())
+		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id`,
+		jobID, state, ramMB, nodeID, wakeID)
+	return scanInstance(row)
+}
+
+// CountLiveJobTasksForAccount (ADR-099 / PR-C) counts kind='job_task'
+// instances in {WAKING, COLD_BOOTING, RUNNING} for the account.
+// Uses the partial index instances_job_id_idx WHERE job_id IS NOT
+// NULL (migration 00256) — joined against accounts on
+// (account_id of the job row, not the instance row). The query is
+// the only path that touches this index; CountLiveInstancesByDeployment
+// (the per-deployment analogue) is unrelated.
+//
+// JOIN strategy: the jobs table holds account_id; instances.job_id
+// references jobs.id. Joining through jobs keeps the index usable
+// and avoids a per-instance account lookup. Returns 0 (not error)
+// when no live tasks exist — that's the common case on Hobby/Pro
+// accounts between runs.
+func (s *PgStore) CountLiveJobTasksForAccount(ctx context.Context, accountID string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`select count(*) from instances i
+		 join jobs j on j.id = i.job_id
+		 where j.account_id = $1::uuid
+		   and i.kind = 'job_task'
+		   and i.state in ('WAKING','COLD_BOOTING','RUNNING')`,
+		accountID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("pgstore: count live job tasks: %w", err)
+	}
+	return n, nil
 }
 
 func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances where id = $1`, id)
 	return scanInstance(row)
 }
@@ -7450,7 +7497,7 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances where app_id = $1 order by started_at desc`, appID)
 	if err != nil {
 		return nil, err
@@ -7474,7 +7521,7 @@ func (s *PgStore) ListLatestInstancesForApp(ctx context.Context, appID string, l
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances where app_id = $1 order by started_at desc limit $2`, appID, limit)
 	if err != nil {
 		return nil, err
@@ -7492,7 +7539,7 @@ func (s *PgStore) ListLatestInstancesForApp(ctx context.Context, appID string, l
 func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances
 		 where state in ('running','waking','cold_booting','snapshotting')
 		 order by started_at desc`)
@@ -7512,7 +7559,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 func (s *PgStore) ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.kind, i.job_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -7552,7 +7599,7 @@ func (s *PgStore) ListInstancesForAccountPaged(ctx context.Context, accountID st
 	}
 	rows, err := s.pool.Query(ctx,
 		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.kind, i.job_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -7585,7 +7632,7 @@ func (s *PgStore) ListLatestInstancePerApp(ctx context.Context, accountID string
 	rows, err := s.pool.Query(ctx,
 		`select distinct on (i.app_id)
 		        i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.kind, i.job_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -7865,7 +7912,7 @@ func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []S
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances
 		 where state = any($1)
 		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
@@ -7904,7 +7951,7 @@ func (s *PgStore) ListRunningInstancesOnDeadNodes(ctx context.Context, threshold
 	rows, err := s.pool.Query(ctx,
 		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
 		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at,
-		        i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		        i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.kind, i.job_id
 		 from instances i
 		 join compute_nodes n on n.id = i.node_id
 		 where i.state = 'running'
@@ -7939,7 +7986,7 @@ func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, st
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, terminal_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id, terminal_at
 		 from instances
 		 where state = any($1)
 		   and terminal_at is not null
@@ -7983,7 +8030,7 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances where app_id = $1 and state = 'running'
 		 order by started_at desc nulls last limit 1`, appID)
 	return scanInstance(row)
@@ -12165,9 +12212,15 @@ func scanInstanceCols(scan func(...any) error) (Instance, error) {
 	// somehow surfaced surfaces as "" rather than a NULL scan error — the
 	// SELECT column list is the contract that prevents column-order drift
 	// from silently swallowing wake_id into an unrelated field.
+	//
+	// kind + job_id are the 17th/18th columns (migration 00256). kind is
+	// NOT NULL DEFAULT 'wake'; job_id is NULL for every wake/build row.
+	// Scanned into plain strings (kind nullable-safe via coalesce, job_id
+	// intentionally string-typed to keep NULL → "" for the legacy pgtest
+	// fixtures that pre-date 00256).
 	if err := scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
 		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID,
-		&frameworkReady, &ins.TailCount); err != nil {
+		&frameworkReady, &ins.TailCount, &ins.Kind, &ins.JobID); err != nil {
 		return Instance{}, err
 	}
 	if started != nil {
@@ -12220,7 +12273,8 @@ func scanInstanceColsWithMigration(scan func(...any) error) (Instance, error) {
 	var leaseStr *string
 	if err := scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
 		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID,
-		&frameworkReady, &migFromStr, &migAtTime, &leaseStr, &ins.TailCount); err != nil {
+		&frameworkReady, &migFromStr, &migAtTime, &leaseStr, &ins.TailCount,
+		&ins.Kind, &ins.JobID); err != nil {
 		return Instance{}, err
 	}
 	if started != nil {
@@ -12271,7 +12325,7 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 		// 00112 added framework_ready_at, 00151 added tail_count,
 		// before terminal_at).
 		if err := rows.Scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
-			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID, &frameworkReady, &ins.TailCount, &terminal); err != nil {
+			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID, &frameworkReady, &ins.TailCount, &terminal, &ins.Kind, &ins.JobID); err != nil {
 			return nil, err
 		}
 		if started != nil {
@@ -16076,6 +16130,87 @@ func (s *PgStore) GetJobRun(ctx context.Context, id, accountID string) (JobRun, 
 	return jobRunFromPgtype(row), nil
 }
 
+// GetJobRunInternal (ADR-099 PR-C) reads a run by primary key
+// WITHOUT the per-account ACL check. schedd-internal only — see
+// the Store interface doc + MemStore.GetJobRunInternal doc for
+// the rationale. Raw SQL (not sqlc) to avoid regenerating the
+// queries.sql golden; the SELECT is identical to GetJobRun minus
+// the account_id predicate.
+func (s *PgStore) GetJobRunInternal(ctx context.Context, id string) (JobRun, error) {
+	runUUID, err := uuid.Parse(id)
+	if err != nil {
+		return JobRun{}, ErrNotFound
+	}
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, job_id, account_id, trigger_kind, env_overrides,
+		       tasks, parallelism, retry_max, task_timeout_s,
+		       aggregate_status, tasks_succeeded, tasks_failed,
+		       tasks_cancelled, tasks_running, started_at,
+		       finished_at, created_at
+		FROM job_runs WHERE id = $1`, pgtypeFromUUID(runUUID))
+	var r JobRun
+	var idOut, jobIDOut, acctIDOut pgtype.UUID
+	var triggerKind pgtype.Text
+	var envOverrides []byte
+	var retryMax, taskTimeoutS pgtype.Int4
+	var aggregateStatus pgtype.Text
+	var tasksS, tasksF, tasksC, tasksR pgtype.Int4
+	var startedAt, finishedAt pgtype.Timestamptz
+	var createdAt pgtype.Timestamptz
+	if err := row.Scan(&idOut, &jobIDOut, &acctIDOut, &triggerKind, &envOverrides,
+		&r.Tasks, &r.Parallelism, &retryMax, &taskTimeoutS,
+		&aggregateStatus, &tasksS, &tasksF, &tasksC, &tasksR, &startedAt,
+		&finishedAt, &createdAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return JobRun{}, ErrNotFound
+		}
+		return JobRun{}, fmt.Errorf("get job run internal: %w", err)
+	}
+	if uuidVal := uuidFromPgtype(idOut); uuidVal != uuid.Nil {
+		r.ID = uuidVal.String()
+	}
+	if uuidVal := uuidFromPgtype(jobIDOut); uuidVal != uuid.Nil {
+		r.JobID = uuidVal.String()
+	}
+	if uuidVal := uuidFromPgtype(acctIDOut); uuidVal != uuid.Nil {
+		r.AccountID = uuidVal.String()
+	}
+	if triggerKind.Valid {
+		r.TriggerKind = JobRunTriggerKind(triggerKind.String)
+	}
+	if len(envOverrides) > 0 {
+		_ = json.Unmarshal(envOverrides, &r.EnvOverrides)
+	}
+	if r.EnvOverrides == nil {
+		r.EnvOverrides = map[string]string{}
+	}
+	if retryMax.Valid {
+		v := retryMax.Int32
+		r.RetryMax = &v
+	}
+	if taskTimeoutS.Valid {
+		v := taskTimeoutS.Int32
+		r.TaskTimeoutS = &v
+	}
+	if aggregateStatus.Valid {
+		r.AggregateStatus = JobRunStatus(aggregateStatus.String)
+	}
+	r.TasksSucceeded = tasksS.Int32
+	r.TasksFailed = tasksF.Int32
+	r.TasksCancelled = tasksC.Int32
+	r.TasksRunning = tasksR.Int32
+	if startedAt.Valid {
+		t := startedAt.Time
+		r.StartedAt = &t
+	}
+	if finishedAt.Valid {
+		t := finishedAt.Time
+		r.FinishedAt = &t
+	}
+	r.CreatedAt = createdAt.Time
+	return r, nil
+}
+
 // ListJobRunsForJob returns runs for one job (used by the
 // dashboard's "Recent runs" panel — PR-E).
 func (s *PgStore) ListJobRunsForJob(ctx context.Context, jobID, accountID string) ([]JobRun, error) {
@@ -16152,19 +16287,81 @@ func (s *PgStore) MarkJobTaskClaimed(ctx context.Context, runID string, taskInde
 	if err != nil {
 		return ErrNotFound
 	}
-	instUUID, err := uuid.Parse(instanceID)
-	if err != nil {
-		return ErrNotFound
+	// ADR-099 PR-C: the dispatch tick calls MarkJobTaskClaimed
+	// BEFORE WakeJob creates the instance row (the dispatch tick
+	// flips status queued → claimed, then WakeJob creates the
+	// instances row, then the supervisor's eventual exit
+	// re-stamps the instance_id). An empty instanceID is the
+	// valid PR-C shape — NOT a not-found error. We translate to
+	// the sqlc NULL via pgtype.UUID's sql.NullUUID path; the
+	// schema column is nullable (migrations/00255) so the
+	// UPDATE succeeds with instance_id=NULL.
+	var instUUID pgtype.UUID
+	if instanceID != "" {
+		parsed, perr := uuid.Parse(instanceID)
+		if perr != nil {
+			return ErrNotFound
+		}
+		instUUID = pgtypeFromUUID(parsed)
+	} else {
+		instUUID = pgtype.UUID{Valid: false}
 	}
 	err = s.jobsQueries().MarkJobTaskClaimed(ctx, s.pool, sqlc.MarkJobTaskClaimedParams{
 		RunID:      pgtypeFromUUID(runUUID),
 		TaskIndex:  taskIndex,
-		InstanceID: pgtypeFromUUID(instUUID),
+		InstanceID: instUUID,
 	})
 	if err != nil {
 		return fmt.Errorf("mark job task claimed: %w", err)
 	}
 	return nil
+}
+
+// JobTaskByRunAndIndex (ADR-099 PR-C) reads a single task row
+// by composite primary key. Raw-SQL rather than sqlc: the query
+// is a trivial PK lookup and adding a sqlc query would force a
+// sqlc regenerate + golden-file updates which the PR-C budget
+// doesn't carry. The column list mirrors the schema in
+// migrations/00255; null-coalesce on the text/jsonb columns
+// keeps the MemStore + PgStore row shape byte-identical for
+// tests.
+func (s *PgStore) JobTaskByRunAndIndex(ctx context.Context, runID string, taskIndex int32) (JobTask, error) {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return JobTask{}, ErrNotFound
+	}
+	var t JobTask
+	var envJSON []byte
+	var startedAt, finishedAt pgtype.Timestamptz
+	err = s.pool.QueryRow(ctx,
+		`select task_index, run_id, attempt, status,
+		        coalesce(env, '{}'::jsonb),
+		        coalesce(error_class, ''),
+		        coalesce(error_message, ''),
+		        coalesce(instance_id::text, ''),
+		        started_at, finished_at
+		 from job_tasks where run_id = $1 and task_index = $2`,
+		pgtypeFromUUID(runUUID), taskIndex).Scan(
+		&t.TaskIndex, &t.RunID, &t.Attempt, &t.Status,
+		&envJSON,
+		&t.ErrorClass, &t.ErrorMessage,
+		&t.InstanceID,
+		&startedAt, &finishedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return JobTask{}, ErrNotFound
+		}
+		return JobTask{}, fmt.Errorf("pgstore: JobTaskByRunAndIndex: %w", err)
+	}
+	if startedAt.Valid {
+		startedCopy := startedAt.Time
+		t.StartedAt = &startedCopy
+	}
+	if finishedAt.Valid {
+		finishedCopy := finishedAt.Time
+		t.FinishedAt = &finishedCopy
+	}
+	return t, nil
 }
 
 // MarkJobTaskSucceeded marks the task terminal (success).
@@ -16253,6 +16450,31 @@ func (s *PgStore) MarkJobTaskCancelled(ctx context.Context, runID string, taskIn
 	})
 	if err != nil {
 		return fmt.Errorf("mark job task cancelled: %w", err)
+	}
+	return nil
+}
+
+// MarkJobTaskRequeued (ADR-099 PR-C) flips status claimed →
+// queued. The dispatch tick calls this when WakeJob returns
+// ErrJobAdmissionRefused so the task row lands back on the
+// ready-queue (job_tasks_ready_idx) and the next tick re-claims
+// it. Mirrors the cron tick's AtCapacity backoff shape.
+//
+// The WHERE status='claimed' clause is the gate: a second
+// call on an already-queued row, or a row that's been moved
+// terminal by a parallel goroutine, is a no-op (the dispatch
+// tick logs the error at Warn and continues).
+func (s *PgStore) MarkJobTaskRequeued(ctx context.Context, runID string, taskIndex int32) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	err = s.jobsQueries().MarkJobTaskRequeued(ctx, s.pool, sqlc.MarkJobTaskRequeuedParams{
+		RunID:     pgtypeFromUUID(runUUID),
+		TaskIndex: taskIndex,
+	})
+	if err != nil {
+		return fmt.Errorf("mark job task requeued: %w", err)
 	}
 	return nil
 }

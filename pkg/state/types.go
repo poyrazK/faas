@@ -1952,6 +1952,36 @@ type Instance struct {
 	// reads request_count alongside TailCount without a second SQL
 	// hop. NOT NULL DEFAULT 0 enforced by migration 00221.
 	RequestCount int64
+	// Kind is the workload class discriminator (ADR-099 / PR-A
+	// migration 00256_instances_kind_job.sql). Closed vocabulary
+	// enforced by instances_kind_check: 'wake' | 'build' | 'job_task'.
+	//   - 'wake'    — the legacy wake/build path (default; every
+	//                 pre-00256 row reads 'wake').
+	//   - 'build'   — builderd's per-build microVM (separate
+	//                 surface from wake; tracked separately so the
+	//                 reaper doesn't reap a mid-build VM).
+	//   - 'job_task' — a job-task VM spun up by the schedd dispatch
+	//                 tick (PR-C). The reaper consults this to skip
+	//                 job-task instances (they run to completion and
+	//                 self-exit; parking them mid-run would corrupt
+	//                 the run audit trail). RAM pressure
+	//                 (SelectEvictions) still wins — invariant §6.2-2
+	//                 is the ceiling.
+	//
+	// Pair-Checked against AppID/JobID via instances_app_or_job_chk:
+	// ('wake'|'build') ⇒ app_id IS NOT NULL AND job_id IS NULL;
+	// 'job_task' ⇒ app_id IS NULL AND job_id IS NOT NULL. New
+	// schedd paths that admit job-task VMs MUST set Kind='job_task'
+	// + appID='' + jobID=non-empty to satisfy the constraint.
+	Kind string
+	// JobID is the jobs.id FK for a job-task instance
+	// (ADR-099 / PR-A migration 00256). Set ONLY when
+	// Kind='job_task'; NULL for wake/build rows. Nullable forever
+	// (the wake path doesn't reference any job). ON DELETE SET NULL
+	// in the FK so a customer hard-deleting a job doesn't cascade
+	// to surviving instance rows — those are part of the audit trail
+	// per the meterd/billing contract and must survive the deletion.
+	JobID string
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis
@@ -4042,10 +4072,10 @@ type Job struct {
 	// sealed-blob convention). Empty map == no overrides; the
 	// SQL column defaults to '{}'::jsonb so the wire shape
 	// never returns NULL.
-	EnvOverrides   map[string]string
-	Status         JobStatus
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	EnvOverrides map[string]string
+	Status       JobStatus
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // JobRun is one row of job_runs (migrations/00255). Created by
@@ -4053,13 +4083,13 @@ type Job struct {
 // comes in (PR-D). The row + N child job_tasks rows are inserted
 // in one transaction via CreateJobRun + InsertJobTasks.
 type JobRun struct {
-	ID              string
-	JobID           string
-	AccountID       string
-	TriggerKind     JobRunTriggerKind
-	EnvOverrides    map[string]string
-	Tasks           int32
-	Parallelism     int32
+	ID           string
+	JobID        string
+	AccountID    string
+	TriggerKind  JobRunTriggerKind
+	EnvOverrides map[string]string
+	Tasks        int32
+	Parallelism  int32
 	// RetryMax is a pointer because the SQL column is nullable;
 	// null means "fall back to the job's retry_max" (the
 	// migration comment block notes this).
@@ -4081,10 +4111,10 @@ type JobRun struct {
 // of the terminal states. InstanceID is set when claimed and
 // points at the corresponding instances row (kind='job', PR-A).
 type JobTask struct {
-	RunID        string
-	TaskIndex    int32
-	Status       JobTaskStatus
-	Attempt      int32
+	RunID     string
+	TaskIndex int32
+	Status    JobTaskStatus
+	Attempt   int32
 	// InstanceID is nil until the schedd claims the task; set to
 	// the new instances.id (PR-A widening) on MarkJobTaskClaimed.
 	InstanceID   *string
@@ -4117,8 +4147,8 @@ type ListReadyJobTask = ClaimedJobTask
 type JobErrorClass string
 
 const (
-	JobErrorClassOOM             JobErrorClass = "oom"
-	JobErrorClassTimeout         JobErrorClass = "timeout"
+	JobErrorClassOOM              JobErrorClass = "oom"
+	JobErrorClassTimeout          JobErrorClass = "timeout"
 	JobErrorClassDeadlineExceeded JobErrorClass = "deadline_exceeded"
 )
 

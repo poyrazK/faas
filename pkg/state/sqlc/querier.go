@@ -453,6 +453,11 @@ type Querier interface {
 	// work shouldn't be charged). PR-D's usage_minutes rollup (PR-A
 	// 00257) honours this.
 	MarkJobTaskOOM(ctx context.Context, db DBTX, arg MarkJobTaskOOMParams) error
+	// Flips status claimed → queued. The dispatch tick calls this on
+	// ErrJobAdmissionRefused so the task row lands back on the
+	// ready-queue (job_tasks_ready_idx) and the next tick re-claims
+	// it. Mirrors the cron tick's AtCapacity backoff shape.
+	MarkJobTaskRequeued(ctx context.Context, db DBTX, arg MarkJobTaskRequeuedParams) error
 	MarkJobTaskSucceeded(ctx context.Context, db DBTX, arg MarkJobTaskSucceededParams) error
 	// Distinct from MarkJobTaskFailed because the watchdog exit
 	// code (PR-C's job_supervisor) classifies timeouts separately

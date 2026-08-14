@@ -1355,6 +1355,15 @@ UPDATE job_tasks SET
     started_at = now()
 WHERE run_id = $1 AND task_index = $2 AND status = 'queued';
 
+-- name: MarkJobTaskRequeued :exec
+-- Flips status claimed → queued. The dispatch tick calls this on
+-- ErrJobAdmissionRefused so the task row lands back on the
+-- ready-queue (job_tasks_ready_idx) and the next tick re-claims
+-- it. Mirrors the cron tick's AtCapacity backoff shape.
+UPDATE job_tasks SET
+    status = 'queued'
+WHERE run_id = $1 AND task_index = $2 AND status = 'claimed';
+
 -- name: MarkJobTaskSucceeded :exec
 UPDATE job_tasks SET
     status = 'succeeded',
