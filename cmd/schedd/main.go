@@ -502,6 +502,70 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	engine.WithOpsMetrics(ops)
 
+	// ADR-099 PR-C: jobs dispatch tick + per-account job-side
+	// rate-limit ceiling + local-host vsock waiter for the
+	// supervisor's job_exit DGRAM. All three are env-gated;
+	// FAAS_JOBS_DISABLED=1 (default until PR-D ships the apid
+	// surface) keeps a green pre-PR-D deploy from accidentally
+	// waking a job task.
+	jobsDisabled := os.Getenv("FAAS_JOBS_DISABLED") == "1"
+	if !jobsDisabled {
+		// 1. Dispatch tick cadence. Default 1 s; FAAS_JOBS_TICK_INTERVAL
+		// overrides (used by tests to fan out faster). Zero value
+		// disables the tick arm (the loop's nil-safe jobsTick
+		// helper short-circuits).
+		tickInterval := time.Second
+		if v := os.Getenv("FAAS_JOBS_TICK_INTERVAL"); v != "" {
+			d, parseErr := time.ParseDuration(v)
+			if parseErr != nil || d < 0 {
+				log.Error("FAAS_JOBS_TICK_INTERVAL must be a valid duration",
+					"value", v)
+				return fmt.Errorf("FAAS_JOBS_TICK_INTERVAL: %s", v)
+			}
+			tickInterval = d
+		}
+		sched.SetJobsTickInterval(tickInterval)
+
+		// 2. Per-account job-side rate-limit ceiling. The limiter
+		// is constructed lazily here so a PR-D-disabled deploy
+		// doesn't burn the per-account bucket map (it's bounded
+		// but unnecessary). The ceiling is read from the env so a
+		// staging cluster can run a smaller bucket without
+		// touching limits.go (production uses the Hobby/Pro/Scale
+		// value from pkg/api/limits.go via the apid gate at run
+		// create-time).
+		jobBurst := 0
+		if v := os.Getenv("FAAS_JOBS_BURST_PER_ACCOUNT"); v != "" {
+			n, parseErr := strconv.Atoi(v)
+			if parseErr != nil || n < 0 {
+				log.Error("FAAS_JOBS_BURST_PER_ACCOUNT must be a non-negative integer",
+					"value", v)
+				return fmt.Errorf("FAAS_JOBS_BURST_PER_ACCOUNT: %s", v)
+			}
+			jobBurst = n
+		}
+		if jobBurst > 0 {
+			wakeLimiter := sched.NewWakeRateLimiter()
+			wakeLimiter.SetJobBucketBurst(jobBurst)
+			engine.WithWakeRateLimiter(wakeLimiter)
+		}
+
+		// 3. Local-host vsock waiter. PR-C ships the WaitJobExit
+		// helper on the local *fcvm.JailerVMM (pkg/fcvm/vmm.go).
+		// cmd/schedd is co-located with vmmd on the control-plane
+		// node (multi-box schedd is a Tier B follow-up); the
+		// WaitJobExit dial hits the per-instance vsock UDS
+		// directly. Production wire-up is a single *fcvm.JailerVMM
+		// shared with the rest of the lifecycle code — that
+		// handle is constructed later in main.go after the
+		// socket/chroot resolution. For PR-C we ship the wiring
+		// seam (cmd/schedd/fcvm_job_exit_adapter.go) and let the
+		// follow-up commit wire the actual handle.
+		_ = &fcvmJobExitAdapter{} //nolint:unused // wired in PR-C follow-up
+		// TODO(PR-C follow-up): build the local *fcvm.JailerVMM
+		// and call engine.WithJobExitWaiter(&fcvmJobExitAdapter{vmm: vmm}).
+	}
+
 	// Issue #555 PR-6 — per-deployment 100% sampling window.
 	//
 	// otelinit.Init wires the OTel SDK (sampler chain:
