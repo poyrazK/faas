@@ -116,6 +116,16 @@ type MemStore struct {
 	buildProvenance map[string]BuildProvenance
 	domains         map[string]CustomDomain
 	crons           map[string]Cron
+	// jobs mirrors jobs + job_runs + job_tasks for in-process handler
+	// tests (ADR-099). jobs and jobRuns are keyed by their primary
+	// key; jobTasks is keyed by (runID, taskIndex) so the dispatch
+	// tick's per-run claim path can look up tasks without scanning.
+	// MemStore holds the same UNIQUE(account_id, name) invariant
+	// the Postgres index enforces — CreateJob rejects a duplicate
+	// before insert.
+	jobs           map[string]Job
+	jobRuns        map[string]JobRun
+	jobTasks       map[string]JobTask // key: fmt.Sprintf("%s/%d", runID, taskIndex)
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -526,6 +536,9 @@ func NewMemStore() *MemStore {
 		buildProvenance:      map[string]BuildProvenance{},
 		domains:              map[string]CustomDomain{},
 		crons:                map[string]Cron{},
+		jobs:                 map[string]Job{},
+		jobRuns:              map[string]JobRun{},
+		jobTasks:             map[string]JobTask{},
 		fireNowRequests:      map[string]FireNowRequest{},
 		alertRules:           map[string]AlertRule{},
 		alertDeliveries:      map[string]AlertDelivery{},
@@ -11694,4 +11707,460 @@ func uuidToPgtype(s string) pgtype.UUID {
 // consistent with pgstore.
 func pgtypeTimestamptzFromTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
+}
+
+// jobTaskKey is the canonical key into m.jobTasks. The
+// string-form keeps the map indexable while sidestepping a
+// composite-key struct (which would break the `var _ Store =
+// (*MemStore)(nil)` assertion when adding methods, because the
+// key type wouldn't be exported).
+func jobTaskKey(runID string, taskIndex int32) string {
+	return runID + "/" + fmt.Sprintf("%d", taskIndex)
+}
+
+// CreateJob is the un-capped insert path used by tests. The
+// customer-facing handler always calls CreateJobIfUnderQuota.
+func (m *MemStore) CreateJob(_ context.Context, j Job) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.jobs {
+		if existing.AccountID == j.AccountID && existing.Name == j.Name && existing.Status != JobStatusDeleted {
+			return Job{}, ErrConflict
+		}
+	}
+	if j.ID == "" {
+		j.ID = newID()
+	}
+	now := time.Now()
+	j.CreatedAt = now
+	j.UpdatedAt = now
+	m.jobs[j.ID] = j
+	return j, nil
+}
+
+// CreateJobIfUnderQuota is the quota-checked variant. Mirrors the
+// PgStore transaction shape: read count, compare to
+// limits.JobMaxPerAccount, INSERT if under. MemStore holds the
+// single-process mutex, so the count-then-insert is implicitly
+// serialised (no TOCTOU).
+func (m *MemStore) CreateJobIfUnderQuota(_ context.Context, j Job, limits api.Limits) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	limit := int32(limits.JobMaxPerAccount)
+	count := int32(0)
+	for _, existing := range m.jobs {
+		if existing.AccountID == j.AccountID && existing.Status != JobStatusDeleted {
+			count++
+		}
+	}
+	if count >= limit {
+		return Job{}, &JobQuotaError{
+			AccountID: j.AccountID,
+			Limit:     limit,
+			Observed:  count,
+		}
+	}
+	for _, existing := range m.jobs {
+		if existing.AccountID == j.AccountID && existing.Name == j.Name && existing.Status != JobStatusDeleted {
+			return Job{}, ErrConflict
+		}
+	}
+	if j.ID == "" {
+		j.ID = newID()
+	}
+	now := time.Now()
+	j.CreatedAt = now
+	j.UpdatedAt = now
+	m.jobs[j.ID] = j
+	return j, nil
+}
+
+func (m *MemStore) GetJob(_ context.Context, id, accountID string) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok || j.AccountID != accountID {
+		return Job{}, ErrNotFound
+	}
+	return j, nil
+}
+
+func (m *MemStore) GetJobByName(_ context.Context, accountID, name string) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, j := range m.jobs {
+		if j.AccountID == accountID && j.Name == name && j.Status != JobStatusDeleted {
+			return j, nil
+		}
+	}
+	return Job{}, ErrNotFound
+}
+
+func (m *MemStore) ListJobsForAccount(_ context.Context, accountID string) ([]Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Job, 0)
+	for _, j := range m.jobs {
+		if j.AccountID == accountID {
+			out = append(out, j)
+		}
+	}
+	return out, nil
+}
+
+// UpdateJob mirrors the pgstore COALESCE pattern. nil pointers
+// leave fields untouched.
+func (m *MemStore) UpdateJob(_ context.Context, id, accountID string, name, imageRef *string, ramMb, taskTimeoutS, maxParallelism, retryMax *int32, envOverrides *map[string]string, status *JobStatus) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok || j.AccountID != accountID {
+		return Job{}, ErrNotFound
+	}
+	if name != nil {
+		for _, existing := range m.jobs {
+			if existing.AccountID == accountID && existing.Name == *name && existing.ID != id && existing.Status != JobStatusDeleted {
+				return Job{}, ErrConflict
+			}
+		}
+		j.Name = *name
+	}
+	if imageRef != nil {
+		j.ImageRef = *imageRef
+	}
+	if ramMb != nil {
+		j.RamMb = *ramMb
+	}
+	if taskTimeoutS != nil {
+		j.TaskTimeoutS = *taskTimeoutS
+	}
+	if maxParallelism != nil {
+		j.MaxParallelism = *maxParallelism
+	}
+	if retryMax != nil {
+		j.RetryMax = *retryMax
+	}
+	if envOverrides != nil {
+		j.EnvOverrides = *envOverrides
+	}
+	if status != nil {
+		j.Status = *status
+	}
+	j.UpdatedAt = time.Now()
+	m.jobs[id] = j
+	return j, nil
+}
+
+// DeleteJob soft-deletes via status='deleted'. The row stays in
+// the map so subsequent GetJobByName / CountJobsForAccount can
+// exclude it via the Status filter.
+func (m *MemStore) DeleteJob(_ context.Context, id, accountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok || j.AccountID != accountID {
+		return ErrNotFound
+	}
+	j.Status = JobStatusDeleted
+	j.UpdatedAt = time.Now()
+	m.jobs[id] = j
+	return nil
+}
+
+func (m *MemStore) CountJobsForAccount(_ context.Context, accountID string) (int32, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := int32(0)
+	for _, j := range m.jobs {
+		if j.AccountID == accountID && j.Status != JobStatusDeleted {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// CreateJobRun materialises a run row + N task rows in one
+// critical section. MemStore holds the mutex, so the row + N
+// tasks are inserted atomically (no half-created runs).
+func (m *MemStore) CreateJobRun(_ context.Context, r JobRun) (JobRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.jobs[r.JobID]; !ok {
+		return JobRun{}, ErrNotFound
+	}
+	if r.ID == "" {
+		r.ID = newID()
+	}
+	r.CreatedAt = time.Now()
+	r.AggregateStatus = JobRunStatusQueued
+	m.jobRuns[r.ID] = r
+	for i := int32(0); i < r.Tasks; i++ {
+		m.jobTasks[jobTaskKey(r.ID, i)] = JobTask{
+			RunID:     r.ID,
+			TaskIndex: i,
+			Status:    JobTaskStatusQueued,
+			CreatedAt: time.Now(),
+		}
+	}
+	return r, nil
+}
+
+// InsertJobTasks is the bulk-insert counterpart to CreateJobRun
+// (in PgStore it uses pgx CopyFrom). MemStore's caller is
+// expected to invoke CreateJobRun first; this method is a
+// safety-net for tests that build the tasks separately.
+func (m *MemStore) InsertJobTasks(_ context.Context, runID string, taskIndices []int32) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.jobRuns[runID]; !ok {
+		return ErrNotFound
+	}
+	now := time.Now()
+	for _, idx := range taskIndices {
+		m.jobTasks[jobTaskKey(runID, idx)] = JobTask{
+			RunID:     runID,
+			TaskIndex: idx,
+			Status:    JobTaskStatusQueued,
+			CreatedAt: now,
+		}
+	}
+	// Bump the run's Tasks counter if the caller pre-allocated
+	// fewer tasks than we ended up with.
+	r := m.jobRuns[runID]
+	if int32(len(taskIndices)) > r.Tasks {
+		r.Tasks = int32(len(taskIndices))
+		m.jobRuns[runID] = r
+	}
+	return nil
+}
+
+func (m *MemStore) GetJobRun(_ context.Context, id, accountID string) (JobRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.jobRuns[id]
+	if !ok || r.AccountID != accountID {
+		return JobRun{}, ErrNotFound
+	}
+	return r, nil
+}
+
+func (m *MemStore) ListJobRunsForJob(_ context.Context, jobID, accountID string) ([]JobRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]JobRun, 0)
+	for _, r := range m.jobRuns {
+		if r.JobID == jobID && r.AccountID == accountID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// ClaimJobTasks atomically claims up to `limit` queued tasks for
+// a run. MemStore holds the mutex, so the claim-then-mark step is
+// implicitly serialised; the schedd dispatch tick is the only
+// caller in production and runs single-threaded.
+func (m *MemStore) ClaimJobTasks(_ context.Context, runID string, limit int32) ([]ClaimedJobTask, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.jobRuns[runID]; !ok {
+		return nil, ErrNotFound
+	}
+	out := make([]ClaimedJobTask, 0, limit)
+	count := int32(0)
+	// Walk task_indices in order; the SQL ORDER BY task_index
+	// gives the same shape.
+	for _, idx := range []int32{} {
+		_ = idx // not used — we iterate the map below
+	}
+	// MemStore can't preserve insertion order on a Go map;
+	// re-sort by extracting matching keys and sorting.
+	indices := make([]int32, 0)
+	for _, t := range m.jobTasks {
+		if t.RunID == runID && t.Status == JobTaskStatusQueued {
+			indices = append(indices, t.TaskIndex)
+		}
+	}
+	sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
+	for _, idx := range indices {
+		if count >= limit {
+			break
+		}
+		out = append(out, ClaimedJobTask{RunID: runID, TaskIndex: idx})
+		count++
+	}
+	return out, nil
+}
+
+// ListReadyJobTasks returns up to `limit` queued tasks across
+// all runs, ordered by (runID, taskIndex) — matches the SQL
+// ORDER BY. MemStore can't preserve insertion order on a Go map;
+// we sort to match the PgStore output.
+func (m *MemStore) ListReadyJobTasks(_ context.Context, limit int32) ([]ListReadyJobTask, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ListReadyJobTask, 0, limit)
+	keys := make([]string, 0)
+	for k, t := range m.jobTasks {
+		if t.Status == JobTaskStatusQueued {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if int32(len(out)) >= limit {
+			break
+		}
+		t := m.jobTasks[k]
+		out = append(out, ListReadyJobTask{RunID: t.RunID, TaskIndex: t.TaskIndex})
+	}
+	return out, nil
+}
+
+// MarkJobTaskClaimed flips status queued → claimed and stamps
+// instance_id. Mirrors pgstore semantics exactly.
+func (m *MemStore) MarkJobTaskClaimed(_ context.Context, runID string, taskIndex int32, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.jobTasks[jobTaskKey(runID, taskIndex)]
+	if !ok {
+		return ErrNotFound
+	}
+	if t.Status != JobTaskStatusQueued {
+		return fmt.Errorf("state: job task %s/%d not in queued state (got %s)", runID, taskIndex, t.Status)
+	}
+	t.Status = JobTaskStatusClaimed
+	idCopy := instanceID
+	t.InstanceID = &idCopy
+	now := time.Now()
+	t.StartedAt = &now
+	m.jobTasks[jobTaskKey(runID, taskIndex)] = t
+	return nil
+}
+
+func (m *MemStore) MarkJobTaskSucceeded(_ context.Context, runID string, taskIndex int32) error {
+	return m.markJobTaskTerminal(runID, taskIndex, JobTaskStatusSucceeded, "", "")
+}
+
+func (m *MemStore) MarkJobTaskFailed(_ context.Context, runID string, taskIndex int32, errorClass, errorMessage string) error {
+	return m.markJobTaskTerminal(runID, taskIndex, JobTaskStatusFailed, errorClass, errorMessage)
+}
+
+func (m *MemStore) MarkJobTaskTimeout(_ context.Context, runID string, taskIndex int32) error {
+	return m.markJobTaskTerminal(runID, taskIndex, JobTaskStatusTimeout, "timeout", "")
+}
+
+func (m *MemStore) MarkJobTaskOOM(_ context.Context, runID string, taskIndex int32) error {
+	return m.markJobTaskTerminal(runID, taskIndex, JobTaskStatusOOM, "oom", "")
+}
+
+// MarkJobTaskCancelled marks the task terminal only if it is
+// still queued or claimed. Terminal tasks stay terminal (the
+// MemStore analogue of the SQL WHERE clause).
+func (m *MemStore) MarkJobTaskCancelled(_ context.Context, runID string, taskIndex int32) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.jobTasks[jobTaskKey(runID, taskIndex)]
+	if !ok {
+		return ErrNotFound
+	}
+	if t.Status != JobTaskStatusQueued && t.Status != JobTaskStatusClaimed {
+		return nil
+	}
+	t.Status = JobTaskStatusCancelled
+	now := time.Now()
+	t.FinishedAt = &now
+	m.jobTasks[jobTaskKey(runID, taskIndex)] = t
+	return nil
+}
+
+// markJobTaskTerminal is the shared terminal-mark helper. It
+// mirrors the SQL MarkJobTask{Succeeded,Failed,Timeout,OOM}
+// shape: flip status, stamp finished_at, optionally stamp
+// error_class / error_message + bump attempt.
+func (m *MemStore) markJobTaskTerminal(runID string, taskIndex int32, status JobTaskStatus, errorClass, errorMessage string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.jobTasks[jobTaskKey(runID, taskIndex)]
+	if !ok {
+		return ErrNotFound
+	}
+	if t.Status != JobTaskStatusClaimed {
+		return fmt.Errorf("state: job task %s/%d not in claimed state (got %s)", runID, taskIndex, t.Status)
+	}
+	t.Status = status
+	if errorClass != "" {
+		ec := errorClass
+		t.ErrorClass = &ec
+	}
+	if errorMessage != "" {
+		em := errorMessage
+		t.ErrorMessage = &em
+	}
+	if status == JobTaskStatusFailed || status == JobTaskStatusTimeout || status == JobTaskStatusOOM {
+		t.Attempt++
+	}
+	now := time.Now()
+	t.FinishedAt = &now
+	m.jobTasks[jobTaskKey(runID, taskIndex)] = t
+	return nil
+}
+
+// RecomputeJobRunStatus is the pure-Go fan-in counterpart of the
+// SQL CTE. Reads the live task counters, updates the
+// aggregate_status + tasks_* fields + finished_at in one
+// critical section.
+func (m *MemStore) RecomputeJobRunStatus(_ context.Context, runID string) (JobRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.jobRuns[runID]
+	if !ok {
+		return JobRun{}, ErrNotFound
+	}
+	var s, f, c, running int32
+	total := int32(0)
+	for _, t := range m.jobTasks {
+		if t.RunID != runID {
+			continue
+		}
+		total++
+		switch t.Status {
+		case JobTaskStatusSucceeded:
+			s++
+		case JobTaskStatusFailed, JobTaskStatusTimeout, JobTaskStatusOOM:
+			f++
+		case JobTaskStatusCancelled:
+			c++
+		case JobTaskStatusClaimed:
+			running++
+		}
+	}
+	r.TasksSucceeded = s
+	r.TasksFailed = f
+	r.TasksCancelled = c
+	r.TasksRunning = running
+	switch {
+	case total == 0:
+		r.AggregateStatus = JobRunStatusQueued
+	case s+f+c == total && s == total:
+		r.AggregateStatus = JobRunStatusSucceeded
+	case s+f+c == total && f > 0:
+		r.AggregateStatus = JobRunStatusDeadLetter
+	case c == total:
+		r.AggregateStatus = JobRunStatusCancelled
+	case running > 0:
+		r.AggregateStatus = JobRunStatusRunning
+	default:
+		r.AggregateStatus = JobRunStatusQueued
+	}
+	if s+f+c == total {
+		now := time.Now()
+		r.FinishedAt = &now
+	}
+	if running > 0 && r.StartedAt == nil {
+		now := time.Now()
+		r.StartedAt = &now
+	}
+	m.jobRuns[runID] = r
+	return r, nil
 }
