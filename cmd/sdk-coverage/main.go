@@ -193,6 +193,25 @@ var methodRouteMap = map[string]string{
 	"POST /v1/crons/{id}/run":                     "FireCron",           // issue #791 — manual fire-now (PR-C)
 	"GET /v1/cron-fire-now-requests/{request_id}": "GetFireCronRequest", // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
 	"GET /v1/crons/{id}":                          "GetCron",            // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
+
+	// ADR-099 PR-D — jobs cluster. The auto-derivation produces
+	// names with literal underscores for the run_id path segment
+	// ("GetV1RunsRun_id") which the explicit map drops. Run/task
+	// endpoints live under both /v1/jobs/{id}/* (parent-child
+	// shape) and /v1/runs/{run_id}/* (post-creation direct
+	// access); both are mapped here so sdk-coverage sees the
+	// pair.
+	"GET /v1/jobs":                               "ListJobs",
+	"POST /v1/jobs":                              "CreateJob",
+	"GET /v1/jobs/{id}":                          "GetJob",
+	"PATCH /v1/jobs/{id}":                        "UpdateJob",
+	"DELETE /v1/jobs/{id}":                       "DeleteJob",
+	"GET /v1/jobs/{id}/runs":                     "ListRuns",
+	"POST /v1/jobs/{id}/runs":                    "CreateRun",
+	"GET /v1/runs/{run_id}":                      "GetRun",
+	"POST /v1/runs/{run_id}/cancel":              "CancelRun",
+	"GET /v1/runs/{run_id}/tasks":                "ListRunTasks",
+	"POST /v1/runs/{run_id}/tasks/{idx}/retry":   "RetryTask",
 	"GET /v1/usage/summary":                       "UsageSummary",
 	"GET /v1/usage":                               "GetUsage",
 	"GET /v1/usage/daily":                         "UsageDaily",
