@@ -121,6 +121,69 @@ func TestLogger_JSONToStderr(t *testing.T) {
 	}
 }
 
+// TestDaemon_LogRecordsStampDaemonKeyOnce is the issue #852 regression:
+// Daemon() stamped "daemon" via Logger().With(...) AND again inside
+// NewCorrelationLogger (FieldDaemon), so every record carried the key
+// twice. Duplicate JSON keys are parser-dependent — jq and Loki take the
+// last occurrence, strict decoders reject the record.
+//
+// Asserted on the raw stderr bytes, not a decoded map: encoding/json
+// silently collapses duplicate keys on decode, so a map-based assertion
+// cannot see this bug. strings.Count on the key token is the only shape
+// that catches it.
+//
+// Re-exec (same pattern as TestDaemon_VersionFlag above) rather than a
+// reimplementation of Daemon's body: the pre-existing in-process seam
+// runWithFreshFlags (daemon_internal_test.go) omits NewCorrelationLogger
+// entirely, which is exactly why no test caught the double stamp. This
+// test drives the real Daemon() so it cannot drift the same way.
+func TestDaemon_LogRecordsStampDaemonKeyOnce(t *testing.T) {
+	if os.Getenv("WIRE_DAEMON_KEY_CHILD") == "1" {
+		// Daemon() emits "starting" then "shutdown complete" through the
+		// envelope under test; fn returning nil keeps the child exit 0.
+		wire.Daemon("testd", func(_ context.Context, _ *slog.Logger) error {
+			return nil
+		})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestDaemon_LogRecordsStampDaemonKeyOnce")
+	cmd.Env = append(os.Environ(), "WIRE_DAEMON_KEY_CHILD=1")
+	// slog writes to stderr; the test framework's PASS/ok go to stdout.
+	// Keep them apart so the assertion sees log records only.
+	var stderr bytes.Buffer
+	cmd.Stdout = io.Discard
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("child failed: %v\nstderr:\n%s", err, stderr.String())
+	}
+
+	var records int
+	for _, line := range strings.Split(stderr.String(), "\n") {
+		line = strings.TrimSpace(line)
+		// Only slog JSON records; the child may also emit framework noise.
+		if !strings.HasPrefix(line, "{") || !strings.Contains(line, `"msg":`) {
+			continue
+		}
+		records++
+		if n := strings.Count(line, `"daemon":`); n != 1 {
+			t.Errorf("record has %d %q keys, want exactly 1:\n%s", n, "daemon", line)
+		}
+		// The field must survive the dedup — losing it would break the
+		// operator's "filter the aggregate stream by source daemon" path
+		// that NewCorrelationLogger's doc comment promises.
+		if !strings.Contains(line, `"daemon":"testd"`) {
+			t.Errorf("record missing daemon=testd:\n%s", line)
+		}
+		// version is the half of the envelope Daemon() still owns.
+		if !strings.Contains(line, `"version":`) {
+			t.Errorf("record missing version:\n%s", line)
+		}
+	}
+	if records == 0 {
+		t.Fatalf("no JSON log records captured from child; stderr:\n%s", stderr.String())
+	}
+}
+
 func TestStubRun_BlocksUntilCancel(t *testing.T) {
 	// StubRun returns nil on ctx cancel; this is its entire contract.
 	// Per contextcheck: do not capture this test's ctx into the goroutine.

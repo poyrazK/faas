@@ -144,8 +144,14 @@ func Daemon(name string, fn RunFunc) {
 		return
 	}
 
+	// "version" only — NewCorrelationLogger stamps FieldDaemon ("daemon")
+	// from the name argument below. Stamping it here too emitted the key
+	// twice on every record (issue #852): duplicate JSON keys are
+	// parser-dependent (jq/Loki keep the last, some decoders reject the
+	// record outright). The correlation layer owns the daemon field; this
+	// envelope owns version.
 	log := NewCorrelationLogger(
-		Logger().With("daemon", name, "version", Version),
+		Logger().With("version", Version),
 		CorrelationFields{RequestID: NewRequestID()},
 		name,
 	)

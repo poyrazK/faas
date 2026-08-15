@@ -43,6 +43,15 @@ func cancelImmediately(_ context.Context, _ ...os.Signal) (context.Context, cont
 // TestDaemon_VersionFlag re-execs Daemon with the test framework's flags
 // already on os.Args). The unit-test seam uses a private FlagSet to keep the
 // tests hermetic and parallel-safe.
+//
+// NOTE (issue #852): this seam mirrors Daemon's flag/exit/run control flow
+// ONLY. Its logger is deliberately NOT Daemon's — it skips
+// NewCorrelationLogger, so it has no correlation envelope and no request_id.
+// Do not treat log records produced here as representative: the duplicate
+// "daemon" key fixed in #852 was invisible to these tests for exactly that
+// reason. Assertions about the log envelope belong in
+// TestDaemon_LogRecordsStampDaemonKeyOnce (daemon_test.go), which re-execs
+// the real Daemon().
 func runWithFreshFlags(name string, args []string, fn RunFunc, exit func(int), logger func() *slog.Logger, notifyContext func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)) int {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	configPath := fs.String("config", "/etc/faas/"+name+".toml", "path to the daemon's TOML config")
