@@ -476,6 +476,79 @@ tail host hangs for any reason, the park gate fires
   those three touch-points together is the load-bearing piece —
   removing any one of them in isolation fails CI.
 
+#### 4.7.4 Jobs — run-to-completion workloads (ADR-099)
+
+Cloud Run-style jobs. A job is a named, reusable template (image +
+RAM + timeout + parallelism + retry policy + per-task env overlay);
+each execution (`JobRun`) instantiates the job into N `JobTask`
+rows that fan out across firecracker microVMs and fan in terminal
+results. Jobs NEVER replace apps — they coexist:
+
+- **`instances.kind` widens to `'app' | 'job'`**. Every existing
+  writer (`schedd.Engine.Wake`, `apid.handlers_apps.go`) keeps
+  writing `'app'`; the new schedd dispatch path (`runJobsTick` →
+  `Engine.WakeJob`) writes `'job'`. The kind column carries a
+  CHECK in migration `00256_instances_kind_job.sql` — any future
+  value MUST land here with a migration.
+- **`usage_minutes.meter_kind` widens to `'app' | 'job'`**. Job
+  rows have `app_id IS NULL` and `job_id NOT NULL`; the partial
+  index `usage_minutes_job_idx` keeps job rows isolated from app
+  rollup. **Out of scope for the mega**: meterd rollup
+  (`pkg/meter/rollup.go::rollupSQL`) still GROUP BYs by
+  `(account_id, app_id, day)` and groups jobs into a
+  `(account_id, NULL, day)` daily bucket. Jobs ARE metered
+  (per-second `mb_seconds`, plan RAM + 8 MB) — only the rollup
+  widening is deferred, as a follow-up ADR.
+- **Plan-tier caps** (per migration `00243_tenant_surfaces.sql`
+  + `pkg/api/limits.go::JobMaxPerAccount` / `JobMaxConcurrentPerAccount` /
+  `JobMaxRAMMB` / `JobMaxTaskTimeoutS` / `JobMaxParallelismPerRun` /
+  `JobMaxTasksPerRun`):
+
+  | Plan  | PerAccount | Concurrent | RAM MB | Task Timeout s | Parallelism | Tasks/Run |
+  |-------|-----------:|-----------:|-------:|----------------:|------------:|----------:|
+  | Free  |          0 |          0 |      0 |               0 |           0 |         0 |
+  | Hobby |          5 |          3 |    512 |             300 |          10 |       100 |
+  | Pro   |         25 |          8 |   2048 |            1800 |          25 |      1000 |
+  | Scale |        100 |         32 |   4096 |            3600 |          50 |      5000 |
+
+  Free plan routes through `gateJobsEnabled` and returns
+  `404 code=jobs_not_allowed` with the plan-upgrade CTA — the
+  cap is a `0` for Free but the gate short-circuits before the
+  cap check, so a Free plan customer never sees a `403 quota`
+  response.
+- **Cold-boot-only invariant** (ADR-005 ↔ ADR-099 §Decision 4):
+  job task VMs NEVER restore from snapshot. They always cold-
+  boot from the job's `image_ref`. Reusing a snapshot would leak
+  state across tasks (RNG aside, env vars + secrets would
+  persist). The `Engine.bootInstance` extraction in
+  `pkg/sched/engine.go` makes both paths explicit: apps restore
+  via snapshot, jobs always `SnapshotLoad=No` + `BlockDiff=No`.
+- **Vsock protocol** — `port=1026, msg_type=4` is the
+  `job_exit` channel (16 bytes: `{exit_code:u32, signal:u32,
+  epoch_ns:u64}`). `msg_type=3` is the pre-existing
+  characterization channel; they share the port but the discriminator
+  is `msg_type`. `pkg/fcvm/vmm.go::WaitJobExit` decodes + returns
+  `(exit_code, signal, err)` to schedd.
+- **Rate-limit buckets are separate** —
+  `pkg/sched/rate_limit.go::WakeRateLimiter` has `wakeBuckets`
+  (per-app) and `jobBuckets` (per-account). A customer whose
+  jobs are running at their concurrent cap cannot starve their
+  own app wake rate, and vice versa.
+- **Reaper kind filter** — `pkg/sched/reaper.go` only reaps
+  parked instances of `kind='app'`. Job tasks self-exit when
+  their vsock `job_exit` lands, and the reaper filters them out.
+- **Wire surface** — `/v1/jobs*` and `/v1/runs/*` (11 paths +
+  10 schemas; see `api/openapi.yaml::jobs`); SDK auto-regenerated
+  for Go / Node / Python. CLI surface: `gregale jobs
+  list|create|info|update|rm|run|runs|cancel` (8 verbs;
+  `cmd/gregale/commands_jobs.go`). Soft-delete on `DELETE`:
+  the row is preserved with `status='deleted'`; a follow-up
+  `GET /v1/jobs/{id}` returns 200 with `status='deleted'`.
+- **No apps table mutations on job wake** — `Engine.WakeJob`
+  MUST NOT stamp `apps.last_scale_out_at`. The reaper kind
+  filter checks `instances.kind='app'`; the wake path
+  correspondingly updates `apps` only on `kind='app'`.
+
 ### 4.8 `guest-init` — PID 1 inside every microVM
 
 Tiny static Go binary (< 5 MB), injected by imaged.

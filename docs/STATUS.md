@@ -489,6 +489,44 @@ spinner) and PR #51 (the closeout batch):
 
 The §14 M8 gates still on the board are listed in [What's next](#whats-next).
 
+### M8 — Jobs cluster (ADR-099). ✅
+
+Run-to-completion workloads shipped via a single mega-PR spanning
+PR-0 (WakeRateLimiter separation of buckets) → PR-A (schema
++migrations 00256 instances.kind widening / 00257 usage_minutes
+widening) → PR-B (pkg/state CRUD + sqlc) → PR-C (schedd dispatch,
+`runJobsTick`, `Engine.WakeJob`, vsock port=1026 msg_type=4
+`job_exit` decode, `guest/init/job_supervisor.go`, separate
+`jobBuckets`) → PR-D (apid handlers + OpenAPI + SDK regen for
+11 paths / 10 schemas) → PR-E (CLI surface `gregale jobs
+list|create|info|update|rm|run|runs|cancel` + e2e matrix +
+harness migration head 264).
+
+- **Cold-boot-only invariant preserved (ADR-005 ↔ ADR-099)**:
+  job task VMs NEVER restore from snapshot — they always
+  cold-boot from the job's `image_ref`. `Engine.bootInstance`
+  extracted in `pkg/sched/engine.go` so both paths are
+  explicit; apps restore, jobs don't.
+- **instances.kind widened to `'app' | 'job'`** with CHECK
+  in migration 00256 (existing writers still stamp `'app'`).
+- **usage_minutes.meter_kind = 'job'** rows are isolated by
+  a partial index. **Pending (deferred, separate ADR)**:
+  meterd rollup (`pkg/meter/rollup.go::rollupSQL`) still GROUP
+  BYs by `(account_id, app_id, day)` — the rollup writes land
+  in a `(account_id, NULL, day)` bucket. Per-second `mb_seconds`
+  ARE metered (plan RAM + 8 MB).
+- **Per-plan caps** (`pkg/api/limits.go`): Free 0/0/0/0/0/0,
+  Hobby 5/3/512/300/10/100, Pro 25/8/2048/1800/25/1000,
+  Scale 100/32/4096/3600/50/5000. Free plan routes through
+  `gateJobsEnabled` → 404 jobs_not_allowed (gate short-circuits
+  before quota check).
+- **Watchdog**: any task VM older than `task.TaskTimeoutS + 30s`
+  grace gets SIGKILL'd via vmmd and stamped
+  `deadline_exceeded`. Vsock `job_exit` is the happy path;
+  deadline is the safety net.
+- **Docs**: spec §4.7.4 added; runbooks
+  `docs/runbooks/JobsBacklog.md` + `JobTaskOOMStorm.md`.
+
 ### M8 — alert pipeline. ✅ (this PR)
 
 The §12 dashboard pipeline is wired end-to-end:

@@ -1952,6 +1952,36 @@ type Instance struct {
 	// reads request_count alongside TailCount without a second SQL
 	// hop. NOT NULL DEFAULT 0 enforced by migration 00221.
 	RequestCount int64
+	// Kind is the workload class discriminator (ADR-099 / PR-A
+	// migration 00256_instances_kind_job.sql). Closed vocabulary
+	// enforced by instances_kind_check: 'wake' | 'build' | 'job_task'.
+	//   - 'wake'    — the legacy wake/build path (default; every
+	//                 pre-00256 row reads 'wake').
+	//   - 'build'   — builderd's per-build microVM (separate
+	//                 surface from wake; tracked separately so the
+	//                 reaper doesn't reap a mid-build VM).
+	//   - 'job_task' — a job-task VM spun up by the schedd dispatch
+	//                 tick (PR-C). The reaper consults this to skip
+	//                 job-task instances (they run to completion and
+	//                 self-exit; parking them mid-run would corrupt
+	//                 the run audit trail). RAM pressure
+	//                 (SelectEvictions) still wins — invariant §6.2-2
+	//                 is the ceiling.
+	//
+	// Pair-Checked against AppID/JobID via instances_app_or_job_chk:
+	// ('wake'|'build') ⇒ app_id IS NOT NULL AND job_id IS NULL;
+	// 'job_task' ⇒ app_id IS NULL AND job_id IS NOT NULL. New
+	// schedd paths that admit job-task VMs MUST set Kind='job_task'
+	// + appID='' + jobID=non-empty to satisfy the constraint.
+	Kind string
+	// JobID is the jobs.id FK for a job-task instance
+	// (ADR-099 / PR-A migration 00256). Set ONLY when
+	// Kind='job_task'; NULL for wake/build rows. Nullable forever
+	// (the wake path doesn't reference any job). ON DELETE SET NULL
+	// in the FK so a customer hard-deleting a job doesn't cascade
+	// to surviving instance rows — those are part of the audit trail
+	// per the meterd/billing contract and must survive the deletion.
+	JobID string
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis
@@ -3955,3 +3985,195 @@ type DataUpstreamProbe struct {
 	// queries.sql read paths).
 	ProbeNode string
 }
+
+// JobKind is the closed vocabulary for jobs.kind (migrations/00255).
+// ADR-099 §Decision 2: only "run_to_completion" ships in PR-A. Other
+// kinds ("scheduled_job", "shell_pipe") are reserved for future PRs
+// — the CHECK constraint rejects unknown values at the SQL layer so
+// adding a new kind is a code PR, not a silent migration.
+type JobKind string
+
+const (
+	JobKindRunToCompletion JobKind = "run_to_completion"
+)
+
+// JobStatus is the closed vocabulary for jobs.status.
+//   - "active" — accepting new runs; schedd dispatches queued tasks.
+//   - "paused" — runs may finish, but no new dispatches (PR-D wires
+//     the customer-facing pause endpoint; PR-C reads this).
+//   - "deleted" — soft-delete tombstone; counts do not include
+//     `deleted` jobs in JobMaxPerAccount (CountJobsForAccount).
+type JobStatus string
+
+const (
+	JobStatusActive  JobStatus = "active"
+	JobStatusPaused  JobStatus = "paused"
+	JobStatusDeleted JobStatus = "deleted"
+)
+
+// JobRunTriggerKind is the closed vocabulary for job_runs.trigger_kind.
+// ADR-099 §Decision 5: only "manual" ships in PR-A. "cron" and
+// "webhook" are reserved for the cluster's follow-on PRs.
+type JobRunTriggerKind string
+
+const (
+	JobRunTriggerManual JobRunTriggerKind = "manual"
+)
+
+// JobRunStatus is the closed vocabulary for job_runs.aggregate_status.
+// Mirrors the SQL CASE chain in RecomputeJobRunStatus:
+//   - "queued"    — no task has transitioned to claimed yet
+//   - "running"   — at least one task is claimed and not terminal
+//   - "succeeded" — every task is succeeded
+//   - "dead_letter" — at least one task is in a terminal-failure
+//     state (failed / timeout / oom) and the retry policy is exhausted
+//   - "cancelled" — every task is cancelled (user-initiated bulk
+//     cancel via PR-D's DELETE /v1/jobs/{name}/runs/{id})
+type JobRunStatus string
+
+const (
+	JobRunStatusQueued     JobRunStatus = "queued"
+	JobRunStatusRunning    JobRunStatus = "running"
+	JobRunStatusSucceeded  JobRunStatus = "succeeded"
+	JobRunStatusDeadLetter JobRunStatus = "dead_letter"
+	JobRunStatusCancelled  JobRunStatus = "cancelled"
+)
+
+// JobTaskStatus is the closed vocabulary for job_tasks.status. See
+// RecomputeJobRunStatus for the run-level fan-in logic.
+type JobTaskStatus string
+
+const (
+	JobTaskStatusQueued    JobTaskStatus = "queued"
+	JobTaskStatusClaimed   JobTaskStatus = "claimed"
+	JobTaskStatusSucceeded JobTaskStatus = "succeeded"
+	JobTaskStatusFailed    JobTaskStatus = "failed"
+	JobTaskStatusTimeout   JobTaskStatus = "timeout"
+	JobTaskStatusOOM       JobTaskStatus = "oom"
+	JobTaskStatusCancelled JobTaskStatus = "cancelled"
+)
+
+// Job is one row of jobs (migrations/00255). apid writes this row
+// on POST /v1/jobs (PR-D); schedd reads it for the dispatch tick
+// (PR-C). The stdlib uuid.UUID / time.Time / json.RawMessage shape
+// matches Cron/AppError — boundary conversion from the sqlc
+// pgtype.* form happens inside pkg/state/pgstore.go's job methods.
+type Job struct {
+	ID             string
+	AccountID      string
+	Kind           JobKind
+	Name           string
+	ImageRef       string
+	RamMb          int32
+	TaskTimeoutS   int32
+	MaxParallelism int32
+	RetryMax       int32
+	// EnvOverrides is the per-job env-var overlay (ADR-090
+	// sealed-blob convention). Empty map == no overrides; the
+	// SQL column defaults to '{}'::jsonb so the wire shape
+	// never returns NULL.
+	EnvOverrides map[string]string
+	Status       JobStatus
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// JobRun is one row of job_runs (migrations/00255). Created by
+// schedd (PR-C) when an apid POST /v1/jobs/{name}/runs request
+// comes in (PR-D). The row + N child job_tasks rows are inserted
+// in one transaction via CreateJobRun + InsertJobTasks.
+type JobRun struct {
+	ID           string
+	JobID        string
+	AccountID    string
+	TriggerKind  JobRunTriggerKind
+	EnvOverrides map[string]string
+	Tasks        int32
+	Parallelism  int32
+	// RetryMax is a pointer because the SQL column is nullable;
+	// null means "fall back to the job's retry_max" (the
+	// migration comment block notes this).
+	RetryMax        *int32
+	TaskTimeoutS    *int32
+	AggregateStatus JobRunStatus
+	TasksSucceeded  int32
+	TasksFailed     int32
+	TasksCancelled  int32
+	TasksRunning    int32
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+	CreatedAt       time.Time
+}
+
+// JobTask is one row of job_tasks (migrations/00255). Created in
+// bulk via InsertJobTasks when the parent JobRun materialises; the
+// schedd dispatch tick (PR-C) flips status queued → claimed → one
+// of the terminal states. InstanceID is set when claimed and
+// points at the corresponding instances row (kind='job', PR-A).
+type JobTask struct {
+	RunID     string
+	TaskIndex int32
+	Status    JobTaskStatus
+	Attempt   int32
+	// InstanceID is nil until the schedd claims the task; set to
+	// the new instances.id (PR-A widening) on MarkJobTaskClaimed.
+	InstanceID   *string
+	ErrorClass   *string
+	ErrorMessage *string
+	StartedAt    *time.Time
+	FinishedAt   *time.Time
+	CreatedAt    time.Time
+}
+
+// ClaimedJobTask is the result of ClaimJobTasks. The (RunID,
+// TaskIndex) pair identifies the row to update; PR-C follows up
+// with MarkJobTaskClaimed to flip status and stamp instance_id.
+type ClaimedJobTask struct {
+	RunID     string
+	TaskIndex int32
+}
+
+// ListReadyJobTask is the dispatch-tick hot path return shape
+// (ListReadyJobTasks). Used by schedd to surface candidate work
+// without joining to job_runs; per-run ClaimJobTasks does the
+// fine-grained FOR UPDATE SKIP LOCKED claim.
+type ListReadyJobTask = ClaimedJobTask
+
+// JobErrorClass is the closed vocabulary for job_tasks.error_class
+// (migrations/00255). 'oom' and 'timeout' are set by the guest-init
+// job_supervisor (PR-C); 'deadline_exceeded' is set by the schedd
+// watchdog. Free-form values are admitted by the SQL CHECK
+// (text NOT NULL) but the dashboard (PR-E) renders this set.
+type JobErrorClass string
+
+const (
+	JobErrorClassOOM              JobErrorClass = "oom"
+	JobErrorClassTimeout          JobErrorClass = "timeout"
+	JobErrorClassDeadlineExceeded JobErrorClass = "deadline_exceeded"
+)
+
+// JobQuotaError is returned by CreateJobIfUnderQuota when the
+// per-account cap (JobMaxPerAccount from pkg/api/limits.go) is
+// exceeded. Mirrors CronQuotaError's shape so apid's quota-error
+// middleware handles both with one branch.
+type JobQuotaError struct {
+	AccountID string
+	Limit     int32
+	Observed  int32
+}
+
+func (e *JobQuotaError) Error() string {
+	return fmt.Sprintf("state: job quota exceeded (account=%s, limit=%d, observed=%d)",
+		e.AccountID, e.Limit, e.Observed)
+}
+
+// Is allows errors.Is(err, ErrJobQuotaExceeded) to match any
+// *JobQuotaError. Same pattern as CronQuotaError.
+func (e *JobQuotaError) Is(target error) bool {
+	return target == ErrJobQuotaExceeded
+}
+
+// ErrJobQuotaExceeded is the sentinel callers compare against via
+// errors.Is. apid maps this to RFC 7807 (code=quota_exceeded) in
+// PR-D.
+var ErrJobQuotaExceeded = errors.New("state: job quota exceeded")

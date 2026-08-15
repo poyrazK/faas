@@ -1060,3 +1060,107 @@ func TestReapIdleNilMetrics_DoesNotPoisonSharedSet(t *testing.T) {
 		t.Errorf("ReapAggressive did not record into shared set: %v", shared)
 	}
 }
+
+// TestReapIdleSkipsJobTaskKind pins ADR-099 PR-C: job_task
+// instances are reaper-exempt in ReapIdle. The supervisor reports
+// job_exit via vsock (port 1026, msg_type=4) and the engine
+// transitions the row to STOPPED before the reaper next ticks;
+// LastRequest is meaningless (no HTTP server in the task VM) so
+// the idle-timeout gate would otherwise park them. RAM pressure
+// (SelectEvictions) still wins — invariant §6.2-2 is the
+// ceiling — but that path is a separate test.
+//
+// The four cases fence every side of the contract:
+//   - kind='wake' + stale → reaped (regression: pre-PR-C rule fires)
+//   - kind='job_task' + stale → NOT reaped (the PR-C fix)
+//   - kind='build' + stale → reaped (builders are not run-to-completion;
+//     they get killed by the watchdog, not parked by the reaper)
+//   - kind='job_task' + WAKING state → not reaped regardless (the
+//     per-state filter would catch this anyway, but the test
+//     guards against a future "job_task skip respects State"
+//     reordering that would re-introduce a regression)
+func TestReapIdleSkipsJobTaskKind(t *testing.T) {
+	now := time.Now()
+	instances := []InstanceInfo{
+		// Control: wake, stale, free → reaped.
+		{Instance: "wake-stale", Plan: api.PlanFree, State: state.StateRunning,
+			LastRequest: now.Add(-time.Hour), Kind: "wake"},
+		// The fix: job_task, stale → NOT reaped.
+		{Instance: "job-task-stale", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Hour), Kind: "job_task", JobID: "job-abc"},
+		// Build is not in scope for the skip — reaped if stale.
+		{Instance: "build-stale", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Hour), Kind: "build"},
+		// job_task in WAKING: not reaped anyway, but the skip must
+		// still apply (guards against future "skip only RUNNING"
+		// refinements).
+		{Instance: "job-task-waking", Plan: api.PlanPro, State: state.StateWaking,
+			LastRequest: time.Time{}, Kind: "job_task", JobID: "job-abc"},
+	}
+	got := ReapIdle(now, instances, nil, nil)
+	if !equalSet(got, []string{"wake-stale", "build-stale"}) {
+		t.Errorf("ReapIdle = %v, want [wake-stale build-stale] (job_task instances must be reaper-exempt)", got)
+	}
+}
+
+// TestReapAggressiveSkipsJobTaskKind pins the same gate for
+// ReapAggressive (issue #462 + ADR-099 PR-C). Autoscaling
+// desired = ceil(rps / target) is undefined for run-to-completion
+// workloads; the aggressive loop would compute extra = running - 1
+// and want to park every task VM above the first. The Kind skip
+// closes that. Mirror of TestReapIdleSkipsJobTaskKind for the
+// aggressive path; same four cases.
+func TestReapAggressiveSkipsJobTaskKind(t *testing.T) {
+	now := time.Now()
+	instances := []InstanceInfo{
+		// Control: wake, no autoscale target → deferred to ReapIdle
+		// (the desiredByApp miss path).
+		{Instance: "wake-noautoscale", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Hour), Kind: "wake"},
+		// The fix: job_task with autoscale target → NOT reaped
+		// even though desired=0 would otherwise park everything
+		// above the first instance.
+		{Instance: "job-task-autoscale", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Hour), Kind: "job_task", JobID: "job-abc"},
+	}
+	desiredByApp := map[string]int{
+		"app1": 0, // app1 aggregates both instances above; desired=0
+	}
+	// Add AppID so the per-app grouping fires (autoscale consult
+	// requires in.AppID != "" to be considered).
+	for i := range instances {
+		instances[i].AppID = "app1"
+	}
+	got := ReapAggressive(now, instances, desiredByApp, nil, nil)
+	// desired=0 → limit = max(floor=0, desired+1=1) = 1; running=1
+	// (the wake one; job_task is skipped before running++); extra
+	// = 0 → empty result.
+	if len(got) != 0 {
+		t.Errorf("ReapAggressive = %v, want [] (job_task skip + desired=0 yields no candidate)", got)
+	}
+}
+
+// TestSelectEvictionsEvictsJobTaskUnderRAMPressure pins the
+// load-bearing inverse: RAM pressure (SelectEvictions) STILL
+// evicts job_task instances, regardless of the Kind skip in
+// ReapIdle/ReapAggressive. Invariant §6.2-2 is the ceiling; the
+// reaper kind filter is not a RAM-pressure bypass.
+//
+// Test shape: build a snapshot where a job_task instance is the
+// ONLY way to bring resident RAM below EvictionThresholdMB; the
+// eviction must include it.
+func TestSelectEvictionsEvictsJobTaskUnderRAMPressure(t *testing.T) {
+	now := time.Now()
+	// ResidentMB above threshold by exactly one job_task's RAM.
+	const aboveThreshold = EvictionThresholdMB + 256
+	instances := []InstanceInfo{
+		// One job_task instance: 256 MB; the only eviction candidate.
+		{Instance: "job-task-pressure", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Minute), Started: now.Add(-time.Hour),
+			RAMMB: 256, Kind: "job_task", JobID: "job-abc"},
+	}
+	got := SelectEvictions(aboveThreshold, now, instances)
+	if len(got) != 1 || got[0] != "job-task-pressure" {
+		t.Errorf("SelectEvictions = %v, want [job-task-pressure] (RAM pressure bypasses the Kind skip)", got)
+	}
+}

@@ -2073,6 +2073,35 @@ const VsockCharacterizationMsgType uint32 = 3
 // VsockCharacterizationMaxBody.
 const VsockCharacterizationMaxBody = 32 * 1024
 
+// VsockJobExitMsgType (ADR-099 PR-C) is the wire-format discriminator
+// for a guest→host job_exit report. Distinct from
+// VsockCharacterizationMsgType (=3) so a misrouted frame is
+// caught at the type byte. Must match
+// guest/init/job_supervisor.go::VsockJobExitMsgType (=4).
+const VsockJobExitMsgType uint32 = 4
+
+// VsockJobExitBodyBytes is the fixed-size payload:
+//   [u32 BE exit_code][u32 BE signal][u64 BE epoch_ns]
+// 32 bytes, little-endian to match guest-init's encoding (the
+// supervisor's runtime is Go; the rest of the guest-vsock wire
+// uses big-endian for the framing but the payload itself is
+// platform-native — see guest/init/job_supervisor.go). We accept
+// little-endian here too to keep the encoding symmetric.
+//
+// The exit_code / signal pair is the standard POSIX wait(2)
+// shape: signal=0 means a normal exit; exit_code carries the
+// return code. Both fields can be 0 simultaneously (a clean exit
+// with no signal). The epoch_ns is informational (lets schedd's
+// audit log correlate supervisor-reported time vs host clock).
+const VsockJobExitBodyBytes = 16
+
+// JobExitReport is the typed payload of the job_exit DGRAM.
+type JobExitReport struct {
+	ExitCode int32 // 0..255; -1 means unset (watchdog-killed, never reported)
+	Signal   int32 // POSIX 1..31; 0 = no signal
+	EpochNS  int64 // supervisor clock at send time (informational)
+}
+
 // WaitCharacterizationReport accepts the FIRST guest-initiated
 // AF_VSOCK STREAM connection on VsockCharacterizationHostPort and
 // reads [4B BE msg_type][4B BE body_len][N B JSON], writes a 1-byte
@@ -2188,6 +2217,120 @@ func (v *JailerVMM) WaitCharacterizationReport(ctx context.Context, l Lease, dea
 		return report, fmt.Errorf("vmm: write ack: %w", err)
 	}
 	return report, nil
+}
+
+// WaitJobExit (ADR-099 PR-C) accepts the FIRST guest-initiated
+// AF_VSOCK STREAM connection on VsockCharacterizationHostPort and
+// reads a 4-byte BE msg_type discriminator. It returns
+// context.DeadlineExceeded if the supervisor never sends within
+// `deadline` (the watchdog's signal — engine.WakeJob marks the
+// task DeadlineExceeded).
+//
+// Wire direction: GUEST INITIATES (same as
+// WaitCharacterizationReport). The supervisor runs the task
+// command, captures the exit code + signal + epoch_ns, sends the
+// 4-byte msg_type=VsockJobExitMsgType + 16-byte payload, then
+// halts the VM (poweroff). The host reads, decodes, and returns.
+//
+// We share VsockCharacterizationHostPort (1026) between the
+// characterization probe and the job_exit channel — they are
+// mutually exclusive in time (characterization fires during wake,
+// job_exit fires during task exit) and the msg_type discriminator
+// routes each frame to the right parser. Sharing the port avoids
+// a 5th vsock port in the busy-vsock-port-map (the platform has
+// already burned 1024..1027; 1028 is reserved for liveness per
+// ADR-099 §3.2).
+//
+// Returns (exitCode, signal, err):
+//   - exitCode = report.ExitCode (0..255; -1 on watchdog kill
+//     where the supervisor never reported)
+//   - signal = report.Signal
+//   - err = context.DeadlineExceeded (watchdog tripped),
+//          context.Canceled (caller cancelled), or transport
+//          error (vmmd unreachable / UDS glitch)
+func (v *JailerVMM) WaitJobExit(ctx context.Context, l Lease, deadline time.Duration) (int, int, error) {
+	if v == nil {
+		return 0, 0, fmt.Errorf("vmm: WaitJobExit: nil receiver")
+	}
+	if l.Instance == "" {
+		return 0, 0, fmt.Errorf("vmm: WaitJobExit: empty instance")
+	}
+	if v.chrootBase == "" {
+		return 0, 0, fmt.Errorf("vmm: WaitJobExit: chrootBase not configured")
+	}
+	sock := v.vsockUDSSock(l.Instance)
+
+	dialDeadline := time.Now().Add(deadline)
+	var conn net.Conn
+	var lastErr error
+	for time.Now().Before(dialDeadline) {
+		if ctx.Err() != nil {
+			return -1, -1, ctx.Err()
+		}
+		var err error
+		conn, err = net.DialTimeout("unix", sock, 200*time.Millisecond)
+		if err == nil {
+			break
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			return -1, -1, ctx.Err()
+		case <-time.After(resumeHookDialStep):
+		}
+	}
+	if conn == nil {
+		return -1, -1, fmt.Errorf("vmm: dial vsock uds %s: %w", sock, lastErr)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Step 1: FC CONNECT-port handshake. Same shape as
+	// WaitCharacterizationReport — guest-init listens on port 1026
+	// and the FC vsock backend delivers frames to it via UDS;
+	// we tell FC "CONNECT 1026" so the connect(2) lands on the
+	// supervisor's listener.
+	connectCmd := fmt.Sprintf("CONNECT %d\n", VsockCharacterizationHostPort)
+	if _, err := conn.Write([]byte(connectCmd)); err != nil {
+		return -1, -1, fmt.Errorf("vmm: write CONNECT %d: %w", VsockCharacterizationHostPort, err)
+	}
+	connectAck, err := readConnectAck(conn)
+	if err != nil {
+		return -1, -1, fmt.Errorf("vmm: read CONNECT ack: %w", err)
+	}
+	if connectAck != "OK" {
+		return -1, -1, fmt.Errorf("vmm: CONNECT rejected: %q", connectAck)
+	}
+
+	_ = conn.SetDeadline(time.Now().Add(deadline))
+
+	// Step 2: read 4-byte BE msg_type. A wrong type means a
+	// misrouted frame (the guest sent a characterization report
+	// here, or vice versa) — surface as an error so the watchdog
+	// logs it loudly. Production never sees this in steady state.
+	var msgTypeBuf [4]byte
+	if _, err := io.ReadFull(conn, msgTypeBuf[:]); err != nil {
+		return -1, -1, fmt.Errorf("vmm: read msg_type: %w", err)
+	}
+	msgType := binary.BigEndian.Uint32(msgTypeBuf[:])
+	if msgType != VsockJobExitMsgType {
+		return -1, -1, fmt.Errorf("vmm: wrong msg_type %d (want %d)", msgType, VsockJobExitMsgType)
+	}
+
+	// Step 3: read the 16-byte fixed payload. ReadFull guarantees
+	// we get all 16 bytes or a transport error — partial reads
+	// are not a concern on a unix socket pair.
+	var payload [VsockJobExitBodyBytes]byte
+	if _, err := io.ReadFull(conn, payload[:]); err != nil {
+		return -1, -1, fmt.Errorf("vmm: read job_exit body: %w", err)
+	}
+
+	exitCode := int32(binary.LittleEndian.Uint32(payload[0:4]))
+	signal := int32(binary.LittleEndian.Uint32(payload[4:8]))
+	// epoch_ns (bytes 8..16) is parsed but unused today; the
+	// audit-log correlation lands in a follow-up.
+	_ = binary.LittleEndian.Uint64(payload[8:16])
+
+	return int(exitCode), int(signal), nil
 }
 
 // fcClient returns an HTTP client bound to the instance's Firecracker API socket.

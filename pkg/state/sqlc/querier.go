@@ -51,7 +51,24 @@ type Querier interface {
 	// follow-up SELECT. Returns ErrNotFound when the instance row is
 	// missing (pgx.ErrNoRows maps to state.ErrNotFound in pgstore).
 	BumpInstanceTailCount(ctx context.Context, db DBTX, arg BumpInstanceTailCountParams) (int32, error)
+	// Atomically claim up to N queued tasks for a run. The schedd
+	// dispatch tick (PR-C) calls this in a loop until it has filled
+	// max_parallelism slots. FOR UPDATE SKIP LOCKED is the canonical
+	// shape; two schedd instances never grab the same task row.
+	// Returns the claimed (run_id, task_index) pairs; the caller
+	// flips status to 'claimed' via MarkJobTaskClaimed below.
+	//
+	// This is a TWO-step pattern in PR-B: claim + update. PR-C may
+	// collapse it into a single CTE if the schedd hot-path profiling
+	// shows the round-trip matters (it doesn't at the per-second tick
+	// rate, but the dispatch tick is the load-bearing surface).
+	ClaimJobTasks(ctx context.Context, db DBTX, arg ClaimJobTasksParams) ([]ClaimJobTasksRow, error)
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	// Per-account quota check (mirrors CountCronsForAccount in the
+	// Cron domain). PR-D's CreateJob handler calls this BEFORE CreateJob
+	// to enforce JobMaxPerAccount. Returns int4 so it matches the
+	// pgx int4 scan convention.
+	CountJobsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error)
 	// scopes is $4 (text[]). The handler is responsible for validating the
 	// scope vocabulary; the store does not. See ADR-034 rev2.
 	CreateAPIKey(ctx context.Context, db DBTX, arg CreateAPIKeyParams) (CreateAPIKeyRow, error)
@@ -62,6 +79,29 @@ type Querier interface {
 	CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCustomDomainParams) (CreateCustomDomainRow, error)
 	CreateDeployment(ctx context.Context, db DBTX, arg CreateDeploymentParams) (CreateDeploymentRow, error)
 	CreateInstance(ctx context.Context, db DBTX, arg CreateInstanceParams) (CreateInstanceRow, error)
+	//--------------------------------------------------------------------
+	// ADR-099 jobs (run-to-completion workloads) — PR-B surface.
+	//
+	// These queries are the read/write boundary for the jobs cluster.
+	// Schedd (PR-C) and apid (PR-D) call them via the Store interface
+	// (see pkg/state/store.go JobStore methods); pgstore.go and
+	// memstore.go implement them. The schema is in migrations/00255
+	// (jobs/job_runs/job_tasks). The default-OFF invariant holds until
+	// PR-D lands the customer-facing routes (FAAS_JOBS_Hobby=true).
+	//--------------------------------------------------------------------
+	// Inserts a new job definition. The caller validates plan caps
+	// (JobMaxPerAccount etc.) BEFORE invoking this; the migration's
+	// CHECK constraints catch the remaining malformed-input cases
+	// (ram_mb > 0, max_parallelism in [1, 1000], retry_max in [0, 10],
+	// task_timeout_s in [1, 86400], name regex).
+	CreateJob(ctx context.Context, db DBTX, arg CreateJobParams) (Job, error)
+	// Materialises a run + its tasks in one shot via INSERT ... SELECT.
+	// The fan-out row generator uses generate_series to produce N
+	// task rows with task_index 0..N-1. Returns the run row; the
+	// caller reads the task rows separately via ListJobTasksForRun.
+	// Per ADR-099 §Decision 6, the run is queued and the dispatch
+	// tick (PR-C) claims tasks from job_tasks_ready_idx.
+	CreateJobRun(ctx context.Context, db DBTX, arg CreateJobRunParams) (JobRun, error)
 	// --- Organizations (ADR-061, IAM-6, PR 2) -------------------------------
 	//
 	// PR 2's sqlc queries cover the deterministic reads + simple writes. The
@@ -114,6 +154,12 @@ type Querier interface {
 	// the GDPR path (delete-account cascades through
 	// apps → data_upstreams).
 	DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// Soft-delete via the 'deleted' status (the migration sets the
+	// CHECK to admit 'active' | 'paused' | 'deleted'). Hard-delete
+	// cascades to job_runs + job_tasks per the FK definitions; the
+	// soft path lets the customer undelete within a 7-day window
+	// (PR-D wires the recovery endpoint).
+	DeleteJob(ctx context.Context, db DBTX, arg DeleteJobParams) error
 	DeploymentByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentByIDRow, error)
 	DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error)
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
@@ -137,6 +183,16 @@ type Querier interface {
 	// shared_buffers under normal load. Returns ErrNotFound when the
 	// instance row is missing.
 	GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.UUID) (int32, error)
+	// Reads a job by primary key. Caller passes account_id for
+	// authorisation (the 404 / not-found is returned uniformly so a
+	// cross-account probe doesn't leak the existence of someone else's
+	// job — the row is filtered before reaching the row scan).
+	GetJob(ctx context.Context, db DBTX, arg GetJobParams) (Job, error)
+	// Slug-based lookup (the dashboard + CLI render by name; the
+	// apid handlers in PR-D accept name OR id). Unique-per-account is
+	// enforced by migrations/00255's jobs_account_name_uniq_idx.
+	GetJobByName(ctx context.Context, db DBTX, arg GetJobByNameParams) (Job, error)
+	GetJobRun(ctx context.Context, db DBTX, arg GetJobRunParams) (JobRun, error)
 	// Primary-key lookup; called on every authenticated dashboard request.
 	// sql.ErrNoRows from pgx maps to state.ErrNotFound in pgstore.
 	GetSession(ctx context.Context, db DBTX, id pgtype.UUID) (GetSessionRow, error)
@@ -216,6 +272,11 @@ type Querier interface {
 	// path; the partition creator (PR-C) drops old
 	// partitions wholesale.
 	InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg InsertDataUpstreamProbeParams) error
+	// Materialises the task rows for a newly-created run. Runs as a
+	// pgx.CopyFrom in pgstore (one round-trip for N rows). The
+	// (run_id, task_index) PK catches duplicate inserts so a retry
+	// after a partial failure is safe.
+	InsertJobTasks(ctx context.Context, db DBTX, arg []InsertJobTasksParams) (int64, error)
 	InstanceByID(ctx context.Context, db DBTX, id pgtype.UUID) (InstanceByIDRow, error)
 	LatestDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestDeploymentRow, error)
 	LatestSupersededDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestSupersededDeploymentRow, error)
@@ -333,9 +394,23 @@ type Querier interface {
 	// ADR-064 §"Compatibility".
 	ListEventsByWakeID(ctx context.Context, db DBTX, arg ListEventsByWakeIDParams) ([]ListEventsByWakeIDRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
+	ListJobRunsForJob(ctx context.Context, db DBTX, arg ListJobRunsForJobParams) ([]JobRun, error)
+	// Reads all jobs in an account ordered by created_at DESC.
+	// Used by GET /v1/jobs (PR-D). No pagination cursor in PR-B —
+	// JobMaxPerAccount (per plan) bounds the result size well below
+	// 1000 rows even at Scale plan; PR-D adds a cursor if usage
+	// data shows we ever approach that ceiling.
+	ListJobsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Job, error)
 	ListOrgInvitationsForOrg(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]ListOrgInvitationsForOrgRow, error)
 	ListOrgMembers(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]ListOrgMembersRow, error)
 	ListOrgsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListOrgsForAccountRow, error)
+	// Schedd dispatch-tick hot path (PR-C). Returns N queued tasks
+	// across all runs, ordered by run_id + task_index. Backed by the
+	// job_tasks_ready_idx partial index (WHERE status = 'queued').
+	// Used by the dispatch tick to surface candidate work without
+	// joining to job_runs; the per-run ClaimJobTasks above does the
+	// fine-grained claim once a run is selected.
+	ListReadyJobTasks(ctx context.Context, db DBTX, limit int32) ([]ListReadyJobTasksRow, error)
 	// ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
 	// the partial index events_actor_account_idx on
 	// (actor_account_id) WHERE actor_account_id IS NOT NULL
@@ -353,11 +428,65 @@ type Querier interface {
 	// per-account projections; the broader ?actor + ?subject filter
 	// shape lives on ListAllEventsPaged.
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
+	// ADR-099 PR-D page the child task rows for one run in
+	// task_index order. before is the cursor (rows with task_index
+	// > before are returned); empty before = first page. Limit
+	// caps the page size; the apid handler clamps limit to
+	// jobsMaxLimit (500).
+	ListRunTasksForRun(ctx context.Context, db DBTX, arg ListRunTasksForRunParams) ([]JobTask, error)
 	// Active rows only, newest first. Partial index keeps the scan tight.
 	ListSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListSessionsRow, error)
 	MarkDeploymentLive(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDeploymentSuperseded(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error
+	// ADR-099 PR-D user-initiated bulk cancel. Non-terminal runs
+	// only — calling on an already-succeeded/dead_letter/cancelled
+	// run is a no-op (the dispatch tick is the single source of
+	// truth for terminal-status flips). Caller (apid's cancelRun
+	// handler) emits pg_notify after this UPDATE so schedd can
+	// fan out per-task MarkJobTaskCancelled on in-flight tasks and
+	// call RecomputeJobRunStatus to settle the aggregate.
+	MarkJobRunCancelled(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// User-initiated cancel via DELETE /v1/jobs/{name}/runs/{id}.
+	// Only flips if status is queued or claimed (not already
+	// terminal) — terminal tasks stay terminal.
+	MarkJobTaskCancelled(ctx context.Context, db DBTX, arg MarkJobTaskCancelledParams) error
+	// Flips status queued → claimed and stamps instance_id. instance_id
+	// is set by the schedd to the newly-created job_task instance row
+	// (see pkg/state/jobs.go's WriteJobInstance helper in PR-C).
+	MarkJobTaskClaimed(ctx context.Context, db DBTX, arg MarkJobTaskClaimedParams) error
+	// Marks a task as failed with an error_class + error_message.
+	// The run-level fan-in (RecomputeJobRunStatus) decides whether
+	// to retry (increment attempt) or dead-letter based on retry_max.
+	// attempt is bumped atomically here so the next claim picks up
+	// the next attempt.
+	MarkJobTaskFailed(ctx context.Context, db DBTX, arg MarkJobTaskFailedParams) error
+	// Guest-init's OOM watchdog (PR-C job_supervisor) reports OOM
+	// exits; the task is marked terminal with the 'oom' error_class
+	// for billing exemption (a task that OOM'd before doing useful
+	// work shouldn't be charged). PR-D's usage_minutes rollup (PR-A
+	// 00257) honours this.
+	MarkJobTaskOOM(ctx context.Context, db DBTX, arg MarkJobTaskOOMParams) error
+	// Flips status claimed → queued. The dispatch tick calls this on
+	// ErrJobAdmissionRefused so the task row lands back on the
+	// ready-queue (job_tasks_ready_idx) and the next tick re-claims
+	// it. Mirrors the cron tick's AtCapacity backoff shape.
+	MarkJobTaskRequeued(ctx context.Context, db DBTX, arg MarkJobTaskRequeuedParams) error
+	// ADR-099 PR-D manual retry. Flips a terminal-failure task back
+	// to 'queued' so the dispatch tick re-claims it. The status
+	// whitelist mirrors the retryTask handler's pre-check; the
+	// SQL-side gate prevents a parallel dispatch tick from racing
+	// the manual retry (the row is only flipped when the status is
+	// already terminal-failure). reset_attempt=true (sqlc param 3,
+	// 0/1) zeroes the per-task attempt counter; false leaves it for
+	// retry_max enforcement on the dispatch path.
+	MarkJobTaskRetried(ctx context.Context, db DBTX, arg MarkJobTaskRetriedParams) error
+	MarkJobTaskSucceeded(ctx context.Context, db DBTX, arg MarkJobTaskSucceededParams) error
+	// Distinct from MarkJobTaskFailed because the watchdog exit
+	// code (PR-C's job_supervisor) classifies timeouts separately
+	// for retry policy. PR-D's dead-letter endpoint surfaces the
+	// error_class breakdown.
+	MarkJobTaskTimeout(ctx context.Context, db DBTX, arg MarkJobTaskTimeoutParams) error
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)
 	OrgByPersonalAccount(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) (OrgByPersonalAccountRow, error)
 	OrgBySlug(ctx context.Context, db DBTX, lower string) (OrgBySlugRow, error)
@@ -389,6 +518,16 @@ type Querier interface {
 	// partition tail (rows in the default partition or
 	// the current month that are older than cutoff).
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
+	// The run-level fan-in. Called after every task transition. Reads
+	// the live task counters and updates the aggregate_status +
+	// tasks_* fields on the run row. Pure SQL — no app code involved.
+	// The CHECK constraint job_runs_terminal_pair_chk enforces that
+	// finished_at is set iff aggregate_status is terminal, so we set
+	// finished_at inside the same UPDATE when the run just terminated.
+	//
+	// Returns the updated run row so the caller can emit a
+	// job_run.terminal event (PR-C) without a second round-trip.
+	RecomputeJobRunStatus(ctx context.Context, db DBTX, runID pgtype.UUID) (JobRun, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.
 	RevokeAllSessions(ctx context.Context, db DBTX, arg RevokeAllSessionsParams) ([]pgtype.UUID, error)
@@ -471,6 +610,17 @@ type Querier interface {
 	UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams) (UpdateCronRow, error)
 	UpdateDeploymentStatus(ctx context.Context, db DBTX, arg UpdateDeploymentStatusParams) error
 	UpdateInstanceState(ctx context.Context, db DBTX, arg UpdateInstanceStateParams) error
+	// Patches the mutable fields. NULL parameters mean "leave alone"
+	// (the coalesce() pattern matches UpdateCron). The unique name
+	// constraint catches rename collisions; a duplicate-name failure
+	// surfaces as a mapErr(unique_violation) at the pgstore layer.
+	//
+	// sqlc.narg(name) emits nullable pgtype.Text / pgtype.Int4 /
+	// pgtype.JSONB fields at the Go boundary; nil maps to SQL NULL
+	// and COALESCE leaves the column untouched. sqlc.narg is the
+	// nullable variant of sqlc.arg — it always returns NULL when the
+	// Go caller passes a zero/empty pgtype wrapper.
+	UpdateJob(ctx context.Context, db DBTX, arg UpdateJobParams) (Job, error)
 	UpdateOrgPlan(ctx context.Context, db DBTX, arg UpdateOrgPlanParams) error
 	UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgStatusParams) error
 	// ---------------------------------------------------------------------------

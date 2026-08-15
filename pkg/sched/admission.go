@@ -98,6 +98,21 @@ const (
 	// that is mid-migration. Tier A5 (ADR-066) wires this into the
 	// destination schedd at Phase 3 of the four-phase handoff.
 	KindMigration
+	// KindJob (ADR-099 / PR-C) is a job-task wake reservation:
+	// counts toward per-node RAM (§6.2-2) and per-node vCPU but
+	// NOT per-app concurrency (§6.2-1) — job tasks have no apps
+	// row to bind to (instances.kind='job_task' with app_id IS
+	// NULL per migration 00256's instances_app_or_job_chk pair-
+	// CHECK), so the per-app key would collapse every job run on
+	// an account into one shared bucket and the ledger would
+	// refuse the second wake with ErrPlanLimitConcurrency. The
+	// per-account concurrency cap (limits.JobMaxConcurrentPerAccount)
+	// is enforced upstream by Engine.WakeJob's
+	// CountLiveJobTasksForAccount consult, NOT here — the ledger
+	// stays a per-node RAM/vCPU guard. RAM + vCPU per-node
+	// ceilings still apply, so a node's box capacity still bounds
+	// total job-task admission.
+	KindJob
 )
 
 // Request is an admission request for one instance (a wake or a build).
@@ -190,8 +205,17 @@ func (l *NodeLedger) Admit(r Request) error {
 	// validate Plan for KindWake so a malformed caller doesn't
 	// slip past the per-app concurrency check by leaving Plan
 	// empty.
+	//
+	// ADR-099 / PR-C: KindJob also skips LimitsFor. Job tasks
+	// have no app row (instances.kind='job_task' carries
+	// app_id IS NULL per migration 00256's CHECK), so the
+	// per-app concurrency consult is meaningless. The
+	// per-account concurrency consult lives upstream in
+	// Engine.WakeJob via CountLiveJobTasksForAccount +
+	// limits.JobMaxConcurrentPerAccount. The ledger stays a
+	// per-node RAM/vCPU guard for the job path; Plan is unused.
 	var limits api.Limits
-	if r.Kind != KindMigration {
+	if r.Kind != KindMigration && r.Kind != KindJob {
 		l, ok := api.LimitsFor(r.Plan)
 		if !ok {
 			return fmt.Errorf("sched: admit: unknown plan %q", r.Plan)
@@ -218,11 +242,15 @@ func (l *NodeLedger) Admit(r Request) error {
 	// 1 instance at MaxConcurrency=1 would see a transient ErrPlan
 	// during the failover window even though no extra instance was
 	// ever admitted. RAM/vCPU per-node ceilings (below) still apply.
+	//
+	// ADR-099 / PR-C: KindJob reservations SKIP this check for the
+	// same reason Migration does — there's no app row to bind to.
+	// The per-account cap is enforced upstream.
 	maxConc := r.MaxConcurrency
 	if maxConc <= 0 || maxConc > limits.MaxConcurrency {
 		maxConc = limits.MaxConcurrency
 	}
-	if r.Kind != KindMigration {
+	if r.Kind != KindMigration && r.Kind != KindJob {
 		if have := l.perApp[r.AppID]; have >= maxConc {
 			return api.ErrPlanLimitConcurrency(limits, have)
 		}
@@ -273,11 +301,17 @@ func (l *NodeLedger) Admit(r Request) error {
 	l.entries[r.Instance] = &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, nodeID: r.NodeID,
 		admissionMB: r.admissionMB(), vcpu: r.VCPU,
-		countsConc: r.Kind != KindMigration,
+		// ADR-099 / PR-C: KindJob reservations are per-account
+		// concurrency-tracked upstream by Engine.WakeJob's
+		// CountLiveJobTasksForAccount consult; the ledger's per-app
+		// key has no meaning for jobs (no app row to bind to).
+		// countsConc=false keeps Release() from decrementing perApp
+		// on exit.
+		countsConc: r.Kind != KindMigration && r.Kind != KindJob,
 	}
 	node.residentRAM += r.admissionMB()
 	node.usedVCPU += r.VCPU
-	if r.Kind != KindMigration {
+	if r.Kind != KindMigration && r.Kind != KindJob {
 		l.perApp[r.AppID]++
 		if r.DeploymentID != "" {
 			l.perAppDeployment[r.AppID+"\x00"+r.DeploymentID]++

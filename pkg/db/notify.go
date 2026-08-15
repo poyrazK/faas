@@ -183,6 +183,17 @@ const (
 	// consumes via cmd/schedd/main.go's existing SubscribeWithReconnect
 	// block. See the payload contract in the file header. ADR-090 PR-C.
 	NotifyCronRunNow             = "cron_run_now"
+	// NotifyJobTasksQueued (ADR-099 PR-C) fires when a
+	// jobs.job_tasks row transitions to a claimable state
+	// (status='pending' AND attempt < retry_max AND scheduled_at <= now).
+	// schedd's dispatch tick consumes it (multiplexed on the cron
+	// loop's existing LISTEN per the zero-cost pattern in
+	// cmd/schedd/main.go). Payload is the job_id (uuid); schedd
+	// re-reads the job_tasks rows via ClaimJobTasks. The same
+	// channel is reused by Engine.WakeJob's terminal-status notify
+	// so the next sweep picks up the just-finished task without
+	// waiting for the periodic stale-task sweep.
+	NotifyJobTasksQueued = "job_tasks_queued"
 	NotifyAccountDeletionPending = "account_deletion_pending"
 	NotifyAccountDeleted         = "account_deleted"
 	// NotifyAppDelete is emitted by apid on app deletion (spec §6.2

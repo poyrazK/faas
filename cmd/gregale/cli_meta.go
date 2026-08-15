@@ -395,6 +395,21 @@ var cliCommands = []cliCommand{
 		Short:   "List issued invoices",
 	},
 	{
+		Name:    "jobs",
+		DocSlug: "jobs",
+		Short:   "Manage run-to-completion jobs (jobs list|create|info|update|rm|run|runs|cancel)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List jobs"},
+			{Name: "create", Short: "Create a job"},
+			{Name: "info", Short: "Show one job"},
+			{Name: "update", Short: "Update one job"},
+			{Name: "rm", Short: "Delete one job"},
+			{Name: "run", Short: "Enqueue a job run"},
+			{Name: "runs", Short: "Show one job's run history"},
+			{Name: "cancel", Short: "Cancel an in-flight run"},
+		},
+	},
+	{
 		Name:    "keys",
 		DocSlug: "keys",
 		Short:   "Manage API keys (keys list|add|rm|rotate|grace-window)",

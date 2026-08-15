@@ -369,6 +369,12 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifySnapshotPrime,
 		db.NotifyCronRunNow, // PR-D / issue #791: multiplexed on the cron loop's existing LISTEN; zero extra pool connections.
 		db.NotifyAppDelete,  // ADR-098: multiplexed on the cron loop's existing LISTEN; same zero-cost pattern as NotifyCronRunNow. Saves a 7th long-term pool subscriber (the standalone one tipped pool.MaxConns=8 over the edge and starved the async-invoke drain's BeginTx under e2e query bursts).
+		// ADR-099 PR-C: job_tasks_queued is the dispatcher signal
+		// for runJobsTick. Multiplexed on the same LISTEN; zero
+		// extra pool connections. The handleNotification arm
+		// no-ops (the dispatch tick is already on the 1 s
+		// timer; the notify just nudges it forward).
+		db.NotifyJobTasksQueued,
 	}, l.log)
 	if err != nil {
 		return err
@@ -388,6 +394,21 @@ func (l *Loop) Run(ctx context.Context) error {
 	defer reaperT.Stop()
 	cronT := time.NewTicker(60 * time.Second)
 	defer cronT.Stop()
+	// Jobs dispatch ticker (ADR-099 PR-C). 1 s cadence is the
+	// dispatch-tick interval: a claimed job_task row has at most
+	// 1 s before the next sweep re-claims it, so the dispatch
+	// fan-out is bounded to one WakeJob per second per claim.
+	// nil-able: FAAS_JOBS_DISABLED=1 (default until PR-D ships
+	// the apid surface) skips the ticker entirely so a green
+	// pre-PR-D deploy never accidentally wakes a job task.
+	// jobsTickInterval is read from the env at NewLoop time;
+	// the constant lives in cmd/schedd/main.go (not here) so the
+	// sched package stays free of env wiring.
+	var jobsT *time.Ticker
+	if jobsTickInterval > 0 {
+		jobsT = time.NewTicker(jobsTickInterval)
+		defer jobsT.Stop()
+	}
 	// Fire-now safety ticker (PR-D / issue #791). 60s cadence
 	// mirrors pkg/sched/fire_now.go::fireNowSafetyTick: when a
 	// NotifyCronRunNow delivery is dropped (Postgres bounce, network
@@ -584,6 +605,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runReaper(ctx)
 		case <-cronT.C:
 			l.runCronTick(ctx)
+		case <-jobsTick(jobsT):
+			l.runJobsTick(ctx)
 		case <-watchdogTick(watchdogT):
 			l.runWatchdog(ctx)
 		case <-heartbeatTick(heartbeatT):
@@ -631,6 +654,35 @@ func watchdogTick(t *time.Ticker) <-chan time.Time {
 		return nil
 	}
 	return t.C
+}
+
+// jobsTick (ADR-099 PR-C) is the same nil-safe shape as
+// watchdogTick. The ticker is constructed lazily inside Loop.Run
+// only when jobsTickInterval > 0, so the select arm never fires
+// in PR-C-disabled deploys (FAAS_JOBS_DISABLED=1).
+func jobsTick(t *time.Ticker) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
+}
+
+// jobsTickInterval (ADR-099 PR-C) is the dispatch-tick cadence
+// settable via SetJobsTickInterval (called by cmd/schedd at
+// startup from the FAAS_JOBS_TICK_INTERVAL env, default 1s).
+// Zero value (the package default) means "disabled" — Loop.Run
+// never constructs the ticker. cmd/schedd wires the value
+// before NewLoop returns so the first Loop.Run gets the right
+// cadence. Tests that exercise the dispatch path inject a
+// non-zero value via SetJobsTickInterval in TestMain / a fixture.
+var jobsTickInterval time.Duration
+
+// SetJobsTickInterval configures the dispatch-tick cadence. Must
+// be called before Loop.Run starts (the ticker is constructed
+// lazily inside Run). Passing 0 disables the tick arm (the
+// PR-C-disabled dark-launch path).
+func SetJobsTickInterval(d time.Duration) {
+	jobsTickInterval = d
 }
 
 // retentionTick is the same nil-safe pattern as watchdogTick, kept
@@ -995,6 +1047,15 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// matches the build_queued notify-loss defense pattern
 		// (cmd/imaged consumer: subscriber re-reads the row).
 		l.drainPendingFireNowRequests(ctx)
+	case db.NotifyJobTasksQueued:
+		// ADR-099 PR-C: nudge the jobs dispatch tick. The
+		// payload (job_id) is informational — runJobsTick
+		// re-reads the job_tasks rows via ClaimJobTasks so a
+		// notify-loss defense isn't required. The notify just
+		// cuts dispatch latency from "up to 1 s" to "next
+		// available tick"; without it the periodic sweep is
+		// still correct.
+		l.runJobsTick(ctx)
 	case db.NotifyAppDelete:
 		// ADR-098: app was deleted. Evict any in-flight wake for
 		// the deleted app via the wake coordinator's Forget so
@@ -1174,6 +1235,14 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// + ScalingPolicy.ScaleInCooldownS.
 				LastScaleInAt:    a.LastScaleInAt,
 				ScaleInCooldownS: state.ScalingPolicyOrDefault(a.ScalingPolicy).ScaleInCooldownS,
+				// ADR-099 PR-C: kind/job_id carriers from the
+				// instances row (migration 00256). The reaper
+				// gates on Kind — job_task rows are reaper-exempt
+				// in ReapIdle/ReapAggressive; SelectEvictions
+				// still wins on RAM pressure. JobID is carried
+				// for downstream logging (no consult today).
+				Kind:  ins.Kind,
+				JobID: ins.JobID,
 				// Issue #475: per-app eviction tier (best_effort
 				// | reserved). Same carrier semantics as
 				// MinInstances — identical across all instances of

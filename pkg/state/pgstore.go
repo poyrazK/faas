@@ -2008,7 +2008,7 @@ func (s *PgStore) ListAppsByNodeID(ctx context.Context, nodeID string) ([]App, e
 // last_request_at, parked_at, node_id, wake_id).
 func (s *PgStore) ListInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error) {
 	sel := `select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.kind, i.job_id
 		   from instances i
 		   join apps a on a.id = i.app_id
 		  where a.node_id = $1`
@@ -7434,15 +7434,62 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at)
 		 values ($1, $2, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else $6::uuid end, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count`,
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id`,
 		appID, deploymentID, state, ramMB, nodeID, wakeID)
 	return scanInstance(row)
+}
+
+// CreateJobInstance (ADR-099 / PR-C) stamps a kind='job_task'
+// instance row. The pair-CHECK instances_app_or_job_chk (migration
+// 00256) enforces app_id IS NULL + job_id IS NOT NULL for kind =
+// 'job_task'; we pass appID=NULL explicitly (defaulting the column
+// to NULL rather than relying on COALESCE) so a Postgres error
+// surfaces immediately if a future caller bypasses the contract.
+// The literal 'job_task' is hard-coded — the closed vocabulary
+// ('wake' | 'build' | 'job_task') is enforced by the kind CHECK,
+// so a typo here surfaces as SQLSTATE 23514 on the INSERT.
+func (s *PgStore) CreateJobInstance(ctx context.Context, jobID, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+	row := s.pool.QueryRow(ctx,
+		`insert into instances (app_id, deployment_id, job_id, kind, state, ram_mb, node_id, wake_id, started_at)
+		 values (NULL, NULL, $1::uuid, 'job_task', $2, $3, $4, case when $5::text = '' then gen_random_uuid() else $5::uuid end, now())
+		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id`,
+		jobID, state, ramMB, nodeID, wakeID)
+	return scanInstance(row)
+}
+
+// CountLiveJobTasksForAccount (ADR-099 / PR-C) counts kind='job_task'
+// instances in {WAKING, COLD_BOOTING, RUNNING} for the account.
+// Uses the partial index instances_job_id_idx WHERE job_id IS NOT
+// NULL (migration 00256) — joined against accounts on
+// (account_id of the job row, not the instance row). The query is
+// the only path that touches this index; CountLiveInstancesByDeployment
+// (the per-deployment analogue) is unrelated.
+//
+// JOIN strategy: the jobs table holds account_id; instances.job_id
+// references jobs.id. Joining through jobs keeps the index usable
+// and avoids a per-instance account lookup. Returns 0 (not error)
+// when no live tasks exist — that's the common case on Hobby/Pro
+// accounts between runs.
+func (s *PgStore) CountLiveJobTasksForAccount(ctx context.Context, accountID string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`select count(*) from instances i
+		 join jobs j on j.id = i.job_id
+		 where j.account_id = $1::uuid
+		   and i.kind = 'job_task'
+		   and i.state in ('WAKING','COLD_BOOTING','RUNNING')`,
+		accountID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("pgstore: count live job tasks: %w", err)
+	}
+	return n, nil
 }
 
 func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances where id = $1`, id)
 	return scanInstance(row)
 }
@@ -7450,7 +7497,7 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances where app_id = $1 order by started_at desc`, appID)
 	if err != nil {
 		return nil, err
@@ -7474,7 +7521,7 @@ func (s *PgStore) ListLatestInstancesForApp(ctx context.Context, appID string, l
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances where app_id = $1 order by started_at desc limit $2`, appID, limit)
 	if err != nil {
 		return nil, err
@@ -7492,7 +7539,7 @@ func (s *PgStore) ListLatestInstancesForApp(ctx context.Context, appID string, l
 func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances
 		 where state in ('running','waking','cold_booting','snapshotting')
 		 order by started_at desc`)
@@ -7512,7 +7559,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 func (s *PgStore) ListInstancesForAccount(ctx context.Context, accountID string) ([]Instance, error) {
 	rows, err := s.pool.Query(ctx,
 		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.kind, i.job_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -7552,7 +7599,7 @@ func (s *PgStore) ListInstancesForAccountPaged(ctx context.Context, accountID st
 	}
 	rows, err := s.pool.Query(ctx,
 		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.kind, i.job_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -7585,7 +7632,7 @@ func (s *PgStore) ListLatestInstancePerApp(ctx context.Context, accountID string
 	rows, err := s.pool.Query(ctx,
 		`select distinct on (i.app_id)
 		        i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
-		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.kind, i.job_id
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
@@ -7865,7 +7912,7 @@ func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []S
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances
 		 where state = any($1)
 		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
@@ -7904,7 +7951,7 @@ func (s *PgStore) ListRunningInstancesOnDeadNodes(ctx context.Context, threshold
 	rows, err := s.pool.Query(ctx,
 		`select i.id, i.app_id, i.deployment_id, i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
 		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at,
-		        i.node_id, i.wake_id, i.framework_ready_at, i.tail_count
+		        i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.kind, i.job_id
 		 from instances i
 		 join compute_nodes n on n.id = i.node_id
 		 where i.state = 'running'
@@ -7939,7 +7986,7 @@ func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, st
 	}
 	rows, err := s.pool.Query(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, terminal_at
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id, terminal_at
 		 from instances
 		 where state = any($1)
 		   and terminal_at is not null
@@ -7983,7 +8030,7 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
-		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, kind, job_id
 		 from instances where app_id = $1 and state = 'running'
 		 order by started_at desc nulls last limit 1`, appID)
 	return scanInstance(row)
@@ -12165,9 +12212,15 @@ func scanInstanceCols(scan func(...any) error) (Instance, error) {
 	// somehow surfaced surfaces as "" rather than a NULL scan error — the
 	// SELECT column list is the contract that prevents column-order drift
 	// from silently swallowing wake_id into an unrelated field.
+	//
+	// kind + job_id are the 17th/18th columns (migration 00256). kind is
+	// NOT NULL DEFAULT 'wake'; job_id is NULL for every wake/build row.
+	// Scanned into plain strings (kind nullable-safe via coalesce, job_id
+	// intentionally string-typed to keep NULL → "" for the legacy pgtest
+	// fixtures that pre-date 00256).
 	if err := scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
 		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID,
-		&frameworkReady, &ins.TailCount); err != nil {
+		&frameworkReady, &ins.TailCount, &ins.Kind, &ins.JobID); err != nil {
 		return Instance{}, err
 	}
 	if started != nil {
@@ -12220,7 +12273,8 @@ func scanInstanceColsWithMigration(scan func(...any) error) (Instance, error) {
 	var leaseStr *string
 	if err := scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
 		&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID,
-		&frameworkReady, &migFromStr, &migAtTime, &leaseStr, &ins.TailCount); err != nil {
+		&frameworkReady, &migFromStr, &migAtTime, &leaseStr, &ins.TailCount,
+		&ins.Kind, &ins.JobID); err != nil {
 		return Instance{}, err
 	}
 	if started != nil {
@@ -12271,7 +12325,7 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 		// 00112 added framework_ready_at, 00151 added tail_count,
 		// before terminal_at).
 		if err := rows.Scan(&ins.ID, &ins.AppID, &ins.DeploymentID, &ins.State, &ins.Netns, &ins.GuestUID,
-			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID, &frameworkReady, &ins.TailCount, &terminal); err != nil {
+			&ins.HostIP, &ins.RAMMB, &started, &lastReq, &parked, &ins.NodeID, &ins.WakeID, &frameworkReady, &ins.TailCount, &terminal, &ins.Kind, &ins.JobID); err != nil {
 			return nil, err
 		}
 		if started != nil {
@@ -15637,4 +15691,928 @@ func (s *PgStore) ListDataUpstreamProbesByHostRegion(ctx context.Context, arg sq
 // partitions); PR-C's partition creator handles whole-partition drops.
 func (s *PgStore) PruneDataUpstreamProbesOlderThan(ctx context.Context, cutoff time.Time) error {
 	return s.dataUpstreamsQueries().PruneDataUpstreamProbesOlderThan(ctx, s.pool, pgtypeFromTime(cutoff))
+}
+
+// jobsQueries returns a fresh sqlc.Queries instance for the
+// Jobs domain (ADR-099, migrations/00255). Matches the
+// appErrorsQueries / dataUpstreamsQueries pattern so each call
+// site gets a dedicated *Queries pointer (the generated
+// Queries type is not safe for concurrent use).
+func (s *PgStore) jobsQueries() *sqlc.Queries { return sqlc.New() }
+
+// jobFromPgtype maps a sqlc.Job row to the domain Job struct.
+// Decodes env_overrides (jsonb byte slice) into a
+// map[string]string; the SQL DEFAULT is '{}'::jsonb so the
+// decode always succeeds (empty map on '{}').
+func jobFromPgtype(row sqlc.Job) Job {
+	return Job{
+		ID:             uuidFromPgtype(row.ID).String(),
+		AccountID:      uuidFromPgtype(row.AccountID).String(),
+		Kind:           JobKind(row.Kind),
+		Name:           row.Name,
+		ImageRef:       row.ImageRef,
+		RamMb:          row.RamMb,
+		TaskTimeoutS:   row.TaskTimeoutS,
+		MaxParallelism: row.MaxParallelism,
+		RetryMax:       row.RetryMax,
+		EnvOverrides:   decodeEnvOverrides(row.EnvOverrides),
+		Status:         JobStatus(row.Status),
+		CreatedAt:      timeFromPgtype(row.CreatedAt),
+		UpdatedAt:      timeFromPgtype(row.UpdatedAt),
+	}
+}
+
+// jobRunFromPgtype maps a sqlc.JobRun row to the domain
+// JobRun struct. The nullable RetryMax/TaskTimeoutS/
+// StartedAt/FinishedAt columns surface as pointers.
+func jobRunFromPgtype(row sqlc.JobRun) JobRun {
+	out := JobRun{
+		ID:              uuidFromPgtype(row.ID).String(),
+		JobID:           uuidFromPgtype(row.JobID).String(),
+		AccountID:       uuidFromPgtype(row.AccountID).String(),
+		TriggerKind:     JobRunTriggerKind(row.TriggerKind),
+		EnvOverrides:    decodeEnvOverrides(row.EnvOverrides),
+		Tasks:           row.Tasks,
+		Parallelism:     row.Parallelism,
+		AggregateStatus: JobRunStatus(row.AggregateStatus),
+		TasksSucceeded:  row.TasksSucceeded,
+		TasksFailed:     row.TasksFailed,
+		TasksCancelled:  row.TasksCancelled,
+		TasksRunning:    row.TasksRunning,
+		CreatedAt:       timeFromPgtype(row.CreatedAt),
+	}
+	if row.RetryMax.Valid {
+		v := row.RetryMax.Int32
+		out.RetryMax = &v
+	}
+	if row.TaskTimeoutS.Valid {
+		v := row.TaskTimeoutS.Int32
+		out.TaskTimeoutS = &v
+	}
+	if row.StartedAt.Valid {
+		v := timeFromPgtype(row.StartedAt)
+		out.StartedAt = &v
+	}
+	if row.FinishedAt.Valid {
+		v := timeFromPgtype(row.FinishedAt)
+		out.FinishedAt = &v
+	}
+	return out
+}
+
+// decodeEnvOverrides unmarshals the jsonb byte slice. Returns
+// an empty map on empty input — matches the SQL DEFAULT of
+// '{}'::jsonb so callers never see a nil map for a row that
+// was inserted with no env overrides.
+func decodeEnvOverrides(raw []byte) map[string]string {
+	if len(raw) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		// The migration's CHECK on jsonb validity should make
+		// this impossible, but a corrupt row should not crash
+		// the dispatch tick. Return an empty map and let the
+		// caller decide whether to surface the error.
+		return map[string]string{}
+	}
+	return out
+}
+
+// encodeEnvOverrides marshals the env override map to jsonb.
+// Empty / nil maps serialise to '{}' (matches the column DEFAULT).
+func encodeEnvOverrides(env map[string]string) []byte {
+	if len(env) == 0 {
+		return []byte("{}")
+	}
+	out, err := json.Marshal(env)
+	if err != nil {
+		// map[string]string is JSON-marshalable by definition;
+		// a non-nil error here means a programmer bug, not a
+		// runtime condition. Return '{}' to keep the call
+		// site simple (the sqlc NOT NULL check would reject
+		// NULL anyway).
+		return []byte("{}")
+	}
+	return out
+}
+
+// CreateJob inserts a new job definition (migrations/00255).
+// The migration's CHECK constraints catch the malformed-input
+// cases the caller didn't pre-validate (ram_mb > 0,
+// max_parallelism in [1, 1000], retry_max in [0, 10],
+// task_timeout_s in [1, 86400], name regex).
+//
+// The id column defaults to gen_random_uuid() server-side; the
+// RETURNING clause gives us the freshly-minted UUID. We surface
+// that as the Job.ID rather than minting on the client side, so
+// the SQL column is the single source of truth for the PK.
+func (s *PgStore) CreateJob(ctx context.Context, j Job) (Job, error) {
+	row, err := s.jobsQueries().CreateJob(ctx, s.pool, sqlc.CreateJobParams{
+		AccountID:      pgtypeFromUUID(uuid.MustParse(j.AccountID)),
+		Kind:           string(j.Kind),
+		Name:           j.Name,
+		ImageRef:       j.ImageRef,
+		RamMb:          j.RamMb,
+		TaskTimeoutS:   j.TaskTimeoutS,
+		MaxParallelism: j.MaxParallelism,
+		RetryMax:       j.RetryMax,
+		EnvOverrides:   encodeEnvOverrides(j.EnvOverrides),
+	})
+	if err != nil {
+		// Duplicate (account_id, name) → unique violation.
+		// Map to the canonical ErrConflict sentinel so callers
+		// don't have to import pgconn.PgError.
+		if isUniqueViolation(err) {
+			return Job{}, ErrConflict
+		}
+		return Job{}, fmt.Errorf("create job: %w", err)
+	}
+	out := jobFromPgtype(row)
+	// SQL DEFAULT gen_random_uuid() minted the id server-side;
+	// jobFromPgtype already copied it into out.ID. No client-side
+	// override needed.
+	return out, nil
+}
+
+// CreateJobIfUnderQuota is the quota-checked variant. Mirrors
+// the Cron + AlertRule pattern: read counts, compare to
+// JobMaxPerAccount, INSERT if under. The whole sequence runs
+// in a single SERIALIZABLE-ish READ COMMITTED transaction; the
+// worst-case race is N concurrent inserts each seeing count=N-1
+// and all succeeding — acceptable because the cap is a soft
+// limit and the dashboard surfaces overage events.
+func (s *PgStore) CreateJobIfUnderQuota(ctx context.Context, j Job, limits api.Limits) (Job, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Job{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // commit wins on happy path
+
+	limit := int32(limits.JobMaxPerAccount)
+	count, err := s.jobsQueries().CountJobsForAccount(ctx, tx, pgtypeFromUUID(uuid.MustParse(j.AccountID)))
+	if err != nil {
+		return Job{}, fmt.Errorf("count jobs: %w", err)
+	}
+	if count >= limit {
+		return Job{}, &JobQuotaError{
+			AccountID: j.AccountID,
+			Limit:     limit,
+			Observed:  count,
+		}
+	}
+
+	row, err := s.jobsQueries().CreateJob(ctx, tx, sqlc.CreateJobParams{
+		AccountID:      pgtypeFromUUID(uuid.MustParse(j.AccountID)),
+		Kind:           string(j.Kind),
+		Name:           j.Name,
+		ImageRef:       j.ImageRef,
+		RamMb:          j.RamMb,
+		TaskTimeoutS:   j.TaskTimeoutS,
+		MaxParallelism: j.MaxParallelism,
+		RetryMax:       j.RetryMax,
+		EnvOverrides:   encodeEnvOverrides(j.EnvOverrides),
+	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			return Job{}, ErrConflict
+		}
+		return Job{}, fmt.Errorf("create job in tx: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Job{}, fmt.Errorf("commit: %w", err)
+	}
+	out := jobFromPgtype(row)
+	return out, nil
+}
+
+// GetJob reads a job by primary key, scoped to the account.
+// Cross-account reads return ErrNotFound (uniformly — no
+// existence leak).
+func (s *PgStore) GetJob(ctx context.Context, id, accountID string) (Job, error) {
+	jobID, err := uuid.Parse(id)
+	if err != nil {
+		return Job{}, ErrNotFound
+	}
+	acctID, err := uuid.Parse(accountID)
+	if err != nil {
+		return Job{}, ErrNotFound
+	}
+	row, err := s.jobsQueries().GetJob(ctx, s.pool, sqlc.GetJobParams{
+		ID:        pgtypeFromUUID(jobID),
+		AccountID: pgtypeFromUUID(acctID),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Job{}, ErrNotFound
+		}
+		return Job{}, fmt.Errorf("get job: %w", err)
+	}
+	return jobFromPgtype(row), nil
+}
+
+// GetJobByName is the slug-based lookup (the dashboard + CLI
+// render by name). Backed by the jobs_account_name_uniq_idx
+// partial unique index from migrations/00255.
+func (s *PgStore) GetJobByName(ctx context.Context, accountID, name string) (Job, error) {
+	acctID, err := uuid.Parse(accountID)
+	if err != nil {
+		return Job{}, ErrNotFound
+	}
+	row, err := s.jobsQueries().GetJobByName(ctx, s.pool, sqlc.GetJobByNameParams{
+		AccountID: pgtypeFromUUID(acctID),
+		Name:      name,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Job{}, ErrNotFound
+		}
+		return Job{}, fmt.Errorf("get job by name: %w", err)
+	}
+	return jobFromPgtype(row), nil
+}
+
+// ListJobsForAccount returns all jobs for the account
+// ordered by created_at DESC. PR-D's GET /v1/jobs handler
+// wraps this with pagination (cursor pattern deferred — the
+// per-plan cap bounds result size).
+func (s *PgStore) ListJobsForAccount(ctx context.Context, accountID string) ([]Job, error) {
+	acctID, err := uuid.Parse(accountID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	rows, err := s.jobsQueries().ListJobsForAccount(ctx, s.pool, pgtypeFromUUID(acctID))
+	if err != nil {
+		return nil, fmt.Errorf("list jobs: %w", err)
+	}
+	out := make([]Job, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, jobFromPgtype(r))
+	}
+	return out, nil
+}
+
+// UpdateJob patches the mutable fields of a job row. nil
+// pointers / nil maps leave the corresponding field untouched
+// (COALESCE in the SQL). The pgtype.Text / pgtype.Int4 fields
+// on UpdateJobParams are nullable wrappers generated by sqlc.narg.
+func (s *PgStore) UpdateJob(ctx context.Context, id, accountID string, name, imageRef *string, ramMb, taskTimeoutS, maxParallelism, retryMax *int32, envOverrides *map[string]string, status *JobStatus) (Job, error) {
+	jobID, err := uuid.Parse(id)
+	if err != nil {
+		return Job{}, ErrNotFound
+	}
+	acctID, err := uuid.Parse(accountID)
+	if err != nil {
+		return Job{}, ErrNotFound
+	}
+	params := sqlc.UpdateJobParams{
+		ID:        pgtypeFromUUID(jobID),
+		AccountID: pgtypeFromUUID(acctID),
+	}
+	if name != nil {
+		params.Name = pgtype.Text{String: *name, Valid: true}
+	}
+	if imageRef != nil {
+		params.ImageRef = pgtype.Text{String: *imageRef, Valid: true}
+	}
+	if ramMb != nil {
+		params.RamMb = pgtype.Int4{Int32: *ramMb, Valid: true}
+	}
+	if taskTimeoutS != nil {
+		params.TaskTimeoutS = pgtype.Int4{Int32: *taskTimeoutS, Valid: true}
+	}
+	if maxParallelism != nil {
+		params.MaxParallelism = pgtype.Int4{Int32: *maxParallelism, Valid: true}
+	}
+	if retryMax != nil {
+		params.RetryMax = pgtype.Int4{Int32: *retryMax, Valid: true}
+	}
+	if envOverrides != nil {
+		params.EnvOverrides = encodeEnvOverrides(*envOverrides)
+	}
+	if status != nil {
+		params.Status = pgtype.Text{String: string(*status), Valid: true}
+	}
+	row, err := s.jobsQueries().UpdateJob(ctx, s.pool, params)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Job{}, ErrNotFound
+		}
+		if isUniqueViolation(err) {
+			return Job{}, ErrConflict
+		}
+		return Job{}, fmt.Errorf("update job: %w", err)
+	}
+	return jobFromPgtype(row), nil
+}
+
+// DeleteJob soft-deletes via status='deleted'. The unique
+// (account_id, name) index admits `deleted` rows so the name
+// can be re-used after the 7-day retention window (PR-D's
+// recovery endpoint, or a manual undelete).
+func (s *PgStore) DeleteJob(ctx context.Context, id, accountID string) error {
+	jobID, err := uuid.Parse(id)
+	if err != nil {
+		return ErrNotFound
+	}
+	acctID, err := uuid.Parse(accountID)
+	if err != nil {
+		return ErrNotFound
+	}
+	err = s.jobsQueries().DeleteJob(ctx, s.pool, sqlc.DeleteJobParams{
+		ID:        pgtypeFromUUID(jobID),
+		AccountID: pgtypeFromUUID(acctID),
+	})
+	if err != nil {
+		return fmt.Errorf("delete job: %w", err)
+	}
+	return nil
+}
+
+// CountJobsForAccount is the quota-check primitive. Excludes
+// `deleted` rows so a recently-deleted job doesn't keep the
+// customer pinned at the cap.
+func (s *PgStore) CountJobsForAccount(ctx context.Context, accountID string) (int32, error) {
+	acctID, err := uuid.Parse(accountID)
+	if err != nil {
+		return 0, ErrNotFound
+	}
+	count, err := s.jobsQueries().CountJobsForAccount(ctx, s.pool, pgtypeFromUUID(acctID))
+	if err != nil {
+		return 0, fmt.Errorf("count jobs: %w", err)
+	}
+	return count, nil
+}
+
+// CreateJobRun materialises a new run row. The caller is
+// expected to follow up with InsertJobTasks in the same
+// transaction — the Store surface doesn't bundle them
+// because the pgx CopyFrom path (InsertJobTasks) needs the
+// run row's ID, and forcing both into one method would
+// sacrifice the CopyFrom round-trip.
+func (s *PgStore) CreateJobRun(ctx context.Context, r JobRun) (JobRun, error) {
+	jobID, err := uuid.Parse(r.JobID)
+	if err != nil {
+		return JobRun{}, ErrNotFound
+	}
+	acctID, err := uuid.Parse(r.AccountID)
+	if err != nil {
+		return JobRun{}, ErrNotFound
+	}
+	var retryMax, taskTimeoutS pgtype.Int4
+	if r.RetryMax != nil {
+		retryMax = pgtype.Int4{Int32: *r.RetryMax, Valid: true}
+	}
+	if r.TaskTimeoutS != nil {
+		taskTimeoutS = pgtype.Int4{Int32: *r.TaskTimeoutS, Valid: true}
+	}
+	row, err := s.jobsQueries().CreateJobRun(ctx, s.pool, sqlc.CreateJobRunParams{
+		JobID:        pgtypeFromUUID(jobID),
+		AccountID:    pgtypeFromUUID(acctID),
+		TriggerKind:  string(r.TriggerKind),
+		EnvOverrides: encodeEnvOverrides(r.EnvOverrides),
+		Tasks:        r.Tasks,
+		Parallelism:  r.Parallelism,
+		RetryMax:     retryMax,
+		TaskTimeoutS: taskTimeoutS,
+	})
+	if err != nil {
+		return JobRun{}, fmt.Errorf("create job run: %w", err)
+	}
+	out := jobRunFromPgtype(row)
+	return out, nil
+}
+
+// InsertJobTasks bulk-inserts the task rows for a newly
+// created run. Uses pgx CopyFrom for one round-trip on N rows.
+// The (run_id, task_index) PK catches duplicate inserts so a
+// retry after a partial failure is safe.
+func (s *PgStore) InsertJobTasks(ctx context.Context, runID string, taskIndices []int32) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	rows := make([][]any, 0, len(taskIndices))
+	for _, idx := range taskIndices {
+		rows = append(rows, []any{pgtypeFromUUID(runUUID), idx})
+	}
+	_, err = s.pool.CopyFrom(ctx,
+		pgx.Identifier{"job_tasks"},
+		[]string{"run_id", "task_index"},
+		pgx.CopyFromRows(rows),
+	)
+	if err != nil {
+		return fmt.Errorf("insert job tasks: %w", err)
+	}
+	return nil
+}
+
+// GetJobRun reads a run by primary key, scoped to the account.
+func (s *PgStore) GetJobRun(ctx context.Context, id, accountID string) (JobRun, error) {
+	runUUID, err := uuid.Parse(id)
+	if err != nil {
+		return JobRun{}, ErrNotFound
+	}
+	acctID, err := uuid.Parse(accountID)
+	if err != nil {
+		return JobRun{}, ErrNotFound
+	}
+	row, err := s.jobsQueries().GetJobRun(ctx, s.pool, sqlc.GetJobRunParams{
+		ID:        pgtypeFromUUID(runUUID),
+		AccountID: pgtypeFromUUID(acctID),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return JobRun{}, ErrNotFound
+		}
+		return JobRun{}, fmt.Errorf("get job run: %w", err)
+	}
+	return jobRunFromPgtype(row), nil
+}
+
+// GetJobRunInternal (ADR-099 PR-C) reads a run by primary key
+// WITHOUT the per-account ACL check. schedd-internal only — see
+// the Store interface doc + MemStore.GetJobRunInternal doc for
+// the rationale. Raw SQL (not sqlc) to avoid regenerating the
+// queries.sql golden; the SELECT is identical to GetJobRun minus
+// the account_id predicate.
+func (s *PgStore) GetJobRunInternal(ctx context.Context, id string) (JobRun, error) {
+	runUUID, err := uuid.Parse(id)
+	if err != nil {
+		return JobRun{}, ErrNotFound
+	}
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, job_id, account_id, trigger_kind, env_overrides,
+		       tasks, parallelism, retry_max, task_timeout_s,
+		       aggregate_status, tasks_succeeded, tasks_failed,
+		       tasks_cancelled, tasks_running, started_at,
+		       finished_at, created_at
+		FROM job_runs WHERE id = $1`, pgtypeFromUUID(runUUID))
+	var r JobRun
+	var idOut, jobIDOut, acctIDOut pgtype.UUID
+	var triggerKind pgtype.Text
+	var envOverrides []byte
+	var retryMax, taskTimeoutS pgtype.Int4
+	var aggregateStatus pgtype.Text
+	var tasksS, tasksF, tasksC, tasksR pgtype.Int4
+	var startedAt, finishedAt pgtype.Timestamptz
+	var createdAt pgtype.Timestamptz
+	if err := row.Scan(&idOut, &jobIDOut, &acctIDOut, &triggerKind, &envOverrides,
+		&r.Tasks, &r.Parallelism, &retryMax, &taskTimeoutS,
+		&aggregateStatus, &tasksS, &tasksF, &tasksC, &tasksR, &startedAt,
+		&finishedAt, &createdAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return JobRun{}, ErrNotFound
+		}
+		return JobRun{}, fmt.Errorf("get job run internal: %w", err)
+	}
+	if uuidVal := uuidFromPgtype(idOut); uuidVal != uuid.Nil {
+		r.ID = uuidVal.String()
+	}
+	if uuidVal := uuidFromPgtype(jobIDOut); uuidVal != uuid.Nil {
+		r.JobID = uuidVal.String()
+	}
+	if uuidVal := uuidFromPgtype(acctIDOut); uuidVal != uuid.Nil {
+		r.AccountID = uuidVal.String()
+	}
+	if triggerKind.Valid {
+		r.TriggerKind = JobRunTriggerKind(triggerKind.String)
+	}
+	if len(envOverrides) > 0 {
+		_ = json.Unmarshal(envOverrides, &r.EnvOverrides)
+	}
+	if r.EnvOverrides == nil {
+		r.EnvOverrides = map[string]string{}
+	}
+	if retryMax.Valid {
+		v := retryMax.Int32
+		r.RetryMax = &v
+	}
+	if taskTimeoutS.Valid {
+		v := taskTimeoutS.Int32
+		r.TaskTimeoutS = &v
+	}
+	if aggregateStatus.Valid {
+		r.AggregateStatus = JobRunStatus(aggregateStatus.String)
+	}
+	r.TasksSucceeded = tasksS.Int32
+	r.TasksFailed = tasksF.Int32
+	r.TasksCancelled = tasksC.Int32
+	r.TasksRunning = tasksR.Int32
+	if startedAt.Valid {
+		t := startedAt.Time
+		r.StartedAt = &t
+	}
+	if finishedAt.Valid {
+		t := finishedAt.Time
+		r.FinishedAt = &t
+	}
+	r.CreatedAt = createdAt.Time
+	return r, nil
+}
+
+// ListJobRunsForJob returns runs for one job (used by the
+// dashboard's "Recent runs" panel — PR-E).
+func (s *PgStore) ListJobRunsForJob(ctx context.Context, jobID, accountID string) ([]JobRun, error) {
+	jobUUID, err := uuid.Parse(jobID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	acctID, err := uuid.Parse(accountID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	rows, err := s.jobsQueries().ListJobRunsForJob(ctx, s.pool, sqlc.ListJobRunsForJobParams{
+		JobID:     pgtypeFromUUID(jobUUID),
+		AccountID: pgtypeFromUUID(acctID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list job runs: %w", err)
+	}
+	out := make([]JobRun, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, jobRunFromPgtype(r))
+	}
+	return out, nil
+}
+
+// ClaimJobTasks atomically claims up to N queued tasks for a
+// run (FOR UPDATE SKIP LOCKED). The schedd dispatch tick
+// (PR-C) calls this until it has filled max_parallelism slots.
+func (s *PgStore) ClaimJobTasks(ctx context.Context, runID string, limit int32) ([]ClaimedJobTask, error) {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	rows, err := s.jobsQueries().ClaimJobTasks(ctx, s.pool, sqlc.ClaimJobTasksParams{
+		RunID: pgtypeFromUUID(runUUID),
+		Limit: limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("claim job tasks: %w", err)
+	}
+	out := make([]ClaimedJobTask, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ClaimedJobTask{
+			RunID:     uuidFromPgtype(r.RunID).String(),
+			TaskIndex: r.TaskIndex,
+		})
+	}
+	return out, nil
+}
+
+// ListReadyJobTasks is the dispatch-tick hot path. Returns
+// up to `limit` queued tasks across all runs, ordered by
+// (run_id, task_index). Backed by the job_tasks_ready_idx
+// partial index.
+func (s *PgStore) ListReadyJobTasks(ctx context.Context, limit int32) ([]ListReadyJobTask, error) {
+	rows, err := s.jobsQueries().ListReadyJobTasks(ctx, s.pool, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list ready job tasks: %w", err)
+	}
+	out := make([]ListReadyJobTask, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ListReadyJobTask{
+			RunID:     uuidFromPgtype(r.RunID).String(),
+			TaskIndex: r.TaskIndex,
+		})
+	}
+	return out, nil
+}
+
+// MarkJobTaskClaimed flips status queued → claimed and stamps
+// the instance_id assigned by the schedd (PR-C's wake loop).
+func (s *PgStore) MarkJobTaskClaimed(ctx context.Context, runID string, taskIndex int32, instanceID string) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	// ADR-099 PR-C: the dispatch tick calls MarkJobTaskClaimed
+	// BEFORE WakeJob creates the instance row (the dispatch tick
+	// flips status queued → claimed, then WakeJob creates the
+	// instances row, then the supervisor's eventual exit
+	// re-stamps the instance_id). An empty instanceID is the
+	// valid PR-C shape — NOT a not-found error. We translate to
+	// the sqlc NULL via pgtype.UUID's sql.NullUUID path; the
+	// schema column is nullable (migrations/00255) so the
+	// UPDATE succeeds with instance_id=NULL.
+	var instUUID pgtype.UUID
+	if instanceID != "" {
+		parsed, perr := uuid.Parse(instanceID)
+		if perr != nil {
+			return ErrNotFound
+		}
+		instUUID = pgtypeFromUUID(parsed)
+	} else {
+		instUUID = pgtype.UUID{Valid: false}
+	}
+	err = s.jobsQueries().MarkJobTaskClaimed(ctx, s.pool, sqlc.MarkJobTaskClaimedParams{
+		RunID:      pgtypeFromUUID(runUUID),
+		TaskIndex:  taskIndex,
+		InstanceID: instUUID,
+	})
+	if err != nil {
+		return fmt.Errorf("mark job task claimed: %w", err)
+	}
+	return nil
+}
+
+// JobTaskByRunAndIndex (ADR-099 PR-C) reads a single task row
+// by composite primary key. Raw-SQL rather than sqlc: the query
+// is a trivial PK lookup and adding a sqlc query would force a
+// sqlc regenerate + golden-file updates which the PR-C budget
+// doesn't carry. The column list mirrors the schema in
+// migrations/00255; null-coalesce on the text/jsonb columns
+// keeps the MemStore + PgStore row shape byte-identical for
+// tests.
+func (s *PgStore) JobTaskByRunAndIndex(ctx context.Context, runID string, taskIndex int32) (JobTask, error) {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return JobTask{}, ErrNotFound
+	}
+	var t JobTask
+	var envJSON []byte
+	var startedAt, finishedAt pgtype.Timestamptz
+	err = s.pool.QueryRow(ctx,
+		`select task_index, run_id, attempt, status,
+		        coalesce(env, '{}'::jsonb),
+		        coalesce(error_class, ''),
+		        coalesce(error_message, ''),
+		        coalesce(instance_id::text, ''),
+		        started_at, finished_at
+		 from job_tasks where run_id = $1 and task_index = $2`,
+		pgtypeFromUUID(runUUID), taskIndex).Scan(
+		&t.TaskIndex, &t.RunID, &t.Attempt, &t.Status,
+		&envJSON,
+		&t.ErrorClass, &t.ErrorMessage,
+		&t.InstanceID,
+		&startedAt, &finishedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return JobTask{}, ErrNotFound
+		}
+		return JobTask{}, fmt.Errorf("pgstore: JobTaskByRunAndIndex: %w", err)
+	}
+	if startedAt.Valid {
+		startedCopy := startedAt.Time
+		t.StartedAt = &startedCopy
+	}
+	if finishedAt.Valid {
+		finishedCopy := finishedAt.Time
+		t.FinishedAt = &finishedCopy
+	}
+	return t, nil
+}
+
+// MarkJobTaskSucceeded marks the task terminal (success).
+func (s *PgStore) MarkJobTaskSucceeded(ctx context.Context, runID string, taskIndex int32) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	err = s.jobsQueries().MarkJobTaskSucceeded(ctx, s.pool, sqlc.MarkJobTaskSucceededParams{
+		RunID:     pgtypeFromUUID(runUUID),
+		TaskIndex: taskIndex,
+	})
+	if err != nil {
+		return fmt.Errorf("mark job task succeeded: %w", err)
+	}
+	return nil
+}
+
+// MarkJobTaskFailed marks the task terminal (failure). The
+// caller follows up with RecomputeJobRunStatus for the
+// run-level fan-in.
+func (s *PgStore) MarkJobTaskFailed(ctx context.Context, runID string, taskIndex int32, errorClass, errorMessage string) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	err = s.jobsQueries().MarkJobTaskFailed(ctx, s.pool, sqlc.MarkJobTaskFailedParams{
+		RunID:        pgtypeFromUUID(runUUID),
+		TaskIndex:    taskIndex,
+		ErrorClass:   pgtypeFromText(errorClass),
+		ErrorMessage: pgtypeFromText(errorMessage),
+	})
+	if err != nil {
+		return fmt.Errorf("mark job task failed: %w", err)
+	}
+	return nil
+}
+
+// MarkJobTaskTimeout marks the task terminal (timeout). The
+// watchdog exit code distinguishes from a regular failure for
+// retry policy and dashboard rendering.
+func (s *PgStore) MarkJobTaskTimeout(ctx context.Context, runID string, taskIndex int32) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	err = s.jobsQueries().MarkJobTaskTimeout(ctx, s.pool, sqlc.MarkJobTaskTimeoutParams{
+		RunID:     pgtypeFromUUID(runUUID),
+		TaskIndex: taskIndex,
+	})
+	if err != nil {
+		return fmt.Errorf("mark job task timeout: %w", err)
+	}
+	return nil
+}
+
+// MarkJobTaskOOM marks the task terminal (OOM). The
+// guest-init job_supervisor reports OOM exits; the task is
+// marked so billing can exempt it.
+func (s *PgStore) MarkJobTaskOOM(ctx context.Context, runID string, taskIndex int32) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	err = s.jobsQueries().MarkJobTaskOOM(ctx, s.pool, sqlc.MarkJobTaskOOMParams{
+		RunID:     pgtypeFromUUID(runUUID),
+		TaskIndex: taskIndex,
+	})
+	if err != nil {
+		return fmt.Errorf("mark job task oom: %w", err)
+	}
+	return nil
+}
+
+// MarkJobTaskCancelled marks the task terminal (cancelled)
+// if it is still queued or claimed. Terminal tasks stay
+// terminal (the WHERE clause is the gate).
+func (s *PgStore) MarkJobTaskCancelled(ctx context.Context, runID string, taskIndex int32) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	err = s.jobsQueries().MarkJobTaskCancelled(ctx, s.pool, sqlc.MarkJobTaskCancelledParams{
+		RunID:     pgtypeFromUUID(runUUID),
+		TaskIndex: taskIndex,
+	})
+	if err != nil {
+		return fmt.Errorf("mark job task cancelled: %w", err)
+	}
+	return nil
+}
+
+// MarkJobTaskRequeued (ADR-099 PR-C) flips status claimed →
+// queued. The dispatch tick calls this when WakeJob returns
+// ErrJobAdmissionRefused so the task row lands back on the
+// ready-queue (job_tasks_ready_idx) and the next tick re-claims
+// it. Mirrors the cron tick's AtCapacity backoff shape.
+//
+// The WHERE status='claimed' clause is the gate: a second
+// call on an already-queued row, or a row that's been moved
+// terminal by a parallel goroutine, is a no-op (the dispatch
+// tick logs the error at Warn and continues).
+func (s *PgStore) MarkJobTaskRequeued(ctx context.Context, runID string, taskIndex int32) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	err = s.jobsQueries().MarkJobTaskRequeued(ctx, s.pool, sqlc.MarkJobTaskRequeuedParams{
+		RunID:     pgtypeFromUUID(runUUID),
+		TaskIndex: taskIndex,
+	})
+	if err != nil {
+		return fmt.Errorf("mark job task requeued: %w", err)
+	}
+	return nil
+}
+
+// RecomputeJobRunStatus is the pure-SQL run-level fan-in.
+// Reads the live task counters, updates the aggregate_status
+// + tasks_* fields + finished_at in one UPDATE. Returns the
+// updated run row so the caller can emit a job_run.terminal
+// event (PR-C) without a second round-trip.
+func (s *PgStore) RecomputeJobRunStatus(ctx context.Context, runID string) (JobRun, error) {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return JobRun{}, ErrNotFound
+	}
+	row, err := s.jobsQueries().RecomputeJobRunStatus(ctx, s.pool, pgtypeFromUUID(runUUID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return JobRun{}, ErrNotFound
+		}
+		return JobRun{}, fmt.Errorf("recompute job run: %w", err)
+	}
+	return jobRunFromPgtype(row), nil
+}
+
+// MarkJobTaskRetried (ADR-099 PR-D) flips a terminal-failure
+// task back to 'queued' for re-dispatch. The status whitelist
+// in the SQL is the gate that prevents a parallel dispatch tick
+// from racing the manual retry; reset_attempt=true zeroes the
+// per-task attempt counter.
+func (s *PgStore) MarkJobTaskRetried(ctx context.Context, runID string, taskIndex int32, resetAttempt bool) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	// The sqlc params field is named `Attempt` (not `ResetAttempt`)
+	// because sqlc derives it from the SQL placeholder $3 — we use
+	// it as a 0/1 flag to keep the SQL portable across versions.
+	flag := int32(0)
+	if resetAttempt {
+		flag = 1
+	}
+	err = s.jobsQueries().MarkJobTaskRetried(ctx, s.pool, sqlc.MarkJobTaskRetriedParams{
+		RunID:     pgtypeFromUUID(runUUID),
+		TaskIndex: taskIndex,
+		Column3:   flag,
+	})
+	if err != nil {
+		return fmt.Errorf("mark job task retried: %w", err)
+	}
+	return nil
+}
+
+// MarkJobRunCancelled (ADR-099 PR-D) flips a non-terminal run to
+// 'cancelled'. The status whitelist in the SQL is the gate; the
+// dispatch tick is the single source of truth for terminal-status
+// flips, so a cancel against an already-terminal run is a no-op.
+func (s *PgStore) MarkJobRunCancelled(ctx context.Context, runID string) error {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return ErrNotFound
+	}
+	if err := s.jobsQueries().MarkJobRunCancelled(ctx, s.pool, pgtypeFromUUID(runUUID)); err != nil {
+		return fmt.Errorf("mark job run cancelled: %w", err)
+	}
+	return nil
+}
+
+// ListRunTasksForRun (ADR-099 PR-D) pages the child task rows
+// for one run in task_index order. before is the task_index
+// cursor; limit <= 0 falls back to 50 (matches the MemStore
+// default + apid's jobsDefaultLimit).
+func (s *PgStore) ListRunTasksForRun(ctx context.Context, runID, before string, limit int) ([]JobTask, error) {
+	runUUID, err := uuid.Parse(runID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.jobsQueries().ListRunTasksForRun(ctx, s.pool, sqlc.ListRunTasksForRunParams{
+		RunID:   pgtypeFromUUID(runUUID),
+		Column2: before,
+		Limit:   int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list run tasks: %w", err)
+	}
+	out := make([]JobTask, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, jobTaskFromSqlc(r))
+	}
+	return out, nil
+}
+
+// jobTaskFromSqlc projects sqlc.JobTask (pgtype-heavy) onto the
+// pkg/state.JobTask boundary shape. Mirrors jobRunFromPgtype's
+// conversion: pgtype.UUID → string (via uuidFromPgtype), pgtype.Text
+// → *string, pgtype.Timestamptz → *time.Time.
+func jobTaskFromSqlc(r sqlc.JobTask) JobTask {
+	t := JobTask{
+		TaskIndex: r.TaskIndex,
+		Status:    JobTaskStatus(r.Status),
+		Attempt:   r.Attempt,
+	}
+	if uid := uuidFromPgtype(r.RunID); uid != uuid.Nil {
+		t.RunID = uid.String()
+	}
+	if r.InstanceID.Valid {
+		if uid := uuidFromPgtype(r.InstanceID); uid != uuid.Nil {
+			s := uid.String()
+			t.InstanceID = &s
+		}
+	}
+	if r.ErrorClass.Valid {
+		s := r.ErrorClass.String
+		t.ErrorClass = &s
+	}
+	if r.ErrorMessage.Valid {
+		s := r.ErrorMessage.String
+		t.ErrorMessage = &s
+	}
+	if r.StartedAt.Valid {
+		v := r.StartedAt.Time
+		t.StartedAt = &v
+	}
+	if r.FinishedAt.Valid {
+		v := r.FinishedAt.Time
+		t.FinishedAt = &v
+	}
+	if r.CreatedAt.Valid {
+		t.CreatedAt = r.CreatedAt.Time
+	}
+	return t
+}
+
+// pgtypeFromText wraps a string into pgtype.Text with
+// Valid=true. Used by the MarkJobTask* writers to pass
+// error_class / error_message.
+func pgtypeFromText(s string) pgtype.Text {
+	return pgtype.Text{String: s, Valid: true}
 }

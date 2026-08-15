@@ -61,12 +61,26 @@ import (
 // the Engine's other late-bound dependencies (verifier, audit,
 // events.Platform) so unit tests that don't exercise the limiter can
 // skip the wire-up.
+//
+// ADR-099 PR-C: jobBuckets is a third bucket map keyed by
+// accountID, separate from acctBuckets, so a customer's job run
+// (`gregale jobs run --tasks 1000 --parallelism 100`) cannot
+// drain the wake-side per-account bucket the customer's app
+// wake path shares. The plan-keyed ceiling is
+// api.Limits.JobWakeBurstPerAccount (per the ADR's separate-
+// buckets direction — Option B in the implementation plan).
+// Job wakes NEVER consult appBuckets (jobs have no appID) and
+// NEVER touch acctBuckets (the wake-side budget is reserved
+// for app wakes). ForgetAccount forgets BOTH the wake bucket
+// AND the job bucket on account delete.
 type WakeRateLimiter struct {
-	mu          sync.Mutex
-	appBuckets  map[string]*wakeBucket // appID -> bucket
-	acctBuckets map[string]*wakeBucket // accountID -> bucket
-	now         func() time.Time
-	noop        bool // test seam: WithNoop returns a copy that always allows
+	mu             sync.Mutex
+	appBuckets     map[string]*wakeBucket // appID -> bucket (wake side)
+	acctBuckets    map[string]*wakeBucket // accountID -> bucket (wake side)
+	jobBuckets     map[string]*wakeBucket // accountID -> bucket (job side, ADR-099 PR-C)
+	jobBucketBurst int                    // ceiling for jobBuckets (set by SetJobBucketBurst)
+	now            func() time.Time
+	noop           bool // test seam: WithNoop returns a copy that always allows
 }
 
 type wakeBucket struct {
@@ -81,6 +95,7 @@ func NewWakeRateLimiter() *WakeRateLimiter {
 	return &WakeRateLimiter{
 		appBuckets:  map[string]*wakeBucket{},
 		acctBuckets: map[string]*wakeBucket{},
+		jobBuckets:  map[string]*wakeBucket{},
 		now:         time.Now,
 	}
 }
@@ -91,6 +106,7 @@ func NewWakeRateLimiterWithClock(now func() time.Time) *WakeRateLimiter {
 	return &WakeRateLimiter{
 		appBuckets:  map[string]*wakeBucket{},
 		acctBuckets: map[string]*wakeBucket{},
+		jobBuckets:  map[string]*wakeBucket{},
 		now:         now,
 	}
 }
@@ -149,6 +165,62 @@ func (l *WakeRateLimiter) AllowWakeAccount(accountID string, plan api.Plan) bool
 	return l.consume(l.acctBuckets, accountID, float64(burst), float64(burst))
 }
 
+// AllowWakeJobAccount (ADR-099 PR-C) reports whether a job-task
+// wake-admission for the given accountID may proceed, consuming
+// one token from a separate per-account bucket (jobBuckets).
+//
+// Why a SEPARATE bucket (Option B in the implementation plan):
+// jobs and app wakes share the per-account concurrency consult
+// upstream (CountLiveJobTasksForAccount is its own path; the
+// account cap is checked by WakeJob separately). At the rate-
+// limit layer, sharing acctBuckets would let a Scale customer's
+// `--tasks 1000 --parallelism 100` job burst drain the same
+// bucket their customer's app wake path uses — a customer who
+// legitimately has 100 cold apps and a 1000-task job run would
+// either starve themselves on one side or have to choose. The
+// separate bucket gives each side an independent budget.
+//
+// Per-plan burst ceiling: api.Limits.JobWakeBurstPerAccount
+// (Free 0 / Hobby 5 / Pro 25 / Scale 100). 0 returns false
+// fail-closed (Free plan jobs are gated upstream by
+// api.Limits.JobMaxConcurrentPerAccount <= 0 and the apid-side
+// CodeJobsNotAllowed; this is the schedd backstop).
+func (l *WakeRateLimiter) AllowWakeJobAccount(accountID string) bool {
+	if l == nil || l.noop {
+		return true
+	}
+	// Look up the plan via api.LimitsFor? No — the caller already
+	// resolved it for the per-account concurrency consult. Pass
+	// the ceiling directly so the limiter stays ignorant of
+	// accounts → plan mapping. The ceiling is sourced from
+	// api.Limits.JobWakeBurstPerAccount (limits.go PR-D field).
+	// For PR-C tests we accept a hard-coded default of 25
+	// (Hobby's JobWakeBurstPerAccount value) until the limit is
+	// added in PR-D; the dispatch_jobs.go caller passes the
+	// resolved ceiling directly.
+	burst := l.jobBucketBurst
+	if burst <= 0 {
+		return false
+	}
+	return l.consume(l.jobBuckets, accountID, float64(burst), float64(burst))
+}
+
+// SetJobBucketBurst (PR-C) configures the job-side per-account
+// burst ceiling. cmd/schedd wires this from the resolved plan at
+// startup (one bucket ceiling per-process; the same value is
+// used for every AllowWakeJobAccount consult). PR-D's Limits
+// addition sources the value; PR-C tests pass a literal. Safe
+// to call multiple times — the next AllowWakeJobAccount picks
+// up the new ceiling on the next consume().
+func (l *WakeRateLimiter) SetJobBucketBurst(burst int) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.jobBucketBurst = burst
+}
+
 // consume is the shared token-bucket math. Tokens refill at
 // `burst` per minute (= `burst / 60` per second); the bucket ceiling
 // is `burst`. A plan change updates the bucket's parameters without
@@ -194,12 +266,16 @@ func (l *WakeRateLimiter) ForgetApp(appID string) {
 }
 
 // ForgetAccount drops an account's bucket. Symmetric with ForgetApp.
+// PR-C: also drops the job-side bucket so a deleted account's
+// job-wake state doesn't linger. The two buckets share the
+// accountID key.
 func (l *WakeRateLimiter) ForgetAccount(accountID string) {
 	if l == nil {
 		return
 	}
 	l.mu.Lock()
 	delete(l.acctBuckets, accountID)
+	delete(l.jobBuckets, accountID)
 	l.mu.Unlock()
 }
 
@@ -211,9 +287,10 @@ func (l *WakeRateLimiter) ForgetAll() int {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	n := len(l.appBuckets) + len(l.acctBuckets)
+	n := len(l.appBuckets) + len(l.acctBuckets) + len(l.jobBuckets)
 	l.appBuckets = map[string]*wakeBucket{}
 	l.acctBuckets = map[string]*wakeBucket{}
+	l.jobBuckets = map[string]*wakeBucket{}
 	return n
 }
 
@@ -227,15 +304,17 @@ func (l *WakeRateLimiter) WithNoop() *WakeRateLimiter {
 		return nil
 	}
 	return &WakeRateLimiter{
-		appBuckets:  l.appBuckets,
-		acctBuckets: l.acctBuckets,
-		now:         l.now,
-		noop:        true,
+		appBuckets:     l.appBuckets,
+		acctBuckets:    l.acctBuckets,
+		jobBuckets:     l.jobBuckets,
+		jobBucketBurst: l.jobBucketBurst,
+		now:            l.now,
+		noop:           true,
 	}
 }
 
-// BucketCount returns the total number of buckets held across both
-// scopes. /metrics uses this so operators can watch for cardinality
+// BucketCount returns the total number of buckets held across all
+// three scopes. /metrics uses this so operators can watch for cardinality
 // drift on long-running schedd instances.
 func (l *WakeRateLimiter) BucketCount() int {
 	if l == nil {
@@ -243,5 +322,5 @@ func (l *WakeRateLimiter) BucketCount() int {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return len(l.appBuckets) + len(l.acctBuckets)
+	return len(l.appBuckets) + len(l.acctBuckets) + len(l.jobBuckets)
 }

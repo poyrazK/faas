@@ -1895,6 +1895,123 @@ type Store interface {
 	// lastFiredAt map; PgStore uses a column added in migration 00003.
 	MarkCronFired(ctx context.Context, cronID string, at time.Time) error
 
+	// Jobs (ADR-099). apid is the only writer to jobs; schedd (PR-C)
+	// writes job_runs + job_tasks on every dispatch and reads them on
+	// every tick. The interface is the single seam between PR-D's
+	// HTTP handlers and the underlying store; MemStore keeps an
+	// in-memory map (sufficient for unit tests, never wired to a
+	// real control plane) and PgStore uses the jobs/job_runs/job_tasks
+	// tables from migrations/00255.
+	//
+	// CreateJob is the un-capped insert path used by tests. The
+	// customer-facing handler always calls CreateJobIfUnderQuota
+	// (same TOCTOU-defence pattern as CreateCronIfUnderQuota).
+	CreateJob(ctx context.Context, j Job) (Job, error)
+	// CreateJobIfUnderQuota inserts a job iff the per-account cap
+	// (limits.JobMaxPerAccount) is not yet reached. Returns:
+	//   - (Job{}, *JobQuotaError) when the cap trips
+	//   - (Job{}, ErrNotFound) when account row is missing or deleted
+	//   - (Job{}, ErrConflict) on a duplicate (account_id, name)
+	CreateJobIfUnderQuota(ctx context.Context, j Job, limits api.Limits) (Job, error)
+	GetJob(ctx context.Context, id, accountID string) (Job, error)
+	GetJobByName(ctx context.Context, accountID, name string) (Job, error)
+	ListJobsForAccount(ctx context.Context, accountID string) ([]Job, error)
+	// UpdateJob mutates the optional fields of a job row. nil pointers
+	// (and nil maps) leave the field untouched, matching UpdateCron /
+	// UpdateAlertRule. The *JobStatus parameter lets PR-D's pause
+	// endpoint flip active ⇄ paused; nil means "don't change".
+	UpdateJob(ctx context.Context, id, accountID string, name, imageRef *string, ramMb, taskTimeoutS, maxParallelism, retryMax *int32, envOverrides *map[string]string, status *JobStatus) (Job, error)
+	// DeleteJob soft-deletes via status='deleted' (matches the
+	// soft-tombstone pattern in DeleteCron). Counts in
+	// CountJobsForAccount exclude 'deleted' rows.
+	DeleteJob(ctx context.Context, id, accountID string) error
+	CountJobsForAccount(ctx context.Context, accountID string) (int32, error)
+
+	// Job runs (ADR-099). Created by schedd (PR-C) on POST
+	// /v1/jobs/{name}/runs (PR-D). CreateJobRun materialises the
+	// run row; InsertJobTasks bulk-inserts N task rows in one
+	// round-trip (pgx CopyFrom). Caller passes in a transaction
+	// boundary in pgstore.go.
+	CreateJobRun(ctx context.Context, r JobRun) (JobRun, error)
+	InsertJobTasks(ctx context.Context, runID string, taskIndices []int32) error
+	GetJobRun(ctx context.Context, id, accountID string) (JobRun, error)
+	// GetJobRunInternal (ADR-099 PR-C) reads a run row by id,
+	// bypassing the per-account ACL check. schedd is a trusted
+	// internal caller: the dispatch tick (dispatch_jobs.go) walks
+	// (runID, taskIndex) tuples via ClaimJobTasks and resolves the
+	// full run row to drive WakeJob. The customer-facing apid
+	// handlers must NOT use this getter — they go through
+	// GetJobRun with the customer-supplied accountID so a wrong
+	// id surfaces as 404 rather than a cross-account leak.
+	GetJobRunInternal(ctx context.Context, id string) (JobRun, error)
+	ListJobRunsForJob(ctx context.Context, jobID, accountID string) ([]JobRun, error)
+	// JobTaskByRunAndIndex (ADR-099 PR-C) reads a single task
+	// row by (runID, taskIndex). Used by schedd's dispatch tick
+	// after ClaimJobTasks returns the (runID, taskIndex) tuple;
+	// WakeJob needs the task's ImageRef + TaskTimeoutS +
+	// per-task env. The composite primary key is
+	// (run_id, task_index) (migrations/00255) so this is an
+	// index-only lookup.
+	JobTaskByRunAndIndex(ctx context.Context, runID string, taskIndex int32) (JobTask, error)
+	// ClaimJobTasks atomically claims up to N queued tasks for a
+	// run. FOR UPDATE SKIP LOCKED is the canonical shape; two
+	// schedd instances never grab the same task row. Caller then
+	// flips status queued → claimed via MarkJobTaskClaimed.
+	ClaimJobTasks(ctx context.Context, runID string, limit int32) ([]ClaimedJobTask, error)
+	// ListReadyJobTasks surfaces queued tasks across all runs for
+	// the schedd dispatch-tick hot path. Backed by the
+	// job_tasks_ready_idx partial index. PR-C may batch up to
+	// `limit` rows per tick.
+	ListReadyJobTasks(ctx context.Context, limit int32) ([]ListReadyJobTask, error)
+
+	// MarkJobTask* are the per-task state transitions. PR-C's
+	// job_supervisor + dispatch tick emit them; the run-level
+	// fan-in (RecomputeJobRunStatus) is called by the caller
+	// AFTER each terminal mark.
+	MarkJobTaskClaimed(ctx context.Context, runID string, taskIndex int32, instanceID string) error
+	// MarkJobTaskRequeued flips status claimed → queued. The
+	// dispatch tick uses this on ErrJobAdmissionRefused: the
+	// per-account concurrency cap refused the wake, so the
+	// task row needs to land back on the ready-queue so the
+	// next tick re-claims it. Without this, the row stays in
+	// 'claimed' forever (ListReadyJobTasks only returns
+	// 'queued' rows) and the dispatch tick silently drops the
+	// task. Mirrors the cron tick's AtCapacity backoff shape.
+	MarkJobTaskRequeued(ctx context.Context, runID string, taskIndex int32) error
+	MarkJobTaskSucceeded(ctx context.Context, runID string, taskIndex int32) error
+	MarkJobTaskFailed(ctx context.Context, runID string, taskIndex int32, errorClass, errorMessage string) error
+	MarkJobTaskTimeout(ctx context.Context, runID string, taskIndex int32) error
+	MarkJobTaskOOM(ctx context.Context, runID string, taskIndex int32) error
+	MarkJobTaskCancelled(ctx context.Context, runID string, taskIndex int32) error
+	// MarkJobTaskRetried (ADR-099 PR-D) flips a terminal-failure
+	// task back to 'queued' for re-dispatch. Caller must verify
+	// the current status is one of failed/timeout/oom/cancelled
+	// (handlers_jobs.go::retryTask does this); the store's gate
+	// is the `WHERE status IN (...)` clause. resetAttempt=true
+	// zeroes the per-task attempt counter; false leaves it for
+	// retry_max enforcement on the dispatch path. Returns
+	// ErrConflict when the current status is not retryable (so
+	// a parallel dispatch tick can't race the manual retry).
+	MarkJobTaskRetried(ctx context.Context, runID string, taskIndex int32, resetAttempt bool) error
+	// RecomputeJobRunStatus is the pure-SQL run-level fan-in. Reads
+	// the live task counters, updates the aggregate_status +
+	// tasks_* fields + finished_at in one UPDATE.
+	RecomputeJobRunStatus(ctx context.Context, runID string) (JobRun, error)
+	// MarkJobRunCancelled (ADR-099 PR-D) is the user-initiated
+	// bulk-cancel gate. Sets aggregate_status='cancelled' on the
+	// run row and signals schedd (via pg_notify from the caller)
+	// to fan-out per-task MarkJobTaskCancelled on the in-flight
+	// tasks. Non-terminal runs only — calling on a terminal run
+	// returns ErrConflict. The dispatch tick is the only writer
+	// that flips aggregate_status once a run is terminal.
+	MarkJobRunCancelled(ctx context.Context, runID string) error
+	// ListRunTasksForRun (ADR-099 PR-D) pages the child task
+	// rows in task_index order. before is the task_index cursor
+	// (rows with task_index > before are returned); empty
+	// before = first page. The order is stable so the cursor
+	// pagination is well-defined.
+	ListRunTasksForRun(ctx context.Context, runID, before string, limit int) ([]JobTask, error)
+
 	// Fire-now request queue (ADR-090 PR-C / migrations/00193).
 	// apid inserts on POST /v1/crons/{id}/run; schedd claims +
 	// dispatches via RunCronNow. The interface is the single seam
@@ -2426,6 +2543,27 @@ type Store interface {
 	// calls this between a successful vmmd boot and the RUNNING transition so the
 	// gateway can route to host_ip:8080 (spec §7).
 	SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error
+	// CreateJobInstance (ADR-099 / PR-C) stamps a kind='job_task'
+	// instance row with app_id=NULL, job_id=$1, and the cold-boot
+	// state. The pair-CHECK instances_app_or_job_chk (migration
+	// 00256) enforces the app_id/job_id XOR at the schema layer so a
+	// future caller cannot bypass this contract by passing a
+	// non-empty appID. wakeID follows the same gen_random_uuid()
+	// fallback as CreateInstance. schedd's WakeJob is the only
+	// caller; the dispatch tick (dispatch_jobs.go::runJobsTick)
+	// invokes WakeJob after FOR UPDATE SKIP LOCKED claims the
+	// job_tasks row, so concurrent claims cannot race the INSERT.
+	CreateJobInstance(ctx context.Context, jobID, state string, ramMB int, nodeID, wakeID string) (Instance, error)
+	// CountLiveJobTasksForAccount (ADR-099 / PR-C) returns the
+	// number of kind='job_task' instances currently in {WAKING,
+	// COLD_BOOTING, RUNNING} for the given account. schedd
+	// consults this against JobMaxConcurrentPerAccount before
+	// admitting a new task; the partial index
+	// instances_job_id_idx WHERE job_id IS NOT NULL (migration
+	// 00256) keeps the count O(log N) rather than a seq-scan.
+	// Returns 0 when no live task instances exist (the common case
+	// on a Hobby account with no in-flight runs).
+	CountLiveJobTasksForAccount(ctx context.Context, accountID string) (int, error)
 	// RunningInstanceForApp returns the newest RUNNING instance for an app, or
 	// ErrNotFound when none is live. schedd uses it to make Wake idempotent and
 	// the gateway to seed its route target on startup.

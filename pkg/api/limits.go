@@ -340,6 +340,77 @@ type Limits struct {
 	CronLimitPerApp     int
 	CronLimitPerAccount int
 
+	// JobMaxPerAccount caps how many job definitions an account
+	// may hold (ADR-099, migrations/00255). Soft-enforced in
+	// pkg/state.PgStore.CreateJobIfUnderQuota. Per-plan shape
+	// (mirrors CronLimitPerAccount but a single number — there is
+	// no per-app cron analogue for jobs):
+	//   Free 0 · Hobby 5 · Pro 25 · Scale 100.
+	// Free = 0 because jobs are a paid workload (the budget is the
+	// GB-h bill, not the count); the dashboard surfaces "Upgrade to
+	// create jobs" on Free. Reconciled with the financial model in
+	// task #19.
+	JobMaxPerAccount int
+
+	// JobMaxConcurrentPerAccount (ADR-099 PR-C) caps the number
+	// of kind='job_task' instances an account may have in {WAKING,
+	// COLD_BOOTING, RUNNING} concurrently. schedd's WakeJob consults
+	// this against CountLiveJobTasksForAccount BEFORE admitting a
+	// new task; the apid route gates CreateJobRequest at this
+	// ceiling too. Free = 0 (fail-closed: the apid side returns
+	// CodeJobsNotAllowed; schedd's consult is the backstop). Per-
+	// plan shape:
+	//   Free 0 · Hobby 3 · Pro 8 · Scale 32.
+	JobMaxConcurrentPerAccount int
+
+	// JobWakeBurstPerAccount (ADR-099 PR-C) is the per-minute
+	// wake-admission ceiling for the job-side rate-limit bucket
+	// (pkg/sched.WakeRateLimiter.jobBuckets). Distinct from
+	// WakeBurstPerAccount so a customer's job burst cannot drain
+	// the same bucket their app wake path uses (Option B — the
+	// separate-buckets direction in the implementation plan).
+	// Per-plan shape:
+	//   Free 0 · Hobby 5 · Pro 25 · Scale 100.
+	JobWakeBurstPerAccount int
+
+	// JobMaxRAMMB (ADR-099 PR-C) caps the per-task RAM ceiling at
+	// the apid gate. The dispatch tick and schedd's WakeJob do NOT
+	// consult this — WakeJob trusts the validated request shape.
+	// Per-plan shape:
+	//   Free 0 · Hobby 512 · Pro 2048 · Scale 4096.
+	JobMaxRAMMB int
+
+	// JobMaxTaskTimeoutS (ADR-099 PR-D) caps the per-task
+	// task_timeout_s ceiling at the apid gate. Distinct from the
+	// build-time BuildTimeoutS (10 min, hard-coded across all
+	// plans) because jobs are customer-shaped: Hobby's 5-min cap
+	// keeps long ETL off the abuse-floor tier; Scale's 60-min cap
+	// reflects the per-task workload reality (a midnight data
+	// import that takes 45 min). Enforced in apid's CreateJob /
+	// UpdateJob validator with 400 CodeJobTimeoutTooLong.
+	// Per-plan shape:
+	//   Free 0 · Hobby 300 · Pro 1800 · Scale 3600.
+	JobMaxTaskTimeoutS int
+
+	// JobMaxParallelismPerRun (ADR-099 PR-D) caps how many tasks a
+	// single CreateRun may schedule in parallel. Distinct from
+	// JobMaxConcurrentPerAccount (a backpressure cap on live task
+	// instances — enforced at wake time) and from
+	// JobMaxTasksPerRun (the absolute upper bound on the fan-out
+	// tree). Per-plan shape reflects the per-plan fan-out ceiling
+	// a single run is allowed to trigger:
+	//   Free 0 · Hobby 10 · Pro 25 · Scale 50.
+	JobMaxParallelismPerRun int
+
+	// JobMaxTasksPerRun (ADR-099 PR-D) caps the absolute number of
+	// tasks a single CreateRun can request (sum, not concurrency).
+	// Defends the dispatch tick + meterd rollup from the
+	// "create one run with 100k tasks" abuse shape — even with
+	// parallelism=1, the schedd would walk the task list once and
+	// write N rows. Per-plan shape:
+	//   Free 0 · Hobby 100 · Pro 1000 · Scale 5000.
+	JobMaxTasksPerRun int
+
 	// EvictionPriorityReservedAllowed (issue #475) gates the per-app
 	// reserved eviction tier. Free = false (no reserved apps on the
 	// abuse-floor tier); Hobby+ = true. apid's updateApp handler
@@ -877,6 +948,24 @@ var planLimits = map[Plan]Limits{
 		// value the store still reads.
 		CronLimitPerApp:     0,
 		CronLimitPerAccount: 0,
+		// ADR-099: Free plan ships 0 jobs. The dashboard renders
+		// "Upgrade to create jobs" on POST /v1/jobs (PR-D).
+		JobMaxPerAccount: 0,
+		// PR-C: Free — fail-closed on every jobs surface. The apid
+		// route returns CodeJobsNotAllowed (PR-D), schedd's per-
+		// account concurrency consult is the backstop. Wake-burst=0
+		// means even an operator-only force-bypass path returns
+		// false from AllowWakeJobAccount.
+		JobMaxConcurrentPerAccount: 0,
+		JobWakeBurstPerAccount:     0,
+		JobMaxRAMMB:                0,
+		// PR-D: Free — every job-shape cap stays 0. The apid route
+		// gates before the store consult, but the values are kept
+		// here so ErrJob*LimitExceeded-style shape checks share the
+		// same source of truth as the rest of the Limits struct.
+		JobMaxTaskTimeoutS:      0,
+		JobMaxParallelismPerRun: 0,
+		JobMaxTasksPerRun:       0,
 		// Issue #475: Free stays off the reserved eviction tier. The
 		// abuse-floor tier has no reserved-tier entitlement; per-account
 		// cap is 0 so the gate fails closed.
@@ -1113,6 +1202,27 @@ var planLimits = map[Plan]Limits{
 		// template's tutorials.
 		CronLimitPerApp:     5,
 		CronLimitPerAccount: 10,
+		// ADR-099: Hobby plan ships 5 jobs (CI nightly + scrapers).
+		JobMaxPerAccount: 5,
+		// PR-C: Hobby — 3 concurrent tasks (a Hobby customer's
+		// scraper + nightly + a one-off migration run fits). 5/min
+		// burst accommodates the cron-tick firing N wakes in one
+		// second (the wake-burst bucket refills at per-minute
+		// granularity — see rate_limit.go). 512 MB / task covers
+		// typical data-processing workloads.
+		JobMaxConcurrentPerAccount: 3,
+		JobWakeBurstPerAccount:     5,
+		JobMaxRAMMB:                512,
+		// PR-D: Hobby — 5-min cap keeps long ETL off the abuse-floor
+		// tier (the customer's "5-min Hobby job" workload is the
+		// typical CI-nightly + scraper shape). 10 parallel / 100
+		// tasks-per-run fits Hobby's "3 concurrent wake ceiling"
+		// (parallelism can't run more than JobMaxConcurrentPerAccount
+		// tasks live at once anyway — these are ceiling values for
+		// the request shape, not the runtime fan-out).
+		JobMaxTaskTimeoutS:      300,
+		JobMaxParallelismPerRun: 10,
+		JobMaxTasksPerRun:       100,
 		// Issue #475: Hobby gets 1 reserved-tier app. One healthcheck-
 		// critical service (status page, uptime probe) is the typical
 		// Hobby workload that needs cross-account RAM-pressure
@@ -1350,6 +1460,24 @@ var planLimits = map[Plan]Limits{
 		// run more apps (25) than Hobby (5).
 		CronLimitPerApp:     20,
 		CronLimitPerAccount: 50,
+		// ADR-099: Pro plan ships 25 jobs (parity with DeployedApps).
+		JobMaxPerAccount: 25,
+		// PR-C: Pro — 8 concurrent tasks (Pro customers run fan-out
+		// ETL pipelines; 8 covers the typical data-warehouse
+		// staging-area workload without saturating the per-VM
+		// concurrency bound of 25). 25/min burst matches the
+		// per-account wake-burst ceiling the wake side uses.
+		JobMaxConcurrentPerAccount: 8,
+		JobWakeBurstPerAccount:     25,
+		JobMaxRAMMB:                2048,
+		// PR-D: Pro — 30-min cap covers the typical ETL pipeline
+		// shape (nightly warehouse load + hourly aggregation).
+		// 25 parallel / 1000 tasks-per-run matches the Pro
+		// MaxConcurrency=5 ceiling with headroom for batch-shape
+		// fan-out.
+		JobMaxTaskTimeoutS:      1800,
+		JobMaxParallelismPerRun: 25,
+		JobMaxTasksPerRun:       1000,
 		// Issue #475: Pro gets 2 reserved-tier apps. Pro customers
 		// run customer-facing APIs + background workers; the +1 vs
 		// Hobby tracks the +5 Pro app budget. Reserved-tier RAM cost
@@ -1572,6 +1700,24 @@ var planLimits = map[Plan]Limits{
 		// at the per-app cap, the typical SaaS fan-out.
 		CronLimitPerApp:     100,
 		CronLimitPerAccount: 500,
+		// ADR-099: Scale plan ships 100 jobs (parity with DeployedApps).
+		JobMaxPerAccount: 100,
+		// PR-C: Scale — large. 32 concurrent tasks (twice the per-VM
+		// ConcurrencyPerVMBound of 80 — a Scale customer can saturate
+		// 2 cold-boot task VMs at once). 4 GB per task covers heavy
+		// data-processing pipelines.
+		JobMaxConcurrentPerAccount: 32,
+		JobWakeBurstPerAccount:     100,
+		JobMaxRAMMB:                4096,
+		// PR-D: Scale — 60-min cap for the long ETL / batch-shape
+		// workloads Scale customers run (midnight warehouse load
+		// can take 45 min). 50 parallel / 5000 tasks-per-run is the
+		// ceiling that fits within JobMaxConcurrentPerAccount=32
+		// (parallelism is a request-shape upper bound; the runtime
+		// fan-out is still gated by 32).
+		JobMaxTaskTimeoutS:      3600,
+		JobMaxParallelismPerRun: 50,
+		JobMaxTasksPerRun:       5000,
 		// Issue #475: Scale gets 4 reserved-tier apps. 2× Pro tracks
 		// the doubling in DeployedApps (25 → 100) and the doubling in
 		// MaxConcurrency (5 → 20). At Scale's 1024 MB instance RAM +
@@ -3454,6 +3600,100 @@ func (p Plan) AlertRuleLimitPerAccount() int {
 		return 0
 	}
 	return l.AlertRuleLimitPerAccount
+}
+
+// ADR-099 PR-D: jobs (run-to-completion workloads) accessors.
+// Mirror the CronLimit / AlertRuleLimit family so the apid
+// validators and dashboard renderers can use a single Plan method
+// per field. Unknown plans fail closed (return 0) — same contract
+// as the other accessors above. Free=0 because the apid route gates
+// before the store consult (CodeJobsNotAllowed), but the value is
+// kept in the table for symmetry + defence-in-depth.
+
+// JobMaxPerAccount returns the per-account job-definition cap.
+// Free 0; Hobby 5; Pro 25; Scale 100. Mirrors CronLimitPerAccount
+// but a single number — there is no per-app cron analogue for jobs
+// (a job definition spans tasks across runs, not apps).
+func (p Plan) JobMaxPerAccount() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.JobMaxPerAccount
+}
+
+// JobMaxConcurrentPerAccount returns the per-account live-task
+// concurrency cap. schedd's WakeJob consults this against
+// CountLiveJobTasksForAccount before admitting a new task; the
+// apid route gates CreateJobRequest at this ceiling too. Free 0
+// (fail-closed); Hobby 3; Pro 8; Scale 32.
+func (p Plan) JobMaxConcurrentPerAccount() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.JobMaxConcurrentPerAccount
+}
+
+// JobWakeBurstPerAccount returns the per-minute wake-admission
+// ceiling for the job-side rate-limit bucket
+// (pkg/sched.WakeRateLimiter.jobBuckets). Distinct from
+// WakeBurstPerAccount — Option B (separate-buckets direction).
+// Free 0; Hobby 5; Pro 25; Scale 100.
+func (p Plan) JobWakeBurstPerAccount() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.JobWakeBurstPerAccount
+}
+
+// JobMaxRAMMB returns the per-task RAM ceiling. apid validator
+// gates CreateJobRequest / UpdateJobRequest at this value with 400
+// CodeJobRAMTooLarge. Free 0; Hobby 512; Pro 2048; Scale 4096.
+func (p Plan) JobMaxRAMMB() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.JobMaxRAMMB
+}
+
+// JobMaxTaskTimeoutS returns the per-task timeout ceiling. apid
+// validator gates CreateJobRequest / UpdateJobRequest at this
+// value with 400 CodeJobTimeoutTooLong. Free 0; Hobby 300; Pro
+// 1800; Scale 3600.
+func (p Plan) JobMaxTaskTimeoutS() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.JobMaxTaskTimeoutS
+}
+
+// JobMaxParallelismPerRun returns the per-run parallelism ceiling
+// (the upper bound on tasks scheduled in parallel). apid
+// CreateRunRequest validator uses this. Free 0; Hobby 10; Pro 25;
+// Scale 50.
+func (p Plan) JobMaxParallelismPerRun() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.JobMaxParallelismPerRun
+}
+
+// JobMaxTasksPerRun returns the absolute upper bound on tasks
+// per CreateRun. Defends dispatch + meterd rollup from the
+// "create one run with 100k tasks" abuse shape. apid
+// CreateRunRequest validator uses this. Free 0; Hobby 100; Pro
+// 1000; Scale 5000.
+func (p Plan) JobMaxTasksPerRun() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.JobMaxTasksPerRun
 }
 
 // WebhookPerApp returns the per-app outbound-webhook subscription cap

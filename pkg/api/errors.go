@@ -450,6 +450,19 @@ const (
 	CodeHandlerMissing    = "handler_missing"
 	CodeImageRequired     = "image_required"
 	CodeDeployFailed      = "deploy_failed"
+	// ADR-099 PR-D: jobs API surface error codes. The Codes are
+	// stable strings that apid + SDK + dashboard all key off —
+	// changing them is a wire break.
+	CodeJobsNotAllowed      = "jobs_not_allowed" // FAAS_JOBS_ENABLED=0 — Free plan / dark-launch
+	CodeJobNotFound         = "job_not_found"
+	CodeJobQuotaExceeded    = "job_quota_exceeded" // JobMaxPerAccount cap
+	CodeJobTaskNotFound     = "job_task_not_found"
+	CodeJobRunNotFound      = "job_run_not_found"
+	CodeJobRunCancelled     = "job_run_cancelled" // 409 — already terminal
+	CodeJobDeadlineExceeded = "job_deadline_exceeded"
+	CodeJobInvalid          = "job_invalid"          // 400 — name / image_ref / ram_mb / task_timeout_s shape
+	CodeJobRAMTooLarge      = "job_ram_too_large"    // 400 — exceeds plan JobMaxRAMMB
+	CodeJobTimeoutTooLong   = "job_timeout_too_long" // 400 — exceeds plan JobMaxTaskTimeoutS
 	// CodeSigInvalid is returned by schedd when the layer's
 	// signature fails verification (or is missing) on cold-boot.
 	// The deployment transitions to DeployFailed with this code;
@@ -1384,6 +1397,28 @@ func StatusForCode(code string) int {
 		return http.StatusUnsupportedMediaType
 	case CodeRequestTooLarge:
 		return http.StatusRequestEntityTooLarge
+	// ADR-099 PR-D: jobs (run-to-completion workloads) error codes.
+	// Plan gate is 402 (mirror the Cron / AlertRules / Webhooks
+	// 402 family — a deliberate account-level setting that
+	// requires customer action, not a retry). Quota overage is
+	// 403 (mirror CodePlanCronQuota). 404 family covers the
+	// disabled-surface + not-found paths (mirror the IDOR
+	// convention — cross-tenant access returns 404, never 403).
+	// 400 family covers request-shape failures (mirror
+	// CodeCronInvalid). 409 for already-cancelled run state.
+	// 504 for deadline overrun (mirror GatewayTimeout — the
+	// upstream guest-init did not signal job_exit inside the
+	// per-task budget; the SDK can branch on `code` to retry).
+	case CodeJobsNotAllowed, CodeJobNotFound, CodeJobTaskNotFound, CodeJobRunNotFound:
+		return http.StatusNotFound
+	case CodeJobInvalid, CodeJobRAMTooLarge, CodeJobTimeoutTooLong:
+		return http.StatusBadRequest
+	case CodeJobQuotaExceeded:
+		return http.StatusForbidden
+	case CodeJobRunCancelled:
+		return http.StatusConflict
+	case CodeJobDeadlineExceeded:
+		return http.StatusGatewayTimeout
 	default:
 		return http.StatusInternalServerError
 	}
@@ -3249,4 +3284,136 @@ func ErrRequestValidationFailed(ruleID string, errs []FieldError) *Problem {
 	}
 	p.Errors = errs
 	return p
+}
+
+// ADR-099 PR-D: jobs (run-to-completion workloads) error factories.
+// Pattern after the cron / alert-rule / webhook 4xx families so the
+// CLI + dashboard can reuse the upsell-vs-quota rendering without
+// new branches.
+
+// ErrJobsNotAllowed is the 404 apid returns when FAAS_JOBS_ENABLED=0
+// (default until the jobs cluster dark-launches) or the customer's
+// plan has JobMaxPerAccount == 0 (Free today). 404 (not 402) because
+// the dashboard's dark-launch copy renders a "feature-not-yet-on"
+// notice distinct from the cron "upgrade to Hobby" upsell, and 404
+// keeps the route shape consistent with /v1/jobs/{id} when the id
+// itself is unknown. Companion to CodeJobsNotAllowed which
+// StatusForCode maps to 404 above.
+func ErrJobsNotAllowed() *Problem {
+	return NewProblem(http.StatusNotFound, CodeJobsNotAllowed,
+		"Jobs are not available",
+		"the jobs cluster is not enabled on this control plane. Set FAAS_JOBS_ENABLED=1 on schedd + apid to opt in.").
+		WithDocs(docsBase + "/jobs")
+}
+
+// ErrJobNotFound is the 404 returned by GetJob / UpdateJob / DeleteJob
+// when the id is unknown OR the job belongs to a different account
+// (IDOR convention — cross-tenant access returns 404, never 403).
+func ErrJobNotFound(id string) *Problem {
+	return NewProblem(http.StatusNotFound, CodeJobNotFound,
+		"Job not found",
+		fmt.Sprintf("no job with id %q exists for this account.", id))
+}
+
+// ErrJobQuotaExceeded is the 403 returned by CreateJob when the
+// account already holds JobMaxPerAccount jobs. Distinct from a plan
+// upgrade prompt (that's ErrJobsNotAllowed above + 404); the
+// customer IS on a plan that unlocks jobs but they've maxed the cap
+// — the correct copy is "delete a job to add another", not "upgrade
+// plan". scope is PlanQuotaScopeAccount / PlanQuotaScopeApp; today
+// only the account scope is enforced (per-app job quotas are
+// deferred to v2).
+func ErrJobQuotaExceeded(plan Plan, scope string, limit, observed int) *Problem {
+	scopeName := PlanQuotaScopeDisplayName(scope)
+	return NewProblem(http.StatusForbidden, CodeJobQuotaExceeded,
+		"Job limit reached",
+		fmt.Sprintf("%s plan caps jobs at %d for %s; you have %d. Delete one to add another.",
+			plan, limit, scopeName, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#jobs")
+}
+
+// ErrJobTaskNotFound is the 404 returned by ListRunTasks / RetryTask
+// when the run id is unknown OR the task_index falls outside the
+// run's task count. Mirrors ErrJobNotFound's IDOR convention — the
+// run id belongs to a different account returns 404, not 403, so the
+// surface is impossible to enumerate cross-tenant.
+func ErrJobTaskNotFound(runID string, taskIndex int) *Problem {
+	return NewProblem(http.StatusNotFound, CodeJobTaskNotFound,
+		"Job task not found",
+		fmt.Sprintf("no task %d on run %q exists for this account.", taskIndex, runID))
+}
+
+// ErrJobRunNotFound is the 404 returned by GetRun / ListRuns /
+// CancelRun when the run id is unknown OR the run belongs to a
+// different account (IDOR convention). Mirrors ErrJobNotFound.
+func ErrJobRunNotFound(id string) *Problem {
+	return NewProblem(http.StatusNotFound, CodeJobRunNotFound,
+		"Job run not found",
+		fmt.Sprintf("no run with id %q exists for this account.", id))
+}
+
+// ErrJobRunCancelled is the 409 returned by CancelRun when the run
+// is already in a terminal state (succeeded / failed / cancelled /
+// deadline_exceeded). 409 mirrors CodeOrgSlugTaken / CodeConflict —
+// the operation is well-formed but conflicts with the resource's
+// current state, not "your plan forbids this" (403) and not "the
+// surface is gated" (402).
+func ErrJobRunCancelled(id string) *Problem {
+	return NewProblem(http.StatusConflict, CodeJobRunCancelled,
+		"Job run already terminal",
+		fmt.Sprintf("run %q is already in a terminal state; cancellation is a no-op.", id))
+}
+
+// ErrJobDeadlineExceeded is the 504 returned by WakeJob when the
+// guest-init supervisor does not signal job_exit inside the per-task
+// budget. Mirrors CodeWaitForWarm's "upstream timed out" family so
+// SDK agents can branch on `code` for actionable retry guidance.
+// 504 (not 408 or 503) is deliberate: the request was well-formed
+// and the upstream was reached, but did not complete in time.
+func ErrJobDeadlineExceeded(runID string, taskIndex int, deadlineS int) *Problem {
+	return NewProblem(http.StatusGatewayTimeout, CodeJobDeadlineExceeded,
+		"Job task deadline exceeded",
+		fmt.Sprintf("task %d on run %q did not signal completion within %ds; the VM was force-stopped.", taskIndex, runID, deadlineS))
+}
+
+// ErrJobInvalid is the 400 returned by CreateJob / UpdateJob when the
+// body shape fails validation (missing name, malformed image_ref,
+// non-positive ram_mb, non-positive task_timeout_s, max_parallelism
+// outside [1, JobMaxParallelismPerRun]). Mirrors CodeCronInvalid's
+// "shape failure" contract; the detail string carries the field that
+// failed so the SDK can surface it on the form. The plan-shape
+// failures (ram_mb > JobMaxRAMMB, task_timeout_s > JobMaxTaskTimeoutS)
+// use the dedicated ErrJobRAMTooLarge / ErrJobTimeoutTooLong below.
+func ErrJobInvalid(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeJobInvalid,
+		"Invalid job",
+		reason).
+		WithDocs(docsBase + "/jobs")
+}
+
+// ErrJobRAMTooLarge is the 400 returned when the requested ram_mb
+// exceeds the plan's JobMaxRAMMB cap. Distinct from CodePlanLimitRAM
+// (the app wake path) because the customer-facing limit name is
+// different — the financial-model ledger counts app RAM and job RAM
+// separately, so reusing CodePlanLimitRAM would mis-pivot telemetry.
+// 400 (not 403) because the request is shape-wrong for this plan;
+// the customer could right-size the ram_mb and resubmit.
+func ErrJobRAMTooLarge(plan Plan, requestedMB, capMB int) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeJobRAMTooLarge,
+		"Job RAM exceeds plan cap",
+		fmt.Sprintf("%s plan caps job RAM at %d MB; %d MB requested.", plan, capMB, requestedMB)).
+		WithLimit(int64(capMB), int64(requestedMB)).
+		WithDocs(docsBase + "/plans#jobs")
+}
+
+// ErrJobTimeoutTooLong is the 400 returned when the requested
+// task_timeout_s exceeds the plan's JobMaxTaskTimeoutS cap. Mirrors
+// ErrJobRAMTooLarge's 400 + WithLimit shape.
+func ErrJobTimeoutTooLong(plan Plan, requestedS, capS int) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeJobTimeoutTooLong,
+		"Job timeout exceeds plan cap",
+		fmt.Sprintf("%s plan caps per-task timeout at %ds; %ds requested.", plan, capS, requestedS)).
+		WithLimit(int64(capS), int64(requestedS)).
+		WithDocs(docsBase + "/plans#jobs")
 }
