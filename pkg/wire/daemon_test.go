@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -366,4 +367,148 @@ func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// TestDaemon_SIGHUPReloadsLevel re-execs the test binary as a real
+// daemon child, sends it SIGHUP, and asserts the shared leveler
+// mutated — observable from the parent via the child's stderr
+// (issue #550 acceptance criteria).
+//
+// Flake history (issue #550): a StderrPipe + bufio.Scanner version was
+// environmentally flaky — the kernel pipe buffer was not reliably
+// drained to the parent's scanner before the deadline. This version
+// hands the child an *os.File (temp file) as stderr: exec wires the fd
+// straight into the child, every slog emit is a direct write(2), and
+// the parent polls by re-reading the file. No pipe is involved.
+//
+// Level choreography: the package-level LevelVar initializes from
+// FAAS_LOG_LEVEL at package init (daemon.go), so the parent strips the
+// variable from the child's env (child boots at INFO) and the child
+// sets it to "debug" after init, before Daemon(). The SIGHUP re-read
+// then flips INFO → DEBUG. The daemon body emits log.Debug probes on a
+// ticker: suppressed before the flip, visible after — direct evidence
+// the handler's leveler mutated, not just that the reload goroutine
+// logged.
+func TestDaemon_SIGHUPReloadsLevel(t *testing.T) {
+	if os.Getenv("WIRE_SIGHUP_CHILD") == "1" {
+		// Child: package init already ran with FAAS_LOG_LEVEL unset,
+		// so the leveler is at INFO. Arrange for the SIGHUP re-read
+		// to see "debug".
+		os.Setenv(wire.EnvLogLevel, "debug")
+		wire.Daemon("testd", func(ctx context.Context, log *slog.Logger) error {
+			for {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(25 * time.Millisecond):
+					// Suppressed at INFO; visible only after the
+					// SIGHUP-driven flip to DEBUG.
+					log.Debug("debug probe")
+				}
+			}
+		})
+		return
+	}
+
+	stderrPath := filepath.Join(t.TempDir(), "child-stderr.log")
+	stderrFile, err := os.Create(stderrPath)
+	if err != nil {
+		t.Fatalf("create child stderr file: %v", err)
+	}
+	defer stderrFile.Close()
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestDaemon_SIGHUPReloadsLevel$")
+	// Strip FAAS_LOG_LEVEL so the child's package init boots the
+	// leveler at INFO regardless of the CI environment.
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, wire.EnvLogLevel+"=") {
+			env = append(env, kv)
+		}
+	}
+	// Sentinel last: exec.Cmd dedups by keeping the final occurrence of
+	// a key, so appending here beats any ambient WIRE_SIGHUP_CHILD in
+	// the developer's shell (a stale "=0" would send the child down the
+	// parent branch and fork-bomb the test).
+	env = append(env, "WIRE_SIGHUP_CHILD=1")
+	cmd.Env = env
+	// Both streams go to the same file: slog writes to stderr, but the
+	// child's go-test framework reports failures on stdout — without
+	// this a child framework failure surfaces as a bare "exit status 1".
+	cmd.Stdout = stderrFile
+	cmd.Stderr = stderrFile
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	t.Cleanup(func() {
+		// Best-effort: no-ops with "process already finished" after a
+		// clean Wait; prevents an orphan on assertion failure.
+		_ = cmd.Process.Kill()
+	})
+
+	// waitFor polls the child's stderr file until substr appears,
+	// returning the full contents; fails the test on timeout.
+	waitFor := func(substr string, timeout time.Duration) string {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			b, readErr := os.ReadFile(stderrPath)
+			if readErr == nil && strings.Contains(string(b), substr) {
+				return string(b)
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		b, _ := os.ReadFile(stderrPath)
+		t.Fatalf("timed out after %v waiting for %q in child stderr; got:\n%s", timeout, substr, b)
+		return "" // unreachable
+	}
+
+	// Daemon() calls signal.Notify for SIGHUP before it logs
+	// "starting" (daemon.go), so once "starting" is visible the HUP
+	// handler is installed and there is no delivery race.
+	waitFor(`"msg":"starting"`, 10*time.Second)
+
+	// Snapshot stderr strictly before the signal: everything in it was
+	// written while the leveler was still at INFO, so it is a
+	// race-free witness for the pre-flip assertion below. Slicing the
+	// post-flip output at the "log level changed" marker would NOT be:
+	// watchLogLevelReload calls logLevel.Set(next) before it emits that
+	// marker (daemon.go), so a probe tick landing in that window is
+	// legitimately written ahead of the marker.
+	preFlip, err := os.ReadFile(stderrPath)
+	if err != nil {
+		t.Fatalf("snapshot child stderr before SIGHUP: %v", err)
+	}
+
+	if err := cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatalf("send SIGHUP: %v", err)
+	}
+
+	out := waitFor(`"msg":"log level changed"`, 10*time.Second)
+	if !strings.Contains(out, `"prev":"INFO"`) || !strings.Contains(out, `"next":"DEBUG"`) {
+		t.Errorf(`"log level changed" record lacks "prev":"INFO"/"next":"DEBUG"; child stderr:`+"\n%s", out)
+	}
+	// Before the flip, INFO suppressed the probes.
+	if strings.Contains(string(preFlip), "debug probe") {
+		t.Errorf("debug probe leaked before SIGHUP (leveler was not at INFO); child stderr:\n%s", preFlip)
+	}
+	// After the flip, the mutated leveler must let a probe through.
+	waitFor(`"msg":"debug probe"`, 10*time.Second)
+
+	// Clean shutdown: SIGTERM cancels Daemon's ctx, fn returns nil,
+	// the child exits 0.
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("send SIGTERM: %v", err)
+	}
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- cmd.Wait() }()
+	select {
+	case err := <-waitDone:
+		if err != nil {
+			b, _ := os.ReadFile(stderrPath)
+			t.Fatalf("child exited non-zero: %v; stderr:\n%s", err, b)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("child did not exit within 10s of SIGTERM")
+	}
 }
