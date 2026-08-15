@@ -58,6 +58,17 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		envSet    bool
 		dfSet     bool
 		sourceSet bool
+		// det is the detector that won identity — the same first
+		// arrival that wins source/tier, so it is set under the
+		// sourceSet gate below and never overwritten (issue #742).
+		det detector
+		// mergedFrom collects the OTHER detectors that landed in
+		// this bucket, in first-arrival (= priority) order. A slice
+		// rather than a map keeps the output deterministic without
+		// a second sort; the cardinality is bounded by the detector
+		// enum (8), so the linear contains-check is cheaper than a
+		// map allocation per bucket.
+		mergedFrom []string
 	}
 	ordered := make([]workloadKey, 0, len(sorted))
 	buckets := make(map[workloadKey]*bucket, len(sorted))
@@ -74,7 +85,16 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		if !b.sourceSet {
 			b.source = s.source
 			b.tier = s.tier
+			b.det = s.det
 			b.sourceSet = true
+		} else if name := s.det.String(); name != b.det.String() && !containsString(b.mergedFrom, name) {
+			// A non-winning seed collapsed into this bucket. Record
+			// its detector once. The winner is excluded (it is
+			// already Detection.Detector), and a second seed from
+			// the SAME detector is not a merge across detectors —
+			// e.g. two compose services in one file — so it is
+			// deduplicated rather than repeated.
+			b.mergedFrom = append(b.mergedFrom, name)
 		}
 		if !b.dfSet && s.dockerfile != "" {
 			b.dockerfile = s.dockerfile
@@ -121,7 +141,24 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			EnvKeys:    b.envKeys,
 			Source:     b.source,
 			Tier:       b.tier,
+			DetectedBy: Detection{
+				Detector:   b.det.String(),
+				Priority:   b.det.priority(),
+				MergedFrom: b.mergedFrom,
+			},
 		})
 	}
 	return out
+}
+
+// containsString is the linear membership check used by the
+// mergedFrom accumulator. The slice is bounded by the detector enum
+// (8 values), so this beats a per-bucket map allocation.
+func containsString(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }

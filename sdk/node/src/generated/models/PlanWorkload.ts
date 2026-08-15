@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PlanDetectedBy } from './PlanDetectedBy.js';
 /**
  * One discovered unit of work. Mirrors reposcan.Workload.
  */
@@ -25,5 +26,6 @@ export type PlanWorkload = {
    */
   source?: string;
   tier?: 'single' | 'convention' | 'workspace' | 'compose' | 'unknown';
+  detected_by?: PlanDetectedBy;
 };
 

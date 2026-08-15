@@ -3285,6 +3285,40 @@ type PlanWorkload struct {
 	EnvKeys    []string `json:"env_keys,omitempty"`
 	Source     string   `json:"source,omitempty"`
 	Tier       string   `json:"tier,omitempty"`
+	// DetectedBy is the structured detection trace (issue #742).
+	// Pointer + omitempty so the field is purely additive: an
+	// existing `gregale scan --json` consumer that does not know
+	// the key sees byte-identical output for any response the
+	// server did not populate.
+	DetectedBy *PlanDetectedBy `json:"detected_by,omitempty"`
+}
+
+// PlanDetectedBy mirrors reposcan.Detection — the answer to "why
+// does this workload exist?" (issue #742).
+//
+// `source` on PlanWorkload already carries human-readable
+// provenance ("compose.yaml: api"). This is the machine-readable
+// form, so a client can branch on the detector without parsing that
+// string, and so a UI can explain a merge without hard-coding our
+// precedence table.
+type PlanDetectedBy struct {
+	// Detector is the closed vocabulary from reposcan's detector
+	// enum: compose | procfile | k8s | render | fly | serverless |
+	// app_yaml | other. Pinned by the OpenAPI enum; renaming a
+	// value is a wire-contract change.
+	Detector string `json:"detector"`
+	// Priority is the detector's tiebreak weight. Higher wins
+	// identity within a tier. Surfaced so the precedence order is
+	// visible on the wire rather than implied by our source.
+	Priority int `json:"priority"`
+	// MergedFrom names the other detectors whose seeds collapsed
+	// into this workload under the (root_dir, name) merge key,
+	// deduplicated and deterministically ordered. Absent when the
+	// workload came from a single seed.
+	//
+	// This is what answers "why didn't my Procfile `web` get its
+	// own workload?" — it merged into the compose `web`.
+	MergedFrom []string `json:"merged_from,omitempty"`
 }
 
 // PlanManaged mirrors reposcan.Managed.
