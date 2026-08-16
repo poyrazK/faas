@@ -435,6 +435,18 @@ func LoadConfig(path string) (*Config, error) {
 	// Zero is rejected here even though the struct-default path silently
 	// defaults to api.VCPUSlots — a TOML `vcpu_budget = 0` is an
 	// explicit operator mistake, not an omitted field.
+	//
+	// Asymmetry with cmd/vmmd/register.go (review finding #4 on PR #940):
+	// LoadConfig rejects <= 0 because that's a valid Go zero value in
+	// the TOML-decoded struct; registerComputeNode accepts 0 and falls
+	// back to api.VCPUSlots because the test seam
+	// (register_test.go:TestRegisterComputeNode_DefaultsVCPUBudgetFromAPI)
+	// calls the function directly with the struct-default zero value
+	// to pin the omitted-field fallback. The two layers are
+	// therefore deliberately inconsistent: LoadConfig = "explicit
+	// zero is an operator error", register = "zero is the omitted-
+	// field-default sentinel". Unifying them is fine, but pin the
+	// test that exercises the fallback before doing so.
 	if c.ComputeNode.VCPUBudget <= 0 {
 		return nil, fmt.Errorf("vmmd: [compute_node].vcpu_budget must be > 0 (got %d)", c.ComputeNode.VCPUBudget)
 	}

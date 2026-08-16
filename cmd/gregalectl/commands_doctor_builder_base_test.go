@@ -198,3 +198,41 @@ func TestCheckBuilderBaseExt4_PathOverride(t *testing.T) {
 		t.Errorf("locateBuilderBasePathHook = %q, want %q (FAAS_BUILDER_BASE_PATH override)", got, custom)
 	}
 }
+
+// TestCheckBuilderBaseExt4_DebugfsOutputMalformed: review finding #7
+// on PR #940. A previous build of the check accepted "Inode" anywhere
+// in the output; a future debugfs version that prints "Inode" as part
+// of an error banner would trip a false OK finding. The check now
+// requires both "Inode:" and "File mode:" — a malformed-but-zero-
+// exit output must surface as SeverityError so the operator sees the
+// breakage, not a green dot.
+func TestCheckBuilderBaseExt4_DebugfsOutputMalformed(t *testing.T) {
+	dir := t.TempDir()
+	ext4 := filepath.Join(dir, "fake.ext4")
+	if err := os.WriteFile(ext4, []byte("not a real ext4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withBuilderBaseHooks(t, builderBaseHooks{
+		Path: ext4,
+		Stat: os.Stat,
+		LookPath: func(string) (string, error) {
+			return "/usr/sbin/debugfs", nil
+		},
+		RunDebugfs: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			// Successful exit, but missing the File mode field.
+			// A naive "contains Inode" check would mark this OK.
+			return []byte("Inode: 12345   Links: 1"), nil
+		},
+	})
+	findings, err := checkBuilderBaseExt4(&doctorDeps{})
+	if err != nil {
+		t.Fatalf("checkBuilderBaseExt4: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("got %d findings, want 1", len(findings))
+	}
+	if findings[0].Severity != doctorSeverityError {
+		t.Errorf("severity = %q, want %q (malformed-but-zero-exit output MUST be error, not OK)",
+			findings[0].Severity, doctorSeverityError)
+	}
+}

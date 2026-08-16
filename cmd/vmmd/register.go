@@ -85,6 +85,18 @@ func registerComputeNode(ctx context.Context, st state.Store, cfg ComputeNodeCon
 	// fail the upsert depending on the fallback order). Zero is
 	// explicitly permitted here so the api.VCPUSlots fallback below
 	// remains the single source of truth for the "no override" path.
+	//
+	// Asymmetry with cmd/vmmd/config.go (review finding #4 on PR #940):
+	// LoadConfig rejects vcpu_budget <= 0 because TOML `vcpu_budget = 0`
+	// is an explicit operator mistake. This layer accepts 0 and falls
+	// back to api.VCPUSlots because the test seam
+	// (register_test.go:TestRegisterComputeNode_DefaultsVCPUBudgetFromAPI)
+	// calls registerComputeNode directly with the struct-default zero
+	// value to pin the "operator omitted the field" fallback. In
+	// production, LoadConfig has already rejected a zero before this
+	// code runs, so the fallback only fires for the test seam and
+	// for any future caller that bypasses LoadConfig (none today).
+	// Do not unify the two layers without updating the test.
 	if cfg.VCPUBudget < 0 {
 		return state.ComputeNode{}, fmt.Errorf("vmmd: [compute_node].vcpu_budget must be >= 0 (got %d)", cfg.VCPUBudget)
 	}

@@ -1393,6 +1393,12 @@ var (
 //
 // All three states produce exactly one finding so the wire shape
 // stays consistent.
+//
+// deps is accepted for parity with the other always-on checks (callers
+// wrap with a closure that passes deps); the check is fully disk-based
+// today and does not need a DB. If a future revision adds a check
+// against pg_stat for the running vmmd's builder-base attach
+// state, the deps plumbing is already there.
 func checkBuilderBaseExt4(deps *doctorDeps) ([]doctorFinding, error) {
 	_ = deps
 	basePath := locateBuilderBasePathHook()
@@ -1425,12 +1431,22 @@ func checkBuilderBaseExt4(deps *doctorDeps) ([]doctorFinding, error) {
 			Detail:   fmt.Sprintf("debugfs stat against %s returned: %s", basePath, strings.TrimSpace(string(out))),
 		}}, nil
 	}
-	if !strings.Contains(string(out), "Inode") {
+	// A successful debugfs stat prints (e2fsprogs 1.47.x):
+	//   Inode: 12345   File mode: 0755   Links: 1
+	// Both fields are always present on a hit; a missing file
+	// returns exit status 1 + "file not found" before this block
+	// runs, so the substring check is belt-and-braces against a
+	// future debugfs version that emits a different header shape.
+	// Requiring both fields (not just "Inode") avoids a false OK
+	// finding if debugfs ever prints "Inode" as part of an error
+	// banner (review finding #7 on PR #940).
+	outStr := string(out)
+	if !strings.Contains(outStr, "Inode:") || !strings.Contains(outStr, "File mode:") {
 		return []doctorFinding{{
 			Check:    doctorCheckBuilderBaseExt4,
 			Severity: doctorSeverityError,
 			Message:  "faas-guest-init missing from builder-base.ext4",
-			Detail:   fmt.Sprintf("debugfs stat output did not contain an inode record: %s", strings.TrimSpace(string(out))),
+			Detail:   fmt.Sprintf("debugfs stat output did not contain inode + mode records: %s", strings.TrimSpace(outStr)),
 		}}, nil
 	}
 	return []doctorFinding{{
