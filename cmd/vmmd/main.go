@@ -432,9 +432,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Mirror the bridge base into the per-netns default-route. The
 	// slot allocator reserves the .1 (see pkg/fcvm/alloc.go), so the
 	// next-hop for every per-VM netns is the .1 of the same /16 we
-	// just seeded the allocator with. SetDefaultHostBridgeIP is
-	// idempotent under same-value calls (vmmd's EgressPolicyChanged
-	// reload may invoke it again with an identical .1).
+	// just seeded the allocator with. This is a one-shot boot-time
+	// write — the EgressPolicyChanged pg_notify reload path
+	// (cmd/vmmd/egress_watcher.go) does NOT touch the bridge IP; it
+	// only re-renders the nftables ruleset from compile-time
+	// defaults. The setter is invoked exactly once per process.
 	netns.SetDefaultHostBridgeIP(parsedBridge.Masked().Addr().Next())
 	listenTarget := cfg.ResolveListenTarget()
 	// targetURL is the DIAL target schedd/gatewayd use to reach

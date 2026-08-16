@@ -188,24 +188,7 @@ func readPinnedInterfaceIP(ctx context.Context, iface string) (netip.Addr, bool,
 	}
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
 	for scanner.Scan() {
-		// Each line of `ip -4 -o addr show dev <iface>` looks like:
-		//   <idx>: <iface> inet <addr>/<mask> brd ...
-		// The `-o` flag is the one-line format — fields are space-
-		// delimited. We grab the field AFTER `inet` (the v4 address
-		// with prefix length) and strip the prefix.
-		fields := strings.Fields(scanner.Text())
-		for i := 0; i < len(fields)-1; i++ {
-			if fields[i] != "inet" {
-				continue
-			}
-			rawAddr := strings.SplitN(fields[i+1], "/", 2)[0]
-			addr, perr := netip.ParseAddr(rawAddr)
-			if perr != nil {
-				continue
-			}
-			if !addr.Is4() {
-				continue
-			}
+		if addr, ok := parseIPAddrShowLine(scanner.Text()); ok {
 			return addr, true, nil
 		}
 	}
@@ -213,6 +196,40 @@ func readPinnedInterfaceIP(ctx context.Context, iface string) (netip.Addr, bool,
 		return netip.Addr{}, false, fmt.Errorf("scan ip output: %w", serr)
 	}
 	return netip.Addr{}, false, nil
+}
+
+// parseIPAddrShowLine pulls the first IPv4 address out of one line of
+// `ip -4 -o addr show dev <iface>` output. Each line looks like:
+//
+//	<idx>: <iface> inet <addr>/<mask> brd ...
+//
+// The `-o` flag is the one-line format — fields are space-delimited.
+// Returns (zero, false) on any non-matching line (missing `inet`,
+// garbage `inet` value, IPv6-only, etc.) so the caller can continue
+// scanning. Extracted from readPinnedInterfaceIP so the parser has
+// direct test coverage without shelling out to `ip` itself.
+//
+// Why per-line and not the whole output: the `ip` output is multi-
+// line on dual-stack hosts and on NICs with secondary addresses; the
+// scanner walks the lines and we want each line to be testable on
+// its own.
+func parseIPAddrShowLine(line string) (netip.Addr, bool) {
+	fields := strings.Fields(line)
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] != "inet" {
+			continue
+		}
+		rawAddr := strings.SplitN(fields[i+1], "/", 2)[0]
+		addr, perr := netip.ParseAddr(rawAddr)
+		if perr != nil {
+			continue
+		}
+		if !addr.Is4() {
+			continue
+		}
+		return addr, true
+	}
+	return netip.Addr{}, false
 }
 
 // parseTailscaleIPLines turns the multi-line `tailscale ip -4`

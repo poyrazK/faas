@@ -509,3 +509,81 @@ func TestSplitboxExample_ValidatesAndIllustratesOverlay(t *testing.T) {
 		t.Errorf("splitbox.example.yaml missing the ILLUSTRATIVE ONLY marker — operators will read the placeholder addresses (10.42.0.x) as a real deployable config. Add the marker before `schema_version: \"1.0.0\"`.")
 	}
 }
+
+// TestEgressValidate covers the Gap #4 pair-enforcement gate. The
+// manifest validator (Egress.validate) is the apply-time mirror of
+// the DB CHECK constraint (migration 00273); both reject the same
+// mismatched inputs.
+func TestEgressValidate(t *testing.T) {
+	cases := []struct {
+		name      string
+		egress    Egress
+		wantErr   bool
+		wantConta string // substring expected in the error message
+	}{
+		{
+			name:    "quiet default — no flag, no exceptions, no error",
+			egress:  Egress{},
+			wantErr: false,
+		},
+		{
+			name: "flag set without exceptions — pair rejected",
+			egress: Egress{
+				DangerAcceptRFC1918LateralMovement: true,
+			},
+			wantErr:   true,
+			wantConta: "requires at least one entry",
+		},
+		{
+			name: "exceptions without flag — pair rejected",
+			egress: Egress{
+				OverlayExceptions: []string{"10.42.0.0/24"},
+			},
+			wantErr:   true,
+			wantConta: "requires danger_accept_rfc1918_lateral_movement=true",
+		},
+		{
+			name: "flag + exception — accepted",
+			egress: Egress{
+				DangerAcceptRFC1918LateralMovement: true,
+				OverlayExceptions:                  []string{"10.42.0.0/24"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "flag + malformed exception — rejected",
+			egress: Egress{
+				DangerAcceptRFC1918LateralMovement: true,
+				OverlayExceptions:                  []string{"not-a-cidr"},
+			},
+			wantErr:   true,
+			wantConta: "invalid CIDR",
+		},
+		{
+			name: "flag + multiple valid exceptions — accepted",
+			egress: Egress{
+				DangerAcceptRFC1918LateralMovement: true,
+				OverlayExceptions:                  []string{"10.42.0.0/24", "10.43.0.0/24"},
+			},
+			wantErr: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := tc.egress.validate()
+			if tc.wantErr {
+				if len(errs) == 0 {
+					t.Fatalf("validate() = nil, want error containing %q", tc.wantConta)
+				}
+				joined := errs.Error()
+				if !strings.Contains(joined, tc.wantConta) {
+					t.Errorf("validate() error %q does not contain %q", joined, tc.wantConta)
+				}
+				return
+			}
+			if len(errs) > 0 {
+				t.Errorf("validate() = %v, want nil", errs)
+			}
+		})
+	}
+}

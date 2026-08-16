@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -138,11 +139,12 @@ type Manifest struct {
 	// CIDR list together widen the host forward chain + per-netns
 	// forward chain beyond the §11 always-deny catalog. Both must
 	// be set together — a CHECK constraint on the egress_policy DB
-	// row enforces the pair at runtime; the manifest validator
-	// enforces the same pair at apply time. PR scale-out tier-1
-	// residual (Gap #4). The flag name itself is load-bearing: any
-	// operator who skims the manifest sees the consequence spelled
-	// out before they can flip it.
+	// row (migration 00273) enforces the pair at runtime; the
+	// manifest validator (Egress.validate) enforces the same pair at
+	// apply time. PR scale-out tier-1 residual (Gap #4). The flag
+	// name itself is load-bearing: any operator who skims the
+	// manifest sees the consequence spelled out before they can
+	// flip it.
 	Egress Egress `yaml:"egress,omitempty"`
 }
 
@@ -175,6 +177,43 @@ type Egress struct {
 	// is the only sanctioned path to route overlay traffic
 	// through an RFC1918 range.
 	OverlayExceptions []string `yaml:"overlay_exceptions,omitempty"`
+}
+
+// validate enforces the pair-check at manifest-load time:
+// DangerAcceptRFC1918LateralMovement is rejected when the exceptions
+// list is empty (the flag without a target is a no-op that risks
+// being silently flipped on by a future maintainer); an exception
+// without the flag is rejected (the flag is the operator's explicit
+// acknowledgement of the lateral-movement consequence — without it
+// the exception would silently widen the §11 deny catalog). Each
+// entry's CIDR must parse via netip.ParsePrefix. The DB CHECK
+// constraint (migration 00273_egress_policy_exceptions.sql) is
+// the row-level mirror of this gate.
+func (e *Egress) validate() Errors {
+	var errs Errors
+	if !e.DangerAcceptRFC1918LateralMovement && len(e.OverlayExceptions) == 0 {
+		// Quiet default — no flag, no exceptions. Nothing to do.
+		return nil
+	}
+	if e.DangerAcceptRFC1918LateralMovement && len(e.OverlayExceptions) == 0 {
+		errs = append(errs, Error{
+			"egress",
+			"danger_accept_rfc1918_lateral_movement=true requires at least one entry in overlay_exceptions (the flag is the explicit acknowledgement; without a target the flag is a no-op and risks being silently flipped on)",
+		})
+	}
+	if len(e.OverlayExceptions) > 0 && !e.DangerAcceptRFC1918LateralMovement {
+		errs = append(errs, Error{
+			"egress",
+			"overlay_exceptions requires danger_accept_rfc1918_lateral_movement=true (the flag is the explicit acknowledgement of the lateral-movement consequence; without it the exception would silently widen the §11 deny catalog)",
+		})
+	}
+	for i, raw := range e.OverlayExceptions {
+		path := fmt.Sprintf("egress.overlay_exceptions[%d]", i)
+		if _, err := netip.ParsePrefix(raw); err != nil {
+			errs = append(errs, Error{path, fmt.Sprintf("invalid CIDR %q: %v", raw, err)})
+		}
+	}
+	return errs
 }
 
 // Fleet is the list of hosts in the deployment. Each host must have a
@@ -561,6 +600,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Storage.validate()...)
 	errs = append(errs, m.Cgroups.validate()...)
 	errs = append(errs, m.PKI.validate()...)
+	errs = append(errs, m.Egress.validate()...)
 	if len(errs) > 0 {
 		return errs
 	}

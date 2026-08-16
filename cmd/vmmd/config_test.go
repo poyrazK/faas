@@ -246,3 +246,84 @@ func TestConfig_LoadServerTLS(t *testing.T) {
 		t.Errorf("err = %q, want both tls_key_path and tls_ca_path named", err.Error())
 	}
 }
+
+// TestValidateHostBridgeCIDR covers the Gap #3 wiring gate. The
+// canonical use case (an operator setting a per-host RFC1918 /16 —
+// the default is 10.100.0.0/16) MUST pass: the deny catalog is for
+// tenant egress, not host infrastructure. The two narrow rejection
+// paths remain: non-/16 prefix length and non-network-form input.
+func TestValidateHostBridgeCIDR(t *testing.T) {
+	cases := []struct {
+		name      string
+		cidr      string
+		wantErr   bool
+		wantConta string // substring expected in the error message
+	}{
+		{
+			name:    "canonical RFC1918 default passes",
+			cidr:    "10.100.0.0/16",
+			wantErr: false,
+		},
+		{
+			name:    "operator-chosen 10.42.0.0/16 passes",
+			cidr:    "10.42.0.0/16",
+			wantErr: false,
+		},
+		{
+			name:    "172.16.0.0/16 passes",
+			cidr:    "172.16.0.0/16",
+			wantErr: false,
+		},
+		{
+			name:    "192.168.0.0/16 passes",
+			cidr:    "192.168.0.0/16",
+			wantErr: false,
+		},
+		{
+			name:    "100.64.0.0/16 (CGN) passes",
+			cidr:    "100.64.0.0/16",
+			wantErr: false,
+		},
+		{
+			name:      "non-/16 rejected",
+			cidr:      "10.100.0.0/24",
+			wantErr:   true,
+			wantConta: "prefix length must be /16",
+		},
+		{
+			name:      "non-network-form rejected (host bits set)",
+			cidr:      "10.42.0.5/16",
+			wantErr:   true,
+			wantConta: "not in network form",
+		},
+		{
+			name:      "non-network-form rejected (host bits set, different position)",
+			cidr:      "10.100.0.255/16",
+			wantErr:   true,
+			wantConta: "not in network form",
+		},
+		{
+			name:      "unparseable CIDR rejected",
+			cidr:      "not-a-cidr",
+			wantErr:   true,
+			wantConta: "parse",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateHostBridgeCIDR(tc.cidr)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("validateHostBridgeCIDR(%q) = nil, want error containing %q", tc.cidr, tc.wantConta)
+				}
+				if !strings.Contains(err.Error(), tc.wantConta) {
+					t.Errorf("validateHostBridgeCIDR(%q) error %q does not contain %q", tc.cidr, err, tc.wantConta)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("validateHostBridgeCIDR(%q) = %v, want nil", tc.cidr, err)
+			}
+		})
+	}
+}

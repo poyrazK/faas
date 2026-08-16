@@ -415,9 +415,7 @@ func LoadConfig(path string) (*Config, error) {
 	// CIDR against the slot-allocator contract — must be a /16 (the
 	// only prefix length that leaves room for `fcvm.Allocator` to
 	// hand out per-VM /30 leases without spilling into the next
-	// host's range). The bridge IP must also fall outside the §11
-	// RFC1918 deny set so the host bridge itself isn't denied at
-	// egress time. Reject at config-load time with a clear startup
+	// host's range). Reject at config-load time with a clear startup
 	// error naming the offending CIDR.
 	if bridge := strings.TrimSpace(c.ComputeNode.HostBridgeCIDR); bridge != "" {
 		if err := validateHostBridgeCIDR(bridge); err != nil {
@@ -433,17 +431,26 @@ func LoadConfig(path string) (*Config, error) {
 //   - the prefix length is not /16 (the only size that maps cleanly
 //     to per-VM /30 leases; smaller leaves gaps, larger would overflow
 //     the slot space)
-//   - the bridge IP (the .1 of the CIDR) falls inside the §11 RFC1918
-//     deny set — that would mean the host bridge itself is denied at
-//     egress time, which would silently break wake-and-proxy. The
-//     deny-set exception path is reserved for tenant overlay traffic,
-//     NOT host infrastructure.
+//   - the input is not in network form (e.g. "10.42.0.5/16" rather
+//     than "10.42.0.0/16"). The slot allocator re-masks the input
+//     before assigning .2 / .3 / .4 /etc., so a non-network host
+//     would silently re-anchor to the masked form — rejecting at
+//     load time surfaces the operator's intent.
 //
 // Empty input is treated as "use the default" — the caller is
 // expected to skip the call when the TOML/env value is empty so the
 // default branch in cmd/vmmd/main.go::runWithDeps can apply
 // api.DefaultHostBridgeCIDR() after the bridge-CIDR byte identity is
 // confirmed against the slot allocator.
+//
+// NOTE: the §11 deny catalog applies to TENANT egress, not host
+// infrastructure. The host bridge IP is a /30 gateway from the
+// physical NIC into the per-VM netns; the deny rules live on the
+// per-netns forward chain and the host forward chain AFTER the
+// bridge, so the bridge IP itself is never subject to the deny
+// catalog. Operators are expected to use RFC1918 ranges for the
+// per-host bridge (the canonical default is 10.100.0.0/16) —
+// rejecting those would defeat the entire Gap #3 use case.
 func validateHostBridgeCIDR(cidr string) error {
 	prefix, err := netip.ParsePrefix(cidr)
 	if err != nil {
@@ -452,12 +459,8 @@ func validateHostBridgeCIDR(cidr string) error {
 	if prefix.Bits() != 16 {
 		return fmt.Errorf("prefix length must be /16 (got /%d); per-VM /30 leases only fit a /16", prefix.Bits())
 	}
-	bridgeIP := prefix.Masked().Addr().Next() // .1 of the /16
-	deny := netns.NewDefaultDenySet()
-	for _, denyPrefix := range deny.V4DenyCIDRs {
-		if denyPrefix.Contains(bridgeIP) {
-			return fmt.Errorf("bridge IP %s falls inside deny CIDR %s; pick a non-RFC1918 /16", bridgeIP, denyPrefix)
-		}
+	if prefix.Masked() != prefix {
+		return fmt.Errorf("CIDR %q is not in network form (the host bits must be zero); use %q", cidr, prefix.Masked().String())
 	}
 	return nil
 }
