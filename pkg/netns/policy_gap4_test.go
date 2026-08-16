@@ -46,7 +46,7 @@ func TestHostPolicyRenderEmitsOperatorExceptionAccept(t *testing.T) {
 // lateral-movement surface. The renderer's panic-on-empty
 // contract is the load-bearing last line of defense — the
 // validator at cmd/vmmd/config.go + the DB CHECK constraint
-// (migration 00273) enforce the pair at apply time, but a
+// (migration 00276) enforce the pair at apply time, but a
 // programmatic caller could mutate HostPolicy.OperatorExceptions
 // post-load and bypass those gates.
 //

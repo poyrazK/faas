@@ -139,7 +139,7 @@ type Manifest struct {
 	// CIDR list together widen the host forward chain + per-netns
 	// forward chain beyond the §11 always-deny catalog. Both must
 	// be set together — a CHECK constraint on the egress_policy DB
-	// row (migration 00273) enforces the pair at runtime; the
+	// row (migration 00276) enforces the pair at runtime; the
 	// manifest validator (Egress.validate) enforces the same pair at
 	// apply time. PR scale-out tier-1 residual (Gap #4). The flag
 	// name itself is load-bearing: any operator who skims the
@@ -187,7 +187,7 @@ type Egress struct {
 // acknowledgement of the lateral-movement consequence — without it
 // the exception would silently widen the §11 deny catalog). Each
 // entry's CIDR must parse via netip.ParsePrefix. The DB CHECK
-// constraint (migration 00273_egress_policy_exceptions.sql) is
+// constraint (migration 00276_egress_policy_exceptions.sql) is
 // the row-level mirror of this gate.
 func (e *Egress) validate() Errors {
 	var errs Errors

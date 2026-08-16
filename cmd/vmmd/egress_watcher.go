@@ -96,7 +96,7 @@ func (osExecNft) Reload(ctx context.Context, path string) error {
 //
 // PR scale-out tier-1 residual (Gap #4): the trigger payload now
 // also carries overlay_exceptions + danger_accept_rfc1918_lateral_movement
-// (added by migration 00273_egress_policy_exceptions.sql). The
+// (added by migration 00276_egress_policy_exceptions.sql). The
 // watcher reads them for log correlation; the renderer still uses
 // the local host's compile-time defaults (the audit row is
 // "freshness, not authority" — same posture as masquerade_cidr).

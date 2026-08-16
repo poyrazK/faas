@@ -1,8 +1,8 @@
--- filename: 00273_egress_policy_exceptions.sql
+-- filename: 00276_egress_policy_exceptions.sql
 -- +goose Up
 -- +goose StatementBegin
 --
--- 00273_egress_policy_exceptions.sql — issue #911 / ADR-110 /
+-- 00276_egress_policy_exceptions.sql — issue #911 / ADR-110 /
 -- PR scale-out tier-1 residual (Gap #4).
 --
 -- Extends the egress_policy singleton (00078_egress_policy_notify.sql)
@@ -67,9 +67,9 @@ end$$;
 -- two new fields (the watcher's egressPolicyAuditRow struct reads
 -- them for log correlation). This is the canonical place for the
 -- payload expansion — 00078_egress_policy_notify.sql stays as it
--- is so a 00078-only replay against a pre-00273 schema doesn't
+-- is so a 00078-only replay against a pre-00276 schema doesn't
 -- fail on `new.overlay_exceptions` (the column doesn't exist
--- yet). After 00273 applies, the trigger function is replaced
+-- yet). After 00276 applies, the trigger function is replaced
 -- once and all subsequent updates emit the full 6-field payload.
 create or replace function egress_policy_notify() returns trigger as $$
 begin

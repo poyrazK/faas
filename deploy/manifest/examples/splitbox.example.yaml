@@ -127,7 +127,7 @@ overlay:
 # load-bearing safety: anyone skimming this manifest sees the
 # consequence spelled out before they flip it. Pair this with at
 # least one entry in overlay_exceptions — the DB CHECK constraint
-# (migration 00273_egress_policy_exceptions.sql) enforces the
+# (migration 00276_egress_policy_exceptions.sql) enforces the
 # pair at the row level. Empty overlay_exceptions + the flag set
 # is rejected at apply time.
 #

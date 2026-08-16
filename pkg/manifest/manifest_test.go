@@ -512,7 +512,7 @@ func TestSplitboxExample_ValidatesAndIllustratesOverlay(t *testing.T) {
 
 // TestEgressValidate covers the Gap #4 pair-enforcement gate. The
 // manifest validator (Egress.validate) is the apply-time mirror of
-// the DB CHECK constraint (migration 00273); both reject the same
+// the DB CHECK constraint (migration 00276); both reject the same
 // mismatched inputs.
 func TestEgressValidate(t *testing.T) {
 	cases := []struct {
