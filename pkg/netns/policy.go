@@ -116,6 +116,20 @@ type HostPolicy struct {
 	// public-range overlay (e.g. operator-owned IPs routed over
 	// the mesh, or a public-cloud VPC). See Render panic gate.
 	OverlayCIDRs []string
+
+	// OperatorExceptions (PR scale-out tier-1 residual Gap #4) is
+	// the explicit accept-before-deny list. Each entry is a
+	// netip.Prefix the renderer emits as
+	// `ip saddr <ex> accept` BETWEEN the established/related
+	// accept rule and the per-CIDR deny block on the forward
+	// chain — i.e. BEFORE the deny, AFTER the conntrack shortcut.
+	// Operators using an RFC1918 overlay (e.g. 10.42.0.0/24)
+	// declare the exception here AND enable the
+	// manifest-level `danger_accept_rfc1918_lateral_movement`
+	// flag (the flag's name itself enforces the safety in code
+	// review). Empty by default — single-host dev keeps the
+	// legacy "deny wins on RFC1918" posture byte-identical.
+	OperatorExceptions []netip.Prefix
 }
 
 // DefaultHostPolicy is the platform-wide host nftables policy. Source of
@@ -188,17 +202,47 @@ func (e *OverlayCIDRError) Error() string {
 // /23-vs-/24 and v4-vs-v6 edges — see the isSubset doc comment).
 //
 // Mega-PR-B review M3.
+//
+// PR scale-out tier-1 residual (Gap #4): this function remains the
+// canonical "requireNotInDeny" validator for the overlay CIDR path.
+// The deny-set exception path is gated behind a separate function
+// (ValidateCIDRsAgainstDenySet with requireNotInDeny=false) — the
+// two callers (overlay auto-detect + RFC1918 exception) cannot
+// silently bypass each other.
 func ValidateOverlayCIDRs(cidrs []string, deny DenySet) error {
-	for i, overlayStr := range cidrs {
-		overlay, err := netip.ParsePrefix(overlayStr)
+	return ValidateCIDRsAgainstDenySet(cidrs, deny, true)
+}
+
+// ValidateCIDRsAgainstDenySet is the Gap #4 general validator.
+//
+// When requireNotInDeny is true, behavior matches the original
+// ValidateOverlayCIDRs: every entry must NOT be a subset of any
+// deny entry. Any subset match returns *OverlayCIDRError.
+//
+// When requireNotInDeny is false, the caller has explicitly
+// authorised the lateral-movement cost (the manifest flag
+// `danger_accept_rfc1918_lateral_movement: true` is set). The
+// function returns nil for any valid CIDR; the renderer emits
+// accept-before-deny rules for each entry. The flag + the deny
+// exception are paired at the DB CHECK constraint level so a
+// missing-flag path cannot silently widen the surface.
+//
+// Empty input is valid in both modes (no exception = legacy
+// behavior). Malformed CIDRs return a plain error in both modes.
+func ValidateCIDRsAgainstDenySet(cidrs []string, deny DenySet, requireNotInDeny bool) error {
+	for i, cidrStr := range cidrs {
+		prefix, err := netip.ParsePrefix(cidrStr)
 		if err != nil {
-			return fmt.Errorf("netns: OverlayCIDRs[%d] %q: %w", i, overlayStr, err)
+			return fmt.Errorf("netns: OperatorExceptions[%d] %q: %w", i, cidrStr, err)
+		}
+		if !requireNotInDeny {
+			continue
 		}
 		for _, e := range deny.Entries {
-			if isSubset(overlay, e.Prefix) {
+			if isSubset(prefix, e.Prefix) {
 				return &OverlayCIDRError{
 					Index:   i,
-					Overlay: overlay,
+					Overlay: prefix,
 					Deny:    e.Prefix,
 					DenySrc: e.SourceADR,
 				}
@@ -291,6 +335,27 @@ func (h HostPolicy) Render() string {
 	b.WriteString("    type filter hook forward priority 0; policy drop;\n")
 	b.WriteString("    ct state established,related accept\n")
 	b.WriteString("\n")
+	// PR scale-out tier-1 residual (Gap #4): per-exception accept
+	// rules emitted BEFORE the per-CIDR deny block — nftables is
+	// first-match, so an exception in 10/8 (e.g. operator's overlay
+	// subnet 10.42.0.0/24) MUST take precedence over the matching
+	// `ip daddr 10.0.0.0/8 drop`. The deny-set entries stay
+	// byte-identical; only the new rules are additive. Gated by
+	// the manifest flag `danger_accept_rfc1918_lateral_movement`
+	// — operators must explicitly authorize the lateral-movement
+	// consequence. Empty OperatorExceptions (single-host dev)
+	// emits zero rules; rendered bytes are byte-identical to the
+	// pre-Gap-4 output. The `established,related accept` above is
+	// placed first so replies on existing flows keep flowing
+	// regardless of any exception.
+	for _, ex := range h.OperatorExceptions {
+		family := "ip"
+		if ex.Addr().Is6() && !ex.Addr().Is4In6() {
+			family = "ip6"
+		}
+		fmt.Fprintf(&b, "    %s saddr %s accept     # operator exception (RFC1918 lateral movement, gated by manifest flag)\n",
+			family, ex.String())
+	}
 	b.WriteString("    # spec §11 denylist — evaluated BEFORE the bridged-tenant broad allow\n")
 	b.WriteString("    # so tenant traffic to RFC1918 / SMTP / link-local is actually dropped at\n")
 	b.WriteString("    # the host layer; the per-netns chain is the primary block, this is defense\n")

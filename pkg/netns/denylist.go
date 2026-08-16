@@ -154,6 +154,18 @@ type DenySet struct {
 	// Entries is the provenance-bearing view. Length == len(V4DenyCIDRs)
 	// + len(V6DenyCIDRs); same data, sorted by family then CIDR.
 	Entries []DenyEntry
+	// OperatorExceptions is the explicit allow-before-deny list
+	// (PR scale-out tier-1 residual Gap #4). The renderer emits
+	// one `ip saddr <ex> accept` rule per entry, placed BEFORE
+	// the per-CIDR deny block on both the host forward chain
+	// (pkg/netns/policy.go::Render) and the per-netns forward
+	// chain (pkg/netns/config.go::NftCommands). Operators set
+	// this when they want overlay traffic to survive the §11
+	// deny — typically when their overlay (e.g. Tail/wg subnet
+	// 100.64.0.0/10 or a custom RFC1918) lives inside the
+	// always-deny catalog. Empty by default — single-host dev
+	// keeps the legacy "deny wins on RFC1918" posture.
+	OperatorExceptions []netip.Prefix
 }
 
 // NewDefaultDenySet returns the platform-wide default denylist.
