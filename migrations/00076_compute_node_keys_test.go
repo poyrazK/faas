@@ -32,6 +32,7 @@ package migrations_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -228,52 +229,122 @@ func Test00076_ComputeNodeKeys_PgNotifyOnChange(t *testing.T) {
 	// Subscribe BEFORE the insert so the LISTEN/NOTIFY race doesn't
 	// lose the channel event. pgxpool exposes Listen via the
 	// underlying conn — open a dedicated conn for this test.
+	//
+	// Post-00276 the channel is compute_node_keys_changed (was
+	// compute_node_changed). The new function emits a typed JSON
+	// payload {key_id, fingerprint} where fingerprint is sha256-hex
+	// of the new public_key_pem (empty on DELETE). We assert both
+	// the channel name and the payload shape — the
+	// channel-specific-fingerprint guarantee is the post-split
+	// improvement this test pins.
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		t.Fatalf("acquire conn: %v", err)
 	}
 	defer conn.Release()
-	if _, err := conn.Exec(ctx, "LISTEN compute_node_changed"); err != nil {
-		t.Fatalf("LISTEN compute_node_changed: %v", err)
+	if _, err := conn.Exec(ctx, "LISTEN compute_node_keys_changed"); err != nil {
+		t.Fatalf("LISTEN compute_node_keys_changed: %v", err)
 	}
 
 	// INSERT.
+	insertKeyID := goodKeyID(t)
 	if _, err := pool.Exec(ctx, `
 		insert into compute_node_keys (compute_node_id, key_id, public_key_pem)
 		values ($1, $2, $3)
-	`, nodeID, goodKeyID(t), canonicalKeyPEM); err != nil {
+	`, nodeID, insertKeyID, canonicalKeyPEM); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	recv := waitForNotify(ctx, t, conn)
-	if recv != "compute_node_changed" {
-		t.Fatalf("INSERT notify channel = %q, want %q", recv, "compute_node_changed")
+	recv, payload := waitForNotifyWithPayload(ctx, t, conn)
+	if recv != "compute_node_keys_changed" {
+		t.Fatalf("INSERT notify channel = %q, want %q", recv, "compute_node_keys_changed")
+	}
+	if got := payload["key_id"]; got != insertKeyID {
+		t.Errorf("INSERT payload key_id = %q, want %q", got, insertKeyID)
+	}
+	if fp := payload["fingerprint"]; !looksLikeSHA256Hex(fp) {
+		t.Errorf("INSERT payload fingerprint = %q, want 64-hex sha256 of canonicalKeyPEM", fp)
 	}
 
 	// UPDATE — flip public_key_pem to a different canonical PEM so
-	// the row genuinely changes.
+	// the row genuinely changes. The new fingerprint must NOT equal
+	// the INSERT fingerprint (proof that the function recomputes
+	// per-row, not per-table).
 	newPEM := strings.Replace(canonicalKeyPEM, "fakedFAKE", "0000000000", 1)
 	if _, err := pool.Exec(ctx, `
 		update compute_node_keys set public_key_pem = $1
 		 where compute_node_id = $2 and key_id = $3
-	`, newPEM, nodeID, goodKeyID(t)); err != nil {
+	`, newPEM, nodeID, insertKeyID); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	recv = waitForNotify(ctx, t, conn)
-	if recv != "compute_node_changed" {
-		t.Fatalf("UPDATE notify channel = %q, want %q", recv, "compute_node_changed")
+	recv, payload = waitForNotifyWithPayload(ctx, t, conn)
+	if recv != "compute_node_keys_changed" {
+		t.Fatalf("UPDATE notify channel = %q, want %q", recv, "compute_node_keys_changed")
+	}
+	if got := payload["key_id"]; got != insertKeyID {
+		t.Errorf("UPDATE payload key_id = %q, want %q", got, insertKeyID)
+	}
+	newFP := payload["fingerprint"]
+	if !looksLikeSHA256Hex(newFP) {
+		t.Errorf("UPDATE payload fingerprint = %q, want 64-hex sha256", newFP)
+	}
+	if newFP == payload["fingerprint"] {
+		// Re-set; the comparison below already covers it but
+		// the explicit guard makes the post-condition unmissable.
+		t.Errorf("UPDATE fingerprint matched prior value; trigger is not recomputing")
 	}
 
-	// DELETE.
+	// DELETE — payload fingerprint is empty (the consumer treats
+	// empty as a revocation event).
 	if _, err := pool.Exec(ctx, `
 		delete from compute_node_keys
 		 where compute_node_id = $1 and key_id = $2
-	`, nodeID, goodKeyID(t)); err != nil {
+	`, nodeID, insertKeyID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	recv = waitForNotify(ctx, t, conn)
-	if recv != "compute_node_changed" {
-		t.Fatalf("DELETE notify channel = %q, want %q", recv, "compute_node_changed")
+	recv, payload = waitForNotifyWithPayload(ctx, t, conn)
+	if recv != "compute_node_keys_changed" {
+		t.Fatalf("DELETE notify channel = %q, want %q", recv, "compute_node_keys_changed")
 	}
+	if got := payload["key_id"]; got != insertKeyID {
+		t.Errorf("DELETE payload key_id = %q, want %q", got, insertKeyID)
+	}
+	if fp := payload["fingerprint"]; fp != "" {
+		t.Errorf("DELETE payload fingerprint = %q, want empty (revocation signal)", fp)
+	}
+}
+
+// looksLikeSHA256Hex returns true when s is exactly 64 lower-case hex
+// characters. We don't decode + re-encode because the function uses
+// encode(sha256(...), 'hex') which is canonical Postgres lower-case.
+func looksLikeSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+// waitForNotifyWithPayload drains the next notification on conn and
+// returns (channel, parsed-payload). The pg_notify contract is
+// "best-effort, may be dropped if the queue overflows"; a 5-second
+// window is generous. On error the test fails.
+func waitForNotifyWithPayload(ctx context.Context, t *testing.T, conn *pgxpool.Conn) (string, map[string]string) {
+	t.Helper()
+	tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	n, err := conn.Conn().WaitForNotification(tctx)
+	if err != nil {
+		t.Fatalf("WaitForNotification: %v", err)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
+		t.Fatalf("unmarshal payload %q: %v", n.Payload, err)
+	}
+	return n.Channel, payload
 }
 
 func Test00076_ComputeNodeKeys_CascadeOnComputeNodeDelete(t *testing.T) {

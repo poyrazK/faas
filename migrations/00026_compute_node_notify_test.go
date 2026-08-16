@@ -46,7 +46,7 @@ func TestMigrations_00026_ComputeNodeNotify(t *testing.T) {
 		t.Fatalf("db.MigrateUp: %v", err)
 	}
 
-	notif, cancel, err := db.Subscribe(ctx, pool, []string{db.NotifyComputeNodeChanged})
+	notif, cancel, err := db.Subscribe(ctx, pool, []string{db.NotifyComputeNodesChanged})
 	if err != nil {
 		t.Fatalf("Subscribe(compute_node_changed): %v", err)
 	}
