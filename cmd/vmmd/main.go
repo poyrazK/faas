@@ -561,7 +561,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if dbURL == "" {
 			return errors.New("vmmd: [compute_node].name set but [db_url] (or FAAS_VMMD_DBURL) is empty")
 		}
-		pool, err := deps.openDB(ctx, dbURL)
+		// Issue #938 / PR-A Blocker 2: the original code was
+		// `pool, err := deps.openDB(ctx, dbURL)` — Go 1.22's shadowing
+		// rules treated `err` as already declared (from the outer
+		// runWithDeps scope) and redeclared `pool` in this inner
+		// scope, leaving the outer `pool` at line 554 nil. The node-
+		// verifier wiring at line ~882 then constructed a
+		// PGNodeLoader(nil) and tripped the "pgNodeLoader has nil
+		// pool" guard at the first Refresh. Assign to the outer
+		// `pool` (and `err`) by using `=` instead of `:=` so the
+		// verifier sees the live pool.
+		var err error
+		pool, err = deps.openDB(ctx, dbURL)
 		if err != nil {
 			return fmt.Errorf("vmmd: open db for self-registration: %w", err)
 		}
