@@ -62,7 +62,9 @@ The renderer (PR-2) writes one TOML per daemon on each host. The
 load-bearing invariant from issue #911 is that keys belong to the
 right table: vmmd's `[compute_node]` block must NOT re-declare
 the top-level cluster (the bug at
-`deploy/ansible/roles/vmmd_service/files/vmmd.toml.example:96-103`),
+`deploy/ansible/roles/vmmd_service/files/vmmd.toml.example`
+lines 33-40 — the canonical top-level `tls_cert_path` /
+`tls_key_path` / `tls_ca_path` cluster),
 and `[compute_node]` must NOT carry remote-daemon keys (e.g.
 `schedd_client_*`). The
 catalog at `pkg/manifest/toml_check.go` is the source of truth

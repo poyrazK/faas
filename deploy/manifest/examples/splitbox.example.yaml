@@ -91,6 +91,20 @@ daemons:
       key_path: /etc/faas/tls/vmmd/server.key
       ca_path: /etc/faas/tls/ca/ca.crt
       mode: "0400"
+    # PR scale-out tier-1 residual (PR #937 / Gaps #3 + #5):
+    # per-host compute_node overrides. The slot allocator
+    # (pkg/fcvm.SetHostIPBase) carves per-VM /30 leases from
+    # host_bridge_cidr's .2+ range. The overlay_cidr is what
+    # the vmmd overlay detector prefers when multiple NICs come
+    # back from `tailscale ip -4`. overlay_interface pins the
+    # detector to a specific NIC (e.g. tailscale0) on multi-NIC
+    # hosts. All three default to api.DefaultHostBridgeCIDR /
+    # api.DefaultOverlayCIDR / "auto-detect" when unset. Single-box
+    # dev leaves them commented out.
+    # compute_node:
+    #   host_bridge_cidr: 10.100.0.0/16   # per-host bridge /16 (.1 reserved)
+    #   overlay_cidr: 100.64.0.0/10       # overlay subnet the detector prefers
+    #   overlay_interface: tailscale0     # optional NIC pin (Gap #5)
   apid:
     bind: unix:///run/faas/apid.sock
   meterd:
@@ -107,6 +121,24 @@ daemons:
 overlay:
   provider: wireguard
   cidr: 10.42.0.0/24
+
+# Egress — top-level RFC1918 lateral-movement escape hatch
+# (PR scale-out tier-1 residual Gap #4). The flag's name is
+# load-bearing safety: anyone skimming this manifest sees the
+# consequence spelled out before they flip it. Pair this with at
+# least one entry in overlay_exceptions — the DB CHECK constraint
+# (migration 00273_egress_policy_exceptions.sql) enforces the
+# pair at the row level. Empty overlay_exceptions + the flag set
+# is rejected at apply time.
+#
+# Default: false. Set to true ONLY when your overlay CIDR lives
+# inside an RFC1918 range (the example's 10.42.0.0/24 sits in
+# 10/8, which is in the §11 deny catalog). Single-box dev keeps
+# the legacy "deny wins on RFC1918" posture byte-identical by
+# leaving this unset.
+egress:
+  danger_accept_rfc1918_lateral_movement: false
+  overlay_exceptions: []
 
 # DNS — public-facing hostname contract. apps_domain is the single
 # source of truth consumed by gatewayd-internal, apid, and the

@@ -41,8 +41,11 @@
     surface, and `make lint-manifest` is the CI gate. There is no
     "third-party" validator that disagrees with the canonical one.
   - **TOML table-placement catalog (PR-0):** the bug at
-    `deploy/ansible/roles/vmmd_service/files/vmmd.toml.example:96-103`
-    (duplicated `tls_*_path` inside `[compute_node]`) is the load-bearing failure mode
+    `deploy/ansible/roles/vmmd_service/files/vmmd.toml.example`
+    lines 33-40 (duplicated `tls_*_path` cluster declared inside
+    `[compute_node]` — the canonical location is the top-level
+    `tls_cert_path` / `tls_key_path` / `tls_ca_path` group) is
+    the load-bearing failure mode
     issue #911 calls out. The schema's `pkg/manifest/toml_check.go`
     catalog is the source of truth for which key belongs to
     which TOML table. The renderer (PR-2) consumes the same
