@@ -217,13 +217,34 @@ const (
 	//   sweep. Payload is informational; the listener re-reads the
 	//   table on every signal anyway.
 	NotifyAlertRuleChanged = "alert_rule_changed"
-	// NotifyComputeNodeChanged {"node_id":uuid, "active":bool}
+	// NotifyComputeNodesChanged {"node_id":uuid, "active":bool}
 	// schedd (SetComputeNodeActive + UpsertComputeNode) →
 	// gatewayd-internal (NodeClientCache.Evict). gatewayd-internal's per-node
 	// *grpc.ClientConn must drop on every UPSERT (admin UPDATE)
 	// and every active=false (heartbeat watchdog), so a future
 	// request to the same node re-dials against the fresh row.
-	// Issue #98 / ADR-028.
+	// Also consumed by vmmd's PGNodeVerifier (drained; refreshes
+	// the leaf-cert handshake snapshot — not filtered) and by
+	// schedd's router-refresh / rebalancer / live-migrator (the
+	// reason they were bundled under the same channel pre-00276:
+	// the channel naming forced consumers to JSON-parse-and-filter
+	// inline; the split removes that).
+	// Issue #98 / ADR-028 / Tier-2 gap #12 / migration 00276.
+	//
+	// NotifyComputeNodeKeysChanged {"key_id":text, "fingerprint":hex64}
+	//   schedd's node-key registry (cmd/schedd/node_keys_loader.go).
+	//   Fired on INSERT/UPDATE/DELETE of compute_node_keys. The
+	//   fingerprint is sha256-hex(new.public_key_pem) on INSERT
+	//   and UPDATE; empty string on DELETE (consumer treats empty
+	//   as a revocation event and removes the entry from the
+	//   in-memory map). The trigger posture changed from
+	//   STATEMENT-level to ROW-level in migration 00276 because the
+	//   new function reads NEW.public_key_pem — the cardinality
+	//   cost is one notify per row write, bounded by the fleet
+	//   size (one row per node, on registration or rotation).
+	//   No other daemon currently subscribes to this channel
+	//   (vmmd's PGNodeVerifier is compute_nodes-only; gatewayd-
+	//   internal's cache eviction is compute_nodes-only).
 	//
 	// NotifyInvocationDue {"invocation_id":uuid, "app_id":uuid,
 	//                     "source":"async_invoke|queue|delayed_task|cron"}
@@ -235,9 +256,10 @@ const (
 	//                     "source":"...", "state":"completed|failed|cancelled"}
 	//   fired by the drain's state-machine transition; reserved for a
 	//   follow-up SSE push (the dashboard polls /v1/invocations today).
-	NotifyComputeNodeChanged = "compute_node_changed"
-	NotifyInvocationDue      = "invocation_due"
-	NotifyInvocationDone     = "invocation_done"
+	NotifyComputeNodesChanged    = "compute_nodes_changed"
+	NotifyComputeNodeKeysChanged = "compute_node_keys_changed"
+	NotifyInvocationDue          = "invocation_due"
+	NotifyInvocationDone         = "invocation_done"
 	// NotifyEgressPolicyChanged {"policy_id":uuid, "public_iface":"...",
 	//                           "masquerade_cidr":"..."}
 	//   ops → cmd/vmmd/egress_watcher: the per-host egress policy
