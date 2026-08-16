@@ -141,7 +141,17 @@ func defaultDetectOverlayIP(ctx context.Context, cfg ComputeNodeConfig) (string,
 		}
 		prefer = p
 	}
-	return detectOverlayIP(ctx, OverlayDetector{PreferCIDR: prefer})
+	// PR scale-out tier-1 residual (Gap #5): forward the
+	// operator-pinned NIC into the detector. Empty (the v1
+	// default) keeps the PreferCIDR scoring path unchanged. When
+	// set, the detector pins to that interface's IPv4 address and
+	// only falls back to PreferCIDR scoring when the pinned NIC
+	// is missing or has no IPv4 address — the "never silently
+	// fail" posture that preserves the v1 contract.
+	return detectOverlayIP(ctx, OverlayDetector{
+		PreferCIDR:      prefer,
+		PinnedInterface: strings.TrimSpace(cfg.OverlayInterface),
+	})
 }
 
 // registerComputeNodeKey writes the public half of vmmd's signing

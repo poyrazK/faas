@@ -35,6 +35,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/netip"
 	"os"
 	"strings"
 
@@ -56,6 +57,11 @@ func main() {
 		"per-host overlay CIDR (e.g. 100.64.0.0/14). Repeatable; the renderer emits one accept + one MASQUERADE per entry. Env: FAAS_OVERLAY_CIDRS (comma-separated).")
 	masqueradeCIDRv6 := flag.String("masquerade-cidr-v6", "",
 		"source-address v6 CIDR for the postrouting v6 MASQUERADE sibling (e.g. fc00::/7). Defaults to empty (no v6 rule emitted). Env: FAAS_MASQUERADE_CIDR_V6.")
+	var overlayExceptions multiFlag
+	flag.Var(&overlayExceptions, "overlay-exception",
+		"PR scale-out tier-1 residual (Gap #4): CIDR accepted BEFORE the §11 deny block on the host forward chain. Operators using an RFC1918 overlay (e.g. 10.42.0.0/24) declare the exception here. Env: FAAS_OVERLAY_EXCEPTIONS (comma-separated). Each entry is parsed via netip.ParsePrefix; malformed CIDRs fail at startup.")
+	dangerAccept := flag.Bool("danger-accept-rfc1918-lateral-movement", false,
+		"PR scale-out tier-1 residual (Gap #4): enable the deny-set exception path. When true, the renderer emits per-CIDR accept rules BEFORE the §11 deny block. Default: false. Operators using an RFC1918 overlay MUST set this AND list the overlay CIDR in --overlay-exception; the manifest schema enforces the same pair at the DB CHECK constraint level.")
 	flag.Parse()
 
 	policy := netns.DefaultHostPolicy
@@ -77,6 +83,38 @@ func main() {
 	}
 	if cidr := pickValue(*masqueradeCIDRv6, "FAAS_MASQUERADE_CIDR_V6"); cidr != "" {
 		policy.MasqueradeCIDR6 = cidr
+	}
+	// Gap #4: deny-set exception path. Operators using an RFC1918
+	// overlay (e.g. 10.42.0.0/24) MUST pair --danger-accept-rfc1918-
+	// lateral-movement with at least one --overlay-exception; the
+	// same pair is enforced at the manifest validator level (the
+	// DB CHECK constraint forces the same pair at the row level).
+	// The flag is the CLI escape hatch — the manifest schema flag
+	// name is the load-bearing safety in code review (operators
+	// skim it before flipping).
+	if *dangerAccept {
+		mergedExceptions := append([]string(nil), overlayExceptions...)
+		if env := os.Getenv("FAAS_OVERLAY_EXCEPTIONS"); env != "" {
+			mergedExceptions = append(mergedExceptions, strings.Split(env, ",")...)
+		}
+		if len(mergedExceptions) == 0 {
+			fmt.Fprintln(os.Stderr, "faas-nft-render: --danger-accept-rfc1918-lateral-movement set but no --overlay-exception entries (and FAAS_OVERLAY_EXCEPTIONS empty). Pair them.")
+			os.Exit(1)
+		}
+		for _, ex := range mergedExceptions {
+			p, err := netip.ParsePrefix(strings.TrimSpace(ex))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "faas-nft-render: --overlay-exception %q: %v\n", ex, err)
+				os.Exit(1)
+			}
+			policy.OperatorExceptions = append(policy.OperatorExceptions, p)
+		}
+	} else if len(overlayExceptions) > 0 || os.Getenv("FAAS_OVERLAY_EXCEPTIONS") != "" {
+		// Operator listed exceptions but didn't flip the flag —
+		// refuse to render silently. The pair IS the contract;
+		// silently dropping exceptions would surprise the operator.
+		fmt.Fprintln(os.Stderr, "faas-nft-render: --overlay-exception entries present without --danger-accept-rfc1918-lateral-movement; the flag is the gate.")
+		os.Exit(1)
 	}
 
 	if _, err := os.Stdout.WriteString(policy.Render()); err != nil {
