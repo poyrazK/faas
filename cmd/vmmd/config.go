@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -190,6 +191,14 @@ type ComputeNodeConfig struct {
 	MemMB              int    `toml:"mem_mb"`               // total RAM in MiB
 	MaxConcurrency     int    `toml:"max_concurrency"`      // parallel live instances
 	AdmissionCeilingMB int    `toml:"admission_ceiling_mb"` // Σ(ram_mb + 8) cap
+	// VCPUBudget is the per-node vCPU admission ceiling (migration 00123,
+	// Tier A2). schedd's NodeLedger checks vCPU against this value rather
+	// than the legacy fleet-wide api.VCPUSlots constant. Defaults to
+	// api.VCPUSlots (160) when 0; operators on heterogeneous fleets dial
+	// it per-host via [compute_node].vcpu_budget or FAAS_VCPU_BUDGET. The
+	// SQL CHECK constraint (vcpu_budget > 0) means non-positive values
+	// would also fail at upsert — fail fast at LoadConfig instead.
+	VCPUBudget         int    `toml:"vcpu_budget"`
 	OverlayIP          string `toml:"overlay_ip"`           // Tailscale/Wireguard IP; auto-detected when empty
 	// HostBridgeCIDR is the per-host bridge CIDR (the /16 the veth
 	// host-side addresses live in). Mega-PR-B Commit 1 supersedes
@@ -336,25 +345,33 @@ func LoadConfig(path string) (*Config, error) {
 			// through api.DefaultComputeNodeCeilingMB so the
 			// MemStore seed (pkg/state/memstore.go) and vmmd
 			// share a single source of truth. Resolves to 47_600.
+			// Issue #938 / PR-A: VCPUBudget defaults to api.VCPUSlots
+			// (160) so the upsert satisfies the migration 00123 CHECK
+			// constraint (vcpu_budget > 0) without operator action on
+			// single-box dev. Heterogeneous fleets override per-host
+			// via [compute_node].vcpu_budget or FAAS_VCPU_BUDGET.
 			VPCPUs:             160,
 			MemMB:              56000,
 			MaxConcurrency:     200,
 			AdmissionCeilingMB: api.DefaultComputeNodeCeilingMB(),
+			VCPUBudget:         api.VCPUSlots,
 		},
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			// Gate-B: even on the missing-file path, resolve Role
-			// against FAAS_VMMD_ROLE so env wins over the empty
-			// TOML default. role.FromConfig falls back to
-			// RoleSingleBox when the env is unset.
-			c.Role = role.FromConfig(string(c.Role), "FAAS_VMMD_ROLE")
-			return c, nil
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("vmmd: read %q: %w", path, err)
 		}
-		return nil, fmt.Errorf("vmmd: read %q: %w", path, err)
-	}
-	if err := toml.Unmarshal(b, c); err != nil {
+		// Missing-file path: fall through with c as the defaults-only
+		// config. The env-overlay block below applies FAAS_NODE_NAME,
+		// FAAS_HOST_BRIDGE_CIDR, FAAS_OVERLAY_INTERFACE,
+		// FAAS_VCPU_BUDGET, and FAAS_VMMD_ROLE just as it does on the
+		// parsed-TOML path; the role-against-env call happens here too.
+		// (Historically this branch early-returned before the env-
+		// overlays ran — issue #938 / PR-A exposes that as a bug
+		// because FAAS_VCPU_BUDGET=0 silently bypassed the
+		// non-positive validator.)
+	} else if err := toml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("vmmd: parse %q: %w", path, err)
 	}
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
@@ -394,6 +411,32 @@ func LoadConfig(path string) (*Config, error) {
 	// value (or the auto-detect default when TOML is also empty).
 	if v := os.Getenv("FAAS_OVERLAY_INTERFACE"); v != "" {
 		c.ComputeNode.OverlayInterface = v
+	}
+	// Issue #938 / PR-A: env-var overlay for [compute_node].vcpu_budget
+	// so heterogeneous fleets can dial the per-host vCPU ceiling via the
+	// systemd drop-in without editing vmmd.toml on every box. Mirrors
+	// the FAAS_NODE_NAME / FAAS_HOST_BRIDGE_CIDR / FAAS_OVERLAY_INTERFACE
+	// pattern. Non-positive values are rejected at LoadConfig so the
+	// migration 00123 CHECK constraint (vcpu_budget > 0) can't trip the
+	// self-registration upsert later. Empty keeps the TOML value (or
+	// api.VCPUSlots when both are empty).
+	if v := os.Getenv("FAAS_VCPU_BUDGET"); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n <= 0 {
+			return nil, fmt.Errorf("vmmd: FAAS_VCPU_BUDGET %q must be a positive integer", v)
+		}
+		c.ComputeNode.VCPUBudget = n
+	}
+	// Issue #938 / PR-A: reject non-positive TOML values for
+	// [compute_node].vcpu_budget at LoadConfig rather than letting them
+	// reach the upsert (where migration 00123's CHECK constraint would
+	// trip the self-registration fail-closed path). The env-overlay
+	// block above already enforces the same rule for FAAS_VCPU_BUDGET.
+	// Zero is rejected here even though the struct-default path silently
+	// defaults to api.VCPUSlots — a TOML `vcpu_budget = 0` is an
+	// explicit operator mistake, not an omitted field.
+	if c.ComputeNode.VCPUBudget <= 0 {
+		return nil, fmt.Errorf("vmmd: [compute_node].vcpu_budget must be > 0 (got %d)", c.ComputeNode.VCPUBudget)
 	}
 	// Mega-PR-B review M3: validate [compute_node].overlay_cidr
 	// against the §11 deny set at config-load time, BEFORE vmmd

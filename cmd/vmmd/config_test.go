@@ -134,6 +134,113 @@ func TestLoadConfig_PartialTOMLKeepsDefaults(t *testing.T) {
 	}
 }
 
+// TestLoadConfig_DefaultVCPUBudget pins the issue #938 / PR-A wiring
+// between cmd/vmmd/config.go and pkg/api.VCPUSlots. With no TOML
+// override, the default must match the migration 00123 backfill value
+// so single-box dev never trips the CHECK constraint.
+func TestLoadConfig_DefaultVCPUBudget(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ComputeNode.VCPUBudget != api.VCPUSlots {
+		t.Errorf("ComputeNode.VCPUBudget = %d, want %d (api.VCPUSlots)",
+			cfg.ComputeNode.VCPUBudget, api.VCPUSlots)
+	}
+}
+
+// TestLoadConfig_VCPUBudgetOverride: a per-host [compute_node].vcpu_budget
+// flows through verbatim to ComputeNodeConfig.VCPUBudget.
+func TestLoadConfig_VCPUBudgetOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	body := `
+[compute_node]
+vcpu_budget = 40
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ComputeNode.VCPUBudget != 40 {
+		t.Errorf("ComputeNode.VCPUBudget = %d, want 40 (operator override)", cfg.ComputeNode.VCPUBudget)
+	}
+}
+
+// TestLoadConfig_RejectsNonPositiveVCPUBudget: non-positive values
+// must fail at LoadConfig so the migration 00123 CHECK
+// (vcpu_budget > 0) cannot trip the self-registration upsert.
+func TestLoadConfig_RejectsNonPositiveVCPUBudget(t *testing.T) {
+	cases := []struct {
+		name, body string
+	}{
+		{"zero", `
+[compute_node]
+vcpu_budget = 0
+`},
+		{"negative", `
+[compute_node]
+vcpu_budget = -1
+`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vmmd.toml")
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadConfig(path)
+			if err == nil {
+				t.Fatalf("expected non-positive vcpu_budget to be rejected")
+			}
+			if !strings.Contains(err.Error(), "vcpu_budget") {
+				t.Errorf("error %q should name vcpu_budget", err.Error())
+			}
+		})
+	}
+}
+
+// TestLoadConfig_FAASVCPUBudgetOverride pins the env-overlay seam
+// (issue #938 / PR-A): FAAS_VCPU_BUDGET wins over the TOML value when
+// both are set, mirroring the FAAS_NODE_NAME / FAAS_HOST_BRIDGE_CIDR
+// pattern. Empty keeps the TOML value.
+func TestLoadConfig_FAASVCPUBudgetOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	body := `
+[compute_node]
+vcpu_budget = 40
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAAS_VCPU_BUDGET", "80")
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ComputeNode.VCPUBudget != 80 {
+		t.Errorf("ComputeNode.VCPUBudget = %d, want 80 (env override)", cfg.ComputeNode.VCPUBudget)
+	}
+}
+
+// TestLoadConfig_FAASVCPUBudgetRejectsNonPositive pins the env-overlay
+// validator (issue #938 / PR-A): non-positive FAAS_VCPU_BUDGET fails
+// at LoadConfig rather than at the upsert.
+func TestLoadConfig_FAASVCPUBudgetRejectsNonPositive(t *testing.T) {
+	t.Setenv("FAAS_VCPU_BUDGET", "0")
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected non-positive FAAS_VCPU_BUDGET to be rejected")
+	}
+	if !strings.Contains(err.Error(), "FAAS_VCPU_BUDGET") {
+		t.Errorf("error %q should name FAAS_VCPU_BUDGET", err.Error())
+	}
+}
+
 func TestLoadConfig_BadTOMLErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bad.toml")
 	if err := os.WriteFile(path, []byte("not valid toml === ==="), 0o600); err != nil {

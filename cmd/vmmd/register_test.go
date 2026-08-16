@@ -17,8 +17,10 @@ import (
 	"io"
 	"log/slog"
 	"net/netip"
+	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -110,6 +112,77 @@ func TestRegisterComputeNode_RejectsZeroFields(t *testing.T) {
 		if err == nil {
 			t.Errorf("case %d: expected zero-field rejection", i)
 		}
+	}
+}
+
+// TestRegisterComputeNode_RejectsNegativeVCPUBudget: issue #938 / PR-A.
+// The migration 00123 CHECK (vcpu_budget > 0) trips the upsert, so
+// LoadConfig also rejects it via FAAS_VCPU_BUDGET. A negative value at
+// the register boundary must surface as a startup error rather than
+// reaching the upsert.
+func TestRegisterComputeNode_RejectsNegativeVCPUBudget(t *testing.T) {
+	st := state.NewMemStore()
+	cfg := ComputeNodeConfig{
+		NodeName:           "box-east-1",
+		VPCPUs:             160,
+		MemMB:              56000,
+		MaxConcurrency:     200,
+		AdmissionCeilingMB: 47600,
+		VCPUBudget:         -1,
+	}
+	_, err := registerComputeNode(context.Background(), st, cfg, "unix:///x", nil, testLogger())
+	if err == nil {
+		t.Fatal("expected negative VCPUBudget to be rejected")
+	}
+	if !strings.Contains(err.Error(), "vcpu_budget") {
+		t.Errorf("error %q does not name vcpu_budget", err.Error())
+	}
+}
+
+// TestRegisterComputeNode_DefaultsVCPUBudgetFromAPI: issue #938 / PR-A.
+// When the operator leaves VCPUBudget at the struct-default zero value,
+// the upsert falls back to api.VCPUSlots so the migration 00123 CHECK
+// never trips on single-box dev. Pins the fallback to a single source
+// of truth (pkg/api.VCPUSlots).
+func TestRegisterComputeNode_DefaultsVCPUBudgetFromAPI(t *testing.T) {
+	st := state.NewMemStore()
+	cfg := ComputeNodeConfig{
+		NodeName:           "box-east-1",
+		VPCPUs:             160,
+		MemMB:              56000,
+		MaxConcurrency:     200,
+		AdmissionCeilingMB: 47600,
+		// VCPUBudget omitted → fallback to api.VCPUSlots
+	}
+	got, err := registerComputeNode(context.Background(), st, cfg, "unix:///x", nil, testLogger())
+	if err != nil {
+		t.Fatalf("registerComputeNode: %v", err)
+	}
+	if got.VCPUBudget != api.VCPUSlots {
+		t.Errorf("VCPUBudget = %d, want %d (api.VCPUSlots fallback)", got.VCPUBudget, api.VCPUSlots)
+	}
+}
+
+// TestRegisterComputeNode_HonorsExplicitVCPUBudget: issue #938 / PR-A.
+// Heterogeneous fleets override the per-host vCPU ceiling via
+// [compute_node].vcpu_budget; the value flows through verbatim to the
+// compute_nodes row.
+func TestRegisterComputeNode_HonorsExplicitVCPUBudget(t *testing.T) {
+	st := state.NewMemStore()
+	cfg := ComputeNodeConfig{
+		NodeName:           "box-east-1",
+		VPCPUs:             160,
+		MemMB:              56000,
+		MaxConcurrency:     200,
+		AdmissionCeilingMB: 47600,
+		VCPUBudget:         40, // smaller box, narrower ceiling
+	}
+	got, err := registerComputeNode(context.Background(), st, cfg, "unix:///x", nil, testLogger())
+	if err != nil {
+		t.Fatalf("registerComputeNode: %v", err)
+	}
+	if got.VCPUBudget != 40 {
+		t.Errorf("VCPUBudget = %d, want 40 (operator override)", got.VCPUBudget)
 	}
 }
 

@@ -77,6 +77,17 @@ func registerComputeNode(ctx context.Context, st state.Store, cfg ComputeNodeCon
 		return state.ComputeNode{}, fmt.Errorf("vmmd: [compute_node] fields must be > 0 (got vpcpus=%d mem_mb=%d max_concurrency=%d admission_ceiling_mb=%d)",
 			cfg.VPCPUs, cfg.MemMB, cfg.MaxConcurrency, cfg.AdmissionCeilingMB)
 	}
+	// Issue #938 / PR-A: VCPUBudget is treated specially because the
+	// struct literal default in config.go is already the canonical
+	// api.VCPUSlots (160) — operators who omit it get a sensible single-
+	// box value. Negative values are still rejected (the SQL CHECK
+	// constraint is > 0, and a negative would either default to 160 or
+	// fail the upsert depending on the fallback order). Zero is
+	// explicitly permitted here so the api.VCPUSlots fallback below
+	// remains the single source of truth for the "no override" path.
+	if cfg.VCPUBudget < 0 {
+		return state.ComputeNode{}, fmt.Errorf("vmmd: [compute_node].vcpu_budget must be >= 0 (got %d)", cfg.VCPUBudget)
+	}
 
 	overlayIP := strings.TrimSpace(cfg.OverlayIP)
 	if overlayIP == "" && detectOverlayIP != nil {
@@ -102,7 +113,18 @@ func registerComputeNode(ctx context.Context, st state.Store, cfg ComputeNodeCon
 		MemMB:              cfg.MemMB,
 		MaxConcurrency:     cfg.MaxConcurrency,
 		AdmissionCeilingMB: cfg.AdmissionCeilingMB,
+		VCPUBudget:         cfg.VCPUBudget,
 		Active:             true,
+	}
+	// Issue #938 / PR-A: the migration 00123 CHECK constraint
+	// (vcpu_budget > 0) rejects 0, and the struct-default path leaves
+	// the field at 0 unless the operator set it. Fall back to
+	// api.VCPUSlots (160, the migration backfill default) so single-box
+	// dev never trips the CHECK. The < 0 guard above ensures this
+	// fallback only fires for the "operator omitted" path, not the
+	// "operator wrote a negative" path.
+	if row.VCPUBudget <= 0 {
+		row.VCPUBudget = api.VCPUSlots
 	}
 	got, err := st.UpsertComputeNodeFromVmmd(ctx, row)
 	if err != nil {
@@ -112,7 +134,8 @@ func registerComputeNode(ctx context.Context, st state.Store, cfg ComputeNodeCon
 		"name", got.Name, "id", got.ID,
 		"target_url", got.TargetURL,
 		"vpcpus", got.VPCPUs, "mem_mb", got.MemMB,
-		"admission_ceiling_mb", got.AdmissionCeilingMB)
+		"admission_ceiling_mb", got.AdmissionCeilingMB,
+		"vcpu_budget", got.VCPUBudget)
 	_ = overlayIP // reserved: pkg/state.ComputeNode will get OverlayIP in the migration-00026 follow-up.
 	return got, nil
 }
