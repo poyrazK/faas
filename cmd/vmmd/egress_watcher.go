@@ -93,11 +93,20 @@ func (osExecNft) Reload(ctx context.Context, path string) error {
 // trust the payload for the render — the canonical values live in
 // `pkg/netns.DefaultHostPolicy`. A misconfigured audit row is
 // surfaced as a log warning, not a render override.
+//
+// PR scale-out tier-1 residual (Gap #4): the trigger payload now
+// also carries overlay_exceptions + danger_accept_rfc1918_lateral_movement
+// (added by migration 00273_egress_policy_exceptions.sql). The
+// watcher reads them for log correlation; the renderer still uses
+// the local host's compile-time defaults (the audit row is
+// "freshness, not authority" — same posture as masquerade_cidr).
 type egressPolicyAuditRow struct {
-	PolicyID       string `json:"policy_id"`
-	PublicIface    string `json:"public_iface"`
-	MasqueradeCIDR string `json:"masquerade_cidr"`
-	ChangedAt      string `json:"changed_at"`
+	PolicyID                           string   `json:"policy_id"`
+	PublicIface                        string   `json:"public_iface"`
+	MasqueradeCIDR                     string   `json:"masquerade_cidr"`
+	OverlayExceptions                  []string `json:"overlay_exceptions,omitempty"`
+	DangerAcceptRFC1918LateralMovement bool     `json:"danger_accept_rfc1918_lateral_movement,omitempty"`
+	ChangedAt                          string   `json:"changed_at"`
 }
 
 // renderStagingFunc is the seam that converts the host policy into
@@ -195,6 +204,8 @@ func (w *egressWatcher) Run(ctx context.Context, pool *pgxpool.Pool) error {
 				"policy_id", row.PolicyID,
 				"public_iface", row.PublicIface,
 				"masquerade_cidr", row.MasqueradeCIDR,
+				"overlay_exceptions", row.OverlayExceptions,
+				"danger_accept_rfc1918_lateral_movement", row.DangerAcceptRFC1918LateralMovement,
 				"changed_at", row.ChangedAt)
 		}
 	}
