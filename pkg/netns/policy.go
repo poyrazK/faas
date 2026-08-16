@@ -349,9 +349,9 @@ func (h HostPolicy) Render() string {
 	// placed first so replies on existing flows keep flowing
 	// regardless of any exception.
 	for _, ex := range h.OperatorExceptions {
-		family := "ip"
+		family := familyKeywordV4
 		if ex.Addr().Is6() && !ex.Addr().Is4In6() {
-			family = "ip6"
+			family = familyKeywordV6
 		}
 		fmt.Fprintf(&b, "    %s saddr %s accept     # operator exception (RFC1918 lateral movement, gated by manifest flag)\n",
 			family, ex.String())
@@ -367,9 +367,9 @@ func (h HostPolicy) Render() string {
 	b.WriteString("    # question.\n")
 	fmt.Fprintf(&b, "    tcp dport { %s } drop\n", denyPorts)
 	for _, e := range h.DenySet.Entries {
-		family := "ip"
+		family := familyKeywordV4
 		if e.Family == FamilyV6 {
-			family = "ip6"
+			family = familyKeywordV6
 		}
 		fmt.Fprintf(&b, "    %s daddr %s counter name %q drop\n",
 			family, e.Prefix.String(), e.CounterName)
