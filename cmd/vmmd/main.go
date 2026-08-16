@@ -109,7 +109,7 @@ var errNodeKeyInsecure = errors.New("vmmd: node.key mode permits group/other acc
 //
 // The matching public key is registered in schedd's
 // compute_node_keys table by an out-of-band install step; the
-// registry listens for `compute_node_changed` pg_notify and
+// registry listens for `compute_node_keys_changed` pg_notify and
 // picks up the row within its next refresh tick (migration
 // 00076).
 // loadNodeSigningKeyDefault is the zero-arg shim used by every
@@ -837,7 +837,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (cfg.ComputeNode.NodeName == "") does NOT construct a
 	// verifier — stdlib trust alone runs. Multi-box vmmd
 	// constructs a PG-backed verifier, refreshes once at
-	// startup, and pumps compute_node_changed notifications into
+	// startup, and pumps compute_nodes_changed notifications into
 	// a drain goroutine for the lifetime of the daemon.
 	var nodeVerifier *wire.PGNodeVerifier
 	if nodeID != "" {
@@ -848,7 +848,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("vmmd: node verifier startup refresh: %w", rerr)
 		}
 		go func() {
-			ch, lerr := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyComputeNodeChanged}, log)
+			ch, lerr := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyComputeNodesChanged}, log)
 			if lerr != nil {
 				log.Error("vmmd: node verifier LISTEN failed", "err", lerr)
 				return

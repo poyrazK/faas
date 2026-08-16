@@ -301,13 +301,13 @@ func (n *nodeCache) watchEvictionsWithInterval(ctx context.Context, pool *pgxpoo
 		}
 	}()
 
-	notif, err := subscribe(ctx, pool, []string{db.NotifyComputeNodeChanged}, n.log)
+	notif, err := subscribe(ctx, pool, []string{db.NotifyComputeNodesChanged}, n.log)
 	if err != nil {
 		// First-subscribe failure: do NOT start the heartbeat. The
 		// gauge stays at 0; the alert rule fires. Production's
 		// ctx.Done probe in cmd/gatewayd-internal/main.go's SIGHUP path
 		// handles daemon shutdown — we don't need to block here.
-		n.log.Error("gatewayd-internal: subscribe compute_node_changed", "err", err)
+		n.log.Error("gatewayd-internal: subscribe compute_nodes_changed", "err", err)
 		return
 	}
 

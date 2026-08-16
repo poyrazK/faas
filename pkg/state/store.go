@@ -1119,7 +1119,7 @@ type Store interface {
 	// node_id points at a compute_node with active=false — the input
 	// set for
 	// schedd's rebalancer (pkg/sched/rebalancer.go, Tier A4 migration
-	// 00092). Used by both the live compute_node_changed watcher (which
+	// 00092). Used by both the live compute_nodes_changed watcher (which
 	// filters by deadNodeID in memory) and the cold-start sweep (which
 	// scans every dead node at schedd boot — pg_notify is fire-and-
 	// forget; a schedd down while a drain event landed recovers via
@@ -2603,8 +2603,8 @@ type Store interface {
 	// The schedd heartbeat staleness gate (issue #98) calls this
 	// to mark a node active=false when last_heartbeat_at ages past
 	// 90s, and again active=true when a heartbeat succeeds for a
-	// previously-drained node. Emits compute_node_changed via the
-	// pg_notify listener (pkg/db/notify.NotifyComputeNodeChanged) so
+	// previously-drained node. Emits compute_nodes_changed via the
+	// pg_notify listener (pkg/db/notify.NotifyComputeNodesChanged) so
 	// gatewayd-internal can add or drop its per-node client without a
 	// restart. ErrNotFound when the id has no row.
 	SetComputeNodeActive(ctx context.Context, id string, active bool) error
@@ -2618,7 +2618,7 @@ type Store interface {
 	// so a SQL injection via an operator-supplied role is impossible —
 	// the parameter is length-capped at 32 chars and member-tested.
 	// Idempotent: writing the same role twice is a no-op UPDATE. Returns
-	// ErrNotFound if the row is gone. Emits compute_node_changed via
+	// ErrNotFound if the row is gone. Emits compute_nodes_changed via
 	// the pg_notify trigger so gatewayd-internal's per-node cache and
 	// schedd's chooser re-rank immediately (the chooser currently
 	// ignores role, but the family is wired for ADR-110 follow-ons).

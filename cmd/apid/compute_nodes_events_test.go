@@ -1,7 +1,7 @@
 // CP-1: tests for GET /v1/compute-nodes/events.
 //
 // The handler is a thin SSE wrapper around db.Subscribe (one channel:
-// compute_node_changed). The test seam is the package-internal
+// compute_nodes_changed). The test seam is the package-internal
 // recordingNotifier (defined in handlers_events_test.go) so the SSE
 // body can be observed without a real Postgres connection.
 //
@@ -50,7 +50,7 @@ func newComputeNodeEventsFixture(t *testing.T, notif *recordingNotifier, allowli
 }
 
 // TestComputeNodes_Events_StreamsAllFrames confirms the handler
-// emits one SSE frame per `compute_node_changed` notification the
+// emits one SSE frame per `compute_nodes_changed` notification the
 // recordingNotifier publishes. Three publishes → three frames on the
 // wire. Admin allowlist hits; auth chain passes.
 func TestComputeNodes_Events_StreamsAllFrames(t *testing.T) {
@@ -68,9 +68,9 @@ func TestComputeNodes_Events_StreamsAllFrames(t *testing.T) {
 
 	// Give the handler a beat to subscribe before publishing.
 	time.Sleep(50 * time.Millisecond)
-	notif.publish(db.NotifyComputeNodeChanged, `{"node_id":"box-1","op":"upsert"}`)
-	notif.publish(db.NotifyComputeNodeChanged, `{"node_id":"box-2","op":"upsert"}`)
-	notif.publish(db.NotifyComputeNodeChanged, `{"node_id":"box-3","op":"deactivate"}`)
+	notif.publish(db.NotifyComputeNodesChanged, `{"node_id":"box-1","op":"upsert"}`)
+	notif.publish(db.NotifyComputeNodesChanged, `{"node_id":"box-2","op":"upsert"}`)
+	notif.publish(db.NotifyComputeNodesChanged, `{"node_id":"box-3","op":"deactivate"}`)
 	time.Sleep(50 * time.Millisecond)
 
 	// Close the channel to unblock the handler's select (mirrors the
@@ -85,9 +85,9 @@ func TestComputeNodes_Events_StreamsAllFrames(t *testing.T) {
 	}
 	// The handler emits the channel name as the SSE event field —
 	// confirm the wire shape matches the dashboard /v1/events style.
-	if !strings.Contains(body, "event: compute_node_changed") &&
-		!strings.Contains(body, "event: "+db.NotifyComputeNodeChanged) {
-		t.Errorf("missing event: header for compute_node_changed\n%s", body)
+	if !strings.Contains(body, "event: compute_nodes_changed") &&
+		!strings.Contains(body, "event: "+db.NotifyComputeNodesChanged) {
+		t.Errorf("missing event: header for compute_nodes_changed\n%s", body)
 	}
 }
 

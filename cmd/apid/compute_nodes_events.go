@@ -1,7 +1,7 @@
 package main
 
 // CP-1: GET /v1/compute-nodes/events. Operator-facing SSE stream
-// of pg_notify frames on the compute_node_changed channel. Mirror
+// of pg_notify frames on the compute_nodes_changed channel. Mirror
 // of the dashboard's /v1/events handler but admin-only and
 // unfiltered (operators want raw fleet upserts, not per-account
 // frames).
@@ -26,7 +26,7 @@ import (
 )
 
 // computeNodeEventsHandler handles GET /v1/compute-nodes/events.
-// It opens a per-request subscription to compute_node_changed and
+// It opens a per-request subscription to compute_nodes_changed and
 // streams each frame as an SSE event. The 15s `:` heartbeat (per
 // the dashboard's /v1/events shape) keeps the connection alive
 // across idle ticks; clients SHOULD reconnect on disconnect because
@@ -54,7 +54,7 @@ func (s *server) computeNodeEventsHandler(w http.ResponseWriter, r *http.Request
 	apislogs.StartSSE(w)
 	flusher, _ := w.(http.Flusher)
 
-	ch, cancel, err := s.notif.Subscribe(r.Context(), []string{db.NotifyComputeNodeChanged})
+	ch, cancel, err := s.notif.Subscribe(r.Context(), []string{db.NotifyComputeNodesChanged})
 	if err != nil {
 		// Surface the failure on the wire as a single error
 		// frame, then close the connection. The dashboard's

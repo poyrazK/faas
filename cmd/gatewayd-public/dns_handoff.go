@@ -1,7 +1,7 @@
 // DNSHandoff wiring for cmd/gatewayd-public (Tier A8 / ADR-083 /
 // code-review fix #2).
 //
-// Subscribes to the `compute_node_changed` pg_notify channel.
+// Subscribes to the `compute_nodes_changed` pg_notify channel.
 // On every notification:
 //
 //  1. Re-elect the leader via leader.ElectLeader (lex-min over
@@ -37,7 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// runDNSHandoff subscribes to compute_node_changed and routes
+// runDNSHandoff subscribes to compute_nodes_changed and routes
 // every notification to the right DNSHandoff.Run / UpsertRecord
 // call. Blocks until ctx is cancelled.
 func runDNSHandoff(
@@ -48,10 +48,10 @@ func runDNSHandoff(
 	ops *wire.OpsMetrics,
 ) error {
 	notif, err := db.SubscribeWithReconnect(ctx, pool, []string{
-		db.NotifyComputeNodeChanged,
+		db.NotifyComputeNodesChanged,
 	}, log)
 	if err != nil {
-		return fmt.Errorf("gatewayd-public: subscribe compute_node_changed: %w", err)
+		return fmt.Errorf("gatewayd-public: subscribe compute_nodes_changed: %w", err)
 	}
 	// lastLeaderName is the cached current leader. Empty on
 	// first boot. We compare against the freshly-elected
@@ -71,7 +71,7 @@ func runDNSHandoff(
 				// this branch only fires on ctx cancel.
 				return nil
 			}
-			log.Info("gatewayd-public: compute_node_changed received",
+			log.Info("gatewayd-public: compute_nodes_changed received",
 				"channel", n.Channel,
 				"last_leader", lastLeaderName,
 			)

@@ -76,7 +76,7 @@ func TestRebalancer_DrainPayload_CallsHandle(t *testing.T) {
 	rec := &recordingRebalancerHandle{}
 	ch := make(chan db.Notification, 1)
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: `{"node_id":"fsn-2","active":false}`,
 	}
 
@@ -108,7 +108,7 @@ func TestRebalancer_ActiveTruePayload_DropsHandle(t *testing.T) {
 	rec := &recordingRebalancerHandle{}
 	ch := make(chan db.Notification, 1)
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: `{"node_id":"fsn-2","active":true}`,
 	}
 
@@ -139,7 +139,7 @@ func TestRebalancer_ComputeNodeKeysLiteral_NoDispatch(t *testing.T) {
 	rec := &recordingRebalancerHandle{}
 	ch := make(chan db.Notification, 1)
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: `"compute_node_keys"`,
 	}
 
@@ -168,11 +168,11 @@ func TestRebalancer_MalformedJSON_LoopSurvives(t *testing.T) {
 	rec := &recordingRebalancerHandle{}
 	ch := make(chan db.Notification, 2)
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: "not json {{{",
 	}
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: `{"node_id":"after-malformed","active":false}`,
 	}
 
@@ -207,11 +207,11 @@ func TestRebalancer_HandleError_LogsAndContinues(t *testing.T) {
 
 	ch := make(chan db.Notification, 2)
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: `{"node_id":"fsn-1","active":false}`,
 	}
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: `{"node_id":"fsn-2","active":false}`,
 	}
 
@@ -239,11 +239,11 @@ func TestRebalancer_BackToBack_DispatchesTwice(t *testing.T) {
 	rec := &recordingRebalancerHandle{}
 	ch := make(chan db.Notification, 2)
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: `{"node_id":"same","active":false}`,
 	}
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: `{"node_id":"same","active":false}`,
 	}
 
@@ -299,7 +299,7 @@ func TestRebalancer_EmptyNodeID_DropsHandle(t *testing.T) {
 	rec := &recordingRebalancerHandle{}
 	ch := make(chan db.Notification, 1)
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: `{"node_id":"","active":false}`,
 	}
 

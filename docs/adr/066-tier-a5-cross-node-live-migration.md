@@ -73,10 +73,11 @@ deleted.
 ### Architectural decisions
 
 1. **Trigger.** A second consumer of the
-   `db.NotifyComputeNodeChanged` channel — `LiveMigrator`,
-   parallel to the Tier A4 `Rebalancer` watcher. Same payload
-   filter (`active=false` + valid `node_id`); different
-   per-instance dispatch (the four-phase handoff).
+   `db.NotifyComputeNodesChanged` channel (post-00276; was
+   `db.NotifyComputeNodeChanged` before the split) —
+   `LiveMigrator`, parallel to the Tier A4 `Rebalancer` watcher.
+   Same payload filter (`active=false` + valid `node_id`);
+   different per-instance dispatch (the four-phase handoff).
 
 2. **Per-tick cap.** `MigrateLiveMaxPerTick = 10` (env-
    overridable via `FAAS_MIGRATE_LIVE_MAX_PER_TICK`). Lower

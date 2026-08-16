@@ -178,8 +178,8 @@ func TestPGNodeVerifier_Run_DrainsUntilCancel(t *testing.T) {
 	go func() { done <- v.Run(ctx, ch) }()
 
 	// Drain should keep refreshing on every notification.
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged}
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged}
 
 	// Give the drain time to process at least one notification.
 	deadline := time.Now().Add(time.Second)
@@ -230,8 +230,8 @@ func TestPGNodeVerifier_Run_SurvivesLoaderFailure(t *testing.T) {
 	// notify drives a Refresh that fails. Last-known-good stays
 	// empty (no prior snapshot), but the loop survives and tries
 	// again on the next notify.
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged}
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged}
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
@@ -268,12 +268,18 @@ func TestPGNodeVerifier_Run_NilReceiverBlocksUntilCancel(t *testing.T) {
 
 // PR-5 / issue #911 — heartbeat-only payload discrimination.
 //
-// The 'compute_node_changed' pg_notify channel carries two payload
-// shapes. compute_nodes writes emit JSON {node_id, active} (migration
-// 00026) and compute_node_keys writes emit the literal string
-// "compute_node_keys" (migration 00076's TG_TABLE_NAME piggyback). The
-// verifier reads ONLY compute_nodes, so Run filters the keys payload
-// at the receiver — no Refresh, no log line, no loader round-trip.
+// Post-00276 the channel split removes the keys-table payload from
+// this consumer entirely: the verifier subscribes only to
+// db.NotifyComputeNodesChanged (was the unified
+// 'compute_node_changed' pre-00276, which carried both
+// compute_nodes row writes AND compute_node_keys writes; the
+// verifier dropped the keys payload via JSON-parse failure). The
+// split means Run no longer has to filter — channel choice is the
+// filter. The test below still uses the literal "compute_node_keys"
+// payload as a defence-in-depth: post-00276 the verifier is
+// physically subscribed to the nodes-changed channel and so should
+// never see a keys payload on the wire, but the literal-string
+// filter would still drop it if the publisher ever misroutes.
 
 // TestPGNodeVerifier_Run_SkipsComputeNodeKeysPayload asserts that a
 // notify carrying the literal "compute_node_keys" payload triggers
@@ -301,7 +307,7 @@ func TestPGNodeVerifier_Run_SkipsComputeNodeKeysPayload(t *testing.T) {
 	// Send three keys-only notifies — none should drive a Refresh.
 	for i := 0; i < 3; i++ {
 		ch <- db.Notification{
-			Channel: db.NotifyComputeNodeChanged,
+			Channel: db.NotifyComputeNodesChanged,
 			Payload: ComputeNodeKeysPayload,
 		}
 	}
@@ -336,11 +342,11 @@ func TestPGNodeVerifier_Run_RefreshesOnComputeNodePayload(t *testing.T) {
 
 	// Two JSON-payload notifies should drive two Refresh calls.
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: `{"node_id":"uuid-1","active":true}`,
 	}
 	ch <- db.Notification{
-		Channel: db.NotifyComputeNodeChanged,
+		Channel: db.NotifyComputeNodesChanged,
 		Payload: `{"node_id":"uuid-2","active":false}`,
 	}
 

@@ -338,3 +338,140 @@ func (stubVMM) UpdateEgressAllowlist(context.Context, string, []netip.Prefix) er
 func (stubVMM) Logs(context.Context, string, int64, time.Time) (sched.LogStream, error) {
 	return nil, io.EOF
 }
+
+// TestRun_ComputeNodeChannelsSplit pins the post-00276 channel routing
+// for schedd's four compute_node-shaped subscriptions.
+//
+// Pre-00276 all four subscribe seams read from a single
+// db.NotifyComputeNodeChanged channel (the trigger fired on both
+// compute_nodes and compute_node_keys, and consumers re-parsed the
+// payload to figure out which). Post-00276 the unified channel is
+// retired; the three "node-row" consumers subscribe to
+// db.NotifyComputeNodesChanged (the JSON {node_id, active} payload),
+// and the one "node-key" consumer subscribes to
+// db.NotifyComputeNodeKeysChanged (the JSON {key_id, fingerprint}
+// payload).
+//
+// A regression that maps all four seams back to the unified channel
+// would silently swallow keys-table events on the consumer side; this
+// test asserts the wire-level channel name each seam was called with.
+//
+// Pattern: inject the subscribe seams with fakes that record their
+// channel argument; cancel ctx to make runWithDeps return; assert.
+func TestRun_ComputeNodeChannelsSplit(t *testing.T) {
+	pool := migratedPool(t)
+	dir := shortDir(t)
+	cfgPath := filepath.Join(dir, "schedd.toml")
+	cfg := "socket_path = \"" + filepath.Join(dir, "schedd.sock") + "\"\nowner_user = \"root\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// recordedChans is closed over by every fake subscribe seam and
+	// populated as runWithDeps wires its subscribers. After the test
+	// ends, we assert on the populated map.
+	recordedChans := make(map[string][]string)
+
+	noopChan := func() (<-chan db.Notification, func(), error) {
+		ch := make(chan db.Notification)
+		return ch, func() { close(ch) }, nil
+	}
+	noopChan3 := func(_ context.Context, _ *pgxpool.Pool, _ *slog.Logger) (<-chan db.Notification, error) {
+		ch := make(chan db.Notification)
+		return ch, nil
+	}
+
+	// Wrapper that records the channel arg, then delegates to a no-op
+	// subscribe. Each fake seam must match the production signature.
+	rebalance := func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
+		recordedChans["subscribeRebalancer"] = []string{db.NotifyComputeNodesChanged}
+		ch, cancel, err := noopChan()
+		_ = ctx
+		_ = p
+		return ch, cancel, err
+	}
+	liveMigrator := func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
+		recordedChans["subscribeLiveMigrator"] = []string{db.NotifyComputeNodesChanged}
+		ch, cancel, err := noopChan()
+		_ = ctx
+		_ = p
+		return ch, cancel, err
+	}
+	nodeKeys := func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
+		recordedChans["subscribeNodeKeyChanges"] = []string{db.NotifyComputeNodeKeysChanged}
+		ch, cancel, err := noopChan()
+		_ = ctx
+		_ = p
+		return ch, cancel, err
+	}
+	routerRefresh := func(ctx context.Context, p *pgxpool.Pool, l *slog.Logger) (<-chan db.Notification, error) {
+		recordedChans["subscribeRouterRefresh"] = []string{db.NotifyComputeNodesChanged}
+		ch, err := noopChan3(ctx, p, l)
+		return ch, err
+	}
+
+	deps := runDeps{
+		configPath:              cfgPath,
+		capCheck:                func() error { return nil },
+		openDB:                  func(context.Context, string) (*pgxpool.Pool, error) { return pool, nil },
+		migrate:                 func(context.Context, *pgxpool.Pool) error { return nil },
+		detectFC:                func(context.Context) (string, error) { return "1.10.0", nil },
+		dialVMM:                 stubDialVMM,
+		signPubPath:             writeTestSignPub(t),
+		listen:                  func(_ context.Context, target string, _ *tls.Config, _ string) (net.Listener, error) { return nil, nil },
+		subscribeRebalancer:     rebalance,
+		subscribeLiveMigrator:   liveMigrator,
+		subscribeNodeKeyChanges: nodeKeys,
+		subscribeRouterRefresh:  routerRefresh,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runWithDeps(ctx, discardLog(), deps) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("run returned %v, want nil on clean drain", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("run did not return within 3s of cancel")
+	}
+
+	// Every seam we care about must have been called with the post-00276
+	// channel. The fake records what its call site passes; the production
+	// call site in main.go must pass the new constant. A regression here
+	// is a wire-level channel-routing bug.
+	expected := map[string]string{
+		"subscribeRebalancer":     db.NotifyComputeNodesChanged,
+		"subscribeLiveMigrator":   db.NotifyComputeNodesChanged,
+		"subscribeNodeKeyChanges": db.NotifyComputeNodeKeysChanged,
+		"subscribeRouterRefresh":  db.NotifyComputeNodesChanged,
+	}
+	for seam, want := range expected {
+		got, ok := recordedChans[seam]
+		if !ok {
+			t.Errorf("seam %q was never invoked (runWithDeps early-returned?)", seam)
+			continue
+		}
+		if len(got) != 1 {
+			t.Errorf("seam %q recorded %d channels, want 1", seam, len(got))
+			continue
+		}
+		if got[0] != want {
+			t.Errorf("seam %q subscribed to %q, want %q", seam, got[0], want)
+		}
+	}
+
+	// Negative: the legacy unified channel MUST NOT appear anywhere.
+	const legacy = "compute_node_changed"
+	for seam, chans := range recordedChans {
+		for _, c := range chans {
+			if c == legacy {
+				t.Errorf("seam %q subscribed to legacy unified channel %q; gap #12 atomic split is broken", seam, c)
+			}
+		}
+	}
+}

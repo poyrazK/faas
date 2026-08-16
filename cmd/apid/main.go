@@ -401,7 +401,7 @@ type runDeps struct {
 	// via db.Open. runWithDeps needs it to construct the handshake-
 	// layer PGNodeVerifier (wire.NewPGNodeLoader(pool)) and to wire
 	// its notification drain (db.SubscribeWithReconnect(ctx, pool,
-	// [db.NotifyComputeNodeChanged], log)). Mirrors the existing
+	// [db.NotifyComputeNodesChanged], log)). Mirrors the existing
 	// deps.store / deps.notif pattern: production wires it from run();
 	// tests that build runDeps directly without a real pool leave it
 	// nil — the verifier block below short-circuits to nil when pool
@@ -929,7 +929,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: node verifier startup refresh: %w", err)
 		}
 		go func() {
-			ch, err := db.SubscribeWithReconnect(ctx, deps.pool, []string{db.NotifyComputeNodeChanged}, log)
+			ch, err := db.SubscribeWithReconnect(ctx, deps.pool, []string{db.NotifyComputeNodesChanged}, log)
 			if err != nil {
 				log.Error("apid: node verifier LISTEN failed", "err", err)
 				return

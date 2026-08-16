@@ -89,9 +89,13 @@ CANNOT see an untrusted leaf.
 - **Defense-in-depth.** `wire.PeerCN(ctx)` stays untouched. PR-B
   adds the verifier at the handshake layer so a future RPC that
   forgets the handler-layer CN check is still safe.
-- **No new pg_notify channel.** Reuse `db.NotifyComputeNodeChanged`
-  (already covers both `compute_nodes` and `compute_node_keys`
-  writes per migration 00076's broader trigger).
+- **Reuse `db.NotifyComputeNodesChanged`.** Post-00276 the verifier
+  subscribes to the dedicated nodes-only channel
+  (`db.NotifyComputeNodesChanged`); the pre-split unified channel
+  `db.NotifyComputeNodeChanged` was retired by migration 00276 (Tier-2
+  gap #12). The keys-table writes that used to piggyback on the
+  unified channel now route via `db.NotifyComputeNodeKeysChanged`,
+  consumed by schedd's node-key registry only.
 
 ## Three implementations
 

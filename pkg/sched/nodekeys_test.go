@@ -9,9 +9,11 @@
 //  2. ReplaceAll is atomic: a row whose PEM fails to parse is
 //     skipped (the registry keeps the last-known-good map for the
 //     parseable rows).
-//  3. Run drains an already-opened 'compute_node_changed' channel
-//     and triggers Refresh on every notify; nil receiver is a
-//     no-op drain that returns ctx.Err() on cancellation.
+//  3. Run drains an already-opened 'compute_node_keys_changed'
+//     channel and triggers Refresh on every notify; nil receiver is
+//     a no-op drain that returns ctx.Err() on cancellation.
+//     Post-00276 the node-key registry listens on the dedicated
+//     keys channel (was 'compute_node_changed' before the split).
 //
 // White-box (package sched) so the test can construct a
 // NodeKeyRegistry without re-exporting the loader interface.
@@ -206,9 +208,9 @@ func TestNodeKeyRegistry_RunTriggersRefresh(t *testing.T) {
 	go func() { done <- reg.Run(ctx, feed) }()
 
 	// Send two notifies — one success, one loader failure.
-	feed <- db.Notification{Channel: db.NotifyComputeNodeChanged}
+	feed <- db.Notification{Channel: db.NotifyComputeNodeKeysChanged}
 	loader.setFailOnNextLoad(errors.New("transient"))
-	feed <- db.Notification{Channel: db.NotifyComputeNodeChanged}
+	feed <- db.Notification{Channel: db.NotifyComputeNodeKeysChanged}
 
 	// Let the loop drain.
 	deadline := time.Now().Add(2 * time.Second)

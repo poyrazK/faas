@@ -235,7 +235,7 @@ func TestPlacementClaimSubscriber_BadPayloadLogsAndContinues(t *testing.T) {
 	// Malformed: not JSON.
 	feed.Send(db.Notification{Channel: db.NotifyAppChanged, Payload: "not json {"})
 	// Wrong channel: defensive drop.
-	feed.Send(db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: `{"kind":"created","app_id":"x"}`})
+	feed.Send(db.Notification{Channel: db.NotifyComputeNodesChanged, Payload: `{"kind":"created","app_id":"x"}`})
 	// Empty app_id: defensive drop (still valid JSON).
 	feed.Send(db.Notification{Channel: db.NotifyAppChanged, Payload: `{"kind":"created","app_id":""}`})
 

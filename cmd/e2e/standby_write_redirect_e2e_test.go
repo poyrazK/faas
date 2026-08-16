@@ -230,7 +230,7 @@ func TestStandbyWriteRedirect_MakefileTarget_ReferencesRunbookAndScript(t *testi
 		"docs/runbooks/standby-write-redirect.md", // cross-ref to the runbook
 		"deploy/lima/run-ha-write-redirect.sh",    // cross-ref to the drill script
 		"FAAS_LEADER_REDIRECT_TLS_CERT",           // the deploy-time opt-in flag
-		"compute_node_changed",                    // the pg_notify channel
+		"compute_nodes_changed",                   // the pg_notify channel (post-00276 split)
 	}
 	missing := []string{}
 	for _, s := range required {

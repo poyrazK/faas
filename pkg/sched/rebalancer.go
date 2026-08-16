@@ -1,6 +1,6 @@
 // pkg/sched/rebalancer.go — Tier A4 cross-node rebalance watcher.
 //
-// Subscribes to db.NotifyComputeNodeChanged and reacts only to
+// Subscribes to db.NotifyComputeNodesChanged and reacts only to
 // active=false transitions. For each drain event, invokes the
 // caller-supplied handle with the dead node ID. The interesting
 // policy (admission + cooldown + per-tick cap + conditional
@@ -10,15 +10,15 @@
 // pkg/sched/router_watcher.go.
 //
 // Architectural note: this is the fourth consumer of the
-// compute_node_changed pg_notify channel on schedd (alongside
+// compute_nodes_changed pg_notify channel on schedd (alongside
 // pkg/sched/router_watcher.go, pkg/sched/nodekeys.go::Run, and
 // cmd/schedd/main.go's nodeVerifier). The router watcher refreshes
 // the vmmd dial target on every event (active-flip and
-// target_url-rotation); nodekeys refreshes the trusted-key
-// registry; nodeVerifier advances mTLS epoch on peer changes.
+// target_url-rotation); nodekeys (now on its own keys-changed
+// channel, post-00276) refreshes the trusted-key registry;
+// nodeVerifier advances mTLS epoch on peer changes.
 // The rebalancer only cares about active=false transitions; it
-// drops active=true payloads and the literal "compute_node_keys"
-// payload from migration 00076 silently.
+// drops active=true payloads and any malformed payload silently.
 //
 // Failure modes:
 //

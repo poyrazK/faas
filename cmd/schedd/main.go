@@ -96,7 +96,7 @@ type runDeps struct {
 	// run gets reconciled on boot.
 	subscribePlacementClaim func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 	// subscribeRebalancer (Tier A4 / ADR-064) is the
-	// producer-side seam for the compute_node_changed consumer
+	// producer-side seam for the compute_nodes_changed consumer
 	// that drains orphans from a freshly-inactive compute_node
 	// onto the local schedd. Mirrors subscribePlacementClaim's
 	// shape; nil = subscriber not started (tests that don't
@@ -104,7 +104,7 @@ type runDeps struct {
 	// below still reconciles orphans on boot).
 	subscribeRebalancer func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 	// subscribeLiveMigrator (Tier A5 / ADR-066) is the
-	// producer-side seam for the compute_node_changed consumer
+	// producer-side seam for the compute_nodes_changed consumer
 	// that migrates live instances (state in {WAKING,
 	// COLD_BOOTING, RUNNING, SNAPSHOTTING}) from a freshly-
 	// inactive compute_node onto the local schedd via the
@@ -113,17 +113,19 @@ type runDeps struct {
 	// below still reconciles live instances on boot).
 	subscribeLiveMigrator func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 	// subscribeNodeKeyChanges (ADR-053) is the producer-side seam
-	// for the 'compute_node_changed' pg_notify consumer that
+	// for the 'compute_node_keys_changed' pg_notify consumer that
 	// refreshes the in-memory NodeKeyRegistry on every relevant
 	// INSERT/UPDATE/DELETE (migration 00076's trigger fires on
-	// both compute_nodes AND compute_node_keys). nil = the
-	// subscriber is not started; the initial Refresh at startup
-	// still runs so a slice-3 schedd with no vmmd registered
-	// yet has a coherent (empty) state. Tests inject a fake
-	// channel.
+	// compute_node_keys writes; migration 00276 split the
+	// former shared compute_node_changed channel into
+	// compute_nodes_changed + compute_node_keys_changed).
+	// nil = the subscriber is not started; the initial Refresh
+	// at startup still runs so a slice-3 schedd with no vmmd
+	// registered yet has a coherent (empty) state. Tests
+	// inject a fake channel.
 	subscribeNodeKeyChanges func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 	// subscribeRouterRefresh (Tier A3) is the producer-side seam
-	// for the compute_node_changed consumer that drops a stale
+	// for the compute_nodes_changed consumer that drops a stale
 	// dialed client and reloads target_url into VMMRouter. The
 	// first subscribe is critical-path (a vmmd URL rotation that
 	// arrives before the daemon registered for events will silently
@@ -192,7 +194,7 @@ func defaultDeps() runDeps {
 		subscribeAppDelete: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
 			return db.Subscribe(ctx, p, []string{db.NotifyAppDelete})
 		},
-		// Tier A4 / ADR-064: subscribe to compute_node_changed
+		// Tier A4 / ADR-064: subscribe to compute_nodes_changed
 		// and let Rebalancer filter to active=false. The router
 		// watcher + nodekeys + nodeVerifier above already share
 		// the same channel; the rebalancer is the fourth
@@ -200,7 +202,7 @@ func defaultDeps() runDeps {
 		// single LISTEN shared by N subscribers is the canonical
 		// pattern (subscribers filter on the typed payload).
 		subscribeRebalancer: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
-			return db.Subscribe(ctx, p, []string{db.NotifyComputeNodeChanged})
+			return db.Subscribe(ctx, p, []string{db.NotifyComputeNodesChanged})
 		},
 		// Tier A5 / ADR-066: live-instance migration watcher.
 		// Same channel as the parked-app rebalancer — both
@@ -209,19 +211,19 @@ func defaultDeps() runDeps {
 		// subscribe keeps the watcher logic (filter shape +
 		// log context) cleanly scoped per ADR-066 §"Trigger".
 		subscribeLiveMigrator: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
-			return db.Subscribe(ctx, p, []string{db.NotifyComputeNodeChanged})
+			return db.Subscribe(ctx, p, []string{db.NotifyComputeNodesChanged})
 		},
 		// Production wires db.Subscribe on the
-		// 'compute_node_changed' channel. Migration 00075's
-		// trigger fires on both compute_nodes AND
-		// compute_node_keys writes, so a single subscription
-		// covers both lifecycles. The registry's Run method
-		// reruns Refresh on every notify (idempotent on the
-		// ReplaceAll map swap).
+		// 'compute_node_keys_changed' channel. Split from the
+		// pre-00276 shared compute_node_changed channel by
+		// migration 00276 so the node-key registry no longer
+		// has to JSON-parse-and-filter inline. The registry's
+		// Run method reruns Refresh on every notify (idempotent
+		// on the ReplaceAll map swap).
 		subscribeNodeKeyChanges: func(ctx context.Context, p *pgxpool.Pool) (<-chan db.Notification, func(), error) {
-			return db.Subscribe(ctx, p, []string{db.NotifyComputeNodeChanged})
+			return db.Subscribe(ctx, p, []string{db.NotifyComputeNodeKeysChanged})
 		},
-		// Tier A3: a second LISTEN on compute_node_changed. The
+		// Tier A3: a second LISTEN on compute_nodes_changed. The
 		// node-key verifier above wraps its subscribe in a
 		// goroutine because a transient LISTEN failure there is
 		// a degraded (not fatal) state; the router refresh
@@ -230,7 +232,7 @@ func defaultDeps() runDeps {
 		// SubscribeWithReconnect and fail the daemon inline if
 		// the first Subscribe fails.
 		subscribeRouterRefresh: func(ctx context.Context, p *pgxpool.Pool, l *slog.Logger) (<-chan db.Notification, error) {
-			return db.SubscribeWithReconnect(ctx, p, []string{db.NotifyComputeNodeChanged}, l)
+			return db.SubscribeWithReconnect(ctx, p, []string{db.NotifyComputeNodesChanged}, l)
 		},
 	}
 }
@@ -316,7 +318,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// handshake would fail), so the contract is "best effort
 		// refresh on every notify; never brick".
 		go func() {
-			ch, err := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyComputeNodeChanged}, log)
+			ch, err := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyComputeNodesChanged}, log)
 			if err != nil {
 				log.Error("schedd: node verifier LISTEN failed", "err", err)
 				return
@@ -397,7 +399,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS)
 
-	// Tier A3: subscribe to compute_node_changed and refresh the
+	// Tier A3: subscribe to compute_nodes_changed and refresh the
 	// router's (nodeID, target_url) map on every payload. The
 	// first subscribe is critical-path; on failure we fail the
 	// boot inline (mirrors the inline Refresh call at lines
@@ -556,7 +558,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-053 — slice-3 signature verification. Construct the
 	// in-memory (key_id → *ecdsa.PublicKey) registry, load the
 	// initial snapshot from compute_node_keys (migration 00076),
-	// then subscribe to the 'compute_node_changed' pg_notify
+	// then subscribe to the 'compute_node_keys_changed' pg_notify
 	// channel so a vmmd registering (or rotating) its key
 	// lands on the next listener tick. The handler
 	// (pkg/scheddgrpc.Server.ReportCapacity) reads
@@ -567,7 +569,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The initial Refresh is best-effort: a transient loader
 	// failure is logged at Warn and the daemon keeps running
 	// with the empty registry. The first successful
-	// 'compute_node_changed' notify populates the map; until
+	// 'compute_node_keys_changed' notify populates the map; until
 	// then the handler rejects every report with
 	// ErrUnknownNodeKey, which is the safer default (silent
 	// unsigned-accept is the failure mode slice-3 closes).
@@ -997,7 +999,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	// Tier A4 / ADR-064: rebalancer subscriber. Watches
-	// compute_node_changed for active=false events and hands
+	// compute_nodes_changed for active=false events and hands
 	// the dead node id to Engine.RebalanceOrphanedApps.
 	if deps.subscribeRebalancer != nil && ownerNodeID != "" {
 		reb := sched.NewRebalancer(
@@ -1097,7 +1099,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Tier A4 / ADR-064: rebalance cold-start sweep. Same
 	// fire-and-forget-notify reasoning as the unplaced
 	// sweep above — a schedd that was down while a drain
-	// event landed missed the compute_node_changed active=
+	// event landed missed the compute_nodes_changed active=
 	// false notify. RebalanceOrphanedApps with
 	// deadNodeID="" reconciles every orphaned app
 	// regardless of which dead node owned it. Runs once.
@@ -1118,7 +1120,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// sweep. Same fire-and-forget-notify reasoning as the
 	// rebalance cold-start sweep above — a schedd that was
 	// down while a drain event landed missed the
-	// compute_node_changed active=false notify, so any live
+	// compute_nodes_changed active=false notify, so any live
 	// instance still owned by an inactive compute_node would
 	// be pinned until the next notify. MigrateLiveInstances
 	// with deadNodeID="" reconciles every dead-node-owned

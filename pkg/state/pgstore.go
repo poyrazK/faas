@@ -2337,7 +2337,7 @@ func (s *PgStore) MarkInstanceMigrating(ctx context.Context, instanceID, current
 	if tag.RowsAffected() == 0 {
 		// Peer rollback / owner change / row gone. The migration
 		// orchestrator treats this as "drop silently"; the next
-		// compute_node_changed event retries. The state machine
+		// compute_nodes_changed event retries. The state machine
 		// prevents the instance from getting stuck in 'migrating'
 		// — if no peer picks up the lease, MigrateLiveLeaseSeconds
 		// (pkg/api/limits.go) fires CancelInstanceMigration.
@@ -9017,7 +9017,7 @@ func (s *PgStore) UpsertNodeKey(ctx context.Context, nodeID string, keyID string
 // last_heartbeat_at ages past 90s, and the heartbeat goroutine uses it
 // again to reactivate a drained row on the next successful dial. The
 // pg_notify trigger on compute_nodes (operator-visible via
-// pkg/db/notify.NotifyComputeNodeChanged) fires on the UPDATE so
+// pkg/db/notify.NotifyComputeNodesChanged) fires on the UPDATE so
 // gatewayd-internal's per-node client cache can drop/add entries without
 // restart.
 func (s *PgStore) SetComputeNodeActive(ctx context.Context, id string, active bool) error {

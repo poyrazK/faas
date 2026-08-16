@@ -10,7 +10,7 @@
 //
 // # Why a separate daemon-side goroutine
 //
-// The publisher subscribes to `compute_node_changed` via
+// The publisher subscribes to `compute_nodes_changed` via
 // `pkg/db.SubscribeWithReconnect` (the same primitive
 // `cmd/gatewayd-public/dns_handoff.go:50` uses for the
 // Tier A8 active-passive handoff). Every notification
@@ -47,7 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
-// runLeaderURLPublisher subscribes to compute_node_changed
+// runLeaderURLPublisher subscribes to compute_nodes_changed
 // and pushes a signal onto `refresh` on every notification.
 // The refresh channel is buffered to size 1 by the wiring
 // code; if the resolver hasn't drained a previous signal
@@ -83,14 +83,14 @@ func runLeaderURLPublisher(
 		return fmt.Errorf("gatewayd-internal: leader_url_publisher refresh channel is nil")
 	}
 	notif, err := db.SubscribeWithReconnect(ctx, pool, []string{
-		db.NotifyComputeNodeChanged,
+		db.NotifyComputeNodesChanged,
 	}, log)
 	if err != nil {
-		return fmt.Errorf("gatewayd-internal: subscribe compute_node_changed: %w", err)
+		return fmt.Errorf("gatewayd-internal: subscribe compute_nodes_changed: %w", err)
 	}
 	log.Info("gatewayd-internal: leader url publisher armed",
 		"node", nodeName,
-		"channel", db.NotifyComputeNodeChanged,
+		"channel", db.NotifyComputeNodesChanged,
 	)
 
 	for {
@@ -108,7 +108,7 @@ func runLeaderURLPublisher(
 				log.Info("gatewayd-internal: leader url publisher channel closed")
 				return nil
 			}
-			log.Debug("gatewayd-internal: compute_node_changed received",
+			log.Debug("gatewayd-internal: compute_nodes_changed received",
 				"channel", n.Channel,
 				"node", nodeName,
 			)

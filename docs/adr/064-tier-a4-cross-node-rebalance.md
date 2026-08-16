@@ -47,9 +47,10 @@ Tier A4 closes that gap.
 ### Trigger
 
 `pkg/sched/rebalancer.go` subscribes to
-`db.NotifyComputeNodeChanged` (existing; payload
-`{"node_id":uuid,"active":bool}`) and filters to `active=false`
-events. On each match, calls
+`db.NotifyComputeNodesChanged` (post-00276; was
+`db.NotifyComputeNodeChanged` before the channel split, payload
+`{"node_id":uuid,"active":bool}` unchanged) and filters to
+`active=false` events. On each match, calls
 `Engine.RebalanceOrphanedApps(ctx, deadNodeID)`. Shape parallels
 `pkg/sched/router_watcher.go` (drain goroutine + typed JSON
 filter + per-payload work closure). The rebalancer is the fourth

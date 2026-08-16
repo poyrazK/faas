@@ -231,7 +231,7 @@ func (r *scheddRouter) clientForNode(ctx context.Context, nodeID string) (schedd
 }
 
 // Evict drops the cached client for nodeID. Called by the
-// compute_node_changed pg_notify subscriber; safe to call for an
+// compute_nodes_changed pg_notify subscriber; safe to call for an
 // id that's not in the cache. The next ScheddFor{App,Instance}
 // call re-reads the row and dials fresh.
 func (r *scheddRouter) Evict(nodeID string) {
@@ -264,7 +264,7 @@ func (r *scheddRouter) Close() error {
 	return firstErr
 }
 
-// WatchNodeChanges subscribes to compute_node_changed pg_notify and
+// WatchNodeChanges subscribes to compute_nodes_changed pg_notify and
 // calls Evict on every payload. Mirrors
 // cmd/gatewayd-internal/nodecache.go::WatchEvictions — same db.Subscribe
 // wrapper, same malformed-payload drop, same single-goroutine
@@ -274,9 +274,9 @@ func (r *scheddRouter) WatchNodeChanges(ctx context.Context, pool *pgxpool.Pool,
 	if sub == nil {
 		sub = db.SubscribeWithReconnect
 	}
-	notif, err := sub(ctx, pool, []string{db.NotifyComputeNodeChanged}, r.log)
+	notif, err := sub(ctx, pool, []string{db.NotifyComputeNodesChanged}, r.log)
 	if err != nil {
-		r.log.Error("scheddrouter: subscribe compute_node_changed", "err", err)
+		r.log.Error("scheddrouter: subscribe compute_nodes_changed", "err", err)
 		return
 	}
 	for {
@@ -292,7 +292,7 @@ func (r *scheddRouter) WatchNodeChanges(ctx context.Context, pool *pgxpool.Pool,
 				Active bool   `json:"active"`
 			}
 			if err := json.Unmarshal([]byte(got.Payload), &p); err != nil || p.NodeID == "" {
-				r.log.Warn("scheddrouter: bad compute_node_changed payload", "payload", got.Payload)
+				r.log.Warn("scheddrouter: bad compute_nodes_changed payload", "payload", got.Payload)
 				continue
 			}
 			r.Evict(p.NodeID)

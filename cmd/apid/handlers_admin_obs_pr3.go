@@ -234,7 +234,7 @@ func (s *server) obsNodesEventsSSE(w http.ResponseWriter, r *http.Request, acct 
 // obsNodesEventsChannels is the channel set the operator SSE
 // mirror subscribes to. The selection is the union of the
 // existing /v1/compute-nodes/events (which only listens to
-// compute_node_changed) and /v1/events (which listens to
+// compute_nodes_changed) and /v1/events (which listens to
 // app_changed + deployment_changed + instance_changed). The
 // operator's "fleet feed" wants every bus event the apid
 // surfaces — names-spaced so a future channel-add is a one-line
@@ -243,7 +243,7 @@ var obsNodesEventsChannels = []string{
 	db.NotifyAppChanged,
 	db.NotifyDeploymentChanged,
 	db.NotifyInstanceChanged,
-	db.NotifyComputeNodeChanged,
+	db.NotifyComputeNodesChanged,
 }
 
 // parseObsAuditLogSearchQuery parses the audit-log search query

@@ -363,7 +363,7 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  echo "              Both boxes must run with FAAS_LEADER_REDIRECT_TLS_CERT set so the writeGate is"; \
 	  echo "              constructed (the opt-in flag for the Tier A9 gate, ADR-089 §Decision #1)."; \
 	  echo "  Step 1: read the active-passive decision from each box. The leader identity is refreshed"; \
-	  echo "          on every compute_node_changed pg_notify event (Tier A8 / ADR-083):"; \
+	  echo "          on every compute_nodes_changed pg_notify event (Tier A8 / ADR-083; post-00276 split):"; \
 	  echo "          limactl shell faas-metal    curl -s localhost:9100/metrics | grep gateway_standby_state"; \
 	  echo "          limactl shell faas-metal-2b curl -s localhost:9100/metrics | grep gateway_standby_state"; \
 	  echo "          lex-min(name) is the leader (StandbyState=2/warm); the other is the standby."; \

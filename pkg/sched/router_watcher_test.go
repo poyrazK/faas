@@ -58,7 +58,7 @@ func (r *recordingRefreshFunc) fn(_ context.Context, nodeID string) error {
 func TestWatcher_ActiveTruePayload_CallsRefresh(t *testing.T) {
 	rec := &recordingRefreshFunc{}
 	ch := make(chan db.Notification, 1)
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: `{"node_id":"n1","active":true}`}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged, Payload: `{"node_id":"n1","active":true}`}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -85,7 +85,7 @@ func TestWatcher_ActiveTruePayload_CallsRefresh(t *testing.T) {
 func TestWatcher_ActiveFalsePayload_CallsRefresh(t *testing.T) {
 	rec := &recordingRefreshFunc{}
 	ch := make(chan db.Notification, 1)
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: `{"node_id":"n2","active":false}`}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged, Payload: `{"node_id":"n2","active":false}`}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -106,36 +106,11 @@ func TestWatcher_ActiveFalsePayload_CallsRefresh(t *testing.T) {
 	}
 }
 
-func TestWatcher_ComputeNodeKeysLiteral_NoRefresh(t *testing.T) {
-	rec := &recordingRefreshFunc{}
-	ch := make(chan db.Notification, 1)
-	// The literal-string payload from migration 00076's second
-	// trigger; parseable as JSON (`"compute_node_keys"` is a
-	// valid JSON string) but NOT parseable as a node event.
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: `"compute_node_keys"`}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	done := make(chan struct{})
-	go func() {
-		RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
-		close(done)
-	}()
-	// Give the watcher a tick to consume; nothing should happen.
-	time.Sleep(50 * time.Millisecond)
-	cancel()
-	<-done
-
-	if got := rec.calls.Load(); got != 0 {
-		t.Errorf("refresh calls = %d, want 0 (literal must not dispatch a refresh)", got)
-	}
-}
-
 func TestWatcher_MalformedJSON_NoPanic(t *testing.T) {
 	rec := &recordingRefreshFunc{}
 	ch := make(chan db.Notification, 2)
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: "not json {{{"}
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: `{"node_id":"after-malformed","active":true}`}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged, Payload: "not json {{{"}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged, Payload: `{"node_id":"after-malformed","active":true}`}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -187,8 +162,8 @@ func TestWatcher_RefreshError_LogsAndContinues(t *testing.T) {
 	rec.errAfter.Store(1) // first call errors; second succeeds
 
 	ch := make(chan db.Notification, 2)
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: `{"node_id":"n1","active":true}`}
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: `{"node_id":"n2","active":true}`}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged, Payload: `{"node_id":"n1","active":true}`}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged, Payload: `{"node_id":"n2","active":true}`}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -209,8 +184,8 @@ func TestWatcher_RefreshError_LogsAndContinues(t *testing.T) {
 func TestWatcher_BackToBack_RefreshesTwice(t *testing.T) {
 	rec := &recordingRefreshFunc{}
 	ch := make(chan db.Notification, 2)
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: `{"node_id":"same","active":true}`}
-	ch <- db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: `{"node_id":"same","active":true}`}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged, Payload: `{"node_id":"same","active":true}`}
+	ch <- db.Notification{Channel: db.NotifyComputeNodesChanged, Payload: `{"node_id":"same","active":true}`}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

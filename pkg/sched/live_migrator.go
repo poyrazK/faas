@@ -2,7 +2,7 @@
 // live-instance migration watcher.
 //
 // Mirror of pkg/sched/rebalancer.go, but consumes the same
-// db.NotifyComputeNodeChanged channel and dispatches to the
+// db.NotifyComputeNodesChanged channel and dispatches to the
 // live-instance counterpart (Engine.MigrateLiveInstances).
 // The split is deliberate: the parked-app rebalancer (Tier A4,
 // ADR-064) and the live-instance migrator (Tier A5, ADR-066)
@@ -11,11 +11,10 @@
 // would conflate the two retry loops.
 //
 // Architectural note: this is the fifth consumer of the
-// compute_node_changed pg_notify channel on schedd. Same
+// compute_nodes_changed pg_notify channel on schedd. Same
 // payload shape as the A4 rebalancer — the live migrator also
 // only cares about active=false transitions; active=true and
-// the literal "compute_node_keys" payload from migration
-// 00076 are dropped silently.
+// any malformed payload are dropped silently.
 //
 // Failure modes:
 //
