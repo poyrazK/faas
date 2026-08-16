@@ -120,6 +120,13 @@
       - xz-utils
       - flex
       - bison
+      # Issue #938 / PR-B / ADR-114: e2fsprogs ships `debugfs`, which
+      # the gregalectl doctor "builder-base-ext4" check uses to verify
+      # /srv/fc/base/builder-base.ext4 contains the guest-init PID1
+      # binary. Without this package the doctor degrades to a warn-
+      # finding on every control-plane node, masking the load-bearing
+      # case where the alpine placeholder ref is shipped to imaged.
+      - e2fsprogs
     state: present
 
 - name: firecracker — download kernel source tarball
