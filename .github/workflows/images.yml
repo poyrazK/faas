@@ -5,7 +5,13 @@
 # and a post-build crane-based verification step that asserts
 # /usr/local/bin/faas-guest-init exists in the published image's
 # rootfs (the kernel-cmdline PID1 binary every builder microVM hands
-# control to — see images/builder-base.Dockerfile:72).
+# control to — see images/builder-base.Dockerfile:96).
+#
+# guest-init is built INSIDE the Dockerfile via a multi-stage cross-
+# compile (see images/builder-base.Dockerfile:41-52). Each arch's
+# manifest receives the arch-matching binary because buildx resolves
+# TARGETARCH per image in the multi-arch build — no host-side pre-
+# build, no overwrite bug (review finding #2 on PR #940).
 #
 # Why a separate workflow (not an extension of ci.yml):
 #  - ci.yml is the Go bundle (test, unit-tests-pg-*, metal, migrations,
@@ -73,28 +79,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build the static guest-init binary for each target arch. The
-      # Dockerfile COPY points at guest/init/faas-guest-init (see
-      # images/builder-base.Dockerfile:72), so we need to drop the
-      # binary at that exact path before buildx resolves the build
-      # context. Mirrors deploy/lima/faas-metal.yaml:441-450.
-      - name: Build guest-init (linux/amd64)
-        run: |
-          mkdir -p guest/init
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-            go build -trimpath -tags linux \
-              -o guest/init/faas-guest-init ./guest/init
-      - name: Build guest-init (linux/arm64)
-        run: |
-          mkdir -p guest/init
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
-            go build -trimpath -tags linux \
-              -o guest/init/faas-guest-init ./guest/init
-
       # Multi-arch build. On main pushes, push to ghcr.io with both
       # :latest and :${GITHUB_SHA::12} tags. On PRs and dispatch,
-      # build to the local cache only (--output type=image,push=false)
-      # — the verify step inspects the local cache via crane.
+      # also push to a local registry container so the verify step
+      # can crane-inspect the just-built image. The buildx cache
+      # alone is not a stable surface for crane (the cache is
+      # containerd, not a registry) — review finding #1 on PR #940.
+      - name: Start local registry (PR / dispatch)
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        run: |
+          docker run -d --name verify-registry -p 5000:5000 \
+            --restart always registry:2
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5000/v2/ >/dev/null; then
+              echo "registry ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::local registry did not become ready"
+          docker logs verify-registry || true
+          exit 1
+
       - name: Build + push (main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
@@ -107,15 +113,15 @@ jobs:
             --push \
             -f images/builder-base.Dockerfile .
 
-      - name: Build only (PR / dispatch)
+      - name: Build + push (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: |
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --build-arg BUILDKIT_VERSION \
             --build-arg RAILPACK_VERSION \
-            --output "type=image,push=false" \
-            --tag "${IMAGE_NAME}:pr-${GITHUB_SHA::12}" \
+            --tag "localhost:5000/pr-${GITHUB_SHA::12}" \
+            --push \
             -f images/builder-base.Dockerfile .
 
       # Verify the linux/amd64 manifest in the just-built (or just-pushed)
@@ -145,8 +151,8 @@ jobs:
           if [ ! -x /tmp/rootfs/usr/local/bin/faas-guest-init ]; then
             echo "::error::faas-guest-init missing from ${REF}@${DIGEST}"
             echo "The build pipeline produced a rootfs without the PID1"
-            echo "binary. Check images/builder-base.Dockerfile:72 COPY path"
-            echo "and the guest-init build step output."
+            echo "binary. Check images/builder-base.Dockerfile COPY path"
+            echo "and the guest-init build stage."
             exit 1
           fi
           echo "OK: ${REF}@${DIGEST} contains /usr/local/bin/faas-guest-init"

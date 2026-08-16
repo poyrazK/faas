@@ -27,6 +27,31 @@ ARG RAILPACK_VERSION=0.31.1
 # the VM boundary is the actual security perimeter (ADR-003).
 ARG BUILDKIT_VERSION=0.31.2
 
+# ---- guest-init version (issue #938 / PR-B / ADR-114) -------------------
+# Multi-arch builds CANNOT pre-stage guest-init in the build context because
+# both arches would overwrite the same host path (review finding #2 on PR
+# #940). Instead, build guest-init inside the Dockerfile via cross-compile
+# so each arch's binary lands in its own image. The Go builder base is
+# digest-pinned via images/Dockerfile.lock just like debian:12-slim below.
+# Issue #938: building guest-init inside the image (instead of in the
+# workflow) also lets the Lima local-build path stage a multi-arch rootfs
+# via buildx without per-arch file juggling.
+ARG GO_VERSION=1.23.4
+
+# ---- stage 1: build guest-init for the target arch -----------------------
+FROM --platform=$TARGETPLATFORM golang:${GO_VERSION}@sha256:REPLACE_ME_AT_MERGE_TIME AS guest-init-build
+WORKDIR /src
+# guest-init is a pure-Go binary; no submodule vendoring needed. The
+# repository is the build context, so COPY . picks up the whole tree.
+# .dockerignore (repo root) keeps secrets, .git, and local caches out.
+COPY . /src
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+      go build -trimpath -tags linux \
+        -o /out/faas-guest-init ./guest/init
+
+# ---- stage 2: assemble the runtime rootfs -------------------------------
 FROM --platform=$TARGETPLATFORM debian:12-slim@sha256:REPLACE_ME_AT_MERGE_TIME
 # Issue #197 B3.5: the `debian:12-slim` tag is mutable. The digest is
 # pinned via images/Dockerfile.lock; `make images-lock-update` resolves
@@ -65,12 +90,10 @@ RUN case "${TARGETARCH}" in \
     rm /tmp/railpack.tgz && \
     /usr/local/bin/railpack --version
 
-# guest-init is built by `go build -o guest/init/faas-guest-init`
-# (see .github/workflows/images.yml and deploy/lima/faas-metal.yaml:441-450).
-# The kernel cmdline hands PID1 to this binary regardless of app vs build
-# mode (mode is decided by which manifest file exists at /etc/faas/).
-# Path is repo-relative because the build context is the repo root.
-COPY guest/init/faas-guest-init /usr/local/bin/faas-guest-init
+# guest-init copied from the build stage. Each arch's manifest receives the
+# arch-matching binary because buildx resolves TARGETARCH per image in the
+# multi-arch build — no host-side pre-build required, no overwrite bug.
+COPY --from=guest-init-build /out/faas-guest-init /usr/local/bin/faas-guest-init
 RUN chmod +x /usr/local/bin/faas-guest-init
 
 WORKDIR /build

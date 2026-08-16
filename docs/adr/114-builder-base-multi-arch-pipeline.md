@@ -41,24 +41,36 @@
   1. **`images/builder-base.Dockerfile` is the source of truth for
      the rootfs shape.** debian:12-slim (digest-pinned via
      `images/Dockerfile.lock`), BuildKit, Railpack, git, OCI
-     exporter, and the `guest-init` binary copied from
-     `guest/init/faas-guest-init` (the build artifact produced by
-     `go build -o guest/init/faas-guest-init ./guest/init`). The
-     `COPY guest/init/faas-guest-init` path is unambiguous so the
-     same contract works for both the CI workflow (which builds the
-     binary first) and the Lima local-build path
-     (`deploy/lima/faas-metal.yaml:353-509`).
+     exporter, and the `guest-init` binary. guest-init is built
+     inside the Dockerfile via a multi-stage cross-compile (a
+     `golang:1.23` builder stage, then `COPY --from=` into the
+     runtime stage). This was the deliberate fix for review
+     finding #2 on PR #940: a host-side pre-build of the binary
+     before the multi-arch buildx invocation would let arm64
+     overwrite amd64 on the same host path, so the
+     manifest-list matching ends up wrong. Per-stage cross-compile
+     via `TARGETARCH` is the only race-free shape. The Lima
+     local-build path keeps its own host-side `go build` at
+     `deploy/lima/faas-metal.yaml:441-450` because it stages the
+     rootfs into the local filesystem, not a registry — the two
+     paths don't conflict.
 
   2. **`.github/workflows/images.yml` is the publisher.** Trigger:
      push to `main` paths-filtered on the Dockerfile, the digest
-     lock, the guest-init source, or this workflow file. PRs and
-     `workflow_dispatch` build with `--output type=image,push=false`.
-     Multi-arch (`linux/amd64,linux/arm64`) for parity with the
-     Lima arm64 dev loop; operators pin the amd64-specific digest
-     in `sealed.env` because imaged rejects manifest lists at
-     `cmd/imaged/main.go:392-401`. Concurrency group is
-     `images-${{ github.ref }}` with `cancel-in-progress: true` so
-     re-pushes don't pile up.
+     lock, the guest-init source, or this workflow file. PR and
+     `workflow_dispatch` builds push to a co-runner `registry:2`
+     container (`localhost:5000`) so the verify step can
+     `crane export` the just-built image. (review finding #1 on
+     PR #940: buildx's `--output type=image,push=false` keeps the
+     image in containerd/cache, not a registry — the previous
+     verify step pointed at `localhost:5000/pr-${SHA::12}` but
+     no registry was running, so every PR build failed the
+     verify step.) Multi-arch (`linux/amd64,linux/arm64`) for
+     parity with the Lima arm64 dev loop; operators pin the
+     amd64-specific digest in `sealed.env` because imaged rejects
+     manifest lists at `cmd/imaged/main.go:392-401`. Concurrency
+     group is `images-${{ github.ref }}` with
+     `cancel-in-progress: true` so re-pushes don't pile up.
 
   3. **The verify step is the load-bearing contract.** After every
      build (push or PR), `crane export` the linux/amd64 manifest
@@ -103,17 +115,20 @@
 - **Consequences:**
 
   - The PRs in the cluster are atomic and reviewable in <10 min:
-    (1) the new workflow file, (2) the Dockerfile `COPY` fix,
-    (3) the `sealed.env.example` TODO, (4) the doctor check +
-    ansible `e2fsprogs` (one commit because they're load-bearing
-    together), (5) this ADR.
+    (1) the new workflow file, (2) the Dockerfile multi-stage
+    rewrite (guest-init cross-compile + same-line `COPY`), (3)
+    the `sealed.env.example` TODO, (4) the doctor check + ansible
+    `e2fsprogs` (one commit because they're load-bearing together),
+    (5) this ADR. The post-review revisions (registry container,
+    targeted COPY path) are folded into the same commits.
 
   - The Lima local-build path Just Works without further edits
-    because the Dockerfile `COPY` now points at the path Lima
+    because the Dockerfile `COPY` still points at the path Lima
     already produces (`guest/init/faas-guest-init`). The
     post-build sanity check at
-    `deploy/lima/faas-metal.yaml:482-490` stops catching the
-    wrong-COPY-path bug because the bug no longer exists.
+    `deploy/lima/faas-metal.yaml:482-490` continues to assert
+    the result; it's the dev-loop equivalent of the CI verify
+    step.
 
   - imaged's startup check at `cmd/imaged/main.go:392-401` is
     unchanged: it rejects bare tags and manifest lists. Operators
