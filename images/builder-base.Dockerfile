@@ -65,11 +65,12 @@ RUN case "${TARGETARCH}" in \
     rm /tmp/railpack.tgz && \
     /usr/local/bin/railpack --version
 
-# guest-init is built by `make guest-init` (or by CI before the docker build)
-# and stamped in at image-build time. The kernel cmdline hands PID1 to this
-# binary regardless of app vs build mode (mode is decided by which manifest
-# file exists at /etc/faas/).
-COPY guest-init /usr/local/bin/faas-guest-init
+# guest-init is built by `go build -o guest/init/faas-guest-init`
+# (see .github/workflows/images.yml and deploy/lima/faas-metal.yaml:441-450).
+# The kernel cmdline hands PID1 to this binary regardless of app vs build
+# mode (mode is decided by which manifest file exists at /etc/faas/).
+# Path is repo-relative because the build context is the repo root.
+COPY guest/init/faas-guest-init /usr/local/bin/faas-guest-init
 RUN chmod +x /usr/local/bin/faas-guest-init
 
 WORKDIR /build
