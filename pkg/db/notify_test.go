@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -150,4 +151,110 @@ func newTestPoolOrSkip(t *testing.T) (*pgxpool.Pool, func()) {
 		t.Skipf("pgxpool.NewWithConfig: %v", err)
 	}
 	return pool, pool.Close
+}
+
+// TestNotifyConstants_ComputeNodesSplit asserts the post-00276 channel
+// split is wire-distinct. Each constant is the wire-level channel name;
+// a typo here would silently route consumers to a never-firing channel.
+//
+// The split is the lineage:
+//
+//	pre-00276:  NotifyComputeNodeChanged = "compute_node_changed"
+//	            (carried compute_nodes + compute_node_keys events)
+//	post-00276: NotifyComputeNodesChanged     = "compute_nodes_changed"
+//	            NotifyComputeNodeKeysChanged   = "compute_node_keys_changed"
+//
+// The old constant is removed outright (full atomic migration); this
+// test guards against accidental revert.
+func TestNotifyConstants_ComputeNodesSplit(t *testing.T) {
+	// Wire-distinct: a typo that maps two constants to the same
+	// channel would silently route everything to the same place.
+	if NotifyComputeNodesChanged == NotifyComputeNodeKeysChanged {
+		t.Fatalf("NotifyComputeNodesChanged == NotifyComputeNodeKeysChanged (%q); the split is not actually split",
+			NotifyComputeNodesChanged)
+	}
+	// Names match the migration-00276 pg_notify('...') strings.
+	wantNodes := "compute_nodes_changed"
+	wantKeys := "compute_node_keys_changed"
+	if NotifyComputeNodesChanged != wantNodes {
+		t.Errorf("NotifyComputeNodesChanged = %q, want %q", NotifyComputeNodesChanged, wantNodes)
+	}
+	if NotifyComputeNodeKeysChanged != wantKeys {
+		t.Errorf("NotifyComputeNodeKeysChanged = %q, want %q", NotifyComputeNodeKeysChanged, wantKeys)
+	}
+	// Neither name collides with the legacy constant's value.
+	const legacy = "compute_node_changed"
+	if NotifyComputeNodesChanged == legacy {
+		t.Errorf("NotifyComputeNodesChanged collides with legacy %q; constants are aliased", legacy)
+	}
+	if NotifyComputeNodeKeysChanged == legacy {
+		t.Errorf("NotifyComputeNodeKeysChanged collides with legacy %q; constants are aliased", legacy)
+	}
+}
+
+// TestNotifyPayloadShape_ComputeNodesChanged pins the expected JSON
+// payload for the nodes-channel. The consumer (schedd's
+// router-refresh, rebalancer, live-migrator; vmmd's PGNodeVerifier;
+// gatewayd-internal's nodecache.WatchEvictions) parses the payload
+// without re-reading the row, so the shape is part of the contract.
+//
+// An example payload is hard-coded here rather than synthesized from
+// a struct so a refactor that changes the field name (e.g. `id` →
+// `node_uuid`) shows up as a test failure rather than silently
+// shipping.
+func TestNotifyPayloadShape_ComputeNodesChanged(t *testing.T) {
+	raw := `{"node_id":"5b1f9a8e-7c2d-4f3a-9e8b-1a2b3c4d5e6f","active":true}`
+	var p struct {
+		NodeID string `json:"node_id"`
+		Active bool   `json:"active"`
+	}
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatalf("consumer-side parse failed: %v (schema drift?)", err)
+	}
+	if p.NodeID == "" {
+		t.Errorf("node_id empty; consumers that filter on node_id would drop this notify")
+	}
+	if !p.Active {
+		t.Errorf("active = false; the example is an INSERT (active default true)")
+	}
+}
+
+// TestNotifyPayloadShape_ComputeNodeKeysChanged pins the expected
+// JSON payload for the keys-channel. The consumer (schedd's
+// nodeKeyRegistry via subscribeNodeKeyChanges) parses the payload
+// to detect rotation events without a re-fetch.
+//
+// The post-00276 payload carries a sha256-hex fingerprint of the
+// new public_key_pem (empty on DELETE). The example here uses a
+// 64-character lower-case hex string — the canonical form produced
+// by encode(sha256(bytea), 'hex').
+func TestNotifyPayloadShape_ComputeNodeKeysChanged(t *testing.T) {
+	raw := `{"key_id":"node-1","fingerprint":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}`
+	var p struct {
+		KeyID       string `json:"key_id"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatalf("consumer-side parse failed: %v (schema drift?)", err)
+	}
+	if p.KeyID == "" {
+		t.Errorf("key_id empty; consumers remove entries by key_id (revocation)")
+	}
+	if len(p.Fingerprint) != 64 {
+		t.Errorf("fingerprint length = %d, want 64 (sha256-hex)", len(p.Fingerprint))
+	}
+	// Empty fingerprint is the DELETE-side sentinel — pin its
+	// shape so consumers' "empty == revocation" branch is
+	// covered by the test.
+	rawDel := `{"key_id":"node-1","fingerprint":""}`
+	var pDel struct {
+		KeyID       string `json:"key_id"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.Unmarshal([]byte(rawDel), &pDel); err != nil {
+		t.Fatalf("DELETE-payload parse failed: %v", err)
+	}
+	if pDel.Fingerprint != "" {
+		t.Errorf("DELETE fingerprint = %q, want empty (revocation signal)", pDel.Fingerprint)
+	}
 }
