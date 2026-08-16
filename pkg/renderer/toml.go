@@ -284,6 +284,36 @@ func computeNodeValue(daemon string, dc *manifest.DaemonConfig, k manifest.Table
 		// (the cgroup slice for memory, the operator's plan for
 		// concurrency). Empty values flow through.
 		return "", nil
+	case "host_bridge_cidr":
+		// PR scale-out tier-1 residual (Gap #3). Per-host bridge
+		// /16 override — the slot allocator carves per-VM /30
+		// leases from this CIDR's .2+ range. Empty falls back to
+		// api.DefaultHostBridgeCIDR(). Validator (in
+		// cmd/vmmd/config.go::validateHostBridgeCIDR) enforces
+		// the /16 prefix length + non-RFC1918 constraints.
+		if dc.ComputeNode == nil {
+			return "", nil
+		}
+		return dc.ComputeNode.HostBridgeCIDR, nil
+	case "overlay_cidr":
+		// Per-host overlay subnet the detector prefers. Empty
+		// falls back to api.DefaultOverlayCIDR() (Tailscale
+		// 100.64.0.0/10). Validator enforces the §11 deny
+		// subset-check via pkg/netns.ValidateOverlayCIDRs.
+		if dc.ComputeNode == nil {
+			return "", nil
+		}
+		return dc.ComputeNode.OverlayCIDR, nil
+	case "overlay_interface":
+		// PR scale-out tier-1 residual (Gap #5). Optional NIC pin
+		// used by the overlay-IP detector. Empty means
+		// "auto-detect via PreferCIDR scoring" (the v1 contract).
+		// Operators with multiple NICs (LAN + tail/wg) on a single
+		// host set this to disambiguate.
+		if dc.ComputeNode == nil {
+			return "", nil
+		}
+		return dc.ComputeNode.OverlayInterface, nil
 	}
 	return "", nil
 }

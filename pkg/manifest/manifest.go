@@ -132,6 +132,49 @@ type Manifest struct {
 	// per-daemon leaves using pkg/pki.RolesForBox(); the manifest
 	// declares the CA cert fingerprint the doctor enforces.
 	PKI PKI `yaml:"pki"`
+
+	// Egress is the top-level egress-policy escape hatch. The
+	// DangerAcceptRFC1918LateralMovement flag + the OverlayExceptions
+	// CIDR list together widen the host forward chain + per-netns
+	// forward chain beyond the §11 always-deny catalog. Both must
+	// be set together — a CHECK constraint on the egress_policy DB
+	// row enforces the pair at runtime; the manifest validator
+	// enforces the same pair at apply time. PR scale-out tier-1
+	// residual (Gap #4). The flag name itself is load-bearing: any
+	// operator who skims the manifest sees the consequence spelled
+	// out before they can flip it.
+	Egress Egress `yaml:"egress,omitempty"`
+}
+
+// Egress is the top-level egress-policy knob. PR scale-out
+// tier-1 residual (Gap #4): the RFC1918 lateral-movement
+// exception is gated behind a manifest flag with a name that
+// makes the consequence impossible to miss in code review.
+// The DB schema (migration 00078) enforces the pairing at the
+// row level; the manifest validator enforces the same pairing
+// at apply time so an operator can't bypass the row-level gate
+// by editing TOML directly.
+type Egress struct {
+	// DangerAcceptRFC1918LateralMovement enables the per-host
+	// host + per-netns forward chains to emit `ip saddr <ex>
+	// accept` rules BEFORE the §11 deny block. Setting this
+	// without listing at least one entry in OverlayExceptions
+	// is rejected by the manifest validator and by the DB
+	// CHECK constraint. Default: false. Operators using an
+	// RFC1918 overlay (e.g. 10.42.0.0/24) MUST enable this
+	// flag AND list the overlay CIDR in OverlayExceptions —
+	// otherwise the §11 deny would block bridged tenant
+	// traffic to the overlay.
+	DangerAcceptRFC1918LateralMovement bool `yaml:"danger_accept_rfc1918_lateral_movement,omitempty"`
+
+	// OverlayExceptions is the explicit list of CIDRs the host
+	// + per-netns forward chains accept ahead of the §11 deny
+	// block. Each entry must be a valid netip.Prefix; an empty
+	// list means "no exceptions" (the deny block stands).
+	// Combined with DangerAcceptRFC1918LateralMovement this
+	// is the only sanctioned path to route overlay traffic
+	// through an RFC1918 range.
+	OverlayExceptions []string `yaml:"overlay_exceptions,omitempty"`
 }
 
 // Fleet is the list of hosts in the deployment. Each host must have a
@@ -195,6 +238,43 @@ type DaemonConfig struct {
 	// daemon. The renderer writes this into the daemon's TOML
 	// `vmmd_target` / `schedd_target` / etc. field.
 	Outbound *OutboundConfig `yaml:"outbound,omitempty"`
+
+	// ComputeNode is the [compute_node] sub-struct consumed by vmmd
+	// only. It carries the per-host bridge CIDR override, the
+	// overlay CIDR the detector prefers, and the optional NIC pin
+	// used by the overlay-IP auto-detector. PR scale-out tier-1
+	// residual (Gaps #3 + #5) — only vmmd's DaemonConfig populates
+	// this today; the renderer no-ops when nil. Other daemons'
+	// DaemonConfig structs leave it nil and the catalog's
+	// HostKeys[daemon].ComputeNodeBlock is empty, so the
+	// validator never complains about a missing field.
+	ComputeNode *ComputeNodeConfig `yaml:"compute_node,omitempty"`
+}
+
+// ComputeNodeConfig is the vmmd `[compute_node]` schema. All three
+// fields are overrides; empty values fall back to per-host defaults
+// (api.DefaultHostBridgeCIDR, api.DefaultOverlayCIDR, "auto-detect"
+// for the NIC). The validator requires a /16 prefix for
+// HostBridgeCIDR — see pkg/netns.NewConfigWithBridge and
+// pkg/fcvm.SetHostIPBase for the slot-allocator contract that pins
+// the prefix length.
+type ComputeNodeConfig struct {
+	// HostBridgeCIDR is the per-host bridge /16. The .1 is reserved
+	// for the root-ns bridge; per-VM /30 leases are carved from
+	// .2 onwards by pkg/fcvm.Allocator. Default: api.DefaultHostBridgeCIDR.
+	HostBridgeCIDR string `yaml:"host_bridge_cidr,omitempty"`
+
+	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
+	// detector prefers when multiple IPv4 candidates come back from
+	// `tailscale ip -4`. Same CIDR is rendered into the host
+	// forward chain's overlay-accept rules. Default: api.DefaultOverlayCIDR.
+	OverlayCIDR string `yaml:"overlay_cidr,omitempty"`
+
+	// OverlayInterface is the optional NIC pin used by the
+	// overlay-IP detector. Empty means "auto-detect via the
+	// existing PreferCIDR scoring path". Operators with multiple
+	// NICs (LAN + tail/wg) on a single host set this to disambiguate.
+	OverlayInterface string `yaml:"overlay_interface,omitempty"`
 }
 
 // TLSMaterial is the filesystem path triple for a cert / key / CA. The

@@ -5,9 +5,9 @@
 // in the wrong TOML table (the operator reports `schedd_client_*`
 // inside `[compute_node]`; the actual on-disk bug is the duplicate
 // `tls_*_path` inside `[compute_node]` at the vmmd.toml.example
-// canonical copy under deploy/ansible/roles/vmmd_service/files/
-// (the legacy deploy/etc/vmmd.toml.example was git rm'd in PR-1
-// Phase 2). Both shapes share the same root cause: the renderer
+// canonical copy under deploy/ansible/roles/vmmd_service/files/,
+// lines 33-40 — the top-level tls_*_path cluster). Both shapes share
+// the same root cause: the renderer
 // treats the wrong key as belonging to the wrong table, and the
 // TOML default-coercion paths silently fall back to a no-op.
 // Both shapes share the same root cause: the renderer treats the
@@ -143,6 +143,19 @@ var HostKeys = map[string]HostBlock{
 			{Table: "compute_node", Key: "mem_mb", Owner: "vmmd", Scope: "public"},
 			{Table: "compute_node", Key: "max_concurrency", Owner: "vmmd", Scope: "public"},
 			{Table: "compute_node", Key: "admission_ceiling_mb", Owner: "vmmd", Scope: "public"},
+			// PR scale-out tier-1 residual (Gaps #3 + #5):
+			// per-host bridge CIDR override, per-host overlay
+			// CIDR override, and the NIC pin used by the
+			// overlay-IP auto-detector. All three flow from
+			// `daemons.vmmd.compute_node` in the manifest schema
+			// into the renderer's [compute_node] table; the
+			// catalog entry is what tells ValidateTOMLPlacement
+			// they belong here (and not at top level alongside
+			// the legacy `tls_*_path` cluster — which would be
+			// the bug class ADR-028 caught).
+			{Table: "compute_node", Key: "host_bridge_cidr", Owner: "vmmd", Scope: "public"},
+			{Table: "compute_node", Key: "overlay_cidr", Owner: "vmmd", Scope: "public"},
+			{Table: "compute_node", Key: "overlay_interface", Owner: "vmmd", Scope: "public"},
 		},
 	},
 	"schedd": {
@@ -236,9 +249,10 @@ var HostKeys = map[string]HostBlock{
 // The slice is sorted for stable error messages.
 var TombstoneKeys = []string{
 	// vmmd's [compute_node] must NOT re-declare the top-level
-	// cluster (the bug at deploy/etc/vmmd.toml.example:96-103 —
-	// removed in Mega-PR-B Commit 4; canonical location is
-	// deploy/ansible/roles/vmmd_service/files/vmmd.toml.example:96-103).
+	// cluster. Canonical tls_*_path lives at the top of
+	// deploy/ansible/roles/vmmd_service/files/vmmd.toml.example
+	// (lines 33-40 — tls_cert_path / tls_key_path / tls_ca_path
+	// group, server-mTLS cluster).
 	"compute_node.tls_cert_path",
 	"compute_node.tls_key_path",
 	"compute_node.tls_ca_path",

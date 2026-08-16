@@ -7,6 +7,7 @@ package main
 import (
 	"crypto/tls"
 	"fmt"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -206,6 +207,16 @@ type ComputeNodeConfig struct {
 	// overlay-accept rules (Commit 2) so mesh traffic survives the
 	// §11 RFC1918 deny.
 	OverlayCIDR string `toml:"overlay_cidr"`
+	// OverlayInterface is the optional NIC pin used by
+	// cmd/vmmd/overlay_detect.go::OverlayDetector. When set, the
+	// detector shells out to `ip -4 -o addr show dev <iface>` and
+	// returns that interface's IPv4 address, bypassing the
+	// CIDR-preference scoring path. When the pinned NIC has no
+	// IPv4 address the detector falls back to PreferCIDR scoring
+	// (preserves the v1 contract). Empty keeps the existing
+	// auto-detect behavior. Operators with multiple NICs (LAN +
+	// tail/wg) on a single host use this to disambiguate.
+	OverlayInterface string `toml:"overlay_interface"`
 }
 
 // ResolveListenTarget returns the gRPC target the server should bind.
@@ -375,6 +386,15 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_HOST_BRIDGE_CIDR"); v != "" {
 		c.ComputeNode.HostBridgeCIDR = v
 	}
+	// PR scale-out tier-1 residual (issue #911 / ADR-110 / Gap #5):
+	// env-var overlay for [compute_node].overlay_interface so
+	// operators with multiple NICs can pin the overlay detector
+	// without editing vmmd.toml on every box. Mirrors the
+	// FAAS_HOST_BRIDGE_CIDR pattern above. Empty keeps the TOML
+	// value (or the auto-detect default when TOML is also empty).
+	if v := os.Getenv("FAAS_OVERLAY_INTERFACE"); v != "" {
+		c.ComputeNode.OverlayInterface = v
+	}
 	// Mega-PR-B review M3: validate [compute_node].overlay_cidr
 	// against the §11 deny set at config-load time, BEFORE vmmd
 	// accepts any traffic or registers with schedd. The render-time
@@ -391,5 +411,53 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: [compute_node].overlay_cidr %q invalid: %w", overlay, err)
 		}
 	}
+	// PR scale-out tier-1 residual (Gap #3): validate the bridge
+	// CIDR against the slot-allocator contract — must be a /16 (the
+	// only prefix length that leaves room for `fcvm.Allocator` to
+	// hand out per-VM /30 leases without spilling into the next
+	// host's range). The bridge IP must also fall outside the §11
+	// RFC1918 deny set so the host bridge itself isn't denied at
+	// egress time. Reject at config-load time with a clear startup
+	// error naming the offending CIDR.
+	if bridge := strings.TrimSpace(c.ComputeNode.HostBridgeCIDR); bridge != "" {
+		if err := validateHostBridgeCIDR(bridge); err != nil {
+			return nil, fmt.Errorf("vmmd: [compute_node].host_bridge_cidr %q invalid: %w", bridge, err)
+		}
+	}
 	return c, nil
+}
+
+// validateHostBridgeCIDR is the Gap #3 wiring gate for the bridge
+// CIDR override. Returns an error when:
+//   - the CIDR is unparseable
+//   - the prefix length is not /16 (the only size that maps cleanly
+//     to per-VM /30 leases; smaller leaves gaps, larger would overflow
+//     the slot space)
+//   - the bridge IP (the .1 of the CIDR) falls inside the §11 RFC1918
+//     deny set — that would mean the host bridge itself is denied at
+//     egress time, which would silently break wake-and-proxy. The
+//     deny-set exception path is reserved for tenant overlay traffic,
+//     NOT host infrastructure.
+//
+// Empty input is treated as "use the default" — the caller is
+// expected to skip the call when the TOML/env value is empty so the
+// default branch in cmd/vmmd/main.go::runWithDeps can apply
+// api.DefaultHostBridgeCIDR() after the bridge-CIDR byte identity is
+// confirmed against the slot allocator.
+func validateHostBridgeCIDR(cidr string) error {
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return fmt.Errorf("parse: %w", err)
+	}
+	if prefix.Bits() != 16 {
+		return fmt.Errorf("prefix length must be /16 (got /%d); per-VM /30 leases only fit a /16", prefix.Bits())
+	}
+	bridgeIP := prefix.Masked().Addr().Next() // .1 of the /16
+	deny := netns.NewDefaultDenySet()
+	for _, denyPrefix := range deny.V4DenyCIDRs {
+		if denyPrefix.Contains(bridgeIP) {
+			return fmt.Errorf("bridge IP %s falls inside deny CIDR %s; pick a non-RFC1918 /16", bridgeIP, denyPrefix)
+		}
+	}
+	return nil
 }

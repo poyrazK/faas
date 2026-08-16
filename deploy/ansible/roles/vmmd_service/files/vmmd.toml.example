@@ -58,3 +58,25 @@
 # advisory_client_cert_path = "/etc/faas/tls/vmmd/apid-client.crt"
 # advisory_client_key_path = "/etc/faas/tls/vmmd/apid-client.key"
 # advisory_client_ca_path = "/etc/faas/tls/ca/ca.crt"
+
+# --- PR scale-out tier-1 residual (PR #937 / Gaps #3 + #5) ---
+# Per-host [compute_node] overrides for the multi-host layout.
+# The slot allocator (pkg/fcvm.SetHostIPBase) carves per-VM /30
+# leases from host_bridge_cidr's .2+ range; the bridge IP is the
+# .1 (reserved). host_bridge_cidr MUST be a /16 (the only prefix
+# length that maps cleanly to per-VM /30 leases) and MUST NOT
+# fall inside the §11 RFC1918 deny catalog. overlay_cidr is the
+# subnet the overlay detector prefers when multiple IPv4
+# candidates come back from `tailscale ip -4`. overlay_interface
+# is the optional NIC pin (Gap #5) — operators with multiple
+# NICs (LAN + tail/wg) on one host set this to disambiguate.
+# Empty values fall back to the per-host defaults
+# (api.DefaultHostBridgeCIDR / api.DefaultOverlayCIDR /
+# auto-detect). Single-box dev leaves the entire [compute_node]
+# block commented out — the slot allocator carves from
+# 10.100.0.0/16 by default.
+#
+# [compute_node]
+# host_bridge_cidr = "10.100.0.0/16"   # per-host bridge /16 (.1 reserved)
+# overlay_cidr = "100.64.0.0/10"       # overlay subnet the detector prefers
+# overlay_interface = "tailscale0"     # optional NIC pin (Gap #5)

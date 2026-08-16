@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -400,6 +401,41 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := role.Require("vmmd", cfg.Role, role.RoleSingleBox, role.RoleComputeOnly); err != nil {
 		return err
 	}
+	// PR scale-out tier-1 residual (Gap #3 wiring): seed the
+	// slot allocator with the operator-supplied bridge CIDR so
+	// every per-VM /30 lease (hostIPForSlot) is carved from the
+	// right /16 on this box. The setter is documented as
+	// "exactly once at boot, before any Acquire" (see
+	// pkg/fcvm/alloc.go SetHostIPBase). Wiring it HERE — after
+	// LoadConfig + role gate, before registerComputeNode —
+	// guarantees the order: any Wake path that calls Acquire
+	// runs after the setter returns. The default branch (empty
+	// HostBridgeCIDR) falls through to api.DefaultHostBridgeCIDR
+	// (10.100.0.0/16) so single-host dev keeps its previous
+	// allocation.
+	var parsedBridge netip.Prefix
+	bridgeCIDR := strings.TrimSpace(cfg.ComputeNode.HostBridgeCIDR)
+	if bridgeCIDR == "" {
+		parsedBridge = api.DefaultHostBridgeCIDR()
+	} else {
+		var perr error
+		parsedBridge, perr = netip.ParsePrefix(bridgeCIDR)
+		if perr != nil {
+			// LoadConfig already rejected malformed CIDRs via
+			// validateHostBridgeCIDR. This branch exists only as a
+			// safety net for the api-default fallback path — the
+			// default is a constant known-good.
+			return fmt.Errorf("vmmd: bridge CIDR %q unparseable (load-time validator missed it): %w", bridgeCIDR, perr)
+		}
+	}
+	fcvm.SetHostIPBase(parsedBridge.Masked().Addr())
+	// Mirror the bridge base into the per-netns default-route. The
+	// slot allocator reserves the .1 (see pkg/fcvm/alloc.go), so the
+	// next-hop for every per-VM netns is the .1 of the same /16 we
+	// just seeded the allocator with. SetDefaultHostBridgeIP is
+	// idempotent under same-value calls (vmmd's EgressPolicyChanged
+	// reload may invoke it again with an identical .1).
+	netns.SetDefaultHostBridgeIP(parsedBridge.Masked().Addr().Next())
 	listenTarget := cfg.ResolveListenTarget()
 	// targetURL is the DIAL target schedd/gatewayd use to reach
 	// this vmmd. Distinct from listenTarget (the bind address):
