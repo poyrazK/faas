@@ -3,6 +3,8 @@ Description=onebox-faas gatewayd-public — plain-HTTP edge (Tier A7 split, ADR-
 Documentation=https://docs.gregale.dev/ops/gatewayd-public
 After=faas-cp.slice network-online.target faas-apid.service faas-gatewayd-internal.service
 Wants=faas-cp.slice faas-apid.service faas-gatewayd-internal.service
+StartLimitIntervalSec=300s
+StartLimitBurst=3
 
 [Service]
 Type=simple
@@ -11,6 +13,8 @@ Group=faas
 ExecStart=/opt/faas/current/bin/gatewayd-public
 Restart=on-failure
 RestartSec=2s
+RestartPreventExitStatus=0 SIGTERM
+TimeoutStopSec=30s
 Slice=faas-cp.slice
 MemoryMax=512M
 AmbientCapabilities=

@@ -19,17 +19,15 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //
 // See ADR-078 for the migration that wiped this from the unit body.
 func UnitSchedd() daemonunit.Unit {
-	return daemonunit.Unit{
+	return withRestartPolicy(daemonunit.Unit{
 		Description: "onebox-faas schedd — scheduler + lifecycle owner",
 		After:       []string{"network.target", "faas-cp.slice"},
 		Wants:       []string{"faas-cp.slice"},
 
-		Type:       "simple",
-		User:       "faas-schedd",
-		Group:      "faas",
-		ExecStart:  `/opt/faas/current/bin/schedd --config /etc/faas/schedd.toml`,
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type:      "simple",
+		User:      "faas-schedd",
+		Group:     "faas",
+		ExecStart: `/opt/faas/current/bin/schedd --config /etc/faas/schedd.toml`,
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
@@ -48,5 +46,5 @@ func UnitSchedd() daemonunit.Unit {
 		ReadWritePaths: []string{"/run/faas", "/var/log/faas"},
 
 		WantedBy: "multi-user.target",
-	}
+	})
 }

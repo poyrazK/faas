@@ -18,17 +18,15 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //
 // See ADR-078 for the migration that wiped these from the unit body.
 func UnitMeterd() daemonunit.Unit {
-	return daemonunit.Unit{
+	return withRestartPolicy(daemonunit.Unit{
 		Description: "onebox-faas meterd — metering and billing",
 		After:       []string{"network.target", "postgresql.service", "faas-schedd.service", "faas-cp.slice"},
 		Wants:       []string{"faas-cp.slice", "faas-schedd.service"},
 
-		Type:       "simple",
-		User:       "faas-meterd",
-		Group:      "faas",
-		ExecStart:  `/opt/faas/current/bin/meterd --config /etc/faas/meterd.toml`,
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type:      "simple",
+		User:      "faas-meterd",
+		Group:     "faas",
+		ExecStart: `/opt/faas/current/bin/meterd --config /etc/faas/meterd.toml`,
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
@@ -47,5 +45,5 @@ func UnitMeterd() daemonunit.Unit {
 		ReadWritePaths: []string{"/var/log/faas"},
 
 		WantedBy: "multi-user.target",
-	}
+	})
 }

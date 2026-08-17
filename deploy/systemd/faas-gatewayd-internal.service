@@ -3,14 +3,18 @@ Description=onebox-faas gatewayd-internal — routing + wake + proxy (Tier A7 sp
 Documentation=https://docs.gregale.dev/ops/gatewayd-internal
 After=faas-cp.slice network-online.target faas-apid.service faas-schedd.service
 Wants=faas-cp.slice faas-apid.service faas-schedd.service
+StartLimitIntervalSec=300s
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=faas
 Group=faas
 ExecStart=/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml
-Restart=on-failure
+Restart=always
 RestartSec=2s
+RestartPreventExitStatus=0 SIGTERM
+TimeoutStopSec=30s
 Slice=faas-cp.slice
 MemoryMax=512M
 Environment=FAAS_GATEWAY_LISTEN=off

@@ -80,14 +80,40 @@ type Unit struct {
 	Wants         []string
 	Requires      []string
 
+	// StartLimitIntervalSec + StartLimitBurst live in [Unit], not
+	// [Service] (systemd moved them in v229; a [Service] placement
+	// is silently ignored with a warning). They bound the restart
+	// loop: more than Burst starts inside Interval puts the unit in
+	// `failed` until `systemctl reset-failed`. Issue #593 sets them
+	// on every daemon so a crash-looping daemon stops hammering a
+	// sick dependency, and so a cascading Postgres blip cannot
+	// thunder every daemon into the same 2s retry window forever.
+	StartLimitIntervalSec string
+	StartLimitBurst       string
+
 	// [Service]
-	Type                  string // "simple" for every faas daemon today
-	User                  string
-	Group                 string
-	ExecStart             string
-	ExecStartPre          []string // ordered (vmmd has 2; nobody else has any)
-	Restart               string
-	RestartSec            string
+	Type         string // "simple" for every faas daemon today
+	User         string
+	Group        string
+	ExecStart    string
+	ExecStartPre []string // ordered (vmmd has 2; nobody else has any)
+	Restart      string
+	RestartSec   string
+	// RestartPreventExitStatus lists exit statuses / signals that
+	// must NOT trigger a restart. With Restart=always this is what
+	// keeps a deliberate clean shutdown clean: the drain paths in
+	// cmd/gatewayd-*/ and the rest of the daemons return nil (exit
+	// 0) after a successful drain, and systemd must respect that
+	// rather than immediately restarting the process it just asked
+	// to stop (issue #593).
+	RestartPreventExitStatus string
+	// TimeoutStopSec bounds how long systemd waits after SIGTERM
+	// before SIGKILL. It must exceed the daemon's own drain budget
+	// (pkg/gateway/drain.DrainGrace is 25s, sized as "30s unit
+	// budget minus 5s kernel-reap headroom") — an unset value
+	// inherits DefaultTimeoutStopSec (90s in most distros), which
+	// silently contradicts every 30s drain comment in the tree.
+	TimeoutStopSec        string
 	Slice                 string
 	MemoryMax             string
 	CapabilityBoundingSet []string
@@ -132,7 +158,8 @@ func BoolPtr(b bool) *bool { return &b }
 // Render emits the unit file as bytes. Section ordering: [Unit] first,
 // then [Service], then [Install] — matching every shipped faas unit.
 // Inside [Service], field ordering is fixed (Type → User → Group →
-// ExecStartPre → ExecStart → Restart → RestartSec → Slice → MemoryMax →
+// ExecStartPre → ExecStart → Restart → RestartSec →
+// RestartPreventExitStatus → TimeoutStopSec → Slice → MemoryMax →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
@@ -156,6 +183,8 @@ func (u Unit) Render() []byte {
 	writeStringList(&buf, "After", u.After)
 	writeStringList(&buf, "Wants", u.Wants)
 	writeStringList(&buf, "Requires", u.Requires)
+	writeStringKV(&buf, "StartLimitIntervalSec", u.StartLimitIntervalSec)
+	writeStringKV(&buf, "StartLimitBurst", u.StartLimitBurst)
 	buf.WriteByte('\n')
 
 	buf.WriteString("[Service]\n")
@@ -174,6 +203,8 @@ func (u Unit) Render() []byte {
 	writeStringKV(&buf, "ExecStart", u.ExecStart)
 	writeStringKV(&buf, "Restart", u.Restart)
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
+	writeStringKV(&buf, "RestartPreventExitStatus", u.RestartPreventExitStatus)
+	writeStringKV(&buf, "TimeoutStopSec", u.TimeoutStopSec)
 	writeStringKV(&buf, "Slice", u.Slice)
 	writeStringKV(&buf, "MemoryMax", u.MemoryMax)
 
@@ -328,6 +359,8 @@ func (u Unit) RenderSlice() []byte {
 	writeStringList(&buf, "After", u.After)
 	writeStringList(&buf, "Wants", u.Wants)
 	writeStringList(&buf, "Requires", u.Requires)
+	writeStringKV(&buf, "StartLimitIntervalSec", u.StartLimitIntervalSec)
+	writeStringKV(&buf, "StartLimitBurst", u.StartLimitBurst)
 	buf.WriteByte('\n')
 
 	buf.WriteString("[Slice]\n")
@@ -454,6 +487,14 @@ func apply(u *Unit, section, key, val string) error {
 		u.Restart = val
 	case "[Service]/RestartSec":
 		u.RestartSec = val
+	case "[Service]/RestartPreventExitStatus":
+		u.RestartPreventExitStatus = val
+	case "[Service]/TimeoutStopSec":
+		u.TimeoutStopSec = val
+	case "[Unit]/StartLimitIntervalSec":
+		u.StartLimitIntervalSec = val
+	case "[Unit]/StartLimitBurst":
+		u.StartLimitBurst = val
 	case "[Service]/Slice":
 		u.Slice = val
 	case "[Service]/MemoryMax":
@@ -620,8 +661,12 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "Group", a.Group, b.Group)
 	add("[Service]", "ExecStart", a.ExecStart, b.ExecStart)
 	add("[Service]", "ExecStartPre", fmt.Sprintf("%v", a.ExecStartPre), fmt.Sprintf("%v", b.ExecStartPre))
+	add("[Unit]", "StartLimitIntervalSec", a.StartLimitIntervalSec, b.StartLimitIntervalSec)
+	add("[Unit]", "StartLimitBurst", a.StartLimitBurst, b.StartLimitBurst)
 	add("[Service]", "Restart", a.Restart, b.Restart)
 	add("[Service]", "RestartSec", a.RestartSec, b.RestartSec)
+	add("[Service]", "RestartPreventExitStatus", a.RestartPreventExitStatus, b.RestartPreventExitStatus)
+	add("[Service]", "TimeoutStopSec", a.TimeoutStopSec, b.TimeoutStopSec)
 	add("[Service]", "Slice", a.Slice, b.Slice)
 	add("[Service]", "MemoryMax", a.MemoryMax, b.MemoryMax)
 	add("[Service]", "CapabilityBoundingSet",

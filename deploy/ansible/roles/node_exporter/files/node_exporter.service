@@ -4,6 +4,16 @@ Documentation=https://github.com/prometheus/node_exporter
 Wants=network-online.target
 After=network-online.target
 
+# Issue #593: the systemd collector is scoped to ^faas-.*\.service$ so
+# the scrape carries one series per platform daemon and not the whole
+# host's unit list. enable-restarts-metrics adds
+# node_systemd_service_restart_total{name}, which is what makes a
+# crash-looping daemon visible on the dashboard — with Restart=always
+# and a StartLimit ceiling, a daemon can now churn without ever
+# reaching the `failed` state that alerting keys on.
+#
+# The collector reads systemd over D-Bus; it needs no extra privilege
+# beyond the read-only introspection every local user already has.
 [Service]
 User=node_exporter
 Group=node_exporter
@@ -12,7 +22,10 @@ ExecStart=/usr/local/bin/node_exporter \
   --web.listen-address={{ node_exporter_listen_addr }} \
   --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|run)($|/) \
   --collector.netclass.ignored-devices=^(veth|docker) \
-  --collector.diskstats.ignored-devices=^(loop|dm-)
+  --collector.diskstats.ignored-devices=^(loop|dm-) \
+  --collector.systemd \
+  --collector.systemd.unit-include=^faas-.*\.service$ \
+  --collector.systemd.enable-restarts-metrics
 Restart=on-failure
 RestartSec=5
 

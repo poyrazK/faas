@@ -3,14 +3,18 @@ Description=onebox-faas vmmd — microVM supervisor (the only root component, sp
 Documentation=https://docs.gregale.dev/ops/vmmd
 After=faas-tenant.slice faas-cp.slice
 Wants=faas-tenant.slice faas-cp.slice
+StartLimitIntervalSec=300s
+StartLimitBurst=5
 
 [Service]
 Type=simple
 ExecStartPre=/usr/bin/chown root:faas /run/faas
 ExecStartPre=/usr/bin/chmod 0775 /run/faas
 ExecStart=/opt/faas/current/bin/vmmd --config /etc/faas/vmmd.toml
-Restart=on-failure
+Restart=always
 RestartSec=2s
+RestartPreventExitStatus=0 SIGTERM
+TimeoutStopSec=30s
 Slice=faas-cp.slice
 MemoryMax=256M
 AmbientCapabilities=CAP_NET_BIND_SERVICE

@@ -33,18 +33,16 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // gRPC over the wire to apid on fsn-1 (the [apphub] layer), so
 // there is no same-host ordering need at unit-activation time.
 func UnitBuilderd() daemonunit.Unit {
-	return daemonunit.Unit{
+	return withRestartPolicy(daemonunit.Unit{
 		Description:   "onebox-faas builderd — build orchestrator + ephemeral builder microVMs (spec §4.5, ADR-003, ADR-005)",
 		Documentation: "https://docs.gregale.dev/ops/builderd",
 		After:         []string{"network.target", "faas-cp.slice", "faas-vmmd.service"},
 		Wants:         []string{"faas-cp.slice", "faas-vmmd.service"},
 
-		Type:       "simple",
-		User:       "faas-builderd",
-		Group:      "faas",
-		ExecStart:  "/opt/faas/current/bin/builderd",
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type:      "simple",
+		User:      "faas-builderd",
+		Group:     "faas",
+		ExecStart: "/opt/faas/current/bin/builderd",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "512M",
@@ -63,5 +61,5 @@ func UnitBuilderd() daemonunit.Unit {
 		ReadWritePaths: []string{"/srv/fc/builder", "/srv/fc/base", "/var/log/faas", "/var/spool/faas"},
 
 		WantedBy: "multi-user.target",
-	}
+	})
 }

@@ -26,18 +26,16 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //
 // See ADR-078 for the migration that wiped these from the unit body.
 func UnitGatewaydPublic() daemonunit.Unit {
-	return daemonunit.Unit{
+	return withEdgeRestartPolicy(daemonunit.Unit{
 		Description:   "onebox-faas gatewayd-public — plain-HTTP edge (Tier A7 split, ADR-070; TLS terminates at Caddy upstream)",
 		Documentation: "https://docs.gregale.dev/ops/gatewayd-public",
 		After:         []string{"faas-cp.slice", "network-online.target", "faas-apid.service", "faas-gatewayd-internal.service"},
 		Wants:         []string{"faas-cp.slice", "faas-apid.service", "faas-gatewayd-internal.service"},
 
-		Type:       "simple",
-		User:       "faas",
-		Group:      "faas",
-		ExecStart:  `/opt/faas/current/bin/gatewayd-public`,
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type:      "simple",
+		User:      "faas",
+		Group:     "faas",
+		ExecStart: `/opt/faas/current/bin/gatewayd-public`,
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "512M",
@@ -70,5 +68,5 @@ func UnitGatewaydPublic() daemonunit.Unit {
 		ReadWritePaths: []string{"/run/faas"},
 
 		WantedBy: "multi-user.target",
-	}
+	})
 }

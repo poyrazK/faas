@@ -38,18 +38,16 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //
 // See ADR-078 for the migration that wiped these from the unit body.
 func UnitApid() daemonunit.Unit {
-	return daemonunit.Unit{
+	return withRestartPolicy(daemonunit.Unit{
 		Description:   "onebox-faas apid — public control-plane API (spec §4.1)",
 		Documentation: "https://docs.gregale.dev/ops/apid",
 		After:         []string{"network.target", "faas-cp.slice"},
 		Wants:         []string{"faas-cp.slice"},
 
-		Type:       "simple",
-		User:       "faas-apid",
-		Group:      "faas",
-		ExecStart:  `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type:      "simple",
+		User:      "faas-apid",
+		Group:     "faas",
+		ExecStart: `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
@@ -81,5 +79,5 @@ func UnitApid() daemonunit.Unit {
 		ReadWritePaths: []string{"/var/lib/faas", "/var/log/faas", "/var/spool/faas"},
 
 		WantedBy: "multi-user.target",
-	}
+	})
 }

@@ -30,18 +30,16 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //
 // See ADR-078 for the migration that wiped these from the unit body.
 func UnitImaged() daemonunit.Unit {
-	return daemonunit.Unit{
+	return withRestartPolicy(daemonunit.Unit{
 		Description:   "onebox-faas imaged — image/snapshot orchestrator (spec §4.6, ADR-003, ADR-005)",
 		Documentation: "https://docs.gregale.dev/ops/imaged",
 		After:         []string{"network.target", "faas-cp.slice", "faas-vmmd.service"},
 		Wants:         []string{"faas-cp.slice", "faas-vmmd.service"},
 
-		Type:       "simple",
-		User:       "faas-imaged",
-		Group:      "faas",
-		ExecStart:  `/opt/faas/current/bin/imaged --config /etc/faas/imaged.toml`,
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type:      "simple",
+		User:      "faas-imaged",
+		Group:     "faas",
+		ExecStart: `/opt/faas/current/bin/imaged --config /etc/faas/imaged.toml`,
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "1G",
@@ -85,5 +83,5 @@ func UnitImaged() daemonunit.Unit {
 		},
 
 		WantedBy: "multi-user.target",
-	}
+	})
 }

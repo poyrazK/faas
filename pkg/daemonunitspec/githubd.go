@@ -30,17 +30,15 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //
 // See ADR-078 for the migration that wiped these from the unit body.
 func UnitGithubd() daemonunit.Unit {
-	return daemonunit.Unit{
+	return withRestartPolicy(daemonunit.Unit{
 		Description: "onebox-faas githubd — GitHub App integration",
 		After:       []string{"network.target", "postgresql.service", "faas-cp.slice"},
 		Wants:       []string{"faas-cp.slice"},
 
-		Type:       "simple",
-		User:       "faas",
-		Group:      "faas",
-		ExecStart:  `/opt/faas/current/bin/githubd --config /etc/faas/githubd.toml`,
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type:      "simple",
+		User:      "faas",
+		Group:     "faas",
+		ExecStart: `/opt/faas/current/bin/githubd --config /etc/faas/githubd.toml`,
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
@@ -65,5 +63,5 @@ func UnitGithubd() daemonunit.Unit {
 		ReadWritePaths: []string{"/var/log/faas", "/var/lib/faas", "/run/faas"},
 
 		WantedBy: "multi-user.target",
-	}
+	})
 }

@@ -3,14 +3,18 @@ Description=onebox-faas imaged — image/snapshot orchestrator (spec §4.6, ADR-
 Documentation=https://docs.gregale.dev/ops/imaged
 After=network.target faas-cp.slice faas-vmmd.service
 Wants=faas-cp.slice faas-vmmd.service
+StartLimitIntervalSec=300s
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=faas-imaged
 Group=faas
 ExecStart=/opt/faas/current/bin/imaged --config /etc/faas/imaged.toml
-Restart=on-failure
+Restart=always
 RestartSec=2s
+RestartPreventExitStatus=0 SIGTERM
+TimeoutStopSec=30s
 Slice=faas-cp.slice
 MemoryMax=1G
 CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner cap_fsetid cap_kill cap_setgid cap_setuid cap_setpcap cap_net_bind_service cap_sys_chroot

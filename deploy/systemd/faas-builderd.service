@@ -3,14 +3,18 @@ Description=onebox-faas builderd — build orchestrator + ephemeral builder micr
 Documentation=https://docs.gregale.dev/ops/builderd
 After=network.target faas-cp.slice faas-vmmd.service
 Wants=faas-cp.slice faas-vmmd.service
+StartLimitIntervalSec=300s
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=faas-builderd
 Group=faas
 ExecStart=/opt/faas/current/bin/builderd
-Restart=on-failure
+Restart=always
 RestartSec=2s
+RestartPreventExitStatus=0 SIGTERM
+TimeoutStopSec=30s
 Slice=faas-cp.slice
 MemoryMax=512M
 EnvironmentFile=/etc/faas/sealed.env

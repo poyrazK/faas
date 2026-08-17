@@ -2,14 +2,18 @@
 Description=onebox-faas meterd — metering and billing
 After=network.target postgresql.service faas-schedd.service faas-cp.slice
 Wants=faas-cp.slice faas-schedd.service
+StartLimitIntervalSec=300s
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=faas-meterd
 Group=faas
 ExecStart=/opt/faas/current/bin/meterd --config /etc/faas/meterd.toml
-Restart=on-failure
+Restart=always
 RestartSec=2s
+RestartPreventExitStatus=0 SIGTERM
+TimeoutStopSec=30s
 Slice=faas-cp.slice
 MemoryMax=256M
 EnvironmentFile=/etc/faas/sealed.env

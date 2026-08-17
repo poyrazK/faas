@@ -2,14 +2,18 @@
 Description=onebox-faas githubd — GitHub App integration
 After=network.target postgresql.service faas-cp.slice
 Wants=faas-cp.slice
+StartLimitIntervalSec=300s
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=faas
 Group=faas
 ExecStart=/opt/faas/current/bin/githubd --config /etc/faas/githubd.toml
-Restart=on-failure
+Restart=always
 RestartSec=2s
+RestartPreventExitStatus=0 SIGTERM
+TimeoutStopSec=30s
 Slice=faas-cp.slice
 MemoryMax=256M
 EnvironmentFile=/etc/faas/sealed.env

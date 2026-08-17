@@ -32,7 +32,7 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //
 // See ADR-078 for the migration that wiped these from the unit body.
 func UnitVmmd() daemonunit.Unit {
-	return daemonunit.Unit{
+	return withRestartPolicy(daemonunit.Unit{
 		Description:   "onebox-faas vmmd — microVM supervisor (the only root component, spec §4.4)",
 		Documentation: "https://docs.gregale.dev/ops/vmmd",
 		After:         []string{"faas-tenant.slice", "faas-cp.slice"},
@@ -45,8 +45,6 @@ func UnitVmmd() daemonunit.Unit {
 			`/usr/bin/chown root:faas /run/faas`,
 			`/usr/bin/chmod 0775 /run/faas`,
 		},
-		Restart:    "on-failure",
-		RestartSec: "2s",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
@@ -66,5 +64,5 @@ func UnitVmmd() daemonunit.Unit {
 		ReadWritePaths:       []string{"/etc/faas/secrets", "/run/faas", "/srv/fc", "/var/log/faas"},
 
 		WantedBy: "multi-user.target",
-	}
+	})
 }

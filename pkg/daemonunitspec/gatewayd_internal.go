@@ -32,18 +32,16 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //
 // See ADR-078 for the migration that wiped these from the unit body.
 func UnitGatewaydInternal() daemonunit.Unit {
-	return daemonunit.Unit{
+	return withRestartPolicy(daemonunit.Unit{
 		Description:   "onebox-faas gatewayd-internal — routing + wake + proxy (Tier A7 split, ADR-070)",
 		Documentation: "https://docs.gregale.dev/ops/gatewayd-internal",
 		After:         []string{"faas-cp.slice", "network-online.target", "faas-apid.service", "faas-schedd.service"},
 		Wants:         []string{"faas-cp.slice", "faas-apid.service", "faas-schedd.service"},
 
-		Type:       "simple",
-		User:       "faas",
-		Group:      "faas",
-		ExecStart:  `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type:      "simple",
+		User:      "faas",
+		Group:     "faas",
+		ExecStart: `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "512M",
@@ -73,5 +71,5 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		ReadWritePaths: []string{"/run/faas"},
 
 		WantedBy: "multi-user.target",
-	}
+	})
 }
