@@ -1370,8 +1370,8 @@ var (
 		}
 		return "/srv/fc/base/builder-base.ext4"
 	}
-	statHook = os.Stat
-	lookPathHook = exec.LookPath
+	statHook       = os.Stat
+	lookPathHook   = exec.LookPath
 	runDebugfsHook = func(ctx context.Context, debugfs, ext4, target string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, debugfs, "-R", "stat "+target, ext4)
 		return cmd.CombinedOutput()

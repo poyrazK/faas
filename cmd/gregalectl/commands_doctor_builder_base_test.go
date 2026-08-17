@@ -23,9 +23,9 @@ import (
 // are all stubbed; missing fields fall back to the production hook
 // so partial overrides still work.
 type builderBaseHooks struct {
-	Path      string
-	Stat      func(string) (os.FileInfo, error)
-	LookPath  func(string) (string, error)
+	Path       string
+	Stat       func(string) (os.FileInfo, error)
+	LookPath   func(string) (string, error)
 	RunDebugfs func(ctx context.Context, debugfs, ext4, target string) ([]byte, error)
 }
 

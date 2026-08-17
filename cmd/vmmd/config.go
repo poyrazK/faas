@@ -198,8 +198,8 @@ type ComputeNodeConfig struct {
 	// it per-host via [compute_node].vcpu_budget or FAAS_VCPU_BUDGET. The
 	// SQL CHECK constraint (vcpu_budget > 0) means non-positive values
 	// would also fail at upsert — fail fast at LoadConfig instead.
-	VCPUBudget         int    `toml:"vcpu_budget"`
-	OverlayIP          string `toml:"overlay_ip"`           // Tailscale/Wireguard IP; auto-detected when empty
+	VCPUBudget int    `toml:"vcpu_budget"`
+	OverlayIP  string `toml:"overlay_ip"` // Tailscale/Wireguard IP; auto-detected when empty
 	// HostBridgeCIDR is the per-host bridge CIDR (the /16 the veth
 	// host-side addresses live in). Mega-PR-B Commit 1 supersedes
 	// the former pkg/netns Go const; defaults to
