@@ -1,14 +1,14 @@
 # .github/workflows/images.yml — Gregale OCI base image pipeline (issue #938, ADR-114).
 #
 # Builds and publishes ghcr.io/onebox-faas/builder-base for linux/amd64
-# + linux/arm64 on every push to main. PR builds run with --push=false
-# and a post-build crane-based verification step that asserts
-# /usr/local/bin/faas-guest-init exists in the published image's
-# rootfs (the kernel-cmdline PID1 binary every builder microVM hands
-# control to — see images/builder-base.Dockerfile:96).
+# + linux/arm64 on every push to main. PR builds run against a local
+# registry container and a post-build crane-based verification step
+# asserts /usr/local/bin/faas-guest-init exists in the just-pushed
+# image's amd64 manifest (the kernel-cmdline PID1 binary every
+# builder microVM hands control to — see images/builder-base.Dockerfile).
 #
 # guest-init is built INSIDE the Dockerfile via a multi-stage cross-
-# compile (see images/builder-base.Dockerfile:41-52). Each arch's
+# compile (see images/builder-base.Dockerfile stage 1). Each arch's
 # manifest receives the arch-matching binary because buildx resolves
 # TARGETARCH per image in the multi-arch build — no host-side pre-
 # build, no overwrite bug (review finding #2 on PR #940).
@@ -21,9 +21,20 @@
 #  - This workflow needs packages:write to push to ghcr.io; scoping it
 #    to its own file keeps the elevated permission minimal.
 #
-# Trigger paths: changes to the Dockerfile, the digest lock, the guest-
-# init source, or this workflow file itself. workflow_dispatch gives a
-# manual reroll (e.g. after a BuildKit / Railpack bump).
+# Trigger paths: changes to the Dockerfile, the digest lock, the
+# guest-init source, or this workflow file. workflow_dispatch is the
+# manual reroll path (e.g. after a BuildKit / Railpack bump).
+#
+# Why a service container for the local registry (PR #940 CI follow-
+# up): two earlier attempts — `docker run -d --network=host` and
+# `docker run -d -p 5000:5000` — both died mid-build. A 3-4 minute
+# multi-arch buildx invocation reaches for the registry URL at the
+# push phase; the sidecar container was gone by then. Service
+# containers in GitHub Actions are tied to the job lifecycle and
+# reachable via `${{ job.services.registry.ports[5000] }}` from the
+# host, so the registry stays alive for the entire 25-min job
+# timeout. The `services.registry` hostname below is the canonical
+# service-container alias for the `registry:` service.
 
 name: images
 
@@ -56,10 +67,25 @@ jobs:
     name: builder-base (linux/amd64 + linux/arm64)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Issue #938 / PR-B / ADR-114: PR builds push to a local registry
+    # service-container so the verify step can `crane export` the
+    # just-built image. Service containers stay alive for the entire
+    # job — the docker-bridge-vs-host-net ambiguity and container
+    # OOM issues from earlier attempts (PR #940 CI follow-up) are
+    # sidestepped by GitHub's job-lifecycle guarantees.
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+        options: >-
+          --restart=always
     env:
       IMAGE_NAME: ghcr.io/onebox-faas/builder-base
       BUILDKIT_VERSION: "0.31.2"
       RAILPACK_VERSION: "0.31.1"
+      # The host-side alias for the service container.
+      REGISTRY_HOST: ${{ job.services.registry.ports[5000] }}
     steps:
       - uses: actions/checkout@v7
 
@@ -79,36 +105,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Multi-arch build. On main pushes, push to ghcr.io with both
-      # :latest and :${GITHUB_SHA::12} tags. On PRs and dispatch,
-      # also push to a local registry container so the verify step
-      # can crane-inspect the just-built image. The buildx cache
-      # alone is not a stable surface for crane (the cache is
-      # containerd, not a registry) — review finding #1 on PR #940.
-      - name: Start local registry (PR / dispatch)
+      - name: Wait for registry (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: |
-          # --network=host avoids the IPv4/IPv6 dual-bind ambiguity that
-          # surfaces in buildx push logs as
-          #   `dial tcp [::1]:5000: connect: connection refused`
-          # (PR #940 CI follow-up: the linux/arm64 push step reached for
-          # localhost:5000 after the multi-arch build held the registry
-          # container for 3-4 min; the docker-bridge NAT inverts
-          # ::1 vs 127.0.0.1 in long-running buildx invocations.
-          # host-net binding removes the NAT entirely.) Pin the
-          # registry hostname to 127.0.0.1 in the build steps below
-          # so the buildx side picks the IPv4 path consistently.
-          docker run -d --name verify-registry --network=host \
-            --restart always registry:2
+          # Service container takes a few seconds after job start
+          # to bind 5000; the readiness check below is 30s max.
           for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:5000/v2/ >/dev/null; then
-              echo "registry ready on 127.0.0.1:5000"
+            if curl -sf "http://${REGISTRY_HOST}/v2/" >/dev/null; then
+              echo "registry ready on ${REGISTRY_HOST}"
               exit 0
             fi
             sleep 1
           done
           echo "::error::local registry did not become ready"
-          docker logs verify-registry || true
           exit 1
 
       - name: Build + push (main)
@@ -126,23 +135,25 @@ jobs:
       - name: Build + push (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: |
-          # Pin the registry hostname to 127.0.0.1 — see the
-          # Start-local-registry step for why localhost:5000 is
-          # ambiguous in long-running multi-arch buildx invocations.
+          # Push to the service-container registry on the canonical
+          # GitHub-managed alias (job.services.registry.ports[5000]).
+          # Avoid localhost / 127.0.0.1 — those names resolved to the
+          # wrong interface in earlier PR #940 CI iterations.
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --build-arg BUILDKIT_VERSION \
             --build-arg RAILPACK_VERSION \
-            --tag "127.0.0.1:5000/pr-${GITHUB_SHA::12}" \
+            --tag "${REGISTRY_HOST}/pr-${GITHUB_SHA::12}" \
             --push \
             -f images/builder-base.Dockerfile .
 
-      # Verify the linux/amd64 manifest in the just-built (or just-pushed)
-      # image contains /usr/local/bin/faas-guest-init. The Lima local-
-      # build path checks the same thing at deploy/lima/faas-metal.yaml:
-      # 482-490; this is the CI equivalent. imaged rejects manifest
-      # lists at cmd/imaged/main.go:392-401 so operators will pin the
-      # amd64-specific digest via `crane digest --platform linux/amd64`.
+      # Verify the linux/amd64 manifest in the just-built (or just-
+      # pushed) image contains /usr/local/bin/faas-guest-init. The
+      # Lima local-build path checks the same thing at deploy/lima/
+      # faas-metal.yaml:482-490; this is the CI equivalent. imaged
+      # rejects manifest lists at cmd/imaged/main.go:392-401 so
+      # operators will pin the amd64-specific digest via
+      # `crane digest --platform linux/amd64`.
       - name: Verify faas-guest-init is in the image
         run: |
           set -euo pipefail
@@ -151,7 +162,7 @@ jobs:
              [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             REF="${IMAGE_NAME}:latest"
           else
-            REF="127.0.0.1:5000/pr-${GITHUB_SHA::12}"
+            REF="${REGISTRY_HOST}/pr-${GITHUB_SHA::12}"
           fi
           DIGEST=$(crane manifest "${REF}" 2>/dev/null | \
             jq -r '.manifests[] | select(.platform.architecture=="amd64").digest')
