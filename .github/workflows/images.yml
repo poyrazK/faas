@@ -26,7 +26,7 @@
 # manual reroll path (e.g. after a BuildKit / Railpack bump).
 #
 # Why a service container for the local registry (PR #940 CI follow-
-# up, runs #1–#6): six prior attempts all failed.
+# up, runs #1–#7): seven prior attempts all failed.
 #   #1 `docker run -d --network=host`           (ex44/local mental model)
 #   #2 `docker run -d -p 5000:5000`             (first workflow revision)
 #   #3 services:registry + ports[5000] (numeric index) — actionlint
@@ -39,28 +39,21 @@
 #      the bridge gateway), but the buildx push (running inside a
 #      separate `moby/buildkit:v0.31.2` container) hit
 #      `dial tcp [::1]:5000: connect: connection refused`.
-#   #6 `registry:5000` (service label) everywhere + default
-#      docker-container buildkit driver — every Dockerfile stage
-#      ran cleanly and the multi-arch build completed, BUT the
-#      curl/wait probe (running from the runner namespace) cannot
-#      resolve `registry:5000` because that label-to-IP mapping
-#      exists only inside the bridge network the runner shares
-#      with the service container; the runner's resolver doesn't
-#      try the docker network first.
-# Resolution: TWO namespaces, TWO addresses.
-#   - curl / crane / etc. on the runner: `localhost:5000`. The
-#     runner shares the `github_network_*` bridge with the service
-#     container; docker publishes the host port 5000 to the
-#     bridge's gateway, which is reachable as `localhost:5000`
-#     from the runner process (curl's resolver falls through
-#     `::1` → `127.0.0.1` → bridge IP; the registry log line
-#     `172.18.0.1 - - [..] "GET /v2/ HTTP/1.1" 200` confirms).
-#   - docker buildx push: `registry:5000`. buildkitd's docker-
-#     container driver (the default with `setup-buildx-action`)
-#     joins `github_network_*` so the service label resolves
-#     inside its namespace.
-# A custom `driver-opts: image=…` buildkit container does NOT
-# share the service bridge by default; that override is dropped.
+#   #6 `registry:5000` (service label) everywhere — runner's curl
+#      cannot resolve the label (DNS resolver doesn't try the
+#      docker bridge network); step 7 failed fast.
+#   #7 dual namespace (`localhost:5000` for runner, `registry:5000`
+#      for push) — step 7 succeeded, but buildkitd also could
+#      not resolve `registry` (`no such host`); buildkitd also
+#      defaulted to https:// for an HTTP-only endpoint.
+# Resolution (run #8+): one network, one address.
+#   - `driver-opts: network=host` puts buildkitd on the runner's
+#     host network namespace, where `localhost:5000` resolves to
+#     the same registry port-published to the runner's loopback
+#     (verified on runs #5 and #7: step 7's curl GET /v2/ → 200
+#     in <1s).
+#   - `BUILDKIT_TLS_VERIFY=0` env on step 9 stops buildkit from
+#     upgrading the push to https:// for an HTTP-only registry.
 # Service containers stay alive for the entire 25-min job —
 # sidestepping the death-mid-build bug that killed run #1/#2.
 
@@ -119,16 +112,30 @@ jobs:
           platforms: linux/amd64,linux/arm64
 
       - uses: docker/setup-buildx-action@v3
-        # Default driver is docker-container; buildkitd joins the
-        # same github_network_* as the `services.registry` container
-        # so it can resolve the service label `registry:5000` (see
-        # below). An earlier custom `driver-opts: image=…` was
-        # dropped because explicit-`image=` containers don't share
-        # the runner's service bridge by default, and we observed
-        # buildkitd's `localhost:5000` push fail with
-        # `dial tcp [::1]:5000: connect: connection refused` on the
-        # multi-arch push phase even though the curl readiness
-        # probe (running from the runner's namespace) succeeded.
+        # `driver-opts: network=host` puts the buildkitd container
+        # on the runner's host network namespace. That makes
+        # `localhost:5000` resolve the same way in both namespaces:
+        #   - the runner's curl probes `localhost:5000` via the
+        #     service container's port publish to the runner's
+        #     loopback (verified in run #32013676953 — step 7's
+        #     curl GET /v2/ → 200 succeeded in <1s);
+        #   - buildkitd's push to `localhost:5000` also reaches the
+        #     same registry without needing DNS for the
+        #     `registry` service label (which only resolves inside
+        #     `github_network_*`, which neither namespace's DNS
+        #     can see, hence the `no such host` failure on
+        #     run #32013676953).
+        # Earlier attempts:
+        #   - default driver + service label `registry:5000` →
+        #     `dial tcp: lookup registry on 168.63.129.16:53: no
+        #     such host` (DNS lookup misses; also no network join).
+        #   - explicit `image=moby/buildkit:v0.31.2` driver +
+        #     `localhost:5000` → `dial tcp [::1]:5000: connect:
+        #     connection refused` (custom container is on its own
+        #     namespace; no host loopback).
+        # `network=host` sidesteps both.
+        with:
+          driver-opts: network=host
 
       - name: Login to ghcr.io
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -138,15 +145,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Wait probe: use `localhost:5000` because the readiness curl
-      # runs from the runner's namespace, NOT from buildkitd's.
-      # The runner shares the `github_network_*` bridge with the
-      # service container, and the service's published port
-      # resolves there via the bridge gateway (curl on
-      # `localhost:5000` actually traverses `172.18.0.1:41682` on
-      # the runner; registry logs confirm). buildkitd uses the
-      # service label `registry:5000` (see below) because buildkitd
-      # runs in its own container on the same network.
+      # Wait probe: hit `localhost:5000` from the runner's namespace.
+      # With `driver-opts: network=host` on setup-buildx-action
+      # (step 5), buildkitd's namespace shares this view — the same
+      # `localhost:5000` works from buildkitd's push step below.
+      # Earlier service-label (`registry:5000`) and dual-namespace
+      # approaches both fell over (DNS lookup fails; custom
+      # buildkit containers don't share the loopback).
       - name: Wait for registry (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: |
@@ -175,19 +180,26 @@ jobs:
 
       - name: Build + push (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        env:
+          # buildkit (the daemon behind `docker buildx`) defaults
+          # to https:// for any registry endpoint it doesn't
+          # recognize as plaintext. The local registry on
+          # `localhost:5000` serves plain HTTP only; this env tells
+          # buildkit to skip the TLS upgrade.
+          BUILDKIT_TLS_VERIFY: "0"
         run: |
-          # Build against the service-container label `registry:5000`
-          # — buildkitd (default docker-container driver) shares the
-          # github_network_* bridge with the services.registry
-          # container, so the label resolves inside buildkitd's
-          # namespace. Multi-arch with cross-compiled guest-init so
-          # each manifest carries the arch-matching /usr/local/bin/
-          # faas-guest-init binary (review finding #2 on PR #940).
+          # Build against `localhost:5000`. The buildkitd container
+          # is on the runner's host network (driver-opts above), so
+          # `localhost:5000` resolves to the same port-published
+          # registry as the runner's curl. Multi-arch with cross-
+          # compiled guest-init so each manifest carries the arch-
+          # matching /usr/local/bin/faas-guest-init binary
+          # (review finding #2 on PR #940).
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --build-arg BUILDKIT_VERSION \
             --build-arg RAILPACK_VERSION \
-            --tag "registry:5000/pr-${GITHUB_SHA::12}" \
+            --tag "localhost:5000/pr-${GITHUB_SHA::12}" \
             --push \
             -f images/builder-base.Dockerfile .
 
