@@ -450,6 +450,29 @@ func LoadConfig(path string) (*Config, error) {
 	if c.ComputeNode.VCPUBudget <= 0 {
 		return nil, fmt.Errorf("vmmd: [compute_node].vcpu_budget must be > 0 (got %d)", c.ComputeNode.VCPUBudget)
 	}
+	// Issue #900: reject a wildcard [compute_node].target_url at
+	// LoadConfig. The bind form `tcp://0.0.0.0:50051` (or `tcp://[::]:50051`)
+	// is a valid listen target but NOT a routable dial target — schedd/
+	// gatewayd on the second box would dial 0.0.0.0:50051 and resolve to
+	// the local host, silently routing wakes to the wrong daemon. The
+	// fallback chain in ResolveTargetURL is correct for unset
+	// target_url; this gate fires only on the explicit-override slot
+	// where the operator copy-pasted the bind form. The error lands
+	// where the operator is editing (vmmd.toml) and exits before FC
+	// detect, host-key load, or DB connect have spent the operator's
+	// time. FQDNs are accepted as-is (the verifier and the dialer
+	// resolve them); only an Unspecified IP host is rejected.
+	if raw := strings.TrimSpace(c.ComputeNode.TargetURL); raw != "" {
+		if wildcard, err := targetURLIsWildcardDial(raw); err != nil {
+			return nil, fmt.Errorf("vmmd: [compute_node].target_url %q invalid: %w", raw, err)
+		} else if wildcard {
+			return nil, fmt.Errorf(
+				"vmmd: [compute_node].target_url %q is a bind form (0.0.0.0 / ::) — "+
+					"set a routable FQDN or IP for multi-box routing, or use [compute_node].overlay_ip to auto-derive. "+
+					"Docs: docs/runbooks/multi-host-rollout.md §3.5",
+				raw)
+		}
+	}
 	// Mega-PR-B review M3: validate [compute_node].overlay_cidr
 	// against the §11 deny set at config-load time, BEFORE vmmd
 	// accepts any traffic or registers with schedd. The render-time
@@ -518,4 +541,63 @@ func validateHostBridgeCIDR(cidr string) error {
 		return fmt.Errorf("CIDR %q is not in network form (the host bits must be zero); use %q", cidr, prefix.Masked().String())
 	}
 	return nil
+}
+
+// targetURLIsWildcardDial is the issue #900 load-time gate for
+// [compute_node].target_url. It returns true when raw is a tcp://
+// URL whose host is an Unspecified IPv4 (0.0.0.0) or IPv6 (::) address
+// — the bind form copy-pasted into the dial-target slot. The error
+// return is for parse failures the caller should surface (the load
+// path wraps it with the offending field name).
+//
+// Non-tcp schemes (unix://, dns://) never have an IP host:
+//   - unix:// — no host at all.
+//   - dns:// — authority is a hostname; the dialer resolves it.
+//
+// FQDNs on tcp:// are accepted as-is. The verifier and the
+// dialer both resolve names; assuming routability matches the
+// v1 wire contract (ADR-025 / pkg/wire/grpc.go).
+//
+// wire.ParseTarget strips the IPv6 brackets in the parsed Address
+// (e.g. Address=":::50051" for tcp://[::]:50051 — see
+// pkg/wire/grpc.go:103). net.SplitHostPort does NOT understand
+// that unbracketed IPv6 form, so we split on the LAST colon to
+// peel off the port. This matches the v1 wire contract: the
+// authority is always host:port, and the port is the rightmost
+// `:`. The only multi-colon host form is IPv6 literal, which
+// netip.ParseAddr will accept either way.
+//
+// The helper is package-private; the only caller is LoadConfig
+// above.
+func targetURLIsWildcardDial(raw string) (bool, error) {
+	t, err := wire.ParseTarget(raw)
+	if err != nil {
+		return false, fmt.Errorf("parse: %w", err)
+	}
+	if t.Scheme != wire.SchemeTCP {
+		return false, nil
+	}
+	host := t.Address
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		host = host[:i]
+	}
+	return ipLiteralIsWildcard(host), nil
+}
+
+// ipLiteralIsWildcard classifies an address string as a wildcard
+// (bind-form) address. Returns false for any value that is not an
+// IP literal (FQDNs, named hosts); those cannot be a bind form and
+// are the verifier/dialer's job to resolve.
+//
+// Factored out of targetURLIsWildcardDial so the
+// netip.ParseAddr error path lives in a helper whose `(bool, error)`
+// return is never bound — the wildcard caller does not propagate
+// the parse error (a non-IP host isn't an error; see comment on
+// targetURLIsWildcardDial).
+func ipLiteralIsWildcard(host string) bool {
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return !ip.IsValid() || ip.IsUnspecified()
 }

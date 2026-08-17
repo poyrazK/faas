@@ -434,3 +434,188 @@ func TestValidateHostBridgeCIDR(t *testing.T) {
 		})
 	}
 }
+
+// TestTargetURLIsWildcardDial is the unit-level pin for the issue #900
+// raw-string detector. Every shape the operator might paste into
+// [compute_node].target_url is exhaustively covered: IPv4 wildcard, IPv6
+// wildcard, routable IP, FQDN, unix://, dns://, and parse failures. The
+// (wildcard, err) tuple is asserted directly so a future refactor that
+// over-rejects (treats FQDN as wildcard) or under-rejects (accepts
+// 0.0.0.0) surfaces here.
+func TestTargetURLIsWildcardDial(t *testing.T) {
+	cases := []struct {
+		name       string
+		raw        string
+		wantWild   bool
+		wantErrSub string // empty = no error expected
+	}{
+		{"ipv4-0.0.0.0 wildcard", "tcp://0.0.0.0:50051", true, ""},
+		{"ipv6-:: wildcard", "tcp://[::]:50051", true, ""},
+		{"ipv4-routable accepted", "tcp://100.64.0.1:50051", false, ""},
+		{"ipv4-routable-192.168 accepted", "tcp://192.168.1.10:50051", false, ""},
+		{"fqdn accepted", "tcp://vmmd-2.faas:50051", false, ""},
+		{"fqdn-with-dots accepted", "tcp://vmmd.us-east-1.faas:50051", false, ""},
+		{"unix-scheme accepted", "unix:///run/faas/vmmd.sock", false, ""},
+		{"dns-scheme accepted", "dns:///vmmd-2.faas:50051", false, ""},
+		{"bogus-scheme parse error", "bogus://nope", false, "parse"},
+		{"empty-host-parse error", "tcp://", false, "parse"},
+		{"missing-port-parse error", "tcp://0.0.0.0", false, "parse"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wildcard, err := targetURLIsWildcardDial(tc.raw)
+			if tc.wantErrSub != "" {
+				if err == nil {
+					t.Fatalf("targetURLIsWildcardDial(%q) = nil err, want containing %q", tc.raw, tc.wantErrSub)
+				}
+				if !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Errorf("targetURLIsWildcardDial(%q) err = %q, want containing %q", tc.raw, err, tc.wantErrSub)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("targetURLIsWildcardDial(%q) unexpected error: %v", tc.raw, err)
+			}
+			if wildcard != tc.wantWild {
+				t.Errorf("targetURLIsWildcardDial(%q) wildcard = %v, want %v", tc.raw, wildcard, tc.wantWild)
+			}
+		})
+	}
+}
+
+// TestLoadConfig_RejectsWildcardTargetURL pins the load-time gate for
+// issue #900. The accepted shapes (FQDN, routable IP, unix://, dns://,
+// empty) load without error; the wildcard bind forms (0.0.0.0, ::) are
+// rejected with the canonical "bind form" message that names the
+// offending field for operator grep. The gate fires regardless of
+// whether overlay_ip is also set — the explicit override is the
+// load-bearing path and the fallback chain is not in scope here.
+func TestLoadConfig_RejectsWildcardTargetURL(t *testing.T) {
+	reject := []struct {
+		name string
+		toml string
+	}{
+		{
+			name: "ipv4 wildcard",
+			toml: `
+[compute_node]
+name = "vmmd-fsn-2"
+target_url = "tcp://0.0.0.0:50051"
+`,
+		},
+		{
+			name: "ipv6 wildcard",
+			toml: `
+[compute_node]
+name = "vmmd-fsn-2"
+target_url = "tcp://[::]:50051"
+`,
+		},
+		{
+			name: "ipv4 wildcard even with overlay_ip set",
+			toml: `
+[compute_node]
+name = "vmmd-fsn-2"
+target_url = "tcp://0.0.0.0:50051"
+overlay_ip = "100.64.0.1"
+`,
+		},
+		{
+			name: "ipv6 wildcard even with overlay_ip set",
+			toml: `
+[compute_node]
+name = "vmmd-fsn-2"
+target_url = "tcp://[::]:50051"
+overlay_ip = "100.64.0.1"
+`,
+		},
+	}
+	for _, tc := range reject {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vmmd.toml")
+			if err := os.WriteFile(path, []byte(tc.toml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadConfig(path)
+			if err == nil {
+				t.Fatalf("LoadConfig must reject wildcard target_url; got nil")
+			}
+			if !strings.Contains(err.Error(), "target_url") {
+				t.Errorf("error %q must name target_url for operator grep", err.Error())
+			}
+			if !strings.Contains(err.Error(), "bind form") {
+				t.Errorf("error %q must indicate bind form (4-line operator guidance)", err.Error())
+			}
+			// Don't pin the doc URL — the load-time path only
+			// attaches it when the full reproduction path is
+			// available; the LoadConfig error is the canonical
+			// operator-facing shape.
+		})
+	}
+}
+
+// TestLoadConfig_AcceptsRoutableTargetURL pins the inverse: the
+// issue #900 wildcard gate is narrowly scoped to bind forms. Operators
+// on a multi-box fleet set [compute_node].target_url to a routable
+// FQDN or IP; that path is accepted. Default-empty target_url
+// (single-box dev) is also accepted (covered by
+// TestLoadConfig_MissingFileReturnsDefaults).
+func TestLoadConfig_AcceptsRoutableTargetURL(t *testing.T) {
+	accept := []struct {
+		name string
+		toml string
+		want string
+	}{
+		{
+			name: "fqdn",
+			toml: `
+[compute_node]
+name = "vmmd-fsn-2"
+target_url = "tcp://vmmd-2.faas:50051"
+`,
+			want: "tcp://vmmd-2.faas:50051",
+		},
+		{
+			name: "routable ipv4",
+			toml: `
+[compute_node]
+name = "vmmd-fsn-2"
+target_url = "tcp://100.64.0.1:50051"
+`,
+			want: "tcp://100.64.0.1:50051",
+		},
+		{
+			name: "unix-scheme",
+			toml: `
+[compute_node]
+name = "vmmd-fsn-2"
+target_url = "unix:///run/faas/vmmd.sock"
+`,
+			want: "unix:///run/faas/vmmd.sock",
+		},
+		{
+			name: "dns-scheme",
+			toml: `
+[compute_node]
+name = "vmmd-fsn-2"
+target_url = "dns:///vmmd-2.faas:50051"
+`,
+			want: "dns:///vmmd-2.faas:50051",
+		},
+	}
+	for _, tc := range accept {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vmmd.toml")
+			if err := os.WriteFile(path, []byte(tc.toml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("LoadConfig must accept %q; got %v", tc.want, err)
+			}
+			if cfg.ComputeNode.TargetURL != tc.want {
+				t.Errorf("TargetURL = %q, want %q", cfg.ComputeNode.TargetURL, tc.want)
+			}
+		})
+	}
+}
