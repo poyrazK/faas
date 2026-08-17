@@ -26,18 +26,26 @@
 # manual reroll path (e.g. after a BuildKit / Railpack bump).
 #
 # Why a service container for the local registry (PR #940 CI follow-
-# up, run #3): two earlier attempts — `docker run -d --network=host`
-# and `docker run -d -p 5000:5000` — both died mid-build during the
-# multi-arch push phase (5+ min build), surfacing as connection-
-# refused errors at the linux/arm64 manifest attachment. Service
-# containers in GitHub Actions are tied to the job lifecycle, stay
-# alive for the entire 25-min timeout, and are reachable from step
-# commands via the service label as hostname (`registry:5000`) per
+# up, runs #1–#4): four prior attempts all failed.
+#   #1 `docker run -d --network=host`           (ex44/local mental model)
+#   #2 `docker run -d -p 5000:5000`             (first workflow revision)
+#   #3 services:registry + ports[5000] (numeric index) — actionlint
+#      error: property access on string-keyed map.
+#   #4 services:registry + ports['5000'] + step-level env —
+#      YAML validated, but the loop in step 7 hung past its 30-iter
+#      ceiling for the full job timeout, strongly suggesting the
+#      `${{ job.services.<name>.ports[<n>] }}` expression under the
+#      static 5000:5000 mapping on a bare-runner job returned an
+#      address that `curl -sf` couldn't connect to without a
+#      timeout.
+# Per
 # https://docs.github.com/en/actions/using-containerized-services/
-# about-service-containers. actionlint SC-acceptable; the
-# `${{ job.services.<name>.ports[N] }}` lookup is only valid inside
-# `steps:` (actionlint enforces context-availability rules), so it
-# is computed lazily by each step that needs it.
+# about-service-containers: bare-runner jobs reach a service via
+# `localhost:<host_port>`. Containerized jobs use the label as a
+# hostname. Our job has no `container:` clause, so we use the bare-
+# runner form: `localhost:5000`. Service containers stay alive for
+# the entire 25-min job — sidestepping the death-mid-build bug that
+# killed run #1 and run #2.
 
 name: images
 
@@ -105,28 +113,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Service-container hostname on bare-runner jobs: the label
-      # name resolves to the container's IP on the docker network
-      # the runner + service share. Per
+      # Service-container hostname on bare-runner jobs: per
       # https://docs.github.com/en/actions/using-containerized-services
-      # /about-service-containers: "the hostname of the service
-      # container is automatically mapped to the label name".
-      # Verified locally that `docker run -d -p 5000:5000
-      # registry:2` then `docker exec` from a sibling buildx
-      # invocation against `registry:5000` works; the
-      # `${{ job.services.registry.ports[5000] }}` form is the
-      # actionlint-clean way to spell the host port for cases
-      # where the port mapping is dynamic (TCP-mapped random
-      # port). For our 5000:5000 static mapping both forms
-      # resolve to 5000.
+      # /about-service-containers, when the job runs directly on
+      # the runner machine (this workflow does — no `container:`
+      # clause), service containers are reachable via
+      # `localhost:<host_port>` (NOT via the service label).
+      # The `${{ job.services.<name>.ports[<n>] }}` form returns
+      # the host port string, but on a static 5000:5000 mapping
+      # it would have to be combined with `localhost` — and an
+      # earlier attempt that trusted the expression produced
+      # connect-refused loop stuck for the full 25-min job
+      # timeout. Use `localhost:5000` directly; this is the
+      # documented, deterministic pattern.
       - name: Wait for registry (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-        env:
-          REGISTRY_HOST: ${{ job.services.registry.ports['5000'] }}
         run: |
           for _ in $(seq 1 30); do
-            if curl -sf "http://${REGISTRY_HOST}/v2/" >/dev/null; then
-              echo "registry ready on ${REGISTRY_HOST}"
+            if curl -sf --connect-timeout 2 --max-time 3 \
+                 http://localhost:5000/v2/ >/dev/null; then
+              echo "registry ready on localhost:5000"
               exit 0
             fi
             sleep 1
@@ -148,18 +154,18 @@ jobs:
 
       - name: Build + push (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-        env:
-          REGISTRY_HOST: ${{ job.services.registry.ports['5000'] }}
         run: |
-          # Service-container hostname on bare-runner jobs: the
-          # label name is the canonical alias; both `registry:5000`
-          # and `${REGISTRY_HOST}:5000` resolve to the same
-          # container IP for a static 5000:5000 mapping.
+          # Build against `localhost:5000` per the GitHub
+          # service-container docs (bare-runner jobs reach the
+          # service via localhost:<host_port>, not the service
+          # label). Multi-arch with cross-compiled guest-init so
+          # each manifest carries the arch-matching /usr/local/bin/
+          # faas-guest-init binary (review finding #2 on PR #940).
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --build-arg BUILDKIT_VERSION \
             --build-arg RAILPACK_VERSION \
-            --tag "${REGISTRY_HOST}/pr-${GITHUB_SHA::12}" \
+            --tag "localhost:5000/pr-${GITHUB_SHA::12}" \
             --push \
             -f images/builder-base.Dockerfile .
 
@@ -172,8 +178,6 @@ jobs:
       # amd64-specific digest via `crane digest --platform
       # linux/amd64`.
       - name: Verify faas-guest-init is in the image
-        env:
-          REGISTRY_HOST: ${{ job.services.registry.ports['5000'] }}
         run: |
           set -euo pipefail
           go install github.com/google/go-containerregistry/cmd/crane@latest
@@ -181,7 +185,7 @@ jobs:
              [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             REF="${IMAGE_NAME}:latest"
           else
-            REF="${REGISTRY_HOST}/pr-${GITHUB_SHA::12}"
+            REF="localhost:5000/pr-${GITHUB_SHA::12}"
           fi
           DIGEST=$(crane manifest "${REF}" 2>/dev/null | \
             jq -r '.manifests[] | select(.platform.architecture=="amd64").digest')
