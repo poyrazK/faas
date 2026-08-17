@@ -36,10 +36,22 @@ ARG BUILDKIT_VERSION=0.31.2
 # Issue #938: building guest-init inside the image (instead of in the
 # workflow) also lets the Lima local-build path stage a multi-arch rootfs
 # via buildx without per-arch file juggling.
-ARG GO_VERSION=1.23.4
+# Note: the version is intentionally baked into the FROM line (no ARG)
+# so images/Dockerfile.lock has a literal "golang:1.25.7" alias to
+# match against. Bumping the Go version is a two-step: change this
+# line, run `make images-lock-update` to refresh the lock and digest.
+# We use 1.25.7 (not 1.23.x) because go.mod in this repo declares
+# `go 1.25.7` and a `tool` directive that older Go versions reject
+# with `unknown directive: tool` (verified during PR #940 review).
 
 # ---- stage 1: build guest-init for the target arch -----------------------
-FROM --platform=$TARGETPLATFORM golang:${GO_VERSION}@sha256:REPLACE_ME_AT_MERGE_TIME AS guest-init-build
+# Image registry digest pinned via images/Dockerfile.lock; make
+# images-lock-update resolves the current digest and rewrites BOTH
+# this line and the lock entry. The base manifest-list digest pins
+# every per-arch child manifest so buildx's per-arch resolution
+# stays race-free under multi-arch build (per-arch digests are not
+# stable across re-pulls, but the manifest-list digest is).
+FROM --platform=$TARGETPLATFORM golang:1.25.7@sha256:5a79b94c34c299ac0361fbb7c7fca6dc552e166b42341050323fa3ab137d7be9 AS guest-init-build
 WORKDIR /src
 # guest-init is a pure-Go binary; no submodule vendoring needed. The
 # repository is the build context, so COPY . picks up the whole tree.
@@ -52,7 +64,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         -o /out/faas-guest-init ./guest/init
 
 # ---- stage 2: assemble the runtime rootfs -------------------------------
-FROM --platform=$TARGETPLATFORM debian:12-slim@sha256:REPLACE_ME_AT_MERGE_TIME
+FROM --platform=$TARGETPLATFORM debian:12-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 # Issue #197 B3.5: the `debian:12-slim` tag is mutable. The digest is
 # pinned via images/Dockerfile.lock; `make images-lock-update` resolves
 # the current registry digest and updates BOTH the lock and the FROM
