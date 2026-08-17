@@ -912,6 +912,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load server TLS: %w", err)
 	}
+	// Issue #900 follow-up: surface the leaf-CN-vs-registered-name
+	// gap at startup so an operator running `gregale pki init &&
+	// systemctl start faas-vmmd` sees the mismatch before traffic
+	// starts to fail. The Warn is advisory-only — vmmd still starts
+	// and serves traffic; the verifier (which runs AFTER stdlib
+	// trust) only fails on the handshake with schedd / gatewayd.
+	// Triggered only when the operator's [compute_node].name was
+	// set (so auto-append will fire) AND serverTLS is non-nil
+	// (the verifier path is installed). Other paths are silent.
+	warnIfPkiCNMismatch(cfg.ComputeNode, serverTLS, log)
 	scheddClientTLS, err := cfg.LoadScheddClientTLSWithVerifier(nodeVerifier)
 	if err != nil {
 		return fmt.Errorf("vmmd: load schedd client TLS: %w", err)
