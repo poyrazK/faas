@@ -155,7 +155,7 @@ func (h *Handler) EnsureBaseExt4(
 	// still closes layers 0..N-1. PullBlob streams the gzipped tarball; we
 	// hand it to Builder.BuildBase which copies it through ApplyLayerGz.
 	//
-	// PullBlob takes a repo like "ghcr.io/onebox-faas/builder-base" — the
+	// PullBlob takes a repo like "ghcr.io/poyrazK/builder-base" — the
 	// host:port + path with no tag/digest suffix. ParseReference splits
 	// the ref for us (same parser the registry client uses internally).
 	ociRef, err := oci.ParseReference(ref)

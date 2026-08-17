@@ -28,7 +28,7 @@ const (
 	BaseRefNode24      = "ghcr.io/onebox-faas/runner-node24:latest"
 	BaseRefPython313   = "ghcr.io/onebox-faas/runner-python313:latest"
 	BaseRefMinimal     = "ghcr.io/onebox-faas/base-minimal:latest"
-	BaseRefBuilder     = "ghcr.io/onebox-faas/builder-base:latest"
+	BaseRefBuilder     = "ghcr.io/poyrazK/builder-base:latest"
 	// BaseRefDebianParent (ADR-053) is the staging-only parent
 	// runtime — its ext4 carries the shared debian:12-slim userland
 	// (~150 MB of libc/openssl/ca-certs/busybox) that the four

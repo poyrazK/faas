@@ -13,7 +13,7 @@ import (
 // BaseBuildInput is one base-image provisioning run.
 //
 // imaged startup calls BuildBase once per box lifetime to convert
-// ghcr.io/onebox-faas/builder-base:latest (or the configured override) into
+// ghcr.io/poyrazK/builder-base:latest (or the configured override) into
 // /srv/fc/base/builder-base.ext4 — the read-only drive0 used by builder
 // microVMs (spec §4.6, two-drive scheme). The base image already contains
 // guest-init + /usr/local/bin/railpack + buildkit, baked into its own

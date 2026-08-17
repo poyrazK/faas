@@ -4,7 +4,7 @@
 - **Date:** 2026-08-16
 - **Decision:** The builder-base rootfs that backs every ephemeral
   builder microVM is sourced from `images/builder-base.Dockerfile`
-  and published to `ghcr.io/onebox-faas/builder-base` for
+  and published to `ghcr.io/poyrazK/builder-base` for
   `linux/amd64 + linux/arm64` by `.github/workflows/images.yml` on
   every push to `main`. PR builds run with `--push=false` and a
   post-build crane-based verification step asserts
@@ -19,12 +19,12 @@
   was that **nothing published `builder-base`**. `images/builder-
   base.Dockerfile` existed and was complete (debian:12-slim +
   BuildKit 0.31.2 + Railpack 0.31.1 + git + the guest-init binary),
-  but `grep -l 'docker buildx|ghcr.io/onebox-faas' .github/workflows/`
+  but `grep -l 'docker buildx\|ghcr.io/poyrazK' .github/workflows/`
   returned zero matches. The only artifact flowing into imaged was
   the operator-set `FAAS_BUILDER_BASE_REF`, which defaulted to
   `mirror.gcr.io/library/alpine` in `deploy/controlplane/sealed.env.
   example:25` — a public-registry placeholder left over from when
-  `ghcr.io/onebox-faas/builder-base` was private. The result: imaged
+  `ghcr.io/poyrazK/builder-base` was private. The result: imaged
   stages alpine as `builder-base.ext4`; the resulting VM boots
   busybox with no `faas-guest-init`, no railpack, no buildkit; every
   build times out at vmmd's `waitReady` (30s); every build fails.

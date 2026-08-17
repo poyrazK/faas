@@ -1016,7 +1016,7 @@ type OpsMetrics struct {
 	deployScanVulns *prometheus.CounterVec
 	// imageScanVulns: issue #299 / supply-chain scan observability.
 	// Counter labelled by image (the OCI ref of the staged base
-	// ext4, e.g. "ghcr.io/onebox-faas/builder-base:latest" or
+	// ext4, e.g. "ghcr.io/poyrazK/builder-base:latest" or
 	// "ghcr.io/onebox-faas/runner-node22:v1.2.3") and severity ∈
 	// {CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN}. Closed `severity`
 	// set pre-instantiated at boot below — `image` is bounded by

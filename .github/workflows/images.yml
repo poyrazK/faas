@@ -1,6 +1,6 @@
 # .github/workflows/images.yml — Gregale OCI base image pipeline (issue #938, ADR-114).
 #
-# Builds and publishes ghcr.io/onebox-faas/builder-base for linux/amd64
+# Builds and publishes ghcr.io/poyrazK/builder-base for linux/amd64
 # + linux/arm64 on every push to main. PR builds run against a local
 # registry service container and a post-build crane-based verification
 # step asserts /usr/local/bin/faas-guest-init exists in the just-pushed
@@ -81,7 +81,7 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write   # ghcr.io/onebox-faas push (GITHUB_TOKEN)
+  packages: write   # ghcr.io/poyrazK push (GITHUB_TOKEN)
 
 jobs:
   builder-base:
@@ -101,7 +101,7 @@ jobs:
         ports:
           - 5000:5000
     env:
-      IMAGE_NAME: ghcr.io/onebox-faas/builder-base
+      IMAGE_NAME: ghcr.io/poyrazK/builder-base
       BUILDKIT_VERSION: "0.31.2"
       RAILPACK_VERSION: "0.31.1"
     steps:

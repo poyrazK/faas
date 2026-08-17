@@ -252,7 +252,7 @@ kernel_path = %q
 		)
 		// Optional builder-base override (Lima / CI without ghcr creds). When
 		// FAAS_TEST_BUILDER_BASE_REF is set, imaged pulls the base from there
-		// instead of the production ghcr.io/onebox-faas/builder-base:latest
+		// instead of the production ghcr.io/poyrazK/builder-base:latest
 		// (which 403s anonymously). FAAS_TEST_DEPLOY_BASE_REF, if set,
 		// overrides the per-runtime base ref used by aboveBaseLayers at
 		// deploy time so it also dials the stub registry. Default behavior
