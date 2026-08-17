@@ -62,3 +62,29 @@
     owner: root
     group: root
     mode: "0644"
+# Issue #603 — soft assert on the GitHub App private key. The file is
+# operator-provisioned (see the header note), so a box where githubd
+# is not yet wired must still deploy: absence is fine. Presence with a
+# loose mode is not — this key mints installation tokens for every
+# customer repo the App is installed on, so a world-readable copy is a
+# tenant-wide credential leak.
+#
+# The allowlist mirrors the runtime tripwire that refuses to start on
+# the same modes (pkg/secretbox/filemode.go::SecretFileModes, called
+# from cmd/githubd/main.go::readKeyPEMDefault). Ansible fails loud
+# before daemon-reload so a perms drift on a fresh box never reaches
+# production; the daemon-side check is the backstop for a file that
+# drifts after bootstrap. Shape mirrors the host.age assert in
+# roles/control_plane_service/tasks/main.yml.
+#
+# Owner must be the daemon's user (faas per faas-githubd.service);
+# root-owned 0400 would be unreadable by the daemon.
+- name: githubd_service — soft assert github-app.pem mode + owner (issue #603)
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/github-app.pem
+  register: faas_github_app_pem_stat
+  failed_when:
+    - >-
+      faas_github_app_pem_stat.stat.exists
+      and (faas_github_app_pem_stat.stat.mode not in ["0400", "0440", "0600", "0640"]
+           or faas_github_app_pem_stat.stat.pw_name != "faas")
