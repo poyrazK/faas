@@ -26,25 +26,31 @@
 # manual reroll path (e.g. after a BuildKit / Railpack bump).
 #
 # Why a service container for the local registry (PR #940 CI follow-
-# up, runs #1–#4): four prior attempts all failed.
+# up, runs #1–#5): five prior attempts all failed.
 #   #1 `docker run -d --network=host`           (ex44/local mental model)
 #   #2 `docker run -d -p 5000:5000`             (first workflow revision)
 #   #3 services:registry + ports[5000] (numeric index) — actionlint
 #      error: property access on string-keyed map.
 #   #4 services:registry + ports['5000'] + step-level env —
-#      YAML validated, but the loop in step 7 hung past its 30-iter
-#      ceiling for the full job timeout, strongly suggesting the
-#      `${{ job.services.<name>.ports[<n>] }}` expression under the
-#      static 5000:5000 mapping on a bare-runner job returned an
-#      address that `curl -sf` couldn't connect to without a
-#      timeout.
+#      YAML validated, but the curl/wait loop hung past its 30-iter
+#      ceiling for the full job timeout. (Expressions may have
+#      returned the service label name or a bridgeless value that
+#      `curl` couldn't resolve inside the runner.)
+#   #5 `localhost:5000` directly + custom buildkit driver — the
+#      curl/wait loop succeeded (curl's resolver fell through
+#      `::1` → `127.0.0.1` → bridge gateway IP), but the buildx
+#      push (running inside a separate `moby/buildkit:v0.31.2`
+#      container) hit `dial tcp [::1]:5000: connect: connection
+#      refused`. Two namespaces disagreed on where `localhost`
+#      lives.
 # Per
 # https://docs.github.com/en/actions/using-containerized-services/
-# about-service-containers: bare-runner jobs reach a service via
-# `localhost:<host_port>`. Containerized jobs use the label as a
-# hostname. Our job has no `container:` clause, so we use the bare-
-# runner form: `localhost:5000`. Service containers stay alive for
-# the entire 25-min job — sidestepping the death-mid-build bug that
+# about-service-containers: the service **label name** resolves to
+# the container's IP on the docker network shared by the runner,
+# the buildkitd container, and the service container. That's the
+# only address consistently reachable from every namespace that
+# touches the registry. Service containers stay alive for the
+# entire 25-min job — sidestepping the death-mid-build bug that
 # killed run #1 and run #2.
 
 name: images
@@ -102,8 +108,16 @@ jobs:
           platforms: linux/amd64,linux/arm64
 
       - uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: image=moby/buildkit:v0.31.2
+        # Default driver is docker-container; buildkitd joins the
+        # same github_network_* as the `services.registry` container
+        # so it can resolve the service label `registry:5000` (see
+        # below). An earlier custom `driver-opts: image=…` was
+        # dropped because explicit-`image=` containers don't share
+        # the runner's service bridge by default, and we observed
+        # buildkitd's `localhost:5000` push fail with
+        # `dial tcp [::1]:5000: connect: connection refused` on the
+        # multi-arch push phase even though the curl readiness
+        # probe (running from the runner's namespace) succeeded.
 
       - name: Login to ghcr.io
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -113,26 +127,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Service-container hostname on bare-runner jobs: per
+      # Service-container hostname: per
       # https://docs.github.com/en/actions/using-containerized-services
-      # /about-service-containers, when the job runs directly on
-      # the runner machine (this workflow does — no `container:`
-      # clause), service containers are reachable via
-      # `localhost:<host_port>` (NOT via the service label).
-      # The `${{ job.services.<name>.ports[<n>] }}` form returns
-      # the host port string, but on a static 5000:5000 mapping
-      # it would have to be combined with `localhost` — and an
-      # earlier attempt that trusted the expression produced
-      # connect-refused loop stuck for the full 25-min job
-      # timeout. Use `localhost:5000` directly; this is the
-      # documented, deterministic pattern.
+      # /about-service-containers, the service label `registry`
+      # resolves to the container's IP on the docker network shared
+      # by the runner and the service container. The label
+      # hostname is the **only** address that's reachable from
+      # both the runner's namespace AND from buildkitd's namespace
+      # (which is what `docker/setup-buildx-action@v3` defaults
+      # to with the docker-container driver — see step 5 above).
+      # Earlier attempts at `localhost:5000` succeeded for the
+      # curl readiness probe but the buildkitd `localhost:5000`
+      # push hit `dial tcp [::1]:5000: connect: connection
+      # refused`. Use the label form throughout.
       - name: Wait for registry (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: |
           for _ in $(seq 1 30); do
             if curl -sf --connect-timeout 2 --max-time 3 \
-                 http://localhost:5000/v2/ >/dev/null; then
-              echo "registry ready on localhost:5000"
+                 http://registry:5000/v2/ >/dev/null; then
+              echo "registry ready on registry:5000"
               exit 0
             fi
             sleep 1
@@ -155,17 +169,18 @@ jobs:
       - name: Build + push (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: |
-          # Build against `localhost:5000` per the GitHub
-          # service-container docs (bare-runner jobs reach the
-          # service via localhost:<host_port>, not the service
-          # label). Multi-arch with cross-compiled guest-init so
+          # Build against the service-container label `registry:5000`
+          # — buildkitd (default docker-container driver) shares the
+          # github_network_* bridge with the services.registry
+          # container, so the label resolves inside buildkitd's
+          # namespace. Multi-arch with cross-compiled guest-init so
           # each manifest carries the arch-matching /usr/local/bin/
           # faas-guest-init binary (review finding #2 on PR #940).
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --build-arg BUILDKIT_VERSION \
             --build-arg RAILPACK_VERSION \
-            --tag "localhost:5000/pr-${GITHUB_SHA::12}" \
+            --tag "registry:5000/pr-${GITHUB_SHA::12}" \
             --push \
             -f images/builder-base.Dockerfile .
 
@@ -185,7 +200,7 @@ jobs:
              [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             REF="${IMAGE_NAME}:latest"
           else
-            REF="localhost:5000/pr-${GITHUB_SHA::12}"
+            REF="registry:5000/pr-${GITHUB_SHA::12}"
           fi
           DIGEST=$(crane manifest "${REF}" 2>/dev/null | \
             jq -r '.manifests[] | select(.platform.architecture=="amd64").digest')
