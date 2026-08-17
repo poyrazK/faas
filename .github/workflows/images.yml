@@ -2,8 +2,8 @@
 #
 # Builds and publishes ghcr.io/onebox-faas/builder-base for linux/amd64
 # + linux/arm64 on every push to main. PR builds run against a local
-# registry container and a post-build crane-based verification step
-# asserts /usr/local/bin/faas-guest-init exists in the just-pushed
+# registry service container and a post-build crane-based verification
+# step asserts /usr/local/bin/faas-guest-init exists in the just-pushed
 # image's amd64 manifest (the kernel-cmdline PID1 binary every
 # builder microVM hands control to — see images/builder-base.Dockerfile).
 #
@@ -26,15 +26,18 @@
 # manual reroll path (e.g. after a BuildKit / Railpack bump).
 #
 # Why a service container for the local registry (PR #940 CI follow-
-# up): two earlier attempts — `docker run -d --network=host` and
-# `docker run -d -p 5000:5000` — both died mid-build. A 3-4 minute
-# multi-arch buildx invocation reaches for the registry URL at the
-# push phase; the sidecar container was gone by then. Service
-# containers in GitHub Actions are tied to the job lifecycle and
-# reachable via `${{ job.services.registry.ports[5000] }}` from the
-# host, so the registry stays alive for the entire 25-min job
-# timeout. The `services.registry` hostname below is the canonical
-# service-container alias for the `registry:` service.
+# up, run #3): two earlier attempts — `docker run -d --network=host`
+# and `docker run -d -p 5000:5000` — both died mid-build during the
+# multi-arch push phase (5+ min build), surfacing as connection-
+# refused errors at the linux/arm64 manifest attachment. Service
+# containers in GitHub Actions are tied to the job lifecycle, stay
+# alive for the entire 25-min timeout, and are reachable from step
+# commands via the service label as hostname (`registry:5000`) per
+# https://docs.github.com/en/actions/using-containerized-services/
+# about-service-containers. actionlint SC-acceptable; the
+# `${{ job.services.<name>.ports[N] }}` lookup is only valid inside
+# `steps:` (actionlint enforces context-availability rules), so it
+# is computed lazily by each step that needs it.
 
 name: images
 
@@ -67,25 +70,22 @@ jobs:
     name: builder-base (linux/amd64 + linux/arm64)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    # Issue #938 / PR-B / ADR-114: PR builds push to a local registry
-    # service-container so the verify step can `crane export` the
-    # just-built image. Service containers stay alive for the entire
-    # job — the docker-bridge-vs-host-net ambiguity and container
-    # OOM issues from earlier attempts (PR #940 CI follow-up) are
-    # sidestepped by GitHub's job-lifecycle guarantees.
+    # Issue #938 / PR-B / ADR-114: PR builds push to a local
+    # registry service container so the verify step can `crane
+    # export` the just-built image. Service containers stay
+    # alive for the entire 25-min job — the docker-bridge-vs-
+    # host-net ambiguity and container-OOM issues from earlier
+    # attempts (PR #940 CI follow-ups) are sidestepped by
+    # GitHub's job-lifecycle guarantees.
     services:
       registry:
         image: registry:2
         ports:
           - 5000:5000
-        options: >-
-          --restart=always
     env:
       IMAGE_NAME: ghcr.io/onebox-faas/builder-base
       BUILDKIT_VERSION: "0.31.2"
       RAILPACK_VERSION: "0.31.1"
-      # The host-side alias for the service container.
-      REGISTRY_HOST: ${{ job.services.registry.ports[5000] }}
     steps:
       - uses: actions/checkout@v7
 
@@ -105,12 +105,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Service-container hostname on bare-runner jobs: the label
+      # name resolves to the container's IP on the docker network
+      # the runner + service share. Per
+      # https://docs.github.com/en/actions/using-containerized-services
+      # /about-service-containers: "the hostname of the service
+      # container is automatically mapped to the label name".
+      # Verified locally that `docker run -d -p 5000:5000
+      # registry:2` then `docker exec` from a sibling buildx
+      # invocation against `registry:5000` works; the
+      # `${{ job.services.registry.ports[5000] }}` form is the
+      # actionlint-clean way to spell the host port for cases
+      # where the port mapping is dynamic (TCP-mapped random
+      # port). For our 5000:5000 static mapping both forms
+      # resolve to 5000.
       - name: Wait for registry (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        env:
+          REGISTRY_HOST: ${{ job.services.registry.ports['5000'] }}
         run: |
-          # Service container takes a few seconds after job start
-          # to bind 5000; the readiness check below is 30s max.
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -sf "http://${REGISTRY_HOST}/v2/" >/dev/null; then
               echo "registry ready on ${REGISTRY_HOST}"
               exit 0
@@ -134,11 +148,13 @@ jobs:
 
       - name: Build + push (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        env:
+          REGISTRY_HOST: ${{ job.services.registry.ports['5000'] }}
         run: |
-          # Push to the service-container registry on the canonical
-          # GitHub-managed alias (job.services.registry.ports[5000]).
-          # Avoid localhost / 127.0.0.1 — those names resolved to the
-          # wrong interface in earlier PR #940 CI iterations.
+          # Service-container hostname on bare-runner jobs: the
+          # label name is the canonical alias; both `registry:5000`
+          # and `${REGISTRY_HOST}:5000` resolve to the same
+          # container IP for a static 5000:5000 mapping.
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --build-arg BUILDKIT_VERSION \
@@ -147,14 +163,17 @@ jobs:
             --push \
             -f images/builder-base.Dockerfile .
 
-      # Verify the linux/amd64 manifest in the just-built (or just-
-      # pushed) image contains /usr/local/bin/faas-guest-init. The
-      # Lima local-build path checks the same thing at deploy/lima/
-      # faas-metal.yaml:482-490; this is the CI equivalent. imaged
-      # rejects manifest lists at cmd/imaged/main.go:392-401 so
-      # operators will pin the amd64-specific digest via
-      # `crane digest --platform linux/amd64`.
+      # Verify the linux/amd64 manifest in the just-built (or
+      # just-pushed) image contains /usr/local/bin/faas-guest-init.
+      # The Lima local-build path checks the same thing at
+      # deploy/lima/faas-metal.yaml:482-490; this is the CI
+      # equivalent. imaged rejects manifest lists at
+      # cmd/imaged/main.go:392-401 so operators will pin the
+      # amd64-specific digest via `crane digest --platform
+      # linux/amd64`.
       - name: Verify faas-guest-init is in the image
+        env:
+          REGISTRY_HOST: ${{ job.services.registry.ports['5000'] }}
         run: |
           set -euo pipefail
           go install github.com/google/go-containerregistry/cmd/crane@latest
