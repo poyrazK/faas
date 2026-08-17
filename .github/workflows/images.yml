@@ -214,7 +214,22 @@ jobs:
       - name: Verify faas-guest-init is in the image
         run: |
           set -euo pipefail
-          go install github.com/google/go-containerregistry/cmd/crane@latest
+          # Earlier attempts called `go install
+          # github.com/google/go-containerregistry/cmd/crane@latest`
+          # which surfaced exit 127 ('command not found') on
+          # Ubuntu 24.04 GitHub runners: go-containerregistry
+          # v0.21.9 requires Go ≥ 1.25.0, so go install switched
+          # the toolchain to go1.25.13 and dropped the binary in
+          # $GOPATH/bin, which isn't on the step's PATH by
+          # default. Skip the toolchain dance and install a
+          # static pre-built crane from the upstream release
+          # tarball instead — same code, no Go-toolchain auto-
+          # fetch race, lands at an absolute path.
+          curl -fsSL -o /tmp/crane.tgz \
+            https://github.com/google/go-containerregistry/releases/download/v0.21.1/go-containerregistry_Linux_x86_64.tar.gz
+          tar -C /usr/local/bin -xzf /tmp/crane.tgz crane
+          chmod +x /usr/local/bin/crane
+          rm /tmp/crane.tgz
           if [ "${GITHUB_REF_NAME:-}" = "main" ] && \
              [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             REF="${IMAGE_NAME}:latest"
