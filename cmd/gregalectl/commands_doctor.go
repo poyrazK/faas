@@ -409,7 +409,7 @@ func runDoctorChecks(ctx context.Context, deps *doctorDeps) doctorReport {
 	// Degrades to SeverityWarn when debugfs is absent so macOS dev boxes
 	// and minimal container images still produce a useful report.
 	runCheck(doctorCheckBuilderBaseExt4, func() ([]doctorFinding, error) {
-		return checkBuilderBaseExt4(deps)
+		return checkBuilderBaseExt4(ctx, deps)
 	})
 	// node-hashes is --deep-only. When the flag is unset, don't
 	// append the per-check summary at all — the JSON / text
@@ -1394,12 +1394,11 @@ var (
 // All three states produce exactly one finding so the wire shape
 // stays consistent.
 //
-// deps is accepted for parity with the other always-on checks (callers
-// wrap with a closure that passes deps); the check is fully disk-based
-// today and does not need a DB. If a future revision adds a check
-// against pg_stat for the running vmmd's builder-base attach
-// state, the deps plumbing is already there.
-func checkBuilderBaseExt4(deps *doctorDeps) ([]doctorFinding, error) {
+// ctx is plumbed through so the debugfs subprocess respects the
+// doctor's overall deadline (the runCheck above is non-cancellable
+// today; the ctx anchor lets future --json=streaming or timeout-
+// bounded wrappers reuse this check without churn).
+func checkBuilderBaseExt4(ctx context.Context, deps *doctorDeps) ([]doctorFinding, error) {
 	_ = deps
 	basePath := locateBuilderBasePathHook()
 	if _, err := statHook(basePath); err != nil {
@@ -1415,6 +1414,7 @@ func checkBuilderBaseExt4(deps *doctorDeps) ([]doctorFinding, error) {
 	}
 	debugfs, err := lookPathHook("debugfs")
 	if err != nil {
+		//nolint:nilerr // err is converted to a finding; runner does not need to see it.
 		return []doctorFinding{{
 			Check:    doctorCheckBuilderBaseExt4,
 			Severity: doctorSeverityWarn,
@@ -1422,8 +1422,9 @@ func checkBuilderBaseExt4(deps *doctorDeps) ([]doctorFinding, error) {
 			Detail:   "install e2fsprogs on the box for full coverage (apt install e2fsprogs / brew install e2fsprogs)",
 		}}, nil
 	}
-	out, err := runDebugfsHook(context.Background(), debugfs, basePath, "/usr/local/bin/faas-guest-init")
+	out, err := runDebugfsHook(ctx, debugfs, basePath, "/usr/local/bin/faas-guest-init")
 	if err != nil {
+		//nolint:nilerr // err is converted to a finding; runner does not need to see it.
 		return []doctorFinding{{
 			Check:    doctorCheckBuilderBaseExt4,
 			Severity: doctorSeverityError,

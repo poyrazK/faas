@@ -64,7 +64,7 @@ func TestCheckBuilderBaseExt4_FileMissing(t *testing.T) {
 			return nil, &os.PathError{Op: "stat", Path: p, Err: os.ErrNotExist}
 		},
 	})
-	findings, err := checkBuilderBaseExt4(&doctorDeps{})
+	findings, err := checkBuilderBaseExt4(context.Background(), &doctorDeps{})
 	if err != nil {
 		t.Fatalf("checkBuilderBaseExt4: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestCheckBuilderBaseExt4_DebugfsMissing(t *testing.T) {
 			return "", errors.New("exec: \"debugfs\": executable file not found in $PATH")
 		},
 	})
-	findings, err := checkBuilderBaseExt4(&doctorDeps{})
+	findings, err := checkBuilderBaseExt4(context.Background(), &doctorDeps{})
 	if err != nil {
 		t.Fatalf("checkBuilderBaseExt4: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestCheckBuilderBaseExt4_FilePresent(t *testing.T) {
 			return []byte("Inode: 12345   File mode: 0755"), nil
 		},
 	})
-	findings, err := checkBuilderBaseExt4(&doctorDeps{})
+	findings, err := checkBuilderBaseExt4(context.Background(), &doctorDeps{})
 	if err != nil {
 		t.Fatalf("checkBuilderBaseExt4: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestCheckBuilderBaseExt4_FileAbsent(t *testing.T) {
 			return []byte("debugfs: error: file not found: usr/local/bin/faas-guest-init"), errors.New("exit status 1")
 		},
 	})
-	findings, err := checkBuilderBaseExt4(&doctorDeps{})
+	findings, err := checkBuilderBaseExt4(context.Background(), &doctorDeps{})
 	if err != nil {
 		t.Fatalf("checkBuilderBaseExt4: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestCheckBuilderBaseExt4_DebugfsOutputMalformed(t *testing.T) {
 			return []byte("Inode: 12345   Links: 1"), nil
 		},
 	})
-	findings, err := checkBuilderBaseExt4(&doctorDeps{})
+	findings, err := checkBuilderBaseExt4(context.Background(), &doctorDeps{})
 	if err != nil {
 		t.Fatalf("checkBuilderBaseExt4: %v", err)
 	}
