@@ -13,7 +13,7 @@
       "resolved_tag": "12-slim",
       "platform": "linux/amd64",
       "digest": "sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241",
-      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM debian:12-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
+      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
@@ -23,7 +23,7 @@
       "resolved_tag": "1.25.7",
       "platform": "linux/amd64",
       "digest": "sha256:5a79b94c34c299ac0361fbb7c7fca6dc552e166b42341050323fa3ab137d7be9",
-      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM golang:1.25.7@sha256:5a79b94c34c299ac0361fbb7c7fca6dc552e166b42341050323fa3ab137d7be9 AS guest-init-build"
+      "pinned_in_dockerfile": "FROM golang:1.25.7@sha256:5a79b94c34c299ac0361fbb7c7fca6dc552e166b42341050323fa3ab137d7be9 AS guest-init-build"
     },
     {
       "dockerfile": "images/base-minimal.Dockerfile",

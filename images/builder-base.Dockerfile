@@ -51,7 +51,9 @@ ARG BUILDKIT_VERSION=0.31.2
 # every per-arch child manifest so buildx's per-arch resolution
 # stays race-free under multi-arch build (per-arch digests are not
 # stable across re-pulls, but the manifest-list digest is).
-FROM --platform=$TARGETPLATFORM golang:1.25.7@sha256:5a79b94c34c299ac0361fbb7c7fca6dc552e166b42341050323fa3ab137d7be9 AS guest-init-build
+# $TARGETPLATFORM is implicit on multi-arch FROM; the explicit
+# `--platform=` would emit a RedundantTargetPlatform warning.
+FROM golang:1.25.7@sha256:5a79b94c34c299ac0361fbb7c7fca6dc552e166b42341050323fa3ab137d7be9 AS guest-init-build
 WORKDIR /src
 # guest-init is a pure-Go binary; no submodule vendoring needed. The
 # repository is the build context, so COPY . picks up the whole tree.
@@ -64,7 +66,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         -o /out/faas-guest-init ./guest/init
 
 # ---- stage 2: assemble the runtime rootfs -------------------------------
-FROM --platform=$TARGETPLATFORM debian:12-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+# See the stage 1 FROM above re: $TARGETPLATFORM handling.
+FROM debian:12-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 # Issue #197 B3.5: the `debian:12-slim` tag is mutable. The digest is
 # pinned via images/Dockerfile.lock; `make images-lock-update` resolves
 # the current registry digest and updates BOTH the lock and the FROM

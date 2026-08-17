@@ -88,11 +88,21 @@ jobs:
       - name: Start local registry (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: |
-          docker run -d --name verify-registry -p 5000:5000 \
+          # --network=host avoids the IPv4/IPv6 dual-bind ambiguity that
+          # surfaces in buildx push logs as
+          #   `dial tcp [::1]:5000: connect: connection refused`
+          # (PR #940 CI follow-up: the linux/arm64 push step reached for
+          # localhost:5000 after the multi-arch build held the registry
+          # container for 3-4 min; the docker-bridge NAT inverts
+          # ::1 vs 127.0.0.1 in long-running buildx invocations.
+          # host-net binding removes the NAT entirely.) Pin the
+          # registry hostname to 127.0.0.1 in the build steps below
+          # so the buildx side picks the IPv4 path consistently.
+          docker run -d --name verify-registry --network=host \
             --restart always registry:2
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:5000/v2/ >/dev/null; then
-              echo "registry ready"
+            if curl -sf http://127.0.0.1:5000/v2/ >/dev/null; then
+              echo "registry ready on 127.0.0.1:5000"
               exit 0
             fi
             sleep 1
@@ -116,11 +126,14 @@ jobs:
       - name: Build + push (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: |
+          # Pin the registry hostname to 127.0.0.1 — see the
+          # Start-local-registry step for why localhost:5000 is
+          # ambiguous in long-running multi-arch buildx invocations.
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --build-arg BUILDKIT_VERSION \
             --build-arg RAILPACK_VERSION \
-            --tag "localhost:5000/pr-${GITHUB_SHA::12}" \
+            --tag "127.0.0.1:5000/pr-${GITHUB_SHA::12}" \
             --push \
             -f images/builder-base.Dockerfile .
 
@@ -138,7 +151,7 @@ jobs:
              [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             REF="${IMAGE_NAME}:latest"
           else
-            REF="localhost:5000/pr-${GITHUB_SHA::12}"
+            REF="127.0.0.1:5000/pr-${GITHUB_SHA::12}"
           fi
           DIGEST=$(crane manifest "${REF}" 2>/dev/null | \
             jq -r '.manifests[] | select(.platform.architecture=="amd64").digest')
