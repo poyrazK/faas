@@ -26,32 +26,43 @@
 # manual reroll path (e.g. after a BuildKit / Railpack bump).
 #
 # Why a service container for the local registry (PR #940 CI follow-
-# up, runs #1–#5): five prior attempts all failed.
+# up, runs #1–#6): six prior attempts all failed.
 #   #1 `docker run -d --network=host`           (ex44/local mental model)
 #   #2 `docker run -d -p 5000:5000`             (first workflow revision)
 #   #3 services:registry + ports[5000] (numeric index) — actionlint
 #      error: property access on string-keyed map.
-#   #4 services:registry + ports['5000'] + step-level env —
-#      YAML validated, but the curl/wait loop hung past its 30-iter
-#      ceiling for the full job timeout. (Expressions may have
-#      returned the service label name or a bridgeless value that
-#      `curl` couldn't resolve inside the runner.)
-#   #5 `localhost:5000` directly + custom buildkit driver — the
-#      curl/wait loop succeeded (curl's resolver fell through
-#      `::1` → `127.0.0.1` → bridge gateway IP), but the buildx
-#      push (running inside a separate `moby/buildkit:v0.31.2`
-#      container) hit `dial tcp [::1]:5000: connect: connection
-#      refused`. Two namespaces disagreed on where `localhost`
-#      lives.
-# Per
-# https://docs.github.com/en/actions/using-containerized-services/
-# about-service-containers: the service **label name** resolves to
-# the container's IP on the docker network shared by the runner,
-# the buildkitd container, and the service container. That's the
-# only address consistently reachable from every namespace that
-# touches the registry. Service containers stay alive for the
-# entire 25-min job — sidestepping the death-mid-build bug that
-# killed run #1 and run #2.
+#   #4 services:registry + ports['5000'] + step-level env — YAML
+#      validated, but the curl/wait loop hung past its 30-iter
+#      ceiling for the full job timeout.
+#   #5 `localhost:5000` everywhere + custom buildkit driver — the
+#      curl/wait loop succeeded (curl on the runner namespace hits
+#      the bridge gateway), but the buildx push (running inside a
+#      separate `moby/buildkit:v0.31.2` container) hit
+#      `dial tcp [::1]:5000: connect: connection refused`.
+#   #6 `registry:5000` (service label) everywhere + default
+#      docker-container buildkit driver — every Dockerfile stage
+#      ran cleanly and the multi-arch build completed, BUT the
+#      curl/wait probe (running from the runner namespace) cannot
+#      resolve `registry:5000` because that label-to-IP mapping
+#      exists only inside the bridge network the runner shares
+#      with the service container; the runner's resolver doesn't
+#      try the docker network first.
+# Resolution: TWO namespaces, TWO addresses.
+#   - curl / crane / etc. on the runner: `localhost:5000`. The
+#     runner shares the `github_network_*` bridge with the service
+#     container; docker publishes the host port 5000 to the
+#     bridge's gateway, which is reachable as `localhost:5000`
+#     from the runner process (curl's resolver falls through
+#     `::1` → `127.0.0.1` → bridge IP; the registry log line
+#     `172.18.0.1 - - [..] "GET /v2/ HTTP/1.1" 200` confirms).
+#   - docker buildx push: `registry:5000`. buildkitd's docker-
+#     container driver (the default with `setup-buildx-action`)
+#     joins `github_network_*` so the service label resolves
+#     inside its namespace.
+# A custom `driver-opts: image=…` buildkit container does NOT
+# share the service bridge by default; that override is dropped.
+# Service containers stay alive for the entire 25-min job —
+# sidestepping the death-mid-build bug that killed run #1/#2.
 
 name: images
 
@@ -127,26 +138,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Service-container hostname: per
-      # https://docs.github.com/en/actions/using-containerized-services
-      # /about-service-containers, the service label `registry`
-      # resolves to the container's IP on the docker network shared
-      # by the runner and the service container. The label
-      # hostname is the **only** address that's reachable from
-      # both the runner's namespace AND from buildkitd's namespace
-      # (which is what `docker/setup-buildx-action@v3` defaults
-      # to with the docker-container driver — see step 5 above).
-      # Earlier attempts at `localhost:5000` succeeded for the
-      # curl readiness probe but the buildkitd `localhost:5000`
-      # push hit `dial tcp [::1]:5000: connect: connection
-      # refused`. Use the label form throughout.
+      # Wait probe: use `localhost:5000` because the readiness curl
+      # runs from the runner's namespace, NOT from buildkitd's.
+      # The runner shares the `github_network_*` bridge with the
+      # service container, and the service's published port
+      # resolves there via the bridge gateway (curl on
+      # `localhost:5000` actually traverses `172.18.0.1:41682` on
+      # the runner; registry logs confirm). buildkitd uses the
+      # service label `registry:5000` (see below) because buildkitd
+      # runs in its own container on the same network.
       - name: Wait for registry (PR / dispatch)
         if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: |
           for _ in $(seq 1 30); do
             if curl -sf --connect-timeout 2 --max-time 3 \
-                 http://registry:5000/v2/ >/dev/null; then
-              echo "registry ready on registry:5000"
+                 http://localhost:5000/v2/ >/dev/null; then
+              echo "registry ready on localhost:5000 (runner namespace)"
               exit 0
             fi
             sleep 1
@@ -200,7 +207,10 @@ jobs:
              [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             REF="${IMAGE_NAME}:latest"
           else
-            REF="registry:5000/pr-${GITHUB_SHA::12}"
+            # Verify step runs from the runner namespace; the
+            # published port is reachable via the bridge
+            # gateway at localhost:5000 (same as step 7).
+            REF="localhost:5000/pr-${GITHUB_SHA::12}"
           fi
           DIGEST=$(crane manifest "${REF}" 2>/dev/null | \
             jq -r '.manifests[] | select(.platform.architecture=="amd64").digest')
