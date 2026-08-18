@@ -461,6 +461,16 @@ func readKeyPEMDefault() ([]byte, error) {
 	if path == "" {
 		path = "/etc/faas/secrets/github-app.pem"
 	}
+	// Issue #603: gate on the file mode BEFORE reading. bootstrap
+	// writes this file, but nothing enforced its mode afterwards —
+	// on a stray umask the GitHub App private key lands 0644 and
+	// every user on the box can mint installation tokens for every
+	// customer repo. Fail-loud at startup instead: a daemon that
+	// refuses to start is a page; a world-readable private key is
+	// silent until it is someone else's incident.
+	if err := secretbox.AssertSecretFileMode("githubd", path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path) //nolint:gosec // path is operator-controlled
 	if err != nil {
 		return nil, fmt.Errorf("githubd: read app key %q: %w", path, err)

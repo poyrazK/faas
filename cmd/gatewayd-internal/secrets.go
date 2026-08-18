@@ -16,15 +16,29 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
 // ErrInsecureSecretPerms is returned when a token file is group/other
 // writable or has any exec/setuid bits. The error is intentionally distinct
 // from "file not found" so an operator can tell "didn't provision" apart from
 // "provisioned insecurely".
-var ErrInsecureSecretPerms = errors.New("gatewayd: secret file mode permits more than owner read/write")
+// Issue #603: aliased to the platform sentinel so `errors.Is(err,
+// ErrInsecureSecretPerms)` and `errors.Is(err,
+// secretbox.ErrInsecureFileMode)` are the same question. The local
+// name stays because every call site and test in this package reads
+// better with it.
+var ErrInsecureSecretPerms = secretbox.ErrInsecureFileMode
 
 // allowedSecretPerm reports whether perm is a safe mode for a token file.
+//
+// Issue #603: the allowlist itself now lives in
+// pkg/secretbox.AllowedSecretFileMode — githubd needs the same answer
+// for the GitHub App private key, and two hand-maintained copies of
+// "which modes are safe" is exactly the drift this check exists to
+// prevent. The rationale below is why the list is what it is; it stays
+// here because this is where it was reasoned through.
 // The Hetzner DNS API token is operator-provisioned and read by the
 // gatewayd process (running as faas:faas per the systemd unit). The
 // systemd unit gives the daemon no other capabilities, so the only safe
@@ -42,11 +56,7 @@ var ErrInsecureSecretPerms = errors.New("gatewayd: secret file mode permits more
 // distinguish "group-r allowed, group-w forbidden" — and group-w is the
 // canonical priv-esc signal we MUST close on.
 func allowedSecretPerm(perm os.FileMode) bool {
-	switch perm {
-	case 0o400, 0o440, 0o600, 0o640:
-		return true
-	}
-	return false
+	return secretbox.AllowedSecretFileMode(perm)
 }
 
 // loadSecretFile reads path and returns its trimmed contents. Fails closed
