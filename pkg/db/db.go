@@ -53,9 +53,18 @@ func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, erro
 		dsn = "postgres:///faas?host=/run/postgresql&user=faas"
 	}
 
-	cfg, err := pgxpool.ParseConfig(dsn)
+	// Issue #602: fail loud at startup, before the pool exists and
+	// long before the 5 s Ping below. A DSN that would dial
+	// cleartext to a remote host, or that points at a socket
+	// outside the standard directories, is a config error the
+	// operator must see in the unit's first log line — not a
+	// first-dial failure minutes later under load. See dsn.go for
+	// the rules and the rationale.
+	// validateDSN hands back the parsed config so the DSN is parsed
+	// exactly once — the config we validated is the config we dial.
+	cfg, err := validateDSN(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("db: parse config: %w", err)
+		return nil, err
 	}
 	// Sane defaults for a one-box daemon. schedd has several independent
 	// LISTEN subscribers (node keys, placement, migration, deployment
