@@ -38,6 +38,9 @@ func happyEdgeRuleValidateAction() EdgeRuleValidateAction {
 		ApplyWhileStreaming:   false,
 		RejectOnUnknownFields: false,
 		MaxBodyBytes:          0, // inherit platform cap (default).
+		// ValidateMode defaults to empty (== 'block' at the
+		// gateway-side handler). Issue #975 #3 / Mega-Foundation #979-a.
+		ValidateMode: "",
 	}
 }
 
@@ -176,6 +179,41 @@ func TestEdgeRuleValidateAction_Validate_Rejects(t *testing.T) {
 				// Sentinel; wrapper flips the receiver to nil.
 			},
 			wantSub: "validate action is required",
+		},
+		// validate_mode (issue #975 #3 / Mega-Foundation #979-a)
+		// closed-set enforcement. Empty == 'block' at the
+		// gateway-side handler; the three known values are
+		// accepted; anything else is a 422 with the allowed
+		// list. The schema-side CHECK constraint is the
+		// backstop, but the validator catches it earlier so a
+		// customer gets a useful error message at create-time.
+		{
+			name: "validate-mode-unknown",
+			mutate: func(a *EdgeRuleValidateAction) {
+				a.ValidateMode = "explode"
+			},
+			wantSub: "validate_mode must be one of",
+		},
+		{
+			name: "validate-mode-observe-allowed",
+			mutate: func(a *EdgeRuleValidateAction) {
+				a.ValidateMode = ValidateModeObserve
+			},
+			wantSub: "", // sentinel: expects accept.
+		},
+		{
+			name: "validate-mode-warn-allowed",
+			mutate: func(a *EdgeRuleValidateAction) {
+				a.ValidateMode = ValidateModeWarn
+			},
+			wantSub: "", // sentinel: expects accept.
+		},
+		{
+			name: "validate-mode-block-allowed",
+			mutate: func(a *EdgeRuleValidateAction) {
+				a.ValidateMode = ValidateModeBlock
+			},
+			wantSub: "", // sentinel: expects accept.
 		},
 	}
 

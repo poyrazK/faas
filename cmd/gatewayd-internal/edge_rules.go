@@ -1428,6 +1428,9 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 			ApplyWhileStreaming: action.ApplyWhileStreaming,
 			RejectUnknownFields: action.RejectOnUnknown,
 			MaxBodyBytes:        action.MaxBodyBytes,
+			// Empty string is treated as 'block' by the handler —
+			// matches the schema default at 00293.
+			ValidateMode: action.ValidateMode,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

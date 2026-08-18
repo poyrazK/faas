@@ -106,6 +106,12 @@ func (a *edgeValidateAdapter) Validate(ctx context.Context, req *gateway.EdgeVal
 		SchemaDigest:        rule.SchemaDigest,
 		ApplyWhileStreaming: rule.ApplyWhileStreaming,
 		RejectUnknownFields: rule.RejectUnknownFields,
+		// Mode is plumbed for the metric tag path — the validator
+		// itself is mode-agnostic and the handler reads Mode via
+		// the resolved rule directly. Passing it through here
+		// keeps the audit + metric sites in lock-step with the
+		// load-time value.
+		Mode: rule.ValidateMode,
 	})
 	if err != nil {
 		return nil, translateValidateErr(err)

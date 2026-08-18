@@ -2438,29 +2438,118 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 				Got:      res.FirstError.Got,
 			}}
 		}
-		api.WriteProblemWithErrors(w, api.NewProblem(http.StatusUnprocessableEntity,
-			api.CodeRequestValidationFailed, "Invalid request",
-			fmt.Sprintf("body does not match schema for rule %s", rule.ID)), errs)
-		if h.edgeRuleAudit != nil {
-			auditData := map[string]any{
-				"rule_id":   rule.ID,
-				"from_host": r.Host,
-				"reason":    "schema_mismatch",
-			}
-			if res.FirstError != nil {
-				auditData["field"] = res.FirstError.Field
-				auditData["expected"] = res.FirstError.Expected
-			}
-			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, auditData)
+		// validate_mode (issue #975 #3 / Mega-Foundation #979-a)
+		// selects the post-failure behavior. Default empty string
+		// == 'block' to match the schema-side default at 00293.
+		// `observe` and `warn` never reject — they count the
+		// failure in the validate_failures metric and let the
+		// proxy leg run. `warn` additionally stamps
+		// X-Validation-Warning: <rule_id> via the statusRecorder
+		// so the customer's API consumer can see the warning
+		// without the gateway changing the response status.
+		//
+		// Body has already been buffered and r.Body restored
+		// above (line ~2384), so the proxy leg reads the same
+		// bytes regardless of mode.
+		mode := rule.ValidateMode
+		if mode == "" {
+			mode = api.ValidateModeBlock
+		}
+		var reason string
+		if res.FirstError != nil {
+			reason = res.FirstError.Reason()
+		} else {
+			reason = "other"
 		}
 		if h.metrics != nil {
-			h.metrics.ObserveEdgeRuleMatch("validate", "blocked")
-			// PR-C: 422 schema mismatch is a non-2xx wire
-			// write — emit apply error so the §12 chip
-			// surfaces the customer's malformed payload.
-			h.metrics.ObserveEdgeRuleApply("validate", "error")
+			h.metrics.ObserveEdgeRuleValidateFailure(mode, reason)
 		}
-		return true
+		switch mode {
+		case api.ValidateModeObserve:
+			// Counted, no header, no reject. Audit tag
+			// fires so the failure is queryable from the
+			// ledger even when the response is 200.
+			if h.edgeRuleAudit != nil {
+				auditData := map[string]any{
+					"rule_id":   rule.ID,
+					"from_host": r.Host,
+					"reason":    "schema_mismatch",
+					"mode":      mode,
+				}
+				if res.FirstError != nil {
+					auditData["field"] = res.FirstError.Field
+					auditData["expected"] = res.FirstError.Expected
+				}
+				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, auditData)
+			}
+			if h.metrics != nil {
+				// Match is the "rule fired and returned a
+				// verdict" counter; the per-{mode,reason}
+				// counter is the validate_failures_total
+				// line above. Both increment so the
+				// dashboard can correlate.
+				h.metrics.ObserveEdgeRuleMatch("validate", "match")
+				h.metrics.ObserveEdgeRuleApply("validate", "success")
+			}
+			return false
+		case api.ValidateModeWarn:
+			// Like observe, plus stamp the X-Validation-Warning
+			// header on the proxied response. The header op
+			// goes through the same statusRecorder hook the
+			// CORS / headers rules use, so the value lands
+			// on the response on the way back to the client.
+			// The header value is the rule ID (uuid), not
+			// the failing field — keeps any PII in the
+			// field path out of the response.
+			rec.installHeaderOps([]EdgeRuleHeaderOp{
+				{Action: "set", Name: "X-Validation-Warning", Value: rule.ID},
+			})
+			if h.edgeRuleAudit != nil {
+				auditData := map[string]any{
+					"rule_id":   rule.ID,
+					"from_host": r.Host,
+					"reason":    "schema_mismatch",
+					"mode":      mode,
+				}
+				if res.FirstError != nil {
+					auditData["field"] = res.FirstError.Field
+					auditData["expected"] = res.FirstError.Expected
+				}
+				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, auditData)
+			}
+			if h.metrics != nil {
+				h.metrics.ObserveEdgeRuleMatch("validate", "match")
+				h.metrics.ObserveEdgeRuleApply("validate", "success")
+			}
+			return false
+		default:
+			// 'block' (and the empty-string coerce) — the
+			// pre-existing 422 path. Behavior preserved.
+			api.WriteProblemWithErrors(w, api.NewProblem(http.StatusUnprocessableEntity,
+				api.CodeRequestValidationFailed, "Invalid request",
+				fmt.Sprintf("body does not match schema for rule %s", rule.ID)), errs)
+			if h.edgeRuleAudit != nil {
+				auditData := map[string]any{
+					"rule_id":   rule.ID,
+					"from_host": r.Host,
+					"reason":    "schema_mismatch",
+					"mode":      mode,
+				}
+				if res.FirstError != nil {
+					auditData["field"] = res.FirstError.Field
+					auditData["expected"] = res.FirstError.Expected
+				}
+				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, auditData)
+			}
+			if h.metrics != nil {
+				h.metrics.ObserveEdgeRuleMatch("validate", "blocked")
+				// PR-C: 422 schema mismatch is a non-2xx wire
+				// write — emit apply error so the §12 chip
+				// surfaces the customer's malformed payload.
+				h.metrics.ObserveEdgeRuleApply("validate", "error")
+			}
+			return true
+		}
 	}
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_matched", nil, map[string]any{

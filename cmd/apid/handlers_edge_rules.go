@@ -447,6 +447,12 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				ApplyWhileStreaming: a.ApplyWhileStreaming,
 				RejectOnUnknown:     a.RejectOnUnknownFields,
 				MaxBodyBytes:        a.MaxBodyBytes,
+				// Empty 'block' coercion happens at the
+				// gateway-side handler; the value is
+				// carried verbatim so a PATCH that
+				// explicitly clears the field round-trips
+				// (issue #975 #3 / Mega-Foundation #979-a).
+				ValidateMode: a.ValidateMode,
 			}
 		}
 	case state.EdgeRuleKindLimit:

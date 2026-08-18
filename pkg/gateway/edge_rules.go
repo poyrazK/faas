@@ -280,6 +280,15 @@ type EdgeRuleValidateResolved struct {
 	ApplyWhileStreaming bool     // default false
 	RejectUnknownFields bool     // audit-tag-only; schema-side authoritative
 	MaxBodyBytes        int      // 0 = use api.MaxRequestBodyBytes
+	// ValidateMode (issue #975 #3 / Mega-Foundation #979-a) is the
+	// per-rule validate_mode (observe|warn|block). Default empty
+	// string is treated as 'block' by the handler to match the
+	// schema default (migrations/00293_validate_mode.sql). The
+	// adapter fills this from the edge_rules.validate_mode column
+	// at rule load; the value is read by the handler at the
+	// schema-mismatch branch to decide whether to 422, pass-through,
+	// or pass-through with the X-Validation-Warning header.
+	ValidateMode string
 }
 
 // EdgeRuleGeoResolved is the kind=geo subset (ADR-091 D21/D22).
@@ -900,6 +909,32 @@ type EdgeValidateFieldError struct {
 	Field    string
 	Expected string
 	Got      string
+}
+
+// Reason (issue #975 #3 / Mega-Foundation #979-a) maps the
+// schema-side keyword the validator reported to the bounded
+// taxonomy the gateway metric uses. The mapping is the same as
+// pkg/edgevalidate.FieldError.Reason — duplicated here so the
+// gateway-side wrapper doesn't need to import its validator
+// backend. Keeping the two in lockstep is the test's
+// responsibility (see pkg/gateway/edge_rules_test.go).
+func (fe *EdgeValidateFieldError) Reason() string {
+	if fe == nil {
+		return "other"
+	}
+	switch fe.Expected {
+	case "required":
+		return "required_missing"
+	case "type":
+		return "type_mismatch"
+	case "additionalProperties":
+		return "additional_properties_not_allowed"
+	case "enum":
+		return "enum_violation"
+	case "format":
+		return "format_violation"
+	}
+	return "other"
 }
 
 // EdgeValidateResult is the per-call outcome of Validator.Validate.

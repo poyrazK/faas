@@ -3572,6 +3572,12 @@ type EdgeRuleValidateAction struct {
 	ApplyWhileStreaming bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknown     bool            `json:"reject_on_unknown_fields,omitempty"`
 	MaxBodyBytes        int             `json:"max_body_bytes,omitempty"`
+	// ValidateMode (issue #975 #3 / Mega-Foundation #979-a)
+	// mirrors the wire-side field. Default empty == 'block' to
+	// match the schema-side default at 00293. The state mirror
+	// is intentionally permissive — the closed-set enforcement
+	// lives at the apid write boundary (pkg/api.Validate).
+	ValidateMode string `json:"validate_mode,omitempty"`
 }
 
 // EdgeRuleLimitAction carries the per-rule body caps for kind=limit.

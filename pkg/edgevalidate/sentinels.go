@@ -112,3 +112,50 @@ func FormatValidationError(fe FieldError) error {
 	return fmt.Errorf("%w: field=%q expected=%q got=%q",
 		ErrValidationFailed, fe.Field, fe.Expected, fe.Got)
 }
+
+// ValidateReasonClosedSet is the bounded taxonomy of validation
+// failure reasons exposed to the gateway metric. The set is closed
+// (issue #975 #3 / Mega-Foundation #979-a) — the gateway metric
+// label is one of these strings, never a free-form value from the
+// schema. Adding a new value requires a coordinated apid-side +
+// gateway-side + schema CHECK change so the cardinality stays
+// bounded.
+var ValidateReasonClosedSet = map[string]struct{}{
+	"required_missing":                  {},
+	"type_mismatch":                     {},
+	"additional_properties_not_allowed": {},
+	"enum_violation":                    {},
+	"format_violation":                  {},
+	"other":                             {},
+}
+
+// Reason (issue #975 #3 / Mega-Foundation #979-a) maps a FieldError
+// to the bounded metric reason. The wire-side FieldError is built
+// by jsonschema/v6's ErrorKind.LocalizedString(), so the only
+// pointer we have is the keyword the schema actually rejected
+// (FieldError.Expected). We map the keyword to the closed set; any
+// keyword we don't recognise collapses to "other".
+//
+// The mapping is intentionally narrow — the schema keyword is the
+// only input we trust, not FieldError.Got (which is the
+// localised error string and can vary by library version). Adding
+// a new keyword-to-reason mapping is a one-line change here plus
+// a test in handler_validate_mode_test.go.
+func (fe *FieldError) Reason() string {
+	if fe == nil {
+		return "other"
+	}
+	switch fe.Expected {
+	case "required":
+		return "required_missing"
+	case "type":
+		return "type_mismatch"
+	case "additionalProperties":
+		return "additional_properties_not_allowed"
+	case "enum":
+		return "enum_violation"
+	case "format":
+		return "format_violation"
+	}
+	return "other"
+}

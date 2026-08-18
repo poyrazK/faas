@@ -145,6 +145,25 @@ type Metrics struct {
 	// one of {success, error} — a 2-element closed set; expanding it
 	// requires a new metric (the apply-error mix is its own surface).
 	edgeRuleApply *prometheus.CounterVec
+	// edgeRuleValidateFailures (issue #975 #3 / Mega-Foundation #979-a):
+	// counter of kind=validate body mismatches, labelled by
+	// {mode, reason}. `mode` is the rule's validate_mode
+	// (observe|warn|block — closed set; the schema enforces the
+	// values at column level). `reason` is the bounded taxonomy
+	// emitted by pkg/edgevalidate (required_missing |
+	// type_mismatch | additional_properties_not_allowed |
+	// enum_violation | format_violation | other — 6 elements, also
+	// closed). The counter increments in every mode — the reject
+	// decision is independent of the count, so the dashboard can
+	// read the same series for "how often does this rule fail?" in
+	// observe mode and for "how often would this rule have failed?"
+	// in block mode. The {app_id, rule_id} pair is NOT a label on
+	// this counter; the per-rule break-out is queryable via the
+	// existing edgeRuleApply{result=error} counter, which is
+	// incremented on the block-mode reject path. Cardinality is
+	// therefore `mode × reason` = 18, well below the 50-counter
+	// budget any single Metrics instance ships.
+	edgeRuleValidateFailures *prometheus.CounterVec
 	// routeConsumerThrottleDecisions (ADR-104, issue #881 Phase 3):
 	// counter of per-consumer throttle decisions, labelled by
 	// {kind, outcome}. `kind` is the KeyBy dimension
@@ -485,6 +504,14 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_rule_apply_total",
 			Help: "Edge-rule apply-path outcomes (success|error), labelled by kind. ADR-091 hardening PR-A.",
 		}, []string{"kind", "result"}),
+		// Issue #975 #3 / Mega-Foundation #979-a — kind=validate body
+		// mismatches, labelled by {mode, reason}. The schema-side
+		// counter is the (app, rule_id) tuple from rule load. Tagged
+		// closed sets, so cardinality is bounded by mode × reason.
+		edgeRuleValidateFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_rule_validate_failures_total",
+			Help: "Edge-rule kind=validate body mismatches, labelled by validate_mode (observe|warn|block) and reason (required_missing|type_mismatch|additional_properties_not_allowed|enum_violation|format_violation|other). The counter increments in every mode; the reject decision is independent. Issue #975 #3 / Mega-Foundation #979-a.",
+		}, []string{"mode", "reason"}),
 		// ADR-104 (issue #881 Phase 3) — per-consumer throttle
 		// decisions, distinct from the per-rule edgeRuleApply path.
 		// `kind` ∈ {none, api_key, jwt_subject, jwt_claim} tracks the
@@ -1059,7 +1086,7 @@ func NewMetrics() *Metrics {
 	// surfaces from boot. The pre-instantiate loop above (where
 	// tenantSurfaceCert is stamped across the closed (result, kind)
 	// cartesian) is the same pattern as the rest of the family.
-	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleCompileError, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions)
+	reg.MustRegister(m.requests, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.edgeRuleCompileError, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -1424,6 +1451,38 @@ func (m *Metrics) ObserveEdgeRuleApply(kind, result string) {
 		return
 	}
 	m.edgeRuleApply.WithLabelValues(kind, result).Inc()
+}
+
+// ObserveEdgeRuleValidateFailure (issue #975 #3 / Mega-Foundation #979-a)
+// increments the kind=validate failure counter. mode is the rule's
+// validate_mode (observe|warn|block); reason is the bounded taxonomy
+// from pkg/edgevalidate (required_missing | type_mismatch |
+// additional_properties_not_allowed | enum_violation | format_violation
+// | other). The metric is incremented in every mode — the reject
+// decision is independent and handled by the handler. Nil-safe so the
+// Handler hot path doesn't need a nil guard, mirroring
+// ObserveEdgeRuleMatch / ObserveEdgeRuleApply above. Unknown mode
+// values are coerced to "other" so a malformed wire payload cannot
+// add a new label tuple and break the §12 dashboard panel.
+func (m *Metrics) ObserveEdgeRuleValidateFailure(mode, reason string) {
+	if m == nil {
+		return
+	}
+	switch mode {
+	case "observe", "warn", "block":
+	default:
+		mode = "other"
+	}
+	switch reason {
+	case "required_missing",
+		"type_mismatch",
+		"additional_properties_not_allowed",
+		"enum_violation",
+		"format_violation":
+	default:
+		reason = "other"
+	}
+	m.edgeRuleValidateFailures.WithLabelValues(mode, reason).Inc()
 }
 
 // ObserveRouteConsumerThrottleDecision (ADR-104, issue #881 Phase 3)
