@@ -13584,7 +13584,7 @@ components:
           maxLength: 16
           x-since: "2026-08"
           x-issue: "adr-117"
-          description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows."
+          description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows. Mirror of the AccountAppSecretResponse / ScopedAppSecretResponse field."
           example: "abcdef0123456789"
 
     # ADR-117 PR-C: env-diff matrix. The DTOs mirror the Go
