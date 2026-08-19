@@ -2932,6 +2932,48 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ADR-117 PR-C: env-diff matrix endpoint. The response is
+  # a (rows × scopes) matrix of env vars + secrets; each cell
+  # carries {present, value_hash (secret only) | value (env
+  # only)}. Secrets NEVER reveal plaintext on this surface —
+  # the load-bearing security property of the endpoint.
+  /v1/apps/{slug}/env-diff:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [env]
+      operationId: getAppEnvDiff
+      summary: Render the env-diff matrix (presence / value-equality across scopes).
+      description: |
+        Returns the (rows × scopes) matrix of env vars + sealed
+        secrets on the app. Secrets never reveal plaintext — the
+        cell carries {present, value_hash} for secret rows and
+        {present, value} for env rows. Two cells with the same
+        `value_hash` therefore share byte-identical plaintext
+        (collision probability 2^-64). Pre-PR-C rows have
+        `value_hash = ''` and emit no `value_hash` key.
+      responses:
+        '200':
+          description: Env-diff matrix.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvDiffResponse'
+                example:
+                  app_slug: "demo"
+                  scopes: ["prod", "staging"]
+                  rows:
+                    - { key: "DATABASE_URL", kind: "secret",
+                        cells: { prod: { present: true, value_hash: "aaaa1111aaaa1111" },
+                                 staging: { present: true, value_hash: "bbbb2222bbbb2222" } } }
+                    - { key: "LOG_LEVEL", kind: "env",
+                        cells: { prod: { present: true, value: "info" },
+                                 staging: { present: true, value: "debug" } } }
+                  generated_at: "2026-08-19T12:00:00Z"
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/env:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -12595,6 +12637,15 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         kid: { type: string, description: "age-1... recipient string of the host identity that sealed this row (ADR-089). Empty for rows sealed before migration 00166.", example: "age1q..." }
+        # ADR-117 PR-C: 16-hex value_hash discriminator. Empty
+        # for pre-PR-C rows; the env-diff endpoint reads this to
+        # compare secret equality without unsealing.
+        value_hash:
+          type: string
+          pattern: '^[a-f0-9]{16}$'
+          maxLength: 16
+          description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows. Same value across scopes = byte-identical plaintext."
+          example: "abcdef0123456789"
 
     # ADR-092 PR-B: per-row shape for the nested secrets_by_scope
     # response (mirror of ScopedAppEnvResponse). Reserved for the
@@ -12620,6 +12671,14 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         kid: { type: string, description: "age-1... recipient string of the host identity that sealed this row (ADR-089). Empty for rows sealed before migration 00166. Mirrors the `kid` field on the parent `AppSecretResponse` — see that schema for the cross-reference.", example: "age1q..." }
+        # ADR-117 PR-C: 16-hex value_hash discriminator. Mirror of
+        # the AppSecretResponse field.
+        value_hash:
+          type: string
+          pattern: '^[a-f0-9]{16}$'
+          maxLength: 16
+          description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows."
+          example: "abcdef0123456789"
 
     AppSecretListResponse:
       description: "Paginated list of sealed-secret envelopes (no plaintext). Discriminated union: `secrets` is the flat arm; `secrets_by_scope` is the `?scope=__all__` arm (ADR-092 PR-B)."
@@ -13516,6 +13575,97 @@ components:
           format: date-time
           x-since: "2026-07"
           x-issue: "393"
+        # ADR-117 PR-C: 16-hex value_hash discriminator. Mirror
+        # of the AppSecretResponse / ScopedAppSecretResponse
+        # field.
+        value_hash:
+          type: string
+          pattern: '^[a-f0-9]{16}$'
+          maxLength: 16
+          x-since: "2026-08"
+          x-issue: "adr-117"
+          description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows."
+          example: "abcdef0123456789"
+
+    # ADR-117 PR-C: env-diff matrix. The DTOs mirror the Go
+    # types in pkg/api/env_diff.go verbatim. Security: the
+    # cell shape is uniform across kinds but the value field
+    # is NEVER populated on a secret row, and the value_hash
+    # field is NEVER populated on an env row. The discriminator
+    # is the row's `kind` field.
+    EnvDiffKind:
+      type: string
+      description: "Discriminator for an env-diff matrix row. 'secret' rows carry {present, value_hash}; 'env' rows carry {present, value}. The cell shape is uniform but the field population is kind-aware."
+      enum: [secret, env]
+      example: "secret"
+
+    EnvDiffCell:
+      description: |
+        One (scope, row) cell in the env-diff matrix. The shape is
+        closed and uniform across row kinds; the difference is which
+        optional fields are populated. Security: secret cells never
+        emit a `value` field; env cells never emit a `value_hash`
+        field. Pre-PR-C rows have value_hash = '' and emit no field.
+      type: object
+      required: [present]
+      properties:
+        present:
+          type: boolean
+          description: "True if the (row.key, scope) pair is stamped on the app; false if missing."
+        value_hash:
+          type: string
+          pattern: '^[a-f0-9]{16}$'
+          maxLength: 16
+          description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Secret cells only."
+          example: "abcdef0123456789"
+        value:
+          type: string
+          description: "Plaintext env var. Env cells only; NEVER populated on secret cells (the load-bearing security property of the endpoint)."
+          example: "info"
+
+    EnvDiffRow:
+      description: "One (key, kind) row in the env-diff matrix. The Cells map is keyed by scope."
+      type: object
+      required: [key, kind, cells]
+      properties:
+        key:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]*$'
+          maxLength: 128
+          example: "DATABASE_URL"
+        kind: { $ref: '#/components/schemas/EnvDiffKind' }
+        cells:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/EnvDiffCell' }
+          description: "scope → cell. The handler populates the unioned set of scopes; consumers iterate EnvDiffResponse.Scopes for the canonical order."
+
+    EnvDiffResponse:
+      description: |
+        Top-level response shape for GET /v1/apps/{slug}/env-diff
+        (ADR-117 PR-C). The matrix is always full (no `?scope=`
+        filter in v1). Rows are sorted ASC by key; scopes are
+        sorted ASC. Bounded payload: row count <= SecretCountMax +
+        EnvCountMax (200 on Scale), column count = customer's
+        scope set (1-3 typical).
+      type: object
+      required: [app_slug, scopes, rows, generated_at]
+      properties:
+        app_slug:
+          type: string
+          description: "Echoes the URL path parameter so the dashboard can render a header without re-parsing the URL."
+          example: "demo"
+        scopes:
+          type: array
+          items: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$' }
+          description: "Sorted ASC list of scopes present in the matrix. Consumers iterate this list for column ordering."
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/EnvDiffRow' }
+          description: "Sorted ASC (by key) list of env-diff rows."
+        generated_at:
+          type: string
+          format: date-time
+          description: "RFC3339Nano timestamp the response was built. Dashboards use this to display stale badges."
 
     ListSecretsForAccountResponse:
       description: |
