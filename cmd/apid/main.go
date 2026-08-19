@@ -1433,6 +1433,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Store:        store,
 				Audit:        rekeyAudit,
 				Identities:   identities,
+				HostHMACKey:  hostHMACKey(),
 				ProgressPath: progressPath,
 				Log:          log,
 			})

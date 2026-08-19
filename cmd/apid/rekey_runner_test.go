@@ -27,6 +27,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
@@ -64,6 +65,19 @@ func newTestIdentities(t *testing.T) []*age.X25519Identity {
 	return []*age.X25519Identity{id}
 }
 
+// newTestRunnerKey returns a fresh 32-byte random HMAC key
+// for the rekey runner to stamp value_hash (ADR-117 PR-C).
+// Per-test (rand.Read); the runner copies it internally so a
+// caller-side wipe does not affect re-Seal hashes.
+func newTestRunnerKey(t *testing.T) []byte {
+	t.Helper()
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("rand.Read for rekey runner HMAC key: %v", err)
+	}
+	return b
+}
+
 // newTestRunner wraps NewRunner with sensible test defaults:
 // silent logger, fresh identity, in-memory store, ProgressPath
 // in t.TempDir(). Returns the Runner and the resolved path so
@@ -76,6 +90,7 @@ func newTestRunner(t *testing.T) (*Runner, string) {
 		Store:        state.NewMemStore(),
 		Audit:        audit.New(state.NewMemStore(), testLogger(), nil, "rekey-test"),
 		Identities:   newTestIdentities(t),
+		HostHMACKey:  newTestRunnerKey(t),
 		ProgressPath: path,
 		Log:          testLogger(),
 	})
@@ -146,6 +161,7 @@ func TestRunner_LoadsExistingProgress(t *testing.T) {
 		Store:        state.NewMemStore(),
 		Audit:        audit.New(state.NewMemStore(), testLogger(), nil, "rekey-test"),
 		Identities:   newTestIdentities(t),
+		HostHMACKey:  newTestRunnerKey(t),
 		ProgressPath: path,
 		Log:          testLogger(),
 	})
@@ -188,6 +204,7 @@ func TestRunner_DisabledReturnsNilProgress(t *testing.T) {
 			opts: RunnerOpts{
 				Audit:        audit.New(state.NewMemStore(), testLogger(), nil, "rekey-test"),
 				Identities:   newTestIdentities(t),
+				HostHMACKey:  newTestRunnerKey(t),
 				Log:          testLogger(),
 				ProgressPath: t.TempDir() + "/p.json",
 			},
@@ -197,6 +214,7 @@ func TestRunner_DisabledReturnsNilProgress(t *testing.T) {
 			opts: RunnerOpts{
 				Store:        state.NewMemStore(),
 				Identities:   newTestIdentities(t),
+				HostHMACKey:  newTestRunnerKey(t),
 				Log:          testLogger(),
 				ProgressPath: t.TempDir() + "/p.json",
 			},
@@ -207,6 +225,7 @@ func TestRunner_DisabledReturnsNilProgress(t *testing.T) {
 				Store:        state.NewMemStore(),
 				Audit:        audit.New(state.NewMemStore(), testLogger(), nil, "rekey-test"),
 				Identities:   newTestIdentities(t),
+				HostHMACKey:  newTestRunnerKey(t),
 				ProgressPath: t.TempDir() + "/p.json",
 			},
 		},
@@ -229,6 +248,7 @@ func TestRunner_MemoryOnlyWhenPathEmpty(t *testing.T) {
 		Store:      state.NewMemStore(),
 		Audit:      audit.New(state.NewMemStore(), testLogger(), nil, "rekey-test"),
 		Identities: newTestIdentities(t),
+		HostHMACKey:  newTestRunnerKey(t),
 		Log:        testLogger(),
 		// ProgressPath intentionally empty
 	})
@@ -259,6 +279,7 @@ func TestRunner_LoadFromMissingFile(t *testing.T) {
 		Store:        state.NewMemStore(),
 		Audit:        audit.New(state.NewMemStore(), testLogger(), nil, "rekey-test"),
 		Identities:   newTestIdentities(t),
+		HostHMACKey:  newTestRunnerKey(t),
 		ProgressPath: path,
 		Log:          testLogger(),
 	})
@@ -287,6 +308,7 @@ func TestRunner_LoadFromCorruptFile(t *testing.T) {
 		Store:        state.NewMemStore(),
 		Audit:        audit.New(state.NewMemStore(), testLogger(), nil, "rekey-test"),
 		Identities:   newTestIdentities(t),
+		HostHMACKey:  newTestRunnerKey(t),
 		ProgressPath: path,
 		Log:          testLogger(),
 	})
@@ -310,6 +332,7 @@ func TestRunner_WriteProgressRecoversFromMissingDir(t *testing.T) {
 		Store:        state.NewMemStore(),
 		Audit:        audit.New(state.NewMemStore(), testLogger(), nil, "rekey-test"),
 		Identities:   newTestIdentities(t),
+		HostHMACKey:  newTestRunnerKey(t),
 		ProgressPath: path,
 		Log:          testLogger(),
 	})

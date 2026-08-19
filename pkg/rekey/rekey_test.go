@@ -1,7 +1,7 @@
 // rekey_test.go — unit tests for pkg/rekey.
 //
 // Tests use a tiny in-memory fakeStore (the methods pkg/rekey
-// uses — ListAppSecretsForRekey, UpsertAppSecretWithKidInScope). The
+// uses — ListAppSecretsForRekey, UpsertAppSecretWithKidAndValueHashInScope). The
 // fakeStore matches the cursor encoding pgstore + memstore use so
 // the tests exercise the same wire shape.
 //
@@ -16,6 +16,7 @@ package rekey
 
 import (
 	"context"
+	"crypto/rand"
 	"sort"
 	"sync"
 	"testing"
@@ -26,7 +27,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// fakeStore implements just the three methods pkg/rekey uses.
+// newTestHMACKey returns a fresh 32-byte random HMAC key for
+// the rekey run to stamp value_hash with (ADR-117 PR-C). The
+// key is per-test; the Replayer copies it internally.
+func newTestHMACKey(t *testing.T) []byte {
+	t.Helper()
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("rand.Read for test HMAC key: %v", err)
+	}
+	return b
+}
+
+// fakeStore implements just the two methods pkg/rekey uses.
 // Cursor encoding matches pgstore/pgstore_memstore
 // ("<account_id>|<app_id>|<scope>|<key>"). ADR-092 PR-A widened
 // the encoding from 3-segment to 4-segment; this test fake
@@ -87,7 +100,7 @@ func (s *fakeStore) ListAppSecretsForRekey(_ context.Context, limit int, cursor 
 	return out, nil
 }
 
-func (s *fakeStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, appID, scope, key, kid string, ciphertext []byte) error {
+func (s *fakeStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	row := s.rows[encodeCursor(accountID, appID, scope, key)]
@@ -96,6 +109,7 @@ func (s *fakeStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, 
 	row.Scope = scope
 	row.Key = key
 	row.Kid = kid
+	row.ValueHash = valueHash
 	row.Ciphertext = ciphertext
 	s.rows[encodeCursor(accountID, appID, state.DefaultEnvScope, key)] = row
 	return nil
@@ -155,7 +169,7 @@ func sealUnder(t *testing.T, recipient *age.X25519Recipient, key, value string) 
 func TestRun_EmptyStore(t *testing.T) {
 	id := mustIdentity(t)
 	store := newFakeStore()
-	r, err := New(store, []*age.X25519Identity{id}, RekeyConfig{RowsPerSecond: 1000, BatchSize: 50})
+	r, err := New(store, []*age.X25519Identity{id}, newTestHMACKey(t), RekeyConfig{RowsPerSecond: 1000, BatchSize: 50})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -190,7 +204,7 @@ func TestRun_RekeysRowsUnderPreviousKid(t *testing.T) {
 		})
 	}
 
-	r, err := New(store, []*age.X25519Identity{current, previous}, RekeyConfig{RowsPerSecond: 5000, BatchSize: 50})
+	r, err := New(store, []*age.X25519Identity{current, previous}, newTestHMACKey(t), RekeyConfig{RowsPerSecond: 5000, BatchSize: 50})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -231,7 +245,7 @@ func TestRun_Idempotent(t *testing.T) {
 		Kid:        previous.Recipient().String(),
 	})
 
-	r, err := New(store, []*age.X25519Identity{current, previous}, RekeyConfig{RowsPerSecond: 5000, BatchSize: 50})
+	r, err := New(store, []*age.X25519Identity{current, previous}, newTestHMACKey(t), RekeyConfig{RowsPerSecond: 5000, BatchSize: 50})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -278,7 +292,7 @@ func TestRun_CursorResumes(t *testing.T) {
 		})
 	}
 
-	r, err := New(store, []*age.X25519Identity{current, previous}, RekeyConfig{RowsPerSecond: 5000, BatchSize: 50})
+	r, err := New(store, []*age.X25519Identity{current, previous}, newTestHMACKey(t), RekeyConfig{RowsPerSecond: 5000, BatchSize: 50})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -299,12 +313,18 @@ func TestRun_CursorResumes(t *testing.T) {
 }
 
 // TestNew_RejectsEmptyIdentities: constructor precondition contract.
+// The HMAC key is passed (ADR-117 PR-C) but is irrelevant — the
+// identities check fires first. Also pins the empty-HMAC-key
+// rejection.
 func TestNew_RejectsEmptyIdentities(t *testing.T) {
-	if _, err := New(newFakeStore(), nil, RekeyConfig{}); err == nil {
+	if _, err := New(newFakeStore(), nil, newTestHMACKey(t), RekeyConfig{}); err == nil {
 		t.Fatal("expected error for empty identities slice")
 	}
-	if _, err := New(newFakeStore(), []*age.X25519Identity{nil}, RekeyConfig{}); err == nil {
+	if _, err := New(newFakeStore(), []*age.X25519Identity{nil}, newTestHMACKey(t), RekeyConfig{}); err == nil {
 		t.Fatal("expected error for nil current identity")
+	}
+	if _, err := New(newFakeStore(), []*age.X25519Identity{mustIdentity(t)}, nil, RekeyConfig{}); err == nil {
+		t.Fatal("expected error for empty host HMAC key — refusing to run without value_hash key (ADR-117 PR-C)")
 	}
 }
 
@@ -313,7 +333,7 @@ func TestNew_RejectsEmptyIdentities(t *testing.T) {
 // doesn't get a runaway goroutine.
 func TestNew_FillsDefaults(t *testing.T) {
 	id := mustIdentity(t)
-	r, err := New(newFakeStore(), []*age.X25519Identity{id}, RekeyConfig{})
+	r, err := New(newFakeStore(), []*age.X25519Identity{id}, newTestHMACKey(t), RekeyConfig{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -355,11 +375,11 @@ type failingFakeStore struct {
 	faultCursor string
 }
 
-func (s *failingFakeStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, appID, scope, key, kid string, ciphertext []byte) error {
+func (s *failingFakeStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
 	if s.faultCursor != "" && encodeCursor(accountID, appID, scope, key) == s.faultCursor {
 		return context.DeadlineExceeded // sentinel "persist failed"
 	}
-	return s.fakeStore.UpsertAppSecretWithKidInScope(ctx, accountID, appID, scope, key, kid, ciphertext)
+	return s.fakeStore.UpsertAppSecretWithKidAndValueHashInScope(ctx, accountID, appID, scope, key, kid, valueHash, ciphertext)
 }
 
 // TestRun_CrashMidRow pins the cursor-pin-on-failure + >=
@@ -393,7 +413,7 @@ func TestRun_CrashMidRow(t *testing.T) {
 		})
 	}
 
-	r, err := New(store, []*age.X25519Identity{current, previous},
+	r, err := New(store, []*age.X25519Identity{current, previous}, newTestHMACKey(t),
 		RekeyConfig{RowsPerSecond: 5000, BatchSize: 50})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -443,7 +463,7 @@ func TestRun_CrashMidRow(t *testing.T) {
 	// repeatedly attempted until the operator fixes the
 	// underlying failure (or runs an escape-hatch UPDATE on
 	// the kid column).
-	r2, err := New(store, []*age.X25519Identity{current, previous},
+	r2, err := New(store, []*age.X25519Identity{current, previous}, newTestHMACKey(t),
 		RekeyConfig{RowsPerSecond: 5000, BatchSize: 50})
 	if err != nil {
 		t.Fatalf("New (resume): %v", err)
