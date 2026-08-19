@@ -32,6 +32,16 @@ import (
 // 1024 is a conservative upper bound: compiled jsonschema/v6 schemas
 // are typically 10–100 KiB each → at most ~100 MiB worst-case. LRU
 // eviction kicks in over the cap (mirrors pkg/edgejwks' MaxKeysPerJWKSURL
+// reasonOther is the overflow bucket for FieldError.Reason() when
+// the schema-side keyword (FieldError.Expected) doesn't map to one
+// of the named reasons (required_missing, type_mismatch,
+// additional_properties_not_allowed, enum_violation,
+// format_violation) AND when the receiver itself is nil. Hoisted
+// from a string literal so goconst stops flagging the 3-occurrence
+// duplication and so a future taxonomy rename is a one-line edit
+// (issue #975 #3 / Mega-Foundation #979-a).
+const reasonOther = "other"
+
 // = 1024). If a customer's deploy fan-out balloons past this, the
 // 1025th compile evicts the LRU — schemas are deterministic so a
 // later miss re-compiles.
@@ -126,7 +136,7 @@ var ValidateReasonClosedSet = map[string]struct{}{
 	"additional_properties_not_allowed": {},
 	"enum_violation":                    {},
 	"format_violation":                  {},
-	"other":                             {},
+	reasonOther:                         {},
 }
 
 // Reason (issue #975 #3 / Mega-Foundation #979-a) maps a FieldError
@@ -143,7 +153,7 @@ var ValidateReasonClosedSet = map[string]struct{}{
 // a test in handler_validate_mode_test.go.
 func (fe *FieldError) Reason() string {
 	if fe == nil {
-		return "other"
+		return reasonOther
 	}
 	switch fe.Expected {
 	case "required":
@@ -157,5 +167,5 @@ func (fe *FieldError) Reason() string {
 	case "format":
 		return "format_violation"
 	}
-	return "other"
+	return reasonOther
 }

@@ -71,5 +71,16 @@ export type EdgeRuleValidateAction = {
    *
    */
   max_body_bytes?: number;
+  /**
+   * How the gateway handles a schema mismatch. `block` rejects
+   * with 422 (the strictest mode; preserves the pre-2026
+   * behaviour). `observe` counts via the metric and proxies
+   * normally. `warn` does the same and stamps
+   * `X-Validation-Warning: <rule_id>` on the response. An
+   * empty / omitted value is coerced to `block` at the
+   * gateway-side handler.
+   *
+   */
+  validate_mode?: 'block' | 'observe' | 'warn';
 };
 

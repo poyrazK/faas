@@ -1477,7 +1477,7 @@ func (m *Metrics) ObserveEdgeRuleValidateFailure(mode, reason string) {
 	switch mode {
 	case "observe", "warn", "block":
 	default:
-		mode = "other"
+		mode = reasonOther
 	}
 	switch reason {
 	case "required_missing",
@@ -1486,7 +1486,7 @@ func (m *Metrics) ObserveEdgeRuleValidateFailure(mode, reason string) {
 		"enum_violation",
 		"format_violation":
 	default:
-		reason = "other"
+		reason = reasonOther
 	}
 	m.edgeRuleValidateFailures.WithLabelValues(mode, reason).Inc()
 }

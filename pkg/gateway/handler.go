@@ -2459,7 +2459,7 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 		if res.FirstError != nil {
 			reason = res.FirstError.Reason()
 		} else {
-			reason = "other"
+			reason = reasonOther
 		}
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleValidateFailure(mode, reason)

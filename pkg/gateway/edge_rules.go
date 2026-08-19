@@ -100,6 +100,16 @@ const EdgeRuleCacheCap = 10_000
 // for the LRU scan to actually find an evictable bucket.
 const EdgeRuleConsumerCacheCap = 100_000
 
+// reasonOther (issue #975 #3 / Mega-Foundation #979-a) is the
+// overflow bucket for both EdgeValidateFieldError.Reason() and the
+// gateway_edge_rule_validate_failures_total metric coercer. Hoisted
+// from a string literal so goconst stops flagging the package-wide
+// 6-occurrence duplication (across edge_rules.go + metrics.go +
+// handler.go). The metric is a closed-set: changing this constant
+// changes the wire-level label value on the metric, which the §12
+// dashboard pins. See ValidateMode* constants for the mode side.
+const reasonOther = "other"
+
 // EdgeRuleResolved is the gateway-side subset of `state.EdgeRule`
 // the matcher reads on every request. Fields are the minimum needed
 // to (a) find a rule whose host matches, (b) apply the path/methods
@@ -920,7 +930,7 @@ type EdgeValidateFieldError struct {
 // responsibility (see pkg/gateway/edge_rules_test.go).
 func (fe *EdgeValidateFieldError) Reason() string {
 	if fe == nil {
-		return "other"
+		return reasonOther
 	}
 	switch fe.Expected {
 	case "required":
@@ -934,7 +944,7 @@ func (fe *EdgeValidateFieldError) Reason() string {
 	case "format":
 		return "format_violation"
 	}
-	return "other"
+	return reasonOther
 }
 
 // EdgeValidateResult is the per-call outcome of Validator.Validate.
