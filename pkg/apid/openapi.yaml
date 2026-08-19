@@ -10533,15 +10533,6 @@ components:
           * `max_body_bytes` — per-rule inbound body cap. 0 =
             inherit `MaxRequestBodyBytes` (per-plan 25 MB buffered /
             100 MB streaming). Must be > 0 and <= `MaxRequestBodyBytes`.
-          * `validate_mode` — selects how the gateway handles a
-            schema mismatch (issue #975 #3 / Mega-Foundation #979-a).
-            `block` (default) rejects with 422. `observe` counts
-            mismatches via the `gateway_edge_rule_validate_failures_total`
-            metric and proxies normally — useful for spotting noisy
-            endpoints without breaking customers. `warn` does the
-            same and also stamps `X-Validation-Warning: <rule_id>`
-            on the proxied response. Closed enum; unknown values
-            reject at create-time.
       type: object
       required: [schema]
       properties:

@@ -161,8 +161,12 @@ type Metrics struct {
 	// this counter; the per-rule break-out is queryable via the
 	// existing edgeRuleApply{result=error} counter, which is
 	// incremented on the block-mode reject path. Cardinality is
-	// therefore `mode × reason` = 18, well below the 50-counter
-	// budget any single Metrics instance ships.
+	// therefore `mode × reason` = 4 × 6 = 24 (modes: observe, warn,
+	// block, other — `other` is the coerce-on-unknown bucket;
+	// reasons: required_missing, type_mismatch,
+	// additional_properties_not_allowed, enum_violation,
+	// format_violation, other), well below the 50-counter budget
+	// any single Metrics instance ships.
 	edgeRuleValidateFailures *prometheus.CounterVec
 	// routeConsumerThrottleDecisions (ADR-104, issue #881 Phase 3):
 	// counter of per-consumer throttle decisions, labelled by
@@ -507,10 +511,12 @@ func NewMetrics() *Metrics {
 		// Issue #975 #3 / Mega-Foundation #979-a — kind=validate body
 		// mismatches, labelled by {mode, reason}. The schema-side
 		// counter is the (app, rule_id) tuple from rule load. Tagged
-		// closed sets, so cardinality is bounded by mode × reason.
+		// closed sets, so cardinality is bounded by mode × reason =
+		// 4 × 6 = 24 (mode includes `other` as the coerce-on-unknown
+		// bucket; reason is closed at 6).
 		edgeRuleValidateFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_rule_validate_failures_total",
-			Help: "Edge-rule kind=validate body mismatches, labelled by validate_mode (observe|warn|block) and reason (required_missing|type_mismatch|additional_properties_not_allowed|enum_violation|format_violation|other). The counter increments in every mode; the reject decision is independent. Issue #975 #3 / Mega-Foundation #979-a.",
+			Help: "Edge-rule kind=validate body mismatches, labelled by validate_mode (observe|warn|block|other) and reason (required_missing|type_mismatch|additional_properties_not_allowed|enum_violation|format_violation|other). The counter increments in every mode; the reject decision is independent. `other` is the coerce bucket for unknown inputs. Issue #975 #3 / Mega-Foundation #979-a.",
 		}, []string{"mode", "reason"}),
 		// ADR-104 (issue #881 Phase 3) — per-consumer throttle
 		// decisions, distinct from the per-rule edgeRuleApply path.

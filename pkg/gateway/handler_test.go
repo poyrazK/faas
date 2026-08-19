@@ -1619,6 +1619,13 @@ type stubEdgeRuleMatcher struct {
 	// noOpEdgeRuleMatcher; the MatchThrottle override below returns
 	// s.throttle verbatim.
 	throttle *EdgeRuleThrottleResolved
+	// validate (issue #975 #3 / Mega-Foundation #979-a): twelfth-kind
+	// seat on the stub matcher so the validate-mode end-to-end test
+	// can drive applyEdgeRuleValidate through observe / warn / block
+	// without a real matcher or LRU cache. Inherits the no-op
+	// MatchValidate from the embedded noOpEdgeRuleMatcher; the
+	// MatchValidate override below returns s.validate verbatim.
+	validate *EdgeRuleValidateResolved
 }
 
 func (s stubEdgeRuleMatcher) MatchRewrite(_ context.Context, _, _, _ string) *EdgeRuleRewriteResolved {
@@ -1683,6 +1690,17 @@ func (s stubEdgeRuleMatcher) MatchMaintenance(_ context.Context, _, _, _ string)
 // miss" branch and the bucket-key assertion would never fire.
 func (s stubEdgeRuleMatcher) MatchThrottle(_ context.Context, _, _, _ string) *EdgeRuleThrottleResolved {
 	return s.throttle
+}
+
+// MatchValidate (issue #975 #3 / Mega-Foundation #979-a) — returns
+// s.validate verbatim so the validate-mode end-to-end test can drive
+// applyEdgeRuleValidate without a real matcher or LRU cache. Mirrors
+// MatchLimit / MatchMaintenance above; the stub's
+// noOpEdgeRuleMatcher base class returns nil for this method, so
+// without this override every test would silently hit the "rule miss"
+// branch and the per-mode outcome assertion would never fire.
+func (s stubEdgeRuleMatcher) MatchValidate(_ context.Context, _, _, _ string) *EdgeRuleValidateResolved {
+	return s.validate
 }
 
 // TestMatchAndApplyRewrite_PrefixAddToSlash_NoDoubleSlash pins the

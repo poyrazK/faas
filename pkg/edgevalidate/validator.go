@@ -34,16 +34,6 @@ type Rule struct {
 	// set of properties is the schema-side knob; this flag exists
 	// for ops who want a hard reject without rewriting the schema).
 	RejectUnknownFields bool
-
-	// Mode is the per-rule validate_mode (issue #975 #3 / Mega-
-	// Foundation #979-a). The validator itself is mode-agnostic:
-	// it always returns the same Result regardless of Mode. The
-	// gateway-side handler reads Mode to decide whether to 422
-	// (mode='block'), pass-through (mode='observe'), or pass-
-	// through and stamp a warning header (mode='warn'). Default
-	// empty string is treated as 'block' by the handler to match
-	// the schema default.
-	Mode string
 }
 
 // In carries the inbound request slice that the validator needs. It

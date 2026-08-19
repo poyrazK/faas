@@ -52,15 +52,43 @@ func TestObserveEdgeRuleValidateFailure_ClosedLabelSet(t *testing.T) {
 
 // TestObserveEdgeRuleValidateFailure_UnknownCoercedToOther ensures
 // that a malformed mode or reason collapses to the closed set so a
-// determined caller cannot grow the label cardinality.
+// determined caller cannot grow the label cardinality. Covers the
+// full coerce matrix:
+//
+//   - unknown mode + unknown reason → (mode="other", reason="other")
+//   - unknown mode + known reason   → (mode="other", reason=<known>)
+//   - known mode + unknown reason   → (mode=<known>, reason="other")
+//
+// A regression that only co-erced one side would let the cross-
+// product inflate; this test pins the four-cell matrix.
 func TestObserveEdgeRuleValidateFailure_UnknownCoercedToOther(t *testing.T) {
 	m := NewMetrics()
+	// (mode="other", reason="other") — both unknown.
 	m.ObserveEdgeRuleValidateFailure("NUKE", "leak-fingerprint")
 	m.ObserveEdgeRuleValidateFailure("explode", "x"+"y"+"z")
+	// (mode="other", reason=<known>) — mode unknown, reason known.
+	m.ObserveEdgeRuleValidateFailure("NUKE", "type_mismatch")
+	m.ObserveEdgeRuleValidateFailure("explode", "enum_violation")
+	// (mode=<known>, reason="other") — mode known, reason unknown.
+	m.ObserveEdgeRuleValidateFailure("observe", "leak-fingerprint")
+	m.ObserveEdgeRuleValidateFailure("block", "x"+"y"+"z")
 
 	body := bodyForCounter(t, m)
-	if !strings.Contains(body, `gateway_edge_rule_validate_failures_total{mode="other",reason="other"} 2`) {
-		t.Errorf("unknown mode+reason did not collapse to other/other; body:\n%s", body)
+	want := []string{
+		// Both unknown → (other, other). Two increments from
+		// the first two calls land here.
+		`gateway_edge_rule_validate_failures_total{mode="other",reason="other"} 2`,
+		// Unknown mode + known reason → (other, known).
+		`gateway_edge_rule_validate_failures_total{mode="other",reason="type_mismatch"} 1`,
+		`gateway_edge_rule_validate_failures_total{mode="other",reason="enum_violation"} 1`,
+		// Known mode + unknown reason → (known, other).
+		`gateway_edge_rule_validate_failures_total{mode="observe",reason="other"} 1`,
+		`gateway_edge_rule_validate_failures_total{mode="block",reason="other"} 1`,
+	}
+	for _, w := range want {
+		if !strings.Contains(body, w) {
+			t.Errorf("missing %q in metrics body:\n%s", w, body)
+		}
 	}
 }
 
