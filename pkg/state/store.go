@@ -3533,6 +3533,15 @@ type Store interface {
 	// kid alongside (scope, ciphertext). Used by the rotate
 	// handler (PR-B) and the rekey walk.
 	UpsertAppSecretWithKidInScope(ctx context.Context, accountID, appID, scope, key, kid string, ciphertext []byte) error
+	// UpsertAppSecretWithKidAndValueHashInScope is the
+	// value-hash scope-aware sibling (ADR-117 env-diff matrix,
+	// PR-C). Mirrors UpsertAppSecretWithKidInScope but stamps
+	// value_hash from secretbox.ValueFingerprint(plaintext,
+	// hostHMACKey()) alongside (scope, ciphertext, kid). Used by
+	// the PUT + rotate paths and the rekey re-seal pass; the
+	// legacy UpsertAppSecretWithKidInScope stays for callers
+	// that don't carry the field.
+	UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error
 	// GetAppSecretInScope is the scope-aware sibling of
 	// GetAppSecret (ADR-092 PR-A). Returns ErrNotFound when no
 	// row exists at (account_id, app_id, scope, key).
