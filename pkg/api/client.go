@@ -2128,6 +2128,19 @@ func (c *Client) ListSecretsWithScope(ctx context.Context, slug, scope string) (
 	return out, c.do(ctx, "GET", c.scopeQuery("/v1/apps/"+slug+"/secrets", scope), nil, &out)
 }
 
+// GetAppEnvDiff returns the (rows × scopes) matrix of env
+// vars + secrets for an app (ADR-117 PR-C). The matrix is
+// always full — there is no `?scope=` filter in v1. Secret
+// cells never carry plaintext on the wire (the EnvDiffCell
+// DTO's omitempty on Value for secret cells is the
+// load-bearing security property; the renderer in
+// cmd/gregale/commands_env_diff.go::renderEnvDiffCell is
+// the other half of the same property).
+func (c *Client) GetAppEnvDiff(ctx context.Context, slug string) (EnvDiffResponse, error) {
+	var out EnvDiffResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/env-diff", nil, &out)
+}
+
 // GetSecrets returns every sealed secret across the caller's account
 // (issue #393). One call replaces N per-app ListSecrets calls. Each
 // row carries app_id and app_slug so the dashboard renders

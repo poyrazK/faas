@@ -197,6 +197,14 @@ func cmdEnv(args []string) int {
 		return envPull(args[1:])
 	case "push":
 		return envPush(args[1:])
+	case "diff":
+		// ADR-117 PR-C: env-diff matrix as a text table.
+		// Renders the same wire surface as GET /v1/apps/{slug}/env-diff
+		// (the handler added in Commit 11). Security: secret
+		// cells never reveal plaintext; env cells emit the
+		// literal value (env is public). The renderer lives
+		// in commands_env_diff.go.
+		return envDiff(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "gregale env: unknown subcommand %q\n", args[0])
 	return 1
