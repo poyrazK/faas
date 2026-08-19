@@ -49,6 +49,24 @@ type stdctx = context.Context
 // 503 from every PUT (no silent accept-and-drop).
 var setSecretRecipient func() *age.X25519Recipient
 
+// hostHMACKey is the per-host HMAC key that secretbox.ValueFingerprint
+// uses to compute the trustworthy value-equality discriminator on the
+// sealed envelope (ADR-117 env-diff matrix, PR-C). Loaded once at
+// apid startup from /etc/faas/secrets/host.hmac.key (32 bytes,
+// mode 0o400 OR 0o440) and held as a func() []byte seam that
+// mirrors setSecretRecipient.
+//
+// Write-time only: sealAndPersist (PUT + rotate paths) and the
+// rekey worker (pkg/rekey/rekey.go) consult hostHMACKey at
+// write time. The diff endpoint reads value_hash off the row
+// directly and never needs the HMAC key. A missing key causes
+// the apid to refuse to start (cmd/apid/main.go) — see
+// ADR-117 D2 + D9.
+//
+// Setting this is the responsibility of cmd/apid/main.go's run path.
+// Tests that don't seal pass without plumbing.
+var hostHMACKey func() []byte
+
 // listSecrets returns every secret on the app, key + timestamps only.
 // Ciphertext never leaves apid except via schedd → vmmd. Quota info is
 // included so the CLI can show "3/25 secrets" without a separate call.
@@ -109,6 +127,7 @@ func (s *server) listSecretsInScope(w http.ResponseWriter, r *http.Request, acct
 			CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339),
 			UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339),
 			Kid:       row.Kid,
+			ValueHash: row.ValueHash,
 		})
 	}
 	totalCount, err := s.store.CountAppSecrets(r.Context(), acct.ID, app.ID)
@@ -141,6 +160,7 @@ func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int
 			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
 			UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
 			Kid:       r.Kid,
+			ValueHash: r.ValueHash,
 		})
 	}
 	for scope := range bucket {

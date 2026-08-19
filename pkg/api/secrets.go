@@ -56,6 +56,18 @@ type AppSecretResponse struct {
 	// handle null. Dashboards rendering "last rotated at" use
 	// kid to filter on the host-key epoch.
 	Kid string `json:"kid,omitempty"`
+	// ValueHash is the 16-hex truncated HMAC-SHA256 of the
+	// PLAINTEXT (NOT the ciphertext — see ADR-117 D1) keyed by
+	// the per-host /etc/faas/secrets/host.hmac.key. Two rows
+	// with the same value_hash therefore share byte-identical
+	// plaintext under the same host key. Distinct from Kid
+	// (identity-shaped, not value-shaped). Empty for rows sealed
+	// before migration 00296 — the JSON wire shape uses ""
+	// instead of null for forward-compatibility with older SDKs
+	// that don't handle null. Used by GET /v1/apps/{slug}/env-diff
+	// to discriminate equal-vs-different across scopes without
+	// ever unsealing. omitempty so pre-PR-C clients see no field.
+	ValueHash string `json:"value_hash,omitempty"`
 }
 
 // ScopedAppSecretResponse is the per-row shape for the nested
@@ -73,12 +85,17 @@ type AppSecretResponse struct {
 // response because a customer on the default scope doesn't need
 // scope metadata in every row — a one-off nested response is
 // cheaper to render than a per-row scope string.
+//
+// ValueHash mirrors AppSecretResponse.ValueHash (ADR-117 PR-C).
 type ScopedAppSecretResponse struct {
 	Scope     string `json:"scope"`
 	Key       string `json:"key"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 	Kid       string `json:"kid,omitempty"`
+	// ValueHash — see AppSecretResponse.ValueHash for the
+	// semantics. omitempty so pre-PR-C clients see no field.
+	ValueHash string `json:"value_hash,omitempty"`
 }
 
 // SecretByScope is the nested map shape returned under `secrets_by_scope`
@@ -134,8 +151,11 @@ type AccountAppSecretResponse struct {
 	Key        string `json:"key"`
 	Scope      string `json:"scope"`
 	Ciphertext string `json:"ciphertext"`
-	CreatedAt  string `json:"created_at"`
-	UpdatedAt  string `json:"updated_at"`
+	// ValueHash — see AppSecretResponse.ValueHash (ADR-117 PR-C).
+	// Empty for rows sealed before migration 00296.
+	ValueHash string `json:"value_hash,omitempty"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // ListSecretsForAccountResponse is the page shape for GET /v1/secrets.
