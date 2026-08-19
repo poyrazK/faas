@@ -270,15 +270,38 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 // so the PUT path is self-consistent with the rotate path and
 // pkg/rekey.Replayer can reseal rows without first unsealing NULL.
 //
+// ADR-117 PR-C widens the row with value_hash (HMAC-SHA256 over
+// the PLAINTEXT, keyed by hostHMACKey, truncated to 16 hex). The
+// hash is computed BEFORE SealOne because age X25519 +
+// ChaCha20-Poly1305 is probabilistically non-deterministic — two
+// calls over the same plaintext produce byte-different ciphertexts,
+// so a ciphertext-derived hash would diverge for every row and the
+// env-diff discriminator would be useless. The plaintext variant
+// is the only one that produces the "same hash across scopes =
+// same plaintext" property the env-diff endpoint relies on.
+//
 // The kid is computed from mfaIdentities()[0] (the current host
 // identity). If identities are not loaded we refuse to seal (same
 // posture as the rotate handler — a typo'd env var shouldn't
-// silently degrade to "no kid, no problem").
+// silently degrade to "no kid, no problem"). Same refuses-to-start
+// posture for the host HMAC key — apid boots without one ONLY in
+// the env-disabled path; calling sealAndPersist without a host
+// HMAC key is a misconfiguration that must surface as a 5xx, not
+// a silently empty value_hash.
 func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, scope, key, value string, limits api.Limits) *api.Problem {
 	recipient := setSecretRecipient()
 	if recipient == nil {
 		// Apid started without a host.age.pub; refuse to accept plaintext.
 		return api.ErrCapacity("host age recipient not loaded — refusing to seal")
+	}
+	hmacKey := hostHMACKey()
+	if len(hmacKey) == 0 {
+		// ADR-117 PR-C: defensible refuse-to-seal for the case where
+		// env-driven secrets are enabled but the per-host HMAC key
+		// didn't load. apid startup catches this earlier (503 at boot),
+		// but a unit test that bypasses main's loader must not be
+		// able to silently write a row with value_hash = ''.
+		return api.ErrCapacity("host hmac key not loaded — refusing to seal")
 	}
 	// mfaIdentities is nil in unit-test harnesses that only install
 	// the single-key package level (see withTestRecipient in
@@ -302,6 +325,15 @@ func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, sco
 	if err != nil {
 		return api.ErrCapacity("could not resolve kid: " + err.Error())
 	}
+	valueHash, err := secretbox.ValueFingerprint([]byte(value), hmacKey)
+	if err != nil {
+		// Empty plaintext is a 400 from the handler chain (limits /
+		// SecretValueMaxBytes >= 1) — ValueFingerprint's empty-input
+		// error only fires for the empty-string edge case the
+		// handler didn't catch. Treat as a 5xx capacity problem
+		// (misconfiguration: handler let an empty value through).
+		return api.ErrCapacity("could not compute value_hash: " + err.Error())
+	}
 	ciphertext, err := secretbox.SealOne(recipient, key, value, limits.SecretValueMaxBytes)
 	if err != nil {
 		// SealOne may return an api.Problem (over-cap) — surface it directly.
@@ -315,7 +347,11 @@ func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, sco
 	// as a sibling interface for legacy callers; new callers MUST
 	// thread the scope from `?scope=` through scopeFromQuery →
 	// sealAndPersist.
-	if err := s.store.UpsertAppSecretWithKidInScope(c, acct.ID, app.ID, scope, key, kid, ciphertext); err != nil {
+	//
+	// ADR-117 PR-C: value_hash is the value-hash discriminator the
+	// env-diff endpoint reads. Stamped alongside ciphertext so the
+	// row is usable by the diff surface immediately.
+	if err := s.store.UpsertAppSecretWithKidAndValueHashInScope(c, acct.ID, app.ID, scope, key, kid, valueHash, ciphertext); err != nil {
 		return api.ErrCapacity("could not persist secret")
 	}
 	return nil

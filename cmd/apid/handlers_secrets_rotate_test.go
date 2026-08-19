@@ -20,6 +20,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -40,6 +41,10 @@ import (
 // a rotate-then-Open cycle round-trips without a host.age file on
 // disk. Each test gets its own identity — no cross-test leakage.
 //
+// ADR-117 PR-C widens the row with value_hash. The rotate path's
+// sealAndPersistWithKid calls hostHMACKey() and refuses to seal
+// when the key is empty — install a fresh 32-byte random key
+// alongside the identity so the path can stamp value_hash.
 // Returns a teardown that restores both package-level accessors.
 // Callers must defer the returned func.
 func withTestIdentities(t *testing.T) (*age.X25519Identity, func()) {
@@ -50,11 +55,18 @@ func withTestIdentities(t *testing.T) (*age.X25519Identity, func()) {
 	}
 	prevRecipient := setSecretRecipient
 	prevIdentities := mfaIdentities
+	prevHMAC := hostHMACKey
 	setSecretRecipient = func() *age.X25519Recipient { return ident.Recipient() }
 	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{ident} }
+	hmacKey := make([]byte, 32)
+	if _, err := rand.Read(hmacKey); err != nil {
+		t.Fatalf("rand.Read for host HMAC key: %v", err)
+	}
+	hostHMACKey = func() []byte { return hmacKey }
 	return ident, func() {
 		setSecretRecipient = prevRecipient
 		mfaIdentities = prevIdentities
+		hostHMACKey = prevHMAC
 	}
 }
 
