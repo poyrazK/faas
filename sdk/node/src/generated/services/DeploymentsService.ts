@@ -7,6 +7,7 @@ import type { BuildProvenanceResponse } from '../models/BuildProvenanceResponse.
 import type { BuildResponse } from '../models/BuildResponse.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
 import type { DeploymentListResponse } from '../models/DeploymentListResponse.js';
+import type { DeploymentPreviewURL } from '../models/DeploymentPreviewURL.js';
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
@@ -697,66 +698,51 @@ export class DeploymentsService {
     });
   }
   /**
-   * Per-stage retry (ADR-117 §Production-ready follow-on, C2).
-   * Inserts a fresh `deployments` row from a failed (or stale)
-   * row, restarting the imaged chokepoint at `from_stage`. The
-   * fresh row copies every input primitive from the source
-   * (`image`, `source_url`, `commit_sha`, `overrides`,
-   * `sidecars`, `scope`, `traffic_percent`) and seeds a fresh
-   * `stage_state` (`current = from_stage`, empty history). The
-   * source row is left untouched — the new row's id is
-   * returned in the body so the customer can wire it to
-   * `GET /v1/deployments/{new-id}/logs` for live progress
-   * (mirrors `gregale deploys retry` UX).
+   * Get per-deployment preview URL (SAFE-RELEASES-C.2).
+   * Returns the per-deployment preview URL shape
+   * `deploy-{N}.{slug}.gregale.dev` that the cert allowlist will
+   * mint under for a single deployment (issue #976 / ADR-122).
+   * `N` is the per-app 1-based ordinal of the deployment row,
+   * resolved from state.DeploymentOrdinal — the order is
+   * stable so a previously-issued URL doesn't silently rot when
+   * a later deploy lands.
    *
-   * `from_stage` must be one of the closed 6-stage vocabulary
-   * (`source_download` / `dependency_restore` / `image_build` /
-   * `security_scan` / `snapshot_prepare` / `readiness`).
-   * `from_stage = source_download` is intentional — it's the
-   * "retry-from-top" case and re-runs the whole pipeline.
+   * The `alive` field is the same predicate the cert allowlist
+   * consults (state.Deployment.DeploymentPreviewActive):
+   * `true` iff the deployment's status is in
+   * `{pending, building, imaging, snapshotting, live}`. When
+   * `alive=false` the handler returns 200 with `host=""` and
+   * `url=""` so the dashboard renders a "preview closed" chip
+   * without round-tripping again. When the per-deployment
+   * preview zone is disabled (`wire.DeployWildcardSuffix == ""`)
+   * the handler returns the same 200 + Alive=false shape so
+   * envelopes stay stable across environments.
    *
-   * Status codes:
+   * A 404 is returned when:
+   * - the deployment row does not exist,
+   * - the deployment belongs to a different account
+   * (IDOR-safe; no account-existence leak).
    *
-   * - 202 Accepted with the new row (the row is written;
-   * imaged picks it up; the SSE stream on the new id is
-   * the customer's progress surface).
-   * - 400 if `from_stage` is empty or not in the closed-6
-   * vocabulary.
-   * - 401 if not authenticated.
-   * - 404 if the source deployment does not exist OR is in
-   * another account (IDOR posture; never 403, never
-   * reveal cross-account existence).
-   * - 500 for storage-layer failures.
-   *
-   * Auth chain: authLimited → requireMFA → requireScope
-   * (deploy-write). Non-idempotent (every call creates a fresh
-   * row); the operator must surface this in the dashboard.
-   *
-   * @returns DeploymentResponse Fresh row inserted with `stage_state.current = from_stage`. imaged picks it up; progress is on the per-deployment SSE stream.
+   * @returns DeploymentPreviewURL The resolved per-deployment preview URL.
    * @throws ApiError
    */
-  public static retryDeploymentFromStage({
+  public static getDeploymentUrl({
     id,
-    requestBody,
   }: {
     /**
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
-    requestBody: RetryDeploymentRequest,
-  }): CancelablePromise<DeploymentResponse> {
+  }): CancelablePromise<DeploymentPreviewURL> {
     return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/deployments/{id}/retry',
+      method: 'GET',
+      url: '/v1/deployments/{id}/url',
       path: {
         'id': id,
       },
-      body: requestBody,
-      mediaType: 'application/json',
       errors: {
-        400: `Bad request: \`from_stage\` missing or not in the closed-6 vocabulary. Stable code \`validation\`.`,
         401: `code: unauthorized`,
-        404: `Source deployment missing or cross-account probe (IDOR-safe; never 403).`,
+        404: `Deployment row missing or cross-account probe (IDOR-safe; never 403).`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

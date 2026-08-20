@@ -93,6 +93,7 @@ export type { DelayedTaskResponse } from './DelayedTaskResponse.js';
 export type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 export type { DeploymentListResponse } from './DeploymentListResponse.js';
 export type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
+export type { DeploymentPreviewURL } from './DeploymentPreviewURL.js';
 export type { DeploymentResponse } from './DeploymentResponse.js';
 export type { DiffAppConfigPatch } from './DiffAppConfigPatch.js';
 export type { DiffBreak } from './DiffBreak.js';
