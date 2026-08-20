@@ -3878,7 +3878,20 @@ func TestPg_DeploymentAuditRoundtrip(t *testing.T) {
 		t.Errorf("rows[0].DeploymentID = %v, want %v", rows[0].DeploymentID, deploymentID)
 	}
 	if string(rows[0].Data) != `{"ref":"sha256:abc","supersedes":""}` {
-		t.Errorf("rows[0].Data = %q, want verbatim payload", rows[0].Data)
+		// Postgres JSONB canonicalises whitespace + key order on
+		// read-back, so the bytes won't match the input verbatim.
+		// Decode both sides and assert semantic equality — that's
+		// what the closed-vocab contract actually pins.
+		var got, want map[string]any
+		if err := json.Unmarshal(rows[0].Data, &got); err != nil {
+			t.Fatalf("rows[0].Data json.Unmarshal: %v (bytes=%q)", err, rows[0].Data)
+		}
+		if err := json.Unmarshal([]byte(`{"ref":"sha256:abc","supersedes":""}`), &want); err != nil {
+			t.Fatalf("want json.Unmarshal: %v", err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("rows[0].Data = %v, want %v (JSONB canonical form — semantically equal but bytes may differ)", got, want)
+		}
 	}
 
 	// 3. Cross-deployment filter — write a row for a different
@@ -3955,9 +3968,9 @@ func TestPg_DeploymentOrdinal(t *testing.T) {
 			t.Fatalf("exec %q args=%v: %v", stmt, args, err)
 		}
 	}
-	mustExec(`insert into accounts (id, plan) values ($1, 'free')`, uuid.New())
+	mustExec(`insert into accounts (id, email, plan) values ($1, $2, 'free')`, uuid.New(), fmt.Sprintf("seed-%s@example.test", uuid.New()))
 	acctID := uuid.New()
-	mustExec(`insert into accounts (id, plan) values ($1, 'free')`, acctID)
+	mustExec(`insert into accounts (id, email, plan) values ($1, $2, 'free')`, acctID, fmt.Sprintf("seed-%s@example.test", acctID))
 	mustExec(`insert into apps (id, account_id, slug, status) values ($1, $2, 'ordinal-app', 'active')`, a, acctID)
 	mustExec(`insert into apps (id, account_id, slug, status) values ($1, $2, 'ordinal-app-other', 'active')`, b, acctID)
 
