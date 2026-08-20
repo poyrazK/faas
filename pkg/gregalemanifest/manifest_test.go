@@ -99,17 +99,18 @@ func TestValidate_HappyPath(t *testing.T) {
 }
 
 func TestValidate_UnknownKind(t *testing.T) {
-	// "rabbitmq" is a kind we genuinely don't support — neither in
-	// the cron-PR-C vocabulary nor in the ADR-0NN six-value widening.
-	// (ADR-0NN widens to cron/kafka/nats/redis_streams/sqs_compat/queue,
-	// so "queue" is now a valid kind and would not exercise the
-	// unknown-kind branch — pinning "rabbitmq" here keeps the
-	// pre-widening test stable through the rename.)
+	// Stage 2 PR-A (issue #757 follow-on): "rabbitmq" is now a
+	// supported kind, so the previous "rabbitmq"-pinned negative
+	// no longer exercises the unknown-kind branch. Switch the
+	// test fixture to "pulsar" — a deliberately bogus name that
+	// matches no closed-vocab member today and would never match
+	// any future kind (event-source-management plugins are out of
+	// scope per the Stage 2 plan).
 	m := &Manifest{Triggers: []Trigger{
-		{Kind: "rabbitmq", App: "x", Schedule: "0 3 * * *", Path: "/y"},
+		{Kind: "pulsar", App: "x", Schedule: "0 3 * * *", Path: "/y"},
 	}}
 	err := m.Validate()
-	if err == nil || !strings.Contains(err.Error(), "unsupported trigger kind \"rabbitmq\"") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported trigger kind \"pulsar\"") {
 		t.Errorf("err = %v, want unsupported-kind message", err)
 	}
 }

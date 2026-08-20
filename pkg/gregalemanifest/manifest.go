@@ -78,6 +78,32 @@ const (
 	// with source IN ('queue','delayed_task') become a Trigger.
 	// Config schema: QueueConfig{Mode}.
 	TriggerKindQueue TriggerKind = "queue"
+	// TriggerKindMSK — AWS Managed Streaming for Apache Kafka
+	// (issue #757 follow-on, Stage 2 PR-A). Kafka-wire protocol
+	// over IAM auth; bootstrap derived from cluster ARN. Config
+	// schema: MSKConfig{Region, ClusterARN, Topic, Group}.
+	TriggerKindMSK TriggerKind = "msk"
+	// TriggerKindKinesis — AWS Kinesis Data Streams (issue #757
+	// follow-on). SubscribeToShard over hand-rolled SigV4
+	// (pkg/awssigv4). Config schema: KinesisConfig{Region,
+	// StreamARN, ShardID}.
+	TriggerKindKinesis TriggerKind = "kinesis"
+	// TriggerKindDynamoDBStreams — AWS DynamoDB Streams
+	// (issue #757 follow-on). DescribeStream + GetRecords over
+	// hand-rolled SigV4. Config schema: DynamoDBStreamsConfig{
+	// Region, TableARN, ShardID}.
+	TriggerKindDynamoDBStreams TriggerKind = "dynamodb_streams"
+	// TriggerKindRabbitMQ — RabbitMQ via amqp091-go (issue #757
+	// follow-on). channel.Consume with manual Ack. Config
+	// schema: RabbitMQConfig{URL, Queue, Exchange, ConsumerTag,
+	// PrefetchCount}.
+	TriggerKindRabbitMQ TriggerKind = "rabbitmq"
+	// TriggerKindDocumentDB — AWS DocumentDB change-stream CDC
+	// (issue #757 follow-on). Resume-token advances per Ack via
+	// trigger_records.resume_token column. Config schema:
+	// DocumentDBConfig{URI, Database, Collection, Pipeline,
+	// ResumeToken}.
+	TriggerKindDocumentDB TriggerKind = "documentdb"
 )
 
 // Trigger is one entry under `triggers:`. PR-C ships cron-only fields;
@@ -374,6 +400,69 @@ type QueueConfig struct {
 	Mode string `json:"mode"`
 }
 
+// MSKConfig is the per-kind config for kind=msk (issue #757 follow-on,
+// Stage 2 PR-A). Region is the AWS region; ClusterARN is the MSK
+// cluster ARN used for IAM auth + bootstrap derivation; Topic is the
+// Kafka topic; Group is the consumer-group id. The MSK poller resolves
+// bootstrap brokers via the AWS Kafka API on first connect — ClusterARN
+// is the IAM principal, not the broker list.
+type MSKConfig struct {
+	Region     string `json:"region"`
+	ClusterARN string `json:"cluster_arn"`
+	Topic      string `json:"topic"`
+	Group      string `json:"group"`
+}
+
+// KinesisConfig is the per-kind config for kind=kinesis (issue #757
+// follow-on). Region is the AWS region; StreamARN is the Kinesis
+// stream ARN; ShardID is the explicit shard (operators with multi-shard
+// streams must create one trigger per shard — shard auto-discovery
+// stays out of Stage 2). The hand-rolled SigV4 client in
+// pkg/awssigv4 reads credentials from env / shared file / IAM role.
+type KinesisConfig struct {
+	Region   string `json:"region"`
+	StreamARN string `json:"stream_arn"`
+	ShardID  string `json:"shard_id"`
+}
+
+// DynamoDBStreamsConfig is the per-kind config for kind=dynamodb_streams
+// (issue #757 follow-on). Region is the AWS region; TableARN is the
+// DynamoDB table ARN; ShardID is the stream shard id. Same SigV4
+// credential resolution as Kinesis.
+type DynamoDBStreamsConfig struct {
+	Region   string `json:"region"`
+	TableARN string `json:"table_arn"`
+	ShardID  string `json:"shard_id"`
+}
+
+// RabbitMQConfig is the per-kind config for kind=rabbitmq (issue #757
+// follow-on). URL is the amqp:// or amqps:// endpoint; Queue is the
+// queue to consume; Exchange is optional (default exchange if empty);
+// ConsumerTag identifies this consumer in management UI; PrefetchCount
+// bounds the QoS prefetch (default 50). amqp091-go handles
+// reconnection internally.
+type RabbitMQConfig struct {
+	URL           string `json:"url"`
+	Queue         string `json:"queue"`
+	Exchange      string `json:"exchange,omitempty"`
+	ConsumerTag   string `json:"consumer_tag,omitempty"`
+	PrefetchCount int    `json:"prefetch_count,omitempty"`
+}
+
+// DocumentDBConfig is the per-kind config for kind=documentdb
+// (issue #757 follow-on). URI is the mongodb:// connection string with
+// tls=true&tlsCAFile=...; Database and Collection scope the change
+// stream; Pipeline is an optional aggregation filter (default empty =
+// all change events); ResumeToken is the optional resume position from
+// a prior run.
+type DocumentDBConfig struct {
+	URI         string   `json:"uri"`
+	Database    string   `json:"database"`
+	Collection  string   `json:"collection"`
+	Pipeline    []map[string]any `json:"pipeline,omitempty"`
+	ResumeToken []byte   `json:"resume_token,omitempty"`
+}
+
 // Manifest is the parsed `gregale.yaml` root. Only `triggers` is
 // recognised in PR-C; other top-level keys are validated strictly
 // (yaml.Decoder.KnownFields(true)) so a typo like `trigger:` (singular)
@@ -476,7 +565,16 @@ func (m *Manifest) Validate() error {
 			TriggerKindNATS,
 			TriggerKindRedisStreams,
 			TriggerKindSQSCompat,
-			TriggerKindQueue:
+			TriggerKindQueue,
+			// Stage 2 managed-service adapters (issue #757 follow-on,
+			// PR-A). Per-kind validation lives in
+			// validateKindConfig below; the manifest just routes
+			// the closed-vocab membership check.
+			TriggerKindMSK,
+			TriggerKindKinesis,
+			TriggerKindDynamoDBStreams,
+			TriggerKindRabbitMQ,
+			TriggerKindDocumentDB:
 			// fall through to per-kind validation below
 		case "":
 			return fmt.Errorf("trigger[%d]: missing kind (want one of %s)", i, supportedKindsList())
@@ -567,7 +665,7 @@ func (m *Manifest) Validate() error {
 // shape — then alphabetical) so a customer grep'ing for "kafka" in
 // the error message finds it consistently.
 func supportedKindsList() string {
-	return "cron, kafka, nats, redis_streams, sqs_compat, queue"
+	return "cron, kafka, nats, redis_streams, sqs_compat, queue, msk, kinesis, dynamodb_streams, rabbitmq, documentdb"
 }
 
 // validateKindConfig runs the per-kind config check. The cron kind's
@@ -675,6 +773,92 @@ func (t Trigger) validateKindConfig(idx int) error {
 		default:
 			return fmt.Errorf("trigger[%d]: queue config mode %q not in {queue, delayed_task}", idx, c.Mode)
 		}
+	case TriggerKindMSK:
+		var c MSKConfig
+		if err := decodeInto(t.Config, &c); err != nil {
+			return fmt.Errorf("trigger[%d]: bad msk config: %w", idx, err)
+		}
+		if c.Region == "" {
+			return fmt.Errorf("trigger[%d]: msk config requires non-empty region", idx)
+		}
+		if c.ClusterARN == "" {
+			return fmt.Errorf("trigger[%d]: msk config requires non-empty cluster_arn", idx)
+		}
+		if c.Topic == "" {
+			return fmt.Errorf("trigger[%d]: msk config requires non-empty topic", idx)
+		}
+		if c.Group == "" {
+			return fmt.Errorf("trigger[%d]: msk config requires non-empty group", idx)
+		}
+		return nil
+	case TriggerKindKinesis:
+		var c KinesisConfig
+		if err := decodeInto(t.Config, &c); err != nil {
+			return fmt.Errorf("trigger[%d]: bad kinesis config: %w", idx, err)
+		}
+		if c.Region == "" {
+			return fmt.Errorf("trigger[%d]: kinesis config requires non-empty region", idx)
+		}
+		if c.StreamARN == "" {
+			return fmt.Errorf("trigger[%d]: kinesis config requires non-empty stream_arn", idx)
+		}
+		if c.ShardID == "" {
+			return fmt.Errorf("trigger[%d]: kinesis config requires non-empty shard_id", idx)
+		}
+		return nil
+	case TriggerKindDynamoDBStreams:
+		var c DynamoDBStreamsConfig
+		if err := decodeInto(t.Config, &c); err != nil {
+			return fmt.Errorf("trigger[%d]: bad dynamodb_streams config: %w", idx, err)
+		}
+		if c.Region == "" {
+			return fmt.Errorf("trigger[%d]: dynamodb_streams config requires non-empty region", idx)
+		}
+		if c.TableARN == "" {
+			return fmt.Errorf("trigger[%d]: dynamodb_streams config requires non-empty table_arn", idx)
+		}
+		if c.ShardID == "" {
+			return fmt.Errorf("trigger[%d]: dynamodb_streams config requires non-empty shard_id", idx)
+		}
+		return nil
+	case TriggerKindRabbitMQ:
+		var c RabbitMQConfig
+		if err := decodeInto(t.Config, &c); err != nil {
+			return fmt.Errorf("trigger[%d]: bad rabbitmq config: %w", idx, err)
+		}
+		if c.URL == "" {
+			return fmt.Errorf("trigger[%d]: rabbitmq config requires non-empty url", idx)
+		}
+		u, err := url.Parse(c.URL)
+		if err != nil || (u.Scheme != "amqp" && u.Scheme != "amqps") || u.Host == "" {
+			return fmt.Errorf("trigger[%d]: rabbitmq url must be amqp:// or amqps:// with a host (got %q)", idx, c.URL)
+		}
+		if c.Queue == "" {
+			return fmt.Errorf("trigger[%d]: rabbitmq config requires non-empty queue", idx)
+		}
+		if c.PrefetchCount != 0 && (c.PrefetchCount < 1 || c.PrefetchCount > 1000) {
+			return fmt.Errorf("trigger[%d]: rabbitmq prefetch_count=%d out of range [1, 1000]", idx, c.PrefetchCount)
+		}
+		return nil
+	case TriggerKindDocumentDB:
+		var c DocumentDBConfig
+		if err := decodeInto(t.Config, &c); err != nil {
+			return fmt.Errorf("trigger[%d]: bad documentdb config: %w", idx, err)
+		}
+		if c.URI == "" {
+			return fmt.Errorf("trigger[%d]: documentdb config requires non-empty uri", idx)
+		}
+		u, err := url.Parse(c.URI)
+		if err != nil || u.Scheme != "mongodb" || u.Host == "" {
+			return fmt.Errorf("trigger[%d]: documentdb uri must be mongodb:// with a host (got %q)", idx, c.URI)
+		}
+		if c.Database == "" {
+			return fmt.Errorf("trigger[%d]: documentdb config requires non-empty database", idx)
+		}
+		if c.Collection == "" {
+			return fmt.Errorf("trigger[%d]: documentdb config requires non-empty collection", idx)
+		}
+		return nil
 	}
 	// Unreachable: the outer switch in Validate already rejected
 	// unknown kinds. Returning nil here keeps the linter quiet and
