@@ -137,10 +137,12 @@
     zero new schema (the diff package consumes the existing
     `pkg/apid/openapi.yaml`). Mega PR #2 is zero-schema.
   - **Migration slot coordination.** Mega PR #1 starts at
-    `00326_deployment_audit.sql` (renumbered through 3 hops:
-    `00320 → 00322 → 00324 → 00326` to clear open-PR slots
-    #999 #990 #1004 #1000). The backfill sits at
-    `00327_deployment_audit_backfill_90d.sql`. The cross-PR
+    `00327_deployment_audit.sql` (renumbered through 4 hops:
+    `00320 → 00322 → 00324 → 00326 → 00327` to clear open-PR slots
+    #999 #990 #1004 #1000 + post-merge of PR #999's
+    `00326_apps_public_auth_ip_allowlist.sql` on origin/main).
+    The backfill sits at
+    `00328_deployment_audit_backfill_90d.sql`. The cross-PR
     slot precheck
     (`scripts/ci/check_migration_slots.sh --base-ref=origin/main`)
     must be re-run at every push — the open-PR slot landscape

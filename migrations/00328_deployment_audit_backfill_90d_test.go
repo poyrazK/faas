@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// Migration-apply test for 00327 (deployment_audit 90-day backfill
+// Migration-apply test for 00328 (deployment_audit 90-day backfill
 // from events — issue #976 / ADR-122 / SAFE-RELEASES-E.2). Pins:
 //  1. The migration set applies cleanly through 00321.
 //  2. After applying 00321 (against an empty events table) and

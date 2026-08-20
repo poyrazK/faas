@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// Migration-apply test for 00320 (deployment_audit table — issue
+// Migration-apply test for 00327 (deployment_audit table — issue
 // #976 / ADR-122 / SAFE-RELEASES-E.2). Pins the contract:
 //  1. The migration set applies cleanly through 00320.
 //  2. The deployment_audit table lands with the expected column shape
