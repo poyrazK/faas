@@ -23,5 +23,9 @@ export type AccountAppSecretResponse = {
   ciphertext: string;
   created_at: string;
   updated_at: string;
+  /**
+   * 16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows. Mirror of the AccountAppSecretResponse / ScopedAppSecretResponse field.
+   */
+  value_hash?: string;
 };
 

@@ -77,24 +77,24 @@ func envDiff(args []string) int {
 // "unknown, cannot compare".
 func renderEnvDiffTable(w io.Writer, app string, resp *api.EnvDiffResponse) {
 	if len(resp.Rows) == 0 {
-		fmt.Fprintf(w, "%s: no env vars or secrets (0 rows)\n", app)
+		_, _ = fmt.Fprintf(w, "%s: no env vars or secrets (0 rows)\n", app)
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	// Header.
-	fmt.Fprintf(tw, "KEY\tKIND")
+	_, _ = fmt.Fprintf(tw, "KEY\tKIND")
 	for _, sc := range resp.Scopes {
-		fmt.Fprintf(tw, "\t%s", sc)
+		_, _ = fmt.Fprintf(tw, "\t%s", sc)
 	}
-	fmt.Fprintln(tw)
+	_, _ = fmt.Fprintln(tw)
 	// Body.
 	for _, row := range resp.Rows {
-		fmt.Fprintf(tw, "%s\t%s", row.Key, row.Kind)
+		_, _ = fmt.Fprintf(tw, "%s\t%s", row.Key, row.Kind)
 		for _, sc := range resp.Scopes {
 			cell := row.Cells[sc]
-			fmt.Fprintf(tw, "\t%s", renderEnvDiffCell(row.Kind, cell, row.Cells, resp.Scopes))
+			_, _ = fmt.Fprintf(tw, "\t%s", renderEnvDiffCell(row.Kind, cell, row.Cells, resp.Scopes))
 		}
-		fmt.Fprintln(tw)
+		_, _ = fmt.Fprintln(tw)
 	}
 	_ = tw.Flush()
 }
