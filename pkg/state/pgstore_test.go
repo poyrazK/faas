@@ -3971,8 +3971,8 @@ func TestPg_DeploymentOrdinal(t *testing.T) {
 	mustExec(`insert into accounts (id, email, plan) values ($1, $2, 'free')`, uuid.New(), fmt.Sprintf("seed-%s@example.test", uuid.New()))
 	acctID := uuid.New()
 	mustExec(`insert into accounts (id, email, plan) values ($1, $2, 'free')`, acctID, fmt.Sprintf("seed-%s@example.test", acctID))
-	mustExec(`insert into apps (id, account_id, slug, status) values ($1, $2, 'ordinal-app', 'active')`, a, acctID)
-	mustExec(`insert into apps (id, account_id, slug, status) values ($1, $2, 'ordinal-app-other', 'active')`, b, acctID)
+	mustExec(`insert into apps (id, account_id, slug, status, ram_mb) values ($1, $2, 'ordinal-app', 'active', 256)`, a, acctID)
+	mustExec(`insert into apps (id, account_id, slug, status, ram_mb) values ($1, $2, 'ordinal-app-other', 'active', 256)`, b, acctID)
 
 	insert := func(id string, appID string, at time.Time) {
 		t.Helper()
