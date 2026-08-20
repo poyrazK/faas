@@ -33,11 +33,14 @@
 INSERT INTO deployment_audit (id, deployment_id, account_id, kind, actor, at, data)
 SELECT
     -- Stable id derived from events.id so a replay is idempotent.
-    -- Hashtext returns int4; the BIGINT id wraps via the ::bigint cast
-    -- so the PK stays in the BIGINT identity range. Negative values
-    -- from hashtext are flipped positive so we never collide with the
-    -- identity sequence.
-    ((hashtext(events.id::text) & 0x7FFFFFFFFFFFFFFF)::bigint) AS id,
+    -- Hashtext returns int4 (signed -2^31..2^31-1); abs() flips
+    -- negatives so the BIGINT id stays in 0..2^31-1, comfortably
+    -- inside the BIGINT identity range and never colliding with
+    -- the identity sequence. Postgres does NOT accept 0x... hex
+    -- numeric literals, so abs() replaces the bit-mask form
+    -- ((& 0x7FFFFFFFFFFFFFFF)::bigint) — same collision-avoidance
+    -- property, simpler syntax.
+    (abs(hashtext(events.id::text))::bigint) AS id,
     -- events.data->>'deployment_id' is the deployment UUID the apid
     -- CreateDeployment path stamped. NULL for legacy pre-PR-#992 rows
     -- (those rows have no actor attribution, but they're still in
@@ -94,7 +97,7 @@ ON CONFLICT (id) DO NOTHING;
 DELETE FROM deployment_audit
  WHERE kind IN ('deploy.created', 'deploy.source_ref', 'deploy.local_tarball')
    AND id IN (
-       SELECT ((hashtext(events.id::text) & 0x7FFFFFFFFFFFFFFF)::bigint)
+       SELECT (abs(hashtext(events.id::text))::bigint)
          FROM events
         WHERE events.kind IN ('app.deployed', 'deploy.source_ref', 'deploy.local_tarball')
    );

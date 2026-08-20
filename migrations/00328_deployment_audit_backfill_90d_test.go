@@ -63,7 +63,7 @@ func TestMigrations_00327_DeploymentAuditBackfill(t *testing.T) {
 	const backfillSQL = `
 		INSERT INTO deployment_audit (id, deployment_id, account_id, kind, actor, at, data)
 		SELECT
-		    ((hashtext(events.id::text) & 0x7FFFFFFFFFFFFFFF)::bigint) AS id,
+		    (abs(hashtext(events.id::text))::bigint) AS id,
 		    (events.data->>'deployment_id')::uuid AS deployment_id,
 		    NULL::uuid AS account_id,
 		    CASE events.kind
@@ -134,7 +134,7 @@ func TestMigrations_00327_DeploymentAuditBackfill(t *testing.T) {
 	}
 
 	// (5) Replay safety. The deterministic id derivation
-	// (hashtext(events.id) & 0x7FFFFFFFFFFFFFFF) gives every row a
+	// (abs(hashtext(events.id::text))::bigint) gives every row a
 	// stable PK, so the ON CONFLICT (id) DO NOTHING clause is a
 	// no-op on a re-run. Replay the backfill a second time and
 	// verify zero new rows.

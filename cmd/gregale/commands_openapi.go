@@ -165,7 +165,7 @@ func cmdOpenapiDiff(args []string) int {
 			if _, ok := breakingKinds[b.Kind]; ok {
 				marker = "BREAKING"
 			}
-			fmt.Fprintf(osStdout, "%s %s %s %s %s\n",
+			_, _ = fmt.Fprintf(osStdout, "%s %s %s %s %s\n",
 				marker, b.Path, b.Method, b.Status, b.Kind)
 			if b.PathInSchema != "" {
 				_, _ = fmt.Fprintf(osStdout, "    at: %s\n", b.PathInSchema)

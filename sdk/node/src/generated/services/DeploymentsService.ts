@@ -742,7 +742,7 @@ export class DeploymentsService {
       },
       errors: {
         401: `code: unauthorized`,
-        404: `Deployment row missing or cross-account probe (IDOR-safe; never 403).`,
+        404: `Deployment URL row missing or cross-account probe (IDOR-safe; never 403).`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
