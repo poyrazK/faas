@@ -80,6 +80,32 @@ type tenantSurfaceVerified interface {
 // fail closed at Warn level.
 type OnDemandPreviewLookup func(ctx context.Context, prNumber int, parentSlug string) (any, error)
 
+// OnDemandDeploymentLookup is the deployment-preview half of the
+// allowlist (issue #976 / ADR-122 / SAFE-RELEASES-C). It is
+// invoked with (deployment ordinal, app slug) extracted from the
+// hostname by DeploymentScopeFromHost; the closure is expected to
+// load the deployment row and return it for the
+// DeploymentPreviewActive() assertion (a deployment is
+// "previewable" when its row exists and has not been superseded
+// or removed). nil deploymentLookup means the deployment-preview
+// branch is disabled — useful for unit tests and for staging
+// paths that don't mint deployment-preview certs.
+//
+// Mirrors OnDemandPreviewLookup's shape: returns (any, error).
+// Callers MUST surface ErrNotFound from the lookup closure when
+// the row is missing; other errors fail closed at Warn level.
+type OnDemandDeploymentLookup func(ctx context.Context, ordinal int, slug string) (any, error)
+
+// deploymentPreviewActive is the shape NewPGAllowlist needs from
+// the deployment-preview lookup result. The concrete state.Deployment
+// satisfies it via a small adapter method added alongside this
+// change; tests use a local fake. Mirrors the verified interface
+// for custom domains and the previewOpen interface for PR
+// previews — pkg/gateway stays free of pkg/state.
+type deploymentPreviewActive interface {
+	DeploymentPreviewActive() bool
+}
+
 // verified is the shape NewPGAllowlist needs from the custom-domain lookup
 // result. The concrete state.CustomDomain satisfies it; tests use
 // fakeCustomDomain. Keeping this as a local interface (rather than
@@ -128,7 +154,25 @@ var ErrNotFound = errors.New("gateway: domain not found in allowlist")
 //
 // NewPGAllowlist never panics on a nil lookup: nil is treated as
 // deny-all, which is the safe fail-closed default for an unconfigured edge.
-func NewPGAllowlist(customLookup OnDemandLookup, previewLookup OnDemandPreviewLookup, surfaceLookup OnDemandSurfaceLookup, appsSuffix string, log *slog.Logger) OnDemandAllowlist {
+//
+// deploymentLookup + deploySuffix (issue #976 / ADR-122 /
+// SAFE-RELEASES-C) extend the allowlist with a deployment-preview
+// branch. Hostnames whose shape matches
+// `deploy-{N}.{slug}.{deploySuffix}` are peeled by
+// DeploymentScopeFromHost, the closure loads the deployment row,
+// and the row's DeploymentPreviewActive() must return true for the
+// allowlist to admit the host. nil deploymentLookup or empty
+// deploySuffix disables the branch entirely (existing single-daemon
+// gateways that don't mint deployment-preview certs).
+func NewPGAllowlist(
+	customLookup OnDemandLookup,
+	previewLookup OnDemandPreviewLookup,
+	surfaceLookup OnDemandSurfaceLookup,
+	deploymentLookup OnDemandDeploymentLookup,
+	appsSuffix string,
+	deploySuffix string,
+	log *slog.Logger,
+) OnDemandAllowlist {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -190,6 +234,56 @@ func NewPGAllowlist(customLookup OnDemandLookup, previewLookup OnDemandPreviewLo
 				log.Warn("gateway: surface allowlist lookup failed; failing closed",
 					"host", host, "err", err)
 				return false, nil
+			}
+		}
+
+		// Deployment-preview path (issue #976 / ADR-122 / SAFE-RELEASES-C).
+		// Only fires for hostnames whose shape matches
+		// deploy-{N}.{slug}.{deploySuffix} — anything else (custom
+		// domains, surface hostnames, prod, malformed scans) is refused.
+		// deploymentLookup==nil OR empty deploySuffix disables the branch
+		// entirely (e.g. tests + staging paths that don't mint
+		// deployment-preview certs). Sits BEFORE the PR-preview branch
+		// because the deployment-preview suffix (".gregale.dev") does
+		// not collide with the PR-preview suffix (".apps.gregale.dev"),
+		// but the parsers fail closed on the wrong-suffix input so
+		// the order is purely a code-readability choice.
+		if deploymentLookup == nil || deploySuffix == "" {
+			// fall through to the PR-preview branch below
+		} else {
+			ord, slug, ok := DeploymentScopeFromHost(deploySuffix, host)
+			if !ok {
+				// Quiet denial: this is the steady-state path for any
+				// hostname that isn't a deployment-preview shape.
+				// Logging here would flood on every scan of an
+				// unowned hostname. The PR-preview branch below
+				// handles its own shape; anything that reaches the
+				// bottom of the function is denied.
+			} else {
+				dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+				raw, err := deploymentLookup(dbCtx, ord, slug)
+				cancel()
+				if err != nil {
+					if errors.Is(err, ErrNotFound) {
+						// Quiet: missing deployment row is the
+						// steady-state denial path. Fall through
+						// to the PR-preview branch — the host might
+						// be a PR preview, in which case the
+						// allowlist still admits it.
+					} else {
+						log.Warn("gateway: deployment allowlist lookup failed; failing closed",
+							"host", host, "ordinal", ord, "slug", slug, "err", err)
+						return false, nil
+					}
+				} else {
+					v, ok := raw.(deploymentPreviewActive)
+					if !ok || !v.DeploymentPreviewActive() {
+						log.Info("gateway: on-demand denied: deployment exists but is not preview-active",
+							"host", host, "ordinal", ord, "slug", slug)
+						return false, nil
+					}
+					return true, nil
+				}
 			}
 		}
 

@@ -1487,6 +1487,42 @@ type Deployment struct {
 	LastAutoRollbackReason string     `json:"last_auto_rollback_reason,omitempty"`
 }
 
+// DeploymentPreviewActive (issue #976 / ADR-122 / SAFE-RELEASES-C)
+// returns true iff the deployment is in a state where a customer
+// can usefully visit its preview URL. Mirrors the App.PreviewOpen()
+// shape used by the PR-preview allowlist branch
+// (pkg/gateway/allowlist.go::previewOpen) — both gateways call
+// into the same allowlist, so the two predicates must agree on the
+// "previewable" semantics.
+//
+// Active states (return true):
+//
+//   - DeployPending, DeployBuilding, DeployImaging,
+//     DeploySnapshotting, DeployLive: the deployment is in flight
+//     or live; the preview URL serves either the staging snapshot
+//     or the live one. A pending deploy is "previewable" because
+//     the customer might want to verify the build hasn't crashed
+//     before flipping traffic.
+//
+// Inactive states (return false):
+//
+//   - DeployFailed: the deployment failed at the build / image /
+//     snapshot stage; serving the preview URL would 502 the
+//     customer. The dashboard surfaces the failure instead.
+//   - DeploySuperseded: a newer deployment has flipped traffic
+//     away from this one. The preview URL is still resolvable
+//     for post-mortem, but the allowlist denies it so a stale
+//     link doesn't accidentally serve traffic.
+func (d Deployment) DeploymentPreviewActive() bool {
+	switch d.Status {
+	case DeployPending, DeployBuilding, DeployImaging,
+		DeploySnapshotting, DeployLive:
+		return true
+	default:
+		return false
+	}
+}
+
 // StageState is the typed view of the
 // `deployments.stage_state` jsonb column (ADR-117,
 // migration 00302). Shape:

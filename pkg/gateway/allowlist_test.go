@@ -66,7 +66,7 @@ func quietLogger() *slog.Logger {
 func TestPGAllowlist_AllowsVerifiedDomain(t *testing.T) {
 	store := newFakeDomainLookup()
 	store.put("jane-api.example.com", true)
-	al := NewPGAllowlist(store.DomainByName, nil, nil, ".apps.gregale.dev", quietLogger())
+	al := NewPGAllowlist(store.DomainByName, nil, nil, nil, ".apps.gregale.dev", "", quietLogger())
 	ok, err := al(context.Background(), "jane-api.example.com")
 	if err != nil {
 		t.Fatalf("verified domain lookup err = %v, want nil", err)
@@ -79,7 +79,7 @@ func TestPGAllowlist_AllowsVerifiedDomain(t *testing.T) {
 func TestPGAllowlist_DeniesUnverified(t *testing.T) {
 	store := newFakeDomainLookup()
 	store.put("pending.example.com", false) // exists but TXT challenge unresolved
-	al := NewPGAllowlist(store.DomainByName, nil, nil, ".apps.gregale.dev", quietLogger())
+	al := NewPGAllowlist(store.DomainByName, nil, nil, nil, ".apps.gregale.dev", "", quietLogger())
 	ok, err := al(context.Background(), "pending.example.com")
 	if err != nil {
 		t.Fatalf("unverified lookup err = %v, want nil", err)
@@ -91,7 +91,7 @@ func TestPGAllowlist_DeniesUnverified(t *testing.T) {
 
 func TestPGAllowlist_DeniesUnknown(t *testing.T) {
 	store := newFakeDomainLookup()
-	al := NewPGAllowlist(store.DomainByName, nil, nil, ".apps.gregale.dev", quietLogger())
+	al := NewPGAllowlist(store.DomainByName, nil, nil, nil, ".apps.gregale.dev", "", quietLogger())
 	ok, err := al(context.Background(), "attacker.example.com")
 	if err != nil {
 		t.Fatalf("unknown host lookup err = %v, want nil", err)
@@ -107,7 +107,7 @@ func TestPGAllowlist_DeniesUnknown(t *testing.T) {
 func TestPGAllowlist_FailsClosedOnDBError(t *testing.T) {
 	store := newFakeDomainLookup()
 	store.err = errors.New("conn refused")
-	al := NewPGAllowlist(store.DomainByName, nil, nil, ".apps.gregale.dev", quietLogger())
+	al := NewPGAllowlist(store.DomainByName, nil, nil, nil, ".apps.gregale.dev", "", quietLogger())
 	ok, err := al(context.Background(), "anything.example.com")
 	if err != nil {
 		t.Fatalf("DB-error lookup err = %v, want nil (swallowed, fail closed)", err)
@@ -121,7 +121,7 @@ func TestPGAllowlist_FailsClosedOnDBError(t *testing.T) {
 // or the wire-up step was skipped) must refuse to mint certs. Failing open
 // would let any hostname through.
 func TestPGAllowlist_NilLookupFailsClosed(t *testing.T) {
-	al := NewPGAllowlist(nil, nil, nil, ".apps.gregale.dev", quietLogger())
+	al := NewPGAllowlist(nil, nil, nil, nil, ".apps.gregale.dev", "", quietLogger())
 	ok, err := al(context.Background(), "anything.example.com")
 	if err != nil {
 		t.Fatalf("nil-lookup err = %v, want nil (swallowed, fail closed)", err)
@@ -264,6 +264,146 @@ func (f *fakePreviewLookup) PreviewByKey(_ context.Context, n int, slug string) 
 	return row, nil
 }
 
+// fakeDeploymentRow is the minimal shape NewPGAllowlist's
+// deployment-preview branch needs: a row whose
+// DeploymentPreviewActive() reflects the deployment's current
+// state. The struct mirrors the production state.Deployment
+// surface (issue #976 / ADR-122 / SAFE-RELEASES-C) without
+// dragging pkg/state into pkg/gateway tests.
+type fakeDeploymentRow struct {
+	status string // "pending" | "live" | "failed" | "superseded"
+}
+
+func (d fakeDeploymentRow) DeploymentPreviewActive() bool {
+	switch d.status {
+	case "pending", "building", "imaging", "snapshotting", "live":
+		return true
+	default:
+		return false
+	}
+}
+
+// fakeDeploymentLookup is the OnDemandDeploymentLookup fake.
+// Mirrors fakePreviewLookup's shape — key is "{ordinal}|{slug}",
+// configurable state via put(), err injection via .err.
+type fakeDeploymentLookup struct {
+	mu     sync.Mutex
+	rows   map[string]fakeDeploymentRow
+	err    error
+	called int
+}
+
+func newFakeDeploymentLookup() *fakeDeploymentLookup {
+	return &fakeDeploymentLookup{rows: map[string]fakeDeploymentRow{}}
+}
+
+func (f *fakeDeploymentLookup) put(ord int, slug, status string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rows[fmt.Sprintf("%d|%s", ord, slug)] = fakeDeploymentRow{status: status}
+}
+
+func (f *fakeDeploymentLookup) ByOrdinal(_ context.Context, ord int, slug string) (any, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.called++
+	if f.err != nil {
+		return nil, f.err
+	}
+	row, ok := f.rows[fmt.Sprintf("%d|%s", ord, slug)]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return row, nil
+}
+
+// TestOnDemandAllowlist_DeploymentPreviewHost (issue #976 /
+// ADR-122 / SAFE-RELEASES-C) pins the deployment-preview
+// allowlist branch. Mirrors TestOnDemandAllowlist_PreviewHost's
+// shape so future maintainers see the two branches' differences
+// at a glance.
+func TestOnDemandAllowlist_DeploymentPreviewHost(t *testing.T) {
+	const suffix = ".gregale.dev"
+
+	cases := []struct {
+		name      string
+		host      string
+		status    string // "" = no row, "pending", "live", "failed", "superseded"
+		lookupErr error
+		want      bool
+	}{
+		{
+			name: "live deployment allows", host: "deploy-42-foo.gregale.dev",
+			status: "live", want: true,
+		},
+		{
+			name: "pending deployment allows (in-flight build)", host: "deploy-7-foo.gregale.dev",
+			status: "pending", want: true,
+		},
+		{
+			name: "failed deployment denies", host: "deploy-8-foo.gregale.dev",
+			status: "failed", want: false,
+		},
+		{
+			name: "superseded deployment denies", host: "deploy-9-foo.gregale.dev",
+			status: "superseded", want: false,
+		},
+		{
+			name: "missing row denies", host: "deploy-100-foo.gregale.dev",
+			status: "", want: false,
+		},
+		{
+			name: "wrong suffix denies (PR preview shape)", host: "deploy-42-foo.apps.gregale.dev",
+			status: "live", want: false,
+		},
+		{
+			name: "prod host denies", host: "foo.gregale.dev",
+			status: "", want: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dep := newFakeDeploymentLookup()
+			if tc.status != "" {
+				// Extract ordinal + slug from the host.
+				// For the "wrong suffix denies" case, the
+				// parser fails closed and the lookup is
+				// never called — don't seed the row.
+				ord, slug, ok := DeploymentScopeFromHost(suffix, tc.host)
+				if ok {
+					dep.put(ord, slug, tc.status)
+				}
+			}
+			dep.err = tc.lookupErr
+
+			al := NewPGAllowlist(nil, nil, nil, dep.ByOrdinal, "", suffix, quietLogger())
+			ok, err := al(context.Background(), tc.host)
+			if err != nil {
+				t.Fatalf("allowlist err = %v, want nil", err)
+			}
+			if ok != tc.want {
+				t.Errorf("allow(%q) = %v, want %v (status=%q)", tc.host, ok, tc.want, tc.status)
+			}
+		})
+	}
+}
+
+// TestOnDemandAllowlist_NilDeploymentLookupDisablesDeploymentBranch
+// pins the deny-all default when the deployment-preview branch is
+// unconfigured (single-daemon gateways that don't mint deployment
+// certs, staging environments).
+func TestOnDemandAllowlist_NilDeploymentLookupDisablesDeploymentBranch(t *testing.T) {
+	al := NewPGAllowlist(nil, nil, nil, nil, ".apps.gregale.dev", ".gregale.dev", quietLogger())
+	ok, err := al(context.Background(), "deploy-42-foo.gregale.dev")
+	if err != nil {
+		t.Fatalf("allowlist err = %v, want nil", err)
+	}
+	if ok {
+		t.Fatal("nil deploymentLookup must deny deployment hosts (no row lookup attempted)")
+	}
+}
+
 // TestOnDemandAllowlist_PreviewHost (issue #272 / ADR-095 PR-B) — pins the
 // 7-table of locked cases for the preview-allowlist branch. The table
 // mirrors TestPreviewScopeFromHost in cmd/gatewayd-internal so the parser
@@ -328,7 +468,7 @@ func TestOnDemandAllowlist_PreviewHost(t *testing.T) {
 				}
 			}
 			store.err = tc.lookupErr
-			al := NewPGAllowlist(nil, store.PreviewByKey, nil, suffix, quietLogger())
+			al := NewPGAllowlist(nil, store.PreviewByKey, nil, nil, suffix, "", quietLogger())
 			ok, err := al(context.Background(), tc.host)
 			if err != nil {
 				t.Fatalf("allowlist err = %v, want nil (errors are swallowed to fail closed)", err)
@@ -347,7 +487,7 @@ func TestOnDemandAllowlist_PreviewHost(t *testing.T) {
 func TestOnDemandAllowlist_PreviewBranchDisabledWhenSuffixEmpty(t *testing.T) {
 	store := newFakePreviewLookup()
 	store.put(42, "foo", "open")
-	al := NewPGAllowlist(nil, store.PreviewByKey, nil, "", quietLogger())
+	al := NewPGAllowlist(nil, store.PreviewByKey, nil, nil, "", "", quietLogger())
 	ok, err := al(context.Background(), "pr-42-foo.apps.gregale.dev")
 	if err != nil {
 		t.Fatalf("allowlist err = %v, want nil", err)
@@ -362,7 +502,7 @@ func TestOnDemandAllowlist_PreviewBranchDisabledWhenSuffixEmpty(t *testing.T) {
 // don't mint preview certs). The allowlist must not panic on a nil
 // previewLookup.
 func TestOnDemandAllowlist_NilPreviewLookupDisablesPreviewBranch(t *testing.T) {
-	al := NewPGAllowlist(nil, nil, nil, ".apps.gregale.dev", quietLogger())
+	al := NewPGAllowlist(nil, nil, nil, nil, ".apps.gregale.dev", "", quietLogger())
 	ok, err := al(context.Background(), "pr-42-foo.apps.gregale.dev")
 	if err != nil {
 		t.Fatalf("allowlist err = %v, want nil", err)
@@ -382,7 +522,7 @@ func TestOnDemandAllowlist_CustomDomainTakesPrecedence(t *testing.T) {
 	dom.put("custom.apps.gregale.dev", true) // hypothetical custom row
 	prev := newFakePreviewLookup()
 	prev.put(42, "custom", "open")
-	al := NewPGAllowlist(dom.DomainByName, prev.PreviewByKey, nil, ".apps.gregale.dev", quietLogger())
+	al := NewPGAllowlist(dom.DomainByName, prev.PreviewByKey, nil, nil, ".apps.gregale.dev", "", quietLogger())
 	ok, err := al(context.Background(), "custom.apps.gregale.dev")
 	if err != nil {
 		t.Fatalf("allowlist err = %v, want nil", err)
@@ -413,7 +553,7 @@ func TestRoutingAndCertAllowlistShareStore(t *testing.T) {
 	store.put("jane-api.example.com", true)
 	prev.put(42, "foo", "open")
 
-	al := NewPGAllowlist(store.DomainByName, prev.PreviewByKey, nil, suffix, quietLogger())
+	al := NewPGAllowlist(store.DomainByName, prev.PreviewByKey, nil, nil, suffix, "", quietLogger())
 
 	// The allowlist answers (true, nil) for both shapes via the shared
 	// store. A real wiring would close over the same *state.PgStore;
@@ -466,7 +606,7 @@ func TestPGAllowlist_TenantSurfaceAllowsVerified(t *testing.T) {
 	surf := &fakeSurfaceLookup{rows: map[string]fakeTenantHostnameRow{
 		"a.example": {verifiedAt: time.Now()},
 	}}
-	al := NewPGAllowlist(nil, nil, surf.ByName, "", quietLogger())
+	al := NewPGAllowlist(nil, nil, surf.ByName, nil, "", "", quietLogger())
 	ok, err := al(context.Background(), "a.example")
 	if err != nil {
 		t.Fatalf("allowlist: %v", err)
@@ -480,7 +620,7 @@ func TestPGAllowlist_TenantSurfaceDeniesUnverified(t *testing.T) {
 	surf := &fakeSurfaceLookup{rows: map[string]fakeTenantHostnameRow{
 		"a.example": {verifiedAt: time.Time{}}, // zero — unverified
 	}}
-	al := NewPGAllowlist(nil, nil, surf.ByName, "", quietLogger())
+	al := NewPGAllowlist(nil, nil, surf.ByName, nil, "", "", quietLogger())
 	ok, _ := al(context.Background(), "a.example")
 	if ok {
 		t.Errorf("allowlist = true for unverified surface hostname; want false")
@@ -489,7 +629,7 @@ func TestPGAllowlist_TenantSurfaceDeniesUnverified(t *testing.T) {
 
 func TestPGAllowlist_TenantSurfaceDeniesUnknown(t *testing.T) {
 	surf := &fakeSurfaceLookup{rows: map[string]fakeTenantHostnameRow{}}
-	al := NewPGAllowlist(nil, nil, surf.ByName, "", quietLogger())
+	al := NewPGAllowlist(nil, nil, surf.ByName, nil, "", "", quietLogger())
 	ok, _ := al(context.Background(), "unknown.example")
 	if ok {
 		t.Errorf("allowlist = true for unknown hostname; want false")
@@ -498,7 +638,7 @@ func TestPGAllowlist_TenantSurfaceDeniesUnknown(t *testing.T) {
 
 func TestPGAllowlist_TenantSurfaceFailsClosedOnDBError(t *testing.T) {
 	surf := &fakeSurfaceLookup{err: errors.New("boom")}
-	al := NewPGAllowlist(nil, nil, surf.ByName, "", quietLogger())
+	al := NewPGAllowlist(nil, nil, surf.ByName, nil, "", "", quietLogger())
 	ok, _ := al(context.Background(), "a.example")
 	if ok {
 		t.Errorf("allowlist = true on DB error; want false (fail closed)")
