@@ -172,3 +172,39 @@ func DeploymentScopeFromHost(deploySuffix, host string) (ordinal int, slug strin
 	}
 	return n, rest, true
 }
+
+// BuildDeploymentPreviewURL is the writer counterpart to
+// DeploymentScopeFromHost: it stamps the deployment-preview URL
+// shape `deploy-{N}.{slug}{deploySuffix}` from the (ordinal,
+// slug) pair the apid read-path resolves. Mirrors the round-trip
+// that the cert allowlist issues — every URL it returns MUST
+// re-peel through DeploymentScopeFromHost to (ordinal, slug) by
+// design, so the URL grammar cannot drift from the parser.
+//
+// Caller responsibility:
+//   - deploySuffix is the leading-dot form (".gregale.dev").
+//     Empty suffix is the "no deployment-preview zone on this
+//     platform" signal; the call returns empty so the caller
+//     can distinguish "preview disabled" from "preview live"
+//     on the wire (the handler emits Host="" in that case).
+//   - ordinal <= 0 or slug == "" is malformed; the call returns
+//     empty so the caller can surface a 422 instead of minting
+//     a URL the allowlist will refuse to admit.
+//
+// Why the helper lives in pkg/gateway (not pkg/api or cmd/apid):
+// the allowlist (pkg/gateway/allowlist.go) and the URL stamper must
+// agree on the URL grammar. Co-locating the writer with the parser
+// at pkg/gateway/preview_parser.go closes the round-trip inside one
+// file and prevents the cert-issuance path and the apid URL-emission
+// path from drifting apart.
+//
+// Issue #976 / ADR-122 / SAFE-RELEASES-C.
+func BuildDeploymentPreviewURL(deploySuffix string, ordinal int, slug string) string {
+	if deploySuffix == "" {
+		return ""
+	}
+	if ordinal <= 0 || slug == "" {
+		return ""
+	}
+	return "deploy-" + strconv.Itoa(ordinal) + "." + slug + deploySuffix
+}

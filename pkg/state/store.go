@@ -1743,6 +1743,22 @@ type Store interface {
 	CreateDeployment(ctx context.Context, d Deployment) (Deployment, error)
 	DeploymentByID(ctx context.Context, id string) (Deployment, error)
 	LatestDeployment(ctx context.Context, appID string) (Deployment, error)
+	// DeploymentOrdinal (issue #976 / ADR-122 / SAFE-RELEASES-C.2)
+	// returns the per-app 1-based ordinal of the deployment row,
+	// ordered by (created_at, id). Stable: the same {app_id,
+	// deployment_id} pair always resolves to the same ordinal
+	// even after later deploys land (the latest deploy is Nth,
+	// the one before it is (N-1)th, etc.). Used by the
+	// deployment-preview URL surface to stamp the
+	// `deploy-{N}.{slug}.gregale.dev` host — N MUST be stable
+	// for an existing row across runs so a previously-issued
+	// URL doesn't silently rot when the customer deploys a
+	// fresh row.
+	//
+	// Returns ErrNotFound when no row exists for deploymentID
+	// (handled by the apid handler with the standard 404 +
+	// IDOR posture).
+	DeploymentOrdinal(ctx context.Context, appID, deploymentID string) (int, error)
 	// LiveDeployment returns the app's current live deployment (status='live').
 	// schedd's wake path boots from this; ErrNotFound if the app has never had a
 	// successful deploy (an app always has a live snapshot OR a cold-bootable

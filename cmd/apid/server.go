@@ -1038,6 +1038,14 @@ func (s *server) handler() http.Handler {
 	// the closed-6-stage vocabulary is enforced by the migration's
 	// CHECK constraint, so the handler does no Go-side decoding.
 	mux.HandleFunc("GET /v1/deployments/{id}/stages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentStages))))
+	// Issue #976 / ADR-122 / SAFE-RELEASES-C.2 — per-deployment
+	// preview URL read seam. Same auth chain as the sibling
+	// /stages / /scan / /secret-scan routes (authLimited +
+	// requireMFA + read scope). Cross-account probes return 404,
+	// never 403; non-preview-active rows return 200 with Alive=
+	// false so the dashboard renders the closed-state chip
+	// without a second round-trip.
+	mux.HandleFunc("GET /v1/deployments/{id}/url", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentURL))))
 	// Issue #557 closure / ADR-072 — PATCH the per-deployment floor
 	// (MinInstances). Reuses the deploy-write scope (the only mutable
 	// field is the floor; image / digest / overrides / sidecars stay

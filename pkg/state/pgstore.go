@@ -4441,6 +4441,38 @@ func (s *PgStore) LatestDeployment(ctx context.Context, appID string) (Deploymen
 	return scanDeployment(row)
 }
 
+// DeploymentOrdinal (issue #976 / ADR-122 / SAFE-RELEASES-C.2) returns
+// the per-app 1-based rank of the deployment row ordered by
+// (created_at, id). Mirrors memstore's sort: id breaks the
+// created_at tie so two rows stamped in the same millisecond
+// resolve to a stable rank.
+//
+// Uses a window function rather than the COUNT(*) over a sub-query
+// for two reasons: (1) the per-deployment ordinal is read on every
+// /v1/deployments/{id}/url call, so the inner ORDER BY gives the
+// optimizer a stable plan shape; (2) COUNT(*) recomputes on every
+// rank row, which scales as O(N²) for an app with N deploys — a
+// concern once the platform reaches the §6.1 max_concurrency
+// ceilings (Scale plan = 20+ deploys per app). The window function
+// is O(N log N) and uses the index on (app_id, created_at) added
+// in migration 00006.
+func (s *PgStore) DeploymentOrdinal(ctx context.Context, appID, deploymentID string) (int, error) {
+	var ord int
+	err := s.pool.QueryRow(ctx,
+		`select ord from (
+		   select id, row_number() over (partition by app_id order by created_at, id) as ord
+		   from deployments
+		 ) ranks
+		 where id = $1 and app_id = $2`, deploymentID, appID).Scan(&ord)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("deployment ordinal: %w", err)
+	}
+	return ord, nil
+}
+
 func (s *PgStore) LiveDeployment(ctx context.Context, appID string) (Deployment, error) {
 	row := s.pool.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`

@@ -3971,6 +3971,37 @@ func (m *MemStore) DeploymentByID(_ context.Context, id string) (Deployment, err
 	return d, nil
 }
 
+func (m *MemStore) DeploymentOrdinal(_ context.Context, appID, deploymentID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Mirror the pg-side query: row_number() over (partition by
+	// app_id order by created_at, id). MemStore keeps no
+	// monotonic key, so we sort a slice of (CreatedAt, ID, AppID)
+	// for this app and find the row's rank.
+	type key struct {
+		at time.Time
+		id string
+	}
+	rows := make([]key, 0, len(m.deployments))
+	for _, d := range m.deployments {
+		if d.AppID == appID {
+			rows = append(rows, key{at: d.CreatedAt, id: d.ID})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].at.Equal(rows[j].at) {
+			return rows[i].id < rows[j].id
+		}
+		return rows[i].at.Before(rows[j].at)
+	})
+	for i, r := range rows {
+		if r.id == deploymentID {
+			return i + 1, nil
+		}
+	}
+	return 0, ErrNotFound
+}
+
 func (m *MemStore) LatestDeployment(_ context.Context, appID string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

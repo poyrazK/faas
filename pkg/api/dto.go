@@ -1618,6 +1618,59 @@ type UpdateDeploymentRequest struct {
 	MinInstances *int `json:"min_instances"`
 }
 
+// DeploymentPreviewURL is the response body for GET
+// /v1/deployments/{id}/url (issue #976 / ADR-122 /
+// SAFE-RELEASES-C.2). The endpoint reads the deployment row,
+// resolves the (ordinal, slug) pair via the store, and returns
+// the per-deployment preview hostname the cert allowlist will
+// mint under — alongside an alive flag the dashboard and CLI
+// flip on to decide whether to render the "copy URL" button.
+//
+// The shape is split from DeploymentResponse because the
+// preview URL is a derived field (it depends on the live
+// Allowlist's deploySuffix, which can rotate when the platform
+// migrates *.apps.gregale.dev → *.gregale.dev) rather than a
+// stored column on the row.
+//
+// Host is empty in two cases, both deliberate:
+//   - alive=false (deployment is failed/superseded) — the URL
+//     isn't useful, but the row exists so a 404 would mislead
+//     the dashboard into thinking the deployment doesn't.
+//   - DeployWildcardSuffix is empty (deployment-preview zone
+//     disabled on this platform) — the c.2 wire response
+//     surfaces this for staging paths that don't mint
+//     deployment-preview certs.
+//
+// LastCheckedAt is the timestamp the cert-issuance store last
+// verified the wildcard cert on the host. nil when the host
+// has never been touched by certmagic (the on-demand mint is
+// lazy — a non-TLS request never validated). NOT latency — the
+// cert's NotAfter is the load-bearing expiry; LastCheckedAt
+// is a "has certmagic ever touched this hostname?" signal.
+type DeploymentPreviewURL struct {
+	// DeploymentID is the same id from the path — echoed so
+	// batch callers can correlate without their own join.
+	DeploymentID string `json:"deployment_id"`
+	// AppID is the resolved parent app — echoed so the dashboard
+	// can fetch the parent without a second round-trip.
+	AppID string `json:"app_id"`
+	// Host is the per-deployment preview hostname (`deploy-{N}.{slug}.gregale.dev`).
+	// Empty when alive=false or the deployment-preview zone is disabled.
+	Host string `json:"host,omitempty"`
+	// URL is the full request URL (https + host) — empty when host is empty.
+	URL string `json:"url,omitempty"`
+	// Alive is the deployment-preview status — true iff the
+	// deployment row exists, belongs to the caller, and has a
+	// status in {pending, building, imaging, snapshotting,
+	// live} (the same predicate the allowlist uses, hoisted to
+	// the read-path so the dashboard doesn't have to round-trip
+	// it separately).
+	Alive bool `json:"alive"`
+	// LastCheckedAt is when certmagic last validated the cert
+	// under Host. nil for never-touched hostnames.
+	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
+}
+
 // UpdateDeploymentTrafficRequest is the body for
 // PATCH /v1/deployments/{id}/traffic (issue #556 PR-A). The PATCH
 // route is dedicated to traffic splitting rather than reusing

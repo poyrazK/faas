@@ -5712,3 +5712,75 @@ func TestDeployment_DeploymentPreviewActive(t *testing.T) {
 		})
 	}
 }
+
+// TestMemStore_DeploymentOrdinal (issue #976 / ADR-122 /
+// SAFE-RELEASES-C.2) pins the per-app 1-based ordinal the
+// deployment-preview URL surface stamps. The round-trip is
+// stable: ordinal(N) == N regardless of how many later deploys
+// are inserted (the rank is recomputed across the whole window).
+//
+// Five assertions per app:
+//   - The first deployment (by created_at) is ordinal 1.
+//   - The third deployment is ordinal 3.
+//   - The second deployment is ordinal 2.
+//   - A deployment in a different app is ordinal 1 in that app.
+//   - A missing deployment_id for the app is ErrNotFound.
+//
+// MemStore mirrors the pg-side row_number() — both implementations
+// MUST agree (the memstore test is the regression pin for the
+// pgstore test under TestPg_DeploymentOrdinal). Drift between
+// the two impls corrupts every existing deployment-preview URL
+// the moment a new deploy lands.
+func TestMemStore_DeploymentOrdinal(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+
+	a := uuid.NewString()
+	b := uuid.NewString()
+	d1 := uuid.NewString()
+	d2 := uuid.NewString()
+	d3 := uuid.NewString()
+	dX := uuid.NewString()
+	now := time.Now()
+	// Insert out-of-order to exercise the (created_at, id) sort.
+	mustInsertDeployment(t, m, Deployment{
+		ID: d3, AppID: a, Status: DeployLive, CreatedAt: now.Add(2 * time.Second),
+	})
+	mustInsertDeployment(t, m, Deployment{
+		ID: d1, AppID: a, Status: DeployLive, CreatedAt: now,
+	})
+	mustInsertDeployment(t, m, Deployment{
+		ID: d2, AppID: a, Status: DeployLive, CreatedAt: now.Add(1 * time.Second),
+	})
+	mustInsertDeployment(t, m, Deployment{
+		ID: dX, AppID: b, Status: DeployLive, CreatedAt: now,
+	})
+
+	if got, _ := m.DeploymentOrdinal(ctx, a, d1); got != 1 {
+		t.Errorf("ord(d1) = %d, want 1", got)
+	}
+	if got, _ := m.DeploymentOrdinal(ctx, a, d2); got != 2 {
+		t.Errorf("ord(d2) = %d, want 2", got)
+	}
+	if got, _ := m.DeploymentOrdinal(ctx, a, d3); got != 3 {
+		t.Errorf("ord(d3) = %d, want 3", got)
+	}
+	if got, _ := m.DeploymentOrdinal(ctx, b, dX); got != 1 {
+		t.Errorf("ord(dX in app b) = %d, want 1 (separate counter)", got)
+	}
+	if _, err := m.DeploymentOrdinal(ctx, a, uuid.NewString()); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing deployment: err = %v, want ErrNotFound", err)
+	}
+}
+
+// mustInsertDeployment is a thin helper for the ordinal test;
+// mirrors the production CreateDeployment stub pattern but inserts
+// directly into the memstore map (CreateDeployment is heavier
+// than necessary — for the ordinal query we only need the {id,
+// app_id, status, created_at} columns on a single tenant).
+func mustInsertDeployment(t *testing.T, m *MemStore, d Deployment) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deployments[d.ID] = d
+}

@@ -3913,3 +3913,79 @@ func TestPg_DeploymentAuditRoundtrip(t *testing.T) {
 		t.Errorf("expected CHECK violation on rogue_audit_kind, got nil")
 	}
 }
+
+// TestPg_DeploymentOrdinal (issue #976 / ADR-122 /
+// SAFE-RELEASES-C.2) pins the per-app 1-based rank the
+// deployment-preview URL surface stamps. Pairs with
+// TestMemStore_DeploymentOrdinal — both impls MUST agree; drift
+// rots every existing deployment-preview URL the moment a new
+// deploy lands.
+//
+//   - first deployment in app = ordinal 1 (no COUNT(*) bias)
+//   - third deployment in app = ordinal 3 (correct rank across ordering)
+//   - second app's first deployment = ordinal 1 in that app
+//     (separate counter per app — no global sequence shared)
+//   - missing deployment_id in known app = ErrNotFound (sentinel)
+//
+// Postgres-only behavior verified:
+//   - row_number() over (partition by app_id order by
+//     created_at, id) is stable — same (app_id, id) pair
+//     always resolves to the same rank even after later
+//     deploys land.
+//   - pgx.ErrNoRows maps to ErrNotFound (NOT a 500).
+func TestPg_DeploymentOrdinal(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	a := uuid.New()
+	b := uuid.New()
+	d1 := uuid.New()
+	d2 := uuid.New()
+	d3 := uuid.New()
+	dX := uuid.New()
+	now := time.Now()
+	// Two apps so we can pin the "separate counter per app"
+	// assertion. Insert via the underlying pool (CreateDeployment
+	// is heavier than necessary and would force status transitions
+	// — for the ordinal query we only need the {id, app_id,
+	// status, created_at} columns, and we set status='live' so
+	// the apps status='active' parent precondition is moot (we
+	// insert directly without going through CreateApp).
+	mustExec := func(stmt string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, stmt, args...); err != nil {
+			t.Fatalf("exec %q args=%v: %v", stmt, args, err)
+		}
+	}
+	mustExec(`insert into accounts (id, plan) values ($1, 'free')`, uuid.New())
+	acctID := uuid.New()
+	mustExec(`insert into accounts (id, plan) values ($1, 'free')`, acctID)
+	mustExec(`insert into apps (id, account_id, slug, status) values ($1, $2, 'ordinal-app', 'active')`, a, acctID)
+	mustExec(`insert into apps (id, account_id, slug, status) values ($1, $2, 'ordinal-app-other', 'active')`, b, acctID)
+
+	insert := func(id string, appID string, at time.Time) {
+		t.Helper()
+		mustExec(`insert into deployments (id, app_id, status, image_digest, created_at)
+		          values ($1, $2, 'live', 'sha256:ord', $3)`,
+			id, appID, at)
+	}
+	// Insert out-of-order to exercise (created_at, id) sort.
+	insert(d3.String(), a.String(), now.Add(2*time.Second))
+	insert(d1.String(), a.String(), now)
+	insert(d2.String(), a.String(), now.Add(1*time.Second))
+	insert(dX.String(), b.String(), now)
+
+	if got, err := s.DeploymentOrdinal(ctx, a.String(), d1.String()); err != nil || got != 1 {
+		t.Errorf("ord(d1) = %d err=%v, want 1", got, err)
+	}
+	if got, err := s.DeploymentOrdinal(ctx, a.String(), d2.String()); err != nil || got != 2 {
+		t.Errorf("ord(d2) = %d err=%v, want 2", got, err)
+	}
+	if got, err := s.DeploymentOrdinal(ctx, a.String(), d3.String()); err != nil || got != 3 {
+		t.Errorf("ord(d3) = %d err=%v, want 3", got, err)
+	}
+	if got, err := s.DeploymentOrdinal(ctx, b.String(), dX.String()); err != nil || got != 1 {
+		t.Errorf("ord(dX in app b) = %d err=%v, want 1 (separate counter)", got, err)
+	}
+	if _, err := s.DeploymentOrdinal(ctx, a.String(), uuid.New().String()); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("missing deployment: err = %v, want ErrNotFound", err)
+	}
+}

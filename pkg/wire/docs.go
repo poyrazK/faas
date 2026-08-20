@@ -49,4 +49,29 @@ const (
 	//   - pkg/oci/registry.go (RegistryClient User-Agent)
 	//   - pkg/storage/oci.go (OCIRegistryStorageBackend User-Agent)
 	PlatformHost = "gregale.dev"
+
+	// DeployWildcardSuffix is the leading-dot wildcard suffix the
+	// per-deployment preview URL surface mints certs under
+	// (issue #976 / ADR-122 / SAFE-RELEASES-C). Pairs with the
+	// parser at pkg/gateway/preview_parser.go::DeploymentScopeFromHost
+	// — keeping the suffix as a single constant prevents the cert
+	// allowlist and the apid URL-emission path from drifting
+	// apart. Empty value disables the deployment-preview branch
+	// entirely (the allowlist's deploymentLookup branch, and the
+	// C.2 wire endpoint's Host field).
+	//
+	// Distinct from AppsWildcardSuffix because the two audiences
+	// don't overlap: PR previews live under *.apps.gregale.dev
+	// (GitHub-Checks-driven ephemeral); deployment previews live
+	// under *.gregale.dev (customer-facing, shareable with a
+	// teammate). The cert issuer would mint one wildcard cert
+	// per suffix, so the constant is per-suffix.
+	DeployWildcardSuffix = ".gregale.dev"
+	// DeployPreviewURIScheme is the URI scheme stamped on the
+	// GET /v1/deployments/{id}/url response's URL field
+	// (SAFE-RELEASES-C.2). "https" is the only valid production
+	// value (certmagic's OnDemand HTTP-01 challenge is
+	// HTTPS-driven); http is only for a non-TLS staging
+	// environment where the challenge is also disabled.
+	DeployPreviewURIScheme = "https"
 )
