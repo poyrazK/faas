@@ -308,7 +308,24 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 			"")
 	}
 	switch req.Kind {
-	case api.TriggerKindKafka, api.TriggerKindNATS, api.TriggerKindRedisStreams, api.TriggerKindSQSCompat, api.TriggerKindQueue:
+	case api.TriggerKindKafka, api.TriggerKindNATS, api.TriggerKindRedisStreams, api.TriggerKindSQSCompat, api.TriggerKindQueue,
+		// Stage 2 managed-service adapters (issue #757 follow-on,
+		// PR-A review finding #1): the closed-vocab widening PR
+		// added 5 new TriggerKind constants + a wider manifests
+		// validator + a wider SQL CHECK, but the HTTP admission
+		// switch here only knew the original 5 non-cron kinds.
+		// Without this case, POST /v1/triggers with kind=msk /
+		// kinesis / dynamodb_streams / rabbitmq / documentdb
+		// would 400 with the misleading closed-vocab error.
+		// The runtime poller for each kind lands in a follow-up
+		// PR; until then the dispatcher will log+skip these
+		// triggers (pkg/sched/poller.go:179-191 — newPollerForTrigger
+		// returns (nil, false) on registry miss).
+		api.TriggerKindMSK,
+		api.TriggerKindKinesis,
+		api.TriggerKindDynamoDBStreams,
+		api.TriggerKindRabbitMQ,
+		api.TriggerKindDocumentDB:
 		if req.Slug == "" {
 			return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "slug is required for non-cron triggers")
 		}
@@ -321,7 +338,7 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 		return nil
 	default:
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request",
-			"unknown kind: must be one of cron|kafka|nats|redis_streams|sqs_compat|queue")
+			"unknown kind: must be one of cron|kafka|nats|redis_streams|sqs_compat|queue|msk|kinesis|dynamodb_streams|rabbitmq|documentdb")
 	}
 }
 
