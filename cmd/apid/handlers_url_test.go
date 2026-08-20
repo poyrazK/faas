@@ -35,10 +35,11 @@ import (
 // TestGetDeploymentURL_HappyPath exercises the production wire:
 // one deployment, status='live', parent app with slug "url-happy"
 // → first deployment → ordinal 1 →
-//   expect: Host="deploy-1.url-happy.gregale.dev"
-//   expect: URL="https://deploy-1.url-happy.gregale.dev"
-//   expect: Alive=true.
-//   expect: DeploymentID + AppID echoed on the response.
+//
+//	expect: Host="deploy-1.url-happy.gregale.dev"
+//	expect: URL="https://deploy-1.url-happy.gregale.dev"
+//	expect: Alive=true.
+//	expect: DeploymentID + AppID echoed on the response.
 func TestGetDeploymentURL_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	dep := mustSeedDeployment(t, e, "url-happy")
@@ -87,7 +88,7 @@ func TestGetDeploymentURL_BuildingStatusIsAlive(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	dep := mustSeedDeployment(t, e, "url-building")
 	// Flip status manually so the test exercises the building →
-// alive path (the seed path is 'live' only).
+	// alive path (the seed path is 'live' only).
 	if err := e.store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeployBuilding, "test flip"); err != nil {
 		t.Fatalf("UpdateDeploymentStatus: %v", err)
 	}

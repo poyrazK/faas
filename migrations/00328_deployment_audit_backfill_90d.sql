@@ -30,7 +30,16 @@
 -- computed at migration apply time so a replay N days later picks
 -- up the same window the original apply did.
 
+-- OVERRIDING SYSTEM VALUE: the deployment_audit.id column is
+-- GENERATED ALWAYS AS IDENTITY (so a future EmitAs caller that
+-- forgets to pass an id gets an automatic one). The deterministic
+-- hash id this INSERT writes is required for ON CONFLICT (id)
+-- DO NOTHING idempotency, so we explicitly override the identity
+-- generation here. PG 10+ requires the OVERRIDING SYSTEM VALUE
+-- clause for GENERATED ALWAYS columns; the migration will fail at
+-- apply time without it.
 INSERT INTO deployment_audit (id, deployment_id, account_id, kind, actor, at, data)
+OVERRIDING SYSTEM VALUE
 SELECT
     -- Stable id derived from events.id so a replay is idempotent.
     -- Hashtext returns int4 (signed -2^31..2^31-1); abs() flips

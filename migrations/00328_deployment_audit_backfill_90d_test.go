@@ -62,6 +62,7 @@ func TestMigrations_00327_DeploymentAuditBackfill(t *testing.T) {
 	// count check at (5).
 	const backfillSQL = `
 		INSERT INTO deployment_audit (id, deployment_id, account_id, kind, actor, at, data)
+		OVERRIDING SYSTEM VALUE
 		SELECT
 		    (abs(hashtext(events.id::text))::bigint) AS id,
 		    (events.data->>'deployment_id')::uuid AS deployment_id,
