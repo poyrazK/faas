@@ -2549,6 +2549,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// (see pkg/events/trigger.go + pkg/gregalemanifest).
 	esmSourceClosedSet := []string{
 		"kafka", "nats", "redis_streams", "sqs_compat", "queue", "cron",
+		// Stage 2 managed-service adapters (issue #757 follow-on,
+		// PR-A). Order mirrors pkg/api.TriggerKind so a future
+		// closed-vocab audit can diff them line-by-line. Each new
+		// source pre-instantiates the (success, empty, error)
+		// × (source, outcome) counters + (source, shard) lag
+		// histogram so the rows surface in /metrics from process
+		// start. See pkg/sched/POLLER_ADAPTER_GUIDE.md §8.
+		"msk", "kinesis", "dynamodb_streams", "rabbitmq", "documentdb",
 	}
 	esmOutcomeClosedSet := []string{"success", "empty", "error"}
 	esmPollsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
