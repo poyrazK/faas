@@ -1,4 +1,4 @@
--- filename: 00320_triggers_kind_extend_msk.sql
+-- filename: 00334_triggers_kind_extend_msk.sql
 -- +goose Up
 -- +goose StatementBegin
 

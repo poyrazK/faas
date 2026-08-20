@@ -1,13 +1,13 @@
--- filename: 00321_triggers_kind_extend_kinesis.sql
+-- filename: 00337_triggers_kind_extend_rabbitmq.sql
 -- +goose Up
 -- +goose StatementBegin
 
--- Closed-vocab widening (issue #757 follow-on, Stage 2 PR-A, kind=kinesis).
+-- Closed-vocab widening (issue #757 follow-on, Stage 2 PR-A, kind=rabbitmq).
 
 ALTER TABLE triggers DROP CONSTRAINT IF EXISTS triggers_kind_check;
 ALTER TABLE triggers ADD CONSTRAINT triggers_kind_check
   CHECK (kind IN ('cron','kafka','nats','redis_streams','sqs_compat','queue',
-                  'msk','kinesis'));
+                  'msk','kinesis','dynamodb_streams','rabbitmq'));
 
 -- +goose StatementEnd
 
@@ -16,5 +16,5 @@ ALTER TABLE triggers ADD CONSTRAINT triggers_kind_check
 ALTER TABLE triggers DROP CONSTRAINT IF EXISTS triggers_kind_check;
 ALTER TABLE triggers ADD CONSTRAINT triggers_kind_check
   CHECK (kind IN ('cron','kafka','nats','redis_streams','sqs_compat','queue',
-                  'msk'));
+                  'msk','kinesis','dynamodb_streams'));
 -- +goose StatementEnd

@@ -1,4 +1,4 @@
--- filename: 00322_triggers_kind_extend_dynamodb_streams.sql
+-- filename: 00336_triggers_kind_extend_dynamodb_streams.sql
 -- +goose Up
 -- +goose StatementBegin
 
