@@ -3224,7 +3224,7 @@ type Store interface {
 
 	// AppendDeploymentAudit (issue #976 / ADR-122 / SAFE-RELEASES-E.2)
 	// inserts one row of the deployment_audit table
-	// (migrations/00332_deployment_audit.sql). The table is the
+	// (migrations/00334_deployment_audit.sql). The table is the
 	// per-deployment counterpart of the events stream: events rows
 	// are per-emit, indexed for subject lookups; deployment_audit
 	// rows are per-deployment, indexed for (deployment_id, at DESC)
@@ -3247,7 +3247,7 @@ type Store interface {
 	// returns deployment_audit rows for one deployment, ordered
 	// (at DESC, id DESC) — same tiebreaker discipline as
 	// ListAuditLog. The deployment_audit_deployment_idx
-	// ((deployment_id, at DESC), migration 00332) backs the query
+	// ((deployment_id, at DESC), migration 00334) backs the query
 	// so the timeline endpoint stays sub-millisecond at one-box
 	// scale.
 	//

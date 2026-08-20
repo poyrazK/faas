@@ -16726,7 +16726,7 @@ func (s *PgStore) InsertAuditLog(ctx context.Context, entry AuditLog) error {
 
 // AppendDeploymentAudit (issue #976 / ADR-122 / SAFE-RELEASES-E.2)
 // inserts one row of the deployment_audit table
-// (migrations/00332_deployment_audit.sql). Mirrors InsertAuditLog
+// (migrations/00334_deployment_audit.sql). Mirrors InsertAuditLog
 // but writes the per-deployment shape (BIGINT IDENTITY PK, NOT NULL
 // deployment_id with NO FK — see migration commentary for the FK-free
 // rationale).
@@ -16748,7 +16748,7 @@ func (s *PgStore) AppendDeploymentAudit(ctx context.Context, entry DeploymentAud
 		// Pass zero time as NULL so the column default now() takes
 		// effect; a caller-supplied non-zero time is honored
 		// verbatim (used by the 90-day backfill in migration
-		// 00333, which preserves the events.at timestamp).
+		// 00335, which preserves the events.at timestamp).
 		nullTime(entry.At),
 		[]byte(entry.Data),
 	).Scan(&id)
