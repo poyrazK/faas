@@ -2652,6 +2652,60 @@ type AuditLog struct {
 	Data         json.RawMessage // nullable; verbatim payload at emit time
 }
 
+// DeploymentAuditKind is the closed-set vocabulary enforced by
+// deployment_audit_kind_chk on the deployment_audit table
+// (migrations/00326_deployment_audit.sql, issue #976 / ADR-122 /
+// SAFE-RELEASES-E.2). The Go type prevents drift between the
+// handler-level emit sites and the SQL CHECK constraint — every
+// kind the meterd orchestrator (Mega PR #2) or the apid CreateDeployment
+// path emits must be one of these constants.
+//
+// Closed set (8 kinds):
+//   - DeployCreated:     apid CreateDeployment path + 90-day backfill
+//     rename of legacy app.deployed.
+//   - DeploySourceRef:   apid source-ref path.
+//   - DeployLocalTarball: apid tarball path.
+//   - DeployTrafficChanged:  meterd orchestrator (canary step).
+//   - DeployHealthProbeFailed: meterd orchestrator (first-N-5xx gate).
+//   - DeployHealthRecovered:  meterd orchestrator (recovery).
+//   - DeployRolledBack:  meterd orchestrator (auto-rollback).
+//   - DeployRemoved:     meterd orchestrator (90-day GC).
+type DeploymentAuditKind string
+
+const (
+	DeployCreated           DeploymentAuditKind = "deploy.created"
+	DeploySourceRef         DeploymentAuditKind = "deploy.source_ref"
+	DeployLocalTarball      DeploymentAuditKind = "deploy.local_tarball"
+	DeployTrafficChanged    DeploymentAuditKind = "deploy.traffic_changed"
+	DeployHealthProbeFailed DeploymentAuditKind = "deploy.health_probe_failed"
+	DeployHealthRecovered   DeploymentAuditKind = "deploy.health_recovered"
+	DeployRolledBack        DeploymentAuditKind = "deploy.rolled_back"
+	DeployRemoved           DeploymentAuditKind = "deploy.removed"
+)
+
+// DeploymentAudit is one row of the deployment_audit table
+// (migrations/00326_deployment_audit.sql). Mirrors the AuditLog
+// shape (issue #755 / PR-5) but is per-deployment instead of
+// per-account: a deployment row outlives the deployment it
+// relates to so a SOC 2 / GDPR auditor can re-derive the
+// post-deploy state without joining back to a deleted deployment
+// row.
+//
+// Stored shape matches the migration: BIGINT IDENTITY PK, NOT NULL
+// UUID deployment_id (no FK — see migration commentary), nullable
+// UUID account_id (no FK — same rationale), NOT NULL TEXT kind
+// (closed-set CHECK), NOT NULL TEXT actor, NOT NULL TIMESTAMPTZ at
+// with default now(), nullable JSONB data.
+type DeploymentAudit struct {
+	ID           int64               // assigned by Postgres IDENTITY on insert
+	DeploymentID uuid.UUID           // NOT NULL; no FK to deployments(id)
+	AccountID    *uuid.UUID          // nullable; no FK to accounts(id)
+	Kind         DeploymentAuditKind // NOT NULL; closed-set CHECK
+	Actor        string              // NOT NULL; resolved actor from EmitAs
+	At           time.Time           // NOT NULL DEFAULT now()
+	Data         json.RawMessage     // nullable; verbatim payload at emit time
+}
+
 // AuditLogFilter is the read-side query shape for the audit_log table.
 // Handlers build one from the inbound query string; the store method
 // translates it into a single WHERE clause without string concatenation.

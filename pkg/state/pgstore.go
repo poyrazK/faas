@@ -16692,6 +16692,94 @@ func (s *PgStore) InsertAuditLog(ctx context.Context, entry AuditLog) error {
 	return err
 }
 
+// AppendDeploymentAudit (issue #976 / ADR-122 / SAFE-RELEASES-E.2)
+// inserts one row of the deployment_audit table
+// (migrations/00326_deployment_audit.sql). Mirrors InsertAuditLog
+// but writes the per-deployment shape (BIGINT IDENTITY PK, NOT NULL
+// deployment_id with NO FK — see migration commentary for the FK-free
+// rationale).
+//
+// Returns the id Postgres assigned via RETURNING id. The caller uses
+// this for the deployment-timeline endpoint's cursor (the id DESC
+// tiebreaker keeps the result stable across at-ties).
+func (s *PgStore) AppendDeploymentAudit(ctx context.Context, entry DeploymentAudit) (int64, error) {
+	var id int64
+	err := s.pool.QueryRow(ctx,
+		`insert into deployment_audit
+		    (deployment_id, account_id, kind, actor, at, data)
+		 values ($1, $2, $3, $4, coalesce($5, now()), $6::jsonb)
+		 returning id`,
+		entry.DeploymentID,
+		entry.AccountID,
+		string(entry.Kind),
+		entry.Actor,
+		// Pass zero time as NULL so the column default now() takes
+		// effect; a caller-supplied non-zero time is honored
+		// verbatim (used by the 90-day backfill in migration
+		// 00327, which preserves the events.at timestamp).
+		nullTime(entry.At),
+		[]byte(entry.Data),
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("state: append deployment_audit: %w", err)
+	}
+	return id, nil
+}
+
+// ListDeploymentAudit (issue #976 / ADR-122 / SAFE-RELEASES-E.2)
+// returns deployment_audit rows for one deployment, ordered
+// (at DESC, id DESC). The deployment_audit_deployment_idx
+// ((deployment_id, at DESC), migration 00326) backs the query so
+// the timeline endpoint stays sub-millisecond at one-box scale.
+//
+// limit > 0 caps the page; <= 0 means "no row cap" (the caller is
+// responsible for bounding via the 90-day retention floor or the
+// customer-facing handler cap).
+func (s *PgStore) ListDeploymentAudit(ctx context.Context, deploymentID string, limit int) ([]DeploymentAudit, error) {
+	const cap = 1000
+	if limit <= 0 || limit > cap {
+		limit = cap
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, deployment_id, account_id, kind, actor, at, data
+		   from deployment_audit
+		  where deployment_id = $1::uuid
+		  order by at desc, id desc
+		  limit $2`,
+		deploymentID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list deployment_audit: %w", err)
+	}
+	defer rows.Close()
+	var out []DeploymentAudit
+	for rows.Next() {
+		var (
+			d       DeploymentAudit
+			dataRaw []byte
+		)
+		if err := rows.Scan(&d.ID, &d.DeploymentID, &d.AccountID, &d.Kind, &d.Actor, &d.At, &dataRaw); err != nil {
+			return nil, fmt.Errorf("state: scan deployment_audit row: %w", err)
+		}
+		d.Data = json.RawMessage(dataRaw)
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list deployment_audit rows: %w", err)
+	}
+	return out, nil
+}
+
+// nullTime is a tiny helper that returns a *time.Time pointing at the
+// zero value as SQL NULL — used by AppendDeploymentAudit so a caller
+// who omits At gets the column default now() rather than the Go zero
+// time (which Postgres would reject as out-of-range for timestamptz).
+func nullTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}
+
 // insertAuditLogTx is the tx-bound variant of InsertAuditLog. Called
 // from inside (*PgStore).DeleteAccount so the audit_log row lands in
 // the same tx as the accounts row delete. The pool-based InsertAuditLog

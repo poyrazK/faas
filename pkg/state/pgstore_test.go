@@ -2,6 +2,7 @@ package state_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -3697,3 +3698,218 @@ func TestPg_UpsertComputeNodeFromVmmd_PreservesOperatorReleaseID(t *testing.T) {
 // fields that PR-3a widens. Kept private to this file.
 func ptrStr(s string) *string { return &s }
 func ptrInt(i int) *int       { return &i }
+
+// TestPg_DeploymentActorRoundtrip (issue #606) pins the four
+// actor-attribution columns (deployed_by_user_id, deployed_via,
+// deployed_from_ip, pusher_login) + the FK to accounts(id) +
+// the closed-set CHECK on deployed_via through CreateDeployment +
+// DeploymentByID. The Go-zero collapse on every column asserts
+// the nullif()/coalesce() chain in pgstore.go::CreateDeployment
+// keeps pre-feature rows valid without a backfill. A bad
+// deployed_via value exercises the DB-side CHECK rejection.
+//
+// The positional scan invariant documented at pgstore.go:12480
+// (and called out again at the deploymentSelectColumnsWithRootfs
+// const) is the load-bearing constraint: if any of the four new
+// SELECT projections drifts from the INSERT column order, pgx
+// fails loud at the first SELECT. This test is the regression
+// net for that drift, parallel to TestPg_DeploymentAnnotationRoundtrip
+// from PR #984.
+func TestPg_DeploymentActorRoundtrip(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, err := s.CreateAccount(ctx, "actor@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := s.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "actor-app", Type: state.AppTypeApp,
+		RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	// 1. Full actor payload — dashboard / API path with a session
+	//    user, remote IP, and a githubd-stamped pusher login.
+	depFull, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID:            app.ID,
+		Kind:             state.DeploymentKindGitHub,
+		ImageDigest:      "sha256:actor-full",
+		Status:           state.DeployPending,
+		DeployedByUserID: acct.ID,
+		DeployedVia:      "github",
+		DeployedFromIP:   "203.0.113.42",
+		PusherLogin:      "octocat",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(full): %v", err)
+	}
+	got, err := s.DeploymentByID(ctx, depFull.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(full): %v", err)
+	}
+	if got.DeployedByUserID != acct.ID {
+		t.Errorf("deployed_by_user_id = %q, want %q", got.DeployedByUserID, acct.ID)
+	}
+	if got.DeployedVia != "github" {
+		t.Errorf("deployed_via = %q, want %q", got.DeployedVia, "github")
+	}
+	if got.DeployedFromIP != "203.0.113.42" {
+		t.Errorf("deployed_from_ip = %q, want %q", got.DeployedFromIP, "203.0.113.42")
+	}
+	if got.PusherLogin != "octocat" {
+		t.Errorf("pusher_login = %q, want %q", got.PusherLogin, "octocat")
+	}
+
+	// 2. Zero actor payload — anonymous / pre-FK / push-to-main
+	//    with no pusher. Every empty-string Go field must
+	//    collapse to NULL on INSERT (the nullif() chain at
+	//    pgstore.go::CreateDeployment) so the
+	//    deployed_by_user_id FK and the INET parser never see
+	//    a literal ''. The NOT NULL deployed_via column must
+	//    collapse to 'api' via the coalesce() fallback so
+	//    pre-feature rows stay valid without a backfill.
+	depEmpty, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "sha256:actor-empty",
+		Status:      state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(empty): %v", err)
+	}
+	gotEmpty, err := s.DeploymentByID(ctx, depEmpty.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(empty): %v", err)
+	}
+	if gotEmpty.DeployedByUserID != "" {
+		t.Errorf("empty deployed_by_user_id = %q, want \"\"", gotEmpty.DeployedByUserID)
+	}
+	if gotEmpty.DeployedVia != "api" {
+		t.Errorf("empty deployed_via = %q, want %q (coalesce() fallback)", gotEmpty.DeployedVia, "api")
+	}
+	if gotEmpty.DeployedFromIP != "" {
+		t.Errorf("empty deployed_from_ip = %q, want \"\"", gotEmpty.DeployedFromIP)
+	}
+	if gotEmpty.PusherLogin != "" {
+		t.Errorf("empty pusher_login = %q, want \"\"", gotEmpty.PusherLogin)
+	}
+
+	// 3. Closed-set deployed_via CHECK rejection. The DB-side
+	//    constraint (migrations/00305_deployments_actor.sql) is
+	//    the source of truth; the apid handler is expected to
+	//    mirror the vocabulary. We drive the rejection directly
+	//    through the store to confirm the constraint is wired
+	//    (the apid would otherwise silently accept and round-trip
+	//    a malformed value).
+	_, err = s.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "sha256:actor-bad",
+		Status:      state.DeployPending,
+		DeployedVia: "rogue_surface",
+	})
+	if err == nil {
+		t.Errorf("expected CHECK violation on rogue_surface, got nil")
+	}
+
+	// 4. FK rejection: a non-existent account id must fail
+	//    (the FK to accounts(id) enforces referential integrity
+	//    — the dashboard / api handler is expected to resolve
+	//    the session user before reaching the store, but the
+	//    constraint is the source of truth).
+	_, err = s.CreateDeployment(ctx, state.Deployment{
+		AppID:            app.ID,
+		Kind:             state.DeploymentKindImage,
+		ImageDigest:      "sha256:actor-bad-fk",
+		Status:           state.DeployPending,
+		DeployedByUserID: "00000000-0000-0000-0000-000000000000",
+		DeployedVia:      "api",
+	})
+	if err == nil {
+		t.Errorf("expected FK violation on non-existent deployed_by_user_id, got nil")
+	}
+}
+
+// TestPg_DeploymentAuditRoundtrip (issue #976 / ADR-122 /
+// SAFE-RELEASES-E.2) pins the AppendDeploymentAudit + ListDeploymentAudit
+// pgstore surface. Mirrors TestPg_DeploymentActorRoundtrip's shape
+// (write, read back, assert closed-set CHECK rejects, assert
+// cross-deployment filter is honored).
+func TestPg_DeploymentAuditRoundtrip(t *testing.T) {
+	s, ctx := pgStore(t)
+
+	// Generate a deterministic deployment UUID for this test
+	// (the deployment_audit table has no FK to deployments, so
+	// we don't need a real deployment row).
+	deploymentID := uuid.New()
+	otherDeploymentID := uuid.New()
+
+	// 1. Full payload — deploy.created with all fields populated.
+	id1, err := s.AppendDeploymentAudit(ctx, state.DeploymentAudit{
+		DeploymentID: deploymentID,
+		Kind:         state.DeployCreated,
+		Actor:        "apid:dashboard",
+		Data:         json.RawMessage(`{"ref":"sha256:abc","supersedes":""}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendDeploymentAudit: %v", err)
+	}
+	if id1 == 0 {
+		t.Errorf("AppendDeploymentAudit id = 0, want non-zero (Postgres IDENTITY returns)")
+	}
+
+	// 2. Read back via ListDeploymentAudit — exactly one row for
+	// this deployment_id.
+	rows, err := s.ListDeploymentAudit(ctx, deploymentID.String(), 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentAudit: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("ListDeploymentAudit len = %d, want 1", len(rows))
+	}
+	if rows[0].Kind != state.DeployCreated {
+		t.Errorf("rows[0].Kind = %q, want %q", rows[0].Kind, state.DeployCreated)
+	}
+	if rows[0].Actor != "apid:dashboard" {
+		t.Errorf("rows[0].Actor = %q, want %q", rows[0].Actor, "apid:dashboard")
+	}
+	if rows[0].DeploymentID != deploymentID {
+		t.Errorf("rows[0].DeploymentID = %v, want %v", rows[0].DeploymentID, deploymentID)
+	}
+	if string(rows[0].Data) != `{"ref":"sha256:abc","supersedes":""}` {
+		t.Errorf("rows[0].Data = %q, want verbatim payload", rows[0].Data)
+	}
+
+	// 3. Cross-deployment filter — write a row for a different
+	// deployment_id and assert ListDeploymentAudit does NOT
+	// bleed it in.
+	if _, err := s.AppendDeploymentAudit(ctx, state.DeploymentAudit{
+		DeploymentID: otherDeploymentID,
+		Kind:         state.DeploySourceRef,
+		Actor:        "apid:cli",
+		Data:         json.RawMessage(`{"ref":"refs/heads/main"}`),
+	}); err != nil {
+		t.Fatalf("AppendDeploymentAudit (other): %v", err)
+	}
+	rowsScoped, err := s.ListDeploymentAudit(ctx, deploymentID.String(), 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentAudit (scoped): %v", err)
+	}
+	if len(rowsScoped) != 1 {
+		t.Errorf("ListDeploymentAudit (scoped) len = %d, want 1 (other-deployment row must NOT bleed in)", len(rowsScoped))
+	}
+
+	// 4. Closed-set kind CHECK rejection. Drive the violation
+	// directly through the store to confirm the constraint is
+	// wired (the apid handler is expected to mirror the
+	// vocabulary, but the constraint is the source of truth).
+	_, err = s.AppendDeploymentAudit(ctx, state.DeploymentAudit{
+		DeploymentID: deploymentID,
+		Kind:         "rogue_audit_kind",
+		Actor:        "apid",
+	})
+	if err == nil {
+		t.Errorf("expected CHECK violation on rogue_audit_kind, got nil")
+	}
+}

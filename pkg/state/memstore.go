@@ -259,6 +259,14 @@ type MemStore struct {
 	// section that drops the accounts row, mirroring the PG
 	// atomicity contract.
 	auditLog []AuditLog
+	// deploymentAudit is the in-memory mirror of the deployment_audit
+	// table (migrations/00326_deployment_audit.sql, issue #976 /
+	// ADR-122 / SAFE-RELEASES-E.2). Same shape as the PG row; the
+	// memstore is the test-backend so handler tests can exercise the
+	// read path without spinning Postgres. Append is mu-guarded;
+	// reads are also mu-guarded so the loop is consistent with
+	// the underlying slice growth under concurrent append.
+	deploymentAudit []DeploymentAudit
 	// usage holds one row per (instance, minute) — mirrors PgStore's
 	// usage_minutes PK. Aggregated into `usageByMonth` (per app, per
 	// calendar month) so UsageByMonth can keep returning the spec §10
@@ -8200,6 +8208,72 @@ func (m *MemStore) ListAuditLog(_ context.Context, filter AuditLogFilter) ([]Aud
 		}
 		// Defensive copy so the caller's slice doesn't alias the
 		// in-memory store row.
+		clone := row
+		if len(row.Data) > 0 {
+			clone.Data = append(json.RawMessage(nil), row.Data...)
+		}
+		out = append(out, clone)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// AppendDeploymentAudit (issue #976 / ADR-122 / SAFE-RELEASES-E.2)
+// appends one row to the in-memory deployment_audit mirror. The Data
+// json.RawMessage is copied so a caller can reuse the input slice
+// without aliasing the stored row. The id is assigned by a monotonic
+// counter so handler tests can assert the order without racing the
+// identity sequence. The append is guarded by m.mu.
+func (m *MemStore) AppendDeploymentAudit(_ context.Context, entry DeploymentAudit) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var dataCopy json.RawMessage
+	if len(entry.Data) > 0 {
+		dataCopy = append(json.RawMessage(nil), entry.Data...)
+	}
+	at := entry.At
+	if at.IsZero() {
+		at = time.Now()
+	}
+	id := int64(len(m.deploymentAudit) + 1)
+	m.deploymentAudit = append(m.deploymentAudit, DeploymentAudit{
+		ID:           id,
+		DeploymentID: entry.DeploymentID,
+		AccountID:    entry.AccountID,
+		Kind:         entry.Kind,
+		Actor:        entry.Actor,
+		At:           at,
+		Data:         dataCopy,
+	})
+	return id, nil
+}
+
+// ListDeploymentAudit (issue #976 / ADR-122 / SAFE-RELEASES-E.2)
+// is the dashboard read path for the deployment_audit mirror. Walks
+// m.deploymentAudit in reverse (newest-first) and filters by
+// deployment_id, ordered (at DESC, id DESC) to match the pgstore
+// shape. limit > 0 caps the page; <= 0 means 100 (the
+// DeploymentAuditPageSizeMax default in the customer-facing handler).
+//
+// Returned slice is a fresh copy of each DeploymentAudit row
+// (Data included) so a caller can hold it past the next store
+// mutation.
+func (m *MemStore) ListDeploymentAudit(_ context.Context, deploymentID string, limit int) ([]DeploymentAudit, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if limit <= 0 {
+		limit = 100
+	}
+	var out []DeploymentAudit
+	for i := len(m.deploymentAudit) - 1; i >= 0; i-- {
+		row := m.deploymentAudit[i]
+		if row.DeploymentID.String() != deploymentID {
+			continue
+		}
 		clone := row
 		if len(row.Data) > 0 {
 			clone.Data = append(json.RawMessage(nil), row.Data...)

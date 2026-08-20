@@ -3206,6 +3206,44 @@ type Store interface {
 	// the read path without spinning Postgres.
 	InsertAuditLog(ctx context.Context, entry AuditLog) error
 
+	// AppendDeploymentAudit (issue #976 / ADR-122 / SAFE-RELEASES-E.2)
+	// inserts one row of the deployment_audit table
+	// (migrations/00326_deployment_audit.sql). The table is the
+	// per-deployment counterpart of the events stream: events rows
+	// are per-emit, indexed for subject lookups; deployment_audit
+	// rows are per-deployment, indexed for (deployment_id, at DESC)
+	// timeline reads. The two coexist — AppendDeploymentAudit is
+	// the structured counterpart of audit.EmitAs for the deploy
+	// lifecycle.
+	//
+	// kind must be in the closed set enforced by
+	// deployment_audit_kind_chk; the handler-level type alias
+	// DeploymentAuditKind (pkg/state/types.go, defined alongside
+	// this method) prevents drift between the Go vocabulary and
+	// the SQL CHECK.
+	//
+	// Returns the id Postgres assigned. MemStore picks a sequential
+	// id so the round-trip test pins both backends to the same
+	// shape.
+	AppendDeploymentAudit(ctx context.Context, entry DeploymentAudit) (int64, error)
+
+	// ListDeploymentAudit (issue #976 / ADR-122 / SAFE-RELEASES-E.2)
+	// returns deployment_audit rows for one deployment, ordered
+	// (at DESC, id DESC) — same tiebreaker discipline as
+	// ListAuditLog. The deployment_audit_deployment_idx
+	// ((deployment_id, at DESC), migration 00326) backs the query
+	// so the timeline endpoint stays sub-millisecond at one-box
+	// scale.
+	//
+	// limit > 0 caps the page; <= 0 means "no row cap" — caller
+	// must bound via the per-deployment retention (90 days per
+	// ADR-122 §Consequences) or the customer-facing handler cap
+	// (DeploymentAuditPageSizeMax). The deployment_id has no FK
+	// to deployments(id), so a deployment row deleted by 90-day
+	// GC can still have its audit rows listed — the dashboard
+	// shows them under the orphaned-deployment_id sentinel.
+	ListDeploymentAudit(ctx context.Context, deploymentID string, limit int) ([]DeploymentAudit, error)
+
 	// AppendDeploymentStage (ADR-117, migration 00302) appends a
 	// closed stage transition to deployments.stage_state and returns
 	// the new row. The `from` and `to` parameters are the

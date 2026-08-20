@@ -5513,6 +5513,95 @@ func TestMemStore_DeploymentActorRoundtrip(t *testing.T) {
 	}
 }
 
+// TestMemStore_DeploymentAuditRoundtrip (issue #976 / ADR-122 /
+// SAFE-RELEASES-E.2) pins the AppendDeploymentAudit + ListDeploymentAudit
+// memstore surface. MemStore stores the DeploymentAudit struct
+// directly in m.deploymentAudit; the "round-trip" is a write+read
+// of the struct fields. The closed-set kind CHECK and the no-FK
+// shape are DB-only (TestMigrations_00326_DeploymentAudit covers
+// those); here we only assert the in-memory shape is consistent
+// with the new methods.
+func TestMemStore_DeploymentAuditRoundtrip(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	deploymentID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
+	accountID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+	// (1) Write a deploy.created row with full payload — every field
+	// round-trips cleanly through the in-memory slice.
+	id1, err := m.AppendDeploymentAudit(ctx, DeploymentAudit{
+		DeploymentID: deploymentID,
+		AccountID:    &accountID,
+		Kind:         DeployCreated,
+		Actor:        "apid:dashboard",
+		Data:         json.RawMessage(`{"ref":"sha256:abc","supersedes":""}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendDeploymentAudit: %v", err)
+	}
+	if id1 == 0 {
+		t.Errorf("AppendDeploymentAudit id = 0, want non-zero (monotonic counter)")
+	}
+
+	// (2) Write a deploy.source_ref row for a different deployment —
+	// the ListDeploymentAudit filter must NOT cross-contaminate.
+	otherDeploymentID := uuid.MustParse("99999999-8888-7777-6666-555555555555")
+	if _, err := m.AppendDeploymentAudit(ctx, DeploymentAudit{
+		DeploymentID: otherDeploymentID,
+		AccountID:    &accountID,
+		Kind:         DeploySourceRef,
+		Actor:        "apid:cli",
+		Data:         json.RawMessage(`{"ref":"refs/heads/main"}`),
+	}); err != nil {
+		t.Fatalf("AppendDeploymentAudit (other): %v", err)
+	}
+
+	// (3) ListDeploymentAudit for the original deployment returns
+	// exactly the one row we wrote (the other-deployment row is
+	// filtered out by deployment_id).
+	rows, err := m.ListDeploymentAudit(ctx, deploymentID.String(), 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentAudit: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("ListDeploymentAudit len = %d, want 1 (other-deployment row must NOT bleed in)", len(rows))
+	}
+	if rows[0].Kind != DeployCreated {
+		t.Errorf("rows[0].Kind = %q, want %q", rows[0].Kind, DeployCreated)
+	}
+	if rows[0].Actor != "apid:dashboard" {
+		t.Errorf("rows[0].Actor = %q, want %q", rows[0].Actor, "apid:dashboard")
+	}
+	if rows[0].DeploymentID != deploymentID {
+		t.Errorf("rows[0].DeploymentID = %v, want %v", rows[0].DeploymentID, deploymentID)
+	}
+	if rows[0].AccountID == nil || *rows[0].AccountID != accountID {
+		t.Errorf("rows[0].AccountID = %v, want %v", rows[0].AccountID, accountID)
+	}
+	if string(rows[0].Data) != `{"ref":"sha256:abc","supersedes":""}` {
+		t.Errorf("rows[0].Data = %q, want verbatim payload", rows[0].Data)
+	}
+
+	// (4) ListDeploymentAudit with limit=0 caps to the 100-row
+	// default (MemStore sets limit=100 when caller passes <= 0).
+	// The single row in scope stays under that ceiling.
+	rowsLimited, err := m.ListDeploymentAudit(ctx, deploymentID.String(), 1)
+	if err != nil {
+		t.Fatalf("ListDeploymentAudit(limit=1): %v", err)
+	}
+	if len(rowsLimited) != 1 {
+		t.Errorf("ListDeploymentAudit(limit=1) len = %d, want 1", len(rowsLimited))
+	}
+
+	// (5) Zero At — MemStore defaults to time.Now() (the
+	// pgstore path uses the column default coalesce($5, now())).
+	// Assert At is non-zero on the read-back.
+	if rows[0].At.IsZero() {
+		t.Errorf("rows[0].At is zero — MemStore must default At to time.Now() when caller omits it")
+	}
+}
+
 // TestMemStoreUpdateTrigger_FilterCriteriaPersists is the regression
 // test for REVIEW-FIX MED-1 (PR #993 / issue #757 closure): the
 // UpdateTrigger signature gained a filterCriteria *[]byte argument
