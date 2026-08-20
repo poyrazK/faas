@@ -218,6 +218,7 @@ var vmmdBinary string
 // a zero-key Warn — that path was never gated.
 func envForAPID(t *testing.T, dbURL string, extra ...string) []string {
 	t.Helper()
+	hostHMACPath := testHostHMACKeyFile(t)
 	env := []string{
 		"DATABASE_URL=" + dbURL,
 		"FAAS_SKIP_SOCKET_GROUP=1",      // harness convention; see harness.go:498
@@ -226,6 +227,12 @@ func envForAPID(t *testing.T, dbURL string, extra ...string) []string {
 		"HOME=" + os.Getenv("HOME"),
 		"FAAS_APPS_DOMAIN=apps.test.example",
 		"FAAS_MFA_RECOVERY_HMAC_KEY=" + testRecoveryHMACKeyHex(t),
+		// ADR-117 PR-C: apid refuses to start without the per-host
+		// HMAC key (loadHostHMACKey in cmd/apid/main.go). Mirror the
+		// audit + recovery key posture: a fresh 32-byte key in
+		// t.TempDir() with mode 0400. The key is private to the
+		// test process — never logged, never re-used across tests.
+		"FAAS_HOST_HMAC_KEY_PATH=" + hostHMACPath,
 		// PR #962 CRIT-2 — paddle.NewProvider rejects empty apiKey. Mirror
 		// of pkg/e2etest/harness.go:testEnvCommon so this file's parallel
 		// apid boot also gets the placeholder keys. The pdl_… shape with
@@ -237,6 +244,26 @@ func envForAPID(t *testing.T, dbURL string, extra ...string) []string {
 	}
 	env = append(env, extra...)
 	return env
+}
+
+// testHostHMACKeyFile writes a fresh 32-byte raw HMAC key into a
+// t.TempDir() file with mode 0400 (the production posture for
+// /etc/faas/secrets/host.hmac.key) and returns the path. The
+// per-test uniqueness is intentional — the value_hash discriminator
+// is keyed on this file's bytes, so re-using across tests would
+// leak state.
+func testHostHMACKeyFile(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "host.hmac.key")
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatalf("e2e: crypto/rand for host HMAC key: %v", err)
+	}
+	if err := writeWithPerm(t, path, key, 0o400); err != nil {
+		t.Fatalf("write host.hmac.key: %v", err)
+	}
+	return path
 }
 
 // testRecoveryHMACKeyHex returns a fresh 32-byte hex string for the
