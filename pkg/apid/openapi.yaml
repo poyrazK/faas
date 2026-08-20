@@ -3733,7 +3733,7 @@ paths:
                 $ref: '#/components/schemas/DeploymentPreviewURL'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404':
-          description: Deployment row missing or cross-account probe (IDOR-safe; never 403).
+          description: Deployment URL row missing or cross-account probe (IDOR-safe; never 403).
           content:
             application/problem+json:
               schema:
@@ -10530,9 +10530,8 @@ components:
           type: boolean
           description: 'True iff the deployment exists, belongs to the caller, and has a status in {pending, building, imaging, snapshotting, live} (the same predicate as state.Deployment.DeploymentPreviewActive the cert allowlist consults).'
         last_checked_at:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
           description: 'When certmagic last validated the cert under host. Null for never-touched hostnames. NOT a latency probe — the cert NotAfter is the load-bearing expiry.'
 
     # ─── Instances ────────────────────────────────────────────────────────

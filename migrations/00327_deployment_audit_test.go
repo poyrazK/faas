@@ -8,7 +8,10 @@
 //  3. The closed-set deployment_audit_kind_chk CHECK covers the 8
 //     kinds the meterd orchestrator emits.
 //  4. The (deployment_id, at DESC) timeline index lands.
-//  5. The 90-day GC partial index lands with the WHERE clause.
+//  5. The 90-day GC index lands on (at) WITHOUT a WHERE clause —
+//     partial-index predicates must use IMMUTABLE functions, and
+//     now() is VOLATILE. The meterd orchestrator enforces the 90-day
+//     retention via a DELETE WHERE clause at query time.
 //  6. deployment_id has NO FK to deployments(id) (audit rows must
 //     outlive the deployment row — mirrors audit_log / accounts
 //     precedent from migration 00163 / issue #755 / PR-5).
@@ -135,10 +138,16 @@ func TestMigrations_00320_DeploymentAudit(t *testing.T) {
 		t.Errorf("deployment_audit_deployment_idx def %q missing (deployment_id, at DESC)", timelineIdx)
 	}
 
-	// (5) 90-day GC partial index. ADR-122 §Consequences fixes
-	// retention at 90 days; the migration must encode that in
-	// the WHERE clause so a future retention change is an
-	// explicit migration, not a silent SQL drift.
+	// (5) 90-day GC index. ADR-122 §Consequences fixes retention at 90
+	// days; the meterd orchestrator enforces it via a DELETE WHERE
+	// at < now() - INTERVAL '90 days' every 6h. The migration's index
+	// is on the (at) column alone — partial-index predicates must use
+	// IMMUTABLE functions only, and now() is VOLATILE, so the time
+	// bound moves to the DELETE WHERE clause instead of living in
+	// the index. The test pins that the index exists and orders on
+	// the at column; the 90-day literal lives in the meterd query
+	// (not in the schema) so a future retention change is one source-
+	// line edit, not a migration.
 	var gcIdx string
 	err = pool.QueryRow(ctx, `
 		select indexdef
@@ -149,8 +158,11 @@ func TestMigrations_00320_DeploymentAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query deployment_audit_at_gc_idx: %v (GC index must have landed)", err)
 	}
-	if !strings.Contains(gcIdx, "90 days") {
-		t.Errorf("deployment_audit_at_gc_idx def %q missing 90-day retention predicate", gcIdx)
+	if !strings.Contains(gcIdx, "(at)") {
+		t.Errorf("deployment_audit_at_gc_idx def %q missing (at) column", gcIdx)
+	}
+	if strings.Contains(gcIdx, "WHERE") {
+		t.Errorf("deployment_audit_at_gc_idx def %q carries a WHERE predicate (PG rejects now()-based predicates in partial indexes; the time bound moves to the meterd DELETE)", gcIdx)
 	}
 
 	// (6) deployment_id has NO FK to deployments(id). Mirror the

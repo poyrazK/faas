@@ -82,12 +82,15 @@ CREATE INDEX IF NOT EXISTS deployment_audit_deployment_idx
     ON deployment_audit (deployment_id, at DESC);
 
 -- GC sweep index: meterd orchestrator runs DELETE FROM deployment_audit
--- WHERE at < now() - INTERVAL '90 days' every 6h. The partial index
--- keeps the sweep cost bounded — only the GC-eligible rows are in
--- the index, not the live rows.
+-- WHERE at < now() - INTERVAL '90 days' every 6h. PG requires partial-
+-- index predicates to use IMMUTABLE functions only, and now() is
+-- VOLATILE — so the WHERE clause cannot carry the time-bound
+-- predicate (the index would be rejected at CREATE INDEX time).
+-- The meterd sweep filters on at < now() - INTERVAL '90 days' at
+-- query time; the index below keeps the at column ordered so the
+-- DELETE range scan stays sub-millisecond at the 90-day tail.
 CREATE INDEX IF NOT EXISTS deployment_audit_at_gc_idx
-    ON deployment_audit (at)
-    WHERE at < now() - INTERVAL '90 days';
+    ON deployment_audit (at);
 
 -- +goose StatementEnd
 

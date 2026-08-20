@@ -153,7 +153,7 @@ func cmdOpenapiDiff(args []string) int {
 				_, _ = fmt.Fprintf(os.Stderr, "marshal: %v\n", err)
 				return 1
 			}
-			fmt.Fprintln(osStdout, string(out))
+			_, _ = fmt.Fprintln(osStdout, string(out))
 		}
 	} else {
 		// One row per break. Empty result prints nothing.
@@ -168,13 +168,13 @@ func cmdOpenapiDiff(args []string) int {
 			fmt.Fprintf(osStdout, "%s %s %s %s %s\n",
 				marker, b.Path, b.Method, b.Status, b.Kind)
 			if b.PathInSchema != "" {
-				fmt.Fprintf(osStdout, "    at: %s\n", b.PathInSchema)
+				_, _ = fmt.Fprintf(osStdout, "    at: %s\n", b.PathInSchema)
 			}
 			if b.Before != nil {
-				fmt.Fprintf(osStdout, "    before: %v\n", b.Before)
+				_, _ = fmt.Fprintf(osStdout, "    before: %v\n", b.Before)
 			}
 			if b.After != nil {
-				fmt.Fprintf(osStdout, "    after:  %v\n", b.After)
+				_, _ = fmt.Fprintf(osStdout, "    after:  %v\n", b.After)
 			}
 		}
 	}

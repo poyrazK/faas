@@ -149,7 +149,7 @@ func cmdDeploysShow(args []string) int {
 		// Print URL on stdout OR an empty line when the
 		// deployment isn't preview-active / the zone is
 		// disabled. Shell consumers branch on `wc -c`.
-		fmt.Fprintln(osStdout, u.URL)
+		_, _ = fmt.Fprintln(osStdout, u.URL)
 		// Exit 0 either way: an empty URL line means the
 		// deployment simply isn't previewable right now
 		// (failed/superseded), which is a valid operator
