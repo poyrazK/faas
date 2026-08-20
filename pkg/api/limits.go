@@ -1038,6 +1038,19 @@ const UpstreamFitMinDeltaMs = 5
 // ADR-098 §263.
 const UpstreamAffinityTTL = 30 * time.Second
 
+// MaxRabbitMQPrefetch (issue #757 follow-on, Stage 2 PR-A review
+// finding #5) is the global ceiling on the amqp091-go
+// channel.Qos(prefetchCount) bound applied to every kind=rabbitmq
+// trigger. Defends schedd's per-trigger goroutine/buffer budget
+// against a misconfigured manifest asking for unbounded prefetch.
+// Matches the [1, 1000] range the gregalemanifest validator
+// enforces (pkg/gregalemanifest/manifest.go — RabbitMQConfig
+// case); the validator reads this constant so the ceiling lives
+// in exactly one place. Top-level constant (not per-plan) because
+// the budget is a schedd-node resource, not a per-tenant quota.
+// Added to limits.go per CLAUDE.md "every limit lives here" rule.
+const MaxRabbitMQPrefetch = 1000
+
 // planLimits is the authoritative table. Values: spec §1 quota row, §4.1 rate
 // limits, §4.3 idle timeouts, §4.6 app-layer caps, §7 egress, §10 prices.
 //
