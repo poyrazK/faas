@@ -875,3 +875,111 @@ func TestRender_DeploymentDetail_StagesAbsent(t *testing.T) {
 		t.Errorf("legacy row rendered <h2>Stages</h2> heading — gate is broken\n--- body ---\n%s", body)
 	}
 }
+
+// TestRender_DeploymentDetail_PreviewURLCopyChip pins the
+// SAFE-RELEASES-C.3 dashboard surface (issue #976 / ADR-122).
+// Two assertions:
+//
+//   - Alive=true → "preview-live" badge + readonly <input> with the
+//     resolved host + "copy" button. Pinned via the CSS class
+//     names + the host string (a drift in the gate would either
+//     drop the chip or render the wrong shape).
+//   - Alive=false → "preview-closed" badge + "(preview closed —
+//     deploy failed)" label. NO copy button. The "preview-live"
+//     badge MUST NOT appear when Alive=false.
+//
+// The second subtest pins the template's three-state model
+// (Alive=true / Alive=false / ZoneDisabled). A regression that
+// always rendered "copy" or always rendered "preview-closed"
+// would break this; the assertion is exactly the difference
+// between the two states.
+func TestRender_DeploymentDetail_PreviewURLCopyChip(t *testing.T) {
+	t.Run("alive=true", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		log := slog.New(slog.NewTextHandler(io.Discard, nil))
+		page := dashboard.Page{
+			Title: "Deployment d-live",
+			Body:  "deployment_detail",
+			Data: dashboard.DeploymentDetailData{
+				App: dashboard.AppListItem{Slug: "url-copy"},
+				Deployment: dashboard.DeploymentItem{
+					ID:        "d-live",
+					Status:    "live",
+					Kind:      "function",
+					CreatedAt: "2026-08-19T18:00:00Z",
+				},
+				PreviewURL: &dashboard.DeploymentPreviewURL{
+					Host:  "deploy-3.url-copy.gregale.dev",
+					URL:   "https://deploy-3.url-copy.gregale.dev",
+					Alive: true,
+				},
+			},
+		}
+		if err := dashboard.Render(rec, log, "", page); err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		body := rec.Body.String()
+		for _, want := range []string{
+			`<span class="badge preview-live">preview</span>`,
+			"deploy-3.url-copy.gregale.dev",
+			`class="preview-copy"`,
+			`>copy<`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("alive=true body missing %q\n--- body ---\n%s", want, body)
+			}
+		}
+		// Closed-state label MUST NOT render alongside the live chip
+		// — a regression that always rendered "preview closed" plus
+		// the input would produce both strings.
+		if strings.Contains(body, "preview closed") {
+			t.Errorf("alive=true body should not render 'preview closed' label\n--- body ---\n%s", body)
+		}
+	})
+	t.Run("alive=false", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		log := slog.New(slog.NewTextHandler(io.Discard, nil))
+		page := dashboard.Page{
+			Title: "Deployment d-failed",
+			Body:  "deployment_detail",
+			Data: dashboard.DeploymentDetailData{
+				App: dashboard.AppListItem{Slug: "url-copy"},
+				Deployment: dashboard.DeploymentItem{
+					ID:        "d-failed",
+					Status:    "failed",
+					Kind:      "function",
+					CreatedAt: "2026-08-19T18:00:00Z",
+				},
+				PreviewURL: &dashboard.DeploymentPreviewURL{
+					Host:  "",
+					URL:   "",
+					Alive: false,
+				},
+			},
+		}
+		if err := dashboard.Render(rec, log, "", page); err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		body := rec.Body.String()
+		for _, want := range []string{
+			`<span class="badge preview-closed">preview</span>`,
+			"preview closed — deploy failed",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("alive=false body missing %q\n--- body ---\n%s", want, body)
+			}
+		}
+		// The live-state chip / input MUST NOT render. Anchor on the
+		// JSX span attribute (matches what the template emits) rather
+		// than the substring "preview-live", which would also match
+		// the .badge.preview-live CSS rule in the inline <style>
+		// block (and trip the assertion even though the gate is
+		// correct).
+		if strings.Contains(body, `<span class="badge preview-live">`) {
+			t.Errorf("alive=false body rendered <span class=\"badge preview-live\"> — gate is broken\n--- body ---\n%s", body)
+		}
+		if strings.Contains(body, `class="preview-host"`) {
+			t.Errorf("alive=false body should not render copyable input\n--- body ---\n%s", body)
+		}
+	})
+}
