@@ -2548,14 +2548,19 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// source values are the closed trigger-kind vocabulary
 	// (see pkg/events/trigger.go + pkg/gregalemanifest).
 	esmSourceClosedSet := []string{
-		"kafka", "nats", "redis_streams", "sqs_compat", "queue", "cron",
+		"cron", "kafka", "nats", "redis_streams", "sqs_compat", "queue",
 		// Stage 2 managed-service adapters (issue #757 follow-on,
-		// PR-A). Order mirrors pkg/api.TriggerKind so a future
-		// closed-vocab audit can diff them line-by-line. Each new
-		// source pre-instantiates the (success, empty, error)
-		// × (source, outcome) counters + (source, shard) lag
-		// histogram so the rows surface in /metrics from process
-		// start. See pkg/sched/POLLER_ADAPTER_GUIDE.md §8.
+		// PR-A). Order mirrors pkg/api.TriggerKind + the
+		// pkg/gregalemanifest duplicate so a future closed-vocab
+		// audit can diff them line-by-line. PR #1004 review
+		// finding #8: the original PR widened the set but kept
+		// the legacy PR-#993 ordering (kafka,nats,...,cron at the
+		// tail); this reorder puts cron first to match the
+		// canonical vocab. Each new source pre-instantiates the
+		// (success, empty, error) × (source, outcome) counters +
+		// (source, shard) lag histogram so the rows surface in
+		// /metrics from process start. See
+		// pkg/sched/POLLER_ADAPTER_GUIDE.md §8.
 		"msk", "kinesis", "dynamodb_streams", "rabbitmq", "documentdb",
 	}
 	esmOutcomeClosedSet := []string{"success", "empty", "error"}
