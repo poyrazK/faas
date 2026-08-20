@@ -37,6 +37,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 )
 
@@ -419,6 +420,13 @@ type MSKConfig struct {
 // streams must create one trigger per shard — shard auto-discovery
 // stays out of Stage 2). The hand-rolled SigV4 client in
 // pkg/awssigv4 reads credentials from env / shared file / IAM role.
+//
+// G2 (env secrets sealed at rest, §17): this struct carries NO
+// inline credentials. AWS access keys live in the standard SigV4
+// resolution chain (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env
+// vars, ~/.aws/credentials, or IMDS for the IAM role). Those are
+// already sealed by the platform's existing secret-handling posture;
+// this struct is credential-free by design.
 type KinesisConfig struct {
 	Region    string `json:"region"`
 	StreamARN string `json:"stream_arn"`
@@ -429,6 +437,9 @@ type KinesisConfig struct {
 // (issue #757 follow-on). Region is the AWS region; TableARN is the
 // DynamoDB table ARN; ShardID is the stream shard id. Same SigV4
 // credential resolution as Kinesis.
+//
+// G2 (env secrets sealed at rest, §17): credential-free by design —
+// see KinesisConfig note. Inline secrets would be a planning bug.
 type DynamoDBStreamsConfig struct {
 	Region   string `json:"region"`
 	TableARN string `json:"table_arn"`
@@ -436,11 +447,19 @@ type DynamoDBStreamsConfig struct {
 }
 
 // RabbitMQConfig is the per-kind config for kind=rabbitmq (issue #757
-// follow-on). URL is the amqp:// or amqps:// endpoint; Queue is the
-// queue to consume; Exchange is optional (default exchange if empty);
+// follow-on). URL is the amqp:// or amqps:// endpoint (may embed
+// username:password — see G2 note below); Queue is the queue to
+// consume; Exchange is optional (default exchange if empty);
 // ConsumerTag identifies this consumer in management UI; PrefetchCount
-// bounds the QoS prefetch (default 50). amqp091-go handles
-// reconnection internally.
+// bounds the QoS prefetch (default 50, capped at api.MaxRabbitMQPrefetch).
+// amqp091-go handles reconnection internally.
+//
+// G2 (env secrets sealed at rest, §17): URL may carry embedded SASL
+// credentials and is currently persisted plaintext in
+// triggers.config jsonb. ADR-113 PR-B will introduce per-field
+// sealing (envelope encryption keyed by KMS / Vault) — until then,
+// treat gregale.yaml as a secret-bearing file and keep it out of git
+// in any deployment whose URL includes a real password.
 type RabbitMQConfig struct {
 	URL           string `json:"url"`
 	Queue         string `json:"queue"`
@@ -450,11 +469,20 @@ type RabbitMQConfig struct {
 }
 
 // DocumentDBConfig is the per-kind config for kind=documentdb
-// (issue #757 follow-on). URI is the mongodb:// connection string with
+// (issue #757 follow-on). URI is the mongodb:// connection string
+// (may embed username:password — see G2 note below) with
 // tls=true&tlsCAFile=...; Database and Collection scope the change
 // stream; Pipeline is an optional aggregation filter (default empty =
 // all change events); ResumeToken is the optional resume position from
-// a prior run.
+// a prior run (opaque []byte — not a credential).
+//
+// G2 (env secrets sealed at rest, §17): URI may carry embedded SCRAM
+// credentials and is currently persisted plaintext in
+// triggers.config jsonb. ADR-113 PR-B will introduce per-field
+// sealing. Until then, treat gregale.yaml as a secret-bearing file
+// when the URI carries a real password. ResumeToken is durable
+// CDC state (not a credential) — it is intentionally plaintext and
+// will remain so across the PR-B sealing work.
 type DocumentDBConfig struct {
 	URI         string           `json:"uri"`
 	Database    string           `json:"database"`
@@ -836,8 +864,8 @@ func (t Trigger) validateKindConfig(idx int) error {
 		if c.Queue == "" {
 			return fmt.Errorf("trigger[%d]: rabbitmq config requires non-empty queue", idx)
 		}
-		if c.PrefetchCount != 0 && (c.PrefetchCount < 1 || c.PrefetchCount > 1000) {
-			return fmt.Errorf("trigger[%d]: rabbitmq prefetch_count=%d out of range [1, 1000]", idx, c.PrefetchCount)
+		if c.PrefetchCount != 0 && (c.PrefetchCount < 1 || c.PrefetchCount > api.MaxRabbitMQPrefetch) {
+			return fmt.Errorf("trigger[%d]: rabbitmq prefetch_count=%d out of range [1, %d]", idx, c.PrefetchCount, api.MaxRabbitMQPrefetch)
 		}
 		return nil
 	case TriggerKindDocumentDB:
