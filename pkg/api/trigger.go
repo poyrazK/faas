@@ -60,23 +60,23 @@ import (
 type TriggerKind string
 
 const (
-	TriggerKindCron             TriggerKind = "cron"
-	TriggerKindKafka            TriggerKind = "kafka"
-	TriggerKindNATS             TriggerKind = "nats"
-	TriggerKindRedisStreams     TriggerKind = "redis_streams"
-	TriggerKindSQSCompat        TriggerKind = "sqs_compat"
-	TriggerKindQueue            TriggerKind = "queue"
+	TriggerKindCron         TriggerKind = "cron"
+	TriggerKindKafka        TriggerKind = "kafka"
+	TriggerKindNATS         TriggerKind = "nats"
+	TriggerKindRedisStreams TriggerKind = "redis_streams"
+	TriggerKindSQSCompat    TriggerKind = "sqs_compat"
+	TriggerKindQueue        TriggerKind = "queue"
 	// Stage 2 managed-service adapters (issue #757 follow-on,
 	// PR-A). MSK is Kafka-wire over IAM; Kinesis and DynamoDB
 	// Streams use hand-rolled SigV4 (pkg/awssigv4); RabbitMQ uses
 	// amqp091-go; DocumentDB uses mongo-driver against the
 	// change-stream resume-token. See docs/adr/118-trigger-ops-vocabulary.md
 	// §"Stage 2 sources" for the per-adapter design rationale.
-	TriggerKindMSK              TriggerKind = "msk"
-	TriggerKindKinesis          TriggerKind = "kinesis"
-	TriggerKindDynamoDBStreams  TriggerKind = "dynamodb_streams"
-	TriggerKindRabbitMQ         TriggerKind = "rabbitmq"
-	TriggerKindDocumentDB       TriggerKind = "documentdb"
+	TriggerKindMSK             TriggerKind = "msk"
+	TriggerKindKinesis         TriggerKind = "kinesis"
+	TriggerKindDynamoDBStreams TriggerKind = "dynamodb_streams"
+	TriggerKindRabbitMQ        TriggerKind = "rabbitmq"
+	TriggerKindDocumentDB      TriggerKind = "documentdb"
 )
 
 // BrokerPoisonStrategy is the closed-vocabulary carrier for the

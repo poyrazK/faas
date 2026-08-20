@@ -420,9 +420,9 @@ type MSKConfig struct {
 // stays out of Stage 2). The hand-rolled SigV4 client in
 // pkg/awssigv4 reads credentials from env / shared file / IAM role.
 type KinesisConfig struct {
-	Region   string `json:"region"`
+	Region    string `json:"region"`
 	StreamARN string `json:"stream_arn"`
-	ShardID  string `json:"shard_id"`
+	ShardID   string `json:"shard_id"`
 }
 
 // DynamoDBStreamsConfig is the per-kind config for kind=dynamodb_streams
@@ -456,11 +456,11 @@ type RabbitMQConfig struct {
 // all change events); ResumeToken is the optional resume position from
 // a prior run.
 type DocumentDBConfig struct {
-	URI         string   `json:"uri"`
-	Database    string   `json:"database"`
-	Collection  string   `json:"collection"`
+	URI         string           `json:"uri"`
+	Database    string           `json:"database"`
+	Collection  string           `json:"collection"`
 	Pipeline    []map[string]any `json:"pipeline,omitempty"`
-	ResumeToken []byte   `json:"resume_token,omitempty"`
+	ResumeToken []byte           `json:"resume_token,omitempty"`
 }
 
 // Manifest is the parsed `gregale.yaml` root. Only `triggers` is
