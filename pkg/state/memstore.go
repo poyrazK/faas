@@ -9466,7 +9466,7 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 // scope-aware sibling (ADR-117 env-diff matrix, PR-C). Mirrors
 // UpsertAppSecretWithKidInScope but stamps both kid and
 // value_hash alongside ciphertext. Empty valueHash is stored as
-// the zero-value (matches the SQL `NULLIF($7, '')` for the
+// the zero-value (matches the SQL `NULLIF($7, ”)` for the
 // pgstore sibling) so pre-PR-C callers preserve their prior
 // behavior.
 func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {

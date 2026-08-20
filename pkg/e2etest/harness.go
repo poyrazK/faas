@@ -113,8 +113,8 @@ type Harness struct {
 	// populated in Start / StartWithEnv; tests that build their
 	// own harness struct must set it themselves.
 	HostHMACKeyPath string
-	ImagedTmp          string // FAAS_APPS_ROOT
-	BuilderdCfg        string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
+	ImagedTmp       string // FAAS_APPS_ROOT
+	BuilderdCfg     string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
 
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
@@ -619,7 +619,21 @@ const testDomain = "apps.test.example"
 // (memory: cross-pr-slot-gate-fence-pattern) is that the only line a
 // migration land touches in this file is this constant + the doc-comment
 // history above.
-const e2eMigrationTarget = 346
+//
+// PR #990 (ADR-117 PR-C, env-diff matrix) bumped 313 → 327 → 340 → 347
+// across nine rebump rounds. The value_hash column lands at
+// 00347_app_secret_value_hash.sql (HMAC-SHA256 of plaintext, truncated
+// to 16 hex — the trustworthy value-equality discriminator for the
+// GET /v1/apps/{slug}/env-diff matrix). Slot rebump chain
+// 291 → 296 → 303 → 309 → 314 → 321 → 322 → 327 → 340 → 347, with
+// alt-name reservations (NNNNN_no_op_slot_reservation.sql, ADR-041
+// carve-out) at slots 330-346 to bridge contiguity past PR #999's
+// 00326 + PR #1004's 00322-00324 + PR #1000's 00329 + PR #1009's
+// 00333 + PR #1010's 00341 + PR #1008's 00345 + PR #984's 00346.
+// Round 9 forced by PR #1009 (apps_public_auth_internal_only at 00333)
+// + PR #1008 (edge_rules_kind_cache at 00345) + PR #984
+// (deployments_annotation at 00346) advancing the floor.
+const e2eMigrationTarget = 347
 
 // StartWithEnv is the G2-aware entrypoint used by the secrets e2e:
 // the test wants apid to load a specific host.age.pub (FAAS_HOST_AGE_

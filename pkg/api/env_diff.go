@@ -58,7 +58,7 @@ const (
 // The omitempty tags are the wire shape: a secret cell never
 // emits a `value` field (regardless of presence) and an env
 // cell never emits a `value_hash` field. Pre-PR-C rows have
-// value_hash = '' and emit no field — the consumer treats
+// value_hash = ” and emit no field — the consumer treats
 // absent value_hash as "unknown" and the cell as "missing or
 // pre-PR-C".
 type EnvDiffCell struct {

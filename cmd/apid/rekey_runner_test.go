@@ -245,11 +245,11 @@ func TestRunner_DisabledReturnsNilProgress(t *testing.T) {
 // snapshot yet); writeProgress is a no-op that doesn't error.
 func TestRunner_MemoryOnlyWhenPathEmpty(t *testing.T) {
 	r, err := NewRunner(RunnerOpts{
-		Store:      state.NewMemStore(),
-		Audit:      audit.New(state.NewMemStore(), testLogger(), nil, "rekey-test"),
-		Identities: newTestIdentities(t),
-		HostHMACKey:  newTestRunnerKey(t),
-		Log:        testLogger(),
+		Store:       state.NewMemStore(),
+		Audit:       audit.New(state.NewMemStore(), testLogger(), nil, "rekey-test"),
+		Identities:  newTestIdentities(t),
+		HostHMACKey: newTestRunnerKey(t),
+		Log:         testLogger(),
 		// ProgressPath intentionally empty
 	})
 	if err != nil {

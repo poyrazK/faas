@@ -72,7 +72,7 @@ func envDiff(args []string) int {
 //   - "≠"     differs from at least one peer cell
 //   - literal env cells only (secrets never reveal values)
 //
-// Pre-PR-C rows (value_hash = '') render as "-" for secret
+// Pre-PR-C rows (value_hash = ”) render as "-" for secret
 // cells — the renderer treats the absent value_hash as
 // "unknown, cannot compare".
 func renderEnvDiffTable(w io.Writer, app string, resp *api.EnvDiffResponse) {
@@ -113,7 +113,7 @@ func renderEnvDiffTable(w io.Writer, app string, resp *api.EnvDiffResponse) {
 //     the peer set — a cell with no peer to compare against
 //     renders as "-" (the "single cell" case).
 //
-// A pre-PR-C row (value_hash = '') renders as "-" for every
+// A pre-PR-C row (value_hash = ”) renders as "-" for every
 // scope because we cannot make an equality claim about an
 // unknown value. This is the conservative posture — better
 // to render "unknown" than to assert a (potentially false)

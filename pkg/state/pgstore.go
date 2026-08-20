@@ -12083,7 +12083,7 @@ func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, 
 // the same plaintext byte string feeds both the HMAC and the
 // seal. SQL stores it as TEXT (NULL allowed for legacy rows
 // pre-00296; the migration CHECK caps the length at 16 hex).
-// NULLIF($7, '') preserves the "empty string = NULL" semantic
+// NULLIF($7, ”) preserves the "empty string = NULL" semantic
 // so an unconfigured handler surface as NULL on the column.
 func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
 	_, err := s.pool.Exec(ctx,
