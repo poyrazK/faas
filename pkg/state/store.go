@@ -2442,15 +2442,22 @@ type Store interface {
 	MinCertExpiryForApp(ctx context.Context, accountID, appID string) (int64, error)
 
 	// RefreshCertExpiryStates walks tenant_surfaces for rows with
-	// cert_state='issued', upserts apid_tenant_surface_cert_expiry_state,
-	// and stamps last_refreshed_at = now(). Returns the number of
-	// rows updated. Called by the meterd cert-expiry refresher
-	// goroutine (issue #1233, ADR-123) on a 1-hour cadence.
+	// cert_state='issued', upserts
+	// meterd_tenant_surface_cert_expiry_state, and stamps
+	// last_refreshed_at = now(). Returns the number of rows
+	// updated. Called by the meterd cert-expiry refresher goroutine
+	// (issue #1233, ADR-123) on a 1-hour cadence. Note: the table
+	// is meterd-owned per the CLAUDE.md ownership rule; the writer
+	// runs in cmd/meterd; readers (apid / alert-evaluator) use
+	// MinCertExpiryForApp below.
 	RefreshCertExpiryStates(ctx context.Context) (int, error)
 	// ListCertExpiryStateForWalker returns every row in
-	// apid_tenant_surface_cert_expiry_state whose last_refreshed_at
-	// is fresher than (now - staleCutoff). The refresher uses this
-	// to stamp the apid_tenant_surface_cert_expiry_seconds gauge.
+	// meterd_tenant_surface_cert_expiry_state whose
+	// last_refreshed_at is fresher than (now - staleCutoff).
+	// Meterd's refresher uses this to stamp the
+	// apid_tenant_surface_cert_expiry_seconds gauge (the metric
+	// name keeps its legacy apid_ prefix for backward-compat with
+	// already-deployed alert rules).
 	ListCertExpiryStateForWalker(ctx context.Context, staleCutoff time.Duration) ([]TenantSurfaceCertExpiryState, error)
 
 	// Invocations (Move 1 — async_invoke / queue / delayed_task / cron).

@@ -4248,8 +4248,9 @@ type AccountSpendSnapshot struct {
 }
 
 // TenantSurfaceCertExpiryState is the in-memory row mirrored from
-// apid_tenant_surface_cert_expiry_state (issue #1233 / ADR-123 /
-// migrations/00351). The apid refresher goroutine updates the
+// meterd_tenant_surface_cert_expiry_state (issue #1233 / ADR-123 /
+// migrations/00351). The meterd cert-expiry refresher goroutine
+// (cmd/meterd/alert_presets_ticks.go) updates the
 // last_observed_cert_not_after + last_walk_status; the alert
 // evaluator reads MinCertExpiryForApp to compute the
 // cert_expiry_seconds metric.

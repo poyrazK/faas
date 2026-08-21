@@ -117,8 +117,11 @@ lines 473-531) gains 5 new cases:
   via `CountFailedDeploymentsSince(ctx, accountID, appID, since) int`.
 - **`cert_expiry_seconds`** — PromQL path; the gauge
   `apid_tenant_surface_cert_expiry_seconds{account_id, app_id, hostname}`
-  is fed by the apid_tenant_surface_cert_expiry refresher goroutine in
-  meterd.
+  is fed by the meterd_tenant_surface_cert_expiry refresher
+  goroutine in meterd (the metric name keeps the legacy `apid_`
+  prefix for backward-compat with deployed alert rules; the
+  underlying table is meterd-owned per the CLAUDE.md ownership
+  rule and lives in `migrations/00351_meterd_…`).
 - **`queue_depth`** — PromQL path; the gauge `gateway_queue_depth{app}`
   already exists at `pkg/gateway/metrics.go:667` — we only need to
   surface it in `appmetrics.Fetch`.

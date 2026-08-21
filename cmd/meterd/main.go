@@ -934,7 +934,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go meter.RetentionLoop(ctx, poolAdapter{pool}, mc.RetentionInterval, log)
 
 	// ADR-123 / issue #1233: alert-preset signal-feeding
-	// goroutines. CertExpiryRefresherLoop feeds
+	// goroutines. CertExpiryRefresherLoop (meterd-owned, owns the
+	// meterd_tenant_surface_cert_expiry_state table per the
+	// CLAUDE.md ownership rule) feeds
 	// apid_tenant_surface_cert_expiry_seconds
 	// (alert preset cert_expiring_14d); AccountSpendAggregatorLoop
 	// feeds meterd_account_spend_eur (alert preset spend_eur_20).

@@ -1,4 +1,4 @@
--- filename: 00351_apid_tenant_surface_cert_expiry_state.sql
+-- filename: 00351_meterd_tenant_surface_cert_expiry_state.sql
 -- +goose Up
 -- +goose StatementBegin
 
@@ -8,17 +8,26 @@
 -- gateway_tls_cert_expiry_seconds / _by_host_seconds — those are
 -- the operator's edge cert, NOT the customer's per-app domain
 -- cert on tenant_surfaces (migrations/00243). This migration
--- stands up the apid-side walker target so a per-app refresher
+-- stands up the meterd-side walker target so a per-app refresher
 -- goroutine can write a small row per tenant_surfaces.cert_state =
--- 'issued' entry and emit apid_tenant_surface_cert_expiry_seconds
+-- 'issued' entry and emit meterd_tenant_surface_cert_expiry_seconds
 -- for the alert evaluator.
 --
 -- Walker pattern mirrors pkg/gateway/cert_expiry.go: a single
 -- SELECT of the current set, a bulk UPDATE with the new
 -- observed cert_not_after, then increment the
--- apid_tenant_surface_cert_expiry_refresher_walk_complete_total
+-- meterd_tenant_surface_cert_expiry_refresher_walk_complete_total
 -- gauge. The state table is the read-cache the alert evaluator
--- reads from; the walker is the writer.
+-- reads from; the walker is the sole writer.
+--
+-- Ownership: CLAUDE.md rule "apid is the ONLY writer to
+-- customer-intent tables" — this is a DERIVED signal cache,
+-- not customer intent. The meter daemon (cmd/meterd) owns the
+-- walker, the gauge, and this table; the apid process only
+-- READS via state.MinCertExpiryForApp. The meterd_* prefix makes
+-- the ownership obvious to any reader and survives the future
+-- split of apid + meterd into separate Postgres roles for §11
+-- hardening (no cross-role writes).
 --
 -- Storage shape:
 --   - tenant_surface_id is the FK root — ON DELETE CASCADE mirrors
@@ -45,7 +54,7 @@
 -- Replay-safety: CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT
 -- EXISTS. No trigger (rows are walker-owned).
 
-CREATE TABLE IF NOT EXISTS apid_tenant_surface_cert_expiry_state (
+CREATE TABLE IF NOT EXISTS meterd_tenant_surface_cert_expiry_state (
     tenant_surface_id        uuid PRIMARY KEY REFERENCES tenant_surfaces(id) ON DELETE CASCADE,
     account_id               uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id                   uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -53,7 +62,7 @@ CREATE TABLE IF NOT EXISTS apid_tenant_surface_cert_expiry_state (
     last_observed_cert_not_after timestamptz,
     last_walk_status         text NOT NULL DEFAULT 'ok',
     last_refreshed_at        timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT apid_tenant_surface_cert_expiry_status_chk CHECK (
+    CONSTRAINT meterd_tenant_surface_cert_expiry_status_chk CHECK (
         last_walk_status IN ('ok', 'stale_parent', 'cert_unissued', 'error')
     )
 );
@@ -62,14 +71,14 @@ CREATE TABLE IF NOT EXISTS apid_tenant_surface_cert_expiry_state (
 -- index on ok-status rows so the alert evaluator's degraded-source
 -- branch (mirroring pkg/alerts/evaluator.go:505) skips rows the
 -- walker has flagged.
-CREATE INDEX IF NOT EXISTS apid_tenant_surface_cert_expiry_app_idx
-    ON apid_tenant_surface_cert_expiry_state (app_id, hostname)
+CREATE INDEX IF NOT EXISTS meterd_tenant_surface_cert_expiry_app_idx
+    ON meterd_tenant_surface_cert_expiry_state (app_id, hostname)
     WHERE last_walk_status = 'ok';
 
 -- Walker's UPDATE target: WHERE last_refreshed_at < $N. Partial
 -- index keeps the walker from scanning rows it just touched.
-CREATE INDEX IF NOT EXISTS apid_tenant_surface_cert_expiry_stale_idx
-    ON apid_tenant_surface_cert_expiry_state (last_refreshed_at)
+CREATE INDEX IF NOT EXISTS meterd_tenant_surface_cert_expiry_stale_idx
+    ON meterd_tenant_surface_cert_expiry_state (last_refreshed_at)
     WHERE last_walk_status <> 'ok';
 
 -- +goose StatementEnd
@@ -77,8 +86,8 @@ CREATE INDEX IF NOT EXISTS apid_tenant_surface_cert_expiry_stale_idx
 -- +goose Down
 -- +goose StatementBegin
 
-DROP INDEX IF EXISTS apid_tenant_surface_cert_expiry_stale_idx;
-DROP INDEX IF EXISTS apid_tenant_surface_cert_expiry_app_idx;
-DROP TABLE IF EXISTS apid_tenant_surface_cert_expiry_state;
+DROP INDEX IF EXISTS meterd_tenant_surface_cert_expiry_stale_idx;
+DROP INDEX IF EXISTS meterd_tenant_surface_cert_expiry_app_idx;
+DROP TABLE IF EXISTS meterd_tenant_surface_cert_expiry_state;
 
 -- +goose StatementEnd

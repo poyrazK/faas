@@ -186,10 +186,10 @@ type MemStore struct {
 	// MTD-window SUM. Keyed by ID.
 	accountSpendSnapshots map[string]AccountSpendSnapshot
 	// tenantSurfaceCertExpiryStates mirrors
-	// apid_tenant_surface_cert_expiry_state (migrations/00351).
-	// The apid refresher goroutine (PR-A wiring) upserts rows; the
-	// alert evaluator's MinCertExpiryForApp walks the map for the
-	// smallest remaining-seconds value.
+	// meterd_tenant_surface_cert_expiry_state (migrations/00351).
+	// The meterd cert-expiry refresher goroutine (PR-A wiring)
+	// upserts rows; the alert evaluator's MinCertExpiryForApp
+	// walks the map for the smallest remaining-seconds value.
 	tenantSurfaceCertExpiryStates map[string]TenantSurfaceCertExpiryState
 	// oidcTrustPolicies is keyed by (accountID, issuerURL) — the
 	// composite primary key shape from migration 00265. The
@@ -11138,7 +11138,7 @@ func uuidOrSentinel() string {
 	return fmt.Sprintf("snapshot-%d", memStoreSnapshotCounter)
 }
 
-// MinCertExpiryForApp walks the apid_tenant_surface_cert_expiry_state
+// MinCertExpiryForApp walks the meterd_tenant_surface_cert_expiry_state
 // map and returns the smallest remaining seconds for the (account,
 // app) — or -1 when no surface is in 'ok' state.
 func (m *MemStore) MinCertExpiryForApp(_ context.Context, accountID, appID string) (int64, error) {
@@ -11165,9 +11165,10 @@ func (m *MemStore) MinCertExpiryForApp(_ context.Context, accountID, appID strin
 }
 
 // RefreshCertExpiryStates walks every tenant_surfaces row whose
-// cert_state='issued', upserts the apid_tenant_surface_cert_expiry_state
-// mirror row, and stamps last_refreshed_at=now(). Returns the
-// number of rows upserted. Mirrors pgstore.RefreshCertExpiryStates
+// cert_state='issued', upserts the
+// meterd_tenant_surface_cert_expiry_state mirror row, and stamps
+// last_refreshed_at=now(). Returns the number of rows upserted.
+// Mirrors pgstore.RefreshCertExpiryStates
 // for tests. The hostname is the lexicographically-smallest
 // verified hostname on the surface (matches the
 // pkg/gateway.CertExpiry ordering at cert_expiry_surface.go:88-93)
@@ -11216,9 +11217,10 @@ func (m *MemStore) RefreshCertExpiryStates(_ context.Context) (int, error) {
 }
 
 // ListCertExpiryStateForWalker returns every row in
-// apid_tenant_surface_cert_expiry_state whose last_refreshed_at
-// is fresher than (now - staleCutoff). The refresher uses this
-// to stamp the apid_tenant_surface_cert_expiry_seconds gauge.
+// meterd_tenant_surface_cert_expiry_state whose
+// last_refreshed_at is fresher than (now - staleCutoff). Meterd's
+// refresher uses this to stamp the
+// apid_tenant_surface_cert_expiry_seconds gauge.
 func (m *MemStore) ListCertExpiryStateForWalker(_ context.Context, staleCutoff time.Duration) ([]TenantSurfaceCertExpiryState, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

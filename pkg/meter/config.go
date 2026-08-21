@@ -113,10 +113,14 @@ type Config struct {
 	// partitions. Zero means the production default (1 h).
 	UpstreamPartitionCreateInterval time.Duration
 	// CertExpiryRefresherInterval (ADR-123) is how often the
-	// apid_tenant_surface_cert_expiry refresher walks
+	// meterd_tenant_surface_cert_expiry refresher walks
 	// tenant_surfaces WHERE cert_state='issued', upserts the
-	// apid_tenant_surface_cert_expiry_state mirror, and stamps
-	// the apid_tenant_surface_cert_expiry_seconds gauge.
+	// meterd_tenant_surface_cert_expiry_state mirror, and stamps
+	// the apid_tenant_surface_cert_expiry_seconds gauge (the
+	// metric name keeps the legacy apid_ prefix for backward-
+	// compat with already-deployed alert rules; the table itself
+	// moved to meterd_ in migrations/00351 per the CLAUDE.md
+	// ownership rule).
 	// Zero means the production default (1 h). The renewer bot
 	// rotates certs daily, so 1 h keeps the gauge within ~4 % of
 	// true remaining-seconds even if a renewal slips.

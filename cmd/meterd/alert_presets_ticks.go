@@ -3,7 +3,8 @@
 //
 // Two free-function Loop variants sit alongside the existing
 // RollupLoop / StorageRollupLoop / RetentionLoop pair in this
-// package: CertExpiryRefresherLoop feeds
+// package: CertExpiryRefresherLoop (meterd-owned, per
+// CLAUDE.md ownership rule) feeds
 // apid_tenant_surface_cert_expiry_seconds{account_id, app_id,
 // hostname} (backing the alert preset cert_expiring_14d), and
 // AccountSpendAggregatorLoop feeds meterd_account_spend_eur
@@ -61,10 +62,13 @@ type CertExpiryRefresherParams struct {
 }
 
 // CertExpiryRefresherLoop walks every row in
-// apid_tenant_surface_cert_expiry_state every interval, computes
+// meterd_tenant_surface_cert_expiry_state every interval, computes
 // the remaining-seconds-from-now for each, and stamps the
 // apid_tenant_surface_cert_expiry_seconds{account_id, app_id,
-// hostname} gauge. Stale rows (last_refreshed_at older than
+// hostname} gauge. The metric name keeps the legacy apid_ prefix
+// for backward-compat with deployed alert rules; the owning
+// table moved to meterd_ in migrations/00351 per the CLAUDE.md
+// ownership rule. Stale rows (last_refreshed_at older than
 // 2× interval) are reset to 0 so the alert evaluator's
 // degraded-source branch (mirroring pkg/alerts/evaluator.go:505)
 // can skip them. Returns when ctx is cancelled.

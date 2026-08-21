@@ -7433,14 +7433,17 @@ func (s *PgStore) UpsertAccountSpendSnapshot(ctx context.Context, accountID stri
 // evaluator's cert_expiry_seconds metric case (issue #1233,
 // ADR-123).
 //
-// Walks the apid_tenant_surface_cert_expiry_state table built by
-// the apid refresher (migrations/00351) — the apid side keeps the
-// per-host state; the evaluator reads the min.
+// Walks the meterd_tenant_surface_cert_expiry_state table built by
+// the meterd refresher (migrations/00351) — the meterd side
+// keeps the per-host state (CLAUDE.md "apid is the ONLY writer
+// to customer-intent tables" rule: this is a derived signal
+// cache, not customer intent, so the meter daemon owns it); the
+// evaluator reads the min.
 func (s *PgStore) MinCertExpiryForApp(ctx context.Context, accountID, appID string) (int64, error) {
 	var minSeconds *int64
 	row := s.pool.QueryRow(ctx, `
 		select min(extract(epoch from (last_observed_cert_not_after - now())))::bigint
-		  from apid_tenant_surface_cert_expiry_state
+		  from meterd_tenant_surface_cert_expiry_state
 		 where account_id = $1
 		   and app_id = $2
 		   and last_walk_status = 'ok'
@@ -7456,7 +7459,7 @@ func (s *PgStore) MinCertExpiryForApp(ctx context.Context, accountID, appID stri
 }
 
 // RefreshCertExpiryStates walks every tenant_surfaces row whose
-// cert_state='issued', upserts the apid_tenant_surface_cert_expiry_state
+// cert_state='issued', upserts the meterd_tenant_surface_cert_expiry_state
 // mirror row, and stamps last_refreshed_at=now(). Called by the
 // meterd cert-expiry refresher goroutine on a 1-hour cadence
 // (issue #1233 / ADR-123). Returns the number of rows upserted.
@@ -7470,7 +7473,7 @@ func (s *PgStore) MinCertExpiryForApp(ctx context.Context, accountID, appID stri
 // the defensive read).
 func (s *PgStore) RefreshCertExpiryStates(ctx context.Context) (int, error) {
 	tag, err := s.pool.Exec(ctx, `
-		insert into apid_tenant_surface_cert_expiry_state (
+		insert into meterd_tenant_surface_cert_expiry_state (
 			tenant_surface_id, account_id, app_id, hostname,
 			last_observed_cert_not_after, last_walk_status, last_refreshed_at
 		)
@@ -7491,14 +7494,14 @@ func (s *PgStore) RefreshCertExpiryStates(ctx context.Context) (int, error) {
 }
 
 // ListCertExpiryStateForWalker returns every row in
-// apid_tenant_surface_cert_expiry_state whose last_refreshed_at
+// meterd_tenant_surface_cert_expiry_state whose last_refreshed_at
 // is fresher than (now() - staleCutoff). The refresher uses this
-// to stamp the apid_tenant_surface_cert_expiry_seconds gauge.
+// to stamp the meterd_tenant_surface_cert_expiry_seconds gauge.
 func (s *PgStore) ListCertExpiryStateForWalker(ctx context.Context, staleCutoff time.Duration) ([]TenantSurfaceCertExpiryState, error) {
 	rows, err := s.pool.Query(ctx, `
 		select tenant_surface_id, account_id, app_id, hostname,
 		       last_observed_cert_not_after, last_walk_status, last_refreshed_at
-		  from apid_tenant_surface_cert_expiry_state
+		  from meterd_tenant_surface_cert_expiry_state
 		 where last_refreshed_at >= now() - ($2 || ' seconds')::interval`,
 		staleCutoff)
 	if err != nil {
