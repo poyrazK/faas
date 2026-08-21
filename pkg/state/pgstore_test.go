@@ -3974,17 +3974,23 @@ func TestPg_DeploymentOrdinal(t *testing.T) {
 	mustExec(`insert into apps (id, account_id, slug, status, ram_mb) values ($1, $2, 'ordinal-app', 'active', 256)`, a, acctID)
 	mustExec(`insert into apps (id, account_id, slug, status, ram_mb) values ($1, $2, 'ordinal-app-other', 'active', 256)`, b, acctID)
 
-	insert := func(id string, appID string, at time.Time) {
+	insert := func(id string, appID string, status string, at time.Time) {
 		t.Helper()
 		mustExec(`insert into deployments (id, app_id, status, image_digest, created_at)
-		          values ($1, $2, 'live', 'sha256:ord', $3)`,
-			id, appID, at)
+		          values ($1, $2, $3, 'sha256:ord', $4)`,
+			id, appID, status, at)
 	}
-	// Insert out-of-order to exercise (created_at, id) sort.
-	insert(d3.String(), a.String(), now.Add(2*time.Second))
-	insert(d1.String(), a.String(), now)
-	insert(d2.String(), a.String(), now.Add(1*time.Second))
-	insert(dX.String(), b.String(), now)
+	// Insert out-of-order to exercise (created_at, id) sort. Only
+	// d1 (the row the DeploymentOrdinal assertions check first) is
+	// 'live' — the partial-unique index deployments_app_scope_live_uniq
+	// (00213) allows exactly one 'live' row per (app_id, scope), so
+	// the other two must use a non-live status (DeploymentOrdinal is
+	// status-agnostic — it ranks by (created_at, id) over the full
+	// deployment set, not by the live filter).
+	insert(d3.String(), a.String(), "superseded", now.Add(2*time.Second))
+	insert(d1.String(), a.String(), "live", now)
+	insert(d2.String(), a.String(), "superseded", now.Add(1*time.Second))
+	insert(dX.String(), b.String(), "live", now)
 
 	if got, err := s.DeploymentOrdinal(ctx, a.String(), d1.String()); err != nil || got != 1 {
 		t.Errorf("ord(d1) = %d err=%v, want 1", got, err)
