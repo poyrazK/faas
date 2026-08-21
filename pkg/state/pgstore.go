@@ -7233,7 +7233,7 @@ func (s *PgStore) GetCorsPresetByID(ctx context.Context, accountID, id string) (
 // Catalog rows are system-owned. Customers have SELECT-only via the
 // apid GET surface. The Store interface exposes two read methods
 // (ListAlertPresets, AlertPresetByName) and zero mutators — the only
-// write path is migration 00348's idempotent seed.
+// write path is migration 00353's idempotent seed.
 //
 // Hand-written (not sqlc) per the cors_presets precedent at
 // pgstore.go:7047-7060: the partial-index / closed-vocab shape makes
@@ -7246,7 +7246,7 @@ func (s *PgStore) GetCorsPresetByID(ctx context.Context, accountID, id string) (
 // positional arguments against this list. Mirrors the
 // corsPresetSelectCols pattern at pgstore.go:7047-7060.
 //
-// Ordering matches migrations/00347_alert_presets.sql (column list
+// Ordering matches migrations/00352_alert_presets.sql (column list
 // 1:1). Nullable fields (none today — all columns are NOT NULL
 // per the migration) would come before NOT NULL so Scan can
 // target them; since every column is NOT NULL the order is the
@@ -7395,7 +7395,7 @@ func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, ap
 // MTD boundary is computed at evaluation time (now() at the UTC
 // midnight of the first day of the current month) so the window
 // is stable across meterd restarts. The (account_id, period_start
-// DESC) partial index at migrations/00350 keeps the scan bounded.
+// DESC) partial index at migrations/00355 keeps the scan bounded.
 func (s *PgStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64, error) {
 	var total int64
 	row := s.pool.QueryRow(ctx, `
@@ -7412,7 +7412,7 @@ func (s *PgStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64
 // UpsertAccountSpendSnapshot is called by the meterd tick loop on
 // every AlertEvalInterval. Inserts a fresh row tagged with the
 // tick's (period_start, period_end). The ON CONFLICT (account_id,
-// source, period_end) clause at migrations/00350 makes a double-fire
+// source, period_end) clause at migrations/00355 makes a double-fire
 // (e.g. meterd restart mid-tick) idempotent.
 func (s *PgStore) UpsertAccountSpendSnapshot(ctx context.Context, accountID string, periodStart, periodEnd time.Time, gbSeconds float64, eurCents int64, source string) error {
 	_, err := s.pool.Exec(ctx, `
@@ -7434,7 +7434,7 @@ func (s *PgStore) UpsertAccountSpendSnapshot(ctx context.Context, accountID stri
 // ADR-123).
 //
 // Walks the meterd_tenant_surface_cert_expiry_state table built by
-// the meterd refresher (migrations/00351) — the meterd side
+// the meterd refresher (migrations/00356) — the meterd side
 // keeps the per-host state (CLAUDE.md "apid is the ONLY writer
 // to customer-intent tables" rule: this is a derived signal
 // cache, not customer intent, so the meter daemon owns it); the
