@@ -89,7 +89,7 @@ var ErrReorderNotPending = errors.New("state: reorder only valid for pending dep
 // ErrPriorityOutOfRange is the defensive backstop returned by
 // ReorderDeployment when newPriority falls outside the closed range
 // [0, 1000]. The CHECK constraint deployments_priority_check
-// (migration 00355) is the schema-layer guard; this sentinel
+// (migration 00364) is the schema-layer guard; this sentinel
 // surfaces the same range violation when the store is the one
 // running the backstop. Translated at the handler boundary to
 // HTTP 422 with the deployment_reorder_priority_invalid code.

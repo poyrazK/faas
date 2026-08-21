@@ -13469,7 +13469,7 @@ const deploymentSelectColumnsWithRootfs = `
 	stage_state,
 	coalesce(deployed_by_user_id::text,''), deployed_via, coalesce(host(deployed_from_ip),''), coalesce(pusher_login,''),
 	coalesce(reason,''), coalesce(tag,''), coalesce(deployed_by,''), pr_number,
-	-- ADR-124 deployment queue controls (migration 00353). priority
+	-- ADR-124 deployment queue controls (migration 00362). priority
 	-- is NOT NULL DEFAULT 100 so the coalesce is purely for symmetry
 	-- with the rest of the projection (and for the rare pre-PR #X
 	-- backfill window). cancelled_*/cancel_reason are nullable so the
@@ -13515,7 +13515,7 @@ const deploymentSelectColumnsQualified = `
 	d.stage_state,
 	coalesce(d.deployed_by_user_id::text,''), d.deployed_via, coalesce(host(d.deployed_from_ip),''), coalesce(d.pusher_login,''),
 	coalesce(d.reason,''), coalesce(d.tag,''), coalesce(d.deployed_by,''), d.pr_number,
-	-- ADR-124 deployment queue controls (migration 00353). See the
+	-- ADR-124 deployment queue controls (migration 00362). See the
 	-- unqualified-projection counterpart above for the rationale on
 	-- coalesce choices.
 	coalesce(d.priority, 100), coalesce(d.reordered_by_principal, ''),
@@ -13616,7 +13616,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		// the INSERT side and a plain int column on the SELECT side,
 		// scanned via the *int local returned as nil for NULL.
 		&d.Reason, &d.Tag, &d.DeployedBy, &prNumber,
-		// ADR-124 deployment queue controls (migration 00353). The
+		// ADR-124 deployment queue controls (migration 00362). The
 		// scan order mirrors the SELECT projection above — see the
 		// docblock on deploymentSelectColumnsWithRootfs for the
 		// "lockstep or pgx panic" invariant.

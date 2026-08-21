@@ -37,11 +37,11 @@ This ADR ships the four controls that close the loop: cancel, reorder (via `prio
 
 ### Migrations
 
-- `migrations/00360_deployments_cancelled.sql` — widens `deployments_status_check` to add `'cancelled'`; adds `cancelled_at`, `cancelled_by_principal`, `cancel_reason` (closed-set `user|auto_quota|auto_health|system`), `deleted_at`, `deleted_by_principal`. Index `(account_id, status, cancelled_at DESC) WHERE cancelled_at IS NOT NULL OR deleted_at IS NOT NULL` for the clear-obsolete query path.
-- `migrations/00361_builds_cancelled.sql` — widens `builds_status_check` to add `'cancelled'`; adds `cancelled_at`, `cancelled_by_deployment_cascade bool NOT NULL DEFAULT false` (true when the source was `CancelDeploymentTx` vs. a future direct build-cancel path). Index `(deployment_id, status, cancelled_at DESC)`.
-- `migrations/00362_deployments_priority.sql` — adds `priority int NOT NULL DEFAULT 100 CHECK (priority BETWEEN 0 AND 1000)`; partial index `(app_id, priority, enqueued_at) WHERE status='pending'`.
+- `migrations/00362_deployments_cancelled.sql` — widens `deployments_status_check` to add `'cancelled'`; adds `cancelled_at`, `cancelled_by_principal`, `cancel_reason` (closed-set `user|auto_quota|auto_health|system`), `deleted_at`, `deleted_by_principal`. Existing `deployments_app_idx` from migration 00001 (`app_id`, `created_at DESC`) covers the clear-obsolete query path; no new index needed.
+- `migrations/00363_builds_cancelled.sql` — widens `builds_status_check` to add `'cancelled'`; adds `cancelled_at`, `cancelled_by_deployment_cascade bool NOT NULL DEFAULT false` (true when the source was `CancelDeploymentTx` vs. a future direct build-cancel path). Index `(deployment_id, status, cancelled_at DESC)`.
+- `migrations/00364_deployments_priority.sql` — adds `priority int NOT NULL DEFAULT 100 CHECK (priority BETWEEN 0 AND 1000)`; partial index `(app_id, priority, enqueued_at) WHERE status='pending'`.
 
-`00353–00359` are reserve-slot fences per ADR-041. Slot precheck: PR #1012 (stages-prod-ready) lands at 00352 + PR #1017 (ADR-123 alert presets) lands at 00347–00351. Both are < 00353; our claim is collision-free.
+Slot precheck (round-2): PR #1017 (ADR-123 alert presets) lands at 00357–00361 on its branch tip. Our renumber claims 00362–00364 (next free above its real slots). Reservation fences at 00347–00361 fill the gap from main's 00346 to our claim; these will land on main only when PR #1017 merges, leaving PR #1017's real slots to absorb the fences.
 
 ### State machine extensions (`pkg/state/types.go`)
 
@@ -202,7 +202,7 @@ Help banner at `main.go:50`, dispatcher arm at `:235-242`, manifest entry at `cl
 
 ## Estimated scope
 
-- **~14 new files**: 3 migration files, 7 reserve-slot fences, ADR-124, 4 CLI leaf files (deploys_cancel/reorder/clear/clear_obsolete + their tests).
+- **~10 new files**: 3 migration files, ADR-124, 4 CLI leaf files (deploys_cancel/reorder/clear/clear_obsolete + their tests).
 - **~16 modified files**: `pkg/state/types.go` (+1 enum type), `pkg/state/store.go` (+4 interface methods + 3 sentinels), `pkg/state/pgstore.go` (+5 impl + 1 query update), `cmd/apid/server.go` (+4 routes), `cmd/apid/handlers.go` (+4 handlers), `pkg/api/errors.go` (+4 codes), `pkg/api/client.go` (+4 SDK methods), `pkg/api/limits.go` (+4 fields, +4 per-plan rows), `pkg/wire/metrics.go` (+3 counters), `pkg/fcvm/manager.go` (+1 CancelBuild), `pkg/builderd/vm_metal.go` (+Cancel method on interface), `pkg/builderd/vm_stub.go` (+stub method), `pkg/builderd/builderd.go` (+cancel goroutine), `cmd/builderd/main.go` (+cancel goroutine wiring), `pkg/db/notify.go` (+NotifyBuildChanged), proto files (+CancelBuild RPC).
-- **3 migration slots**: 00360 / 00361 / 00362.
+- **3 migration slots**: 00362 / 00363 / 00364 (round-2 renumber after PR #1017 grew to 00357–00361 on its branch tip).
 - **~1200 LOC + 700 LOC tests**.

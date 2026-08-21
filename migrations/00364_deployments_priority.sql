@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- filename: 00355_deployments_priority.sql
+-- filename: 00364_deployments_priority.sql
 -- ADR-124 deployment queue controls — M3: priority column on deployments.
 --
 -- Reorder + deploy-immediately surface. `priority` is an int in [0,1000]

@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- filename: 00354_builds_cancelled.sql
+-- filename: 00363_builds_cancelled.sql
 -- ADR-124 deployment queue controls — M2: 'cancelled' status on builds.
 --
 -- Pair to M1. The build-row state machine (pkg/state/types.go:199-204)
