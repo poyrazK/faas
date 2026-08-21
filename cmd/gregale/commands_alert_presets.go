@@ -81,9 +81,16 @@ func cmdAlertPresetList(args []string) int {
 		return 0
 	}
 	for _, p := range rows {
-		enabledMark := "✗"
+		// Glyph literals live in output.go so the lint tripwire
+		// that rejects leading glyphs outside output.go lets the
+		// table-rendering path through. The DisplayName column
+		// is the only one a customer sees in pipes; the glyph
+		// prefix is the visual signal that toggles when the
+		// catalog row's enabled_in_catalog flips (precedent:
+		// commands_crons_fire_now.go:175-183).
+		enabledMark := GlyphFail
 		if p.EnabledInCatalog {
-			enabledMark = "✓"
+			enabledMark = GlyphOK
 		}
 		fmt.Printf("%s %-32s %-15s %-22s %-3s %9s %-5s %s\n",
 			enabledMark, p.Name, p.Category, p.Metric,
