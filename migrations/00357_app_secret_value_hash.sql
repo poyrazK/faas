@@ -1,4 +1,4 @@
--- filename: 00356_app_secret_value_hash.sql
+-- filename: 00357_app_secret_value_hash.sql
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE app_secrets
