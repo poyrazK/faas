@@ -137,10 +137,10 @@
     zero new schema (the diff package consumes the existing
     `pkg/apid/openapi.yaml`). Mega PR #2 is zero-schema.
   - **Migration slot coordination.** Mega PR #1 starts at
-    `00356_deployment_audit.sql` (renumbered through 14 hops:
+    `00358_deployment_audit.sql` (renumbered through 15 hops:
     `00320 → 00322 → 00324 → 00326 → 00327 → 00330 → 00332 →
     00334 → 00342 → 00346 → 00348 → 00350 → 00352 → 00354 →
-    00356` to clear open-PR slots #999 #990 #1004 #1000 +
+    00356 → 00358` to clear open-PR slots #999 #990 #1004 #1000 +
     post-merge of PR #999's `00326_apps_public_auth_ip_allowlist.sql`
     on origin/main + the round-4 fence-collision on main's
     `00327_reserve_slot.sql` + `00328_reserve_slot.sql` fences +
@@ -170,8 +170,13 @@
     PR #1024 (ADR-124 deployment queue controls) which opened
     2026-08-21T19:18Z and claimed slots `00353-00355` for its
     real migrations `deployments_cancelled` / `builds_cancelled`
-    / `deployments_priority`. The backfill sits at
-    `00357_deployment_audit_backfill_90d.sql`. The
+    / `deployments_priority` + the round-17 renumber to
+    `00358`+`00359` to clear the same-night collisions with
+    PR #1012's renumber to 00356_deployments_stage_state_history_cap.sql,
+    PR #1005's renumber to 00357_deployment_openapi_snapshots.sql,
+    and PR #990's renumber to 00357_app_secret_value_hash.sql.
+    The backfill sits at
+    `00359_deployment_audit_backfill_90d.sql`. The
     cross-PR slot precheck
     (`scripts/ci/check_migration_slots.sh --base-ref=origin/main`)
     must be re-run at every push — the open-PR slot landscape
