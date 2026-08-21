@@ -28,7 +28,7 @@ import (
 // pkg/gateway package-local constants against the canonical
 // pkg/api constants. ADR-118 adds publicAuthModeIPAllowlist
 // ("ip_allowlist"); ADR-119 adds publicAuthModeInternalOnly
-// ("internal_only"); ADR-120 adds publicAuthModeMembersOnly
+// ("internal_only"); ADR-123 adds publicAuthModeMembersOnly
 // ("members_only"). Order matters: open, bearer, basic,
 // ip_allowlist, internal_only, members_only — matches the
 // historical ship order so a future contributor reading the

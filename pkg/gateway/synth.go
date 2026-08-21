@@ -102,14 +102,14 @@ type SynthServer struct {
 	// takes a context so the request's ctx (with timeout /
 	// cancel chain) flows into the per-app store call.
 	appPublicAuthMode func(ctx context.Context, appID string) string
-	// membersOnlyChecker (ADR-120) is the DB-side bridge for
+	// membersOnlyChecker (ADR-123) is the DB-side bridge for
 	// the public_auth_mode='members_only' synth-side gate
 	// (synth_members_only.go). Same shape as
 	// internalSvcVerifier above; nil = gate disabled, the
 	// gate 500s rather than silently letting every
 	// members_only cron request through.
 	membersOnlyChecker authz.OrgMemberChecker
-	// membersOnlyPrincipal (ADR-120) is the cookie-side
+	// membersOnlyPrincipal (ADR-123) is the cookie-side
 	// bridge. Cron has no cookie, so the dominant case
 	// (every /v1/synthesize from the schedd cron driver) is
 	// denied at this gate. A dashboard-fired
@@ -117,7 +117,7 @@ type SynthServer struct {
 	// would pass this check and reach the org-membership
 	// verification.
 	membersOnlyPrincipal CookiePrincipalExtractor
-	// appOrgID (ADR-120) returns the org_id for a given
+	// appOrgID (ADR-123) returns the org_id for a given
 	// appID via the per-app cache. nil = gate disabled
 	// (same misconfig posture as appPublicAuthMode above).
 	appOrgID func(ctx context.Context, appID string) string
@@ -363,7 +363,7 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// ADR-120: members_only synth-side gate mirrors
+	// ADR-123: members_only synth-side gate mirrors
 	// applyIngressInternalSvc above for the cron-fired path.
 	// Cron has no human session, so the dominant 403 path
 	// here is no_cookie_principal (every /v1/synthesize from
@@ -435,7 +435,7 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
-	// ADR-120: members_only synth-side gate for the
+	// ADR-123: members_only synth-side gate for the
 	// /v1/invocations:dispatch path (Move 1 single
 	// invocation envelope). Mirrors the chain at
 	// handleSynthesize above. Dashboard-fired dispatch
@@ -700,7 +700,7 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 			return
 		}
 	}
-	// ADR-120: members_only synth-side gate for the
+	// ADR-123: members_only synth-side gate for the
 	// /v1/invocations:dispatch_batch path (Move 1
 	// batch). Mirrors the chain at handleSynthesize
 	// and handleInvocationDispatch above. The batch

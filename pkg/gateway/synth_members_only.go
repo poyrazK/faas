@@ -1,6 +1,6 @@
 package gateway
 
-// synth_members_only.go — ADR-120 ingress-control gate for
+// synth_members_only.go — ADR-123 ingress-control gate for
 // the cron-fired wake path. Schedd cron fires /v1/synthesize,
 // /v1/invocations:dispatch, and /v1/invocations:dispatch_batch
 // (synth.go:301, 373, ???) which dispatch directly to

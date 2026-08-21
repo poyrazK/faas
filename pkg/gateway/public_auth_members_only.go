@@ -1,6 +1,6 @@
 package gateway
 
-// public_auth_members_only.go — ADR-120 ingress-control
+// public_auth_members_only.go — ADR-123 ingress-control
 // gate for apps.public_auth_mode='members_only'. The
 // package-local surface here mirrors
 // pkg/gateway/internal_svc_auth.go (ADR-119 / issue #477
@@ -103,7 +103,7 @@ type CookiePrincipalExtractor interface {
 	FromRequest(r *http.Request) (accountID string, ok bool)
 }
 
-// WithMembersOnlyChecker (ADR-120) arms the per-app
+// WithMembersOnlyChecker (ADR-123) arms the per-app
 // 'members_only' ingress gate's DB-side half — the
 // membership-lookup predicate at
 // pkg/authz/is_org_member.go::IsOrgMember. mirror of
@@ -122,7 +122,7 @@ func (h *Handler) WithMembersOnlyChecker(c authz.OrgMemberChecker) *Handler {
 	return h
 }
 
-// WithMembersOnlyPrincipalExtractor (ADR-120) arms the
+// WithMembersOnlyPrincipalExtractor (ADR-123) arms the
 // cookie-side half of the members_only gate — the
 // resolver that converts the cookie envelope into a
 // (accountID, ok) pair. nil = the cookie side is
@@ -148,7 +148,7 @@ func (h *Handler) WithMembersOnlyPrincipalExtractor(e CookiePrincipalExtractor) 
 	return h
 }
 
-// applyIngressMembersOnly (ADR-120) is the per-app
+// applyIngressMembersOnly (ADR-123) is the per-app
 // public_auth_mode='members_only' ingress gate.
 //
 // Trust chain: a valid request must (a) carry a valid
@@ -268,7 +268,7 @@ func (h *Handler) applyIngressMembersOnly(w http.ResponseWriter, r *http.Request
 		}
 		return true
 	}
-	// Active-membership lookup. ADR-120 fail-closed posture:
+	// Active-membership lookup. ADR-123 fail-closed posture:
 	// every DB error returns (false, ErrMembershipLookup);
 	// the gate below pivots on errors.Is to surface a
 	// controlled 401 + audit reason='lookup_error' rather

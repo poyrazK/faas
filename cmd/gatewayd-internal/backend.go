@@ -202,7 +202,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	// ADR-120: members_only mode consults apps.org_id at the
+	// ADR-123: members_only mode consults apps.org_id at the
 	// gate, so we hydrate it here from the per-host LRU miss
 	// path. Adding org_id to state.App would inflate the
 	// scanApp column list and every downstream pgstore /
@@ -249,7 +249,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		// raw forwarder. Default false on the App struct
 		// matches the apps.websocket_enabled column DEFAULT.
 		WebSocketEnabled: app.WebSocketEnabled,
-		// ADR-120: per-app ingress members_only mode looks
+		// ADR-123: per-app ingress members_only mode looks
 		// up apps.org_id via the state.App.OrgID hydration
 		// that migration 00099 ships. Plumbed through so
 		// applyIngressMembersOnly can call

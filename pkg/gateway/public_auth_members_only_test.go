@@ -2,7 +2,7 @@
 
 // public_auth_members_only_test.go — pin the
 // applyIngressMembersOnly gate (Handler side) on the
-// per-app `members_only` public-auth mode (ADR-120).
+// per-app `members_only` public-auth mode (ADR-123).
 // Mirrors public_auth_internal_only_test.go for the
 // same-file-per-feature convention; the synth-side
 // mirror at synth_members_only.go has its own test
