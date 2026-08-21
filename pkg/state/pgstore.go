@@ -4460,7 +4460,7 @@ func (s *PgStore) DeploymentOrdinal(ctx context.Context, appID, deploymentID str
 	var ord int
 	err := s.pool.QueryRow(ctx,
 		`select ord from (
-		   select id, row_number() over (partition by app_id order by created_at, id) as ord
+		   select id, app_id, row_number() over (partition by app_id order by created_at, id) as ord
 		   from deployments
 		 ) ranks
 		 where id = $1 and app_id = $2`, deploymentID, appID).Scan(&ord)
