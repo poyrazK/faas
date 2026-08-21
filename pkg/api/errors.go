@@ -550,6 +550,40 @@ const (
 	CodeHandlerMissing    = "handler_missing"
 	CodeImageRequired     = "image_required"
 	CodeDeployFailed      = "deploy_failed"
+	// CodeDeploymentCancelLiveForbidden (ADR-124) is returned by
+	// POST /v1/apps/{slug}/deployments/{id}/cancel when the row
+	// is already in DeployLive. Cancel of a live row would
+	// either scale the app to zero (kills §6.2 INV 4) or park
+	// the app (kills INV 3). The user-correct escape is the
+	// existing rollback surface — see api.ErrDeploymentCancelLiveForbidden
+	// for the canonical 409 Problem with the deploys-rollback
+	// hint.
+	CodeDeploymentCancelLiveForbidden = "deployment_cancel_live_forbidden"
+	// CodeDeploymentClearLiveForbidden (ADR-124) is returned by
+	// DELETE /v1/deployments/{id} when the row is already in
+	// DeployLive. Distinct from CodeDeploymentCancelLiveForbidden
+	// because the fix path is different: clear-of-live has no
+	// well-defined escape today (no rollback-equivalent exists for
+	// soft-delete), so the hint points at the customer's existing
+	// rollback surface as the next-best action.
+	CodeDeploymentClearLiveForbidden = "deployment_clear_live_forbidden"
+	// CodeDeploymentCancelNotCancellable is returned when the
+	// row's status is in {failed, superseded, cancelled} — i.e.
+	// the row is already terminal and the cancel is meaningless.
+	// ADR-124; mirrors the state.CancelReason invalid path.
+	CodeDeploymentCancelNotCancellable = "deployment_cancel_not_cancellable"
+	// CodeDeploymentReorderNotPending is returned by reorder
+	// when the row's status is not 'pending'. ADR-124.
+	CodeDeploymentReorderNotPending = "deployment_reorder_not_pending"
+	// CodeDeploymentReorderPriorityInvalid is returned when the
+	// request priority falls outside the closed range [0, 1000].
+	// ADR-124; the schema CHECK is the durable backstop.
+	CodeDeploymentReorderPriorityInvalid = "deployment_reorder_priority_invalid"
+	// CodePlanReorderDisabled is returned when the caller's
+	// plan tier locks them out of the reorder + deploy-immediately
+	// surface (cancel + clear-obsolete are Free-allowed; reorder
+	// + deploy-immediately are Hobby+ only). ADR-124.
+	CodePlanReorderDisabled = "plan_reorder_disabled"
 	// CodeSigInvalid is returned by schedd when the layer's
 	// signature fails verification (or is missing) on cold-boot.
 	// The deployment transitions to DeployFailed with this code;
@@ -1360,7 +1394,13 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeNotFound:
 		return http.StatusNotFound
-	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget:
+	// ADR-124 deployment queue controls. Cancel-of-live +
+	// reorder-of-non-pending map to 409 Conflict; range-error
+	// priority maps to 422 (handled at the Problem constructor
+	// since the StatusForCode fallback returns 422 generically).
+	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget,
+		CodeDeploymentCancelLiveForbidden, CodeDeploymentClearLiveForbidden,
+		CodeDeploymentCancelNotCancellable, CodeDeploymentReorderNotPending:
 		return http.StatusConflict
 	case CodeTrafficPercentSumInvalid:
 		// 409 — issue #556. Σ(traffic_percent WHERE status='live')
@@ -2974,6 +3014,84 @@ func ErrPlanMinInstancesNotAllowed(p Plan) *Problem {
 		"Plan doesn't allow a min-instances floor",
 		fmt.Sprintf("the %s plan always scales to zero; upgrade to Hobby, Pro, or Scale to keep instances warm.", p)).
 		WithDocs(docsBase + "/plans#min-instances")
+}
+
+// ErrDeploymentCancelLiveForbidden (ADR-124) is returned when
+// the caller tries to cancel a DeployLive deployment. 409 (not
+// 403) because the operation is well-formed; the row's state
+// forbids it. The fix-hint points at the existing rollback
+// surface.
+func ErrDeploymentCancelLiveForbidden(id string) *Problem {
+	return NewProblem(http.StatusConflict, CodeDeploymentCancelLiveForbidden,
+		"Cannot cancel a live deployment",
+		fmt.Sprintf("deployment %s is live; cancelling a live deploy would orphan the §6.2 INV 3 'always-live-snapshot-OR-rootfs' guarantee.", id)).
+		WithHint("Use 'gregale deploys rollback <id>' to swap to a previous deployment.").
+		WithFix("Run: gregale deploys rollback --app <slug> --to <previous-deployment-id>").
+		WithWhy("Cancelling a live deployment has no well-defined semantics: it would either scale the app to zero (kills §6.2 INV 4) or park the app (kills INV 3). The deploys-rollback path is the user-correct escape.").
+		WithDocs(docsBase + "/deploys#cancel")
+}
+
+// ErrDeploymentClearLiveForbidden (ADR-124) is returned by
+// DELETE /v1/deployments/{id} when the row is already in
+// DeployLive. Distinct code from ErrDeploymentCancelLiveForbidden
+// because the verbs are different on the wire: a dashboard that
+// sees 'cancel' will route the user to rollback, but a dashboard
+// that sees 'clear' needs to know clear-of-live is currently
+// unsupported (no soft-delete equivalent for live). 409 Conflict.
+func ErrDeploymentClearLiveForbidden(id string) *Problem {
+	return NewProblem(http.StatusConflict, CodeDeploymentClearLiveForbidden,
+		"Cannot clear a live deployment",
+		fmt.Sprintf("deployment %s is live; clearing a live row would orphan the §6.2 INV 3 'always-live-snapshot-OR-rootfs' guarantee, identical to cancel-of-live.", id)).
+		WithHint("Use 'gregale deploys rollback <id>' to swap to a previous deployment, then clear the old row.").
+		WithFix("Run: gregale deploys rollback --app <slug> --to <previous-deployment-id>").
+		WithWhy("Clear-of-live is structurally identical to cancel-of-live: both leave the app with no current row. The deploys-rollback path is the user-correct escape.").
+		WithDocs(docsBase + "/deploys#clear")
+}
+
+// ErrDeploymentCancelNotCancellable (ADR-124) is returned when
+// the deployment's current status is in
+// {failed, superseded, cancelled} — i.e. terminal and therefore
+// not cancellable. 409 Conflict.
+func ErrDeploymentCancelNotCancellable(id string) *Problem {
+	return NewProblem(http.StatusConflict, CodeDeploymentCancelNotCancellable,
+		"Deployment is not in a cancellable state",
+		fmt.Sprintf("deployment %s is already terminal; cancel is only valid for pending, building, imaging, or snapshotting rows.", id)).
+		WithDocs(docsBase + "/deploys#cancel")
+}
+
+// ErrDeploymentReorderNotPending (ADR-124) is returned when a
+// reorder request lands on a row that has already left
+// DeployPending. 409 Conflict — the operation is well-formed;
+// the row's state forbids it.
+func ErrDeploymentReorderNotPending(id string) *Problem {
+	return NewProblem(http.StatusConflict, CodeDeploymentReorderNotPending,
+		"Reorder only valid for pending deployments",
+		fmt.Sprintf("deployment %s is no longer pending; reorder is a planning-queue operation and cannot affect a row that has been claimed by builderd.", id)).
+		WithHint("Cancel this deployment and re-deploy with --priority if you need queue control.").
+		WithDocs(docsBase + "/deploys#reorder")
+}
+
+// ErrDeploymentReorderPriorityInvalid (ADR-124) is the range
+// backstop for priority. 422 Unprocessable Entity — the request
+// shape is wrong.
+func ErrDeploymentReorderPriorityInvalid(got int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeDeploymentReorderPriorityInvalid,
+		"priority must be in [0, 1000]",
+		fmt.Sprintf("priority=%d; valid range is [0, 1000] (0 = deploy immediately, 100 = FIFO default, 1000 = background rebuild).", got)).
+		WithLimit(1000, int64(got)).
+		WithDocs(docsBase + "/deploys#reorder")
+}
+
+// ErrPlanReorderDisabled (ADR-124) is the plan-tier gate for
+// reorder + deploy-immediately. 402 Payment Required — the
+// operation is well-formed but the plan tier forbids it.
+// Cancel + clear-obsolete are NOT gated by this check.
+func ErrPlanReorderDisabled(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanReorderDisabled,
+		"Plan doesn't allow reorder or deploy-immediately",
+		fmt.Sprintf("the %s plan locks the deploy queue (no reorder, no deploy-immediately); cancel and clear-obsolete remain available. Upgrade to Hobby, Pro, or Scale to unlock the queue controls.", p)).
+		WithHint("Cancel + clear-obsolete remain available on Free; upgrade to unlock reorder/deploy-immediately.").
+		WithDocs(docsBase + "/plans#queue-controls")
 }
 
 // ErrInvalidMinInstances is returned when the requested min_instances

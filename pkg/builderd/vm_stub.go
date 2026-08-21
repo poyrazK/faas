@@ -37,3 +37,10 @@ func (s *VMMDriver) Spawn(_ context.Context, _ VMRequest) (BuildHandle, error) {
 func (s *VMMDriver) WaitForCompletion(_ context.Context, _ BuildHandle) (BuildOutcome, error) {
 	return BuildOutcome{}, ErrNotMetal
 }
+
+// Cancel is the non-metal pairing; always returns ErrNotMetal.
+// Unit tests don't trigger the cancel path; the stub satisfies
+// the VM interface only.
+func (s *VMMDriver) Cancel(_ context.Context, _ string) error {
+	return ErrNotMetal
+}

@@ -325,7 +325,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeploys,
 		DocSlug: "deploys",
-		Short:   "Read-only deploy drill-downs (deploys show|status <id>)",
+		Short:   "Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete)",
 		Subcommands: []cliSub{
 			// ADR-117 companion read surface. Future siblings
 			// (timeline, events, artifacts) land here as new

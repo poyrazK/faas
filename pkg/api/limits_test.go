@@ -131,7 +131,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// to 0 (the abuse-floor tier cannot host multi-tenant
 			// consumer surfaces — mirrors CronLimitPerApp/OrgMembersMax
 			// 0/0 posture). Handler returns 402 CodeConsumerKeysNotAllowed.
-			ConsumerKeysPerApp: 0, ConsumerKeysPerAccount: 0},
+			ConsumerKeysPerApp: 0, ConsumerKeysPerAccount: 0,
+			// ADR-124: Free keeps cancel + clear-obsolete; reorder
+			// stays plan-gated (Free=false).
+			QueueControlsAllowed: false},
 		PlanHobby: {Plan: PlanHobby, DeployedApps: 5, MaxConcurrency: 2, RAMMB: 256, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 50, PriceMillicents: 900_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, SecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
 			// Issue #559: Hobby = 5 (smallest paid tier — one Node
 			// event loop comfortably handles 5 concurrent requests).
@@ -265,7 +268,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// is the same one-app-many-keys demand that Pro addresses
 			// at higher concurrency). Account ceiling is the abuse
 			// floor; Hobby's typical 5-app footprint stays well under.
-			ConsumerKeysPerApp: 100, ConsumerKeysPerAccount: 250},
+			ConsumerKeysPerApp: 100, ConsumerKeysPerAccount: 250,
+			// ADR-124: Hobby = first paid tier with reorder enabled.
+			QueueControlsAllowed: true},
 		// ADR-031: Pro opt-in for per-app egress allowlist with a 16-CIDR cap.
 		PlanPro: {Plan: PlanPro, DeployedApps: 25, MaxConcurrency: 5, RAMMB: 512, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 250, PriceMillicents: 2_900_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, SecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
 			// Issue #559: Pro = 25 (typical SaaS-tier workload
@@ -392,7 +397,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// (the per-app ceiling × DeployedApps fits inside the per-
 			// account envelope, so neither side trips first on the
 			// typical Pro customer).
-			ConsumerKeysPerApp: 100, ConsumerKeysPerAccount: 2500},
+			ConsumerKeysPerApp: 100, ConsumerKeysPerAccount: 2500,
+			// ADR-124: Pro mirrors Hobby for queue controls.
+			QueueControlsAllowed: true},
 		// ADR-031: Scale double-up to 64 CIDR cap (2× Pro, tracks 2×
 		// DeployedApps).
 		PlanScale: {Plan: PlanScale, DeployedApps: 100, MaxConcurrency: 20, RAMMB: 1024, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 1500, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, SecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
@@ -525,7 +532,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// is the abuse-floor — the typical Scale customer
 			// (multi-tenant SaaS broker) uses 25-30% of the budget per
 			// app, well under 100/app and 25000/acct envelopes.
-			ConsumerKeysPerApp: 1000, ConsumerKeysPerAccount: 25000},
+			ConsumerKeysPerApp: 1000, ConsumerKeysPerAccount: 25000,
+			// ADR-124: Scale gets the highest queue depth (25) and
+			// the same 60/h reorder budget as Hobby/Pro.
+			QueueControlsAllowed: true},
 	}
 	for _, p := range Plans {
 		got := MustLimitsFor(p)

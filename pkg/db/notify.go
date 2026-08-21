@@ -94,6 +94,21 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	NotifyBuildQueued       {"build_id":uuid, "app_id":uuid,
 //	                         "kind":"tarball|dockerfile|function",
 //	                         "deployment_id":uuid}
+//	NotifyBuildChanged      {"build_id":uuid, "deployment_id":uuid,
+//	                         "status":"cancelled", "reason":"user|...|system",
+//	                         "cascade":bool}
+//	                         apidsource → builderd: a build row was flipped
+//	                         to "cancelled" (either by user-initiated
+//	                         `gregale deploys cancel <id>` cascading from
+//	                         CancelDeploymentTx, or by direct user action
+//	                         via the future build-cancel endpoint). Payload
+//	                         mirrors NotifyBuildQueued's shape so the
+//	                         existing decoder pattern applies. Listeners:
+//	                         cmd/builderd/main.go's build-LISTEN goroutine
+//	                         dispatches on channel name and calls
+//	                         VM.Cancel to drop the in-flight VM. The
+//	                         source-of-truth row flip already happened
+//	                         in the same tx — Cancel is fire-and-forget.
 //	NotifyBuildLog          {"build":"uuid","line":"..."}
 //	                         builderd → dashboards / SSE: live build output
 //	                         (UX spec §2.4 streamed logs).
@@ -185,9 +200,15 @@ const (
 	//     full 1s tick before the first batch)
 	//   - dashboard SSE (commit #16 / §4.7.X — operator-facing
 	//     "your trigger just received a record" notification)
-	NotifyTriggerReady    = "trigger_ready"
-	NotifyKeyChanged      = "key_changed"
-	NotifyBuildQueued     = "build_queued"
+	NotifyTriggerReady = "trigger_ready"
+	NotifyKeyChanged   = "key_changed"
+	NotifyBuildQueued  = "build_queued"
+	// NotifyBuildChanged mirrors the deployment_changed row-flip signal
+	// at the build level (ADR-124). Fired by apidsource after the
+	// CancelDeploymentTx single-tx orchestrator commits the build row
+	// to "cancelled" — listeners (currently builderd only) fire their
+	// VM teardown off this signal.
+	NotifyBuildChanged    = "build_changed"
 	NotifyBuildLog        = "build_log"
 	NotifyDomainVerify    = "domain_verify"
 	NotifyInstanceChanged = "instance_changed"

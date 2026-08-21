@@ -1021,6 +1021,25 @@ func (s *server) handler() http.Handler {
 	// powerful as the min_instances PATCH (Σ rebalance affects
 	// sibling live rows in the same app).
 	mux.HandleFunc("PATCH /v1/deployments/{id}/traffic", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateDeploymentTraffic))))
+	// ADR-124 deployment queue controls. Four routes; cancel +
+	// clear-obsolete (Free-allowed); reorder + clear-obsolete's
+	// plan-gated path use ScopeDeployWrite + Plan.QueueControlsAllowed.
+	// The {slug} form on cancel lets us honour the same loadApp
+	// IDOR gate that POST /v1/apps/{slug}/deployments uses; the
+	// id-only form on the other three mirrors the existing PATCH
+	// /v1/deployments/{id} posture (DeploymentByID → AppByID
+	// account check inside the handler).
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleCancelDeployment))))
+	mux.HandleFunc("POST /v1/deployments/{id}/reorder", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleReorderDeployment))))
+	mux.HandleFunc("DELETE /v1/deployments/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleClearDeployment))))
+	// clear-obsolete is app-scoped (the actual bulk soft-delete
+	// operator), not deployment-scoped. Mounted under
+	// /v1/apps/{slug}/deployments/clear-obsolete so the slug
+	// gate naturally scopes the call. The router reserves
+	// "clear-obsolete" as the literal sub-path segment (not a
+	// {id} placeholder) so there is no conflict with the
+	// sibling {id}-bearing routes above.
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/clear-obsolete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleClearObsoleteDeployments))))
 	// Builds (DEPLOY-PROV-6 / ADR-089, issue #741). Lifecycle
 	// surface — returns status, timestamps, failure_class,
 	// server-computed duration_seconds for a build id. Companion

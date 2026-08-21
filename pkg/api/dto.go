@@ -1377,6 +1377,23 @@ type BuildListResponse struct {
 	NextBefore string          `json:"next_before,omitempty"`
 }
 
+// CancelDeploymentRequest is the optional body of POST
+// /v1/apps/{slug}/deployments/{id}/cancel. Reason must be one of
+// the closed pkg/state.CancelReason values (empty → "user" server-side).
+type CancelDeploymentRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+// ClearObsoleteReport is the response shape for POST
+// /v1/apps/{slug}/deployments/clear-obsolete. Count is the number
+// of soft-deleted rows in this call; OlderThan echoes the cutoff
+// the store applied (default 168h).
+type ClearObsoleteReport struct {
+	AppSlug   string `json:"app_slug"`
+	Count     int    `json:"count"`
+	OlderThan string `json:"older_than"`
+}
+
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
 	ID          string `json:"id"`

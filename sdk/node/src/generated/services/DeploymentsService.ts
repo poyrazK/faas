@@ -5,6 +5,8 @@
 import type { BuildListResponse } from '../models/BuildListResponse.js';
 import type { BuildProvenanceResponse } from '../models/BuildProvenanceResponse.js';
 import type { BuildResponse } from '../models/BuildResponse.js';
+import type { CancelDeploymentRequest } from '../models/CancelDeploymentRequest.js';
+import type { ClearObsoleteReport } from '../models/ClearObsoleteReport.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
 import type { DeploymentListResponse } from '../models/DeploymentListResponse.js';
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
@@ -388,6 +390,160 @@ export class DeploymentsService {
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
       },
+    });
+  }
+  /**
+   * Soft-delete a deployment.
+   * ADR-124 deployment queue controls — soft-delete one deployment
+   * row. Status is intentionally untouched (admin audit trail).
+   * Live deployments return 409 with the cancel-live hint pointing
+   * at `gregale deploys rollback`.
+   *
+   * @returns any Soft-deleted.
+   * @throws ApiError
+   */
+  public static clearDeployment({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<any> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/deployments/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+        409: `Live deployments cannot be cleared.`,
+      },
+    });
+  }
+  /**
+   * Reorder a pending deployment.
+   * ADR-124 deployment queue controls — update the priority of a
+   * still-pending deployment. 0 = deploy immediately (top of
+   * queue), 100 = FIFO default, 1000 = background rebuild.
+   * Plan-gated (Hobby/Pro/Scale only); Free returns 402
+   * `plan_reorder_disabled`. 409 if the deployment has already
+   * moved off the pending queue.
+   *
+   * @returns any Reordered.
+   * @throws ApiError
+   */
+  public static reorderDeployment({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: {
+      priority: number;
+    },
+  }): CancelablePromise<{
+    id?: string;
+    priority?: number;
+  }> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/reorder',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        402: `Plan does not allow reorder.`,
+        409: `Row is past the pending queue.`,
+      },
+    });
+  }
+  /**
+   * Cancel a deployment.
+   * ADR-124 deployment queue controls — flip a deployment in
+   * {pending, building, imaging, snapshotting} to "cancelled"
+   * and cascade-cancel its in-flight builds. Live deployments
+   * return 409 `deployment_cancel_live_forbidden` with the
+   * rollback hint. Optional reason: user | auto_quota |
+   * auto_health | system.
+   *
+   * @returns any Cancelled.
+   * @throws ApiError
+   */
+  public static cancelDeployment({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody?: CancelDeploymentRequest,
+  }): CancelablePromise<{
+    id?: string;
+    status?: string;
+    cancelled_at?: string;
+    cancel_reason?: string;
+    cancelled_builds?: Array<string>;
+  }> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deployments/{id}/cancel',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `Live deployment cannot be cancelled.`,
+      },
+    });
+  }
+  /**
+   * Bulk soft-delete terminal-but-not-current deployments.
+   * ADR-124 deployment queue controls — bulk soft-delete rows
+   * in {superseded, failed, cancelled} older than the cutoff
+   * (default 168h). Plan-gated (Free returns 402). Retention
+   * cap enforced inside the store so INV 3 stays satisfied.
+   *
+   * @returns ClearObsoleteReport Cleared.
+   * @throws ApiError
+   */
+  public static clearObsoleteDeployments({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody?: {
+      /**
+       * Go duration (e.g. 168h).
+       */
+      older_than?: string;
+    },
+  }): CancelablePromise<ClearObsoleteReport> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deployments/clear-obsolete',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

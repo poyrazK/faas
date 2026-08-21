@@ -301,6 +301,35 @@ func readBuildDone(exportDir string) (api.BuildDone, bool) {
 	return done, true
 }
 
+// Cancel fires the same vmmd.Destroy path as WaitForCompletion but with
+// a short, fire-and-forget deadline so the LISTEN goroutine
+// (cmd/builderd/main.go) doesn't block on the in-VM build. The build
+// row is already flipped to "cancelled" inside
+// pgstore.CancelDeploymentTx; this call exists only to ask vmmd to
+// drop the VM. A short deadline is the right call: if vmmd cannot
+// reach the VM in 15 s the build is wedged and the janitor sweep
+// (pkg/builderd/reaper.go) will catch the orphan.
+//
+// Note: Destroy waits for vmmd's drive-export to flush even on
+// cancel; the in-build guest-init path is what's slow here, not
+// vmmd itself. 15 s is well below the build timeout (default 600 s)
+// and gives enough headroom for the vmmd API call to round-trip.
+func (d *VMMDriver) Cancel(ctx context.Context, buildID string) error {
+	if d == nil || d.cli == nil {
+		return fmt.Errorf("builderd: VMMDriver not wired")
+	}
+	if buildID == "" {
+		return fmt.Errorf("builderd: empty buildID")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	_, err := d.cli.Destroy(cctx, &vmmdpb.DestroyRequest{Instance: "build-" + buildID})
+	if err != nil {
+		return fmt.Errorf("builderd: cancel destroy: %w", err)
+	}
+	return nil
+}
+
 // runJanitor scans d.driveDir for *.ext4 older than 1h and removes them.
 // Best-effort: no error returned. Per the plan's Risks, vmmd crashes
 // between boot and destroy would otherwise leak 28 GiB scratch files; this
