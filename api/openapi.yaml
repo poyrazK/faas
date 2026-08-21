@@ -4921,6 +4921,23 @@ paths:
   /dashboard/apps/{slug}/alert-presets/{name}/enable:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      # The name path parameter IS defined in the JSON sibling as
+      # an inline field (no reusable `Name` component exists yet —
+      # see #4862 in the component reuse backlog). Vacuum's
+      # `parameter-named-correctly` rule fails when a route
+      # declares a {name} path segment but no `name: in: path`
+      # parameter; mirroring the JSON sibling here keeps the
+      # spec-check gate green and gives dashboard clients a
+      # typed path arg in the SDK.
+      - name: name
+        in: path
+        required: true
+        description: Preset name (catalog key — same value the JSON
+          sibling accepts at /v1/apps/{slug}/alert-presets/{name}/enable).
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
     post:
       tags: [alert_rules]
       operationId: dashboardEnableAlertPreset

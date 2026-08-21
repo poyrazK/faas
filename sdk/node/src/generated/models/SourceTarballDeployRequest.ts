@@ -14,9 +14,5 @@ export type SourceTarballDeployRequest = {
    * 40-char lowercase SHA from `git rev-parse HEAD`. Informational only; the build pipeline does NOT pin to this SHA.
    */
   ref?: string | null;
-  reason?: string | null;
-  tag?: 'incident_recovery' | 'hotfix' | 'scheduled_maintenance' | 'compliance_hold' | 'partner_request';
-  deployed_by?: string | null;
-  pr_number?: number | null;
 };
 

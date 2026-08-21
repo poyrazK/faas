@@ -32,21 +32,5 @@ export type CreateDeploymentRequest = {
    * Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = `default`.
    */
   scope?: string | null;
-  /**
-   * Free-form operator note (issue #977 / ADR-116). DB CHECK enforces length(reason) <= 280.
-   */
-  reason?: string | null;
-  /**
-   * Closed-set annotation tag. DB CHECK (deployments_tag_set_chk) enforces the same vocabulary.
-   */
-  tag?: 'incident_recovery' | 'hotfix' | 'scheduled_maintenance' | 'compliance_hold' | 'partner_request';
-  /**
-   * Operator label. CLI auto-captures from `git config user.name`; githubd stamps pusher.name; Action defaults to ${{ github.actor }}.
-   */
-  deployed_by?: string | null;
-  /**
-   * PR number (when known). 0 / NULL collapses to NULL on the row (DB CHECK rejects 0).
-   */
-  pr_number?: number | null;
 };
 
