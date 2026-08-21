@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"sort"
 	"strconv"
@@ -3714,6 +3715,32 @@ type AppSecurityRequest struct {
 // field so the CLI can render the new state without a follow-up GET.
 type AppSecurityResponse struct {
 	RequireSigned bool `json:"require_signed"`
+}
+
+// AppStaticEgressIPResponse is the body of GET
+// /v1/apps/{slug}/static-egress-ip (ADR-119). IP / SetAt are
+// pointers so the wire shape is stable: a Scale customer with no
+// pin yet sees ip=null, set_at=null, plan_cap=1. PlanCap is the
+// Limits.StaticEgressIPsPerApp value (1 in v1) so the dashboard
+// can render "you can use 1 static IP per app" without the CLI
+// round-tripping the plan table.
+type AppStaticEgressIPResponse struct {
+	IP          *netip.Addr `json:"ip"`
+	SetAt       *time.Time  `json:"set_at"`
+	PlanCap     int         `json:"plan_cap"`
+	PlanAllowed bool        `json:"plan_allowed"`
+}
+
+// SetAppStaticEgressIPRequest is the body of PUT
+// /v1/apps/{slug}/static-egress-ip. IP is the canonical
+// customer-supplied IPv4 (dotted-quad string). The handler
+// validates the family=4 + non-RFC1918 + non-link-local +
+// non-multicast before the column write. Set=false means
+// "clear" — the same wire body covers the DELETE /keep-IP
+// promotion path without a third endpoint.
+type SetAppStaticEgressIPRequest struct {
+	IP  string `json:"ip"`
+	Set bool   `json:"set"`
 }
 
 // AdminSetGithubWebhookSecretRequest is the body shape for

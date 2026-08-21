@@ -143,6 +143,22 @@ service Vmmd {
   // drift subscriber, pkg/sched/egress_drift.go).
   rpc UpdateEgressAllowlist(UpdateEgressAllowlistRequest) returns (UpdateEgressAllowlistAck);
 
+  // UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
+  // per-app static egress IP into every live netns the vmmd
+  // owns without tearing the netns down. The caller passes
+  // app_id + the new IPv4 (already validated upstream; the
+  // DB family=4 CHECK prevents IPv6 from reaching here).
+  // Empty ip = clear the pin (mirrors the DELETE wire shape).
+  // vmmd walks its live-instance map and applies the new
+  // MASQUERADE-sibling rule in-place via the per-netns
+  // nftables re-render path (same posture as
+  // UpdateEgressAllowlist's handle-delete + insert). The
+  // delivery mechanism is pg_notify → schedd's egress_drift
+  // subscriber (pkg/sched/egress_drift.go). Idempotent: a
+  // re-pushed identical IP is a no-op. Plan-gated upstream by
+  // pkg/api/limits.go::Plan.StaticEgressIPAllowed.
+  rpc UpdateStaticEgressIP(UpdateStaticEgressIPRequest) returns (UpdateStaticEgressIPAck);
+
   // SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
   // Linux kernel seccomp state of the jailer child process backing
   // this instance. Spec §11: "Firecracker's default seccomp filter
@@ -453,6 +469,21 @@ message AppSpec {
   // for `runtime`. Renumbered post-rebase to preserve both
   // fields' additive contract under ADR-016.
   repeated SidecarSpec sidecars = 13;
+  // static_egress_ip (ADR-119) is the customer-supplied IPv4
+  // (BYOIP, Scale-only) the host MASQUERADE-sibling rule
+  // rewrites tenant source traffic to. Empty = no static pin
+  // (default behaviour preserved); non-empty → vmmd sets
+  // netns.Config.AccountStaticIP so the per-netns renderer
+  // emits a sibling SNAT-to-customer rule in the postrouting
+  // chain AFTER the default MASQUERADE. v4-only in v1; the
+  // DB family=4 CHECK (apps_static_egress_ip_family_check,
+  // migration 00325) prevents IPv6 from reaching here.
+  // vmmd validates the dotted-quad + non-reserved shape
+  // before forwarding into netns.Config. Plan-gated upstream
+  // (Free/Hobby/Pro always empty) by
+  // pkg/api/limits.go::Plan.StaticEgressIPAllowed.
+  // Additive per ADR-016.
+  string static_egress_ip = 14;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -922,6 +953,36 @@ message UpdateEgressAllowlistRequest {
 // is expected to Park + ColdBoot the affected instances, which
 // the schedd watchdog does on its next tick).
 message UpdateEgressAllowlistAck {}
+
+// UpdateStaticEgressIPRequest (ADR-119) is the input to
+// UpdateStaticEgressIP. app_id is the apps.id UUID whose live
+// instances need the new pin. static_egress_ip is the new
+// customer-supplied IPv4 (dotted-quad); empty = clear the
+// pin (DELETE wire shape). v4-only in v1 — the DB CHECK
+// family=4 (apps_static_egress_ip_family_check, migration
+// 00325) prevents IPv6 from reaching here.
+//
+// The wire does not include a `static_egress_ip_version`
+// field — the in-place patch is the only contract; cold boot
+// on snapshot restore re-reads the column on every Wake, so
+// any drift between the snapshot age and the column is
+// repaired by the next Wake without a version handshake on
+// the hot path. Mirrors the UpdateEgressAllowlistRequest
+// contract above.
+message UpdateStaticEgressIPRequest {
+  string app_id = 1;
+  string static_egress_ip = 2;
+}
+
+// UpdateStaticEgressIPAck is the empty success response. On
+// failure vmmd returns a gRPC status (Unavailable when no live
+// instances match app_id; Internal when the in-place MASQUERADE
+// sibling patch failed AND the revert to the prior argv
+// snapshot also failed — the live netns is then in an
+// undefined state and the caller is expected to Park +
+// ColdBoot the affected instances, which the schedd watchdog
+// does on its next tick). Mirrors UpdateEgressAllowlistAck.
+message UpdateStaticEgressIPAck {}
 
 // SeccompStatusRequest is the input to SeccompStatus. Instance is
 // the compute_node-relative instance id (instances.id). vmmd

@@ -138,6 +138,14 @@ func (s *stubVmmdClient) UpdateEgressAllowlist(context.Context, *vmmdpb.UpdateEg
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
 }
 
+// UpdateStaticEgressIP (ADR-119) — the gateway hot path
+// doesn't drive the in-place patch; schedd's egress_drift
+// subscriber does. Returns success so the gRPC VmmdClient
+// interface stays satisfied. Mirrors UpdateEgressAllowlist above.
+func (s *stubVmmdClient) UpdateStaticEgressIP(context.Context, *vmmdpb.UpdateStaticEgressIPRequest, ...grpc.CallOption) (*vmmdpb.UpdateStaticEgressIPAck, error) {
+	return &vmmdpb.UpdateStaticEgressIPAck{}, nil
+}
+
 // Logs (issue #254 / Move 4) — the gateway hot path never dials
 // the per-instance log stream directly; apid dials schedd for
 // that. The stub returns Unimplemented so any accidental test

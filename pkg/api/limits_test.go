@@ -417,6 +417,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// the worker's hourly budget window.
 			MaxQueueAttempts:       25,
 			EgressAllowlistAllowed: true, EgressAllowlistMaxSize: 64,
+			// ADR-119: Scale unlocks static egress IP (per-app quota=1).
+			StaticEgressIPAllowed: true, StaticEgressIPsPerApp: 1,
 			// Issue #477 / ADR-118: Scale gets a 64-entry cap, 4× Pro
 			// (same ladder as EgressAllowlistMaxSize; SaaS-scale
 			// customers with multi-region deployments enumerate more
@@ -1043,6 +1045,54 @@ func TestPlanEgressAllowlistMonotonic(t *testing.T) {
 	scale := MustLimitsFor(PlanScale).EgressAllowlistMaxSize
 	if scale < pro {
 		t.Errorf("Scale EgressAllowlistMaxSize=%d < Pro=%d — Scale must keep the larger CIDR budget", scale, pro)
+	}
+}
+
+// TestPlanStaticEgressIPAllowed pins the per-plan gate for the
+// static outbound IP feature (ADR-119). Free/Hobby/Pro → false
+// (the B2B allowlist use case is a Scale-only concern in v1 —
+// the per-account variant is a deferred follow-up ADR); Scale
+// → true. Unknown plans must default to false (fail-closed —
+// same contract as EgressAllowlistAllowed above).
+func TestPlanStaticEgressIPAllowed(t *testing.T) {
+	cases := []struct {
+		plan Plan
+		want bool
+	}{
+		{PlanFree, false},
+		{PlanHobby, false},
+		{PlanPro, false},
+		{PlanScale, true},
+		{Plan("unknown"), false},
+	}
+	for _, c := range cases {
+		if got := c.plan.StaticEgressIPAllowed(); got != c.want {
+			t.Errorf("%s.StaticEgressIPAllowed() = %v, want %v", c.plan, got, c.want)
+		}
+	}
+}
+
+// TestPlanStaticEgressIPsPerApp pins the per-plan count cap on
+// pinned static egress IPs (ADR-119). v1 ships with 1 for Scale
+// (the column is a single inet, not a child table — bumping to
+// N is a per-plan int change with no schema impact). 0 for
+// Free/Hobby/Pro. Unknown plans must default to 0 (fail-closed).
+// Mirrors TestPlanEgressAllowlistMaxSize's contract.
+func TestPlanStaticEgressIPsPerApp(t *testing.T) {
+	cases := []struct {
+		plan Plan
+		want int
+	}{
+		{PlanFree, 0},
+		{PlanHobby, 0},
+		{PlanPro, 0},
+		{PlanScale, 1},
+		{Plan("unknown"), 0},
+	}
+	for _, c := range cases {
+		if got := c.plan.StaticEgressIPsPerApp(); got != c.want {
+			t.Errorf("%s.StaticEgressIPsPerApp() = %d, want %d", c.plan, got, c.want)
+		}
 	}
 }
 

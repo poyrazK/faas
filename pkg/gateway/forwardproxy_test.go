@@ -124,6 +124,15 @@ func (f *fakeVmmdClient) UpdateEgressAllowlist(context.Context, *vmmdpb.UpdateEg
 	panic("UpdateEgressAllowlist: not stubbed")
 }
 
+// UpdateStaticEgressIP (ADR-119) — the gateway hot path
+// doesn't drive the in-place patch. Panics so a future test
+// that actually exercises this RPC from the gateway side fails
+// loudly (rather than silently returning a stubbed success).
+// Mirrors UpdateEgressAllowlist above.
+func (f *fakeVmmdClient) UpdateStaticEgressIP(context.Context, *vmmdpb.UpdateStaticEgressIPRequest, ...grpc.CallOption) (*vmmdpb.UpdateStaticEgressIPAck, error) {
+	panic("UpdateStaticEgressIP: not stubbed")
+}
+
 // Logs (issue #254 / Move 4) — the gateway hot path never dials
 // the per-instance log stream directly; apid dials schedd for
 // that. Panics so a future test that exercises the RPC from the

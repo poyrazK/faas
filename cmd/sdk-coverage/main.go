@@ -562,6 +562,17 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/tenant-surfaces/{id}/hostnames":              "AddTenantHostname",
 	"DELETE /v1/apps/{slug}/tenant-surfaces/{id}/hostnames/{hostname}": "RemoveTenantHostname",
 
+	// ADR-119 — per-app static egress IP. Same shape as tenant-surfaces:
+	// the auto-derivation strips the {slug} placeholder but leaves the
+	// hyphen in "static-egress-ip", producing
+	// "GetAppsSlugStatic-egress-ip" which doesn't match the SDK verbs
+	// (GetAppStaticEgressIP, SetAppStaticEgressIP, ClearAppStaticEgressIP).
+	// The explicit map drops the path-separator noise and matches the
+	// spec operationId for each verb.
+	"GET /v1/apps/{slug}/static-egress-ip":    "GetAppStaticEgressIP",
+	"PUT /v1/apps/{slug}/static-egress-ip":    "SetAppStaticEgressIP",
+	"DELETE /v1/apps/{slug}/static-egress-ip": "ClearAppStaticEgressIP",
+
 	// Issue #961 / Mega-A PR-A — zero-config deploy + domains surface.
 	// The auto-derivation produces names with literal hyphens for the
 	// source-tarball route ("PostAppsSlugDeploymentsSource-tarball")

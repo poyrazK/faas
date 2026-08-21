@@ -133,6 +133,11 @@ func (v *statsFakeVMM) UpdateEgressAllowlist(context.Context, string, []netip.Pr
 	return nil
 }
 
+// UpdateStaticEgressIP (ADR-119) is the no-op test fake.
+func (v *statsFakeVMM) UpdateStaticEgressIP(context.Context, string, string, string) error {
+	return nil
+}
+
 // Logs (issue #254 / Move 4, issue #517 / PR-B) — instancestats
 // tests don't drive the log stream path; the scheddgrpc handler
 // tests do. Returns nil + an error so the caller's "no log stream"

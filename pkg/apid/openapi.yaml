@@ -2702,6 +2702,112 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '500': { $ref: '#/components/responses/ServerError' }
 
+  # ADR-119: per-app static egress IP (Scale-only, BYOIP, single-node v1).
+  # Customer brings their own IPv4 from their own range; the host bridge
+  # aliases it and a per-host postrouting MASQUERADE sibling rewrites
+  # matching tenant source traffic to the customer's IP. Three verbs per
+  # the existing egress-allowlist pattern: GET (read), PUT (set),
+  # DELETE (clear). Apid has its own per-app quota guard on top of the
+  # apps_static_egress_ip_key partial unique index that defends at the
+  # DB layer (two apps on the same account cannot pin the same IP).
+
+  /v1/apps/{slug}/static-egress-ip:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [security]
+      operationId: getAppStaticEgressIP
+      summary: Read the per-app static egress IP pin (ADR-119).
+      description: |
+        Returns the customer's pinned IPv4 + the audit timestamp +
+        the per-app quota cap (StaticEgressIPsPerApp, 1 in v1). A
+        Scale customer with no pin yet sees `ip=null`,
+        `set_at=null`, `plan_cap=1`, `plan_allowed=true`. Free /
+        Hobby / Pro return `plan_allowed=false` so the CLI can
+        render the upsell without a separate plan lookup.
+
+        Mounted with the standard auth chain (no MFA, no admin
+        scope — the customer owns the pin).
+      responses:
+        '200':
+          description: The current pin state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppStaticEgressIPResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+    put:
+      tags: [security]
+      operationId: setAppStaticEgressIP
+      summary: Pin an IPv4 to the app's egress traffic (Scale-only).
+      description: |
+        Customer-supplied IPv4 from their own range. The host
+        bridge aliases the IP and a per-host postrouting
+        MASQUERADE sibling rewrites matching tenant source
+        traffic to the customer's IP. v1 limits:
+
+        * Plan must be Scale (Plan.StaticEgressIPAllowed).
+        * IPv4-only (IPv6 is rejected at the DB CHECK).
+        * Not RFC1918, link-local, multicast, or /0.
+        * Per-app quota of 1 (StaticEgressIPsPerApp) — two apps
+          on the same account cannot pin the same IP.
+
+        Sending `{"ip": "203.0.113.42", "set": true}` upserts
+        the pin. Sending `{"ip": "", "set": false}` clears
+        it. The DELETE verb below is a convenience wrapper
+        for the clear path.
+
+        Audit event: `app.static_egress_ip_set` carries the
+        account/app/ip triple.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetAppStaticEgressIPRequest'
+      responses:
+        '200':
+          description: The new pin state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppStaticEgressIPResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: |
+            Plan doesn't allow static egress IPs (Free / Hobby / Pro).
+            Stable code: `plan_static_egress_ip_not_allowed`.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: |
+            Per-app quota exceeded (another app on the same account
+            already pins the same IP). Stable code:
+            `plan_static_egress_ip_quota`.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+    delete:
+      tags: [security]
+      operationId: clearAppStaticEgressIP
+      summary: Clear the per-app static egress IP pin.
+      description: |
+        Removes the apps.static_egress_ip pin and stamps
+        static_egress_ip_set_at=NULL. Survives replay across
+        scale-to-zero (the new pin state is read at wake time
+        and the per-host egress renderer is re-applied on
+        change).
+      responses:
+        '204': { description: Pin cleared. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+
   /v1/apps/{slug}/trusted_signers:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -14567,6 +14673,73 @@ components:
           type: boolean
           description: "The current state of the require_signed flag after the patch."
           example: true
+
+    AppStaticEgressIPResponse:
+      description: |
+        GET /v1/apps/{slug}/static-egress-ip response body (ADR-119).
+        IP / SetAt are pointers so the wire shape is stable: a Scale
+        customer with no pin yet sees `ip=null`, `set_at=null`,
+        `plan_cap=1`, `plan_allowed=true`. PlanCap is the
+        Limits.StaticEgressIPsPerApp value (1 in v1) so the dashboard
+        can render "you can use 1 static IP per app" without the CLI
+        round-tripping the plan table.
+      type: object
+      required: [ip, set_at, plan_cap, plan_allowed]
+      properties:
+        ip:
+          type: [string, "null"]
+          format: ipv4
+          description: |
+            The pinned IPv4 (dotted-quad). `null` when the customer
+            has not pinned an IP yet. The DB family=4 CHECK
+            guarantees this is never IPv6.
+          example: 203.0.113.42
+        set_at:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            RFC 3339 timestamp for when the customer pinned the IP.
+            `null` when IP is `null`.
+          example: 2026-08-19T12:00:00Z
+        plan_cap:
+          type: integer
+          minimum: 0
+          description: |
+            Per-app quota cap (Limits.StaticEgressIPsPerApp). 1 in v1
+            for Scale; 0 for plans that don't allow static egress IPs.
+          example: 1
+        plan_allowed:
+          type: boolean
+          description: |
+            Whether the account's plan permits static egress IPs
+            (Plan.StaticEgressIPAllowed). `true` for Scale; `false`
+            for Free / Hobby / Pro so the CLI can render the upsell.
+          example: true
+
+    SetAppStaticEgressIPRequest:
+      description: |
+        PUT /v1/apps/{slug}/static-egress-ip body (ADR-119). IP is
+        the canonical customer-supplied IPv4 (dotted-quad string).
+        The handler validates the family=4 + non-RFC1918 +
+        non-link-local + non-multicast shape before the column
+        write. Set=false with empty IP means "clear" — the same
+        wire body covers the DELETE /keep-IP promotion path
+        without a third endpoint.
+      type: object
+      required: [ip, set]
+      properties:
+        ip:
+          type: string
+          description: |
+            Customer-supplied IPv4 (dotted-quad). Required when
+            `set=true`. Empty string when `set=false`.
+          example: 203.0.113.42
+        set:
+          type: boolean
+          description: |
+            `true` to pin the IP; `false` to clear the pin.
+          example: true
+
 
     # ─── Organizations (issue #190 / IAM-6 / ADR-061, PR 5) ───────────────
     # DTOs for the /v1/orgs/{slug}/... customer surface (org CRUD,

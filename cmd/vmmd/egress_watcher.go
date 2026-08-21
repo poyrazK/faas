@@ -143,14 +143,29 @@ type egressWatcher struct {
 // newEgressWatcher wires the production watcher. stagingDir is the
 // daemon's process-local temp directory; livePath is the canonical
 // nftables config path. Tests inject their own values.
+//
+// The render closure reads the live ActiveHostPolicyForRender
+// pointer (ADR-119 redesign) — the per-process mutable that the
+// Manager swaps on every Wake / Teardown / drift / SIGHUP. The
+// pointer read is atomic; the renderer is a pure function of the
+// pointed-to struct, so a snapshot guarantees a consistent
+// ruleset for one reload. Pre-redesign this was a hard-coded
+// `netns.DefaultHostPolicy.Render()` — the read-only path never
+// reflected per-VM live state.
 func newEgressWatcher(log *slog.Logger, stagingDir, livePath string) *egressWatcher {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &egressWatcher{
-		log:        log,
-		nft:        osExecNft{},
-		render:     func() string { return netns.DefaultHostPolicy.Render() },
+		log: log,
+		nft: osExecNft{},
+		render: func() string {
+			p := netns.ActiveHostPolicyForRender()
+			if p == nil {
+				return ""
+			}
+			return p.Render()
+		},
 		stagingDir: stagingDir,
 		livePath:   livePath,
 	}

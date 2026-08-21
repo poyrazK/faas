@@ -128,6 +128,11 @@ func (h *heartbeatFakeVMM) UpdateEgressAllowlist(context.Context, string, []neti
 	return nil
 }
 
+// UpdateStaticEgressIP (ADR-119) is the no-op test fake.
+func (h *heartbeatFakeVMM) UpdateStaticEgressIP(context.Context, string, string, string) error {
+	return nil
+}
+
 // Logs (issue #254 / Move 4, issue #517 / PR-B) — heartbeat tests
 // don't drive the log stream path; the scheddgrpc handler tests
 // do. Returns a closed fakeLogStream so any accidental caller exits

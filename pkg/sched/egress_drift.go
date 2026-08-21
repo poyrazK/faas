@@ -95,25 +95,45 @@ func (e *EgressDriftSubscriber) handle(ctx context.Context, n db.Notification) {
 		// (logs only).
 		AppID string `json:"app_id"`
 		Slug  string `json:"slug"`
+		// ADR-119: kind=static_egress_ip carries the new
+		// customer-supplied IPv4 (BYOIP, Scale-only). IP
+		// is the dotted-quad string; an empty string
+		// means "clear" (the DELETE wire shape). The
+		// fan-out re-reads the column on every event so
+		// the patch reflects the post-commit state — IP
+		// here is informational (logs only).
+		IP string `json:"ip"`
 	}
 	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
 		e.log.Warn("schedd: egress drift bad payload",
 			"channel", n.Channel, "err", err, "payload_first_64", first64(n.Payload))
 		return
 	}
-	// kind filter: only "updated" carries an egress_allowlist
-	// mutation. "deleted", "renamed", "parked", "woken" are
-	// ignored — those are domain events the deletion / route
-	// flush / watchdog consumers handle.
-	if payload.Kind != "updated" {
-		return
-	}
+	// kind filter: "updated" carries an egress_allowlist
+	// mutation; "static_egress_ip" carries an ADR-119
+	// pin mutation. "deleted", "renamed", "parked",
+	// "woken" are ignored — those are domain events the
+	// deletion / route flush / watchdog consumers
+	// handle.
+	//
+	// Empty AppID is the first guard: payloads without an
+	// app_id cannot be routed to a vmmd, so the kind switch
+	// is a no-op for them. Logging is at Warn (the upstream
+	// payload is malformed; a future PR may surface this as
+	// a counter).
 	if payload.AppID == "" {
 		e.log.Warn("schedd: egress drift empty app_id in payload",
 			"channel", n.Channel, "payload", n.Payload)
 		return
 	}
-	e.fanOut(ctx, payload.AppID, payload.Slug)
+	switch payload.Kind {
+	case "updated":
+		e.fanOut(ctx, payload.AppID, payload.Slug)
+	case "static_egress_ip":
+		e.fanOutStaticEgressIP(ctx, payload.AppID, payload.Slug)
+	default:
+		return
+	}
 }
 
 // fanOut reads the current EgressAllowlist, enumerates every
@@ -186,6 +206,79 @@ func (e *EgressDriftSubscriber) fanOut(ctx context.Context, appID, slug string) 
 	e.log.Info("schedd: egress drift fanned out",
 		"app", appID, "slug", slug,
 		"allowlist_len", len(allowlist),
+		"live_instances", len(rows),
+		"nodes_pushed", pushed)
+}
+
+// fanOutStaticEgressIP (ADR-119 redesign) is the per-app
+// static IP counterpart of fanOut. It walks the live-instance
+// map of the app, dedupes by node, and pushes the new IP (or
+// clear) to each owning vmmd via
+// RoutedVMM.UpdateStaticEgressIP.
+//
+// The source of truth is the apps.static_egress_ip column —
+// re-read on every event so the patch reflects the
+// post-commit state, not the in-flight snapshot the
+// notification payload held when it was emitted. mirrors
+// fanOut's read-on-event pattern. The wire payload carries
+// `ip` only for log correlation. The vmmd side has its own
+// short-circuit (Manager.UpdateStaticEgressIP's id-IP
+// equality check) so a redelivered identical IP is a no-op.
+func (e *EgressDriftSubscriber) fanOutStaticEgressIP(ctx context.Context, appID, slug string) {
+	// Re-read the column. Cheap — AppByID is one indexed
+	// lookup. The column is signed text (nullable); an empty
+	// string is the "clear" pin.
+	app, err := e.engine.store.AppByID(ctx, appID)
+	if err != nil {
+		e.log.Warn("schedd: static egress IP drift app read failed",
+			"app", appID, "slug", slug, "err", err)
+		return
+	}
+	ip := app.StaticEgressIP
+	// Re-shape the typed column to the wire string. The vmmd
+	// re-parses + re-validates against the canonical deny-set
+	// (pkg/api.ValidateStaticEgressIP) so this is a faithful
+	// round-trip. NULL → "" is the "clear" pin.
+	ipStr := ""
+	if ip != nil {
+		ipStr = ip.String()
+	}
+
+	rows, err := e.engine.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		e.log.Warn("schedd: static egress IP drift list instances failed",
+			"app", appID, "slug", slug, "err", err)
+		return
+	}
+	seen := make(map[string]struct{}, len(rows))
+	pushed := 0
+	for _, ins := range rows {
+		if !state.IsLive(ins.State) {
+			continue
+		}
+		if ins.NodeID == "" {
+			continue
+		}
+		if _, ok := seen[ins.NodeID]; ok {
+			continue
+		}
+		seen[ins.NodeID] = struct{}{}
+		if err := e.router.UpdateStaticEgressIP(ctx, ins.NodeID, app.AccountID, appID, ipStr); err != nil {
+			e.log.Warn("schedd: static egress IP drift vmmd update failed",
+				"app", appID, "slug", slug,
+				"node", ins.NodeID, "err", err)
+			continue
+		}
+		pushed++
+	}
+	if pushed == 0 {
+		e.log.Debug("schedd: static egress IP drift observed with no live instances",
+			"app", appID, "slug", slug, "ip", ipStr)
+		return
+	}
+	e.log.Info("schedd: static egress IP drift fanned out",
+		"app", appID, "slug", slug,
+		"ip", ipStr,
 		"live_instances", len(rows),
 		"nodes_pushed", pushed)
 }

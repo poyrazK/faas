@@ -29,6 +29,9 @@ type recordingRouterVMM struct {
 	// calls is a chronologically-ordered list of patches pushed
 	// to the (deduped-by-node) per-node vmmd.
 	calls []recordedAllowlistCall
+	// staticCalls (ADR-119) is the parallel per-node log for
+	// UpdateStaticEgressIP patches.
+	staticCalls []recordedStaticIPCall
 	// nodeErrors is an optional per-nodeID error injection. nil
 	// entries succeed.
 	nodeErrors map[string]error
@@ -38,6 +41,15 @@ type recordedAllowlistCall struct {
 	NodeID    string
 	AppID     string
 	Allowlist []netip.Prefix
+}
+
+// recordedStaticIPCall (ADR-119) is one UpdateStaticEgressIP
+// patch logged by the recordingRouterVMM. IP is the dotted-quad
+// string the patch pushed (or "" for a clear).
+type recordedStaticIPCall struct {
+	NodeID string
+	AppID  string
+	IP     string
 }
 
 func (r *recordingRouterVMM) UpdateEgressAllowlist(_ context.Context, nodeID, appID string, allowlist []netip.Prefix) error {
@@ -52,6 +64,24 @@ func (r *recordingRouterVMM) UpdateEgressAllowlist(_ context.Context, nodeID, ap
 		NodeID:    nodeID,
 		AppID:     appID,
 		Allowlist: cp,
+	})
+	if r.nodeErrors != nil {
+		if err, ok := r.nodeErrors[nodeID]; ok {
+			return err
+		}
+	}
+	return nil
+}
+
+// UpdateStaticEgressIP (ADR-119) records the per-node
+// static-IP patch. Mirrors UpdateEgressAllowlist above.
+func (r *recordingRouterVMM) UpdateStaticEgressIP(_ context.Context, nodeID, accountID, appID string, ip string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.staticCalls = append(r.staticCalls, recordedStaticIPCall{
+		NodeID: nodeID,
+		AppID:  appID,
+		IP:     ip,
 	})
 	if r.nodeErrors != nil {
 		if err, ok := r.nodeErrors[nodeID]; ok {

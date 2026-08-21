@@ -5,7 +5,9 @@
 import type { AddTrustedSignerRequest } from '../models/AddTrustedSignerRequest.js';
 import type { AppSecurityRequest } from '../models/AppSecurityRequest.js';
 import type { AppSecurityResponse } from '../models/AppSecurityResponse.js';
+import type { AppStaticEgressIPResponse } from '../models/AppStaticEgressIPResponse.js';
 import type { AppTrustedSignerListResponse } from '../models/AppTrustedSignerListResponse.js';
+import type { SetAppStaticEgressIPRequest } from '../models/SetAppStaticEgressIPRequest.js';
 import type { TrustedSigner } from '../models/TrustedSigner.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -49,6 +51,131 @@ export class SecurityService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        500: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read the per-app static egress IP pin (ADR-119).
+   * Returns the customer's pinned IPv4 + the audit timestamp +
+   * the per-app quota cap (StaticEgressIPsPerApp, 1 in v1). A
+   * Scale customer with no pin yet sees `ip=null`,
+   * `set_at=null`, `plan_cap=1`, `plan_allowed=true`. Free /
+   * Hobby / Pro return `plan_allowed=false` so the CLI can
+   * render the upsell without a separate plan lookup.
+   *
+   * Mounted with the standard auth chain (no MFA, no admin
+   * scope — the customer owns the pin).
+   *
+   * @returns AppStaticEgressIPResponse The current pin state.
+   * @throws ApiError
+   */
+  public static getAppStaticEgressIp({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppStaticEgressIPResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/static-egress-ip',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        500: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Pin an IPv4 to the app's egress traffic (Scale-only).
+   * Customer-supplied IPv4 from their own range. The host
+   * bridge aliases the IP and a per-host postrouting
+   * MASQUERADE sibling rewrites matching tenant source
+   * traffic to the customer's IP. v1 limits:
+   *
+   * * Plan must be Scale (Plan.StaticEgressIPAllowed).
+   * * IPv4-only (IPv6 is rejected at the DB CHECK).
+   * * Not RFC1918, link-local, multicast, or /0.
+   * * Per-app quota of 1 (StaticEgressIPsPerApp) — two apps
+   * on the same account cannot pin the same IP.
+   *
+   * Sending `{"ip": "203.0.113.42", "set": true}` upserts
+   * the pin. Sending `{"ip": "", "set": false}` clears
+   * it. The DELETE verb below is a convenience wrapper
+   * for the clear path.
+   *
+   * Audit event: `app.static_egress_ip_set` carries the
+   * account/app/ip triple.
+   *
+   * @returns AppStaticEgressIPResponse The new pin state.
+   * @throws ApiError
+   */
+  public static setAppStaticEgressIp({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetAppStaticEgressIPRequest,
+  }): CancelablePromise<AppStaticEgressIPResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/static-egress-ip',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `Plan doesn't allow static egress IPs (Free / Hobby / Pro).
+        Stable code: \`plan_static_egress_ip_not_allowed\`.
+        `,
+        403: `Per-app quota exceeded (another app on the same account
+        already pins the same IP). Stable code:
+        \`plan_static_egress_ip_quota\`.
+        `,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        500: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Clear the per-app static egress IP pin.
+   * Removes the apps.static_egress_ip pin and stamps
+   * static_egress_ip_set_at=NULL. Survives replay across
+   * scale-to-zero (the new pin state is read at wake time
+   * and the per-host egress renderer is re-applied on
+   * change).
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static clearAppStaticEgressIp({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/static-egress-ip',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
         404: `code: app_not_found — slug does not exist for the authenticated account.`,
         500: `code: capacity — server-side error; retry with backoff.`,
       },

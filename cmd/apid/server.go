@@ -930,6 +930,16 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/trusted_signers/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.upsertTrustedSigner))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/trusted_signers/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.deleteTrustedSigner))))
 
+	// ADR-119: per-app static egress IP (Scale-only, BYOIP, single-
+	// node v1). Customer-scoped (no admin, no MFA) — the customer
+	// owns the pin. The feature-flag check (api.StaticEgressIPEnabled)
+	// runs inside each handler so a dark-launched cluster signals
+	// 402 (not 404) until the operator sets FAAS_STATIC_EGRESS_IP_ENABLED.
+	// Same posture as the tenant-surfaces block above.
+	mux.HandleFunc("GET /v1/apps/{slug}/static-egress-ip", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppStaticEgressIP))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/static-egress-ip", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setAppStaticEgressIP))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/static-egress-ip", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.clearAppStaticEgressIP))))
+
 	// Issue #879 / ADR-100 PR-C — tenant surfaces (customer-facing
 	// hostname routing primitive). Feature-flagged via
 	// api.TenantSurfacesEnabled(); the flag check runs inside each

@@ -32,6 +32,7 @@ const (
 	Vmmd_Ping_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/Ping"
 	Vmmd_Heartbeat_FullMethodName               = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
 	Vmmd_UpdateEgressAllowlist_FullMethodName   = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
+	Vmmd_UpdateStaticEgressIP_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
 	Vmmd_SeccompStatus_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
 	Vmmd_Logs_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/Logs"
 	Vmmd_ForwardHTTPStream_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
@@ -157,6 +158,21 @@ type VmmdClient interface {
 	// uses pg_notify as the delivery mechanism (cmd/schedd egress
 	// drift subscriber, pkg/sched/egress_drift.go).
 	UpdateEgressAllowlist(ctx context.Context, in *UpdateEgressAllowlistRequest, opts ...grpc.CallOption) (*UpdateEgressAllowlistAck, error)
+	// UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
+	// per-app static egress IP into every live netns the vmmd
+	// owns without tearing the netns down. The caller passes
+	// app_id + the new IPv4 (already validated upstream; the
+	// DB family=4 CHECK prevents IPv6 from reaching here).
+	// Empty ip = clear the pin (mirrors the DELETE wire shape).
+	// vmmd walks its live-instance map and applies the new
+	// MASQUERADE-sibling rule in-place via the per-netns
+	// nftables re-render path (same posture as
+	// UpdateEgressAllowlist's handle-delete + insert). The
+	// delivery mechanism is pg_notify → schedd's egress_drift
+	// subscriber (pkg/sched/egress_drift.go). Idempotent: a
+	// re-pushed identical IP is a no-op. Plan-gated upstream by
+	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
+	UpdateStaticEgressIP(ctx context.Context, in *UpdateStaticEgressIPRequest, opts ...grpc.CallOption) (*UpdateStaticEgressIPAck, error)
 	// SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
 	// Linux kernel seccomp state of the jailer child process backing
 	// this instance. Spec §11: "Firecracker's default seccomp filter
@@ -445,6 +461,16 @@ func (c *vmmdClient) UpdateEgressAllowlist(ctx context.Context, in *UpdateEgress
 	return out, nil
 }
 
+func (c *vmmdClient) UpdateStaticEgressIP(ctx context.Context, in *UpdateStaticEgressIPRequest, opts ...grpc.CallOption) (*UpdateStaticEgressIPAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateStaticEgressIPAck)
+	err := c.cc.Invoke(ctx, Vmmd_UpdateStaticEgressIP_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest, opts ...grpc.CallOption) (*SeccompStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SeccompStatusResponse)
@@ -700,6 +726,21 @@ type VmmdServer interface {
 	// uses pg_notify as the delivery mechanism (cmd/schedd egress
 	// drift subscriber, pkg/sched/egress_drift.go).
 	UpdateEgressAllowlist(context.Context, *UpdateEgressAllowlistRequest) (*UpdateEgressAllowlistAck, error)
+	// UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
+	// per-app static egress IP into every live netns the vmmd
+	// owns without tearing the netns down. The caller passes
+	// app_id + the new IPv4 (already validated upstream; the
+	// DB family=4 CHECK prevents IPv6 from reaching here).
+	// Empty ip = clear the pin (mirrors the DELETE wire shape).
+	// vmmd walks its live-instance map and applies the new
+	// MASQUERADE-sibling rule in-place via the per-netns
+	// nftables re-render path (same posture as
+	// UpdateEgressAllowlist's handle-delete + insert). The
+	// delivery mechanism is pg_notify → schedd's egress_drift
+	// subscriber (pkg/sched/egress_drift.go). Idempotent: a
+	// re-pushed identical IP is a no-op. Plan-gated upstream by
+	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
+	UpdateStaticEgressIP(context.Context, *UpdateStaticEgressIPRequest) (*UpdateStaticEgressIPAck, error)
 	// SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
 	// Linux kernel seccomp state of the jailer child process backing
 	// this instance. Spec §11: "Firecracker's default seccomp filter
@@ -917,6 +958,9 @@ func (UnimplementedVmmdServer) Heartbeat(context.Context, *HeartbeatRequest) (*H
 }
 func (UnimplementedVmmdServer) UpdateEgressAllowlist(context.Context, *UpdateEgressAllowlistRequest) (*UpdateEgressAllowlistAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateEgressAllowlist not implemented")
+}
+func (UnimplementedVmmdServer) UpdateStaticEgressIP(context.Context, *UpdateStaticEgressIPRequest) (*UpdateStaticEgressIPAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateStaticEgressIP not implemented")
 }
 func (UnimplementedVmmdServer) SeccompStatus(context.Context, *SeccompStatusRequest) (*SeccompStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SeccompStatus not implemented")
@@ -1154,6 +1198,24 @@ func _Vmmd_UpdateEgressAllowlist_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).UpdateEgressAllowlist(ctx, req.(*UpdateEgressAllowlistRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_UpdateStaticEgressIP_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateStaticEgressIPRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).UpdateStaticEgressIP(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_UpdateStaticEgressIP_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).UpdateStaticEgressIP(ctx, req.(*UpdateStaticEgressIPRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1409,6 +1471,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateEgressAllowlist",
 			Handler:    _Vmmd_UpdateEgressAllowlist_Handler,
+		},
+		{
+			MethodName: "UpdateStaticEgressIP",
+			Handler:    _Vmmd_UpdateStaticEgressIP_Handler,
 		},
 		{
 			MethodName: "SeccompStatus",

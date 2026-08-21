@@ -210,3 +210,254 @@ func hostIPForSlot(slot int) netip.Addr {
 	n += hostIPOffset + uint32(slot)
 	return netip.AddrFrom4([4]byte{byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)})
 }
+
+// ---------------------------------------------------------------------------
+// ADR-119 redesign: per-VM static-egress IP pool
+// ---------------------------------------------------------------------------
+//
+// The legacy design (PR-997 round-1) attached SNAT to the per-netns
+// chain, which was dead code (nftables NAT is first-match + terminal).
+// The redesign moves SNAT to the host renderer, which emits one
+//
+//     ip saddr <per-vm-host-ip> oifname <PublicIface> snat to <CustomerIP>
+//
+// rule per live VM of a static-egress-pinned app. The per-VM host IP
+// is what the kernel uses for the `ip saddr` match (the bridged
+// packet's source on its way out PublicIface) — distinct from the
+// customer's IP (the SNAT target).
+//
+// Why a separate pool (10.200.0.0/16, not 10.100.0.0/16):
+//   1. The legacy per-VM /16 (10.100.x.y) is the bridge /16 — every
+//      bridged tenant VM's host-side IP falls in this range. A
+//      per-VM host IP for a static-egress rule that ALSO sits in
+//      10.100.x.y would alias-collide with the bridge plumbing
+//      (the conntrack matches PerVMHostIP, not the bridge).
+//   2. The renderer panic-gates PerVMHostIP ∉ MasqueradeCIDR; using
+//      a separate /16 makes the gate trivially safe (MasqueradeCIDR
+//      is 10.100.0.0/16, the static-egress pool is 10.200.0.0/16).
+//   3. Capacity: 10.200.x.y/16 is 65,534 slots — far in excess of
+//      the v1 Scale-plan concurrency ceiling (100 apps × ~1 live
+//      VM per app = 100 slots out of 65,534).
+//
+// The reservation is keyed by (accountID, appID). Idempotent on
+// re-acquire for the same (account, app, customerIP) tuple. Release
+// happens on customer-clear (DELETE /v1/apps/{slug}/static-egress-ip)
+// NOT on per-VM teardown — a customer's IP stays available across
+// Scale-driven wakes so the wake path never races a release.
+
+const (
+	// staticEgressPoolBase is the network address of the
+	// per-VM static-egress pool (10.200.0.0/16). Distinct from
+	// hostIPBase (10.100.0.0/16) so the per-VM host IPs used
+	// in `ip saddr` cannot alias-collide with the bridge /16.
+	staticEgressPoolBase = "10.200.0.0"
+	// staticEgressPoolMax is the capacity of the static-egress
+	// pool (the /16 minus network + broadcast). 65,534 slots.
+	staticEgressPoolMax = 65534
+)
+
+// StaticEgressReservation is the (account, app, customer-IP,
+// per-VM host-IP) tuple vmmd keeps in memory + persists to the
+// operator bundle. The host renderer consumes the perVMHostIP +
+// customerIP pair; the accountID + appID are metadata for the
+// rendered rule's trailing comment.
+type StaticEgressReservation struct {
+	AccountID       string
+	AppID           string
+	CustomerIP      netip.Addr
+	PerVMHostIP     netip.Addr
+	reservationSlot int // internal: the slot index in the pool
+}
+
+// staticEgressPool is the package-level reservation store. The map
+// is keyed by appID (one reservation per app, even if the same
+// account has multiple pinned apps). The free-slice is a stack of
+// free slot indices, popped on acquire and pushed on release — same
+// discipline as the legacy Acquire/Release pair, so the underlying
+// allocation order is deterministic in dev.
+var staticEgressPool = struct {
+	mu sync.Mutex
+	// byAppID: appID → reservation. Idempotent acquire on
+	// (accountID, appID, customerIP) returns the existing
+	// reservation; a different customerIP for the same
+	// (accountID, appID) rotates (release-old + acquire-new).
+	byAppID map[string]StaticEgressReservation
+	// bySlot: slot index → appID (inverse lookup so release
+	// is O(1)).
+	bySlot map[int]string
+	// free: stack of free slot indices. Popped on acquire,
+	// pushed on release. Initialised lazily by the first
+	// acquire call.
+	free []int
+	// nextFresh: monotonically increasing counter for fresh
+	// slot allocations when free is empty. Capped at
+	// staticEgressPoolMax.
+	nextFresh int
+}{
+	byAppID:   make(map[string]StaticEgressReservation),
+	bySlot:    make(map[int]string),
+	nextFresh: 0,
+}
+
+// AcquireStaticEgressIP reserves a (per-VM host IP, customer IP)
+// tuple for an (accountID, appID) pair. The per-VM host IP is
+// allocated from the separate 10.200.0.0/16 pool (so it cannot
+// collision with the per-VM bridge /16 at 10.100.x.y).
+//
+// Idempotency:
+//   - Same (accountID, appID, customerIP) → returns the existing
+//     reservation untouched (Wakes re-issue the same request).
+//   - Same (accountID, appID) with a DIFFERENT customerIP →
+//     releases the old per-VM host IP slot, allocates a fresh one
+//     for the new customerIP. The old per-VM host IP returns to
+//     the free pool and is reused by a future acquire.
+//   - Different (accountID, appID) → allocates a fresh slot
+//     (no sharing across apps, even within the same account).
+//
+// Errors:
+//   - api.ErrValidation for a customerIP that fails the canonical
+//     ValidateStaticEgressIP deny-set (the canonical validator
+//     rejects RFC1918, link-local, multicast, loopback, 0.0.0.0/8,
+//     CGN — see pkg/api/static_egress_ip_validate.go).
+//   - ErrStaticEgressPoolExhausted when the /16 is full (v1
+//     capacity is 65,534; the Scale-plan ceiling is 100 apps
+//     per node so this is unreachable in practice, but the
+//     guard is load-bearing for the future).
+//
+// The returned StaticEgressReservation is the canonical form
+// the vmmd Manager pushes into the host renderer. Persistence
+// to the operator TOML happens via the manager's call to
+// SetStaticEgressIPAliases (which already handles the per-app
+// bridge alias lifecycle).
+func AcquireStaticEgressIP(accountID, appID string, customerIP netip.Addr) (StaticEgressReservation, error) {
+	if accountID == "" {
+		return StaticEgressReservation{}, fmt.Errorf("fcvm: AcquireStaticEgressIP: empty account_id")
+	}
+	if appID == "" {
+		return StaticEgressReservation{}, fmt.Errorf("fcvm: AcquireStaticEgressIP: empty app_id")
+	}
+	if !customerIP.IsValid() {
+		return StaticEgressReservation{}, fmt.Errorf("fcvm: AcquireStaticEgressIP: invalid customer_ip")
+	}
+	// Run the canonical deny-set validator. Pulls in
+	// pkg/api.ValidateStaticEgressIP as the single source of
+	// truth — the hard-coded validCustomerStaticEgressIP /
+	// validStaticEgressIPAddr / validCustomerStaticEgressIPMetal
+	// copies were all deleted in the redesign.
+	if err := api.ValidateStaticEgressIP(customerIP); err != nil {
+		return StaticEgressReservation{}, fmt.Errorf("fcvm: AcquireStaticEgressIP: %w", err)
+	}
+
+	staticEgressPool.mu.Lock()
+	defer staticEgressPool.mu.Unlock()
+
+	// Idempotent on (accountID, appID, customerIP).
+	if existing, ok := staticEgressPool.byAppID[appID]; ok {
+		if existing.AccountID != accountID {
+			// appID collision across accounts — refuse rather
+			// than silently overwrite. The apid handler
+			// protects against this via the
+			// apps_static_egress_ip partial unique index, but
+			// the allocator must defend in depth.
+			return StaticEgressReservation{}, fmt.Errorf("fcvm: AcquireStaticEgressIP: app %s already reserved under account %s", appID, existing.AccountID)
+		}
+		if existing.CustomerIP == customerIP {
+			return existing, nil
+		}
+		// Rotation: release the old slot, fall through to
+		// fresh allocation.
+		delete(staticEgressPool.bySlot, existing.reservationSlot)
+		staticEgressPool.free = append(staticEgressPool.free, existing.reservationSlot)
+		delete(staticEgressPool.byAppID, appID)
+	}
+
+	// Allocate a fresh slot.
+	slot, err := allocStaticEgressSlot()
+	if err != nil {
+		return StaticEgressReservation{}, err
+	}
+	perVMHostIP := staticEgressHostIPForSlot(slot)
+	res := StaticEgressReservation{
+		AccountID:       accountID,
+		AppID:           appID,
+		CustomerIP:      customerIP,
+		PerVMHostIP:     perVMHostIP,
+		reservationSlot: slot,
+	}
+	staticEgressPool.byAppID[appID] = res
+	staticEgressPool.bySlot[slot] = appID
+	return res, nil
+}
+
+// ReleaseStaticEgressIP returns the per-VM host IP slot for
+// (accountID, appID) to the free pool. Idempotent on a
+// non-existent appID (returns nil — used in the customer-clear
+// path where the apid handler may re-issue the delete).
+//
+// Release is the customer-clear path (DELETE /v1/apps/{slug}/
+// static-egress-ip), NOT the per-VM teardown path. A live VM
+// tearing down does NOT release the reservation — the customer's
+// IP stays available so the next wake (Scale-driven) reissues
+// the same per-VM host IP. The pool only drains via the
+// apid-side clear.
+func ReleaseStaticEgressIP(accountID, appID string) error {
+	staticEgressPool.mu.Lock()
+	defer staticEgressPool.mu.Unlock()
+	existing, ok := staticEgressPool.byAppID[appID]
+	if !ok {
+		return nil
+	}
+	if existing.AccountID != accountID {
+		return fmt.Errorf("fcvm: ReleaseStaticEgressIP: app %s reserved under account %s, not %s", appID, existing.AccountID, accountID)
+	}
+	delete(staticEgressPool.byAppID, appID)
+	delete(staticEgressPool.bySlot, existing.reservationSlot)
+	staticEgressPool.free = append(staticEgressPool.free, existing.reservationSlot)
+	return nil
+}
+
+// StaticEgressReservationFor returns the active reservation for
+// appID, or false if no reservation is active. Used by the vmmd
+// Manager at Wake time to populate the per-VM host IP without
+// re-acquiring (the reservation is idempotent on re-acquire, but
+// the lookup is cheaper and signals intent — "this is the
+// existing one", not "I want a new one").
+func StaticEgressReservationFor(appID string) (StaticEgressReservation, bool) {
+	staticEgressPool.mu.Lock()
+	defer staticEgressPool.mu.Unlock()
+	r, ok := staticEgressPool.byAppID[appID]
+	return r, ok
+}
+
+// allocStaticEgressSlot pops a free slot or allocates a fresh one.
+// Lock is held by the caller.
+func allocStaticEgressSlot() (int, error) {
+	if n := len(staticEgressPool.free); n > 0 {
+		slot := staticEgressPool.free[n-1]
+		staticEgressPool.free = staticEgressPool.free[:n-1]
+		return slot, nil
+	}
+	if staticEgressPool.nextFresh >= staticEgressPoolMax {
+		return 0, fmt.Errorf("fcvm: AcquireStaticEgressIP: pool exhausted (%d slots)", staticEgressPoolMax)
+	}
+	slot := staticEgressPool.nextFresh
+	staticEgressPool.nextFresh++
+	return slot, nil
+}
+
+// staticEgressHostIPForSlot maps a slot index to the per-VM host
+// IP (10.200.x.y). Slot 0 → 10.200.0.2, slot 1 → 10.200.0.3,
+// etc. The /16 base is distinct from hostIPBase (10.100.0.0/16).
+//
+// The +2 offset mirrors the per-VM pool (hostIPOffset = 2) so
+// slot 0 = .0.2 (the .0 is network, .1 is reserved for the
+// bridge-equivalent — the static-egress pool has no bridge
+// because it's host-side-only, but the offset is preserved for
+// symmetry with the per-VM pool).
+func staticEgressHostIPForSlot(slot int) netip.Addr {
+	base := netip.MustParseAddr(staticEgressPoolBase)
+	v := base.As4()
+	n := uint32(v[0])<<24 | uint32(v[1])<<16 | uint32(v[2])<<8 | uint32(v[3])
+	n += hostIPOffset + uint32(slot)
+	return netip.AddrFrom4([4]byte{byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)})
+}

@@ -331,6 +331,15 @@ func (stubVMM) UpdateEgressAllowlist(context.Context, string, []netip.Prefix) er
 	return nil
 }
 
+// UpdateStaticEgressIP (ADR-119) — wiring tests don't drive
+// the static-IP drift path. Returns nil so the VMM contract is
+// satisfied when schedd's deps.subscribeEgressDrift is left
+// nil (the production subscriber is not started in these tests).
+// Mirrors UpdateEgressAllowlist above.
+func (stubVMM) UpdateStaticEgressIP(context.Context, string, string, string) error {
+	return nil
+}
+
 // Logs (issue #254 / Move 4, issue #517 / PR-B) — wiring tests
 // don't drive the log stream path; the scheddgrpc handler tests
 // do. Returns nil + io.EOF so any accidental caller exits cleanly.

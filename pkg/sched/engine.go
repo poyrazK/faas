@@ -120,6 +120,19 @@ func prefixesToCIDRStrings(prefixes []netip.Prefix) []string {
 	return out
 }
 
+// staticEgressIPString (ADR-119) lifts a *netip.Addr into the
+// dotted-quad string the vmmd AppSpec.static_egress_ip field
+// expects. nil = no static pin → empty string. The shape is
+// validated upstream by apid (family=4, non-reserved) so the
+// engine can trust whatever lands in apps.static_egress_ip
+// without re-parsing.
+func staticEgressIPString(ip *netip.Addr) string {
+	if ip == nil {
+		return ""
+	}
+	return ip.String()
+}
+
 // Notifier is the pg_notify surface the engine needs. db.Notify (pool-backed)
 // satisfies it via poolNotifier; tests inject a fake.
 type Notifier interface {
@@ -1827,6 +1840,18 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 		// effect on the next wake. Live instances keep their
 		// old netns — same contract as RAMMB and MaxConcurrency.
 		EgressAllowlist: prefixesToCIDRStrings(app.EgressAllowlist),
+		// ADR-119: customer-supplied static egress IPv4
+		// (BYOIP, Scale-only). Empty = no static pin
+		// (default behaviour preserved). vmmd sets
+		// netns.Config.AccountStaticIP from this value so
+		// the per-netns renderer emits a sibling SNAT rule.
+		// Plan-gated upstream; the apps_static_egress_ip_key
+		// partial unique index (migration 00325) defends at
+		// the DB layer. Live instances of the same app keep
+		// their old netns — the app_changed pg_notify path
+		// fires UpdateStaticEgressIP gRPC to patch them
+		// (pkg/sched/egress_drift.go).
+		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
 		// Issue #460 / ADR-053 (PR-C): per-deployment override
 		// port the customer's app binds inside the guest. 0 =
 		// legacy 8080 (vmmd's wire-level default). The host's
@@ -3267,6 +3292,10 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		// ADR-031: per-app egress allowlist; same CIDR-string
 		// flattening as the Wake path.
 		EgressAllowlist: prefixesToCIDRStrings(app.EgressAllowlist),
+		// ADR-119: customer-supplied static egress IPv4
+		// (BYOIP, Scale-only). Same threading as the Wake
+		// path above.
+		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
 		// Issue #460 / ADR-053 (PR-C): per-deployment override
 		// port. 0 = legacy 8080 (vmmd wire default).
 		Port: dep.OverridePort,
@@ -3714,6 +3743,11 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// its declared egress policy rather than awaiting a later
 		// wake.
 		EgressAllowlist: prefixesToCIDRStrings(app.EgressAllowlist),
+		// ADR-119: see the Wake builder above. Prime threads
+		// the customer-supplied static IPv4 (BYOIP, Scale-only)
+		// onto the vmmd AppSpec so the per-netns renderer
+		// emits the SNAT-to-customer sibling rule.
+		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label

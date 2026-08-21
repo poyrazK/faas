@@ -472,6 +472,25 @@ type App struct {
 	// plan_egress_allowlist_not_allowed); Pro max 16 entries; Scale
 	// max 64 entries — see pkg/api/limits.go.
 	EgressAllowlist []netip.Prefix
+	// StaticEgressIP (ADR-119) is the customer-supplied IPv4 that
+	// the app's egress traffic presents on the wire. NULL => no
+	// static IP — egress exits with the host's primary IP (the
+	// default behaviour). Non-nil => the host bridge aliases the IP
+	// and a per-host postrouting MASQUERADE sibling rewrites
+	// matching tenant source traffic to this IP. Plan-gated:
+	// Free/Hobby/Pro always read nil (apid rejects PATCH with 402
+	// plan_static_egress_ip_not_allowed); Scale quota = 1 per app
+	// (Limits.StaticEgressIPsPerApp). The DB-side
+	// apps_static_egress_ip_key partial unique index defends
+	// against two apps on the same account pinning the same IP
+	// (alias-IP collision on br-tenants). IPv4 only in v1.
+	StaticEgressIP *netip.Addr
+	// StaticEgressIPSetAt is the audit stamp for when the customer
+	// pinned the IP. Nullable — NULL when StaticEgressIP is NULL
+	// (no pin). Stamped on every non-null write by pgstore.go's
+	// UpdateApp CASE branch.
+	StaticEgressIPSetAt *time.Time
+
 	// PublicAuthIPAllowlist (ADR-118) is the per-app ingress CIDR
 	// allowlist consulted at the request layer by
 	// pkg/gateway/handler.go::applyIngressIPAllowlist (runs before
@@ -2717,6 +2736,17 @@ type UpdateAppParams struct {
 	// (the default — see migration 00029).
 	EgressAllowlist    *[]netip.Prefix
 	SetEgressAllowlist bool
+	// StaticEgressIP (ADR-119) is the customer-supplied IPv4.
+	// SetStaticEgressIP distinguishes "don't touch the column"
+	// (false) from "explicit IP" (true). SetStaticEgressIP=true
+	// with StaticEgressIP=nil means "clear the pin" (DELETE wire
+	// shape). SetStaticEgressIP=false leaves the column unchanged.
+	// Apid gates this on Plan.StaticEgressIPAllowed + the family=4
+	// CHECK + the partial unique index (defends against
+	// alias-IP collision).
+	StaticEgressIP    *netip.Addr
+	SetStaticEgressIP bool
+
 	// PublicAuthIPAllowlist (ADR-118) is the per-app ingress CIDR
 	// allowlist. SetPublicAuthIPAllowlist distinguishes "unset"
 	// from "explicit empty". Same nil-pointer semantics as

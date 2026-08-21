@@ -91,6 +91,16 @@ type VMM interface {
 	// safe. Errors surface as the gRPC status (Unavailable /
 	// Internal) — the egress_drift subscriber logs and drops.
 	UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error
+	// UpdateStaticEgressIP (ADR-119) pushes a fresh per-app
+	// static egress IP into vmmd's live-instance map without
+	// tearing the netns down. The wire is the vmmdpb
+	// .UpdateStaticEgressIP RPC. ip="" = clear the pin
+	// (DELETE wire shape). Idempotent: a re-pushed identical
+	// IP is a no-op. Errors surface as the gRPC status
+	// (Unavailable / Internal) — the egress_drift subscriber
+	// logs and drops. Mirrors UpdateEgressAllowlist's
+	// contract above.
+	UpdateStaticEgressIP(ctx context.Context, accountID, appID string, ip string) error
 	// Logs (issue #254 / Move 4) opens a server-streaming handle
 	// on the per-instance ring buffer at vmmd. The returned
 	// LogStream is the typed view of vmmdpb.Vmmd_LogsClient; the
@@ -348,6 +358,18 @@ type AppSpec struct {
 	// for parity with app_id; an empty value is a contract
 	// violation surfaced as InvalidArgument.
 	Runtime string
+	// StaticEgressIP (ADR-119) is the customer-supplied IPv4
+	// (BYOIP, Scale-only) the host MASQUERADE-sibling rule
+	// rewrites tenant source traffic to. Empty = no static
+	// pin (default behaviour preserved); non-empty → vmmd
+	// sets netns.Config.AccountStaticIP from this value so
+	// the per-netns renderer emits a sibling SNAT rule.
+	// v4-only in v1; the DB family=4 CHECK
+	// (apps_static_egress_ip_family_check) prevents IPv6
+	// from reaching here. Plan-gated upstream by
+	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
+	// Additive per ADR-016.
+	StaticEgressIP string
 }
 
 // SnapshotRef points at the snapshot to restore from and the Firecracker
@@ -592,6 +614,25 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 	if _, err := c.cli.UpdateEgressAllowlist(ctx, &vmmdpb.UpdateEgressAllowlistRequest{
 		AppId:           appID,
 		EgressAllowlist: ss,
+	}); err != nil {
+		return liftErr(err)
+	}
+	return nil
+}
+
+// UpdateStaticEgressIP implements VMM (ADR-119). The wire is
+// the customer-supplied IPv4 (dotted-quad); empty string is
+// valid (clears the per-app pin on vmmd's side, removes the
+// MASQUERADE-sibling rule). The call is best-effort: a gRPC
+// Unavailable / Internal surfaces as a typed error; the caller
+// (egress_drift subscriber) logs and drops so a single bad
+// patch never blocks the loop. Idempotent on the vmmd side —
+// redelivered identical IP is a no-op (set-equal short-circuit
+// — see netns.Config.AccountStaticIP equality check).
+func (c *VMMClient) UpdateStaticEgressIP(ctx context.Context, accountID, appID string, ip string) error {
+	if _, err := c.cli.UpdateStaticEgressIP(ctx, &vmmdpb.UpdateStaticEgressIPRequest{
+		AppId:          appID,
+		StaticEgressIp: ip,
 	}); err != nil {
 		return liftErr(err)
 	}
@@ -877,6 +918,14 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		// AppSpec.Runtime. Empty falls back to "unknown" in
 		// the histogram observer.
 		Runtime: a.Runtime,
+		// ADR-119: customer-supplied static egress IPv4
+		// (BYOIP, Scale-only). Empty = no static pin
+		// (default behaviour preserved). vmmd sets
+		// netns.Config.AccountStaticIP from this value
+		// so the per-netns renderer emits a sibling
+		// SNAT rule in the postrouting chain AFTER
+		// the default MASQUERADE.
+		StaticEgressIp: a.StaticEgressIP,
 	}
 }
 

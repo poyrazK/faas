@@ -146,6 +146,30 @@ type Config struct {
 	// shape.
 	EgressOperatorAllowlist string `toml:"egress_operator_allowlist"`
 
+	// StaticEgressIPBundlePath (ADR-119 redesign) is the path to
+	// the operator-supplied static egress IP TOML. vmmd reads it
+	// at startup AND on SIGHUP; each entry is an (account_id,
+	// app_id, ip) tuple the operator has pre-provisioned on the
+	// host's AS (Hetzner additional IP, AWS EIP, etc.). The
+	// bundle drives three things:
+	//
+	//   1. The bridge alias set on br-tenants (existing
+	//      SetStaticEgressIPAliases path).
+	//   2. The host renderer's StaticEgressRules list (the
+	//      authoritative SNAT source — pkg/netns/policy.go).
+	//   3. The Postgres gate table provisioned_static_egress_ips
+	//      that the apid PUT path reads to validate the
+	//      customer's pin belongs to an operator-provisioned IP.
+	//
+	// Empty disables the bundle (default — no static egress IPs
+	// until the operator provisions them). vmmd warns at startup
+	// if the path is set but the file does not exist.
+	//
+	// See cmd/vmmd/egress_static_ip_bundle.go for the loader +
+	// SIGHUP watcher; /etc/faas/egress/static_egress_ips.toml
+	// for the on-disk shape.
+	StaticEgressIPBundlePath string `toml:"static_egress_ip_bundle"`
+
 	// NodeKeyPath is the on-disk path to the slice-3 per-node
 	// ECDSA P-256 signing key vmmd uses to sign CapacityReport
 	// (ADR-053). Defaults to defaultNodeKeyPath

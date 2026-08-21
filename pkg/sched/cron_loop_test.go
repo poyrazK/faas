@@ -84,6 +84,12 @@ func (f *fakeWakeVMM) UpdateEgressAllowlist(_ context.Context, _, _ string, _ []
 	return nil
 }
 
+// UpdateStaticEgressIP (ADR-119) is the no-op test fake.
+// Mirrors UpdateEgressAllowlist above.
+func (f *fakeWakeVMM) UpdateStaticEgressIP(_ context.Context, _, _, _ string, _ string) error {
+	return nil
+}
+
 // Logs (issue #254 / Move 4, issue #517 / PR-B) — the cron loop
 // tests never drive the log stream path; the scheddgrpc handler
 // tests do. Returns a closed fakeLogStream so any accidental caller

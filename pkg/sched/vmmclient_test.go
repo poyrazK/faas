@@ -112,6 +112,13 @@ func (f *fakeVMM) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 	return nil
 }
 
+// UpdateStaticEgressIP (ADR-119) is the no-op test fake.
+// The drift subscriber tests in pkg/sched/egress_drift_test.go
+// use the RoutedVMM seam, not the gRPC client seam.
+func (f *fakeVMM) UpdateStaticEgressIP(ctx context.Context, accountID, appID string, ip string) error {
+	return nil
+}
+
 // Logs (issue #254 / Move 4) — the sched test rig doesn't drive
 // the per-instance log stream; the Move 4 handler tests live in
 // pkg/scheddgrpc and inject a real pkg/vmmdgrpc Server over

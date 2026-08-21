@@ -25,6 +25,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // HostPolicy is the parameter set for rendering the host nftables ruleset.
@@ -130,6 +131,59 @@ type HostPolicy struct {
 	// review). Empty by default — single-host dev keeps the
 	// legacy "deny wins on RFC1918" posture byte-identical.
 	OperatorExceptions []netip.Prefix
+
+	// StaticEgressRules (ADR-119 redesign) is the per-VM SNAT
+	// tuple list the host renderer emits in `chain postrouting`
+	// BEFORE the MasqueradeCIDR MASQUERADE rule. Each entry is a
+	// (per-VM host IP, customer IP) tuple belonging to one live
+	// VM of a static-egress-pinned app. The Renderer emits:
+	//
+	//   ip saddr <PerVMHostIP> oifname <PublicIface> snat to <CustomerIP>
+	//
+	// ORDERING: emitted BEFORE the broad MASQUERADE because
+	// nftables NAT is first-match + terminal — once the broad
+	// MASQUERADE rewrites the source, the specific SNAT never
+	// fires. This is the BLOCKING bug the PR-997 per-netns design
+	// had (the per-netns SNAT was placed AFTER the per-netns
+	// MASQUERADE and was dead code).
+	//
+	// OWNERSHIP: vmmd's manager populates this slice on every
+	// cache mutation (Wake, Teardown, drift, SIGHUP-reload of
+	// the operator bundle). The renderer is a pure function of
+	// the struct. Empty slice = zero SNAT rules emitted, which
+	// is the byte-identical pre-ADR-119 output for hosts that
+	// have no static-egress-pinned apps.
+	StaticEgressRules []StaticEgressRule
+}
+
+// StaticEgressRule (ADR-119 redesign) is one (per-VM host IP →
+// customer IP) SNAT tuple the host renderer emits in
+// `chain postrouting` BEFORE the broad MASQUERADE rule.
+//
+// PerVMHostIP is the per-VM veth host-side address of one live
+// microVM (allocated from the dedicated static-egress pool at
+// 10.200.x.y/16 — see pkg/fcvm/alloc.go::AcquireStaticEgressIP).
+// The customer's IP is the CustomerIP, which is aliased on
+// br-tenants by vmmd's SetStaticEgressIPAliases at startup +
+// SIGHUP. The kernel uses PerVMHostIP for the `ip saddr` match
+// (the bridged packet's source on its way out PublicIface) and
+// CustomerIP for the `snat to` rewrite target.
+//
+// Multiple rules can share the same CustomerIP (multiple live
+// VMs of one app — each instance wakes its own per-VM host IP,
+// and the SNAT rule list grows by one per live VM). Each rule's
+// PerVMHostIP must be unique (the per-VM host IPs are slotted
+// from a fixed range by the pool allocator).
+//
+// AccountID and AppID are metadata written to the rule's
+// trailing comment so `nft list ruleset` is self-documenting
+// for operators and the future nagios/metric panels. The
+// renderer does not branch on them.
+type StaticEgressRule struct {
+	PerVMHostIP netip.Addr
+	CustomerIP  netip.Addr
+	AccountID   string
+	AppID       string
 }
 
 // DefaultHostPolicy is the platform-wide host nftables policy. Source of
@@ -150,6 +204,67 @@ var DefaultHostPolicy = HostPolicy{
 	// exactly matches "tenant-originated, not the host" once routed out
 	// PublicIface. See HostPolicy.MasqueradeCIDR doc for why this exists.
 	MasqueradeCIDR: "10.100.0.0/16",
+}
+
+// ActiveHostPolicy is the runtime host nftables policy — the mutable
+// that vmmd's egress watcher (cmd/vmmd/egress_watcher.go) reads on
+// every SIGHUP-driven reload AND on every cache mutation (Wake /
+// Teardown / drift). Render() is called against this var, not the
+// package-level DefaultHostPolicy, so a live update to the static-
+// egress rule list (e.g. an app's per-VM host IP being added on
+// Wake) ships without an operator restart.
+//
+// Initial value is the same as DefaultHostPolicy; the watcher
+// uses ActiveHostPolicy.Render() to drive the staged-reload
+// pipeline. Pre-ADR-119 watchpaths hard-coded DefaultHostPolicy.
+// Render() directly — that path was always read-only and never
+// reflected per-VM live state. The redesign now reads the
+// mutable, which the vmmd Manager mutates on every cache event
+// the same way it mutates the bridge alias set.
+//
+// Concurrency: the value is replaced-by-swap (the watcher takes
+// a snapshot of the pointer before calling Render — see
+// liveHostPolicy in cmd/vmmd/egress_watcher.go). The Render
+// method itself is a pure function of the struct value, so a
+// snapshot guarantees a consistent ruleset for one reload.
+// Replace-by-swap is preferred over fine-grained locking on
+// individual fields because the watcher reloads are infrequent
+// (one per cache event) and the swap is a single pointer copy.
+//
+// Initial pointer holds a copy of DefaultHostPolicy; subsequent
+// updates use SwapActiveHostPolicy (read by the watcher via
+// ActiveHostPolicyForRender).
+var ActiveHostPolicy = &DefaultHostPolicy
+
+// SwapActiveHostPolicy atomically replaces the active host
+// policy with next. The watcher reads the new pointer on the
+// next Render cycle. The next argument is taken by value so
+// the caller can compose a fresh struct without aliasing an
+// in-flight read.
+func SwapActiveHostPolicy(next HostPolicy) {
+	activeHostPolicyPtr.Store(&next)
+}
+
+// ActiveHostPolicyForRender returns the current pointer to the
+// active host policy. The watcher reads this BEFORE calling
+// Render, so the renderer sees a consistent snapshot for the
+// lifetime of one reload. Callers MUST NOT mutate the returned
+// pointer's value — use SwapActiveHostPolicy to install a new
+// value.
+func ActiveHostPolicyForRender() *HostPolicy {
+	return activeHostPolicyPtr.Load()
+}
+
+// activeHostPolicyPtr is the canonical atomic backing store
+// for ActiveHostPolicy. The package-level `ActiveHostPolicy`
+// var above is the initial-value alias (not the live source);
+// production reads MUST go through ActiveHostPolicyForRender.
+var activeHostPolicyPtr atomic.Pointer[HostPolicy]
+
+// init makes the atomic pointer match the package-level initial
+// value. Called once at package init.
+func init() {
+	activeHostPolicyPtr.Store(&DefaultHostPolicy)
 }
 
 // OverlayCIDRError is returned by ValidateOverlayCIDRs when an
@@ -299,6 +414,32 @@ func (h HostPolicy) Render() string {
 		panic(fmt.Sprintf("netns: HostPolicy.Render: %v", err))
 	}
 
+	// ADR-119 redesign panic gate: reject StaticEgressRule entries
+	// whose PerVMHostIP sits inside the MasqueradeCIDR. The
+	// SNAT rule emits `ip saddr <PerVMHostIP>` — if PerVMHostIP
+	// is inside the bridge /16, the broad MASQUERADE on
+	// `ip saddr <MasqueradeCIDR>` masks the specific SNAT, and
+	// the customer's IP would never be reached. The legacy
+	// per-VM SNAT bug (PR-997 blocker #1) had the same root
+	// cause; this gate prevents a future maintainer from
+	// re-introducing it via misconfigured per-VM host IPs.
+	// Renders on every SIGHUP-driven EgressPolicyChanged
+	// reload, so the panic surfaces at the failure site
+	// instead of silently shipping a broken ruleset.
+	masqPrefix, masqErr := netip.ParsePrefix(h.MasqueradeCIDR)
+	if masqErr != nil {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: MasqueradeCIDR %q unparseable: %v", h.MasqueradeCIDR, masqErr))
+	}
+	for _, r := range h.StaticEgressRules {
+		if !r.PerVMHostIP.IsValid() {
+			panic(fmt.Sprintf("netns: HostPolicy.Render: StaticEgressRules has invalid PerVMHostIP for app=%s account=%s", r.AppID, r.AccountID))
+		}
+		if masqPrefix.Contains(r.PerVMHostIP) {
+			panic(fmt.Sprintf("netns: HostPolicy.Render: StaticEgressRules[%s/%s] PerVMHostIP %s is inside MasqueradeCIDR %s — the broad MASQUERADE would shadow the specific SNAT. Use a per-VM host IP outside the bridge /16 (the 10.200.x.y/16 static-egress pool)",
+				r.AccountID, r.AppID, r.PerVMHostIP, h.MasqueradeCIDR))
+		}
+	}
+
 	denyPorts := h.DenySet.SMTPPortsCommaSet()
 	allowPorts := joinInts(h.InputAllowTCPPorts, ",")
 
@@ -396,6 +537,31 @@ func (h HostPolicy) Render() string {
 	b.WriteString("\n")
 	b.WriteString("  chain postrouting {\n")
 	b.WriteString("    type nat hook postrouting priority srcnat; policy accept;\n")
+	// ADR-119 redesign: per-VM static-egress SNAT rules. Each
+	// StaticEgressRules entry is a (per-VM host IP, customer IP)
+	// tuple belonging to one live VM of a static-egress-pinned
+	// app. The renderer emits ONE rule per tuple, ordered BEFORE
+	// the broad MasqueradeCIDR MASQUERADE below because nftables
+	// NAT is first-match + terminal — once the broad MASQUERADE
+	// rewrites the source, the specific SNAT never sees the
+	// rewritten packet. The comment at the end of each rule
+	// includes the account_id and app_id so `nft list ruleset`
+	// is self-documenting for operators.
+	//
+	// The PerVMHostIP is allocated from the dedicated static-
+	// egress pool (10.200.x.y/16, see pkg/fcvm/alloc.go::
+	// AcquireStaticEgressIP) — the panic gate above ensures
+	// Renders fail-closed if a PerVMHostIP accidentally sits
+	// inside MasqueradeCIDR (which would re-introduce the
+	// PR-997 BLOCKING bug).
+	for _, r := range h.StaticEgressRules {
+		comment := ""
+		if r.AccountID != "" || r.AppID != "" {
+			comment = fmt.Sprintf("     # account=%s app=%s", r.AccountID, r.AppID)
+		}
+		fmt.Fprintf(&b, "    ip saddr %s oifname %q snat to %s%s\n",
+			r.PerVMHostIP.String(), h.PublicIface, r.CustomerIP.String(), comment)
+	}
 	fmt.Fprintf(&b, "    ip saddr %s oifname %q masquerade\n", h.MasqueradeCIDR, h.PublicIface)
 	// Mega-PR-B Commit 2: per-overlay MASQUERADE siblings. Each
 	// OverlayCIDRs entry produces one MASQUERADE sibling after the

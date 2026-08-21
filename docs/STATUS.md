@@ -447,6 +447,29 @@ spinner) and PR #51 (the closeout batch):
   `pkg/state/memstore.go:585,602`. Metal regression in
   `pkg/netns/allowlist_metal_test.go::TestMetalAllowlistRuleInstalled`.
   Per spec §7 the feature is gated to **Pro / Scale** plans.
+- **ADR-119 per-app static outbound IP (BYOIP, Scale-only, single-node v1)** —
+  `migrations/00303_apps_static_egress_ip.sql` adds a nullable
+  `static_egress_ip INET` + `static_egress_ip_set_at TIMESTAMPTZ` to
+  `apps`, with a `family(INET)=4` CHECK (IPv6 deferred) and a partial
+  unique index `apps_static_egress_ip_key` defending against cross-app
+  IP collision. State path: `pkg/state/types.go::App.StaticEgressIP` +
+  `pkg/state/pgstore_apps.go::UpdateApp` clear/set sentinels; apid
+  handler in `cmd/apid/handlers_apps_static_egress_ip.go` (env gate
+  `FAAS_STATIC_EGRESS_IP_ENABLED`, plan gate `StaticEgressIPAllowed`).
+  Wire: `pkg/sched/vmmclient.go::VMMClient.UpdateStaticEgressIP` +
+  `pkg/sched/egress_drift.go::onAppChanged` fans the pg_notify
+  through the same drift subscriber the egress allowlist rides. vmmd
+  applies the patch via `pkg/fcvm/manager.go::UpdateStaticEgressIP`;
+  the per-VM netns renderer (`pkg/netns/config.go::NftCommands`)
+  emits a sibling MASQUERADE-sibling rule in the per-netns
+  `postrouting` chain — `oifname <VethPeer> ip saddr 10.0.0.2 snat to
+  <CustomerIP>`. Operator TOML bundle at `/etc/faas/egress/static_egress_ips.toml`
+  is loaded at vmmd startup + on SIGHUP via
+  `cmd/vmmd/egress_static_ip_bundle.go::watchStaticEgressIPBundleReload`
+  (same SIGHUP pattern as the egress allowlist bundle). CLI surface:
+  `gregale app <slug> static-egress-ip {show|set <ip>|clear}`. Metal
+  acceptance gates in `pkg/netns/static_egress_ip_metal_test.go`
+  (nft syntax check + `ifconfig.me` round-trip from inside the netns).
 
 **Observability & dashboards (PR #156):**
 

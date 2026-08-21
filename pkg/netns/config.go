@@ -308,6 +308,16 @@ func (c Config) NftCommands() [][]string {
 	add("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, AppPort))
 	add("add", "chain", "ip", "faas", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
 	add("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade")
+	// ADR-119 redesign: per-netns SNAT rule was REMOVED. The legacy
+	// shape (a MASQUERADE-sibling SNAT rule with `ip saddr 10.0.0.2
+	// snat to <CustomerIP>`) was dead code — nftables NAT is first-
+	// match + terminal, so the broad MASQUERADE above rewrites the
+	// source before the specific SNAT can apply. The v1 design moves
+	// SNAT authority to the host renderer (pkg/netns/policy.go::
+	// HostPolicy.Render), which emits one
+	// `ip saddr <per-vm-host-ip> oifname <PublicIface> snat to
+	// <CustomerIP>` rule per live VM in the host's `chain
+	// postrouting`. The per-VM renderer stays bare MASQUERADE.
 	// Egress filter (§11): default-accept, deny from the guest side only.
 	add("add", "chain", "ip", "faas", "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", forwardPolicy, ";", "}")
 	// Accept reply traffic first. The inbound DNAT'd request is published from

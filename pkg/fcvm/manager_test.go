@@ -31,6 +31,34 @@ type fakeRunner struct {
 	teardownCount int
 }
 
+// fakeHostRenderer (ADR-119 redesign) is the test stub for the
+// Manager's HostRenderer seam. It records every Render call and
+// the latest StaticEgressRules slice the Manager pushed. The
+// real renderer (cmd/vmmd/egress_watcher.go::liveHostPolicy)
+// goes through the staging-dir + atomic-rename pipeline; the
+// stub short-circuits to a recorded return so the unit test
+// can assert the rebuild was attempted without touching the
+// host filesystem.
+type fakeHostRenderer struct {
+	mu          sync.Mutex
+	rules       []netns.StaticEgressRule
+	renderCalls int
+	renderErr   error
+}
+
+func (f *fakeHostRenderer) SetStaticEgressRules(rules []netns.StaticEgressRule) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rules = append([]netns.StaticEgressRule(nil), rules...)
+}
+
+func (f *fakeHostRenderer) Render(_ context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.renderCalls++
+	return f.renderErr
+}
+
 func (f *fakeRunner) Run(_ context.Context, argv []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -2645,6 +2673,286 @@ func TestInstanceByCID_UnknownCID(t *testing.T) {
 	}
 }
 
+// ADR-119: per-app static egress IP path. The full Wake side is
+// covered indirectly by the renderer tests in pkg/netns (the
+// renderer emits the SNAT rule when AccountStaticIP != nil); the
+// tests below pin the vmmd-side Manager surface so a future
+// regression that drops the validation or breaks the live-patch
+// surfaces here without needing a metal box.
+
+// TestWakeRejectsStaticEgressIP_NotV4 pins the IPv6-deferred
+// behaviour. apid gates on family=4 upstream; vmmd defends in
+// depth so a future schema relaxation can't sneak a v6 string
+// into the Wake path. The parse gate trips BEFORE the vmm
+// path so fakeVMM doesn't matter — the request errors at the
+// static-egress-IP block in Wake.
+func TestWakeRejectsStaticEgressIP_NotV4(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	_, err := m.Wake(context.Background(), WakeRequest{
+		Instance:       "vw-static-v6",
+		BaseKey:        "/b.ext4",
+		LayerKey:       "/l.ext4",
+		VcpuCount:      2,
+		MemSizeMiB:     128,
+		Plan:           api.PlanScale,
+		StaticEgressIP: "::1",
+	})
+	if err == nil {
+		t.Fatal("Wake with IPv6 static IP: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "IPv6 deferred") {
+		t.Errorf("err = %v, want substring `IPv6 deferred`", err)
+	}
+}
+
+// TestWakeRejectsStaticEgressIP_Reserved pins the deny-set gate.
+// The same deny set the apid handler enforces (RFC1918, CGN,
+// link-local, multicast, loopback) is mirrored here so a Wake
+// from a non-apid caller (eg. a future bulk-import path) can't
+// pin a reserved IP.
+func TestWakeRejectsStaticEgressIP_Reserved(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	_, err := m.Wake(context.Background(), WakeRequest{
+		Instance:       "vw-static-rfc1918",
+		BaseKey:        "/b.ext4",
+		LayerKey:       "/l.ext4",
+		VcpuCount:      2,
+		MemSizeMiB:     128,
+		Plan:           api.PlanScale,
+		StaticEgressIP: "10.1.2.3",
+	})
+	if err == nil {
+		t.Fatal("Wake with RFC1918 static IP: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "in deny set") {
+		t.Errorf("err = %v, want substring `in deny set` (canonical ValidateStaticEgressIP)", err)
+	}
+}
+
+// TestWakeRejectsStaticEgressIP_Malformed pins the parse gate.
+func TestWakeRejectsStaticEgressIP_Malformed(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	_, err := m.Wake(context.Background(), WakeRequest{
+		Instance:       "vw-static-malformed",
+		BaseKey:        "/b.ext4",
+		LayerKey:       "/l.ext4",
+		VcpuCount:      2,
+		MemSizeMiB:     128,
+		Plan:           api.PlanScale,
+		StaticEgressIP: "not-an-ip",
+	})
+	if err == nil {
+		t.Fatal("Wake with malformed static IP: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid dotted-quad") {
+		t.Errorf("err = %v, want substring `invalid dotted-quad`", err)
+	}
+}
+
+// TestUpdateStaticEgressIP_NoLiveInstancesIsNoop — the empty
+// app is the redelivery / no-live-targets path. No nft commands
+// should fire, no error. The per-app cache is still written so
+// a future Wake for this app picks up the new IP.
+func TestUpdateStaticEgressIP_NoLiveInstancesIsNoop(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	if err := m.UpdateStaticEgressIP(context.Background(), "acct-orphan", "app-orphan", "203.0.113.42"); err != nil {
+		t.Fatalf("UpdateStaticEgressIP: %v", err)
+	}
+	if run.ran("nft") {
+		t.Error("nft should not run when no live instances match the app")
+	}
+	m.perAppStaticIPMu.RLock()
+	defer m.perAppStaticIPMu.RUnlock()
+	if got := m.perAppStaticIP["app-orphan"]; got == nil || got.String() != "203.0.113.42" {
+		t.Errorf("perAppStaticIP[app-orphan] = %v, want 203.0.113.42", got)
+	}
+}
+
+// ADR-119 redesign: the per-netns SNAT path was deleted.
+// The per-VM live-patch tests (AppliesPatch, SameIPNoOp,
+// ReplacesIP, ClearPath, FansOutAcrossLiveInstances) all
+// exercised `inst.Net.AccountStaticIP` and `inst.StaticIPHandle`,
+// which are deleted fields. The new model is the host renderer
+// (pkg/netns/policy.go::StaticEgressRules) with the per-VM host
+// IP allocated by pkg/fcvm.AcquireStaticEgressIP. New tests
+// below cover the redesign: rebuildHostStaticEgressRules
+// populates the host policy, the per-app cache invariants hold,
+// and the redelivery fast-path is byte-identical to the
+// previous tests' intent.
+
+// TestUpdateStaticEgressIP_RejectsEmptyAppID — defensive. Empty
+// appID is a programmer error, not a customer-facing failure.
+func TestUpdateStaticEgressIP_RejectsEmptyAppID(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	err := m.UpdateStaticEgressIP(context.Background(), "acct-test", "", "203.0.113.42")
+	if err == nil {
+		t.Fatal("expected error for empty app_id")
+	}
+	if !strings.Contains(err.Error(), "empty app_id") {
+		t.Errorf("err = %v, want substring `empty app_id`", err)
+	}
+}
+
+// TestUpdateStaticEgressIP_RejectsReservedIP — same deny set as
+// Wake. A misconfigured upstream caller (eg. a test fixture or
+// a future bulk-import path) cannot pin a reserved IP.
+func TestUpdateStaticEgressIP_RejectsReservedIP(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "192.168.1.1")
+	if err == nil {
+		t.Fatal("expected error for reserved IP")
+	}
+	if !strings.Contains(err.Error(), "in deny set") {
+		t.Errorf("err = %v, want substring `in deny set` (canonical ValidateStaticEgressIP)", err)
+	}
+}
+
+// TestUpdateStaticEgressIP_BuildsHostPolicy (ADR-119 redesign)
+// is the new regression net for the host-renderer rebuild path.
+// Seeding a live instance with the per-VM host IP and the
+// per-app customer IP, then calling UpdateStaticEgressIP, must
+// surface the (perVMHostIP, customerIP) tuple to the host
+// renderer (via netns.ActiveHostPolicy.StaticEgressRules).
+func TestUpdateStaticEgressIP_BuildsHostPolicy(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	renderer := &fakeHostRenderer{}
+	m.SetHostRenderer(renderer)
+	perVMHostIP := netip.MustParseAddr("10.200.0.1")
+	customerIP := netip.MustParseAddr("203.0.113.42")
+	nc := netns.NewConfig("i-1", "fc-i-1", "vh1", "vp1", netip.MustParseAddr("10.100.0.2"))
+	inst := &Instance{
+		Lease:     Lease{Instance: "i-1", UID: 20001},
+		Net:       nc,
+		Method:    WakeColdBoot,
+		AppID:     "app-1",
+		AccountID: "acct-1",
+	}
+	m.mu.Lock()
+	m.live["i-1"] = inst
+	m.mu.Unlock()
+	// Register the per-VM host IP (the Wake path does this on
+	// a successful AcquireStaticEgressIP).
+	m.RegisterStaticEgressIPForVM("app-1", perVMHostIP)
+
+	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "203.0.113.42"); err != nil {
+		t.Fatalf("UpdateStaticEgressIP: %v", err)
+	}
+	// The host renderer is rebuilt via the atomic-swap path
+	// (netns.SwapActiveHostPolicy) — the renderer stub's
+	// Render() is the call-site. The active host policy's
+	// StaticEgressRules is the canonical evidence the
+	// rebuild ran.
+	pol := netns.ActiveHostPolicyForRender()
+	if pol == nil {
+		t.Fatal("ActiveHostPolicyForRender returned nil")
+	}
+	if len(pol.StaticEgressRules) != 1 {
+		t.Fatalf("StaticEgressRules len = %d, want 1", len(pol.StaticEgressRules))
+	}
+	r := pol.StaticEgressRules[0]
+	if r.PerVMHostIP != perVMHostIP {
+		t.Errorf("PerVMHostIP = %s, want %s", r.PerVMHostIP, perVMHostIP)
+	}
+	if r.CustomerIP != customerIP {
+		t.Errorf("CustomerIP = %s, want %s", r.CustomerIP, customerIP)
+	}
+	if r.AppID != "app-1" {
+		t.Errorf("AppID = %q, want app-1", r.AppID)
+	}
+	if r.AccountID != "acct-1" {
+		t.Errorf("AccountID = %q, want acct-1", r.AccountID)
+	}
+	renderer.mu.Lock()
+	if renderer.renderCalls != 1 {
+		renderer.mu.Unlock()
+		t.Errorf("fakeHostRenderer.renderCalls = %d, want 1", renderer.renderCalls)
+		return
+	}
+	renderer.mu.Unlock()
+	// No per-netns nft exec was emitted.
+	if run.ran("nft") {
+		t.Errorf("renderer should not run nft directly; commands: %v", run.commands)
+	}
+}
+
+// TestUpdateStaticEgressIP_ClearPathRemovesHostRule is the
+// clear-path analogue. Setting the IP then clearing must drop
+// the tuple from the host renderer's StaticEgressRules list.
+func TestUpdateStaticEgressIP_ClearPathRemovesHostRule(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	renderer := &fakeHostRenderer{}
+	m.SetHostRenderer(renderer)
+	perVMHostIP := netip.MustParseAddr("10.200.0.1")
+	nc := netns.NewConfig("i-1", "fc-i-1", "vh1", "vp1", netip.MustParseAddr("10.100.0.2"))
+	inst := &Instance{
+		Lease:     Lease{Instance: "i-1", UID: 20001},
+		Net:       nc,
+		Method:    WakeColdBoot,
+		AppID:     "app-1",
+		AccountID: "acct-1",
+	}
+	m.mu.Lock()
+	m.live["i-1"] = inst
+	m.mu.Unlock()
+	m.RegisterStaticEgressIPForVM("app-1", perVMHostIP)
+	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "203.0.113.42"); err != nil {
+		t.Fatalf("UpdateStaticEgressIP set: %v", err)
+	}
+	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", ""); err != nil {
+		t.Fatalf("UpdateStaticEgressIP clear: %v", err)
+	}
+	pol := netns.ActiveHostPolicyForRender()
+	if pol == nil {
+		t.Fatal("ActiveHostPolicyForRender returned nil")
+	}
+	if len(pol.StaticEgressRules) != 0 {
+		t.Errorf("StaticEgressRules len = %d after clear, want 0", len(pol.StaticEgressRules))
+	}
+}
+
+// TestUpdateStaticEgressIP_SameIPNoOp covers the redelivery
+// path. The same IP twice should not rebuild the host renderer
+// (the second call's idempotent fast-path returns early).
+func TestUpdateStaticEgressIP_SameIPNoOp(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	renderer := &fakeHostRenderer{}
+	m.SetHostRenderer(renderer)
+	perVMHostIP := netip.MustParseAddr("10.200.0.1")
+	nc := netns.NewConfig("i-1", "fc-i-1", "vh1", "vp1", netip.MustParseAddr("10.100.0.2"))
+	inst := &Instance{
+		Lease:  Lease{Instance: "i-1", UID: 20001},
+		Net:    nc,
+		Method: WakeColdBoot,
+		AppID:  "app-1",
+	}
+	m.mu.Lock()
+	m.live["i-1"] = inst
+	m.mu.Unlock()
+	m.RegisterStaticEgressIPForVM("app-1", perVMHostIP)
+	// First call: set the IP, rebuild the host policy.
+	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "203.0.113.42"); err != nil {
+		t.Fatalf("first UpdateStaticEgressIP: %v", err)
+	}
+	// Second call: same IP, no rebuild expected.
+	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "203.0.113.42"); err != nil {
+		t.Fatalf("second UpdateStaticEgressIP: %v", err)
+	}
+	renderer.mu.Lock()
+	defer renderer.mu.Unlock()
+	if renderer.renderCalls != 1 {
+		t.Errorf("fakeHostRenderer.renderCalls = %d, want 1 (redelivery must be a no-op)", renderer.renderCalls)
+	}
+}
+
 // TestManager_ReportWorkloadOOM_CallsRelay (Cluster C / ADR-121)
 // asserts the Manager.ReportWorkloadOOM path invokes the
 // WorkloadOOMSink with the observed (peakMB, planMB) payload
@@ -2711,4 +3019,5 @@ func TestManager_ReportWorkloadOOM_NilRelayNoOp(t *testing.T) {
 		}
 	}()
 	m.ReportWorkloadOOM(context.Background(), "inst-1", 384, 256)
+
 }

@@ -3,6 +3,7 @@ package netns
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -860,4 +861,110 @@ func TestHostPolicyRenderNftSyntaxCheck(t *testing.T) {
 		t.Skipf("nft -c -f requires CAP_NET_ADMIN (running as non-root user); skipping. Run with sudo or rely on `make egress-check` in CI for the production gate:\n%s", stderrStr)
 	}
 	t.Fatalf("nft -c -f rejected the rendered ruleset (raw `nft` output below); ruleset:\n%s\n--- nft stderr ---\n%s", out, stderrStr)
+}
+
+// TestHostPolicyRendersStaticEgressRules (ADR-119 redesign) is the
+// host-side regression net for the new StaticEgressRules field.
+// One entry produces one rule with the exact argv shape:
+//
+//	ip saddr <PerVMHostIP> oifname <PublicIface> snat to <CustomerIP>
+//
+// The rule appears in the SNAT-compatible shape (the same chains
+// the existing MASQUERADE uses) so nft accepts the body as-is in
+// the metal gate.
+func TestHostPolicyRendersStaticEgressRules(t *testing.T) {
+	pol := DefaultHostPolicy
+	pol.StaticEgressRules = []StaticEgressRule{
+		{
+			PerVMHostIP: netip.MustParseAddr("10.200.0.1"),
+			CustomerIP:  netip.MustParseAddr("203.0.113.42"),
+			AccountID:   "11111111-1111-1111-1111-111111111111",
+			AppID:       "22222222-2222-2222-2222-222222222222",
+		},
+	}
+	out := pol.Render()
+	want := `ip saddr 10.200.0.1 oifname "eth0" snat to 203.0.113.42`
+	if !strings.Contains(out, want) {
+		t.Fatalf("expected SNAT rule %q in rendered output, none found:\n%s", want, out)
+	}
+}
+
+// TestHostPolicyStaticEgressRulesPlacedBeforeMasquerade is the
+// LOAD-BEARING regression net for the PR-997 BLOCKING bug. nftables
+// NAT is first-match + terminal; the broad MASQUERADE on
+// MasqueradeCIDR shadows any sibling SNAT. The renderer MUST emit
+// the static-egress rules BEFORE the broad MASQUERADE so the
+// specific SNAT fires first. Pin the byte-offset ordering.
+func TestHostPolicyStaticEgressRulesPlacedBeforeMasquerade(t *testing.T) {
+	pol := DefaultHostPolicy
+	pol.StaticEgressRules = []StaticEgressRule{
+		{
+			PerVMHostIP: netip.MustParseAddr("10.200.0.1"),
+			CustomerIP:  netip.MustParseAddr("203.0.113.42"),
+			AccountID:   "a",
+			AppID:       "b",
+		},
+	}
+	out := pol.Render()
+	// The MASQUERADE on the default MasqueradeCIDR (=10.100.0.0/16).
+	masqLine := "ip saddr 10.100.0.0/16 oifname \"eth0\" masquerade"
+	masqIdx := strings.Index(out, masqLine)
+	snatIdx := strings.Index(out, "snat to 203.0.113.42")
+	if masqIdx < 0 {
+		t.Fatalf("default MASQUERADE missing:\n%s", out)
+	}
+	if snatIdx < 0 {
+		t.Fatalf("SNAT-to-customer rule missing:\n%s", out)
+	}
+	if snatIdx >= masqIdx {
+		t.Fatalf("SNAT rule (offset %d) must appear BEFORE MASQUERADE (offset %d) — first-match NAT:\n%s",
+			snatIdx, masqIdx, out)
+	}
+}
+
+// TestHostPolicyEmptyStaticEgressRulesOmitsRules pins the
+// opt-out: a HostPolicy with no StaticEgressRules emits no `snat
+// to` line anywhere in the ruleset. Default MASQUERADE-only
+// behaviour is preserved byte-identical to pre-119 output for
+// non-pinned apps (the dominant case for Hobby / Pro plans).
+func TestHostPolicyEmptyStaticEgressRulesOmitsRules(t *testing.T) {
+	pol := DefaultHostPolicy
+	// StaticEgressRules is nil by default — no setup needed.
+	out := pol.Render()
+	if strings.Contains(out, "snat to") {
+		t.Errorf("StaticEgressRules=nil but renderer emitted a `snat to` line:\n%s", out)
+	}
+}
+
+// TestHostPolicyStaticEgressRulesMultiple (ADR-119 redesign) is
+// the multi-tenant shape — N apps pinned to N customer IPs all
+// render as N rules, ordered before the broad MASQUERADE, each
+// with the per-VM host IP as the source.
+func TestHostPolicyStaticEgressRulesMultiple(t *testing.T) {
+	pol := DefaultHostPolicy
+	pol.StaticEgressRules = []StaticEgressRule{
+		{PerVMHostIP: netip.MustParseAddr("10.200.0.1"), CustomerIP: netip.MustParseAddr("203.0.113.42"), AccountID: "a1", AppID: "app1"},
+		{PerVMHostIP: netip.MustParseAddr("10.200.0.2"), CustomerIP: netip.MustParseAddr("203.0.113.43"), AccountID: "a2", AppID: "app2"},
+		{PerVMHostIP: netip.MustParseAddr("10.200.0.3"), CustomerIP: netip.MustParseAddr("203.0.113.44"), AccountID: "a3", AppID: "app3"},
+	}
+	out := pol.Render()
+	// All three rules present, in order.
+	want1 := "ip saddr 10.200.0.1 oifname \"eth0\" snat to 203.0.113.42"
+	want2 := "ip saddr 10.200.0.2 oifname \"eth0\" snat to 203.0.113.43"
+	want3 := "ip saddr 10.200.0.3 oifname \"eth0\" snat to 203.0.113.44"
+	idx1 := strings.Index(out, want1)
+	idx2 := strings.Index(out, want2)
+	idx3 := strings.Index(out, want3)
+	if idx1 < 0 || idx2 < 0 || idx3 < 0 {
+		t.Fatalf("expected 3 SNAT rules, found offsets: %d %d %d:\n%s", idx1, idx2, idx3, out)
+	}
+	if !(idx1 < idx2 && idx2 < idx3) {
+		t.Errorf("SNAT rules must appear in input order (offets %d %d %d):\n%s", idx1, idx2, idx3, out)
+	}
+	// Account/app comments present in the rendered output.
+	for _, want := range []string{"# account=a1 app=app1", "# account=a2 app=app2", "# account=a3 app=app3"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected audit comment %q in rendered output:\n%s", want, out)
+		}
+	}
 }

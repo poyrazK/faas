@@ -1356,6 +1356,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	signal.Notify(hupCh, syscall.SIGHUP)
 	defer signal.Stop(hupCh)
 	go watchEgressBundleReload(ctx, mgr, cfg.EgressOperatorAllowlist, log, hupCh)
+	// ADR-119 redesign: SIGHUP-driven static egress IP bundle
+	// reload. Wired on the same hupCh as the operator-allowlist
+	// bundle — every SIGHUP fans out to both. The watcher
+	// (cmd/vmmd/egress_static_ip_bundle.go) reads the operator
+	// TOML, installs the bridge aliases, pushes the rules into
+	// the host renderer (via netns.SwapActiveHostPolicy), and
+	// mirrors the (account_id, customer_ip) tuples into the
+	// Postgres gate table the apid PUT path reads.
+	//
+	// `st` is the same state.Store the rest of the daemon
+	// consumes (the apid uses it for the gate read).
+	go watchStaticEgressIPBundleReload(ctx, mgr, store, cfg.StaticEgressIPBundlePath, log, hupCh)
 	// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation on the
 	// same hupCh the egress-bundle reload watches. Reuses the
 	// channel — each signal is consumed by both watchers — and

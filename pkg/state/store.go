@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -1447,6 +1448,33 @@ type Store interface {
 	// store hiccup doesn't 500 the dashboard load.
 	AuthDefaultFlippedAt(ctx context.Context) (time.Time, error)
 	UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error)
+
+	// ProvisionedStaticEgressIPExists (ADR-119 redesign) is the
+	// apid-side gate. Returns true iff the (account_id, customer_ip)
+	// tuple is in the operator-provisioned set. The vmmd bundle
+	// reload writes the table from the operator's TOML on SIGHUP;
+	// the apid PUT path reads it here. A false return is the
+	// "not provisioned" surface the customer sees as 404 Not
+	// Found (api.ErrStaticEgressIPNotProvisioned).
+	//
+	// Implementation note: the lookup is a single-row PK read
+	// against the `(account_id, customer_ip)` composite index.
+	// Sub-millisecond under realistic load.
+	ProvisionedStaticEgressIPExists(ctx context.Context, accountID string, ip netip.Addr) (bool, error)
+
+	// ReplaceProvisionedStaticEgressIPs (ADR-119 redesign) is the
+	// vmmd-side write that mirrors the operator's TOML into the
+	// Postgres gate table. The watcher calls this on every SIGHUP
+	// (and once at startup). The store clears the table for the
+	// given account_id, then inserts the new set inside a single
+	// transaction — the visible-state invariant is "either the
+	// prior set OR the new set, never a partial mix". Empty
+	// `entries` removes all rows for the account (the "revoke
+	// provisioning" path).
+	//
+	// The implementation lives in pgstore.go (SQL via sqlc).
+	// MemStore (used in unit tests) provides the same shape.
+	ReplaceProvisionedStaticEgressIPs(ctx context.Context, accountID string, ips []netip.Addr) error
 	// RenameApp changes an app's slug atomically (issue #63). Returns
 	// ErrNotFound if oldSlug doesn't belong to accountID; ErrConflict if
 	// newSlug is already taken by another live app. MemStore holds the

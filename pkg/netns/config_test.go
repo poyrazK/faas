@@ -1240,3 +1240,13 @@ func TestNftCommandsChainPolicySwitchesWithAllowlist(t *testing.T) {
 		t.Errorf("populated allowlist: expected 0 `policy accept`, found %d:\n%s", got, ruleset)
 	}
 }
+
+// ADR-119 redesign: the per-netns SNAT path was deleted
+// (nftables NAT is first-match + terminal, so the broad
+// MASQUERADE shadows any sibling SNAT). The host renderer
+// is the new authority — see pkg/netns/policy_test.go for
+// the regression net on the host side. The per-netns
+// Config.AccountStaticIP field is gone; the SNAT rule is
+// emitted by HostPolicy.Render() (one rule per live VM,
+// placed BEFORE the broad MASQUERADE). The deleted tests
+// lived here.

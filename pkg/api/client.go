@@ -2789,6 +2789,33 @@ func (c *Client) UpdateAppSecurity(ctx context.Context, slug string, req AppSecu
 	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/security", req, &out)
 }
 
+// GetAppStaticEgressIP reads the per-app static egress IP pin
+// (ADR-119). Plan-agnostic — returns the current pin status even
+// when the plan doesn't allow static egress IPs (plan_allowed=false,
+// plan_cap=0 in that case). Customer-scoped (no admin required).
+func (c *Client) GetAppStaticEgressIP(ctx context.Context, slug string) (AppStaticEgressIPResponse, error) {
+	var out AppStaticEgressIPResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/static-egress-ip", nil, &out)
+}
+
+// SetAppStaticEgressIP pins a customer-supplied IPv4 to the app's
+// egress traffic (ADR-119). Scale-only — apid returns 402
+// plan_static_egress_ip_not_allowed for Free/Hobby/Pro. The handler
+// validates family=4 + non-RFC1918 + non-link-local +
+// non-multicast before the column write. Set=false with empty
+// IP clears the pin. Audit event: app.static_egress_ip_set.
+func (c *Client) SetAppStaticEgressIP(ctx context.Context, slug string, req SetAppStaticEgressIPRequest) (AppStaticEgressIPResponse, error) {
+	var out AppStaticEgressIPResponse
+	return out, c.do(ctx, "PUT", "/v1/apps/"+slug+"/static-egress-ip", req, &out)
+}
+
+// ClearAppStaticEgressIP drops the per-app static egress IP pin
+// (ADR-119). Convenience wrapper around SetAppStaticEgressIP with
+// Set=false. Idempotent — clearing a non-existent pin is a 204.
+func (c *Client) ClearAppStaticEgressIP(ctx context.Context, slug string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/static-egress-ip", nil, nil)
+}
+
 // SetGithubWebhookSecret sets the per-tenant webhook secret for
 // the given installation_id (PR-D / ADR-012 §7 amendment). The
 // server hex-decodes SecretHex and writes the raw bytes to

@@ -112,6 +112,9 @@ func (r *deploymentFilterFakeVMM) Stats(context.Context, string) (*StatsSnapshot
 func (r *deploymentFilterFakeVMM) UpdateEgressAllowlist(context.Context, string, string, []netip.Prefix) error {
 	return nil
 }
+func (r *deploymentFilterFakeVMM) UpdateStaticEgressIP(context.Context, string, string, string, string) error {
+	return nil
+}
 
 // Tier A5 (ADR-066) — logs filter tests don't drive migration.
 func (r *deploymentFilterFakeVMM) PrepareLiveMigration(context.Context, string, string, string) (LiveMigrationPrepare, error) {

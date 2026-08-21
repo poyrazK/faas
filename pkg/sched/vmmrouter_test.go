@@ -109,6 +109,16 @@ func (f *fakeRouterVMM) UpdateEgressAllowlist(_ context.Context, _ string, _ []n
 	return nil
 }
 
+// UpdateStaticEgressIP (ADR-119) — no-op test fake. Mirrors
+// UpdateEgressAllowlist above. The (ctx, appID, ip) signature
+// matches the VMM interface used by the dial-func return
+// type at vmmrouter_test.go:162. The (ctx, nodeID, appID, ip)
+// RoutedVMM signature is satisfied by a separate method
+// below.
+func (f *fakeRouterVMM) UpdateStaticEgressIP(_ context.Context, _, _ string, _ string) error {
+	return nil
+}
+
 // Logs (issue #254 / Move 4, issue #517 / PR-B) — router tests
 // don't drive the log stream path; the scheddgrpc handler tests
 // do. Returns a closed fakeLogStream so any accidental caller exits

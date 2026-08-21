@@ -719,6 +719,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppsRoutes(slug, args[2:])
 		case subStreamingCap:
 			return cmdAppsStreamingCap(slug, args[2:])
+		case subStaticEgressIP:
+			return cmdAppStaticEgressIP(slug, args[2:])
 		}
 	}
 	// Backwards-compat: legacy flag-form dispatch is the existing cmdApp.
