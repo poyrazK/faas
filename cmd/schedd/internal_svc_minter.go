@@ -5,14 +5,29 @@ package main
 // /v1/synthesize requests targeting apps whose
 // public_auth_mode='internal_only' (issue #477 #4).
 //
-// Production keypair loading: the operator provisions the
-// Ed25519 keypair at /etc/faas/secrets/internal-svc/schedd.ed25519
-// (override via FAAS_INTERNAL_SVC_KEY_PATH). The key is
-// generated fresh on first boot if missing — a loud WARN log
-// makes this visible so the operator can persist it to
-// host.age. The corresponding public key is added to the
-// FAAS_INTERNAL_SVC_PUBKEYS env on every gatewayd-internal
-// node. Rotation: out of scope for PR-A (ADR-120 candidate).
+// Production keypair loading (PR-3 / ADR-125 fleet-wide signing
+// key): schedd tries the cluster_signing_keys row in PG FIRST.
+// Every box that joins the fleet reads the same cluster key, so
+// a JWT minted by schedd on box A is verifiable by
+// gatewayd-internal on box B — the cross-box audit F1+F20 fix.
+//
+// The cluster path requires the operator to have run
+// `hostage-gen cluster-init` once (out of scope for PR-3; the
+// minimal in-tree helper is pkg/state.PgStore.InsertClusterSigningKey
+// + the SQL row shape at migrations/00351). Until then, or on a
+// box whose host.age chain cannot unseal the cluster blob (the
+// shared-host.age bootstrap mistake), the loader falls back to
+// the per-host paths below.
+//
+// Per-host fallback (single-box dev + operator-migration window):
+// the operator provisions the Ed25519 keypair at
+// /etc/faas/secrets/internal-svc/schedd.ed25519 (override via
+// FAAS_INTERNAL_SVC_KEY_PATH). The key is generated fresh on
+// first boot if missing — a loud WARN log makes this visible so
+// the operator can persist it to host.age. The corresponding
+// public key is added to the FAAS_INTERNAL_SVC_PUBKEYS env on
+// every gatewayd-internal node. Rotation: out of scope for PR-A
+// (ADR-120 candidate).
 //
 // Sealed-at-rest posture (CLAUDE.md G2 §17, round-3 peer-review
 // finding #5): the operator MAY instead provision
@@ -27,6 +42,7 @@ package main
 // the same key-shape validation.
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
@@ -36,11 +52,92 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/internalsvc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// mintState holds the (private, kid) pair the closure reads at
+// every call. Stored in an atomic.Pointer so the long-lived
+// "cluster_signing_keys_changed" subscriber can swap the key
+// without dropping an in-flight synth request.
+//
+// Rotation scenario (PR-3 + a follow-on ADR-125 rotation
+// amendment):
+//   - t0: holder is (priv_v1, kid_v1). Every minted JWT carries kid=v1.
+//   - t1: operator runs `hostage-gen cluster-rotate` which inserts
+//     the new row + retires v1.
+//   - t2: trigger fires pg_notify('cluster_signing_keys_changed').
+//   - t3: subscriber goroutine re-runs loadClusterInternalSvcKey,
+//     parses the new priv, builds a fresh mintState{priv_v2, kid_v2},
+//     atomic-swap.
+//   - t4: the very next mint uses kid=v2; receivers that still
+//     accept v1 (rotation overlap window in the verifier side,
+//     PR-3 follow-on) verify both kids cleanly.
+//
+// The atomic.Pointer is the load-bearing primitive here; without
+// it, rotation requires a schedd restart, which is the legacy
+// behaviour this PR cluster is replacing.
+type mintState struct {
+	priv ed25519.PrivateKey
+	kid  string
+}
+
+// newMintState constructs a fresh mintState from (priv, kid).
+// Used by both the initial load path and the rotation path so
+// the same validation (key-shape, kid derivation) runs on every
+// swap.
+func newMintState(priv ed25519.PrivateKey, kid string) *mintState {
+	return &mintState{priv: priv, kid: kid}
+}
+
+// atomicMinter is the long-lived closure factory backing the
+// mintInternalSvcToken signature pkg/sched.loop.go expects. The
+// closure reads the atomic.Pointer on every call so rotation
+// lands without daemon restart. Returns a small handle struct
+// with .Mint + .Rotate so the wiring site (cmd/schedd/main.go)
+// can swap the underlying state in the rotation subscriber
+// goroutine.
+type atomicMinter struct {
+	state atomic.Pointer[mintState]
+}
+
+// Mint returns a fresh JWT for the given app_id, using whichever
+// (priv, kid) is current at the moment of the call.
+func (a *atomicMinter) Mint(appID string) (string, error) {
+	s := a.state.Load()
+	if s == nil {
+		return "", errors.New("schedd: minter state is nil (rotation in progress or initial load failed)")
+	}
+	return internalsvc.Mint("schedd", internalSvcTokenTTL,
+		map[string]any{"app_id": appID}, s.priv, s.kid)
+}
+
+// Rotate swaps the underlying (priv, kid). Called by the
+// cluster_signing_keys_changed subscriber goroutine on every
+// delivery. Fail-closed: a rotation that supplies a nil priv is
+// a logic bug and is rejected without affecting the current
+// state (in-flight mints keep using the previous key until a
+// healthy swap lands).
+func (a *atomicMinter) Rotate(priv ed25519.PrivateKey, kid string) error {
+	if priv == nil || kid == "" {
+		return fmt.Errorf("schedd: rotate minter: nil priv or empty kid refused")
+	}
+	a.state.Store(newMintState(priv, kid))
+	return nil
+}
+
+// Mint returns the child closure expected by
+// sched.ConfigureInternalSvcAuth and sched.WithMintInternalSvcToken.
+// Re-exposes the atomicMinter through the same func-type the
+// legacy minter did, so the wiring in cmd/schedd/main.go doesn't
+// change between cluster-key and per-host-key paths.
+func (a *atomicMinter) AsFunc() func(string) (string, error) {
+	return a.Mint
+}
 
 const (
 	// internalSvcTokenTTL is the JWT exp claim window (ADR-119
@@ -71,22 +168,61 @@ const (
 )
 
 // newSchedInternalSvcMinter loads the schedd Ed25519 keypair
-// from FAAS_INTERNAL_SVC_KEY_PATH (or the default path), or
-// generates a fresh keypair with a loud WARN if the file is
-// missing. Returns a closure of type
-// func(appID string) (string, error) — the signature
-// pkg/sched.loop.go::httpGatewaySynth.mintInternalSvcToken
-// expects.
+// from the cluster_signing_keys PG row (PR-3 / ADR-125
+// fleet-wide signing key), falling back to FAAS_INTERNAL_SVC_KEY_PATH
+// (or its sealed sibling) when the cluster row is missing or
+// not unsealable on this box. Returns an *atomicMinter that
+// callers can both use as the func-type the schedd engine
+// expects (call .AsFunc()) and feed into the rotation
+// subscriber (call .Rotate(priv, kid) on every delivery).
 //
-// Sealed-at-rest mode: if FAAS_INTERNAL_SVC_KEY_SEALED_BLOB is
-// set, the plaintext-PEM path is skipped entirely and the
-// unsealed bytes are used. The host.age identities are loaded
-// via secretbox.LoadHostKeys(secretbox.DefaultHostKeyDir) —
-// current first, previous second — so a rotation overlap window
-// is supported without daemon restart.
-func newSchedInternalSvcMinter(log *slog.Logger) (func(appID string) (string, error), error) {
+// Fallback chain (in order):
+//
+//  1. cluster_signing_keys row (PR-3 / ADR-125) — unsealed
+//     via host.age identities on this box. The cluster row
+//     is the multi-host source of truth; every schedd in
+//     the fleet mints with the same kid.
+//  2. FAAS_INTERNAL_SVC_KEY_SEALED_BLOB — sealed-at-rest
+//     single-box dev + legacy operator-migration path.
+//  3. FAAS_INTERNAL_SVC_KEY_PATH (or default path) —
+//     plaintext PEM, generated-on-missing.
+//
+// Sealed-at-rest mode (step 2): if
+// FAAS_INTERNAL_SVC_KEY_SEALED_BLOB is set, the plaintext-PEM
+// path is skipped entirely and the unsealed bytes are used.
+// The host.age identities are loaded via
+// secretbox.LoadHostKeys(secretbox.DefaultHostKeyDir) — current
+// first, previous second — so a rotation overlap window is
+// supported without daemon restart.
+func newSchedInternalSvcMinter(ctx context.Context, store *state.PgStore, log *slog.Logger) (*atomicMinter, error) {
 	if log == nil {
 		log = slog.Default()
+	}
+	m := &atomicMinter{}
+	// Step 1: cluster-wide PG key (PR-3 / ADR-125). Most
+	// production schedds hit this path; the per-host fallback
+	// chain below is the operator-migration window.
+	if store != nil {
+		priv, kid, err := loadClusterInternalSvcKey(ctx, store, log)
+		if err == nil {
+			if rErr := m.Rotate(priv, kid); rErr != nil {
+				return nil, fmt.Errorf("schedd: prime atomicMinter with cluster key: %w", rErr)
+			}
+			log.Info("schedd: internal-svc minter loaded",
+				"svc_name", "schedd",
+				"kid", kid,
+				"source", "cluster_signing_keys",
+				"ttl", internalSvcTokenTTL.String())
+			return m, nil
+		}
+		if !errors.Is(err, ErrClusterKeyUnavailable) {
+			// Hard error — log + bail. The fallback chain is
+			// for "row missing or unseal failed", not for
+			// "PG is unreachable and pgx is erroring".
+			return nil, fmt.Errorf("schedd: cluster key load: %w", err)
+		}
+		log.Info("schedd: cluster_signing_keys unavailable; falling back to per-host key path",
+			"reason", err.Error())
 	}
 	priv, source, err := loadSchedInternalSvcKey(log)
 	if err != nil {
@@ -94,11 +230,23 @@ func newSchedInternalSvcMinter(log *slog.Logger) (func(appID string) (string, er
 	}
 	pub := priv.Public().(ed25519.PublicKey)
 	kid := kidFromPub(pub)
+	if rErr := m.Rotate(priv, kid); rErr != nil {
+		return nil, fmt.Errorf("schedd: prime atomicMinter with per-host key: %w", rErr)
+	}
 	log.Info("schedd: internal-svc minter loaded",
 		"svc_name", "schedd",
 		"kid", kid,
 		"source", source,
 		"ttl", internalSvcTokenTTL.String())
+	return m, nil
+}
+
+// mintClosure is the small closure factory shared by the cluster
+// and per-host paths so the future-call surface (one JWT per
+// app_id) lives in exactly one place. PR-3 lifts it from
+// newSchedInternalSvcMinter so both paths produce the same
+// closure shape.
+func mintClosure(svcName string, priv ed25519.PrivateKey, kid string) func(string) (string, error) {
 	return func(appID string) (string, error) {
 		claims := map[string]any{
 			// Future: per-app key-pinning — the receiver
@@ -108,8 +256,8 @@ func newSchedInternalSvcMinter(log *slog.Logger) (func(appID string) (string, er
 			// app_id for audit-log fidelity only.
 			"app_id": appID,
 		}
-		return internalsvc.Mint("schedd", internalSvcTokenTTL, claims, priv, kid)
-	}, nil
+		return internalsvc.Mint(svcName, internalSvcTokenTTL, claims, priv, kid)
+	}
 }
 
 // loadSchedInternalSvcKey is the new top-level loader (round-3

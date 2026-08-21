@@ -1478,19 +1478,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// The mode lookup reads the same per-app cache the
 			// dispatcher already populates (no extra SQL). The
 			// minter is the closure below — it loads the
-			// Ed25519 keypair from FAAS_INTERNAL_SVC_KEY_PATH
-			// at boot and mints a fresh JWT per synth request
-			// (TTL 30s; the §15 plan calls out replay-attack
-			// posture). Both are nil-safe: a dev box without
-			// FAAS_INTERNAL_SVC_KEY_PATH leaves the minter nil
-			// and SynthesizeRequest logs a loud warn +
-			// internal_only requests 403.
-			if minter, mErr := newSchedInternalSvcMinter(log); mErr != nil {
+			// Ed25519 keypair from cluster_signing_keys (PR-3
+			// / ADR-125 fleet-wide key) with a per-host
+			// FAAS_INTERNAL_SVC_KEY_PATH fallback, and mints
+			// a fresh JWT per synth request (TTL 30s; the
+			// §15 plan calls out replay-attack posture). The
+			// minter is nil-safe: a dev box without either
+			// source leaves the minter nil and SynthesizeRequest
+			// logs a loud warn + internal_only requests 403.
+			if minter, mErr := newSchedInternalSvcMinter(ctx, store, log); mErr != nil {
 				log.Warn("schedd: internal-svc minter not wired; internal_only cron requests will 403 until corrected",
 					"err", mErr.Error())
 			} else {
 				modeLookup := sched.PublicAuthModeFromStore(store.AppByID)
-				sched.ConfigureInternalSvcAuth(synth, modeLookup, minter)
+				sched.ConfigureInternalSvcAuth(synth, modeLookup, minter.AsFunc())
 				// The trigger batch path (postBatch) does NOT
 				// route through httpGatewaySynth — it uses
 				// l.gatewayHTTPClient directly. Wire the same
@@ -1500,7 +1501,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// synth.go::handleInvocationDispatchBatch would
 				// 403 every internal_only batch the schedd posts.
 				loop.WithAppPublicAuthModeLookup(modeLookup)
-				loop.WithMintInternalSvcToken(minter)
+				loop.WithMintInternalSvcToken(minter.AsFunc())
+
+				// PR-3 / ADR-125 rotation: subscribe to the
+				// cluster_signing_keys_changed channel and
+				// atomic-swap the minter on every delivery.
+				// Best-effort — if the subscribe fails the
+				// boot-time key keeps working; rotation
+				// just requires a daemon restart until the
+				// operator fixes the channel/subscribe path.
+				if subErr := SubscribeClusterKeyChanges(ctx, pool, store, minter, log); subErr != nil {
+					log.Warn("schedd: cluster key rotation subscribe failed; minter frozen at boot key",
+						"err", subErr.Error())
+				}
 			}
 			loop.WithGatewaySynth(synth)
 		}

@@ -91,6 +91,18 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         NotifyCronChanged's payload shape so the
 //	                         existing decoder pattern applies unchanged)
 //	NotifyKeyChanged        {"key_id":uuid}
+//	NotifyClusterSigningKeysChanged {}
+//	                         PR-3 / ADR-125: cluster_signing_keys row
+//	                         INSERT/UPDATE/DELETE; the listener pattern
+//	                         in cmd/schedd/cluster_key_loader.go and
+//	                         cmd/gatewayd-internal/cluster_key_verifier_loader.go
+//	                         re-loads the row on every delivery. Payload
+//	                         is bare table name (mirrors
+//	                         compute_node_keys_changed_trg at
+//	                         schema.sql:4317-4320); consumer re-reads.
+//	NotifyBuildQueued       {"build_id":uuid, "app_id":uuid,
+//	                         "kind":"tarball|dockerfile|function",
+//	                         "deployment_id":uuid}
 //	NotifyBuildQueued       {"build_id":uuid, "app_id":uuid,
 //	                         "kind":"tarball|dockerfile|function",
 //	                         "deployment_id":uuid}
@@ -187,6 +199,17 @@ const (
 	//     "your trigger just received a record" notification)
 	NotifyTriggerReady    = "trigger_ready"
 	NotifyKeyChanged      = "key_changed"
+	// NotifyClusterSigningKeysChanged fires when the
+	// cluster_signing_keys_changed_trg (migration 00351) inserts,
+	// updates, or deletes a row in cluster_signing_keys. PR-3 /
+	// audit F1+F20 / ADR-125: the listener pattern in
+	// cmd/{schedd,gatewayd-internal}/cluster_*_loader.go subscribes
+	// to this channel and re-loads the cluster-wide Ed25519 keypair
+	// from PG, so a rotation propagates to every minter and verifier
+	// within one Postgres NOTIFY delivery (~5 ms end-to-end). The
+	// payload is informational — consumers always re-read the row
+	// to defend against notify loss.
+	NotifyClusterSigningKeysChanged = "cluster_signing_keys_changed"
 	NotifyBuildQueued     = "build_queued"
 	NotifyBuildLog        = "build_log"
 	NotifyDomainVerify    = "domain_verify"
