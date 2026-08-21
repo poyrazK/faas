@@ -15,6 +15,28 @@ import (
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
 
+// ErrCertFingerprintDrift is returned by UpsertComputeNodeFromVmmd
+// when the cert_fingerprint on the existing compute_nodes row
+// differs from the fingerprint vmmd just computed locally. This is
+// the load-bearing guard for the multi-host safety audit F6 /
+// ADR-052 amendment: a vmmd that boots with a freshly-rotated leaf
+// on disk MUST NOT silently overwrite a row whose
+// cert_fingerprint belongs to the previous leaf (the existing row
+// is the public-key-pinning attestation; silently replacing it
+// would let a leaked cert remain trusted across the rotation).
+//
+// The error wraps a fmt.Errorf with the OLD and NEW fingerprints
+// so the operator can grep the log line and run `gregale pki
+// reconcile <node>` to either (a) re-issue the leaf under the
+// expected fingerprint (if the local file is the rogue one), or
+// (b) re-stamp the row with the new fingerprint (if the operator
+// confirmed the rotation is intentional).
+//
+// The migration 00347 unique partial index
+// compute_nodes_active_unique_idx is the DB-level belt-and-braces
+// guard against a future bug that fails to consult this error.
+var ErrCertFingerprintDrift = errors.New("state: compute_node cert fingerprint drift")
+
 // ErrCorsWildcardWithCredentials is returned by
 // MergeCorsPresetIntoRule when the merged AllowOrigins contains
 // the bare "*" wildcard alongside AllowCredentials: true. This is

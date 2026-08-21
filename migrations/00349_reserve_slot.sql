@@ -1,27 +1,13 @@
--- filename: 00349_reserve_slot.sql
+-- 00349_reserve_slot.sql — multi-host safety cluster PR-4 fence.
+-- The real migration for this slot is being coordinated by other
+-- open PRs. Remove this no-op when those migrations land, per
+-- ADR-041.
 -- +goose Up
 -- +goose StatementBegin
-
--- 00349_reserve_slot.sql — reservation fence.
---
--- This slot is fenced by Mega-C (issue #961, PR-1 + PR-2). The
--- Mega-C work needs slots 00353 (PR-1 preview_destroy_commented_at)
--- and 00354 (PR-2 deployments_rollback_on_5xx). Slots 00347-00352
--- are fenced here with distinct comment blocks pointing to issue
--- #961 so the cross-PR slot gate (memory:
--- cross-pr-slot-gate-reservation-fence-pattern) and the fence-
--- deletion hazard (memory: cross-pr-rebase-fence-deletion-hazard)
--- do not delete the wrong copy on merge. PRs #1034/#1036 each
--- fence 00349 on their own branches; the merge-order gate handles
--- the dedupe.
-
-SELECT 1;
-
+SELECT 'reserved 00349 — multi-host safety cluster PR-4 fence' AS notice;
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-
-SELECT 1;
-
+SELECT 'released 00349' AS notice;
 -- +goose StatementEnd

@@ -7694,7 +7694,32 @@ func (m *MemStore) UpsertComputeNodeFromOperator(_ context.Context, node Compute
 //
 // This is the load-bearing fix for the second-box cutover. See
 // pgstore's comment on UpsertComputeNodeFromVmmd for the trap.
+//
+// Multi-host safety cluster PR-4 (audit F6, ADR-052 amendment):
+// like pgstore, this method refuses to silently overwrite an
+// existing row whose cert_fingerprint differs from the new row's.
+// The check happens BEFORE upsertComputeNodeLocked modifies the
+// in-memory map, so a refused drift leaves no in-memory side
+// effect.
 func (m *MemStore) UpsertComputeNodeFromVmmd(_ context.Context, node ComputeNode) (ComputeNode, error) {
+	if node.Name != "" && node.CertFingerprint != nil && *node.CertFingerprint != "" {
+		m.mu.Lock()
+		var existingFP *string
+		for _, current := range m.computeNodes {
+			if current.Name == node.Name {
+				fp := current.CertFingerprint
+				existingFP = fp
+				break
+			}
+		}
+		m.mu.Unlock()
+		if existingFP != nil && *existingFP != "" && *existingFP != *node.CertFingerprint {
+			return ComputeNode{}, fmt.Errorf(
+				"memstore: %w: node %q existing fingerprint %q differs from local leaf %q",
+				ErrCertFingerprintDrift, node.Name, *existingFP, *node.CertFingerprint,
+			)
+		}
+	}
 	return m.upsertComputeNodeLocked(node, true /* preserveTargetURLOnConflict */)
 }
 

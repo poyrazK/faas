@@ -10370,7 +10370,36 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 // `tcp://0.0.0.0:50051`), routing wakes to the local host
 // instead of the second box. See
 // docs/runbooks/multi-host-rollout.md §3.5 + §4.5.
+//
+// Multi-host safety cluster PR-4 (audit F6, ADR-052 amendment)
+// adds a pre-flight check: if the existing row's cert_fingerprint
+// is set AND differs from node.CertFingerprint, the upsert refuses
+// with ErrCertFingerprintDrift rather than silently COALESCEing
+// the old value (the previous "silent preserve" semantics was a
+// load-bearing fix for the cutover, but a leak that replaced the
+// local cert would also be silently preserved). The failing-closed
+// path requires an explicit operator reconcile via `gregale pki
+// reconcile` before vmmd can start — the migration 00347 unique
+// partial index is the DB-level belt-and-braces companion.
+//
+// The check is pre-flight (a SELECT before the upsert) rather than
+// post-flight (compare RETURNING vs input) because a post-flight
+// refusal would have already done the conflict-path UPDATE
+// (a no-op on cert_fingerprint under the COALESCE, but still
+// touches last_heartbeat_at indirectly). Pre-flight refuses cleanly.
 func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNode) (ComputeNode, error) {
+	if node.Name != "" && node.CertFingerprint != nil && *node.CertFingerprint != "" {
+		existingFP, err := s.loadComputeNodeCertFingerprint(ctx, node.Name)
+		if err != nil {
+			return ComputeNode{}, fmt.Errorf("state: pre-flight cert fingerprint read %q: %w", node.Name, err)
+		}
+		if existingFP != nil && *existingFP != "" && *existingFP != *node.CertFingerprint {
+			return ComputeNode{}, fmt.Errorf(
+				"state: %w: node %q existing fingerprint %q differs from local leaf %q — reconcile via `gregale pki reconcile %s`",
+				ErrCertFingerprintDrift, node.Name, *existingFP, *node.CertFingerprint, node.Name,
+			)
+		}
+	}
 	// vmmd self-registration — the vmmd-owned resource numbers win on
 	// conflict, while operator-POSTed values are PRESERVED via COALESCE
 	// (the load-bearing fix for the second-box cutover, see the prose
@@ -10426,6 +10455,30 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		return ComputeNode{}, fmt.Errorf("state: upsert compute_node (vmmd) %q: %w", node.Name, err)
 	}
 	return n, nil
+}
+
+// loadComputeNodeCertFingerprint reads the cert_fingerprint column
+// for an existing compute_nodes row. Returns (nil, nil) when the row
+// does not exist (a fresh INSERT case where the pre-flight check
+// trivially passes — there is no existing row to compare against).
+//
+// Used by UpsertComputeNodeFromVmmd's pre-flight check (multi-host
+// safety cluster PR-4 / audit F6). Lives on PgStore rather than the
+// Store interface because it's an internal pre-flight helper; an
+// external caller (e.g. the future doctor drift detector) will use
+// the existing ListComputeNodes path.
+func (s *PgStore) loadComputeNodeCertFingerprint(ctx context.Context, name string) (*string, error) {
+	var fp *string
+	err := s.pool.QueryRow(ctx, `
+		select cert_fingerprint from public.compute_nodes where name = $1
+	`, name).Scan(&fp)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return fp, nil
 }
 
 // UpsertNodeKey inserts or updates a (compute_node_id, key_id) row

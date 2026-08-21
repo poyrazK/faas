@@ -1,0 +1,56 @@
+-- filename: 00347_compute_nodes_active_unique.sql
+-- +goose Up
+-- +goose StatementBegin
+--
+-- 00347_compute_nodes_active_unique.sql — multi-host safety cluster PR-4
+-- (audit F6 / ADR-052 amendment). Belt-and-braces DB-level guard that
+-- makes "two compute_nodes rows with the same name and active=true"
+-- impossible at the storage layer. The application-level guard in
+-- pkg/state/pgstore.go::UpsertComputeNodeFromVmmd (refusing a
+-- fingerprint drift on conflict) is the primary defense; this index
+-- is the database's last line of defense against a future bug that
+-- fails to consult the fingerprint before UPSERT.
+--
+-- Migration 00024 already created compute_nodes_active_idx (a
+-- NON-UNIQUE partial index on (name) WHERE active = true) to back
+-- the chooser's "active nodes only" lookup. We add a sibling
+-- UNIQUE partial index with the same predicate; the existing
+-- non-unique index stays in place because (a) the planner still
+-- uses it for chooser scans and (b) the unique constraint doesn't
+-- subsume the lookup role.
+--
+-- Pre-condition: at the time this migration runs, no two rows have
+-- the same (name, active=true) — i.e. compute_nodes.name is unique
+-- among active rows. This invariant holds for every shipped
+-- pre-PR-4 install because the seed row from 00024 inserts exactly
+-- one 'default-local' row, every operator POST /v1/compute-nodes
+-- path picks a unique name (api validates), and vmmd's startup
+-- UPSERT keys on name. The PR-4 fingerprint guard makes the
+-- invariant permanent for new rows.
+--
+-- Idempotent under CREATE INDEX IF NOT EXISTS (per
+-- migrations/replay_safety_test.go).
+--
+-- The `WHERE active` partial predicate matches the existing index so
+-- the planner can interchange them, but the predicate on the
+-- UNIQUE version is the load-bearing safety: an inactive row with
+-- the same name as an active row is fine (the inactive row is the
+-- tombstone of a drained node), but two active rows with the same
+-- name is not.
+--
+-- Note on slot numbering: PR-4 branched off main at the
+-- post-00346 tip (PR #1015 / c5269bd8d). PR-2 and PR-3 from the
+-- same cluster also claim slots 00347-00353 on their own
+-- branches; whichever merges first renumbers the rest. The
+-- fences 00348-00349 absorb one renumber hop. See
+-- docs/runbooks/migration-slot-dance.md.
+CREATE UNIQUE INDEX IF NOT EXISTS compute_nodes_active_unique_idx
+    ON public.compute_nodes(name)
+    WHERE active = true;
+
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+DROP INDEX IF EXISTS public.compute_nodes_active_unique_idx;
+-- +goose StatementEnd
