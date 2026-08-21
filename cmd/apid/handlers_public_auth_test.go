@@ -743,3 +743,93 @@ func TestPublicAuthPatch_IPAllowlistEntryCountGatedByMode(t *testing.T) {
 			out.PublicAuth.IPAllowlistEntryCount)
 	}
 }
+
+// TestPublicAuthPatch_MembersOnlyPlanGate (ADR-120) pins the
+// Hobby+-only plan ladder for members_only. Mirrors
+// TestPublicAuthPatch_BasicPlanGate at L141 for the 402 surface
+// (members_only surfaces 402 plan_public_auth_members_only_not_allowed,
+// not 403, because Hobby unlocks via the OrgMembersMax ladder — the
+// "upgrade to Hobby" copy mirrors bearer's 402 surface). Free is
+// rejected because Free personal-org has exactly 1 member (the account
+// itself) so members_only on Free would collapse to bearer with the
+// same account — exactly the abuse-floor conflation ADR-079 §2
+// explicitly avoided by gating bearer at Hobby+. Hobby/Pro/Scale accept
+// a no-payload PATCH (members_only needs no app-side payload — the
+// cookie + org-membership lookup live on the request). The closed-enum
+// validator must accept the new mode first (it does at L791) so a Free
+// customer sees 402 plan_public_auth_members_only_not_allowed, not
+// 422 invalid_public_auth_mode (the supersedes-402 invariant from
+// ADR-079 line 252 — a known-mode still has to honour the plan gate).
+func TestPublicAuthPatch_MembersOnlyPlanGate(t *testing.T) {
+	t.Run("free_returns_402_members_only_not_allowed", func(t *testing.T) {
+		e := setup(t, api.PlanFree)
+		app := seedAppForAudit(t, e, "pa-mo-free")
+		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
+			Mode: api.AppPublicAuthModeMembersOnly,
+		})
+		if rec.Code != http.StatusPaymentRequired {
+			t.Fatalf("PATCH mode=members_only on Free: code=%d body=%s; want 402",
+				rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "plan_public_auth_members_only_not_allowed") {
+			t.Fatalf("body missing code; got %s", rec.Body.String())
+		}
+		assertNoAuditRow(t, e, "app.public_auth_changed")
+	})
+	t.Run("hobby_returns_200", func(t *testing.T) {
+		e := setup(t, api.PlanHobby)
+		app := seedAppForAudit(t, e, "pa-mo-hobby")
+		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
+			Mode: api.AppPublicAuthModeMembersOnly,
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH mode=members_only on Hobby: code=%d body=%s; want 200",
+				rec.Code, rec.Body.String())
+		}
+	})
+	t.Run("pro_returns_200", func(t *testing.T) {
+		e := setup(t, api.PlanPro)
+		app := seedAppForAudit(t, e, "pa-mo-pro")
+		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
+			Mode: api.AppPublicAuthModeMembersOnly,
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH mode=members_only on Pro: code=%d body=%s; want 200",
+				rec.Code, rec.Body.String())
+		}
+	})
+	t.Run("scale_returns_200", func(t *testing.T) {
+		e := setup(t, api.PlanScale)
+		app := seedAppForAudit(t, e, "pa-mo-scale")
+		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
+			Mode: api.AppPublicAuthModeMembersOnly,
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH mode=members_only on Scale: code=%d body=%s; want 200",
+				rec.Code, rec.Body.String())
+		}
+	})
+	t.Run("closed_enum_supersedes_plan_gate", func(t *testing.T) {
+		// ADR-079 line 252 invariant: an unknown mode surfaces
+		// 422 invalid_public_auth_mode BEFORE the plan gate
+		// runs. A Free customer who PATCHes mode="banana"
+		// gets 422, never 402 plan_public_auth_members_only_not_allowed.
+		// This guards against a future contributor from
+		// reordering the closed-enum switch in
+		// cmd/apid/handlers_ext.go:432 and accidentally
+		// routing unknown-mode rejections through the new
+		// plan gate.
+		e := setup(t, api.PlanFree)
+		app := seedAppForAudit(t, e, "pa-mo-banana")
+		rec := patchPublicAuth(t, e, app.Slug, &api.PublicAuthBlock{
+			Mode: "banana",
+		})
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("PATCH mode=banana on Free: code=%d body=%s; want 422",
+				rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "validation_failed") {
+			t.Fatalf("body missing 422 code (validation_failed); got %s", rec.Body.String())
+		}
+	})
+}

@@ -97,6 +97,26 @@ const (
 	// the trust boundary is operator-side, not
 	// human-side, so no plan gate applies.
 	AppPublicAuthModeInternalOnly = "internal_only"
+	// AppPublicAuthModeMembersOnly restricts the app's
+	// public hostname to requests carrying a valid
+	// IAM-6 session cookie (`faas_sid`) whose principal
+	// has an active membership in apps.org_id (ADR-120).
+	// Anything else 401s at the authn layer (no cookie /
+	// revoked cookie / stolen-cookie defense fires first
+	// via pkg/auth/middleware.RequireSession) and 403s at
+	// the authz layer (cookie valid but caller not a
+	// member of the owning org) in
+	// pkg/gateway/handler.go::applyIngressMembersOnly.
+	// Runs after applyIngressInternalSvc, before
+	// applyEdgeRuleIP. Synth-server mirrors the gate at
+	// pkg/gateway/synth.go::handleSynthesize (so cron
+	// cannot bypass — cron has no human session). Plan-gated
+	// to Hobby+ (the org/membership infrastructure is
+	// Hobby+ via the OrgMembersMax ladder; Free personal-org
+	// has exactly 1 member, so members_only on Free would
+	// collapse to bearer with the same account — Free is
+	// rejected to keep the abuse-floor posture clean).
+	AppPublicAuthModeMembersOnly = "members_only"
 )
 
 // AppPublicAuthIPAllowlistMaxEntries bounds the per-app

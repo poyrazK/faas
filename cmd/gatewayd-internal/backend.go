@@ -202,6 +202,38 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	if err != nil {
 		return gateway.App{}, false, err
 	}
+	// ADR-120: members_only mode consults apps.org_id at the
+	// gate, so we hydrate it here from the per-host LRU miss
+	// path. Adding org_id to state.App would inflate the
+	// scanApp column list and every downstream pgstore /
+	// memstore / apid-marshal surface for one bounded-time
+	// use, so the Store interface gains a narrow AppOrgID
+	// accessor instead. The per-host apps LRU makes toApp
+	// hit-once-per-TTL rather than per-request, so the extra
+	// round-trip is bounded by the LRU hit ratio. Returns
+	// "" on (a) pre-#190 rows where apps.org_id was NULL +
+	// (b) ErrNotFound paths; the gate surfaces 500 only
+	// when an app is in members_only mode AND org_id is
+	// empty (the loud posture from applyIngressMembersOnly).
+	orgID, err := r.store.AppOrgID(ctx, app.ID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		// Transient DB blip during route resolution
+		// should not 502 every request for a public-mode
+		// app — keep going with orgID=""; the gate's
+		// empty-orgid branch surfaces the loud 500 ONLY
+		// when an app is in members_only mode AND
+		// org_id is empty (defence in depth). The
+		// pgRouter has no logger field of its own; the
+		// ErrNotFound path is the only failure mode a
+		// table-row missing would produce, and the
+		// per-host LRU cache layers the lookup on top
+		// of a store.AppByID call that already
+		// succeeded (so a true ErrNotFound here means
+		// the app was deleted between the AppByID and
+		// the AppOrgID SELECT — extremely rare, not
+		// worth a field on pgRouter).
+		orgID = ""
+	}
 	return gateway.App{
 		ID:               app.ID,
 		AccountID:        acct.ID,
@@ -217,6 +249,17 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		// raw forwarder. Default false on the App struct
 		// matches the apps.websocket_enabled column DEFAULT.
 		WebSocketEnabled: app.WebSocketEnabled,
+		// ADR-120: per-app ingress members_only mode looks
+		// up apps.org_id via the state.App.OrgID hydration
+		// that migration 00099 ships. Plumbed through so
+		// applyIngressMembersOnly can call
+		// pkg/authz.IsOrgMember(ctx, app.OrgID, accountID)
+		// without re-reading the database — same
+		// allocation-free-after-first-sight pattern as
+		// PublicAuth above. Empty for pre-00099 rows; the
+		// gate's first check (OrgID == "" → 500 misconfig)
+		// surfaces the data-drift on the next gate call.
+		OrgID: orgID,
 		// ADR-093: per-route observability opt-in. Plumbed
 		// from apps.route_metrics_enabled through pgRouter.toApp
 		// so Handler.ServeHTTP's routeSetFor (gated on

@@ -2146,6 +2146,28 @@ func (s *PgStore) AppBySlug(ctx context.Context, slug string) (App, error) {
 	return scanApp(row)
 }
 
+// AppOrgID (ADR-120) is the narrow accessor the per-host LRU
+// hydration in cmd/gatewayd-internal/backend.go::toApp uses to
+// populate gateway.App.OrgID without inflating the App-struct
+// scan column list. The query uses `org_id::text` rather than
+// `org_id` because the column is uuid-typed and the cmd-side
+// contract is a string. Returns ("", nil) on a NULL column
+// (pre-#190 rows); ErrNotFound on a missing app row.
+func (s *PgStore) AppOrgID(ctx context.Context, id string) (string, error) {
+	var orgID *string
+	err := s.pool.QueryRow(ctx, `select org_id::text from apps where id = $1`, id).Scan(&orgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	if orgID == nil {
+		return "", nil
+	}
+	return *orgID, nil
+}
+
 // PreviewAppsByParent (ADR-095 / issue #272) returns every preview
 // app whose preview_of_slug = parentSlug, scoped to accountID. The
 // query plan uses the partial index apps_preview_of_slug_idx

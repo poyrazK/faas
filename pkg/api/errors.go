@@ -1033,8 +1033,9 @@ const (
 	// Distinct codes per mode so the CLI can render "bearer is
 	// Hobby+" vs "basic is Pro+" alongside the existing 402-family
 	// copy without conflating them in telemetry.
-	CodePlanPublicAuthBearerNotAllowed = "plan_public_auth_bearer_not_allowed"
-	CodePlanPublicAuthBasicNotAllowed  = "plan_public_auth_basic_not_allowed"
+	CodePlanPublicAuthBearerNotAllowed      = "plan_public_auth_bearer_not_allowed"
+	CodePlanPublicAuthBasicNotAllowed       = "plan_public_auth_basic_not_allowed"
+	CodePlanPublicAuthMembersOnlyNotAllowed = "plan_public_auth_members_only_not_allowed"
 
 	// Issue #676 / ADR-080 — per-app raw-bytes Upgrade bridge gate.
 	// 403 returned when a customer on a plan that does not enable
@@ -2755,6 +2756,24 @@ func ErrPlanPublicAuthBasicNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanPublicAuthBasicNotAllowed,
 		"Basic public-URL auth is not available on this plan",
 		fmt.Sprintf("the %s plan does not include basic-mode public auth; upgrade to Pro or above to opt in. The 'open' and 'bearer' modes are available on lower plans.", p)).
+		WithDocs(docsBase + "/plans#public-auth")
+}
+
+// ErrPlanPublicAuthMembersOnlyNotAllowed is the 402 apid returns when
+// a Free customer PATCHes public_auth_mode='members_only' (ADR-120 /
+// IAM-6 cookie-ungated org membership). Hobby+ only — Free personal-org
+// has exactly 1 member (the account itself) so members_only on Free
+// would collapse to bearer with the same account, which would invite
+// the abuse-floor conflation ADR-079 §2 explicitly avoided by gating
+// bearer at Hobby+. 402 PaymentRequired mirrors the existing 402 gate
+// family; the "open" + "bearer" modes are still available on Free. The
+// dashboard renders the same "upgrade to Hobby" CTA the bearer mode
+// already surfaces; distinct code so CLI + telemetry can pivot on the
+// mode without parsing the message body.
+func ErrPlanPublicAuthMembersOnlyNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanPublicAuthMembersOnlyNotAllowed,
+		"Members-only public-URL auth is not available on this plan",
+		fmt.Sprintf("the %s plan does not include members-only public auth; upgrade to Hobby or above to opt in. Members-only requires the IAM-6 multi-org footprint that Hobby unlocks via the OrgMembersMax ladder (ADR-061). The 'open' and 'bearer' modes are available on every paid plan.", p)).
 		WithDocs(docsBase + "/plans#public-auth")
 }
 

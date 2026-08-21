@@ -1101,7 +1101,7 @@ func NewMetrics() *Metrics {
 	// closed set guarantees the §12 dashboard panel "edge rule
 	// match rate" surfaces every (kind, outcome) tuple from
 	// first scrape.
-	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "ip", "validate", "limit", "maintenance", "geo", "throttle", "ingress_ip"} {
+	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "ip", "validate", "limit", "maintenance", "geo", "throttle", "ingress_ip", "ingress_internal", "ingress_members"} {
 		for _, outcome := range []string{"match", "miss", "blocked", "failed"} {
 			m.edgeRuleMatch.WithLabelValues(kind, outcome)
 		}
@@ -1230,12 +1230,22 @@ func NewMetrics() *Metrics {
 	// so the §12 dashboard chip "edge rule apply rate" + "edge rule
 	// compile errors" surface every tuple from first scrape. Closed
 	// set: {route, rewrite, redirect, headers, cors, jwt, ip, validate,
-	// limit, maintenance, geo, throttle, ingress_ip}. Adding a new
-	// kind requires extending this slice — the metric name is
-	// stable. `ingress_ip` was added by ADR-118 for the per-app
-	// ingress IP allowlist (pkg/gateway/handler.go::
-	// applyIngressIPAllowlist).
-	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip", "validate", "limit", "maintenance", "geo", "throttle", "ingress_ip"} {
+	// limit, maintenance, geo, throttle, ingress_ip, ingress_internal,
+	// ingress_members}. Adding a new kind requires extending this
+	// slice — the metric name is stable. `ingress_ip` was added by
+	// ADR-118 for the per-app ingress IP allowlist
+	// (pkg/gateway/handler.go::applyIngressIPAllowlist).
+	// `ingress_internal` was added by ADR-119 for the per-app
+	// internal_only token-verification gate
+	// (pkg/gateway/internal_svc_auth.go::applyIngressInternalSvc).
+	// `ingress_members` was added by ADR-120 for the per-app
+	// members_only org-membership gate
+	// (pkg/gateway/public_auth_members_only.go::
+	// applyIngressMembersOnly). Including both ingress_internal
+	// AND ingress_members here closes the §12 dashboard chip
+	// "edge rule apply rate" closed-set gap that ADR-119 left
+	// by pre-instantiating only ingress_ip.
+	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip", "validate", "limit", "maintenance", "geo", "throttle", "ingress_ip", "ingress_internal", "ingress_members"} {
 		for _, result := range []string{"success", "error"} {
 			m.edgeRuleApply.WithLabelValues(kind, result)
 		}

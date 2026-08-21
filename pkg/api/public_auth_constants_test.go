@@ -35,10 +35,13 @@ import (
 // pattern (webhook secret namespace drift pre-#476)
 // is the reference for why this tripwire exists.
 //
-// ADR-118 adds AppPublicAuthModeIPAllowlist ("ip_allowlist").
-// Order matters: open, bearer, basic, ip_allowlist — matches
-// the historical ship order so a future contributor reading
-// the slice knows which mode shipped when.
+// ADR-118 adds AppPublicAuthModeIPAllowlist ("ip_allowlist");
+// ADR-119 adds AppPublicAuthModeInternalOnly ("internal_only");
+// ADR-120 adds AppPublicAuthModeMembersOnly ("members_only").
+// Order matters: open, bearer, basic, ip_allowlist,
+// internal_only, members_only — matches the historical ship
+// order so a future contributor reading the slice knows which
+// mode shipped when.
 func TestPublicAuthModeConstantsAgree(t *testing.T) {
 	apiSet := []string{
 		api.AppPublicAuthModeOpen,
@@ -46,6 +49,7 @@ func TestPublicAuthModeConstantsAgree(t *testing.T) {
 		api.AppPublicAuthModeBasic,
 		api.AppPublicAuthModeIPAllowlist,
 		api.AppPublicAuthModeInternalOnly,
+		api.AppPublicAuthModeMembersOnly,
 	}
 	stateSet := []string{
 		state.AppPublicAuthModeOpen,
@@ -53,6 +57,7 @@ func TestPublicAuthModeConstantsAgree(t *testing.T) {
 		state.AppPublicAuthModeBasic,
 		state.AppPublicAuthModeIPAllowlist,
 		state.AppPublicAuthModeInternalOnly,
+		state.AppPublicAuthModeMembersOnly,
 	}
 	if len(apiSet) != len(stateSet) {
 		t.Fatalf("slice length mismatch: pkg/api has %d modes, pkg/state has %d; "+

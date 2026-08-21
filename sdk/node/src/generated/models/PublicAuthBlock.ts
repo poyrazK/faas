@@ -7,9 +7,9 @@
  */
 export type PublicAuthBlock = {
   /**
-   * Auth mode (closed set). 'open' is the pre-#477 default (every request passes). 'bearer' requires Authorization: Bearer (Hobby+; 402 on Free). 'basic' requires HTTP Basic auth with sealed credentials (Pro+; 402 on Free/Hobby). 'ip_allowlist' (ADR-118) restricts the app to requests originating from a client IP inside the per-app CIDR allowlist (Pro+; 402 on Free/Hobby). 'internal_only' (ADR-119) restricts the app to requests carrying an Authorization: Bearer JWT with aud='gregale.internal' signed by a Gregale daemon's Ed25519 key (per-service public-key allowlist is operator-side; available on all plans). Unknown values → 422 invalid_public_auth_mode.
+   * Auth mode (closed set). 'open' is the pre-#477 default (every request passes). 'bearer' requires Authorization: Bearer (Hobby+; 402 on Free). 'basic' requires HTTP Basic auth with sealed credentials (Pro+; 402 on Free/Hobby). 'ip_allowlist' (ADR-118) restricts the app to requests originating from a client IP inside the per-app CIDR allowlist (Pro+; 402 on Free/Hobby). 'internal_only' (ADR-119) restricts the app to requests carrying an Authorization: Bearer JWT with aud='gregale.internal' signed by a Gregale daemon's Ed25519 key (per-service public-key allowlist is operator-side; available on all plans). 'members_only' (ADR-120) restricts the app to requests carrying a valid faas_sid session cookie whose principal is an active member of apps.org_id (Hobby+; 402 on Free). Unknown values → 422 invalid_public_auth_mode.
    */
-  mode: 'open' | 'bearer' | 'basic' | 'ip_allowlist' | 'internal_only';
+  mode: 'open' | 'bearer' | 'basic' | 'ip_allowlist' | 'internal_only' | 'members_only';
   /**
    * Basic-auth username (RFC 7617 §2). Plaintext at PATCH time; sealed into apps.public_auth_basic under the APP_BASIC_AUTH secretbox namespace. Required when mode='basic'; ignored otherwise. Range [1, 128] bytes after TrimSpace.
    */

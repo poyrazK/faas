@@ -813,16 +813,27 @@ type PublicAuthBlock struct {
 // (the gate at pkg/gateway/handler.go::applyIngressInternalSvc
 // handles the auth; the synth handler gate at
 // pkg/gateway/synth.go::handleSynthesize handles the cron path).
+//
+// ADR-120 added 'members_only'. members_only requires no
+// app-side payload — the cookie + org-membership lookup live
+// on the request. Validate accepts the mode without checking
+// further fields (the gate at
+// pkg/gateway/handler.go::applyIngressMembersOnly handles
+// the authn+authz; the synth handler gate
+// pkg/gateway/synth_members_only.go::applyIngressMembersOnly
+// handles the cron path — cron has no human session so the
+// gate blocks cron-fired wakes).
 func (b *PublicAuthBlock) Validate() *Problem {
 	if b == nil {
 		return nil
 	}
 	switch b.Mode {
 	case AppPublicAuthModeOpen, AppPublicAuthModeBearer, AppPublicAuthModeBasic,
-		AppPublicAuthModeIPAllowlist, AppPublicAuthModeInternalOnly:
+		AppPublicAuthModeIPAllowlist, AppPublicAuthModeInternalOnly,
+		AppPublicAuthModeMembersOnly:
 	default:
 		return NewProblem(422, CodeValidation, "Invalid public_auth.mode",
-			fmt.Sprintf("public_auth.mode must be 'open', 'bearer', 'basic', 'ip_allowlist', or 'internal_only'; got %q", b.Mode))
+			fmt.Sprintf("public_auth.mode must be 'open', 'bearer', 'basic', 'ip_allowlist', 'internal_only', or 'members_only'; got %q", b.Mode))
 	}
 	if b.Mode != AppPublicAuthModeBasic {
 		// IPAllowlist is required iff Mode='ip_allowlist'.

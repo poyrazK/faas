@@ -2485,6 +2485,31 @@ func (m *MemStore) AppByID(_ context.Context, id string) (App, error) {
 	return a, nil
 }
 
+// AppOrgID (ADR-120) is the narrow accessor mirror of
+// pgstore.go::AppOrgID. MemStore doesn't model org_id on the App
+// struct (no schema-side membership in the in-memory test
+// fixture) so the lookup returns "" for every fixture app —
+// the gate's empty-orgid branch correctly surfaces the loud
+// 500 misconfig posture for any test that exercises
+// members_only mode against the in-memory backend. Mirror
+// fix-up to the pgstore impl lives in cmd/gatewayd-internal's
+// per-host LRU for the production path.
+func (m *MemStore) AppOrgID(_ context.Context, id string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok {
+		return "", ErrNotFound
+	}
+	// Returned as "" — see method doc; the per-host LRU
+	// hydration only follows up with the DB pool for the
+	// production (pgx-backed) install. The harness's
+	// fakeRouter substitutes its own resolver for the
+	// membership-only path.
+	_ = a
+	return "", nil
+}
+
 func (m *MemStore) AppBySlug(_ context.Context, slug string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
