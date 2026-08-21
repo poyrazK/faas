@@ -336,5 +336,95 @@ dial to a remote role.
 
 - `make test` — all wire + per-daemon config + new mTLS tests pass.
 - `make lint` — golangci-lint clean.
-- `make spec-check` — ADR-052 cross-linked from `docs/adr/025-decoupled-control-plane-and-compute.md`.
+- `make spec-check` — ADR-052 cross-linked from `docs/adr/025-decoupled-control-plane-and-composite.md`.
 - Live: stand up a two-VM fleet (default-local + compute-01), `gregalectl pki init` on each, deploy an app, observe schedd↔vmmd / gatewayd↔vmmd / meterd↔schedd all running over mTLS with no plaintext on the wire.
+
+## Amendment 1 — Cert fingerprint collision guard (multi-host safety cluster PR-4 / audit F6, 2026-08-22)
+
+### Context
+
+The mTLS handshake verifies that the peer presents a cert signed by
+the operator's CA (the trust anchor). It does NOT verify that the
+cert the peer presents today is the SAME cert it presented yesterday
+— a leaked leaf can be replaced under the same CA without the
+handshake noticing. The PR-3a release-bundle carrier (migration
+00271) added `compute_nodes.host_certificate` and
+`compute_nodes.cert_fingerprint` as a column-level public-key-pinning
+attestation; PR-3 release-install stamps the fingerprint on
+`POST /v1/compute-nodes`; PR-3 secrets-init (PR-X) re-stamps on
+rotation. PR-4 closes the audit F6 gap where vmmd's startup UPSERT
+silently preserved the existing row's fingerprint via COALESCE —
+fine for the cold-INSERT case, but a fingerprint mismatch (i.e. the
+local leaf was rotated under the operator's nose) was tolerated
+silently.
+
+### Decision
+
+Two layers:
+
+1. **App-level (primary):** `pkg/state/pgstore.go::UpsertComputeNodeFromVmmd`
+   runs a pre-flight SELECT on the existing row's cert_fingerprint
+   before the upsert. If both old and new fingerprints are non-null
+   AND differ, the upsert refuses with `state.ErrCertFingerprintDrift`
+   (also wired into `pkg/state/memstore.go` for in-memory tests).
+   The wrapped error message **MUST** include BOTH the OLD and NEW
+   fingerprints so the operator can grep the log line and run the
+   right reconcile command. `cmd/vmmd/register.go` calls
+   `pkg/pki.LoadCertificateFingerprint` on `/etc/faas/tls/vmmd/server.crt`
+   and stamps the result on the upsert.
+
+2. **DB-level (belt-and-braces):** migration 00347 adds a UNIQUE
+   partial index `compute_nodes_active_unique_idx` on
+   `(name) WHERE active = true`. If a future code path skips the
+   pre-flight check and inserts a second active row with the same
+   name, Postgres raises 23505 at INSERT time rather than letting
+   the silent-COLLISION complete.
+
+The pre-flight SELECT lives on `*PgStore` (not the `Store`
+interface) because it's an internal implementation detail of the
+vmmd-side upsert path. The error sentinel
+`state.ErrCertFingerprintDrift` is on the interface so callers can
+match it with `errors.Is`.
+
+### Helper
+
+`pkg/pki.LoadCertificateFingerprint(certPath string) (string, error)`
+reads the PEM leaf, parses it, and returns
+`"sha256:" + hex(SHA-256(DER))` — the same fingerprint format
+`openssl x509 -fingerprint -sha256` prints. The helper enforces the
+project-wide file-mode policy (cert 0o444, key 0o400) via
+`enforceCertMode`, mirroring `cosign.LoadPublicKeyFile`. Mode
+violations return `ErrInsecurePubKeyPerms` BEFORE the parse, so an
+attacker can't use a writable cert file to bypass the certificate
+load.
+
+### Failure mode contract
+
+The error string format is locked:
+
+```
+state: compute_node cert fingerprint drift: node "X" existing fingerprint "OLD" differs from local leaf "NEW" — reconcile via `gregale pki reconcile X`
+```
+
+This shape is pinned by `cmd/vmmd/register_test.go::TestRegisterComputeNode_RefusesFingerprintDrift`
+which asserts both fingerprints appear in the error message. A
+future refactor that changes the wording breaks the test; the test
+name is the contract.
+
+### Rejected alternatives
+
+- **Hash the public key (SPKI) instead of the DER body.** Matches
+  public-key-pinning semantics, but a re-issued leaf under the same
+  key would have the same fingerprint — exactly the case the guard
+  is meant to detect. Hashing the DER body means any rotation
+  (including a forced rotation due to a leak) produces a new
+  fingerprint, which is the correct tripwire.
+- **Compare at the gateway-internal verifier (mTLS handshake).**
+  Defers the check to the wire, but a leaked cert that the operator
+  hasn't rotated yet would still be trusted until the operator
+  manually `pki reconcile`s. Catching the drift at registration
+  time means the operator is alerted on the FIRST boot of the new
+  box, not the first inbound mTLS connection — better signal
+  latency.
+- **Status:** accepted (PR-4 / multi-host safety cluster, audit F6).
+
