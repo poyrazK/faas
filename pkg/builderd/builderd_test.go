@@ -65,6 +65,14 @@ func (f *fakeVM) WaitForCompletion(_ context.Context, _ BuildHandle) (BuildOutco
 	return f.out, f.waitErr
 }
 
+// Cancel satisfies the VM interface for ADR-124 cancel-LISTEN
+// tests. The fake never errors (the unit tests don't exercise the
+// build-cancel goroutine); a future test can swap this with a
+// fault-injecting fake.
+func (f *fakeVM) Cancel(_ context.Context, _ string) error {
+	return nil
+}
+
 // seedDeployment creates an account + app + source-tarball deployment with a
 // build row in the queued state. Returns the buildID and the deployment ID.
 // Account defaults to "pro" plan; tests that need a different plan call

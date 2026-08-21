@@ -125,6 +125,11 @@ func (c *countVM) WaitForCompletion(_ context.Context, _ builderd.BuildHandle) (
 	return builderd.BuildOutcome{OCIImage: "/dev/null", ExitCode: 0}, nil
 }
 
+// Cancel satisfies the VM interface for ADR-124. The main_test
+// suite drives the LISTEN goroutine indirectly via the build
+// pipeline; Cancel is always a no-op here.
+func (c *countVM) Cancel(_ context.Context, _ string) error { return nil }
+
 // nullNotifier satisfies builderdpkg.Notifier so the in-process pipeline
 // doesn't nil-deref on NotifySnapshotBoot. The build-done.json path
 // goes through the vmmd subprocess in the metal e2e; here we just need

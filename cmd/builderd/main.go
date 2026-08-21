@@ -300,6 +300,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return nil
 			}
 			if n.Channel != db.NotifyBuildQueued {
+				if n.Channel == db.NotifyBuildChanged {
+					handleBuildCancelled(ctx, driver, n.Payload, log)
+				}
 				continue
 			}
 			var p struct {
@@ -317,6 +320,38 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Warn("builderd: process", "build", p.Build, "err", err)
 			}
 		}
+	}
+}
+
+// handleBuildCancelled is the ADR-124 build-cancel listener
+// (cmd/builderd/main.go LISTEN goroutine). The pgstore row flip
+// already happened inside CancelDeploymentTx; this function's only
+// job is to ask the VM driver to drop the in-flight VM. The
+// fire-and-forget shape is deliberate — a Cancel error is logged
+// at WARN and the orphan is left for the ReaperLoop
+// (pkg/builderd/reaper.go) to sweep. We never bubble up an error:
+// the LISTEN goroutine must keep draining the channel.
+func handleBuildCancelled(ctx context.Context, driver any, payload string, log *slog.Logger) {
+	var p struct {
+		BuildID string `json:"build_id"`
+	}
+	if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		log.Warn("builderd: bad build_changed payload", "err", err)
+		return
+	}
+	if p.BuildID == "" {
+		log.Warn("builderd: build_changed missing build_id", "payload", payload)
+		return
+	}
+	vm, ok := driver.(builderdpkg.VM)
+	if !ok || vm == nil {
+		// vm is the unit-test stub (interface{} nil) — nothing to do.
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := vm.Cancel(cctx, p.BuildID); err != nil {
+		log.Warn("builderd: build cancel", "build", p.BuildID, "err", err)
 	}
 }
 
