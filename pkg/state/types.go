@@ -83,7 +83,41 @@ const (
 	DeployLive         DeploymentStatus = "live"
 	DeployFailed       DeploymentStatus = "failed"
 	DeploySuperseded   DeploymentStatus = "superseded"
+	// DeployCancelled is the terminal exit set by
+	// Store.CancelDeploymentTx (ADR-124). Distinct from
+	// DeploySuperseded: cancel is a user-driven retract of a
+	// non-live row, while superseded is a system-driven event
+	// triggered by a newer deployment landing. The closed-set
+	// schema CHECK constraint migrations/00360 widens to accept
+	// this value.
+	DeployCancelled DeploymentStatus = "cancelled"
 )
+
+// IsTerminal reports whether the status is a terminal exit
+// (no further transitions allowed). Live is intentionally NOT
+// terminal — DeployLive has the implicit parking pipeline
+// (engine.ParkDeployment + ADR-118 AutoRollbackDeploymentsTx)
+// that can move it to DeploySuperseded.
+func (s DeploymentStatus) IsTerminal() bool {
+	switch s {
+	case DeployFailed, DeploySuperseded, DeployCancelled:
+		return true
+	}
+	return false
+}
+
+// IsCancelEligible reports whether the user-initiated cancel
+// surface (POST /v1/apps/{slug}/deployments/{id}/cancel) can
+// transition this row. The store layer mirrors the same
+// predicate in the CAS WHERE clause — see
+// pgstore.MarkDeploymentCancelled.
+func (s DeploymentStatus) IsCancelEligible() bool {
+	switch s {
+	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting:
+		return true
+	}
+	return false
+}
 
 // StageName is the closed set of customer-visible named stages
 // surfaced in the SSE `event: stage` frame and in the CLI's
@@ -201,6 +235,14 @@ const (
 	BuildRunning   BuildStatus = "running"
 	BuildSucceeded BuildStatus = "succeeded"
 	BuildFailed    BuildStatus = "failed"
+	// BuildCancelled is the terminal exit set by the builderd
+	// cancel-LISTEN goroutine (ADR-124). It is reachable both via
+	// the CancelDeploymentTx deployment-driven cascade
+	// (`cancelled_by_deployment_cascade=true`) and via a future
+	// direct build-cancel path that flips the boolean to false.
+	// The closed-set schema CHECK constraint migrations/00361
+	// widens to accept this value.
+	BuildCancelled BuildStatus = "cancelled"
 )
 
 // FailureClass tags the cause of a build failure (spec §9).
@@ -212,6 +254,47 @@ const (
 	FailureUserError FailureClass = "user_error"
 	FailureInfra     FailureClass = "infra"
 )
+
+// CancelReason is the closed-set label on
+// deployments.cancel_reason (ADR-124, migration 00360). Mirrors
+// the ParkReason precedent at :155-194 — the schema CHECK
+// constraint deployments_cancel_reason_check enforces the same
+// vocabulary at the storage layer; this Go type exists so
+// callers fail fast at the API boundary instead of surfacing a
+// Postgres 23514 at runtime.
+type CancelReason string
+
+const (
+	// CancelReasonUser is stamped by the user-initiated
+	// POST /v1/apps/{slug}/deployments/{id}/cancel route. Most
+	// common path; the CLI's --reason flag can override.
+	CancelReasonUser CancelReason = "user"
+	// CancelReasonAutoQuota is reserved for the future
+	// "auto-cancel on quota breach" path (mirrors ADR-118
+	// AutoRollbackWatcher, not wired yet). The CHECK accepts it
+	// so the migration stays additive.
+	CancelReasonAutoQuota CancelReason = "auto_quota"
+	// CancelReasonAutoHealth is reserved for the future
+	// "auto-cancel on liveness exhaustion" path. CHECK-only.
+	CancelReasonAutoHealth CancelReason = "auto_health"
+	// CancelReasonSystem is the operator-driven escape hatch
+	// (admin CLI / control-plane janitor). Used today by the
+	// builderd cancel-LISTEN goroutine when a deployment row
+	// flips to "cancelled" before builderd has finished its
+	// own cascade.
+	CancelReasonSystem CancelReason = "system"
+)
+
+// IsValid reports whether r is one of the closed-set CancelReason
+// constants. Cheap — used by apid handlers to fail fast on a
+// stray value before the SQL UPDATE surfaces a 23514.
+func (r CancelReason) IsValid() bool {
+	switch r {
+	case CancelReasonUser, CancelReasonAutoQuota, CancelReasonAutoHealth, CancelReasonSystem:
+		return true
+	}
+	return false
+}
 
 // Account is a customer account.
 type Account struct {
@@ -1142,7 +1225,17 @@ type Deployment struct {
 	RootfsKey   string
 	RootfsBytes int64
 	Status      DeploymentStatus
-	Error       string
+	// Priority is the deployment-queue priority (lower = run
+	// sooner). Range [0, 1000], default 100. Migration 00362
+	// widens the column CHECK + adds the partial index that
+	// builderd's claim path reads (ADR-124).
+	Priority int
+	// ReorderedByPrincipal is the opaque principal that last
+	// bumped Priority (account owner / API key id /
+	// "operator:<username>"). Empty for deployments that have
+	// never been reordered.
+	ReorderedByPrincipal string
+	Error                string
 	// ErrorCode is the RFC 7807 code stamped at the same time as
 	// Error when a deployment transitions to `failed`. ADR-021:
 	// oci.ErrImageNotFound / ErrImageEgressDenied /
@@ -1164,7 +1257,29 @@ type Deployment struct {
 	ErrorWhy          string
 	ErrorFix          string
 	ErrorRelevantLogs []api.LogExcerpt
-	CreatedAt         time.Time
+	// CancelledAt is the wall-clock at which the row transitioned
+	// to DeployCancelled. Set by MarkDeploymentCancelled /
+	// CancelDeploymentTx (ADR-124). Populates the `cancelled_at`
+	// column added in migration 00360. Nil for every other row.
+	CancelledAt *time.Time
+	// CancelledByPrincipal is the opaque principal who initiated
+	// the cancel (account owner / API key id / "operator:<u>").
+	// Pairs with CancelReason for the audit trail.
+	CancelledByPrincipal string
+	// CancelReason is the closed-set reason: user|auto_quota|
+	// auto_health|system. Distinct from DeployFailed.ErrorCode —
+	// cancelled rows don't carry the worker's failure taxonomy.
+	CancelReason string
+	// DeletedAt is the wall-clock at which the customer-initiated
+	// `deploys clear` stamped the row as hidden from their
+	// deployment list. Status is intentionally NOT changed by the
+	// clear path — admins see the row, customers don't. Nil until
+	// the first clear.
+	DeletedAt *time.Time
+	// DeletedByPrincipal is the opaque principal who triggered the
+	// clear. Pairs with DeletedAt.
+	DeletedByPrincipal string
+	CreatedAt          time.Time
 	// Override columns (issue #460 / ADR-053). Six optional fields
 	// that layer on top of the OCI image config when the customer
 	// redeploys the same digest-pinned image with a different
@@ -1456,6 +1571,15 @@ type Build struct {
 	StartedAt    time.Time
 	FinishedAt   time.Time
 	EnqueuedAt   time.Time // set at CreateBuild; builderd measures queue wait against it (ADR-030)
+	// CancelledAt is the wall-clock at which the build row
+	// transitioned to BuildCancelled. Set by MarkBuildCancelled
+	// (ADR-124). Nil for every other row.
+	CancelledAt *time.Time
+	// CancelledByDeploymentCascade is true when the cancel came
+	// from a deployment-row flip (CancelDeploymentTx). False when
+	// a future direct build-cancel path lands. Disambiguates the
+	// audit trail.
+	CancelledByDeploymentCascade bool
 }
 
 // BuildProvenance is the post-mortem "what ran?" record for a Build

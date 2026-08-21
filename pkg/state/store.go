@@ -60,6 +60,41 @@ var ErrInvalidPreviewPrState = errors.New("state: invalid preview_pr_state")
 // api.ErrTrafficPercentSumInvalid (409 Conflict).
 var ErrTrafficPercentSumInvalid = errors.New("state: traffic_percent sum != 100")
 
+// ErrInvalidStateTransition is returned by CancelDeploymentTx /
+// MarkDeploymentCancelled when the row's current status is not in
+// the cancel-eligible set {pending, building, imaging, snapshotting}.
+// Translates at the handler boundary to HTTP 409 with the
+// deployment_cancel_not_cancellable code (ADR-124).
+var ErrInvalidStateTransition = errors.New("state: invalid status transition")
+
+// ErrCancelLiveForbidden is returned by CancelDeploymentTx when the
+// caller attempts to cancel a DeployLive row. Cancel of a live
+// deployment would either park the app (kills INV 3 — must always
+// have a live snapshot OR cold-bootable rootfs) or scale-to-zero
+// (kills INV 4 — parked consumes zero RAM). The deploys-rollback
+// path (ADR-118) is the user-correct escape. Translates at the
+// handler boundary to HTTP 409 with the
+// deployment_cancel_live_forbidden code (ADR-124).
+var ErrCancelLiveForbidden = errors.New("state: cancel of DeployLive deployment is forbidden; use deploys rollback")
+
+// ErrReorderNotPending is returned by ReorderDeployment when the
+// caller attempts to reorder a deployment that has already left
+// DeployPending (typically because the build VM is running or the
+// deploy reached DeployImaging). The reorder surface only makes
+// sense while the row is still in the planner's queue. Translates
+// at the handler boundary to HTTP 409 with the
+// deployment_reorder_not_pending code (ADR-124).
+var ErrReorderNotPending = errors.New("state: reorder only valid for pending deployments")
+
+// ErrPriorityOutOfRange is the defensive backstop returned by
+// ReorderDeployment when newPriority falls outside the closed range
+// [0, 1000]. The CHECK constraint deployments_priority_check
+// (migration 00362) is the schema-layer guard; this sentinel
+// surfaces the same range violation when the store is the one
+// running the backstop. Translated at the handler boundary to
+// HTTP 422 with the deployment_reorder_priority_invalid code.
+var ErrPriorityOutOfRange = errors.New("state: priority must be in [0, 1000]")
+
 // ErrQuotaExceeded is returned by CreateAppIfUnderQuota when the
 // account already holds limits.DeployedApps live apps. The error wraps
 // the observed count so apid can include it in the 403 envelope via
@@ -1807,6 +1842,60 @@ type Store interface {
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
+
+	// MarkDeploymentCancelled atomically transitions the row to
+	// DeployCancelled, stamping cancelled_at / cancelled_by_principal /
+	// cancel_reason audit columns. The CAS guard enforces
+	// status ∈ {pending, building, imaging, snapshotting} —
+	// concurrent terminal transitions are last-write-wins safe.
+	// Returns ErrInvalidStateTransition if the row is already
+	// terminal or DeployLive, and ErrNotFound if id is unknown.
+	// (ADR-124 — deployment queue controls.)
+	MarkDeploymentCancelled(ctx context.Context, id, principal string, reason CancelReason, when time.Time) error
+
+	// CancelDeploymentTx is the single-transaction orchestrator
+	// that mirrors AutoRollbackDeploymentsTx (ADR-118). On
+	// success it has (a) flipped the deployment row to
+	// DeployCancelled, (b) cascaded-cancelled every non-terminal
+	// build row attached to the deployment, (c) SELECT FOR UPDATE
+	// locked the parent apps row, and (d) emitted pg_notify on
+	// the deployment_changed channel. The Firecracker VM tear-down
+	// is intentionally OUT of this transaction — it happens via
+	// the builderd cancel-LISTEN goroutine after the row flip
+	// commits. Returns ErrCancelLiveForbidden when the current
+	// status is DeployLive (use deploys rollback instead) and
+	// ErrInvalidStateTransition for any other non-eligible state.
+	// (ADR-124 — deployment queue controls.)
+	CancelDeploymentTx(ctx context.Context, id, principal string, reason CancelReason) (Deployment, []string, error)
+
+	// ReorderDeployment atomically sets the deployments.priority
+	// column (range [0, 1000], 0 = deploy-immediately). The CAS
+	// guard enforces status='pending' so reorder cannot race with
+	// the build VM spin-up. Returns ErrReorderNotPending when the
+	// row has already left pending, and ErrPriorityOutOfRange
+	// when newPriority is outside the closed range. (ADR-124.)
+	ReorderDeployment(ctx context.Context, id string, newPriority int, principal string) error
+
+	// ClearDeployment soft-deletes a deployment row by stamping
+	// deleted_at + deleted_by_principal. Status is intentionally
+	// unchanged so the audit trail remains visible to admins while
+	// the customer list surface hides the row. Only callable on
+	// non-DeployLive rows; cancelling + clearing are distinct axes
+	// by design. (ADR-124.)
+	ClearDeployment(ctx context.Context, id, principal string) error
+
+	// ClearObsoleteDeployments bulk-soft-deletes (a) superseded /
+	// failed / cancelled rows where enqueued_at < olderThan and
+	// (b) the row is NOT in the "current + previous" retention
+	// window for its app (INV 3). Returns the count of rows
+	// touched. (ADR-124.)
+	ClearObsoleteDeployments(ctx context.Context, appID string, olderThan time.Time) (int, error)
+
+	// MarkBuildCancelled atomically transitions a builds row to
+	// BuildCancelled. The CAS guard enforces status ∈ {queued,
+	// running}. Used by the builderd cancel-LISTEN goroutine when
+	// a deployment row's pg_notify fires. (ADR-124.)
+	MarkBuildCancelled(ctx context.Context, buildID, deploymentID string, cascade bool, when time.Time) error
 	// SetDeploymentRootfs records the on-disk path + size + StorageBackend
 	// key of the per-app ext4 layer imaged produced for this deployment
 	// (spec §4.6, drive1). The snapshot-prime handshake reads this when
