@@ -427,7 +427,7 @@ func TestMetricsEdgeRuleApplyRegistersAndPreInstantiates(t *testing.T) {
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	m.Handler().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip"} {
+	for _, kind := range edgeRuleKinds {
 		for _, result := range []string{"success", "error"} {
 			line := "gateway_edge_rule_apply_total{kind=\"" + kind + "\",result=\"" + result + "\"}"
 			if !strings.Contains(body, line) {
@@ -460,7 +460,7 @@ func TestMetricsEdgeRuleCompileErrorRegistersAndPreInstantiates(t *testing.T) {
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	m.Handler().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip"} {
+	for _, kind := range edgeRuleKinds {
 		line := "gateway_edge_rule_compile_error_total{kind=\"" + kind + "\"}"
 		if !strings.Contains(body, line) {
 			t.Errorf("missing exposition line for %q in body:\n%s", line, body)

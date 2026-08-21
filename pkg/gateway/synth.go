@@ -120,7 +120,11 @@ type SynthServer struct {
 	// appOrgID (ADR-123) returns the org_id for a given
 	// appID via the per-app cache. nil = gate disabled
 	// (same misconfig posture as appPublicAuthMode above).
-	appOrgID func(ctx context.Context, appID string) string
+	// Returns (orgID, err) so the gate can distinguish
+	// "row missing" (misconfig) from "transient pg failure"
+	// (503) — see pkg/gateway/synth_members_only.go::
+	// WithAppOrgIDLookup for the full contract.
+	appOrgID func(ctx context.Context, appID string) (string, error)
 }
 
 // NewSynthServer wires the unix-socket listener on socketPath with the

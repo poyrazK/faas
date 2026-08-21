@@ -2,7 +2,7 @@
 // cmd-side adapter that wires authmw.Middleware.AttachSessionIfPresent
 // into the gatewayd-internal public-front-door chain.
 //
-// Why this exists
+// # Why this exists
 //
 // pkg/gateway/handler.go::applyIngressMembersOnly is the per-app
 // ingress gate for apps.public_auth_mode='members_only'. It
@@ -24,7 +24,7 @@
 // ignores the stamp, and the members_only gate sees ok=false
 // on a no-cookie request and 401s with the no_cookie reason.
 //
-// Wiring point
+// # Wiring point
 //
 // The middleware wraps publicListenerHandler at the
 // publicListenerHandler = http.Handler(publicHandler) site in
@@ -37,7 +37,7 @@
 // request that flows through the chain). Audit + tracing
 // keep their independent cross-cutting positions.
 //
-// Why a dedicated adapter file
+// # Why a dedicated adapter file
 //
 // Mirrors the authPrincipalAdapter / requireAuthnAdapter /
 // appErrorsRecorder pattern (each bridge type lives in its own

@@ -1095,12 +1095,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// 500'd with operator_error. Now: inlined.
 	deps.synth.WithMembersOnlyChecker(authz.PoolOrgMemberChecker(pool))
 	deps.synth.WithMembersOnlyPrincipalExtractor(newAuthPrincipalAdapter())
-	deps.synth.WithAppOrgIDLookup(func(ctx context.Context, appID string) string {
-		orgID, err := pgStore.AppOrgID(ctx, appID)
-		if err != nil {
-			return ""
-		}
-		return orgID
+	deps.synth.WithAppOrgIDLookup(func(ctx context.Context, appID string) (string, error) {
+		return pgStore.AppOrgID(ctx, appID)
 	})
 	// Process-local Prometheus registry (spec §12). Constructed here so
 	// every downstream consumer — handler, warm-hint consumer, top-N

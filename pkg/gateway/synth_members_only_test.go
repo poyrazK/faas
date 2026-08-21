@@ -79,9 +79,9 @@ func (a *synthMembersTestAuditor) countByKind(kind string) int {
 // Handler-side OrgID lookup); the test keeps a single
 // constant so the gate's "empty OrgID" misconfig branch
 // can be exercised with a different constructor.
-func fixedOrgIDLookup(orgID string) func(ctx context.Context, appID string) string {
-	return func(ctx context.Context, appID string) string {
-		return orgID
+func fixedOrgIDLookup(orgID string) func(ctx context.Context, appID string) (string, error) {
+	return func(ctx context.Context, appID string) (string, error) {
+		return orgID, nil
 	}
 }
 
@@ -92,7 +92,7 @@ func fixedOrgIDLookup(orgID string) func(ctx context.Context, appID string) stri
 // synth_internal_only_test.go:30 with the members-only
 // bridge types (CookiePrincipalExtractor +
 // OrgMemberChecker).
-func newTestSynthServerForMembersOnly(t *testing.T, mode string, checker authz.OrgMemberChecker, principal CookiePrincipalExtractor, orgIDLookup func(ctx context.Context, appID string) string) (*SynthServer, *synthMembersTestAuditor) {
+func newTestSynthServerForMembersOnly(t *testing.T, mode string, checker authz.OrgMemberChecker, principal CookiePrincipalExtractor, orgIDLookup func(ctx context.Context, appID string) (string, error)) (*SynthServer, *synthMembersTestAuditor) {
 	t.Helper()
 	a := &synthMembersTestAuditor{}
 	srv := &SynthServer{
@@ -129,7 +129,7 @@ func TestSynthApplyIngressMembersOnly_NoCookie_CronDenied(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("rec.Code = %d, want 403", rec.Code)
 	}
-	if got := a.countByKind("instances.public_auth_members_blocked"); got != 1 {
+	if got := a.countByKind("edge_rule.ingress_members_blocked"); got != 1 {
 		t.Errorf("members-blocked audit count = %d, want 1", got)
 	}
 	// The audit "from" tag is "synth" for the legacy
@@ -199,7 +199,7 @@ func TestSynthApplyIngressMembersOnly_LookupError_FailClosed(t *testing.T) {
 	// Confirm the audit reason is lookup_error.
 	var foundReason string
 	for _, ev := range a.events {
-		if ev.kind == "instances.public_auth_members_blocked" {
+		if ev.kind == "edge_rule.ingress_members_blocked" {
 			if r, ok := ev.data["reason"].(string); ok {
 				foundReason = r
 			}
@@ -262,12 +262,12 @@ func TestSynthApplyIngressMembersOnly_NonMember_Returns403(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("rec.Code = %d, want 403", rec.Code)
 	}
-	if got := a.countByKind("instances.public_auth_members_blocked"); got != 1 {
+	if got := a.countByKind("edge_rule.ingress_members_blocked"); got != 1 {
 		t.Errorf("members-blocked audit count = %d, want 1", got)
 	}
 	var foundReason string
 	for _, ev := range a.events {
-		if ev.kind == "instances.public_auth_members_blocked" {
+		if ev.kind == "edge_rule.ingress_members_blocked" {
 			if r, ok := ev.data["reason"].(string); ok {
 				foundReason = r
 			}

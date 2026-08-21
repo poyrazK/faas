@@ -1724,14 +1724,14 @@ func TestAttachSessionIfPresent_LookupError_PassesThrough(t *testing.T) {
 func TestAttachSessionIfPresent_BindingMismatch_PassesThrough(t *testing.T) {
 	authn := newFakeAuthn()
 	sess := &fakeSessions{env: session.Envelope{
-		AccountID:    "acct-1",
-		Sid:          "sid-1",
-		BindingHash:  "stolen-binding",
+		AccountID:   "acct-1",
+		Sid:         "sid-1",
+		BindingHash: "stolen-binding",
 	}}
 	lookups := &fakeLookups{sess: state.Session{
-		ID:           "sid-1",
-		AccountID:    "acct-1",
-		BindingHash:  "legit-binding",
+		ID:          "sid-1",
+		AccountID:   "acct-1",
+		BindingHash: "legit-binding",
 	}}
 	mw := authmw.New(authn, sess, lookups, &fakeAuditor{}, slog.Default(), middleware.NewLimiter(middleware.AuthLimitConfig{}), bindinghash.KeyFunc(func() []byte { return []byte("key") }))
 	r := mkRequest("GET", "/v1/apps", nil, map[string]string{"faas_sid": "valid-cookie"})

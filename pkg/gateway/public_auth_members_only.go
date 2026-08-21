@@ -46,14 +46,18 @@ package gateway
 // the account_id (a UUID, not a cookie value); only that
 // + app_id + from_host + a short reason enum
 // (no_cookie | expired_session | revoked_session |
-// binding_mismatch | not_member | removed_member |
-// lookup_error | not_logged_in_organizational_path) flow
+// binding_mismatch | not_member | lookup_error) flow
 // into the audit row. Reason values are distinct strings
 // — different operators in the same family (mirrors the
 // kind=ip forged/blocked split at handler.go:~2218/2219)
 // so the operator's audit pipeline can pivot on the
 // precise failing condition without re-running through
-// the audit emitter.
+// the audit emitter. The removed-member reason was
+// considered and dropped (see applyIngressMembersOnly's
+// not_member branch comment) — the SELECT EXISTS predicate
+// doesn't distinguish "never a member" from "removed_at IS
+// NOT NULL" and a second SELECT for diagnostic granularity
+// is not justified at the gate layer.
 
 import (
 	"errors"
@@ -328,18 +332,25 @@ func (h *Handler) applyIngressMembersOnly(w http.ResponseWriter, r *http.Request
 		// forgot to log in" on a members_only app in
 		// org-B (cookie genuinely missing) vs "you
 		// are logged in but not a member of this
-		// org" (valid authn, denied authz). The
-		// audit row distinguishes not_member from
-		// removed_member by inspecting the
-		// (account_id, org_id) tuple semantics —
-		// here we surface 'not_member' because the
-		// removed branch is reported as a 403 too
-		// with a finer-grained reason; we keep the
-		// simple 'not_member' reason for the
-		// no-row case (the most-common 403 path)
-		// and route the removed-row case (which
-		// is rarer and a sharper diagnostic) to
-		// 'removed_member'.
+		// org" (valid authn, denied authz).
+		//
+		// Audit reason is uniformly 'not_member':
+		// pkg/authz.IsOrgMember returns false on
+		// either "never a member" or "was a member,
+		// removed_at IS NOT NULL" — the SELECT EXISTS
+		// predicate treats both as no live row. A
+		// finer-grained 'removed_member' reason
+		// would require a second SELECT to inspect
+		// the org_memberships row even when it's
+		// inactive (an extra round-trip per denied
+		// request, dominated by spammers probing for
+		// former-org access). The diagnostic value
+		// (operator can spot "this account was
+		// removed yesterday vs never joined") does
+		// not justify the latency cost. Future
+		// hardening can add a non-INDEX lookup as a
+		// best-effort post-deny audit enrichment
+		// without affecting the gate's wire posture.
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
 			api.CodeForbidden, "Not a member",
 			"this account is not an active member of the organization that owns this app"))
