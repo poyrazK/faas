@@ -8,7 +8,7 @@
 // smaller helpers that have no I/O:
 //
 //   - validateAndDeriveEnablePresetOpts — cooldown band gate
-//     + enabled override.
+//   - enabled override.
 //   - (TruncateRunes is tested in pkg/api via the existing
 //     AlertRuleNameMaxChars helper tests; a follow-up could
 //     add an explicit UTF-8 boundary test if needed.)

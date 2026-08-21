@@ -1231,9 +1231,9 @@ var planLimits = map[Plan]Limits{
 		// Alert rules (issue #396 / ADR-045): Free stays at 0/0.
 		// Gates via CodePlanAlertRulesNotAllowed at the handler level
 		// — the value is informational here for fail-closed accessors.
-		AlertRuleLimitPerApp:               0,
-		AlertRuleLimitPerAccount:           0,
-		AlertPresetCatalogLimitPerAccount:  8,
+		AlertRuleLimitPerApp:              0,
+		AlertRuleLimitPerAccount:          0,
+		AlertPresetCatalogLimitPerAccount: 8,
 		// Edge rules (ADR-089): Free gets 5/app — the 5 cheap
 		// kinds (route, rewrite, redirect, headers, cors). JWT and
 		// IP stay Hobby+ only (paid-only security primitives).
@@ -1535,9 +1535,9 @@ var planLimits = map[Plan]Limits{
 		// cron shape (10) because the typical Hobby customer configures
 		// "one alert per app" and the spare capacity is for a couple of
 		// account-wide rules.
-		AlertRuleLimitPerApp:               3,
-		AlertRuleLimitPerAccount:           10,
-		AlertPresetCatalogLimitPerAccount:  8,
+		AlertRuleLimitPerApp:              3,
+		AlertRuleLimitPerAccount:          10,
+		AlertPresetCatalogLimitPerAccount: 8,
 		// Edge rules (ADR-089): Hobby gets 25/app and unlocks the
 		// JWT + IP kinds.
 		EdgeRulesPerApp:     25,
@@ -1825,9 +1825,9 @@ var planLimits = map[Plan]Limits{
 		// Alert rules (issue #396): Pro gets 10 per-app and 30
 		// per-account. ~2× the Hobby per-account budget tracks the
 		// Pro app budget (25 apps vs Hobby's 5).
-		AlertRuleLimitPerApp:               10,
-		AlertRuleLimitPerAccount:           30,
-		AlertPresetCatalogLimitPerAccount:  8,
+		AlertRuleLimitPerApp:              10,
+		AlertRuleLimitPerAccount:          30,
+		AlertPresetCatalogLimitPerAccount: 8,
 		// Edge rules (ADR-089): Pro gets 100/app with JWT + IP.
 		EdgeRulesPerApp:     100,
 		EdgeRulesJWTAllowed: true,
@@ -2101,9 +2101,9 @@ var planLimits = map[Plan]Limits{
 		// per-account — 2.5× Pro's per-app (10→25) and ~3× the
 		// per-account (30→100). Scale's app budget is 4× Pro's, so
 		// the per-account figure absorbs the fan-out.
-		AlertRuleLimitPerApp:               25,
-		AlertRuleLimitPerAccount:           100,
-		AlertPresetCatalogLimitPerAccount:  8,
+		AlertRuleLimitPerApp:              25,
+		AlertRuleLimitPerAccount:          100,
+		AlertPresetCatalogLimitPerAccount: 8,
 		// Edge rules (ADR-089): Scale gets 500/app with JWT + IP.
 		EdgeRulesPerApp:     500,
 		EdgeRulesJWTAllowed: true,

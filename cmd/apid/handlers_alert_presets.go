@@ -88,19 +88,19 @@ func (s *server) listAlertPresets(w http.ResponseWriter, r *http.Request, _ stat
 // enableAlertPreset instantiates a preset as a real alert_rules row.
 // JSON entrypoint; the work delegates to enableAlertPresetFromForm.
 //
-//   1. Load the preset by {slug, name}. 404 on miss.
-//   2. Reject disabled-in-catalog with 400 (ErrAlertPresetDisabled).
-//   3. Reject below-minimum-plan with 402 (ErrPlanAlertPresetsNotAllowed).
-//   4. Validate body (webhook_url, webhook_secret, cooldown_minutes band).
-//   5. SSRF guard the webhook URL (reuses resolveAndCheckEgress from
-//      handlers_alerts.go:819).
-//   6. Seal the webhook secret (same path as createAlertRule).
-//   7. Persist via CreateAlertRuleIfUnderQuota — the existing per-app
-//      + per-account cap counts an instantiated preset toward the
-//      customer's allowance.
-//   8. Audit alert_preset.enabled with {preset_name, app_slug, rule_id}.
-//   9. Respond 201 with the AlertRuleResponse so the dashboard renders
-//      the new rule alongside hand-rolled ones.
+//  1. Load the preset by {slug, name}. 404 on miss.
+//  2. Reject disabled-in-catalog with 400 (ErrAlertPresetDisabled).
+//  3. Reject below-minimum-plan with 402 (ErrPlanAlertPresetsNotAllowed).
+//  4. Validate body (webhook_url, webhook_secret, cooldown_minutes band).
+//  5. SSRF guard the webhook URL (reuses resolveAndCheckEgress from
+//     handlers_alerts.go:819).
+//  6. Seal the webhook secret (same path as createAlertRule).
+//  7. Persist via CreateAlertRuleIfUnderQuota — the existing per-app
+//     + per-account cap counts an instantiated preset toward the
+//     customer's allowance.
+//  8. Audit alert_preset.enabled with {preset_name, app_slug, rule_id}.
+//  9. Respond 201 with the AlertRuleResponse so the dashboard renders
+//     the new rule alongside hand-rolled ones.
 //
 // Plan-tier gate order matters: the minimum_plan check fires BEFORE
 // loadApp for the same slug-leak reason ErrPlanAlertRulesNotAllowed
@@ -111,7 +111,7 @@ func (s *server) enableAlertPreset(w http.ResponseWriter, r *http.Request, acct 
 	presetName := r.PathValue("name")
 	var req api.EnableAlertPresetRequest
 	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.ErrAlertPresetInvalid("could not decode body: " + err.Error()))
+		api.WriteProblem(w, api.ErrAlertPresetInvalid("could not decode body: "+err.Error()))
 		return
 	}
 	row, err := s.enableAlertPresetFromForm(r.Context(), acct, r.PathValue("slug"), presetName, req)
@@ -254,21 +254,21 @@ func (s *server) persistInstantiatedAlertRule(ctx context.Context, acct state.Ac
 	// Postgres rejects with SQLSTATE 22021 at INSERT time.
 	displayName := api.TruncateRunes(preset.DisplayName+" ("+app.Slug+")", api.AlertRuleNameMaxChars)
 	row, err := s.store.CreateAlertRuleIfUnderQuota(ctx, state.AlertRule{
-		AccountID:           acct.ID,
-		AppID:               app.ID,
-		Name:                displayName,
-		Enabled:             enabled,
-		Metric:              state.AlertMetric(preset.Metric),
-		Comparison:          state.AlertComparison(preset.Comparison),
-		Threshold:           preset.Threshold,
-		WindowSpec:          state.AlertWindowSpec(preset.WindowSpec),
+		AccountID:  acct.ID,
+		AppID:      app.ID,
+		Name:       displayName,
+		Enabled:    enabled,
+		Metric:     state.AlertMetric(preset.Metric),
+		Comparison: state.AlertComparison(preset.Comparison),
+		Threshold:  preset.Threshold,
+		WindowSpec: state.AlertWindowSpec(preset.WindowSpec),
 		// Preset rows never carry a failure_source (the catalog's
 		// metrics are the closed vocabulary at pkg/api/alerts.go:66
 		// — none of them are failed_invocations).
-		FailureSource:   "",
-		WebhookURL:      req.WebhookURL,
+		FailureSource:       "",
+		WebhookURL:          req.WebhookURL,
 		WebhookSecretSealed: sealed,
-		CooldownMinutes: cooldown,
+		CooldownMinutes:     cooldown,
 	}, limits)
 	if err != nil {
 		var qe *state.AlertRuleQuotaError

@@ -10,9 +10,9 @@
 //   - cmdAlertPresetList happy path under --json mode (raw response
 //     emitted).
 //   - cmdAlertPresetEnable validation gates:
-//       - missing --app / missing positional preset name
-//       - missing webhook-url / webhook-secret
-//       - out-of-band --cooldown-minutes
+//   - missing --app / missing positional preset name
+//   - missing webhook-url / webhook-secret
+//   - out-of-band --cooldown-minutes
 //     All fire BEFORE the HTTP round-trip (the fake server's hit
 //     counter must stay at 0).
 //   - cmdAlertPresetEnable happy path (route hits

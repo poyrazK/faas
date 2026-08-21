@@ -11,7 +11,7 @@
 //     window_spec) rule code, and a Cooldown / Min-plan line.
 //  3. Three card-state branches render the right element:
 //     - .Enabled → form POSTing to /apps/{slug}/alert-presets/{name}/enable
-//       with the webhook_url + webhook_secret fields.
+//     with the webhook_url + webhook_secret fields.
 //     - !EnabledInCatalog → "Coming soon" badge.
 //     - else (EnabledInCatalog but !MeetsPlan) → "Upgrade to {plan}" badge.
 //  4. The form action URL is built from AppSlug + Name (no

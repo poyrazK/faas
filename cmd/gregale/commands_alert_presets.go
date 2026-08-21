@@ -1,10 +1,10 @@
 // commands_alert_presets.go — `gregale alerts preset <list|enable>`
 // (issue #1233 / ADR-123). Two leaves:
 //
-//   * gregale alerts preset list                                  → cmdAlertPresetList
-//   * gregale alerts preset enable <name> --app <slug> --webhook-url ... \
-//       --webhook-secret ... [--cooldown-minutes N] [--enabled=false]
-//                                                                  → cmdAlertPresetEnable
+//   - gregale alerts preset list                                  → cmdAlertPresetList
+//   - gregale alerts preset enable <name> --app <slug> --webhook-url ... \
+//     --webhook-secret ... [--cooldown-minutes N] [--enabled=false]
+//     → cmdAlertPresetEnable
 //
 // Mirrors commands_alerts.go (the canonical dispatcher shape +
 // flag conventions for the alerts surface) and

@@ -580,20 +580,20 @@ func NewMemStore() *MemStore {
 		// buildProvenance is the ADR-038 "what ran?" map keyed by
 		// build_id (mirrors the build_provenance.build_id UNIQUE).
 		// Starts empty; CreateBuildProvenance fills it.
-		buildProvenance:      map[string]BuildProvenance{},
-		domains:              map[string]CustomDomain{},
-		doctorObs:            map[string]DomainDoctorObservation{},
-		crons:                map[string]Cron{},
-		fireNowRequests:      map[string]FireNowRequest{},
-		alertRules:           map[string]AlertRule{},
-		alertDeliveries:      map[string]AlertDelivery{},
-		appWebhooks:          map[string]AppWebhook{},
-		appWebhookDeliveries: map[string]AppWebhookDelivery{},
-		alertClaimKeys:       map[string]time.Time{},
-		edgeRules:            map[string]EdgeRule{},
-		corsPresets:          map[string]CorsPreset{},
-		alertPresets:         map[string]AlertPreset{},
-		accountSpendSnapshots: map[string]AccountSpendSnapshot{},
+		buildProvenance:               map[string]BuildProvenance{},
+		domains:                       map[string]CustomDomain{},
+		doctorObs:                     map[string]DomainDoctorObservation{},
+		crons:                         map[string]Cron{},
+		fireNowRequests:               map[string]FireNowRequest{},
+		alertRules:                    map[string]AlertRule{},
+		alertDeliveries:               map[string]AlertDelivery{},
+		appWebhooks:                   map[string]AppWebhook{},
+		appWebhookDeliveries:          map[string]AppWebhookDelivery{},
+		alertClaimKeys:                map[string]time.Time{},
+		edgeRules:                     map[string]EdgeRule{},
+		corsPresets:                   map[string]CorsPreset{},
+		alertPresets:                  map[string]AlertPreset{},
+		accountSpendSnapshots:         map[string]AccountSpendSnapshot{},
 		tenantSurfaceCertExpiryStates: map[string]TenantSurfaceCertExpiryState{},
 		// ADR-120 / issue #975 item #5 — consumer keys. The map is
 		// keyed by ConsumerKey.ID; cross-tenant IDOR guards are
@@ -11203,13 +11203,13 @@ func (m *MemStore) RefreshCertExpiryStates(_ context.Context) (int, error) {
 			}
 		}
 		m.tenantSurfaceCertExpiryStates[ts.ID] = TenantSurfaceCertExpiryState{
-			TenantSurfaceID:         ts.ID,
-			AccountID:               ts.AccountID,
-			AppID:                   ts.AppID,
-			Hostname:                hostname,
+			TenantSurfaceID:          ts.ID,
+			AccountID:                ts.AccountID,
+			AppID:                    ts.AppID,
+			Hostname:                 hostname,
 			LastObservedCertNotAfter: notAfter,
-			LastWalkStatus:          status,
-			LastRefreshedAt:         now,
+			LastWalkStatus:           status,
+			LastRefreshedAt:          now,
 		}
 		n++
 	}

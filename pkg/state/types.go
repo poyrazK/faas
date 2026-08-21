@@ -4255,13 +4255,13 @@ type AccountSpendSnapshot struct {
 // evaluator reads MinCertExpiryForApp to compute the
 // cert_expiry_seconds metric.
 type TenantSurfaceCertExpiryState struct {
-	TenantSurfaceID         string
-	AccountID               string
-	AppID                   string
-	Hostname                string
+	TenantSurfaceID          string
+	AccountID                string
+	AppID                    string
+	Hostname                 string
 	LastObservedCertNotAfter *time.Time
-	LastWalkStatus          string
-	LastRefreshedAt         time.Time
+	LastWalkStatus           string
+	LastRefreshedAt          time.Time
 }
 
 // AlertPreset is the in-memory row mirrored from alert_presets
