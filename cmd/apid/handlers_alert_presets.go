@@ -29,6 +29,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -100,45 +101,64 @@ func (s *server) listAlertPresets(w http.ResponseWriter, r *http.Request, _ stat
 // leak the slug's existence).
 func (s *server) enableAlertPreset(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	presetName := r.PathValue("name")
-	// Pre-resolve the catalog row by name only. We DO NOT load the
-	// app here — the plan-tier gate must run before loadApp to
-	// avoid the slug-leak, and we need the preset's minimum_plan
-	// before we know which 402 body to write.
-	preset, err := s.store.AlertPresetByName(r.Context(), presetName)
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such alert preset", "no preset with that name is in the catalog"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not load alert preset"))
-		return
-	}
-	if !preset.EnabledInCatalog {
-		api.WriteProblem(w, api.ErrAlertPresetDisabled(preset.Name))
-		return
-	}
-	if !api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(preset.MinimumPlan)) {
-		api.WriteProblem(w, api.ErrPlanAlertPresetsNotAllowed(acct.Plan, preset.Name, preset.MinimumPlan))
-		return
-	}
 	var req api.EnableAlertPresetRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrAlertPresetInvalid("could not decode body: "+err.Error()))
 		return
 	}
-	if req.WebhookURL == "" || req.WebhookSecret == "" {
-		api.WriteProblem(w, api.ErrAlertPresetInvalid("webhook_url and webhook_secret are required"))
+	row, err := s.enableAlertPresetFromForm(r.Context(), acct, r.PathValue("slug"), presetName, req)
+	if err != nil {
+		api.WriteProblem(w, err)
 		return
 	}
-	if prob := resolveAndCheckEgress(r.Context(), req.WebhookURL); prob != nil {
-		api.WriteProblem(w, prob)
-		return
+	writeJSON(w, http.StatusCreated, alertRuleResponse(row))
+}
+
+// enableAlertPresetFromForm is the shared work for both the JSON
+// path (POST /v1/apps/{slug}/alert-presets/{name}/enable) and the
+// dashboard's form-encoded path (POST
+// /dashboard/apps/{slug}/alert-presets/{name}/enable). The form
+// path calls this helper after CSRF + auth + form-decoding; the
+// JSON path calls it after JSON-decoding. Returns an
+// *api.Problem on every failure so both callers can write it
+// verbatim (the JSON path via api.WriteProblem, the form path
+// via the redirect + ?preset_enabled=error flash). The return
+// signature is (state.AlertRule, *api.Problem) so the caller can
+// branch on Problem to decide redirect-vs-201.
+//
+// Phase order (validate → plan gate → load app → validate body →
+// SSRF guard → family check → seal → quota → persist → audit →
+// log → return) mirrors the JSON path verbatim — both surfaces
+// MUST stay in lockstep. See the package-doc on
+// handlers_alert_presets.go for the per-phase rationale.
+func (s *server) enableAlertPresetFromForm(ctx context.Context, acct state.Account, slug, presetName string, req api.EnableAlertPresetRequest) (state.AlertRule, *api.Problem) {
+	// Pre-resolve the catalog row by name only. We DO NOT load the
+	// app here — the plan-tier gate must run before loadApp to
+	// avoid the slug-leak, and we need the preset's minimum_plan
+	// before we know which 402 body to write.
+	preset, err := s.store.AlertPresetByName(ctx, presetName)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return state.AlertRule{}, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such alert preset", "no preset with that name is in the catalog")
+		}
+		return state.AlertRule{}, api.ErrCapacity("could not load alert preset")
+	}
+	if !preset.EnabledInCatalog {
+		return state.AlertRule{}, api.ErrAlertPresetDisabled(preset.Name)
+	}
+	if !api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(preset.MinimumPlan)) {
+		return state.AlertRule{}, api.ErrPlanAlertPresetsNotAllowed(acct.Plan, preset.Name, preset.MinimumPlan)
+	}
+	if req.WebhookURL == "" || req.WebhookSecret == "" {
+		return state.AlertRule{}, api.ErrAlertPresetInvalid("webhook_url and webhook_secret are required")
+	}
+	if prob := resolveAndCheckEgress(ctx, req.WebhookURL); prob != nil {
+		return state.AlertRule{}, prob
 	}
 	cooldown := preset.DefaultCooldownMinutes
 	if req.CooldownMinutes != nil {
 		if *req.CooldownMinutes < 1 || *req.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
-			api.WriteProblem(w, api.ErrAlertPresetInvalid("cooldown_minutes out of band (1..1440)"))
-			return
+			return state.AlertRule{}, api.ErrAlertPresetInvalid("cooldown_minutes out of band (1..1440)")
 		}
 		cooldown = *req.CooldownMinutes
 	}
@@ -148,29 +168,26 @@ func (s *server) enableAlertPreset(w http.ResponseWriter, r *http.Request, acct 
 	}
 	recipient := setSecretRecipient()
 	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
-		return
+		return state.AlertRule{}, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret")
 	}
 	sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
-			api.WriteProblem(w, prob)
-			return
+			return state.AlertRule{}, prob
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not seal webhook secret"))
-		return
+		return state.AlertRule{}, api.ErrCapacity("could not seal webhook secret")
 	}
 	// Plan-tier check for the underlying alert_rules cap (Hobby +
 	// above). Mirrors createAlertRule's pre-loadApp gate.
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || limits.AlertRuleLimitPerApp == 0 {
-		api.WriteProblem(w, api.ErrPlanAlertRulesNotAllowed(acct.Plan))
-		return
+		return state.AlertRule{}, api.ErrPlanAlertRulesNotAllowed(acct.Plan)
 	}
-	slug := r.PathValue("slug")
-	app, ok := s.loadApp(w, r, acct, slug)
-	if !ok {
-		return
+	app, err := s.store.AppBySlug(ctx, slug)
+	if err != nil || app.AccountID != acct.ID {
+		// Same IDOR-safe 404 as the createAlertRule path —
+		// never reveal whether the app exists on another account.
+		return state.AlertRule{}, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such app", "no app with that slug is visible to this account")
 	}
 	// Display name: <preset display_name> (<app slug>) so a customer
 	// with multiple apps can tell which rule covers which surface.
@@ -181,7 +198,7 @@ func (s *server) enableAlertPreset(w http.ResponseWriter, r *http.Request, acct 
 	if len(displayName) > api.AlertRuleNameMaxBytes {
 		displayName = displayName[:api.AlertRuleNameMaxBytes]
 	}
-	row, err := s.store.CreateAlertRuleIfUnderQuota(r.Context(), state.AlertRule{
+	row, err := s.store.CreateAlertRuleIfUnderQuota(ctx, state.AlertRule{
 		AccountID:           acct.ID,
 		AppID:               app.ID,
 		Name:                displayName,
@@ -202,15 +219,14 @@ func (s *server) enableAlertPreset(w http.ResponseWriter, r *http.Request, acct 
 		var qe *state.AlertRuleQuotaError
 		switch {
 		case errors.As(err, &qe):
-			api.WriteProblem(w, api.ErrPlanAlertRuleQuota(acct.Plan, string(qe.Scope), qe.Limit, qe.Observed))
+			return state.AlertRule{}, api.ErrPlanAlertRuleQuota(acct.Plan, string(qe.Scope), qe.Limit, qe.Observed)
 		case errors.Is(err, state.ErrNotFound):
-			s.notFound(w, "no such app")
+			return state.AlertRule{}, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such app", "no app with that slug is visible to this account")
 		case errors.Is(err, state.ErrConflict):
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Preset already enabled", "an alert rule for this preset already exists on this app; delete it first to re-enable."))
+			return state.AlertRule{}, api.NewProblem(http.StatusConflict, api.CodeValidation, "Preset already enabled", "an alert rule for this preset already exists on this app; delete it first to re-enable.")
 		default:
-			api.WriteProblem(w, api.ErrCapacity("could not create alert rule from preset"))
+			return state.AlertRule{}, api.ErrCapacity("could not create alert rule from preset")
 		}
-		return
 	}
 	s.log.Info("alert preset enabled",
 		"preset", logsanitize.Field(preset.Name),
@@ -219,7 +235,7 @@ func (s *server) enableAlertPreset(w http.ResponseWriter, r *http.Request, acct 
 		"account", acct.ID,
 		"metric", logsanitize.Field(string(row.Metric)),
 	)
-	s.audit.Emit(r.Context(), "alert_preset.enabled", &acct.ID, map[string]any{
+	s.audit.Emit(ctx, "alert_preset.enabled", &acct.ID, map[string]any{
 		"preset_name": preset.Name,
 		"preset_id":   preset.ID,
 		"app_id":      row.AppID,
@@ -230,5 +246,5 @@ func (s *server) enableAlertPreset(w http.ResponseWriter, r *http.Request, acct 
 		"webhook_url": req.WebhookURL,
 		"enabled":     enabled,
 	})
-	writeJSON(w, http.StatusCreated, alertRuleResponse(row))
+	return row, nil
 }

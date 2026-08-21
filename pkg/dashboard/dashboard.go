@@ -368,6 +368,18 @@ type AppDetailData struct {
 	// section as a warning); an empty slice renders the empty-state
 	// line. RecentDeliveries per rule is capped at 5 by the handler.
 	Alerts *AlertDetailData
+	// Presets is the per-app alert-preset catalog rendered as a
+	// grid between the Alerts panel and the recent-deliveries
+	// sub-table (issue #1233 / ADR-123). Each row carries the
+	// closed-set fields the form needs (DisplayName,
+	// DefaultCooldownMinutes, etc.) plus the dashboard-side
+	// Enabled boolean (= EnabledInCatalog && AccountPlanMeetsMinimum).
+	// Disabled rows render as a greyed card with a "coming soon"
+	// badge — the same affordance the enable endpoint returns
+	// 400 alert_preset_disabled on. Below-minimum-plan rows
+	// render with an "upgrade to <plan>" hint so a Hobby customer
+	// sees what api_down would do without a clickable Enable.
+	Presets []AlertPresetItem
 }
 
 // DeploymentDetailData is the dashboard-facing payload for
@@ -550,6 +562,43 @@ type AlertItem struct {
 	// the template stays a pure renderer. Empty until LastFiredAt
 	// goes non-zero.
 	LastFiredAtLabel string
+}
+
+// AlertPresetItem is one card on the dashboard's "Alert presets"
+// grid (issue #1233 / ADR-123). The shape mirrors api.AlertPresetResponse
+// with two dashboard-side booleans pre-computed by the handler:
+// Enabled (the click-vs-coming-soon gate) and MeetsPlan (the
+// below-minimum-plan gate). Both feed the same UX the API
+// surfaces — the dashboard never asks for a value the server
+// would 400/402 on. AppSlug is the calling app's slug so the
+// form's POST URL is one template variable, not three.
+type AlertPresetItem struct {
+	Name                   string
+	DisplayName            string
+	Description            string
+	Category               string
+	Metric                 string
+	Comparison             string
+	Threshold              float64
+	WindowSpec             string
+	DefaultCooldownMinutes int
+	MinimumPlan            string
+	EnabledInCatalog       bool
+	// Enabled is the dashboard-side AND of EnabledInCatalog and
+	// the customer's plan >= preset.MinimumPlan. When false, the
+	// card renders as "coming soon" (greyed) and the Enable button
+	// is suppressed.
+	Enabled bool
+	// MeetsPlan is the per-row plan-tier check. When false, the
+	// card renders with an "upgrade to <plan>" hint instead of the
+	// Enable button — distinct from Enabled so the user knows
+	// whether the preset is staged-for-future (Enabled=false,
+	// MeetsPlan=true) or plan-gated (Enabled=true, MeetsPlan=false).
+	MeetsPlan bool
+	// AppSlug is the calling app's slug. The form's POST URL is
+	// /apps/{AppSlug}/alert-presets/{Name}/enable (form-encoded,
+	// NOT JSON — see the dashboard handler at cmd/apid/handlers_dashboard.go).
+	AppSlug string
 }
 
 // alertDeliveryErrorLimit caps the LastError string we render on the
