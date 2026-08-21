@@ -374,19 +374,16 @@ type Limits struct {
 	CronLimitPerApp     int
 	CronLimitPerAccount int
 
-	// Queue controls (ADR-124 deployment queue controls).
-	// QueueControlsAllowed gates the reorder + deploy-immediately
-	// surface (Free = false; Hobby + Pro + Scale = true). Cancel
-	// and clear-obsolete are NOT gated by this flag — the safety
-	// valves stay on Free. MaxQueuedDeploysPerApp caps the
-	// pre-build backlog builderd will claim per app; the value
-	// rises with the tier. MaxCancelOpsPerHour /
-	// MaxReorderOpsPerHour are the per-account rate caps so a
-	// single noisy operator cannot churn the deploy queue.
-	QueueControlsAllowed   bool
-	MaxQueuedDeploysPerApp int
-	MaxCancelOpsPerHour    int
-	MaxReorderOpsPerHour   int
+	// QueueControlsAllowed (ADR-124 deployment queue controls)
+	// gates the reorder + deploy-immediately surface (Free =
+	// false; Hobby + Pro + Scale = true). Cancel and
+	// clear-obsolete are NOT gated by this flag — the safety
+	// valves stay on Free. The companion per-tier rate caps
+	// (cancel-ops/hour, reorder-ops/hour) and the queued-deploys
+	// backlog cap land in PR-B alongside the meterd token bucket;
+	// declared here would be a "half-finished quota" trap that
+	// CLAUDE.md warns against.
+	QueueControlsAllowed bool
 
 	// EvictionPriorityReservedAllowed (issue #475) gates the per-app
 	// reserved eviction tier. Free = false (no reserved apps on the
@@ -1176,10 +1173,7 @@ var planLimits = map[Plan]Limits{
 		// locked. Queue depth caps are conservative because Free
 		// deployed-apps cap is 1 (the queue rarely exceeds 2 in
 		// practice; the cap is the per-account rate noise knob).
-		QueueControlsAllowed:   false,
-		MaxQueuedDeploysPerApp: 2,
-		MaxCancelOpsPerHour:    120,
-		MaxReorderOpsPerHour:   0, // gated via QueueControlsAllowed
+		QueueControlsAllowed: false,
 		// Issue #475: Free stays off the reserved eviction tier. The
 		// abuse-floor tier has no reserved-tier entitlement; per-account
 		// cap is 0 so the gate fails closed.
@@ -1472,11 +1466,8 @@ var planLimits = map[Plan]Limits{
 		// template's tutorials.
 		CronLimitPerApp:     5,
 		CronLimitPerAccount: 10,
-		// ADR-124 queue controls — Hobby unlocks all four.
-		QueueControlsAllowed:   true,
-		MaxQueuedDeploysPerApp: 5,
-		MaxCancelOpsPerHour:    120,
-		MaxReorderOpsPerHour:   60,
+		// ADR-124 queue controls — Hobby unlocks the gated surface.
+		QueueControlsAllowed: true,
 		// Issue #475: Hobby gets 1 reserved-tier app. One healthcheck-
 		// critical service (status page, uptime probe) is the typical
 		// Hobby workload that needs cross-account RAM-pressure
@@ -1776,10 +1767,7 @@ var planLimits = map[Plan]Limits{
 		CronLimitPerApp:     20,
 		CronLimitPerAccount: 50,
 		// ADR-124 queue controls — Pro.
-		QueueControlsAllowed:   true,
-		MaxQueuedDeploysPerApp: 10,
-		MaxCancelOpsPerHour:    120,
-		MaxReorderOpsPerHour:   60,
+		QueueControlsAllowed: true,
 		// Issue #475: Pro gets 2 reserved-tier apps. Pro customers
 		// run customer-facing APIs + background workers; the +1 vs
 		// Hobby tracks the +5 Pro app budget. Reserved-tier RAM cost
@@ -2056,10 +2044,7 @@ var planLimits = map[Plan]Limits{
 		CronLimitPerApp:     100,
 		CronLimitPerAccount: 500,
 		// ADR-124 queue controls — Scale (4× Pro).
-		QueueControlsAllowed:   true,
-		MaxQueuedDeploysPerApp: 25,
-		MaxCancelOpsPerHour:    120,
-		MaxReorderOpsPerHour:   60,
+		QueueControlsAllowed: true,
 		// Issue #475: Scale gets 4 reserved-tier apps. 2× Pro tracks
 		// the doubling in DeployedApps (25 → 100) and the doubling in
 		// MaxConcurrency (5 → 20). At Scale's 1024 MB instance RAM +
@@ -3466,8 +3451,8 @@ func (p Plan) MinInstancesAllowed() bool {
 // clear-obsolete are NOT gated by this flag (Free keeps the
 // user-correct safety valves). Mirrors the per-tier lock shape
 // at MinInstancesAllowed: Hobby + Pro + Scale opt in; Free stays
-// off. The value-bound knob (MaxReorderOpsPerHour) lives in the
-// planLimits table.
+// off. The value-bound rate caps land in PR-B alongside the
+// meterd token bucket.
 func (p Plan) QueueControlsAllowed() bool {
 	l, ok := LimitsFor(p)
 	if !ok {

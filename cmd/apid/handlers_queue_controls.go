@@ -15,6 +15,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -59,9 +60,10 @@ func (s *server) resolveDeploymentAccount(w http.ResponseWriter, r *http.Request
 // handleCancelDeployment — POST /v1/apps/{slug}/deployments/{id}/cancel.
 //
 // Body: {"reason"?: "user"|"auto_quota"|"auto_health"|"system"}
-// 200 → {id, status:"cancelled", cancelled_at}; the pg_notify
-// deployment_changed payload fires from the apidsource path after
-// commit. Live deployments return 409 with the canonical
+// 200 → {id, status:"cancelled", cancelled_at}; this handler fires the
+// deployment_changed pg_notify after a successful tx so schedd,
+// gatewayd-internal, the SSE fan-in, and any future subscriber pick up
+// the cancellation. Live deployments return 409 with the canonical
 // "use deploys rollback" hint. Stops at the deployment row flip —
 // the Firecracker VM tear-down is the builderd cancel-LISTEN
 // goroutine's job (pkg/builderd/builderd.go).
@@ -69,7 +71,11 @@ func (s *server) handleCancelDeployment(w http.ResponseWriter, r *http.Request, 
 	id := r.PathValue("id")
 	principal := acct.ID
 	reason := state.CancelReasonUser
-	if r.ContentLength > 0 {
+	// Always attempt the decode: r.ContentLength is -1 for chunked
+	// transfer encoding (curl --data-binary, HTTP/2, etc.), so gating
+	// on >0 silently ignores valid bodies. Decode errors on an empty
+	// body are tolerated (EOF); only an invalid reason is a 400.
+	if r.Body != nil {
 		var req struct {
 			Reason string `json:"reason"`
 		}
@@ -85,7 +91,8 @@ func (s *server) handleCancelDeployment(w http.ResponseWriter, r *http.Request, 
 			reason = parsed
 		}
 	}
-	if _, _, ok := s.resolveDeploymentAccount(w, r, acct, id); !ok {
+	d, app, ok := s.resolveDeploymentAccount(w, r, acct, id)
+	if !ok {
 		return
 	}
 	d, cancelledBuilds, err := s.store.CancelDeploymentTx(r.Context(), id, principal, reason)
@@ -102,11 +109,22 @@ func (s *server) handleCancelDeployment(w http.ResponseWriter, r *http.Request, 
 		s.ops.ObserveDeploymentCancelled("error")
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "cancel failed", err.Error()))
 	default:
+		ctx := r.Context()
+		// ADR-124: emit deployment_changed so schedd, gatewayd-internal,
+		// and the SSE fan-in refresh within ~1s (mirrors the kind="image"
+		// emit at handlers_sidecars.go:414). The kind="cancel" discriminant
+		// is purely additive — existing subscribers ignore the field.
+		if s.notif != nil {
+			payload := fmt.Sprintf(`{"kind":"cancel","status":"cancelled","app_id":"%s","deployment_id":"%s","to":"%s"}`,
+				app.ID, d.ID, d.ID)
+			if err := s.notif.Notify(ctx, db.NotifyDeploymentChanged, payload); err != nil {
+				slog.Warn("apid: cancel deployment_changed notify", "deployment", d.ID, "err", err)
+			}
+		}
 		// ADR-124: fire one build_changed pg_notify per cascade-cancelled
 		// build so builderd's cancel-LISTEN goroutine can call VM.Cancel
 		// on each in-flight VM. Fire-and-forget — the row flip already
 		// succeeded; the VM kill is best-effort (ReaperLoop is the safety net).
-		ctx := r.Context()
 		for _, buildID := range cancelledBuilds {
 			payload := buildChangedPayload{BuildID: buildID, DeploymentID: id, Status: "cancelled", Reason: string(reason), Cascade: true}
 			raw, _ := json.Marshal(payload)
@@ -190,7 +208,7 @@ func (s *server) handleClearDeployment(w http.ResponseWriter, r *http.Request, a
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such deployment")
 		case errors.Is(err, state.ErrCancelLiveForbidden):
-			api.WriteProblem(w, api.ErrDeploymentCancelLiveForbidden(id))
+			api.WriteProblem(w, api.ErrDeploymentClearLiveForbidden(id))
 		default:
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "clear failed", err.Error()))
 		}

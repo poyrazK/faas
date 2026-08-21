@@ -5145,7 +5145,7 @@ func (s *PgStore) MarkDeploymentCancelled(ctx context.Context, id, principal str
 		       cancelled_by_principal = $4,
 		       cancel_reason = $5
 		 WHERE id = $1
-		   AND status = $2_old`,
+		   AND status = $6`,
 		id,
 		string(DeployCancelled),
 		when.UTC(),
@@ -5205,8 +5205,10 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 	// Lock the parent apps row to serialise against concurrent
 	// UpdateApp flips and another CreateDeployment on the same
 	// app. Mirrors pkg/state/pgstore.go:4185-4199 (the canonical
-	// CreateDeployment tx-pattern).
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM apps WHERE id = $1 AND status = 'active' FOR UPDATE`, appID); err != nil {
+	// CreateDeployment tx-pattern). QueryRow (not Exec) so a
+	// future SELECT-with-payload change still gets the row.
+	var appLocked int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM apps WHERE id = $1 AND status = 'active' FOR UPDATE`, appID).Scan(&appLocked); err != nil {
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: lock apps row: %w", err)
 	}
 
@@ -5361,14 +5363,14 @@ func (s *PgStore) ClearObsoleteDeployments(ctx context.Context, appID string, ol
 		       deleted_by_principal = 'system'
 		 WHERE app_id = $1
 		   AND status IN ('superseded', 'failed', 'cancelled')
-		   AND enqueued_at < $2
+		   AND created_at < $2
 		   AND deleted_at IS NULL
 		   AND id NOT IN (
 		         SELECT id FROM (
 		           SELECT id,
 		                  ROW_NUMBER() OVER (
 		                    PARTITION BY app_id
-		                    ORDER BY enqueued_at DESC, id
+		                    ORDER BY created_at DESC, id
 		                  ) AS rn
 		             FROM deployments
 		            WHERE app_id = $1
@@ -13467,7 +13469,7 @@ const deploymentSelectColumnsWithRootfs = `
 	stage_state,
 	coalesce(deployed_by_user_id::text,''), deployed_via, coalesce(host(deployed_from_ip),''), coalesce(pusher_login,''),
 	coalesce(reason,''), coalesce(tag,''), coalesce(deployed_by,''), pr_number,
-	-- ADR-124 deployment queue controls (migration 00360). priority
+	-- ADR-124 deployment queue controls (migration 00353). priority
 	-- is NOT NULL DEFAULT 100 so the coalesce is purely for symmetry
 	-- with the rest of the projection (and for the rare pre-PR #X
 	-- backfill window). cancelled_*/cancel_reason are nullable so the
@@ -13513,7 +13515,7 @@ const deploymentSelectColumnsQualified = `
 	d.stage_state,
 	coalesce(d.deployed_by_user_id::text,''), d.deployed_via, coalesce(host(d.deployed_from_ip),''), coalesce(d.pusher_login,''),
 	coalesce(d.reason,''), coalesce(d.tag,''), coalesce(d.deployed_by,''), d.pr_number,
-	-- ADR-124 deployment queue controls (migration 00360). See the
+	-- ADR-124 deployment queue controls (migration 00353). See the
 	-- unqualified-projection counterpart above for the rationale on
 	-- coalesce choices.
 	coalesce(d.priority, 100), coalesce(d.reordered_by_principal, ''),
@@ -13614,7 +13616,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		// the INSERT side and a plain int column on the SELECT side,
 		// scanned via the *int local returned as nil for NULL.
 		&d.Reason, &d.Tag, &d.DeployedBy, &prNumber,
-		// ADR-124 deployment queue controls (migration 00360). The
+		// ADR-124 deployment queue controls (migration 00353). The
 		// scan order mirrors the SELECT projection above — see the
 		// docblock on deploymentSelectColumnsWithRootfs for the
 		// "lockstep or pgx panic" invariant.

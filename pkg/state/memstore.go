@@ -4230,7 +4230,7 @@ func (m *MemStore) CancelDeploymentTx(ctx context.Context, id, principal string,
 
 // ReorderDeployment (ADR-124) — memstore mirror. The CAS guard
 // enforces status='pending'. Priority range [0, 1000] is checked
-// here and again in the SQL CHECK (migration 00362).
+// here and again in the SQL CHECK (migration 00355).
 func (m *MemStore) ReorderDeployment(_ context.Context, id string, newPriority int, principal string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -88,7 +88,7 @@ const (
 	// DeploySuperseded: cancel is a user-driven retract of a
 	// non-live row, while superseded is a system-driven event
 	// triggered by a newer deployment landing. The closed-set
-	// schema CHECK constraint migrations/00360 widens to accept
+	// schema CHECK constraint migrations/00353 widens to accept
 	// this value.
 	DeployCancelled DeploymentStatus = "cancelled"
 )
@@ -240,7 +240,7 @@ const (
 	// the CancelDeploymentTx deployment-driven cascade
 	// (`cancelled_by_deployment_cascade=true`) and via a future
 	// direct build-cancel path that flips the boolean to false.
-	// The closed-set schema CHECK constraint migrations/00361
+	// The closed-set schema CHECK constraint migrations/00354
 	// widens to accept this value.
 	BuildCancelled BuildStatus = "cancelled"
 )
@@ -256,7 +256,7 @@ const (
 )
 
 // CancelReason is the closed-set label on
-// deployments.cancel_reason (ADR-124, migration 00360). Mirrors
+// deployments.cancel_reason (ADR-124, migration 00353). Mirrors
 // the ParkReason precedent at :155-194 — the schema CHECK
 // constraint deployments_cancel_reason_check enforces the same
 // vocabulary at the storage layer; this Go type exists so
@@ -1226,7 +1226,7 @@ type Deployment struct {
 	RootfsBytes int64
 	Status      DeploymentStatus
 	// Priority is the deployment-queue priority (lower = run
-	// sooner). Range [0, 1000], default 100. Migration 00362
+	// sooner). Range [0, 1000], default 100. Migration 00355
 	// widens the column CHECK + adds the partial index that
 	// builderd's claim path reads (ADR-124).
 	Priority int
@@ -1260,7 +1260,7 @@ type Deployment struct {
 	// CancelledAt is the wall-clock at which the row transitioned
 	// to DeployCancelled. Set by MarkDeploymentCancelled /
 	// CancelDeploymentTx (ADR-124). Populates the `cancelled_at`
-	// column added in migration 00360. Nil for every other row.
+	// column added in migration 00353. Nil for every other row.
 	CancelledAt *time.Time
 	// CancelledByPrincipal is the opaque principal who initiated
 	// the cancel (account owner / API key id / "operator:<u>").

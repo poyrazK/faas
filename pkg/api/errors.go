@@ -559,6 +559,14 @@ const (
 	// for the canonical 409 Problem with the deploys-rollback
 	// hint.
 	CodeDeploymentCancelLiveForbidden = "deployment_cancel_live_forbidden"
+	// CodeDeploymentClearLiveForbidden (ADR-124) is returned by
+	// DELETE /v1/deployments/{id} when the row is already in
+	// DeployLive. Distinct from CodeDeploymentCancelLiveForbidden
+	// because the fix path is different: clear-of-live has no
+	// well-defined escape today (no rollback-equivalent exists for
+	// soft-delete), so the hint points at the customer's existing
+	// rollback surface as the next-best action.
+	CodeDeploymentClearLiveForbidden = "deployment_clear_live_forbidden"
 	// CodeDeploymentCancelNotCancellable is returned when the
 	// row's status is in {failed, superseded, cancelled} — i.e.
 	// the row is already terminal and the cancel is meaningless.
@@ -1391,8 +1399,8 @@ func StatusForCode(code string) int {
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget,
-		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
-		CodeDeploymentReorderNotPending:
+		CodeDeploymentCancelLiveForbidden, CodeDeploymentClearLiveForbidden,
+		CodeDeploymentCancelNotCancellable, CodeDeploymentReorderNotPending:
 		return http.StatusConflict
 	case CodeTrafficPercentSumInvalid:
 		// 409 — issue #556. Σ(traffic_percent WHERE status='live')
@@ -3021,6 +3029,23 @@ func ErrDeploymentCancelLiveForbidden(id string) *Problem {
 		WithFix("Run: gregale deploys rollback --app <slug> --to <previous-deployment-id>").
 		WithWhy("Cancelling a live deployment has no well-defined semantics: it would either scale the app to zero (kills §6.2 INV 4) or park the app (kills INV 3). The deploys-rollback path is the user-correct escape.").
 		WithDocs(docsBase + "/deploys#cancel")
+}
+
+// ErrDeploymentClearLiveForbidden (ADR-124) is returned by
+// DELETE /v1/deployments/{id} when the row is already in
+// DeployLive. Distinct code from ErrDeploymentCancelLiveForbidden
+// because the verbs are different on the wire: a dashboard that
+// sees 'cancel' will route the user to rollback, but a dashboard
+// that sees 'clear' needs to know clear-of-live is currently
+// unsupported (no soft-delete equivalent for live). 409 Conflict.
+func ErrDeploymentClearLiveForbidden(id string) *Problem {
+	return NewProblem(http.StatusConflict, CodeDeploymentClearLiveForbidden,
+		"Cannot clear a live deployment",
+		fmt.Sprintf("deployment %s is live; clearing a live row would orphan the §6.2 INV 3 'always-live-snapshot-OR-rootfs' guarantee, identical to cancel-of-live.", id)).
+		WithHint("Use 'gregale deploys rollback <id>' to swap to a previous deployment, then clear the old row.").
+		WithFix("Run: gregale deploys rollback --app <slug> --to <previous-deployment-id>").
+		WithWhy("Clear-of-live is structurally identical to cancel-of-live: both leave the app with no current row. The deploys-rollback path is the user-correct escape.").
+		WithDocs(docsBase + "/deploys#clear")
 }
 
 // ErrDeploymentCancelNotCancellable (ADR-124) is returned when

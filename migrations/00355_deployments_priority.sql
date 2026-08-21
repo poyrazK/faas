@@ -10,11 +10,15 @@
 -- existing fairness ordering.
 --
 -- The partial index covers the only claim path that matters:
---   WHERE status = 'pending' ORDER BY priority ASC, enqueued_at ASC
+--   WHERE status = 'pending' ORDER BY priority ASC, created_at ASC
 -- which builderd reads when the dashboard's "deploy-immediately" button
 -- bumps a queued row's priority. Existing FIFO claimers that ignore
 -- priority still work — the index is a prefix and the (priority,
--- enqueued_at) tuple orders correctly when priorities are equal.
+-- created_at) tuple orders correctly when priorities are equal.
+-- (Note: this index uses `created_at` rather than `enqueued_at` —
+-- `enqueued_at` is a `builds` column from migrations/00027; on
+-- deployments, `created_at` is the row's submission timestamp and is
+-- semantically the queue-arrival time.)
 ALTER TABLE deployments
   ADD COLUMN IF NOT EXISTS priority int NOT NULL DEFAULT 100;
 
@@ -25,7 +29,7 @@ ALTER TABLE deployments
   CHECK (priority BETWEEN 0 AND 1000);
 
 CREATE INDEX IF NOT EXISTS deployments_pending_priority_idx
-  ON deployments (app_id, priority, enqueued_at)
+  ON deployments (app_id, priority, created_at)
   WHERE status = 'pending';
 -- +goose StatementEnd
 
