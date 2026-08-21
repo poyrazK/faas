@@ -137,22 +137,28 @@
     zero new schema (the diff package consumes the existing
     `pkg/apid/openapi.yaml`). Mega PR #2 is zero-schema.
   - **Migration slot coordination.** Mega PR #1 starts at
-    `00342_deployment_audit.sql` (renumbered through 8 hops:
+    `00348_deployment_audit.sql` (renumbered through 10 hops:
     `00320 → 00322 → 00324 → 00326 → 00327 → 00330 → 00332 →
-    00334 → 00342` to clear open-PR slots #999 #990 #1004 #1000 +
-    post-merge of PR #999's `00326_apps_public_auth_ip_allowlist.sql`
-    on origin/main + the round-4 fence-collision on main's
-    `00327_reserve_slot.sql` + `00328_reserve_slot.sql` fences +
-    main's `00329_consumer_keys.sql` real migration + the
-    round-5 collision with open PR #1005's
+    00334 → 00342 → 00346 → 00348` to clear open-PR slots
+    #999 #990 #1004 #1000 + post-merge of PR #999's
+    `00326_apps_public_auth_ip_allowlist.sql` on origin/main +
+    the round-4 fence-collision on main's `00327_reserve_slot.sql`
+    + `00328_reserve_slot.sql` fences + main's
+    `00329_consumer_keys.sql` real migration + the round-5
+    collision with open PR #1005's
     `00330_deployment_openapi_snapshots.sql` real migration +
     the round-6 contiguity gap created by PR #1005's
-    reservation fences at slots `00331`/`00332`/`00333` + the
-    round-9 rebase-vs-main bump past main's fence ceiling
+    reservation fences at slots `00331`/`00332`/`00333` +
+    the round-9 rebase-vs-main bump past main's fence ceiling
     `00339` and main's `00341_repair_app_secrets_scope.sql`
-    real migration). The backfill sits at
-    `00343_deployment_audit_backfill_90d.sql`. The cross-PR
-    slot precheck
+    real migration + the round-10 rebase-vs-main bump past
+    main's `00345_edge_rules_kind_cache.sql` real migration
+    that landed via PR #1008 + #1013 + the round-11
+    rebase-vs-main bump past main's
+    `00346_deployments_annotation.sql` real migration that
+    landed via PR #984 merging mid-round-10). The backfill
+    sits at `00349_deployment_audit_backfill_90d.sql`. The
+    cross-PR slot precheck
     (`scripts/ci/check_migration_slots.sh --base-ref=origin/main`)
     must be re-run at every push — the open-PR slot landscape
     moves every few hours under a saturated CI queue. Per
