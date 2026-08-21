@@ -405,7 +405,7 @@ func deriveTerminalAt(ss state.StageState, status string, depCreatedAt time.Time
 // set-min-instances and would otherwise grow a third surface.
 func cmdDeploys(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deploys <subcommand> [flags]   (subcommands: show, status)", "deploys")
+		PrintUsage(os.Stderr, "usage: gregale deploys <subcommand> [flags]   (subcommands: show, status, cancel, reorder, clear, clear-obsolete)", "deploys")
 		return 1
 	}
 	switch args[0] {
@@ -419,7 +419,15 @@ func cmdDeploys(args []string) int {
 		// parallel dispatchDeploysStatus const that drifted
 		// silently if anyone renamed statusLiteral).
 		return cmdDeploysStatus(args[1:])
+	case "cancel":
+		return cmdDeploysCancel(args[1:])
+	case "reorder":
+		return cmdDeploysReorder(args[1:])
+	case "clear":
+		return cmdDeploysClear(args[1:])
+	case "clear-obsolete":
+		return cmdDeploysClearObsolete(args[1:])
 	}
-	PrintUsage(os.Stderr, "usage: gregale deploys <subcommand> [flags]   (subcommands: show, status)", "deploys")
+	PrintUsage(os.Stderr, "usage: gregale deploys <subcommand> [flags]   (subcommands: show, status, cancel, reorder, clear, clear-obsolete)", "deploys")
 	return 1
 }
