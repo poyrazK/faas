@@ -562,7 +562,7 @@ func defaultDeps() runDeps {
 	return runDeps{
 		configPath: "/etc/faas/meterd.toml",
 		openDB:     db.Open,
-		migrate:    db.MigrateUp,
+		migrate:    db.MigrateUp, // F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap
 		loadMeter:  func(c *Config) (*meter.Config, error) { return c.Meter, nil },
 		getenv:     os.Getenv,
 		dialSchedd: func(ctx context.Context, target string, tlsCfg *tls.Config) (parkInstanceParker, error) {

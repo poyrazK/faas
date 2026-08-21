@@ -85,6 +85,7 @@ func defaultDeps() runDeps {
 	return runDeps{
 		openDB: db.Open,
 		migrate: func(ctx context.Context, pool *pgxpool.Pool) error {
+			// F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap.
 			return db.MigrateUp(ctx, pool)
 		},
 		lvUsedPct:  imaged.DefaultLvFcUsedPct(imaged.LvFcName),

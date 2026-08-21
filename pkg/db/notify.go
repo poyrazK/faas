@@ -120,6 +120,13 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         meterd → dashboard: paid-tier overage crossed
 //	                         100 %; apps keep running, overage accrues at
 //	                         €0.01/GB-h (spec §1, §10).
+//	NotifyMigrationsApplied {"version_id":int64}
+//	                         the leader's goose-up landed a migration at
+//	                         MAX(version_id) of goose_db_version (migration
+//	                         00347 trigger). cmd/migrate -wait-for-migrations
+//	                         unblocks and re-reads the ledger before
+//	                         declaring the fleet caught up. ADR-124 amendment
+//	                         / PR-2 / audit F2-B.
 //	NotifyCronFired         {"cron_id":uuid, "app_id":uuid, "at":rfc3339nano}
 //	                         schedd → dashboard: a synthetic cron request
 //	                         was dispatched through gatewayd-internal so metering
@@ -174,6 +181,16 @@ const (
 	NotifyDomainChanged     = "domain_changed"
 	NotifyCronChanged       = "cron_changed"
 	NotifyTriggerChanged    = "trigger_changed"
+	// NotifyMigrationsApplied fires when the migration_notify_trg
+	// (migration 00347) inserts a row into goose_db_version at the
+	// leading edge of the ledger. cmd/migrate -wait-for-migrations
+	// subscribes via cmd/migrate/wait.go::WaitForMigrationsApplied
+	// so non-leader daemons block until the leader's last migration
+	// lands before opening their own connection (PR-2 / audit F2-B /
+	// ADR-124 amendment). The payload is the decimal version_id; the
+	// waiter re-reads the ledger to confirm v == MaxEmbedded before
+	// returning, so a spurious early fire is harmless.
+	NotifyMigrationsApplied = "migrations_applied"
 	// NotifyTriggerReady fires when a row is inserted into
 	// trigger_records (migrations/00297_triggers.sql). schedd's
 	// dispatch tick consumes via cmd/schedd/main.go's existing

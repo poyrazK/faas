@@ -77,3 +77,21 @@ The notify fires on `compute_nodes` mutations; there's no equivalent for `goose_
 
 - PR-2 — `cmd/migrate -leader` mode + `WaitForMigrationsApplied` + `migrations_applied` notify trigger.
 - This ADR is the foundation; subsequent cluster PRs (PR-3, PR-4, PR-5) assume PR-1 has landed because their migrations run inside the lock.
+
+## Amendment (2026-08-21, PR-2)
+
+The prod boot order is `cmd/migrate -leader` on box A first, then every other daemon with `-wait-for-migrations` before its own `db.MigrateUp`. The advisory lock is the **safety net** for the case where the operator launches all daemons in parallel without the leader ordering (e.g. an `ansible` one-shot across the fleet, a kubernetes rolling deploy, a CI step that runs `migrate -default` and then boots a daemon before the leader finishes). With the leader pattern the lock is rarely contended in steady-state; without it the lock is the load-bearing serialisation. Both layers ship.
+
+Three concrete pieces of the leader pattern (PR-2):
+
+1. `cmd/migrate -leader` is identical to the default mode except it logs `mode=leader` so operators and monitoring can attribute the boot ordering. The behaviour — `MigrateUp` then exit — is unchanged.
+
+2. `cmd/migrate -wait-for-migrations` does NOT call `MigrateUp`. It blocks on `pg_notify('migrations_applied')` (new channel constant `db.NotifyMigrationsApplied`) and a 5-second safety-net poll on the ledger. Subscribes BEFORE the first poll so a leader commit between the initial SELECT and the LISTEN cannot be lost. Returns when `MAX(version_id) >= MaxEmbedded`. The non-leader daemon's own `MigrateUp` runs after this helper returns.
+
+3. Migration `00347_migration_notify.sql` adds `migration_notify_trg` on `goose_db_version` INSERT, which fires `pg_notify('migrations_applied', NEW.version_id::text)` ONLY when `NEW.version_id = (SELECT MAX(version_id) FROM goose_db_version)` AND `NEW.is_applied = true`. The waiter treats the payload as informational and re-reads the ledger directly, so spurious early fires are harmless.
+
+The leader pattern does NOT replace the advisory lock; both run in production. The lock prevents concurrent migration; the leader prevents out-of-order migration. Removing either layer reintroduces a fleet-bootstrap race the other layer cannot catch (concurrent without lock = 23505; out-of-order without leader = box B sees its own schema-dump output but not box A's fresh columns when B races A's last-migration-in-flight).
+
+Reservation fences `00348`-`00350` are absorbed by subsequent cluster PRs (PR-3 fleet signing key, PR-5 wakeCoord). No code path outside the migration-advisory primitives (lock + trigger + leader/waiter) changes in PR-2.
+
+The call-site audit in `pkg/db/migrate.go` enumerates the seven `MigrateUp` callers and the one deliberate bypass (`cmd/migrate -status` calls `db.Status` instead). Any future caller MUST route through `MigrateUp`; the lock is the cluster-wide invariant.

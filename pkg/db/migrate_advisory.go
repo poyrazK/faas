@@ -71,7 +71,9 @@ var ErrMigrationLockNotHeld = errors.New("db: migration lock not held")
 // on separate connections (the lock sits on a pgxpool connection; goose
 // uses a separate *sql.DB derived from the pool's ConnConfig). Both
 // paths in the same daemon must call this helper or skip it explicitly
-// (cmd/schema-dump's read-only -status path is the one explicit skip).
+// (cmd/migrate -status calls db.Status instead of MigrateUp; that path
+// is the only deliberate skip and is documented at the docstring on
+// MigrateUp itself).
 func AcquireMigrationLock(ctx context.Context, pool *pgxpool.Pool) (release func() error, err error) {
 	if pool == nil {
 		return nil, errors.New("db: AcquireMigrationLock: nil pool")

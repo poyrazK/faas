@@ -30,6 +30,24 @@ import (
 // INSERT's unique-key violation — fleet bootstrap becomes a Russian
 // roulette of panic logs.
 //
+// PR-2 audit: every MigrateUp call site in the repo goes through this
+// function (and therefore acquires the lock). The six known sites are:
+//
+//	cmd/builderd/main.go      runDeps.migrate = db.MigrateUp
+//	cmd/meterd/main.go        runDeps.migrate = db.MigrateUp
+//	cmd/schedd/main.go        runDeps.migrate = db.MigrateUp
+//	cmd/apid/main.go          db.MigrateUp(ctx, pool)  (direct)
+//	cmd/schema-dump/main.go   db.MigrateUp(ctx, pool)  (direct; always acquires)
+//	cmd/imaged/main.go        runDeps.migrate closure wrapping db.MigrateUp
+//	cmd/migrate/main.go       db.MigrateUp(ctx, pool)  (-leader mode + default)
+//
+// The only path that deliberately bypasses MigrateUp is `cmd/migrate
+// -status`, which calls db.Status (read-only ledger query) and never
+// opens the goose shim. That path is the "I just want to know the
+// current version without holding the lock" surface used by CI
+// pre-checks; it MUST NOT acquire the lock (otherwise a CI step that
+// runs in parallel with a fleet bootstrap would deadlock).
+//
 // Goose is run via the standard database/sql interface rather than pgx
 // directly because goose maintains its own connection state and the pgx stdlib
 // shim gives us both: pgx's connection pool plus goose's migration runner.

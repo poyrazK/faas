@@ -121,6 +121,10 @@ func (liveRunner) openPool(ctx context.Context) (poolCloser, error) {
 	if err != nil {
 		return nil, err
 	}
+	// F2 / ADR-124 / PR-2 audit: schema-dump always applies migrations
+	// before pg_dump so the dump reflects HEAD; this acquires the lock
+	// just like every daemon. The fast no-migration path skips this
+	// call via db.Status() in cmd/migrate -status (different binary).
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		pool.Close()
 		return nil, err
