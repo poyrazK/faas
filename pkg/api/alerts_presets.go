@@ -91,22 +91,13 @@ type AlertPresetRow struct {
 }
 
 // AlertPresetResponseFromRow maps a row to the response DTO. Used
-// at the pkg/api ↔ pkg/state boundary.
+// at the pkg/api ↔ pkg/state boundary. Staticcheck S1016 allows the
+// struct conversion because AlertPresetRow and AlertPresetResponse
+// share identical field names + types in the same order — keeping
+// the wire-jSON tags on the response side while letting the row
+// stay untagged.
 func AlertPresetResponseFromRow(r AlertPresetRow) AlertPresetResponse {
-	return AlertPresetResponse{
-		ID:                     r.ID,
-		Name:                   r.Name,
-		DisplayName:            r.DisplayName,
-		Description:            r.Description,
-		Category:               r.Category,
-		Metric:                 r.Metric,
-		Comparison:             r.Comparison,
-		Threshold:              r.Threshold,
-		WindowSpec:             r.WindowSpec,
-		DefaultCooldownMinutes: r.DefaultCooldownMinutes,
-		MinimumPlan:            r.MinimumPlan,
-		EnabledInCatalog:       r.EnabledInCatalog,
-	}
+	return AlertPresetResponse(r)
 }
 
 // EnableAlertPresetRequest is the POST /v1/apps/{slug}/alert-presets/{name}/enable
