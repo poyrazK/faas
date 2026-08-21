@@ -6,6 +6,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/reconciler"
 )
 
+// DefaultCertExpiryRefresherInterval is the production cadence
+// for the ADR-123 cert-expiry refresher (issue #1233). The renewer
+// bot updates tenant_surfaces.cert_not_after daily; one hour keeps
+// the gauge within ~4 % of true remaining-seconds even if a
+// renewal slips. Mirrored in cmd/meterd/alert_presets_ticks.go
+// so the goroutine's standalone nil-default path stays consistent
+// with pkg/meter.Config.Defaults().
+const DefaultCertExpiryRefresherInterval = 1 * time.Hour
+
+// DefaultAccountSpendAggregatorInterval is the production cadence
+// for the ADR-123 MTD-spend gauge refresher. The upstream
+// account_spend_snapshot is fed by the RollupLoop tick every
+// 5 min, so refreshing the gauge faster than that is wasted work.
+// Mirrored in cmd/meterd/alert_presets_ticks.go.
+const DefaultAccountSpendAggregatorInterval = 5 * time.Minute
+
 // Config is the meterd daemon's TOML-backed settings. Defaults match
 // the spec §4.7 cadence:
 //
@@ -96,6 +112,23 @@ type Config struct {
 	// rolling window of pre-created data_upstream_probes
 	// partitions. Zero means the production default (1 h).
 	UpstreamPartitionCreateInterval time.Duration
+	// CertExpiryRefresherInterval (ADR-123) is how often the
+	// apid_tenant_surface_cert_expiry refresher walks
+	// tenant_surfaces WHERE cert_state='issued', upserts the
+	// apid_tenant_surface_cert_expiry_state mirror, and stamps
+	// the apid_tenant_surface_cert_expiry_seconds gauge.
+	// Zero means the production default (1 h). The renewer bot
+	// rotates certs daily, so 1 h keeps the gauge within ~4 % of
+	// true remaining-seconds even if a renewal slips.
+	CertExpiryRefresherInterval time.Duration
+	// AccountSpendAggregatorInterval (ADR-123) is how often
+	// the MTD-spend gauge refresher walks every account and
+	// stamps meterd_account_spend_eur{account_id}. Zero means
+	// the production default (5 min). The upstream
+	// account_spend_snapshot row is fed by the RollupLoop
+	// tick every 5 min, so refreshing faster than that is
+	// wasted work.
+	AccountSpendAggregatorInterval time.Duration
 	// ScheddSocket is the unix socket meterd dials for ParkInstance.
 	ScheddSocket string
 	// NotifyBackend is the db.Notify implementation; defaults to the
@@ -141,5 +174,11 @@ func (c *Config) Defaults() {
 	}
 	if c.UpstreamPartitionCreateInterval == 0 {
 		c.UpstreamPartitionCreateInterval = DefaultUpstreamPartitionCreateInterval
+	}
+	if c.CertExpiryRefresherInterval == 0 {
+		c.CertExpiryRefresherInterval = DefaultCertExpiryRefresherInterval
+	}
+	if c.AccountSpendAggregatorInterval == 0 {
+		c.AccountSpendAggregatorInterval = DefaultAccountSpendAggregatorInterval
 	}
 }

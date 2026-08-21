@@ -11164,6 +11164,75 @@ func (m *MemStore) MinCertExpiryForApp(_ context.Context, accountID, appID strin
 	return *minSec, nil
 }
 
+// RefreshCertExpiryStates walks every tenant_surfaces row whose
+// cert_state='issued', upserts the apid_tenant_surface_cert_expiry_state
+// mirror row, and stamps last_refreshed_at=now(). Returns the
+// number of rows upserted. Mirrors pgstore.RefreshCertExpiryStates
+// for tests. The hostname is the lexicographically-smallest
+// verified hostname on the surface (matches the
+// pkg/gateway.CertExpiry ordering at cert_expiry_surface.go:88-93)
+// so the surface row's hostname is deterministic.
+func (m *MemStore) RefreshCertExpiryStates(_ context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	now := time.Now()
+	for _, ts := range m.tenantSurfaces {
+		if ts.CertState != CertStateIssued {
+			continue
+		}
+		var notAfter *time.Time
+		status := "ok"
+		if !ts.CertNotAfter.IsZero() {
+			t := ts.CertNotAfter
+			notAfter = &t
+		} else {
+			status = "cert_unissued"
+		}
+		// Pick the primary hostname — sort-by-hostname matches
+		// pkg/gateway.CertExpiry so the on-disk cert the alert
+		// evaluator reads is the same one the issuer wrote.
+		hostname := ts.Name
+		for _, h := range m.tenantHostnames {
+			if h.SurfaceID != ts.ID || h.VerifiedAt.IsZero() {
+				continue
+			}
+			if h.Hostname < hostname {
+				hostname = h.Hostname
+			}
+		}
+		m.tenantSurfaceCertExpiryStates[ts.ID] = TenantSurfaceCertExpiryState{
+			TenantSurfaceID:         ts.ID,
+			AccountID:               ts.AccountID,
+			AppID:                   ts.AppID,
+			Hostname:                hostname,
+			LastObservedCertNotAfter: notAfter,
+			LastWalkStatus:          status,
+			LastRefreshedAt:         now,
+		}
+		n++
+	}
+	return n, nil
+}
+
+// ListCertExpiryStateForWalker returns every row in
+// apid_tenant_surface_cert_expiry_state whose last_refreshed_at
+// is fresher than (now - staleCutoff). The refresher uses this
+// to stamp the apid_tenant_surface_cert_expiry_seconds gauge.
+func (m *MemStore) ListCertExpiryStateForWalker(_ context.Context, staleCutoff time.Duration) ([]TenantSurfaceCertExpiryState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cutoff := time.Now().Add(-staleCutoff)
+	var out []TenantSurfaceCertExpiryState
+	for _, s := range m.tenantSurfaceCertExpiryStates {
+		if s.LastRefreshedAt.Before(cutoff) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 // UpdateEdgeRule mirrors the pgstore nil-skip semantics. Action
 // replacement is whole-struct (no partial jsonb merge in MemStore).
 func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRuleParams) (EdgeRule, error) {

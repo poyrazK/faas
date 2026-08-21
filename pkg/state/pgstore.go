@@ -7455,6 +7455,70 @@ func (s *PgStore) MinCertExpiryForApp(ctx context.Context, accountID, appID stri
 	return *minSeconds, nil
 }
 
+// RefreshCertExpiryStates walks every tenant_surfaces row whose
+// cert_state='issued', upserts the apid_tenant_surface_cert_expiry_state
+// mirror row, and stamps last_refreshed_at=now(). Called by the
+// meterd cert-expiry refresher goroutine on a 1-hour cadence
+// (issue #1233 / ADR-123). Returns the number of rows upserted.
+//
+// ON CONFLICT (tenant_surface_id) DO UPDATE keeps the per-host
+// last_observed_cert_not_after in sync with the parent's cert_not_after
+// (which the renewer bot may rotate daily). The status is
+// 'ok' on a clean upsert; 'cert_unissued' on a parent whose
+// cert_not_after is NULL despite cert_state='issued' (defensive
+// — the CHECK in 00243 should prevent it but we don't crash on
+// the defensive read).
+func (s *PgStore) RefreshCertExpiryStates(ctx context.Context) (int, error) {
+	tag, err := s.pool.Exec(ctx, `
+		insert into apid_tenant_surface_cert_expiry_state (
+			tenant_surface_id, account_id, app_id, hostname,
+			last_observed_cert_not_after, last_walk_status, last_refreshed_at
+		)
+		select ts.id, ts.account_id, ts.app_id, ts.hostname,
+		       ts.cert_not_after,
+		       case when ts.cert_not_after is null then 'cert_unissued' else 'ok' end,
+		       now()
+		  from tenant_surfaces ts
+		 where ts.cert_state = 'issued'
+		on conflict (tenant_surface_id) do update set
+			last_observed_cert_not_after = excluded.last_observed_cert_not_after,
+			last_walk_status              = excluded.last_walk_status,
+			last_refreshed_at             = excluded.last_refreshed_at`)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// ListCertExpiryStateForWalker returns every row in
+// apid_tenant_surface_cert_expiry_state whose last_refreshed_at
+// is fresher than (now() - staleCutoff). The refresher uses this
+// to stamp the apid_tenant_surface_cert_expiry_seconds gauge.
+func (s *PgStore) ListCertExpiryStateForWalker(ctx context.Context, staleCutoff time.Duration) ([]TenantSurfaceCertExpiryState, error) {
+	rows, err := s.pool.Query(ctx, `
+		select tenant_surface_id, account_id, app_id, hostname,
+		       last_observed_cert_not_after, last_walk_status, last_refreshed_at
+		  from apid_tenant_surface_cert_expiry_state
+		 where last_refreshed_at >= now() - ($2 || ' seconds')::interval`,
+		staleCutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TenantSurfaceCertExpiryState
+	for rows.Next() {
+		var r TenantSurfaceCertExpiryState
+		var notAfter *time.Time
+		if err := rows.Scan(&r.TenantSurfaceID, &r.AccountID, &r.AppID, &r.Hostname,
+			&notAfter, &r.LastWalkStatus, &r.LastRefreshedAt); err != nil {
+			return nil, err
+		}
+		r.LastObservedCertNotAfter = notAfter
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // UpdateEdgeRule coalesces the optional fields onto edge_rules. The
 // nil-skip pattern is identical to UpdateAlertRule; Action uses the
 // `case when $N then $N+1::jsonb else action end` shape so a nil

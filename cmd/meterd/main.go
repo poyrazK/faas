@@ -778,6 +778,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// flag is on. A bad parse logs and falls through to mc.Defaults().
 	applyEnvTick("FAAS_UPSTREAM_PROBE_INTERVAL", &mc.UpstreamProbeInterval, deps.getenv, log)
 	applyEnvTick("FAAS_UPSTREAM_PROBE_PARTITION_INTERVAL", &mc.UpstreamPartitionCreateInterval, deps.getenv, log)
+	// ADR-123: cert-expiry refresher + MTD spend aggregator
+	// cadences. Defaults live in cmd/meterd/alert_presets_ticks.go
+	// so the loops and the env-tick parser share the same source
+	// of truth.
+	applyEnvTick("FAAS_CERT_EXPIRY_REFRESHER_INTERVAL", &mc.CertExpiryRefresherInterval, deps.getenv, log)
+	applyEnvTick("FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL", &mc.AccountSpendAggregatorInterval, deps.getenv, log)
 
 	// Dunning timer: drives the 7-day past_due → suspended and 21-day
 	// suspended → deleted_pending transitions (spec §4.7, §17). Wired
@@ -926,6 +932,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-049 §B.4: 13-month retention DELETE cron. The pool
 	// satisfies the retentionExecer contract.
 	go meter.RetentionLoop(ctx, poolAdapter{pool}, mc.RetentionInterval, log)
+
+	// ADR-123 / issue #1233: alert-preset signal-feeding
+	// goroutines. CertExpiryRefresherLoop feeds
+	// apid_tenant_surface_cert_expiry_seconds
+	// (alert preset cert_expiring_14d); AccountSpendAggregatorLoop
+	// feeds meterd_account_spend_eur (alert preset spend_eur_20).
+	// Both free-function goroutines share the loop ctx so the
+	// daemon's drain cancels them in one go.
+	go CertExpiryRefresherLoop(ctx, CertExpiryRefresherParams{
+		Store:    store,
+		Log:      log,
+		Ops:      ops,
+		Interval: mc.CertExpiryRefresherInterval,
+	})
+	go AccountSpendAggregatorLoop(ctx, AccountSpendAggregatorParams{
+		Store:    store,
+		Log:      log,
+		Ops:      ops,
+		Interval: mc.AccountSpendAggregatorInterval,
+	})
 
 	// Metrics + healthz listener. Mirrors cmd/schedd/main.go:143-158 —
 	// per-daemon Prometheus registry (ADR-015), mux at /metrics +
