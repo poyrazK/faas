@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -202,6 +203,36 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	if err != nil {
 		return gateway.App{}, false, err
 	}
+	// ADR-123: members_only mode consults apps.org_id at the
+	// gate, so we hydrate it here from the per-host LRU miss
+	// path. Adding org_id to state.App would inflate the
+	// scanApp column list and every downstream pgstore /
+	// memstore / apid-marshal surface for one bounded-time
+	// use, so the Store interface gains a narrow AppOrgID
+	// accessor instead. The per-host apps LRU makes toApp
+	// hit-once-per-TTL rather than per-request, so the extra
+	// round-trip is bounded by the LRU hit ratio. Returns
+	// "" on (a) pre-#190 rows where apps.org_id was NULL +
+	// (b) ErrNotFound paths (the app was deleted between the
+	// AppByID and the AppOrgID SELECT — extremely rare);
+	// surfaces the error otherwise. The gate uses
+	// empty-OrgID + nil-error to mean "misconfig" (500) and
+	// empty-OrgID + non-nil error to mean "transient pg
+	// failure" (503). The caller chain (customDomain /
+	// customPath / AccountBySlug) already returns (App, bool,
+	// error), so propagating here is a one-line change at the
+	// toApp exit.
+	orgID, err := r.store.AppOrgID(ctx, app.ID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		// Transient pg error — propagate so the upstream
+		// handler returns 503 instead of the gate's
+		// 500-misconfig 4xx. The LRU is empty-cached for
+		// this app (first-sight), so the next request will
+		// retry the lookup; sustained failures surface in
+		// the operator dashboard via the dep-store's
+		// error metric (pkg/state.StoreError).
+		return gateway.App{}, false, fmt.Errorf("AppOrgID for %s: %w", app.ID, err)
+	}
 	return gateway.App{
 		ID:               app.ID,
 		AccountID:        acct.ID,
@@ -217,6 +248,17 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		// raw forwarder. Default false on the App struct
 		// matches the apps.websocket_enabled column DEFAULT.
 		WebSocketEnabled: app.WebSocketEnabled,
+		// ADR-123: per-app ingress members_only mode looks
+		// up apps.org_id via the state.App.OrgID hydration
+		// that migration 00099 ships. Plumbed through so
+		// applyIngressMembersOnly can call
+		// pkg/authz.IsOrgMember(ctx, app.OrgID, accountID)
+		// without re-reading the database — same
+		// allocation-free-after-first-sight pattern as
+		// PublicAuth above. Empty for pre-00099 rows; the
+		// gate's first check (OrgID == "" → 500 misconfig)
+		// surfaces the data-drift on the next gate call.
+		OrgID: orgID,
 		// ADR-093: per-route observability opt-in. Plumbed
 		// from apps.route_metrics_enabled through pgRouter.toApp
 		// so Handler.ServeHTTP's routeSetFor (gated on
