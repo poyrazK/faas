@@ -1582,16 +1582,27 @@ type FireNowRequest struct {
 // payload verbatim so the evaluator and the customer-facing metrics
 // endpoint cannot drift. failed_invocations is the only non-Prometheus
 // metric; its source dimension comes through AlertRule.FailureSource.
+//
+// Issue #1233 / ADR-123 — extended with 5 metrics backing the alert
+// preset catalog (api_up / account_spend_eur / deployment_failed /
+// cert_expiry_seconds / queue_depth). The pkg/api.AllowedAlertRuleMetrics
+// slice and the alert_rules_metric_chk DB CHECK mirror these byte-for-byte
+// (migrations/00349_alert_rules_extend_metrics_chk.sql).
 type AlertMetric string
 
 const (
-	AlertMetricErrorRate    AlertMetric = "error_rate_pct"
-	AlertMetricLatencyP50   AlertMetric = "latency_p50_ms"
-	AlertMetricLatencyP95   AlertMetric = "latency_p95_ms"
-	AlertMetricLatencyP99   AlertMetric = "latency_p99_ms"
-	AlertMetricColdStartPct AlertMetric = "cold_start_pct"
-	AlertMetricRequestCount AlertMetric = "request_count"
-	AlertMetricFailedInvocs AlertMetric = "failed_invocations"
+	AlertMetricErrorRate         AlertMetric = "error_rate_pct"
+	AlertMetricLatencyP50        AlertMetric = "latency_p50_ms"
+	AlertMetricLatencyP95        AlertMetric = "latency_p95_ms"
+	AlertMetricLatencyP99        AlertMetric = "latency_p99_ms"
+	AlertMetricColdStartPct      AlertMetric = "cold_start_pct"
+	AlertMetricRequestCount      AlertMetric = "request_count"
+	AlertMetricFailedInvocs      AlertMetric = "failed_invocations"
+	AlertMetricAPIUp             AlertMetric = "api_up"
+	AlertMetricAccountSpendEUR   AlertMetric = "account_spend_eur"
+	AlertMetricFailedDeployments AlertMetric = "deployment_failed"
+	AlertMetricCertExpirySeconds AlertMetric = "cert_expiry_seconds"
+	AlertMetricQueueDepth        AlertMetric = "queue_depth"
 )
 
 // AlertComparison is the textual form of the comparison operator stored

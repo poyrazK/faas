@@ -63,6 +63,11 @@ const (
 // Kept in pkg/api (not pkg/state) so this DTO file stays free of the
 // pkg/api ↔ pkg/state import cycle — same precedent as the
 // pkg/api/dto.go cron block (precedent: PR #327 review).
+//
+// Issue #1233 / ADR-123 — extended from 7 to 12 metrics for the alert
+// preset catalog (api_up, account_spend_eur, deployment_failed,
+// cert_expiry_seconds, queue_depth). The DB CHECK constraint on
+// alert_rules.metric mirrors this list — see migrations/00349.
 var AllowedAlertRuleMetrics = []string{
 	"error_rate_pct",
 	"latency_p50_ms",
@@ -71,6 +76,11 @@ var AllowedAlertRuleMetrics = []string{
 	"cold_start_pct",
 	"request_count",
 	"failed_invocations",
+	"api_up",
+	"account_spend_eur",
+	"deployment_failed",
+	"cert_expiry_seconds",
+	"queue_depth",
 }
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
