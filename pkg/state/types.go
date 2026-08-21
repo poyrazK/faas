@@ -1587,7 +1587,7 @@ type FireNowRequest struct {
 // preset catalog (api_up / account_spend_eur / deployment_failed /
 // cert_expiry_seconds / queue_depth). The pkg/api.AllowedAlertRuleMetrics
 // slice and the alert_rules_metric_chk DB CHECK mirror these byte-for-byte
-// (migrations/00359_alert_rules_extend_metrics_chk.sql).
+// (migrations/00364_alert_rules_extend_metrics_chk.sql).
 type AlertMetric string
 
 const (
@@ -4228,7 +4228,7 @@ type CorsPreset struct {
 }
 
 // AccountSpendSnapshot is the in-memory row mirrored from
-// account_spend_snapshot (issue #1233 / ADR-123 / migrations/00360).
+// account_spend_snapshot (issue #1233 / ADR-123 / migrations/00365).
 // meterd ticks write one row per (account, source) per
 // AlertEvalInterval. The alert evaluator reads SUM(eur_cents)
 // for the MTD window via MTDSpendEurCents.
@@ -4249,7 +4249,7 @@ type AccountSpendSnapshot struct {
 
 // TenantSurfaceCertExpiryState is the in-memory row mirrored from
 // meterd_tenant_surface_cert_expiry_state (issue #1233 / ADR-123 /
-// migrations/00361). The meterd cert-expiry refresher goroutine
+// migrations/00366). The meterd cert-expiry refresher goroutine
 // (cmd/meterd/alert_presets_ticks.go) updates the
 // last_observed_cert_not_after + last_walk_status; the alert
 // evaluator reads MinCertExpiryForApp to compute the
@@ -4271,12 +4271,12 @@ type TenantSurfaceCertExpiryState struct {
 //
 // The struct is read-only at the Store boundary — there is no
 // Update / Delete / Create method on the Store interface for
-// alert_presets. The only write path is migration 00358's
+// alert_presets. The only write path is migration 00363's
 // idempotent seed.
 //
 // Comparison / Metric / WindowSpec mirror the alert_rules closed
 // vocabularies byte-for-byte (the DB CHECK constraints in
-// migrations/00357_alert_presets.sql pin this). When the
+// migrations/00362_alert_presets.sql pin this). When the
 // evaluator's `observe` dispatch learns a new metric, the catalog
 // can include it on the same PR — but a catalog entry MUST NOT
 // reference a metric the evaluator has not learned, or the

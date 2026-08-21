@@ -1,4 +1,4 @@
--- filename: 00358_alert_presets_seed.sql
+-- filename: 00363_alert_presets_seed.sql
 -- +goose Up
 -- +goose StatementBegin
 
@@ -85,7 +85,7 @@ INSERT INTO alert_presets (
     (
         'cert_expiring_14d',
         'Domain certificate is expiring',
-        'Fires when any of the app''s domain certificates has fewer than 14 days remaining. Backed by the meterd_tenant_surface_cert_expiry refresher walker (migrations/00361).',
+        'Fires when any of the app''s domain certificates has fewer than 14 days remaining. Backed by the meterd_tenant_surface_cert_expiry refresher walker (migrations/00366).',
         'infrastructure',
         'cert_expiry_seconds', 'lt', 1209600.0, '24h',
         1440, false, 'hobby'

@@ -43,7 +43,7 @@ PromQL path, 3 require new signals). The closed vocabulary at
 
 ### Catalog pattern — mirror cors_presets
 
-`alert_presets` is a fixed 8-row table seeded by migration `00358`. Rows
+`alert_presets` is a fixed 8-row table seeded by migration `00363`. Rows
 are owned by the system (meterd + apid boot roles are the only writers);
 customers have SELECT-only. Each row carries:
 
@@ -61,7 +61,7 @@ see the preset (mirrors the alert-rules plan gate at
 `cmd/apid/handlers_alerts.go:102-105`).
 
 Cardinality is bounded: 8 rows, no per-tenant data. The migration
-`00357_alert_presets.sql` enforces the closed-set CHECK constraints
+`00362_alert_presets.sql` enforces the closed-set CHECK constraints
 directly in SQL (defence in depth) and pins the metric vocabulary to
 exactly the 8 strings the evaluator will learn.
 
@@ -102,7 +102,7 @@ Three surfaces must learn them in lockstep:
 
 1. `pkg/api/alerts.go::AllowedAlertRuleMetrics` (line 66-74)
 2. `pkg/state/types.go::AlertMetric*` constants (line 1561-1569)
-3. `migrations/00359_alert_rules_extend_metrics_chk.sql` (DROP + ADD
+3. `migrations/00364_alert_rules_extend_metrics_chk.sql` (DROP + ADD
    `alert_rules_metric_chk`)
 
 The evaluator's `observe` dispatch (`pkg/alerts/evaluator.go::observe`
@@ -121,7 +121,7 @@ lines 473-531) gains 5 new cases:
   goroutine in meterd (the metric name keeps the legacy `apid_`
   prefix for backward-compat with deployed alert rules; the
   underlying table is meterd-owned per the CLAUDE.md ownership
-  rule and lives in `migrations/00361_meterd_…`).
+  rule and lives in `migrations/00366_meterd_…`).
 - **`queue_depth`** — PromQL path; the gauge `gateway_queue_depth{app}`
   already exists at `pkg/gateway/metrics.go:667` — we only need to
   surface it in `appmetrics.Fetch`.
@@ -178,7 +178,7 @@ enforced in code (the catalog has 8 rows and is system-owned).
   audit path the existing 7 metrics use. No new failure modes.
 - The catalog is a typed surface; future presets (TLS handshake latency,
   rate-limit headroom, ...) are just new seed inserts + evaluator cases.
-- ADR-123 follows the cors_presets precedent exactly (slot 00357, hand-
+- ADR-123 follows the cors_presets precedent exactly (slot 00362, hand-
   written pgstore, inline set_updated_at trigger). PR review is parallel to
   ADR-091's shape.
 
@@ -187,7 +187,7 @@ enforced in code (the catalog has 8 rows and is system-owned).
 - Single PR is large (~50 files, several thousand lines, 11 atomic
   commits). Mitigation: each commit is small, the slot is reserved
   pre-flight, the cross-PR slot gate walks `refs/pull/*/head` to
-  confirm 00357 is still safe.
+  confirm 00362 is still safe.
 - The 5 new signals add Prometheus cardinality (`api_up` and
   `account_spend_eur` are per-account gauges). Mitigation: bounded by
   per-plan app caps (Hobby 5 / Pro 25 / Scale 100) and the
@@ -222,7 +222,7 @@ enforced in code (the catalog has 8 rows and is system-owned).
 ## Critical files (reviewer path)
 
 Top-down:
-- `migrations/00357_alert_presets.sql` + `00358_alert_presets_seed.sql`
+- `migrations/00362_alert_presets.sql` + `00363_alert_presets_seed.sql`
 - `pkg/api/alerts.go` (closed vocab extension at line 66-74)
 - `pkg/state/types.go` (AlertMetric* constants at line 1561-1569)
 - `pkg/state/pgstore.go` (hand-written catalog queries, mirrors

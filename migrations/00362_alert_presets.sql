@@ -1,4 +1,4 @@
--- filename: 00357_alert_presets.sql
+-- filename: 00362_alert_presets.sql
 -- +goose Up
 -- +goose StatementBegin
 
@@ -22,8 +22,8 @@
 --   - metric / comparison / threshold / window_spec mirror the
 --     alert_rules closed vocabularies byte-for-byte. The CHECK
 --     below pins the catalog's metric vocabulary to the same eight
---     strings the evaluator learns in migration 00359; a future
---     metric lands here first, then in 00359, then in
+--     strings the evaluator learns in migration 00364; a future
+--     metric lands here first, then in 00364, then in
 --     pkg/api.AllowedAlertRuleMetrics + pkg/state.AlertMetric* —
 --     in that order.
 --   - default_cooldown_minutes seeds the instantiated alert_rules
@@ -44,7 +44,7 @@
 -- DELETE are reserved for the meterd + apid system-owner role at
 -- boot. The hand-written pgstore queries in pkg/state/pgstore.go
 -- never expose a mutator method for alert_presets — the only path
--- in is migration 00358's idempotent seed.
+-- in is migration 00363's idempotent seed.
 --
 -- Replay-safety: CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT
 -- EXISTS, CREATE OR REPLACE FUNCTION, DROP TRIGGER IF EXISTS +
@@ -120,7 +120,7 @@ CREATE TRIGGER alert_presets_set_updated_at_trg
 -- +goose StatementBegin
 
 -- Forward-only migration. Drop order: trigger, function, indexes,
--- table. The seed in 00358 is reversed by the table drop.
+-- table. The seed in 00363 is reversed by the table drop.
 DROP TRIGGER IF EXISTS alert_presets_set_updated_at_trg ON alert_presets;
 DROP FUNCTION IF EXISTS alert_presets_set_updated_at();
 DROP INDEX IF EXISTS alert_presets_enabled_idx;

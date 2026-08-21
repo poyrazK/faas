@@ -501,7 +501,7 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return float64(n), compareFloat(float64(n), rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricFailedDeployments:
 		// Postgres-backed. Issue #1233 / ADR-123.
-		// Walks the deployments table per migration 00359.
+		// Walks the deployments table per migration 00364.
 		since := e.windowStart(rule.WindowSpec, e.now())
 		n, err := e.store.CountFailedDeploymentsSince(ctx, rule.AccountID, rule.AppID, since)
 		if err != nil {
