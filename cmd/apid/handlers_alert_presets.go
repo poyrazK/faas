@@ -26,6 +26,13 @@
 // instantiating a preset counts toward the same per-app +
 // per-account cap as a hand-rolled rule, so the existing 403
 // payload is the right answer for the cap-reached path.
+//
+// The work is split into 3 phase helpers
+// (loadAndGatePreset, validateAndDeriveEnablePresetOpts,
+// persistInstantiatedAlertRule) so enableAlertPresetFromForm is
+// the orchestrator and the body stays under the CLAUDE.md
+// ≤-50-lines handler ceiling. The same orchestrator is reused by
+// the dashboard form-encoded handler at cmd/apid/dashboard_preset_enable.go.
 package main
 
 import (
@@ -79,6 +86,7 @@ func (s *server) listAlertPresets(w http.ResponseWriter, r *http.Request, _ stat
 }
 
 // enableAlertPreset instantiates a preset as a real alert_rules row.
+// JSON entrypoint; the work delegates to enableAlertPresetFromForm.
 //
 //   1. Load the preset by {slug, name}. 404 on miss.
 //   2. Reject disabled-in-catalog with 400 (ErrAlertPresetDisabled).
@@ -103,7 +111,7 @@ func (s *server) enableAlertPreset(w http.ResponseWriter, r *http.Request, acct 
 	presetName := r.PathValue("name")
 	var req api.EnableAlertPresetRequest
 	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.ErrAlertPresetInvalid("could not decode body: "+err.Error()))
+		api.WriteProblem(w, api.ErrAlertPresetInvalid("could not decode body: " + err.Error()))
 		return
 	}
 	row, err := s.enableAlertPresetFromForm(r.Context(), acct, r.PathValue("slug"), presetName, req)
@@ -117,37 +125,18 @@ func (s *server) enableAlertPreset(w http.ResponseWriter, r *http.Request, acct 
 // enableAlertPresetFromForm is the shared work for both the JSON
 // path (POST /v1/apps/{slug}/alert-presets/{name}/enable) and the
 // dashboard's form-encoded path (POST
-// /dashboard/apps/{slug}/alert-presets/{name}/enable). The form
-// path calls this helper after CSRF + auth + form-decoding; the
-// JSON path calls it after JSON-decoding. Returns an
-// *api.Problem on every failure so both callers can write it
-// verbatim (the JSON path via api.WriteProblem, the form path
-// via the redirect + ?preset_enabled=error flash). The return
-// signature is (state.AlertRule, *api.Problem) so the caller can
-// branch on Problem to decide redirect-vs-201.
-//
-// Phase order (validate → plan gate → load app → validate body →
-// SSRF guard → family check → seal → quota → persist → audit →
-// log → return) mirrors the JSON path verbatim — both surfaces
-// MUST stay in lockstep. See the package-doc on
-// handlers_alert_presets.go for the per-phase rationale.
+// /dashboard/apps/{slug}/alert-presets/{name}/enable). The body
+// is the orchestrator: each phase is a private helper that owns
+// its own validation surface so the lockstep between JSON + form
+// callers is enforced at the orchestrator level (any future
+// phase addition lands in one helper, not two). The form path
+// calls this after CSRF + auth + form-decoding; the JSON path
+// calls it after JSON-decoding. Returns an *api.Problem on every
+// failure so both callers can write it verbatim.
 func (s *server) enableAlertPresetFromForm(ctx context.Context, acct state.Account, slug, presetName string, req api.EnableAlertPresetRequest) (state.AlertRule, *api.Problem) {
-	// Pre-resolve the catalog row by name only. We DO NOT load the
-	// app here — the plan-tier gate must run before loadApp to
-	// avoid the slug-leak, and we need the preset's minimum_plan
-	// before we know which 402 body to write.
-	preset, err := s.store.AlertPresetByName(ctx, presetName)
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			return state.AlertRule{}, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such alert preset", "no preset with that name is in the catalog")
-		}
-		return state.AlertRule{}, api.ErrCapacity("could not load alert preset")
-	}
-	if !preset.EnabledInCatalog {
-		return state.AlertRule{}, api.ErrAlertPresetDisabled(preset.Name)
-	}
-	if !api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(preset.MinimumPlan)) {
-		return state.AlertRule{}, api.ErrPlanAlertPresetsNotAllowed(acct.Plan, preset.Name, preset.MinimumPlan)
+	preset, prob := s.loadAndGateAlertPreset(ctx, acct, presetName)
+	if prob != nil {
+		return state.AlertRule{}, prob
 	}
 	if req.WebhookURL == "" || req.WebhookSecret == "" {
 		return state.AlertRule{}, api.ErrAlertPresetInvalid("webhook_url and webhook_secret are required")
@@ -155,30 +144,97 @@ func (s *server) enableAlertPresetFromForm(ctx context.Context, acct state.Accou
 	if prob := resolveAndCheckEgress(ctx, req.WebhookURL); prob != nil {
 		return state.AlertRule{}, prob
 	}
-	cooldown := preset.DefaultCooldownMinutes
+	cooldown, enabled, prob := validateAndDeriveEnablePresetOpts(req, preset.DefaultCooldownMinutes)
+	if prob != nil {
+		return state.AlertRule{}, prob
+	}
+	sealed, prob := sealPresetWebhookSecret(ctx, req.WebhookSecret)
+	if prob != nil {
+		return state.AlertRule{}, prob
+	}
+	return s.persistInstantiatedAlertRule(ctx, acct, slug, preset, req, sealed, cooldown, enabled)
+}
+
+// loadAndGateAlertPreset resolves the catalog row by name and
+// applies the two plan-tier gates that MUST run before loadApp
+// (the slug-leak guard). Returns the typed preset + nil on
+// success, or zero-valued + a 4xx Problem on any failure. Pulled
+// out of enableAlertPresetFromForm so the catalog-resolve and
+// plan-gate phases are unit-testable in isolation — both surfaces
+// (JSON, form) share this exact gate.
+func (s *server) loadAndGateAlertPreset(ctx context.Context, acct state.Account, presetName string) (state.AlertPreset, *api.Problem) {
+	preset, err := s.store.AlertPresetByName(ctx, presetName)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return state.AlertPreset{}, api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such alert preset", "no preset with that name is in the catalog")
+		}
+		return state.AlertPreset{}, api.ErrCapacity("could not load alert preset")
+	}
+	if !preset.EnabledInCatalog {
+		return state.AlertPreset{}, api.ErrAlertPresetDisabled(preset.Name)
+	}
+	if !api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(preset.MinimumPlan)) {
+		return state.AlertPreset{}, api.ErrPlanAlertPresetsNotAllowed(acct.Plan, preset.Name, preset.MinimumPlan)
+	}
+	return preset, nil
+}
+
+// validateAndDeriveEnablePresetOpts clamps the customer-supplied
+// cooldown + enabled override against the preset's defaults and
+// the plan-wide band ([1, AlertRuleCooldownMaxMinutes]). Returns
+// the derived (cooldownMinutes, enabled) pair + nil on success
+// or a 400 ErrAlertPresetInvalid if the cooldown is out of band.
+// Pure — no I/O — so it lives in package scope (not a server
+// method) and is trivially unit-testable.
+func validateAndDeriveEnablePresetOpts(req api.EnableAlertPresetRequest, defaultCooldown int) (cooldown int, enabled bool, prob *api.Problem) {
+	cooldown = defaultCooldown
 	if req.CooldownMinutes != nil {
 		if *req.CooldownMinutes < 1 || *req.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
-			return state.AlertRule{}, api.ErrAlertPresetInvalid("cooldown_minutes out of band (1..1440)")
+			return 0, false, api.ErrAlertPresetInvalid("cooldown_minutes out of band (1..1440)")
 		}
 		cooldown = *req.CooldownMinutes
 	}
-	enabled := true
+	enabled = true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
+	return cooldown, enabled, nil
+}
+
+// sealPresetWebhookSecret seals the customer-supplied plaintext
+// under the host's age recipient. The recipient IS the secretbox
+// owner's long-term private key (set at boot); a nil recipient
+// is a hard refusal — the rule never gets persisted in cleartext.
+// The 1 KiB plaintext ceiling is enforced by the secretbox layer
+// (api.AlertRuleWebhookSecretMaxBytes).
+func sealPresetWebhookSecret(ctx context.Context, plaintext string) (sealed []byte, prob *api.Problem) {
 	recipient := setSecretRecipient()
 	if recipient == nil {
-		return state.AlertRule{}, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret")
+		return nil, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret")
 	}
-	sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
+	out, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(plaintext), api.AlertRuleWebhookSecretMaxBytes)
 	if err != nil {
-		if prob := api.AsProblem(err); prob != nil {
-			return state.AlertRule{}, prob
+		if p := api.AsProblem(err); p != nil {
+			return nil, p
 		}
-		return state.AlertRule{}, api.ErrCapacity("could not seal webhook secret")
+		return nil, api.ErrCapacity("could not seal webhook secret")
 	}
+	return out, nil
+}
+
+// persistInstantiatedAlertRule wires the final phase: app lookup
+// + per-plan rule-cap gate (the underlying cap distinct from the
+// preset's minimum_plan gate), display-name derivation, the
+// CreateAlertRuleIfUnderQuota persist call, the structured log,
+// and the audit row. Returns the freshly-persisted AlertRule +
+// nil, or zero + a Problem on any failure.
+func (s *server) persistInstantiatedAlertRule(ctx context.Context, acct state.Account, slug string, preset state.AlertPreset, req api.EnableAlertPresetRequest, sealed []byte, cooldown int, enabled bool) (state.AlertRule, *api.Problem) {
 	// Plan-tier check for the underlying alert_rules cap (Hobby +
-	// above). Mirrors createAlertRule's pre-loadApp gate.
+	// above). Mirrors createAlertRule's pre-loadApp gate. Lives
+	// here, not in loadAndGateAlertPreset, because the cap is on
+	// the *rule* (alert_rules table), not on the preset catalog —
+	// a Free customer can still LIST the catalog but every
+	// enable path hits this 402.
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || limits.AlertRuleLimitPerApp == 0 {
 		return state.AlertRule{}, api.ErrPlanAlertRulesNotAllowed(acct.Plan)
@@ -191,13 +247,12 @@ func (s *server) enableAlertPresetFromForm(ctx context.Context, acct state.Accou
 	}
 	// Display name: <preset display_name> (<app slug>) so a customer
 	// with multiple apps can tell which rule covers which surface.
-	// Clamped to api.AlertRuleNameMaxBytes (the DB column is
-	// varchar(AlertRuleNameMaxBytes)) — the trim is at the seam so
-	// the catalogue-side display_name can't blow past the cap.
-	displayName := preset.DisplayName + " (" + app.Slug + ")"
-	if len(displayName) > api.AlertRuleNameMaxBytes {
-		displayName = displayName[:api.AlertRuleNameMaxBytes]
-	}
+	// Clamped to api.AlertRuleNameMaxChars via api.TruncateRunes
+	// — the DB column is varchar(64) CHARACTERS (char_length, not
+	// octet_length), and a multi-byte codepoint in the slug would
+	// otherwise get sliced mid-rune, producing invalid UTF-8 that
+	// Postgres rejects with SQLSTATE 22021 at INSERT time.
+	displayName := api.TruncateRunes(preset.DisplayName+" ("+app.Slug+")", api.AlertRuleNameMaxChars)
 	row, err := s.store.CreateAlertRuleIfUnderQuota(ctx, state.AlertRule{
 		AccountID:           acct.ID,
 		AppID:               app.ID,
@@ -210,10 +265,10 @@ func (s *server) enableAlertPresetFromForm(ctx context.Context, acct state.Accou
 		// Preset rows never carry a failure_source (the catalog's
 		// metrics are the closed vocabulary at pkg/api/alerts.go:66
 		// — none of them are failed_invocations).
-		FailureSource:       "",
-		WebhookURL:          req.WebhookURL,
+		FailureSource:   "",
+		WebhookURL:      req.WebhookURL,
 		WebhookSecretSealed: sealed,
-		CooldownMinutes:     cooldown,
+		CooldownMinutes: cooldown,
 	}, limits)
 	if err != nil {
 		var qe *state.AlertRuleQuotaError
