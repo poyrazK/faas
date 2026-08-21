@@ -1342,25 +1342,68 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 		}
 	}
-	// ADR-119 — load FAAS_INTERNAL_SVC_PUBKEYS (JSON document
-	// mapping svcName → PEM-encoded Ed25519 public key). The
-	// env is read once at boot; runtime rotation is a
-	// follow-up (ADR-120 candidate — see plan). nil = no
-	// apps in internal_only mode should be reachable, and
-	// the gate 500s loudly rather than fail-open. Production
-	// wires schedd at minimum; meterd / future daemons add
-	// keys to the same JSON map.
-	if rawPubkeys, ok := os.LookupEnv("FAAS_INTERNAL_SVC_PUBKEYS"); ok && rawPubkeys != "" {
-		var perSvc map[string]string
-		if err := json.Unmarshal([]byte(rawPubkeys), &perSvc); err != nil {
-			log.Warn("gatewayd-internal: FAAS_INTERNAL_SVC_PUBKEYS is not valid JSON; internal_only mode will 500 until corrected",
-				"err", err.Error())
-		} else if len(perSvc) == 0 {
-			log.Warn("gatewayd-internal: FAAS_INTERNAL_SVC_PUBKEYS is empty; internal_only mode will 500 until corrected")
-		} else {
-			deps.internalSvcVerifier = newInternalSvcVerifierFromPEMs(perSvc)
-			log.Info("gatewayd-internal: internal_only verifier loaded",
-				"svc_count", len(perSvc))
+	// PR-3 / ADR-125 fleet-wide signing key: try the
+	// cluster_signing_keys PG row FIRST so a JWT minted by
+	// schedd on box A is verifiable by gatewayd-internal on
+	// box B (audit F1+F20). The per-env path below is the
+	// fallback for the operator-migration window (single-box
+	// dev + legacy installs without `hostage-gen cluster-init`).
+	rotatingVerifier := &rotatingVerifier{}
+	clusterVerifier, clusterErr := loadClusterInternalSvcVerifier(ctx, pgStore)
+	switch {
+	case clusterErr == nil:
+		if initErr := rotatingVerifier.initial(clusterVerifier); initErr != nil {
+			return fmt.Errorf("gatewayd-internal: prime rotating verifier with cluster key: %w", initErr)
+		}
+		deps.internalSvcVerifier = rotatingVerifier
+		log.Info("gatewayd-internal: internal_only verifier loaded (cluster_signing_keys)",
+			"source", "cluster_signing_keys")
+		// Subscribe to rotations so a cluster-init refresh lands
+		// without daemon restart. Best-effort — if subscribe
+		// fails the boot-time key keeps working.
+		if subErr := SubscribeClusterVerifierChanges(ctx, pool, pgStore, rotatingVerifier, log); subErr != nil {
+			log.Warn("gatewayd-internal: cluster verifier rotation subscribe failed; verifier frozen at boot key",
+				"err", subErr.Error())
+		}
+	case errors.Is(clusterErr, ErrClusterVerifierUnavailable):
+		log.Info("gatewayd-internal: cluster_signing_keys row missing; falling back to FAAS_INTERNAL_SVC_PUBKEYS env path")
+	default:
+		// Hard error — DB unreachable, parse error on
+		// public_key_pem. Fall back to env path; log loudly so
+		// the operator can investigate. We do NOT fail boot —
+		// the env fallback is the operator-migration path and
+		// must keep the box reachable.
+		log.Warn("gatewayd-internal: cluster verifier load failed; falling back to FAAS_INTERNAL_SVC_PUBKEYS env path",
+			"err", clusterErr.Error())
+	}
+
+	// ADR-119 — env-path fallback: load FAAS_INTERNAL_SVC_PUBKEYS
+	// (JSON document mapping svcName → PEM-encoded Ed25519 public
+	// key). Read once at boot; runtime rotation is a follow-up
+	// (ADR-120 candidate — see plan). nil = no apps in
+	// internal_only mode should be reachable, and the gate 500s
+	// loudly rather than fail-open. Production wires schedd at
+	// minimum; meterd / future daemons add keys to the same JSON
+	// map.
+	//
+	// PR-3 / ADR-125 — this path runs ONLY when the cluster path
+	// above returned ErrClusterVerifierUnavailable or a hard
+	// error. In the cluster-OK case deps.internalSvcVerifier is
+	// already the rotatingVerifier backed by cluster_signing_keys.
+	if deps.internalSvcVerifier == nil {
+		if rawPubkeys, ok := os.LookupEnv("FAAS_INTERNAL_SVC_PUBKEYS"); ok && rawPubkeys != "" {
+			var perSvc map[string]string
+			if err := json.Unmarshal([]byte(rawPubkeys), &perSvc); err != nil {
+				log.Warn("gatewayd-internal: FAAS_INTERNAL_SVC_PUBKEYS is not valid JSON; internal_only mode will 500 until corrected",
+					"err", err.Error())
+			} else if len(perSvc) == 0 {
+				log.Warn("gatewayd-internal: FAAS_INTERNAL_SVC_PUBKEYS is empty; internal_only mode will 500 until corrected")
+			} else {
+				deps.internalSvcVerifier = newInternalSvcVerifierFromPEMs(perSvc)
+				log.Info("gatewayd-internal: internal_only verifier loaded (env)",
+					"svc_count", len(perSvc),
+					"source", "FAAS_INTERNAL_SVC_PUBKEYS")
+			}
 		}
 	}
 	// The scheddClient reference is needed by AppLogsHandler (PR-2).
