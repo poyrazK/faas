@@ -1,6 +1,6 @@
 package gateway
 
-// synth_members_only_test.go — ADR-120 tests for
+// synth_members_only_test.go — ADR-123 tests for
 // SynthServer.applyIngressMembersOnly (the cron-bypass
 // closure for the org-membership ingress gate). Mirrors
 // synth_internal_only_test.go's per-surface pattern:

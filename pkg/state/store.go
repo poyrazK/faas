@@ -1335,7 +1335,7 @@ type Store interface {
 	// call CountDeployedApps before this method (that's the bug).
 	CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error)
 	AppByID(ctx context.Context, id string) (App, error)
-	// AppOrgID (ADR-120) returns the org_id the app belongs to
+	// AppOrgID (ADR-123) returns the org_id the app belongs to
 	// (apps.org_id, migration 00099). Bounded surface — added so
 	// the per-host LRU hydration in cmd/gatewayd-internal/
 	// backend.go::toApp can populate gateway.App.OrgID without

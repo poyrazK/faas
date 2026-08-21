@@ -2760,7 +2760,7 @@ func ErrPlanPublicAuthBasicNotAllowed(p Plan) *Problem {
 }
 
 // ErrPlanPublicAuthMembersOnlyNotAllowed is the 402 apid returns when
-// a Free customer PATCHes public_auth_mode='members_only' (ADR-120 /
+// a Free customer PATCHes public_auth_mode='members_only' (ADR-123 /
 // IAM-6 cookie-ungated org membership). Hobby+ only — Free personal-org
 // has exactly 1 member (the account itself) so members_only on Free
 // would collapse to bearer with the same account, which would invite

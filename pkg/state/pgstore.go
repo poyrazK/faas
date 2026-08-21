@@ -2146,7 +2146,7 @@ func (s *PgStore) AppBySlug(ctx context.Context, slug string) (App, error) {
 	return scanApp(row)
 }
 
-// AppOrgID (ADR-120) is the narrow accessor the per-host LRU
+// AppOrgID (ADR-123) is the narrow accessor the per-host LRU
 // hydration in cmd/gatewayd-internal/backend.go::toApp uses to
 // populate gateway.App.OrgID without inflating the App-struct
 // scan column list. The query uses `org_id::text` rather than

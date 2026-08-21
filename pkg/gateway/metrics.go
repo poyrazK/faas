@@ -1238,7 +1238,7 @@ func NewMetrics() *Metrics {
 	// `ingress_internal` was added by ADR-119 for the per-app
 	// internal_only token-verification gate
 	// (pkg/gateway/internal_svc_auth.go::applyIngressInternalSvc).
-	// `ingress_members` was added by ADR-120 for the per-app
+	// `ingress_members` was added by ADR-123 for the per-app
 	// members_only org-membership gate
 	// (pkg/gateway/public_auth_members_only.go::
 	// applyIngressMembersOnly). Including both ingress_internal

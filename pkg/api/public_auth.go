@@ -100,7 +100,7 @@ const (
 	// AppPublicAuthModeMembersOnly restricts the app's
 	// public hostname to requests carrying a valid
 	// IAM-6 session cookie (`faas_sid`) whose principal
-	// has an active membership in apps.org_id (ADR-120).
+	// has an active membership in apps.org_id (ADR-123).
 	// Anything else 401s at the authn layer (no cookie /
 	// revoked cookie / stolen-cookie defense fires first
 	// via pkg/auth/middleware.RequireSession) and 403s at

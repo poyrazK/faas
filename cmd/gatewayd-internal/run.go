@@ -664,27 +664,6 @@ type runDeps struct {
 	// Production wires the env-loaded FAAS_INTERNAL_SVC_PUBKEYS
 	// map below; dev boxes + tests leave it nil.
 	internalSvcVerifier gateway.InternalSvcVerifier
-	// membersOnlyChecker (ADR-123 / issue #477 #4) is the
-	// pgxpool-backed OrgMemberChecker consulted by
-	// Handler.applyIngressMembersOnly (handler.go) and
-	// SynthServer.applyIngressMembersOnly (synth.go) when an
-	// app's public_auth_mode='members_only'. nil = the gate
-	// is disabled — an app in members_only mode without the
-	// checker wired would 500 (operator_error) per the
-	// loud-misconfig posture in
-	// pkg/gateway/public_auth_members_only.go:195. Production
-	// wires pkg/authz.PoolOrgMemberChecker(pool) below; dev
-	// boxes + tests leave it nil.
-	membersOnlyChecker authz.OrgMemberChecker
-	// membersOnlyPrincipal (ADR-123) is the cookie-side
-	// CookiePrincipalExtractor implementation. Resolves the
-	// faas_sid cookie's stamped principal to an account_id;
-	// the gate's no-cookie branch fires when it returns
-	// ok=false. nil = the cookie side is disabled; same
-	// loud-misconfig posture as membersOnlyChecker.
-	// Production wires newAuthPrincipalAdapter() which
-	// delegates to pkg/auth/middleware.PrincipalFrom.
-	membersOnlyPrincipal gateway.CookiePrincipalExtractor
 	// scheddClient is the ScheddClient interface (production: a
 	// single *scheddgrpc.Client from the per-node cache) used by
 	// AppLogsHandler (issue #254 / Move 4 PR-2) and the warm hint
@@ -1106,8 +1085,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// "we know the app is in members_only mode AND the row
 	// is broken" case — that's an operator-misconfig
 	// surface, not a transient-failure surface).
-	deps.synth.WithMembersOnlyChecker(deps.membersOnlyChecker)
-	deps.synth.WithMembersOnlyPrincipalExtractor(deps.membersOnlyPrincipal)
+	// F1 (review fix): inline the checker + adapter at the
+	// synth wiring site so the SynthServer fields are NEVER
+	// nil in production. The previous code assigned to
+	// deps.membersOnlyChecker AFTER the synth wiring (at
+	// the bottom of run()), so the WithMembersOnlyChecker
+	// call captured the zero value. Every cron-fired
+	// /v1/synthesize against a members_only app would have
+	// 500'd with operator_error. Now: inlined.
+	deps.synth.WithMembersOnlyChecker(authz.PoolOrgMemberChecker(pool))
+	deps.synth.WithMembersOnlyPrincipalExtractor(newAuthPrincipalAdapter())
 	deps.synth.WithAppOrgIDLookup(func(ctx context.Context, appID string) string {
 		orgID, err := pgStore.AppOrgID(ctx, appID)
 		if err != nil {
@@ -1214,17 +1201,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// (B4) — subscribe to compute_node_changed.
 	deps.opsMetrics = gatewayOps
 	deps.pool = pool
-	// ADR-123 — wire the members_only ingress-gate bridge
-	// types. PoolOrgMemberChecker wraps the same pool the
-	// store uses; the authPrincipalAdapter delegates to
-	// pkg/auth/middleware.PrincipalFrom (the cookie
-	// trust chain at handler.go's upstream RequireSession).
-	// nil appOrgIDLookup is fine for the Handler-side gate
-	// (it reads app.OrgID directly); the synth-side gate
-	// requires the closure (set below where the per-app
-	// LRU cache is wired) — see WithAppOrgIDLookup.
-	deps.membersOnlyChecker = authz.PoolOrgMemberChecker(pool)
-	deps.membersOnlyPrincipal = newAuthPrincipalAdapter()
 	// ADR-104 amendment 5 / issue #881 Phase 4 C3: hand the
 	// parsed TOML config to runDeps so runWithDeps can read
 	// the [ratelimit] mode knob and wire the production
@@ -1392,7 +1368,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 		}
 	}
-	// PR-3 / ADR-125 fleet-wide signing key: try the
+// PR-3 / ADR-125 fleet-wide signing key: try the
 	// cluster_signing_keys PG row FIRST so a JWT minted by
 	// schedd on box A is verifiable by gatewayd-internal on
 	// box B (audit F1+F20). The per-env path below is the
@@ -1734,9 +1710,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// WithAppOrgIDLookup call is not needed on the
 	// Handler side. The cmd-side adapter at
 	// auth_principal_adapter.go is the only NEW
-	// cmd-side file.
-	handler.WithMembersOnlyChecker(deps.membersOnlyChecker)
-	handler.WithMembersOnlyPrincipalExtractor(deps.membersOnlyPrincipal)
+	// cmd-side file. Inlined values (F1 review fix):
+	// the deps fields are NOT pre-populated at this
+	// point — they were originally assigned AFTER the
+	// synth wiring (which itself runs BEFORE the
+	// Handler wiring), so the Handler captured the
+	// zero value. Inlining makes the values explicit
+	// and removes the ordering dependency.
+	handler.WithMembersOnlyChecker(authz.PoolOrgMemberChecker(deps.pool))
+	handler.WithMembersOnlyPrincipalExtractor(newAuthPrincipalAdapter())
 	// ADR-046 PR-2: per-instance egress ring buffer + the gRPC
 	// producer channel. The sink is shared between Handler.recordEgress
 	// (writer) and egressgrpc.Server (drainer-on-cadence reader).

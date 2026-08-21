@@ -3690,7 +3690,7 @@ type AppPublicAuthUpdate struct {
 // pkg/gateway's package-local copies. The three layers
 // (sqlc / state / gateway) all share the same vocabulary;
 // if a fifth is ever added, mirror the constant here.
-// ADR-119 added 'internal_only'; ADR-120 added 'members_only'
+// ADR-119 added 'internal_only'; ADR-123 added 'members_only'
 // — see also the drift-guard test
 // pkg/api/public_auth_constants_test.go.
 const (

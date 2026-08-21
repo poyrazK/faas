@@ -2,14 +2,14 @@
 -- +goose Up
 -- +goose StatementBegin
 
--- ADR-120: per-app ingress 'members_only' mode. Closes the
+-- ADR-123: per-app ingress 'members_only' mode. Closes the
 -- second bullet of the canonical ingress-control matrix
 -- (Public / Organization members only / Selected IP ranges /
 -- Internal Gregale services only). ADR-118 reserved the enum
 -- value as a future extension point and called out the
 -- prerequisites in §Out-of-scope (line 239-247); ADR-119
 -- re-listed it as future-work (§Future work line 313-326);
--- ADR-120 is that follow-on.
+-- ADR-123 is that follow-on.
 --
 -- When apps.public_auth_mode='members_only', every public
 -- request must carry a valid IAM-6 session cookie

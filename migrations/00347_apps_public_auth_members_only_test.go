@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// Migration-apply test for 00347 (ADR-120 — per-app ingress
+// Migration-apply test for 00347 (ADR-123 — per-app ingress
 // 'members_only' mode, extends apps.public_auth_mode with
 // 'members_only'). Pins the contract:
 //
@@ -9,7 +9,7 @@
 //      (CHECK widening applied).
 //   3. The closed public_auth_mode enum rejects unknown values
 //      (`'unknown'` fails the widened CHECK).
-//   4. Down-migrate narrows the CHECK back to the pre-ADR-120
+//   4. Down-migrate narrows the CHECK back to the pre-ADR-123
 //      vocabulary (and the row we seeded in members_only
 //      would 23514 against the narrower CHECK — pin that the
 //      Down section does NOT silently destroy customer rows;
@@ -39,7 +39,7 @@ import (
 )
 
 // TestMigrations_00347_AppPublicAuthMembersOnly pins the
-// members_only contract from ADR-120. Mirrors the 00333
+// members_only contract from ADR-123. Mirrors the 00333
 // (internal_only) test verbatim with the new mode swapped
 // in; same SQLSTATE + ConstraintName assertions.
 func TestMigrations_00347_AppPublicAuthMembersOnly(t *testing.T) {

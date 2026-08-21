@@ -438,7 +438,7 @@ type Limits struct {
 	// (return false) — same contract as the other accessors above.
 	PublicAuthBasicAllowed bool
 
-	// PublicAuthMembersOnlyAllowed (ADR-120) gates whether the
+	// PublicAuthMembersOnlyAllowed (ADR-123) gates whether the
 	// plan may opt apps into public_auth_mode='members_only'.
 	// Free = false (Free personal-org has exactly 1 member, so
 	// members_only on Free would collapse to bearer with the same
@@ -3956,7 +3956,7 @@ func (p Plan) PublicAuthIPAllowlistAllowed() bool {
 }
 
 // PublicAuthMembersOnlyAllowed reports whether the plan may opt
-// apps into public_auth_mode='members_only' (ADR-120). Hobby+
+// apps into public_auth_mode='members_only' (ADR-123). Hobby+
 // only — Free is locked because Free personal-org has exactly 1
 // member (the account itself), so members_only on Free would
 // collapse to bearer with the same account. apid's updateApp

@@ -1,6 +1,6 @@
 // Package authz (errors.go) — sentinels for the orgz half of pkg/authz.
 // The sentinel set is intentionally small: only the membership lookup
-// gate (IsOrgMember, ADR-120) and the active-org resolver
+// gate (IsOrgMember, ADR-123) and the active-org resolver
 // (LoadOrgWithResolver, ADR-061 PR 4) return package-level errors that
 // callers want to distinguish via errors.Is. Handler-level error
 // mapping (5xx / 4xx / audit reasons) happens in pkg/gateway, NOT
@@ -14,7 +14,7 @@
 // ("fenced substring-match reason drift"). See
 // cmd/schedd/internal_svc_minter.go:6 for the ADR-119 precedent.
 //
-// Why a separate file: pkg/authz had no errors.go before ADR-120
+// Why a separate file: pkg/authz had no errors.go before ADR-123
 // because every earlier API either returned a typed *Problem (apid
 // layer) or returned (bool, *Problem) for handler-layer errors.
 // IsOrgMember is the first package-level function that returns

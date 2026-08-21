@@ -1,6 +1,6 @@
 // Package authz (is_org_member.go) — IsOrgMember: the single
 // org-membership predicate the public-auth 'members_only' gate
-// (ADR-120) and the SynthServer cron-mirror gate
+// (ADR-123) and the SynthServer cron-mirror gate
 // (pkg/gateway/synth_members_only.go) call. Decoupled from the
 // per-request active-org resolver LoadOrgWithResolver on purpose —
 // the resolver stamps principal.Membership based on the

@@ -53,7 +53,7 @@ type ResolveSlugFn func(slug string) (appID string, ok bool)
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
-	// OrgID (ADR-120) is the org this app belongs to
+	// OrgID (ADR-123) is the org this app belongs to
 	// (state.App.OrgID, hydrated from apps.org_id by
 	// pgRouter.toApp). The members_only public-auth gate
 	// calls pkg/authz.IsOrgMember(ctx, app.OrgID, accountID)
@@ -784,7 +784,7 @@ type Handler struct {
 	// request through is worse than a 500).
 	internalSvcVerifier InternalSvcVerifier
 
-	// membersOnlyPrincipal (ADR-120) is the cookie-side
+	// membersOnlyPrincipal (ADR-123) is the cookie-side
 	// bridge for the public_auth_mode='members_only' gate
 	// at applyIngressMembersOnly. It resolves the
 	// authenticated account_id from the inbound request's
@@ -797,7 +797,7 @@ type Handler struct {
 	// request through (defence in depth).
 	membersOnlyPrincipal CookiePrincipalExtractor
 
-	// membersOnlyChecker (ADR-120) is the DB-side
+	// membersOnlyChecker (ADR-123) is the DB-side
 	// bridge for the public_auth_mode='members_only' gate.
 	// It calls pkg/authz.IsOrgMember(ctx, app.OrgID,
 	// accountID) — the production impl at
@@ -4808,7 +4808,7 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	// ADR-120: per-app ingress 'members_only' mode runs
+	// ADR-123: per-app ingress 'members_only' mode runs
 	// AFTER applyIngressIPAllowlist (L4628) and
 	// applyIngressInternalSvc (above) — cheap-to-evaluate
 	// modes short-circuit first — and BEFORE applyEdgeRuleIP

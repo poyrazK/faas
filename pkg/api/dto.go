@@ -814,7 +814,7 @@ type PublicAuthBlock struct {
 // handles the auth; the synth handler gate at
 // pkg/gateway/synth.go::handleSynthesize handles the cron path).
 //
-// ADR-120 added 'members_only'. members_only requires no
+// ADR-123 added 'members_only'. members_only requires no
 // app-side payload — the cookie + org-membership lookup live
 // on the request. Validate accepts the mode without checking
 // further fields (the gate at
