@@ -194,7 +194,11 @@ var methodRouteMap = map[string]string{
 	"GET /v1/deployments/{id}/stages":             "GetDeploymentStages",     // ADR-117 follow-on; post-stream closed-stage summary for `gregale deploys show <id>`
 	"GET /v1/deployments/{id}":                    "GetDeployment",
 	"PATCH /v1/deployments/{id}":                  "PatchDeployment", // ADR-072 / issue #557 closure; min_instances override
+	"DELETE /v1/deployments/{id}":                 "ClearDeployment", // ADR-124 PR-A; soft-delete (status untouched)
 	"GET /v1/deployments":                         "ListDeployments",
+	"POST /v1/deployments/{id}/reorder":           "ReorderDeployment",         // ADR-124 PR-A; priority bump on pending deploy
+	"POST /v1/apps/{slug}/deployments/{id}/cancel":         "CancelDeployment",         // ADR-124 PR-A; status flip + cascade
+	"POST /v1/apps/{slug}/deployments/clear-obsolete":      "ClearObsoleteDeployments", // ADR-124 PR-A; bulk soft-delete terminal rows
 	"GET /v1/apps":                                "ListApps",
 	"POST /v1/apps":                               "CreateApp",
 	"GET /status/slo.json":                        "GetStatusSLO",
