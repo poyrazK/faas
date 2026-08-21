@@ -9579,7 +9579,7 @@ components:
       properties:
         app_slug: { type: string }
         count: { type: integer }
-        older_than: { type: string, description: "Go duration (e.g. 168h)." }
+        older_than: { type: string, description: "Echoes the cutoff the store applied (default 168h). Same Go duration format as the request body field." }
 
     UpdateDeploymentTrafficRequest:
       description: "Body for PATCH /v1/deployments/{id}/traffic (issue #556 PR-A). Sets the per-deployment traffic-split weight (integer [0, 100]). PR-A uses the zero-siblings rebalance form: setting row R's traffic_percent to N forces every other live row in the same app to 0, keeping Σ = 100 by construction. Pro/Scale only — Free/Hobby are rejected at 403 plan_traffic_split_not_allowed."

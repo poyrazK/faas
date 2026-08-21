@@ -3263,6 +3263,122 @@ paths:
             `plan_min_instances_not_allowed`.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [deployments]
+      operationId: clearDeployment
+      summary: Soft-delete a deployment.
+      description: |
+        ADR-124 deployment queue controls — soft-delete one deployment
+        row. Status is intentionally untouched (admin audit trail).
+        Live deployments return 409 with the cancel-live hint pointing
+        at `gregale deploys rollback`.
+      responses:
+        '200': { description: Soft-deleted. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Live deployments cannot be cleared. }
+
+  /v1/deployments/{id}/reorder:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [deployments]
+      operationId: reorderDeployment
+      summary: Reorder a pending deployment.
+      description: |
+        ADR-124 deployment queue controls — update the priority of a
+        still-pending deployment. 0 = deploy immediately (top of
+        queue), 100 = FIFO default, 1000 = background rebuild.
+        Plan-gated (Hobby/Pro/Scale only); Free returns 402
+        `plan_reorder_disabled`. 409 if the deployment has already
+        moved off the pending queue.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [priority]
+              properties:
+                priority: { type: integer, minimum: 0, maximum: 1000 }
+      responses:
+        '200':
+          description: Reordered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  priority: { type: integer }
+        '409': { description: Row is past the pending queue. }
+        '402': { description: Plan does not allow reorder. }
+
+  /v1/apps/{slug}/deployments/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [deployments]
+      operationId: cancelDeployment
+      summary: Cancel a deployment.
+      description: |
+        ADR-124 deployment queue controls — flip a deployment in
+        {pending, building, imaging, snapshotting} to "cancelled"
+        and cascade-cancel its in-flight builds. Live deployments
+        return 409 `deployment_cancel_live_forbidden` with the
+        rollback hint. Optional reason: user | auto_quota |
+        auto_health | system.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelDeploymentRequest'
+      responses:
+        '200':
+          description: Cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string }
+                  cancelled_at: { type: string, format: date-time }
+                  cancel_reason: { type: string }
+                  cancelled_builds:
+                    type: array
+                    items: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Live deployment cannot be cancelled. }
+
+  /v1/apps/{slug}/deployments/clear-obsolete:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [deployments]
+      operationId: clearObsoleteDeployments
+      summary: Bulk soft-delete terminal-but-not-current deployments.
+      description: |
+        ADR-124 deployment queue controls — bulk soft-delete rows
+        in {superseded, failed, cancelled} older than the cutoff
+        (default 168h). Plan-gated (Free returns 402). Retention
+        cap enforced inside the store so INV 3 stays satisfied.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                older_than: { type: string, description: "Go duration (e.g. 168h)." }
+      responses:
+        '200':
+          description: Cleared.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClearObsoleteReport'
 
   /v1/deployments/{id}/traffic:
     parameters:
@@ -9447,6 +9563,23 @@ components:
           type: integer
           minimum: 0
           description: "Per-deployment cold-wake floor override for PATCH /v1/deployments/{id}. 0 = inherit from parent app; positive value is the deployment's own floor. Effective per-instance floor = max(app, deployment). Validated against the parent app's plan MaxMinInstances cap."
+
+    CancelDeploymentRequest:
+      description: "Body for POST /v1/apps/{slug}/deployments/{id}/cancel (ADR-124). Optional — empty body defaults to reason='user' server-side. Reason is the closed set user | auto_quota | auto_health | system."
+      type: object
+      properties:
+        reason:
+          type: string
+          enum: [user, auto_quota, auto_health, system]
+
+    ClearObsoleteReport:
+      description: "Response for POST /v1/apps/{slug}/deployments/clear-obsolete (ADR-124). Count is the number of soft-deleted rows in this call; OlderThan echoes the cutoff the store applied (default 168h)."
+      type: object
+      required: [app_slug, count, older_than]
+      properties:
+        app_slug: { type: string }
+        count: { type: integer }
+        older_than: { type: string, description: "Echoes the cutoff the store applied (default 168h). Same Go duration format as the request body field." }
 
     UpdateDeploymentTrafficRequest:
       description: "Body for PATCH /v1/deployments/{id}/traffic (issue #556 PR-A). Sets the per-deployment traffic-split weight (integer [0, 100]). PR-A uses the zero-siblings rebalance form: setting row R's traffic_percent to N forces every other live row in the same app to 0, keeping Σ = 100 by construction. Pro/Scale only — Free/Hobby are rejected at 403 plan_traffic_split_not_allowed."

@@ -5126,7 +5126,7 @@ func (s *PgStore) MarkDeploymentCancelled(ctx context.Context, id, principal str
 
 	var currentStatus DeploymentStatus
 	if err := tx.QueryRow(ctx, `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`, id).Scan(&currentStatus); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("MarkDeploymentCancelled: select for update: %w", err)
@@ -5190,7 +5190,7 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 		  FROM deployments
 		 WHERE id = $1
 		 FOR UPDATE`, id).Scan(&appID, &status); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, nil, ErrNotFound
 		}
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: select deployment for update: %w", err)
@@ -5314,7 +5314,7 @@ func (s *PgStore) ClearDeployment(ctx context.Context, id, principal string) err
 
 	var status DeploymentStatus
 	if err := tx.QueryRow(ctx, `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`, id).Scan(&status); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("ClearDeployment: select for update: %w", err)

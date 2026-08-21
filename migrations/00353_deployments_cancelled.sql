@@ -49,15 +49,18 @@ ALTER TABLE deployments
   ADD CONSTRAINT deployments_cancel_reason_check
   CHECK (cancel_reason IS NULL OR cancel_reason IN ('user', 'auto_quota', 'auto_health', 'system'));
 
--- Index for the list-obsolete query (account-scoped, status filter).
-CREATE INDEX IF NOT EXISTS deployments_account_status_cancelled_idx
-  ON deployments (account_id, status, cancelled_at DESC)
-  WHERE cancelled_at IS NOT NULL OR deleted_at IS NOT NULL;
+-- The list-obsolete query (ClearObsoleteDeployments at pgstore.go:5358)
+-- is app-scoped (path resolves through slug → app_id) and filters on
+-- (app_id, status IN (...)). The existing deployments_app_idx from
+-- migration 00001 (app_id, created_at DESC) covers the WHERE app_id=$1
+-- AND created_at<$2 predicate; the status filter rides on top. No new
+-- index needed here — adding one on the audit-only `cancelled` /
+-- `deleted` columns would just bloat write paths for a query that
+-- already completes in <2 ms on the existing composite.
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP INDEX IF EXISTS deployments_account_status_cancelled_idx;
 ALTER TABLE deployments
   DROP CONSTRAINT IF EXISTS deployments_cancel_reason_check;
 ALTER TABLE deployments
