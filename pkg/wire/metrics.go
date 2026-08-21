@@ -4500,6 +4500,59 @@ func (m *OpsMetrics) ObserveBuildCount(code string) {
 	m.ops.WithLabelValues("build", code).Inc()
 }
 
+// ObserveDeploymentCancelled (ADR-124) increments the
+// <daemon>_ops_total{op="deployment_cancel",outcome} counter by one.
+// outcome is the closed label set:
+//   - "ok" — deployment row flipped to "cancelled" successfully
+//   - "live_forbidden" — attempt to cancel a DeployLive row (409)
+//   - "not_cancellable" — row already in a terminal state
+//   - "error" — internal failure (logged at the call site)
+//
+// The §12 "deployment cancel success rate" dashboard tile computes
+// ok / (ok + live_forbidden + not_cancellable + error) over a scrape
+// window. Safe on a nil receiver so apid unit tests without
+// metrics keep working.
+func (m *OpsMetrics) ObserveDeploymentCancelled(outcome string) {
+	if m == nil {
+		return
+	}
+	m.ops.WithLabelValues("deployment_cancel", outcome).Inc()
+}
+
+// ObserveBuildCancelled (ADR-124) increments the
+// <daemon>_ops_total{op="build_cancel",outcome} counter by one.
+// outcome is the closed label set:
+//   - "ok" — VM teardown via VM.Cancel succeeded
+//   - "vmmd_error" — vmmd.Destroy RPC returned an error
+//   - "not_wired" — VM driver is nil (unit-test / stub path)
+//   - "skip" — no live VM for the build_id (already exited)
+//
+// Safe on a nil receiver so builderd unit tests without metrics
+// keep working.
+func (m *OpsMetrics) ObserveBuildCancelled(outcome string) {
+	if m == nil {
+		return
+	}
+	m.ops.WithLabelValues("build_cancel", outcome).Inc()
+}
+
+// ObserveDeploymentReorder (ADR-124) increments the
+// <daemon>_ops_total{op="deployment_reorder",outcome} counter by one.
+// outcome is the closed label set:
+//   - "ok" — priority updated on a DeployPending row
+//   - "not_pending" — target row already past the builderd claim path
+//   - "plan_disabled" — caller is on Free plan
+//   - "out_of_range" — priority outside [0, 1000]
+//   - "error" — internal failure
+//
+// Safe on a nil receiver.
+func (m *OpsMetrics) ObserveDeploymentReorder(outcome string) {
+	if m == nil {
+		return
+	}
+	m.ops.WithLabelValues("deployment_reorder", outcome).Inc()
+}
+
 // ObserveProvenanceWrite records one ADR-038 build_provenance
 // populator outcome. code is "ok" on a successful CREATE /
 // ON CONFLICT (build_id) DO UPDATE write, "error" on any
