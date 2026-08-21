@@ -1356,6 +1356,16 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// behaviour bit-for-bit (the empty-string fallback
 				// in the sort comparator handles pre-PR rows).
 				EvictionPriority: a.EvictionPriority,
+				// Issue #72 / ADR-125: instance mode is the
+				// reaper-exempt predicate for mirror VMs. The
+				// reaper's ReapIdle consults Mode and skips
+				// mode='mirror' rows; the sampler mirrors the
+				// same skip on the biller side. Sourced from
+				// state.Instance.Mode; pre-feature rows carry
+				// 'normal' so this is a no-op for every existing
+				// customer until a mirror goroutine wakes a
+				// mode='mirror' VM via Engine.AdmitInstance.
+				Mode: ins.Mode,
 			})
 		}
 	}

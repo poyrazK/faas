@@ -256,6 +256,50 @@ func TestSampler_SkipsParkedInstances(t *testing.T) {
 	}
 }
 
+// TestSampler_SkipsMirrorInstances is the issue #72 / ADR-125 mirror
+// carve-out guard: a mirror instance (mode='mirror') must not
+// accrue mb_seconds in meterd. The customer-facing response is
+// always the source's response; the mirror never serves the
+// customer, so the model math (financial model §1) must exclude it.
+// The sampler shares the same loop body as the reaper
+// (mirror_count is a sub-case of "not customer-facing"), so a green
+// sampler test implies the reaper test will follow.
+func TestSampler_SkipsMirrorInstances(t *testing.T) {
+	t.Parallel()
+	s := state.NewMemStore()
+	ctx := context.Background()
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+
+	acct := makeAccount(t, ctx, s, api.PlanPro)
+	app := newApp(t, ctx, s, acct.ID)
+	// Plant one RUNNING mirror instance and one RUNNING normal
+	// instance side-by-side. The normal one must appear in the
+	// output rows; the mirror one must not.
+	mirrorIns, err := s.CreateInstance(ctx, app.ID, "dep1", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatalf("create mirror instance: %v", err)
+	}
+	if err := s.SetInstanceMode(ctx, mirrorIns.ID, state.InstanceModeMirror); err != nil {
+		t.Fatalf("set instance mode: %v", err)
+	}
+	normalIns, err := s.CreateInstance(ctx, app.ID, "dep2", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatalf("create normal instance: %v", err)
+	}
+	_ = normalIns
+
+	rows, err := meter.NewSampler(s, nil, func() time.Time { return now }).SampleAndRoll(ctx)
+	if err != nil {
+		t.Fatalf("sample: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (only the normal instance bills)", len(rows))
+	}
+	if rows[0].InstanceID == mirrorIns.ID {
+		t.Fatalf("mirror instance %s leaked into usage rows", mirrorIns.ID)
+	}
+}
+
 // TestInvoiceShadow24h is the §14 M7 acceptance gate: a 256 MB + 8 MB
 // Hobby instance resident for 24 h accrues (264 * 86400) mb_seconds,
 // which is exactly (264/1024) GB-hours = 0.2578125. Shadow math must

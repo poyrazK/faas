@@ -374,6 +374,12 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			RequireAuthnDefault: true, PublicAuthModeDefault: "bearer",
 			// Issue #556 PR-A: Pro unlocks traffic splitting.
 			TrafficSplit: true,
+			// Issue #72 / ADR-125: Pro unlocks traffic mirroring
+			// (one shadow deployment per app for canary-shadow
+			// comparisons). Hobby/Free stay gated — the mirror
+			// path bills a parallel VM and the Hobby plan's
+			// value-prop doesn't subsidise it.
+			MirrorRuleAllowed: true, MirrorTargetsPerApp: 1,
 			// Issue #554 / ADR-078: Pro inherits the same liveness
 			// defaults as Hobby (5s / 3 / 60s / 3 in 300s). Pro is
 			// the unlock point for `GRPCLivenessAllowed()` once v2
@@ -459,6 +465,15 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// 25 attempts) so a Scale customer's SQS-compatible or
 			// Kafka consumer can be drained at full throughput.
 			TriggersAllowed: true, TriggerLimitPerApp: 50, TriggerLimitPerAccount: 200, TriggerBatchSizeMax: 5000, TriggerBatchWindowMaxSec: 300, TriggerMaxAttemptsMax: 25, TriggerRecordsPerSecondPerApp: 10000, TriggerPayloadMaxBytes: 16777216, MaxESMSourcesPerApp: 50, MaxESMRecordsPerSecond: 10000, BrokerEgressMbit: 200, TLSSkipVerifyAllowed: true,
+			// Issue #556 PR-A: Pro unlocks traffic splitting.
+			TrafficSplit: true,
+			// Issue #72 / ADR-125: Scale = 3 mirror targets per
+			// app — SaaS-scale multi-region customers run parallel
+			// canary shadows against multiple staging stacks (e.g.
+			// one per tenant surface). 3 is the upper bound the
+			// picker cache refresh path can validate inside the
+			// deployment_changed pg_notify fanout window.
+			MirrorRuleAllowed: true, MirrorTargetsPerApp: 3,
 			// ADR-040: Scale gets 5000/min — ~10× the per-app rps (500).
 			// The fleet-summed alert at 100/min/5m (FaasPerAccountRateLimitSpike)
 			// triggers well before any single paid customer's bucket fills.
@@ -503,8 +518,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #556 PR-A: Scale mirrors Pro — canary rollout
 			// is part of the production-tier value-prop.
 			RequireAuthnDefault: true, PublicAuthModeDefault: "bearer",
-			// Issue #556 PR-A: Pro unlocks traffic splitting.
-			TrafficSplit: true,
+			// (TrafficSplit: true is set on the Scale block above
+			// at line 469; Scale mirrors Pro's unlock posture.)
+
 			// Issue #554 / ADR-078: Scale mirrors Pro — same
 			// 5s / 3 / 60s / 3 in 300s defaults. The
 			// per-deployment override column on deployments is the

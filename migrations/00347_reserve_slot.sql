@@ -1,0 +1,30 @@
+-- +goose Up
+-- +goose StatementBegin
+-- filename: 00347_reserve_slot.sql
+--
+-- Slot fence (issue #72 / ADR-125 traffic mirroring, PR-A1).
+-- Reserve slot 00347 so this PR's first real migration (00348_mirror_rules)
+-- stays contiguous with main's 00346_deployments_annotation (PR #984)
+-- and 00349..00351 below land as a single contiguous block. Without
+-- this fence, TestMigrationsContiguous at migrations/embed_test.go
+-- would fail with "migration slot 347 is missing" on this PR's CI.
+--
+-- Why we can't use the upstream 00347 slot: a non-main PR (per-service
+-- wire-protocol selector, ADR-124 on a different branch) holds that
+-- slot for `apps.app_protocol`. If that PR merges before this one,
+-- the slot will be claimed by their real migration and this fence
+-- will fail CI's uniqueness check. In that case the rebase recipe
+-- is: drop 00347_reserve_slot.sql + renumber 00348→00347. The
+-- same 00348_absorb_main_00347 fence pattern is documented in
+-- memory: cross-pr-slot-precheck-fence-blindspot.
+--
+-- This file is intentionally a no-op: no schema, no rows, no
+-- triggers. The goose embed_test counts it by filename prefix only.
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+-- +goose StatementEnd

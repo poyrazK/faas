@@ -8786,6 +8786,25 @@ func (s *PgStore) SetInstanceFrameworkReadyAt(ctx context.Context, id string, re
 	return nil
 }
 
+// SetInstanceMode (issue #72 / ADR-125) flips instances.mode to the
+// supplied value. Idempotent. Used by the schedd mirror admission
+// path (Engine.AdmitInstance stamps the value at INSERT time, but a
+// late retrofit on a RUNNING row reads as the same call). Returns
+// ErrNotFound when the row is missing. The CHECK constraint on
+// instances.mode (migrations/00349) enforces the value set.
+func (s *PgStore) SetInstanceMode(ctx context.Context, id string, mode InstanceMode) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances set mode = $2 where id = $1`,
+		id, string(mode))
+	if err != nil {
+		return fmt.Errorf("state: set instance %s mode: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ClearInstanceFrameworkReadyAt resets `framework_ready_at` to NULL.
 // Used by the engine at the start of each warm-capture cycle so a
 // stale stamp from the previous cycle doesn't leak into the next wake
@@ -18039,4 +18058,519 @@ func (s *PgStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appI
 		return ConsumerKey{}, ErrNotFound
 	}
 	return k, err
+}
+
+// ----------------------------------------------------------------------------
+// mirror_rules + mirror_invocation_results (issue #72 / ADR-125)
+//
+// Storage shape mirrors the edge_rules section above: a single
+// mirrorRuleSelectCols constant + scanMirrorRuleCols helper is the
+// column order contract. Every SELECT against mirror_rules binds
+// against this list, so a future column add lands in one commit.
+//
+// CreateMirrorRuleIfUnderQuota uses the same FOR UPDATE row lock on
+// apps that CreateEdgeRuleIfUnderQuota uses — the cheap-tier
+// guardrail that keeps a burst of N parallel inserts from racing
+// past the per-app cap by N-1. The mirror rule count is on the
+// apps row (not on a per-deployment row), so the picker cache
+// refresh path keyed on app_id (pkg/gateway/pgbackend.go) can
+// read the active rule set in a single OAuth-throttled query.
+//
+// Cross-app + cross-deployment validation is enforced at the SQL
+// CHECK level (migrations/00348) AND inside CreateMirrorRuleIfUnderQuota
+// so the handler can return a precise 422 / 409 instead of a
+// generic 23505 FK violation.
+// ----------------------------------------------------------------------------
+
+const mirrorRuleSelectCols = `id, account_id, app_id, source_deployment_id,
+       mirror_deployment_id, percent, enabled, include_body, redact_headers,
+       created_at, updated_at`
+
+const mirrorResultSelectCols = `id, mirror_rule_id, account_id, app_id,
+       source_deployment_id, mirror_deployment_id, instance_id, source_instance_id,
+       status_code, source_status_code, latency_ms, source_latency_ms,
+       body_hash, source_body_hash, schema_hash, source_schema_hash,
+       status_diff, schema_diff, body_diff, crashed, request_id, completed_at`
+
+// scanMirrorRule reads a single mirror_rule row. ErrNotFound on
+// no-rows; mapErr handles raw errors (e.g. constraint violations).
+func (s *PgStore) scanMirrorRule(row pgx.Row) (MirrorRule, error) {
+	r, err := scanMirrorRuleCols(row.Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return MirrorRule{}, ErrNotFound
+		}
+		return MirrorRule{}, err
+	}
+	return r, nil
+}
+
+// scanMirrorRules walks the Rows iterator. Caller owns Close().
+func (s *PgStore) scanMirrorRules(rows pgx.Rows) ([]MirrorRule, error) {
+	var out []MirrorRule
+	for rows.Next() {
+		r, err := scanMirrorRuleCols(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// scanMirrorRuleCols is the single source of column order for
+// mirror_rules. SELECT clauses above cite this exact list.
+func scanMirrorRuleCols(scan func(...any) error) (MirrorRule, error) {
+	var (
+		r             MirrorRule
+		redactHeaders []string
+	)
+	if err := scan(
+		&r.ID, &r.AccountID, &r.AppID, &r.SourceDeploymentID,
+		&r.MirrorDeploymentID, &r.Percent, &r.Enabled, &r.IncludeBody,
+		&redactHeaders, &r.CreatedAt, &r.UpdatedAt,
+	); err != nil {
+		return MirrorRule{}, err
+	}
+	if redactHeaders == nil {
+		redactHeaders = []string{}
+	}
+	r.RedactHeaders = redactHeaders
+	return r, nil
+}
+
+// scanMirrorResult reads a single mirror_invocation_results row.
+func scanMirrorResult(scan func(...any) error) (MirrorInvocationResult, error) {
+	var r MirrorInvocationResult
+	var statusCode, sourceStatusCode, latencyMs, sourceLatencyMs *int
+	// instance_id / source_instance_id are nullable text columns
+	// (NULL when the mirror wake failed — the customer-facing POST
+	// returned a valid source response but the mirror VM never
+	// came up). Scan into *string helpers and dereference so pgx
+	// can return NULL cleanly; scanning into the non-pointer field
+	// crashes pgx v5 with "cannot scan NULL into *string" on the
+	// first failed-wake row, dropping the entire result set and
+	// 500-ing the customer-facing summary endpoint.
+	var instanceID, sourceInstanceID *string
+	if err := scan(
+		&r.ID, &r.MirrorRuleID, &r.AccountID, &r.AppID,
+		&r.SourceDeploymentID, &r.MirrorDeploymentID, &instanceID, &sourceInstanceID,
+		&statusCode, &sourceStatusCode, &latencyMs, &sourceLatencyMs,
+		&r.BodyHash, &r.SourceBodyHash, &r.SchemaHash, &r.SourceSchemaHash,
+		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.RequestID, &r.CompletedAt,
+	); err != nil {
+		return MirrorInvocationResult{}, err
+	}
+	if instanceID != nil {
+		r.InstanceID = *instanceID
+	}
+	if sourceInstanceID != nil {
+		r.SourceInstanceID = *sourceInstanceID
+	}
+	if statusCode != nil {
+		r.StatusCode = *statusCode
+	}
+	if sourceStatusCode != nil {
+		r.SourceStatusCode = *sourceStatusCode
+	}
+	if latencyMs != nil {
+		r.LatencyMs = *latencyMs
+	}
+	if sourceLatencyMs != nil {
+		r.SourceLatencyMs = *sourceLatencyMs
+	}
+	return r, nil
+}
+
+// CreateMirrorRuleIfUnderQuota — see Store interface. Returns:
+//   - (MirrorRule{}, *QuotaError) when Limits.MirrorTargetsPerApp trips
+//   - (MirrorRule{}, ErrMirrorDeploymentNotLive) when source or
+//     mirror deployment is missing / not live / wrong app
+//   - (MirrorRule{}, ErrInvalidMirrorPercent) on out-of-range
+//   - (MirrorRule{}, ErrMirrorSourceTargetSame) when source == mirror
+//   - (MirrorRule{}, ErrMirrorCrossAppMismatch) when the source
+//     deployment's app_id differs from in.AppID (cross-app mirrors
+//     are ADR-125 §follow-on 4, not first-class)
+//
+// The FOR UPDATE row lock on apps is the TOCTOU defence: concurrent
+// inserts serialise on the apps row before reading the count, so a
+// burst of N parallel inserts can't race past the cap by N-1.
+func (s *PgStore) CreateMirrorRuleIfUnderQuota(ctx context.Context, in CreateMirrorRuleParams, limits api.Limits) (MirrorRule, error) {
+	if in.Percent < 0 || in.Percent > 100 {
+		return MirrorRule{}, ErrInvalidMirrorPercent
+	}
+	if in.SourceDeploymentID == in.MirrorDeploymentID {
+		return MirrorRule{}, ErrMirrorSourceTargetSame
+	}
+	redactHeaders := in.RedactHeaders
+	if redactHeaders == nil {
+		redactHeaders = []string{}
+	}
+	if len(redactHeaders) > 32 {
+		return MirrorRule{}, fmt.Errorf("state: mirror_rules redact_headers has %d entries (cap 32)", len(redactHeaders))
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return MirrorRule{}, fmt.Errorf("state: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	// Lock the apps row so concurrent inserts serialise.
+	var locked int
+	if err := tx.QueryRow(ctx,
+		`select 1 from apps where id = $1::uuid and status <> 'deleted' for update`, in.AppID,
+	).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return MirrorRule{}, ErrNotFound
+		}
+		return MirrorRule{}, fmt.Errorf("state: lock app %s: %w", in.AppID, err)
+	}
+
+	// Per-app count gate (Limits.MirrorTargetsPerApp; Free 0 /
+	// Hobby 0 / Pro 1 / Scale 3). The plan gate (Free/Hobby lock)
+	// is the handler's job — Plan.MirrorRuleAllowed() returns false
+	// at the http boundary so we never see a Free/Hobby request here.
+	var appCount int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from mirror_rules where app_id = $1::uuid`, in.AppID,
+	).Scan(&appCount); err != nil {
+		return MirrorRule{}, fmt.Errorf("state: count mirror_rules for app %s: %w", in.AppID, err)
+	}
+	if appCount >= limits.MirrorTargetsPerApp {
+		return MirrorRule{}, &QuotaError{
+			Kind:     QuotaErrorKindMirror,
+			Limit:    limits.MirrorTargetsPerApp,
+			Observed: appCount,
+		}
+	}
+
+	// Validate source + mirror deployments. Both must be live
+	// (operators mirror against live rows, same as traffic split)
+	// AND belong to the same app (a single mirror_rule is
+	// app-scoped; cross-app is ADR-125 §follow-on 4).
+	for _, depID := range []string{in.SourceDeploymentID, in.MirrorDeploymentID} {
+		var appID string
+		var status string
+		if err := tx.QueryRow(ctx,
+			`select app_id, status from deployments where id = $1::uuid`, depID,
+		).Scan(&appID, &status); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return MirrorRule{}, ErrMirrorDeploymentNotLive
+			}
+			return MirrorRule{}, fmt.Errorf("state: read deployment %s: %w", depID, err)
+		}
+		if appID != in.AppID {
+			return MirrorRule{}, ErrMirrorCrossAppMismatch
+		}
+		if status != "live" {
+			return MirrorRule{}, ErrMirrorDeploymentNotLive
+		}
+	}
+
+	row := tx.QueryRow(ctx, `
+		insert into mirror_rules (
+			account_id, app_id, source_deployment_id, mirror_deployment_id,
+			percent, enabled, include_body, redact_headers
+		) values (
+			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			$5, $6, $7, $8
+		)
+		returning `+mirrorRuleSelectCols,
+		in.AccountID, in.AppID, in.SourceDeploymentID, in.MirrorDeploymentID,
+		in.Percent, in.Enabled, in.IncludeBody, redactHeaders,
+	)
+	r, err := s.scanMirrorRule(row)
+	if err != nil {
+		return MirrorRule{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return MirrorRule{}, fmt.Errorf("state: commit create mirror rule: %w", err)
+	}
+	return r, nil
+}
+
+// ListMirrorRules returns every rule for the app, ordered by
+// created_at ASC. The gateway picker reads from this in the
+// deployment_changed pg_notify refresh path; MemStore's in-memory
+// mirror makes it testable without a DB.
+func (s *PgStore) ListMirrorRules(ctx context.Context, appID string) ([]MirrorRule, error) {
+	rows, err := s.pool.Query(ctx, `
+		select `+mirrorRuleSelectCols+`
+		from mirror_rules
+		where app_id = $1::uuid
+		order by created_at asc`,
+		appID)
+	if err != nil {
+		return nil, fmt.Errorf("state: list mirror_rules for app %s: %w", appID, err)
+	}
+	defer rows.Close() //nolint:errcheck // short-lived iterator
+	return s.scanMirrorRules(rows)
+}
+
+// GetMirrorRuleByID returns a single rule by id. IDOR safety is the
+// caller's responsibility (apid's loadApp + AccountID check); this
+// method scopes the read by id alone.
+func (s *PgStore) GetMirrorRuleByID(ctx context.Context, id string) (MirrorRule, error) {
+	row := s.pool.QueryRow(ctx, `
+		select `+mirrorRuleSelectCols+`
+		from mirror_rules
+		where id = $1::uuid`,
+		id)
+	return s.scanMirrorRule(row)
+}
+
+// UpdateMirrorRule applies a partial update via MirrorRulePatch.
+// Pointer fields let the caller distinguish "absent" from "zero"
+// (Percent=0 disables the rule without removing it). Same FOR
+// UPDATE discipline as CreateMirrorRuleIfUnderQuota so concurrent
+// writers serialise on the same apps row.
+func (s *PgStore) UpdateMirrorRule(ctx context.Context, id string, patch MirrorRulePatch) (MirrorRule, error) {
+	// Validate Percent range + RedactHeaders cap before opening the tx.
+	if patch.Percent != nil && (*patch.Percent < 0 || *patch.Percent > 100) {
+		return MirrorRule{}, ErrInvalidMirrorPercent
+	}
+	if patch.RedactHeaders != nil && len(*patch.RedactHeaders) > 32 {
+		return MirrorRule{}, fmt.Errorf("state: mirror_rules redact_headers has %d entries (cap 32)", len(*patch.RedactHeaders))
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return MirrorRule{}, fmt.Errorf("state: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	// Lock the rule row + its parent app. The apps-lock is what
+	// serialises concurrent CreateMirrorRuleIfUnderQuota against
+	// this same rule (both take the apps FOR UPDATE lock).
+	var appID string
+	if err := tx.QueryRow(ctx,
+		`select app_id from mirror_rules where id = $1::uuid for update`, id,
+	).Scan(&appID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return MirrorRule{}, ErrNotFound
+		}
+		return MirrorRule{}, fmt.Errorf("state: lock mirror_rule %s: %w", id, err)
+	}
+	var locked int
+	if err := tx.QueryRow(ctx,
+		`select 1 from apps where id = $1::uuid and status <> 'deleted' for update`, appID,
+	).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return MirrorRule{}, ErrNotFound
+		}
+		return MirrorRule{}, fmt.Errorf("state: lock app %s: %w", appID, err)
+	}
+
+	// Build the SET clause from the patch. Pointer fields that are
+	// nil are skipped via COALESCE($n, col) — this is the standard
+	// pattern for partial-update SQL and keeps the call site free
+	// of dynamic SQL string-build.
+	var (
+		setPercent       *int
+		setEnabled       *bool
+		setIncludeBody   *bool
+		setRedactHeaders *[]string
+	)
+	if patch.Percent != nil {
+		p := *patch.Percent
+		setPercent = &p
+	}
+	if patch.Enabled != nil {
+		b := *patch.Enabled
+		setEnabled = &b
+	}
+	if patch.IncludeBody != nil {
+		b := *patch.IncludeBody
+		setIncludeBody = &b
+	}
+	if patch.RedactHeaders != nil {
+		headers := *patch.RedactHeaders
+		if headers == nil {
+			headers = []string{}
+		}
+		setRedactHeaders = &headers
+	}
+	row := tx.QueryRow(ctx, `
+		update mirror_rules
+		set percent        = coalesce($2::int,        percent),
+		    enabled        = coalesce($3::boolean,    enabled),
+		    include_body   = coalesce($4::boolean,    include_body),
+		    redact_headers = coalesce($5::text[],     redact_headers),
+		    updated_at     = now()
+		where id = $1::uuid
+		returning `+mirrorRuleSelectCols,
+		id, setPercent, setEnabled, setIncludeBody, setRedactHeaders,
+	)
+	r, err := s.scanMirrorRule(row)
+	if err != nil {
+		return MirrorRule{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return MirrorRule{}, fmt.Errorf("state: commit update mirror rule: %w", err)
+	}
+	return r, nil
+}
+
+// DeleteMirrorRule removes a rule. ON DELETE CASCADE on mirror_rules
+// (migrations/00350) cascades to mirror_invocation_results, so a
+// single DELETE clears the customer's history along with the rule.
+func (s *PgStore) DeleteMirrorRule(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `delete from mirror_rules where id = $1::uuid`, id)
+	if err != nil {
+		return fmt.Errorf("state: delete mirror_rule %s: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// InsertMirrorResult appends one row to the mirror ledger. Best-
+// effort: the caller logs the error but doesn't roll back the
+// customer-facing response. Status / latency / body / schema fields
+// are NULL when the mirror wake failed (the customer-facing POST
+// returned a valid source response, but the mirror never came up).
+//
+// NULL contract for the bytea columns (issue #72 / ADR-125): body_hash
+// and source_body_hash are NULL when the rule has include_body=false
+// (the safe-by-default posture — sensitive bodies are explicitly
+// opted in via per-rule). pgx v5 encodes a typed nil `[]byte(nil)` as
+// SQL NULL, but a coerced `[]byte{}` (empty non-nil) as a 0-length
+// bytea. We MUST preserve the typed-nil distinction so downstream
+// tooling (e.g. body_diff skip, schema-evolution audit) can use
+// the column's NULL state to honour include_body=false. Coercing
+// nil → []byte{} collapses "body intentionally not hashed" with
+// "body present but empty" — a silent contract violation.
+func (s *PgStore) InsertMirrorResult(ctx context.Context, r MirrorInvocationResult) error {
+	bodyHash := r.BodyHash // typed-nil preserved on insert
+	srcBodyHash := r.SourceBodyHash
+	schemaHash := r.SchemaHash
+	srcSchemaHash := r.SourceSchemaHash
+	// Status/latency are nullable because the mirror wake can fail
+	// (StatusCode=0 → NULL), hence the pointer dance. Body/hash
+	// columns are the only other nullable fields.
+	var (
+		instanceID    *string
+		srcInstanceID *string
+		statusCode    *int
+		srcStatusCode *int
+		latencyMs     *int
+		srcLatencyMs  *int
+	)
+	if r.InstanceID != "" {
+		v := r.InstanceID
+		instanceID = &v
+	}
+	if r.SourceInstanceID != "" {
+		v := r.SourceInstanceID
+		srcInstanceID = &v
+	}
+	if r.StatusCode != 0 {
+		v := r.StatusCode
+		statusCode = &v
+	}
+	if r.SourceStatusCode != 0 {
+		v := r.SourceStatusCode
+		srcStatusCode = &v
+	}
+	if r.LatencyMs != 0 {
+		v := r.LatencyMs
+		latencyMs = &v
+	}
+	if r.SourceLatencyMs != 0 {
+		v := r.SourceLatencyMs
+		srcLatencyMs = &v
+	}
+	_, err := s.pool.Exec(ctx, `
+		insert into mirror_invocation_results (
+			mirror_rule_id, account_id, app_id,
+			source_deployment_id, mirror_deployment_id,
+			instance_id, source_instance_id,
+			status_code, source_status_code, latency_ms, source_latency_ms,
+			body_hash, source_body_hash, schema_hash, source_schema_hash,
+			status_diff, schema_diff, body_diff, crashed, request_id, completed_at
+		) values (
+			$1::uuid, $2::uuid, $3::uuid,
+			$4::uuid, $5::uuid,
+			$6, $7,
+			$8, $9, $10, $11,
+			$12, $13, $14, $15,
+			$16, $17, $18, $19, $20, $21
+		)`,
+		r.MirrorRuleID, r.AccountID, r.AppID,
+		r.SourceDeploymentID, r.MirrorDeploymentID,
+		instanceID, srcInstanceID,
+		statusCode, srcStatusCode, latencyMs, srcLatencyMs,
+		bodyHash, srcBodyHash, schemaHash, srcSchemaHash,
+		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.RequestID, r.CompletedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("state: insert mirror_invocation_result: %w", err)
+	}
+	return nil
+}
+
+// ListMirrorResults returns up to `limit` rows for a rule with
+// completed_at >= `since`, ordered DESC. limit <= 0 means "no
+// cap" (matches the same contract ListDeploymentsForApp uses).
+func (s *PgStore) ListMirrorResults(ctx context.Context, ruleID string, since time.Time, limit int) ([]MirrorInvocationResult, error) {
+	rows, err := s.pool.Query(ctx, `
+		select `+mirrorResultSelectCols+`
+		from mirror_invocation_results
+		where mirror_rule_id = $1::uuid
+		  and completed_at >= $2
+		order by completed_at desc
+		limit $3`,
+		ruleID, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list mirror_invocation_results for rule %s: %w", ruleID, err)
+	}
+	defer rows.Close() //nolint:errcheck // short-lived iterator
+	var out []MirrorInvocationResult
+	for rows.Next() {
+		r, err := scanMirrorResult(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// MirrorSummary aggregates the rows in the same window via SQL
+// aggregates (COUNT/SUM/AVG/p99_cont) — never by client-side
+// iteration. The latency diff is signed (mirror_ms - source_ms,
+// positive = mirror is slower).
+func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.Time) (MirrorSummary, error) {
+	var s2 MirrorSummary
+	var meanLatencyDiff *float64
+	var p99LatencyDiff *float64
+	if err := s.pool.QueryRow(ctx, `
+		select
+			count(*),
+			coalesce(sum(case when status_diff then 1 else 0 end), 0),
+			coalesce(sum(case when schema_diff then 1 else 0 end), 0),
+			coalesce(sum(case when body_diff   then 1 else 0 end), 0),
+			coalesce(sum(case when crashed     then 1 else 0 end), 0),
+			avg(case when latency_ms is not null and source_latency_ms is not null
+			         then (latency_ms - source_latency_ms)::double precision
+			         else null end),
+			percentile_cont(0.99) within group (order by case
+				when latency_ms is not null and source_latency_ms is not null
+				then (latency_ms - source_latency_ms)::double precision
+				else null end)
+		from mirror_invocation_results
+		where mirror_rule_id = $1::uuid
+		  and completed_at >= $2`,
+		ruleID, since,
+	).Scan(&s2.TotalInvocations, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
+		return MirrorSummary{}, fmt.Errorf("state: mirror summary for rule %s: %w", ruleID, err)
+	}
+	if meanLatencyDiff != nil {
+		s2.MeanLatencyDiffMs = int(*meanLatencyDiff)
+	}
+	if p99LatencyDiff != nil {
+		s2.P99LatencyDiffMs = int(*p99LatencyDiff)
+	}
+	return s2, nil
 }

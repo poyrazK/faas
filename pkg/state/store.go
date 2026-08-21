@@ -60,6 +60,48 @@ var ErrInvalidPreviewPrState = errors.New("state: invalid preview_pr_state")
 // api.ErrTrafficPercentSumInvalid (409 Conflict).
 var ErrTrafficPercentSumInvalid = errors.New("state: traffic_percent sum != 100")
 
+// ErrInvalidMirrorPercent is returned by CreateMirrorRule /
+// UpdateMirrorRule when the requested percent falls outside
+// [0, 100]. The CHECK constraint on mirror_rules.percent
+// (migration 00348) is the schema-layer guard; this sentinel
+// surfaces the same range violation when the store is the one
+// running the backstop. Translated at the handler boundary to
+// api.ErrInvalidMirrorPercent (422). Mirrors ErrInvalidTrafficPercent's
+// contract exactly so the apid surface can lift the traffic-split
+// range-check verbatim.
+var ErrInvalidMirrorPercent = errors.New("state: invalid mirror_rules.percent")
+
+// ErrMirrorSourceTargetSame is returned by CreateMirrorRule when
+// the caller passes the same deployment id for source and mirror.
+// The migrations/00348 SQL CHECK prevents the row from being
+// inserted at the schema layer; this sentinel surfaces the same
+// condition at the store layer so the handler can produce a
+// stable RFC 7807 problem without a Postgres round-trip. Distinct
+// from ErrInvalidMirrorPercent because the customer-facing problem
+// code is different (422 mirror_source_target_same vs 422
+// invalid_mirror_percent).
+var ErrMirrorSourceTargetSame = errors.New("state: mirror_rules source_deployment_id == mirror_deployment_id")
+
+// ErrMirrorDeploymentNotLive is returned by CreateMirrorRule /
+// UpdateMirrorRule when one or both of the referenced deployments
+// is not in status='live' (a superseded / failed / pending row
+// cannot mirror — operators mirror against live rows, same as the
+// traffic-split POST handler). Translated at the handler boundary
+// to api.ErrMirrorDeploymentNotLive (409). The caller is
+// responsible for passing the ids; the store does not infer them
+// from the app.
+var ErrMirrorDeploymentNotLive = errors.New("state: mirror_rules source/mirror deployment is not live")
+
+// ErrMirrorCrossAppMismatch is returned by CreateMirrorRule when
+// the source_deployment_id and mirror_deployment_id resolve to
+// different apps (a single mirror_rule is app-scoped; cross-app
+// mirroring is a follow-on ADR-125 §follow-on 4). Translated at
+// the handler boundary to api.ErrMirrorCrossAppMismatch (422).
+// Distinct from ErrMirrorDeploymentNotLive because the customer
+// problem code is different (422 mirror_cross_app_mismatch vs
+// 409 mirror_deployment_not_live).
+var ErrMirrorCrossAppMismatch = errors.New("state: mirror_rules source/mirror deployment belong to different apps")
+
 // ErrQuotaExceeded is returned by CreateAppIfUnderQuota when the
 // account already holds limits.DeployedApps live apps. The error wraps
 // the observed count so apid can include it in the 403 envelope via
@@ -74,6 +116,16 @@ const (
 	QuotaErrorKindApps   QuotaErrorKind = "apps"
 	QuotaErrorKindCrons  QuotaErrorKind = "crons"
 	QuotaErrorKindMemory                = "memory" // reserved for ADR-046 follow-on
+	// QuotaErrorKindMirror (issue #72 / ADR-125) trips when a
+	// Pro/Scale customer tries to create more than
+	// limits.MirrorTargetsPerApp mirror rules on one app. Free /
+	// Hobby customers hit the plan-gate one layer up
+	// (api.Plan.MirrorRuleAllowed returns false → apid returns 403
+	// plan_mirror_not_allowed before the store ever sees the
+	// request). The QuotaError carries Observed + Limit so the
+	// handler can stamp both on the RFC 7807 problem without
+	// re-running the count.
+	QuotaErrorKindMirror QuotaErrorKind = "mirror"
 )
 
 type QuotaError struct {
@@ -1761,6 +1813,70 @@ type Store interface {
 	// makes the rebalance race-free against CreateDeployment.
 	UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int) (Deployment, error)
 
+	// MirrorRules (issue #72 / ADR-125) — per-deployment traffic-
+	// mirroring CRUD + comparison ledger reads.
+	//
+	// CreateMirrorRuleIfUnderQuota inserts a new mirror_rule after
+	// holding FOR UPDATE on the apps row to serialise against
+	// concurrent creators. The cap is limits.MirrorTargetsPerApp
+	// (Free 0 / Hobby 0 / Pro 1 / Scale 3 per ADR-125 §Decision);
+	// the gate fires before the INSERT, returning a *QuotaError
+	// when tripped (the same shape CreateAppIfUnderQuota /
+	// CreateEdgeRuleIfUnderQuota use, with Kind=QuotaErrorKindMirror
+	// added to the QuotaErrorKind enum so the apid handler can map
+	// it to a stable RFC 7807 code). Range-check on percent ∈
+	// [0, 100] is layered: handler validates first (422), this
+	// method re-validates as defence-in-depth. Source / mirror
+	// distinctness is the migrations/00348 SQL CHECK; this method
+	// surfaces ErrMirrorSourceTargetSame at the Go layer so the
+	// handler doesn't have to inspect the SQL error. Source /
+	// mirror must both be status='live' deployments of the same
+	// app — returns ErrMirrorDeploymentNotLive / ErrMirrorCrossAppMismatch
+	// respectively when either invariant trips.
+	//
+	// ListMirrorRules returns every rule for the app (enabled or
+	// not), ordered by created_at ASC. The gateway picker reads
+	// from this in the deployment_changed pg_notify refresh path;
+	// MemStore's in-memory mirror makes it testable without a DB.
+	//
+	// GetMirrorRuleByID returns a single rule by id. IDOR safety
+	// is the caller's responsibility (apid's loadApp + AccountID
+	// check); this method scopes the read by id alone.
+	//
+	// UpdateMirrorRule applies a partial update via MirrorRulePatch.
+	// Pointer fields let the caller distinguish "absent" from
+	// "zero" (Percent=0 disables the rule without removing it).
+	// Same FOR UPDATE discipline as CreateMirrorRuleIfUnderQuota so
+	// concurrent writers serialise.
+	//
+	// DeleteMirrorRule removes a rule. ON DELETE CASCADE on
+	// mirror_invocation_results.mirror_rule_id cleans up the
+	// comparison ledger; ON DELETE CASCADE on the deployments FKs
+	// means deleting a deployment cascades to its rules.
+	//
+	// InsertMirrorResult appends one row to mirror_invocation_results
+	// after a mirror goroutine completes. Best-effort: the gateway
+	// logs the error but doesn't roll back the customer-facing
+	// response. Caller stamps CompletedAt; the column default is
+	// now() for direct SQL inserts but the Go side sets it
+	// explicitly so the audit + ledger timestamps agree.
+	//
+	// ListMirrorResults returns up to `limit` rows for a rule with
+	// completed_at >= `since`, ordered DESC. limit <= 0 means "no
+	// cap" (matches the same contract ListDeploymentsForApp uses).
+	//
+	// MirrorSummary aggregates the rows in the same window via SQL
+	// aggregates — never client-side. The apid handler renders the
+	// result as MirrorSummaryResponse.
+	CreateMirrorRuleIfUnderQuota(ctx context.Context, in CreateMirrorRuleParams, limits api.Limits) (MirrorRule, error)
+	ListMirrorRules(ctx context.Context, appID string) ([]MirrorRule, error)
+	GetMirrorRuleByID(ctx context.Context, id string) (MirrorRule, error)
+	UpdateMirrorRule(ctx context.Context, id string, patch MirrorRulePatch) (MirrorRule, error)
+	DeleteMirrorRule(ctx context.Context, id string) error
+	InsertMirrorResult(ctx context.Context, r MirrorInvocationResult) error
+	ListMirrorResults(ctx context.Context, ruleID string, since time.Time, limit int) ([]MirrorInvocationResult, error)
+	MirrorSummary(ctx context.Context, ruleID string, since time.Time) (MirrorSummary, error)
+
 	// SetDeploymentFailed is the failure-specific helper ADR-021 introduced
 	// alongside the deployments.error_code column. Status is pinned to
 	// 'failed'; code is the RFC 7807 code pkg/api.SentinelToCode lifted
@@ -2650,6 +2766,13 @@ type Store interface {
 	// routes here when the target state is STOPPED or FAILED; every other
 	// transition still uses UpdateInstanceState / UpdateInstanceStateWithTimestamp.
 	UpdateInstanceStateToTerminal(ctx context.Context, id, state string, terminalAt time.Time) error
+	// SetInstanceMode (issue #72 / ADR-125) flips instances.mode
+	// from 'normal' to 'mirror' (or back). Used by the schedd
+	// admission path when admitting a mirror instance under a
+	// mirror_rule, and by tests that need to plant a mirror
+	// instance without going through the full wake-coord loop.
+	// Idempotent. ErrNotFound when the instance row is missing.
+	SetInstanceMode(ctx context.Context, id string, mode InstanceMode) error
 	// SetInstanceFrameworkReadyAt stamps the column added by
 	// migrations/00112_instances_framework_ready_at.sql — the wall-clock
 	// time the vmmd received the guest-init "framework ready" vsock

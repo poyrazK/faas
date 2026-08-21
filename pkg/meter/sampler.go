@@ -370,6 +370,22 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			if !state.State(ins.State).CountsForRAM() {
 				continue
 			}
+			// Issue #72 / ADR-125: skip mode='mirror' instances at
+			// the sampler. A mirror VM never serves the customer —
+			// the customer only saw the source deployment's
+			// response — so billing it would be a customer-trust
+			// bug, not a feature. The reaper also skips these rows
+			// (mirror VMs self-park on request completion, so
+			// there's no idle lifetime to reap), which keeps the
+			// sampler and reaper symmetric on the
+			// CountsForRAM-vs-mirror skip — both predicates are
+			// evaluated in the same order. The state-mode column is
+			// NOT NULL DEFAULT 'normal' (migration 00349), so
+			// pre-feature rows backfill to the default and skip
+			// this branch.
+			if state.InstanceMode(ins.Mode) == state.InstanceModeMirror {
+				continue
+			}
 			sidecarMBs := sidecarByDeploy[ins.DeploymentID]
 			row := RolledRow{
 				InstanceID:  ins.ID,
@@ -470,6 +486,14 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 		floor := app.EffectiveMinInstances()
 		for _, ins := range ins {
 			if !state.State(ins.State).CountsForRAM() {
+				continue
+			}
+			// Same skip as the live-instance loop above: mode='mirror'
+			// instances shouldn't contribute to the per-deployment
+			// floor enrichment either. Skipping them keeps the floor
+			// math symmetric — a customer with a mirror rule sees
+			// their floor counted from production instances only.
+			if state.InstanceMode(ins.Mode) == state.InstanceModeMirror {
 				continue
 			}
 			if ins.DeploymentID == "" {

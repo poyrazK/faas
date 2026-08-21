@@ -168,6 +168,18 @@ type MemStore struct {
 	// is needed. Soft-delete semantics (apps.status='deleted') are
 	// mirrored by the per-app lookup in the quota-check branch.
 	edgeRules map[string]EdgeRule
+	// mirrorRules mirrors mirror_rules for handler tests (issue #72
+	// / ADR-125). Keyed by MirrorRule.ID; the (app_id, enabled) and
+	// (source_deployment_id, enabled) lookup hot paths walk the map
+	// — fine for tests, matches the partial-index plan on the
+	// pgstore side. The m.mu lock serialises count + insert in
+	// CreateMirrorRuleIfUnderQuota, mirroring the pgstore FOR
+	// UPDATE discipline. mirrorResults is the per-invocation
+	// ledger (mirror_invocation_results table) keyed by result ID;
+	// InsertMirrorResult is best-effort, the apid path doesn't
+	// observe it, only the gateway does.
+	mirrorRules   map[string]MirrorRule
+	mirrorResults map[string]MirrorInvocationResult
 	// corsPresets mirrors cors_presets (issue #975 item #4 /
 	// Mega-Foundation #979-b). Keyed by presetID. PR-A exposes
 	// only the read path; the write surface lives in PR-B
@@ -564,7 +576,12 @@ func NewMemStore() *MemStore {
 		// buildProvenance is the ADR-038 "what ran?" map keyed by
 		// build_id (mirrors the build_provenance.build_id UNIQUE).
 		// Starts empty; CreateBuildProvenance fills it.
-		buildProvenance:      map[string]BuildProvenance{},
+		buildProvenance: map[string]BuildProvenance{},
+		// issue #72 / ADR-125: mirror-rules and mirror-results
+		// stores. Empty until the first create; the per-app count
+		// in CreateMirrorRuleIfUnderQuota walks the map.
+		mirrorRules:          map[string]MirrorRule{},
+		mirrorResults:        map[string]MirrorInvocationResult{},
 		domains:              map[string]CustomDomain{},
 		doctorObs:            map[string]DomainDoctorObservation{},
 		crons:                map[string]Cron{},
@@ -6528,6 +6545,24 @@ func (m *MemStore) SetInstanceFrameworkReadyAt(_ context.Context, id string, rea
 	}
 	ts := readyAt
 	ins.FrameworkReadyAt = &ts
+	m.instances[id] = ins
+	return nil
+}
+
+// SetInstanceMode (issue #72 / ADR-125) mirrors pgstore.SetInstanceMode.
+// Flips instances.mode to the supplied value (InstanceModeNormal or
+// InstanceModeMirror). Idempotent. Used by the schedd mirror
+// admission path and by tests that plant a mirror instance without
+// going through the full wake-coord loop. Returns ErrNotFound when
+// the row is missing.
+func (m *MemStore) SetInstanceMode(_ context.Context, id string, mode InstanceMode) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return ErrNotFound
+	}
+	ins.Mode = string(mode)
 	m.instances[id] = ins
 	return nil
 }
@@ -13042,4 +13077,252 @@ func parseMemUUIDString(s string) [16]byte {
 	}
 	copy(b[:], uid[:])
 	return b
+}
+
+// CreateMirrorRuleIfUnderQuota mirrors pgstore.CreateMirrorRuleIfUnderQuota
+// (issue #72 / ADR-125). The MemStore version runs under m.mu so a
+// concurrent CreateMirrorRuleIfUnderQuota call serialises behind us
+// — same race-free contract the pgstore's FOR UPDATE provides.
+//
+// Range-check matches pgstore (handler already validates, this is
+// defence in depth). Source/mirror distinctness check matches the
+// SQL CHECK (migration 00348). Both-deployments-live + cross-app
+// validation matches the pgstore's pre-insert queries.
+func (m *MemStore) CreateMirrorRuleIfUnderQuota(_ context.Context, in CreateMirrorRuleParams, limits api.Limits) (MirrorRule, error) {
+	if in.Percent < 0 || in.Percent > 100 {
+		return MirrorRule{}, ErrInvalidMirrorPercent
+	}
+	if in.SourceDeploymentID == in.MirrorDeploymentID {
+		return MirrorRule{}, ErrMirrorSourceTargetSame
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	app, ok := m.apps[in.AppID]
+	if !ok || app.Status == AppDeleted {
+		return MirrorRule{}, ErrNotFound
+	}
+	// Per-app count gate (Limits.MirrorTargetsPerApp; Free 0 /
+	// Hobby 0 / Pro 1 / Scale 3). The plan gate (Free/Hobby lock)
+	// is the handler's job — MirrorRuleAllowed returns false at
+	// the Plan.MirrorRuleAllowed() boundary so we never see a
+	// Free/Hobby request here.
+	var appCount int
+	for _, r := range m.mirrorRules {
+		if r.AppID == in.AppID {
+			appCount++
+		}
+	}
+	if appCount >= limits.MirrorTargetsPerApp {
+		return MirrorRule{}, &QuotaError{
+			Kind:     QuotaErrorKindMirror,
+			Limit:    limits.MirrorTargetsPerApp,
+			Observed: appCount,
+		}
+	}
+	// Validate source + mirror deployments. Both must be live
+	// (operators mirror against live rows, same as traffic split)
+	// AND belong to the same app (a single mirror_rule is
+	// app-scoped; cross-app is ADR-125 §follow-on 4).
+	for _, depID := range []string{in.SourceDeploymentID, in.MirrorDeploymentID} {
+		d, ok := m.deployments[depID]
+		if !ok || d.AppID != in.AppID || d.Status != DeployLive {
+			return MirrorRule{}, ErrMirrorDeploymentNotLive
+		}
+	}
+	now := time.Now().UTC()
+	r := MirrorRule{
+		ID:                 uuid.NewString(),
+		AccountID:          in.AccountID,
+		AppID:              in.AppID,
+		SourceDeploymentID: in.SourceDeploymentID,
+		MirrorDeploymentID: in.MirrorDeploymentID,
+		Percent:            in.Percent,
+		Enabled:            in.Enabled,
+		IncludeBody:        in.IncludeBody,
+		RedactHeaders:      in.RedactHeaders,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if r.RedactHeaders == nil {
+		r.RedactHeaders = []string{}
+	}
+	m.mirrorRules[r.ID] = r
+	return r, nil
+}
+
+// ListMirrorRules returns every mirror_rule for the app, ordered by
+// created_at ASC. The gateway picker reads from this in the
+// deployment_changed pg_notify refresh path; MemStore's in-memory
+// mirror makes it testable without a DB.
+func (m *MemStore) ListMirrorRules(_ context.Context, appID string) ([]MirrorRule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []MirrorRule
+	for _, r := range m.mirrorRules {
+		if r.AppID == appID {
+			out = append(out, r)
+		}
+	}
+	sort.SliceStable(out, func(a, b int) bool {
+		return out[a].CreatedAt.Before(out[b].CreatedAt)
+	})
+	return out, nil
+}
+
+// GetMirrorRuleByID returns a single rule by id. IDOR safety is the
+// caller's responsibility (apid's loadApp + AccountID check); this
+// method scopes the read by id alone.
+func (m *MemStore) GetMirrorRuleByID(_ context.Context, id string) (MirrorRule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.mirrorRules[id]
+	if !ok {
+		return MirrorRule{}, ErrNotFound
+	}
+	return r, nil
+}
+
+// UpdateMirrorRule applies a partial update via MirrorRulePatch.
+// Pointer fields let the caller distinguish "absent" from "zero"
+// (Percent=0 disables the rule without removing it). Same m.mu
+// discipline as CreateMirrorRuleIfUnderQuota so concurrent writers
+// serialise.
+func (m *MemStore) UpdateMirrorRule(_ context.Context, id string, patch MirrorRulePatch) (MirrorRule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.mirrorRules[id]
+	if !ok {
+		return MirrorRule{}, ErrNotFound
+	}
+	if patch.Percent != nil {
+		if *patch.Percent < 0 || *patch.Percent > 100 {
+			return MirrorRule{}, ErrInvalidMirrorPercent
+		}
+		r.Percent = *patch.Percent
+	}
+	if patch.Enabled != nil {
+		r.Enabled = *patch.Enabled
+	}
+	if patch.IncludeBody != nil {
+		r.IncludeBody = *patch.IncludeBody
+	}
+	if patch.RedactHeaders != nil {
+		r.RedactHeaders = *patch.RedactHeaders
+	}
+	r.UpdatedAt = time.Now().UTC()
+	m.mirrorRules[id] = r
+	return r, nil
+}
+
+// DeleteMirrorRule removes a rule. MemStore does not cascade to
+// mirror_invocation_results (the in-process map keeps rows around
+// until the next test teardown); the pgstore's ON DELETE CASCADE
+// handles production cleanup.
+func (m *MemStore) DeleteMirrorRule(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.mirrorRules[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m.mirrorRules, id)
+	return nil
+}
+
+// InsertMirrorResult appends one row to the mirror ledger. Best-
+// effort: the caller logs the error but doesn't roll back the
+// customer-facing response. MemStore does NOT enforce the schema
+// NOT NULLs (the caller must pass non-empty IDs / non-nil hashes
+// where the SQL column requires them).
+func (m *MemStore) InsertMirrorResult(_ context.Context, r MirrorInvocationResult) error {
+	if r.ID == "" {
+		r.ID = uuid.NewString()
+	}
+	if r.CompletedAt.IsZero() {
+		r.CompletedAt = time.Now().UTC()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mirrorResults[r.ID] = r
+	return nil
+}
+
+// ListMirrorResults returns up to `limit` rows for a rule with
+// completed_at >= `since`, ordered DESC. limit <= 0 means "no
+// cap" (matches the same contract ListDeploymentsForApp uses).
+func (m *MemStore) ListMirrorResults(_ context.Context, ruleID string, since time.Time, limit int) ([]MirrorInvocationResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []MirrorInvocationResult
+	for _, r := range m.mirrorResults {
+		if r.MirrorRuleID != ruleID {
+			continue
+		}
+		// Boundary is INCLUSIVE (>=). Matches the PgStore SQL
+		// `completed_at >= $2` clause and the docstring contract
+		// on Store.ListMirrorResults. An operator polling with a
+		// previous row's CompletedAt as the new `since` must see
+		// that boundary row, not drop it.
+		if !r.CompletedAt.Before(since) {
+			out = append(out, r)
+		}
+	}
+	sort.SliceStable(out, func(a, b int) bool {
+		return out[a].CompletedAt.After(out[b].CompletedAt)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// MirrorSummary aggregates the rows in the same window via Go-side
+// iteration. The pgstore uses SQL aggregates (COUNT/SUM/AVG/
+// p99_cont) — both stores return the same shape so the apid
+// handler can render either.
+func (m *MemStore) MirrorSummary(_ context.Context, ruleID string, since time.Time) (MirrorSummary, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var s MirrorSummary
+	var latencyDiffs []int
+	for _, r := range m.mirrorResults {
+		if r.MirrorRuleID != ruleID {
+			continue
+		}
+		if r.CompletedAt.Before(since) {
+			continue
+		}
+		s.TotalInvocations++
+		if r.StatusDiff {
+			s.StatusDiffCount++
+		}
+		if r.SchemaDiff {
+			s.SchemaDiffCount++
+		}
+		if r.BodyDiff {
+			s.BodyDiffCount++
+		}
+		if r.Crashed {
+			s.CrashCount++
+		}
+		if r.LatencyMs > 0 && r.SourceLatencyMs > 0 {
+			latencyDiffs = append(latencyDiffs, r.LatencyMs-r.SourceLatencyMs)
+		}
+	}
+	if len(latencyDiffs) > 0 {
+		var sum int
+		for _, d := range latencyDiffs {
+			sum += d
+		}
+		s.MeanLatencyDiffMs = sum / len(latencyDiffs)
+		// p99 ≈ last element after sort (small N; for production
+		// the pgstore uses percentile_cont).
+		sort.Ints(latencyDiffs)
+		p99Idx := len(latencyDiffs) * 99 / 100
+		if p99Idx >= len(latencyDiffs) {
+			p99Idx = len(latencyDiffs) - 1
+		}
+		s.P99LatencyDiffMs = latencyDiffs[p99Idx]
+	}
+	return s, nil
 }

@@ -5445,3 +5445,391 @@ func TestMemStoreUpdateTrigger_FilterCriteriaPersists(t *testing.T) {
 		t.Errorf("after replacement patch, got %q, want %q", got.FilterCriteria, replacement)
 	}
 }
+
+// --- Mirror rules (issue #72 / ADR-125) --------------------------------------
+
+// makeMirrorTestFixture seeds an account, an app, and two live
+// deployments on the same app. Returns the IDs; the test then
+// exercises CreateMirrorRuleIfUnderQuota against the pair.
+//
+// CreateDeployment auto-supersedes any prior live row on the same
+// app — same pattern as memstoreSeedLiveSibling above. We restore
+// the prior to DeployLive after creating the sibling so both rows
+// are live at the same time (the mirror rule validation requires
+// status=DeployLive for BOTH source and mirror; a superseded row
+// trips ErrMirrorDeploymentNotLive).
+func makeMirrorTestFixture(t *testing.T, m *MemStore, plan api.Plan) (acc, app, sourceDep, mirrorDep string) {
+	t.Helper()
+	ctx := context.Background()
+	account, err := m.CreateAccount(ctx, fmt.Sprintf("mirror-%s@x.com", uuid.NewString()), plan)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	a, err := m.CreateApp(ctx, App{AccountID: account.ID, Slug: "mirror-" + uuid.NewString()})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	src, err := m.CreateDeployment(ctx, Deployment{AppID: a.ID, ImageDigest: "sha256:src"})
+	if err != nil {
+		t.Fatalf("CreateDeployment source: %v", err)
+	}
+	if err := m.MarkDeploymentLive(ctx, src.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive source: %v", err)
+	}
+	mir, err := m.CreateDeployment(ctx, Deployment{AppID: a.ID, ImageDigest: "sha256:mirror"})
+	if err != nil {
+		t.Fatalf("CreateDeployment mirror: %v", err)
+	}
+	// Re-promote source back to live — the second CreateDeployment
+	// above auto-superseded it.
+	if err := m.MarkDeploymentLive(ctx, src.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive source (restore): %v", err)
+	}
+	if err := m.MarkDeploymentLive(ctx, mir.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive mirror: %v", err)
+	}
+	return account.ID, a.ID, src.ID, mir.ID
+}
+
+// TestMemStore_MirrorRules_CreateListUpdateDelete round-trips the
+// CRUD surface for mirror_rules. The same test pattern is used
+// against pgstore (TestPg_MirrorRules_CreateListUpdateDelete in the
+// pg test file) — these two suites are the parity guard.
+func TestMemStore_MirrorRules_CreateListUpdateDelete(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	accID, appID, srcID, mirID := makeMirrorTestFixture(t, m, api.PlanPro)
+	limits := api.MustLimitsFor(api.PlanPro)
+
+	created, err := m.CreateMirrorRuleIfUnderQuota(ctx, CreateMirrorRuleParams{
+		AccountID:          accID,
+		AppID:              appID,
+		SourceDeploymentID: srcID,
+		MirrorDeploymentID: mirID,
+		Percent:            100,
+		Enabled:            true,
+		IncludeBody:        false,
+		RedactHeaders:      []string{"X-Customer-Token"},
+	}, limits)
+	if err != nil {
+		t.Fatalf("create mirror rule: %v", err)
+	}
+	if created.ID == "" {
+		t.Fatal("created.ID is empty")
+	}
+	if created.SourceDeploymentID != srcID || created.MirrorDeploymentID != mirID {
+		t.Fatalf("created rule has wrong deployment ids: %+v", created)
+	}
+	if len(created.RedactHeaders) != 1 || created.RedactHeaders[0] != "X-Customer-Token" {
+		t.Fatalf("redact headers round-trip wrong: %+v", created.RedactHeaders)
+	}
+
+	listed, err := m.ListMirrorRules(ctx, appID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != created.ID {
+		t.Fatalf("list returned %+v, want single match", listed)
+	}
+
+	// Patch: disable the rule + flip include_body.
+	updated, err := m.UpdateMirrorRule(ctx, created.ID, MirrorRulePatch{
+		Enabled:     ptr(false),
+		IncludeBody: ptr(true),
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.Enabled {
+		t.Fatal("enabled did not flip to false")
+	}
+	if !updated.IncludeBody {
+		t.Fatal("include_body did not flip to true")
+	}
+
+	if err := m.DeleteMirrorRule(ctx, created.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := m.GetMirrorRuleByID(ctx, created.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetMirrorRuleByID after delete: %v, want ErrNotFound", err)
+	}
+}
+
+// TestMemStore_MirrorRules_QuotaEnforced asserts the per-app cap
+// (Limits.MirrorTargetsPerApp; Pro=1, Scale=3) trips before the
+// second insert. The quota error carries the kind so the apid
+// handler can render the plan-appropriate 403.
+func TestMemStore_MirrorRules_QuotaEnforced(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	accID, appID, srcID, mirID := makeMirrorTestFixture(t, m, api.PlanPro)
+	limits := api.MustLimitsFor(api.PlanPro)
+
+	// First insert succeeds.
+	if _, err := m.CreateMirrorRuleIfUnderQuota(ctx, CreateMirrorRuleParams{
+		AccountID: accID, AppID: appID,
+		SourceDeploymentID: srcID, MirrorDeploymentID: mirID,
+		Percent: 100, Enabled: true,
+	}, limits); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+	// Second insert must trip the quota (Pro=1).
+	_, err := m.CreateMirrorRuleIfUnderQuota(ctx, CreateMirrorRuleParams{
+		AccountID: accID, AppID: appID,
+		SourceDeploymentID: srcID, MirrorDeploymentID: mirID,
+		Percent: 100, Enabled: true,
+	}, limits)
+	if err == nil {
+		t.Fatal("second insert must trip quota")
+	}
+	var qe *QuotaError
+	if !errors.As(err, &qe) || qe.Kind != QuotaErrorKindMirror {
+		t.Fatalf("err = %v, want QuotaError{Kind:mirror}", err)
+	}
+	if qe.Limit != limits.MirrorTargetsPerApp {
+		t.Fatalf("QuotaError.Limit = %d, want %d", qe.Limit, limits.MirrorTargetsPerApp)
+	}
+}
+
+// TestMemStore_MirrorRules_Validation asserts the sentinels
+// produce the right errors: invalid percent, same source/mirror,
+// non-live deployment. These are the handler→HTTP mappings in
+// api.errors.go (issue #72 / ADR-125).
+func TestMemStore_MirrorRules_Validation(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	accID, appID, srcID, mirID := makeMirrorTestFixture(t, m, api.PlanPro)
+	limits := api.MustLimitsFor(api.PlanPro)
+
+	p := func() CreateMirrorRuleParams {
+		return CreateMirrorRuleParams{
+			AccountID: accID, AppID: appID,
+			SourceDeploymentID: srcID, MirrorDeploymentID: mirID,
+			Percent: 100, Enabled: true,
+		}
+	}
+	if _, err := m.CreateMirrorRuleIfUnderQuota(ctx, func() CreateMirrorRuleParams {
+		pp := p()
+		pp.Percent = -1
+		return pp
+	}(), limits); !errors.Is(err, ErrInvalidMirrorPercent) {
+		t.Fatalf("Percent=-1: err = %v, want ErrInvalidMirrorPercent", err)
+	}
+	if _, err := m.CreateMirrorRuleIfUnderQuota(ctx, func() CreateMirrorRuleParams {
+		pp := p()
+		pp.SourceDeploymentID = pp.MirrorDeploymentID
+		return pp
+	}(), limits); !errors.Is(err, ErrMirrorSourceTargetSame) {
+		t.Fatalf("source==mirror: err = %v, want ErrMirrorSourceTargetSame", err)
+	}
+	// Non-live deployment: create a third deployment in pending state.
+	dep, err := m.CreateDeployment(ctx, Deployment{AppID: appID, ImageDigest: "sha256:pending"})
+	if err != nil {
+		t.Fatalf("CreateDeployment pending: %v", err)
+	}
+	if _, err := m.CreateMirrorRuleIfUnderQuota(ctx, func() CreateMirrorRuleParams {
+		pp := p()
+		pp.MirrorDeploymentID = dep.ID
+		return pp
+	}(), limits); !errors.Is(err, ErrMirrorDeploymentNotLive) {
+		t.Fatalf("non-live mirror: err = %v, want ErrMirrorDeploymentNotLive", err)
+	}
+}
+
+// TestMemStore_MirrorInvocationResults exercises InsertMirrorResult,
+// ListMirrorResults, and MirrorSummary. The summary's MeanLatencyDiff
+// is the signed mean((mirror_ms - source_ms)) — the operator's
+// drift signal.
+func TestMemStore_MirrorInvocationResults(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	accID, appID, srcID, mirID := makeMirrorTestFixture(t, m, api.PlanPro)
+	limits := api.MustLimitsFor(api.PlanPro)
+	rule, err := m.CreateMirrorRuleIfUnderQuota(ctx, CreateMirrorRuleParams{
+		AccountID: accID, AppID: appID,
+		SourceDeploymentID: srcID, MirrorDeploymentID: mirID,
+		Percent: 100, Enabled: true,
+	}, limits)
+	if err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	now := time.Now().UTC()
+	// Two rows: one matching, one with status_diff + body_diff.
+	if err := m.InsertMirrorResult(ctx, MirrorInvocationResult{
+		MirrorRuleID:       rule.ID,
+		AccountID:          accID,
+		AppID:              appID,
+		SourceDeploymentID: srcID,
+		MirrorDeploymentID: mirID,
+		StatusCode:         200,
+		SourceStatusCode:   200,
+		LatencyMs:          120,
+		SourceLatencyMs:    100,
+		BodyHash:           []byte("mirror-body"),
+		SourceBodyHash:     []byte("source-body"),
+		SchemaHash:         []byte("mirror-schema"),
+		SourceSchemaHash:   []byte("source-schema"),
+		BodyDiff:           true, // different body bytes
+		RequestID:          "req-1",
+		CompletedAt:        now,
+	}); err != nil {
+		t.Fatalf("insert 1: %v", err)
+	}
+	if err := m.InsertMirrorResult(ctx, MirrorInvocationResult{
+		MirrorRuleID:       rule.ID,
+		AccountID:          accID,
+		AppID:              appID,
+		SourceDeploymentID: srcID,
+		MirrorDeploymentID: mirID,
+		StatusCode:         500,
+		SourceStatusCode:   200,
+		LatencyMs:          200,
+		SourceLatencyMs:    100,
+		RequestID:          "req-2",
+		StatusDiff:         true,
+		Crashed:            true,
+		CompletedAt:        now.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("insert 2: %v", err)
+	}
+	rows, err := m.ListMirrorResults(ctx, rule.ID, now.Add(-time.Minute), 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	// DESC ordering: req-2 first.
+	if rows[0].RequestID != "req-2" {
+		t.Fatalf("first row = %s, want req-2", rows[0].RequestID)
+	}
+	summary, err := m.MirrorSummary(ctx, rule.ID, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("summary: %v", err)
+	}
+	if summary.TotalInvocations != 2 {
+		t.Fatalf("TotalInvocations = %d, want 2", summary.TotalInvocations)
+	}
+	if summary.StatusDiffCount != 1 {
+		t.Fatalf("StatusDiffCount = %d, want 1", summary.StatusDiffCount)
+	}
+	if summary.BodyDiffCount != 1 {
+		t.Fatalf("BodyDiffCount = %d, want 1", summary.BodyDiffCount)
+	}
+	if summary.CrashCount != 1 {
+		t.Fatalf("CrashCount = %d, want 1", summary.CrashCount)
+	}
+}
+
+// ptr is a small helper so the test table can pass typed literals
+// to MirrorRulePatch without `var x = true; patch.Enabled = &x` noise.
+func ptr[T any](v T) *T { return &v }
+
+// TestMemStore_InsertMirrorResult_PreservesByteaNil pins the
+// bytea-NULL contract (issue #72 / ADR-125). When the rule has
+// include_body=false (the safe-by-default posture), body_hash /
+// source_body_hash / schema_hash / source_schema_hash MUST be
+// stored as nil (typed-nil []byte in Go, SQL NULL in pg) — NOT as
+// []byte{} (empty non-nil). Coercing nil → []byte{} collapses
+// "body intentionally not hashed" with "body present but empty",
+// making the include_body flag invisible to downstream tooling
+// (body_diff skip, schema-evolution audit). PgStore used to do
+// this coercion; the test pins the MemStore side of the same
+// contract — both stores must round-trip nil as nil.
+func TestMemStore_InsertMirrorResult_PreservesByteaNil(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	accID, appID, srcID, mirID := makeMirrorTestFixture(t, m, api.PlanPro)
+	limits := api.MustLimitsFor(api.PlanPro)
+	rule, err := m.CreateMirrorRuleIfUnderQuota(ctx, CreateMirrorRuleParams{
+		AccountID: accID, AppID: appID,
+		SourceDeploymentID: srcID, MirrorDeploymentID: mirID,
+		Percent: 100, Enabled: true,
+	}, limits)
+	if err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	// Rule has include_body=false; consumer MUST NOT populate any
+	// of the bytea fields.
+	if err := m.InsertMirrorResult(ctx, MirrorInvocationResult{
+		MirrorRuleID:       rule.ID,
+		AccountID:          accID,
+		AppID:              appID,
+		SourceDeploymentID: srcID,
+		MirrorDeploymentID: mirID,
+		StatusCode:         200,
+		SourceStatusCode:   200,
+		RequestID:          "nil-bytea",
+		CompletedAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	rows, err := m.ListMirrorResults(ctx, rule.ID, time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	r := rows[0]
+	if r.BodyHash != nil {
+		t.Errorf("BodyHash = %v (len=%d), want nil", r.BodyHash, len(r.BodyHash))
+	}
+	if r.SourceBodyHash != nil {
+		t.Errorf("SourceBodyHash = %v, want nil", r.SourceBodyHash)
+	}
+	if r.SchemaHash != nil {
+		t.Errorf("SchemaHash = %v, want nil", r.SchemaHash)
+	}
+	if r.SourceSchemaHash != nil {
+		t.Errorf("SourceSchemaHash = %v, want nil", r.SourceSchemaHash)
+	}
+}
+
+// TestMemStore_ListMirrorResults_BoundaryIsInclusive pins the >=
+// boundary contract (issue #72 / ADR-125). MemStore previously
+// used strict `>` semantics via `!Before && !Equal`, which
+// silently dropped the row whose CompletedAt exactly equals
+// `since` — diverging from PgStore's `completed_at >= $2` SQL.
+// Operators polling with a previous row's CompletedAt as the new
+// `since` must see that boundary row.
+func TestMemStore_ListMirrorResults_BoundaryIsInclusive(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	accID, appID, srcID, mirID := makeMirrorTestFixture(t, m, api.PlanPro)
+	limits := api.MustLimitsFor(api.PlanPro)
+	rule, err := m.CreateMirrorRuleIfUnderQuota(ctx, CreateMirrorRuleParams{
+		AccountID: accID, AppID: appID,
+		SourceDeploymentID: srcID, MirrorDeploymentID: mirID,
+		Percent: 100, Enabled: true,
+	}, limits)
+	if err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	boundary := time.Now().UTC()
+	if err := m.InsertMirrorResult(ctx, MirrorInvocationResult{
+		MirrorRuleID:       rule.ID,
+		AccountID:          accID,
+		AppID:              appID,
+		SourceDeploymentID: srcID,
+		MirrorDeploymentID: mirID,
+		StatusCode:         200,
+		SourceStatusCode:   200,
+		RequestID:          "boundary-row",
+		CompletedAt:        boundary,
+	}); err != nil {
+		t.Fatalf("insert boundary: %v", err)
+	}
+	rows, err := m.ListMirrorResults(ctx, rule.ID, boundary, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (boundary row must be included)", len(rows))
+	}
+	if rows[0].RequestID != "boundary-row" {
+		t.Fatalf("first row = %s, want boundary-row", rows[0].RequestID)
+	}
+}
+
+// --- End of mirror tests -------------------------------------------------

@@ -2252,6 +2252,156 @@ type Instance struct {
 	// reads request_count alongside TailCount without a second SQL
 	// hop. NOT NULL DEFAULT 0 enforced by migration 00221.
 	RequestCount int64
+	// Mode (issue #72 / ADR-125) tags an instance as 'mirror' when
+	// the schedd created it for a mirror invocation rather than a
+	// customer-facing wake. The pkg/meter sampler skips mode='mirror'
+	// rows so the customer is never billed for the shadow VM (spec
+	// §4.7 carve-out: shadow VMs are not customer-served). The reaper
+	// also skips mode='mirror' rows for idle-reap because mirror VMs
+	// self-park on request completion — there's no idle lifetime to
+	// reap. Two-value closed vocabulary ('normal' default + 'mirror');
+	// the CHECK constraint on the SQL column (migrations/00349)
+	// enforces it. Default 'normal' on pre-feature rows so no
+	// existing customer is affected.
+	Mode string
+}
+
+// InstanceMode (issue #72 / ADR-125) is the closed vocabulary for
+// the `instances.mode` column. The string values match the
+// migrations/00349 CHECK; the sampler, reaper, and schedd engine
+// compare against these constants rather than literal strings so a
+// future widening lands as a compile error at every callsite.
+type InstanceMode string
+
+const (
+	// InstanceModeNormal is the default for every customer-facing
+	// wake. The schedd engine stamps this at instance creation
+	// unless the WakeRequest carries is_mirror=true.
+	InstanceModeNormal InstanceMode = "normal"
+	// InstanceModeMirror tags an instance that the schedd created
+	// to serve a mirror invocation (issue #72 / ADR-125). The
+	// customer is never billed for this row; the reaper does not
+	// idle-reap it (the request-completion path self-parks it).
+	InstanceModeMirror InstanceMode = "mirror"
+)
+
+// MirrorRule (issue #72 / ADR-125) is the customer-intent row
+// that links a live source_deployment to a live mirror_deployment.
+// Every customer request served by source is duplicated to mirror
+// asynchronously; the customer always sees source's response. The
+// (source, mirror) pair is enforced as distinct by the SQL CHECK
+// (migrations/00348); percent + enabled + include_body + redact_headers
+// give the customer the levers they need without exposing the
+// implementation (wake coord, detached ctx, JCS canonicalization).
+//
+// `RedactHeaders` is the customer's additive redact-list beyond
+// the always-stripped set (Authorization / Cookie / Set-Cookie /
+// X-API-Key / Proxy-Authorization / WWW-Authenticate). The gateway
+// consults both lists at runMirror time.
+//
+// MirrorRules are owned by apid (the customer-intent writer per
+// the spec component-ownership rule). schedd + gatewayd-internal
+// read them via the in-process cache refreshed on the
+// deployment_changed pg_notify payload's `kind="mirror"`
+// discriminant.
+type MirrorRule struct {
+	ID                 string
+	AccountID          string
+	AppID              string
+	SourceDeploymentID string
+	MirrorDeploymentID string
+	Percent            int
+	Enabled            bool
+	IncludeBody        bool
+	RedactHeaders      []string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+// MirrorRulePatch (issue #72 / ADR-125) is the partial-update
+// shape for PATCH /v1/apps/{slug}/mirrors/{id}. Pointer fields
+// let the handler distinguish "field absent" from "field set to
+// zero value" — the latter is rare but legal (e.g. Percent=0
+// disables the rule without removing it).
+type MirrorRulePatch struct {
+	Percent       *int
+	Enabled       *bool
+	IncludeBody   *bool
+	RedactHeaders *[]string
+}
+
+// CreateMirrorRuleParams (issue #72 / ADR-125) is the parameter
+// shape for CreateMirrorRuleIfUnderQuota. The store stamps id,
+// created_at, and updated_at; everything else comes from the
+// caller. RedactHeaders is non-nil even on the empty case
+// (the SQL DEFAULT is '{}' so an empty slice round-trips
+// identically); nil and []string{} are both accepted by the
+// pgstore via the same array_length check.
+type CreateMirrorRuleParams struct {
+	AccountID          string
+	AppID              string
+	SourceDeploymentID string
+	MirrorDeploymentID string
+	Percent            int
+	Enabled            bool
+	IncludeBody        bool
+	RedactHeaders      []string
+}
+
+// MirrorInvocationResult (issue #72 / ADR-125) is one row in the
+// per-request comparison ledger (migrations/00350). The gateway
+// stamps this on every mirror invocation: status, latency, schema
+// hash, body hash, crash flag, plus the source-side counterparts
+// so a comparison query doesn't need a second table. Pre-computed
+// status_diff / schema_diff / body_diff booleans let the summary
+// endpoint SUM these columns instead of comparing values client
+// side — the customer's read path stays O(1) per row.
+//
+// All *bytea fields are 32 bytes (SHA-256). Go-side: `[]byte`
+// with len==32, OR nil when the rule has include_body=false (the
+// `body_hash` columns are the only ones that can be nil — the
+// schema_hash columns are always populated for JSON responses).
+type MirrorInvocationResult struct {
+	ID                 string
+	MirrorRuleID       string
+	AccountID          string
+	AppID              string
+	SourceDeploymentID string
+	MirrorDeploymentID string
+	InstanceID         string
+	SourceInstanceID   string
+	StatusCode         int
+	SourceStatusCode   int
+	LatencyMs          int
+	SourceLatencyMs    int
+	BodyHash           []byte
+	SourceBodyHash     []byte
+	SchemaHash         []byte
+	SourceSchemaHash   []byte
+	StatusDiff         bool
+	SchemaDiff         bool
+	BodyDiff           bool
+	Crashed            bool
+	RequestID          string
+	CompletedAt        time.Time
+}
+
+// MirrorSummary (issue #72 / ADR-125) is the aggregate the
+// GET /v1/apps/{slug}/mirrors/{id}/summary endpoint returns over
+// a window. Computed by the store via SQL aggregates
+// (COUNT/SUM/AVG/p99_cont) — never by client-side iteration.
+// `MeanLatencyDiffMs` is signed (mirror_ms - source_ms, positive
+// = mirror is slower). `P99LatencyDiffMs` is signed and is the
+// operator's drift signal.
+type MirrorSummary struct {
+	TotalInvocations  int
+	StatusDiffCount   int
+	SchemaDiffCount   int
+	BodyDiffCount     int
+	MeanLatencyDiffMs int
+	P99LatencyDiffMs  int
+	CrashCount        int
+	WindowSeconds     int
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis

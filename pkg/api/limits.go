@@ -870,6 +870,34 @@ type Limits struct {
 	// gate only fires when a Free/Hobby customer tries to
 	// opt-in to a non-100 traffic_percent (which is denied).
 	TrafficSplit bool
+
+	// MirrorRuleAllowed (issue #72 / ADR-125) is the plan gate
+	// for the per-deployment traffic-mirroring opt-in. Pro/Scale
+	// = true; Free/Hobby = false. Same Hobby-locked rationale
+	// as TrafficSplit: a mirror VM wakes for every customer
+	// request, billed per running second. Hobby is the
+	// near-Free-with-a-floor tier where every additional wake
+	// is cost-shaped against the cheap monthly bill; mirror's
+	// 1:1 wake ratio is too expensive to unlock there. Apid's
+	// createMirrorRule + PATCH-mirror handlers reject
+	// Free/Hobby with 403 plan_mirror_not_allowed. Distinct
+	// from TrafficSplit: even if the customer could unlock
+	// traffic split on Hobby, mirror stays locked — the wake
+	// cost shape is stricter than split's (1 wake per request
+	// for mirror vs N-wakes-per-second-burst for split).
+	MirrorRuleAllowed bool
+	// MirrorTargetsPerApp (issue #72 / ADR-125) is the per-app
+	// mirror-rule cap, enforced inside
+	// CreateMirrorRuleIfUnderQuota's FOR UPDATE lock on apps
+	// (mirrors CreateEdgeRuleIfUnderQuota's per-kind count
+	// precedent). Free = 0 (gated off, see MirrorRuleAllowed);
+	// Hobby = 0 (same gate); Pro = 1 (single canary target);
+	// Scale = 3 (multi-shard rollout). The cap is per-app, not
+	// per-account: a Scale customer running 10 apps can hold up
+	// to 30 mirror rules total. QuotaErrorKindMirror carries
+	// the Limit + Observed so the apid handler stamps both on
+	// the 403 envelope via api.ErrMirrorRuleQuotaExceeded.
+	MirrorTargetsPerApp int
 	// WarmSnapshotMinMsDefault is the per-app time-since-first-ready
 	// threshold for warm-tier capture, applied at CreateApp when
 	// the plan allows it. Free/Hobby = 0 (irrelevant). Pro/Scale =
@@ -1341,6 +1369,13 @@ var planLimits = map[Plan]Limits{
 		// passes a non-100 traffic_percent on create (403
 		// plan_traffic_split_not_allowed).
 		TrafficSplit: false,
+		// Mirror (issue #72 / ADR-125): Free stays locked — see
+		// the Limits.MirrorRuleAllowed comment for the cost
+		// rationale. MirrorTargetsPerApp = 0 keeps the field
+		// shaped for the QuotaError tripwire (the per-app count
+		// is what CreateMirrorRuleIfUnderQuota compares against).
+		MirrorRuleAllowed:   false,
+		MirrorTargetsPerApp: 0,
 		// Tail primitive (issue #667 / ADR-078): Free enables with
 		// the floor timeout (5 s) and the floor concurrency cap (4).
 		// Customers on Free get the primitive, just tightly bounded —
@@ -1638,6 +1673,13 @@ var planLimits = map[Plan]Limits{
 		// plan_traffic_split_not_allowed when they try to
 		// pass a non-100 traffic_percent on create or PATCH.
 		TrafficSplit: false,
+		// Mirror (issue #72 / ADR-125): Free stays locked — see
+		// the Limits.MirrorRuleAllowed comment for the cost
+		// rationale. MirrorTargetsPerApp = 0 keeps the field
+		// shaped for the QuotaError tripwire (the per-app count
+		// is what CreateMirrorRuleIfUnderQuota compares against).
+		MirrorRuleAllowed:   false,
+		MirrorTargetsPerApp: 0,
 		// Tail primitive (issue #667 / ADR-078): Hobby unlocks
 		// the 15 s timeout + 16 per-instance concurrent tails.
 		// Matches the issue's "send a confirmation email"
@@ -1913,6 +1955,16 @@ var planLimits = map[Plan]Limits{
 		// traffic_percent=100 by default, so customers
 		// who never opt-in see no behavioural change.
 		TrafficSplit: true,
+		// Mirror (issue #72 / ADR-125): Pro/Scale unlock the
+		// per-deployment mirroring surface. MirrorTargetsPerApp
+		// is 1 on Pro (single canary target — the canonical use
+		// case) and 3 on Scale (multi-shard rollout). The
+		// per-app cap is enforced inside
+		// CreateMirrorRuleIfUnderQuota's FOR UPDATE lock; a
+		// quota-exceeded attempt emits 403 mirror_rule_quota_exceeded
+		// via QuotaErrorKindMirror.
+		MirrorRuleAllowed:   true,
+		MirrorTargetsPerApp: 1,
 		// Tail primitive (issue #667 / ADR-078): Pro unlocks
 		// the 30 s timeout + 64 per-instance concurrent tails.
 		// Matches the issue's per-plan matrix value; covers
@@ -2204,6 +2256,16 @@ var planLimits = map[Plan]Limits{
 		// tier (5/25/100% staged rollout to defend
 		// against bad deploys on a checkout API).
 		TrafficSplit: true,
+		// Mirror (issue #72 / ADR-125): Pro/Scale unlock the
+		// per-deployment mirroring surface. MirrorTargetsPerApp
+		// is 1 on Pro (single canary target — the canonical use
+		// case) and 3 on Scale (multi-shard rollout). The
+		// per-app cap is enforced inside
+		// CreateMirrorRuleIfUnderQuota's FOR UPDATE lock; a
+		// quota-exceeded attempt emits 403 mirror_rule_quota_exceeded
+		// via QuotaErrorKindMirror.
+		MirrorRuleAllowed:   true,
+		MirrorTargetsPerApp: 3,
 		// Tail primitive (issue #667 / ADR-078): Scale unlocks
 		// the 60 s timeout + 256 per-instance concurrent tails —
 		// the ceiling per the issue's per-plan matrix. The 60 s
@@ -2370,6 +2432,22 @@ const (
 	MaxRequestBodyBytes = 25 * 1024 * 1024 // 25 MB either direction
 	WakeQueueCap        = 512              // per-app wake queue
 	WakeQueueTTLSeconds = 30
+
+	// MirrorMaxLifetimeSeconds (issue #72 / ADR-125) is the hard
+	// upper bound on how long a single mirror goroutine can run.
+	// The gateway derives a per-request context via
+	// context.WithoutCancel(r.Context()) + WithTimeout(mirrorMaxLifetime)
+	// so the mirror outlives a customer disconnect, but cannot run
+	// forever. 5s is the empirical envelope: cold-boot
+	// (~250ms) + serve (~50ms) + buffer drain (~100ms) + JCS
+	// canonicalization (~50ms) + safety margin. A sustained
+	// production request (p99 ~200ms) sits comfortably under this;
+	// a wedged mirror VM is bounded at 5s before the goroutine
+	// returns and the deferred ParkInstance runs. Larger values
+	// waste wake-bill on a hung VM; smaller values truncate a
+	// slow-but-correct response. Bumping this is a
+	// spec-amendment-grade change (ADR-125 §Decision).
+	MirrorMaxLifetimeSeconds = 5
 
 	// Apid http.Server defaults (issue #995 Phase 1, ADR-121
 	// companion). The customer-facing control plane binds loopback
@@ -3847,6 +3925,25 @@ func (p Plan) TrafficSplitAllowed() bool {
 		return false // fail-closed
 	}
 	return l.TrafficSplit
+}
+
+// MirrorRuleAllowed reports whether the plan permits a customer to
+// create a mirror_rule (issue #72 / ADR-125). Pro/Scale return
+// true; Free/Hobby return false so apid's createMirrorRule + PATCH-
+// mirror handlers surface 403 plan_mirror_not_allowed. The per-app
+// count cap (Limits.MirrorTargetsPerApp) is enforced separately
+// inside CreateMirrorRuleIfUnderQuota's FOR UPDATE lock; this
+// method is the plan-level gate, not the quota gate. Hobby stays
+// locked for the same cost-shape rationale as TrafficSplit: a
+// mirror VM wakes for every customer request. Unknown plans fail
+// closed (return false), matching the TrafficSplitAllowed contract
+// above and the broader plan-gate discipline in this file.
+func (p Plan) MirrorRuleAllowed() bool {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return false // fail-closed
+	}
+	return l.MirrorRuleAllowed
 }
 
 // RequireAuthnDefault (issue #695 / ADR-080) returns the default

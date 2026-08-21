@@ -134,6 +134,17 @@ type InstanceInfo struct {
 	// ScalingPolicyOrDefault; identical across rows of one app. Zero
 	// disables cooldown enforcement (the customer has not opted in).
 	ScaleInCooldownS int
+	// Mode (issue #72 / ADR-125) is the instance's mode — sourced
+	// from state.Instance.Mode. 'normal' (default) is the
+	// customer-facing wake; 'mirror' is the shadow VM a mirror
+	// goroutine woke for the comparison ledger. The reaper skips
+	// mode='mirror' rows because they self-park on request
+	// completion — there's no idle lifetime to reap, and pulling
+	// them into the candidate set would create a redundant park
+	// alongside the goroutine's deferred ParkInstance. The
+	// pkg/meter sampler also skips these rows so the customer is
+	// never billed for the shadow VM.
+	Mode string
 }
 
 func (i InstanceInfo) admissionMB() int {
@@ -275,6 +286,19 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		// don't enter the candidate set. RAM pressure still
 		// wins via SelectEvictions.
 		if in.WorkloadClass == state.WorkloadClassWorker {
+			continue
+		}
+		// Issue #72 / ADR-125: mode='mirror' rows are
+		// reaper-exempt. The mirror goroutine parks the instance
+		// on request completion (or timeout), so there's no idle
+		// lifetime to reap — pulling it into the candidate set
+		// would create a redundant park alongside the goroutine's
+		// deferred ParkInstance. RAM pressure (SelectEvictions)
+		// still wins: if a node is over-budget, the mirror VM
+		// goes the same way as a normal one. Symmetric with the
+		// sampler skip — both predicates evaluate mode before any
+		// billing / reaping arithmetic.
+		if state.InstanceMode(in.Mode) == state.InstanceModeMirror {
 			continue
 		}
 		g.running++

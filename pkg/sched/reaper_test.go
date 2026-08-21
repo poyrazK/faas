@@ -1060,3 +1060,36 @@ func TestReapIdleNilMetrics_DoesNotPoisonSharedSet(t *testing.T) {
 		t.Errorf("ReapAggressive did not record into shared set: %v", shared)
 	}
 }
+
+// TestReapIdleSkipsMirrorInstances is the issue #72 / ADR-125 mirror
+// carve-out guard for the reaper. A mirror instance (Mode="mirror")
+// self-parks on completion (runMirror's defer), so it never reaches
+// the idle-reap path with a stale LastRequest — but if a wake
+// stalls or the customer disconnects mid-mirror, the instance
+// could otherwise sit idle in state.StateRunning with no customer
+// serving it. The reaper must skip those rows: they're not the
+// customer's instance, the customer already has source's response,
+// and reaping them via the idle path would race the deferred
+// parkMirrorInstance.
+//
+// Mirrors TestReapIdleSkipsInstanceWithOpenConns /
+// TestReapIdleSkipsInstanceWithTailCount shape: a normal-but-stale
+// control row confirms the reaper still works for non-mirror
+// instances.
+func TestReapIdleSkipsMirrorInstances(t *testing.T) {
+	now := time.Now()
+	instances := []InstanceInfo{
+		// Mirror instance, stale LastRequest: must NOT be reaped
+		// because Mode=="mirror". The mirror goroutine handles its
+		// own lifecycle.
+		{Instance: "mirror-stale", Plan: api.PlanPro, State: state.StateRunning,
+			Mode: string(state.InstanceModeMirror), LastRequest: now.Add(-time.Hour)},
+		// No regression: a stale normal instance still gets reaped.
+		{Instance: "idle", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Hour)},
+	}
+	got := ReapIdle(now, instances, nil, nil)
+	if !equalSet(got, []string{"idle"}) {
+		t.Errorf("ReapIdle = %v, want [idle] only (mirror instance must be skipped)", got)
+	}
+}
