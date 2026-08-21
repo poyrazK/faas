@@ -33,6 +33,7 @@ const (
 	envFile       = "env.go"           // issue #395 / ADR-045
 	registryFile  = "registry_auth.go" // issue #461 / ADR-062
 	alertsFile    = "alerts.go"        // issue #396 PR 3 / ADR-045
+	alertsPresetsFile = "alerts_presets.go" // ADR-123 / issue #1233 — alert-preset catalog DTOs
 	manifestFile  = "appmanifest.go"
 	cliauthFile   = "cliauth.go"
 	mfaFile       = "mfa.go"
@@ -184,6 +185,12 @@ var dtoExclude = map[string]bool{
 	// Single-use inline shape — no SDK callers reference it by
 	// name, so no standalone schema.
 	"CreateTriggerBatchResult": true,
+	// Issue #1233 / ADR-123 — internal conversion struct for the
+	// alert_presets catalog. The wire DTO is AlertPresetResponse;
+	// AlertPresetRow is the typed counterpart at the pkg/api ↔
+	// pkg/state seam (state row → wire DTO). It does not cross the
+	// wire on its own.
+	"AlertPresetRow": true,
 }
 
 // codeExclude lists Code* constants that are intentionally not in the
@@ -620,6 +627,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", envFile),
 		filepath.Join(root, "pkg", "api", registryFile),
 		filepath.Join(root, "pkg", "api", alertsFile),
+		filepath.Join(root, "pkg", "api", alertsPresetsFile),
 		filepath.Join(root, "pkg", "api", manifestFile),
 		filepath.Join(root, "pkg", "api", cliauthFile),
 		filepath.Join(root, "pkg", "api", mfaFile),

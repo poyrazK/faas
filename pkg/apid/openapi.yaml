@@ -4912,6 +4912,41 @@ paths:
         '409': { $ref: '#/components/responses/AlertRuleInvalid' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # Dashboard form-POST sibling of /v1/apps/{slug}/alert-presets/{name}/enable.
+  # Accepts application/x-www-form-urlencoded (not JSON) so the
+  # server-rendered preset grid at pkg/dashboard/templates/app_detail.html
+  # can submit without client-side JS. On success returns a 302 redirect
+  # to /apps/{slug}?just_enabled={rule_id}; on 4xx returns the dashboard
+  # app_detail page with the error rendered into the preset card.
+  /dashboard/apps/{slug}/alert-presets/{name}/enable:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [alert_rules]
+      operationId: dashboardEnableAlertPreset
+      summary: Form-POST sibling of enableAlertPreset for the dashboard.
+      description: |
+        Receives application/x-www-form-urlencoded payload from the
+        preset-grid form. Coerces the (webhook_url, webhook_secret)
+        pair into the same EnableAlertPresetRequest body the JSON
+        sibling expects, runs the same plan-tier gate, then 302-redirects
+        to /apps/{slug}?just_enabled={rule_id}. The web-cookie auth
+        path is sufficient — no MFA challenge (the JSON sibling
+        requires MFA via the public-auth middleware).
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { $ref: '#/components/schemas/EnableAlertPresetRequest' }
+      responses:
+        '302':
+          description: Redirect to /apps/{slug}?just_enabled={rule_id}.
+        '400': { $ref: '#/components/responses/AlertRuleInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AlertRuleInvalid' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── Edge rules (ADR-089, planned) ────────────────────────────────────────
   # Customer-configurable resource that runs in pkg/gateway BEFORE
   # host→app resolution. One table, kind-tagged action union
@@ -9452,7 +9487,7 @@ components:
         deployed_via:
           type: [string, "null"]
           enum: [null, api, cli, dashboard, github, operator]
-          description: "Closed-set classifier of how this deployment was submitted. One of `api` (SDK / API key) / `cli` (bearer token) / `dashboard` (session cookie) / `github` (githubd_bridge) / `operator` (admin). Enforced at the schema layer by migrations/00305_deployments_actor.sql's CHECK constraint."
+          description: "Closed-set classifier of how this deployment was submitted. One of `api` (SDK / API key) / `cli` (bearer token) / `dashboard` (session cookie) / `github` (githubd_bridge) / `operator` (admin). Enforced at the schema layer by migrations/00303_deployments_actor.sql's CHECK constraint."
           example: "cli"
         deployed_from_ip:
           type: [string, "null"]
@@ -9469,29 +9504,6 @@ components:
           type: [string, "null"]
           description: "Raw GitHub login of the pusher when `deployed_via == \"github\"`. Empty for all other via values. Distinct from the human-readable `DeployedBy` text column (issue #977 / PR #984) — pusher_login is the unmodified GH identity, suitable for downstream GitHub-API correlation."
           example: "poyrazK"
-        # Issue #977 / ADR-116 — deployment annotation echo. The four
-        # columns stamped at create time are surfaced verbatim so the
-        # dashboard, CLI history, and SDK consumers can render the
-        # annotation without an audit round-trip. omitempty on each
-        # keeps pre-feature rows byte-identical to the pre-PR wire
-        # shape. The closed-set vocabulary on tag and the length cap
-        # on reason are enforced at the schema layer
-        # (deployments_tag_set_chk / deployments_reason_len_chk).
-        reason:
-          type: string
-          maxLength: 280
-          description: "Free-form operator note (≤280 chars). Example: 'Emergency rollback after payment provider incident'."
-        tag:
-          type: string
-          enum: [incident_recovery, hotfix, scheduled_maintenance, compliance_hold, partner_request]
-          description: "Closed-set annotation tag for grouping/filtering."
-        deployed_by:
-          type: string
-          description: "Human-readable actor label. CLI auto-captures from `git config user.name`; githubd stamps pusher.name; the GitHub Action defaults to ${{ github.actor }}."
-        pr_number:
-          type: integer
-          minimum: 1
-          description: "Pull-request number when the wire offers it (githubd pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."
 
     BuildPlan:
       description: "Auto-detected build plan surfaced on DeploymentResponse (issue #961 / Mega-A PR-2). Same shape the CLI's pre-ship `Detected:` line prints; populated by apid via `pkg/markers.DetectFromTarball` against the spooled source tarball. Embedded on DeploymentResponse; never returned by a dedicated route."
@@ -9533,19 +9545,6 @@ components:
           type: [string, "null"]
           pattern: '^[a-f0-9]{40}$'
           description: "40-char lowercase SHA from `git rev-parse HEAD`. Informational only; the build pipeline does NOT pin to this SHA."
-        # Issue #977 / ADR-116 — deployment annotations. Optional;
-        # CLI auto-captures deployed_by from `git config user.name`.
-        reason:
-          type: [string, "null"]
-          maxLength: 280
-        tag:
-          type: [string, "null"]
-          enum: [null, incident_recovery, hotfix, scheduled_maintenance, compliance_hold, partner_request]
-        deployed_by:
-          type: [string, "null"]
-        pr_number:
-          type: [integer, "null"]
-          minimum: 1
 
     UpdateDeploymentRequest:
 
@@ -10063,26 +10062,6 @@ components:
           pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
           description: "Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = `default`."
           example: "prod"
-        # Issue #977 / ADR-116 — deployment annotation fields. The
-        # githubd bridge + GitHub Action auto-capture DeployedBy +
-        # PRNumber; the CLI captures DeployedBy from `git config
-        # user.name` when in a repo. Reason + Tag are operator-
-        # supplied. nil/omitted on every field = no annotation.
-        reason:
-          type: [string, "null"]
-          maxLength: 280
-          description: "Free-form operator note (issue #977 / ADR-116). DB CHECK enforces length(reason) <= 280."
-        tag:
-          type: [string, "null"]
-          enum: [null, incident_recovery, hotfix, scheduled_maintenance, compliance_hold, partner_request]
-          description: "Closed-set annotation tag. DB CHECK (deployments_tag_set_chk) enforces the same vocabulary."
-        deployed_by:
-          type: [string, "null"]
-          description: "Operator label. CLI auto-captures from `git config user.name`; githubd stamps pusher.name; Action defaults to ${{ github.actor }}."
-        pr_number:
-          type: [integer, "null"]
-          minimum: 1
-          description: "PR number (when known). 0 / NULL collapses to NULL on the row (DB CHECK rejects 0)."
 
     CreateDeploymentOverrides:
       description: |
@@ -11130,21 +11109,6 @@ components:
           enum: [tarball]
           default: tarball
           description: "Forward-compat field. PR-A only supports `tarball`."
-        # Issue #977 / ADR-116 — annotation fields. The GitHub
-        # Action .github/actions/deploy/action.yml passes these
-        # from the action.yml inputs. nil/omitted on every field
-        # = no annotation.
-        reason:
-          type: [string, "null"]
-          maxLength: 280
-        tag:
-          type: [string, "null"]
-          enum: [null, incident_recovery, hotfix, scheduled_maintenance, compliance_hold, partner_request]
-        deployed_by:
-          type: [string, "null"]
-        pr_number:
-          type: [integer, "null"]
-          minimum: 1
 
     DiffRequest:
       description: |
@@ -11731,7 +11695,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget]
         action:
           description: 'Kind-tagged union — shape varies by `kind`.'
           oneOf:
@@ -11748,7 +11712,6 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
-            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -11766,7 +11729,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget]
         action:
           description: 'Kind-tagged action body — shape depends on `kind`.'
           oneOf:
@@ -11783,7 +11746,6 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
-            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -11812,7 +11774,6 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
-            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
 
     EdgeRuleRouteAction:
       description: 'Re-targets the matched request to another app owned by the same account.'
@@ -12307,76 +12268,6 @@ components:
           maxLength: 128
           pattern: '^[A-Za-z][A-Za-z0-9-]*$'
           description: "Optional RFC 7230 token header name for per-request override (default `x-faas-budget-ms`). Empty = no override."
-
-    EdgeRuleCacheAction:
-      description: |
-        Per-route TTL knobs for safe response caching on selected
-        GET/HEAD paths (ADR-122 / §4.1.2.17). The primitive for
-        "GET /catalog/* → 60 s fresh + 5 min stale-on-error" without
-        forcing the customer to bring their own cache (Upstash
-        Redis). The hot-path applier
-        (pkg/gateway/handler_apply_edge_rule_cache.go) consults the
-        matched rule on each request; a hit serves the cached body
-        and returns BEFORE the wake gate, so no VM runs and no
-        `gb_ram_hour` accrues.
-
-        Auth posture: requests carrying `Authorization` or a session
-        cookie are a hard bypass — they are NEVER stored and NEVER
-        served. `vary_on` therefore accepts ONLY
-        `Accept-Language` / `Accept-Encoding`; adding
-        `Authorization` / `Cookie` to `vary_on` is rejected at
-        create-time with 422.
-
-        Field-by-field:
-          * `max_age_seconds` — fresh window in seconds. Default 60,
-            range `[0, 3600]`. A zero value disables fresh hits but
-            stale-on-error still applies within
-            `stale_if_error_seconds`.
-          * `stale_if_error_seconds` — post-fresh window during
-            which a stored entry may be served ONLY on origin
-            failure (wake gate failure or upstream 5xx/timeout).
-            Default 300, hard cap 300. Stale-while-revalidate
-            (serving stale while a refresh runs in the background)
-            is NOT supported.
-          * `vary_on` — closed vocabulary subset
-            (`Accept-Language`, `Accept-Encoding`) whose values
-            participate in the cache key. Empty = no vary
-            dimension beyond the URL.
-          * `methods` — optional method allowlist (default
-            `{GET, HEAD}`). Anything outside this set is rejected
-            at create-time with 422.
-
-        Per-plan quota: Free 0 (closed), Hobby 1, Pro 5, Scale 20
-        (`Limits.EdgeRulesCachePerApp`). The Free=0 default is
-        deliberate — the wake-elision guarantee is the upsell, not
-        a baseline amenity.
-      type: object
-      required: [max_age_seconds, stale_if_error_seconds]
-      properties:
-        max_age_seconds:
-          type: integer
-          format: int32
-          minimum: 0
-          maximum: 3600
-          description: "Fresh window in seconds (default 60, range [0, 3600])."
-        stale_if_error_seconds:
-          type: integer
-          format: int32
-          minimum: 0
-          maximum: 300
-          description: "Post-fresh window during which a stored entry may be served ONLY on origin failure (default 300, hard cap 300)."
-        vary_on:
-          type: array
-          description: "Closed vocabulary subset (Accept-Language, Accept-Encoding) whose values participate in the cache key."
-          items:
-            type: string
-            enum: [Accept-Language, Accept-Encoding]
-        methods:
-          type: array
-          description: "Optional method allowlist (default {GET, HEAD})."
-          items:
-            type: string
-            enum: [GET, HEAD]
 
     # ─── API keys ─────────────────────────────────────────────────────────
 
@@ -13192,6 +13083,18 @@ components:
           description: "FLEET p95 wake latency (the unlabeled histogram). Labelled as such in the UI."
           x-since: "2026-07"
           x-issue: "273"
+        queue_depth:
+          type: integer
+          format: int64
+          description: |
+            Current wake-queue depth (`gateway_queue_depth{app}`).
+            Backs the `queue_backlog_growing` alert preset (ADR-123):
+            comparison `gt 50` over the chosen window. Best-effort:
+            absent on Prometheus failure (the field is `null`); the
+            evaluator's degraded-source contract skips firing
+            rather than guessing.
+          x-since: "2026-08"
+          x-issue: "1233"
         egress_bytes:
           type: integer
           format: int64
