@@ -4802,6 +4802,116 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # ─── Alert presets (ADR-123 / issue #1233) ───────────────────────────────
+  # Catalog of one-click alert presets. The catalog is R/O for
+  # customers (system-seeded via migration 00348). Enabling a
+  # preset clones it into a real alert_rules row via the existing
+  # quota path; the row is owned by the customer from then on
+  # (PATCH/DELETE/rotate-secret all work on the cloned row).
+  /v1/alert-presets:
+    get:
+      tags: [alert_rules]
+      operationId: listAlertPresets
+      summary: List the 8-row alert-preset catalog.
+      description: |
+        The catalog is small (8 rows in PR-A) so no pagination.
+        Rows whose enabled_in_catalog=false are returned with the
+        flag set so the dashboard can render "coming soon" — the
+        enable endpoint rejects them with 400 alert_preset_disabled.
+        Rows whose minimum_plan is above the caller's plan are
+        returned with enabled_in_catalog unchanged so the dashboard
+        can render an "upgrade to <plan>" hint per row.
+      responses:
+        '200':
+          description: The catalog.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AlertPresetResponse' }
+              example:
+                - id: "0123456789abcdef0123456789abcdef"
+                  name: "error_rate_2pct"
+                  display_name: "Error rate exceeds 2%"
+                  description: "Fires when the rolling 15-minute error rate exceeds 2%."
+                  category: "reliability"
+                  metric: "error_rate_pct"
+                  comparison: "gt"
+                  threshold: 2
+                  window_spec: "15m"
+                  default_cooldown_minutes: 15
+                  minimum_plan: "hobby"
+                  enabled_in_catalog: true
+                - id: "fedcba9876543210fedcba9876543210"
+                  name: "api_down"
+                  display_name: "API is down"
+                  description: "Fires when the app has not served a successful invocation in 5 minutes."
+                  category: "availability"
+                  metric: "api_up"
+                  comparison: "lt"
+                  threshold: 1
+                  window_spec: "5m"
+                  default_cooldown_minutes: 5
+                  minimum_plan: "pro"
+                  enabled_in_catalog: false
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/alert-presets/{name}/enable:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: Preset name (catalog key — see `listAlertPresets`).
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+    post:
+      tags: [alert_rules]
+      operationId: enableAlertPreset
+      summary: Instantiate a preset as an alert rule.
+      description: |
+        Clones the catalog row into a real alert_rules row the
+        caller owns from then on. The (metric, comparison,
+        threshold, window_spec, default_cooldown_minutes)
+        sextuple is pre-filled server-side; the caller supplies
+        only webhook_url + webhook_secret (the delivery channel)
+        and optional cooldown_minutes / enabled overrides.
+
+        Pre-loadApp gates fire in this order: 404 on missing
+        preset → 400 alert_preset_disabled on disabled-in-catalog
+        → 402 plan_alert_presets_not_allowed on below-minimum-plan
+        → 400 alert_preset_invalid on body shape → 400
+        image_egress_denied on the SSRF egress guard → 402
+        plan_alert_rules_not_allowed on the per-plan cap → 403
+        plan_alert_rule_quota on the per-app / per-account cap.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnableAlertPresetRequest' }
+            example:
+              webhook_url: "https://hooks.example.com/alerts"
+              webhook_secret: "shh"
+              cooldown_minutes: 5
+              enabled: true
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: The instantiated alert rule (carries the masked secret).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertRuleResponse' }
+        '400': { $ref: '#/components/responses/AlertRuleInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AlertRuleInvalid' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AlertRuleInvalid' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── Edge rules (ADR-089, planned) ────────────────────────────────────────
   # Customer-configurable resource that runs in pkg/gateway BEFORE
   # host→app resolution. One table, kind-tagged action union
@@ -11500,6 +11610,78 @@ components:
       properties:
         rotated_at: { type: string, format: date-time, example: "2026-07-28T12:00:00Z" }
         webhook_secret_sealed_masked: { type: string, example: "***" }
+
+    # ─── Alert presets (ADR-123 / issue #1233) ───────────────────────────────
+
+    AlertPresetResponse:
+      description: |
+        One row of the alert-preset catalog (issue #1233, ADR-123).
+        The catalog is system-seeded and R/O for customers — the
+        enable endpoint clones the row into a real alert_rules row
+        the customer owns from then on. No persistent preset_id FK
+        lands on alert_rules.
+      type: object
+      required:
+        - id
+        - name
+        - display_name
+        - description
+        - category
+        - metric
+        - comparison
+        - threshold
+        - window_spec
+        - default_cooldown_minutes
+        - minimum_plan
+        - enabled_in_catalog
+      properties:
+        id: { type: string, format: uuid, example: "0123456789abcdef0123456789abcdef" }
+        name: { type: string, minLength: 1, maxLength: 64, example: "error_rate_2pct" }
+        display_name: { type: string, example: "Error rate exceeds 2%" }
+        description: { type: string, example: "Fires when the rolling 15-minute error rate exceeds 2%." }
+        category:
+          type: string
+          enum: [availability, reliability, cost, deployment, infrastructure]
+          example: "reliability"
+        metric: { type: string, example: "error_rate_pct" }
+        comparison: { type: string, enum: [gt, gte, lt, lte], example: "gt" }
+        threshold: { type: number, example: 2 }
+        window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'], example: "15m" }
+        default_cooldown_minutes: { type: integer, minimum: 5, maximum: 1440, example: 15 }
+        minimum_plan: { type: string, enum: [free, hobby, pro, scale], example: "hobby" }
+        enabled_in_catalog: { type: boolean, example: true }
+
+    EnableAlertPresetRequest:
+      description: |
+        Body for POST /v1/apps/{slug}/alert-presets/{name}/enable.
+        The (name, metric, comparison, threshold, window_spec,
+        default_cooldown_minutes) sextuple is pre-filled from the
+        catalog; the caller supplies only the delivery-side fields.
+      type: object
+      required: [webhook_url, webhook_secret]
+      properties:
+        webhook_url:
+          type: string
+          format: uri
+          maxLength: 2048
+          example: "https://hooks.example.com/alerts"
+        webhook_secret:
+          type: string
+          maxLength: 256
+          example: "shh"
+        cooldown_minutes:
+          type: integer
+          minimum: 5
+          maximum: 1440
+          description: |
+            Override for the preset's default_cooldown_minutes.
+            Omit to use the catalog default.
+        enabled:
+          type: boolean
+          default: true
+          description: |
+            Whether the instantiated rule is enabled. Defaults to
+            true; pass false to stage the rule in disabled state.
 
     # ─── Edge rules (ADR-089, planned) ────────────────────────────────────────
 
