@@ -181,13 +181,13 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 
 	// 7b. Issue #1233 / ADR-123 — per-app wake queue depth
 	// (gateway_queue_depth{app}). The alert preset
-	// queue_backlog_growing fires when this exceeds the threshold
-	// over the window; the public metrics endpoint surfaces it
-	// for dashboard parity. Querying the latest sample (not a
-	// rate) since the gauge reflects current waiters, not a
-	// delta — the alert path's windowed comparison uses the same
-	// query so the gauge is the live value, not an average.
-	qDepthQ := fmt.Sprintf(`gateway_queue_depth{app=%q}`, appID)
+	// queue_backlog_growing fires when the WINDOWED MAX exceeds
+	// the threshold, so a 50-waiter spike that drains in 30 s
+	// does NOT fire (false-positive guard) and 49-waiter sustained
+	// saturation does (false-negative guard). max_over_time(...)
+	// honors the window_spec the catalog row carries; without
+	// [rng] the comparison collapses to the scrape-moment value.
+	qDepthQ := fmt.Sprintf(`max_over_time(gateway_queue_depth{app=%q}[%s])`, appID, rng)
 	if v, err := fetcher.QueryScalar(ctx, qDepthQ); err == nil {
 		resp.QueueDepth = int64(SafeRoundNonNeg(v))
 	} else {
