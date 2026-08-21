@@ -1448,6 +1448,38 @@ func (c *Client) RotateAlertRuleSecret(ctx context.Context, slug, id string) (Ro
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/alerts/"+id+"/rotate-secret", nil, &out)
 }
 
+// --- Alert presets (ADR-123 / issue #1233) -------------------------------
+
+// ListAlertPresets returns the 8-row alert-preset catalog (issue
+// #1233, ADR-123). The catalog is small enough that no pagination
+// is needed — the SDK returns the flat slice verbatim. Disabled
+// rows are returned with enabled_in_catalog=false (so the CLI
+// renders them as "coming soon") and below-minimum-plan rows are
+// returned with their minimum_plan field intact (so the CLI /
+// dashboard can render an "upgrade to <plan>" hint per row).
+func (c *Client) ListAlertPresets(ctx context.Context) ([]AlertPresetResponse, error) {
+	var out []AlertPresetResponse
+	return out, c.do(ctx, "GET", "/v1/alert-presets", nil, &out)
+}
+
+// EnableAlertPreset instantiates a catalog row as a real
+// alert_rules row. The (metric, comparison, threshold, window_spec,
+// default_cooldown_minutes) quadruple is pre-filled server-side;
+// the caller supplies webhook_url + webhook_secret (the delivery
+// channel). CooldownMinutes and Enabled are optional overrides
+// (catalog defaults win when omitted). Returns 201 with the
+// instantiated AlertRuleResponse so the dashboard renders the new
+// rule alongside hand-rolled ones.
+//
+// Plan-tier gate: if the caller's plan is below the preset's
+// minimum_plan, the server returns 402
+// plan_alert_presets_not_allowed. The SDK surfaces the error
+// verbatim; the CLI prints the message and exits 1.
+func (c *Client) EnableAlertPreset(ctx context.Context, slug, presetName string, req EnableAlertPresetRequest) (AlertRuleResponse, error) {
+	var out AlertRuleResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/alert-presets/"+presetName+"/enable", req, &out)
+}
+
 // --- Edge rules (ADR-089, planned) ----------------------------------------
 
 // ListEdgeRules returns every edge rule owned by the authenticated
