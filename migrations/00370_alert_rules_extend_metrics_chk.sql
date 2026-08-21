@@ -1,10 +1,10 @@
--- filename: 00364_alert_rules_extend_metrics_chk.sql
+-- filename: 00370_alert_rules_extend_metrics_chk.sql
 -- +goose Up
 -- +goose StatementBegin
 
 -- Issue #1233 / ADR-123 — extend alert_rules_metric_chk to allow
 -- the 5 new metric strings that the preset catalog introduces.
--- The catalog seed in 00363 references these metrics; the
+-- The catalog seed in 00369 references these metrics; the
 -- evaluator's `observe` dispatch learns them in the same PR; the
 -- pkg/api.AllowedAlertRuleMetrics + pkg/state.AlertMetric*
 -- closed sets learn them in the same PR. The DB CHECK is the

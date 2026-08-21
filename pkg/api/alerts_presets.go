@@ -16,7 +16,7 @@ package api
 
 // AllowedAlertPresetCategories is the closed set for the `category`
 // field on alert_presets. Mirrors the alert_presets_category_chk DB
-// constraint (migrations/00362_alert_presets.sql). Used by the
+// constraint (migrations/00368_alert_presets.sql). Used by the
 // dashboard grid header to bucket the 8 cards.
 var AllowedAlertPresetCategories = []string{
 	"availability",

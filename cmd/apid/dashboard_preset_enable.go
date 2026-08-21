@@ -38,7 +38,7 @@ const dashboardEnablePresetAction = "enable_alert_preset"
 
 // presetNameRe matches the catalog-key shape (lowercase + underscore +
 // digit, 1..64 chars — mirrors the alert_presets_name_len_chk DB
-// constraint at migrations/00362_alert_presets.sql). Same regex
+// constraint at migrations/00368_alert_presets.sql). Same regex
 // gating as dashboardFireCronIDRe to kill G710 open-redirect via
 // path-param taint — the redirect target concatenates the slug +
 // preset name into a fragment / query value.

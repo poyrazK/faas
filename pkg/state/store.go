@@ -2402,7 +2402,7 @@ type Store interface {
 
 	// Alert preset catalog (issue #1233 / ADR-123). The catalog has
 	// 8 system-owned rows; the Store exposes only read methods. The
-	// only write path is migration 00363's idempotent seed.
+	// only write path is migration 00369's idempotent seed.
 	ListAlertPresets(ctx context.Context) ([]AlertPreset, error)
 	AlertPresetByName(ctx context.Context, name string) (AlertPreset, error)
 
@@ -2431,7 +2431,7 @@ type Store interface {
 
 	// UpsertAccountSpendSnapshot is called by the meterd tick
 	// loop on every AlertEvalInterval. Idempotent via the
-	// (account_id, source, period_end) UNIQUE at migrations/00365.
+	// (account_id, source, period_end) UNIQUE at migrations/00371.
 	UpsertAccountSpendSnapshot(ctx context.Context, accountID string, periodStart, periodEnd time.Time, gbSeconds float64, eurCents int64, source string) error
 
 	// MinCertExpiryForApp returns the smallest remaining seconds

@@ -12,7 +12,7 @@
 // closed-set CHECK + the seed-only mutator posture), so the test
 // surface here is the schema-vs-row mapping + the (category, name)
 // order. TestPg_AlertPresetCatalog_SeedMigration pins that the
-// migration 00363 seed inserts the 8 catalog rows verbatim.
+// migration 00369 seed inserts the 8 catalog rows verbatim.
 //
 // pgtest.Open handles the skip when Postgres is unreachable, so
 // the test is safe to run on a dev box without /var/run/postgresql.
@@ -53,7 +53,7 @@ func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows.Err: %v", err)
 	}
-	// The PR-A seed (migrations/00363_alert_presets_seed.sql) ships
+	// The PR-A seed (migrations/00369_alert_presets_seed.sql) ships
 	// 8 rows. The exact names may shift in future migrations; this
 	// test pins the COUNT + the (category, name) ordering shape.
 	if len(got) != 8 {
@@ -79,7 +79,7 @@ func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
 func TestPg_AlertPresetCatalog_ByName_And_NotFound(t *testing.T) {
 	_, pool, ctx := pgStoreWithPool(t)
 	// Seed a single row directly (bypassing the migration seed
-	// so the test is hermetic — it doesn't depend on 00363
+	// so the test is hermetic — it doesn't depend on 00369
 	// running before the assertion).
 	const wantName = "test_catalog_row"
 	if _, err := pool.Exec(ctx, `INSERT INTO alert_presets
