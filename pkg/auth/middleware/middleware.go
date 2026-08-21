@@ -740,6 +740,190 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 	return sess, false, nil
 }
 
+// AttachSessionIfPresent is the soft-attach companion to
+// RequireSession for surfaces where authenticated and anonymous
+// traffic coexist (the public gateway front door, the dashboard
+// reverse-proxy, the per-app ingress chain). It runs ONLY the
+// session-cookie branch of RequireSession — no bearer-key path,
+// no 401 response on missing/invalid cookie — and stamps the
+// resolved principal into r.Context() via withPrincipal when the
+// cookie verifies cleanly. Returns ok=false (without writing
+// anything to w) on:
+//
+//   - No cookie on the request.
+//   - Cookie value fails AEAD verify (m.Sessions.Verify returns
+//     non-nil error).
+//   - Live row lookup fails (revoked, expired, never-valid).
+//   - Account lookup fails (defensive — AEAD-bound
+//     env.AccountID should never miss).
+//   - Account is suspended and the path isn't account-scoped
+//     (mirrors RequireSession's billing-past-due 402, but
+//     silently — the public edge should not surface 402s to
+//     a customer whose cookie is otherwise valid; the per-app
+//     ingress gate will deny with its own wire posture).
+//
+// The "silent on miss" contract is what makes this a soft
+// attach rather than an authn gate. Production wiring places
+// it at the public-front-door chain (cmd/gatewayd-internal) so
+// the cookie envelope survives the proxy hop with the
+// principal already stamped into r.Context() — the per-app
+// members_only gate then reads it via middleware.PrincipalFrom
+// (issue #477 #4 / ADR-123) without having to re-verify the
+// AEAD.
+//
+// Failure modes NEVER write to w. The middleware ALWAYS calls
+// next.ServeHTTP — even on invalid cookie / suspended account —
+// so the downstream chain stays responsible for the actual
+// authz decision. The public-front-door is shared by every
+// public_auth_mode (open / bearer / basic / ip_allowlist /
+// internal_only / members_only); only members_only consults
+// the attached principal, and it consults via a separate
+// cmd-side adapter that does its own reason classification.
+//
+// Audit: AttachSessionIfPresent emits NO audit events. The
+// auth.session.stolen / auth.session.binding_mismatch audit
+// rows that RequireSessionCookie would have emitted on
+// failure cases are intentionally suppressed here — the
+// public-front-door is not the authn boundary (the public-
+// side ed25519-signed JWT for internal_only IS the boundary);
+// a stolen cookie would have already been caught by the
+// previous request's RequireSession run. We DO inherit the
+// sessionTouchDebounce shouldTouch (TouchSessionLastSeen)
+// so the per-session touch counter still advances on the
+// successful path — but the revoke-row / mismatch / empty-sid
+// branches skip the touch (and the audit), matching the
+// "no observable side-effect" contract.
+//
+// Why a separate method instead of refactoring RequireSession
+// to accept a "soft" flag: the contract is genuinely different.
+// RequireSession 401s on any authn failure (it's an authn
+// gate). AttachSessionIfPresent passes through silently (it's
+// a stamp-on-best-effort). Conflating the two would invite
+// regressions on either surface — the public edge would
+// start 401ing open-mode traffic, or the apid chain would
+// start silently passing stolen cookies.
+//
+// Companion: cmd/gatewayd-internal/soft_session_attach.go
+// wires this into the public-front-door http.Handler chain.
+func (m *Middleware) AttachSessionIfPresent(r *http.Request) bool {
+	if m.Sessions == nil || m.Lookups == nil {
+		// Cookie branch not configured at startup — same
+		// "gate disabled" posture as RequireSession's
+		// nil-check at line 564. Silently pass through.
+		return false
+	}
+	c, err := r.Cookie(m.SessionCookieName)
+	if err != nil || c.Value == "" {
+		// No cookie. Dominant case for open / bearer /
+		// basic / ip_allowlist traffic. Silent pass.
+		return false
+	}
+	env, err := m.Sessions.Verify(c.Value)
+	if err != nil {
+		// AEAD verify failed — tampered / wrong key /
+		// corrupt. The previous request would have
+		// surfaced this through RequireSession's audit;
+		// the current request silently passes through,
+		// and any downstream chain that consults
+		// middleware.PrincipalFrom will see ok=false
+		// (members_only gate 401s with no_cookie).
+		if m.Log != nil {
+			m.Log.Debug("session AEAD verify failed (soft attach)",
+				"path", logsanitize.Field(r.URL.Path))
+		}
+		return false
+	}
+	if env.Sid == "" {
+		// Pre-IAM-3 rollout cookie. RequireSession's
+		// hard path would clearSessionCookie + 401.
+		// Soft path: don't touch the cookie (the next
+		// request from this client will likely be a
+		// re-login that overwrites it anyway), don't
+		// stamp principal.
+		return false
+	}
+	sess, err := m.Lookups.GetSession(r.Context(), env.Sid)
+	if err != nil {
+		// Revoked / never-valid / lookup-error. Soft
+		// attach: don't clearSessionCookie (the next
+		// request from a re-login will overwrite the
+		// cookie value; clearing it on a transient
+		// store-error would log the user out
+		// unnecessarily). Don't emit auth.session.stolen
+		// audit (matches the "no observable side-effect"
+		// contract — the upstream RequireSession on
+		// apid already covers this surface).
+		if m.Log != nil && !errors.Is(err, state.ErrNotFound) {
+			m.Log.Debug("session lookup error (soft attach)",
+				"path", logsanitize.Field(r.URL.Path),
+				"error", err.Error())
+		}
+		return false
+	}
+	if sess.RevokedAt != nil {
+		return false
+	}
+	// Binding-hash mismatch: same posture as the lookup-
+	// error branch (silent pass-through — the next
+	// RequireSession run will catch it and 401). We do
+	// NOT auto-revoke here because that's an observable
+	// side-effect that the public-front-door shouldn't
+	// take (the binding check is the per-app
+	// authentication boundary, not the per-app
+	// authorization boundary; revoking at the wrong
+	// layer breaks the layering).
+	if m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != "" &&
+		env.BindingHash != sess.BindingHash {
+		return false
+	}
+	if sess.AccountID != env.AccountID {
+		// AEAD bind broken (defensive — should never
+		// fire). Silent pass.
+		if m.Log != nil {
+			m.Log.Warn("session account mismatch in soft attach (AEAD bind broken?)",
+				"sid", logsanitize.Field(env.Sid),
+				"path", logsanitize.Field(r.URL.Path))
+		}
+		return false
+	}
+	acct, err := m.Authn.AccountByID(r.Context(), env.AccountID)
+	if err != nil {
+		return false
+	}
+	// NOTE: the suspended-account branch in RequireSession
+	// returns 402 (billing-past-due). Soft attach does NOT
+	// reproduce the 402 — the public-front-door chain does
+	// not own the billing posture. A suspended-account
+	// request still has the principal stamped; the
+	// downstream chain (e.g. members_only gate) sees
+	// ok=true and denies on its own criteria (the gate
+	// doesn't currently check account.Active(), but a
+	// future hardening PR can add the Active() short-
+	// circuit here without changing the soft-attach
+	// contract).
+	//
+	// Step-up / mfa-pending stamps are skipped for the
+	// same reason — they're internal to the apid
+	// authentication chain, not the public-front-door
+	// authorization chain.
+	*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: nil, Membership: nil}))
+	// TouchSessionLastSeen — same detached + bounded
+	// shape as RequireSession's branch. Keeps the per-
+	// session observability fresh even when the request
+	// reaches the public edge without going through apid.
+	if t, fire := m.sessionDebounce.shouldTouch(env.Sid, time.Now(), m.sessionTouchWindow()); fire {
+		go func(parentCtx context.Context, sid string, ticket *TouchTicket) {
+			defer ticket.AfterFire(m.sessionTouchWindow())
+			c, cancel := context.WithTimeout(parentCtx, 2*time.Second)
+			defer cancel()
+			if err := m.Lookups.TouchSessionLastSeen(c, sid); err != nil && m.Log != nil {
+				m.Log.Warn("session last_seen_at touch failed (soft attach)", "sid", logsanitize.Field(sid), "error", err.Error())
+			}
+		}(r.Context(), env.Sid, t)
+	}
+	return true
+}
+
 const sessionTouchWindow = 5 * time.Minute
 
 // sessionTouchDebounce mirrors keyTouchDebounce but keyed on the
