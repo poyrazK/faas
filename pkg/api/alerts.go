@@ -56,13 +56,39 @@ const (
 	AlertRuleCooldownMaxMinutes = 1440
 )
 
-// AlertRuleNameMaxBytes is the alert_rules.name column upper
-// bound. Mirrors the alert_rules_name_len_chk DB constraint at
+// AlertRuleNameMaxChars is the alert_rules.name column upper
+// bound expressed in CHARACTERS (Unicode code points). Mirrors
+// the alert_rules_name_len_chk DB constraint at
 // migrations/00062_alert_rules.sql:84-86 (`char_length(name)
 // between 1 and 64`). Used by enableAlertPreset to clamp the
 // derived "<preset display_name> (<app slug>)" name so the
-// catalog-side display_name can't blow past the DB cap.
-const AlertRuleNameMaxBytes = 64
+// catalog-side display_name can't blow past the DB cap. The
+// enforcement is rune-aware (NOT byte-aware) so a multi-byte
+// slug like "küche-app" doesn't get cut mid-codepoint — a
+// naive `len(s) > 64; s = s[:64]` slice would land on an
+// invalid-UTF-8 boundary that Postgres rejects with SQLSTATE
+// 22021 at INSERT time.
+const AlertRuleNameMaxChars = 64
+
+// TruncateRunes returns s clipped to at most maxRunes Unicode
+// code points. Safe against multi-byte boundaries: the cut
+// always lands on a rune boundary so the result is valid UTF-8
+// even when the input contains code points outside ASCII. Used
+// by the alert-preset enable path to clamp the derived rule
+// name against AlertRuleNameMaxChars.
+func TruncateRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == maxRunes {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
 
 // AllowedAlertRuleMetrics is the closed set for the `metric` field.
 // Must match state.AlertMetric's enumerated values byte-for-byte;
