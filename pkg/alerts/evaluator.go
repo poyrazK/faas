@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -530,21 +531,20 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 	case state.AlertMetricAccountSpendEUR:
 		// Postgres-backed MTD SUM. Issue #1233 / ADR-123.
 		// Threshold is EUR (not cents) per the catalog seed
-		// (spend_eur_20 fires at gt 20). The Store returns
-		// cents; the evaluator divides by 100 so the wire-side
-		// threshold unit matches the customer-facing preset
-		// label ("spend exceeds €20").
+		// (spend_eur_20 fires at gt 20). CLAUDE.md says "Floats
+		// near money fail review" — observed is int64 cents,
+		// compareCents rounds the EUR threshold to cents at the
+		// seam so the comparison is integer-aligned end-to-end.
 		cents, err := e.store.MTDSpendEurCents(ctx, rule.AccountID)
 		if err != nil {
 			e.log.Warn("alerts: mtd spend query",
 				"rule", rule.ID, "err", err)
 			return 0, false, skipDegraded
 		}
-		observed := float64(cents) / 100
-		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+		return float64(cents) / 100, compareCents(cents, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricCertExpirySeconds:
 		// Postgres-backed min-seconds-remaining across the
-		// apid_tenant_surface_cert_expiry_state rows for the
+		// meterd_tenant_surface_cert_expiry_state rows for the
 		// (account, app). The walker in cmd/meterd/main.go
 		// keeps the table fresh; -1 means "no cert observed
 		// yet" and the comparison verdict fires false for
@@ -667,6 +667,32 @@ func compareFloat(observed float64, op state.AlertComparison, threshold float64)
 		// vocabulary at state.AlertComparison rejects unknown
 		// values at creation, but a defensive default keeps a
 		// future operator safe.
+		return false
+	}
+}
+
+// compareCents is the integer-aligned sibling of compareFloat for
+// monetary metrics (issue #1233 / ADR-123, account_spend_eur).
+// CLAUDE.md mandates "Floats near money fail review" — the
+// AccountSpend path stores cents (int64) and the catalog's
+// spend_eur_20 preset ships a threshold in EUR (20.0), so we convert
+// thresholdEUR to cents ONCE at the seam (rounded half-to-even
+// avoids the 19.995 EUR phantom-fire at the month edge) and
+// compare two integers. No further float math touches the value.
+func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR float64) bool {
+	// math.Round(threshold*100)/100 then *100 keeps the float out
+	// of the comparison — banker's rounding via math.RoundToEven.
+	thresholdCents := int64(math.RoundToEven(thresholdEUR * 100))
+	switch op {
+	case state.AlertGt:
+		return observedCents > thresholdCents
+	case state.AlertGte:
+		return observedCents >= thresholdCents
+	case state.AlertLt:
+		return observedCents < thresholdCents
+	case state.AlertLte:
+		return observedCents <= thresholdCents
+	default:
 		return false
 	}
 }
