@@ -374,6 +374,20 @@ type Limits struct {
 	CronLimitPerApp     int
 	CronLimitPerAccount int
 
+	// Queue controls (ADR-124 deployment queue controls).
+	// QueueControlsAllowed gates the reorder + deploy-immediately
+	// surface (Free = false; Hobby + Pro + Scale = true). Cancel
+	// and clear-obsolete are NOT gated by this flag — the safety
+	// valves stay on Free. MaxQueuedDeploysPerApp caps the
+	// pre-build backlog builderd will claim per app; the value
+	// rises with the tier. MaxCancelOpsPerHour /
+	// MaxReorderOpsPerHour are the per-account rate caps so a
+	// single noisy operator cannot churn the deploy queue.
+	QueueControlsAllowed   bool
+	MaxQueuedDeploysPerApp int
+	MaxCancelOpsPerHour    int
+	MaxReorderOpsPerHour   int
+
 	// EvictionPriorityReservedAllowed (issue #475) gates the per-app
 	// reserved eviction tier. Free = false (no reserved apps on the
 	// abuse-floor tier); Hobby+ = true. apid's updateApp handler
@@ -1157,6 +1171,15 @@ var planLimits = map[Plan]Limits{
 		// value the store still reads.
 		CronLimitPerApp:     0,
 		CronLimitPerAccount: 0,
+		// ADR-124 queue controls — Free keeps cancel + clear-obsolete
+		// (the safety valves); reorder + deploy-immediately are
+		// locked. Queue depth caps are conservative because Free
+		// deployed-apps cap is 1 (the queue rarely exceeds 2 in
+		// practice; the cap is the per-account rate noise knob).
+		QueueControlsAllowed:   false,
+		MaxQueuedDeploysPerApp: 2,
+		MaxCancelOpsPerHour:    120,
+		MaxReorderOpsPerHour:   0, // gated via QueueControlsAllowed
 		// Issue #475: Free stays off the reserved eviction tier. The
 		// abuse-floor tier has no reserved-tier entitlement; per-account
 		// cap is 0 so the gate fails closed.
@@ -1449,6 +1472,11 @@ var planLimits = map[Plan]Limits{
 		// template's tutorials.
 		CronLimitPerApp:     5,
 		CronLimitPerAccount: 10,
+		// ADR-124 queue controls — Hobby unlocks all four.
+		QueueControlsAllowed:   true,
+		MaxQueuedDeploysPerApp: 5,
+		MaxCancelOpsPerHour:    120,
+		MaxReorderOpsPerHour:   60,
 		// Issue #475: Hobby gets 1 reserved-tier app. One healthcheck-
 		// critical service (status page, uptime probe) is the typical
 		// Hobby workload that needs cross-account RAM-pressure
@@ -1747,6 +1775,11 @@ var planLimits = map[Plan]Limits{
 		// run more apps (25) than Hobby (5).
 		CronLimitPerApp:     20,
 		CronLimitPerAccount: 50,
+		// ADR-124 queue controls — Pro.
+		QueueControlsAllowed:   true,
+		MaxQueuedDeploysPerApp: 10,
+		MaxCancelOpsPerHour:    120,
+		MaxReorderOpsPerHour:   60,
 		// Issue #475: Pro gets 2 reserved-tier apps. Pro customers
 		// run customer-facing APIs + background workers; the +1 vs
 		// Hobby tracks the +5 Pro app budget. Reserved-tier RAM cost
@@ -2022,6 +2055,11 @@ var planLimits = map[Plan]Limits{
 		// at the per-app cap, the typical SaaS fan-out.
 		CronLimitPerApp:     100,
 		CronLimitPerAccount: 500,
+		// ADR-124 queue controls — Scale (4× Pro).
+		QueueControlsAllowed:   true,
+		MaxQueuedDeploysPerApp: 25,
+		MaxCancelOpsPerHour:    120,
+		MaxReorderOpsPerHour:   60,
 		// Issue #475: Scale gets 4 reserved-tier apps. 2× Pro tracks
 		// the doubling in DeployedApps (25 → 100) and the doubling in
 		// MaxConcurrency (5 → 20). At Scale's 1024 MB instance RAM +
@@ -3421,6 +3459,21 @@ func (p Plan) MinInstancesAllowed() bool {
 		return false
 	}
 	return l.MinInstancesAllowed
+}
+
+// QueueControlsAllowed (ADR-124) reports whether the plan may
+// use the reorder + deploy-immediately surface. Cancel and
+// clear-obsolete are NOT gated by this flag (Free keeps the
+// user-correct safety valves). Mirrors the per-tier lock shape
+// at MinInstancesAllowed: Hobby + Pro + Scale opt in; Free stays
+// off. The value-bound knob (MaxReorderOpsPerHour) lives in the
+// planLimits table.
+func (p Plan) QueueControlsAllowed() bool {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return false
+	}
+	return l.QueueControlsAllowed
 }
 
 // MaxInstancesAllowed (issue #462 / ADR-058) reports whether the
