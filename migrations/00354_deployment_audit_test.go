@@ -1,8 +1,8 @@
 //go:build !no_pg
 
-// Migration-apply test for 00352 (deployment_audit table — issue
+// Migration-apply test for 00354 (deployment_audit table — issue
 // #976 / ADR-122 / SAFE-RELEASES-E.2). Pins the contract:
-//  1. The migration set applies cleanly through 00352.
+//  1. The migration set applies cleanly through 00354.
 //  2. The deployment_audit table lands with the expected column shape
 //     and nullable rules.
 //  3. The closed-set deployment_audit_kind_chk CHECK covers the 8
@@ -32,13 +32,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func TestMigrations_00352_DeploymentAudit(t *testing.T) {
+func TestMigrations_00354_DeploymentAudit(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 
-	// (1) Run the full migration set. 00352 should land last.
+	// (1) Run the full migration set. 00354 should land last.
 	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("db.MigrateUp: %v (PR follow-up failure mode: missing migration slot before 00352)", err)
+		t.Fatalf("db.MigrateUp: %v (PR follow-up failure mode: missing migration slot before 00354)", err)
 	}
 
 	// (2) Column shape. Scoped to current_schema() per
