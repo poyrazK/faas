@@ -1,4 +1,4 @@
--- filename: 00365_deployment_audit_backfill_90d.sql
+-- filename: 00371_deployment_audit_backfill_90d.sql
 -- +goose Up
 -- +goose StatementBegin
 

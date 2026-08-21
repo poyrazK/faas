@@ -137,10 +137,10 @@
     zero new schema (the diff package consumes the existing
     `pkg/apid/openapi.yaml`). Mega PR #2 is zero-schema.
   - **Migration slot coordination.** Mega PR #1 starts at
-    `00364_deployment_audit.sql` (renumbered through 18 hops:
+    `00370_deployment_audit.sql` (renumbered through 19 hops:
     `00320 → 00322 → 00324 → 00326 → 00327 → 00330 → 00332 →
     00334 → 00342 → 00346 → 00348 → 00350 → 00352 → 00354 →
-    00356 → 00358 → 00360 → 00363 → 00364` to clear open-PR slots #999 #990 #1004 #1000 +
+    00356 → 00358 → 00360 → 00363 → 00364 → 00370` to clear open-PR slots #999 #990 #1004 #1000 +
     post-merge of PR #999's `00326_apps_public_auth_ip_allowlist.sql`
     on origin/main + the round-4 fence-collision on main's
     `00327_reserve_slot.sql` + `00328_reserve_slot.sql` fences +
@@ -183,9 +183,15 @@
     claim to include `00360_apps_app_protocol.sql` post-rebase
     onto origin/main + the round-20 renumber to `00364`+`00365`
     plus 1 bridge fence `00362_reserve_slot.sql` to clear PR #1024's
-    latest renumber to `00362_deployments_cancelled.sql` +
-    `00363_builds_cancelled.sql`. The backfill sits at
-    `00365_deployment_audit_backfill_90d.sql`. The
+    renumber to `00362_deployments_cancelled.sql` +
+    `00363_builds_cancelled.sql` + the round-21 renumber to
+    `00370`+`00371` plus 6 bridge fences `00363-00369` to clear
+    PR #1024's third renumber to `00362_deployments_cancelled.sql`
+    + `00363_builds_cancelled.sql` + `00364_deployments_priority.sql`,
+    PR #1017's expansion to `00368_alert_presets.sql` +
+    `00369_alert_presets_seed.sql`, and PR #1012's expansion to
+    `00367_deployments_stage_state_history_cap.sql`. The backfill
+    sits at `00371_deployment_audit_backfill_90d.sql`. The
     cross-PR slot precheck
     (`scripts/ci/check_migration_slots.sh --base-ref=origin/main`)
     must be re-run at every push — the open-PR slot landscape

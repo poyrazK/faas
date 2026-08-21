@@ -1,7 +1,11 @@
--- 00368_reserve_slot.sql — temporary concurrent-PR migration fence.
--- The real migration for this slot is being coordinated by other
--- open PRs. Remove this no-op when those migrations land, per
--- ADR-041.
+-- filename: 00368_reserve_slot.sql
+-- Reserved slot to keep the migrations directory contiguous for the
+-- local embed (CI's TestMigrationsContiguous pins slot N to position
+-- N). Round-21 bridge fence: PR #1017 owns 00368_alert_presets.sql
+-- in its branch but the file is not in this branch's local embed.
+-- The real E.2 migrations renumbered in round-21 to 00370+00371.
+-- SAFE-RELEASES Mega PR #1 (issue #976 / ADR-124) — round-21
+-- contiguity fill on 2026-08-22.
 -- +goose Up
 -- +goose StatementBegin
 SELECT 1;
