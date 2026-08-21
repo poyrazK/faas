@@ -83,6 +83,55 @@
     }
     .preview-copy-btn:hover { background: #f3f4f6; }
     .preview-copy-btn[data-copied="true"] { background: #d1fae5; border-color: #065f46; color: #065f46; }
+    /* Issue #1233 / ADR-123 — alert-preset catalog grid.
+       8-card layout, two columns on desktop / one column on mobile.
+       Disabled cards (.disabled) grey out the form and replace
+       the Enable button with a chip — matching the existing
+       .badge.dim palette so the operator reads "coming soon" /
+       "upgrade" as siblings of the other disabled-state chips. */
+    .alert-preset-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 0.75rem;
+      margin: 0.5rem 0 0.75rem 0;
+    }
+    .alert-preset-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 0.75rem;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .alert-preset-card.disabled { background: #f9fafb; opacity: 0.7; }
+    .alert-preset-card h3 { margin: 0; font-size: 1rem; }
+    .alert-preset-card .category {
+      margin: 0; font-size: 0.75rem; text-transform: uppercase;
+      color: #6b7280; letter-spacing: 0.04em;
+    }
+    .alert-preset-card .description { margin: 0; font-size: 0.85rem; color: #374151; }
+    .alert-preset-card .rule {
+      font-size: 0.75rem; background: #f3f4f6; padding: 0.15rem 0.4rem;
+      border-radius: 4px; display: inline-block;
+    }
+    .alert-preset-card .cooldown {
+      margin: 0; font-size: 0.75rem; color: #6b7280;
+    }
+    .alert-preset-card form {
+      display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.3rem;
+    }
+    .alert-preset-card input {
+      padding: 0.25rem 0.4rem; font-size: 0.85rem;
+      border: 1px solid #d1d5db; border-radius: 4px;
+    }
+    .alert-preset-card button {
+      padding: 0.3rem 0.6rem; background: #1e40af; color: #fff;
+      border: 0; border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+    }
+    .alert-preset-card button:hover { background: #1e3a8a; }
+    .badge.badge-coming-soon { background: #f3f4f6; color: #6b7280; }
+    .badge.badge-upgrade    { background: #fef3c7; color: #92400e; }
   </style>
 </head>
 <body hx-ext="sse" sse-connect="/v1/events">
@@ -509,6 +558,47 @@
         {{else}}
           <p>No alert rules configured for this app. Create one via the public API at <code>POST /v1/apps/{slug}/alerts</code>.</p>
         {{end}}
+      {{end}}
+
+      {{/* Issue #1233 / ADR-123 — alert-preset catalog grid.
+           Server-rendered (no SPA build, matching the rest of the
+           app_detail page). One card per row in alert_presets,
+           ordered as the catalog returns them. The grid renders
+           three states per card:
+
+    - .Enabled → Enable form posts to
+      /apps/{AppSlug}/alert-presets/{Name}/enable with
+      application/x-www-form-urlencoded (NOT JSON — see the
+      enableAlertPreset handler).
+
+    - !EnabledInCatalog → "Coming soon" badge, no form.
+
+    - !MeetsPlan → "Upgrade to <plan>" hint, no form. */}}
+      <h2>Alert presets</h2>
+      {{if .Data.Presets}}
+        <div class="alert-preset-grid">
+          {{range .Data.Presets}}
+            <article class="alert-preset-card {{if not .Enabled}}disabled{{end}}">
+              <h3>{{.DisplayName}}</h3>
+              <p class="category">{{.Category}}</p>
+              <p class="description">{{.Description}}</p>
+              <code class="rule">{{.Metric}} {{.Comparison}} {{printf "%g" .Threshold}} over {{.WindowSpec}}</code>
+              <p class="cooldown">Cooldown: {{.DefaultCooldownMinutes}} min · Min plan: <strong>{{.MinimumPlan}}</strong></p>
+              {{if .Enabled}}
+                <form method="POST" action="/apps/{{.AppSlug}}/alert-presets/{{.Name}}/enable">
+                  <input type="hidden" name="csrf_token" value="{{.EnableConfirmToken}}">
+                  <input name="webhook_url" placeholder="https://hooks.example.com/…" required>
+                  <input name="webhook_secret" type="password" placeholder="webhook secret" required>
+                  <button type="submit">Enable</button>
+                </form>
+              {{else if not .EnabledInCatalog}}
+                <span class="badge badge-coming-soon">Coming soon</span>
+              {{else}}
+                <span class="badge badge-upgrade">Upgrade to {{.MinimumPlan}}</span>
+              {{end}}
+            </article>
+          {{end}}
+        </div>
       {{end}}
     {{end}}
   </main>

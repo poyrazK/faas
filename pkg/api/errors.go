@@ -2118,6 +2118,28 @@ const CodePlanAlertRulesNotAllowed = "plan_alert_rules_not_allowed"
 // the body.
 const CodePlanAlertRuleQuota = "plan_alert_rule_quota"
 
+// CodeAlertPresetInvalid is the 400 the customer sees when an
+// enable-from-preset body is malformed (closed-set drift on
+// cooldown_minutes, oversized webhook_secret, etc). Issue
+// #1233 / ADR-123.
+const CodeAlertPresetInvalid = "alert_preset_invalid"
+
+// CodeAlertPresetDisabled is the 400 the customer sees when the
+// catalog row is enabled_in_catalog=false (the preset is staged
+// for a future release). Mirrors CodeAlertPresetInvalid's
+// status so the dashboard renders the same "coming soon"
+// affordance the catalog grid already shows for the disabled
+// rows.
+const CodeAlertPresetDisabled = "alert_preset_disabled"
+
+// CodePlanAlertPresetsNotAllowed is the 402 the customer sees
+// when their plan is below the preset's minimum_plan (e.g. a
+// Hobby customer trying to enable api_down whose minimum_plan
+// is Pro). Fires BEFORE loadApp so a low-plan customer posting
+// to a non-existent slug gets a clean 402 — same slug-leak
+// guard as CodePlanAlertRulesNotAllowed. Issue #1233 / ADR-123.
+const CodePlanAlertPresetsNotAllowed = "plan_alert_presets_not_allowed"
+
 // CodePlanConsumerKeyQuotaReached is the RFC 7807 stable code
 // returned when the per-app or per-account consumer_keys quota is
 // exhausted. The intent is "your plan allows N keys per app (or per
@@ -2416,6 +2438,40 @@ func ErrPlanAlertRuleQuota(plan Plan, scope string, limit, observed int) *Proble
 		fmt.Sprintf("%s plan caps alert rules at %d for %s; you have %d. Delete one to add another.",
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#alerts")
+}
+
+// ErrAlertPresetInvalid is the closed-set + shape error for
+// enable-from-preset requests (issue #1233, ADR-123). Mirrors
+// ErrAlertRuleInvalid's shape so the CLI's problem-code table is
+// one row deep.
+func ErrAlertPresetInvalid(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeAlertPresetInvalid,
+		"Invalid alert preset", reason).
+		WithDocs(docsBase + "/alerts/presets")
+}
+
+// ErrAlertPresetDisabled is returned when the customer POSTs to
+// enable a catalog row whose enabled_in_catalog=false. The 8
+// catalog rows ship 5 disabled in PR-A (the same 5 the dashboard
+// renders with a "coming soon" badge); the 402 is the API-side
+// mirror of that UX so a CLI caller gets the same hint.
+func ErrAlertPresetDisabled(presetName string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeAlertPresetDisabled,
+		"Alert preset not yet available",
+		fmt.Sprintf("the %q preset is staged for a future release; check the catalog for available presets.", presetName)).
+		WithDocs(docsBase + "/alerts/presets")
+}
+
+// ErrPlanAlertPresetsNotAllowed is returned when the customer's
+// plan is below the preset's minimum_plan (e.g. Hobby trying
+// api_down whose floor is Pro). 402 mirrors ErrPlanAlertRulesNotAllowed
+// so the slug-leak guard pattern is one row deep.
+func ErrPlanAlertPresetsNotAllowed(plan Plan, presetName, minimumPlan string) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanAlertPresetsNotAllowed,
+		"Alert preset not available on this plan",
+		fmt.Sprintf("the %q preset requires the %s plan or higher; the %s plan does not include it.",
+			presetName, minimumPlan, plan)).
 		WithDocs(docsBase + "/plans#alerts")
 }
 

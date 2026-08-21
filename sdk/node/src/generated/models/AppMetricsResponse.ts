@@ -59,6 +59,16 @@ export type AppMetricsResponse = {
    */
   wake_p95_ms: number;
   /**
+   * Current wake-queue depth (`gateway_queue_depth{app}`).
+   * Backs the `queue_backlog_growing` alert preset (ADR-123):
+   * comparison `gt 50` over the chosen window. Best-effort:
+   * absent on Prometheus failure (the field is `null`); the
+   * evaluator's degraded-source contract skips firing
+   * rather than guessing.
+   *
+   */
+  queue_depth?: number;
+  /**
    * Per-app egress byte delta over the window (informational; not billed). ADR-046. Source: schedd_egress_net_tx_bytes_total{app} (Prom rollup of usage_minutes.net_tx_bytes — PR-2 wires the rollup; until then this field stays 0).
    */
   egress_bytes?: number;

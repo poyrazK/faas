@@ -3195,6 +3195,14 @@ type AppMetricsResponse struct {
 	// as such in the UI; here it's named plainly because the
 	// dashboard copy does the labelling.
 	WakeP95MS float64 `json:"wake_p95_ms"`
+	// QueueDepth (issue #1233 / ADR-123) is the current waiters
+	// in the per-app wake gate queue, sourced from
+	// gateway_queue_depth{app}. Bounded by per-plan MaxQueueDepth
+	// (Hobby 5 / Pro 25 / Scale 100). The alert preset
+	// queue_backlog_growing uses this via the evaluator's
+	// queue_depth metric branch; the public metrics endpoint
+	// surfaces it for dashboard parity.
+	QueueDepth int64 `json:"queue_depth"`
 	// EgressBytes (ADR-046, step 10) is the total
 	// per-app egress byte delta over the window,
 	// queried from vmmd_egress_net_tx_bytes_total{app}

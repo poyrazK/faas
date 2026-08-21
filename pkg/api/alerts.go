@@ -56,6 +56,40 @@ const (
 	AlertRuleCooldownMaxMinutes = 1440
 )
 
+// AlertRuleNameMaxChars is the alert_rules.name column upper
+// bound expressed in CHARACTERS (Unicode code points). Mirrors
+// the alert_rules_name_len_chk DB constraint at
+// migrations/00062_alert_rules.sql:84-86 (`char_length(name)
+// between 1 and 64`). Used by enableAlertPreset to clamp the
+// derived "<preset display_name> (<app slug>)" name so the
+// catalog-side display_name can't blow past the DB cap. The
+// enforcement is rune-aware (NOT byte-aware) so a multi-byte
+// slug like "küche-app" doesn't get cut mid-codepoint — a
+// naive `len(s) > 64; s = s[:64]` slice would land on an
+// invalid-UTF-8 boundary that Postgres rejects with SQLSTATE
+// 22021 at INSERT time.
+const AlertRuleNameMaxChars = 64
+
+// TruncateRunes returns s clipped to at most maxRunes Unicode
+// code points. Safe against multi-byte boundaries: the cut
+// always lands on a rune boundary so the result is valid UTF-8
+// even when the input contains code points outside ASCII. Used
+// by the alert-preset enable path to clamp the derived rule
+// name against AlertRuleNameMaxChars.
+func TruncateRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == maxRunes {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
+
 // AllowedAlertRuleMetrics is the closed set for the `metric` field.
 // Must match state.AlertMetric's enumerated values byte-for-byte;
 // the handler validates membership before persisting.
@@ -63,6 +97,11 @@ const (
 // Kept in pkg/api (not pkg/state) so this DTO file stays free of the
 // pkg/api ↔ pkg/state import cycle — same precedent as the
 // pkg/api/dto.go cron block (precedent: PR #327 review).
+//
+// Issue #1233 / ADR-123 — extended from 7 to 12 metrics for the alert
+// preset catalog (api_up, account_spend_eur, deployment_failed,
+// cert_expiry_seconds, queue_depth). The DB CHECK constraint on
+// alert_rules.metric mirrors this list — see migrations/00370.
 var AllowedAlertRuleMetrics = []string{
 	"error_rate_pct",
 	"latency_p50_ms",
@@ -71,6 +110,11 @@ var AllowedAlertRuleMetrics = []string{
 	"cold_start_pct",
 	"request_count",
 	"failed_invocations",
+	"api_up",
+	"account_spend_eur",
+	"deployment_failed",
+	"cert_expiry_seconds",
+	"queue_depth",
 }
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.

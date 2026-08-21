@@ -561,6 +561,12 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// alert_rules read renders the panel's warning empty-state
 		// instead of killing the whole page.
 		Alerts: s.fetchDashboardAlerts(ctx, log, acct, app),
+		// Issue #1233 / ADR-123 — best-effort alert-preset catalog
+		// snapshot for the "Alert presets" grid below the Alerts
+		// panel. Same non-fatal posture: a Postgres blip on the
+		// alert_presets read renders an empty grid instead of
+		// killing the whole page.
+		Presets: s.fetchDashboardPresets(ctx, log, acct, app),
 	}}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
@@ -703,6 +709,80 @@ func (s *server) fetchDashboardAlerts(ctx context.Context, log *slog.Logger, acc
 		items = append(items, item)
 	}
 	return &dashboard.AlertDetailData{Rules: items}
+}
+
+// fetchDashboardPresets returns the per-app alert-preset catalog
+// snapshot for the "Alert presets" grid (issue #1233 / ADR-123).
+// On Postgres blip, logs + returns an empty slice so the template
+// renders the grid header without falling off the cliff (same
+// non-fatal posture as fetchDashboardAlerts above).
+//
+// Plan-tier gate is computed on the dashboard side via
+// api.PlanMeetsMinimumPlan(acct.Plan, preset.MinimumPlan) — the
+// same helper the apid enable handler uses
+// (handlers_alert_presets.go:118-121). When the row's plan is
+// above the customer's plan, MeetsPlan=false and the dashboard
+// renders an "upgrade to <plan>" hint instead of the Enable
+// button. When EnabledInCatalog=false the card renders as
+// "coming soon" (greyed). When both gates pass, the form posts
+// to /apps/{slug}/alert-presets/{name}/enable with the customer's
+// webhook_url + webhook_secret as application/x-www-form-urlencoded
+// fields (NOT JSON — see enableAlertPresetFromForm below).
+func (s *server) fetchDashboardPresets(ctx context.Context, log *slog.Logger, acct state.Account, app state.App) []dashboard.AlertPresetItem {
+	rows, err := s.store.ListAlertPresets(ctx)
+	if err != nil {
+		log.Warn("dashboard renderAppDetail: list alert presets", "account_id", acct.ID, "err", err)
+		return nil
+	}
+	// Mint ONE CSRF token for the action — the verifier at
+	// cmd/apid/dashboard_preset_enable.go:72 seals
+	// (action="enable_alert_preset", acct.ID) regardless of which
+	// preset card posted. Reusing a single token across all
+	// enabled cards is safe (the verifier doesn't bind the rule
+	// ID or slug — the underlying enableAlertPresetFromForm does
+	// its own per-preset validation) AND avoids burning a fresh
+	// session-key write per card. On a session-store failure we
+	// fall back to empty tokens, which the verifier rejects —
+	// the customer sees the error banner rather than a silently-
+	// broken form.
+	var enableCSRF string
+	if s.sessions != nil {
+		if t, err := middleware.IssueForAuthenticated(s.sessions, dashboardEnablePresetAction, acct.ID); err == nil {
+			enableCSRF = t
+		} else {
+			log.Warn("dashboard fetchDashboardPresets: mint enable CSRF", "account_id", acct.ID, "err", err)
+		}
+	}
+	out := make([]dashboard.AlertPresetItem, 0, len(rows))
+	for _, p := range rows {
+		meetsPlan := api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(p.MinimumPlan))
+		enabled := p.EnabledInCatalog && meetsPlan
+		item := dashboard.AlertPresetItem{
+			Name:                   p.Name,
+			DisplayName:            p.DisplayName,
+			Description:            p.Description,
+			Category:               p.Category,
+			Metric:                 p.Metric,
+			Comparison:             p.Comparison,
+			Threshold:              p.Threshold,
+			WindowSpec:             p.WindowSpec,
+			DefaultCooldownMinutes: p.DefaultCooldownMinutes,
+			MinimumPlan:            p.MinimumPlan,
+			EnabledInCatalog:       p.EnabledInCatalog,
+			Enabled:                enabled,
+			MeetsPlan:              meetsPlan,
+			AppSlug:                app.Slug,
+		}
+		// Only stamp the token on cards that will render a form.
+		// Coming-soon / upgrade cards have no form so an empty
+		// token is correct (the template's {{if .Enabled}} branch
+		// never reads EnableConfirmToken for those).
+		if enabled {
+			item.EnableConfirmToken = enableCSRF
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 // renderUsage renders /dashboard/usage — the GB-hours bar for the

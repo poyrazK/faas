@@ -1171,6 +1171,19 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/apps/{slug}/alerts/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAlertRule))))
 	mux.HandleFunc("POST /v1/apps/{slug}/alerts/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAlertRuleSecret))))
 
+	// Alert presets (ADR-123 / issue #1233). Catalog R/O for
+	// customers; instantiate-from-preset reuses the alert-rules
+	// create path (handlers_alert_presets.go). The enable route
+	// is idempotent so SDK retries are safe — the duplicate POST
+	// returns 409 "Preset already enabled" so the caller can
+	// branch on a stale POST without silently no-op'ing. Plan-tier
+	// gate (catalog row's minimum_plan → 402) and disabled-row
+	// gate (enabled_in_catalog=false → 400 alert_preset_disabled)
+	// both fire BEFORE loadApp for the same slug-leak reason
+	// createAlertRule gates on the per-plan cap (PR review F4).
+	mux.HandleFunc("GET /v1/alert-presets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertPresets))))
+	mux.HandleFunc("POST /v1/apps/{slug}/alert-presets/{name}/enable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.enableAlertPreset)))))
+
 	// Edge rules (ADR-089, planned). Customer-facing resource that
 	// runs in pkg/gateway BEFORE host→app resolution. Mirrors the
 	// alert-rules decorator chain: authLimited → requireMFA →
@@ -1726,6 +1739,15 @@ func (s *server) handler() http.Handler {
 	// (Go 1.22+ mux needs concrete segment counts; the
 	// /crons/{id}/fire-now suffix is the path tail).
 	mux.Handle("POST /dashboard/apps/{slug}/crons/{id}/fire-now", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardFireCron))))
+
+	// Issue #1233 / ADR-123 — alert-preset enable from the
+	// dashboard's preset grid. Same CSRF-envelope shape as
+	// dashboardFireCron (form-encoded body, action=
+	// "enable_alert_preset"). The handler delegates to
+	// enableAlertPresetFromForm after CSRF + auth so the JSON
+	// path (POST /v1/apps/{slug}/alert-presets/{name}/enable)
+	// and the dashboard path share a single guard order.
+	mux.Handle("POST /dashboard/apps/{slug}/alert-presets/{name}/enable", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardEnablePreset))))
 	// GET /dashboard/account/export is the session-authenticated twin
 	// of the REST /v1/account/export. The dashboard template's "Download
 	// JSON export" link points here because the REST endpoint requires

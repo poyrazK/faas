@@ -179,6 +179,25 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		return degradedFromErr(resp, err, log, "wake_p95")
 	}
 
+	// 7b. Issue #1233 / ADR-123 — per-app wake queue depth
+	// (gateway_queue_depth{app}). The alert preset
+	// queue_backlog_growing fires when the WINDOWED MAX exceeds
+	// the threshold, so a 50-waiter spike that drains in 30 s
+	// does NOT fire (false-positive guard) and 49-waiter sustained
+	// saturation does (false-negative guard). max_over_time(...)
+	// honors the window_spec the catalog row carries; without
+	// [rng] the comparison collapses to the scrape-moment value.
+	qDepthQ := fmt.Sprintf(`max_over_time(gateway_queue_depth{app=%q}[%s])`, appID, rng)
+	if v, err := fetcher.QueryScalar(ctx, qDepthQ); err == nil {
+		resp.QueueDepth = int64(SafeRoundNonNeg(v))
+	} else {
+		// Best-effort: a Prometheus failure here degrades the
+		// queue_depth field but does NOT flip the whole response
+		// to degraded — the rest of the per-app panel is still
+		// useful, mirroring the egress_bytes pattern below.
+		resp.QueueDepth = 0
+	}
+
 	// 8. ADR-046 (step 10): per-app egress byte delta over
 	// the window. Source: the schedd Prom rollup of
 	// usage_minutes.net_tx_bytes (PR-2 wires the rollup;

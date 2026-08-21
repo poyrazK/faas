@@ -160,7 +160,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "alerts",
 		DocSlug: "alerts",
-		Short:   "Per-app alert rules (alerts list|add|info|update|rm|rotate-secret --app <slug>)",
+		Short:   "Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset --app <slug>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List alert rules", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true},
@@ -170,6 +170,11 @@ var cliCommands = []cliCommand{
 			{Name: "update", Short: "Update one alert rule"},
 			{Name: "rm", Short: "Delete one alert rule"},
 			{Name: "rotate-secret", Short: "Rotate the alert's webhook secret"},
+			// Issue #1233 / ADR-123 — alert preset catalog +
+			// instantiate-from-preset. Two leaves under preset:
+			// list (no flags), enable <name> --app <slug>
+			// --webhook-url <url> --webhook-secret <s>.
+			{Name: "preset", Short: "Alert preset catalog (preset list|enable --app <slug>)"},
 		},
 		Flags: []cliFlag{{Name: "app", Short: "app slug"}},
 	},
