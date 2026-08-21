@@ -21,6 +21,33 @@ import (
 // from each daemon's main() at startup so the schema is correct before the
 // HTTP / LISTEN loop opens.
 //
+// Multi-host safety (ADR-124): before opening the goose shim, the caller
+// holds a session-scoped pg_advisory_lock(MigrationLockKey) on a pinned
+// pool connection. Every daemon in the fleet that calls MigrateUp blocks
+// on the same lock; only one migration runs at a time. Without this, two
+// daemons racing the same fresh database both see "no row at v=N", both
+// run the same migration, and the second one crashes on the version
+// INSERT's unique-key violation — fleet bootstrap becomes a Russian
+// roulette of panic logs.
+//
+// PR-2 audit: every MigrateUp call site in the repo goes through this
+// function (and therefore acquires the lock). The six known sites are:
+//
+//	cmd/builderd/main.go      runDeps.migrate = db.MigrateUp
+//	cmd/meterd/main.go        runDeps.migrate = db.MigrateUp
+//	cmd/schedd/main.go        runDeps.migrate = db.MigrateUp
+//	cmd/apid/main.go          db.MigrateUp(ctx, pool)  (direct)
+//	cmd/schema-dump/main.go   db.MigrateUp(ctx, pool)  (direct; always acquires)
+//	cmd/imaged/main.go        runDeps.migrate closure wrapping db.MigrateUp
+//	cmd/migrate/main.go       db.MigrateUp(ctx, pool)  (-leader mode + default)
+//
+// The only path that deliberately bypasses MigrateUp is `cmd/migrate
+// -status`, which calls db.Status (read-only ledger query) and never
+// opens the goose shim. That path is the "I just want to know the
+// current version without holding the lock" surface used by CI
+// pre-checks; it MUST NOT acquire the lock (otherwise a CI step that
+// runs in parallel with a fleet bootstrap would deadlock).
+//
 // Goose is run via the standard database/sql interface rather than pgx
 // directly because goose maintains its own connection state and the pgx stdlib
 // shim gives us both: pgx's connection pool plus goose's migration runner.
@@ -29,6 +56,18 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
 	if cfg == nil || cfg.ConnConfig == nil {
 		return errors.New("db: MigrateUp: pool has no config")
 	}
+
+	// Pin a pool connection and hold the migration lock for the lifetime
+	// of the goose run. The lock is released before this function returns
+	// (defer below). AcquireMigrationLock can fail if the pool is full or
+	// the network is gone — both are operator-actionable errors, not silent
+	// ones, so we surface the wrap directly.
+	release, err := AcquireMigrationLock(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("db: acquire migration lock: %w", err)
+	}
+	defer func() { _ = release() }() //nolint:errcheck // PG auto-releases on conn close; logged at call sites
+
 	connStr := stdlib.RegisterConnConfig(cfg.ConnConfig)
 	sqlDB, err := sql.Open("pgx", connStr)
 	if err != nil {

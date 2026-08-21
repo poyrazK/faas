@@ -537,6 +537,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		closePool()
 		return fmt.Errorf("apid: pool warm-up: %w", err)
 	}
+	// F2 / ADR-124 / PR-2 audit: db.MigrateUp acquires the session-scoped
+	// pg_advisory_lock internally, so apid's boot is safe alongside every
+	// other daemon in the fleet. Do NOT replace this with a direct goose.Up
+	// call — the lock is the load-bearing guarantee.
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		closePool()
 		return fmt.Errorf("apid: migrate: %w", err)

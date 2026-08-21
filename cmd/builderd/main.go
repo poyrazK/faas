@@ -72,7 +72,7 @@ func defaultDeps() runDeps {
 		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 			return db.OpenWithAppName(ctx, dsn, "faas-builderd")
 		},
-		migrate: db.MigrateUp,
+		migrate: db.MigrateUp, // F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap
 		// newDriver is set per build tag at link time: metal uses vmmd
 		// over gRPC; non-metal uses the stub that returns ErrNotMetal.
 		// The *Context form (issue #95) threads ctx + tlsCfg through to

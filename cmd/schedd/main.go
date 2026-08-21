@@ -156,7 +156,7 @@ func defaultDeps() runDeps {
 	return runDeps{
 		configPath: envOr("FAAS_SCHEDD_CONFIG", "/etc/faas/schedd.toml"),
 		openDB:     db.Open,
-		migrate:    db.MigrateUp,
+		migrate:    db.MigrateUp, // F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap
 		detectFC:   fcvm.DetectFirecrackerVersion,
 		dialVMM: func(ctx context.Context, target string, tlsCfg *tls.Config) (sched.VMM, error) {
 			return sched.DialVMMContext(ctx, target, tlsCfg)
