@@ -3243,11 +3243,11 @@ type Store interface {
 	// shape.
 	AppendDeploymentAudit(ctx context.Context, entry DeploymentAudit) (int64, error)
 
-	// ListDeploymentAudit (issue #976 / ADR-122 / SAFE-RELEASES-E.2)
+	// ListDeploymentAudit (issue #976 / ADR-124 / SAFE-RELEASES-E.2)
 	// returns deployment_audit rows for one deployment, ordered
 	// (at DESC, id DESC) — same tiebreaker discipline as
 	// ListAuditLog. The deployment_audit_deployment_idx
-	// ((deployment_id, at DESC), migration 00360) backs the query
+	// ((deployment_id, at DESC), migration 00363) backs the query
 	// so the timeline endpoint stays sub-millisecond at one-box
 	// scale.
 	//

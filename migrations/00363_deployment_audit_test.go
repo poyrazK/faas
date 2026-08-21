@@ -1,8 +1,8 @@
 //go:build !no_pg
 
-// Migration-apply test for 00360 (deployment_audit table — issue
-// #976 / ADR-122 / SAFE-RELEASES-E.2). Pins the contract:
-//  1. The migration set applies cleanly through 00360.
+// Migration-apply test for 00363 (deployment_audit table — issue
+// #976 / ADR-124 / SAFE-RELEASES-E.2). Pins the contract:
+//  1. The migration set applies cleanly through 00363.
 //  2. The deployment_audit table lands with the expected column shape
 //     and nullable rules.
 //  3. The closed-set deployment_audit_kind_chk CHECK covers the 8
@@ -32,13 +32,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func TestMigrations_00360_DeploymentAudit(t *testing.T) {
+func TestMigrations_00363_DeploymentAudit(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 
-	// (1) Run the full migration set. 00360 should land last.
+	// (1) Run the full migration set. 00363 should land last.
 	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("db.MigrateUp: %v (PR follow-up failure mode: missing migration slot before 00360)", err)
+		t.Fatalf("db.MigrateUp: %v (PR follow-up failure mode: missing migration slot before 00363)", err)
 	}
 
 	// (2) Column shape. Scoped to current_schema() per
@@ -138,7 +138,7 @@ func TestMigrations_00360_DeploymentAudit(t *testing.T) {
 		t.Errorf("deployment_audit_deployment_idx def %q missing (deployment_id, at DESC)", timelineIdx)
 	}
 
-	// (5) 90-day GC index. ADR-122 §Consequences fixes retention at 90
+	// (5) 90-day GC index. ADR-124 §Consequences fixes retention at 90
 	// days; the meterd orchestrator enforces it via a DELETE WHERE
 	// at < now() - INTERVAL '90 days' every 6h. The migration's index
 	// is on the (at) column alone — partial-index predicates must use

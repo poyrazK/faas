@@ -1,8 +1,8 @@
 -- filename: 00335_reserve_slot.sql
 -- Reserved slot to keep the migrations directory contiguous for the
 -- local embed (CI's TestMigrationsContiguous pins slot N to position
--- N). The SAFE-RELEASES Mega PR #1 foundation (issue #976 / ADR-122)
--- renumbered in round-18 to land at 00360+00361 (above PR #1024's
+-- N). The SAFE-RELEASES Mega PR #1 foundation (issue #976 / ADR-124)
+-- renumbered in round-18 to land at 00363+00364 (above PR #1024's
 -- ADR-124 deployment queue controls renumber to 00353-00355 for its
 -- real migrations deployments_cancelled / builds_cancelled /
 -- deployments_priority, opened 2026-08-21T19:18Z; above PR #1012's
@@ -21,8 +21,8 @@
 -- merge. The local bridges fill 00347-00353 so TestMigrationsContiguous
 -- passes in the synthetic-merge CI gate (CI run 32505728679 failed
 -- the gate at this exact gap on 2026-08-21). When a future migration
--- lands above 00361, these fences can be dropped in a follow-up
--- commit. SAFE-RELEASES Mega PR #1 (issue #976 / ADR-122) —
+-- lands above 00364, these fences can be dropped in a follow-up
+-- commit. SAFE-RELEASES Mega PR #1 (issue #976 / ADR-124) —
 -- round-18 rebase onto main on 2026-08-21.
 -- +goose Up
 -- +goose StatementBegin

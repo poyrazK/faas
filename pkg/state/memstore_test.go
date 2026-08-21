@@ -5513,12 +5513,12 @@ func TestMemStore_DeploymentActorRoundtrip(t *testing.T) {
 	}
 }
 
-// TestMemStore_DeploymentAuditRoundtrip (issue #976 / ADR-122 /
+// TestMemStore_DeploymentAuditRoundtrip (issue #976 / ADR-124 /
 // SAFE-RELEASES-E.2) pins the AppendDeploymentAudit + ListDeploymentAudit
 // memstore surface. MemStore stores the DeploymentAudit struct
 // directly in m.deploymentAudit; the "round-trip" is a write+read
 // of the struct fields. The closed-set kind CHECK and the no-FK
-// shape are DB-only (TestMigrations_00360_DeploymentAudit covers
+// shape are DB-only (TestMigrations_00363_DeploymentAudit covers
 // those); here we only assert the in-memory shape is consistent
 // with the new methods.
 func TestMemStore_DeploymentAuditRoundtrip(t *testing.T) {
