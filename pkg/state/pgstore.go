@@ -5097,6 +5097,327 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	return s.UpdateDeploymentStatus(ctx, id, DeployLive, "")
 }
 
+// MarkDeploymentCancelled (ADR-124) atomically flips the row to
+// DeployCancelled while honoring the cancel-eligible CAS guard.
+// The single UPDATE covers the (a) status transition, (b) audit
+// stamp, and (c) reason column — all in one round-trip so
+// concurrent transitions are last-write-wins safe per the
+// existing pattern at pgstore.go:5675-5683 (build CAS guard).
+//
+// Tag.RowsAffected() == 0 has three distinct failure modes:
+//   - id is unknown                       → ErrNotFound
+//   - id is known, status = DeployLive    → ErrCancelLiveForbidden
+//   - id is known, status in {failed,
+//     superseded, cancelled}              → ErrInvalidStateTransition
+//
+// The two-tier SQL guard surfaces the right sentinel in one
+// round-trip via RETURNING — the row's pre-UPDATE status is
+// captured by a single SELECT before the UPDATE so the caller
+// (apid handler) can pick the correct RFC 7807 code.
+func (s *PgStore) MarkDeploymentCancelled(ctx context.Context, id, principal string, reason CancelReason, when time.Time) error {
+	if !reason.IsValid() {
+		return ErrInvalidStateTransition
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("MarkDeploymentCancelled: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var currentStatus DeploymentStatus
+	if err := tx.QueryRow(ctx, `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`, id).Scan(&currentStatus); err != nil {
+		if err == pgx.ErrNoRows {
+			return ErrNotFound
+		}
+		return fmt.Errorf("MarkDeploymentCancelled: select for update: %w", err)
+	}
+	if currentStatus == DeployLive {
+		return ErrCancelLiveForbidden
+	}
+	if !currentStatus.IsCancelEligible() {
+		return ErrInvalidStateTransition
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE deployments
+		   SET status = $2,
+		       cancelled_at = $3,
+		       cancelled_by_principal = $4,
+		       cancel_reason = $5
+		 WHERE id = $1
+		   AND status = $2_old`,
+		id,
+		string(DeployCancelled),
+		when.UTC(),
+		principal,
+		string(reason),
+		string(currentStatus),
+	); err != nil {
+		return fmt.Errorf("MarkDeploymentCancelled: update: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("MarkDeploymentCancelled: commit: %w", err)
+	}
+	return nil
+}
+
+// CancelDeploymentTx (ADR-124) is the single-transaction
+// orchestrator. The shape mirrors AutoRollbackDeploymentsTx from
+// ADR-118 (`worktree-feat-deploy-ux-mega-c-pr1` commit c76fd64e6,
+// not yet on main): one tx that (a) locks the parent apps row,
+// (b) flips the deployment to DeployCancelled, (c) cascade-flips
+// every non-terminal build attached to the deployment, then
+// returns the post-flip deployment + the list of build IDs that
+// flipped. The Firecracker VM tear-down is the consumer of the
+// deployment_changed + build_changed pg_notify payloads and lives
+// outside this transaction (best-effort; SweepStuckRunningBuilds
+// is the durable backstop).
+func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, reason CancelReason) (Deployment, []string, error) {
+	if !reason.IsValid() {
+		return Deployment{}, nil, ErrInvalidStateTransition
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var d Deployment
+	var appID string
+	var status DeploymentStatus
+	if err := tx.QueryRow(ctx, `
+		SELECT app_id, status
+		  FROM deployments
+		 WHERE id = $1
+		 FOR UPDATE`, id).Scan(&appID, &status); err != nil {
+		if err == pgx.ErrNoRows {
+			return Deployment{}, nil, ErrNotFound
+		}
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: select deployment for update: %w", err)
+	}
+	if status == DeployLive {
+		return Deployment{}, nil, ErrCancelLiveForbidden
+	}
+	if !status.IsCancelEligible() {
+		return Deployment{}, nil, ErrInvalidStateTransition
+	}
+
+	// Lock the parent apps row to serialise against concurrent
+	// UpdateApp flips and another CreateDeployment on the same
+	// app. Mirrors pkg/state/pgstore.go:4185-4199 (the canonical
+	// CreateDeployment tx-pattern).
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM apps WHERE id = $1 AND status = 'active' FOR UPDATE`, appID); err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: lock apps row: %w", err)
+	}
+
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx, `
+		UPDATE deployments
+		   SET status = $2,
+		       cancelled_at = $3,
+		       cancelled_by_principal = $4,
+		       cancel_reason = $5
+		 WHERE id = $1
+		   AND status IN ('pending', 'building', 'imaging', 'snapshotting')`,
+		id, string(DeployCancelled), now, principal, string(reason),
+	); err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: update deployment: %w", err)
+	}
+
+	// Cascade-cancel every non-terminal build row attached to
+	// this deployment. The cascade flag tells the build-cancel
+	// audit column which side this row flip came from. We
+	// RETURNING id so the handler can fire a build_changed
+	// pg_notify per row (the LISTEN goroutine in cmd/builderd
+	// calls VM.Cancel for each).
+	rows, err := tx.Query(ctx, `
+		UPDATE builds
+		   SET status = $2,
+		       cancelled_at = $3,
+		       cancelled_by_deployment_cascade = true
+		 WHERE deployment_id = $1
+		   AND status IN ('queued', 'running')
+		RETURNING id`,
+		id, string(BuildCancelled), now,
+	)
+	if err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: cascade-cancel builds: %w", err)
+	}
+	var cancelledBuildIDs []string
+	for rows.Next() {
+		var bid string
+		if err := rows.Scan(&bid); err != nil {
+			rows.Close()
+			return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: scan build id: %w", err)
+		}
+		cancelledBuildIDs = append(cancelledBuildIDs, bid)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: iterate build ids: %w", err)
+	}
+
+	if err := scanDeploymentInto(&d, tx.QueryRow(ctx, `SELECT `+deploymentSelectColumnsWithRootfs+` FROM deployments WHERE id = $1`, id), nil, nil, nil); err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: scan deployment: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: commit: %w", err)
+	}
+	return d, cancelledBuildIDs, nil
+}
+
+// ReorderDeployment (ADR-124) atomically bumps the row's priority
+// if-and-only-if status='pending'. The CAS guard prevents a
+// reorder that races with the builderd claim path (which moves
+// pending → building atomically).
+func (s *PgStore) ReorderDeployment(ctx context.Context, id string, newPriority int, principal string) error {
+	if newPriority < 0 || newPriority > 1000 {
+		return ErrPriorityOutOfRange
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE deployments
+		   SET priority = $2,
+		       reordered_by_principal = $3
+		 WHERE id = $1
+		   AND status = 'pending'`,
+		id, newPriority, principal,
+	)
+	if err != nil {
+		return fmt.Errorf("ReorderDeployment: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Distinguish ErrNotFound from ErrReorderNotPending.
+		var exists bool
+		if e := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM deployments WHERE id = $1)`, id).Scan(&exists); e != nil {
+			return fmt.Errorf("ReorderDeployment: post-check: %w", e)
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		return ErrReorderNotPending
+	}
+	return nil
+}
+
+// ClearDeployment (ADR-124) soft-deletes a non-live deployment
+// row. Status is intentionally untouched so the admin audit
+// trail remains visible; customer-side list surfaces filter by
+// `deleted_at IS NULL`.
+func (s *PgStore) ClearDeployment(ctx context.Context, id, principal string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("ClearDeployment: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status DeploymentStatus
+	if err := tx.QueryRow(ctx, `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`, id).Scan(&status); err != nil {
+		if err == pgx.ErrNoRows {
+			return ErrNotFound
+		}
+		return fmt.Errorf("ClearDeployment: select for update: %w", err)
+	}
+	if status == DeployLive {
+		return ErrCancelLiveForbidden
+	}
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx, `
+		UPDATE deployments
+		   SET deleted_at = $2,
+		       deleted_by_principal = $3
+		 WHERE id = $1`,
+		id, now, principal,
+	); err != nil {
+		return fmt.Errorf("ClearDeployment: update: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("ClearDeployment: commit: %w", err)
+	}
+	return nil
+}
+
+// ClearObsoleteDeployments (ADR-124) bulk-soft-deletes terminal
+// rows (status IN {superseded, failed, cancelled}) outside the
+// per-app "current + previous" retention window. The retention
+// invariant (§6.2 INV 3) forbids us from clearing a row that is
+// either the current live deployment OR the immediate previous.
+// Per-app recent-row exclusion is computed in Go after a single
+// SELECT; for accounts with N apps and O(N) obsolete rows each,
+// this is bounded by the per-app LIMIT 5 sub-query.
+func (s *PgStore) ClearObsoleteDeployments(ctx context.Context, appID string, olderThan time.Time) (int, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("ClearObsoleteDeployments: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	now := time.Now().UTC()
+	// Subquery "retention_id" returns the most-recent 2
+	// deployment_ids per app_id (the current + immediate previous
+	// snapshot retention). We explicitly do NOT touch them.
+	tag, err := tx.Exec(ctx, `
+		UPDATE deployments
+		   SET deleted_at = $3,
+		       deleted_by_principal = 'system'
+		 WHERE app_id = $1
+		   AND status IN ('superseded', 'failed', 'cancelled')
+		   AND enqueued_at < $2
+		   AND deleted_at IS NULL
+		   AND id NOT IN (
+		         SELECT id FROM (
+		           SELECT id,
+		                  ROW_NUMBER() OVER (
+		                    PARTITION BY app_id
+		                    ORDER BY enqueued_at DESC, id
+		                  ) AS rn
+		             FROM deployments
+		            WHERE app_id = $1
+		         ) t
+		        WHERE t.rn <= 2
+		   )`,
+		appID, olderThan, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("ClearObsoleteDeployments: bulk update: %w", err)
+	}
+	count := int(tag.RowsAffected())
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("ClearObsoleteDeployments: commit: %w", err)
+	}
+	return count, nil
+}
+
+// MarkBuildCancelled (ADR-124) atomically flips a builds row to
+// BuildCancelled. The CAS guard enforces status ∈ {queued,
+// running}; the cascade column records whether the cancel came
+// from CancelDeploymentTx (true) or a future direct build-cancel
+// path (false).
+func (s *PgStore) MarkBuildCancelled(ctx context.Context, buildID, _ string, cascade bool, when time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE builds
+		   SET status = $2,
+		       cancelled_at = $3,
+		       cancelled_by_deployment_cascade = $4
+		 WHERE id = $1
+		   AND status IN ('queued', 'running')`,
+		buildID, string(BuildCancelled), when.UTC(), cascade,
+	)
+	if err != nil {
+		return fmt.Errorf("MarkBuildCancelled: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		var exists bool
+		if e := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM builds WHERE id = $1)`, buildID).Scan(&exists); e != nil {
+			return fmt.Errorf("MarkBuildCancelled: post-check: %w", e)
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		return ErrInvalidStateTransition
+	}
+	return nil
+}
+
 // AppendDeploymentStage (ADR-117, migration 00302) atomically
 // appends a stage transition to deployments.stage_state.
 //
@@ -5629,7 +5950,8 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 		`insert into builds (deployment_id, kind, source_bytes, status, log_path)
 		 values ($1, $2, $3, 'queued', $4)
 		 returning id, deployment_id, kind, source_bytes, status,
-		           coalesce(failure_class,''), coalesce(log_path,''), started_at, finished_at, enqueued_at`,
+		           coalesce(failure_class,''), coalesce(log_path,''), started_at, finished_at, enqueued_at,
+		           cancelled_at, cancelled_by_deployment_cascade`,
 		deploymentID, string(kind), sourceBytes, nullString(logPath))
 	return scanBuild(row)
 }
@@ -5637,14 +5959,18 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 func (s *PgStore) BuildByID(ctx context.Context, id string) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
-		        started_at, finished_at, enqueued_at from builds where id = $1`, id)
+		        started_at, finished_at, enqueued_at,
+		        cancelled_at, cancelled_by_deployment_cascade
+		 from builds where id = $1`, id)
 	return scanBuild(row)
 }
 
 func (s *PgStore) BuildByDeployment(ctx context.Context, deploymentID string) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
-		        started_at, finished_at, enqueued_at from builds where deployment_id = $1
+		        started_at, finished_at, enqueued_at,
+		        cancelled_at, cancelled_by_deployment_cascade
+		 from builds where deployment_id = $1
 		 order by started_at desc nulls last limit 1`, deploymentID)
 	return scanBuild(row)
 }
@@ -5829,7 +6155,8 @@ func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error
 		 where id = $1 and status = 'queued'
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
-		           started_at, finished_at, enqueued_at`,
+		           started_at, finished_at, enqueued_at,
+		           cancelled_at, cancelled_by_deployment_cascade`,
 		id)
 	b, err := scanBuild(row)
 	if err != nil {
@@ -5863,7 +6190,8 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 		 )
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
-		           started_at, finished_at, enqueued_at`)
+		           started_at, finished_at, enqueued_at,
+		           cancelled_at, cancelled_by_deployment_cascade`)
 	b, err := scanBuild(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -5927,7 +6255,8 @@ func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairness
 		  where id = (select id from target)
 		  returning id, deployment_id, kind, source_bytes, status,
 		            coalesce(failure_class,''), coalesce(log_path,''),
-		            started_at, finished_at, enqueued_at`,
+		            started_at, finished_at, enqueued_at,
+		           cancelled_at, cancelled_by_deployment_cascade`,
 		fmt.Sprintf("%d milliseconds", fairnessWindow.Milliseconds()))
 	b, err := scanBuild(row)
 	if err != nil {
@@ -13137,7 +13466,16 @@ const deploymentSelectColumnsWithRootfs = `
 	scope,
 	stage_state,
 	coalesce(deployed_by_user_id::text,''), deployed_via, coalesce(host(deployed_from_ip),''), coalesce(pusher_login,''),
-	coalesce(reason,''), coalesce(tag,''), coalesce(deployed_by,''), pr_number`
+	coalesce(reason,''), coalesce(tag,''), coalesce(deployed_by,''), pr_number,
+	-- ADR-124 deployment queue controls (migration 00360). priority
+	-- is NOT NULL DEFAULT 100 so the coalesce is purely for symmetry
+	-- with the rest of the projection (and for the rare pre-PR #X
+	-- backfill window). cancelled_*/cancel_reason are nullable so the
+	-- coalesce is the canonical "never cancelled" sentinel. deleted_at
+	-- + deleted_by_principal are the soft-delete audit columns.
+	coalesce(priority, 100), coalesce(reordered_by_principal, ''),
+	cancelled_at, coalesce(cancelled_by_principal, ''), coalesce(cancel_reason, ''),
+	deleted_at, coalesce(deleted_by_principal, '')`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -13174,7 +13512,13 @@ const deploymentSelectColumnsQualified = `
 	d.scope,
 	d.stage_state,
 	coalesce(d.deployed_by_user_id::text,''), d.deployed_via, coalesce(host(d.deployed_from_ip),''), coalesce(d.pusher_login,''),
-	coalesce(d.reason,''), coalesce(d.tag,''), coalesce(d.deployed_by,''), d.pr_number`
+	coalesce(d.reason,''), coalesce(d.tag,''), coalesce(d.deployed_by,''), d.pr_number,
+	-- ADR-124 deployment queue controls (migration 00360). See the
+	-- unqualified-projection counterpart above for the rationale on
+	-- coalesce choices.
+	coalesce(d.priority, 100), coalesce(d.reordered_by_principal, ''),
+	d.cancelled_at, coalesce(d.cancelled_by_principal, ''), coalesce(d.cancel_reason, ''),
+	d.deleted_at, coalesce(d.deleted_by_principal, '')`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -13269,7 +13613,14 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		// stay plain string fields. pr_number is NULLIF($N, 0) on
 		// the INSERT side and a plain int column on the SELECT side,
 		// scanned via the *int local returned as nil for NULL.
-		&d.Reason, &d.Tag, &d.DeployedBy, &prNumber); err != nil {
+		&d.Reason, &d.Tag, &d.DeployedBy, &prNumber,
+		// ADR-124 deployment queue controls (migration 00360). The
+		// scan order mirrors the SELECT projection above — see the
+		// docblock on deploymentSelectColumnsWithRootfs for the
+		// "lockstep or pgx panic" invariant.
+		&d.Priority, &d.ReorderedByPrincipal,
+		&d.CancelledAt, &d.CancelledByPrincipal, &d.CancelReason,
+		&d.DeletedAt, &d.DeletedByPrincipal); err != nil {
 		return mapErr(err)
 	}
 	if rootfsPath != nil {
@@ -13379,8 +13730,8 @@ func scanBuild(row pgx.Row) (Build, error) {
 	// incompatible with column NULL. pgtype.Timestamptz avoids
 	// the trap by always being a value type with a `.Valid`
 	// flag.
-	var startedAt, finishedAt pgtype.Timestamptz
-	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt); err != nil {
+	var startedAt, finishedAt, cancelledAt pgtype.Timestamptz
+	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade); err != nil {
 		return Build{}, mapErr(err)
 	}
 	if startedAt.Valid {
@@ -13388,6 +13739,10 @@ func scanBuild(row pgx.Row) (Build, error) {
 	}
 	if finishedAt.Valid {
 		b.FinishedAt = finishedAt.Time
+	}
+	if cancelledAt.Valid {
+		t := cancelledAt.Time
+		b.CancelledAt = &t
 	}
 	b.Kind = DeploymentKind(kind)
 	b.Status = BuildStatus(statusStr)
@@ -14447,7 +14802,7 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 	rows, err := s.pool.Query(ctx,
 		`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 		        coalesce(b.failure_class,''), coalesce(b.log_path,''),
-		        b.started_at, b.finished_at
+		        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade
 		 from builds b
 		 join deployments d on d.id = b.deployment_id
 		 join apps a on a.id = d.app_id
@@ -14467,8 +14822,8 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 		// / &b.FinishedAt are *time.Time (Build fields are not
 		// pointers) and pgx v5.10.0 rejects NULL into a fresh
 		// *time.Time under rows.Scan.
-		var startedAt, finishedAt pgtype.Timestamptz
-		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt); err != nil {
+		var startedAt, finishedAt, cancelledAt pgtype.Timestamptz
+		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade); err != nil {
 			return nil, err
 		}
 		if startedAt.Valid {
@@ -14476,6 +14831,10 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 		}
 		if finishedAt.Valid {
 			b.FinishedAt = finishedAt.Time
+		}
+		if cancelledAt.Valid {
+			t := cancelledAt.Time
+			b.CancelledAt = &t
 		}
 		b.Kind = DeploymentKind(kind)
 		b.Status = BuildStatus(statusStr)
@@ -14546,7 +14905,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		rows, err = s.pool.Query(ctx,
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
-			        b.started_at, b.finished_at, b.enqueued_at
+			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade
 			 from builds b
 			 join deployments d on d.id = b.deployment_id
 			 join apps a on a.id = d.app_id
@@ -14564,7 +14923,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		rows, err = s.pool.Query(ctx,
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
-			        b.started_at, b.finished_at, b.enqueued_at
+			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade
 			 from builds b
 			 join deployments d on d.id = b.deployment_id
 			 join apps a on a.id = d.app_id
@@ -14600,7 +14959,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		rows, err = s.pool.Query(ctx,
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
-			        b.started_at, b.finished_at, b.enqueued_at
+			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade
 			 from builds b
 			 join deployments d on d.id = b.deployment_id
 			 join apps a on a.id = d.app_id
@@ -14631,9 +14990,9 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		// pgtype wrapper encodes NULL via .Valid = false so
 		// the inner `b.StartedAt = ...` only fires on a real
 		// timestamp.
-		var startedAt, finishedAt pgtype.Timestamptz
+		var startedAt, finishedAt, cancelledAt pgtype.Timestamptz
 		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes,
-			&statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt); err != nil {
+			&statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade); err != nil {
 			return nil, err
 		}
 		if startedAt.Valid {
@@ -14641,6 +15000,10 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		}
 		if finishedAt.Valid {
 			b.FinishedAt = finishedAt.Time
+		}
+		if cancelledAt.Valid {
+			t := cancelledAt.Time
+			b.CancelledAt = &t
 		}
 		b.Kind = DeploymentKind(kind)
 		b.Status = BuildStatus(statusStr)
