@@ -1,9 +1,9 @@
 //go:build !no_pg
 
-// Migration-apply test for 00364 (deployment_audit 90-day backfill
+// Migration-apply test for 00365 (deployment_audit 90-day backfill
 // from events — issue #976 / ADR-124 / SAFE-RELEASES-E.2). Pins:
-//  1. The migration set applies cleanly through 00364.
-//  2. After applying 00364 (against an empty events table) and
+//  1. The migration set applies cleanly through 00365.
+//  2. After applying 00365 (against an empty events table) and
 //     then seeding events rows, re-executing the backfill INSERT
 //     yields exactly one deployment_audit row per in-scope seed.
 //  3. The 90-day cutoff filters out 100-day-old events rows.
@@ -11,7 +11,7 @@
 //  5. Re-executing the backfill INSERT is idempotent (ON CONFLICT
 //     (id) DO NOTHING keeps row count stable across replays).
 //
-// Build tag mirrors 00318 / 00363.
+// Build tag mirrors 00318 / 00364.
 
 package migrations_test
 
@@ -23,11 +23,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func TestMigrations_00364_DeploymentAuditBackfill(t *testing.T) {
+func TestMigrations_00365_DeploymentAuditBackfill(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 
-	// (1) Apply the full migration set through 00364. The backfill
+	// (1) Apply the full migration set through 00365. The backfill
 	// runs against an empty events table (pgtest.Open gives us a
 	// clean per-test schema) and produces zero rows.
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -55,8 +55,8 @@ func TestMigrations_00364_DeploymentAuditBackfill(t *testing.T) {
 		t.Fatalf("seed events: %v", err)
 	}
 
-	// Re-execute the same backfill INSERT 00364 ships verbatim. We
-	// can't replay 00364 itself (it's already applied); the
+	// Re-execute the same backfill INSERT 00365 ships verbatim. We
+	// can't replay 00365 itself (it's already applied); the
 	// idempotency contract is "running the same INSERT twice
 	// produces zero duplicates" — verified by the before/after
 	// count check at (5).

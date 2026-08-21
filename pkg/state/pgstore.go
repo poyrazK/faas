@@ -16748,7 +16748,7 @@ func (s *PgStore) AppendDeploymentAudit(ctx context.Context, entry DeploymentAud
 		// Pass zero time as NULL so the column default now() takes
 		// effect; a caller-supplied non-zero time is honored
 		// verbatim (used by the 90-day backfill in migration
-		// 00364, which preserves the events.at timestamp).
+		// 00365, which preserves the events.at timestamp).
 		nullTime(entry.At),
 		[]byte(entry.Data),
 	).Scan(&id)
