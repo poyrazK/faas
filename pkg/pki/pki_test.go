@@ -5,8 +5,10 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -590,5 +592,123 @@ func TestEnsureLeafRejectsMissingKeyWithCert(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "is missing") {
 		t.Errorf("EnsureLeaf error = %v, want to mention 'is missing'", err)
+	}
+}
+
+// writeTestCert is the test-only convenience that writes a fresh
+// self-signed cert to certPath with the requested mode. Used by the
+// LoadCertificateFingerprint tests below; production paths use
+// EnsureCA + EnsureLeaf which enforce stricter mode policy.
+func writeTestCert(t *testing.T, certPath string, mode os.FileMode) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+	serial := big.NewInt(1)
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "schedd.faas"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	if err := os.WriteFile(certPath, pemBytes, mode); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+}
+
+// TestLoadCertificateFingerprint_Deterministic pins the
+// load-bearing invariant of the cert-fingerprint collision guard
+// (audit F6 / ADR-052 amendment / PR-4): two readers of the same
+// PEM file MUST produce the same fingerprint string. If the hash
+// function or the DER input flipped between calls, the
+// pre-flight check in cmd/vmmd/register.go would false-positive
+// every box on every reboot.
+//
+// The test also pins the canonical format ("sha256:" + 64
+// lowercase hex chars). The column
+// compute_nodes.cert_fingerprint and the doctor drift detector
+// both match by string equality — a hex-case flip would
+// silently break both.
+func TestLoadCertificateFingerprint_Deterministic(t *testing.T) {
+	root := t.TempDir()
+	certPath := filepath.Join(root, "server.crt")
+	writeTestCert(t, certPath, 0o444)
+
+	got1, err := LoadCertificateFingerprint(certPath)
+	if err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+	got2, err := LoadCertificateFingerprint(certPath)
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if got1 != got2 {
+		t.Errorf("non-deterministic fingerprint: %q vs %q", got1, got2)
+	}
+	if !strings.HasPrefix(got1, FingerprintPrefix) {
+		t.Errorf("fingerprint %q: missing %q prefix", got1, FingerprintPrefix)
+	}
+	hexPart := strings.TrimPrefix(got1, FingerprintPrefix)
+	if len(hexPart) != 64 {
+		t.Errorf("fingerprint %q: hex part is %d chars, want 64", got1, len(hexPart))
+	}
+	for _, r := range hexPart {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			t.Errorf("fingerprint %q: hex part contains non-lowercase-hex char %q", got1, r)
+		}
+	}
+}
+
+// TestLoadCertificateFingerprint_RejectsTamperedFile pins the
+// three failure modes that operators hit when a manual cert swap
+// goes wrong:
+//
+//  1. Cert file is missing (PKI dir was never created, or the
+//     rotate race lost the file). Loader returns wrapped
+//     os.ErrNotExist so cmd/vmmd/register.go can fail-closed
+//     with a clear "run gregale pki init" message.
+//  2. Cert file mode is too permissive (group/other writable).
+//     Loader refuses BEFORE hashing — the project treats
+//     enforcement as a security gate, not a logging event
+//     (mirrors the policy in cosign.LoadPublicKeyFile).
+//  3. Cert file is not PEM-encoded (operator dropped a binary
+//     blob or an SSH key). Loader fails with a parse error.
+//
+// A change to LoadCertificateFingerprint that quietly hashed the
+// raw file bytes (skipping PEM decode) would fail this test
+// because the "not PEM-encoded" branch is the load-bearing
+// rejection signal for cert material that was never a cert to
+// begin with.
+func TestLoadCertificateFingerprint_RejectsTamperedFile(t *testing.T) {
+	root := t.TempDir()
+
+	// 1. Missing cert
+	missingPath := filepath.Join(root, "missing.crt")
+	if _, err := LoadCertificateFingerprint(missingPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("missing file: got %v, want os.ErrNotExist", err)
+	}
+
+	// 2. Insecure mode
+	insecurePath := filepath.Join(root, "insecure.crt")
+	writeTestCert(t, insecurePath, 0o644)
+	if _, err := LoadCertificateFingerprint(insecurePath); !errors.Is(err, ErrInsecurePubKeyPerms) {
+		t.Errorf("insecure mode: got %v, want ErrInsecurePubKeyPerms", err)
+	}
+
+	// 3. Not PEM-encoded
+	notPEMPath := filepath.Join(root, "garbage.crt")
+	if err := os.WriteFile(notPEMPath, []byte("not a PEM file"), 0o444); err != nil {
+		t.Fatalf("write garbage: %v", err)
+	}
+	if _, err := LoadCertificateFingerprint(notPEMPath); err == nil {
+		t.Errorf("non-PEM file: got nil error, want parse error")
 	}
 }

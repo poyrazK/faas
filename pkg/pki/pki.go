@@ -21,9 +21,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -33,6 +35,20 @@ import (
 	"path/filepath"
 	"time"
 )
+
+// FingerprintPrefix is the canonical prefix the project stamps on
+// every cert fingerprint column (compute_nodes.cert_fingerprint,
+// release_bundles.signing_cert_fingerprint, …). The "sha256:" tag
+// matches the wire convention used by cert-manager, cosign, and the
+// HTTP Public Key Pinning draft — operators reading a row can paste
+// the value into openssl directly to verify:
+//
+//	openssl x509 -in /etc/faas/tls/vmmd/server.crt -noout -fingerprint -sha256
+//
+// The LoadCertificateFingerprint output uses this prefix so the two
+// commands agree byte-for-byte (after dropping the "sha256:" prefix
+// from the openssl output).
+const FingerprintPrefix = "sha256:"
 
 // DefaultRootDir is the canonical install path for control-plane PKI
 // material. The default-local and multi-box topologies share the same
@@ -679,4 +695,70 @@ func randomSerial() (*big.Int, error) {
 	}
 	// Ensure positive.
 	return n.Abs(n), nil
+}
+
+// LoadCertificateFingerprint reads the PEM-encoded leaf cert at
+// certPath, parses it, and returns the canonical fingerprint string
+// "<FingerprintPrefix><64hex>" where the hex is the SHA-256 of the
+// DER-encoded certificate body.
+//
+// Hashing the DER body (not the public key, not the SPKI, not the
+// signature) is the convention used by:
+//   - openssl `x509 ... -fingerprint -sha256`
+//   - cert-manager's io.cert-manager.certificate-request fingerprint
+//   - cosign's --certificate-identity-regexp path
+//   - the HTTP Public Key Pinning draft (deprecated but still
+//     referenced in deployment guides)
+//
+// Hashing the DER means a re-issued leaf with the same key + same
+// subject but a different serial / validity window produces a
+// DIFFERENT fingerprint — which is the correct behaviour for
+// collision detection (the whole leaf is what wire-level verifiers
+// pin against, not just the key).
+//
+// The function is the canonical one for the column
+// compute_nodes.cert_fingerprint (migration 00271, ADR-052
+// amendment, PR-4 / audit F6): every cert the project stores as a
+// fingerprint derives from this helper. The multi-host safety
+// audit (F6) discovered that vmmd's startup UPSERT silently
+// overwrites a compute_nodes row whose existing fingerprint
+// differs from the local leaf's — meaning a leaked cert on one box
+// could be replaced by an attacker who issued a new leaf under the
+// same CA. The fix is a pre-flight compare (cmd/vmmd/register.go)
+// and the persistent storage of this fingerprint on every
+// register. Failing loud on drift is the load-bearing invariant.
+//
+// Errors:
+//   - file missing → wrapped os.ErrNotExist
+//   - file mode permissive → wrapped ErrInsecurePubKeyPerms
+//   - PEM block missing → "not PEM-encoded" error
+//   - x509 parse failure → wrapped parse error
+//   - x509 serial/sign issues → wrapped parse error
+//
+// Returns the string with no trailing newline. The format is
+// stable; consumers (compute_nodes.cert_fingerprint column, PR-4
+// doctor drift detector, ADR-052 amendment error contract) parse
+// it as "sha256:" + lowercase hex.
+func LoadCertificateFingerprint(certPath string) (string, error) {
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		return "", fmt.Errorf("pki: read cert %q: %w", certPath, err)
+	}
+	if err := enforceCertMode(certPath); err != nil {
+		return "", err
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return "", fmt.Errorf("pki: cert %q is not PEM-encoded", certPath)
+	}
+	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+		return "", fmt.Errorf("pki: parse cert %q: %w", certPath, err)
+	}
+	// Hash the DER body (the bytes between the "-----BEGIN
+	// CERTIFICATE-----" and "-----END CERTIFICATE-----" lines,
+	// base64-decoded) — this is what openssl -fingerprint hashes
+	// and what every other tool in the ecosystem hashes. The
+	// block.Bytes returned by pem.Decode is the raw DER.
+	sum := sha256.Sum256(block.Bytes)
+	return FingerprintPrefix + hex.EncodeToString(sum[:]), nil
 }
