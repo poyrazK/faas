@@ -694,10 +694,30 @@ func (s *server) fetchDashboardPresets(ctx context.Context, log *slog.Logger, ac
 		log.Warn("dashboard renderAppDetail: list alert presets", "account_id", acct.ID, "err", err)
 		return nil
 	}
+	// Mint ONE CSRF token for the action — the verifier at
+	// cmd/apid/dashboard_preset_enable.go:72 seals
+	// (action="enable_alert_preset", acct.ID) regardless of which
+	// preset card posted. Reusing a single token across all
+	// enabled cards is safe (the verifier doesn't bind the rule
+	// ID or slug — the underlying enableAlertPresetFromForm does
+	// its own per-preset validation) AND avoids burning a fresh
+	// session-key write per card. On a session-store failure we
+	// fall back to empty tokens, which the verifier rejects —
+	// the customer sees the error banner rather than a silently-
+	// broken form.
+	var enableCSRF string
+	if s.sessions != nil {
+		if t, err := middleware.IssueForAuthenticated(s.sessions, dashboardEnablePresetAction, acct.ID); err == nil {
+			enableCSRF = t
+		} else {
+			log.Warn("dashboard fetchDashboardPresets: mint enable CSRF", "account_id", acct.ID, "err", err)
+		}
+	}
 	out := make([]dashboard.AlertPresetItem, 0, len(rows))
 	for _, p := range rows {
 		meetsPlan := api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(p.MinimumPlan))
-		out = append(out, dashboard.AlertPresetItem{
+		enabled := p.EnabledInCatalog && meetsPlan
+		item := dashboard.AlertPresetItem{
 			Name:                   p.Name,
 			DisplayName:            p.DisplayName,
 			Description:            p.Description,
@@ -709,10 +729,18 @@ func (s *server) fetchDashboardPresets(ctx context.Context, log *slog.Logger, ac
 			DefaultCooldownMinutes: p.DefaultCooldownMinutes,
 			MinimumPlan:            p.MinimumPlan,
 			EnabledInCatalog:       p.EnabledInCatalog,
-			Enabled:                p.EnabledInCatalog && meetsPlan,
+			Enabled:                enabled,
 			MeetsPlan:              meetsPlan,
 			AppSlug:                app.Slug,
-		})
+		}
+		// Only stamp the token on cards that will render a form.
+		// Coming-soon / upgrade cards have no form so an empty
+		// token is correct (the template's {{if .Enabled}} branch
+		// never reads EnableConfirmToken for those).
+		if enabled {
+			item.EnableConfirmToken = enableCSRF
+		}
+		out = append(out, item)
 	}
 	return out
 }

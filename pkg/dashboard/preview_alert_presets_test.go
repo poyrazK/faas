@@ -65,6 +65,7 @@ func TestRender_AppDetail_AlertPresets_ThreeCardStates(t *testing.T) {
 					Enabled:                true,
 					MeetsPlan:              true,
 					AppSlug:                "demo",
+					EnableConfirmToken:     "csrf-token-three-states-test",
 				},
 				{
 					// Coming-soon card — EnabledInCatalog=false but
@@ -116,6 +117,8 @@ func TestRender_AppDetail_AlertPresets_ThreeCardStates(t *testing.T) {
 		// Enabled card — form action + button + fields.
 		"Error rate exceeds 2%",
 		`action="/apps/demo/alert-presets/error_rate_2pct/enable"`,
+		`name="csrf_token"`,
+		`value="csrf-token-three-states-test"`,
 		`name="webhook_url"`,
 		`name="webhook_secret"`,
 		"Enable",

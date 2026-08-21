@@ -578,6 +578,7 @@
               <p class="cooldown">Cooldown: {{.DefaultCooldownMinutes}} min · Min plan: <strong>{{.MinimumPlan}}</strong></p>
               {{if .Enabled}}
                 <form method="POST" action="/apps/{{.AppSlug}}/alert-presets/{{.Name}}/enable">
+                  <input type="hidden" name="csrf_token" value="{{.EnableConfirmToken}}">
                   <input name="webhook_url" placeholder="https://hooks.example.com/…" required>
                   <input name="webhook_secret" type="password" placeholder="webhook secret" required>
                   <button type="submit">Enable</button>

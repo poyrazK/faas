@@ -599,6 +599,15 @@ type AlertPresetItem struct {
 	// /apps/{AppSlug}/alert-presets/{Name}/enable (form-encoded,
 	// NOT JSON — see the dashboard handler at cmd/apid/handlers_dashboard.go).
 	AppSlug string
+	// EnableConfirmToken is the per-card CSRF token minted by
+	// middleware.IssueForAuthenticated against
+	// (action="enable_alert_preset", acct.ID). The dashboard form
+	// renders it as a hidden <input name="csrf_token"> so the
+	// form-encoded POST handler at cmd/apid/dashboard_preset_enable.go:72
+	// (middleware.VerifyAuthenticated) accepts the submission.
+	// Empty on cards that don't render a form (coming-soon /
+	// upgrade-required) — no token needed there.
+	EnableConfirmToken string
 }
 
 // alertDeliveryErrorLimit caps the LastError string we render on the
