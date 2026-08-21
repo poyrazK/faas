@@ -804,6 +804,10 @@ func cmdDeployTarball(args []string) int {
 	// `gregale deploy --tarball X --yes --json --project-slug S` works.
 	yes := fs.Bool("yes", false, "skip the apply confirmation prompt")
 	deployOnly := fs.String("only", "", "comma-separated workload names to apply (triggers one-key provision)")
+	// ADR-124 inverse-allowlist. Mutex with --only (server rejects
+	// overlap with code='exclude_only_overlap' but the CLI short-
+	// circuits so the operator gets the error pre-flight).
+	deployExclude := fs.String("exclude", "", "comma-separated workload names to omit from the apply set (ADR-124)")
 	projectSlug := fs.String("project-slug", "", "kebab slug for the project (triggers one-key provision)")
 	// Issue #560: per-deployment require_authn opt-in (Cloud Run
 	// --no-allow-unauthenticated analogue). Same flag pair as
@@ -1294,8 +1298,15 @@ func cmdDeployTarball(args []string) int {
 		}
 		defer func() { _ = openTarball.Close() }()
 		prodBranch := "main"
+		onlyList := splitCSV(*deployOnly)
+		excludeList := splitCSV(*deployExclude)
+		if ok, clash := intersect(onlyList, excludeList); ok {
+			return printErr("Invalid flags", fmt.Errorf(
+				"--only and --exclude share workload(s): %s",
+				strings.Join(clash, ", ")))
+		}
 		plan, err := client.ScanProject(ctx, openTarball, filepath.Base(*tarball),
-			*projectSlug, prodBranch, 0, splitCSV(*deployOnly))
+			*projectSlug, prodBranch, 0, onlyList, excludeList)
 		if err != nil {
 			return printErr("Scan failed", err)
 		}
@@ -1303,11 +1314,11 @@ func cmdDeployTarball(args []string) int {
 			if jsonOutput {
 				return jsonOut(writeJSONProblem(planProblem(plan)))
 			}
-			printPlanText(osStdout, plan)
+			printPlanText(osStdout, plan, excludeList, false)
 			return printErr("Plan is not applicable on this plan", errors.New("over-quota or unsupported configuration"))
 		}
 		if !*yes && !jsonOutput && stdoutIsTTY() && stdinIsTTY() {
-			if !confirmPlan(osStdout, os.Stdin, plan) {
+			if !confirmPlan(osStdout, os.Stdin, plan, excludeList) {
 				return printErr("Aborted by user", errors.New("user declined at the confirm prompt"))
 			}
 		}
@@ -1321,7 +1332,7 @@ func cmdDeployTarball(args []string) int {
 		}
 		defer func() { _ = openTarball2.Close() }()
 		apply, err := client.ApplyProjectPlan(ctx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
-			*projectSlug, prodBranch, 0, splitCSV(*deployOnly))
+			*projectSlug, prodBranch, 0, onlyList, excludeList)
 		if err != nil {
 			return printErr("Apply failed", err)
 		}

@@ -362,6 +362,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - Validation enforces plan quotas *before* work happens: deployed-sandbox count, RAM size ≤ plan cap, concurrency setting ≤ plan cap.
 - Idempotency: `Idempotency-Key` header on all POSTs, stored 24 h.
 - Never talks to vmmd/builderd directly — writes rows, notifies via `pg_notify`; owners poll/listen.
+- **Multi-workload repo decomposition (ADR-050) + blast-radius preview (ADR-124):** `POST /v1/projects/scan` (dry-run) and `POST /v1/projects` (apply) handle N-workload tarballs as a single transaction. The `PlanResponse` carries a partition so a single commit's blast radius is visible pre-apply — `will_deploy[]`, `unaffected[]`, `skipped[]`, and `removed[]` are the four sets, matched by `(RootDir, Name)` against the account's existing apps. CLI: `gregale scan --show-affected`, `gregale deploy --exclude=a,b`. Dashboard: `/dashboard/projects/{slug}/preview` (form + apply). Match key mirrors `pkg/reposcan.Workload.Key()` / `pkg/reconcile.diff.workloadDiff` so the wire and the apply engine agree byte-for-byte.
 
 ### 4.3 `schedd` — scheduler and lifecycle owner
 

@@ -1755,6 +1755,20 @@ func (s *server) handler() http.Handler {
 	// and pre-signup browsing). Same file, different envelope.
 	mux.Handle("GET /dashboard/account/dpa", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDPA))))
 
+	// ADR-124: dashboard affected-workloads preview. Two POST routes
+	// (multipart) + one GET route inside the dashboardHandler
+	// dispatcher (handlers_dashboard.go:158). The preview template
+	// posts back to /preview (re-render with the partition populated)
+	// or to /preview/apply (commit with the exclusion list). CSRF
+	// envelopes are minted at GET time (handlers_dashboard_project_preview.go).
+	// Note: these routes accept multipart bodies up to the same
+	// 100 MB / 250 MB cap the v1 /v1/projects/scan path enforces
+	// (pkg/api/limits.go) — the apid request envelope carries that
+	// limit so a curl-upload bypass of the dashboard form still hits
+	// the same cap.
+	mux.Handle("POST /dashboard/projects/{slug}/preview", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.submitProjectPreviewDispatch))))
+	mux.Handle("POST /dashboard/projects/{slug}/preview/apply", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.applyProjectPreviewDispatch))))
+
 	// Status page (spec §12 public status page). Unauthenticated by
 	// design — prospects read it before sign-up, customers during
 	// incidents. Carries no tenant data; only fleet-wide SLIs. Mounted

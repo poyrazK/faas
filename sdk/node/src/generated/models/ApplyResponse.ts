@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppliedBuild } from './AppliedBuild.js';
+import type { PlanAffectedApp } from './PlanAffectedApp.js';
 import type { PlanCron } from './PlanCron.js';
 import type { PlanManaged } from './PlanManaged.js';
 import type { PlanWorkload } from './PlanWorkload.js';
@@ -25,6 +26,10 @@ export type ApplyResponse = {
   can_apply: boolean;
   crons_not_allowed?: boolean;
   plan_token: string;
+  will_deploy?: Array<PlanAffectedApp>;
+  unaffected?: Array<PlanAffectedApp>;
+  skipped?: Array<PlanAffectedApp>;
+  removed?: Array<string>;
   project_id?: string;
   apps?: Array<{
     slug: string;

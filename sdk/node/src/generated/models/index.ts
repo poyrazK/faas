@@ -187,6 +187,7 @@ export type { PasswordResetRequest } from './PasswordResetRequest.js';
 export type { PasswordSignupRequest } from './PasswordSignupRequest.js';
 export type { PatchOrgRequest } from './PatchOrgRequest.js';
 export type { PaymentMethodSummary } from './PaymentMethodSummary.js';
+export type { PlanAffectedApp } from './PlanAffectedApp.js';
 export type { PlanCron } from './PlanCron.js';
 export type { PlanManaged } from './PlanManaged.js';
 export type { PlanResponse } from './PlanResponse.js';

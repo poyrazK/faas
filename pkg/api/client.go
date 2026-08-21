@@ -862,11 +862,11 @@ func (c *Client) DeleteApp(ctx context.Context, slug string) error {
 func (c *Client) ScanProject(
 	ctx context.Context,
 	source io.Reader, sourceName, projectSlug, productionBranch string,
-	installID int64, only []string,
+	installID int64, only, exclude []string,
 ) (PlanResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, productionBranch, installID, only); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, productionBranch, installID, only, exclude); err != nil {
 		return PlanResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/projects/scan", &b)
@@ -890,11 +890,11 @@ func (c *Client) ApplyProjectPlan(
 	ctx context.Context,
 	planToken string,
 	source io.Reader, sourceName, projectSlug, productionBranch string,
-	installID int64, only []string,
+	installID int64, only, exclude []string,
 ) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, productionBranch, installID, only); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, productionBranch, installID, only, exclude); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	endpoint := c.baseURL + "/v1/projects"
@@ -920,7 +920,7 @@ func (c *Client) ApplyProjectPlan(
 // enforces the field-for-field mapping).
 func writeProjectMultipartFields(
 	w *multipart.Writer, source io.Reader, sourceName, projectSlug,
-	productionBranch string, installID int64, only []string,
+	productionBranch string, installID int64, only, exclude []string,
 ) error {
 	fw, err := w.CreateFormFile("source", sourceName)
 	if err != nil {
@@ -946,6 +946,14 @@ func writeProjectMultipartFields(
 	}
 	if len(only) > 0 {
 		if err := w.WriteField("only", strings.Join(only, ",")); err != nil {
+			return err
+		}
+	}
+	// ADR-124: inverse-allowlist. Server treats this as a sibling of
+	// `only` (lowercased name match). intersect(only, exclude) is
+	// rejected at the server with code='exclude_only_overlap'.
+	if len(exclude) > 0 {
+		if err := w.WriteField("exclude", strings.Join(exclude, ",")); err != nil {
 			return err
 		}
 	}

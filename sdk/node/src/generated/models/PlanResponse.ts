@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PlanAffectedApp } from './PlanAffectedApp.js';
 import type { PlanCron } from './PlanCron.js';
 import type { PlanManaged } from './PlanManaged.js';
 import type { PlanWorkload } from './PlanWorkload.js';
@@ -27,5 +28,9 @@ export type PlanResponse = {
    * base64-JSON plan token; pass back as ?plan_token= on /v1/projects to skip the second extract.
    */
   plan_token: string;
+  will_deploy?: Array<PlanAffectedApp>;
+  unaffected?: Array<PlanAffectedApp>;
+  skipped?: Array<PlanAffectedApp>;
+  removed?: Array<string>;
 };
 

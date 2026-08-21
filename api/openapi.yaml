@@ -11227,6 +11227,14 @@ components:
         tier:
           type: string
           enum: [single, convention, workspace, compose, unknown]
+        action:
+          type: string
+          description: "ADR-124 blast-radius projection. create = workload is new to the account; update = existing app matches (root_dir, name)."
+          enum: [create, update]
+        existing_app_id:
+          type: string
+          pattern: '^[a-f0-9]{32}$'
+          description: "ADR-124: app row ID the update targets. Empty iff action == create."
 
     PlanManaged:
       description: |
@@ -11242,6 +11250,31 @@ components:
         env_hint: { type: string, example: DATABASE_URL }
         source: { type: string }
         image: { type: string }
+
+    PlanAffectedApp:
+      description: |
+        One row of the ADR-124 blast-radius partition. action is closed-
+        vocabulary:
+          create — scan workload, no existing app row matches (root_dir, name).
+          update — scan workload, existing app matches.
+          remove — existing app, no scan workload, not protected by --exclude.
+          noop   — operator excluded via --exclude, or no scan change.
+        id is empty for action == create. existing_root_dir is populated
+        only when the existing app's root_dir differs from the scan root_dir
+        (monorepo collision surface).
+      type: object
+      required: [slug, action]
+      properties:
+        slug: { type: string }
+        id:
+          type: string
+          pattern: '^[a-f0-9]{32}$'
+        action:
+          type: string
+          enum: [create, update, remove, noop]
+        existing_root_dir:
+          type: string
+          description: "RootDir of the existing app row. Empty for create. Populated only when it differs from the scan-time RootDir."
 
     PlanCron:
       description: "A cron expression lifted from a workload (k8s CronJob, render.yaml, serverless.yml)."
@@ -11307,6 +11340,23 @@ components:
         can_apply: { type: boolean }
         crons_not_allowed: { type: boolean }
         plan_token: { type: string, description: "base64-JSON plan token; pass back as ?plan_token= on /v1/projects to skip the second extract." }
+        # ADR-124 blast-radius partition. will_deploy + unaffected
+        # together enumerate every existing app in the account plus the
+        # scan's proposed creates. skipped is the operator-excluded
+        # subset of will_deploy. removed is the destructive subset of
+        # unaffected (existing apps absent from the scan).
+        will_deploy:
+          type: array
+          items: { $ref: '#/components/schemas/PlanAffectedApp' }
+        unaffected:
+          type: array
+          items: { $ref: '#/components/schemas/PlanAffectedApp' }
+        skipped:
+          type: array
+          items: { $ref: '#/components/schemas/PlanAffectedApp' }
+        removed:
+          type: array
+          items: { type: string, description: "Slugs the apply path will SoftDeleteAppCascade." }
 
     ApplyResponse:
       description: "Apply response. Carries the inserted project_id and per-app IDs."
@@ -11336,6 +11386,19 @@ components:
         can_apply: { type: boolean }
         crons_not_allowed: { type: boolean }
         plan_token: { type: string }
+        # ADR-124 blast-radius partition (mirrors PlanResponse).
+        will_deploy:
+          type: array
+          items: { $ref: '#/components/schemas/PlanAffectedApp' }
+        unaffected:
+          type: array
+          items: { $ref: '#/components/schemas/PlanAffectedApp' }
+        skipped:
+          type: array
+          items: { $ref: '#/components/schemas/PlanAffectedApp' }
+        removed:
+          type: array
+          items: { type: string }
         project_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         apps:
           type: array

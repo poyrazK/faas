@@ -25,5 +25,13 @@ export type PlanWorkload = {
    */
   source?: string;
   tier?: 'single' | 'convention' | 'workspace' | 'compose' | 'unknown';
+  /**
+   * ADR-124 blast-radius projection. create = workload is new to the account; update = existing app matches (root_dir, name).
+   */
+  action?: 'create' | 'update';
+  /**
+   * ADR-124: app row ID the update targets. Empty iff action == create.
+   */
+  existing_app_id?: string;
 };
 

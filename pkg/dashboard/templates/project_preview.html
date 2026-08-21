@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; color: #06c; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; font-size: 0.95rem; vertical-align: top; }
+    th { background: #f5f5f5; }
+    .muted { color: #888; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 3px; font-size: 0.85rem; }
+    .badge-create { background: #d3f3d3; color: #175c17; }
+    .badge-update { background: #d3e0f3; color: #1a3c75; }
+    .badge-noop   { background: #eee; color: #555; }
+    .badge-remove { background: #f3d3d3; color: #751a1a; }
+    .excluded { text-decoration: line-through; color: #888; }
+    .problem { border: 1px solid #c33; background: #fbeaea; color: #5a1a1a; padding: 0.75rem 1rem; border-radius: 4px; margin: 1rem 0; }
+    .btn, .btn-cta, .btn-danger { display: inline-block; padding: 0.5rem 1rem; border-radius: 4px; border: 1px solid #888; background: #f6f6f6; color: #111; text-decoration: none; cursor: pointer; font: inherit; }
+    .btn-cta { background: #06c; color: #fff; border-color: #06c; }
+    .btn-cta:hover { background: #058; border-color: #058; }
+    .btn-cta:disabled { background: #888; border-color: #888; cursor: not-allowed; }
+    label { display: block; margin: 0.75rem 0; }
+    label > input[type="text"], label > input[type="file"] { display: block; min-width: 320px; padding: 0.4rem; margin-top: 0.25rem; border: 1px solid #888; border-radius: 4px; font: inherit; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 1.25rem; margin: 1.25rem 0; }
+    .empty { padding: 0.75rem 0; color: #555; }
+    h1 { margin: 0.5rem 0 1rem; }
+    h2 { margin-top: 1.5rem; }
+    .apply-bar { position: sticky; bottom: 0; background: #fff; border-top: 1px solid #ddd; padding: 0.75rem 0; }
+    .apply-result { border: 1px solid #175c17; background: #eaf7ea; color: #175c17; padding: 0.85rem 1rem; border-radius: 4px; margin: 1rem 0; }
+    .apply-result h2 { margin: 0 0 0.4rem 0; font-size: 1.05rem; }
+    .apply-result .stamp { color: #555; font-size: 0.85rem; }
+    .apply-result ul { margin: 0.4rem 0 0 1.25rem; padding: 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/pricing">Pricing</a>
+      <a href="/dashboard/invoices">Invoices</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    <h1>{{.Title}}</h1>
+
+    {{if .Data.ProjectNotFound}}
+      <div class="problem">
+        <strong>Project not found.</strong> The slug <code>{{.Data.ProjectSlug}}</code> does not exist on this account. Create it first by deploying a tarball from the CLI: <code>gregale deploy --project-slug={{.Data.ProjectSlug}} --tarball=...</code>.
+      </div>
+    {{end}}
+
+    {{if .Data.PreScanProblem}}
+      <div class="problem">
+        <strong>Preview rejected:</strong> {{.Data.PreScanProblem}}
+      </div>
+    {{end}}
+
+    {{if .Data.ApplyResult}}
+      <section class="apply-result">
+        <h2>Apply complete at <span class="stamp">{{.Data.ApplyResult.AppliedAt}}</span></h2>
+        <p>
+          {{if .Data.ApplyResult.AddedSlugs}}<strong>Added:</strong> {{range .Data.ApplyResult.AddedSlugs}}<code>{{.}}</code> {{end}}<br>{{end}}
+          {{if .Data.ApplyResult.ChangedSlugs}}<strong>Updated:</strong> {{range .Data.ApplyResult.ChangedSlugs}}<code>{{.}}</code> {{end}}<br>{{end}}
+          {{if .Data.ApplyResult.RemovedSlugs}}<strong>Removed:</strong> {{range .Data.ApplyResult.RemovedSlugs}}<code>{{.}}</code> {{end}}{{end}}
+        </p>
+        <p class="muted">The apply form is locked — to apply again, return to the upload form and re-run the scan.</p>
+        <p><a class="btn" href="/dashboard/projects/{{.Data.ProjectSlug}}/preview">Run another preview</a></p>
+      </section>
+    {{end}}
+
+    {{if not .Data.Preview}}
+      <section class="card">
+        <h2 style="margin-top:0">Upload a tarball to preview</h2>
+        <p class="muted">Drop the source tarball for project <code>{{.Data.ProjectSlug}}</code> here. The preview lists every workload the commit will deploy and every app in the account that will stay untouched.</p>
+        <form method="POST" action="/dashboard/projects/{{.Data.ProjectSlug}}/preview" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{.Data.PreviewFormToken}}">
+          <label>
+            Source tarball (.tar.gz)
+            <input type="file" name="tarball" accept=".tar,.tar.gz,.tgz" required>
+          </label>
+          <label>
+            Excluded workloads (comma-separated, optional)
+            <input type="text" name="exclude" placeholder="payments-api, invoice-worker">
+            <small class="muted">These workloads will be omitted from the apply set.</small>
+          </label>
+          <button type="submit" class="btn-cta">Preview</button>
+        </form>
+      </section>
+    {{else}}
+      <section class="card">
+        <p>This commit will affect <strong>{{len .Data.WillDeploy}}</strong> workload(s) and leave <strong>{{len .Data.Unaffected}}</strong> workload(s) untouched in this account.</p>
+        {{if gt (len .Data.Skipped) 0}}
+          <p class="muted">{{len .Data.Skipped}} workload(s) excluded by operator — listed below as <em>Skipped</em>.</p>
+        {{end}}
+      </section>
+
+      <h2>Will deploy ({{len .Data.WillDeploy}})</h2>
+      <table>
+        <thead><tr><th>Slug</th><th>Action</th><th>Existing app</th><th>Exclude</th></tr></thead>
+        <tbody>
+          {{range .Data.WillDeploy}}
+            <tr>
+              <td>{{.Slug}}</td>
+              <td><span class="badge badge-{{.Action}}">{{.ActionGlyph}} {{.ActionLabel}}</span></td>
+              <td>{{if .ID}}<code>{{.ID}}</code>{{if .ExistingRoot}} <span class="muted">(root: {{.ExistingRoot}})</span>{{end}}{{else}}<span class="muted">new</span>{{end}}</td>
+              <td><input type="checkbox" name="exclude" value="{{.Slug}}" form="apply-form"></td>
+            </tr>
+          {{else}}
+            <tr><td colspan="4" class="muted">No workloads will be created or updated.</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+
+      {{if gt (len .Data.Skipped) 0}}
+        <h2>Skipped ({{len .Data.Skipped}})</h2>
+        <table>
+          <thead><tr><th>Slug</th><th>Action</th><th>Existing app</th></tr></thead>
+          <tbody>
+            {{range .Data.Skipped}}
+              <tr class="excluded">
+                <td>{{.Slug}}</td>
+                <td><span class="badge badge-noop">— excluded</span></td>
+                <td>{{if .ID}}<code>{{.ID}}</code>{{end}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{end}}
+
+      <h2>Unaffected ({{len .Data.Unaffected}})</h2>
+      <table>
+        <thead><tr><th>Slug</th><th>Action</th><th>Existing app</th><th>Root</th></tr></thead>
+        <tbody>
+          {{range .Data.Unaffected}}
+            <tr>
+              <td>{{.Slug}}</td>
+              <td><span class="badge badge-noop">— unchanged</span></td>
+              <td>{{if .ID}}<code>{{.ID}}</code>{{end}}</td>
+              <td><code>{{.ExistingRoot}}</code></td>
+            </tr>
+          {{else}}
+            <tr><td colspan="4" class="muted">No other workloads in this account.</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+
+      {{if gt (len .Data.Removed) 0}}
+        <h2>Removed</h2>
+        <p class="muted">These workloads exist in the previous plan but are absent from this tarball. They will be <strong>soft-deleted</strong> on apply (shown only on the apply response, not preview).</p>
+        <ul>
+          {{range .Data.Removed}}<li><code>{{.}}</code></li>{{end}}
+        </ul>
+      {{end}}
+
+      <div class="apply-bar">
+        <form id="apply-form" method="POST" action="/dashboard/projects/{{.Data.ProjectSlug}}/preview/apply">
+          <input type="hidden" name="csrf_token" value="{{.Data.PreviewApplyToken}}">
+          <input type="hidden" name="plan_token" value="{{.Data.PlanToken}}">
+          {{if not .Data.ApplyResult}}
+            <button type="submit" class="btn-cta" {{if not .Data.CanApply}}disabled{{end}}>
+              Apply {{len .Data.WillDeploy}} workload(s){{if gt (len .Data.Skipped) 0}} (excluded: {{range $i, $e := .Data.Skipped}}{{if $i}}, {{end}}{{$e.Slug}}{{end}}){{end}}
+            </button>
+            {{if not .Data.CanApply}}
+              <span class="muted">Apply is blocked by quota or plan limits. See the pre-scan message above.</span>
+            {{end}}
+            <a class="btn" href="/dashboard/projects/{{.Data.ProjectSlug}}/preview">Cancel</a>
+          {{else}}
+            <span class="muted">Apply form locked — see the apply-complete banner above.</span>
+          {{end}}
+        </form>
+      </div>
+    {{end}}
+  </main>
+  <footer>onebox faas · ADR-124 affected-workloads preview</footer>
+</body>
+</html>

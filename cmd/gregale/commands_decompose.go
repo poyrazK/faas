@@ -52,11 +52,19 @@ func cmdScan(args []string) int {
 	repo := fs.String("repo", "", "github owner/name to fetch tarball for")
 	ref := fs.String("ref", "main", "git ref for --repo")
 	only := fs.String("only", "", "comma-separated workload names")
+	// ADR-124 inverse-allowlist. Mutex with --only (overlap rejected
+	// server-side with code='exclude_only_overlap').
+	exclude := fs.String("exclude", "", "comma-separated workload names to omit (ADR-124)")
+	// ADR-124 two-section render toggle. Default keeps the legacy
+	// single-section plan; operators running the new blast-radius
+	// preview opt in explicitly so the default behaviour for scripts
+	// and CI is unchanged.
+	showAffected := fs.Bool("show-affected", false, "render the WillDeploy + Unaffected tables (ADR-124)")
 	projectSlug := fs.String("project-slug", "", "kebab slug; default = repo dir basename")
 	installID := fs.Int64("install-id", 0, "GitHub install id (with --repo)")
 	prodBranch := fs.String("production-branch", "main", "production branch for the project")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME]", "scan")
+		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--show-affected] [--exclude NAME,…]", "scan")
 		return 1
 	}
 
@@ -78,6 +86,16 @@ func cmdScan(args []string) int {
 	}
 	ctx := context.Background()
 	onlyList := splitCSV(*only)
+	excludeList := splitCSV(*exclude)
+	// Client-side mirror of the server's mutex validation. The
+	// server is still authoritative (returns 409 on overlap); this
+	// avoids a needless round-trip when the operator typos both
+	// flags. intersect(empty) short-circuits on either side.
+	if ok, clash := intersect(onlyList, excludeList); ok {
+		return printErr("Invalid flags", fmt.Errorf(
+			"--only and --exclude share workload(s): %s",
+			strings.Join(clash, ", ")))
+	}
 	// srcPath was either customer-supplied (--tarball / --path) or
 	// resoled by the CLI (autoPackCwd tmp / curl repo tmp). Both pass
 	// through openCustomerFile so the lint tripwire's symlink-follow
@@ -87,14 +105,14 @@ func cmdScan(args []string) int {
 		return printErr("Could not open source", err)
 	}
 	defer func() { _ = src.Close() }()
-	plan, err := client.ScanProject(ctx, src, sourceName, *projectSlug, *prodBranch, *installID, onlyList)
+	plan, err := client.ScanProject(ctx, src, sourceName, *projectSlug, *prodBranch, *installID, onlyList, excludeList)
 	if err != nil {
 		return printErr("Scan failed", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(plan))
 	}
-	return printPlanText(osStdout, plan)
+	return printPlanText(osStdout, plan, excludeList, *showAffected)
 }
 
 // resolveScanSource normalises the three input shapes (--tarball /
@@ -252,6 +270,33 @@ func splitCSV(s string) []string {
 	return out
 }
 
+// intersect reports whether a and b share an element. Used by
+// cmdScan / cmdDeployTarball to short-circuit --only ∩ --exclude
+// overlaps before a server round-trip — server is still the
+// authoritative gate (409 exclude_only_overlap), this is a UX
+// guard. Returns (true, sorted-slice) on hit, (false, nil) on miss.
+// Caller passes already-normalised (lowercased/trimmed) slices.
+func intersect(a, b []string) (bool, []string) {
+	if len(a) == 0 || len(b) == 0 {
+		return false, nil
+	}
+	idx := make(map[string]struct{}, len(b))
+	for _, s := range b {
+		idx[s] = struct{}{}
+	}
+	var clash []string
+	for _, s := range a {
+		if _, ok := idx[s]; ok {
+			clash = append(clash, s)
+		}
+	}
+	if len(clash) == 0 {
+		return false, nil
+	}
+	sort.Strings(clash)
+	return true, clash
+}
+
 // printPlanText renders the plan as a human-readable table. Two
 // sections: Workloads (sorted by name asc) and Managed (stateful
 // services we won't provision). Cron rows appear under Workloads with
@@ -261,8 +306,17 @@ func splitCSV(s string) []string {
 // operator — both surface as malformed output and the CLI exits non-zero
 // on the JSON-parse path below (mirrors commands_builds.go:166).
 //
+// excludeSet is the operator's CLI-side --exclude list. It only
+// flows into printAffectedText (the --show-affected partition
+// view), where it marks WillDeploy entries the operator wanted
+// to exclude but the server didn't (a server bug surface —
+// under normal operation the server's Skipped[] covers the
+// same slugs). The single-section Workloads loop does not need
+// it: plan.Workloads is the post-filter set, so excluded slugs
+// never appear there.
+//
 //nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
-func printPlanText(w io.Writer, plan api.PlanResponse) int {
+func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected bool) int {
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
 	fmt.Fprintf(w, "Scan source: %s   tier: %s\n", plan.ScanSource, plan.Tier)
 	fmt.Fprintf(w, "Quota: %d/%d apps   %d/%d crons\n",
@@ -275,6 +329,14 @@ func printPlanText(w io.Writer, plan api.PlanResponse) int {
 		return 0
 	}
 	fmt.Fprintln(w, "can_apply: true")
+	excludeIdx := make(map[string]bool, len(excludeSet))
+	for _, s := range excludeSet {
+		excludeIdx[s] = true
+	}
+	if showAffected {
+		printAffectedText(w, plan, excludeIdx)
+		return 0
+	}
 	if len(plan.Workloads) > 0 {
 		fmt.Fprintln(w, "\nWorkloads:")
 		// sort defensively even though reposcan already sorts — a
@@ -290,6 +352,12 @@ func printPlanText(w io.Writer, plan api.PlanResponse) int {
 			if wl.Class != "" {
 				classSuffix = "  class=" + wl.Class
 			}
+			// plan.Workloads is the post-filter set: the scan
+			// service drops --only/--exclude slugs before populating
+			// it (scan_service.go:564-577). So no excluded row ever
+			// appears in this loop, and no "(excluded)" tag is
+			// needed here. The show-affected branch (printAffectedText)
+			// renders the partition including Skipped.
 			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix)
 		}
 	}
@@ -309,15 +377,88 @@ func printPlanText(w io.Writer, plan api.PlanResponse) int {
 	return 0
 }
 
+// printAffectedText renders the ADR-124 blast-radius view: WillDeploy
+// + Skipped (operator-excluded) + Unaffected + Removed. Mirrors the
+// dashboard's two-table render so a CLI operator sees the same
+// partition the dashboard would.
+//
+// excludedSlugs is a normalised (lowercased) lookup the renderer
+// uses to mark WillDeploy entries that would have been there but
+// the operator excluded — the row gets a " [excluded locally]" tag
+// so the reader can spot operator overrides without re-running the
+// scan.
+//
+// Fprintln at the tab stop is no different from a panic mid-row for the
+// operator — both surface as malformed output and the CLI exits non-zero
+// on the JSON-parse path below (mirrors printPlanText above).
+//
+//nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
+func printAffectedText(w io.Writer, plan api.PlanResponse, excludedSlugs map[string]bool) {
+	wds := append([]api.PlanAffectedApp(nil), plan.WillDeploy...)
+	sort.Slice(wds, func(i, j int) bool { return wds[i].Slug < wds[j].Slug })
+	una := append([]api.PlanAffectedApp(nil), plan.Unaffected...)
+	sort.Slice(una, func(i, j int) bool { return una[i].Slug < una[j].Slug })
+	skp := append([]api.PlanAffectedApp(nil), plan.Skipped...)
+	sort.Slice(skp, func(i, j int) bool { return skp[i].Slug < skp[j].Slug })
+
+	fmt.Fprintln(w, "\nWill deploy:")
+	if len(wds) == 0 {
+		fmt.Fprintln(w, "  (none)")
+	} else {
+		fmt.Fprintln(w, "  ACTION    SLUG                  APP ID                        ROOT_DIR")
+		for _, r := range wds {
+			mark := ""
+			if excludedSlugs[strings.ToLower(r.Slug)] {
+				mark = "  [excluded locally — will be skipped]"
+			}
+			fmt.Fprintf(w, "  %-9s %-20s %-30s %s%s\n", r.Action, r.Slug, r.ID, r.ExistingRootDir, mark)
+		}
+	}
+	if len(skp) > 0 {
+		fmt.Fprintln(w, "\nSkipped (excluded by operator):")
+		fmt.Fprintln(w, "  ACTION    SLUG                  APP ID")
+		for _, r := range skp {
+			fmt.Fprintf(w, "  %-9s %-20s %s\n", r.Action, r.Slug, r.ID)
+		}
+	}
+	fmt.Fprintln(w, "\nUnaffected (apps in your account not touched by this commit):")
+	if len(una) == 0 {
+		fmt.Fprintln(w, "  (none)")
+	} else {
+		fmt.Fprintln(w, "  ACTION    SLUG                  APP ID")
+		for _, r := range una {
+			fmt.Fprintf(w, "  %-9s %-20s %s\n", r.Action, r.Slug, r.ID)
+		}
+	}
+	if len(plan.Removed) > 0 {
+		fmt.Fprintln(w, "\nRemoved (apps the apply path will SoftDeleteAppCascade):")
+		rmv := append([]string(nil), plan.Removed...)
+		sort.Strings(rmv)
+		for _, s := range rmv {
+			fmt.Fprintf(w, "  - %s\n", s)
+		}
+	}
+}
+
 // confirmPlan prints the plan and waits for a y/N confirmation. Reads
 // from r (typically os.Stdin) so tests can stub it. Returns true on
 // 'y' / 'yes' (case-insensitive); false on EOF, 'n', or any other
 // input — git does the same.
-func confirmPlan(w io.Writer, r io.Reader, plan api.PlanResponse) bool {
-	printPlanText(w, plan)
+func confirmPlan(w io.Writer, r io.Reader, plan api.PlanResponse, excludeSet []string) bool {
+	printPlanText(w, plan, excludeSet, false)
 	//nolint:errcheck // same rationale as printPlanText; a failed Fprintln
 	// at the prompt is no different from the read below failing.
-	fmt.Fprintln(w, "\nApply this plan? [y/N] ")
+	prompt := "\nApply this plan? [y/N] "
+	if n := len(excludeSet); n > 0 {
+		prompt = fmt.Sprintf("\nApply %d workload(s) (excluded: %s)? [y/N] ",
+			len(plan.Workloads), strings.Join(excludeSet, ", "))
+	} else if n := len(plan.Workloads); n > 0 {
+		prompt = fmt.Sprintf("\nApply %d workload(s)? [y/N] ", n)
+	}
+	//nolint:errcheck // prompt write mirrors the Fprintln above; if the
+	// prompt fails to flush the subsequent scanner.Scan() will also fail
+	// (broken pipe surfaces as EOF) and the function returns false.
+	fmt.Fprint(w, prompt)
 	scanner := bufio.NewScanner(r)
 	if !scanner.Scan() {
 		return false

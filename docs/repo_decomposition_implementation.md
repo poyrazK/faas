@@ -392,3 +392,24 @@ workloads are auto-created, removed workloads are auto-removed, changed
 workloads are updated. `faas deploy` shows the same reconcile as a confirmable
 diff. The safety that would otherwise come from a confirmation queue comes
 instead from the three reconcile guards.
+
+## 7. Follow-on: affected-workloads preview (`--exclude`)
+
+**[ADR-124](adr/124-affected-workload-preview-and-exclude.md)** (accepted
+2026-08-21) extends the `POST /v1/projects/scan` and `POST /v1/projects`
+endpoints above so a single tarball commit's blast radius is visible
+*before* apply. The `PlanResponse` now carries a partition:
+
+- `will_deploy[]` — scan workloads that will be created or updated.
+- `unaffected[]` — every other app in the account that this commit
+  does not touch.
+- `skipped[]` — scan workloads dropped by `--exclude`.
+- `removed[]` — workloads the apply will soft-delete (apply path only).
+
+CLI surface: `gregale scan --show-affected`, `gregale deploy
+--exclude=a,b`. Dashboard surface: `GET /dashboard/projects/{slug}/preview`
+(form) + `POST .../preview` (re-render) + `POST .../preview/apply` (commit).
+The match key is `(RootDir, Name)` — mirrors `pkg/reposcan.Workload.Key()`
+and `pkg/reconcile.diff.workloadDiff` so the wire and the apply engine
+agree byte-for-byte. No new migrations; this PR is purely derived state.
+

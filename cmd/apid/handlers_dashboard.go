@@ -155,6 +155,32 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderOrgDetail(w, r, log, acct, slug)
 		case path == dashboardAccountPath:
 			s.renderAccount(w, r, log, acct)
+		case len(path) > len("/dashboard/projects/") &&
+			path[:len("/dashboard/projects/")] == "/dashboard/projects/":
+			// ADR-124 affected-workloads preview. The dispatcher
+			// peeks the suffix to extract the slug; the preview
+			// template lives behind GET (form) only — the POST
+			// routes for this surface are registered directly in
+			// server.go (POST /preview, POST /preview/apply) so the
+			// multipart body is parsed by Go's stdlib rather than
+			// by a method-switch here.
+			slug := path[len("/dashboard/projects/"):]
+			// Only the bare slug + "/preview" subpath is GET-routed
+			// through this dispatcher; deeper paths fall through to
+			// 404 so a future /dashboard/projects/{slug}/audit
+			// landing gets a clean seam without colliding with
+			// /dashboard/projects/{slug}/preview/apply.
+			const previewSuffix = "/preview"
+			if slug == "" || !strings.HasSuffix(slug, previewSuffix) {
+				http.NotFound(w, r)
+				return
+			}
+			pslug := strings.TrimSuffix(slug, previewSuffix)
+			if pslug == "" || !previewSlugOK(pslug) {
+				http.NotFound(w, r)
+				return
+			}
+			s.renderProjectPreview(w, r, log, acct, pslug)
 		default:
 			http.NotFound(w, r)
 		}

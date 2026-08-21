@@ -3558,17 +3558,24 @@ type SourceTarballDeployRequest struct {
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).
 // Field names match the OpenAPI schema verbatim — the spec-check
 // AST gate enforces the field-for-field mapping.
+//
+// Action + ExistingAppID are the ADR-124 blast-radius projections:
+// they tell the client whether the workload will create or update an
+// existing app, and which existing app row the update targets. ID is
+// empty when Action == "create".
 type PlanWorkload struct {
-	Name       string   `json:"name"`
-	RootDir    string   `json:"root_dir"`
-	Dockerfile string   `json:"dockerfile,omitempty"`
-	Command    []string `json:"command"`
-	Class      string   `json:"class,omitempty"`
-	Schedule   string   `json:"schedule,omitempty"`
-	Ports      []int    `json:"ports"`
-	EnvKeys    []string `json:"env_keys,omitempty"`
-	Source     string   `json:"source,omitempty"`
-	Tier       string   `json:"tier,omitempty"`
+	Name          string   `json:"name"`
+	RootDir       string   `json:"root_dir"`
+	Dockerfile    string   `json:"dockerfile,omitempty"`
+	Command       []string `json:"command"`
+	Class         string   `json:"class,omitempty"`
+	Schedule      string   `json:"schedule,omitempty"`
+	Ports         []int    `json:"ports"`
+	EnvKeys       []string `json:"env_keys,omitempty"`
+	Source        string   `json:"source,omitempty"`
+	Tier          string   `json:"tier,omitempty"`
+	Action        string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
+	ExistingAppID string   `json:"existing_app_id,omitempty"` // ADR-124: empty iff Action == "create"
 }
 
 // PlanManaged mirrors reposcan.Managed.
@@ -3589,6 +3596,32 @@ type PlanCron struct {
 	Enabled      bool   `json:"enabled"`
 }
 
+// PlanAffectedApp is one row of the ADR-124 affected-workloads
+// partition (PlanResponse.WillDeploy / Unaffected). It pairs an
+// existing-or-future app with a closed-vocabulary Action that tells
+// the operator what the scan will do to it. ID is empty for Action
+// == "create" (the row has no persisted app yet); ExistingRootDir is
+// populated only when the existing app's RootDir differs from the
+// scan-time RootDir, surfacing (slug, root) collisions in monorepos.
+//
+// Action vocabulary (ADR-124):
+//
+//	"create" — scan workload, no existing app row matches (RootDir, Name).
+//	"update" — scan workload, existing app matches (RootDir, Name).
+//	"remove" — existing app, no scan workload with the same (RootDir, Name)
+//	           and not protected by --exclude. Will trigger
+//	           SoftDeleteAppCascade on the apply path.
+//	"noop"   — either (a) existing app + scan workload match and the
+//	           operator excluded it via --exclude, or (b) no scan change
+//	           (manifest config matches app state byte-for-byte). The
+//	           apply path leaves noop rows untouched.
+type PlanAffectedApp struct {
+	Slug            string `json:"slug"`
+	ID              string `json:"id,omitempty"` // empty iff Action == "create"
+	Action          string `json:"action"`       // "create" | "update" | "remove" | "noop"
+	ExistingRootDir string `json:"existing_root_dir,omitempty"`
+}
+
 // QuotaBlock is the limit + observed extension on a plan-quota
 // problem. Mirrors api.Problem.WithLimit — emitted alongside any
 // 402/403 quota response so the CLI can render "X/Y apps" without
@@ -3603,6 +3636,12 @@ type QuotaBlock struct {
 // Fields mirror scanPlanResponse in cmd/apid/scan_service.go; the
 // DTO is the wire shape, the in-process struct is the
 // handler-internal carrier.
+//
+// WillDeploy, Unaffected, Skipped, and Removed are the ADR-124
+// blast-radius projection. They enumerate every existing app in the
+// account (Unaffected = noop or skipped) plus the scan's proposed
+// creates (WillDeploy.Action == "create"). Removed is a flat slug
+// list — removal has no per-row editable metadata worth surfacing.
 type PlanResponse struct {
 	ProjectSlug     string         `json:"project_slug"`
 	RepoFullName    string         `json:"repo_full_name,omitempty"`
@@ -3619,6 +3658,15 @@ type PlanResponse struct {
 	CanApply        bool           `json:"can_apply"`
 	CronsNotAllowed bool           `json:"crons_not_allowed,omitempty"`
 	PlanToken       string         `json:"plan_token"`
+	// ADR-124: blast-radius partition. WillDeploy + Unaffected
+	// together enumerate every non-deleted app in the account plus
+	// the scan's proposed creates. Skipped is the operator-excluded
+	// subset of WillDeploy. Removed is the destructive subset of
+	// Unaffected (existing apps absent from the scan).
+	WillDeploy []PlanAffectedApp `json:"will_deploy,omitempty"`
+	Unaffected []PlanAffectedApp `json:"unaffected,omitempty"`
+	Skipped    []PlanAffectedApp `json:"skipped,omitempty"`
+	Removed    []string          `json:"removed,omitempty"`
 }
 
 // ApplyResponse is the success body for POST /v1/projects. Carries
