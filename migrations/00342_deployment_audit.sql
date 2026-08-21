@@ -1,4 +1,4 @@
--- filename: 00334_deployment_audit.sql
+-- filename: 00342_deployment_audit.sql
 -- +goose Up
 -- +goose StatementBegin
 

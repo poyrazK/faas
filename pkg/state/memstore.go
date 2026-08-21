@@ -260,7 +260,7 @@ type MemStore struct {
 	// atomicity contract.
 	auditLog []AuditLog
 	// deploymentAudit is the in-memory mirror of the deployment_audit
-	// table (migrations/00334_deployment_audit.sql, issue #976 /
+	// table (migrations/00342_deployment_audit.sql, issue #976 /
 	// ADR-122 / SAFE-RELEASES-E.2). Same shape as the PG row; the
 	// memstore is the test-backend so handler tests can exercise the
 	// read path without spinning Postgres. Append is mu-guarded;

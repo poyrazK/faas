@@ -2690,7 +2690,7 @@ type AuditLog struct {
 
 // DeploymentAuditKind is the closed-set vocabulary enforced by
 // deployment_audit_kind_chk on the deployment_audit table
-// (migrations/00334_deployment_audit.sql, issue #976 / ADR-122 /
+// (migrations/00342_deployment_audit.sql, issue #976 / ADR-122 /
 // SAFE-RELEASES-E.2). The Go type prevents drift between the
 // handler-level emit sites and the SQL CHECK constraint — every
 // kind the meterd orchestrator (Mega PR #2) or the apid CreateDeployment
@@ -2720,7 +2720,7 @@ const (
 )
 
 // DeploymentAudit is one row of the deployment_audit table
-// (migrations/00334_deployment_audit.sql). Mirrors the AuditLog
+// (migrations/00342_deployment_audit.sql). Mirrors the AuditLog
 // shape (issue #755 / PR-5) but is per-deployment instead of
 // per-account: a deployment row outlives the deployment it
 // relates to so a SOC 2 / GDPR auditor can re-derive the
