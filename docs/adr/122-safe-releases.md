@@ -137,14 +137,14 @@
     zero new schema (the diff package consumes the existing
     `pkg/apid/openapi.yaml`). Mega PR #2 is zero-schema.
   - **Migration slot coordination.** Mega PR #1 starts at
-    `00354_deployment_audit.sql` (renumbered through 13 hops:
+    `00356_deployment_audit.sql` (renumbered through 14 hops:
     `00320 → 00322 → 00324 → 00326 → 00327 → 00330 → 00332 →
-    00334 → 00342 → 00346 → 00348 → 00350 → 00352 → 00354` to clear
-    open-PR slots #999 #990 #1004 #1000 + post-merge of PR #999's
-    `00326_apps_public_auth_ip_allowlist.sql` on origin/main +
-    the round-4 fence-collision on main's `00327_reserve_slot.sql`
-    + `00328_reserve_slot.sql` fences + main's
-    `00329_consumer_keys.sql` real migration + the round-5
+    00334 → 00342 → 00346 → 00348 → 00350 → 00352 → 00354 →
+    00356` to clear open-PR slots #999 #990 #1004 #1000 +
+    post-merge of PR #999's `00326_apps_public_auth_ip_allowlist.sql`
+    on origin/main + the round-4 fence-collision on main's
+    `00327_reserve_slot.sql` + `00328_reserve_slot.sql` fences +
+    main's `00329_consumer_keys.sql` real migration + the round-5
     collision with open PR #1005's
     `00330_deployment_openapi_snapshots.sql` real migration +
     the round-6 contiguity gap created by PR #1005's
@@ -162,9 +162,16 @@
     ADR-123 alert-preset catalog while round-12 was in flight)
     + the round-13 rebase-vs-PR #1012 collision at slot 00352
     (PR #1012 re-fenced its 00347-00351 range and bumped its real
-    migration to 00352 while round-13 was in flight).
-    The backfill sits at
-    `00355_deployment_audit_backfill_90d.sql`. The
+    migration to 00352 while round-13 was in flight) +
+    the round-14 renumber to `00354`+`00355` to clear PR #1012's
+    round-14 re-fence of its slot range + the round-15 bridge
+    fences `00347-00353` to close the synthetic-merge contiguity
+    gap + the round-16 renumber to `00356`+`00357` to clear
+    PR #1024 (ADR-124 deployment queue controls) which opened
+    2026-08-21T19:18Z and claimed slots `00353-00355` for its
+    real migrations `deployments_cancelled` / `builds_cancelled`
+    / `deployments_priority`. The backfill sits at
+    `00357_deployment_audit_backfill_90d.sql`. The
     cross-PR slot precheck
     (`scripts/ci/check_migration_slots.sh --base-ref=origin/main`)
     must be re-run at every push — the open-PR slot landscape
