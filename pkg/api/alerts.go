@@ -56,6 +56,14 @@ const (
 	AlertRuleCooldownMaxMinutes = 1440
 )
 
+// AlertRuleNameMaxBytes is the alert_rules.name column upper
+// bound. Mirrors the alert_rules_name_len_chk DB constraint at
+// migrations/00062_alert_rules.sql:84-86 (`char_length(name)
+// between 1 and 64`). Used by enableAlertPreset to clamp the
+// derived "<preset display_name> (<app slug>)" name so the
+// catalog-side display_name can't blow past the DB cap.
+const AlertRuleNameMaxBytes = 64
+
 // AllowedAlertRuleMetrics is the closed set for the `metric` field.
 // Must match state.AlertMetric's enumerated values byte-for-byte;
 // the handler validates membership before persisting.

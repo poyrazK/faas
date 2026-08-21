@@ -1171,6 +1171,19 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/apps/{slug}/alerts/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAlertRule))))
 	mux.HandleFunc("POST /v1/apps/{slug}/alerts/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAlertRuleSecret))))
 
+	// Alert presets (ADR-123 / issue #1233). Catalog R/O for
+	// customers; instantiate-from-preset reuses the alert-rules
+	// create path (handlers_alert_presets.go). The enable route
+	// is idempotent so SDK retries are safe — the duplicate POST
+	// returns 409 "Preset already enabled" so the caller can
+	// branch on a stale POST without silently no-op'ing. Plan-tier
+	// gate (catalog row's minimum_plan → 402) and disabled-row
+	// gate (enabled_in_catalog=false → 400 alert_preset_disabled)
+	// both fire BEFORE loadApp for the same slug-leak reason
+	// createAlertRule gates on the per-plan cap (PR review F4).
+	mux.HandleFunc("GET /v1/alert-presets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertPresets))))
+	mux.HandleFunc("POST /v1/apps/{slug}/alert-presets/{name}/enable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.enableAlertPreset)))))
+
 	// Edge rules (ADR-089, planned). Customer-facing resource that
 	// runs in pkg/gateway BEFORE host→app resolution. Mirrors the
 	// alert-rules decorator chain: authLimited → requireMFA →

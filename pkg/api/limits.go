@@ -48,6 +48,34 @@ type StreamingStatus string
 // and for deterministic tests — do not reorder.
 var Plans = []Plan{PlanFree, PlanHobby, PlanPro, PlanScale}
 
+// planRank maps a Plan to its rank (Free=0 … Scale=3). The lookup
+// returns -1 for any unknown plan so a closed-set drift surfaces
+// as a clean failure rather than a silent false-positive "you meet
+// the minimum plan". Used by PlanMeetsMinimumPlan to compare tiers
+// in O(1) without parsing Plans on every call.
+var planRank = map[Plan]int{
+	PlanFree:  0,
+	PlanHobby: 1,
+	PlanPro:   2,
+	PlanScale: 3,
+}
+
+// PlanMeetsMinimumPlan returns true iff customer's plan rank is
+// >= minimumPlan's rank. Used by enableAlertPreset to gate the
+// catalog row's minimum_plan before loadApp (so a low-plan
+// customer posting to a non-existent slug gets a 402, not a 404
+// that would leak the slug's existence — same shape as the
+// ErrPlanAlertRulesNotAllowed guard at handlers_alerts.go:158-162).
+// Returns false for unknown plans (closed-set enforcement).
+func PlanMeetsMinimumPlan(customer, minimumPlan Plan) bool {
+	cRank, cOk := planRank[customer]
+	mRank, mOk := planRank[minimumPlan]
+	if !cOk || !mOk {
+		return false
+	}
+	return cRank >= mRank
+}
+
 // GDPR self-service export rate limit (issue #755 / PR-5.1). Single
 // global value (not per-plan) because the cost is per-bundle (one
 // export scans every per-account table) and the abuse case is
