@@ -55,6 +55,24 @@ func DomainDoctorEnabled() bool {
 	return true
 }
 
+// ApiContractDiffEnabled reports whether the API contract diff
+// surface is live. Reads FAAS_API_CONTRACT_DIFF_ENABLED at every
+// call (mirrors DomainDoctorEnabled / TenantSurfacesEnabled;
+// operator can flip the env var and the next PATCH handler
+// picks it up without a daemon bounce). Default off; the table
+// (migration 00358) + capture path (PR-B) + gate (PR-C) are
+// wired but the PATCH handlers short-circuit and the GET
+// endpoint returns 503 feature_disabled until the operator
+// sets the env var. ADR-121.
+func ApiContractDiffEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_API_CONTRACT_DIFF_ENABLED")))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // CertEngineWired reports whether the per-host cert engine has
 // the env configuration it needs to mint. The engine needs:
 //

@@ -1807,6 +1807,38 @@ type Store interface {
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
+	// UpdateDeploymentOpenAPISnapshot writes the projected
+	// OpenAPI snapshot for a deployment (ADR-121, migration
+	// 00314). PR-B captures the snapshot atomically inside
+	// the same tx as the status='live' transition (via
+	// MarkDeploymentLiveWithSnapshot, a PR-B pgstore refactor
+	// that wraps the status UPDATE + snapshot UPSERT in one
+	// tx). PR-C's gate calls LatestOpenAPISnapshotForScope
+	// to load the project's current live snapshot and
+	// Compares it against the pending deployment's snapshot.
+	// The store method is exposed as a public Store seam so
+	// future callers (e.g. a backfill job that captures
+	// snapshots for pre-PR-B deployments) can write the
+	// row without forcing the status='live' transition.
+	UpdateDeploymentOpenAPISnapshot(ctx context.Context, snap OpenAPISnapshot) error
+	// LatestOpenAPISnapshotForScope returns the most recently
+	// captured snapshot for (appID, scope). The PR-C gate
+	// calls it with scope="prod" to find the baseline that
+	// a prod-promotion PATCH must not break. Returns
+	// ErrNotFound when no snapshot row exists for the
+	// (appID, scope) pair — the first promotion ever, or a
+	// pre-PR-B deployment that has no captured row. The
+	// (app_id, scope, captured_at DESC) index (migration
+	// 00314) makes the lookup O(1).
+	LatestOpenAPISnapshotForScope(ctx context.Context, appID, scope string) (OpenAPISnapshot, error)
+	// OpenAPISnapshotByDeployment returns the snapshot row
+	// for a specific deployment id. The PR-C gate calls it
+	// with the deployment id being promoted to load the
+	// "pending" side of the diff. Returns ErrNotFound when
+	// the deployment has no captured snapshot (typically a
+	// pre-PR-B deployment that the operator has not yet
+	// redeployed to capture).
+	OpenAPISnapshotByDeployment(ctx context.Context, deploymentID string) (OpenAPISnapshot, error)
 	// SetDeploymentRootfs records the on-disk path + size + StorageBackend
 	// key of the per-app ext4 layer imaged produced for this deployment
 	// (spec §4.6, drive1). The snapshot-prime handshake reads this when

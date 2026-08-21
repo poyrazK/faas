@@ -175,6 +175,15 @@ type MemStore struct {
 	// field. Mirroring the read path here means handler tests
 	// can exercise the compile-side merge without a live PG.
 	corsPresets map[string]CorsPreset
+	// openAPISnapshots mirrors deployment_openapi_snapshots
+	// (ADR-121, migration 00358). Keyed by deployment_id,
+	// mirroring the table's PK. PR-C's gate reads via
+	// LatestOpenAPISnapshotForScope (linear scan under m.mu)
+	// and OpenAPISnapshotByDeployment (single map lookup).
+	// MemStore parity is required for the gate's handler tests
+	// — the contract is the same Map+slice-walk the production
+	// PgStore implements with an index.
+	openAPISnapshots map[string]OpenAPISnapshot
 	// oidcTrustPolicies is keyed by (accountID, issuerURL) — the
 	// composite primary key shape from migration 00265. The
 	// per-account lookup OIDCTrustPoliciesForAccount is the only
@@ -579,7 +588,8 @@ func NewMemStore() *MemStore {
 		// ADR-120 / issue #975 item #5 — consumer keys. The map is
 		// keyed by ConsumerKey.ID; cross-tenant IDOR guards are
 		// enforced at the read methods (same as the pg path).
-		consumerKeys: map[string]ConsumerKey{},
+		consumerKeys:     map[string]ConsumerKey{},
+		openAPISnapshots: map[string]OpenAPISnapshot{},
 		// ADR-101 / issue #270 — OIDC trust policies + exchanged
 		// bearers. Start empty; tests inject rows directly.
 		oidcTrustPolicies:   map[string]OIDCTrustPolicy{},
@@ -4152,6 +4162,75 @@ func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) erro
 
 func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	return m.UpdateDeploymentStatus(ctx, id, DeployLive, "")
+}
+
+// UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)
+// mirrors pgstore's UPSERT: key by deployment_id, overwrite
+// every column on conflict. Validation matches pgstore
+// (err on empty required fields, schema_version >= 1).
+func (m *MemStore) UpdateDeploymentOpenAPISnapshot(_ context.Context, snap OpenAPISnapshot) error {
+	if snap.DeploymentID == "" {
+		return errors.New("memstore: UpdateDeploymentOpenAPISnapshot: empty deployment_id")
+	}
+	if snap.AppID == "" {
+		return errors.New("memstore: UpdateDeploymentOpenAPISnapshot: empty app_id")
+	}
+	if snap.Scope == "" {
+		return errors.New("memstore: UpdateDeploymentOpenAPISnapshot: empty scope")
+	}
+	if len(snap.Snapshot) == 0 {
+		return errors.New("memstore: UpdateDeploymentOpenAPISnapshot: empty snapshot bytes")
+	}
+	if snap.SHA256 == "" {
+		return errors.New("memstore: UpdateDeploymentOpenAPISnapshot: empty sha256")
+	}
+	if snap.SchemaVersion < 1 {
+		return errors.New("memstore: UpdateDeploymentOpenAPISnapshot: schema_version must be >= 1")
+	}
+	if snap.CapturedAt.IsZero() {
+		snap.CapturedAt = time.Now().UTC()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.openAPISnapshots[snap.DeploymentID] = snap
+	return nil
+}
+
+// LatestOpenAPISnapshotForScope returns the most recently
+// captured snapshot for (appID, scope). MemStore does a linear
+// scan over the openAPISnapshots map (held under m.mu); the
+// map is small (one row per deployment) and the walk is O(N)
+// but bounded by the customer's lifetime deployment count.
+func (m *MemStore) LatestOpenAPISnapshotForScope(_ context.Context, appID, scope string) (OpenAPISnapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best OpenAPISnapshot
+	found := false
+	for _, snap := range m.openAPISnapshots {
+		if snap.AppID != appID || snap.Scope != scope {
+			continue
+		}
+		if !found || snap.CapturedAt.After(best.CapturedAt) {
+			best = snap
+			found = true
+		}
+	}
+	if !found {
+		return OpenAPISnapshot{}, ErrNotFound
+	}
+	return best, nil
+}
+
+// OpenAPISnapshotByDeployment returns the snapshot row for a
+// specific deployment id, or ErrNotFound.
+func (m *MemStore) OpenAPISnapshotByDeployment(_ context.Context, deploymentID string) (OpenAPISnapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	snap, ok := m.openAPISnapshots[deploymentID]
+	if !ok {
+		return OpenAPISnapshot{}, ErrNotFound
+	}
+	return snap, nil
 }
 
 // AppendDeploymentStage (ADR-117, migration 00302) — memstore

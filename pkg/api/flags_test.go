@@ -232,3 +232,40 @@ func TestCertEngineDNSProviderDefaultsCloudflare(t *testing.T) {
 		t.Errorf("CertEngineDNSProvider(unknown) = %q; want %q (safe default)", got, DNSProviderCloudflare)
 	}
 }
+
+// TestApiContractDiffEnabledDefaultsOff asserts the flag is
+// opt-in. The PR-A migration (00314) + capture path (PR-B) +
+// gate wiring (PR-C) all ship behind this flag; a default-on
+// shape would silently block production PATCHes on staging
+// deploys that have no captured snapshot.
+func TestApiContractDiffEnabledDefaultsOff(t *testing.T) {
+	t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", "")
+	if ApiContractDiffEnabled() {
+		t.Fatal("ApiContractDiffEnabled default = true; want false")
+	}
+}
+
+// TestApiContractDiffEnabledAcceptsOnTokens covers the
+// 1/true/yes/on accept set documented in flags.go. Matches
+// the TenantSurfacesEnabled pattern (no trailing-space token —
+// the reader trims).
+func TestApiContractDiffEnabledAcceptsOnTokens(t *testing.T) {
+	for _, v := range []string{"1", "true", "TRUE", "True", "yes", "YES", "on", "ON"} {
+		t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", v)
+		if !ApiContractDiffEnabled() {
+			t.Errorf("ApiContractDiffEnabled(%q) = false; want true", v)
+		}
+	}
+}
+
+// TestApiContractDiffEnabledRejectsOtherTokens pins the closed
+// accept set so a typo (e.g. "enabled", "1\n") doesn't
+// silently enable the gate.
+func TestApiContractDiffEnabledRejectsOtherTokens(t *testing.T) {
+	for _, v := range []string{"enabled", "truthy", "0", "no", "off", "false"} {
+		t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", v)
+		if ApiContractDiffEnabled() {
+			t.Errorf("ApiContractDiffEnabled(%q) = true; want false", v)
+		}
+	}
+}

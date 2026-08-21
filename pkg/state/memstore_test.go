@@ -5445,3 +5445,198 @@ func TestMemStoreUpdateTrigger_FilterCriteriaPersists(t *testing.T) {
 		t.Errorf("after replacement patch, got %q, want %q", got.FilterCriteria, replacement)
 	}
 }
+
+// TestMemStore_OpenAPISnapshot_RoundTrip (ADR-121, migration 00358)
+// pins the MemStore parity for the contract-diff snapshot store.
+// The PR-C gate reads via LatestOpenAPISnapshotForScope and
+// OpenAPISnapshotByDeployment; both reads must surface the row
+// that UpdateDeploymentOpenAPISnapshot wrote.
+func TestMemStore_OpenAPISnapshot_RoundTrip(t *testing.T) {
+	s := NewMemStore()
+	ctx := context.Background()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	snap := OpenAPISnapshot{
+		DeploymentID:  "dep-1",
+		AppID:         "app-1",
+		Scope:         "prod",
+		Snapshot:      json.RawMessage(`{"schema_version":1,"spec":{}}`),
+		SHA256:        "0000000000000000000000000000000000000000000000000000000000000000",
+		SchemaVersion: 1,
+		CapturedAt:    now,
+	}
+	if err := s.UpdateDeploymentOpenAPISnapshot(ctx, snap); err != nil {
+		t.Fatalf("UpdateDeploymentOpenAPISnapshot: %v", err)
+	}
+
+	// By-deployment lookup.
+	got, err := s.OpenAPISnapshotByDeployment(ctx, "dep-1")
+	if err != nil {
+		t.Fatalf("OpenAPISnapshotByDeployment: %v", err)
+	}
+	if got.DeploymentID != snap.DeploymentID || got.AppID != snap.AppID || got.Scope != snap.Scope {
+		t.Errorf("round-trip mismatch: got %+v vs %+v", got, snap)
+	}
+	if string(got.Snapshot) != string(snap.Snapshot) {
+		t.Errorf("Snapshot bytes round-trip mismatch")
+	}
+	if got.SHA256 != snap.SHA256 || got.SchemaVersion != snap.SchemaVersion {
+		t.Errorf("metadata round-trip mismatch: got %+v", got)
+	}
+	if !got.CapturedAt.Equal(now) {
+		t.Errorf("CapturedAt round-trip: got %v want %v", got.CapturedAt, now)
+	}
+
+	// By-scope lookup.
+	got2, err := s.LatestOpenAPISnapshotForScope(ctx, "app-1", "prod")
+	if err != nil {
+		t.Fatalf("LatestOpenAPISnapshotForScope: %v", err)
+	}
+	if got2.DeploymentID != "dep-1" {
+		t.Errorf("LatestOpenAPISnapshotForScope: got %q", got2.DeploymentID)
+	}
+}
+
+// TestMemStore_OpenAPISnapshot_LatestByScope prefers the most
+// recent captured_at across multiple captures for the same
+// (appID, scope). The PR-C gate's "current live baseline" lookup
+// depends on this ordering.
+func TestMemStore_OpenAPISnapshot_LatestByScope(t *testing.T) {
+	s := NewMemStore()
+	ctx := context.Background()
+
+	older := OpenAPISnapshot{
+		DeploymentID:  "dep-older",
+		AppID:         "app-1",
+		Scope:         "prod",
+		Snapshot:      json.RawMessage(`{"schema_version":1}`),
+		SHA256:        "1111111111111111111111111111111111111111111111111111111111111111",
+		SchemaVersion: 1,
+		CapturedAt:    time.Now().UTC().Add(-time.Hour).Truncate(time.Second),
+	}
+	newer := OpenAPISnapshot{
+		DeploymentID:  "dep-newer",
+		AppID:         "app-1",
+		Scope:         "prod",
+		Snapshot:      json.RawMessage(`{"schema_version":1}`),
+		SHA256:        "2222222222222222222222222222222222222222222222222222222222222222",
+		SchemaVersion: 1,
+		CapturedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	if err := s.UpdateDeploymentOpenAPISnapshot(ctx, older); err != nil {
+		t.Fatalf("UpdateDeploymentOpenAPISnapshot older: %v", err)
+	}
+	if err := s.UpdateDeploymentOpenAPISnapshot(ctx, newer); err != nil {
+		t.Fatalf("UpdateDeploymentOpenAPISnapshot newer: %v", err)
+	}
+	got, err := s.LatestOpenAPISnapshotForScope(ctx, "app-1", "prod")
+	if err != nil {
+		t.Fatalf("LatestOpenAPISnapshotForScope: %v", err)
+	}
+	if got.DeploymentID != "dep-newer" {
+		t.Errorf("LatestOpenAPISnapshotForScope must pick newer; got %q", got.DeploymentID)
+	}
+}
+
+// TestMemStore_OpenAPISnapshot_NotFound_Missing pins the
+// ErrNotFound contract for both read paths.
+func TestMemStore_OpenAPISnapshot_NotFound_Missing(t *testing.T) {
+	s := NewMemStore()
+	ctx := context.Background()
+
+	if _, err := s.OpenAPISnapshotByDeployment(ctx, "missing-dep"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("OpenAPISnapshotByDeployment missing: expected ErrNotFound, got %v", err)
+	}
+	if _, err := s.LatestOpenAPISnapshotForScope(ctx, "missing-app", "prod"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("LatestOpenAPISnapshotForScope missing: expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestMemStore_OpenAPISnapshot_ScopeIsolation pins that
+// LatestOpenAPISnapshotForScope does not leak across scopes.
+// Staging vs prod must not collide.
+func TestMemStore_OpenAPISnapshot_ScopeIsolation(t *testing.T) {
+	s := NewMemStore()
+	ctx := context.Background()
+
+	prodSnap := OpenAPISnapshot{
+		DeploymentID: "dep-prod", AppID: "app-1", Scope: "prod",
+		Snapshot:      json.RawMessage(`{"schema_version":1}`),
+		SHA256:        "3333333333333333333333333333333333333333333333333333333333333333",
+		SchemaVersion: 1,
+		CapturedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	stageSnap := OpenAPISnapshot{
+		DeploymentID: "dep-stage", AppID: "app-1", Scope: "staging",
+		Snapshot:      json.RawMessage(`{"schema_version":1}`),
+		SHA256:        "4444444444444444444444444444444444444444444444444444444444444444",
+		SchemaVersion: 1,
+		CapturedAt:    time.Now().UTC().Truncate(time.Second),
+	}
+	if err := s.UpdateDeploymentOpenAPISnapshot(ctx, prodSnap); err != nil {
+		t.Fatalf("prod: %v", err)
+	}
+	if err := s.UpdateDeploymentOpenAPISnapshot(ctx, stageSnap); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	got, err := s.LatestOpenAPISnapshotForScope(ctx, "app-1", "prod")
+	if err != nil {
+		t.Fatalf("LatestOpenAPISnapshotForScope prod: %v", err)
+	}
+	if got.DeploymentID != "dep-prod" {
+		t.Errorf("prod scope must return prod snapshot; got %q", got.DeploymentID)
+	}
+	got, err = s.LatestOpenAPISnapshotForScope(ctx, "app-1", "staging")
+	if err != nil {
+		t.Fatalf("LatestOpenAPISnapshotForScope staging: %v", err)
+	}
+	if got.DeploymentID != "dep-stage" {
+		t.Errorf("staging scope must return staging snapshot; got %q", got.DeploymentID)
+	}
+}
+
+// TestMemStore_OpenAPISnapshot_Validation mirrors the
+// pgstore validation guards. MemStore must reject the same
+// inputs the pgstore CHECK + NOT NULL constraints would
+// reject.
+func TestMemStore_OpenAPISnapshot_Validation(t *testing.T) {
+	s := NewMemStore()
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		snap OpenAPISnapshot
+	}{
+		{
+			name: "empty deployment_id",
+			snap: OpenAPISnapshot{AppID: "a", Scope: "s", Snapshot: json.RawMessage(`{}`), SHA256: "ff"},
+		},
+		{
+			name: "empty app_id",
+			snap: OpenAPISnapshot{DeploymentID: "d", Scope: "s", Snapshot: json.RawMessage(`{}`), SHA256: "ff"},
+		},
+		{
+			name: "empty scope",
+			snap: OpenAPISnapshot{DeploymentID: "d", AppID: "a", Snapshot: json.RawMessage(`{}`), SHA256: "ff"},
+		},
+		{
+			name: "empty snapshot",
+			snap: OpenAPISnapshot{DeploymentID: "d", AppID: "a", Scope: "s", SHA256: "ff"},
+		},
+		{
+			name: "empty sha256",
+			snap: OpenAPISnapshot{DeploymentID: "d", AppID: "a", Scope: "s", Snapshot: json.RawMessage(`{}`)},
+		},
+		{
+			name: "schema_version < 1",
+			snap: OpenAPISnapshot{DeploymentID: "d", AppID: "a", Scope: "s", Snapshot: json.RawMessage(`{}`), SHA256: "ff", SchemaVersion: 0},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := s.UpdateDeploymentOpenAPISnapshot(ctx, tc.snap); err == nil {
+				t.Errorf("UpdateDeploymentOpenAPISnapshot(%s) accepted malformed input", tc.name)
+			}
+		})
+	}
+}

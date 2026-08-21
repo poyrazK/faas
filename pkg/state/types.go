@@ -1366,6 +1366,37 @@ type Deployment struct {
 	PRNumber   int    `json:"pr_number,omitempty"`
 }
 
+// OpenAPISnapshot is the projected-customer-OpenAPI snapshot
+// captured at a deployment's status='live' transition (ADR-121,
+// migration 00358). One row per deployment; the PR-C gate
+// compares the pending deployment's snapshot against the
+// current live deployment's snapshot at the same scope and
+// rejects prod-scope promotions that emit a SeverityError
+// break.
+//
+// Snapshot is the canonical JSON of pkg/openapidiff.Spec —
+// produced by pkg/openapidiff.MarshalSnapshot. SHA-256 is the
+// hex-64 digest of the same canonical bytes; the migration
+// pins the digest shape via a CHECK constraint. SchemaVersion
+// starts at 1; bump on a breaking serializer change (and a
+// separate migration that widens the schema_version CHECK).
+//
+// Scope is the per-deployment env targeting (deployed.scope
+// column) — the gate looks up the latest snapshot for
+// (app_id, scope="prod") and rejects the promotion when the
+// differ emits a break. The schema's scope CHECK mirrors
+// deployments_scope_shape so cross-table lookups never drop
+// rows on a regex mismatch.
+type OpenAPISnapshot struct {
+	DeploymentID  string
+	AppID         string
+	Scope         string
+	Snapshot      json.RawMessage
+	SHA256        string
+	SchemaVersion int
+	CapturedAt    time.Time
+}
+
 // StageState is the typed view of the
 // `deployments.stage_state` jsonb column (ADR-117,
 // migration 00302). Shape:
