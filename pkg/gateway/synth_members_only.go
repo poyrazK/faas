@@ -72,13 +72,22 @@ func (s *SynthServer) WithMembersOnlyPrincipalExtractor(e CookiePrincipalExtract
 // 500s with the operator_error "misconfig" posture (same
 // shape as the HTTP-front-door side's empty-orgid branch).
 // Production wires the same per-app cache the Handler
-// consults (cmd/gatewayd-internal/run.go) so a cache miss
-// returns "" which the gate treats as "misconfig" for
-// members_only mode only — public-mode apps retain their
-// pre-existing wake behaviour bit-for-bit. The lookup
-// takes a context so the request's ctx (with timeout /
-// cancel chain) flows into the per-app store call.
-func (s *SynthServer) WithAppOrgIDLookup(lookup func(ctx context.Context, appID string) string) *SynthServer {
+// consults (cmd/gatewayd-internal/run.go). The lookup
+// returns (orgID, err) so the gate can distinguish:
+//
+//   - ("", nil)  → the row is missing or pre-#190 (org_id
+//     was NULL). Operator-misconfig: 500 (the loud posture).
+//   - ("", non-nil error) → transient pg failure. 503:
+//     the per-app store call failed (connection refused,
+//     timeout, etc.). NOT a misconfig — the next request
+//     will retry against the same LRU entry. Surfacing 500
+//     would mask the real cause (operator sees a misconfig
+//     alert for what is actually a pg outage).
+//   - ("<uuid>", nil) → success.
+//
+// The lookup takes a context so the request's ctx (with
+// timeout / cancel chain) flows into the per-app store call.
+func (s *SynthServer) WithAppOrgIDLookup(lookup func(ctx context.Context, appID string) (string, error)) *SynthServer {
 	s.appOrgID = lookup
 	return s
 }
@@ -152,7 +161,35 @@ func (s *SynthServer) applyIngressMembersOnly(w http.ResponseWriter, r *http.Req
 			"members_only mode requires the per-app OrgID lookup"))
 		return true
 	}
-	orgID := s.appOrgID(r.Context(), appID)
+	orgID, err := s.appOrgID(r.Context(), appID)
+	if err != nil {
+		// Transient pg failure — distinct from the
+		// "row missing / org_id is NULL" misconfig
+		// branch below. The cron path is best-effort
+		// (synth handler isn't a customer-facing
+		// surface), but a sustained pg outage
+		// shouldn't 500 every cron fire — 503 (the
+		// "service unavailable, retry later" wire
+		// posture) lets schedd back off naturally.
+		// The next request retries the same LRU
+		// entry; sustained failures surface in the
+		// operator dashboard via the dep-store's
+		// error metric.
+		if s.metrics != nil {
+			s.metrics.ObserveEdgeRuleMatch("ingress_members", "blocked")
+			s.metrics.ObserveEdgeRuleApply("ingress_members", "error")
+		}
+		if s.log != nil {
+			s.log.Warn("members_only app org_id lookup failed (transient)",
+				"app_id", appID,
+				"err", err.Error())
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+			api.CodeWaitForWarm,
+			"Service temporarily unavailable",
+			"members_only mode could not resolve the app's org_id; retry"))
+		return true
+	}
 	if orgID == "" {
 		if s.metrics != nil {
 			s.metrics.ObserveEdgeRuleMatch("ingress_members", "blocked")
@@ -175,7 +212,7 @@ func (s *SynthServer) applyIngressMembersOnly(w http.ResponseWriter, r *http.Req
 		// distinguishes a cron-fired denial from a
 		// human-fired one.
 		if s.synthAuditEmit != nil {
-			s.synthAuditEmit(r.Context(), "instances.public_auth_members_blocked", nil, map[string]any{
+			s.synthAuditEmit(r.Context(), "edge_rule.ingress_members_blocked", nil, map[string]any{
 				"app_id": appID,
 				"from":   from,
 				"reason": "no_cookie_principal",
@@ -195,7 +232,7 @@ func (s *SynthServer) applyIngressMembersOnly(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		if errors.Is(err, authz.ErrMembershipLookup) {
 			if s.synthAuditEmit != nil {
-				s.synthAuditEmit(r.Context(), "instances.public_auth_members_blocked", nil, map[string]any{
+				s.synthAuditEmit(r.Context(), "edge_rule.ingress_members_blocked", nil, map[string]any{
 					"app_id":           appID,
 					"from":             from,
 					"reason":           "lookup_error",
@@ -227,7 +264,7 @@ func (s *SynthServer) applyIngressMembersOnly(w http.ResponseWriter, r *http.Req
 	}
 	if !member {
 		if s.synthAuditEmit != nil {
-			s.synthAuditEmit(r.Context(), "instances.public_auth_members_blocked", nil, map[string]any{
+			s.synthAuditEmit(r.Context(), "edge_rule.ingress_members_blocked", nil, map[string]any{
 				"app_id":           appID,
 				"from":             from,
 				"reason":           "not_member",

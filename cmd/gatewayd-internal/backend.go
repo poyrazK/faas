@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -212,27 +213,25 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	// hit-once-per-TTL rather than per-request, so the extra
 	// round-trip is bounded by the LRU hit ratio. Returns
 	// "" on (a) pre-#190 rows where apps.org_id was NULL +
-	// (b) ErrNotFound paths; the gate surfaces 500 only
-	// when an app is in members_only mode AND org_id is
-	// empty (the loud posture from applyIngressMembersOnly).
+	// (b) ErrNotFound paths (the app was deleted between the
+	// AppByID and the AppOrgID SELECT — extremely rare);
+	// surfaces the error otherwise. The gate uses
+	// empty-OrgID + nil-error to mean "misconfig" (500) and
+	// empty-OrgID + non-nil error to mean "transient pg
+	// failure" (503). The caller chain (customDomain /
+	// customPath / AccountBySlug) already returns (App, bool,
+	// error), so propagating here is a one-line change at the
+	// toApp exit.
 	orgID, err := r.store.AppOrgID(ctx, app.ID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		// Transient DB blip during route resolution
-		// should not 502 every request for a public-mode
-		// app — keep going with orgID=""; the gate's
-		// empty-orgid branch surfaces the loud 500 ONLY
-		// when an app is in members_only mode AND
-		// org_id is empty (defence in depth). The
-		// pgRouter has no logger field of its own; the
-		// ErrNotFound path is the only failure mode a
-		// table-row missing would produce, and the
-		// per-host LRU cache layers the lookup on top
-		// of a store.AppByID call that already
-		// succeeded (so a true ErrNotFound here means
-		// the app was deleted between the AppByID and
-		// the AppOrgID SELECT — extremely rare, not
-		// worth a field on pgRouter).
-		orgID = ""
+		// Transient pg error — propagate so the upstream
+		// handler returns 503 instead of the gate's
+		// 500-misconfig 4xx. The LRU is empty-cached for
+		// this app (first-sight), so the next request will
+		// retry the lookup; sustained failures surface in
+		// the operator dashboard via the dep-store's
+		// error metric (pkg/state.StoreError).
+		return gateway.App{}, false, fmt.Errorf("AppOrgID for %s: %w", app.ID, err)
 	}
 	return gateway.App{
 		ID:               app.ID,
