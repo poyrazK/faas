@@ -119,7 +119,7 @@ type Config struct {
 	// the apid_tenant_surface_cert_expiry_seconds gauge (the
 	// metric name keeps the legacy apid_ prefix for backward-
 	// compat with already-deployed alert rules; the table itself
-	// moved to meterd_ in migrations/00356 per the CLAUDE.md
+	// moved to meterd_ in migrations/00361 per the CLAUDE.md
 	// ownership rule).
 	// Zero means the production default (1 h). The renewer bot
 	// rotates certs daily, so 1 h keeps the gauge within ~4 % of

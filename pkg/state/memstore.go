@@ -181,12 +181,12 @@ type MemStore struct {
 	// AlertPresetByName which scans the map (8 rows, O(N) is fine).
 	alertPresets map[string]AlertPreset
 	// accountSpendSnapshots mirrors account_spend_snapshot
-	// (migrations/00355). meterd appends one row per tick; the
+	// (migrations/00360). meterd appends one row per tick; the
 	// alert evaluator's MTDSpendEurCents walks the map for the
 	// MTD-window SUM. Keyed by ID.
 	accountSpendSnapshots map[string]AccountSpendSnapshot
 	// tenantSurfaceCertExpiryStates mirrors
-	// meterd_tenant_surface_cert_expiry_state (migrations/00356).
+	// meterd_tenant_surface_cert_expiry_state (migrations/00361).
 	// The meterd cert-expiry refresher goroutine (PR-A wiring)
 	// upserts rows; the alert evaluator's MinCertExpiryForApp
 	// walks the map for the smallest remaining-seconds value.

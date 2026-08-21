@@ -101,7 +101,7 @@ func TruncateRunes(s string, maxRunes int) string {
 // Issue #1233 / ADR-123 — extended from 7 to 12 metrics for the alert
 // preset catalog (api_up, account_spend_eur, deployment_failed,
 // cert_expiry_seconds, queue_depth). The DB CHECK constraint on
-// alert_rules.metric mirrors this list — see migrations/00354.
+// alert_rules.metric mirrors this list — see migrations/00359.
 var AllowedAlertRuleMetrics = []string{
 	"error_rate_pct",
 	"latency_p50_ms",

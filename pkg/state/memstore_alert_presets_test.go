@@ -1,7 +1,7 @@
 // Package state — MemStore alert_presets catalog tests (issue #1233 /
 // ADR-123).
 //
-// The catalog is system-seeded in production by migrations/00353_alert_presets_seed.sql;
+// The catalog is system-seeded in production by migrations/00358_alert_presets_seed.sql;
 // NewMemStore leaves the map empty so a test must seed its own
 // rows. The two methods under test (ListAlertPresets,
 // AlertPresetByName) are thin O(N) scans; the test pins the

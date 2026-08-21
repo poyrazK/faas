@@ -67,7 +67,7 @@ type CertExpiryRefresherParams struct {
 // apid_tenant_surface_cert_expiry_seconds{account_id, app_id,
 // hostname} gauge. The metric name keeps the legacy apid_ prefix
 // for backward-compat with deployed alert rules; the owning
-// table moved to meterd_ in migrations/00356 per the CLAUDE.md
+// table moved to meterd_ in migrations/00361 per the CLAUDE.md
 // ownership rule. Stale rows (last_refreshed_at older than
 // 2× interval) are reset to 0 so the alert evaluator's
 // degraded-source branch (mirroring pkg/alerts/evaluator.go:505)

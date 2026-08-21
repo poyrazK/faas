@@ -4804,7 +4804,7 @@ paths:
 
   # ─── Alert presets (ADR-123 / issue #1233) ───────────────────────────────
   # Catalog of one-click alert presets. The catalog is R/O for
-  # customers (system-seeded via migration 00353). Enabling a
+  # customers (system-seeded via migration 00358). Enabling a
   # preset clones it into a real alert_rules row via the existing
   # quota path; the row is owned by the customer from then on
   # (PATCH/DELETE/rotate-secret all work on the cloned row).
