@@ -620,20 +620,22 @@ const testDomain = "apps.test.example"
 // migration land touches in this file is this constant + the doc-comment
 // history above.
 //
-// PR #990 (ADR-117 PR-C, env-diff matrix) bumped 313 → 327 → 340 → 347
-// across nine rebump rounds. The value_hash column lands at
-// 00347_app_secret_value_hash.sql (HMAC-SHA256 of plaintext, truncated
+// PR #990 (ADR-117 PR-C, env-diff matrix) bumped 313 → 327 → 340 → 347 → 352
+// across ten rebump rounds. The value_hash column lands at
+// 00352_app_secret_value_hash.sql (HMAC-SHA256 of plaintext, truncated
 // to 16 hex — the trustworthy value-equality discriminator for the
 // GET /v1/apps/{slug}/env-diff matrix). Slot rebump chain
-// 291 → 296 → 303 → 309 → 314 → 321 → 322 → 327 → 340 → 347, with
+// 291 → 296 → 303 → 309 → 314 → 321 → 322 → 327 → 340 → 347 → 352, with
 // alt-name reservations (NNNNN_no_op_slot_reservation.sql, ADR-041
-// carve-out) at slots 330-346 to bridge contiguity past PR #999's
-// 00326 + PR #1004's 00322-00324 + PR #1000's 00329 + PR #1009's
-// 00333 + PR #1010's 00341 + PR #1008's 00345 + PR #984's 00346.
-// Round 9 forced by PR #1009 (apps_public_auth_internal_only at 00333)
-// + PR #1008 (edge_rules_kind_cache at 00345) + PR #984
-// (deployments_annotation at 00346) advancing the floor.
-const e2eMigrationTarget = 347
+// carve-out) at slots 330-346 in round 7/8 to bridge contiguity past
+// PR #999's 00326 + PR #1004's 00322-00324 + PR #1000's 00329 +
+// PR #1009's 00333 + PR #1010's 00341 + PR #1008's 00345 + PR #984's
+// 00346. Round 9 forced by PR #1009 (apps_public_auth_internal_only
+// at 00333) + PR #1008 (edge_rules_kind_cache at 00345) + PR #984
+// (deployments_annotation at 00346) advancing the floor. Round 10
+// forced by PR #1017 (ADR-123 alert_presets at 00347-00351) claiming
+// slot 00347 after the round-9 push.
+const e2eMigrationTarget = 352
 
 // StartWithEnv is the G2-aware entrypoint used by the secrets e2e:
 // the test wants apid to load a specific host.age.pub (FAAS_HOST_AGE_

@@ -1,4 +1,4 @@
-// migrations/00347_app_secret_value_hash_test.go — pins the
+// migrations/00352_app_secret_value_hash_test.go — pins the
 // shape of the value_hash column on app_secrets (ADR-117 PR-C).
 
 //go:build pg
@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func Test_00347_AppSecretValueHash(t *testing.T) {
+func Test_00352_AppSecretValueHash(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
