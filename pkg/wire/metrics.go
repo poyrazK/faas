@@ -548,6 +548,34 @@ type OpsMetrics struct {
 	// alertEvalFiredTotal / alertEvalSkippedDegradedTotal for the
 	// operator's "is meterd actually evaluating rules?" view.
 	alertEvaluatorEnabled prometheus.Gauge
+
+	// Issue #1233 / ADR-123 — alert-preset signal gauges.
+	// meterdApiReachable (account_id, app_id) is fed by the
+	// meterd reachability tick — a per-app gauge of
+	// {1: invoked successfully in last 5m, 0: cold/quiet}.
+	// Cardinity is bounded by the per-plan app cap (Hobby 5,
+	// Pro 25, Scale 100).
+	meterdApiReachable *prometheus.GaugeVec
+	// meterdAccountSpendEur (account_id) is the MTD EUR spend
+	// computed by the meterd tick loop and stamped every
+	// AlertEvalInterval. Cardinity is bounded by account count.
+	meterdAccountSpendEur *prometheus.GaugeVec
+	// apidDeploymentFailedTotal (account_id, app_id) is the
+	// per-app failed-deployment counter the alert evaluator's
+	// deployment_failed metric reads. Fed by the apid
+	// SetDeploymentFailed callback.
+	apidDeploymentFailedTotal *prometheus.CounterVec
+	// apidTenantSurfaceCertExpirySeconds (account_id, app_id,
+	// hostname) is the per-host cert-expiry gauge fed by the
+	// apid_tenant_surface_cert_expiry_state walker. The alert
+	// evaluator's cert_expiry_seconds metric reads MIN across
+	// the label set.
+	apidTenantSurfaceCertExpirySeconds *prometheus.GaugeVec
+	// apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal
+	// (result) is the walker's fleet-level status gauge —
+	// {ok, error} closed vocabulary. Surfaces a healthy vs
+	// failing walker for the §12 self-healing alert.
+	apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal *prometheus.CounterVec
 	// standbyState — operator-facing enum gauge stamped by
 	// gatewayd-public on every active-passive HA state transition
 	// (Tier A8 / ADR-083). Values are 1/2/3 mapped to the
@@ -1870,6 +1898,31 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// gauge series would otherwise look like "never scraped", which
 	// Prometheus treats as a missing time series rather than zero.
 	alertEvaluatorEnabled.Set(0)
+
+	// Issue #1233 / ADR-123 — alert-preset signal gauges.
+	meterdApiReachable := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_api_reachable",
+		Help: "Per-{account_id, app_id} binary gauge of whether the app has served a successful invocation in the last AlertEvalInterval window. 1 = reachable, 0 = cold/quiet. Backs the alert preset api_down (issue #1233 / ADR-123). Cardinity is bounded by per-plan app caps (Hobby 5 / Pro 25 / Scale 100).",
+	}, []string{"account_id", "app_id"})
+	meterdAccountSpendEur := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_account_spend_eur",
+		Help: "Per-{account_id} MTD EUR spend, recomputed by the meterd tick loop every AlertEvalInterval. Backs the alert preset spend_eur_20. Cardinity is bounded by account count.",
+	}, []string{"account_id"})
+	apidDeploymentFailedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_deployment_failed_total",
+		Help: "Per-{account_id, app_id} counter of deployment failures (status='failed'). Backs the alert preset deploy_failed. Unbounded but bounded by deployments table lifetime.",
+	}, []string{"account_id", "app_id"})
+	apidTenantSurfaceCertExpirySeconds := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_tenant_surface_cert_expiry_seconds",
+		Help: "Per-{account_id, app_id, hostname} remaining-seconds gauge for the apid_tenant_surface_cert_expiry_state walker. Backs the alert preset cert_expiring_14d. Cardinity is bounded by per-tenant surface count.",
+	}, []string{"account_id", "app_id", "hostname"})
+	apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_tenant_surface_cert_expiry_refresher_walk_complete_total",
+		Help: "Per-{result} walker status counter for the apid_tenant_surface_cert_expiry refresher (issue #1233 / ADR-123). Closed vocabulary {ok, error}. Surfaces a healthy vs failing walker for the §12 self-healing alert.",
+	}, []string{"result"})
+	for _, r := range []string{"ok", "error"} {
+		apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal.WithLabelValues(r)
+	}
 	imagedOCIPull := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_oci_pull_duration_seconds",
 		Help: "Latency of imaged's OCI registry pulls (manifest, config, blob, above-base), in seconds. Sized to api.OCIPullTimeoutSeconds (60 s).",
@@ -3046,6 +3099,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		paddleWebhookVerifyFailedTotal:       paddleWebhookVerifyFailedTotal,
 		paddleWebhookReplaySuppressedTotal:   paddleWebhookReplaySuppressedTotal,
 		alertEvaluatorEnabled:                alertEvaluatorEnabled,
+		meterdApiReachable:                   meterdApiReachable,
+		meterdAccountSpendEur:                meterdAccountSpendEur,
+		apidDeploymentFailedTotal:            apidDeploymentFailedTotal,
+		apidTenantSurfaceCertExpirySeconds:   apidTenantSurfaceCertExpirySeconds,
+		apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal: apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal,
 		pgBackupLastPushed:                   pgBackupLastPushed,
 		ipLabels:                             newIPLabelSet(maxIPLabelValues),
 		topTenantRPS:                         topTenantRPS,
@@ -4697,6 +4755,72 @@ func (m *OpsMetrics) AlertDeliveryAttemptsTotal(outcome string) func() {
 		return func() {}
 	}
 	m.alertDeliveryAttemptsTotal.WithLabelValues(outcome).Inc()
+	return func() {}
+}
+
+// MeterdApiReachable returns the per-{account_id, app_id} gauge fed by
+// the meterd reachability tick. Issue #1233 / ADR-123 backs the
+// alert preset api_down — 1 = invoked successfully in the last
+// AlertEvalInterval window, 0 = cold/quiet. Returns nil on a nil
+// receiver; callers must handle the zero value when registering an
+// alert rule.
+func (m *OpsMetrics) MeterdApiReachable() *prometheus.GaugeVec {
+	if m == nil {
+		return nil
+	}
+	return m.meterdApiReachable
+}
+
+// MeterdAccountSpendEur returns the per-{account_id} MTD EUR-spend
+// gauge fed by the meterd spend aggregator. Issue #1233 / ADR-123
+// backs the alert preset spend_eur_20. Returns nil on a nil receiver.
+func (m *OpsMetrics) MeterdAccountSpendEur() *prometheus.GaugeVec {
+	if m == nil {
+		return nil
+	}
+	return m.meterdAccountSpendEur
+}
+
+// ApidDeploymentFailedTotal returns the per-{account_id, app_id}
+// failed-deployment counter fed by the apid SetDeploymentFailed
+// callback. Issue #1233 / ADR-123 backs the alert preset
+// deploy_failed. Returns nil on a nil receiver.
+func (m *OpsMetrics) ApidDeploymentFailedTotal() *prometheus.CounterVec {
+	if m == nil {
+		return nil
+	}
+	return m.apidDeploymentFailedTotal
+}
+
+// ApidTenantSurfaceCertExpirySeconds returns the per-{account_id,
+// app_id, hostname} remaining-seconds gauge fed by the
+// apid_tenant_surface_cert_expiry refresher. Issue #1233 / ADR-123
+// backs the alert preset cert_expiring_14d. Returns nil on a nil
+// receiver.
+func (m *OpsMetrics) ApidTenantSurfaceCertExpirySeconds() *prometheus.GaugeVec {
+	if m == nil {
+		return nil
+	}
+	return m.apidTenantSurfaceCertExpirySeconds
+}
+
+// ApidTenantSurfaceCertExpiryRefresherWalkCompleteTotal increments
+// the walker status counter with the closed-vocabulary {ok, error}
+// outcome. Used by the apid_tenant_surface_cert_expiry refresher at
+// issue #1233 / ADR-123 — surfaces a healthy vs failing walker for
+// the §12 self-healing alert. Returns a no-op closure on a nil
+// receiver or an unknown result.
+func (m *OpsMetrics) ApidTenantSurfaceCertExpiryRefresherWalkCompleteTotal(result string) func() {
+	if m == nil {
+		return func() {}
+	}
+	switch result {
+	case "ok", "error":
+		// admitted
+	default:
+		return func() {}
+	}
+	m.apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal.WithLabelValues(result).Inc()
 	return func() {}
 }
 
