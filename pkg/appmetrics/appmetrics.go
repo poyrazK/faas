@@ -179,6 +179,25 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		return degradedFromErr(resp, err, log, "wake_p95")
 	}
 
+	// 7b. Issue #1233 / ADR-123 — per-app wake queue depth
+	// (gateway_queue_depth{app}). The alert preset
+	// queue_backlog_growing fires when this exceeds the threshold
+	// over the window; the public metrics endpoint surfaces it
+	// for dashboard parity. Querying the latest sample (not a
+	// rate) since the gauge reflects current waiters, not a
+	// delta — the alert path's windowed comparison uses the same
+	// query so the gauge is the live value, not an average.
+	qDepthQ := fmt.Sprintf(`gateway_queue_depth{app=%q}`, appID)
+	if v, err := fetcher.QueryScalar(ctx, qDepthQ); err == nil {
+		resp.QueueDepth = int64(SafeRoundNonNeg(v))
+	} else {
+		// Best-effort: a Prometheus failure here degrades the
+		// queue_depth field but does NOT flip the whole response
+		// to degraded — the rest of the per-app panel is still
+		// useful, mirroring the egress_bytes pattern below.
+		resp.QueueDepth = 0
+	}
+
 	// 8. ADR-046 (step 10): per-app egress byte delta over
 	// the window. Source: the schedd Prom rollup of
 	// usage_minutes.net_tx_bytes (PR-2 wires the rollup;

@@ -175,6 +175,22 @@ type MemStore struct {
 	// field. Mirroring the read path here means handler tests
 	// can exercise the compile-side merge without a live PG.
 	corsPresets map[string]CorsPreset
+	// alertPresets mirrors alert_presets (issue #1233 / ADR-123).
+	// System-owned catalog; only the seed migrations write these.
+	// Keyed by preset.ID — the apid enable handler reads via
+	// AlertPresetByName which scans the map (8 rows, O(N) is fine).
+	alertPresets map[string]AlertPreset
+	// accountSpendSnapshots mirrors account_spend_snapshot
+	// (migrations/00350). meterd appends one row per tick; the
+	// alert evaluator's MTDSpendEurCents walks the map for the
+	// MTD-window SUM. Keyed by ID.
+	accountSpendSnapshots map[string]AccountSpendSnapshot
+	// tenantSurfaceCertExpiryStates mirrors
+	// apid_tenant_surface_cert_expiry_state (migrations/00351).
+	// The apid refresher goroutine (PR-A wiring) upserts rows; the
+	// alert evaluator's MinCertExpiryForApp walks the map for the
+	// smallest remaining-seconds value.
+	tenantSurfaceCertExpiryStates map[string]TenantSurfaceCertExpiryState
 	// oidcTrustPolicies is keyed by (accountID, issuerURL) — the
 	// composite primary key shape from migration 00265. The
 	// per-account lookup OIDCTrustPoliciesForAccount is the only
@@ -576,6 +592,9 @@ func NewMemStore() *MemStore {
 		alertClaimKeys:       map[string]time.Time{},
 		edgeRules:            map[string]EdgeRule{},
 		corsPresets:          map[string]CorsPreset{},
+		alertPresets:         map[string]AlertPreset{},
+		accountSpendSnapshots: map[string]AccountSpendSnapshot{},
+		tenantSurfaceCertExpiryStates: map[string]TenantSurfaceCertExpiryState{},
 		// ADR-120 / issue #975 item #5 — consumer keys. The map is
 		// keyed by ConsumerKey.ID; cross-tenant IDOR guards are
 		// enforced at the read methods (same as the pg path).
@@ -10968,6 +10987,181 @@ func (m *MemStore) GetCorsPresetByID(_ context.Context, accountID, id string) (C
 		return CorsPreset{}, ErrNotFound
 	}
 	return p, nil
+}
+
+// --- alert_presets (issue #1233, ADR-123) -----------------------------------
+
+// ListAlertPresets mirrors the pgstore query: every catalog row
+// ordered by (category, name). Catalog cardinality is bounded (8
+// rows today) so no pagination is needed.
+func (m *MemStore) ListAlertPresets(_ context.Context) ([]AlertPreset, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]AlertPreset, 0, len(m.alertPresets))
+	for _, p := range m.alertPresets {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Category != out[j].Category {
+			return out[i].Category < out[j].Category
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
+}
+
+// AlertPresetByName scans the map (8 rows). O(N) is acceptable
+// for the catalog cardinality. Returns ErrNotFound on no match.
+func (m *MemStore) AlertPresetByName(_ context.Context, name string) (AlertPreset, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range m.alertPresets {
+		if p.Name == name {
+			return p, nil
+		}
+	}
+	return AlertPreset{}, ErrNotFound
+}
+
+// CountFailedDeploymentsSince mirrors the pgstore scan over the
+// deployments table. Used by the alert evaluator's
+// deployment_failed case. accountID is resolved via the apps
+// lookup (deployments stores app_id only, mirroring the pgstore
+// JOIN). appID "" means "any app on this account".
+func (m *MemStore) CountFailedDeploymentsSince(_ context.Context, accountID, appID string, since time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, d := range m.deployments {
+		// Resolve the deployment's account via the apps map
+		// (deployments carries app_id only).
+		app, ok := m.apps[d.AppID]
+		if !ok || app.AccountID != accountID {
+			continue
+		}
+		if appID != "" && d.AppID != appID {
+			continue
+		}
+		if d.Status != DeployFailed {
+			continue
+		}
+		if d.CreatedAt.Before(since) {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
+// WasInvokedSuccessfullySince mirrors the pgstore EXISTS scan.
+// Returns true iff at least one non-failed invocation exists in
+// the window — the api_up signal.
+func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, appID string, since time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, inv := range m.invocations {
+		if inv.AccountID != accountID {
+			continue
+		}
+		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if inv.State == InvocationFailed {
+			continue
+		}
+		if inv.CreatedAt.Before(since) {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// MTDSpendEurCents mirrors the pgstore SUM(eur_cents) over
+// account_spend_snapshot. Returns 0 when no rows exist.
+func (m *MemStore) MTDSpendEurCents(_ context.Context, accountID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	monthStart := time.Now().UTC().Add(-time.Duration(time.Now().UTC().Day()-1) * 24 * time.Hour)
+	// Snap to UTC midnight of day 1 — date_trunc equivalent.
+	monthStart = time.Date(monthStart.Year(), monthStart.Month(), 1, 0, 0, 0, 0, time.UTC)
+	var total int64
+	for _, s := range m.accountSpendSnapshots {
+		if s.AccountID != accountID {
+			continue
+		}
+		if s.PeriodStart.Before(monthStart) {
+			continue
+		}
+		total += s.EurCents
+	}
+	return total, nil
+}
+
+// UpsertAccountSpendSnapshot is the memstore mirror of the pg
+// upsert. Idempotent on (account_id, source, period_end) — a
+// double-fire (e.g. meterd restart mid-tick) overwrites the row
+// with the latest gb_seconds / eur_cents.
+func (m *MemStore) UpsertAccountSpendSnapshot(_ context.Context, accountID string, periodStart, periodEnd time.Time, gbSeconds float64, eurCents int64, source string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, s := range m.accountSpendSnapshots {
+		if s.AccountID == accountID && s.Source == source && s.PeriodEnd.Equal(periodEnd) {
+			s.PeriodStart = periodStart
+			s.GBSeconds = gbSeconds
+			s.EurCents = eurCents
+			m.accountSpendSnapshots[id] = s
+			return nil
+		}
+	}
+	id := uuidOrSentinel()
+	m.accountSpendSnapshots[id] = AccountSpendSnapshot{
+		ID:          id,
+		AccountID:   accountID,
+		PeriodStart: periodStart,
+		PeriodEnd:   periodEnd,
+		GBSeconds:   gbSeconds,
+		EurCents:    eurCents,
+		Source:      source,
+		CreatedAt:   time.Now().UTC(),
+	}
+	return nil
+}
+
+// uuidOrSentinel returns a v4-ish UUID for in-memory map keys.
+// MemStore doesn't depend on the uuid package; a counter-based
+// sentinel keeps tests deterministic.
+var memStoreSnapshotCounter int64
+
+func uuidOrSentinel() string {
+	memStoreSnapshotCounter++
+	return fmt.Sprintf("snapshot-%d", memStoreSnapshotCounter)
+}
+
+// MinCertExpiryForApp walks the apid_tenant_surface_cert_expiry_state
+// map and returns the smallest remaining seconds for the (account,
+// app) — or -1 when no surface is in 'ok' state.
+func (m *MemStore) MinCertExpiryForApp(_ context.Context, accountID, appID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var minSec *int64
+	for _, s := range m.tenantSurfaceCertExpiryStates {
+		if s.AccountID != accountID || s.AppID != appID {
+			continue
+		}
+		if s.LastWalkStatus != "ok" || s.LastObservedCertNotAfter == nil {
+			continue
+		}
+		remaining := int64(time.Until(*s.LastObservedCertNotAfter).Seconds())
+		if minSec == nil || remaining < *minSec {
+			r := remaining
+			minSec = &r
+		}
+	}
+	if minSec == nil {
+		return -1, nil
+	}
+	return *minSec, nil
 }
 
 // UpdateEdgeRule mirrors the pgstore nil-skip semantics. Action

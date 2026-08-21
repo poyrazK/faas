@@ -7228,6 +7228,233 @@ func (s *PgStore) GetCorsPresetByID(ctx context.Context, accountID, id string) (
 	return scanCorsPreset(row)
 }
 
+// --- alert_presets (issue #1233, ADR-123) -----------------------------------
+//
+// Catalog rows are system-owned. Customers have SELECT-only via the
+// apid GET surface. The Store interface exposes two read methods
+// (ListAlertPresets, AlertPresetByName) and zero mutators — the only
+// write path is migration 00348's idempotent seed.
+//
+// Hand-written (not sqlc) per the cors_presets precedent at
+// pgstore.go:7047-7060: the partial-index / closed-vocab shape makes
+// sqlc's emit lossy and we prefer a single hand-written const that
+// the SELECT clauses and scan functions bind against byte-for-byte.
+
+// alertPresetSelectCols is the single source of column order for
+// alert_presets. Every SELECT against alert_presets lists these
+// columns in this order, and the SELECT statement binds Scan's
+// positional arguments against this list. Mirrors the
+// corsPresetSelectCols pattern at pgstore.go:7047-7060.
+//
+// Ordering matches migrations/00347_alert_presets.sql (column list
+// 1:1). Nullable fields (none today — all columns are NOT NULL
+// per the migration) would come before NOT NULL so Scan can
+// target them; since every column is NOT NULL the order is the
+// same as the table definition.
+const alertPresetSelectCols = `id, name, display_name, description,
+       category, metric, comparison, threshold, window_spec,
+       default_cooldown_minutes, enabled_in_catalog, minimum_plan,
+       created_at, updated_at`
+
+func scanAlertPreset(row pgx.Row) (AlertPreset, error) {
+	r, err := scanAlertPresetCols(row.Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AlertPreset{}, ErrNotFound
+		}
+		return AlertPreset{}, err
+	}
+	return r, nil
+}
+
+func scanAlertPresets(rows pgx.Rows) ([]AlertPreset, error) {
+	var out []AlertPreset
+	for rows.Next() {
+		r, err := scanAlertPresetCols(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func scanAlertPresetCols(scan func(...any) error) (AlertPreset, error) {
+	var r AlertPreset
+	if err := scan(
+		&r.ID, &r.Name, &r.DisplayName, &r.Description,
+		&r.Category, &r.Metric, &r.Comparison, &r.Threshold, &r.WindowSpec,
+		&r.DefaultCooldownMinutes, &r.EnabledInCatalog, &r.MinimumPlan,
+		&r.CreatedAt, &r.UpdatedAt,
+	); err != nil {
+		return AlertPreset{}, err
+	}
+	return r, nil
+}
+
+// ListAlertPresets returns every catalog row, ordered by category
+// then name. The dashboard grid renders the same order so the
+// (category, name) sort key is the canonical render order. No
+// filtering by enabled_in_catalog here — the apid handler filters
+// out disabled rows after consulting the customer's plan tier
+// (defence-in-depth: the closed-set check on minimum_plan is the
+// authoritative gate, not a SQL filter).
+//
+// Catalog cardinality is bounded (8 rows today) so no pagination
+// is needed; the slice fits in a single round trip.
+func (s *PgStore) ListAlertPresets(ctx context.Context) ([]AlertPreset, error) {
+	rows, err := s.pool.Query(ctx,
+		`select `+alertPresetSelectCols+` from alert_presets
+		 order by category asc, name asc`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAlertPresets(rows)
+}
+
+// AlertPresetByName returns the catalog row for a stable name key
+// ('error_rate_2pct', 'p95_latency_1s', ...) or ErrNotFound.
+// The apid enable handler calls this to resolve the preset before
+// pre-filling the createAlertRule payload. name is the catalog
+// primary key by convention (UNIQUE on the DB) so the result is
+// at most one row.
+func (s *PgStore) AlertPresetByName(ctx context.Context, name string) (AlertPreset, error) {
+	row := s.pool.QueryRow(ctx,
+		`select `+alertPresetSelectCols+` from alert_presets
+		 where name = $1`, name)
+	return scanAlertPreset(row)
+}
+
+// CountFailedDeploymentsSince mirrors CountFailedInvocationsSince
+// but walks the deployments table instead of invocations. Used by
+// the alert evaluator's deployment_failed metric case (issue #1233,
+// ADR-123). appID "" means "any app on this account" via the
+// subquery against apps.account_id — the deployments table does
+// not carry account_id directly.
+//
+// Walks the deployments table per migrations/00001_init.sql: the
+// status CHECK constraint includes 'failed' so a `status = 'failed'`
+// predicate is the canonical match. The deployments index on
+// (app_id, created_at) keeps the per-app scan bounded.
+func (s *PgStore) CountFailedDeploymentsSince(ctx context.Context, accountID, appID string, since time.Time) (int, error) {
+	var appArg any
+	if appID != "" {
+		appArg = appID
+	}
+	var n int
+	row := s.pool.QueryRow(ctx, `
+		select count(*) from deployments d
+		 join apps a on a.id = d.app_id
+		 where a.account_id = $1
+		   and d.status = 'failed'
+		   and d.created_at >= $2
+		   and ($3::uuid is null or d.app_id = $3::uuid)`,
+		accountID, since.UTC(), appArg)
+	if err := row.Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// WasInvokedSuccessfullySince returns true iff at least one
+// successful (terminal state != 'failed') invocation exists for
+// (account, app) in the window. Used by the alert evaluator's
+// api_up metric case (issue #1233, ADR-123) — the binary reachability
+// signal. Returns false when the window is empty (cold start).
+//
+// appID "" means "any app on this account" via IS NOT DISTINCT FROM
+// NULL — the same pattern as CountFailedInvocationsSince.
+func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, appID string, since time.Time) (bool, error) {
+	var appArg any
+	if appID != "" {
+		appArg = appID
+	}
+	var exists bool
+	row := s.pool.QueryRow(ctx, `
+		select exists(
+			select 1 from invocations
+			 where account_id = $1
+			   and state <> 'failed'
+			   and created_at >= $2
+			   and ($3::uuid is null or app_id is not distinct from $3::uuid)
+			 limit 1)`,
+		accountID, since.UTC(), appArg)
+	if err := row.Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// MTDSpendEurCents returns the SUM(eur_cents) of every
+// account_spend_snapshot row for the account whose period_start
+// is within the current UTC month-to-date window. Used by the
+// alert evaluator's account_spend_eur metric case (issue #1233,
+// ADR-123).
+//
+// MTD boundary is computed at evaluation time (now() at the UTC
+// midnight of the first day of the current month) so the window
+// is stable across meterd restarts. The (account_id, period_start
+// DESC) partial index at migrations/00350 keeps the scan bounded.
+func (s *PgStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64, error) {
+	var total int64
+	row := s.pool.QueryRow(ctx, `
+		select coalesce(sum(eur_cents), 0)::bigint from account_spend_snapshot
+		 where account_id = $1
+		   and period_start >= date_trunc('month', now() at time zone 'utc')`,
+		accountID)
+	if err := row.Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// UpsertAccountSpendSnapshot is called by the meterd tick loop on
+// every AlertEvalInterval. Inserts a fresh row tagged with the
+// tick's (period_start, period_end). The ON CONFLICT (account_id,
+// source, period_end) clause at migrations/00350 makes a double-fire
+// (e.g. meterd restart mid-tick) idempotent.
+func (s *PgStore) UpsertAccountSpendSnapshot(ctx context.Context, accountID string, periodStart, periodEnd time.Time, gbSeconds float64, eurCents int64, source string) error {
+	_, err := s.pool.Exec(ctx, `
+		insert into account_spend_snapshot
+			(account_id, period_start, period_end, gb_seconds, eur_cents, source)
+		values ($1, $2, $3, $4, $5, $6)
+		on conflict (account_id, source, period_end) do update set
+			gb_seconds = excluded.gb_seconds,
+			eur_cents = excluded.eur_cents`,
+		accountID, periodStart.UTC(), periodEnd.UTC(), gbSeconds, eurCents, source)
+	return err
+}
+
+// MinCertExpiryForApp returns the smallest remaining seconds until
+// cert expiry across all per-app tenant_surfaces for the given
+// (account, app), or -1 when no surface has a cert (the alert
+// evaluator treats -1 as "no signal"). Used by the alert
+// evaluator's cert_expiry_seconds metric case (issue #1233,
+// ADR-123).
+//
+// Walks the apid_tenant_surface_cert_expiry_state table built by
+// the apid refresher (migrations/00351) — the apid side keeps the
+// per-host state; the evaluator reads the min.
+func (s *PgStore) MinCertExpiryForApp(ctx context.Context, accountID, appID string) (int64, error) {
+	var minSeconds *int64
+	row := s.pool.QueryRow(ctx, `
+		select min(extract(epoch from (last_observed_cert_not_after - now())))::bigint
+		  from apid_tenant_surface_cert_expiry_state
+		 where account_id = $1
+		   and app_id = $2
+		   and last_walk_status = 'ok'
+		   and last_observed_cert_not_after is not null`,
+		accountID, appID)
+	if err := row.Scan(&minSeconds); err != nil {
+		return 0, err
+	}
+	if minSeconds == nil {
+		return -1, nil
+	}
+	return *minSeconds, nil
+}
+
 // UpdateEdgeRule coalesces the optional fields onto edge_rules. The
 // nil-skip pattern is identical to UpdateAlertRule; Action uses the
 // `case when $N then $N+1::jsonb else action end` shape so a nil

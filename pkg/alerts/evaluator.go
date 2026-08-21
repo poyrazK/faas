@@ -62,6 +62,11 @@ type Store interface {
 	ListEnabledAlertRules(ctx context.Context) ([]state.AlertRule, error)
 	AlertRuleByID(ctx context.Context, id string) (state.AlertRule, error)
 	CountFailedInvocationsSince(ctx context.Context, accountID, appID string, source state.InvocationSource, since time.Time) (int, error)
+	// Issue #1233 / ADR-123 — 5 new metric cases learn these:
+	CountFailedDeploymentsSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
+	WasInvokedSuccessfullySince(ctx context.Context, accountID, appID string, since time.Time) (bool, error)
+	MTDSpendEurCents(ctx context.Context, accountID string) (int64, error)
+	MinCertExpiryForApp(ctx context.Context, accountID, appID string) (int64, error)
 	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error)
 	SetAlertRuleState(ctx context.Context, ruleID string, to state.AlertState, at time.Time) (changed bool, err error)
 	SetAlertRuleLastEvaluated(ctx context.Context, ruleID string, at time.Time) error
@@ -493,6 +498,66 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			return 0, false, skipDegraded
 		}
 		return float64(n), compareFloat(float64(n), rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricFailedDeployments:
+		// Postgres-backed. Issue #1233 / ADR-123.
+		// Walks the deployments table per migration 00349.
+		since := e.windowStart(rule.WindowSpec, e.now())
+		n, err := e.store.CountFailedDeploymentsSince(ctx, rule.AccountID, rule.AppID, since)
+		if err != nil {
+			e.log.Warn("alerts: count failed deployments",
+				"rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		return float64(n), compareFloat(float64(n), rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricAPIUp:
+		// Postgres-backed binary reachability. Issue #1233 /
+		// ADR-123. The rule threshold is the expected count
+		// (1 = reachable, 0 = not reachable); comparison 'lt 1'
+		// fires when no successful invocation has landed in the
+		// window. Cooldown gates redundant fires.
+		since := e.windowStart(rule.WindowSpec, e.now())
+		ok, err := e.store.WasInvokedSuccessfullySince(ctx, rule.AccountID, rule.AppID, since)
+		if err != nil {
+			e.log.Warn("alerts: api reachability probe",
+				"rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		var observed float64
+		if ok {
+			observed = 1
+		}
+		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricAccountSpendEUR:
+		// Postgres-backed MTD SUM. Issue #1233 / ADR-123.
+		// Threshold is EUR (not cents) per the catalog seed
+		// (spend_eur_20 fires at gt 20). The Store returns
+		// cents; the evaluator divides by 100 so the wire-side
+		// threshold unit matches the customer-facing preset
+		// label ("spend exceeds €20").
+		cents, err := e.store.MTDSpendEurCents(ctx, rule.AccountID)
+		if err != nil {
+			e.log.Warn("alerts: mtd spend query",
+				"rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		observed := float64(cents) / 100
+		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricCertExpirySeconds:
+		// Postgres-backed min-seconds-remaining across the
+		// apid_tenant_surface_cert_expiry_state rows for the
+		// (account, app). The walker in cmd/meterd/main.go
+		// keeps the table fresh; -1 means "no cert observed
+		// yet" and the comparison verdict fires false for
+		// any lt threshold (the customer-facing preset uses
+		// `lt 1209600` for "fewer than 14 days remaining").
+		secs, err := e.store.MinCertExpiryForApp(ctx, rule.AccountID, rule.AppID)
+		if err != nil {
+			e.log.Warn("alerts: min cert expiry query",
+				"rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		observed := float64(secs)
+		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	default:
 		// PromQL-driven metrics.
 		resp, source := appmetrics.Fetch(ctx, e.promQL, e.log, rule.AppID, string(rule.WindowSpec))
@@ -519,6 +584,11 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			observed = resp.ColdStartPct
 		case state.AlertMetricRequestCount:
 			observed = float64(resp.RequestCount)
+		case state.AlertMetricQueueDepth:
+			// Issue #1233 / ADR-123. gateway_queue_depth{app}
+			// is fed by SetQueueDepth in pkg/gateway/handler.go;
+			// appmetrics.Fetch surfaces it on resp.QueueDepth.
+			observed = float64(resp.QueueDepth)
 		default:
 			// Unknown / future metric — skip silently. The
 			// closed vocabulary at state.AlertMetric rejects

@@ -2400,6 +2400,47 @@ type Store interface {
 	// the four InvocationSource values by the caller before the call.
 	CountFailedInvocationsSince(ctx context.Context, accountID, appID string, source InvocationSource, since time.Time) (int, error)
 
+	// Alert preset catalog (issue #1233 / ADR-123). The catalog has
+	// 8 system-owned rows; the Store exposes only read methods. The
+	// only write path is migration 00348's idempotent seed.
+	ListAlertPresets(ctx context.Context) ([]AlertPreset, error)
+	AlertPresetByName(ctx context.Context, name string) (AlertPreset, error)
+
+	// CountFailedDeploymentsSince counts deployments in
+	// status='failed' for (accountID, appID) since `since`. Used
+	// by the alert evaluator's deployment_failed metric branch
+	// (issue #1233, ADR-123). Mirrors CountFailedInvocationsSince
+	// but walks the deployments table; appID "" means "any app on
+	// this account" per the Store contract.
+	CountFailedDeploymentsSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
+
+	// WasInvokedSuccessfullySince returns true iff at least one
+	// non-failed invocation exists for (accountID, appID) since
+	// `since`. Used by the alert evaluator's api_up metric branch
+	// (issue #1233, ADR-123) — the binary reachability signal.
+	// appID "" means "any app on this account" per the Store
+	// contract; a cold-start app with no invocations returns false.
+	WasInvokedSuccessfullySince(ctx context.Context, accountID, appID string, since time.Time) (bool, error)
+
+	// MTDSpendEurCents returns the SUM(eur_cents) of every
+	// account_spend_snapshot row for the account whose
+	// period_start is within the current UTC month-to-date window.
+	// Used by the alert evaluator's account_spend_eur metric
+	// branch (issue #1233, ADR-123).
+	MTDSpendEurCents(ctx context.Context, accountID string) (int64, error)
+
+	// UpsertAccountSpendSnapshot is called by the meterd tick
+	// loop on every AlertEvalInterval. Idempotent via the
+	// (account_id, source, period_end) UNIQUE at migrations/00350.
+	UpsertAccountSpendSnapshot(ctx context.Context, accountID string, periodStart, periodEnd time.Time, gbSeconds float64, eurCents int64, source string) error
+
+	// MinCertExpiryForApp returns the smallest remaining seconds
+	// until cert expiry across all per-app tenant_surfaces for the
+	// given (account, app), or -1 when no surface has a cert in
+	// 'ok' state. Used by the alert evaluator's cert_expiry_seconds
+	// metric branch (issue #1233, ADR-123).
+	MinCertExpiryForApp(ctx context.Context, accountID, appID string) (int64, error)
+
 	// Invocations (Move 1 — async_invoke / queue / delayed_task / cron).
 	// apid writes customer-intent rows; schedd's drain loop owns the
 	// state transitions pending → dispatching → completed/failed.

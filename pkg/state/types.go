@@ -4227,6 +4227,77 @@ type CorsPreset struct {
 	UpdatedAt        time.Time
 }
 
+// AccountSpendSnapshot is the in-memory row mirrored from
+// account_spend_snapshot (issue #1233 / ADR-123 / migrations/00350).
+// meterd ticks write one row per (account, source) per
+// AlertEvalInterval. The alert evaluator reads SUM(eur_cents)
+// for the MTD window via MTDSpendEurCents.
+//
+// source is a closed vocabulary mirroring the
+// account_spend_snapshot_source_chk DB constraint:
+// 'running_seconds' | 'overage' | 'build_seconds' | 'snapshot_storage'.
+type AccountSpendSnapshot struct {
+	ID          string
+	AccountID   string
+	PeriodStart time.Time
+	PeriodEnd   time.Time
+	GBSeconds   float64
+	EurCents    int64
+	Source      string
+	CreatedAt   time.Time
+}
+
+// TenantSurfaceCertExpiryState is the in-memory row mirrored from
+// apid_tenant_surface_cert_expiry_state (issue #1233 / ADR-123 /
+// migrations/00351). The apid refresher goroutine updates the
+// last_observed_cert_not_after + last_walk_status; the alert
+// evaluator reads MinCertExpiryForApp to compute the
+// cert_expiry_seconds metric.
+type TenantSurfaceCertExpiryState struct {
+	TenantSurfaceID         string
+	AccountID               string
+	AppID                   string
+	Hostname                string
+	LastObservedCertNotAfter *time.Time
+	LastWalkStatus          string
+	LastRefreshedAt         time.Time
+}
+
+// AlertPreset is the in-memory row mirrored from alert_presets
+// (issue #1233, ADR-123). Catalog rows are system-owned; the
+// meterd + apid system-owner role is the only writer. Customers
+// have SELECT-only access via the apid GET surface.
+//
+// The struct is read-only at the Store boundary — there is no
+// Update / Delete / Create method on the Store interface for
+// alert_presets. The only write path is migration 00348's
+// idempotent seed.
+//
+// Comparison / Metric / WindowSpec mirror the alert_rules closed
+// vocabularies byte-for-byte (the DB CHECK constraints in
+// migrations/00347_alert_presets.sql pin this). When the
+// evaluator's `observe` dispatch learns a new metric, the catalog
+// can include it on the same PR — but a catalog entry MUST NOT
+// reference a metric the evaluator has not learned, or the
+// enable path would persist an alert_rules row whose metric the
+// evaluator then drops at run-time.
+type AlertPreset struct {
+	ID                     string
+	Name                   string
+	DisplayName            string
+	Description            string
+	Category               string
+	Metric                 string
+	Comparison             string
+	Threshold              float64
+	WindowSpec             string
+	DefaultCooldownMinutes int
+	EnabledInCatalog       bool
+	MinimumPlan            string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+}
+
 // CreateEdgeRuleParams is the input bundle for CreateEdgeRule and
 // CreateEdgeRuleIfUnderQuota. Action is marshalled to jsonb at the
 // pgstore boundary.
