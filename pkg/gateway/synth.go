@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -101,6 +102,25 @@ type SynthServer struct {
 	// takes a context so the request's ctx (with timeout /
 	// cancel chain) flows into the per-app store call.
 	appPublicAuthMode func(ctx context.Context, appID string) string
+	// membersOnlyChecker (ADR-120) is the DB-side bridge for
+	// the public_auth_mode='members_only' synth-side gate
+	// (synth_members_only.go). Same shape as
+	// internalSvcVerifier above; nil = gate disabled, the
+	// gate 500s rather than silently letting every
+	// members_only cron request through.
+	membersOnlyChecker authz.OrgMemberChecker
+	// membersOnlyPrincipal (ADR-120) is the cookie-side
+	// bridge. Cron has no cookie, so the dominant case
+	// (every /v1/synthesize from the schedd cron driver) is
+	// denied at this gate. A dashboard-fired
+	// /v1/invocations:dispatch with a faas_sid cookie
+	// would pass this check and reach the org-membership
+	// verification.
+	membersOnlyPrincipal CookiePrincipalExtractor
+	// appOrgID (ADR-120) returns the org_id for a given
+	// appID via the per-app cache. nil = gate disabled
+	// (same misconfig posture as appPublicAuthMode above).
+	appOrgID func(ctx context.Context, appID string) string
 }
 
 // NewSynthServer wires the unix-socket listener on socketPath with the
@@ -343,6 +363,21 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// ADR-120: members_only synth-side gate mirrors
+	// applyIngressInternalSvc above for the cron-fired path.
+	// Cron has no human session, so the dominant 403 path
+	// here is no_cookie_principal (every /v1/synthesize from
+	// the schedd cron driver fires into this branch). The
+	// gate runs AFTER applyIngressInternalSvc so an
+	// internal_only cron request fails on the cheaper
+	// JWT-verify first and never reaches the membership
+	// predicate. Mirrors the Handler-side chain order at
+	// handler.go:4648.
+	if s.appPublicAuthMode != nil {
+		if s.applyIngressMembersOnly(w, r, req.AppID, s.appPublicAuthMode(r.Context(), req.AppID), "synth") {
+			return
+		}
+	}
 	s.log.Debug("gateway synth: dispatched", "app_id", logAppID, "method", logMethod, "path", logPath)
 	if err := s.dispatcher.Wake(r.Context(), req.AppID); err != nil {
 		s.log.Warn("gateway synth: wake", "app_id", logAppID, "path", logPath, "err", err)
@@ -397,6 +432,19 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	// dispatcher is never reached.
 	if s.appPublicAuthMode != nil {
 		if s.applyIngressInternalSvc(w, r, req.AppID, s.appPublicAuthMode(r.Context(), req.AppID), "synth_dispatch") {
+			return
+		}
+	}
+	// ADR-120: members_only synth-side gate for the
+	// /v1/invocations:dispatch path (Move 1 single
+	// invocation envelope). Mirrors the chain at
+	// handleSynthesize above. Dashboard-fired dispatch
+	// (a human "trigger wake" click) carries a
+	// faas_sid cookie; cron-fired dispatch carries
+	// none. Both reach this gate; only the human
+	// case passes the membership predicate.
+	if s.appPublicAuthMode != nil {
+		if s.applyIngressMembersOnly(w, r, req.AppID, s.appPublicAuthMode(r.Context(), req.AppID), "synth_dispatch") {
 			return
 		}
 	}
@@ -649,6 +697,20 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 	// of "synth" so dashboards can split the two surfaces.
 	if s.appPublicAuthMode != nil {
 		if s.applyIngressInternalSvc(w, r, req.AppID, s.appPublicAuthMode(r.Context(), req.AppID), "synth_batch") {
+			return
+		}
+	}
+	// ADR-120: members_only synth-side gate for the
+	// /v1/invocations:dispatch_batch path (Move 1
+	// batch). Mirrors the chain at handleSynthesize
+	// and handleInvocationDispatch above. The batch
+	// path can carry a faas_sid cookie only when
+	// fired from the dashboard's "trigger cron sweep"
+	// button — cron fires from the schedd cron
+	// driver with no cookie, so the dominant 403
+	// path is no_cookie_principal.
+	if s.appPublicAuthMode != nil {
+		if s.applyIngressMembersOnly(w, r, req.AppID, s.appPublicAuthMode(r.Context(), req.AppID), "synth_batch") {
 			return
 		}
 	}
