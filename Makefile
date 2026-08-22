@@ -34,7 +34,7 @@ build: guest-runners ## Build every daemon + CLIs + function runners into ./bin
 	@mkdir -p $(BINDIR)
 	@for d in $(DAEMONS); do \
 	  echo "building $$d"; \
-	  $(GO) build -ldflags '$(LDFLAGS)' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
+	  $(GO) build -tags metal -ldflags '$(LDFLAGS)' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
 	done
 	@for c in $(CLIS); do \
 	  echo "building $$c (CLI)"; \

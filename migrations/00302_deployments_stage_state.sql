@@ -61,7 +61,7 @@ BEGIN
     ) THEN
         ALTER TABLE deployments
             ADD CONSTRAINT deployments_stage_state_current_check
-                CHECK (stage_state->>'current' IN (
+                CHECK (stage_state->>'current' IS NULL OR stage_state->>'current' = '' OR stage_state->>'current' IN (
                     'source_download',
                     'dependency_restore',
                     'image_build',

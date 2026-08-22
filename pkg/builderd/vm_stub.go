@@ -1,4 +1,4 @@
-//go:build !metal
+//go:build !metal || !linux
 
 package builderd
 

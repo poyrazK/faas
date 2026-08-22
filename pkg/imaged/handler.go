@@ -2357,12 +2357,16 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	// as an error so the caller logs it loudly and the operator
 	// sees the regression rather than a customer's ticker stuck
 	// on "Source downloaded" forever.
+	fromStage := state.StageDependencyRestore
 	if len(dep.StageState) > 0 {
 		var ss state.StageState
-		if uerr := json.Unmarshal(dep.StageState, &ss); uerr == nil && ss.Current != "" && ss.Current != state.StageDependencyRestore {
-			h.log.Warn("imaged: snapshot_boot precondition violated — stage_state.current is not dependency_restore",
-				"deployment", p.DeploymentID, "current_stage", ss.Current, "status", dep.Status)
-			return fmt.Errorf("imaged: snapshot_boot precondition violated (current=%q, want dependency_restore)", ss.Current)
+		if uerr := json.Unmarshal(dep.StageState, &ss); uerr == nil && ss.Current != "" {
+			if ss.Current != state.StageDependencyRestore && ss.Current != state.StageSourceDownload {
+				h.log.Warn("imaged: snapshot_boot precondition violated — stage_state.current is not dependency_restore or source_download",
+					"deployment", p.DeploymentID, "current_stage", ss.Current, "status", dep.Status)
+				return fmt.Errorf("imaged: snapshot_boot precondition violated (current=%q, want dependency_restore or source_download)", ss.Current)
+			}
+			fromStage = ss.Current
 		}
 	}
 	if dep.RootfsPath == "" {
@@ -2391,13 +2395,13 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	// ADR-117: handleSnapshotBoot enters when the row is already in
 	// DeployBuilding (the caller at builderd's notifySnapshotBoot
 	// path set the status upstream). The active StageName is
-	// dependency_restore. PR-A review fix (F1): open
-	// security_scan here; the snapshot_boot path also calls
-	// runDeployScan below (line ~1353) so security_scan→image_build
-	// closes at the same place as the source_changed path. Same
-	// from→to pair as sites 1551 + 1928 except `to` is now
-	// security_scan instead of image_build.
-	if err := h.transitionWithStage(ctx, dep.ID, state.StageDependencyRestore, state.StageSecurityScan, state.DeployImaging, ""); err != nil {
+	// dependency_restore (or source_download for direct builds).
+	// PR-A review fix (F1): open security_scan here; the snapshot_boot
+	// path also calls runDeployScan below (line ~1353) so
+	// security_scan→image_build closes at the same place as the
+	// source_changed path. Same from→to pair as sites 1551 + 1928 except
+	// `to` is now security_scan instead of image_build.
+	if err := h.transitionWithStage(ctx, dep.ID, fromStage, state.StageSecurityScan, state.DeployImaging, ""); err != nil {
 		return err
 	}
 	// Dispatch on the deploy kind — builderd stamps the OCI tarball

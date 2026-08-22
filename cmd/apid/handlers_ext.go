@@ -4826,9 +4826,13 @@ func emitStageDiff(w http.ResponseWriter, flusher http.Flusher, raw json.RawMess
 // decoder tests and avoids pulling in apislogs.WriteEvent (out of
 // scope for ADR-117).
 func emitStageFrame(w http.ResponseWriter, flusher http.Flusher, item state.StageStateItem, status string, durationMs int64, reason string) {
+	startedAtStr := time.Now().UTC().Format(time.RFC3339Nano)
+	if item.StartedAt != nil {
+		startedAtStr = item.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
 	payload := map[string]any{
 		"name":        string(item.Name),
-		"started_at":  item.StartedAt.UTC().Format(time.RFC3339Nano),
+		"started_at":  startedAtStr,
 		"duration_ms": durationMs,
 		"status":      status,
 	}

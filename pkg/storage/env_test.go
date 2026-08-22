@@ -39,7 +39,7 @@ func TestParseLocalPrefixes_Default(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseLocalPrefixes: %v", err)
 	}
-	want := []string{"snap/", "base/", "kernel/", "layers/"}
+	want := []string{"snap/", "base/", "kernel/", "layers/", "scans/"}
 	if len(got) != len(want) {
 		t.Fatalf("len = %d, want %d (got %v)", len(got), len(want), got)
 	}

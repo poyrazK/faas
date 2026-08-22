@@ -662,9 +662,6 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.bindTunSource(root, l.Instance); err != nil {
 		return err
 	}
-	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
-		return err
-	}
 
 	// Start firecracker with only the API socket, then load + resume.
 	// Move 4 (issue #254): register the per-instance ring BEFORE
@@ -672,6 +669,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// writes, including the boot echo and the resume hook's ack.
 	_ = v.registerRing(l.Instance)
 	if err = v.startJailer(ctx, l); err != nil {
+		return err
+	}
+	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
 		return err
 	}
 	body := map[string]any{
@@ -1504,8 +1504,8 @@ const layerImageName = "layer.ext4"
 const (
 	kernelImageName     = "vmlinux"
 	baseImageName       = "base.ext4"
-	memSnapshotName     = "mem"
-	vmstateSnapshotName = "vmstate"
+	memSnapshotName     = "snap-in-mem"
+	vmstateSnapshotName = "snap-in-vmstate"
 )
 
 func stableReadOnlyName(src, fallback string) string {

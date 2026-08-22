@@ -153,7 +153,7 @@ func wrapWithCache(parent StorageBackend, kind string) (StorageBackend, error) {
 // cold boot, and small enough to keep on every box. Operators
 // override via FAAS_STORAGE_LOCAL_PREFIXES (comma-separated).
 var defaultLocalPrefixes = []string{
-	"snap/", "base/", "kernel/", "layers/",
+	"snap/", "base/", "kernel/", "layers/", "scans/",
 }
 
 // parseLocalPrefixes splits a FAAS_STORAGE_LOCAL_PREFIXES value
