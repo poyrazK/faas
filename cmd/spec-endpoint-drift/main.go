@@ -256,30 +256,52 @@ func walkNodeSDK(dir string) (map[endpoint]struct{}, error) {
 		return nil, err
 	}
 	for _, p := range entries {
-		f, err := os.Open(p)
+		fileHits, err := scanNodeServiceFile(p)
 		if err != nil {
 			return nil, err
 		}
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		var curMethod string
-		for scanner.Scan() {
-			line := scanner.Text()
-			if mm := nodeMethodRe.FindStringSubmatch(line); mm != nil {
-				curMethod = mm[1]
-				continue
-			}
-			if um := nodeURLRe.FindStringSubmatch(line); um != nil {
-				if curMethod != "" {
-					out[endpoint{method: curMethod, path: um[1]}] = struct{}{}
-					curMethod = ""
-				}
+		for ep := range fileHits {
+			out[ep] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
+// scanNodeServiceFile opens a single generated Node service file and
+// extracts (method, path) pairs from the `__request(OpenAPI, { method:
+// 'GET', url: '/v1/...' })` literal block. Carved out so the errcheck +
+// forbidigo nolints live in one place (the loop in walkNodeSDK is then
+// a clean two-step).
+func scanNodeServiceFile(path string) (map[endpoint]struct{}, error) {
+	out := map[endpoint]struct{}{}
+	//nolint:forbidigo // path comes from filepath.Glob against the operator-supplied
+	//                     --node-sdk dir (CI: sdk/node/src/generated/services);
+	//                     pattern-locked to *.ts. The customer-file symlink guard
+	//                     (cmd/faas/commands5.go openCustomerFile) is irrelevant here.
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	var curMethod string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if mm := nodeMethodRe.FindStringSubmatch(line); mm != nil {
+			curMethod = mm[1]
+			continue
+		}
+		if um := nodeURLRe.FindStringSubmatch(line); um != nil {
+			if curMethod != "" {
+				out[endpoint{method: curMethod, path: um[1]}] = struct{}{}
+				curMethod = ""
 			}
 		}
-		f.Close()
-		if err := scanner.Err(); err != nil {
-			return nil, err
-		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
