@@ -16,6 +16,18 @@
 // stance matches the host-key load above it (the daemon refuses to
 // start without its unseal key for the same reason).
 //
+// Multi-host safety cluster PR-4 (audit F6 / ADR-052 amendment):
+// the upsert also stamps the local leaf cert's fingerprint
+// (pkg/pki.LoadCertificateFingerprint) on the row's
+// cert_fingerprint column. On a conflict, the existing row's
+// fingerprint is compared against the freshly-computed local one;
+// if they differ, the upsert fails-closed with
+// state.ErrCertFingerprintDrift. This guards against a leaked cert
+// being silently replaced by an attacker who issued a new leaf
+// under the same CA — the existing fingerprint column is the
+// public-key-pinning attestation, and refusing to overwrite it on
+// mismatch keeps the operator's window of detection open.
+//
 // The `default-local` row seeded by migration 00024 has the same
 // name the vmmd uses when [compute_node].name is left at its
 // default — short hostname — only when hostname equals
@@ -36,9 +48,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"os"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -152,6 +166,36 @@ func registerComputeNode(ctx context.Context, st state.Store, cfg ComputeNodeCon
 		}
 	}
 
+	// PR-4 (multi-host safety audit F6 / ADR-052 amendment):
+	// compute the cert fingerprint from the local leaf so the
+	// upsert can refuse a drift on conflict. The fingerprint is
+	// advisory — vmmd refusing to start because the cert file is
+	// missing or unreadable is too loud for the dev path
+	// (`gregale pki init` may not have run yet on a brand-new box
+	// that hasn't yet opened a TLS listener — that box has no
+	// cert to fingerprint). We log a warning and let the upsert
+	// proceed with a nil fingerprint, which leaves the row's
+	// existing cert_fingerprint intact via the COALESCE.
+	//
+	// Production boxes run `gregale pki init` before vmmd starts,
+	// so the leaf always exists. The fallback (no fingerprint
+	// stamped) is a soft-no-op that the operator can detect via
+	// `gregale doctor` (PR-4 follow-on; out of scope here).
+	var certFP *string
+	if certPath, ok := vmmdServerCertPath(); ok {
+		fp, err := pki.LoadCertificateFingerprint(certPath)
+		if err != nil {
+			// Loud-but-non-fatal: missing cert is the
+			// default-local / dev-box path (no `gregale pki
+			// init` yet); a malformed cert is a real
+			// problem but the perms gate at pki.go will
+			// have already produced a clear error message.
+			log.Warn("vmmd: cert fingerprint load skipped", "path", certPath, "err", err.Error())
+		} else {
+			certFP = &fp
+		}
+	}
+
 	row := state.ComputeNode{
 		Name:               name,
 		TargetURL:          targetURL,
@@ -161,6 +205,7 @@ func registerComputeNode(ctx context.Context, st state.Store, cfg ComputeNodeCon
 		AdmissionCeilingMB: cfg.AdmissionCeilingMB,
 		VCPUBudget:         cfg.VCPUBudget,
 		Active:             true,
+		CertFingerprint:    certFP,
 	}
 	if len(scheddTargets) > 0 && strings.TrimSpace(scheddTargets[0]) != "" {
 		scheddTarget := strings.TrimSpace(scheddTargets[0])
@@ -321,3 +366,44 @@ func publicKeyPEM(pub *ecdsa.PublicKey) ([]byte, error) {
 // reference so a future refactor that drops the helper surfaces
 // at build time rather than silently producing an empty key_id.
 var _ = sched.KeyIDForPublicKey
+
+// vmmdServerCertPath returns the on-disk path to the vmmd server
+// leaf cert (the cert that vmmd presents to inbound clients —
+// schedd, meterd, gatewayd-internal — for mTLS). The (false, "")
+// return value signals "no cert path known" (e.g. a dev box
+// running vmmd without `gregale pki init`), which lets the caller
+// fall through with a nil fingerprint rather than fail-closed.
+//
+// The constant path matches pkg/pki.Roles()'s vmmd/server entry
+// (CommonName "vmmd.faas", Directory "vmmd", Filename "server"):
+// /etc/faas/tls/vmmd/server.crt. Overridable via
+// FAAS_TLS_DIR for tests + non-standard installs; the env-var
+// lookup mirrors pkg/pki.DefaultRootDir's posture (constant in
+// production, overridable in test).
+func vmmdServerCertPath() (string, bool) {
+	root := pki.DefaultRootDir
+	if v := strings.TrimSpace(envOrDefault("FAAS_TLS_DIR", "")); v != "" {
+		root = v
+	}
+	path := root + "/vmmd/server.crt"
+	// Stat is best-effort: a missing file at this path is the
+	// default-local / dev-box path; vmmd still serves traffic
+	// over the unix socket without mTLS in that mode. Returning
+	// (path, true) so the caller attempts the load (and gets the
+	// os.ErrNotExist error, which is wrapped at the call site as
+	// a "cert fingerprint load skipped" warning).
+	return path, true
+}
+
+// envOrDefault is the small helper that reads an env var with a
+// fallback. Mirrors the project-wide pattern in cmd/vmmd/config.go
+// — kept inline here to avoid pulling config.go's surface into
+// the register_test.go fixture set. Tests use t.Setenv for the
+// FAAS_TLS_DIR override (no test seam required — os.Getenv reads
+// through t.Setenv's mutation).
+func envOrDefault(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}

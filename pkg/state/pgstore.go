@@ -8877,13 +8877,46 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// fails with "COALESCE types text and uuid cannot be matched"
 	// (SQLSTATE 42804). The CASE shape also keeps the gen_random_uuid()
 	// branch on the text path so the whole expression resolves to uuid.
+	//
+	// Multi-host safety cluster PR-5 (audit F4): the partial unique
+	// index instances_wake_attempt_active_idx (migration 00377)
+	// makes a duplicate INSERT with the same wake_id + state IN
+	// ('waking', 'cold_booting') fail with SQLSTATE 23505. We translate
+	// the raw pgconn.PgError into the typed sentinel
+	// state.ErrConcurrentWake so the engine's retry loop (Layer 2
+	// of the cluster-wide wakeCoord) can recover via
+	// ReadActiveInstanceForWakeID. A 23505 with state OUTSIDE the
+	// in-flight set would be a different bug (the index wouldn't
+	// have fired), so the typed translation is safe.
+	//
+	// We use scanInstanceCols directly (not scanInstance) so the
+	// raw pgconn.PgError survives in the chain — scanInstance's
+	// mapErr helper rewrites 23505 into state.ErrConflict:
+	// <constraint_name>, which is a useful surface for callers
+	// that don't need the SQLSTATE, but here we need to
+	// distinguish ErrConcurrentWake (instances_wake_attempt_active_idx)
+	// from every other unique violation.
 	row := s.pool.QueryRow(ctx,
 		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at)
 		 values ($1, $2, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else $6::uuid end, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count`,
 		appID, deploymentID, state, ramMB, nodeID, wakeID)
-	return scanInstance(row)
+	inst, err := scanInstanceCols(row.Scan)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Instance{}, fmt.Errorf(
+				"state: %w: wake_id=%s app_id=%s already in-flight — recover via ReadActiveInstanceForWakeID",
+				ErrConcurrentWake, wakeID, appID,
+			)
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Instance{}, fmt.Errorf("state: create instance %q (app=%s): %w", wakeID, appID, err)
+		}
+		return Instance{}, fmt.Errorf("state: create instance %q (app=%s): %w", wakeID, appID, err)
+	}
+	return inst, nil
 }
 
 func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error) {
@@ -8892,6 +8925,43 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
 		 from instances where id = $1`, id)
 	return scanInstance(row)
+}
+
+// ReadActiveInstanceForWakeID returns the in-flight instance row
+// for the given wake_id (state IN ('waking', 'cold_booting',
+// 'running')) — the winner of the cluster-coord race that
+// instances_wake_attempt_active_idx (migration 00377, audit F4 /
+// ADR-098 amendment) protects. Returns ErrNotFound when the
+// wake_id has no in-flight row (the race lost and the winner
+// already parked — unusual but possible if the caller retried
+// after a long sleep).
+//
+// Used by pkg/sched.Engine.EnsureWake's recovery path: on a 23505
+// from CreateInstance, the engine calls ReadActiveInstanceForWakeID
+// to discover the winner's instance_id and observes the winner's
+// state transition (waking → cold_booting → running) with the same
+// in-process state machine the winner is running.
+//
+// State literals are lowercase — instances.state is constrained
+// at the schema layer (migrations/00001_init.sql:85) to
+// ('parked','waking','cold_booting','running','snapshotting',
+// 'stopped','failed'); an uppercase predicate would never match
+// and the recovery path would silently return ErrNotFound.
+func (s *PgStore) ReadActiveInstanceForWakeID(ctx context.Context, wakeID string) (Instance, error) {
+	row := s.pool.QueryRow(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		 from instances where wake_id = $1
+		   and state in ('waking','cold_booting','running')
+		 order by started_at desc limit 1`, wakeID)
+	inst, err := scanInstance(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Instance{}, ErrNotFound
+		}
+		return Instance{}, fmt.Errorf("state: read active instance for wake_id %q: %w", wakeID, err)
+	}
+	return inst, nil
 }
 
 func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error) {
@@ -10370,7 +10440,36 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 // `tcp://0.0.0.0:50051`), routing wakes to the local host
 // instead of the second box. See
 // docs/runbooks/multi-host-rollout.md §3.5 + §4.5.
+//
+// Multi-host safety cluster PR-4 (audit F6, ADR-052 amendment)
+// adds a pre-flight check: if the existing row's cert_fingerprint
+// is set AND differs from node.CertFingerprint, the upsert refuses
+// with ErrCertFingerprintDrift rather than silently COALESCEing
+// the old value (the previous "silent preserve" semantics was a
+// load-bearing fix for the cutover, but a leak that replaced the
+// local cert would also be silently preserved). The failing-closed
+// path requires an explicit operator reconcile via `gregale pki
+// reconcile` before vmmd can start — the migration 00347 unique
+// partial index is the DB-level belt-and-braces companion.
+//
+// The check is pre-flight (a SELECT before the upsert) rather than
+// post-flight (compare RETURNING vs input) because a post-flight
+// refusal would have already done the conflict-path UPDATE
+// (a no-op on cert_fingerprint under the COALESCE, but still
+// touches last_heartbeat_at indirectly). Pre-flight refuses cleanly.
 func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNode) (ComputeNode, error) {
+	if node.Name != "" && node.CertFingerprint != nil && *node.CertFingerprint != "" {
+		existingFP, err := s.loadComputeNodeCertFingerprint(ctx, node.Name)
+		if err != nil {
+			return ComputeNode{}, fmt.Errorf("state: pre-flight cert fingerprint read %q: %w", node.Name, err)
+		}
+		if existingFP != nil && *existingFP != "" && *existingFP != *node.CertFingerprint {
+			return ComputeNode{}, fmt.Errorf(
+				"state: %w: node %q existing fingerprint %q differs from local leaf %q — reconcile via `gregale pki reconcile %s`",
+				ErrCertFingerprintDrift, node.Name, *existingFP, *node.CertFingerprint, node.Name,
+			)
+		}
+	}
 	// vmmd self-registration — the vmmd-owned resource numbers win on
 	// conflict, while operator-POSTed values are PRESERVED via COALESCE
 	// (the load-bearing fix for the second-box cutover, see the prose
@@ -10426,6 +10525,30 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		return ComputeNode{}, fmt.Errorf("state: upsert compute_node (vmmd) %q: %w", node.Name, err)
 	}
 	return n, nil
+}
+
+// loadComputeNodeCertFingerprint reads the cert_fingerprint column
+// for an existing compute_nodes row. Returns (nil, nil) when the row
+// does not exist (a fresh INSERT case where the pre-flight check
+// trivially passes — there is no existing row to compare against).
+//
+// Used by UpsertComputeNodeFromVmmd's pre-flight check (multi-host
+// safety cluster PR-4 / audit F6). Lives on PgStore rather than the
+// Store interface because it's an internal pre-flight helper; an
+// external caller (e.g. the future doctor drift detector) will use
+// the existing ListComputeNodes path.
+func (s *PgStore) loadComputeNodeCertFingerprint(ctx context.Context, name string) (*string, error) {
+	var fp *string
+	err := s.pool.QueryRow(ctx, `
+		select cert_fingerprint from public.compute_nodes where name = $1
+	`, name).Scan(&fp)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return fp, nil
 }
 
 // UpsertNodeKey inserts or updates a (compute_node_id, key_id) row

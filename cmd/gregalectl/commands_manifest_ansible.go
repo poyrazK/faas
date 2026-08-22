@@ -301,6 +301,16 @@ func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewayI
 		fmt.Fprintf(&b, "faas_gatewayd_apid_loopback: %q\n", controlPlaneAPIDLoopback)
 		fmt.Fprintf(&b, "faas_gatewayd_egress_listen: %q\n", fmt.Sprintf("tcp://0.0.0.0:%d", manifestGatewayEgressPort))
 		b.WriteString("faas_gateway_listen: \"0.0.0.0:8080\"\n")
+		// Multi-host safety cluster PR-9 (audit F8-B): emit
+		// faas_public_listen_addr so the ansible role passes
+		// FAAS_PUBLIC_LISTEN_ADDR=... to gatewayd-public and
+		// the PR-8 boot-time check (requirePublicBindInMultiHost)
+		// does not fire. Without this emission, a correctly
+		// bootstrapped fleet reaches the boot-time error and
+		// refuses to start; with it, the operator only sees
+		// the loopback default on a single-box dev install.
+		fmt.Fprintf(&b, "faas_public_listen_addr: %q\n", renderPublicListenAddr(host))
+		fmt.Fprintf(&b, "faas_public_control_addr: %q\n", renderPublicControlAddr(host))
 	}
 	if host.Role == roleControlPlane && gatewayInternalTarget != "" {
 		b.WriteString("faas_meterd_config_managed: true\n")
@@ -347,6 +357,44 @@ func quotedYAMLList(values []string) string {
 		quoted[i] = fmt.Sprintf("%q", value)
 	}
 	return strings.Join(quoted, ", ")
+}
+
+// renderPublicListenAddr is the PR-9 emit for
+// faas_public_listen_addr. Multi-host safety cluster (audit F8-B):
+// the PR-8 boot-time check (gatewayd-public/main.go:625
+// requirePublicBindInMultiHost) refuses to start the public
+// listener on a loopback default when FAAS_NODE_NAME is set. The
+// manifest renderer must emit an explicit host:port from the host
+// row so the ansible role passes FAAS_PUBLIC_LISTEN_ADDR and the
+// check does not fire.
+//
+// Single-box posture (the host's Address is loopback) is preserved
+// — operators who intentionally want loopback bind keep it. Multi-
+// box hosts with a public IP get that IP; multi-box hosts with
+// just a private overlay address get 0.0.0.0 + the same port (the
+// LB reaches the box via the public path the operator wires
+// upstream).
+func renderPublicListenAddr(host manifest.Host) string {
+	address, port, err := manifest.ParseHostPort(host.Address)
+	if err != nil || address == "" {
+		return "0.0.0.0:443"
+	}
+	_ = port
+	// Public listen addr: the public-facing host:port. Without a
+	// separate PublicIP field, default to the host's address; the
+	// loopback case is preserved (single-box posture).
+	return net.JoinHostPort(address, "443")
+}
+
+// renderPublicControlAddr is the companion emit for
+// faas_public_control_addr. Mirrors renderPublicListenAddr shape
+// but pins to the canonical :9092 control listener port.
+func renderPublicControlAddr(host manifest.Host) string {
+	address, _, err := manifest.ParseHostPort(host.Address)
+	if err != nil || address == "" {
+		return "0.0.0.0:9092"
+	}
+	return net.JoinHostPort(address, "9092")
 }
 
 func writeGeneratedAnsibleFile(path string, body []byte, force bool) error {

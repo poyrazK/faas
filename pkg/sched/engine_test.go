@@ -3713,3 +3713,206 @@ func TestCaptureWarmSnapshot_EmitsErrorCounter(t *testing.T) {
 // reach it (captureWarmSnapshotLocked's WarmSnapshot returns the
 // real gRPC error).
 var errWarmCaptureFail = errors.New("fake: warm snapshot fail")
+
+// TestEngineEnsureWake_RefusesForeignOwnedApp pins Layer 1 of the
+// multi-host safety cluster PR-5 / audit F4. The owner gate at
+// EnsureWake entry (engine.go:~1235) must refuse to queue a wake
+// when the app's App.NodeID points at a different schedd's
+// compute_node. Without this guard, two schedds in a multi-host
+// fleet can both queue the same wake in their own wakeCoord —
+// each will eventually try to mint an instance row, each will
+// pass choosePlacement (same chooser, same rules), and the
+// cluster-coord primitive (Layer 2: the partial unique index on
+// instances.wake_id) has to be the only thing keeping the fleet
+// from double-booting.
+//
+// The test is the unit pin for the layer-1 refusal at entry; the
+// end-to-end "two schedds racing on the same wake_id" pin lives
+// in cmd/e2e/fleet_wake_dedup_e2e_test.go (build-tag metal).
+func TestEngineEnsureWake_RefusesForeignOwnedApp(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+
+	// Pin the app to a DIFFERENT box. SetAppNodeID is the
+	// Phase 2 / Gate A owner-claim primitive (migration 00090).
+	if err := store.SetAppNodeID(context.Background(), app.ID, "box-a"); err != nil {
+		t.Fatalf("SetAppNodeID: %v", err)
+	}
+
+	// Build an engine whose ownerNodeID is "box-b" — i.e., this
+	// schedd is the WRONG one to handle the wake. The wakeCoord
+	// is real; the gate fires before the queue is touched.
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOwnerNodeID("box-b")
+
+	_, err := e.EnsureWake(context.Background(), app.ID, "test")
+	if err == nil {
+		t.Fatal("EnsureWake on foreign-owned app: expected error, got nil")
+	}
+	// The error string must surface both owner IDs so the
+	// operator can correlate the wrong-box wake with the
+	// owning box's logs.
+	if !strings.Contains(err.Error(), "box-a") || !strings.Contains(err.Error(), "box-b") {
+		t.Errorf("error = %q, must mention both owner box-a and box-b", err)
+	}
+
+	// Refusal must happen BEFORE any vmm call — the gate is at
+	// entry, not at placement. vmm.coldBoots == 0 is the load-bearing
+	// assertion: a chooser-side gate would still let the wakeCoord
+	// queue the request, but a real cold-boot would never start.
+	if vmm.coldBoots != 0 || vmm.restores != 0 {
+		t.Errorf("owner gate failed to block: coldBoots=%d restores=%d, want 0/0",
+			vmm.coldBoots, vmm.restores)
+	}
+}
+
+// TestEngineEnsureWake_AllowsOwnerSameBox pins the negative case
+// of the Layer 1 gate. When app.NodeID == engine.ownerNodeID, the
+// gate must fall through to wakeCoord.Enter and the wake proceeds
+// to cold-boot. Companion to TestEngineEnsureWake_RefusesForeignOwnedApp:
+// without the companion, the gate could over-refuse and a healthy
+// fleet would silently drop every request.
+func TestEngineEnsureWake_AllowsOwnerSameBox(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+
+	// Pin the app to the same box this schedd owns. The gate's
+	// equality branch must fall through.
+	if err := store.SetAppNodeID(context.Background(), app.ID, "box-a"); err != nil {
+		t.Fatalf("SetAppNodeID: %v", err)
+	}
+
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOwnerNodeID("box-a")
+
+	out, err := e.EnsureWake(context.Background(), app.ID, "test")
+	if err != nil {
+		t.Fatalf("EnsureWake on owner box: %v", err)
+	}
+	if out.Instance == nil || out.Instance.InstanceID == "" {
+		t.Errorf("owner-same-box EnsureWake returned empty InstanceID")
+	}
+	if vmm.coldBoots != 1 {
+		t.Errorf("coldBoots = %d, want 1 (owner gate must not block same-box wakes)",
+			vmm.coldBoots)
+	}
+}
+
+// TestEngineEnsureWake_AllowsUnownedApp pins the single-box dev
+// path. An app whose NodeID == "" (legacy non-shared case — never
+// pinned to a node, e.g. a fresh install before Phase 2 / Gate A
+// ran) must wake regardless of the engine's ownerNodeID stamp.
+// Empty ownerNodeID also falls through, but the production
+// fleet always has WithOwnerNodeID set; the unowned-app branch
+// is the row that single-box dev hits.
+func TestEngineEnsureWake_AllowsUnownedApp(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	// app.NodeID stays "" by design.
+
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOwnerNodeID("box-a")
+
+	out, err := e.EnsureWake(context.Background(), app.ID, "test")
+	if err != nil {
+		t.Fatalf("EnsureWake on unowned app: %v", err)
+	}
+	if out.Instance == nil || out.Instance.InstanceID == "" {
+		t.Errorf("unowned-app EnsureWake returned empty InstanceID")
+	}
+	if vmm.coldBoots != 1 {
+		t.Errorf("coldBoots = %d, want 1 (unowned apps must wake on the local schedd)",
+			vmm.coldBoots)
+	}
+}
+
+// TestEngine_CreateInstanceWithWakeRetry_LoserSurfacesSentinel pins
+// the corrected contract for the cluster-coord Layer 2 helper
+// (pkg/sched/engine.go createInstanceWithWakeRetry, multi-host
+// safety cluster PR-5 / audit F4). When the underlying store returns
+// state.ErrConcurrentWake (the partial unique index rejected our
+// INSERT because another schedd already inserted an in-flight row
+// with the same wake_id), the helper MUST return
+// state.ErrWakeAlreadyInflight with an empty Instance — NOT the
+// winner's row.
+//
+// Returning the winner's row is the ship-blocking bug code-review
+// agent #1036 surfaced: the helper previously read the winner's
+// row via ReadActiveInstanceForWakeID and returned it as if THIS
+// schedd had minted it. The engine downstream uses (ins.ID,
+// placement.NodeID) for ledger.Admit + vmm.CreateColdBoot +
+// SetInstanceRuntime — so a foreign winner's row caused the LOCAL
+// schedd to boot a microVM tagged with the REMOTE schedd's
+// instance UUID. Six concrete failure modes followed (wrong node
+// tag, double-counted perApp concurrency, local VM with remote
+// UUID, HostIP clobber race, DeleteInstance deleting the winner,
+// transitionWithKind marking the winner FAILED). The corrected
+// contract exits cleanly via the typed sentinel so the engine
+// surfaces "another box handled it" to the gateway-side retry
+// poll / cron-side reschedule / redeploy — no local boot happens.
+func TestEngine_CreateInstanceWithWakeRetry_LoserSurfacesSentinel(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	deploymentID := dep.ID
+
+	// Seed the "winner" the loser's helper would otherwise have
+	// returned. We assert below that the helper does NOT echo
+	// this row back when the store returns ErrConcurrentWake.
+	_, err := store.CreateInstance(context.Background(), app.ID, deploymentID,
+		string(state.StateColdBooting), 512, state.DefaultLocalNodeName,
+		"winner-wake-id-on-peer-box")
+	if err != nil {
+		t.Fatalf("seed winner row: %v", err)
+	}
+
+	// Wrap the memstore so the loser's CreateInstance call
+	// returns ErrConcurrentWake — the same path the partial
+	// unique index instances_wake_attempt_active_idx takes on
+	// a real Postgres when a peer's row is already in the table.
+	loseStore := &loseAlwaysCreateInstance{MemStore: store}
+
+	vmm := &fakeVMM{}
+	e := newEngine(t, loseStore, vmm, &fakeNotifier{}, "1.10.0")
+
+	// Call the helper directly with a wake_id that has no row
+	// in the table. The wrapper returns ErrConcurrentWake. The
+	// helper must surface ErrWakeAlreadyInflight with an empty
+	// Instance.
+	ins, err := e.createInstanceWithWakeRetry(context.Background(),
+		app.ID, deploymentID, string(state.StateColdBooting),
+		512, state.DefaultLocalNodeName, "loser-wake-id")
+	if !errors.Is(err, state.ErrWakeAlreadyInflight) {
+		t.Fatalf("loser err = %v, want ErrWakeAlreadyInflight", err)
+	}
+	if ins.ID != "" {
+		t.Errorf("loser ins.ID = %q, want empty (helper must NOT return the winner's row)", ins.ID)
+	}
+
+	// The wrapper was invoked exactly once — the helper does
+	// not retry. A retry loop with jitter (the previous broken
+	// shape) would have called CreateInstance up to 3 times; the
+	// corrected helper keeps the call to a single round trip
+	// because the partial unique index is binary (succeeds or
+	// 23505; a retry can never win once tripped).
+	if loseStore.calls != 1 {
+		t.Errorf("CreateInstance calls = %d, want 1 (binary index — retries are useless)", loseStore.calls)
+	}
+}
+
+// loseAlwaysCreateInstance is a minimal Store wrapper used by
+// TestEngine_CreateInstanceWithWakeRetry_LoserSurfacesSentinel. It
+// overrides only CreateInstance, returning ErrConcurrentWake and
+// counting calls; every other method embeds through to the wrapped
+// memstore (state.Store satisfaction comes via *state.MemStore
+// method promotion on the embedded field) so the test's seedApp +
+// dep rows remain reachable. Lives in _test.go to keep the production
+// binary clean of test seams.
+type loseAlwaysCreateInstance struct {
+	*state.MemStore
+	calls int
+}
+
+func (l *loseAlwaysCreateInstance) CreateInstance(ctx context.Context, appID, depID, initState string, ramMB int, nodeID, wakeID string) (state.Instance, error) {
+	l.calls++
+	return state.Instance{}, state.ErrConcurrentWake
+}

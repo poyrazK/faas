@@ -4,10 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -124,7 +128,7 @@ func TestScheddRouter_CachesPerNode(t *testing.T) {
 	}
 	dial := newFakeScheddDial()
 
-	r := newScheddRouter(store, nil, dial.Dial, nil, "")
+	r := newScheddRouter(store, nil, dial.Dial, nil)
 	defer func() { _ = r.Close() }()
 
 	// First ScheddForApp for app on node-A → 1 dial to urlA.
@@ -157,12 +161,22 @@ func TestScheddRouter_CachesPerNode(t *testing.T) {
 	}
 }
 
-// TestScheddRouter_DefaultLocalHonorsLegacySocketOverride keeps the
-// single-box/e2e compatibility path working after schedd routing moved to
-// compute_nodes.schedd_target_url. Migration 00090 stores the canonical
-// production socket, while the harness relocates the socket per test.
-func TestScheddRouter_DefaultLocalHonorsLegacySocketOverride(t *testing.T) {
-	canonical := defaultLocalScheddTarget
+// TestScheddRouter_DefaultLocalAlwaysUsesDBTarget pins the
+// removal of the legacy FAAS_SCHEDD_SOCKET shortcut (multi-host
+// safety cluster PR-7 / audit F5). The router must dial the
+// per-node target from compute_nodes.schedd_target_url even
+// when the synthetic default-local row points at the canonical
+// production socket. Without this guard, a multi-box fleet
+// would route a foreign-owned wake through the local schedd
+// silently — the PR-5 owner gate catches it at wakeCoord, but
+// the dial still happened.
+//
+// Companion to TestScheddRouter_DefaultLocalPreservesExplicitTarget
+// (also pinned): together they pin "always DB-driven, never
+// env-driven" — the load-bearing invariant of the multi-host
+// posture.
+func TestScheddRouter_DefaultLocalAlwaysUsesDBTarget(t *testing.T) {
+	canonical := "unix:///run/faas/schedd.sock"
 	store := &stubRouterStore{nodes: map[string]state.ComputeNode{
 		"node-local": {
 			ID:              "node-local",
@@ -172,23 +186,25 @@ func TestScheddRouter_DefaultLocalHonorsLegacySocketOverride(t *testing.T) {
 		},
 	}}
 	dial := newFakeScheddDial()
-	legacy := "/tmp/faas-e2e/schedd.sock"
-	r := newScheddRouter(store, nil, dial.Dial, nil, legacy)
+	r := newScheddRouter(store, nil, dial.Dial, nil)
 	defer func() { _ = r.Close() }()
 
 	if _, err := r.ScheddForApp(context.Background(), state.App{ID: "app-local", NodeID: "node-local"}); err != nil {
 		t.Fatalf("ScheddForApp: %v", err)
 	}
-	if got := dial.dials[legacy]; got != 1 {
-		t.Fatalf("dials[%q] = %d, want 1", legacy, got)
-	}
-	if got := dial.dials[canonical]; got != 0 {
-		t.Fatalf("dials[%q] = %d, want 0", canonical, got)
+	// The router must dial the per-node target from PG, not
+	// any env-driven shortcut. The legacy short-circuit is
+	// removed; the dial counts as 1 against the canonical
+	// target.
+	if got := dial.dials[canonical]; got != 1 {
+		t.Fatalf("dials[%q] = %d, want 1 (per-node target from PG must be authoritative)", canonical, got)
 	}
 }
 
-// TestScheddRouter_DefaultLocalPreservesExplicitTarget ensures the legacy
-// environment fallback cannot override an operator-configured target.
+// TestScheddRouter_DefaultLocalPreservesExplicitTarget ensures an
+// operator-configured target on the default-local row is
+// authoritative. Companion to
+// TestScheddRouter_DefaultLocalAlwaysUsesDBTarget.
 func TestScheddRouter_DefaultLocalPreservesExplicitTarget(t *testing.T) {
 	configured := "unix:///tmp/operator/schedd.sock"
 	store := &stubRouterStore{nodes: map[string]state.ComputeNode{
@@ -200,8 +216,7 @@ func TestScheddRouter_DefaultLocalPreservesExplicitTarget(t *testing.T) {
 		},
 	}}
 	dial := newFakeScheddDial()
-	legacy := "/tmp/faas-e2e/schedd.sock"
-	r := newScheddRouter(store, nil, dial.Dial, nil, legacy)
+	r := newScheddRouter(store, nil, dial.Dial, nil)
 	defer func() { _ = r.Close() }()
 
 	if _, err := r.ScheddForApp(context.Background(), state.App{ID: "app-local", NodeID: "node-local"}); err != nil {
@@ -209,9 +224,6 @@ func TestScheddRouter_DefaultLocalPreservesExplicitTarget(t *testing.T) {
 	}
 	if got := dial.dials[configured]; got != 1 {
 		t.Fatalf("dials[%q] = %d, want 1", configured, got)
-	}
-	if got := dial.dials[legacy]; got != 0 {
-		t.Fatalf("dials[%q] = %d, want 0", legacy, got)
 	}
 }
 
@@ -223,7 +235,7 @@ func TestScheddRouter_EvictClosesAndReDials(t *testing.T) {
 	store := &stubRouterStore{nodes: map[string]state.ComputeNode{"node-A": nodeA}}
 	dial := newFakeScheddDial()
 
-	r := newScheddRouter(store, nil, dial.Dial, nil, "")
+	r := newScheddRouter(store, nil, dial.Dial, nil)
 	defer func() { _ = r.Close() }()
 
 	cli1, err := r.ScheddForApp(context.Background(), state.App{ID: "app-1", NodeID: "node-A"})
@@ -251,7 +263,7 @@ func TestScheddRouter_EvictClosesAndReDials(t *testing.T) {
 // not silently route to the wrong schedd.
 func TestScheddRouter_RejectsEmptyNodeID(t *testing.T) {
 	dial := newFakeScheddDial()
-	r := newScheddRouter(&stubRouterStore{}, nil, dial.Dial, nil, "")
+	r := newScheddRouter(&stubRouterStore{}, nil, dial.Dial, nil)
 	defer func() { _ = r.Close() }()
 
 	if _, err := r.ScheddForApp(context.Background(), state.App{ID: "app-x", NodeID: ""}); err == nil {
@@ -271,7 +283,7 @@ func TestScheddRouter_DialError(t *testing.T) {
 	dial := newFakeScheddDial()
 	dial.err = errors.New("connection refused")
 
-	r := newScheddRouter(store, nil, dial.Dial, nil, "")
+	r := newScheddRouter(store, nil, dial.Dial, nil)
 	defer func() { _ = r.Close() }()
 
 	if _, err := r.ScheddForApp(context.Background(), state.App{ID: "app-1", NodeID: "node-A"}); err == nil {
@@ -297,7 +309,7 @@ func TestScheddRouter_ScheddForInstance_ResolvesByNodeID(t *testing.T) {
 	}
 	dial := newFakeScheddDial()
 
-	r := newScheddRouter(store, nil, dial.Dial, nil, "")
+	r := newScheddRouter(store, nil, dial.Dial, nil)
 	defer func() { _ = r.Close() }()
 
 	cliA, err := r.ScheddForInstance(context.Background(), "i-a")
@@ -318,5 +330,150 @@ func TestScheddRouter_ScheddForInstance_ResolvesByNodeID(t *testing.T) {
 	}
 	if cliGone != nil {
 		t.Errorf("unknown instance should return nil cli, got %v", cliGone)
+	}
+}
+
+// fakeSubscribeFunc is a controllable subscribeFunc for the
+// WatchNodeChanges test seam. The returned channel is buffered (so
+// the test goroutine can push without blocking on the consumer),
+// and the test signals completion by closing the channel — the
+// router's WatchNodeChanges loop exits cleanly via the `!ok` arm
+// (scheddrouter.go:302). Production wiring uses
+// db.SubscribeWithReconnect; the fake exists so the Evict path
+// can be pinned without standing up a live LISTEN session.
+type fakeSubscribeFunc struct {
+	ch    chan db.Notification
+	calls int
+}
+
+func (f *fakeSubscribeFunc) Subscribe(_ context.Context, _ *pgxpool.Pool, _ []string, _ *slog.Logger) (<-chan db.Notification, error) {
+	f.calls++
+	return f.ch, nil
+}
+
+// TestScheddRouter_WatchNodeChanges_EvictsOnPayload pins the
+// pg_notify → Evict chain end-to-end without a real LISTEN
+// session. The subscribeFunc test seam is the same primitive
+// cmd/gatewayd-internal/nodecache.go uses; the test verifies
+// that the production wiring (scheddrouter.go:288-317) routes
+// the payload through to r.Evict. Multi-host safety cluster
+// PR-6 (audit F3 verify): without this pin, a wire-shape
+// change to the payload struct (e.g. {id} → {node_id}) breaks
+// every consumer silently — the test fails fast on the rename.
+func TestScheddRouter_WatchNodeChanges_EvictsOnPayload(t *testing.T) {
+	urlA := "tcp://10.0.0.1:7100"
+	nodeA := state.ComputeNode{ID: "node-A", Name: "fsn-1", Active: true, ScheddTargetURL: &urlA}
+	store := &stubRouterStore{nodes: map[string]state.ComputeNode{"node-A": nodeA}}
+	dial := newFakeScheddDial()
+
+	r := newScheddRouter(store, nil, dial.Dial, nil)
+	defer func() { _ = r.Close() }()
+
+	// Pre-populate the cache so Evict has something to drop.
+	cli, err := r.ScheddForApp(context.Background(), state.App{ID: "app-1", NodeID: "node-A"})
+	if err != nil {
+		t.Fatalf("ScheddForApp: %v", err)
+	}
+	if cli == nil {
+		t.Fatal("expected non-nil client after ScheddForApp")
+	}
+
+	fake := &fakeSubscribeFunc{ch: make(chan db.Notification, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// WatchNodeChanges blocks reading the channel; run in a
+	// goroutine and rely on cancel to unwind on test exit.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.WatchNodeChanges(ctx, nil, fake.Subscribe)
+	}()
+
+	// Send a payload that mirrors the trigger payload from
+	// pkg/db/notify.go:248-250 — the wire contract the router
+	// unmarshals at scheddrouter.go:305-312. Renaming the field
+	// (audit F3 risk: every wire-shape change here is a silent
+	// regression for every gatewayd-internal in the fleet) would
+	// land a "bad compute_node_changed payload" warn log; the
+	// cache would NOT be evicted. Test catches the rename.
+	fake.ch <- db.Notification{
+		Channel: db.NotifyComputeNodeChanged,
+		Payload: `{"node_id":"node-A","active":false}`,
+	}
+
+	// Poll for eviction. The select-arm dispatch is non-blocking
+	// from the test's perspective, but Evict mutates r.cache
+	// under r.mu. Tighten to 2s — well under the pg_notify
+	// default 5s, generous for CI scheduling jitter.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		_, stillCached := r.cache["node-A"]
+		r.mu.Unlock()
+		if !stillCached {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	r.mu.Lock()
+	_, stillCached := r.cache["node-A"]
+	r.mu.Unlock()
+	if stillCached {
+		t.Fatal("cache still has node-A after payload — Evict did not fire")
+	}
+	if fake.calls != 1 {
+		t.Errorf("subscribe called %d times, want 1", fake.calls)
+	}
+}
+
+// TestScheddRouter_WatchNodeChanges_MalformedPayloadDropped pins
+// the defensive drop on a malformed payload (audit F3 regression
+// guard). The router must NOT evict on a payload that fails to
+// unmarshal — that would silently evict healthy boxes on a wire
+// bug or a publisher typo. Companion to the happy-path test.
+func TestScheddRouter_WatchNodeChanges_MalformedPayloadDropped(t *testing.T) {
+	urlA := "tcp://10.0.0.1:7100"
+	nodeA := state.ComputeNode{ID: "node-A", Name: "fsn-1", Active: true, ScheddTargetURL: &urlA}
+	store := &stubRouterStore{nodes: map[string]state.ComputeNode{"node-A": nodeA}}
+	dial := newFakeScheddDial()
+
+	r := newScheddRouter(store, nil, dial.Dial, nil)
+	defer func() { _ = r.Close() }()
+
+	if _, err := r.ScheddForApp(context.Background(), state.App{ID: "app-1", NodeID: "node-A"}); err != nil {
+		t.Fatalf("ScheddForApp: %v", err)
+	}
+
+	fake := &fakeSubscribeFunc{ch: make(chan db.Notification, 2)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.WatchNodeChanges(ctx, nil, fake.Subscribe)
+	}()
+
+	// Three flavours of malformed payload — none must trigger
+	// Evict. The router's defensive drop (scheddrouter.go:309-311)
+	// logs a warn and continues.
+	badPayloads := []string{
+		`{`,                              // truncated JSON
+		`{"node_id":""}`,                 // empty node_id
+		`{"id":"node-A","active":false}`, // wrong field name (renamed upstream)
+	}
+	for _, p := range badPayloads {
+		fake.ch <- db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: p}
+	}
+
+	// Give the router a moment to process the drops.
+	time.Sleep(50 * time.Millisecond)
+
+	r.mu.Lock()
+	_, stillCached := r.cache["node-A"]
+	r.mu.Unlock()
+	if !stillCached {
+		t.Errorf("malformed payloads evicted node-A — defensive drop is broken")
 	}
 }

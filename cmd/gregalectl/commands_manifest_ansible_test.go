@@ -52,6 +52,17 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(computeVars, `faas_gateway_listen: "0.0.0.0:8080"`) {
 		t.Errorf("compute host vars missing split gateway listener:\n%s", computeVars)
 	}
+	// Multi-host safety cluster PR-9 (audit F8-B): the manifest
+	// renderer must emit faas_public_listen_addr + faas_public_control_addr
+	// so a correctly bootstrapped fleet never reaches the PR-8
+	// boot-time check (gatewayd-public refuses to start on a
+	// loopback default when FAAS_NODE_NAME is set).
+	if !strings.Contains(computeVars, `faas_public_listen_addr: "10.42.0.2:443"`) {
+		t.Errorf("compute host vars missing faas_public_listen_addr emission:\n%s", computeVars)
+	}
+	if !strings.Contains(computeVars, `faas_public_control_addr: "10.42.0.2:9092"`) {
+		t.Errorf("compute host vars missing faas_public_control_addr emission:\n%s", computeVars)
+	}
 	if !strings.Contains(computeVars, `faas_gatewayd_egress_listen: "tcp://0.0.0.0:9092"`) {
 		t.Errorf("compute host vars missing split egress listener:\n%s", computeVars)
 	}

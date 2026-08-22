@@ -15,6 +15,68 @@ import (
 // ErrNotFound is returned by Store reads when a row does not exist.
 var ErrNotFound = errors.New("state: not found")
 
+// ErrCertFingerprintDrift is returned by UpsertComputeNodeFromVmmd
+// when the cert_fingerprint on the existing compute_nodes row
+// differs from the fingerprint vmmd just computed locally. This is
+// the load-bearing guard for the multi-host safety audit F6 /
+// ADR-052 amendment: a vmmd that boots with a freshly-rotated leaf
+// on disk MUST NOT silently overwrite a row whose
+// cert_fingerprint belongs to the previous leaf (the existing row
+// is the public-key-pinning attestation; silently replacing it
+// would let a leaked cert remain trusted across the rotation).
+//
+// The error wraps a fmt.Errorf with the OLD and NEW fingerprints
+// so the operator can grep the log line and run `gregale pki
+// reconcile <node>` to either (a) re-issue the leaf under the
+// expected fingerprint (if the local file is the rogue one), or
+// (b) re-stamp the row with the new fingerprint (if the operator
+// confirmed the rotation is intentional).
+//
+// The migration 00347 unique partial index
+// compute_nodes_active_unique_idx is the DB-level belt-and-braces
+// guard against a future bug that fails to consult this error.
+var ErrCertFingerprintDrift = errors.New("state: compute_node cert fingerprint drift")
+
+// ErrConcurrentWake is returned by CreateInstance when the partial
+// unique index instances_wake_attempt_active_idx (migration 00350,
+// multi-host safety cluster PR-5 / audit F4) rejects an INSERT
+// because another schedd has already inserted a row with the same
+// wake_id AND state IN ('WAKING', 'COLD_BOOTING'). The caller
+// (pkg/sched.Engine.EnsureWake) recovers by reading the existing
+// row via ReadActiveInstanceForWakeID and observing the winner's
+// progress.
+//
+// This is the cluster-coord primitive: in-memory wakeCoord
+// (pkg/sched/wake_coord.go) serialises within ONE schedd; the
+// partial unique index serialises ACROSS schedds on different
+// boxes. The two layers are deliberately redundant — the in-
+// memory coord is the fast path for the dominant single-box
+// case, the partial index is the cluster-coord primitive that
+// catches cross-box races.
+var ErrConcurrentWake = errors.New("state: concurrent wake — wake_id conflict")
+
+// ErrWakeAlreadyInflight is returned by the engine's wake-retry helper
+// (pkg/sched.Engine.createInstanceWithWakeRetry) when the cluster-coord
+// partial unique index instances_wake_attempt_active_idx (migration
+// 00350) rejects its CREATE INSTANCE call because another schedd has
+// already inserted an in-flight row with the same wake_id AND state
+// IN ('WAKING', 'COLD_BOOTING'). The engine surfaces this as a
+// "another box is handling this wake" outcome — the caller must
+// propagate it; the gateway-side retry / cron-side reschedule /
+// redeploy handles the follow-up.
+//
+// This is a strictly-losing outcome. The helper does NOT return the
+// winner's row because the engine's downstream path (ledger.Admit,
+// vmm.CreateColdBoot, SetInstanceRuntime) is keyed by (ins.ID,
+// placement.NodeID) — returning the winner's row would cause the
+// LOSER's engine to boot a local microVM tagged with a WINNER's
+// instance UUID, double-billing the customer, double-allocating
+// per-app concurrency slots, and (in single-box degenerate case)
+// colliding on cgroup/jail-uid/netns per spec §6.2-5. The retry
+// helper pins this contract by surfacing the typed sentinel and
+// exiting the engine's wake path before any local side effect.
+var ErrWakeAlreadyInflight = errors.New("state: wake already in flight on another node")
+
 // ErrCorsWildcardWithCredentials is returned by
 // MergeCorsPresetIntoRule when the merged AllowOrigins contains
 // the bare "*" wildcard alongside AllowCredentials: true. This is
@@ -2665,6 +2727,14 @@ type Store interface {
 	// is fine — the row still has a non-NULL wake_id after the write.
 	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
+	// ReadActiveInstanceForWakeID is the cluster-coord lookup
+	// primitive (multi-host safety cluster PR-5 / audit F4). When
+	// CreateInstance returns ErrConcurrentWake (the partial unique
+	// index instances_wake_attempt_active_idx rejected a duplicate
+	// in-flight row), the engine's retry path calls this to discover
+	// the winner's instance_id and observe its state transition
+	// through the existing in-process state machine.
+	ReadActiveInstanceForWakeID(ctx context.Context, wakeID string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
 	// StampAppScaleOut (PR-C, issue #462) records apps.last_scale_out_at
 	// = now() on the wake-gate admit path. Non-atomic with the

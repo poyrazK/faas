@@ -807,6 +807,63 @@ func (e *Engine) WithOwnerNodeID(nodeID string) *Engine {
 // emits the instances.parked_liveness_exhausted audit row. nil
 // is safe — the window check is skipped. Production cmd/schedd
 // wires sched.NewLivenessWindow(window, maxN) at construction.
+
+// createInstanceWithWakeRetry is the cluster-coord Layer 2 helper
+// (multi-host safety cluster PR-5 / audit F4). Wraps
+// store.CreateInstance; on a SQLSTATE 23505 (the partial unique
+// index instances_wake_attempt_active_idx rejected the INSERT
+// because another schedd already created an in-flight row with
+// the same wake_id) it returns state.ErrWakeAlreadyInflight.
+//
+// The helper deliberately does NOT return the winner's row. The
+// engine's downstream path (ledger.Admit, vmm.CreateColdBoot,
+// SetInstanceRuntime, store.DeleteInstance, transitionWithKind,
+// emitInstanceChanged) is keyed by (ins.ID, placement.NodeID) —
+// if we returned the remote winner's row, this schedd would boot
+// a LOCAL microVM tagged with a REMOTE instance UUID, double-
+// billing the customer, double-allocating per-app concurrency
+// slots, and (in single-box degenerate case) colliding on
+// cgroup / jail uid / netns per spec §6.2-5. The partial unique
+// index IS the cluster-coord primitive: one inserter wins, all
+// others exit cleanly with a typed sentinel that the upstream
+// surfaces through the existing error funnel.
+//
+// Retry policy: a single attempt. The partial unique index is
+// binary (succeeds, or 23505) — once tripped, the winner's row
+// is already in the table in WAKING / COLD_BOOTING; retries
+// against the same wake_id always 23505 and never win. The
+// jittered retry loop previously lifted into this helper was
+// removed because (a) the binary guarantee above makes retries
+// useless, and (b) the previous "winner-recovery" branch read
+// the winner's row and returned it as if this schedd had minted
+// it — that turned the helper into a dangerous lie (the layered
+// downstream was never designed to be safe with a foreign row).
+//
+// Caller propagation: the three call sites (engine.go:1460 floor
+// admit, :1764 wake dispatch, :3750 prime) wrap the sentinel
+// with their own context and surface it as a typed error; the
+// gateway-side retry / cron-side reschedule / redeploy handles
+// the "another box handled it" follow-up. Callers that want to
+// observe the winner's progress can call
+// state.PgStore.ReadActiveInstanceForWakeID directly — the
+// primitive remains exported for that purpose.
+func (e *Engine) createInstanceWithWakeRetry(ctx context.Context, appID, deploymentID, initState string, ramMB int, nodeID, wakeID string) (state.Instance, error) {
+	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, initState, ramMB, nodeID, wakeID)
+	if err == nil {
+		return ins, nil
+	}
+	if errors.Is(err, state.ErrConcurrentWake) {
+		// Loser path: another schedd (or this schedd's wakeCoord
+		// released the slot to a peer race that landed just before
+		// us) won the INSERT. Surfacing ErrWakeAlreadyInflight
+		// unwinds the layered downstream — no ledger reservation,
+		// no vmmd.CreateColdBoot, no row mutation — so the local
+		// box cannot boot a microVM tagged with the remote winner's
+		// instance UUID.
+		return state.Instance{}, state.ErrWakeAlreadyInflight
+	}
+	return state.Instance{}, err
+}
 func (e *Engine) WithLivenessWindow(w *LivenessWindow) *Engine {
 	if e == nil {
 		return e
@@ -1162,6 +1219,33 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 	if e == nil || e.wakeCoord == nil {
 		return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: engine not fully constructed")
 	}
+	// Multi-host safety cluster PR-5 / audit F4 (Layer 1 — owner gate):
+	// refuse the wake if the app is owned by another schedd in the
+	// fleet. This is the SAME check that lives in
+	// choosePlacementLocked (engine.go:~2483), lifted earlier in the
+	// pipeline so a foreign-owned app fails-fast at entry rather than
+	// consuming a slot in the wakeCoord queue. The two layers (queue
+	// refusal here + placement refusal in choosePlacementLocked) are
+	// deliberately redundant — choosePlacementLocked still gates the
+	// chooser so a stale app.NodeID can't slip through via a direct
+	// choosePlacement call that bypasses EnsureWake.
+	//
+	// Empty ownerNodeID preserves the single-box dev path (the
+	// synthetic default-local row has no NodeID constraint). Empty
+	// app.NodeID is the legacy non-shared case (an app never pinned
+	// to a node); the engine's chooser places it on the local box.
+	if e.ownerNodeID != "" {
+		app, err := e.store.AppByID(ctx, appID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: load app %q: %w", appID, err)
+		}
+		if err == nil && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+			return CoordOutcome{}, fmt.Errorf(
+				"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box)",
+				appID, app.NodeID, e.ownerNodeID,
+			)
+		}
+	}
 	call, isLeader, err := e.wakeCoord.Enter(appID)
 	if err != nil {
 		return CoordOutcome{}, err
@@ -1375,7 +1459,7 @@ func (e *Engine) admitAndDispatchForDeployment(ctx context.Context, appID, deplo
 	}
 	wakeID := wakeUUID.String()
 
-	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, wakeID)
+	ins, err := e.createInstanceWithWakeRetry(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, wakeID)
 	if err != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: floor admit: create instance: %w", err)
@@ -1679,7 +1763,7 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 			WrittenAt: time.Now(),
 		})
 	}
-	ins, err := e.store.CreateInstance(ctx, appID, dep.ID, string(initState), app.RAMMB, placement.NodeID, wakeID)
+	ins, err := e.createInstanceWithWakeRetry(ctx, appID, dep.ID, string(initState), app.RAMMB, placement.NodeID, wakeID)
 	if err != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
@@ -3684,7 +3768,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 			"app", appID, "err", err)
 	}
 	primeWakeID := primeWakeUUID.String()
-	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, primeWakeID)
+	ins, err := e.createInstanceWithWakeRetry(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, primeWakeID)
 	if err != nil {
 		return fmt.Errorf("sched: prime: create instance: %w", err)
 	}

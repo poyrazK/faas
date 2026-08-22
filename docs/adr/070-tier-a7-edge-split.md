@@ -448,3 +448,30 @@ pre-split era or the legacy daemon's specific responsibilities (the
 wiring fix) — those references are the historical substance of the
 split and stay verbatim. Cite this ADR rather than the banner when
 explaining the split.
+
+## Amendment 1 — Legacy single-box fallback removed (multi-host safety cluster PR-7)
+
+The legacy FAAS_SCHEDD_SOCKET shortcut in
+`cmd/gatewayd-internal/scheddrouter.go::clientForNode` is
+REMOVED. The router now always dials the per-node target from
+`compute_nodes.schedd_target_url`; the env-var override no
+longer exists.
+
+The shortcut existed because the synthetic default-local row
+(migration 00090) carries the canonical production socket, and
+the e2e harness relocates the socket per test. In a multi-box
+fleet the shortcut would silently swap a foreign-owned wake
+onto the local box. The PR-5 owner gate catches the wake at
+`Engine.EnsureWake`, but the dial still happened — wasted
+work and an unnecessary FailedPrecondition surface. Removing
+the shortcut closes the audit F5 gap.
+
+The setter `PGBackend.WithLegacySingleBox` is retained as a
+no-op for backwards compatibility with existing wiring. The
+`resolveSched` transient-miss fallback (resolves through
+`b.sched` on resolver ok=false / empty NodeID / clientForApp
+miss) is removed — it would route a foreign-owned app through
+the local schedd in a multi-box fleet and surface a 503 storm.
+
+Operators who need a non-canonical default-local target must
+update the `compute_nodes.schedd_target_url` row directly.

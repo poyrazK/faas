@@ -6640,6 +6640,33 @@ func (m *MemStore) InstanceByID(_ context.Context, id string) (Instance, error) 
 	return ins, nil
 }
 
+// ReadActiveInstanceForWakeID mirrors PgStore.ReadActiveInstanceForWakeID
+// for in-memory tests. Returns the most-recently-started instance
+// row whose state is in the in-flight set AND whose wake_id matches.
+// Matches the partial-unique-index predicate from migration 00350
+// (multi-host safety cluster PR-5 / audit F4).
+func (m *MemStore) ReadActiveInstanceForWakeID(_ context.Context, wakeID string) (Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best *Instance
+	for _, ins := range m.instances {
+		if ins.WakeID != wakeID {
+			continue
+		}
+		if ins.State != "WAKING" && ins.State != "COLD_BOOTING" && ins.State != "RUNNING" {
+			continue
+		}
+		if best == nil || ins.StartedAt.After(best.StartedAt) {
+			copy := ins
+			best = &copy
+		}
+	}
+	if best == nil {
+		return Instance{}, ErrNotFound
+	}
+	return *best, nil
+}
+
 func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -7744,7 +7771,32 @@ func (m *MemStore) UpsertComputeNodeFromOperator(_ context.Context, node Compute
 //
 // This is the load-bearing fix for the second-box cutover. See
 // pgstore's comment on UpsertComputeNodeFromVmmd for the trap.
+//
+// Multi-host safety cluster PR-4 (audit F6, ADR-052 amendment):
+// like pgstore, this method refuses to silently overwrite an
+// existing row whose cert_fingerprint differs from the new row's.
+// The check happens BEFORE upsertComputeNodeLocked modifies the
+// in-memory map, so a refused drift leaves no in-memory side
+// effect.
 func (m *MemStore) UpsertComputeNodeFromVmmd(_ context.Context, node ComputeNode) (ComputeNode, error) {
+	if node.Name != "" && node.CertFingerprint != nil && *node.CertFingerprint != "" {
+		m.mu.Lock()
+		var existingFP *string
+		for _, current := range m.computeNodes {
+			if current.Name == node.Name {
+				fp := current.CertFingerprint
+				existingFP = fp
+				break
+			}
+		}
+		m.mu.Unlock()
+		if existingFP != nil && *existingFP != "" && *existingFP != *node.CertFingerprint {
+			return ComputeNode{}, fmt.Errorf(
+				"memstore: %w: node %q existing fingerprint %q differs from local leaf %q",
+				ErrCertFingerprintDrift, node.Name, *existingFP, *node.CertFingerprint,
+			)
+		}
+	}
 	return m.upsertComputeNodeLocked(node, true /* preserveTargetURLOnConflict */)
 }
 

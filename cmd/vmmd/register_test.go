@@ -11,16 +11,22 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -784,4 +790,231 @@ func TestScoreByCIDR(t *testing.T) {
 			t.Errorf("got %s, want zero Addr for empty list", got)
 		}
 	})
+}
+
+// writeLeafCertForRegisterTest is the test-only convenience that
+// writes a fresh self-signed cert + matching key to disk under
+// dir, returning the cert path. Mirrors the production-side
+// `gregale pki init` output (one cert + one key per role), but
+// bypasses the strict-mode enforcement of pkg/pki.EnsureLeaf
+// because the test seam must not couple to the operator-only
+// role table.
+//
+// The cert is mode 0o444, the key 0o400 — matching the
+// enforcement in pkg/pki.enforceCertMode / enforceKeyMode — so
+// pki.LoadCertificateFingerprint can run without false-positive
+// perm errors.
+func writeLeafCertForRegisterTest(t *testing.T, dir string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "vmmd"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+	serial := big.NewInt(1)
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "vmmd.faas"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	certPath := filepath.Join(dir, "vmmd", "server.crt")
+	keyPath := filepath.Join(dir, "vmmd", "server.key")
+	if err := os.WriteFile(certPath, certPEM, 0o444); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o400); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	return certPath
+}
+
+// TestRegisterComputeNode_StampsFingerprintOnFreshRow pins the
+// "fingerprint lands on the row when the operator has never
+// registered before" path (audit F6 / ADR-052 amendment / PR-4).
+//
+// The cert at /etc/faas/tls/vmmd/server.crt (overridden via
+// FAAS_TLS_DIR for the test) is loaded by
+// pkg/pki.LoadCertificateFingerprint, the hex string is stamped
+// on the upsert, and the returned row's CertFingerprint column
+// equals the fingerprint the helper returned. Without this
+// assertion, a future refactor that drops the fingerprint path
+// from registerComputeNode would silently degrade the multi-host
+// collision guard.
+func TestRegisterComputeNode_StampsFingerprintOnFreshRow(t *testing.T) {
+	tlsDir := t.TempDir()
+	t.Setenv("FAAS_TLS_DIR", tlsDir)
+	certPath := writeLeafCertForRegisterTest(t, tlsDir)
+	fp, err := pki.LoadCertificateFingerprint(certPath)
+	if err != nil {
+		t.Fatalf("compute expected fingerprint: %v", err)
+	}
+
+	st := state.NewMemStore()
+	cfg := ComputeNodeConfig{
+		NodeName:           "box-east-1",
+		VPCPUs:             160,
+		MemMB:              56000,
+		MaxConcurrency:     200,
+		AdmissionCeilingMB: 47600,
+	}
+	got, err := registerComputeNode(context.Background(), st, cfg, "unix:///run/faas/vmmd.sock",
+		func(context.Context) (string, error) { return "", nil }, testLogger())
+	if err != nil {
+		t.Fatalf("registerComputeNode: %v", err)
+	}
+	if got.CertFingerprint == nil {
+		t.Fatal("cert_fingerprint not stamped on the row")
+	}
+	if *got.CertFingerprint != fp {
+		t.Errorf("cert_fingerprint = %q, want %q", *got.CertFingerprint, fp)
+	}
+}
+
+// TestRegisterComputeNode_AcceptsMatchingFingerprint pins the
+// "fingerprint matches the existing row" path: the pre-flight
+// check in UpsertComputeNodeFromVmmd must allow the upsert
+// through unchanged. A false-positive drift refusal would block
+// every vmmd reboot that uses the same cert, which is the common
+// case (rotations are infrequent). This test is the regression
+// guard against the drift-check regression.
+//
+// Setup: pre-populate a row via UpsertComputeNodeFromOperator
+// (the operator-POSTed fingerprint, which the secrets-init flow
+// stamps on first contact), then call registerComputeNode with
+// the same fingerprint in cfg and assert the row is updated, not
+// refused.
+func TestRegisterComputeNode_AcceptsMatchingFingerprint(t *testing.T) {
+	tlsDir := t.TempDir()
+	t.Setenv("FAAS_TLS_DIR", tlsDir)
+	certPath := writeLeafCertForRegisterTest(t, tlsDir)
+	fp, err := pki.LoadCertificateFingerprint(certPath)
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+
+	st := state.NewMemStore()
+	ctx := context.Background()
+	_, err = st.UpsertComputeNodeFromOperator(ctx, state.ComputeNode{
+		Name:               "box-east-1.faas",
+		TargetURL:          "tcp://vmmd-1.faas:50051",
+		VPCPUs:             160,
+		MemMB:              56000,
+		MaxConcurrency:     200,
+		AdmissionCeilingMB: 47600,
+		CertFingerprint:    &fp,
+	})
+	if err != nil {
+		t.Fatalf("seed row: %v", err)
+	}
+
+	cfg := ComputeNodeConfig{
+		NodeName:           "box-east-1",
+		VPCPUs:             160,
+		MemMB:              56000,
+		MaxConcurrency:     200,
+		AdmissionCeilingMB: 47600,
+	}
+	got, err := registerComputeNode(ctx, st, cfg, "tcp://0.0.0.0:50051",
+		func(context.Context) (string, error) { return "", nil }, testLogger())
+	if err != nil {
+		t.Fatalf("registerComputeNode with matching fp: %v", err)
+	}
+	if got.CertFingerprint == nil || *got.CertFingerprint != fp {
+		t.Errorf("cert_fingerprint drift after matching upsert: got %v, want %q", got.CertFingerprint, fp)
+	}
+}
+
+// TestRegisterComputeNode_RefusesFingerprintDrift pins the
+// load-bearing behaviour of PR-4: a vmmd that boots with a
+// freshly-rotated leaf on disk MUST NOT silently overwrite a row
+// whose cert_fingerprint belongs to the previous leaf. The
+// UpsertComputeNodeFromVmmd pre-flight check refuses with
+// ErrCertFingerprintDrift; the operator must reconcile (either
+// re-issue the local leaf under the expected fingerprint, or
+// accept the rotation by re-stamping the row) before vmmd can
+// start.
+//
+// Setup: seed a row with a deterministic fingerprint "AAA…",
+// point FAAS_TLS_DIR at a dir containing a freshly-generated
+// cert (whose real fingerprint is computed at runtime), call
+// registerComputeNode, assert the error wraps
+// state.ErrCertFingerprintDrift and the error message includes
+// BOTH fingerprints (mandated by the ADR-052 amendment so the
+// operator can grep the log line and run the right reconcile).
+func TestRegisterComputeNode_RefusesFingerprintDrift(t *testing.T) {
+	st := state.NewMemStore()
+	ctx := context.Background()
+
+	originalFP := "sha256:" + strings.Repeat("a", 64)
+	_, err := st.UpsertComputeNodeFromOperator(ctx, state.ComputeNode{
+		Name:               "box-east-1.faas",
+		TargetURL:          "tcp://vmmd-1.faas:50051",
+		VPCPUs:             160,
+		MemMB:              56000,
+		MaxConcurrency:     200,
+		AdmissionCeilingMB: 47600,
+		CertFingerprint:    &originalFP,
+	})
+	if err != nil {
+		t.Fatalf("seed row: %v", err)
+	}
+
+	// Write a different cert — fresh keypair, real fingerprint
+	// computed by LoadCertificateFingerprint at runtime. The
+	// produced fingerprint cannot collide with the seeded
+	// originalFP by construction (deterministic "aaaa…" vs.
+	// SHA-256 of a random DER body).
+	tlsDir := t.TempDir()
+	t.Setenv("FAAS_TLS_DIR", tlsDir)
+	certPath := writeLeafCertForRegisterTest(t, tlsDir)
+	localFP, err := pki.LoadCertificateFingerprint(certPath)
+	if err != nil {
+		t.Fatalf("compute local fingerprint: %v", err)
+	}
+	if localFP == originalFP {
+		t.Fatalf("test setup invariant: fresh cert fingerprint %q equals seeded original %q", localFP, originalFP)
+	}
+
+	cfg := ComputeNodeConfig{
+		NodeName:           "box-east-1",
+		VPCPUs:             160,
+		MemMB:              56000,
+		MaxConcurrency:     200,
+		AdmissionCeilingMB: 47600,
+	}
+	_, err = registerComputeNode(ctx, st, cfg, "tcp://0.0.0.0:50051",
+		func(context.Context) (string, error) { return "", nil }, testLogger())
+	if err == nil {
+		t.Fatal("expected fingerprint drift error, got nil")
+	}
+	if !errors.Is(err, state.ErrCertFingerprintDrift) {
+		t.Fatalf("error = %v, want ErrCertFingerprintDrift", err)
+	}
+	// The wrapped error MUST include both fingerprints so an
+	// operator reading the log line can grep the OLD fingerprint
+	// (the public-key-pinning attestation that we refused to
+	// overwrite) and the NEW fingerprint (the local leaf that
+	// the vmmd is trying to register). This is the ADR-052
+	// amendment contract.
+	if !strings.Contains(err.Error(), originalFP) {
+		t.Errorf("error %q missing original fingerprint %q", err, originalFP)
+	}
+	if !strings.Contains(err.Error(), localFP) {
+		t.Errorf("error %q missing local fingerprint %q", err, localFP)
+	}
 }
