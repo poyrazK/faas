@@ -829,6 +829,36 @@ images-lock-update: ## Operator-only: resolve current registry digests, update D
 	# Dockerfile. The CI gate above then accepts the PR.
 	@echo "images-lock-update: not implemented in CI; run scripts/ci/images_lock_update.py locally"
 
+# Dockerfile best-practices lint via hadolint. The images-lock-check
+# (above) handles FROM digest pinning; hadolint handles the rest:
+#   - DL3002 (last USER is not root) — every images/*.Dockerfile today
+#     runs as root because the jailer takes care of uid mapping (the
+#     guest uid is set by the Firecracker/jailer chain, not by USER);
+#     surfaces as a known-accepted warning we silence via --ignore.
+#   - DL3008 (apt-get install pinned versions) — every builder image
+#     uses `apt-get install -y` without version pins; the digest-pinned
+#     FROM (via images-lock-check) is the integrity boundary, so
+#     package pinning is the second layer of the same defense and
+#     intentionally deferred. Silence via --ignore.
+#   - DL3018 (apk add pinned versions) — same defense argument as
+#     DL3008, but for the Alpine-based builder-base stage that uses
+#     `apk add --no-cache`. Silence via --ignore.
+# Anything hadolint surfaces that is NOT in this ignore-list fails the
+# PR. The CI step at ci.yml:~166 installs hadolint at the pinned
+# SHA-256 from the GitHub releases tarball (same pattern as vacuum
+# install at ci.yml:640-671).
+.PHONY: images-hadolint-check
+images-hadolint-check: ## hadolint over images/*.Dockerfile (DL3002 / DL3008 / DL3018 etc.)
+	@command -v hadolint >/dev/null 2>&1 || { \
+	  echo "hadolint not on PATH; install via 'brew install hadolint' (macOS) or run 'make images-hadolint-check' in CI"; \
+                          exit 1; \
+                        }
+	@hadolint \
+	  --ignore DL3002 \
+	  --ignore DL3008 \
+	  --ignore DL3018 \
+	  $$(find images -maxdepth 1 -name '*.Dockerfile' -print | sort)
+
 .PHONY: denylist-md
 denylist-md: ## Regenerate docs/denylist.md from the shared egress catalog (ADR-034 §Consequences)
 	# Pure-Go generator — no template strings, no timestamps. Deterministic

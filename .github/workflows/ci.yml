@@ -50,6 +50,14 @@ env:
   # (~3 min on a cold runner cache).
   VACUUM_VERSION: "0.29.10"
   VACUUM_SHA256_LINUX_AMD64: "84a596d5f88dd42f6f020376e5d2c2a29e6e51cc4b5614828f03dda122457a03"
+  # hadolint is the Dockerfile best-practices linter used by `make
+  # images-hadolint-check`. Both the version and the SHA-256 pin are
+  # mirrored from the upstream checksums.sha256 in the hadolint GitHub
+  # release — never bump one without the other. CI downloads the binary
+  # because the `go install` path (hadolint is Haskell) has no equivalent
+  # of `go install`. Local devs use `brew install hadolint`.
+  HADOLINT_VERSION: "v2.15.1"
+  HADOLINT_SHA256_LINUX_AMD64: "c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"
   # sqlc is the Postgres→Go query layer used by `make sqlc-check` (issue
   # #125). Both the version and SHA-256 pin are mirrored from the v1.31.1
   # GitHub release — never bump one without the other. The Makefile also
@@ -163,6 +171,31 @@ jobs:
       # `make images-lock-update` to resolve real digests.
       - name: images lock check (FROM digest-pinned)
         run: make images-lock-check
+      # hadolint: Dockerfile best-practices lint. images-lock-check above
+      # covers FROM digest pinning; hadolint covers the rest (DL3002 USER,
+      # DL3008/DL3018 unpinned packages, DL3059 chained RUNs, DL4006
+      # missing pipefail, etc.). Each images/*.Dockerfile is linted with
+      # the policy-shaped ignore list documented in Makefile:832-847; the
+      # ignore set is the gate's policy, so adding to it is a deliberate
+      # action and shows up in PR review. The binary is downloaded at
+      # the pinned SHA-256 from hadolint's GitHub releases — same shape
+      # as the vacuum install above.
+      - name: install hadolint
+        run: |
+          if [ "$(uname -m)" != "x86_64" ]; then
+            echo "::error::hadolint install assumes x86_64; runner is $(uname -m)"
+            exit 1
+          fi
+          URL="https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64"
+          mkdir -p "$HOME/.local/hadolint/bin"
+          BIN="$HOME/.local/hadolint/bin/hadolint"
+          curl --fail --silent --show-error --location --output "$BIN" "$URL"
+          echo "${HADOLINT_SHA256_LINUX_AMD64}  $BIN" | sha256sum --check --strict
+          chmod +x "$BIN"
+          echo "→ installed: $("$BIN" --version)"
+          echo "$HOME/.local/hadolint/bin" >> "$GITHUB_PATH"
+      - name: hadolint images/*.Dockerfile
+        run: make images-hadolint-check
 
       # grafana-jq-check (Makefile:184, PR #837): validates every
       # dashboard JSON parses cleanly (jq -e .). `[ -f "$$f" ]` guard
