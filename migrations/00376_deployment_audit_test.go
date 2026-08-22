@@ -32,7 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func TestMigrations_00373_DeploymentAudit(t *testing.T) {
+func TestMigrations_00376_DeploymentAudit(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 
