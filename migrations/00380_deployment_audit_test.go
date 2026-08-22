@@ -32,13 +32,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func TestMigrations_00376_DeploymentAudit(t *testing.T) {
+func TestMigrations_00380_DeploymentAudit(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 
-	// (1) Run the full migration set. 00364 should land last.
+	// (1) Run the full migration set. 00380 should land last.
 	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("db.MigrateUp: %v (PR follow-up failure mode: missing migration slot before 00370)", err)
+		t.Fatalf("db.MigrateUp: %v (PR follow-up failure mode: missing migration slot before 00380)", err)
 	}
 
 	// (2) Column shape. Scoped to current_schema() per

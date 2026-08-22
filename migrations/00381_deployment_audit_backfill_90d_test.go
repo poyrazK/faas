@@ -23,7 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func TestMigrations_00377_DeploymentAuditBackfill(t *testing.T) {
+func TestMigrations_00381_DeploymentAuditBackfill(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 

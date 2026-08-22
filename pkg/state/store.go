@@ -3247,7 +3247,7 @@ type Store interface {
 	// returns deployment_audit rows for one deployment, ordered
 	// (at DESC, id DESC) — same tiebreaker discipline as
 	// ListAuditLog. The deployment_audit_deployment_idx
-	// ((deployment_id, at DESC), migration 00376) backs the query
+	// ((deployment_id, at DESC), migration 00380) backs the query
 	// so the timeline endpoint stays sub-millisecond at one-box
 	// scale.
 	//

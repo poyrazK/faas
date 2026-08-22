@@ -137,11 +137,11 @@
     zero new schema (the diff package consumes the existing
     `pkg/apid/openapi.yaml`). Mega PR #2 is zero-schema.
   - **Migration slot coordination.** Mega PR #1 starts at
-    `00376_deployment_audit.sql` (renumbered through 21 hops:
+    `00380_deployment_audit.sql` (renumbered through 23 hops:
     `00320 → 00322 → 00324 → 00326 → 00327 → 00330 → 00332 →
     00334 → 00342 → 00346 → 00348 → 00350 → 00352 → 00354 →
     00356 → 00358 → 00360 → 00363 → 00364 → 00370 → 00373 →
-    00376` to clear open-PR slots #999 #990 #1004 #1000 +
+    00376 → 00378 → 00380` to clear open-PR slots #999 #990 #1004 #1000 +
     post-merge of PR #999's `00326_apps_public_auth_ip_allowlist.sql`
     on origin/main + the round-4 fence-collision on main's
     `00327_reserve_slot.sql` + `00328_reserve_slot.sql` fences +
@@ -200,8 +200,20 @@
     round-23 renumber to `00376`+`00377` (post-#1011 main merge of
     `00375_endpoint_discovery.sql`; the new ceiling of 00375 means
     our previous round-22 00373+00374 collided with the main-side
-    rebase). The backfill sits at
-    `00377_deployment_audit_backfill_90d.sql`. The cross-PR slot
+    rebase) + the round-24 renumber to `00378`+`00379` after
+    `scripts/ci/check_migration_slots.sh` flagged PR #1036's
+    pre-claim of `00376_compute_nodes_active_unique.sql` +
+    `00377_instances_wake_attempt_active_unique.sql` (PR #1036
+    multi-host cert fingerprint cluster opened the same night
+    as round-23's force-push; the cross-PR slot precheck caught
+    the collision before any push landed) + the round-25
+    renumber to `00380`+`00381` after the round-24 push
+    re-triggered the slot precheck (PR #1030's file list spans
+    2 GitHub API pages; `gh api .../pulls/1030/files` without
+    `--paginate` truncated the file set and missed
+    `00378_apps_public_auth_members_only.sql`). The backfill
+    sits at `00381_deployment_audit_backfill_90d.sql`. The
+    cross-PR slot
     precheck
     (`scripts/ci/check_migration_slots.sh --base-ref=origin/main`)
     must be re-run at every push — the open-PR slot landscape
