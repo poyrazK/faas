@@ -747,6 +747,24 @@ spec-sync: ## Sync the //go:embed copy of the spec from api/openapi.yaml
 spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
 	@vacuum lint -r $(VACUUM_RULES) $(SPEC)
 
+# OpenAPI 3.1.0 meta-schema lint via openapi-spec-validator (Python).
+# vacuum covers Spectral-style rules (api/vacuum.yaml) but NOT schema
+# validity against the meta-schema. The two gates are complementary:
+#   - vacuum catches opinionated style violations (description missing,
+#     summary over 80 chars, examples not aligned with schema).
+#   - openapi-spec-validator catches structural errors that vacuum
+#     silently accepts: a $ref to a path that does not exist, a
+#     requestBody with content but no schema, a path parameter whose
+#     name does not appear in {braces}, an operationId that collides
+#     with another operation under the same path, a securityScheme
+#     referenced but never declared under components, etc.
+# Pinned at openapi-spec-validator==0.7.1 (last 3.1.0-capable release
+# before the 0.8 line tightened error messages — matches the pip-
+# resolution precedent at sdk-python ci.yml:758-761).
+.PHONY: spec-meta-lint
+spec-meta-lint: ## OpenAPI 3.1.0 meta-schema validation via openapi-spec-validator
+	@python -m openapi_spec_validator api/openapi.yaml
+
 .PHONY: spec-check
 spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md ## CI gate: vacuum lint + AST parity + git clean + denylist.md + subprocessor.md drift (runs in PR CI)
 	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race

@@ -677,6 +677,23 @@ jobs:
         # Makefile's `$(GOBIN)` default (`go env GOPATH/bin`) is the
         # correct install location for the local-dev `go install` path.
         run: make spec-check
+      # Meta-schema lint via openapi-spec-validator. vacuum (spec-check
+      # above) covers Spectral-style rules but NOT schema validity
+      # against the meta-schema; the two gates are complementary. The
+      # validator catches structural errors vacuum silently accepts:
+      # $ref to a non-existent path, requestBody with content but no
+      # schema, path parameter whose name does not appear in {braces},
+      # duplicate operationId, securityScheme referenced but not
+      # declared, etc. Pinned at 0.7.1 (last 3.1.0-capable release;
+      # matches the sdk-python pip-resolution pattern at ci.yml:758-761).
+      - name: install openapi-spec-validator (Python)
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: spec meta-schema lint (OpenAPI 3.1.0)
+        run: |
+          python -m pip install --quiet openapi-spec-validator==0.7.1
+          make spec-meta-lint
       # Endpoint drift detector: cross-checks current spec against the
       # PR-base spec, scoped to (path, method) pairs the SDKs expose.
       # Internal-only endpoints can move freely. The detector is a
