@@ -747,6 +747,24 @@ spec-sync: ## Sync the //go:embed copy of the spec from api/openapi.yaml
 spec-lint: spec-install ## vacuum lint (style + rules) on the OpenAPI spec
 	@vacuum lint -r $(VACUUM_RULES) $(SPEC)
 
+# OpenAPI 3.1.0 meta-schema lint via openapi-spec-validator (Python).
+# vacuum covers Spectral-style rules (api/vacuum.yaml) but NOT schema
+# validity against the meta-schema. The two gates are complementary:
+#   - vacuum catches opinionated style violations (description missing,
+#     summary over 80 chars, examples not aligned with schema).
+#   - openapi-spec-validator catches structural errors that vacuum
+#     silently accepts: a $ref to a path that does not exist, a
+#     requestBody with content but no schema, a path parameter whose
+#     name does not appear in {braces}, an operationId that collides
+#     with another operation under the same path, a securityScheme
+#     referenced but never declared under components, etc.
+# Pinned at openapi-spec-validator==0.7.1 (last 3.1.0-capable release
+# before the 0.8 line tightened error messages — matches the pip-
+# resolution precedent at sdk-python ci.yml:758-761).
+.PHONY: spec-meta-lint
+spec-meta-lint: ## OpenAPI 3.1.0 meta-schema validation via openapi-spec-validator
+	@python -m openapi_spec_validator api/openapi.yaml
+
 .PHONY: spec-check
 spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md ## CI gate: vacuum lint + AST parity + git clean + denylist.md + subprocessor.md drift (runs in PR CI)
 	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
@@ -755,6 +773,31 @@ spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md ## CI g
 	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/compliance/subprocessors.md || \
 	  (echo "spec-check: drift (spec, denylist.md, or subprocessor.md) — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
+
+# spec-endpoint-drift: cross-checks the current OpenAPI spec against
+# the PR-base spec, scoped to (path, method) pairs exposed in any of
+# the three customer-facing SDKs (sdk/node generated services,
+# sdk/python generated api modules, pkg/api.Client). Internal-only
+# endpoints can move freely — the gate only fires on removal/rename
+# of endpoints the customer can actually call.
+#
+# The binary at cmd/spec-endpoint-drift/main.go does the walking;
+# this Makefile recipe just plumbs the BASE_REF env (CI uses
+# `origin/${{ github.base_ref }}`; local devs default to origin/main).
+# BASE_REF must resolve to a ref git can `git show` — fetch first.
+# Spec endpoint drift PR cluster (commit 1 of CI follow-up).
+.PHONY: spec-endpoint-drift
+spec-endpoint-drift: ## CI gate: diff current spec against $$BASE_REF spec; fail on removal/rename of SDK-exposed paths
+	@tmp=$$(mktemp); \
+	  git show "$${BASE_REF:-origin/main}:api/openapi.yaml" > $$tmp; \
+	  $(GO) run ./cmd/spec-endpoint-drift \
+	    --base-spec $$tmp \
+	    --current-spec api/openapi.yaml \
+	    --node-sdk sdk/node/src/generated/services \
+	    --python-sdk sdk/python/faas_sdk/api \
+	    --go-sdk pkg/api/client.go \
+	    --allowlist api/endpoint_allowlist.yaml; \
+	  status=$$?; rm -f $$tmp; exit $$status
 
 .PHONY: images-lock-check
 images-lock-check: ## CI gate: every images/*.Dockerfile FROM is digest-pinned via images/Dockerfile.lock (issue #197 B3.5 + B3.6)
@@ -785,6 +828,54 @@ images-lock-update: ## Operator-only: resolve current registry digests, update D
 	# truth) and the matching `FROM ...@sha256:` line in each
 	# Dockerfile. The CI gate above then accepts the PR.
 	@echo "images-lock-update: not implemented in CI; run scripts/ci/images_lock_update.py locally"
+
+# Dockerfile best-practices lint via hadolint. The images-lock-check
+# (above) handles FROM digest pinning; hadolint handles the rest:
+#   - DL3002 (last USER is not root) — every images/*.Dockerfile today
+#     runs as root because the jailer takes care of uid mapping (the
+#     guest uid is set by the Firecracker/jailer chain, not by USER);
+#     surfaces as a known-accepted warning we silence via --ignore.
+#   - DL3008 (apt-get install pinned versions) — every builder image
+#     uses `apt-get install -y` without version pins; the digest-pinned
+#     FROM (via images-lock-check) is the integrity boundary, so
+#     package pinning is the second layer of the same defense and
+#     intentionally deferred. Silence via --ignore.
+#   - DL3018 (apk add pinned versions) — same defense argument as
+#     DL3008, but for the Alpine-based builder-base stage that uses
+#     `apk add --no-cache`. Silence via --ignore.
+#   - DL4006 (RUN with pipe missing pipefail) — three occurrences in
+#     images/builder-base.Dockerfile:85/118/124 each run a curl|tar
+#     pipeline WITHOUT `set -o pipefail` first. Real finding; the
+#     reason it's accepted: the subsequent install/chmod/rm step
+#     fails noisily on a half-extracted tarball (test confirms),
+#     so a partial extract is operationally loud even without pipefail.
+#     `set -o pipefail` would be added in a separate follow-up
+#     commit when the build-cache implications are measured (every
+#     RUN instruction has its own layer; adding SHELL change does
+#     not invalidate cache but the next RUN's pipe chain does).
+#   - DL3059 (multiple consecutive RUN instructions) — info-level;
+#     builder-base has 13 RUN statements, intentionally one-per-
+#     concern (curl BuildKit, install Railpack, install mise, copy
+#     guest-init) so a single failure doesn't redo unrelated work.
+#     Consolidation is a layer-cache trade-off; defer until a PR
+#     specifically measures the cache win.
+# Anything hadolint surfaces that is NOT in this ignore-list fails the
+# PR. The CI step at ci.yml:~166 installs hadolint at the pinned
+# SHA-256 from the GitHub releases tarball (same pattern as vacuum
+# install at ci.yml:640-671).
+.PHONY: images-hadolint-check
+images-hadolint-check: ## hadolint over images/*.Dockerfile (DL3002 / DL3008 / DL3018 / DL4006 / DL3059 etc.)
+	@command -v hadolint >/dev/null 2>&1 || { \
+	  echo "hadolint not on PATH; install via 'brew install hadolint' (macOS) or run 'make images-hadolint-check' in CI"; \
+                          exit 1; \
+                        }
+	@hadolint \
+	  --ignore DL3002 \
+	  --ignore DL3008 \
+	  --ignore DL3018 \
+	  --ignore DL4006 \
+	  --ignore DL3059 \
+	  $$(find images -maxdepth 1 -name '*.Dockerfile' -print | sort)
 
 .PHONY: denylist-md
 denylist-md: ## Regenerate docs/denylist.md from the shared egress catalog (ADR-034 §Consequences)
@@ -880,15 +971,46 @@ sdk-gen: ## (re)generate every generated SDK + assert clean diff vs HEAD
 pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
 	@echo "==> pre-pr: spec-check (api/openapi.yaml ↔ pkg/apid/openapi.yaml)"
 	@$(MAKE) spec-check
+	@echo "==> pre-pr: spec-meta-lint (openapi-spec-validator 3.1.0)"
+	@$(MAKE) spec-meta-lint
+	@echo "==> pre-pr: spec-endpoint-drift (current vs origin/$${BASE_REF:-main})"
+	@BASE_REF=$${BASE_REF:-origin/main} $(MAKE) spec-endpoint-drift
 	@echo "==> pre-pr: proto-check (checked-in *.pb.go matches protoc)"
 	@$(MAKE) proto-check
 	@echo "==> pre-pr: sqlc-check (checked-in sqlc output matches regenerated)"
 	@$(MAKE) sqlc-check
 	@echo "==> pre-pr: egress-check (nftables render + Go cross-check)"
 	@$(MAKE) egress-check
-	@echo "==> pre-pr: sdk-gen (node + python SDK regenerated, no diff)"
+	@echo "==> pre-pr: images-lock-check (FROM digest-pinned)"
+	@$(MAKE) images-lock-check
+	@echo "==> pre-pr: images-hadolint-check (Dockerfile best practices)"
+	@$(MAKE) images-hadolint-check
+	@echo "==> pre-pr: grafana-jq-check (dashboard JSON parses)"
+	@$(MAKE) grafana-jq-check
+	@echo "==> pre-pr: grafana-mirror-check (deploy/grafana ↔ ansible mirror)"
+	@$(MAKE) grafana-mirror-check
+	@echo "==> pre-pr: workflow-lint (actionlint semantic YAML lint)"
+	@$(MAKE) workflow-lint
+	@echo "==> pre-pr: sdk-gen-node-twice (Node SDK determinism)"
+	@$(MAKE) sdk-gen-node-twice
+	@echo "==> pre-pr: sdk-gen-python-twice (Python SDK determinism)"
+	@$(MAKE) sdk-gen-python-twice
+	@echo "==> pre-pr: sdk-gen (single-shot regenerate-and-diff as final baseline)"
 	@$(MAKE) sdk-gen
 	@echo "pre-pr: OK (every drift gate clean)"
+
+# Workflow YAML semantic lint via actionlint. CI runs this as a
+# separate job (ci.yml:~1307 workflow-lint (actionlint)) — pinning at
+# rhysd/actionlint@v1.7.12. Local devs run \`brew install actionlint\`
+# (actionlint is also a static Go binary; brew's the canonical macOS
+# install path).
+.PHONY: workflow-lint
+workflow-lint: ## actionlint over .github/workflows/*.yml — CI gate's local counterpart
+	@command -v actionlint >/dev/null 2>&1 || { \
+	  echo "actionlint not on PATH; install via 'brew install actionlint' (macOS)"; \
+                          exit 1; \
+                        }
+	@actionlint -shellcheck ''
 
 .PHONY: sdk-smoke-python
 sdk-smoke-python: ## Build fakeapid fixture + run Python SDK smoke + unit tests

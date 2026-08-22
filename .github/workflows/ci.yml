@@ -50,6 +50,14 @@ env:
   # (~3 min on a cold runner cache).
   VACUUM_VERSION: "0.29.10"
   VACUUM_SHA256_LINUX_AMD64: "84a596d5f88dd42f6f020376e5d2c2a29e6e51cc4b5614828f03dda122457a03"
+  # hadolint is the Dockerfile best-practices linter used by `make
+  # images-hadolint-check`. Both the version and the SHA-256 pin are
+  # mirrored from the upstream checksums.sha256 in the hadolint GitHub
+  # release — never bump one without the other. CI downloads the binary
+  # because the `go install` path (hadolint is Haskell) has no equivalent
+  # of `go install`. Local devs use `brew install hadolint`.
+  HADOLINT_VERSION: "v2.15.1"
+  HADOLINT_SHA256_LINUX_AMD64: "c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"
   # sqlc is the Postgres→Go query layer used by `make sqlc-check` (issue
   # #125). Both the version and SHA-256 pin are mirrored from the v1.31.1
   # GitHub release — never bump one without the other. The Makefile also
@@ -163,6 +171,31 @@ jobs:
       # `make images-lock-update` to resolve real digests.
       - name: images lock check (FROM digest-pinned)
         run: make images-lock-check
+      # hadolint: Dockerfile best-practices lint. images-lock-check above
+      # covers FROM digest pinning; hadolint covers the rest (DL3002 USER,
+      # DL3008/DL3018 unpinned packages, DL3059 chained RUNs, DL4006
+      # missing pipefail, etc.). Each images/*.Dockerfile is linted with
+      # the policy-shaped ignore list documented in Makefile:832-847; the
+      # ignore set is the gate's policy, so adding to it is a deliberate
+      # action and shows up in PR review. The binary is downloaded at
+      # the pinned SHA-256 from hadolint's GitHub releases — same shape
+      # as the vacuum install above.
+      - name: install hadolint
+        run: |
+          if [ "$(uname -m)" != "x86_64" ]; then
+            echo "::error::hadolint install assumes x86_64; runner is $(uname -m)"
+            exit 1
+          fi
+          URL="https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64"
+          mkdir -p "$HOME/.local/hadolint/bin"
+          BIN="$HOME/.local/hadolint/bin/hadolint"
+          curl --fail --silent --show-error --location --output "$BIN" "$URL"
+          echo "${HADOLINT_SHA256_LINUX_AMD64}  $BIN" | sha256sum --check --strict
+          chmod +x "$BIN"
+          echo "→ installed: $("$BIN" --version)"
+          echo "$HOME/.local/hadolint/bin" >> "$GITHUB_PATH"
+      - name: hadolint images/*.Dockerfile
+        run: make images-hadolint-check
 
       # grafana-jq-check (Makefile:184, PR #837): validates every
       # dashboard JSON parses cleanly (jq -e .). `[ -f "$$f" ]` guard
@@ -621,6 +654,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        # fetch-depth: 0 — `make spec-endpoint-drift` runs
+        # `git show origin/<base>:api/openapi.yaml` (added in CI
+        # follow-up PR), which requires the base ref to be locally
+        # reachable. Same precedent as the `migrations` job at
+        # ci.yml:~1000, which also diffs against origin/<base>.
+        with:
+          fetch-depth: 0
       # setup-go is needed because `make spec-check` invokes
       # `$(GO) test -count=1 -run TestSpecCompliance ./cmd/apid/...` for
       # the AST parity assertion (~0.4 s locally, negligible in CI).
@@ -670,6 +710,34 @@ jobs:
         # Makefile's `$(GOBIN)` default (`go env GOPATH/bin`) is the
         # correct install location for the local-dev `go install` path.
         run: make spec-check
+      # Meta-schema lint via openapi-spec-validator. vacuum (spec-check
+      # above) covers Spectral-style rules but NOT schema validity
+      # against the meta-schema; the two gates are complementary. The
+      # validator catches structural errors vacuum silently accepts:
+      # $ref to a non-existent path, requestBody with content but no
+      # schema, path parameter whose name does not appear in {braces},
+      # duplicate operationId, securityScheme referenced but not
+      # declared, etc. Pinned at 0.7.1 (last 3.1.0-capable release;
+      # matches the sdk-python pip-resolution pattern at ci.yml:758-761).
+      - name: install openapi-spec-validator (Python)
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: spec meta-schema lint (OpenAPI 3.1.0)
+        run: |
+          python -m pip install --quiet openapi-spec-validator==0.7.1
+          make spec-meta-lint
+      # Endpoint drift detector: cross-checks current spec against the
+      # PR-base spec, scoped to (path, method) pairs the SDKs expose.
+      # Internal-only endpoints can move freely. The detector is a
+      # Go binary at cmd/spec-endpoint-drift/main.go (~150 lines);
+      # the Makefile recipe handles the BASE_REF plumbing.
+      # fetch-depth: 0 on the checkout above is mandatory — `git show
+      # origin/<base>` requires the base ref to be locally reachable.
+      - name: spec endpoint drift (current vs origin/${{ github.base_ref }})
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: make spec-endpoint-drift
 
   # Go SDK build + test gate (issue #266, PR 2). The SDK is a nested
   # Go module at sdk/go/ (module github.com/poyrazK/faas-go). The
@@ -1122,6 +1190,21 @@ jobs:
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
         run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+
+      # Idempotency for migrations this diff ADDS. apply-and-walk and
+      # replay-safety together still leave one gap uncovered: a migration
+      # whose SECOND `goose up` against the same schema silently mutates
+      # state (a backfill UPDATE re-running, a constraint addition that
+      # 42710's, a CREATE TABLE without IF NOT EXISTS). Reachable in
+      # production through a daemon restart after a partial first apply
+      # (the ledger row committed but the DDL commit was unobserved) or
+      # a test harness that re-bootstraps without dropping the schema.
+      # Same scoping as replay-safety (only the tail is checked; 00001_init
+      # is intentionally not idempotent). See migrations/idempotency_test.go.
+      - name: migrations idempotency (new migrations only)
+        env:
+          FAAS_IDEMPOTENCY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
+        run: go test -race -count=1 -v -run TestNewMigrationsAreIdempotent ./migrations/...
 
   sqlc-check:
     # Drift gate between queries.sql + schema.sql and the committed

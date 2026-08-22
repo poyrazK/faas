@@ -70,6 +70,36 @@ gh api repos/poyrazK/faas/rulesets/19061133 | jq '.rules[] | select(.type=="requ
 ## Local aggregator
 
 `make pre-pr` runs the regenerate-and-diff subset of these checks
-locally, in this order: `spec-check` → `proto-check` → `sqlc-check`
-→ `egress-check` → `sdk-gen`. Does NOT cover CI-only jobs that need
-Postgres service containers.
+locally, in this order (each one is its own atomic gate so a failure
+points at exactly one cause):
+
+1. `spec-check`          — `api/openapi.yaml` ↔ `pkg/apid/openapi.yaml`
+                           drift + vacuum lint + AST parity.
+2. `spec-meta-lint`      — `openapi-spec-validator==0.7.1` against the
+                           3.1.0 meta-schema (catches the structural
+                           errors vacuum silently accepts: bad `$ref`,
+                           missing schema, duplicate operationId, etc.).
+3. `spec-endpoint-drift` — current spec vs PR-base spec, cross-checked
+                           against the three customer-facing SDKs (Node
+                           generated services + Python generated api +
+                           Go `pkg/api/client.go` AST). Fails on
+                           removal/rename of an SDK-exposed (path, method).
+4. `proto-check`         — checked-in `*.pb.go` matches protoc.
+5. `sqlc-check`          — checked-in sqlc output matches regenerated.
+6. `egress-check`        — nftables render + Go cross-check.
+7. `images-lock-check`   — every `images/*.Dockerfile` FROM is digest-
+                           pinned via `images/Dockerfile.lock`.
+8. `images-hadolint-check` — Dockerfile best practices via hadolint.
+9. `grafana-jq-check`    — dashboard JSON parses cleanly (`jq -e .`).
+10. `grafana-mirror-check` — `deploy/grafana/` byte-identity mirror to
+                             the ansible role.
+11. `workflow-lint`       — `actionlint` over `.github/workflows/*.yml`.
+12. `sdk-gen-node-twice`  — Node SDK determinism (regen twice, zero diff).
+13. `sdk-gen-python-twice` — Python SDK determinism.
+14. `sdk-gen`             — single-shot regenerate-and-diff as final
+                            baseline (catches a missed step in the
+                            per-SDK recipes above).
+
+Does NOT cover CI-only jobs that need Postgres service containers
+(`lint + build` / `unit tests (pg shard 1/2)` / `unit tests (pure Go
+shard 1/2)` / `e2e`). Those still surface in CI only.
