@@ -4,14 +4,14 @@
 --
 -- 00377_instances_wake_attempt_active_unique.sql — multi-host safety cluster
 -- PR-5 / audit F4 (cluster-wide wakeCoord). Adds a UNIQUE partial index on
--- instances(wake_id) WHERE state IN ('WAKING', 'COLD_BOOTING'). This is the
+-- instances(wake_id) WHERE state IN ('waking', 'cold_booting'). This is the
 -- DB-level dedup primitive that closes the cross-box race where two schedd
 -- daemons (on different boxes) both boot the same wake attempt: the second
 -- INSERT lands a 23505 (UNIQUE violation) and the engine can recover via
 -- ReadActiveInstanceForWakeID.
 --
 -- Why the partial predicate: an instance's wake_id stays stable for the
--- lifetime of that boot. The same wake_id reappearing with state='RUNNING'
+-- lifetime of that boot. The same wake_id reappearing with state='running'
 -- is the SAME instance, not a duplicate — the engine updated the state
 -- column in place. The partial predicate matches ONLY the in-flight states
 -- where two rows with the same wake_id would be a true race.
@@ -29,7 +29,7 @@
 -- pattern.
 --
 -- Pre-condition: at the time this migration runs, no two rows exist
--- with the same wake_id AND state IN ('WAKING', 'COLD_BOOTING'). This
+-- with the same wake_id AND state IN ('waking', 'cold_booting'). This
 -- invariant holds for every shipped pre-PR-5 install because (a) on
 -- single-box, schedd mints a fresh UUIDv7 per wake; (b) on multi-box
 -- without the owner-gate, races COULD have produced duplicates, but
@@ -48,7 +48,7 @@
 -- past them. See docs/runbooks/migration-slot-dance.md.
 CREATE UNIQUE INDEX IF NOT EXISTS instances_wake_attempt_active_idx
     ON instances(wake_id)
-    WHERE state IN ('WAKING', 'COLD_BOOTING');
+    WHERE state IN ('waking', 'cold_booting');
 
 -- +goose StatementEnd
 

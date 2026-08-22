@@ -8879,9 +8879,9 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// branch on the text path so the whole expression resolves to uuid.
 	//
 	// Multi-host safety cluster PR-5 (audit F4): the partial unique
-	// index instances_wake_attempt_active_idx (migration 00350)
+	// index instances_wake_attempt_active_idx (migration 00377)
 	// makes a duplicate INSERT with the same wake_id + state IN
-	// ('WAKING', 'COLD_BOOTING') fail with SQLSTATE 23505. We translate
+	// ('waking', 'cold_booting') fail with SQLSTATE 23505. We translate
 	// the raw pgconn.PgError into the typed sentinel
 	// state.ErrConcurrentWake so the engine's retry loop (Layer 2
 	// of the cluster-wide wakeCoord) can recover via
@@ -8917,9 +8917,9 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 }
 
 // ReadActiveInstanceForWakeID returns the in-flight instance row
-// for the given wake_id (state IN ('WAKING', 'COLD_BOOTING',
-// 'RUNNING')) — the winner of the cluster-coord race that
-// instances_wake_attempt_active_idx (migration 00350, audit F4 /
+// for the given wake_id (state IN ('waking', 'cold_booting',
+// 'running')) — the winner of the cluster-coord race that
+// instances_wake_attempt_active_idx (migration 00377, audit F4 /
 // ADR-098 amendment) protects. Returns ErrNotFound when the
 // wake_id has no in-flight row (the race lost and the winner
 // already parked — unusual but possible if the caller retried
@@ -8928,14 +8928,20 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 // Used by pkg/sched.Engine.EnsureWake's recovery path: on a 23505
 // from CreateInstance, the engine calls ReadActiveInstanceForWakeID
 // to discover the winner's instance_id and observes the winner's
-// state transition (WAKING → COLD_BOOTING → RUNNING) with the same
+// state transition (waking → cold_booting → running) with the same
 // in-process state machine the winner is running.
+//
+// State literals are lowercase — instances.state is constrained
+// at the schema layer (migrations/00001_init.sql:85) to
+// ('parked','waking','cold_booting','running','snapshotting',
+// 'stopped','failed'); an uppercase predicate would never match
+// and the recovery path would silently return ErrNotFound.
 func (s *PgStore) ReadActiveInstanceForWakeID(ctx context.Context, wakeID string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
 		 from instances where wake_id = $1
-		   and state in ('WAKING','COLD_BOOTING','RUNNING')
+		   and state in ('waking','cold_booting','running')
 		 order by started_at desc limit 1`, wakeID)
 	inst, err := scanInstance(row)
 	if err != nil {
