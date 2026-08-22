@@ -594,6 +594,22 @@ func (c *Client) GetDeploymentStages(ctx context.Context, id string) (json.RawMe
 	return out, c.do(ctx, "GET", "/v1/deployments/"+id+"/stages", nil, &out)
 }
 
+// GetDeploymentURL (issue #976 / ADR-122 / SAFE-RELEASES-C.3) returns
+// the per-deployment preview URL for one deployment. Wire call:
+// GET /v1/deployments/{id}/url (returns the typed
+// api.DeploymentPreviewURL envelope — Host and URL empty when the
+// deployment isn't preview-active or the deployment-preview zone is
+// disabled on this platform).
+//
+// Used by the dashboard's copy-URL chip + `gregale deploys show
+// --url` to mint a link to a shareable preview surface without
+// round-tripping gatewayd-internal. The 404 envelope mirrors
+// GetDeploymentStages (cross-account probes are 404, never 403).
+func (c *Client) GetDeploymentURL(ctx context.Context, id string) (DeploymentPreviewURL, error) {
+	var out DeploymentPreviewURL
+	return out, c.do(ctx, "GET", "/v1/deployments/"+id+"/url", nil, &out)
+}
+
 // PatchDeployment sets the per-deployment cold-wake floor override
 // (issue #557 closure / ADR-072). MinInstances is the only mutable
 // field on a deployment post-create — image / digest / overrides /

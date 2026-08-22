@@ -478,3 +478,90 @@ func TestCmdDeploys_Dispatcher_Status(t *testing.T) {
 		t.Errorf("cmdDeploys status no args = %d, want 1", code)
 	}
 }
+
+// showURLServer mirrors showServer but routes /url instead of /stages,
+// so --url tests can hit the per-deployment preview URL wire seam.
+func showURLServer(t *testing.T, payload []byte, ok map[string]bool) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !ok[r.URL.Path] {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestCmdDeploysShow_URLFlag is the SAFE-RELEASES-C.3 pin:
+// `gregale deploys show <id> --url` prints ONLY the per-deployment
+// preview URL on stdout (no stage summary, no JSON envelope),
+// exits 0 on a successful preview OR on a not-previewable
+// deployment (Alive=false → empty line). Shell consumers
+// (`$EDITOR`, `xargs`, `kubectl port-forward` style chains)
+// rely on this guarantee.
+func TestCmdDeploysShow_URLFlag(t *testing.T) {
+	payload := []byte(`{"deployment_id":"0123456789abcdef0123456789abcdef","app_id":"app1","host":"deploy-3.url-live.gregale.dev","url":"https://deploy-3.url-live.gregale.dev","alive":true}`)
+	srv := showURLServer(t, payload, map[string]bool{
+		"/v1/deployments/" + showTestID + "/url": true,
+	})
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	stdout, restoreStdout := swapStdout(t)
+	defer restoreStdout()
+
+	if code := cmdDeploysShow([]string{"--url", showTestID}); code != 0 {
+		t.Fatalf("cmdDeploysShow --url = %d, want 0", code)
+	}
+	got := strings.TrimSpace(stdout.String())
+	want := "https://deploy-3.url-live.gregale.dev"
+	if got != want {
+		t.Errorf("--url stdout = %q, want %q (no extras, no envelope)", got, want)
+	}
+}
+
+// TestCmdDeploysShow_URLFlagNotAlive covers the Alive=false
+// branch (host empty, url empty). The CLI prints an empty
+// line and exits 0 — shell consumers branch on `wc -c`.
+func TestCmdDeploysShow_URLFlagNotAlive(t *testing.T) {
+	payload := []byte(`{"deployment_id":"0123456789abcdef0123456789abcdef","app_id":"app1","host":"","url":"","alive":false}`)
+	srv := showURLServer(t, payload, map[string]bool{
+		"/v1/deployments/" + showTestID + "/url": true,
+	})
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	stdout, restoreStdout := swapStdout(t)
+	defer restoreStdout()
+
+	if code := cmdDeploysShow([]string{"--url", showTestID}); code != 0 {
+		t.Fatalf("cmdDeploysShow --url on Alive=false = %d, want 0 (empty line is valid)", code)
+	}
+	if stdout.Len() == 0 {
+		t.Errorf("--url stdout empty on Alive=false; want newline-terminated empty string")
+	}
+}
+
+// TestCmdDeploysShow_URLFlagServerError covers the wire-error
+// branch: the server returns non-200 (e.g. 401, 5xx). The
+// CLI must surface as exit != 0 so shell consumers can branch.
+func TestCmdDeploysShow_URLFlagServerError(t *testing.T) {
+	srv := showURLServer(t, nil, map[string]bool{}) // empty ok map → 404
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	// The printErr path writes to stderr — keep using the
+	// swapStdout helper because our test infra doesn't
+	// expose a stderr swap for this file; we only need to
+	// confirm the exit code here, not the stderr prose.
+	_, restoreStdout := swapStdout(t)
+	defer restoreStdout()
+
+	if code := cmdDeploysShow([]string{"--url", showTestID}); code == 0 {
+		t.Errorf("cmdDeploysShow --url on server error = 0, want non-zero")
+	}
+}

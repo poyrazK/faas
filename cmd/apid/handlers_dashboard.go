@@ -30,11 +30,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/stages"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/whycopy"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // dashboardAccountPath is the route served by renderAccount below.
@@ -1849,39 +1851,57 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	} else if stagePayload.BodyHTML != "" {
 		data.Stages = &stagePayload
 	}
-	// C4 (ADR-117 §Production-ready follow-on): mint a retry-form
-	// CSRF token + flip CanRetry on failed rows that have a known
-	// failing stage in the stage_state jsonb. The token is the
-	// sealed envelope (action="retry_deployment", account_id)
-	// pattern shared with dashboardDelete / dashboardFireCron —
-	// never the bare cookie. When CanRetry is false the template
-	// omits the form entirely; the token stays on the data struct
-	// regardless so a future "expand to all" change requires only
-	// the template gate, not a render path change.
+	// Issue #976 / ADR-122 / SAFE-RELEASES-C.3 — populate the
+	// per-deployment preview URL for the dashboard. Mirrors
+	// getDeploymentURL (cmd/apid/handlers_url.go::getDeploymentURL)
+	// so the dashboard and the apid wire surface agree. The
+	// resolved hostname goes through state.DeploymentOrdinal
+	// (per-app 1-based rank ordered by (created_at, id)) —
+	// the same code path the cert allowlist takes on TLS
+	// handshake, so the dashboard copy button's URL is the
+	// exact same URL the edge will mint under.
+	//
+	// Always populates the field (pointer, never nil), even
+	// when Alive=false on a failed/superseded row: the
+	// template distinguishes "preview active" vs "preview
+	// closed" rather than absent-vs-present.
+	alive := dep.DeploymentPreviewActive()
+	preview := dashboard.DeploymentPreviewURL{Alive: alive}
+	if alive {
+		suffix := wire.DeployWildcardSuffix
+		if suffix != "" {
+			ord, ordErr := s.store.DeploymentOrdinal(ctx, app.ID, dep.ID)
+			if ordErr == nil {
+				if host := gateway.BuildDeploymentPreviewURL(suffix, ord, app.Slug); host != "" {
+					preview.Host = host
+					preview.URL = wire.DeployPreviewURIScheme + "://" + host
+				}
+			}
+			// On ordinal lookup error we leave preview at
+			// Alive=true with empty Host/URL — the
+			// template renders the "preview pending" chip
+			// (transient failure). Surfacing a hard error
+			// here would 500 the dashboard's read-only
+			// page on a benign transient.
+		}
+	}
+	data.PreviewURL = &preview
+
+	// ADR-117 §Production-ready follow-on, C4: per-stage retry
+	// form (visible only when the deployment failed AND a
+	// recoverable failed-stage name is recoverable from the
+	// jsonb). The form posts to
+	// /dashboard/apps/{slug}/deployments/{id}/retry?from=<stage>
+	// with the sealed (action="retry_deployment", account_id)
+	// envelope minted below. failedStageFromJSON lives in
+	// dashboard_retry_deployment.go alongside the POST handler
+	// so the two stay in lock-step.
 	if dep.Status == state.DeployFailed {
 		if from := failedStageFromJSON(dep.StageState); from != "" {
+			data.CanRetry = true
 			data.RetryFromStage = from
-			tok, terr := middleware.IssueForAuthenticated(s.sessions, dashboardRetryDeploymentAction, acct.ID)
-			if terr != nil {
-				// Code-review finding #6: a failed mint means the
-				// faas_csrf sidecar can't be set, which means the
-				// matching form POST would be silently rejected
-				// (VerifyAuthenticated returns ErrCSRFInvalid and
-				// the dashboard flash surfaces a generic error).
-				// Rather than render a form that can't submit,
-				// suppress CanRetry so the template omits the form
-				// entirely. Log loudly so the operator sees the
-				// underlying seal failure.
-				log.Warn("dashboard: mint retry CSRF failed; suppressing retry form", "deployment_id", dep.ID, "err", terr)
-			} else {
-				data.CanRetry = true
+			if tok, err := middleware.IssueForAuthenticated(s.sessions, dashboardRetryDeploymentAction, acct.ID); err == nil {
 				data.DeploymentRetryCSRF = tok
-				// Set the matching faas_csrf sidecar so the form
-				// POST finds the same envelope. Without this the
-				// POST handler's VerifyAuthenticated step fails
-				// with ErrCSRFInvalid and the form submit is
-				// rejected. Same pattern as renderAccount's
-				// delete/restore envelopes (see handlers_dashboard.go:1089).
 				http.SetCookie(w, &http.Cookie{
 					Name:     middleware.CookieNameAuthenticated,
 					Value:    tok,

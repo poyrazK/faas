@@ -446,6 +446,19 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		// Issue #976 / ADR-122 / SAFE-RELEASES-D: pre-publish
+		// schema-drift gate. Pure local: reads two openapi.yaml
+		// files, runs pkg/openapidiff.Compare, prints one row per
+		// SchemaBreak, exits 2 iff any BREAKING row is present.
+		// CI consumes the exit code.
+		Name:    "openapi",
+		DocSlug: "openapi",
+		Short:   "Pre-publish openapi schema-drift gate (openapi diff <baseline> <proposed>)",
+		Subcommands: []cliSub{
+			{Name: "diff", Short: "Diff two openapi.yaml files; exit 2 on any BREAKING row"},
+		},
+	},
+	{
 		Name:    "env",
 		DocSlug: "env",
 		Short:   "Pull/push .env <-> sealed secrets (--app <slug>)",

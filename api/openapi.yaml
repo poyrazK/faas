@@ -3698,42 +3698,26 @@ paths:
       - $ref: '#/components/parameters/Id32'
     post:
       tags: [deployments]
-      operationId: retryDeploymentFromStage
-      summary: Per-stage retry (ADR-117 §Production-ready follow-on, C2).
+      operationId: retryDeployment
+      summary: Retry a failed deployment from a named stage (ADR-117 production-ready follow-on C2).
       description: |
-        Inserts a fresh `deployments` row from a failed (or stale)
-        row, restarting the imaged chokepoint at `from_stage`. The
-        fresh row copies every input primitive from the source
-        (`image`, `source_url`, `commit_sha`, `overrides`,
-        `sidecars`, `scope`, `traffic_percent`) and seeds a fresh
-        `stage_state` (`current = from_stage`, empty history). The
-        source row is left untouched — the new row's id is
-        returned in the body so the customer can wire it to
-        `GET /v1/deployments/{new-id}/logs` for live progress
-        (mirrors `gregale deploys retry` UX).
+        Closes the production-ready gap exposed by ADR-117 §C4: a
+        deployment that fails partway is restorable via
+        `POST /v1/deployments/{id}/retry` with a `from_stage` field.
+        The deployment row is duplicated (NOT mutated); the new
+        row carries a fresh `stage_state.current` and a fresh
+        `stage_state.history` so the dashboard's stage-progression
+        timeline (and the CLI's `gregale deploys show <id>` summary)
+        reflects the retry as a separate event.
 
-        `from_stage` must be one of the closed 6-stage vocabulary
-        (`source_download` / `dependency_restore` / `image_build` /
-        `security_scan` / `snapshot_prepare` / `readiness`).
-        `from_stage = source_download` is intentional — it's the
-        "retry-from-top" case and re-runs the whole pipeline.
+        The closed-6 vocabulary mirrors `state.AllStageNames`
+        (ADR-117); the API rejects unknown values with 400.
+        Empty strings are rejected for the same reason.
 
-        Status codes:
-
-          - 202 Accepted with the new row (the row is written;
-            imaged picks it up; the SSE stream on the new id is
-            the customer's progress surface).
-          - 400 if `from_stage` is empty or not in the closed-6
-            vocabulary.
-          - 401 if not authenticated.
-          - 404 if the source deployment does not exist OR is in
-            another account (IDOR posture; never 403, never
-            reveal cross-account existence).
-          - 500 for storage-layer failures.
-
-        Auth chain: authLimited → requireMFA → requireScope
-        (deploy-write). Non-idempotent (every call creates a fresh
-        row); the operator must surface this in the dashboard.
+        Auth chain mirrors `POST /v1/apps/{slug}/deployments`:
+        `authLimited → requireMFA → requireScope(ScopesDeployWriteSurface)`.
+        Returns 202 Accepted with the new deployment row (same
+        shape as `POST /v1/apps/{slug}/deployments`).
       requestBody:
         required: true
         content:
@@ -3742,17 +3726,77 @@ paths:
               $ref: '#/components/schemas/RetryDeploymentRequest'
       responses:
         '202':
-          description: "Fresh row inserted with `stage_state.current = from_stage`. imaged picks it up; progress is on the per-deployment SSE stream."
+          description: The new deployment row (same shape as a fresh deploy).
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeploymentResponse'
         '400':
-          description: "Bad request: `from_stage` missing or not in the closed-6 vocabulary. Stable code `validation`."
-          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+          description: |
+            `400 Bad Request` — `from_stage` is empty or
+            not in the closed-6 vocabulary.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: |
+            `403 Forbidden` — the caller's MFA factor or scope
+            does not satisfy the deploy-write surface.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Deployment row missing, or not in a retryable terminal state for the requested `from` stage (ADR-117 retry surface).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/deployments/{id}/url:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getDeploymentURL
+      summary: Get per-deployment preview URL (SAFE-RELEASES-C.2).
+      description: |
+        Returns the per-deployment preview URL shape
+        `deploy-{N}.{slug}.gregale.dev` that the cert allowlist will
+        mint under for a single deployment (issue #976 / ADR-122).
+        `N` is the per-app 1-based ordinal of the deployment row,
+        resolved from state.DeploymentOrdinal — the order is
+        stable so a previously-issued URL doesn't silently rot when
+        a later deploy lands.
+
+        The `alive` field is the same predicate the cert allowlist
+        consults (state.Deployment.DeploymentPreviewActive):
+        `true` iff the deployment's status is in
+        `{pending, building, imaging, snapshotting, live}`. When
+        `alive=false` the handler returns 200 with `host=""` and
+        `url=""` so the dashboard renders a "preview closed" chip
+        without round-tripping again. When the per-deployment
+        preview zone is disabled (`wire.DeployWildcardSuffix == ""`)
+        the handler returns the same 200 + Alive=false shape so
+        envelopes stay stable across environments.
+
+        A 404 is returned when:
+          - the deployment row does not exist,
+          - the deployment belongs to a different account
+            (IDOR-safe; no account-existence leak).
+      responses:
+        '200':
+          description: The resolved per-deployment preview URL.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentPreviewURL'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404':
-          description: Source deployment missing or cross-account probe (IDOR-safe; never 403).
+          description: Deployment URL row missing or cross-account probe (IDOR-safe; never 403).
           content:
             application/problem+json:
               schema:
@@ -10518,6 +10562,40 @@ components:
         essential:
           type: boolean
           description: "Defaults to true. type=init non-zero exit → fail deploy; type=sidecar non-zero exit → restart-loop. PR-B's runtime."
+
+    # ─── Deployments (PR-E1 / SAFE-RELEASES-C.2) ──────────────────────────
+
+    DeploymentPreviewURL:
+      description: |
+        Per-deployment preview URL read seam response.
+        Issue #976 / ADR-122 / SAFE-RELEASES-C.2.
+        Mirrors the api.DeploymentPreviewURL struct in pkg/api/dto.go.
+      type: object
+      required: [deployment_id, app_id, alive]
+      properties:
+        deployment_id:
+          type: string
+          format: uuid
+          description: Echoed from the path so a batch caller can correlate.
+        app_id:
+          type: string
+          format: uuid
+          description: Resolved parent app id.
+        host:
+          type: string
+          description: 'Per-deployment preview hostname (`deploy-{N}.{slug}.gregale.dev`). Empty when alive=false OR when wire.DeployWildcardSuffix is "" (zone disabled).'
+          example: deploy-3.url-happy.gregale.dev
+        url:
+          type: string
+          description: Full request URL (`https://<host>`). Empty when host is empty.
+          example: https://deploy-3.url-happy.gregale.dev
+        alive:
+          type: boolean
+          description: 'True iff the deployment exists, belongs to the caller, and has a status in {pending, building, imaging, snapshotting, live} (the same predicate as state.Deployment.DeploymentPreviewActive the cert allowlist consults).'
+        last_checked_at:
+          type: [string, "null"]
+          format: date-time
+          description: 'When certmagic last validated the cert under host. Null for never-touched hostnames. NOT a latency probe — the cert NotAfter is the load-bearing expiry.'
 
     # ─── Instances ────────────────────────────────────────────────────────
 

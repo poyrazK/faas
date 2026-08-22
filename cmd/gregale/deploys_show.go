@@ -69,7 +69,7 @@ import (
 // deploysShowUsage is the canonical CLI usage string for the
 // `show` subcommand. Centralized so the cmdDeploys dispatcher and
 // the cli_meta.go cliCommand entry reuse the same wording.
-const deploysShowUsage = "usage: gregale deploys show <id> [--status] [--json]"
+const deploysShowUsage = "usage: gregale deploys show <id> [--status] [--json] [--url]"
 
 // deploysStatusUsage mirrors deploysShowUsage for the `status`
 // subcommand. The wording intentionally distinguishes "show" (stage
@@ -79,7 +79,9 @@ const deploysShowUsage = "usage: gregale deploys show <id> [--status] [--json]"
 const deploysStatusUsage = "usage: gregale deploys status <id> [--json]"
 
 // cmdDeploysShow implements `gregale deploys show <id> [--status]
-// [--json]`.
+// [--json] [--url]`. The --url flag is the issue #976 / ADR-122 /
+// SAFE-RELEASES-C.3 surface; it short-circuits to print ONLY the
+// per-deployment preview URL.
 //
 // Wire call: GET /v1/deployments/{id}/stages (returns the raw
 // deployments.stage_state jsonb verbatim; CLI is the typed-shape owner).
@@ -89,6 +91,13 @@ const deploysStatusUsage = "usage: gregale deploys status <id> [--json]"
 // emitted. The two round-trips happen in parallel via errgroup.
 //
 // Render path:
+//   - --url                            → ONLY the per-deployment preview
+//     URL (single line, pipe-friendly). When --url is passed,
+//     nothing else is printed and the stage summary is
+//     skipped — this flag exists for shell scripting
+//     (`grep` / `xargs` / `$EDITOR` "open" commands). When the
+//     deployment isn't preview-active, prints an empty line so
+//     shell chains can branch on `wc -c`.
 //   - --json (or FAAS_JSON=1)        → indented JSON of stage_state.
 //   - stdout is TTY + no --json      → closed 6-row block via
 //     renderDeploySummary.
@@ -108,6 +117,7 @@ const deploysStatusUsage = "usage: gregale deploys status <id> [--json]"
 func cmdDeploysShow(args []string) int {
 	fs := flag.NewFlagSet("deploys show", flag.ContinueOnError)
 	withStatus := fs.Bool("status", false, "include terminal-status footer (live since / failed at)")
+	urlOnly := fs.Bool("url", false, "print only the per-deployment preview URL (shell-friendly)")
 	reordered := splitFlagArgs(args)
 	if err := fs.Parse(reordered); err != nil {
 		return 1
@@ -126,6 +136,28 @@ func cmdDeploysShow(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
+
+	// --url is a short-circuit branch: fetch the preview URL,
+	// print ONLY the URL line, exit. Skips the stage summary
+	// fetch entirely because shell consumers don't want the
+	// stage payload on stderr-tty terminal-coding pipelines.
+	if *urlOnly {
+		u, err := client.GetDeploymentURL(ctx, id)
+		if err != nil {
+			return printErr("Could not fetch deployment preview URL", err)
+		}
+		// Print URL on stdout OR an empty line when the
+		// deployment isn't preview-active / the zone is
+		// disabled. Shell consumers branch on `wc -c`.
+		_, _ = fmt.Fprintln(osStdout, u.URL)
+		// Exit 0 either way: an empty URL line means the
+		// deployment simply isn't previewable right now
+		// (failed/superseded), which is a valid operator
+		// answer — not a wire error. The non-zero exit was
+		// rejecting deliberate probes earlier (mirror of the
+		// dashboard's "preview closed" chip).
+		return 0
+	}
 
 	// Fetch the stage_state (always required) and, when --status
 	// is set, the deployment row (for the footer). The two

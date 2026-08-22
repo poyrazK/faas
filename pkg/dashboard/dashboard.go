@@ -415,24 +415,59 @@ type AppDetailData struct {
 // (handler-edge projection via pkg/dashboard/stages) so the
 // template only inlines the result and needs zero FuncMap wiring.
 //
-// Retry (ADR-117 §Production-ready follow-on, C4): when the
-// deployment row's status is "failed" AND the customer's plan
-// allows deploy (every paid plan does today; Free gates via a
-// separate CodePlanDeployBlocked), CanRetry flips true and the
-// template renders the "Retry from this stage" form posting to
-// /dashboard/apps/{slug}/deployments/{id}/retry. RetryFromStage
-// carries the failing stage's name (drives the hidden input),
-// and DeploymentRetryCSRF is the sealed token binding
-// (action="retry_deployment", account_id) minted by the renderer
-// (same pattern as dashboardDelete / dashboardFireCron).
+// PreviewURL (issue #976 / ADR-122 / SAFE-RELEASES-C.3) is the
+// read seam for the per-deployment preview URL
+// `deploy-{N}.{slug}.gregale.dev`. Populated by the dashboard
+// handler via the same Store call chain the apid
+// getDeploymentURL handler uses; nil when the deployment is
+// NOT preview-active (failed/superseded) so the template
+// renders the "preview closed" chip in place of a copy
+// button. Alive=false still carries a non-nil pointer with
+// Host="" — the same shape api.DeploymentPreviewURL returns.
 type DeploymentDetailData struct {
-	App                 AppListItem
-	Deployment          DeploymentItem
-	Scan                *ScanPayload
-	Stages              *StagePayload
-	CanRetry            bool
-	RetryFromStage      string
+	App        AppListItem
+	Deployment DeploymentItem
+	Scan       *ScanPayload
+	Stages     *StagePayload
+	// PreviewURL carries the resolved per-deployment preview
+	// URL. nil when the deployment doesn't exist or belongs to
+	// another account (handler already 404s in that case).
+	// Non-nil with Alive=false on failed/superseded rows so
+	// the template renders the closed-state copy.
+	PreviewURL *DeploymentPreviewURL
+	// CanRetry drives the per-stage retry form
+	// (deployment_detail.html:280). True when the deployment
+	// row is in a failed terminal state AND the jsonb
+	// stage_state carries a recoverable failed-stage name
+	// (cmd/apid/dashboard_retry_deployment.go::failedStageFromJSON).
+	// False otherwise — the form is hidden, not disabled, so
+	// the page layout doesn't shift row-by-row.
+	CanRetry bool
+	// RetryFromStage is the from_stage query param + hidden
+	// form input mirrored on the retry POST
+	// (`/dashboard/apps/{slug}/deployments/{id}/retry?from=<stage>`).
+	// Empty when CanRetry is false.
+	RetryFromStage string
+	// DeploymentRetryCSRF is the sealed
+	// (action="retry_deployment", account_id) form token the
+	// handler re-validates via
+	// middleware.VerifyAuthenticated in
+	// cmd/apid/dashboard_retry_deployment.go::dashboardRetryDeployment.
+	// Empty when CanRetry is false.
 	DeploymentRetryCSRF string
+}
+
+// DeploymentPreviewURL is the dashboard-local mirror of
+// pkg/api.DeploymentPreviewURL (issue #976 / ADR-122 /
+// SAFE-RELEASES-C.3). Carries only the fields the template
+// needs — Host, URL, Alive — so pkg/dashboard stays free of
+// pkg/api imports. Host and URL are empty when Alive=false OR
+// when the deployment-preview zone is disabled
+// (wire.DeployWildcardSuffix == "").
+type DeploymentPreviewURL struct {
+	Host  string
+	URL   string
+	Alive bool
 }
 
 // StagePayload is the dashboard-local mirror of the closed-6-stage

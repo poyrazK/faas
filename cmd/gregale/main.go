@@ -297,6 +297,14 @@ func run(args []string) int {
 		// itself is cmdEdgeRules. --json round-trips through the
 		// pkg/api SDK methods (ListEdgeRules / CreateEdgeRule / etc.).
 		return cmdEdgeRules(args[1:])
+	case "openapi":
+		// Issue #976 / ADR-122 / SAFE-RELEASES-D: pre-publish
+		// schema-drift gate. Single subcommand `diff`
+		// (commands_openapi.go) compares two openapi.yaml files
+		// using the same pkg/openapidiff.Compare the apid
+		// deploy-diff engine uses — exits non-zero on BREAKING
+		// rows so CI can pin a contract across a service bump.
+		return cmdOpenapi(args[1:])
 	case "cors":
 		// CORS improvements D5: thin shim over the typed SDK
 		// helper CreateCORSEdgeRule. Sub-commands live in

@@ -191,39 +191,36 @@ var methodRouteMap = map[string]string{
 	// underscore survives title-case), so the explicit map drops the
 	// underscore and aligns with the SDK's Get*EgressAllowlistExtra
 	// method names.
-	"GET /v1/account/egress_allowlist_extra":                  "GetEgressAllowlistExtra",
-	"PATCH /v1/account/egress_allowlist_extra":                "SetEgressAllowlistExtra",
-	"GET /v1/apps/{slug}/logs":                                "StreamAppLogs",
-	"GET /v1/deployments/{id}/logs":                           "StreamDeploymentLogs",
-	"GET /v1/deployments/{id}/scan":                           "GetDeploymentScan",              // issue #464 / ADR-055; per-deploy grype CVE drill-down
-	"GET /v1/deployments/{id}/secret-scan":                    "GetDeploymentSecretScan",        // PR-A / ADR-101; per-deploy image-layer secret-scan audit row
-	"GET /v1/deployments/{id}/stages":                         "GetDeploymentStages",            // ADR-117 follow-on; post-stream closed-stage summary for `gregale deploys show <id>`
-	"POST /v1/deployments/{id}/retry":                         "RetryDeploymentFromStage",       // ADR-117 §Production-ready follow-on C2; per-stage retry
-	"GET /v1/apps/{slug}/deployments/{deployment}/openapi":    "GetAppsDeploymentOpenAPIDoc",    // issue #975 item #1 / ADR-122 — captured OpenAPI doc per deployment
-	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":  "PatchAppsDeploymentOpenAPIDoc",  // manual upload; same store as cold-boot capture
-	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi": "DeleteAppsDeploymentOpenAPIDoc", // wipe the captured doc; re-captures on next cold boot
-	"GET /v1/deployments/{id}":                                "GetDeployment",
-	"PATCH /v1/deployments/{id}":                              "PatchDeployment", // ADR-072 / issue #557 closure; min_instances override
-	"GET /v1/deployments":                                     "ListDeployments",
-	"GET /v1/apps":                                            "ListApps",
-	"POST /v1/apps":                                           "CreateApp",
-	"GET /status/slo.json":                                    "GetStatusSLO",
-	"PATCH /v1/crons/{id}":                                    "UpdateCron",
-	"POST /v1/crons":                                          "CreateCron",
-	"GET /v1/crons":                                           "ListCrons",
-	"GET /v1/crons/{id}/runs":                                 "ListCronRuns",       // issue #791 — per-cron execution history
-	"POST /v1/crons/{id}/run":                                 "FireCron",           // issue #791 — manual fire-now (PR-C)
-	"GET /v1/cron-fire-now-requests/{request_id}":             "GetFireCronRequest", // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
-	"GET /v1/crons/{id}":                                      "GetCron",            // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
-	"GET /v1/usage/summary":                                   "UsageSummary",
-	"GET /v1/usage":                                           "GetUsage",
-	"GET /v1/usage/daily":                                     "UsageDaily",
-	"GET /v1/usage/storage":                                   "StorageUsage",
-	"GET /v1/invoices":                                        "ListInvoices",
-	"POST /v1/invocations/{id}/replay":                        "ReplayInvocation", // issue #315 — re-issue a failed/dead_letter invocation
-	"GET /v1/apps/{slug}/secrets":                             "ListSecrets",
-	"GET /v1/domains":                                         "ListDomains",
-	"POST /v1/domains":                                        "CreateDomain",
+	"GET /v1/account/egress_allowlist_extra":      "GetEgressAllowlistExtra",
+	"PATCH /v1/account/egress_allowlist_extra":    "SetEgressAllowlistExtra",
+	"GET /v1/apps/{slug}/logs":                    "StreamAppLogs",
+	"GET /v1/deployments/{id}/logs":               "StreamDeploymentLogs",
+	"GET /v1/deployments/{id}/scan":               "GetDeploymentScan",       // issue #464 / ADR-055; per-deploy grype CVE drill-down
+	"GET /v1/deployments/{id}/secret-scan":        "GetDeploymentSecretScan", // PR-A / ADR-101; per-deploy image-layer secret-scan audit row
+	"GET /v1/deployments/{id}/stages":             "GetDeploymentStages",     // ADR-117 follow-on; post-stream closed-stage summary for `gregale deploys show <id>`
+	"GET /v1/deployments/{id}/url":                "GetDeploymentURL",        // issue #976 / ADR-122 / SAFE-RELEASES-C.3 — per-deployment preview URL; the auto-derivation would produce "GetDeploymentsIdUrl" (Swagger-style with literal "Url") so the explicit map drops the path-segment noise
+	"GET /v1/deployments/{id}":                    "GetDeployment",
+	"PATCH /v1/deployments/{id}":                  "PatchDeployment", // ADR-072 / issue #557 closure; min_instances override
+	"GET /v1/deployments":                         "ListDeployments",
+	"GET /v1/apps":                                "ListApps",
+	"POST /v1/apps":                               "CreateApp",
+	"GET /status/slo.json":                        "GetStatusSLO",
+	"PATCH /v1/crons/{id}":                        "UpdateCron",
+	"POST /v1/crons":                              "CreateCron",
+	"GET /v1/crons":                               "ListCrons",
+	"GET /v1/crons/{id}/runs":                     "ListCronRuns",       // issue #791 — per-cron execution history
+	"POST /v1/crons/{id}/run":                     "FireCron",           // issue #791 — manual fire-now (PR-C)
+	"GET /v1/cron-fire-now-requests/{request_id}": "GetFireCronRequest", // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
+	"GET /v1/crons/{id}":                          "GetCron",            // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
+	"GET /v1/usage/summary":                       "UsageSummary",
+	"GET /v1/usage":                               "GetUsage",
+	"GET /v1/usage/daily":                         "UsageDaily",
+	"GET /v1/usage/storage":                       "StorageUsage",
+	"GET /v1/invoices":                            "ListInvoices",
+	"POST /v1/invocations/{id}/replay":            "ReplayInvocation", // issue #315 — re-issue a failed/dead_letter invocation
+	"GET /v1/apps/{slug}/secrets":                 "ListSecrets",
+	"GET /v1/domains":                             "ListDomains",
+	"POST /v1/domains":                            "CreateDomain",
 
 	// Issue #396 / ADR-045 PR 3 — alert rules. The auto-derivation
 	// would produce names with literal hyphens for the rotate-secret
@@ -584,6 +581,21 @@ var methodRouteMap = map[string]string{
 	"GET /v1/domains/{domain}":                        "GetDomain",
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
+	// Issue #976 / SAFE-RELEASES PR-C4 — per-stage retry surface.
+	// Auto-derivation would produce "PostDeploymentsIdRetry"
+	// (Swagger-style verb+id concat); the SDK verb is
+	// RetryDeploymentFromStage to mirror the verb+Resource
+	// convention used by the rest of pkg/api.
+	"POST /v1/deployments/{id}/retry": "RetryDeploymentFromStage",
+	// Issue #975 item #1 / ADR-122 — endpoint discovery. The
+	// SDK methods pre-date the spec route (added in PR #1007),
+	// so the auto-derivation names don't match the existing
+	// method names. Pin the route → method mapping here so
+	// sdk-coverage reports green until the SDK names are
+	// normalized to the Swagger convention.
+	"GET /v1/apps/{slug}/deployments/{deployment}/openapi":    "GetAppsDeploymentOpenAPIDoc",
+	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":  "PatchAppsDeploymentOpenAPIDoc",
+	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi": "DeleteAppsDeploymentOpenAPIDoc",
 }
 
 func main() {

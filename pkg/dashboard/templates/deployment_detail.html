@@ -68,7 +68,34 @@
     .deployer-field      { display: inline-block; margin-right: 0.75rem; font-size: 0.9rem; }
     .deployer-field.muted { color: #888; }
     p.deployer           { margin-top: 0.25rem; }
-/* Stage timeline (ADR-117 v2 follow-on, A2): the closed-6-stage
+    /* Issue #976 / ADR-122 / SAFE-RELEASES-C.3: per-deployment
+       preview URL chip + input + copy button. The chip mirrors
+       the deployer-via accent so the two metadata strips read
+       as siblings. The .preview-host input is readonly (no
+       customer-tampering) and uses size=host-length so the
+       widget fits the URL exactly without a separate label. */
+    .badge.preview-live   { background: #d1fae5; color: #065f46; }
+    .badge.preview-closed { background: #f3f4f6; color: #6b7280; }
+    .preview-host {
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 0.85rem;
+      border: 1px solid #d1d5db;
+      background: #f9fafb;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+    }
+    .preview-copy {
+      font-size: 0.85rem;
+      padding: 0.15rem 0.55rem;
+      margin-left: 0.25rem;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .preview-copy:hover { background: #f3f4f6; }
+    p.preview-url        { margin-top: 0.5rem; }
+    /* Stage timeline (ADR-117 v2 follow-on, A2): the closed-6-stage
        post-stream summary the customer sees via `gregale deploys
        show <id>`. Scoped under .stage-timeline so no global selector
        bleed. The HTML is rendered at the handler edge into the
@@ -179,6 +206,41 @@
             <dd>#{{.Data.Deployment.PRNumber}}</dd>
           {{end}}
         </dl>
+      {{end}}
+
+      {{/* Issue #976 / ADR-122 / SAFE-RELEASES-C.3: per-deployment
+          preview URL chip + copy button. Three states:
+          - Alive=true → green chip + native <input readonly> with
+            the resolved host + a JS copy button (htmx-style inline
+            script, no external deps).
+          - Alive=false + Host="" → greyed chip + "(preview closed)"
+            label. STILL renders the chip so the layout doesn't
+            shift when a live deploy turns failed.
+          - Alive=false + ZoneDisabled → "(preview zone disabled)"
+            label. Same layout, no input.
+       */}}
+      {{if .Data.PreviewURL}}
+        <p class="preview-url">
+          {{if .Data.PreviewURL.Alive}}
+            <span class="badge preview-live">preview</span>
+            <input
+              class="preview-host"
+              type="text"
+              readonly
+              value="{{.Data.PreviewURL.Host}}"
+              onclick="this.select()"
+              size="{{len .Data.PreviewURL.Host}}"
+              data-cluster="preview-url">
+            <button
+              class="preview-copy"
+              type="button"
+              data-cluster="preview-url"
+              onclick="(function(btn){var i=btn.previousElementSibling;navigator.clipboard&&navigator.clipboard.writeText(i.value);var prev=btn.textContent;btn.textContent='copied';setTimeout(function(){btn.textContent=prev;},1000);})(this);">copy</button>
+          {{else}}
+            <span class="badge preview-closed">preview</span>
+            <span class="deployer-field muted">(preview closed — deploy {{.Data.Deployment.Status}})</span>
+          {{end}}
+        </p>
       {{end}}
 
       {{ with .Data.Stages }}

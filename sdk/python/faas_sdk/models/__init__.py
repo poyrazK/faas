@@ -176,17 +176,11 @@ from .delete_account_session_body import DeleteAccountSessionBody
 from .deployment_healthcheck import DeploymentHealthcheck
 from .deployment_list_response import DeploymentListResponse
 from .deployment_liveness_probe import DeploymentLivenessProbe
+from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_response import DeploymentResponse
 from .deployment_response_deployed_via_type_1 import DeploymentResponseDeployedViaType1
 from .deployment_response_deployed_via_type_2_type_1 import DeploymentResponseDeployedViaType2Type1
 from .deployment_response_deployed_via_type_3_type_1 import DeploymentResponseDeployedViaType3Type1
-from .deployment_response_last_auto_rollback_reason_type_1 import DeploymentResponseLastAutoRollbackReasonType1
-from .deployment_response_last_auto_rollback_reason_type_2_type_1 import (
-    DeploymentResponseLastAutoRollbackReasonType2Type1,
-)
-from .deployment_response_last_auto_rollback_reason_type_3_type_1 import (
-    DeploymentResponseLastAutoRollbackReasonType3Type1,
-)
 from .deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
 from .deployment_response_parked_reason_type_1 import DeploymentResponseParkedReasonType1
 from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseParkedReasonType2Type1
@@ -677,13 +671,11 @@ __all__ = (
     "DeploymentHealthcheck",
     "DeploymentListResponse",
     "DeploymentLivenessProbe",
+    "DeploymentPreviewURL",
     "DeploymentResponse",
     "DeploymentResponseDeployedViaType1",
     "DeploymentResponseDeployedViaType2Type1",
     "DeploymentResponseDeployedViaType3Type1",
-    "DeploymentResponseLastAutoRollbackReasonType1",
-    "DeploymentResponseLastAutoRollbackReasonType2Type1",
-    "DeploymentResponseLastAutoRollbackReasonType3Type1",
     "DeploymentResponseOverrideEnvSecretRefs",
     "DeploymentResponseParkedReasonType1",
     "DeploymentResponseParkedReasonType2Type1",
