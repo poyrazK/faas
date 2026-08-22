@@ -1,0 +1,36 @@
+-- filename: 00367_deployments_stage_state_history_cap.sql
+-- +goose Up
+-- +goose StatementBegin
+-- +goose StatementEnd
+-- +goose Down
+-- +goose StatementBegin
+-- +goose StatementEnd
+
+-- Stage-state history retention cap (ADR-117 §Production-ready
+-- follow-on, C1).
+--
+-- Schema unchanged: deployments.stage_state remains jsonb. The 64-
+-- entry history cap is enforced Go-side inside
+-- AppendDeploymentStage (pkg/state/pgstore.go and memstore.go) at
+-- the existing read-modify-write site. The cap is exported from
+-- pkg/state/types.go as MaxStageHistory so the trim, the type
+-- docblock, and this migration's comment all reference the same
+-- constant.
+--
+-- Why not a CHECK constraint on jsonb_array_length(stage_state ->
+-- 'history'): the path is fragile across jsonb mutation shapes
+-- (the field can be absent, null, or carry an object instead of
+-- an array — goose-managed migrations can't enforce a shape
+-- every code path produces). The Go-side trim is co-located with
+-- the read-modify-write so future contributors can't widen the
+-- field without seeing the cap.
+--
+-- Trim semantics: FIFO. When the append would push history past
+-- 64 entries, the oldest entry is dropped. The current stage
+-- (stage_state.current) is never trimmed — only the historical
+-- archive.
+--
+-- Reversibility: the trim is irreversible in the same way a
+-- "delete old rows" cleanup is irreversible. No archival is
+-- implied; a future PR can change the cap by bumping
+-- MaxStageHistory and re-migrating.
