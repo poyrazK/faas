@@ -44,12 +44,12 @@
 -- chosen slot for PR-5; the fences 00351-00352 (added below) absorb
 -- one renumber.
 CREATE UNIQUE INDEX IF NOT EXISTS instances_wake_attempt_active_idx
-    ON public.instances(wake_id)
+    ON instances(wake_id)
     WHERE state IN ('WAKING', 'COLD_BOOTING');
 
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP INDEX IF EXISTS public.instances_wake_attempt_active_idx;
+DROP INDEX IF EXISTS instances_wake_attempt_active_idx;
 -- +goose StatementEnd

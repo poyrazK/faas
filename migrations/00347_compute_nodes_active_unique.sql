@@ -45,12 +45,12 @@
 -- fences 00348-00349 absorb one renumber hop. See
 -- docs/runbooks/migration-slot-dance.md.
 CREATE UNIQUE INDEX IF NOT EXISTS compute_nodes_active_unique_idx
-    ON public.compute_nodes(name)
+    ON compute_nodes(name)
     WHERE active = true;
 
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP INDEX IF EXISTS public.compute_nodes_active_unique_idx;
+DROP INDEX IF EXISTS compute_nodes_active_unique_idx;
 -- +goose StatementEnd
