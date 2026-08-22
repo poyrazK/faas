@@ -137,6 +137,12 @@ func diffAppConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
 				After: AsAny(*p.EvictionPriority),
 			})
 		}
+		if p.AppProtocol != nil {
+			out.Changes = append(out.Changes, Change{
+				Field: "app_protocol", Kind: ChangeAdd,
+				After: AsAny(*p.AppProtocol),
+			})
+		}
 		if p.AutoscaleTargetRPS != nil {
 			out.Changes = append(out.Changes, Change{
 				Field: "autoscale_target_rps", Kind: ChangeAdd,
@@ -219,6 +225,12 @@ func diffAppConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
 		out.Changes = append(out.Changes, Change{
 			Field: "eviction_priority", Kind: ChangeModify,
 			Before: AsAny(base.EvictionPriority), After: AsAny(*p.EvictionPriority),
+		})
+	}
+	if p.AppProtocol != nil && *p.AppProtocol != base.AppProtocol {
+		out.Changes = append(out.Changes, Change{
+			Field: "app_protocol", Kind: ChangeModify,
+			Before: AsAny(base.AppProtocol), After: AsAny(*p.AppProtocol),
 		})
 	}
 	if p.AutoscaleTargetRPS != nil && *p.AutoscaleTargetRPS != base.AutoscaleTargetRPS {

@@ -46,6 +46,7 @@ from .app_metrics_response_range import AppMetricsResponseRange
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_response import AppResponse
+from .app_response_app_protocol import AppResponseAppProtocol
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_runtime import AppResponseRuntime
 from .app_response_type import AppResponseType
@@ -118,6 +119,7 @@ from .create_alert_rule_request_failure_source import CreateAlertRuleRequestFail
 from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
 from .create_app_request import CreateAppRequest
+from .create_app_request_app_protocol import CreateAppRequestAppProtocol
 from .create_app_request_eviction_priority import CreateAppRequestEvictionPriority
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_type import CreateAppRequestType
@@ -193,6 +195,7 @@ from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseP
 from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseParkedReasonType3Type1
 from .deployment_response_tag import DeploymentResponseTag
 from .diff_app_config_patch import DiffAppConfigPatch
+from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
 from .diff_app_config_patch_eviction_priority import DiffAppConfigPatchEvictionPriority
 from .diff_break import DiffBreak
 from .diff_break_severity import DiffBreakSeverity
@@ -475,6 +478,7 @@ from .update_alert_rule_request_comparison import UpdateAlertRuleRequestComparis
 from .update_alert_rule_request_metric import UpdateAlertRuleRequestMetric
 from .update_alert_rule_request_window_spec import UpdateAlertRuleRequestWindowSpec
 from .update_app_request import UpdateAppRequest
+from .update_app_request_app_protocol import UpdateAppRequestAppProtocol
 from .update_app_request_eviction_priority_type_1 import UpdateAppRequestEvictionPriorityType1
 from .update_app_request_eviction_priority_type_2_type_1 import UpdateAppRequestEvictionPriorityType2Type1
 from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequestEvictionPriorityType3Type1
@@ -554,6 +558,7 @@ __all__ = (
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
     "AppResponse",
+    "AppResponseAppProtocol",
     "AppResponseEvictionPriority",
     "AppResponseRuntime",
     "AppResponseType",
@@ -623,6 +628,7 @@ __all__ = (
     "CreateAlertRuleRequestMetric",
     "CreateAlertRuleRequestWindowSpec",
     "CreateAppRequest",
+    "CreateAppRequestAppProtocol",
     "CreateAppRequestEvictionPriority",
     "CreateAppRequestRuntime",
     "CreateAppRequestType",
@@ -690,6 +696,7 @@ __all__ = (
     "DeploymentResponseParkedReasonType3Type1",
     "DeploymentResponseTag",
     "DiffAppConfigPatch",
+    "DiffAppConfigPatchAppProtocol",
     "DiffAppConfigPatchEvictionPriority",
     "DiffBreak",
     "DiffBreakSeverity",
@@ -970,6 +977,7 @@ __all__ = (
     "UpdateAlertRuleRequestMetric",
     "UpdateAlertRuleRequestWindowSpec",
     "UpdateAppRequest",
+    "UpdateAppRequestAppProtocol",
     "UpdateAppRequestEvictionPriorityType1",
     "UpdateAppRequestEvictionPriorityType2Type1",
     "UpdateAppRequestEvictionPriorityType3Type1",

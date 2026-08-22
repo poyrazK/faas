@@ -316,6 +316,32 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.")
 		}
 	}
+	// ADR-124: per-app wire-protocol selector. Same plan-gate
+	// shape as the streaming / require_authn gates above — Free +
+	// "grpc" = 403 plan_app_protocol_grpc_not_allowed. The
+	// closed-set CHECK apps_app_protocol_chk (migration 00378)
+	// catches out-of-set values at the SQL layer; the apid
+	// layer returns 400 app_protocol_invalid so the customer
+	// sees a clean validation error before any SQL write.
+	// http1 / http2 are universal and not gated here. The
+	// default is "http1" (Plan.AppProtocolDefault) so a Free
+	// customer PATCHing nil is a no-op (the Set bit is unset
+	// in updateApp's UpdateAppParams call below).
+	if req.AppProtocol != nil {
+		if !api.IsValidAppProtocol(*req.AppProtocol) {
+			return api.NewProblem(http.StatusBadRequest,
+				api.CodeAppProtocolInvalid,
+				"Invalid app_protocol",
+				"app_protocol must be one of: http1, http2, grpc")
+		}
+		if *req.AppProtocol == api.AppProtocolGRPC &&
+			!acct.Plan.AppProtocolAllowed(api.AppProtocolGRPC) {
+			return api.NewProblem(http.StatusForbidden,
+				api.CodePlanAppProtocolGrpcNotAllowed,
+				"Per-app gRPC wire protocol is not allowed on this plan",
+				"Free tier does not support app_protocol='grpc'; upgrade to Hobby or higher.")
+		}
+	}
 	if req.WarmSnapshotMinRequests != nil {
 		v := *req.WarmSnapshotMinRequests
 		if v < 1 || v > 100 {
@@ -854,6 +880,22 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// plain column write.
 		RouteMetricsEnabled:    req.RouteMetricsEnabled,
 		SetRouteMetricsEnabled: req.RouteMetricsEnabled != nil,
+		// ADR-124: per-app wire-protocol selector. Same
+		// Set*/optional-pointer convention as RouteMetricsEnabled
+		// above — nil pointer means "don't touch the column"
+		// (the SQL keeps the existing value via the
+		// `app_protocol = case when $N then $M else
+		// app_protocol end` pattern at pgstore.go); non-nil
+		// pointer writes the value verbatim. The closed-set
+		// CHECK apps_app_protocol_chk (migration 00378) admits
+		// only {http1, http2, grpc}; the apid validator above
+		// has already returned 400 app_protocol_invalid on any
+		// other value, so the SQL never sees an illegal value.
+		// Plan gate (Free + grpc → 403 plan_app_protocol_grpc_not_allowed)
+		// is enforced above; by the time UpdateApp runs, the
+		// value is authoritative.
+		AppProtocol:    req.AppProtocol,
+		SetAppProtocol: req.AppProtocol != nil,
 		// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
 		// maintenance flag (apps.maintenance_mode). Same Set-bit
 		// convention as RouteMetricsEnabled above — nil pointer

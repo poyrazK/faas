@@ -151,6 +151,7 @@ type App struct {
 	AuthDefaultFlippedAt    pgtype.Timestamptz
 	OverflowNode            pgtype.UUID
 	RouteMetricsEnabled     bool
+	AppProtocol             string
 	PreviewOfSlug           pgtype.Text
 	PreviewPrNumber         pgtype.Int4
 	PreviewPrState          pgtype.Text

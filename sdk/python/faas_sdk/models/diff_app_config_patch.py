@@ -6,6 +6,10 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.diff_app_config_patch_app_protocol import (
+    DiffAppConfigPatchAppProtocol,
+    check_diff_app_config_patch_app_protocol,
+)
 from ..models.diff_app_config_patch_eviction_priority import (
     DiffAppConfigPatchEvictionPriority,
     check_diff_app_config_patch_eviction_priority,
@@ -38,6 +42,9 @@ class DiffAppConfigPatch:
     warm_snapshot_enabled: bool | Unset = UNSET
     require_authn: bool | Unset = UNSET
     eviction_priority: DiffAppConfigPatchEvictionPriority | Unset = UNSET
+    app_protocol: DiffAppConfigPatchAppProtocol | Unset = UNSET
+    """Per-app wire-protocol selector (ADR-124). Same closed set + plan gate as UpdateAppRequest.app_protocol.
+    Pointer-aware: omitted → no change; non-null → set to this value."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +78,10 @@ class DiffAppConfigPatch:
         if not isinstance(self.eviction_priority, Unset):
             eviction_priority = self.eviction_priority
 
+        app_protocol: str | Unset = UNSET
+        if not isinstance(self.app_protocol, Unset):
+            app_protocol = self.app_protocol
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -100,6 +111,8 @@ class DiffAppConfigPatch:
             field_dict["require_authn"] = require_authn
         if eviction_priority is not UNSET:
             field_dict["eviction_priority"] = eviction_priority
+        if app_protocol is not UNSET:
+            field_dict["app_protocol"] = app_protocol
 
         return field_dict
 
@@ -137,6 +150,13 @@ class DiffAppConfigPatch:
         else:
             eviction_priority = check_diff_app_config_patch_eviction_priority(_eviction_priority)
 
+        _app_protocol = d.pop("app_protocol", UNSET)
+        app_protocol: DiffAppConfigPatchAppProtocol | Unset
+        if isinstance(_app_protocol, Unset):
+            app_protocol = UNSET
+        else:
+            app_protocol = check_diff_app_config_patch_app_protocol(_app_protocol)
+
         diff_app_config_patch = cls(
             ram_mb=ram_mb,
             idle_timeout_s=idle_timeout_s,
@@ -151,6 +171,7 @@ class DiffAppConfigPatch:
             warm_snapshot_enabled=warm_snapshot_enabled,
             require_authn=require_authn,
             eviction_priority=eviction_priority,
+            app_protocol=app_protocol,
         )
 
         diff_app_config_patch.additional_properties = d

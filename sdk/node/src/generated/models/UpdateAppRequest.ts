@@ -41,6 +41,10 @@ export type UpdateAppRequest = {
    */
   maintenance_mode?: boolean | null;
   /**
+   * Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit for no change; set explicitly to opt in (http2/grpc) or reset to 'http1'. Free customers PATCHing 'grpc' are rejected with 403 plan_app_protocol_grpc_not_allowed.
+   */
+  app_protocol?: 'http1' | 'http2' | 'grpc';
+  /**
    * Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the jsonb column.
    */
   scaling_policy?: (null | ScalingPolicy);

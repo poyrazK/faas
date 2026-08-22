@@ -446,7 +446,7 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildCreateRequest("slug", tc.sh, tc.runtime, tc.authnPtr)
+			got := buildCreateRequest("slug", tc.sh, tc.runtime, tc.authnPtr, nil)
 			if got.Slug != "slug" {
 				t.Errorf("Slug = %q, want %q", got.Slug, "slug")
 			}

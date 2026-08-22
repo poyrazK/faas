@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.update_app_request_app_protocol import UpdateAppRequestAppProtocol, check_update_app_request_app_protocol
 from ..models.update_app_request_eviction_priority_type_1 import (
     UpdateAppRequestEvictionPriorityType1,
     check_update_app_request_eviction_priority_type_1,
@@ -57,6 +58,10 @@ class UpdateAppRequest:
     """Coarse per-app maintenance toggle (ADR-091 amendment). Omitted → no change. PATCH true pins the app for
     maintenance (every request 503 + Retry-After); PATCH false restores normal handling. Free-tier allowed; no plan
     gate. The apps_maintenance_mode_notify trigger (migration 00237) fires pg_notify on flip."""
+    app_protocol: UpdateAppRequestAppProtocol | Unset = UNSET
+    """Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit for no change; set
+    explicitly to opt in (http2/grpc) or reset to 'http1'. Free customers PATCHing 'grpc' are rejected with 403
+    plan_app_protocol_grpc_not_allowed."""
     scaling_policy: None | ScalingPolicy | Unset = UNSET
     """Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the jsonb column."""
     require_signed: bool | None | Unset = UNSET
@@ -168,6 +173,10 @@ class UpdateAppRequest:
         else:
             maintenance_mode = self.maintenance_mode
 
+        app_protocol: str | Unset = UNSET
+        if not isinstance(self.app_protocol, Unset):
+            app_protocol = self.app_protocol
+
         scaling_policy: dict[str, Any] | None | Unset
         if isinstance(self.scaling_policy, Unset):
             scaling_policy = UNSET
@@ -267,6 +276,8 @@ class UpdateAppRequest:
             field_dict["route_metrics_enabled"] = route_metrics_enabled
         if maintenance_mode is not UNSET:
             field_dict["maintenance_mode"] = maintenance_mode
+        if app_protocol is not UNSET:
+            field_dict["app_protocol"] = app_protocol
         if scaling_policy is not UNSET:
             field_dict["scaling_policy"] = scaling_policy
         if require_signed is not UNSET:
@@ -390,6 +401,13 @@ class UpdateAppRequest:
             return cast(bool | None | Unset, data)
 
         maintenance_mode = _parse_maintenance_mode(d.pop("maintenance_mode", UNSET))
+
+        _app_protocol = d.pop("app_protocol", UNSET)
+        app_protocol: UpdateAppRequestAppProtocol | Unset
+        if isinstance(_app_protocol, Unset):
+            app_protocol = UNSET
+        else:
+            app_protocol = check_update_app_request_app_protocol(_app_protocol)
 
         def _parse_scaling_policy(data: object) -> None | ScalingPolicy | Unset:
             if data is None:
@@ -550,6 +568,7 @@ class UpdateAppRequest:
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,
             maintenance_mode=maintenance_mode,
+            app_protocol=app_protocol,
             scaling_policy=scaling_policy,
             require_signed=require_signed,
             warm_snapshot_enabled=warm_snapshot_enabled,

@@ -73,6 +73,16 @@ type CreateAppRequest struct {
 	// streaming pattern from issue #471 — same fail-closed
 	// contract, same Plan.WebSocketEnabled() accessor.
 	WebSocketEnabled *bool `json:"websocket_enabled,omitempty"`
+	// AppProtocol (ADR-124) is the per-app wire-protocol selector
+	// (closed-set {http1, http2, grpc}). nil → apid applies the
+	// universal default "http1" (Create) / "don't touch" (Update).
+	// http2 is universally opt-in. grpc is Hobby/Pro/Scale only —
+	// Free customers who set "grpc" are rejected by apid with 403
+	// plan_app_protocol_grpc_not_allowed. Out-of-set values are
+	// rejected with 400 app_protocol_invalid. See
+	// pkg/api/limits.go::Plan.AppProtocolAllowed for the gate and
+	// ADR-124 §Plan gating for the closed-set rationale.
+	AppProtocol *string `json:"app_protocol,omitempty"`
 	// RouteMetricsEnabled (ADR-093) opts the brand-new app into the
 	// per-route observability surface (gatewayd-internal emits
 	// `gateway_request_duration_seconds{app,route,class}` etc. plus
@@ -173,6 +183,16 @@ type UpdateAppRequest struct {
 	// does not want long-poll pinning). Pointer distinguishes
 	// "don't touch" (nil) from "explicit false" (*bool=false).
 	WebSocketEnabled *bool `json:"websocket_enabled,omitempty"`
+	// AppProtocol (ADR-124) is the per-app wire-protocol selector
+	// (closed-set {http1, http2, grpc}). nil → apid applies the
+	// universal default "http1" (Create) / "don't touch" (Update).
+	// http2 is universally opt-in. grpc is Hobby/Pro/Scale only —
+	// Free customers who set "grpc" are rejected by apid with 403
+	// plan_app_protocol_grpc_not_allowed. Out-of-set values are
+	// rejected with 400 app_protocol_invalid. See
+	// pkg/api/limits.go::Plan.AppProtocolAllowed for the gate and
+	// ADR-124 §Plan gating for the closed-set rationale.
+	AppProtocol *string `json:"app_protocol,omitempty"`
 	// RouteMetricsEnabled (ADR-093) toggles the per-app per-route
 	// observability surface. When true (or unset on a plan where
 	// the default is true), gatewayd-internal emits the per-route
@@ -545,6 +565,15 @@ type AppResponse struct {
 	// explicitly opted out via PATCH. Surfaced so dashboards can
 	// show "websocket on / off" alongside the streaming pill.
 	WebSocketEnabled bool `json:"websocket_enabled"`
+	// AppProtocol (ADR-124) is the wire-protocol selector stored on
+	// the apps row. Always "http1" on a Free-or-above app that
+	// didn't set the field — the universal default. Set to "http2"
+	// or "grpc" by the customer via PATCH /v1/apps/{slug} or
+	// manifest. Surfaced so dashboards can show a protocol pill
+	// alongside the streaming/WS pills; the column is NOT NULL
+	// DEFAULT 'http1' in schema.sql so the empty-string fallback
+	// is impossible.
+	AppProtocol string `json:"app_protocol"`
 	// RouteMetricsEnabled (ADR-093) reflects the per-app
 	// route_metrics_enabled flag stored on the apps row. False
 	// on Free (the plan default and the only legal state — apid

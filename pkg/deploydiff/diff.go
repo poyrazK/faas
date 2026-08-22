@@ -117,6 +117,15 @@ type AppConfigPatch struct {
 	WarmSnapshotEnabled *bool
 	RequireAuthn        *bool
 	EvictionPriority    *string
+	// AppProtocol (ADR-124) is the per-app wire-protocol
+	// selector — closed set {http1, http2, grpc} with `http1`
+	// as the universal default. Pointer-aware: nil means "don't
+	// touch"; non-nil carries the would-write value verbatim
+	// (engine.go's quota gate refuses 'grpc' on Free plans before
+	// the change row ever lands). The field maps 1:1 to
+	// api.UpdateAppRequest.AppProtocol so the engine does not
+	// depend on the wire DTO shape.
+	AppProtocol *string
 	// ScalingPolicy is intentionally omitted: the wire shape is a
 	// *ScalingPolicy whose nil-vs-empty distinction is brittle, and
 	// the diff would need a separate deep-equality path. Future

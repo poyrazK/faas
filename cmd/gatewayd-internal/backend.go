@@ -233,6 +233,20 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		// column DEFAULT (migration 00237).
 		MaintenanceMode: app.MaintenanceMode,
 		RequireAuthn:    app.RequireAuthn,
+		// ADR-124: per-app wire-protocol selector (closed-set
+		// {http1, http2, grpc}, default 'http1'). Plumbed from
+		// apps.app_protocol through pgRouter.toApp so
+		// Handler.ServeHTTP's decideProtocol can stamp
+		// x-faas-protocol on the request at the site
+		// x-faas-stream is stamped today, WITHOUT re-reading
+		// the apps row. Empty on legacy never-PATCHed rows
+		// is treated as "http1" by decideProtocol, preserving
+		// pre-ADR-124 behaviour. Apid enforces the write-time
+		// plan gate (CodePlanAppProtocolGrpcNotAllowed) so this
+		// side is read-only; sqlc Scan coerces NULL→"" (the
+		// apps_app_protocol_chk constraint + NOT NULL DEFAULT
+		// guarantee the column is never actually NULL).
+		AppProtocol: app.AppProtocol,
 		// CORS improvements D1: per-app default CORS
 		// plumbed through pgRouter.toApp from the apps
 		// row. CORSDefaultEnabled is *bool (tri-state:

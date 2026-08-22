@@ -137,6 +137,23 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 			Field:    "require_authn",
 		})
 	}
+	// App-protocol gate (ADR-124). Free plans cannot adopt
+	// app_protocol='grpc'; http1 / http2 are universal and not
+	// gated here. Mirrors the per-plan Plan.AppProtocolAllowed
+	// accessor used at every other gate in this file (require_authn,
+	// public_auth, warm_snapshot, traffic_split, egress_allowlist).
+	if pending.AppConfig.AppProtocol != nil &&
+		!p.AppProtocolAllowed(api.AppProtocolGRPC) &&
+		*pending.AppConfig.AppProtocol == api.AppProtocolGRPC {
+		out = append(out, Break{
+			Code:     api.CodePlanAppProtocolGrpcNotAllowed,
+			Severity: SeverityError,
+			Reason:   "app_protocol='grpc' is not enabled on this plan",
+			Field:    "app_protocol",
+			Observed: AsAny(*pending.AppConfig.AppProtocol),
+			Limit:    AsAny("http1|http2 only"),
+		})
+	}
 	// Egress allowlist gate + size cap.
 	if pending.AppConfig.EgressAllowlist != nil {
 		if !limits.EgressAllowlistAllowed {

@@ -193,7 +193,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--ram N] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--public-auth MODE] [--basic-user USER --basic-pass PASS]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--ram N] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -252,6 +252,15 @@ func cmdApp(args []string) int {
 	// problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement; back to public-by-default")
+	// ADR-124: per-app wire-protocol selector. Single string
+	// flag (closed set {http1, http2, grpc}) — empty value
+	// means "use the per-plan default" (http1 universal). The
+	// server validates the closed set + the per-plan gate
+	// (Free + grpc = 403 plan_app_protocol_grpc_not_allowed).
+	// No positive/negative pair because the closed set is
+	// already a sentinel-friendly enum (unlike the bool pair
+	// for require_authn).
+	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to use server default)")
 	// Issue #477 / ADR-079: per-app public-URL auth mode.
 	// The CLI uses a single string flag (open|bearer|basic)
 	// plus optional --basic-user / --basic-pass plaintext
@@ -410,6 +419,20 @@ func cmdApp(args []string) int {
 		v := false
 		req.RequireAuthn = &v
 	}
+	// ADR-124: per-app wire-protocol selector. Validate the
+	// closed set locally so a typo surfaces as a usage error
+	// before the round-trip (the apid side returns the same
+	// 400 app_protocol_invalid but with less context). Empty
+	// value = "use server default" (omits the field so the
+	// per-plan default applies).
+	if explicit["app-protocol"] {
+		v := *appProtocol
+		if !api.IsValidAppProtocol(v) {
+			return printErr("Invalid --app-protocol",
+				fmt.Errorf("must be 'http1', 'http2', or 'grpc'; got %q", v))
+		}
+		req.AppProtocol = &v
+	}
 	// Issue #477 / ADR-079: public-auth block. The CLI
 	// validates the mode locally (so a typo surfaces
 	// before the round-trip) and forwards the
@@ -460,7 +483,7 @@ func cmdApp(args []string) int {
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.OverflowNode == nil {
+		req.OverflowNode == nil && req.AppProtocol == nil {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -638,10 +661,11 @@ func cmdAppsRm(args []string) int {
 //     explicit --function --tarball path relies on the explicit
 //     --runtime flag, with --handler defaulting to "handler.handler"
 //     (defaultTemplateHandler, commands2.go:48).
-func buildCreateRequest(slug string, sh shape, runtime string, requireAuthnPtr *bool) api.CreateAppRequest {
+func buildCreateRequest(slug string, sh shape, runtime string, requireAuthnPtr *bool, appProtocolPtr *string) api.CreateAppRequest {
 	req := api.CreateAppRequest{
 		Slug:         slug,
 		RequireAuthn: requireAuthnPtr,
+		AppProtocol:  appProtocolPtr,
 	}
 	if sh == shapeFunction {
 		req.Type = "function"
@@ -819,6 +843,11 @@ func cmdDeployTarball(args []string) int {
 	// app <slug> --require-authn`.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement; back to public-by-default")
+	// ADR-124: per-app wire-protocol selector (PATCH path).
+	// Same single-string flag shape as the CREATE path above.
+	// Empty value = no change (the Set bit in UpdateAppParams
+	// is unset, so the SQL keeps the existing value).
+	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to leave unchanged)")
 	// Issue #556 PR-A: per-deployment traffic-split weight (Pro/Scale
 	// only). Sentinel value -1 = "unset" — `fs.Int` doesn't have a
 	// pointer type, so the explicit `fs.Visit` check below
@@ -965,6 +994,16 @@ func cmdDeployTarball(args []string) int {
 	case explicit["no-require-authn"]:
 		v := false
 		requireAuthnPtr = &v
+	}
+	// ADR-124: per-app wire-protocol selector (deploy path).
+	// Single-string flag (closed set); empty value = omit so
+	// the per-plan default applies server-side. The
+	// commands2.go:cmdApp handler validates the closed set
+	// already; this path surfaces as a JSON body field only.
+	var appProtocolPtr *string
+	if explicit["app-protocol"] {
+		v := *appProtocol
+		appProtocolPtr = &v
 	}
 	// Issue #556 PR-A: derive the optional traffic_percent pointer.
 	// Sentinel -1 (the default value above) means "absent" — the
@@ -1265,7 +1304,7 @@ func cmdDeployTarball(args []string) int {
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
 	// happen. --diff never ships a deploy.
 	if *diff {
-		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, cwd, requireAuthnPtr)
+		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, cwd, requireAuthnPtr, appProtocolPtr)
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
 		opts.Strict = !*diffLenient
@@ -1350,7 +1389,7 @@ func cmdDeployTarball(args []string) int {
 		return 0
 	}
 
-	createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr)
+	createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr)
 	if _, err := client.CreateApp(ctx, createReq); err != nil {
 		var ae *APIError
 		if !errors.As(err, &ae) || ae.Problem.Status != 409 {

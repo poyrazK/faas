@@ -29,6 +29,10 @@ export type CreateAppRequest = {
    */
   maintenance_mode?: boolean;
   /**
+   * Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit to use the per-plan default ('http1'); set explicitly to opt in to http2 or grpc. Free customers POSTing 'grpc' are rejected with 403 plan_app_protocol_grpc_not_allowed.
+   */
+  app_protocol?: 'http1' | 'http2' | 'grpc';
+  /**
    * Per-app two-tier snapshot flag (issue #470 / ADR-055). Omitted at create-time → apid applies the plan default. Free/Hobby PATCH-true is rejected.
    */
   warm_snapshot_enabled?: boolean;

@@ -738,6 +738,74 @@ with a non-evicting `__route_other__` overflow bucket (ADR-093 D2).
   `deploy/ansible/roles/prometheus/tasks/main.yml` (commit 1 of
   this PR — G1+G2 closure).
 
+## M8 — Per-service wire-protocol selector (issue #67 / ADR-124). 🚧
+
+Customer knob: pick the wire protocol at the public edge
+(`http1 | http2 | grpc`) via `apps.app_protocol`. Default `http1`
+universal; `http2` universal; `grpc` Hobby+/Pro/Scale only.
+Closes issue #67 (Cloud Run parity for k8s/Cloud-Run migrators
+carrying gRPC services).
+
+- **Schema** — migration `00378_apps_app_protocol.sql`
+  (`ADD COLUMN IF NOT EXISTS app_protocol text NOT NULL DEFAULT
+  'http1'` + `apps_app_protocol_chk` CHECK mirroring the
+  `eviction_priority` precedent at `00346_deployments_annotation.sql:54-60`).
+  Round-trip + replay-safety pinned at `00378_apps_app_protocol_test.go`
+  (replay-safe ADD COLUMN IF NOT EXISTS + DROP/ADD CONSTRAINT IF
+  EXISTS pattern from the streaming migration).
+- **Plan gate** — `pkg/api/limits.go::Plan.AppProtocolAllowed(protocol)`
+  mirrors the `StreamingResponseAllowed` precedent. `grpc` is gated
+  per-plan on `AppProtocolGrpcAllowed bool` (Free=false,
+  Hobby/Pro/Scale=true). apid applies the gate at `CreateApp` AND
+  at `UpdateApp` — Free PATCH to `grpc` surfaces
+  `plan_app_protocol_grpc_not_allowed` (RFC 7807, 403). Invalid
+  values (`!∈ {http1, http2, grpc}`) surface
+  `app_protocol_invalid` (400). The column-level CHECK is the
+  belt-and-braces backstop, not the primary validator.
+- **Closed-set DTO + validator** — `pkg/api/dto.go`: `CreateAppRequest.AppProtocol *string`,
+  `UpdateAppRequest.AppProtocol *string`, `AppResponse.AppProtocol string`. `pkg/api/diff.go`:
+  `DiffAppConfigPatch.AppProtocol *string` for the `deploy --diff`
+  path. CLI: `cmd/gregale/commands2.go`, `commands5.go`,
+  `commands_diff.go` wire `--app-protocol http1|http2|grpc` (create,
+  update, diff).
+- **Read-side plumbing** — `cmd/gatewayd-internal/backend.go::toApp`
+  copies `state.App.AppProtocol` onto the gateway's local
+  `gateway.App.AppProtocol` so the cached app struct carries
+  the closed-set value without re-reading the apps row.
+- **Header stamp** — `pkg/gateway/handler.go::decideProtocol`
+  + `r.Header.Set("x-faas-protocol", decideProtocol(h, r, app))`
+  at the site `x-faas-stream` is stamped today (~5131 streaming
+  path; ~5261 buffered path). Empty→`"http1"` preserves
+  pre-ADR-124 behaviour bit-for-bit. `pkg/gateway/forwardproxy.go::fwdStreamOnceWithEvents`
+  reads the header and emits a `slog.Debug` "framing selection"
+  line on the gatewayd-internal debug stream so operators with
+  debug logging on can correlate per-app protocol choice with
+  bridge-side framing behaviour.
+- **OpenAPI / SDK** — `api/openapi.yaml` adds `app_protocol` to
+  `AppResponse`, `CreateAppRequest`, `UpdateAppRequest`,
+  `DiffAppConfigPatch` (type `string`, `enum: [http1, http2, grpc]`,
+  `example: http1`). `make spec-sync` mirrors to
+  `pkg/apid/openapi.yaml`. SDK node + Python regenerated.
+- **Diff engine** — `pkg/deploydiff/{diff,engine,quota,render_text}.go`
+  gain the `app_protocol` branch (closed-set Modify; Free-account
+  gate on `grpc` Add). Mirrors the streaming/require_authn
+  pattern at `pkg/deploydiff/quota.go:105`.
+- **E2E** — `cmd/e2e/app_protocol_test.go` pins (CI, no metal):
+  Free-app `grpc` rejected, Hobby default = `"http1"`,
+  Hobby persistence of `"http2"` round-trip, PATCH of
+  invalid value → 400 `app_protocol_invalid`.
+- **Out of scope (filed §17 G19)** — end-to-end H2 framing on
+  the customer→guest leg (i.e. `grpc` actually reaches the
+  guest's `:8080` as gRPC trailers, not as H1+chunked). The
+  bridge already speaks H2C on the vmmd side and H1+chunked
+  on the guest side per PR #750 / ADR-079; this PR ships the
+  customer knob without changing the bridge. G19 is a separate
+  multi-week ADR (bridge-side termination on the guest side
+  + coordination with the guest base image).
+
+ADR-124 (new file at `docs/adr/124-app-protocol-selector.md`).
+Closes §17 G18; opens §17 G19.
+
 ### Tier A — observation period
 
 Operational follow-up (no code change). 2-week observation window

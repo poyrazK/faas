@@ -8916,6 +8916,18 @@ components:
         # annotation with the "since YYYY-MM-DD" suffix only
         # when this is non-null.
         auth_default_flipped_at: { type: [string, "null"], format: date-time }
+        # ADR-124: per-app wire-protocol selector. Closed set
+        # {http1, http2, grpc}; http1 is the universal default
+        # (apps.app_protocol NOT NULL DEFAULT 'http1' per
+        # migration 00378). Surfaced so dashboards can render
+        # "PROTOCOL: http1/http2/grpc" alongside the streaming/
+        # websocket pills and so a customer can verify their
+        # PATCH landed without a second round-trip.
+        app_protocol:
+          description: "Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Default 'http1' (universal). Setting 'grpc' is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'."
+          type: string
+          enum: [http1, http2, grpc]
+          example: http1
 
     CreateAppRequest:
       description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."
@@ -8960,6 +8972,19 @@ components:
           description: "Coarse per-app maintenance toggle (ADR-091 amendment). Omitted → apid applies the default (false). Free-tier allowed; no plan gate. Flipping this on at create time pins the app for maintenance from the first request."
           type: boolean
           example: false
+        # ADR-124: per-app wire-protocol selector (CreateAppRequest).
+        # Same closed set + plan gate as the AppResponse field.
+        # Pointer-shaped on the wire (omitempty): omit to use the
+        # per-plan default ('http1' universal), set explicitly to
+        # opt in to http2 or grpc. Free customers POSTing 'grpc'
+        # are rejected with 403 plan_app_protocol_grpc_not_allowed;
+        # any value outside the closed set returns 400
+        # app_protocol_invalid before any SQL write.
+        app_protocol:
+          description: "Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit to use the per-plan default ('http1'); set explicitly to opt in to http2 or grpc. Free customers POSTing 'grpc' are rejected with 403 plan_app_protocol_grpc_not_allowed."
+          type: string
+          enum: [http1, http2, grpc]
+          example: http1
         # Issue #470 / ADR-055: optional at create-time. Omitted
         # → apid applies the plan default (Pro/Scale = true;
         # Free/Hobby = false — the only legal state on those
@@ -9094,6 +9119,17 @@ components:
           description: "Coarse per-app maintenance toggle (ADR-091 amendment). Omitted → no change. PATCH true pins the app for maintenance (every request 503 + Retry-After); PATCH false restores normal handling. Free-tier allowed; no plan gate. The apps_maintenance_mode_notify trigger (migration 00237) fires pg_notify on flip."
           type: [boolean, "null"]
           example: false
+        # ADR-124: per-app wire-protocol selector (UpdateAppRequest).
+        # Pointer-shaped (nullable on the wire): omitted → no change;
+        # set explicitly to opt in to http2 / grpc or reset back to
+        # 'http1'. Free customers PATCHing 'grpc' are rejected with
+        # 403 plan_app_protocol_grpc_not_allowed; any value outside
+        # the closed set returns 400 app_protocol_invalid.
+        app_protocol:
+          description: "Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit for no change; set explicitly to opt in (http2/grpc) or reset to 'http1'. Free customers PATCHing 'grpc' are rejected with 403 plan_app_protocol_grpc_not_allowed."
+          type: [string, "null"]
+          enum: [http1, http2, grpc]
+          example: http1
         # Issue #462 / ADR-058 (PR-A): per-app scaling policy.
         # Omitted → no change. Non-null → atomic full-overwrite
         # of the jsonb column `apps.scaling_policy` (the
@@ -11354,6 +11390,11 @@ components:
         warm_snapshot_enabled: { type: boolean }
         require_authn: { type: boolean }
         eviction_priority: { type: string, enum: [normal, batch, latency] }
+        app_protocol:
+          description: "Per-app wire-protocol selector (ADR-124). Same closed set + plan gate as UpdateAppRequest.app_protocol. Pointer-aware: omitted → no change; non-null → set to this value."
+          type: [string, "null"]
+          enum: [http1, http2, grpc]
+          example: http1
 
     DiffEnvRow:
       description: |

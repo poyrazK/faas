@@ -24,5 +24,9 @@ export type DiffAppConfigPatch = {
   warm_snapshot_enabled?: boolean;
   require_authn?: boolean;
   eviction_priority?: 'normal' | 'batch' | 'latency';
+  /**
+   * Per-app wire-protocol selector (ADR-124). Same closed set + plan gate as UpdateAppRequest.app_protocol. Pointer-aware: omitted → no change; non-null → set to this value.
+   */
+  app_protocol?: 'http1' | 'http2' | 'grpc';
 };
 

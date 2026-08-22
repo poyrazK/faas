@@ -317,6 +317,44 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if req.WarmSnapshotMinMs != nil {
 		warmMinMs = *req.WarmSnapshotMinMs
 	}
+	// ADR-124: per-app wire-protocol selector. Closed set
+	// {http1, http2, grpc} — http1 / http2 are universal;
+	// grpc is plan-gated to Hobby+/Pro/Scale (Free returns 403
+	// plan_app_protocol_grpc_not_allowed). Plan-level default
+	// applied when the request didn't carry one so a Hobby
+	// customer's brand-new app is grpc-ready without an extra
+	// PATCH round-trip; Free defaults to "http1" via the
+	// Plan.AppProtocolDefault() accessor (the only legal value
+	// on Free). The closed-set CHECK apps_app_protocol_chk
+	// (migration 00378) is the schema-level guard; the apid
+	// gate is the customer-visible 403 surface that mirrors the
+	// PATCH-time gate (handlers_ext.go). Without the apid gate
+	// a Free customer's create request would silently land as
+	// "http1" via the plan default — bypass-closed, but the
+	// error message would never reach the customer. Mirrors the
+	// streaming_enabled / require_authn shape above.
+	if req.AppProtocol != nil {
+		if !api.IsValidAppProtocol(*req.AppProtocol) {
+			return state.App{}, api.NewProblem(http.StatusBadRequest,
+				api.CodeAppProtocolInvalid,
+				"Invalid app_protocol",
+				"app_protocol must be one of: http1, http2, grpc")
+		}
+		if *req.AppProtocol == api.AppProtocolGRPC &&
+			!acct.Plan.AppProtocolAllowed(api.AppProtocolGRPC) {
+			return state.App{}, api.NewProblem(http.StatusForbidden,
+				api.CodePlanAppProtocolGrpcNotAllowed,
+				"Per-app gRPC wire protocol is not allowed on this plan",
+				"Free tier does not support app_protocol='grpc'; upgrade to Hobby or higher.")
+		}
+	}
+	appProtocol := api.AppProtocolHTTP1
+	if req.AppProtocol != nil {
+		appProtocol = *req.AppProtocol
+	}
+	if req.AppProtocol != nil {
+		appProtocol = *req.AppProtocol
+	}
 	return state.App{
 		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
 		RAMMB: ram, MaxConcurrency: mc, IdleTimeoutS: req.IdleTimeoutS, Status: state.AppActive,
@@ -357,6 +395,15 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		// projects the plan defaults so dashboards stay consistent.
 		WarmSnapshotMinRequests: warmMinReqs,
 		WarmSnapshotMinMs:       warmMinMs,
+		// ADR-124: per-app wire-protocol selector. Plan-default
+		// applied above (Free → "http1", Hobby/Pro/Scale →
+		// "http1" but customer may opt in to http2 / grpc via
+		// the request body). The store's CreateApp floor
+		// (pgstore.go) coerces an empty value to "http1" so
+		// hand-built App{}s land safely; this branch never
+		// reaches the floor in practice because every exit
+		// path above assigns appProtocol explicitly.
+		AppProtocol: appProtocol,
 	}, nil
 }
 
@@ -559,6 +606,15 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		// customer can verify their PATCH landed without a second
 		// round-trip.
 		RouteMetricsEnabled: a.RouteMetricsEnabled,
+		// ADR-124: per-app wire-protocol selector (DB
+		// round-trip). Surfaced so dashboards can show
+		// "protocol: http1 / http2 / grpc" alongside the
+		// streaming + websocket + route-metrics pills and so
+		// the customer can verify their PATCH landed
+		// without a second round-trip. The schema's NOT NULL
+		// DEFAULT 'http1' guarantee means a plain string
+		// copy is safe (no coalesce needed).
+		AppProtocol: a.AppProtocol,
 		// Issue #560: per-app require_authn flag. Surfaced so
 		// dashboards can show "auth required on / off" alongside
 		// the streaming + require_signed pills, and so a customer

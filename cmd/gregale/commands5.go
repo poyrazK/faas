@@ -562,6 +562,10 @@ func cmdAppScale(slug string, args []string) int {
 	// error with the API's problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement; back to public-by-default")
+	// ADR-124: per-app wire-protocol selector (scale path).
+	// Mirrors commands2.go:cmdApp — single string flag, empty
+	// value = no change. Free + grpc = 403 server-side.
+	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to leave unchanged)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -633,12 +637,23 @@ func cmdAppScale(slug string, args []string) int {
 		v := false
 		req.RequireAuthn = &v
 	}
+	// ADR-124: per-app wire-protocol selector. Closed-set
+	// validation mirrors commands2.go:cmdApp — local check
+	// surfaces a usage error before the round-trip.
+	if explicit["app-protocol"] {
+		v := *appProtocol
+		if !api.IsValidAppProtocol(v) {
+			return printErr("Invalid --app-protocol",
+				fmt.Errorf("must be 'http1', 'http2', or 'grpc'; got %q", v))
+		}
+		req.AppProtocol = &v
+	}
 	if req.RAMMB == nil && req.MaxConcurrency == nil &&
 		req.IdleTimeoutS == nil && req.MinInstances == nil &&
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
-		req.RequireAuthn == nil {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> scale [--ram N] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn]", "apps")
+		req.RequireAuthn == nil && req.AppProtocol == nil {
+		PrintUsage(os.Stderr, "usage: gregale app <slug> scale [--ram N] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	client, err := authedClient()

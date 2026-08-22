@@ -6,6 +6,7 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.create_app_request_app_protocol import CreateAppRequestAppProtocol, check_create_app_request_app_protocol
 from ..models.create_app_request_eviction_priority import (
     CreateAppRequestEvictionPriority,
     check_create_app_request_eviction_priority,
@@ -41,6 +42,10 @@ class CreateAppRequest:
     maintenance_mode: bool | Unset = UNSET
     """Coarse per-app maintenance toggle (ADR-091 amendment). Omitted → apid applies the default (false). Free-tier
     allowed; no plan gate. Flipping this on at create time pins the app for maintenance from the first request."""
+    app_protocol: CreateAppRequestAppProtocol | Unset = UNSET
+    """Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit to use the per-plan default
+    ('http1'); set explicitly to opt in to http2 or grpc. Free customers POSTing 'grpc' are rejected with 403
+    plan_app_protocol_grpc_not_allowed."""
     warm_snapshot_enabled: bool | Unset = UNSET
     """Per-app two-tier snapshot flag (issue #470 / ADR-055). Omitted at create-time → apid applies the plan
     default. Free/Hobby PATCH-true is rejected."""
@@ -88,6 +93,10 @@ class CreateAppRequest:
 
         maintenance_mode = self.maintenance_mode
 
+        app_protocol: str | Unset = UNSET
+        if not isinstance(self.app_protocol, Unset):
+            app_protocol = self.app_protocol
+
         warm_snapshot_enabled = self.warm_snapshot_enabled
 
         warm_snapshot_min_requests = self.warm_snapshot_min_requests
@@ -127,6 +136,8 @@ class CreateAppRequest:
             field_dict["route_metrics_enabled"] = route_metrics_enabled
         if maintenance_mode is not UNSET:
             field_dict["maintenance_mode"] = maintenance_mode
+        if app_protocol is not UNSET:
+            field_dict["app_protocol"] = app_protocol
         if warm_snapshot_enabled is not UNSET:
             field_dict["warm_snapshot_enabled"] = warm_snapshot_enabled
         if warm_snapshot_min_requests is not UNSET:
@@ -175,6 +186,13 @@ class CreateAppRequest:
 
         maintenance_mode = d.pop("maintenance_mode", UNSET)
 
+        _app_protocol = d.pop("app_protocol", UNSET)
+        app_protocol: CreateAppRequestAppProtocol | Unset
+        if isinstance(_app_protocol, Unset):
+            app_protocol = UNSET
+        else:
+            app_protocol = check_create_app_request_app_protocol(_app_protocol)
+
         warm_snapshot_enabled = d.pop("warm_snapshot_enabled", UNSET)
 
         warm_snapshot_min_requests = d.pop("warm_snapshot_min_requests", UNSET)
@@ -203,6 +221,7 @@ class CreateAppRequest:
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,
             maintenance_mode=maintenance_mode,
+            app_protocol=app_protocol,
             warm_snapshot_enabled=warm_snapshot_enabled,
             warm_snapshot_min_requests=warm_snapshot_min_requests,
             warm_snapshot_min_ms=warm_snapshot_min_ms,

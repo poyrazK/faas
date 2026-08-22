@@ -903,6 +903,17 @@ type Limits struct {
 	// threshold for warm-tier capture, applied at CreateApp when
 	// the plan allows it. Free/Hobby = 0 (irrelevant). Pro/Scale =
 	// 2000 (matches Node.js Express / Flask framework startup).
+	// AppProtocolGrpcAllowed (ADR-124 §Plan gating) is the plan
+	// gate for the per-app app_protocol=grpc opt-in. Hobby/Pro/
+	// Scale = true (Cloud Run analogue: gRPC framing is a paid-tier
+	// feature). Free = false (no business case for gRPC traffic at
+	// the free tier; the universal default 'http1' keeps every
+	// pre-existing app on the buffered H1 path regardless). Apid's
+	// createApp + updateApp handlers reject Free PATCH-grpc with
+	// 403 plan_app_protocol_grpc_not_allowed. http1 and http2
+	// are universally allowed (no per-plan gate) and validated
+	// via the same accessor below.
+	AppProtocolGrpcAllowed bool
 	// Range [100, 60000] (migration 00109 CHECK).
 	WarmSnapshotMinMsDefault int
 
@@ -1371,6 +1382,12 @@ var planLimits = map[Plan]Limits{
 		// default (false) keeps every existing customer
 		// public-by-default.
 		RequireAuthn: false,
+		// AppProtocolGrpcAllowed (ADR-124): Free does not
+		// unlock gRPC framing at the customer edge. The
+		// universal default 'http1' keeps every Free app on
+		// the legacy H1 path regardless; the gate only fires
+		// if a Free customer tries PATCH app_protocol=grpc.
+		AppProtocolGrpcAllowed: false,
 		// TrafficSplit (issue #556): Free does not unlock
 		// per-deployment traffic splitting. The column
 		// default (100) keeps today's behaviour — 100% to the
@@ -1673,6 +1690,12 @@ var planLimits = map[Plan]Limits{
 		// feature toggle, and the issue pairs it with
 		// internal-only ingress (Pro+).
 		RequireAuthn: false,
+		// AppProtocolGrpcAllowed (ADR-124): Hobby unlocks
+		// gRPC framing — gRPC server-streaming is a paid-tier
+		// feature consistent with Hobby's "near-Free with a
+		// floor" value-prop. Customers on Hobby may PATCH
+		// app_protocol=grpc freely.
+		AppProtocolGrpcAllowed: true,
 		// TrafficSplit (issue #556): Hobby does not unlock
 		// per-deployment traffic splitting. Hobby's value-prop
 		// is "near-Free with a floor" (MinInstancesAllowed
@@ -1957,6 +1980,12 @@ var planLimits = map[Plan]Limits{
 		// recommendation. The column default is still
 		// false — the customer must explicitly PATCH true.
 		RequireAuthn: true,
+		// AppProtocolGrpcAllowed (ADR-124): Pro unlocks gRPC
+		// framing — paired with internal-only ingress + traffic
+		// splitting + canary as the production-tier go-fast
+		// stack. gRPC server-streaming is a paid-tier feature
+		// consistently across Hobby/Pro/Scale.
+		AppProtocolGrpcAllowed: true,
 		// TrafficSplit (issue #556): Pro unlocks
 		// per-deployment traffic splitting. The issue
 		// title says "Pro+ canary"; the migration
@@ -2256,6 +2285,10 @@ var planLimits = map[Plan]Limits{
 		// Customers on the largest plan who want
 		// token-gating still set it per-deployment.
 		RequireAuthn: true,
+		// AppProtocolGrpcAllowed (ADR-124): Scale unlocks gRPC
+		// framing — mirroring Pro as the production-tier
+		// go-fast stack.
+		AppProtocolGrpcAllowed: true,
 		// TrafficSplit (issue #556): Scale unlocks
 		// per-deployment traffic splitting — the
 		// revenue-protecting feature for the Scale
@@ -3885,6 +3918,45 @@ func (p Plan) RequireAuthnAllowed() bool {
 	}
 	return l.RequireAuthn
 }
+
+// AppProtocolAllowed (ADR-124 §Plan gating) reports whether the
+// plan admits the given protocol value. http1 and http2 are
+// universally allowed (a customer on any plan may opt-in to H2
+// framing). grpc is Hobby/Pro/Scale only — Free returns false so
+// apid's createApp + updateApp handlers surface 403
+// plan_app_protocol_grpc_not_allowed. Out-of-set values
+// (anything other than http1|http2|grpc) return false so
+// apid's validation branch surfaces 400 app_protocol_invalid
+// rather than letting the value reach SQL. The migration
+// (00360) default is 'http1' so every pre-existing app
+// continues on the legacy H1 path regardless of plan.
+func (p Plan) AppProtocolAllowed(protocol string) bool {
+	switch protocol {
+	case "http1", "http2":
+		return true
+	case "grpc":
+		l, ok := LimitsFor(p)
+		if !ok {
+			return false // fail-closed
+		}
+		return l.AppProtocolGrpcAllowed
+	default:
+		return false
+	}
+}
+
+// DefaultAppProtocol (ADR-124 §Decision 1) is the value apid
+// writes when the customer omits AppProtocol on create. Universal
+// "http1" — no per-plan differentiation per the ADR. The closed-
+// set literal is also the canonical default declared at the column
+// level (NOT NULL DEFAULT 'http1' in migration 00378) so handlers
+// can fall back to the SQL default rather than relying on this
+// constant for the empty-string case. Declared as a package
+// constant (not a Plan receiver method) because the value is
+// plan-independent — every Plan returns the same thing and a
+// per-plan branch would just confuse a reader about whether
+// defaults vary across tiers.
+const DefaultAppProtocol = AppProtocolHTTP1
 
 // TrafficSplitAllowed reports whether the plan permits a customer to
 // set a non-default traffic_percent on a deployment (issue #556).

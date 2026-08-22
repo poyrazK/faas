@@ -101,5 +101,9 @@ export type AppResponse = {
   cors_default_origins?: Array<string>;
   public_auth?: PublicAuthStatus;
   auth_default_flipped_at?: string | null;
+  /**
+   * Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Default 'http1' (universal). Setting 'grpc' is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'.
+   */
+  app_protocol?: 'http1' | 'http2' | 'grpc';
 };
 

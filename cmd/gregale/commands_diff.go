@@ -71,7 +71,7 @@ type diffCLIOptions struct {
 // into the diff CLI options. Called from cmdDeployTarball's
 // --diff short-circuit path so the diff sees the same flags a real
 // deploy would.
-func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string, requireAuthnPtr *bool) diffCLIOptions {
+func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string, requireAuthnPtr *bool, appProtocolPtr *string) diffCLIOptions {
 	opts := diffCLIOptions{
 		Slug:     slug,
 		AppShape: sh,
@@ -83,6 +83,10 @@ func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string
 	if requireAuthnPtr != nil {
 		v := *requireAuthnPtr
 		opts.AppConfig.RequireAuthn = &v
+	}
+	if appProtocolPtr != nil {
+		v := *appProtocolPtr
+		opts.AppConfig.AppProtocol = &v
 	}
 	return opts
 }
@@ -366,16 +370,31 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 // DiffRequest. Mirrors the apid handler's diffPendingFromRequest
 // (cmd/apid/handlers_diff.go) but with CLI-side signal sources
 // (gregale.yaml triggers fan-out populates Crons; --require-authn
-// populates AppConfig.RequireAuthn).
+// populates AppConfig.RequireAuthn; --app-protocol populates
+// AppConfig.AppProtocol per ADR-124).
 //
 // PR-1 keeps the CLI's existing AppConfig surface narrow — only
-// the fields the CLI flags today (RequireAuthn, etc.). Future PRs
-// can extend with --memory, --concurrency, etc.
+// the fields the CLI flags today (RequireAuthn, AppProtocol).
+// Future PRs can extend with --memory, --concurrency, etc.
 func diffRequestFromCLI(opts diffCLIOptions) api.DiffRequest {
 	req := api.DiffRequest{ImageRef: opts.Image}
+	// Build the patch lazily so we don't allocate an empty
+	// AppConfig struct when no fields are set.
+	var patch *api.DiffAppConfigPatch
 	if opts.AppConfig.RequireAuthn != nil {
 		v := *opts.AppConfig.RequireAuthn
-		req.AppConfig = &api.DiffAppConfigPatch{RequireAuthn: &v}
+		patch = &api.DiffAppConfigPatch{RequireAuthn: &v}
+	}
+	if opts.AppConfig.AppProtocol != nil {
+		v := *opts.AppConfig.AppProtocol
+		if patch == nil {
+			patch = &api.DiffAppConfigPatch{AppProtocol: &v}
+		} else {
+			patch.AppProtocol = &v
+		}
+	}
+	if patch != nil {
+		req.AppConfig = patch
 	}
 	if opts.Manifest != nil {
 		req.Manifest = opts.Manifest

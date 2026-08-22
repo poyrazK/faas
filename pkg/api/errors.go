@@ -956,6 +956,25 @@ const (
 	// gate and the request gate are distinct failure modes.
 	CodePlanRequireAuthnNotAllowed = "plan_require_authn_not_allowed"
 
+	// ADR-124 §Plan gating — per-app app_protocol=grpc gate.
+	// Free apps cannot opt-in to gRPC framing at the customer
+	// edge; Hobby+/Pro/Scale may freely PATCH app_protocol=grpc.
+	// 403 mirrors the streaming / warm-snapshot / require-authn /
+	// public-auth / traffic-split gate family — a deliberate
+	// plan-tier choice that requires customer action (upgrade),
+	// not a retry. The literal carries observed value (always
+	// "grpc") + docs URL (/docs/app-protocol#plan-gating).
+	CodePlanAppProtocolGrpcNotAllowed = "plan_app_protocol_grpc_not_allowed"
+
+	// ADR-124 §Decision 1 — closed-set validator. Any value
+	// outside {http1, http2, grpc} surfaces as 400 with this
+	// code. Carry observed value + docs URL
+	// (/docs/app-protocol#closed-set) so the CLI can render
+	// "the value 'h2c' is not in the closed set http1|http2|grpc"
+	// alongside the existing 400 copy without conflating in
+	// telemetry.
+	CodeAppProtocolInvalid = "app_protocol_invalid"
+
 	// Issue #477 / ADR-079 — public-URL auth mode gate. Free apps
 	// stay on the no-signup-friction path (open-only); Hobby unlocks
 	// 'bearer'; Pro+ unlocks both 'bearer' and 'basic'. 402 mirrors

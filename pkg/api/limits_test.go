@@ -114,6 +114,12 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// — opt-in is a paid-tier feature (Cloud Run's
 			// `--no-allow-unauthenticated` shape).
 			RequireAuthn: false,
+			// ADR-124: Free stays on http1/http2 (universal) but is
+			// gated off gRPC entirely — the abuse-floor tier doesn't
+			// host the gRPC service-migration use case that prompted
+			// ADR-124 (issue #67). apid PATCH rejects with 403
+			// plan_app_protocol_grpc_not_allowed on Free.
+			AppProtocolGrpcAllowed: false,
 			// Issue #695 / ADR-080: Free stays public-by-default.
 			// 'open' is the canonical mode for non-token-gated apps;
 			// require_authn=true would be meaningless on Free because
@@ -243,6 +249,11 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #560: Hobby is gated off for the same
 			// posture-change shape as Free.
 			RequireAuthn: false,
+			// ADR-124: Hobby unlocks gRPC framing. Hobby is the
+			// smallest paid tier where the gRPC service-migration
+			// use case (issue #67) makes sense — Free stays
+			// gated to http1/http2 only.
+			AppProtocolGrpcAllowed: true,
 			// Issue #695 / ADR-080: Hobby unlocks the token gate but
 			// bearer is still gated off (see PublicAuthBearerAllowed
 			// above) — the default opens the require_authn=true
@@ -381,6 +392,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			RequireAuthnDefault: true, PublicAuthModeDefault: "bearer",
 			// Issue #556 PR-A: Pro unlocks traffic splitting.
 			TrafficSplit: true,
+			// ADR-124: Pro unlocks gRPC framing (matches Hobby —
+			// both paid tiers).
+			AppProtocolGrpcAllowed: true,
 			// Issue #554 / ADR-078: Pro inherits the same liveness
 			// defaults as Hobby (5s / 3 / 60s / 3 in 300s). Pro is
 			// the unlock point for `GRPCLivenessAllowed()` once v2
@@ -515,6 +529,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			RequireAuthnDefault: true, PublicAuthModeDefault: "bearer",
 			// Issue #556 PR-A: Pro unlocks traffic splitting.
 			TrafficSplit: true,
+			// ADR-124: Scale mirrors Pro — gRPC framing unlocked.
+			AppProtocolGrpcAllowed: true,
 			// Issue #554 / ADR-078: Scale mirrors Pro — same
 			// 5s / 3 / 60s / 3 in 300s defaults. The
 			// per-deployment override column on deployments is the

@@ -52,7 +52,7 @@ func RenderText(w io.Writer, d Diff) {
 	// streaming_enabled, websocket_enabled, require_authn,
 	// warm_snapshot_enabled, require_signed, eviction_priority,
 	// autoscale_target_rps, autoscale_target_cpu_pct,
-	// egress_allowlist.
+	// egress_allowlist, app_protocol.
 	//
 	// Other fields (e.g. require_signed, scaling_policy) land in
 	// the "Other" group below — the renderer is intentionally
@@ -175,7 +175,8 @@ func isHeadlineScalar(field string) bool {
 	switch field {
 	case "memory", "concurrency", "idle_timeout_s",
 		"streaming_enabled", "websocket_enabled",
-		"require_authn", "warm_snapshot_enabled":
+		"require_authn", "warm_snapshot_enabled",
+		"app_protocol":
 		return true
 	}
 	return false

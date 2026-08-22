@@ -8,6 +8,7 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.app_response_app_protocol import AppResponseAppProtocol, check_app_response_app_protocol
 from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
 from ..models.app_response_type import AppResponseType, check_app_response_type
@@ -119,6 +120,9 @@ class AppResponse:
     §Decision 're-redaction invariant': neither basic_user nor basic_pass is EVER returned on the wire, even when
     mode='basic'. To rotate credentials, the customer PATCHes a fresh public_auth block."""
     auth_default_flipped_at: datetime.datetime | None | Unset = UNSET
+    app_protocol: AppResponseAppProtocol | Unset = UNSET
+    """Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Default 'http1' (universal).
+    Setting 'grpc' is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -247,6 +251,10 @@ class AppResponse:
         else:
             auth_default_flipped_at = self.auth_default_flipped_at
 
+        app_protocol: str | Unset = UNSET
+        if not isinstance(self.app_protocol, Unset):
+            app_protocol = self.app_protocol
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -309,6 +317,8 @@ class AppResponse:
             field_dict["public_auth"] = public_auth
         if auth_default_flipped_at is not UNSET:
             field_dict["auth_default_flipped_at"] = auth_default_flipped_at
+        if app_protocol is not UNSET:
+            field_dict["app_protocol"] = app_protocol
 
         return field_dict
 
@@ -507,6 +517,13 @@ class AppResponse:
 
         auth_default_flipped_at = _parse_auth_default_flipped_at(d.pop("auth_default_flipped_at", UNSET))
 
+        _app_protocol = d.pop("app_protocol", UNSET)
+        app_protocol: AppResponseAppProtocol | Unset
+        if isinstance(_app_protocol, Unset):
+            app_protocol = UNSET
+        else:
+            app_protocol = check_app_response_app_protocol(_app_protocol)
+
         app_response = cls(
             id=id,
             slug=slug,
@@ -542,6 +559,7 @@ class AppResponse:
             cors_default_origins=cors_default_origins,
             public_auth=public_auth,
             auth_default_flipped_at=auth_default_flipped_at,
+            app_protocol=app_protocol,
         )
 
         app_response.additional_properties = d

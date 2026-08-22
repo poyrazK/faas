@@ -80,6 +80,13 @@ type DiffAppConfigPatch struct {
 	WarmSnapshotEnabled *bool     `json:"warm_snapshot_enabled,omitempty"`
 	RequireAuthn        *bool     `json:"require_authn,omitempty"`
 	EvictionPriority    *string   `json:"eviction_priority,omitempty"`
+	// AppProtocol (ADR-124) is the per-app wire-protocol selector.
+	// Tri-state pointer mirrors the StreamingEnabled / RequireAuthn
+	// pattern: nil = "don't touch", non-nil = "write this value".
+	// The closed set {http1, http2, grpc} is validated by
+	// deploydiff/quota.go::quotaCheckAppProtocol which mirrors
+	// the per-plan gate (grpc Hobby+/Pro/Scale only).
+	AppProtocol *string `json:"app_protocol,omitempty"`
 }
 
 // DiffEnvRow is one would-write env var. Value carries the plaintext
