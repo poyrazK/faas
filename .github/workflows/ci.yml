@@ -621,6 +621,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        # fetch-depth: 0 — `make spec-endpoint-drift` runs
+        # `git show origin/<base>:api/openapi.yaml` (added in CI
+        # follow-up PR), which requires the base ref to be locally
+        # reachable. Same precedent as the `migrations` job at
+        # ci.yml:~1000, which also diffs against origin/<base>.
+        with:
+          fetch-depth: 0
       # setup-go is needed because `make spec-check` invokes
       # `$(GO) test -count=1 -run TestSpecCompliance ./cmd/apid/...` for
       # the AST parity assertion (~0.4 s locally, negligible in CI).
@@ -670,6 +677,17 @@ jobs:
         # Makefile's `$(GOBIN)` default (`go env GOPATH/bin`) is the
         # correct install location for the local-dev `go install` path.
         run: make spec-check
+      # Endpoint drift detector: cross-checks current spec against the
+      # PR-base spec, scoped to (path, method) pairs the SDKs expose.
+      # Internal-only endpoints can move freely. The detector is a
+      # Go binary at cmd/spec-endpoint-drift/main.go (~150 lines);
+      # the Makefile recipe handles the BASE_REF plumbing.
+      # fetch-depth: 0 on the checkout above is mandatory — `git show
+      # origin/<base>` requires the base ref to be locally reachable.
+      - name: spec endpoint drift (current vs origin/${{ github.base_ref }})
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: make spec-endpoint-drift
 
   # Go SDK build + test gate (issue #266, PR 2). The SDK is a nested
   # Go module at sdk/go/ (module github.com/poyrazK/faas-go). The

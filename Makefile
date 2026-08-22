@@ -756,6 +756,31 @@ spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md ## CI g
 	  (echo "spec-check: drift (spec, denylist.md, or subprocessor.md) — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
 
+# spec-endpoint-drift: cross-checks the current OpenAPI spec against
+# the PR-base spec, scoped to (path, method) pairs exposed in any of
+# the three customer-facing SDKs (sdk/node generated services,
+# sdk/python generated api modules, pkg/api.Client). Internal-only
+# endpoints can move freely — the gate only fires on removal/rename
+# of endpoints the customer can actually call.
+#
+# The binary at cmd/spec-endpoint-drift/main.go does the walking;
+# this Makefile recipe just plumbs the BASE_REF env (CI uses
+# `origin/${{ github.base_ref }}`; local devs default to origin/main).
+# BASE_REF must resolve to a ref git can `git show` — fetch first.
+# Spec endpoint drift PR cluster (commit 1 of CI follow-up).
+.PHONY: spec-endpoint-drift
+spec-endpoint-drift: ## CI gate: diff current spec against $$BASE_REF spec; fail on removal/rename of SDK-exposed paths
+	@tmp=$$(mktemp); \
+	  git show "$${BASE_REF:-origin/main}:api/openapi.yaml" > $$tmp; \
+	  $(GO) run ./cmd/spec-endpoint-drift \
+	    --base-spec $$tmp \
+	    --current-spec api/openapi.yaml \
+	    --node-sdk sdk/node/src/generated/services \
+	    --python-sdk sdk/python/faas_sdk/api \
+	    --go-sdk pkg/api/client.go \
+	    --allowlist api/endpoint_allowlist.yaml; \
+	  status=$$?; rm -f $$tmp; exit $$status
+
 .PHONY: images-lock-check
 images-lock-check: ## CI gate: every images/*.Dockerfile FROM is digest-pinned via images/Dockerfile.lock (issue #197 B3.5 + B3.6)
 	# Two pure-stdlib Python scripts (no install) run the gate:

@@ -1,0 +1,13 @@
+# Paths exempt from `make spec-endpoint-drift`. Each entry exempts
+# one (path, method) pair from the failure set. Add entries when an
+# endpoint intentionally changes customer-visible identity (a rename
+# that ships with a major-version bump, a deprecation cycle, or an
+# internal refactor that coincidentally removes an SDK surface).
+#
+# Each entry has:
+#   path:     The OpenAPI path string, including {param} tokens.
+#   method:   The HTTP method, case-insensitive (e.g. GET, post, Delete).
+#   reason:   One-line human-readable justification; required.
+#
+# The gate starts strict and grows as needed via PR-time additions.
+# PR title should call out any new allowlist entries.
