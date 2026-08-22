@@ -1,4 +1,4 @@
--- filename: 00363_reserve_slot.sql
+-- filename: 00364_reserve_slot.sql
 -- Reserved slot to keep the migrations directory contiguous for the
 -- local embed (CI's TestMigrationsContiguous pins slot N to position
 -- N). Round-19 bridge fence (renamed in round-20): PR #1017
