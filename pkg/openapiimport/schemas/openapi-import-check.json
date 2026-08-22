@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gregale.dev/schemas/openapi-import-check-1",
+  "title": "Gregale OpenAPI Import Structural Check",
+  "description": "Structural-minimum JSON Schema for OpenAPI documents imported via POST /v1/apps/{slug}/openapi. This is NOT the full OpenAPI 3.1 meta-schema (the canonical OAI repo no longer hosts schema.json — see OAI/OpenAPI-Specification issue #4149 from 2024-10); it pins the load-bearing shape requirements the apid layer needs for abuse prevention. Customers get a structural guarantee (required fields present, version enum, paths is an object); the full meta-schema can be layered in later without API changes.",
+  "type": "object",
+  "required": ["openapi", "info", "paths"],
+  "additionalProperties": true,
+  "properties": {
+    "openapi": {
+      "type": "string",
+      "enum": [
+        "3.0.0", "3.0.1", "3.0.2", "3.0.3", "3.0.4",
+        "3.1.0", "3.1.1"
+      ],
+      "description": "OpenAPI version. Pinned to the seven versions whose meta-schemas Gregale accepts."
+    },
+    "info": {
+      "type": "object",
+      "required": ["title", "version"],
+      "additionalProperties": true,
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 8192
+        }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "description": "Paths object — keys are URL templates, values are path items. Empty {} is allowed (declaration-only doc)."
+    },
+    "servers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "components": {
+      "type": "object"
+    }
+  }
+}
