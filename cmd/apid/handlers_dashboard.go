@@ -1887,6 +1887,34 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	}
 	data.PreviewURL = &preview
 
+	// ADR-117 §Production-ready follow-on, C4: per-stage retry
+	// form (visible only when the deployment failed AND a
+	// recoverable failed-stage name is recoverable from the
+	// jsonb). The form posts to
+	// /dashboard/apps/{slug}/deployments/{id}/retry?from=<stage>
+	// with the sealed (action="retry_deployment", account_id)
+	// envelope minted below. failedStageFromJSON lives in
+	// dashboard_retry_deployment.go alongside the POST handler
+	// so the two stay in lock-step.
+	if dep.Status == state.DeployFailed {
+		if from := failedStageFromJSON(dep.StageState); from != "" {
+			data.CanRetry = true
+			data.RetryFromStage = from
+			if tok, err := middleware.IssueForAuthenticated(s.sessions, dashboardRetryDeploymentAction, acct.ID); err == nil {
+				data.DeploymentRetryCSRF = tok
+				http.SetCookie(w, &http.Cookie{
+					Name:     middleware.CookieNameAuthenticated,
+					Value:    tok,
+					Path:     "/",
+					HttpOnly: true,
+					Secure:   s.domain != "",
+					SameSite: http.SameSiteLaxMode,
+					MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
+				})
+			}
+		}
+	}
+
 	nonce := httpsec.NonceFromContext(r.Context())
 	page := dashboard.Page{
 		Title:   "Deployment " + dep.ID,

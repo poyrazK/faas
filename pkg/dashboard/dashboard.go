@@ -435,6 +435,26 @@ type DeploymentDetailData struct {
 	// Non-nil with Alive=false on failed/superseded rows so
 	// the template renders the closed-state copy.
 	PreviewURL *DeploymentPreviewURL
+	// CanRetry drives the per-stage retry form
+	// (deployment_detail.html:280). True when the deployment
+	// row is in a failed terminal state AND the jsonb
+	// stage_state carries a recoverable failed-stage name
+	// (cmd/apid/dashboard_retry_deployment.go::failedStageFromJSON).
+	// False otherwise — the form is hidden, not disabled, so
+	// the page layout doesn't shift row-by-row.
+	CanRetry bool
+	// RetryFromStage is the from_stage query param + hidden
+	// form input mirrored on the retry POST
+	// (`/dashboard/apps/{slug}/deployments/{id}/retry?from=<stage>`).
+	// Empty when CanRetry is false.
+	RetryFromStage string
+	// DeploymentRetryCSRF is the sealed
+	// (action="retry_deployment", account_id) form token the
+	// handler re-validates via
+	// middleware.VerifyAuthenticated in
+	// cmd/apid/dashboard_retry_deployment.go::dashboardRetryDeployment.
+	// Empty when CanRetry is false.
+	DeploymentRetryCSRF string
 }
 
 // DeploymentPreviewURL is the dashboard-local mirror of

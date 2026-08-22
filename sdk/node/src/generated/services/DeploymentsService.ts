@@ -698,6 +698,63 @@ export class DeploymentsService {
     });
   }
   /**
+   * Retry a failed deployment from a named stage (ADR-117 production-ready follow-on C2).
+   * Closes the production-ready gap exposed by ADR-117 §C4: a
+   * deployment that fails partway is restorable via
+   * `POST /v1/deployments/{id}/retry` with a `from_stage` field.
+   * The deployment row is duplicated (NOT mutated); the new
+   * row carries a fresh `stage_state.current` and a fresh
+   * `stage_state.history` so the dashboard's stage-progression
+   * timeline (and the CLI's `gregale deploys show <id>` summary)
+   * reflects the retry as a separate event.
+   *
+   * The closed-6 vocabulary mirrors `state.AllStageNames`
+   * (ADR-117); the API rejects unknown values with 400.
+   * Empty strings are rejected for the same reason.
+   *
+   * Auth chain mirrors `POST /v1/apps/{slug}/deployments`:
+   * `authLimited → requireMFA → requireScope(ScopesDeployWriteSurface)`.
+   * Returns 202 Accepted with the new deployment row (same
+   * shape as `POST /v1/apps/{slug}/deployments`).
+   *
+   * @returns DeploymentResponse The new deployment row (same shape as a fresh deploy).
+   * @throws ApiError
+   */
+  public static retryDeployment({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: RetryDeploymentRequest,
+  }): CancelablePromise<DeploymentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/retry',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `\`400 Bad Request\` — \`from_stage\` is empty or
+        not in the closed-6 vocabulary.
+        `,
+        401: `code: unauthorized`,
+        403: `\`403 Forbidden\` — the caller's MFA factor or scope
+        does not satisfy the deploy-write surface.
+        `,
+        404: `Deployment row missing or cross-account probe (IDOR-safe; never 403).`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Get per-deployment preview URL (SAFE-RELEASES-C.2).
    * Returns the per-deployment preview URL shape
    * `deploy-{N}.{slug}.gregale.dev` that the cert allowlist will
