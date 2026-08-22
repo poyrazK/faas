@@ -1,8 +1,8 @@
--- filename: 00350_instances_wake_attempt_active_unique.sql
+-- filename: 00369_instances_wake_attempt_active_unique.sql
 -- +goose Up
 -- +goose StatementBegin
 --
--- 00350_instances_wake_attempt_active_unique.sql — multi-host safety cluster
+-- 00369_instances_wake_attempt_active_unique.sql — multi-host safety cluster
 -- PR-5 / audit F4 (cluster-wide wakeCoord). Adds a UNIQUE partial index on
 -- instances(wake_id) WHERE state IN ('WAKING', 'COLD_BOOTING'). This is the
 -- DB-level dedup primitive that closes the cross-box race where two schedd
@@ -38,11 +38,13 @@
 -- picks up the wake. The PR-5 owner gate + the partial index together
 -- make the invariant permanent.
 --
--- Slot note: PR-5 branched off main at the post-00346 tip. Slots 00347-
--- 00349 are fenced by PR-4 (audit F6) on a sibling branch; whichever
--- merges first triggers a renumber hop. Migration 00350 is the
--- chosen slot for PR-5; the fences 00351-00352 (added below) absorb
--- one renumber.
+-- Slot note: PR-5 originally claimed slot 00350 on the
+-- multi-host-f6-cert-fingerprint branch (post-00346 tip). Sibling
+-- PRs #1019 / #1030 / #1034 landed on main first and consumed
+-- slots 00347 + 00350, so PR-5 renumbered to 00369 (past PR-4's
+-- 00368_compute_nodes_active_unique). PR-4 + PR-5 are the only two
+-- real migrations on this branch; no fences needed past them.
+-- See docs/runbooks/migration-slot-dance.md.
 CREATE UNIQUE INDEX IF NOT EXISTS instances_wake_attempt_active_idx
     ON instances(wake_id)
     WHERE state IN ('WAKING', 'COLD_BOOTING');
