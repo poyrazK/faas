@@ -3713,3 +3713,115 @@ func TestCaptureWarmSnapshot_EmitsErrorCounter(t *testing.T) {
 // reach it (captureWarmSnapshotLocked's WarmSnapshot returns the
 // real gRPC error).
 var errWarmCaptureFail = errors.New("fake: warm snapshot fail")
+
+// TestEngineEnsureWake_RefusesForeignOwnedApp pins Layer 1 of the
+// multi-host safety cluster PR-5 / audit F4. The owner gate at
+// EnsureWake entry (engine.go:~1235) must refuse to queue a wake
+// when the app's App.NodeID points at a different schedd's
+// compute_node. Without this guard, two schedds in a multi-host
+// fleet can both queue the same wake in their own wakeCoord —
+// each will eventually try to mint an instance row, each will
+// pass choosePlacement (same chooser, same rules), and the
+// cluster-coord primitive (Layer 2: the partial unique index on
+// instances.wake_id) has to be the only thing keeping the fleet
+// from double-booting.
+//
+// The test is the unit pin for the layer-1 refusal at entry; the
+// end-to-end "two schedds racing on the same wake_id" pin lives
+// in cmd/e2e/fleet_wake_dedup_e2e_test.go (build-tag metal).
+func TestEngineEnsureWake_RefusesForeignOwnedApp(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+
+	// Pin the app to a DIFFERENT box. SetAppNodeID is the
+	// Phase 2 / Gate A owner-claim primitive (migration 00090).
+	if err := store.SetAppNodeID(context.Background(), app.ID, "box-a"); err != nil {
+		t.Fatalf("SetAppNodeID: %v", err)
+	}
+
+	// Build an engine whose ownerNodeID is "box-b" — i.e., this
+	// schedd is the WRONG one to handle the wake. The wakeCoord
+	// is real; the gate fires before the queue is touched.
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOwnerNodeID("box-b")
+
+	_, err := e.EnsureWake(context.Background(), app.ID, "test")
+	if err == nil {
+		t.Fatal("EnsureWake on foreign-owned app: expected error, got nil")
+	}
+	// The error string must surface both owner IDs so the
+	// operator can correlate the wrong-box wake with the
+	// owning box's logs.
+	if !strings.Contains(err.Error(), "box-a") || !strings.Contains(err.Error(), "box-b") {
+		t.Errorf("error = %q, must mention both owner box-a and box-b", err)
+	}
+
+	// Refusal must happen BEFORE any vmm call — the gate is at
+	// entry, not at placement. vmm.coldBoots == 0 is the load-bearing
+	// assertion: a chooser-side gate would still let the wakeCoord
+	// queue the request, but a real cold-boot would never start.
+	if vmm.coldBoots != 0 || vmm.restores != 0 {
+		t.Errorf("owner gate failed to block: coldBoots=%d restores=%d, want 0/0",
+			vmm.coldBoots, vmm.restores)
+	}
+}
+
+// TestEngineEnsureWake_AllowsOwnerSameBox pins the negative case
+// of the Layer 1 gate. When app.NodeID == engine.ownerNodeID, the
+// gate must fall through to wakeCoord.Enter and the wake proceeds
+// to cold-boot. Companion to TestEngineEnsureWake_RefusesForeignOwnedApp:
+// without the companion, the gate could over-refuse and a healthy
+// fleet would silently drop every request.
+func TestEngineEnsureWake_AllowsOwnerSameBox(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+
+	// Pin the app to the same box this schedd owns. The gate's
+	// equality branch must fall through.
+	if err := store.SetAppNodeID(context.Background(), app.ID, "box-a"); err != nil {
+		t.Fatalf("SetAppNodeID: %v", err)
+	}
+
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOwnerNodeID("box-a")
+
+	out, err := e.EnsureWake(context.Background(), app.ID, "test")
+	if err != nil {
+		t.Fatalf("EnsureWake on owner box: %v", err)
+	}
+	if out.Instance == nil || out.Instance.InstanceID == "" {
+		t.Errorf("owner-same-box EnsureWake returned empty InstanceID")
+	}
+	if vmm.coldBoots != 1 {
+		t.Errorf("coldBoots = %d, want 1 (owner gate must not block same-box wakes)",
+			vmm.coldBoots)
+	}
+}
+
+// TestEngineEnsureWake_AllowsUnownedApp pins the single-box dev
+// path. An app whose NodeID == "" (legacy non-shared case — never
+// pinned to a node, e.g. a fresh install before Phase 2 / Gate A
+// ran) must wake regardless of the engine's ownerNodeID stamp.
+// Empty ownerNodeID also falls through, but the production
+// fleet always has WithOwnerNodeID set; the unowned-app branch
+// is the row that single-box dev hits.
+func TestEngineEnsureWake_AllowsUnownedApp(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	// app.NodeID stays "" by design.
+
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOwnerNodeID("box-a")
+
+	out, err := e.EnsureWake(context.Background(), app.ID, "test")
+	if err != nil {
+		t.Fatalf("EnsureWake on unowned app: %v", err)
+	}
+	if out.Instance == nil || out.Instance.InstanceID == "" {
+		t.Errorf("unowned-app EnsureWake returned empty InstanceID")
+	}
+	if vmm.coldBoots != 1 {
+		t.Errorf("coldBoots = %d, want 1 (unowned apps must wake on the local schedd)",
+			vmm.coldBoots)
+	}
+}

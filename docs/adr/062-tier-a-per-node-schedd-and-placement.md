@@ -141,6 +141,40 @@ and returning `codes.FailedPrecondition` on mismatch.
 - Migration 00083's test flipped `is_nullable="NO"` → `"YES"` to match
   the post-00084 contract. Flagged in the PR description.
 
+## Amendment 1 — Owner gate lifted to EnsureWake entry (multi-host safety cluster PR-5)
+
+The owner check ("this app's `node_id` is mine, refuse otherwise")
+was originally scoped to `choosePlacementLocked` so the chooser
+could never admit an instance onto a non-owner box. The PR-5
+audit surfaced a brief queue-consumption race: a wrong-box schedd
+that received a wake for a foreign-owned app would still consume
+a slot in `wakeCoord` and only fail at placement time — under
+fan-out (cron event broadcast, gateway retry storm) this pinned
+the wakeCoord slot budget without producing a useful outcome.
+
+PR-5 (audit F4) lifts the same check to `Engine.EnsureWake`
+entry (engine.go:~1235) so a foreign-owned wake fails-fast
+before the queue is touched. The placement-time check is
+retained — the two layers are deliberately redundant:
+- `EnsureWake` gate: keep the wakeCoord queue budget honest;
+  fail-fast so the caller (gateway / cron) gets an immediate
+  error and can route to the owning box.
+- `choosePlacementLocked` gate: defense in depth; a direct
+  `choosePlacement` call that bypasses `EnsureWake` (a future
+  refactor, an internal tool) still can't admit a foreign-owned
+  instance.
+
+The check shape is unchanged (`app.NodeID != "" && app.NodeID
+!= e.ownerNodeID`). Empty `e.ownerNodeID` preserves the
+single-box dev path (the synthetic default-local row has no
+node_id constraint); empty `app.NodeID` is the legacy
+non-sharded case.
+
+Three unit tests pin the shape:
+`TestEngineEnsureWake_RefusesForeignOwnedApp`,
+`TestEngineEnsureWake_AllowsOwnerSameBox`,
+`TestEngineEnsureWake_AllowsUnownedApp`.
+
 ## Open follow-ups (deliberately deferred)
 
 - ~~App rebalance across nodes.~~ **Shipped in Tier A4, ADR-064.**

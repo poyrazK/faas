@@ -115,6 +115,74 @@ with `ErrAppDeleted` so followers unwind promptly.
   512/30 s `WakeQueueCap` / `WakeQueueTTLSeconds` still bound the
   pre-filter `WakeGate`; the coordinator inherits the same TTL.
 
+## Amendment 1 — Cluster-coord primitive added (multi-host safety cluster PR-5)
+
+ADR-098's original "rejected: pg_advisory_lock per app_id" reasoning
+was correct for the single-box posture — the in-memory
+`wakeCoord` is amortised to zero additional wire hops under
+steady state, and adding a PG round-trip to every wake call was
+net negative. Multi-host changes the cost model: two schedds on
+different boxes each spin up their own `wakeCoord`, and a
+fan-out event (cron event broadcast, gateway retry storm) can
+land the same `wake_id` on both schedds in the same instant.
+The in-memory coordinator is invisible across boxes — its
+serialisation guarantee stops at the process boundary.
+
+PR-5 (audit F4) layers a DB-side cluster-coord primitive on top
+of the in-memory coordinator:
+
+- **Layer 1 (owner gate at EnsureWake entry)** is an ADR-062
+  amendment (see `062-tier-a-per-node-schedd-and-placement.md`
+  Amendment 1). It catches the dominant case: a wrong-box wake
+  fails-fast before consuming a `wakeCoord` slot.
+
+- **Layer 2 (DB-level partial unique index)** is this ADR's
+  amendment. Migration `00350_instances_wake_attempt_active_unique.sql`
+  creates:
+  ```sql
+  CREATE UNIQUE INDEX instances_wake_attempt_active_idx
+      ON public.instances(wake_id)
+      WHERE state IN ('WAKING', 'COLD_BOOTING');
+  ```
+  The partial predicate is the load-bearing piece: a row whose
+  state has flipped to `RUNNING` / `PARKING` / `PARKED` falls
+  outside the index, so a re-wake of the same logical request
+  (gateway retry after long pause, cron event re-delivery) can
+  still INSERT. Only the simultaneous-flight race is rejected.
+
+  `Store.CreateInstance` (pgstore.go:8494) translates SQLSTATE
+  `23505` into the typed sentinel `state.ErrConcurrentWake`;
+  `pkg/sched.Engine.createInstanceWithWakeRetry` (engine.go:~810)
+  wraps the three `CreateInstance` call sites in a 3-attempt
+  jittered loop (50-200ms) that recovers via
+  `Store.ReadActiveInstanceForWakeID` when it loses the race.
+
+The in-memory `wakeCoord` remains the single-box fast path. The
+DB-level index is the cluster-coord primitive. The two are
+deliberately redundant: Layer 1 short-circuits the wrong-box
+case before any queue/DB work; Layer 2 catches the same-box-but-
+still-racing case (e.g. an HPA controller sending a burst, a
+stale leader election) and the cross-box case Layer 1 cannot
+catch (two schedds racing on a not-yet-claimed app).
+
+New surfaces:
+- `pkg/state.ErrConcurrentWake` sentinel.
+- `pkg/state.Store.ReadActiveInstanceForWakeID` (pgstore + memstore mirror).
+- `pkg/sched.Engine.createInstanceWithWakeRetry` (the 3-attempt retry helper).
+
+New tests:
+- `pkg/state/pgstore_test.go::TestPg_CreateInstance_PartialUniqueIndexBlocks`
+- `pkg/state/pgstore_test.go::TestPg_CreateInstance_PartialUniqueIndex_AllowsAfterPark`
+- `pkg/state/pgstore_test.go::TestPg_ReadActiveInstanceForWakeID_ReturnsWinner`
+- `pkg/state/pgstore_test.go::TestPg_ReadActiveInstanceForWakeID_ParkedRowHidden`
+- `pkg/sched/engine_test.go::TestEngineEnsureWake_RefusesForeignOwnedApp`
+- `pkg/sched/engine_test.go::TestEngineEnsureWake_AllowsOwnerSameBox`
+- `pkg/sched/engine_test.go::TestEngineEnsureWake_AllowsUnownedApp`
+
+The cross-PR e2e pin (`cmd/e2e/fleet_wake_dedup_e2e_test.go`,
+build tag `metal`) covers the full two-schedd-two-gatewayd
+fleet scenario end-to-end.
+
 ## Rejected alternatives
 
 - **Extend `pkg/gateway/WakeGate` to cover cron / floor / scaleup / targets.**
