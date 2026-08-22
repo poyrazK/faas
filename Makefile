@@ -953,15 +953,46 @@ sdk-gen: ## (re)generate every generated SDK + assert clean diff vs HEAD
 pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
 	@echo "==> pre-pr: spec-check (api/openapi.yaml ↔ pkg/apid/openapi.yaml)"
 	@$(MAKE) spec-check
+	@echo "==> pre-pr: spec-meta-lint (openapi-spec-validator 3.1.0)"
+	@$(MAKE) spec-meta-lint
+	@echo "==> pre-pr: spec-endpoint-drift (current vs origin/$${BASE_REF:-main})"
+	@BASE_REF=$${BASE_REF:-origin/main} $(MAKE) spec-endpoint-drift
 	@echo "==> pre-pr: proto-check (checked-in *.pb.go matches protoc)"
 	@$(MAKE) proto-check
 	@echo "==> pre-pr: sqlc-check (checked-in sqlc output matches regenerated)"
 	@$(MAKE) sqlc-check
 	@echo "==> pre-pr: egress-check (nftables render + Go cross-check)"
 	@$(MAKE) egress-check
-	@echo "==> pre-pr: sdk-gen (node + python SDK regenerated, no diff)"
+	@echo "==> pre-pr: images-lock-check (FROM digest-pinned)"
+	@$(MAKE) images-lock-check
+	@echo "==> pre-pr: images-hadolint-check (Dockerfile best practices)"
+	@$(MAKE) images-hadolint-check
+	@echo "==> pre-pr: grafana-jq-check (dashboard JSON parses)"
+	@$(MAKE) grafana-jq-check
+	@echo "==> pre-pr: grafana-mirror-check (deploy/grafana ↔ ansible mirror)"
+	@$(MAKE) grafana-mirror-check
+	@echo "==> pre-pr: workflow-lint (actionlint semantic YAML lint)"
+	@$(MAKE) workflow-lint
+	@echo "==> pre-pr: sdk-gen-node-twice (Node SDK determinism)"
+	@$(MAKE) sdk-gen-node-twice
+	@echo "==> pre-pr: sdk-gen-python-twice (Python SDK determinism)"
+	@$(MAKE) sdk-gen-python-twice
+	@echo "==> pre-pr: sdk-gen (single-shot regenerate-and-diff as final baseline)"
 	@$(MAKE) sdk-gen
 	@echo "pre-pr: OK (every drift gate clean)"
+
+# Workflow YAML semantic lint via actionlint. CI runs this as a
+# separate job (ci.yml:~1307 workflow-lint (actionlint)) — pinning at
+# rhysd/actionlint@v1.7.12. Local devs run \`brew install actionlint\`
+# (actionlint is also a static Go binary; brew's the canonical macOS
+# install path).
+.PHONY: workflow-lint
+workflow-lint: ## actionlint over .github/workflows/*.yml — CI gate's local counterpart
+	@command -v actionlint >/dev/null 2>&1 || { \
+	  echo "actionlint not on PATH; install via 'brew install actionlint' (macOS)"; \
+                          exit 1; \
+                        }
+	@actionlint -shellcheck ''
 
 .PHONY: sdk-smoke-python
 sdk-smoke-python: ## Build fakeapid fixture + run Python SDK smoke + unit tests
