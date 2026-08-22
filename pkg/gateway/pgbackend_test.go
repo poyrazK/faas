@@ -375,17 +375,20 @@ func TestPGBackend_AdmitPortZeroIsZero(t *testing.T) {
 	}
 }
 
-// --- resolveSched legacy-fallback posture gate (PR #509 finding F1) ---
+// --- resolveSched legacy-fallback removal (PR #509 finding F1 + multi-host PR-7) ---
 //
 // Background: PGBackend.resolveSched picks between the legacy
 // single-schedd field (b.sched) and the per-node client cache
 // (resolved via WithAppResolver + WithClientForApp). On a transient
 // resolver miss (ok=false on the AppByID path, or app.NodeID empty),
 // the legacy fallback would route a foreign-owned app through the
-// default-local dial and surface a FailedPrecondition storm. The
-// legacySingleBox flag (WithLegacySingleBox) gates the fallback:
-// single-box posture (one schedd, every app owned locally) keeps
-// it; multi-box posture forbids it and surfaces a typed error.
+// default-local dial and surface a FailedPrecondition storm.
+//
+// Multi-host safety cluster PR-7 (audit F5) REMOVED the fallback
+// outright — the legacySingleBox gate that previously toggled
+// (single-box keep, multi-box forbid) is gone alongside the
+// fallback itself. resolveSched now always returns an error on
+// transient misses; no setter exists to toggle the behaviour.
 
 // capturingScheduler records the per-node clients selected by
 // WithClientForApp so the multi-box branch can assert that the
@@ -406,17 +409,15 @@ func (c *capturingScheduler) EnsureWake(_ context.Context, _, _ string) (string,
 }
 
 // TestPGBackend_ResolveSched_MultiBox_RejectsTransientMiss covers
-// the headline fix: with WithLegacySingleBox(false) and the
-// resolver returning ok=false (transient cache miss on AppByID),
-// resolveSched must return an error rather than silently routing
-// through b.sched. The error message names "multi-box posture" so
-// an operator on call can trace the routing mistake without a
-// debugger.
+// the headline fix: with the resolver returning ok=false (transient
+// cache miss on AppByID), resolveSched must return an error rather
+// than silently routing through b.sched. The error message names
+// "multi-box posture" so an operator on call can trace the routing
+// mistake without a debugger.
 func TestPGBackend_ResolveSched_MultiBox_RejectsTransientMiss(t *testing.T) {
 	legacySched := gateway.NewFakeScheduler("default-local")
 	ownerSched := &capturingScheduler{id: "node-owner"}
 	b := gateway.NewPGBackend(&fakeRouter{}, legacySched, nil).
-		WithLegacySingleBox(false).
 		WithAppResolver(func(_ context.Context, _ string) (gateway.App, bool, error) {
 			// Resolver says "transient miss" (ok=false, err=nil).
 			return gateway.App{}, false, nil
@@ -442,13 +443,12 @@ func TestPGBackend_ResolveSched_MultiBox_RejectsTransientMiss(t *testing.T) {
 
 // TestPGBackend_ResolveSched_MultiBox_RejectsEmptyNodeID pins the
 // pre-migration-row branch: an app row that survived the migration
-// but still has NodeID="" must error rather than fall through. The
-// legacySingleBox=false posture refuses the fallback even though
-// the resolver succeeded.
+// but still has NodeID="" must error rather than fall through.
+// The PR-7 removal of the legacy fallback refuses the route even
+// though the resolver succeeded.
 func TestPGBackend_ResolveSched_MultiBox_RejectsEmptyNodeID(t *testing.T) {
 	legacySched := gateway.NewFakeScheduler("default-local")
 	b := gateway.NewPGBackend(&fakeRouter{}, legacySched, nil).
-		WithLegacySingleBox(false).
 		WithAppResolver(func(_ context.Context, _ string) (gateway.App, bool, error) {
 			return gateway.App{ID: "app-y", NodeID: ""}, true, nil
 		}).
@@ -467,23 +467,14 @@ func TestPGBackend_ResolveSched_MultiBox_RejectsEmptyNodeID(t *testing.T) {
 
 // TestPGBackend_ResolveSched_LegacySingleBox_AlwaysRejects pins
 // the multi-host safety cluster PR-7 (audit F5) invariant: the
-// legacy single-box fallback is REMOVED. Whether WithLegacySingleBox
-// is true or false, resolveSched returns an error on a transient
-// resolver miss. The previous behaviour was:
-//
-//   - WithLegacySingleBox(true): silently fall back to b.sched.
-//   - WithLegacySingleBox(false): return a "multi-box posture
-//     forbids" error.
-//
-// The new behaviour is: always return an error naming the PR-7
-// removal. The setter is retained as a no-op for backwards
-// compatibility; the value is ignored. A transient resolver miss
-// on a foreign-owned app in a multi-box fleet must surface as a
-// 503, not silently route through the local schedd.
+// legacy single-box fallback is REMOVED. resolveSched returns an
+// error on a transient resolver miss — there is no longer a
+// per-instance flag to opt into the fallback. A transient resolver
+// miss on a foreign-owned app in a multi-box fleet must surface
+// as a 503, not silently route through the local schedd.
 func TestPGBackend_ResolveSched_LegacySingleBox_AlwaysRejects(t *testing.T) {
 	legacySched := gateway.NewFakeScheduler("default-local")
 	b := gateway.NewPGBackend(&fakeRouter{}, legacySched, nil).
-		WithLegacySingleBox(true). // value is ignored after PR-7
 		WithAppResolver(func(_ context.Context, _ string) (gateway.App, bool, error) {
 			return gateway.App{}, false, nil
 		}).
@@ -501,15 +492,13 @@ func TestPGBackend_ResolveSched_LegacySingleBox_AlwaysRejects(t *testing.T) {
 }
 
 // TestPGBackend_ResolveSched_MultiBox_HappyPathRoutesToOwner is the
-// contrast to the rejection cases: with legacySingleBox=false and
-// the resolver returning ok=true with a valid NodeID, the
-// owner-schedd client (returned by clientForApp) — NOT b.sched —
-// receives the Admit.
+// contrast to the rejection cases: with the resolver returning
+// ok=true with a valid NodeID, the owner-schedd client (returned
+// by clientForApp) — NOT b.sched — receives the Admit.
 func TestPGBackend_ResolveSched_MultiBox_HappyPathRoutesToOwner(t *testing.T) {
 	legacySched := gateway.NewFakeScheduler("default-local")
 	ownerSched := &capturingScheduler{id: "node-owner"}
 	b := gateway.NewPGBackend(&fakeRouter{}, legacySched, nil).
-		WithLegacySingleBox(false).
 		WithAppResolver(func(_ context.Context, _ string) (gateway.App, bool, error) {
 			return gateway.App{ID: "app-ok", NodeID: "node-owner"}, true, nil
 		}).

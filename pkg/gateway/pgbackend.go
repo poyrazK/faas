@@ -318,20 +318,6 @@ type PGBackend struct {
 	// of pkg/state.
 	liveTargetLoader func(ctx context.Context, appID string) ([]Target, error)
 
-	// legacySingleBox (Phase 2 / Gate A) gates the resolveSched
-	// fallback to the legacy b.sched field. When true, a missing
-	// app row or empty NodeID falls through to b.sched — this is the
-	// single-box posture where every app lives on the local schedd.
-	// When false (the multi-box posture), the fallback is unsafe
-	// because b.sched is the legacy default-local dial and a foreign
-	// owner's app routed through it would return FailedPrecondition,
-	// surfacing as a 503 storm on transient cache misses. Multi-box
-	// startup sets this to false; single-box startup sets it to true.
-	// The setter (WithLegacySingleBox) is wired by cmd/gatewayd-internal's
-	// startup phase after it has resolved fleet posture from the
-	// compute_nodes table.
-	legacySingleBox bool
-
 	// publicAuthCache is the unsealed basic-auth credential
 	// cache (issue #477 / ADR-079). nil = no caching; the
 	// basic-auth path falls back to per-request unsealing
@@ -457,24 +443,6 @@ func (b *PGBackend) WithLiveTargetLoader(fn func(context.Context, string) ([]Tar
 // docs/adr/025 — see plan file).
 func (b *PGBackend) WithWarmHint(fn WarmHintFunc) *PGBackend {
 	b.warmHint = fn
-	return b
-}
-
-// WithLegacySingleBox is a no-op stub retained for backwards
-// compatibility with existing cmd/gatewayd-internal/run.go wiring.
-//
-// Multi-host safety cluster PR-7 (audit F5): the legacy single-
-// box fallback in resolveSched is REMOVED. resolveSched always
-// returns an error on transient resolver misses (resolver ok=false,
-// empty NodeID, clientForApp ok=false) instead of routing through
-// b.sched. Single-box deployments don't need this fallback anymore:
-// the synthetic default-local row (migration 00090) carries a
-// per-node schedd_target_url that the router dials directly.
-//
-// The setter remains so existing wiring compiles; the value is
-// ignored. A future PR may remove the setter entirely. Returns
-// b so existing chains still chain.
-func (b *PGBackend) WithLegacySingleBox(_ bool) *PGBackend {
 	return b
 }
 
@@ -1307,18 +1275,14 @@ func (b *PGBackend) RequestCertForSurface(ctx context.Context, surfaceID string)
 // Multi-host safety cluster PR-7 (audit F5): the legacy single-
 // box fallback path is REMOVED. The previous implementation
 // returned b.sched (the single-box field) on three transient
-// triggers — resolver miss, empty NodeID, clientForApp miss —
-// gated by b.legacySingleBox. In a multi-box fleet that fallback
-// would route a foreign-owned app through the wrong schedd and
-// surface a FailedPrecondition storm. The current implementation
-// always returns an error so the gateway surfaces a 503 with a
-// useful message rather than a silent FailedPrecondition.
-//
-// The WithLegacySingleBox setter is retained as a no-op for
-// backwards compatibility with existing wiring (cmd/gatewayd-
-// internal/run.go previously toggled it based on the
-// ActiveComputeNodes posture probe). The setter has no effect;
-// callers should remove the toggle from their wiring.
+// triggers — resolver miss, empty NodeID, clientForApp miss.
+// In a multi-box fleet that fallback would route a foreign-owned
+// app through the wrong schedd and surface a FailedPrecondition
+// storm. The current implementation always returns an error so
+// the gateway surfaces a 503 with a useful message rather than a
+// silent FailedPrecondition. The legacySingleBox gate that
+// previously toggled the fallback was removed alongside the
+// fallback itself (no callers remain after PR-7).
 func (b *PGBackend) resolveSched(ctx context.Context, appID string) (Scheduler, error) {
 	if b.appResolver != nil && b.clientForApp != nil {
 		app, ok, err := b.appResolver(ctx, appID)

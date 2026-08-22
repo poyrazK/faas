@@ -932,10 +932,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// Multi-host safety cluster PR-7 (audit F5): the legacy
 		// single-box fallback is REMOVED. The backend always uses
 		// the per-node schedd router; the resolveSched fallback
-		// path is dead code (no-op no-op). We keep the
-		// ActiveComputeNodes probe so the boot log still surfaces
-		// the fleet posture, but no longer use it to toggle
-		// WithLegacySingleBox.
+		// path is dead code. We keep the ActiveComputeNodes probe
+		// so the boot log still surfaces the fleet posture, but
+		// no longer use it to toggle any per-instance gate.
 	} else {
 		log.Warn("gatewayd: schedd posture probe failed; legacy fallback no longer exists", "err", err)
 	}
