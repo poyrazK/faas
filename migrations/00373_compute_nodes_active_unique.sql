@@ -1,8 +1,8 @@
--- filename: 00368_compute_nodes_active_unique.sql
+-- filename: 00373_compute_nodes_active_unique.sql
 -- +goose Up
 -- +goose StatementBegin
 --
--- 00368_compute_nodes_active_unique.sql — multi-host safety cluster PR-4
+-- 00373_compute_nodes_active_unique.sql — multi-host safety cluster PR-4
 -- (audit F6 / ADR-052 amendment). Belt-and-braces DB-level guard that
 -- makes "two compute_nodes rows with the same name and active=true"
 -- impossible at the storage layer. The application-level guard in
@@ -43,8 +43,12 @@
 -- c5269bd8d). Sibling PRs #1030 / #1019 / #1034 landed on main
 -- first and consumed slots 00347 and 00350, so PR-4 renumbered
 -- to 00368 (past PR #1012's 00367_deployments_stage_state_history_cap).
+-- Then sibling PR #1017 also claimed 00368, so PR-4 renumbered
+-- again to 00373 (past PR #1017's 00368_alert_presets +
+-- 00369_alert_presets_seed + 00370_alert_rules_extend +
+-- 00371_account_spend_snapshot + 00372_meterd_tenant_surface).
 -- The sibling PR-5 real migration (instances_wake_attempt_active_unique)
--- renumbered to 00369. See docs/runbooks/migration-slot-dance.md.
+-- renumbered to 00374. See docs/runbooks/migration-slot-dance.md.
 CREATE UNIQUE INDEX IF NOT EXISTS compute_nodes_active_unique_idx
     ON compute_nodes(name)
     WHERE active = true;
