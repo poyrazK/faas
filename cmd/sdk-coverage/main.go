@@ -586,7 +586,7 @@ var methodRouteMap = map[string]string{
 	// (Swagger-style verb+id concat); the SDK verb is
 	// RetryDeploymentFromStage to mirror the verb+Resource
 	// convention used by the rest of pkg/api.
-	"POST /v1/deployments/{id}/retry":                 "RetryDeploymentFromStage",
+	"POST /v1/deployments/{id}/retry": "RetryDeploymentFromStage",
 	// Issue #975 item #1 / ADR-122 — endpoint discovery. The
 	// SDK methods pre-date the spec route (added in PR #1007),
 	// so the auto-derivation names don't match the existing
