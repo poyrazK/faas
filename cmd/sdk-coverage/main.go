@@ -581,6 +581,21 @@ var methodRouteMap = map[string]string{
 	"GET /v1/domains/{domain}":                        "GetDomain",
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
+	// Issue #976 / SAFE-RELEASES PR-C4 — per-stage retry surface.
+	// Auto-derivation would produce "PostDeploymentsIdRetry"
+	// (Swagger-style verb+id concat); the SDK verb is
+	// RetryDeploymentFromStage to mirror the verb+Resource
+	// convention used by the rest of pkg/api.
+	"POST /v1/deployments/{id}/retry":                 "RetryDeploymentFromStage",
+	// Issue #975 item #1 / ADR-122 — endpoint discovery. The
+	// SDK methods pre-date the spec route (added in PR #1007),
+	// so the auto-derivation names don't match the existing
+	// method names. Pin the route → method mapping here so
+	// sdk-coverage reports green until the SDK names are
+	// normalized to the Swagger convention.
+	"GET /v1/apps/{slug}/deployments/{deployment}/openapi":    "GetAppsDeploymentOpenAPIDoc",
+	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":  "PatchAppsDeploymentOpenAPIDoc",
+	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi": "DeleteAppsDeploymentOpenAPIDoc",
 }
 
 func main() {
