@@ -6640,6 +6640,33 @@ func (m *MemStore) InstanceByID(_ context.Context, id string) (Instance, error) 
 	return ins, nil
 }
 
+// ReadActiveInstanceForWakeID mirrors PgStore.ReadActiveInstanceForWakeID
+// for in-memory tests. Returns the most-recently-started instance
+// row whose state is in the in-flight set AND whose wake_id matches.
+// Matches the partial-unique-index predicate from migration 00350
+// (multi-host safety cluster PR-5 / audit F4).
+func (m *MemStore) ReadActiveInstanceForWakeID(_ context.Context, wakeID string) (Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best *Instance
+	for _, ins := range m.instances {
+		if ins.WakeID != wakeID {
+			continue
+		}
+		if ins.State != "WAKING" && ins.State != "COLD_BOOTING" && ins.State != "RUNNING" {
+			continue
+		}
+		if best == nil || ins.StartedAt.After(best.StartedAt) {
+			copy := ins
+			best = &copy
+		}
+	}
+	if best == nil {
+		return Instance{}, ErrNotFound
+	}
+	return *best, nil
+}
+
 func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

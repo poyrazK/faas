@@ -8877,13 +8877,35 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// fails with "COALESCE types text and uuid cannot be matched"
 	// (SQLSTATE 42804). The CASE shape also keeps the gen_random_uuid()
 	// branch on the text path so the whole expression resolves to uuid.
+	//
+	// Multi-host safety cluster PR-5 (audit F4): the partial unique
+	// index instances_wake_attempt_active_idx (migration 00350)
+	// makes a duplicate INSERT with the same wake_id + state IN
+	// ('WAKING', 'COLD_BOOTING') fail with SQLSTATE 23505. We translate
+	// the raw pgconn.PgError into the typed sentinel
+	// state.ErrConcurrentWake so the engine's retry loop (Layer 2
+	// of the cluster-wide wakeCoord) can recover via
+	// ReadActiveInstanceForWakeID. A 23505 with state OUTSIDE the
+	// in-flight set would be a different bug (the index wouldn't
+	// have fired), so the typed translation is safe.
 	row := s.pool.QueryRow(ctx,
 		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at)
 		 values ($1, $2, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else $6::uuid end, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count`,
 		appID, deploymentID, state, ramMB, nodeID, wakeID)
-	return scanInstance(row)
+	inst, err := scanInstance(row)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Instance{}, fmt.Errorf(
+				"state: %w: wake_id=%s app_id=%s already in-flight — recover via ReadActiveInstanceForWakeID",
+				ErrConcurrentWake, wakeID, appID,
+			)
+		}
+		return Instance{}, fmt.Errorf("state: create instance %q (app=%s): %w", wakeID, appID, err)
+	}
+	return inst, nil
 }
 
 func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error) {
@@ -8892,6 +8914,37 @@ func (s *PgStore) InstanceByID(ctx context.Context, id string) (Instance, error)
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
 		 from instances where id = $1`, id)
 	return scanInstance(row)
+}
+
+// ReadActiveInstanceForWakeID returns the in-flight instance row
+// for the given wake_id (state IN ('WAKING', 'COLD_BOOTING',
+// 'RUNNING')) — the winner of the cluster-coord race that
+// instances_wake_attempt_active_idx (migration 00350, audit F4 /
+// ADR-098 amendment) protects. Returns ErrNotFound when the
+// wake_id has no in-flight row (the race lost and the winner
+// already parked — unusual but possible if the caller retried
+// after a long sleep).
+//
+// Used by pkg/sched.Engine.EnsureWake's recovery path: on a 23505
+// from CreateInstance, the engine calls ReadActiveInstanceForWakeID
+// to discover the winner's instance_id and observes the winner's
+// state transition (WAKING → COLD_BOOTING → RUNNING) with the same
+// in-process state machine the winner is running.
+func (s *PgStore) ReadActiveInstanceForWakeID(ctx context.Context, wakeID string) (Instance, error) {
+	row := s.pool.QueryRow(ctx,
+		`select id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count
+		 from instances where wake_id = $1
+		   and state in ('WAKING','COLD_BOOTING','RUNNING')
+		 order by started_at desc limit 1`, wakeID)
+	inst, err := scanInstance(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Instance{}, ErrNotFound
+		}
+		return Instance{}, fmt.Errorf("state: read active instance for wake_id %q: %w", wakeID, err)
+	}
+	return inst, nil
 }
 
 func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error) {

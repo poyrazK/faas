@@ -3697,3 +3697,389 @@ func TestPg_UpsertComputeNodeFromVmmd_PreservesOperatorReleaseID(t *testing.T) {
 // fields that PR-3a widens. Kept private to this file.
 func ptrStr(s string) *string { return &s }
 func ptrInt(i int) *int       { return &i }
+
+// TestPg_DeploymentActorRoundtrip (issue #606) pins the four
+// actor-attribution columns (deployed_by_user_id, deployed_via,
+// deployed_from_ip, pusher_login) + the FK to accounts(id) +
+// the closed-set CHECK on deployed_via through CreateDeployment +
+// DeploymentByID. The Go-zero collapse on every column asserts
+// the nullif()/coalesce() chain in pgstore.go::CreateDeployment
+// keeps pre-feature rows valid without a backfill. A bad
+// deployed_via value exercises the DB-side CHECK rejection.
+//
+// The positional scan invariant documented at pgstore.go:12480
+// (and called out again at the deploymentSelectColumnsWithRootfs
+// const) is the load-bearing constraint: if any of the four new
+// SELECT projections drifts from the INSERT column order, pgx
+// fails loud at the first SELECT. This test is the regression
+// net for that drift, parallel to TestPg_DeploymentAnnotationRoundtrip
+// from PR #984.
+func TestPg_DeploymentActorRoundtrip(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, err := s.CreateAccount(ctx, "actor@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := s.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "actor-app", Type: state.AppTypeApp,
+		RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	// 1. Full actor payload — dashboard / API path with a session
+	//    user, remote IP, and a githubd-stamped pusher login.
+	depFull, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID:            app.ID,
+		Kind:             state.DeploymentKindGitHub,
+		ImageDigest:      "sha256:actor-full",
+		Status:           state.DeployPending,
+		DeployedByUserID: acct.ID,
+		DeployedVia:      "github",
+		DeployedFromIP:   "203.0.113.42",
+		PusherLogin:      "octocat",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(full): %v", err)
+	}
+	got, err := s.DeploymentByID(ctx, depFull.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(full): %v", err)
+	}
+	if got.DeployedByUserID != acct.ID {
+		t.Errorf("deployed_by_user_id = %q, want %q", got.DeployedByUserID, acct.ID)
+	}
+	if got.DeployedVia != "github" {
+		t.Errorf("deployed_via = %q, want %q", got.DeployedVia, "github")
+	}
+	if got.DeployedFromIP != "203.0.113.42" {
+		t.Errorf("deployed_from_ip = %q, want %q", got.DeployedFromIP, "203.0.113.42")
+	}
+	if got.PusherLogin != "octocat" {
+		t.Errorf("pusher_login = %q, want %q", got.PusherLogin, "octocat")
+	}
+
+	// 2. Zero actor payload — anonymous / pre-FK / push-to-main
+	//    with no pusher. Every empty-string Go field must
+	//    collapse to NULL on INSERT (the nullif() chain at
+	//    pgstore.go::CreateDeployment) so the
+	//    deployed_by_user_id FK and the INET parser never see
+	//    a literal ''. The NOT NULL deployed_via column must
+	//    collapse to 'api' via the coalesce() fallback so
+	//    pre-feature rows stay valid without a backfill.
+	depEmpty, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "sha256:actor-empty",
+		Status:      state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(empty): %v", err)
+	}
+	gotEmpty, err := s.DeploymentByID(ctx, depEmpty.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(empty): %v", err)
+	}
+	if gotEmpty.DeployedByUserID != "" {
+		t.Errorf("empty deployed_by_user_id = %q, want \"\"", gotEmpty.DeployedByUserID)
+	}
+	if gotEmpty.DeployedVia != "api" {
+		t.Errorf("empty deployed_via = %q, want %q (coalesce() fallback)", gotEmpty.DeployedVia, "api")
+	}
+	if gotEmpty.DeployedFromIP != "" {
+		t.Errorf("empty deployed_from_ip = %q, want \"\"", gotEmpty.DeployedFromIP)
+	}
+	if gotEmpty.PusherLogin != "" {
+		t.Errorf("empty pusher_login = %q, want \"\"", gotEmpty.PusherLogin)
+	}
+
+	// 3. Closed-set deployed_via CHECK rejection. The DB-side
+	//    constraint (migrations/00305_deployments_actor.sql) is
+	//    the source of truth; the apid handler is expected to
+	//    mirror the vocabulary. We drive the rejection directly
+	//    through the store to confirm the constraint is wired
+	//    (the apid would otherwise silently accept and round-trip
+	//    a malformed value).
+	_, err = s.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "sha256:actor-bad",
+		Status:      state.DeployPending,
+		DeployedVia: "rogue_surface",
+	})
+	if err == nil {
+		t.Errorf("expected CHECK violation on rogue_surface, got nil")
+	}
+
+	// 4. FK rejection: a non-existent account id must fail
+	//    (the FK to accounts(id) enforces referential integrity
+	//    — the dashboard / api handler is expected to resolve
+	//    the session user before reaching the store, but the
+	//    constraint is the source of truth).
+	_, err = s.CreateDeployment(ctx, state.Deployment{
+		AppID:            app.ID,
+		Kind:             state.DeploymentKindImage,
+		ImageDigest:      "sha256:actor-bad-fk",
+		Status:           state.DeployPending,
+		DeployedByUserID: "00000000-0000-0000-0000-000000000000",
+		DeployedVia:      "api",
+	})
+	if err == nil {
+		t.Errorf("expected FK violation on non-existent deployed_by_user_id, got nil")
+	}
+}
+
+// TestPg_DeploymentAnnotationRoundtrip (issue #977 / ADR-116) pins
+// the four deploy-annotation columns (reason, tag, deployed_by,
+// pr_number) through CreateDeployment + DeploymentByID. The closed-
+// set tag CHECK is exercised on both the positive (allowed value)
+// and negative (rejected value) branches. A second CreateDeployment
+// with all-zero annotation fields asserts the Go-zero → NULL collapse
+// on pr_number + the empty-string passthrough on the text columns —
+// pre-#977 rows must continue to round-trip without surprise.
+//
+// The positional scan invariant documented at
+// pkg/state/pgstore.go:12269-12270 (and called out again at lines
+// 12283-12286) is the load-bearing constraint: if any of the four
+// new SELECT projections drifts from the INSERT column order, pgx
+// fails loud at the first SELECT. This test is the regression net
+// for that drift.
+func TestPg_DeploymentAnnotationRoundtrip(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, err := s.CreateAccount(ctx, "ann@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := s.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "ann-app", Type: state.AppTypeApp,
+		RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+
+	// 1. Full annotation payload — the githubd / Action path.
+	depFull, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindGitHub,
+		ImageDigest: "sha256:ann-full",
+		Status:      state.DeployPending,
+		Reason:      "Rollback after payments incident",
+		Tag:         "incident_recovery",
+		DeployedBy:  "octocat",
+		PRNumber:    4242,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(full): %v", err)
+	}
+	got, err := s.DeploymentByID(ctx, depFull.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(full): %v", err)
+	}
+	if got.Reason != "Rollback after payments incident" {
+		t.Errorf("reason = %q, want %q", got.Reason, "Rollback after payments incident")
+	}
+	if got.Tag != "incident_recovery" {
+		t.Errorf("tag = %q, want %q", got.Tag, "incident_recovery")
+	}
+	if got.DeployedBy != "octocat" {
+		t.Errorf("deployed_by = %q, want %q", got.DeployedBy, "octocat")
+	}
+	if got.PRNumber != 4242 {
+		t.Errorf("pr_number = %d, want 4242", got.PRNumber)
+	}
+
+	// 2. Zero annotations — push-to-main via CLI without --reason,
+	//    --tag, --deployed-by, --pr-number. The Go-zero on
+	//    pr_number must collapse to NULL on INSERT (the
+	//    nullif($N, 0) at pgstore.go:CreateDeployment).
+	depEmpty, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "sha256:ann-empty",
+		Status:      state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(empty): %v", err)
+	}
+	gotEmpty, err := s.DeploymentByID(ctx, depEmpty.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(empty): %v", err)
+	}
+	if gotEmpty.Reason != "" {
+		t.Errorf("empty reason = %q, want \"\"", gotEmpty.Reason)
+	}
+	if gotEmpty.Tag != "" {
+		t.Errorf("empty tag = %q, want \"\"", gotEmpty.Tag)
+	}
+	if gotEmpty.DeployedBy != "" {
+		t.Errorf("empty deployed_by = %q, want \"\"", gotEmpty.DeployedBy)
+	}
+	if gotEmpty.PRNumber != 0 {
+		t.Errorf("empty pr_number = %d, want 0", gotEmpty.PRNumber)
+	}
+
+	// 3. Closed-set tag CHECK rejection. The DB-side constraint
+	//    (migrations/00346_deployments_annotation.sql) is the
+	//    source of truth; the CLI / handler validators mirror
+	//    it. We drive the rejection directly through the store
+	//    to confirm the constraint is wired (the apid would
+	//    otherwise silently accept and round-trip a malformed
+	//    value).
+	_, err = s.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "sha256:ann-bad",
+		Status:      state.DeployPending,
+		Tag:         "rogue_tag",
+	})
+	if err == nil {
+		t.Errorf("expected CHECK violation on rogue_tag, got nil")
+	}
+}
+
+// TestPg_CreateInstance_PartialUniqueIndexBlocks pins the
+// cluster-coord primitive for the multi-host safety cluster PR-5
+// (audit F4). Two CreateInstance calls with the SAME wake_id AND
+// state IN ('WAKING', 'COLD_BOOTING') must: the first succeeds; the
+// second returns state.ErrConcurrentWake (SQLSTATE 23505 translated
+// to the typed sentinel). Without this guard, two schedds on
+// different boxes can both boot the same wake attempt —
+// double-charging the customer, double-warming the cold-boot path,
+// and violating spec §6.2's "two instances from one snapshot never
+// share IP/netns/uid/RNG" invariant via the IP+netns+uid the
+// second boot would mint.
+//
+// The test exercises the DB-level rejection at the partial unique
+// index instances_wake_attempt_active_idx (migration 00350). The
+// app-level retry (Engine.createInstanceWithWakeRetry) lives in
+// pkg/sched; this is the lower layer's pin.
+func TestPg_CreateInstance_PartialUniqueIndexBlocks(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+
+	wakeID := "11111111-1111-4111-8111-111111111111"
+
+	first, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, nodeID, wakeID)
+	if err != nil {
+		t.Fatalf("first CreateInstance: %v", err)
+	}
+	if first.WakeID != wakeID {
+		t.Errorf("first instance wake_id = %q, want %q", first.WakeID, wakeID)
+	}
+
+	// Second insert with the same wake_id + same in-flight state
+	// must fail with ErrConcurrentWake. The partial unique index
+	// is the rejection site; the wrapper translates 23505 →
+	// ErrConcurrentWake so the engine can recover.
+	_, err = s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, nodeID, wakeID)
+	if err == nil {
+		t.Fatal("second CreateInstance with duplicate wake_id: expected error, got nil")
+	}
+	if !errors.Is(err, state.ErrConcurrentWake) {
+		t.Fatalf("second CreateInstance: got %v, want ErrConcurrentWake", err)
+	}
+}
+
+// TestPg_CreateInstance_PartialUniqueIndex_AllowsAfterPark pins the
+// partial predicate of instances_wake_attempt_active_idx: once an
+// instance parks (state moves out of the WAKING/COLD_BOOTING/RUNNING
+// set), a fresh INSERT with the same wake_id is allowed. Without
+// this guard, a re-wake after the previous instance parked would
+// 23505 and the engine would refuse to serve the new request.
+// The engine's watchdog (sched/state.go) flips the row to
+// PARKED on cold shutdown, which moves the state OUT of the
+// partial predicate; the new wake_id is unrelated to the parked
+// row's wake_id in production, but the test exercises the
+// wake_id-reuse case to pin the predicate.
+func TestPg_CreateInstance_PartialUniqueIndex_AllowsAfterPark(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+
+	wakeID := "22222222-2222-4222-8222-222222222222"
+
+	first, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, nodeID, wakeID)
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	// Move the row to PARKED so it falls outside the partial
+	// predicate. UpdateInstanceStateToTerminal is the watchdog's
+	// path that flips in-flight instances out of the in-flight set.
+	if err := s.UpdateInstanceStateToTerminal(ctx, first.ID, string(state.StateParked), time.Now()); err != nil {
+		t.Fatalf("park: %v", err)
+	}
+
+	// Same wake_id, same in-flight state — but the original row
+	// is parked so the partial predicate allows the INSERT.
+	second, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, nodeID, wakeID)
+	if err != nil {
+		t.Fatalf("second after park: %v", err)
+	}
+	if second.ID == first.ID {
+		t.Errorf("second INSERT should have created a fresh row, got same id %q", second.ID)
+	}
+}
+
+// TestPg_ReadActiveInstanceForWakeID_ReturnsWinner pins the
+// recovery path (multi-host safety cluster PR-5 / audit F4). After
+// the partial unique index rejects a duplicate INSERT, the engine
+// calls ReadActiveInstanceForWakeID to discover the winner. The
+// returned row must carry the same wake_id AND a state in the
+// in-flight set; the engine's downstream code treats (ins.ID,
+// wakeID) the same regardless of which box minted the row.
+func TestPg_ReadActiveInstanceForWakeID_ReturnsWinner(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+
+	wakeID := "33333333-3333-4333-8333-333333333333"
+
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, nodeID, wakeID)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	got, err := s.ReadActiveInstanceForWakeID(ctx, wakeID)
+	if err != nil {
+		t.Fatalf("ReadActiveInstanceForWakeID: %v", err)
+	}
+	if got.ID != ins.ID {
+		t.Errorf("ReadActiveInstanceForWakeID id = %q, want %q", got.ID, ins.ID)
+	}
+	if got.WakeID != wakeID {
+		t.Errorf("ReadActiveInstanceForWakeID wake_id = %q, want %q", got.WakeID, wakeID)
+	}
+	if got.State != string(state.StateColdBooting) {
+		t.Errorf("ReadActiveInstanceForWakeID state = %q, want %q", got.State, state.StateColdBooting)
+	}
+}
+
+// TestPg_ReadActiveInstanceForWakeID_ParkedRowHidden pins the
+// predicate boundary: a row whose state is PARKING or PARKED does
+// not surface via ReadActiveInstanceForWakeID. The recovery path
+// only returns in-flight rows; the loser's retry should NOT pick
+// up a stale parked row as the "winner" (it would never transition
+// to RUNNING and the loser's call would block forever).
+func TestPg_ReadActiveInstanceForWakeID_ParkedRowHidden(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+
+	wakeID := "44444444-4444-4444-8444-444444444444"
+
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, nodeID, wakeID)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := s.UpdateInstanceStateToTerminal(ctx, ins.ID, string(state.StateParked), time.Now()); err != nil {
+		t.Fatalf("park: %v", err)
+	}
+
+	_, err = s.ReadActiveInstanceForWakeID(ctx, wakeID)
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("ReadActiveInstanceForWakeID after park: got %v, want ErrNotFound", err)
+	}
+}

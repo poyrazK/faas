@@ -37,6 +37,24 @@ var ErrNotFound = errors.New("state: not found")
 // guard against a future bug that fails to consult this error.
 var ErrCertFingerprintDrift = errors.New("state: compute_node cert fingerprint drift")
 
+// ErrConcurrentWake is returned by CreateInstance when the partial
+// unique index instances_wake_attempt_active_idx (migration 00350,
+// multi-host safety cluster PR-5 / audit F4) rejects an INSERT
+// because another schedd has already inserted a row with the same
+// wake_id AND state IN ('WAKING', 'COLD_BOOTING'). The caller
+// (pkg/sched.Engine.EnsureWake) recovers by reading the existing
+// row via ReadActiveInstanceForWakeID and observing the winner's
+// progress.
+//
+// This is the cluster-coord primitive: in-memory wakeCoord
+// (pkg/sched/wake_coord.go) serialises within ONE schedd; the
+// partial unique index serialises ACROSS schedds on different
+// boxes. The two layers are deliberately redundant — the in-
+// memory coord is the fast path for the dominant single-box
+// case, the partial index is the cluster-coord primitive that
+// catches cross-box races.
+var ErrConcurrentWake = errors.New("state: concurrent wake — wake_id conflict")
+
 // ErrCorsWildcardWithCredentials is returned by
 // MergeCorsPresetIntoRule when the merged AllowOrigins contains
 // the bare "*" wildcard alongside AllowCredentials: true. This is
@@ -2687,6 +2705,14 @@ type Store interface {
 	// is fine — the row still has a non-NULL wake_id after the write.
 	CreateInstance(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID string) (Instance, error)
 	InstanceByID(ctx context.Context, id string) (Instance, error)
+	// ReadActiveInstanceForWakeID is the cluster-coord lookup
+	// primitive (multi-host safety cluster PR-5 / audit F4). When
+	// CreateInstance returns ErrConcurrentWake (the partial unique
+	// index instances_wake_attempt_active_idx rejected a duplicate
+	// in-flight row), the engine's retry path calls this to discover
+	// the winner's instance_id and observe its state transition
+	// through the existing in-process state machine.
+	ReadActiveInstanceForWakeID(ctx context.Context, wakeID string) (Instance, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
 	// StampAppScaleOut (PR-C, issue #462) records apps.last_scale_out_at
 	// = now() on the wake-gate admit path. Non-atomic with the
