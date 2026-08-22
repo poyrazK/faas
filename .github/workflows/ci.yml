@@ -1141,6 +1141,21 @@ jobs:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
         run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
 
+      # Idempotency for migrations this diff ADDS. apply-and-walk and
+      # replay-safety together still leave one gap uncovered: a migration
+      # whose SECOND `goose up` against the same schema silently mutates
+      # state (a backfill UPDATE re-running, a constraint addition that
+      # 42710's, a CREATE TABLE without IF NOT EXISTS). Reachable in
+      # production through a daemon restart after a partial first apply
+      # (the ledger row committed but the DDL commit was unobserved) or
+      # a test harness that re-bootstraps without dropping the schema.
+      # Same scoping as replay-safety (only the tail is checked; 00001_init
+      # is intentionally not idempotent). See migrations/idempotency_test.go.
+      - name: migrations idempotency (new migrations only)
+        env:
+          FAAS_IDEMPOTENCY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
+        run: go test -race -count=1 -v -run TestNewMigrationsAreIdempotent ./migrations/...
+
   sqlc-check:
     # Drift gate between queries.sql + schema.sql and the committed
     # pkg/state/sqlc/* baseline (issue #125). ADR-017 keeps PgStore
