@@ -99,11 +99,10 @@ type ScheddNodeResolver interface {
 // 00083). ScheddForApp / ScheddForInstance resolve that single
 // node and behave identically to the pre-PR single-dial path.
 type scheddRouter struct {
-	store                 ScheddNodeResolver
-	tlsCfg                *tls.Config
-	dialer                ScheddDialer
-	log                   *slog.Logger
-	legacySingleBoxTarget string
+	store  ScheddNodeResolver
+	tlsCfg *tls.Config
+	dialer ScheddDialer
+	log    *slog.Logger
 
 	mu     sync.Mutex
 	cache  map[string]scheddgrpc.ScheddClient
@@ -113,11 +112,16 @@ type scheddRouter struct {
 // newScheddRouter wires the production cache. store must be
 // non-nil; tlsCfg may be nil for unix-only deployments; dialer may
 // be nil and defaults to DefaultScheddDialer. log may be nil
-// (slog.Default). legacySingleBoxTarget is the optional legacy
-// FAAS_SCHEDD_SOCKET override used by single-box/e2e deployments;
-// configured per-node targets remain authoritative for every other
-// compute node.
-func newScheddRouter(store ScheddNodeResolver, tlsCfg *tls.Config, dialer ScheddDialer, log *slog.Logger, legacySingleBoxTarget string) *scheddRouter {
+// (slog.Default).
+//
+// Multi-host safety cluster PR-7 (audit F5): the legacy
+// FAAS_SCHEDD_SOCKET override is REMOVED. The router now always
+// dials the per-node target from compute_nodes.schedd_target_url.
+// Operators who need a non-canonical target for the synthetic
+// default-local row must update the row directly; the env-var
+// shortcut no longer exists because it would silently swap a
+// non-owner box onto a foreign-owned wake in a multi-box fleet.
+func newScheddRouter(store ScheddNodeResolver, tlsCfg *tls.Config, dialer ScheddDialer, log *slog.Logger) *scheddRouter {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -125,12 +129,11 @@ func newScheddRouter(store ScheddNodeResolver, tlsCfg *tls.Config, dialer Schedd
 		dialer = DefaultScheddDialer(tlsCfg)
 	}
 	return &scheddRouter{
-		store:                 store,
-		tlsCfg:                tlsCfg,
-		dialer:                dialer,
-		log:                   log,
-		legacySingleBoxTarget: legacySingleBoxTarget,
-		cache:                 map[string]scheddgrpc.ScheddClient{},
+		store:  store,
+		tlsCfg: tlsCfg,
+		dialer: dialer,
+		log:    log,
+		cache:  map[string]scheddgrpc.ScheddClient{},
 	}
 }
 
@@ -218,15 +221,18 @@ func (r *scheddRouter) clientForNode(ctx context.Context, nodeID string) (schedd
 			return nil, fmt.Errorf("scheddrouter: compute_node %s (%s) has no schedd_target_url configured", n.ID, n.Name)
 		}
 		target := *n.ScheddTargetURL
-		// Migration 00090 seeds default-local with the canonical
-		// production socket. Honor the legacy socket override when
-		// this is the single-box row (the e2e harness uses a temporary
-		// socket); never override a target configured for another node
-		// or an explicitly customized default-local target.
-		if n.Name == state.DefaultLocalNodeName &&
-			target == defaultLocalScheddTarget && r.legacySingleBoxTarget != "" {
-			target = r.legacySingleBoxTarget
-		}
+		// Multi-host safety cluster PR-7 (audit F5): the legacy
+		// FAAS_SCHEDD_SOCKET shortcut is REMOVED. The router always
+		// dials the per-node target from
+		// compute_nodes.schedd_target_url. Migration 00090 seeds
+		// default-local with the canonical production socket;
+		// operators who need a non-canonical target must update the
+		// row directly. The env-var shortcut existed because the
+		// single-box default-local row had no env-driven override
+		// path; in a multi-box fleet the shortcut swapped a
+		// foreign-owned wake onto the local box silently, which
+		// the PR-5 owner gate catches but the shortcut still
+		// shouldn't exist.
 		c, err := r.dialer(ctx, target, r.tlsCfg)
 		if err != nil {
 			return nil, fmt.Errorf("scheddrouter: dial schedd for node %s (%s): %w", n.ID, n.Name, err)

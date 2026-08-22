@@ -72,7 +72,7 @@ func TestScheddRouter_WatchNodeChanges_LiveNotify(t *testing.T) {
 	}
 	dial := newFakeScheddDial()
 
-	r := newScheddRouter(store, nil, dial.Dial, nil, "")
+	r := newScheddRouter(store, nil, dial.Dial, nil)
 	defer func() { _ = r.Close() }()
 
 	// Pre-populate the cache. After the trigger fires, this

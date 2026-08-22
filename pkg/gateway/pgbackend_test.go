@@ -465,16 +465,25 @@ func TestPGBackend_ResolveSched_MultiBox_RejectsEmptyNodeID(t *testing.T) {
 	}
 }
 
-// TestPGBackend_ResolveSched_LegacySingleBox_FallsBackToBSched is
-// the regression guard for the single-box posture: a transient
-// resolver miss falls through to b.sched, which is correct because
-// the local schedd owns every app on the box. The pre-PR behaviour
-// is preserved byte-for-byte for single-box installs that never
-// configure FAAS_NODE_NAME.
-func TestPGBackend_ResolveSched_LegacySingleBox_FallsBackToBSched(t *testing.T) {
+// TestPGBackend_ResolveSched_LegacySingleBox_AlwaysRejects pins
+// the multi-host safety cluster PR-7 (audit F5) invariant: the
+// legacy single-box fallback is REMOVED. Whether WithLegacySingleBox
+// is true or false, resolveSched returns an error on a transient
+// resolver miss. The previous behaviour was:
+//
+//   - WithLegacySingleBox(true): silently fall back to b.sched.
+//   - WithLegacySingleBox(false): return a "multi-box posture
+//     forbids" error.
+//
+// The new behaviour is: always return an error naming the PR-7
+// removal. The setter is retained as a no-op for backwards
+// compatibility; the value is ignored. A transient resolver miss
+// on a foreign-owned app in a multi-box fleet must surface as a
+// 503, not silently route through the local schedd.
+func TestPGBackend_ResolveSched_LegacySingleBox_AlwaysRejects(t *testing.T) {
 	legacySched := gateway.NewFakeScheduler("default-local")
 	b := gateway.NewPGBackend(&fakeRouter{}, legacySched, nil).
-		WithLegacySingleBox(true).
+		WithLegacySingleBox(true). // value is ignored after PR-7
 		WithAppResolver(func(_ context.Context, _ string) (gateway.App, bool, error) {
 			return gateway.App{}, false, nil
 		}).
@@ -483,11 +492,11 @@ func TestPGBackend_ResolveSched_LegacySingleBox_FallsBackToBSched(t *testing.T) 
 			return nil, false, nil
 		})
 
-	if _, _, _, err := b.Admit(context.Background(), "app-z", "", "", "", 5); err != nil {
-		t.Fatalf("single-box posture must accept transient miss; got err=%v", err)
+	if _, _, _, err := b.Admit(context.Background(), "app-z", "", "", "", 5); err == nil {
+		t.Fatal("PR-7 removed the legacy single-box fallback; transient miss must error")
 	}
-	if legacySched.Calls() != 1 {
-		t.Errorf("legacy b.sched received %d Admits, want 1 (single-box fallback)", legacySched.Calls())
+	if legacySched.Calls() != 0 {
+		t.Errorf("legacy b.sched received %d Admits, want 0 (PR-7 removed the fallback)", legacySched.Calls())
 	}
 }
 

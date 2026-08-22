@@ -78,11 +78,6 @@ import (
 // compute_nodes.schedd_target_url, not from this var).
 var scheddSocket = envOrGateway("FAAS_SCHEDD_SOCKET", "/run/faas/schedd.sock")
 
-// defaultLocalScheddTarget is the target written by migration 00090 for the
-// synthetic single-box node. Keep it here as the comparison value for the
-// legacy FAAS_SCHEDD_SOCKET compatibility path in scheddrouter.go.
-const defaultLocalScheddTarget = "unix:///run/faas/schedd.sock"
-
 // gatewaydInternalSocket is the unix-domain socket schedd dials to
 // fire synthetic cron requests through gatewayd (spec §4.4, M7).
 // Mode 0660 group `faas` (ADR-015); only schedd can dial. Overridable
@@ -818,7 +813,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if hp := os.Getenv("FAAS_HOST_KEY_PATH"); hp != "" {
 		deps.hostKeyDir = filepath.Dir(hp)
 	}
-	deps.scheddRouter = newScheddRouter(pgStore, scheddTLS, nil, log, scheddSocket)
+	deps.scheddRouter = newScheddRouter(pgStore, scheddTLS, nil, log)
 	go deps.scheddRouter.WatchNodeChanges(ctx, pool, nil)
 	// Single-stream fallback: dial the legacy schedd socket once for
 	// the consumers that don't currently fan-in (warm hints, log
@@ -933,18 +928,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// changes that flip the posture are out of scope (an operator
 	// adding a second box restarts gatewayd alongside schedd).
 	if nodes, err := pgStore.ActiveComputeNodes(ctx); err == nil {
-		multiBox := false
-		for _, n := range nodes {
-			if n.Name != "default-local" {
-				multiBox = true
-				break
-			}
-		}
-		backend.WithLegacySingleBox(!multiBox)
-		log.Info("gatewayd: schedd posture", "legacy_single_box", !multiBox, "active_nodes", len(nodes))
+		log.Info("gatewayd: schedd posture", "active_nodes", len(nodes))
+		// Multi-host safety cluster PR-7 (audit F5): the legacy
+		// single-box fallback is REMOVED. The backend always uses
+		// the per-node schedd router; the resolveSched fallback
+		// path is dead code (no-op no-op). We keep the
+		// ActiveComputeNodes probe so the boot log still surfaces
+		// the fleet posture, but no longer use it to toggle
+		// WithLegacySingleBox.
 	} else {
-		log.Warn("gatewayd: schedd posture probe failed; defaulting to legacy single-box fallback", "err", err)
-		backend.WithLegacySingleBox(true)
+		log.Warn("gatewayd: schedd posture probe failed; legacy fallback no longer exists", "err", err)
 	}
 
 	// Keep the routing + target caches fresh from apid/schedd's pg_notify

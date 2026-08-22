@@ -460,19 +460,21 @@ func (b *PGBackend) WithWarmHint(fn WarmHintFunc) *PGBackend {
 	return b
 }
 
-// WithLegacySingleBox toggles the resolveSched fallback. Single-box
-// deployments (one schedd, every app owned by default-local) want
-// the legacy fallback to remain in effect so transient cache misses
-// do not deny traffic — there's only one schedd to dial, and the
-// ownership guard never trips because every app's NodeID matches.
-// Multi-box deployments (N schedds, per-app ownership) MUST set this
-// to false: the fallback would otherwise route a foreign-owned app
-// through the legacy default-local dial, and that schedd returns
-// FailedPrecondition, surfacing as a 503 storm on transient cache
-// misses. The setter is documented at the field (see legacySingleBox
-// above). Returns b so the gatewayd-internal startup wire-up can chain.
-func (b *PGBackend) WithLegacySingleBox(v bool) *PGBackend {
-	b.legacySingleBox = v
+// WithLegacySingleBox is a no-op stub retained for backwards
+// compatibility with existing cmd/gatewayd-internal/run.go wiring.
+//
+// Multi-host safety cluster PR-7 (audit F5): the legacy single-
+// box fallback in resolveSched is REMOVED. resolveSched always
+// returns an error on transient resolver misses (resolver ok=false,
+// empty NodeID, clientForApp ok=false) instead of routing through
+// b.sched. Single-box deployments don't need this fallback anymore:
+// the synthetic default-local row (migration 00090) carries a
+// per-node schedd_target_url that the router dials directly.
+//
+// The setter remains so existing wiring compiles; the value is
+// ignored. A future PR may remove the setter entirely. Returns
+// b so existing chains still chain.
+func (b *PGBackend) WithLegacySingleBox(_ bool) *PGBackend {
 	return b
 }
 
@@ -1300,18 +1302,23 @@ func (b *PGBackend) RequestCertForSurface(ctx context.Context, surfaceID string)
 // resolveSched picks the schedd client that should service appID
 // (Phase 2 / Gate A). Returns the per-node client when both hooks
 // are configured AND the app has a non-empty NodeID; otherwise
-// either falls through to the legacy single b.sched field
-// (legacy single-box posture, gated by WithLegacySingleBox) or
-// returns a definitive error (multi-box posture, where the
-// fallback would route a foreign-owned app through the wrong
-// schedd and surface a FailedPrecondition storm).
+// returns a definitive error.
 //
-// A nil error and a nil Scheduler means the hook declined —
-// caller falls back. b.legacySingleBox gates the fallback: when
-// false, any of the three fallback triggers (resolver ok=false,
-// app.NodeID empty, clientForApp ok=false) returns an error so
-// the gateway surfaces a 503 with a useful message rather than
-// a silent FailedPrecondition.
+// Multi-host safety cluster PR-7 (audit F5): the legacy single-
+// box fallback path is REMOVED. The previous implementation
+// returned b.sched (the single-box field) on three transient
+// triggers — resolver miss, empty NodeID, clientForApp miss —
+// gated by b.legacySingleBox. In a multi-box fleet that fallback
+// would route a foreign-owned app through the wrong schedd and
+// surface a FailedPrecondition storm. The current implementation
+// always returns an error so the gateway surfaces a 503 with a
+// useful message rather than a silent FailedPrecondition.
+//
+// The WithLegacySingleBox setter is retained as a no-op for
+// backwards compatibility with existing wiring (cmd/gatewayd-
+// internal/run.go previously toggled it based on the
+// ActiveComputeNodes posture probe). The setter has no effect;
+// callers should remove the toggle from their wiring.
 func (b *PGBackend) resolveSched(ctx context.Context, appID string) (Scheduler, error) {
 	if b.appResolver != nil && b.clientForApp != nil {
 		app, ok, err := b.appResolver(ctx, appID)
@@ -1319,34 +1326,17 @@ func (b *PGBackend) resolveSched(ctx context.Context, appID string) (Scheduler, 
 			return nil, err
 		}
 		if !ok {
-			// App row missing. On single-box this is the
-			// legacy fallback (b.sched serves every app);
-			// on multi-box it's a 503 because routing to
-			// b.sched would surface FailedPrecondition for
-			// every foreign-owned app on transient miss.
-			if b.legacySingleBox {
-				return b.sched, nil
-			}
-			return nil, fmt.Errorf("gatewayd-internal: app %s: not found (transient resolver miss; multi-box posture forbids legacy fallback)", appID)
+			return nil, fmt.Errorf("gatewayd-internal: app %s: not found (transient resolver miss; legacy single-box fallback removed in PR-7)", appID)
 		}
 		if app.NodeID == "" {
-			// Pre-migration row or test fixture: only valid
-			// in single-box where every app lives on the
-			// local schedd.
-			if b.legacySingleBox {
-				return b.sched, nil
-			}
-			return nil, fmt.Errorf("gatewayd-internal: app %s has empty NodeID (pre-migration row; multi-box posture forbids legacy fallback)", appID)
+			return nil, fmt.Errorf("gatewayd-internal: app %s has empty NodeID (pre-migration row; legacy single-box fallback removed in PR-7)", appID)
 		}
 		cli, ok, err := b.clientForApp(ctx, app)
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
-			if b.legacySingleBox {
-				return b.sched, nil
-			}
-			return nil, fmt.Errorf("gatewayd-internal: app %s (node %s): client resolver declined (transient miss; multi-box posture forbids legacy fallback)", appID, app.NodeID)
+			return nil, fmt.Errorf("gatewayd-internal: app %s (node %s): client resolver declined (transient miss; legacy single-box fallback removed in PR-7)", appID, app.NodeID)
 		}
 		return cli, nil
 	}
