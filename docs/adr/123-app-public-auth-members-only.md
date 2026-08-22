@@ -327,7 +327,7 @@ O(log n) — no fan-out, no per-row soft-delete sweep.
 
 ## Schema materialization
 
-Migration `00347_apps_public_auth_members_only.sql` widens
+Migration `00378_apps_public_auth_members_only.sql` widens
 the `apps_public_auth_mode_chk` CHECK constraint by
 DROP-then-ADD (per the trigger-replay-safety DROP-before-CREATE
 precedent at `trigger-replay-safety-drop-before-create`). The
@@ -336,7 +336,7 @@ materialization gate (`make sqlc-check`) re-derives both from
 the migration history on every CI run.
 
 The migration's test file
-(`migrations/00347_apps_public_auth_members_only_test.go`)
+(`migrations/00378_apps_public_auth_members_only_test.go`)
 pins seven scenarios: `ApplyThrough` (round-trip the new
 value), `EnumAccepts` (closed-set still rejects unknown
 values), `RoundTrip` (mode flip `open → members_only →
@@ -372,10 +372,10 @@ pre-ADR-123 set), `AfterDown` (the post-DOWN row rejects
 - `pkg/api/public_auth_constants_test.go` + `pkg/gateway/handler_public_auth_constants_test.go`
   — drift guards pin the three-place constant mirror
   (pkg/api ↔ pkg/state ↔ pkg/gateway).
-- `migrations/00347_apps_public_auth_members_only_test.go` —
+- `migrations/00378_apps_public_auth_members_only_test.go` —
   7 sub-tests pinning the closed-enum migration contract.
 - `TestMigrationsContiguous` — pre-existing gate that catches
-  slot-fence drift on the 00347 slot.
+  slot-fence drift on the 00378 slot.
 
 ## Future work (deliberately out of scope for this ADR)
 
@@ -456,7 +456,7 @@ The four package-local surfaces the operator sees:
 - Migration `00099_org_memberships.sql` — the
   `org_memberships` table + PK `(org_id, account_id)` + the
   `removed_at IS NULL` soft-delete pattern.
-- Migration `00347_apps_public_auth_members_only.sql` — the
+- Migration `00378_apps_public_auth_members_only.sql` — the
   ADR-123 widening.
 - `pkg/auth/middleware/RequireSession` — the cookie side
   (AEAD-decrypt + live-row cross-check + binding-hash verify).

@@ -1,4 +1,4 @@
--- filename: 00347_apps_public_auth_members_only.sql
+-- filename: 00378_apps_public_auth_members_only.sql
 -- +goose Up
 -- +goose StatementBegin
 
@@ -29,14 +29,17 @@
 -- constraint with the full vocabulary literal because
 -- Postgres 15 (CI) rejects ADD CONSTRAINT IF NOT EXISTS.
 --
--- Slot note: 00347. The slot is the next free one above
--- the latest real migration (00346_deployments_annotation
--- shipped via PR #984). No bridge fences are needed
--- (00346 is the immediate predecessor; no concurrent PRs
--- are known to target 00347 at the time of authoring).
--- If a sibling PR claims 00347 in flight, the ADR-041
--- renumber dance applies (drop the real file, claim the
--- sibling's fence) — accept the loss; the embed
+-- Slot note: 00378. Originally targeted at 00347 (the
+-- immediate successor of 00346 at the time of authoring)
+-- but main-side evolution since fork landed 00347-00375
+-- (most as `reserve_slot.sql` fences + 00367 + 00375
+-- real), three-way slot collision with PRs #1034 and
+-- #1036 occupied 00347 in CI; the ADR-041 renumber dance
+-- moved us off 00347. First move was 00376, but PR #1036
+-- (multi-host safety cluster) had also renumbered to
+-- 00376 — bumping again to 00378. The first 00376 on the
+-- branch was actually PR #1036's compute_nodes_active_unique,
+-- so this is the second-bump renumber. The embed
 -- contiguity is preserved by whichever PR merges first.
 
 alter table apps drop constraint if exists apps_public_auth_mode_chk;
