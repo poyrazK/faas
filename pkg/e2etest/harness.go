@@ -198,6 +198,14 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 		// migrations. The metal path reuses the same socket so this
 		// ceiling also covers the post-migration cold start.
 		waitUnix(t, sockPath, 30*time.Second)
+		// Multi-host safety cluster PR-7 (audit F5) removed the
+		// legacy FAAS_SCHEDD_SOCKET fallback in
+		// pkg/gateway/pgbackend.go:resolveSched; the scheddrouter
+		// now dials compute_nodes.schedd_target_url, which
+		// migration 00090 seeds with the canonical production
+		// socket (/run/faas/schedd.sock). Re-point the row at the
+		// per-test socket so synth dispatch can find schedd.
+		setDefaultLocalScheddTarget(t, pool, sockPath)
 	}
 
 	if which&VMMD != 0 {
@@ -702,6 +710,14 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		// 30s tolerates schedd's first-boot db.MigrateUp (same
 		// rationale as the Start path above).
 		waitUnix(t, sockPath, 30*time.Second)
+		// Multi-host safety cluster PR-7 (audit F5) removed the
+		// legacy FAAS_SCHEDD_SOCKET fallback in
+		// pkg/gateway/pgbackend.go:resolveSched; the scheddrouter
+		// now dials compute_nodes.schedd_target_url, which
+		// migration 00090 seeds with the canonical production
+		// socket (/run/faas/schedd.sock). Re-point the row at the
+		// per-test socket so synth dispatch can find schedd.
+		setDefaultLocalScheddTarget(t, pool, sockPath)
 	}
 	if which&Meterd != 0 {
 		startMeterd(t, h, bin, dbURL, extraEnv)
@@ -1260,6 +1276,31 @@ func waitTCP(t *testing.T, addr string, d time.Duration) {
 	}
 	dumpProcs(t)
 	t.Fatalf("e2etest: %s did not accept within %s", addr, d)
+}
+
+// setDefaultLocalScheddTarget points the synthetic default-local
+// compute_nodes row's schedd_target_url at the per-test schedd
+// unix socket. Migration 00090 seeds the canonical production
+// socket (/run/faas/schedd.sock), but the e2e harness boots schedd
+// on a per-test temp dir. Without this UPDATE, the
+// gatewayd-internal scheddrouter dials the canonical socket and
+// every dispatch fails with "sched: invocation: gateway returned
+// 502" (the legacy FAAS_SCHEDD_SOCKET fallback that masked this was
+// removed in multi-host safety cluster PR-7 / audit F5 —
+// pkg/gateway/pgbackend.go:1286 deletes the resolveSched branch
+// that previously returned b.sched on transient triggers).
+//
+// Idempotent: the UPDATE re-applies on every Start/StartWithEnv
+// call so two schedd boots in the same process (e.g. back-to-back
+// subtests) both converge on the active socket.
+func setDefaultLocalScheddTarget(t *testing.T, pool *pgxpool.Pool, sockPath string) {
+	t.Helper()
+	target := "unix://" + sockPath
+	if _, err := pool.Exec(context.Background(),
+		`update compute_nodes set schedd_target_url = $1 where name = 'default-local'`,
+		target); err != nil {
+		t.Fatalf("e2etest: set default-local schedd_target_url: %v", err)
+	}
 }
 
 // waitUnix polls for a unix socket file to exist and accept. The daemon
