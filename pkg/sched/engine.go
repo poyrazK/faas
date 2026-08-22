@@ -810,57 +810,59 @@ func (e *Engine) WithOwnerNodeID(nodeID string) *Engine {
 
 // createInstanceWithWakeRetry is the cluster-coord Layer 2 helper
 // (multi-host safety cluster PR-5 / audit F4). Wraps
-// store.CreateInstance with a bounded retry loop on
-// state.ErrConcurrentWake: the cluster-coord partial unique
-// index instances_wake_attempt_active_idx (migration 00350)
-// rejects duplicate in-flight rows with the same wake_id + state
-// in ('WAKING', 'COLD_BOOTING'). Two schedds on different boxes
-// that race on the same wake_id (a cron event fan-out, a gateway
-// retry storm) land one winner and one 23505 loser; the loser
-// observes the winner's row via ReadActiveInstanceForWakeID and
-// surfaces the same wake as if it had been the inserter.
+// store.CreateInstance; on a SQLSTATE 23505 (the partial unique
+// index instances_wake_attempt_active_idx rejected the INSERT
+// because another schedd already created an in-flight row with
+// the same wake_id) it returns state.ErrWakeAlreadyInflight.
 //
-// Retry policy: 3 attempts, 50-200ms jittered sleep between
-// attempts. The jitter prevents the two-schedd thundering-herd
-// pattern the multi-host safety audit flagged (PR-5 risk #1).
-// After 3 failures the function gives up and returns the
-// ErrConcurrentWake as-is so the engine surfaces the loss to the
-// caller (gateway-side retry, cron-side reschedule).
+// The helper deliberately does NOT return the winner's row. The
+// engine's downstream path (ledger.Admit, vmm.CreateColdBoot,
+// SetInstanceRuntime, store.DeleteInstance, transitionWithKind,
+// emitInstanceChanged) is keyed by (ins.ID, placement.NodeID) —
+// if we returned the remote winner's row, this schedd would boot
+// a LOCAL microVM tagged with a REMOTE instance UUID, double-
+// billing the customer, double-allocating per-app concurrency
+// slots, and (in single-box degenerate case) colliding on
+// cgroup / jail uid / netns per spec §6.2-5. The partial unique
+// index IS the cluster-coord primitive: one inserter wins, all
+// others exit cleanly with a typed sentinel that the upstream
+// surfaces through the existing error funnel.
+//
+// Retry policy: a single attempt. The partial unique index is
+// binary (succeeds, or 23505) — once tripped, the winner's row
+// is already in the table in WAKING / COLD_BOOTING; retries
+// against the same wake_id always 23505 and never win. The
+// jittered retry loop previously lifted into this helper was
+// removed because (a) the binary guarantee above makes retries
+// useless, and (b) the previous "winner-recovery" branch read
+// the winner's row and returned it as if this schedd had minted
+// it — that turned the helper into a dangerous lie (the layered
+// downstream was never designed to be safe with a foreign row).
+//
+// Caller propagation: the three call sites (engine.go:1460 floor
+// admit, :1764 wake dispatch, :3750 prime) wrap the sentinel
+// with their own context and surface it as a typed error; the
+// gateway-side retry / cron-side reschedule / redeploy handles
+// the "another box handled it" follow-up. Callers that want to
+// observe the winner's progress can call
+// state.PgStore.ReadActiveInstanceForWakeID directly — the
+// primitive remains exported for that purpose.
 func (e *Engine) createInstanceWithWakeRetry(ctx context.Context, appID, deploymentID, initState string, ramMB int, nodeID, wakeID string) (state.Instance, error) {
-	const maxAttempts = 3
-	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		ins, err := e.store.CreateInstance(ctx, appID, deploymentID, initState, ramMB, nodeID, wakeID)
-		if err == nil {
-			return ins, nil
-		}
-		if !errors.Is(err, state.ErrConcurrentWake) {
-			return state.Instance{}, err
-		}
-		lastErr = err
-		// Loser: the partial unique index rejected this INSERT
-		// because another schedd already inserted an in-flight
-		// row with the same wake_id. Read the winner's row
-		// and return it as if we had been the inserter —
-		// the engine's downstream code path treats (ins.ID,
-		// wakeID) the same regardless of which box minted the
-		// row, because both boxes share the same DB state.
-		winner, readErr := e.store.ReadActiveInstanceForWakeID(ctx, wakeID)
-		if readErr == nil && winner.ID != "" {
-			return winner, nil
-		}
-		// The winner row isn't there yet (the inserter may
-		// still be in progress). Jitter and retry.
-		if attempt < maxAttempts {
-			jitter := time.Duration(50+attempt*50) * time.Millisecond
-			select {
-			case <-ctx.Done():
-				return state.Instance{}, ctx.Err()
-			case <-time.After(jitter):
-			}
-		}
+	ins, err := e.store.CreateInstance(ctx, appID, deploymentID, initState, ramMB, nodeID, wakeID)
+	if err == nil {
+		return ins, nil
 	}
-	return state.Instance{}, lastErr
+	if errors.Is(err, state.ErrConcurrentWake) {
+		// Loser path: another schedd (or this schedd's wakeCoord
+		// released the slot to a peer race that landed just before
+		// us) won the INSERT. Surfacing ErrWakeAlreadyInflight
+		// unwinds the layered downstream — no ledger reservation,
+		// no vmmd.CreateColdBoot, no row mutation — so the local
+		// box cannot boot a microVM tagged with the remote winner's
+		// instance UUID.
+		return state.Instance{}, state.ErrWakeAlreadyInflight
+	}
+	return state.Instance{}, err
 }
 func (e *Engine) WithLivenessWindow(w *LivenessWindow) *Engine {
 	if e == nil {

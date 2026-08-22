@@ -183,6 +183,77 @@ The cross-PR e2e pin (`cmd/e2e/fleet_wake_dedup_e2e_test.go`,
 build tag `metal`) covers the full two-schedd-two-gatewayd
 fleet scenario end-to-end.
 
+## Amendment 2 — Loser surfaces sentinel, never returns the winner row (correction)
+
+The original Amendment 1 described the helper as a 3-attempt
+jittered loop that "recovers via `Store.ReadActiveInstanceForWakeID`
+when it loses the race." Code-review agent #1036 (PR #1036
+verify pass) found that this recovery branch is the ship-
+blocking shape: returning the winner's `state.Instance` to the
+loser causes the engine downstream — which is keyed by
+`(ins.ID, placement.NodeID)` — to boot a LOCAL microVM tagged
+with the REMOTE winner's instance UUID. Six concrete failure
+modes follow (wrong node tag, double-counted per-app
+concurrency, local VM with remote UUID, `HostIP` clobber race,
+`store.DeleteInstance` deleting the winner on the loser's
+failure path, `transitionWithKind` marking the winner `FAILED`).
+In the single-box degenerate case (two schedds on one node, no
+`App.NodeID` claim yet) the two would boot on the same node —
+colliding on cgroup / jail uid / netns in violation of spec
+§6.2-5.
+
+The corrected contract (one attempt, no jitter, no winner-row
+read):
+
+1. `pkg/sched.Engine.createInstanceWithWakeRetry` calls
+   `store.CreateInstance` exactly once. The partial unique
+   index is binary (succeeds or `23505`) — retries against the
+   same `wake_id` cannot win because the winner's row is
+   already in the index's `WAKING` / `COLD_BOOTING` predicate.
+   The 3-attempt jittered loop was structurally useless and
+   has been removed.
+
+2. On `23505`, the helper returns `(state.Instance{},
+   state.ErrWakeAlreadyInflight)` — NOT the winner's row. The
+   three `CreateInstance` call sites (engine.go:1460 floor
+   admit, :1764 wake dispatch, :3750 prime) propagate the
+   sentinel as a typed error via `fmt.Errorf("...: %w", err)`.
+   The engine's downstream (ledger.Admit, vmm.CreateColdBoot,
+   SetInstanceRuntime, store.DeleteInstance,
+   transitionWithKind, emitInstanceChanged) never runs on the
+   loser path; no local microVM is ever booted with the winner's
+   instance UUID.
+
+3. Callers that need to observe the winner's progress (gateway-
+   side retry poll, cron-side reschedule, redeploy follow-up)
+   call `Store.ReadActiveInstanceForWakeID` directly — the
+   primitive remains exported for that purpose. The helper no
+   longer auto-recovers.
+
+4. The `pg_notify` wake-coord follower path (the wakeCoord
+   `call.Await` block at engine.go:1254) inherits the same
+   `ErrWakeAlreadyInflight` from the leader via `CoordOutcome.Err`
+   — followers exit cleanly without attempting local boot.
+
+New surfaces:
+- `pkg/state.ErrWakeAlreadyInflight` typed sentinel (the engine
+  helper surfaces it; the raw `ErrConcurrentWake` stays as the
+  store-layer sentinel).
+
+New tests:
+- `pkg/sched/engine_test.go::TestEngine_CreateInstanceWithWakeRetry_LoserSurfacesSentinel`
+  pins the helper contract: store returns `ErrConcurrentWake`,
+  helper returns `ErrWakeAlreadyInflight` with empty `Instance`;
+  `CreateInstance` was called exactly once.
+
+The cross-PR e2e pin (`cmd/e2e/fleet_wake_dedup_e2e_test.go`,
+build tag `metal`) was updated: the loser is now expected to
+surface `ErrWakeAlreadyInflight` (or the raw `ErrConcurrentWake`
+from the store, both are accepted), and the assertion "both
+schedds observe the same winner via the retry helper" was
+removed — the loser now exits cleanly with an empty
+`Instance`.
+
 ## Rejected alternatives
 
 - **Extend `pkg/gateway/WakeGate` to cover cron / floor / scaleup / targets.**

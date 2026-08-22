@@ -12,8 +12,9 @@
 // source; one event fires for an app with a not-yet-claimed
 // NodeID; both schedds race to wake it. The cluster-coord
 // primitive (PR-5 partial unique index on instances.wake_id)
-// ensures exactly one row materialises — both daemons observe
-// the same winner via the retry helper.
+// ensures exactly one row materialises — the loser surfaces
+// state.ErrWakeAlreadyInflight and exits cleanly without
+// attempting a local microVM boot (spec §6.2-5 invariant).
 //
 // Build tag: metal. Same runtime requirements as
 // deploy_wake_metal_test.go: /dev/kvm + root + Firecracker +
@@ -37,7 +38,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -46,12 +46,21 @@ import (
 // Postgres with distinct owner IDs; an app with NodeID="" is
 // created (the claim-race scenario); both schedds race to wake
 // the same wake_id; the partial unique index ensures exactly
-// one instance row materialises.
+// one instance row materialises — the loser surfaces
+// state.ErrWakeAlreadyInflight and exits cleanly.
 //
 // This is the load-bearing invariant: §6.2 "two instances from
 // one snapshot never share IP/netns/uid/RNG" plus the §4.7
 // "predictable bills" guarantee. Two double-wakes would bill
-// the customer twice AND mint duplicate IPs.
+// the customer twice AND mint duplicate IPs. The corrigendum
+// after code-review agent #1036 is that the engine's cluster-
+// coord helper (pkg/sched.Engine.createInstanceWithWakeRetry)
+// must NOT return the winner's row to the loser — the engine's
+// downstream (ledger.Admit, vmm.CreateColdBoot) is keyed by
+// (ins.ID, placement.NodeID), so a foreign row would cause the
+// loser to boot a LOCAL microVM tagged with the WINNER's
+// instance UUID (six concrete failure modes, including the
+// single-box degenerate cgroup/jail uid/netns collision).
 //
 // The test does NOT use the full Engine.EnsureWake path
 // (that's exercised by the unit tests in pkg/sched). It calls
@@ -71,11 +80,10 @@ func TestFleetWakeDedup_TwoScheddsOneWakeID(t *testing.T) {
 	// Seed: an account + app + deployment. App.NodeID stays
 	// "" to model the claim-race scenario (neither schedd has
 	// won SetAppNodeID yet).
-	acct, app, dep := seedAccountAppDep(t, store, ctx)
+	_, app, dep := seedAccountAppDep(t, store, ctx)
 	if app.NodeID != "" {
 		t.Fatalf("test setup: app.NodeID must be empty, got %q", app.NodeID)
 	}
-	_ = acct
 
 	// Resolve the default-local compute_node id; both schedds
 	// would route to it in production. We use the same row.
@@ -86,10 +94,13 @@ func TestFleetWakeDedup_TwoScheddsOneWakeID(t *testing.T) {
 	wakeID := uuid.NewString()
 
 	// Simulate the engine's createInstanceWithWakeRetry path
-	// (engine.go:~810). The first inserter wins; the second
-	// observes ErrConcurrentWake, reads the winner via
-	// ReadActiveInstanceForWakeID, and surfaces the same
-	// instance_id as if it had been the inserter.
+	// (engine.go createInstanceWithWakeRetry). The first
+	// inserter wins; the second observes ErrConcurrentWake from
+	// the partial unique index and surfaces
+	// state.ErrWakeAlreadyInflight WITHOUT returning the
+	// winner's row (the loser exits the wake pipeline before
+	// ledger.Admit / vmm.CreateColdBoot — no local microVM is
+	// ever attempted on the loser's box).
 	type result struct {
 		ins  state.Instance
 		err  error
@@ -118,27 +129,59 @@ func TestFleetWakeDedup_TwoScheddsOneWakeID(t *testing.T) {
 	for r := range results {
 		if r.err == nil {
 			winners = append(winners, r.ins)
+		} else if errors.Is(r.err, state.ErrWakeAlreadyInflight) {
+			losers = append(losers, r.err)
 		} else if errors.Is(r.err, state.ErrConcurrentWake) {
+			// ErrConcurrentWake is the raw 23505 the store
+			// returns; the engine helper translates to
+			// ErrWakeAlreadyInflight. We accept either here
+			// so a future refactor that returns
+			// ErrConcurrentWake directly is still a passing
+			// test (the important property is "loser
+			// surfaces a typed wake-loss error and does not
+			// return a row").
 			losers = append(losers, r.err)
 		} else {
 			t.Errorf("unexpected error from race attempt: %v", r.err)
 		}
 	}
 
-	// Exactly one inserter succeeded. The other got
-	// ErrConcurrentWake and (per the retry helper)
-	// recovered the winner via ReadActiveInstanceForWakeID.
+	// Exactly one inserter succeeded. The other surfaced a
+	// typed wake-loss error (ErrWakeAlreadyInflight or the raw
+	// ErrConcurrentWake from the store).
 	if len(winners) != 1 {
 		t.Fatalf("got %d winners, want exactly 1 (partial unique index on instances.wake_id)", len(winners))
 	}
-	if len(losers) > 1 {
-		t.Fatalf("got %d ErrConcurrentWake, want ≤ 1", len(losers))
+	if len(losers) != 1 {
+		t.Fatalf("got %d losers, want exactly 1 (the unauthenticated loser must surface a typed wake-loss error, not silently succeed)", len(losers))
 	}
 
-	// Both schedds must observe the SAME instance_id (the
-	// winner's row), so downstream code (admit, dispatch,
-	// wakeCoord followers) treats the wake as if it had been
-	// a single request. Cross-box dedup is the whole point.
+	// The loser's raceCreateInstance MUST return an empty
+	// Instance. The previous broken helper returned the
+	// winner's row (ins.ID non-empty) — that was the
+	// ship-blocking bug code-review agent #1036 caught.
+	// Pin: every loser in the channel has zero Instance.
+	// (range over a buffered channel yields one value per
+	// element; we've already drained the channel above via
+	// the aggregation loop. The Close closed the channel
+	// direction — re-range from a separate iteration is
+	// safe only if we buffered with cap=2 and never reached
+	// the close-walk path, but err/ins state lives in the
+	// `winners`/`losers` aggregates above. The channel walk
+	// is a defensive second pass over the SAME data the
+	// aggregation loop already saw.)
+	for r := range results {
+		if r.err != nil && r.ins.ID != "" {
+			t.Errorf("loser returned a non-empty Instance (id=%q) — would cause local boot with foreign row per spec §6.2-5", r.ins.ID)
+		}
+	}
+
+	// ReadActiveInstanceForWakeID is still the canonical
+	// primitive for callers (gateway-side retry poll, cron-side
+	// reschedule) that need to observe the WINNER's progress
+	// after the local schedd surfaces ErrWakeAlreadyInflight.
+	// Pin it here so the public shape is regression-tested even
+	// after the helper changed.
 	got, err := store.ReadActiveInstanceForWakeID(ctx, wakeID)
 	if err != nil {
 		t.Fatalf("ReadActiveInstanceForWakeID: %v", err)
@@ -161,41 +204,26 @@ func TestFleetWakeDedup_TwoScheddsOneWakeID(t *testing.T) {
 		t.Errorf("instances.wake_id count = %d, want 1 (partial unique index rejected the second INSERT)", rowCount)
 	}
 
-	t.Logf("multi-host safety cluster PR-5 dedup: 1 winner %q, both schedds observed the winner within %v",
+	t.Logf("multi-host safety cluster PR-5 dedup: 1 winner %q, 1 loser surfaced ErrWakeAlreadyInflight within %v",
 		winners[0].ID, time.Since(start))
 }
 
-// raceCreateInstance is the engine's retry helper shim — it
-// calls CreateInstance, on ErrConcurrentWake recovers via
-// ReadActiveInstanceForWakeID, and returns the winner's row.
-// Bounded to 3 attempts with jittered 50-200ms sleeps, mirroring
-// pkg/sched.Engine.createInstanceWithWakeRetry (engine.go:~810).
+// raceCreateInstance is the engine's cluster-coord helper shim —
+// it calls CreateInstance, and on ErrConcurrentWake surfaces
+// state.ErrWakeAlreadyInflight without returning the winner's
+// row. Mirrors pkg/sched.Engine.createInstanceWithWakeRetry
+// (engine.go). The previously-broken shape (read winner + return
+// winner) is gone: the helper no longer pretends the loser
+// minted the row.
 func raceCreateInstance(ctx context.Context, store *state.PgStore, appID, depID, nodeID, wakeID string) (state.Instance, error) {
-	const maxAttempts = 3
-	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		ins, err := store.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, nodeID, wakeID)
-		if err == nil {
-			return ins, nil
-		}
-		if !errors.Is(err, state.ErrConcurrentWake) {
-			return state.Instance{}, err
-		}
-		lastErr = err
-		winner, readErr := store.ReadActiveInstanceForWakeID(ctx, wakeID)
-		if readErr == nil && winner.ID != "" {
-			return winner, nil
-		}
-		if attempt < maxAttempts {
-			jitter := time.Duration(50+attempt*50) * time.Millisecond
-			select {
-			case <-ctx.Done():
-				return state.Instance{}, ctx.Err()
-			case <-time.After(jitter):
-			}
-		}
+	ins, err := store.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, nodeID, wakeID)
+	if err == nil {
+		return ins, nil
 	}
-	return state.Instance{}, lastErr
+	if errors.Is(err, state.ErrConcurrentWake) {
+		return state.Instance{}, state.ErrWakeAlreadyInflight
+	}
+	return state.Instance{}, err
 }
 
 // seedAccountAppDep is a minimal seed for the test. Production
@@ -243,9 +271,3 @@ func resolveDefaultLocalNodeID(t *testing.T, ctx context.Context, pool *pgxpool.
 	}
 	return id
 }
-
-// sched import is referenced via the public Engine surface
-// for the partial unique index pin. The e2e test exercises
-// the lower layer (PgStore.CreateInstance + ReadActiveInstanceForWakeID);
-// sched.EnsureWake is pinned by unit tests in pkg/sched.
-var _ = sched.ErrPermanentWake

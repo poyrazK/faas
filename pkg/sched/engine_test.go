@@ -3825,3 +3825,94 @@ func TestEngineEnsureWake_AllowsUnownedApp(t *testing.T) {
 			vmm.coldBoots)
 	}
 }
+
+// TestEngine_CreateInstanceWithWakeRetry_LoserSurfacesSentinel pins
+// the corrected contract for the cluster-coord Layer 2 helper
+// (pkg/sched/engine.go createInstanceWithWakeRetry, multi-host
+// safety cluster PR-5 / audit F4). When the underlying store returns
+// state.ErrConcurrentWake (the partial unique index rejected our
+// INSERT because another schedd already inserted an in-flight row
+// with the same wake_id), the helper MUST return
+// state.ErrWakeAlreadyInflight with an empty Instance — NOT the
+// winner's row.
+//
+// Returning the winner's row is the ship-blocking bug code-review
+// agent #1036 surfaced: the helper previously read the winner's
+// row via ReadActiveInstanceForWakeID and returned it as if THIS
+// schedd had minted it. The engine downstream uses (ins.ID,
+// placement.NodeID) for ledger.Admit + vmm.CreateColdBoot +
+// SetInstanceRuntime — so a foreign winner's row caused the LOCAL
+// schedd to boot a microVM tagged with the REMOTE schedd's
+// instance UUID. Six concrete failure modes followed (wrong node
+// tag, double-counted perApp concurrency, local VM with remote
+// UUID, HostIP clobber race, DeleteInstance deleting the winner,
+// transitionWithKind marking the winner FAILED). The corrected
+// contract exits cleanly via the typed sentinel so the engine
+// surfaces "another box handled it" to the gateway-side retry
+// poll / cron-side reschedule / redeploy — no local boot happens.
+func TestEngine_CreateInstanceWithWakeRetry_LoserSurfacesSentinel(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	deploymentID := dep.ID
+
+	// Seed the "winner" the loser's helper would otherwise have
+	// returned. We assert below that the helper does NOT echo
+	// this row back when the store returns ErrConcurrentWake.
+	_, err := store.CreateInstance(context.Background(), app.ID, deploymentID,
+		string(state.StateColdBooting), 512, state.DefaultLocalNodeName,
+		"winner-wake-id-on-peer-box")
+	if err != nil {
+		t.Fatalf("seed winner row: %v", err)
+	}
+
+	// Wrap the memstore so the loser's CreateInstance call
+	// returns ErrConcurrentWake — the same path the partial
+	// unique index instances_wake_attempt_active_idx takes on
+	// a real Postgres when a peer's row is already in the table.
+	loseStore := &loseAlwaysCreateInstance{MemStore: store}
+
+	vmm := &fakeVMM{}
+	e := newEngine(t, loseStore, vmm, &fakeNotifier{}, "1.10.0")
+
+	// Call the helper directly with a wake_id that has no row
+	// in the table. The wrapper returns ErrConcurrentWake. The
+	// helper must surface ErrWakeAlreadyInflight with an empty
+	// Instance.
+	ins, err := e.createInstanceWithWakeRetry(context.Background(),
+		app.ID, deploymentID, string(state.StateColdBooting),
+		512, state.DefaultLocalNodeName, "loser-wake-id")
+	if !errors.Is(err, state.ErrWakeAlreadyInflight) {
+		t.Fatalf("loser err = %v, want ErrWakeAlreadyInflight", err)
+	}
+	if ins.ID != "" {
+		t.Errorf("loser ins.ID = %q, want empty (helper must NOT return the winner's row)", ins.ID)
+	}
+
+	// The wrapper was invoked exactly once — the helper does
+	// not retry. A retry loop with jitter (the previous broken
+	// shape) would have called CreateInstance up to 3 times; the
+	// corrected helper keeps the call to a single round trip
+	// because the partial unique index is binary (succeeds or
+	// 23505; a retry can never win once tripped).
+	if loseStore.calls != 1 {
+		t.Errorf("CreateInstance calls = %d, want 1 (binary index — retries are useless)", loseStore.calls)
+	}
+}
+
+// loseAlwaysCreateInstance is a minimal Store wrapper used by
+// TestEngine_CreateInstanceWithWakeRetry_LoserSurfacesSentinel. It
+// overrides only CreateInstance, returning ErrConcurrentWake and
+// counting calls; every other method embeds through to the wrapped
+// memstore (state.Store satisfaction comes via *state.MemStore
+// method promotion on the embedded field) so the test's seedApp +
+// dep rows remain reachable. Lives in _test.go to keep the production
+// binary clean of test seams.
+type loseAlwaysCreateInstance struct {
+	*state.MemStore
+	calls int
+}
+
+func (l *loseAlwaysCreateInstance) CreateInstance(ctx context.Context, appID, depID, initState string, ramMB int, nodeID, wakeID string) (state.Instance, error) {
+	l.calls++
+	return state.Instance{}, state.ErrConcurrentWake
+}

@@ -55,6 +55,28 @@ var ErrCertFingerprintDrift = errors.New("state: compute_node cert fingerprint d
 // catches cross-box races.
 var ErrConcurrentWake = errors.New("state: concurrent wake — wake_id conflict")
 
+// ErrWakeAlreadyInflight is returned by the engine's wake-retry helper
+// (pkg/sched.Engine.createInstanceWithWakeRetry) when the cluster-coord
+// partial unique index instances_wake_attempt_active_idx (migration
+// 00350) rejects its CREATE INSTANCE call because another schedd has
+// already inserted an in-flight row with the same wake_id AND state
+// IN ('WAKING', 'COLD_BOOTING'). The engine surfaces this as a
+// "another box is handling this wake" outcome — the caller must
+// propagate it; the gateway-side retry / cron-side reschedule /
+// redeploy handles the follow-up.
+//
+// This is a strictly-losing outcome. The helper does NOT return the
+// winner's row because the engine's downstream path (ledger.Admit,
+// vmm.CreateColdBoot, SetInstanceRuntime) is keyed by (ins.ID,
+// placement.NodeID) — returning the winner's row would cause the
+// LOSER's engine to boot a local microVM tagged with a WINNER's
+// instance UUID, double-billing the customer, double-allocating
+// per-app concurrency slots, and (in single-box degenerate case)
+// colliding on cgroup/jail-uid/netns per spec §6.2-5. The retry
+// helper pins this contract by surfacing the typed sentinel and
+// exiting the engine's wake path before any local side effect.
+var ErrWakeAlreadyInflight = errors.New("state: wake already in flight on another node")
+
 // ErrCorsWildcardWithCredentials is returned by
 // MergeCorsPresetIntoRule when the merged AllowOrigins contains
 // the bare "*" wildcard alongside AllowCredentials: true. This is
