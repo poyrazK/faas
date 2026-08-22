@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,5 +115,80 @@ func TestBuildServers_ControlMuxAdoptsMetricsVariant(t *testing.T) {
 	}
 	if ctrl.MaxHeaderBytes != api.DefaultMaxHeaderBytes {
 		t.Errorf("control MHB = %d, want %d", ctrl.MaxHeaderBytes, api.DefaultMaxHeaderBytes)
+	}
+}
+
+// TestRequirePublicBindInMultiHost_AcceptsLoopbackDefaultInSingleBox
+// pins the single-box escape: FAAS_NODE_NAME unset + loopback
+// defaults must pass. Without this, single-box dev installs
+// (the most common case) would refuse to boot. The check must
+// only fire when the operator has explicitly opted into the
+// multi-box posture by setting FAAS_NODE_NAME.
+func TestRequirePublicBindInMultiHost_AcceptsLoopbackDefaultInSingleBox(t *testing.T) {
+	// Unset FAAS_NODE_NAME (default single-box posture) and
+	// both listen addrs. t.Setenv to "" sets the variable to
+	// empty (os.LookupEnv returns ok=true), which is NOT the
+	// "unset" case our gate checks; we use os.Unsetenv.
+	os.Unsetenv("FAAS_NODE_NAME")
+	os.Unsetenv("FAAS_PUBLIC_LISTEN_ADDR")
+	os.Unsetenv("FAAS_PUBLIC_CONTROL_ADDR")
+
+	if err := requirePublicBindInMultiHost(); err != nil {
+		t.Errorf("single-box posture must accept loopback defaults, got: %v", err)
+	}
+}
+
+// TestRequirePublicBindInMultiHost_FatalsOnLoopbackDefault pins
+// the multi-host safety cluster PR-8 (audit F8-A) check: a
+// FAAS_NODE_NAME=node-X env (multi-box posture signal) combined
+// with an unset FAAS_PUBLIC_LISTEN_ADDR (loopback default) must
+// refuse to boot. The error message must reference the operator
+// action they need to take — set FAAS_PUBLIC_LISTEN_ADDR.
+func TestRequirePublicBindInMultiHost_FatalsOnLoopbackDefault(t *testing.T) {
+	t.Setenv("FAAS_NODE_NAME", "node-A")
+	os.Unsetenv("FAAS_PUBLIC_LISTEN_ADDR")
+	t.Setenv("FAAS_PUBLIC_CONTROL_ADDR", "0.0.0.0:9092") // control addr explicitly set
+
+	err := requirePublicBindInMultiHost()
+	if err == nil {
+		t.Fatal("multi-host posture + unset listen addr must error, got nil")
+	}
+	if !strings.Contains(err.Error(), "FAAS_PUBLIC_LISTEN_ADDR") {
+		t.Errorf("error must mention FAAS_PUBLIC_LISTEN_ADDR, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "node-A") {
+		t.Errorf("error must mention FAAS_NODE_NAME value, got: %v", err)
+	}
+}
+
+// TestRequirePublicBindInMultiHost_FatalsOnLoopbackControl pins
+// the control listener mirror. A FAAS_NODE_NAME-set box with
+// unset FAAS_PUBLIC_CONTROL_ADDR must also refuse.
+func TestRequirePublicBindInMultiHost_FatalsOnLoopbackControl(t *testing.T) {
+	t.Setenv("FAAS_NODE_NAME", "node-A")
+	t.Setenv("FAAS_PUBLIC_LISTEN_ADDR", "0.0.0.0:443") // listen addr explicitly set
+	os.Unsetenv("FAAS_PUBLIC_CONTROL_ADDR")           // control defaulted
+
+	err := requirePublicBindInMultiHost()
+	if err == nil {
+		t.Fatal("multi-host posture + unset control addr must error, got nil")
+	}
+	if !strings.Contains(err.Error(), "FAAS_PUBLIC_CONTROL_ADDR") {
+		t.Errorf("error must mention FAAS_PUBLIC_CONTROL_ADDR, got: %v", err)
+	}
+}
+
+// TestRequirePublicBindInMultiHost_AcceptsExplicitOverrideInMultiHost
+// pins the escape hatch: an operator who really does want the
+// loopback bind (a node behind an external LB) sets the env
+// vars explicitly. The check must distinguish "unset → would
+// default to loopback" from "explicitly set to loopback".
+func TestRequirePublicBindInMultiHost_AcceptsExplicitOverrideInMultiHost(t *testing.T) {
+	t.Setenv("FAAS_NODE_NAME", "node-A")
+	t.Setenv("FAAS_PUBLIC_LISTEN_ADDR", "127.0.0.1:8443") // explicit even if loopback
+	t.Setenv("FAAS_PUBLIC_CONTROL_ADDR", "127.0.0.1:9092") // explicit even if loopback
+
+	if err := requirePublicBindInMultiHost(); err != nil {
+		t.Errorf("explicit loopback override must pass (escape hatch), got: %v", err)
 	}
 }
