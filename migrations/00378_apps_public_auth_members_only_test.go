@@ -1,10 +1,10 @@
 //go:build !no_pg
 
-// Migration-apply test for 00347 (ADR-123 — per-app ingress
+// Migration-apply test for 00378 (ADR-123 — per-app ingress
 // 'members_only' mode, extends apps.public_auth_mode with
 // 'members_only'). Pins the contract:
 //
-//   1. The migration set applies cleanly through 00347.
+//   1. The migration set applies cleanly through 00378.
 //   2. Setting public_auth_mode='members_only' is accepted
 //      (CHECK widening applied).
 //   3. The closed public_auth_mode enum rejects unknown values
@@ -38,17 +38,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// TestMigrations_00347_AppPublicAuthMembersOnly pins the
+// TestMigrations_00378_AppPublicAuthMembersOnly pins the
 // members_only contract from ADR-123. Mirrors the 00333
 // (internal_only) test verbatim with the new mode swapped
 // in; same SQLSTATE + ConstraintName assertions.
-func TestMigrations_00347_AppPublicAuthMembersOnly(t *testing.T) {
+func TestMigrations_00378_AppPublicAuthMembersOnly(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
 
-	// (1) Apply through 00347.
+	// (1) Apply through 00378.
 	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("db.MigrateUp: %v (regression: missing migration slot between 1 and 346)", err)
+		t.Fatalf("db.MigrateUp: %v (regression: missing migration slot between 1 and 375)", err)
 	}
 
 	// (2) Seed an account + apps row to carry the column. The
@@ -57,7 +57,7 @@ func TestMigrations_00347_AppPublicAuthMembersOnly(t *testing.T) {
 	// grep-ability.
 	if _, err := pool.Exec(ctx, `
 		insert into accounts (id, email, plan, created_at)
-		values ('00000000-0000-0000-0000-000000000347',
+		values ('00000000-0000-0000-0000-000000000378',
 		        'public-auth-members-only-test@example.com', 'hobby', now())
 		on conflict (id) do nothing
 	`); err != nil {
@@ -65,8 +65,8 @@ func TestMigrations_00347_AppPublicAuthMembersOnly(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		insert into apps (id, account_id, slug, ram_mb, max_concurrency, idle_timeout_s, status, created_at)
-		values ('00000000-0000-0000-0000-000000000347',
-		        '00000000-0000-0000-0000-000000000347',
+		values ('00000000-0000-0000-0000-000000000378',
+		        '00000000-0000-0000-0000-000000000378',
 		        'public-auth-members-only-test', 256, 1, 60, 'active', now())
 		on conflict (id) do nothing
 	`); err != nil {
@@ -76,7 +76,7 @@ func TestMigrations_00347_AppPublicAuthMembersOnly(t *testing.T) {
 	// (3) EnumAcceptsMembersOnly.
 	if _, err := pool.Exec(ctx, `
 		update apps set public_auth_mode = 'members_only'
-		 where id = '00000000-0000-0000-0000-000000000347'
+		 where id = '00000000-0000-0000-0000-000000000378'
 	`); err != nil {
 		t.Fatalf("set public_auth_mode='members_only': %v (CHECK widening not applied?)", err)
 	}
@@ -86,7 +86,7 @@ func TestMigrations_00347_AppPublicAuthMembersOnly(t *testing.T) {
 	var gotMode string
 	if err := pool.QueryRow(ctx, `
 		select public_auth_mode from apps
-		 where id = '00000000-0000-0000-0000-000000000347'
+		 where id = '00000000-0000-0000-0000-000000000378'
 	`).Scan(&gotMode); err != nil {
 		t.Fatalf("read back public_auth_mode: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestMigrations_00347_AppPublicAuthMembersOnly(t *testing.T) {
 	// constraint name.
 	_, err := pool.Exec(ctx, `
 		update apps set public_auth_mode = 'unknown_mode_xyz'
-		 where id = '00000000-0000-0000-0000-000000000347'
+		 where id = '00000000-0000-0000-0000-000000000378'
 	`)
 	if err == nil {
 		t.Fatalf("set public_auth_mode='unknown_mode_xyz': expected SQLSTATE 23514, got nil")
@@ -122,7 +122,7 @@ func TestMigrations_00347_AppPublicAuthMembersOnly(t *testing.T) {
 	for _, mode := range []string{"open", "bearer", "basic", "ip_allowlist", "internal_only"} {
 		if _, err := pool.Exec(ctx, `
 			update apps set public_auth_mode = $1
-			 where id = '00000000-0000-0000-0000-000000000347'
+			 where id = '00000000-0000-0000-0000-000000000378'
 		`, mode); err != nil {
 			t.Errorf("set public_auth_mode=%q: %v (regression: pre-existing mode should still be accepted)", mode, err)
 		}
@@ -133,7 +133,7 @@ func TestMigrations_00347_AppPublicAuthMembersOnly(t *testing.T) {
 	// "row present + narrower CHECK" failure mode.
 	if _, err := pool.Exec(ctx, `
 		update apps set public_auth_mode = 'members_only'
-		 where id = '00000000-0000-0000-0000-000000000347'
+		 where id = '00000000-0000-0000-0000-000000000378'
 	`); err != nil {
 		t.Fatalf("re-set members_only for Down test: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestMigrations_00347_AppPublicAuthMembersOnly(t *testing.T) {
 	// pre-Down procedure), then the Down succeeds.
 	if _, err := pool.Exec(ctx, `
 		update apps set public_auth_mode = 'open'
-		 where id = '00000000-0000-0000-0000-000000000347'
+		 where id = '00000000-0000-0000-0000-000000000378'
 	`); err != nil {
 		t.Fatalf("operator-clear: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestMigrations_00347_AppPublicAuthMembersOnly(t *testing.T) {
 	// fail because the CHECK has been narrowed).
 	if _, err := pool.Exec(ctx, `
 		update apps set public_auth_mode = 'members_only'
-		 where id = '00000000-0000-0000-0000-000000000347'
+		 where id = '00000000-0000-0000-0000-000000000378'
 	`); err == nil {
 		t.Fatalf("set members_only after Down: expected SQLSTATE 23514 (CHECK should have been narrowed), got nil")
 	}
