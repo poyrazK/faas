@@ -459,9 +459,9 @@ func TestScheddRouter_WatchNodeChanges_MalformedPayloadDropped(t *testing.T) {
 	// Evict. The router's defensive drop (scheddrouter.go:309-311)
 	// logs a warn and continues.
 	badPayloads := []string{
-		`{`,                                                              // truncated JSON
-		`{"node_id":""}`,                                                 // empty node_id
-		`{"id":"node-A","active":false}`,                                 // wrong field name (renamed upstream)
+		`{`,                              // truncated JSON
+		`{"node_id":""}`,                 // empty node_id
+		`{"id":"node-A","active":false}`, // wrong field name (renamed upstream)
 	}
 	for _, p := range badPayloads {
 		fake.ch <- db.Notification{Channel: db.NotifyComputeNodeChanged, Payload: p}

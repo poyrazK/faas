@@ -167,7 +167,7 @@ func TestRequirePublicBindInMultiHost_FatalsOnLoopbackDefault(t *testing.T) {
 func TestRequirePublicBindInMultiHost_FatalsOnLoopbackControl(t *testing.T) {
 	t.Setenv("FAAS_NODE_NAME", "node-A")
 	t.Setenv("FAAS_PUBLIC_LISTEN_ADDR", "0.0.0.0:443") // listen addr explicitly set
-	os.Unsetenv("FAAS_PUBLIC_CONTROL_ADDR")           // control defaulted
+	os.Unsetenv("FAAS_PUBLIC_CONTROL_ADDR")            // control defaulted
 
 	err := requirePublicBindInMultiHost()
 	if err == nil {
@@ -185,7 +185,7 @@ func TestRequirePublicBindInMultiHost_FatalsOnLoopbackControl(t *testing.T) {
 // default to loopback" from "explicitly set to loopback".
 func TestRequirePublicBindInMultiHost_AcceptsExplicitOverrideInMultiHost(t *testing.T) {
 	t.Setenv("FAAS_NODE_NAME", "node-A")
-	t.Setenv("FAAS_PUBLIC_LISTEN_ADDR", "127.0.0.1:8443") // explicit even if loopback
+	t.Setenv("FAAS_PUBLIC_LISTEN_ADDR", "127.0.0.1:8443")  // explicit even if loopback
 	t.Setenv("FAAS_PUBLIC_CONTROL_ADDR", "127.0.0.1:9092") // explicit even if loopback
 
 	if err := requirePublicBindInMultiHost(); err != nil {
