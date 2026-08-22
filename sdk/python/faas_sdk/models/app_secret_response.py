@@ -26,6 +26,9 @@ class AppSecretResponse:
     kid: str | Unset = UNSET
     """age-1... recipient string of the host identity that sealed this row (ADR-089). Empty for rows sealed before
     migration 00166."""
+    value_hash: str | Unset = UNSET
+    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows.
+    Same value across scopes = byte-identical plaintext."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +42,8 @@ class AppSecretResponse:
 
         kid = self.kid
 
+        value_hash = self.value_hash
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -51,6 +56,8 @@ class AppSecretResponse:
         )
         if kid is not UNSET:
             field_dict["kid"] = kid
+        if value_hash is not UNSET:
+            field_dict["value_hash"] = value_hash
 
         return field_dict
 
@@ -67,12 +74,15 @@ class AppSecretResponse:
 
         kid = d.pop("kid", UNSET)
 
+        value_hash = d.pop("value_hash", UNSET)
+
         app_secret_response = cls(
             key=key,
             scope=scope,
             created_at=created_at,
             updated_at=updated_at,
             kid=kid,
+            value_hash=value_hash,
         )
 
         app_secret_response.additional_properties = d

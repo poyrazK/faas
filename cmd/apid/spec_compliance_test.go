@@ -47,6 +47,7 @@ const (
 	upstreamsFile = "upstreams.go"     // ADR-098 §9.A PR-B
 	triggerFile   = "trigger.go"       // issue #757 / ADR-100 — trigger primitive wire DTOs
 	oidcFile      = "oidc.go"          // ADR-101 / PR-A — OIDC / keyless deploy auth DTOs
+	envDiffFile   = "env_diff.go"      // ADR-117 PR-C — EnvDiffResponse / EnvDiffRow / EnvDiffCell wire DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -224,6 +225,7 @@ var schemaSpecOnly = map[string]bool{
 	// struct so it doesn't surface as a scanner name.
 	"FilterCriteriaOp":   true,
 	"KafkaSASLMechanism": true,
+	"EnvDiffKind":        true, // ADR-117 PR-C: typed-string discriminator in pkg/api/env_diff.go (scanner only sees *ast.StructType)
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.
@@ -634,6 +636,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", upstreamsFile),
 		filepath.Join(root, "pkg", "api", triggerFile),
 		filepath.Join(root, "pkg", "api", oidcFile),
+		filepath.Join(root, "pkg", "api", envDiffFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

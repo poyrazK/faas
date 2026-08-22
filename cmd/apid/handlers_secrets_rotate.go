@@ -184,10 +184,25 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 //
 // ADR-092 PR-B: the scope arg threads through to
 // UpsertAppSecretWithKidInScope — PK is (app_id, scope, key).
+//
+// ADR-117 PR-C: value_hash is computed BEFORE SealOne (plaintext
+// form, NOT ciphertext) for the same reason as in sealAndPersist:
+// age is probabilistically non-deterministic so a ciphertext-derived
+// hash is useless as the env-diff discriminator. The kid is
+// caller-supplied and identity-shaped; the value_hash is computed
+// locally off the plaintext.
 func (s *server) sealAndPersistWithKid(c stdctx, acct state.Account, app state.App, scope, key, value string, limits api.Limits, kid string) *api.Problem {
 	recipient := setSecretRecipient()
 	if recipient == nil {
 		return api.ErrCapacity("host age recipient not loaded — refusing to seal")
+	}
+	hmacKey := hostHMACKey()
+	if len(hmacKey) == 0 {
+		return api.ErrCapacity("host hmac key not loaded — refusing to seal")
+	}
+	valueHash, err := secretbox.ValueFingerprint([]byte(value), hmacKey)
+	if err != nil {
+		return api.ErrCapacity("could not compute value_hash: " + err.Error())
 	}
 	ciphertext, err := secretbox.SealOne(recipient, key, value, limits.SecretValueMaxBytes)
 	if err != nil {
@@ -196,7 +211,7 @@ func (s *server) sealAndPersistWithKid(c stdctx, acct state.Account, app state.A
 		}
 		return api.ErrCapacity("could not seal secret")
 	}
-	if err := s.store.UpsertAppSecretWithKidInScope(c, acct.ID, app.ID, scope, key, kid, ciphertext); err != nil {
+	if err := s.store.UpsertAppSecretWithKidAndValueHashInScope(c, acct.ID, app.ID, scope, key, kid, valueHash, ciphertext); err != nil {
 		return api.ErrCapacity("could not persist secret")
 	}
 	return nil

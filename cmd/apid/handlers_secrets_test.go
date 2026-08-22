@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -43,6 +44,14 @@ import (
 // test that installs only a recipient without a matching identity would
 // 503 "host age identities not loaded". We install both behind the
 // same closure so the receiver/identity pair is internally consistent.
+//
+// ADR-117 PR-C widens the row with value_hash (HMAC-SHA256 over
+// the plaintext, keyed by hostHMACKey). The PUT path's
+// sealAndPersist refuses to seal when hostHMACKey() returns empty
+// (defensible misconfiguration guard), so we install a fresh
+// 32-byte random key alongside the recipient. The key is
+// per-test and never persisted — fresh per test so two parallel
+// tests don't share a discriminator.
 func withTestRecipient(t *testing.T) func() {
 	t.Helper()
 	// Generate a fresh identity in memory — we never persist it, so the
@@ -54,6 +63,7 @@ func withTestRecipient(t *testing.T) func() {
 	}
 	prevRcp := setSecretRecipient
 	prevIdent := mfaIdentities
+	prevHMAC := hostHMACKey
 	setSecretRecipient = func() *age.X25519Recipient {
 		return ident.Recipient()
 	}
@@ -62,9 +72,19 @@ func withTestRecipient(t *testing.T) func() {
 	// never uses this fallback (main.go sets BOTH for the rotation-aware
 	// path); the fallback exists only for unit-test harnesses.
 	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{ident} }
+	// PR-C: 32-byte random HMAC key. getOrGenerate-style handler helpers
+	// never read this key back; the value_hash is computed once at seal
+	// time and stamped. The slice is defensively copied at the loader
+	// boundary in production; tests likewise treat it as opaque.
+	hmacKey := make([]byte, 32)
+	if _, err := rand.Read(hmacKey); err != nil {
+		t.Fatalf("rand.Read for host HMAC key: %v", err)
+	}
+	hostHMACKey = func() []byte { return hmacKey }
 	return func() {
 		setSecretRecipient = prevRcp
 		mfaIdentities = prevIdent
+		hostHMACKey = prevHMAC
 	}
 }
 

@@ -20,6 +20,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -54,13 +55,22 @@ import (
 // so the matching identity must also be installed via mfaIdentities —
 // otherwise the PUT 503s "host age identities not loaded". The
 // recipient + identity pair is internally consistent (same age key).
+//
+// ADR-117 PR-C widens sealAndPersist with a value_hash HMAC over the
+// plaintext, keyed by hostHMACKey(). Without an installed HMAC key,
+// the PUT refuses to seal ("host hmac key not loaded — refusing to
+// seal") which trips the G6 export tests' PUT-rotate arm. Install a
+// fresh 32-byte random key alongside the recipient — mirrors
+// withTestRecipient in handlers_secrets_test.go.
 func withAccountTestRecipient(t *testing.T) {
 	t.Helper()
 	prevRcp := setSecretRecipient
 	prevIdent := mfaIdentities
+	prevHMAC := hostHMACKey
 	t.Cleanup(func() {
 		setSecretRecipient = prevRcp
 		mfaIdentities = prevIdent
+		hostHMACKey = prevHMAC
 	})
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
@@ -68,6 +78,11 @@ func withAccountTestRecipient(t *testing.T) {
 	}
 	setSecretRecipient = func() *age.X25519Recipient { return id.Recipient() }
 	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{id} }
+	hmacKey := make([]byte, 32)
+	if _, err := rand.Read(hmacKey); err != nil {
+		t.Fatalf("rand.Read for host HMAC key: %v", err)
+	}
+	hostHMACKey = func() []byte { return hmacKey }
 }
 
 // seedOneApp creates a single app the handler tests can hang

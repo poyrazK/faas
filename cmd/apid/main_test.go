@@ -36,22 +36,25 @@ func newLocalListener(t *testing.T) net.Listener {
 	return l
 }
 
-// withTestHMACFiles overrides FAAS_AUDIT_HMAC_KEY_FILE and
-// FAAS_RECOVERY_HMAC_KEY_FILE for the lifetime of the test so
-// loadOrGenerate{Audit,Recovery}HMACKey auto-mint a fresh key in
-// t.TempDir() rather than refusing to start (production-grade
-// strict-mode for the recovery-hmac.key path; the audit-hmac.key
-// path tolerates a nil but the recovery path does not).
+// withTestHMACFiles overrides FAAS_AUDIT_HMAC_KEY_FILE,
+// FAAS_RECOVERY_HMAC_KEY_FILE, and (ADR-117 PR-C)
+// FAAS_HOST_HMAC_KEY_PATH for the lifetime of the test so
+// loadOrGenerate{Audit,Recovery}HMACKey + loadHostHMACKey
+// auto-mint a fresh key in t.TempDir() rather than refusing to
+// start (production-grade strict-mode for the recovery-hmac.key
+// + host.hmac.key paths; the audit-hmac.key path tolerates a nil
+// but the recovery + env-diff paths do not).
 //
 // The env-var overrides are unset by t.Cleanup. The tmp keys
-// persist for the test's lifetime — both loaders pass them
-// through to their respective SetHMACSecret calls, so the audit
-// + recovery HMAC keys are live for the duration of the test
-// process.
+// persist for the test's lifetime — the loaders pass them
+// through to their respective SetHMACSecret + hostHMACKey
+// seams, so the audit + recovery + env-diff HMAC keys are live
+// for the duration of the test process.
 //
 // Use this from any test that calls runWithDeps directly, since
-// the boot-time loader calls os.Stat on /var/lib/faas and refuses
-// to start if neither the env var nor the file yields a key.
+// the boot-time loaders call os.Stat on /var/lib/faas (audit +
+// recovery) and /etc/faas/secrets (env-diff) and refuse to
+// start if neither the env var nor the file yields a key.
 func withTestHMACFiles(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
@@ -63,14 +66,26 @@ func withTestHMACFiles(t *testing.T) {
 	for i := range recoveryKey {
 		recoveryKey[i] = 0xCD
 	}
+	envDiffKey := make([]byte, 32)
+	for i := range envDiffKey {
+		envDiffKey[i] = 0xEF
+	}
 	if err := os.WriteFile(filepath.Join(dir, "audit-hmac.key"), []byte(hex.EncodeToString(auditKey)+"\n"), 0o600); err != nil {
 		t.Fatalf("write audit-hmac.key: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "recovery-hmac.key"), []byte(hex.EncodeToString(recoveryKey)+"\n"), 0o600); err != nil {
 		t.Fatalf("write recovery-hmac.key: %v", err)
 	}
+	// host.hmac.key is 32 RAW bytes (NOT hex-encoded) per the
+	// loadHostHMACKey loader; the audit + recovery paths use
+	// hex-encoded keys for filesystem portability, but the
+	// env-diff key shares the raw-bytes posture with host.age.pub.
+	if err := os.WriteFile(filepath.Join(dir, "host.hmac.key"), envDiffKey, 0o400); err != nil {
+		t.Fatalf("write host.hmac.key: %v", err)
+	}
 	t.Setenv("FAAS_AUDIT_HMAC_KEY_FILE", filepath.Join(dir, "audit-hmac.key"))
 	t.Setenv("FAAS_RECOVERY_HMAC_KEY_FILE", filepath.Join(dir, "recovery-hmac.key"))
+	t.Setenv("FAAS_HOST_HMAC_KEY_PATH", filepath.Join(dir, "host.hmac.key"))
 	// ADR-096 / PR-B kill-switch OFF for in-process apid tests. The
 	// default-on gate (cmd/apid/main.go runAppErrorsServer boot path)
 	// probes the `faas-apid` unix user via wire.ListenOrRecreateByName;

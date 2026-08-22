@@ -4,11 +4,49 @@
 /* eslint-disable */
 import type { AppEnvListResponse } from '../models/AppEnvListResponse.js';
 import type { AppEnvResponse } from '../models/AppEnvResponse.js';
+import type { EnvDiffResponse } from '../models/EnvDiffResponse.js';
 import type { PutAppEnvRequest } from '../models/PutAppEnvRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class EnvService {
+  /**
+   * Render the env-diff matrix (presence / value-equality across scopes).
+   * Returns the (rows × scopes) matrix of env vars + sealed
+   * secrets on the app. Secrets never reveal plaintext — the
+   * cell carries {present, value_hash} for secret rows and
+   * {present, value} for env rows. Two cells with the same
+   * `value_hash` therefore share byte-identical plaintext
+   * (collision probability 2^-64). Pre-PR-C rows have
+   * `value_hash = ''` and emit no `value_hash` key.
+   *
+   * @returns EnvDiffResponse Env-diff matrix.
+   * @throws ApiError
+   */
+  public static getAppEnvDiff({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<EnvDiffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/env-diff',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
   /**
    * List env vars on an app.
    * Returns every env var key + timestamps on the app. The plaintext

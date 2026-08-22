@@ -1290,6 +1290,34 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — MFA /confirm, /verify, /disable, /recover will return 503")
 	}
 
+	// ADR-117 PR-C: load the host HMAC key so sealAndPersist
+	// can compute secretbox.ValueFingerprint(plaintext,
+	// hostHMACKey) BEFORE SealOne. The hash is the
+	// value-equality discriminator the env-diff endpoint reads
+	// (GET /v1/apps/{slug}/env-diff). 32 bytes, mode 0o400 OR
+	// 0o440 (the systemd-credentials posture). Refusing to start
+	// on missing/permissive/length-mismatch matches the posture
+	// of the age recipient + identity loaders above — a
+	// misconfigured box must NOT silently write a NULL value_hash
+	// column.
+	if hmacKeyPath := deps.getenv("FAAS_HOST_HMAC_KEY_PATH"); hmacKeyPath != "" {
+		k, err := loadHostHMACKey(hmacKeyPath)
+		if err != nil {
+			return fmt.Errorf("apid: load host HMAC key %q: %w", hmacKeyPath, err)
+		}
+		hostHMACKey = func() []byte { return k }
+		log.Info("host HMAC key loaded for value_hash", "path", hmacKeyPath)
+	} else {
+		// ADR-117 D2 + D9 posture: refuse to start without the
+		// per-host HMAC key. The legacy "503 on PUT" path is the
+		// fallback for the recipient (sealed-envelope work), but
+		// here the discriminator is a metadata field on every row
+		// and a silent NULL would survive indefinitely (lazy
+		// backfill on rotate). A startup refusal is the right
+		// signal.
+		return fmt.Errorf("apid: FAAS_HOST_HMAC_KEY_PATH unset — refusing to start without the per-host HMAC key (ADR-117 D2 + D9; bootstrap with `openssl rand -out /etc/faas/secrets/host.hmac.key 32 && chmod 0400 /etc/faas/secrets/host.hmac.key`)")
+	}
+
 	// Issue #286 / CodeQL alert #121: load (or generate + persist)
 	// a per-box audit HMAC key and wire it into pkg/auth so
 	// HashEmail uses HMAC-SHA256 instead of plain SHA-256. The
@@ -1402,6 +1430,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Store:        store,
 				Audit:        rekeyAudit,
 				Identities:   identities,
+				HostHMACKey:  hostHMACKey(),
 				ProgressPath: progressPath,
 				Log:          log,
 			})
@@ -1920,6 +1949,55 @@ func loadOrGenerateRecoveryHMACKey(getenv func(string) string, log *slog.Logger)
 	}
 	log.Info("recovery HMAC key generated and persisted", "path", path)
 	return key, nil
+}
+
+// loadHostHMACKey loads the per-host HMAC key that
+// secretbox.ValueFingerprint uses to compute the value-equality
+// discriminator on the sealed envelope (ADR-117 env-diff matrix,
+// PR-C). The file is RAW 32 bytes (NOT hex-encoded — the
+// audit/recovery keys use hex for filesystem portability, but
+// the env-diff key lives in /etc/faas/secrets alongside
+// host.age.pub which is also raw bytes). Mode MUST be 0o400
+// (root-only) OR 0o440 (group-readable under systemd
+// credentials). Anything else — 0o600, 0o640, 0o644, 0o660,
+// 0o664, 0o666, 0o777 — is rejected: anyone who can read the
+// key can trivially compute value_hash for any observed
+// plaintext (it's HMAC, not asymmetric), which would let a
+// non-root reader cross-customer correlate the discriminator.
+//
+// Bootstrap (operator):
+//
+//	openssl rand -out /etc/faas/secrets/host.hmac.key 32
+//	chmod 0400 /etc/faas/secrets/host.hmac.key
+//	chown root:root /etc/faas/secrets/host.hmac.key
+//
+// Mirrors the existing age-recipient / age-identity loader
+// posture at cmd/apid/main.go:1213,1242 (which check the same
+// 0o400 perm). Returns a defensive copy of the bytes (NOT a
+// reference to the on-disk file) so a future re-read of the
+// file does not silently mutate the cache.
+func loadHostHMACKey(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w (bootstrap with `openssl rand -out %s 32 && chmod 0400 %s && chown root:root %s`): %w",
+			path, err, path, path, path, err)
+	}
+	mode := info.Mode().Perm()
+	if mode != 0o400 && mode != 0o440 {
+		return nil, fmt.Errorf("insecure file mode 0o%o (want 0o400 or 0o440) on %s — fix with `chmod 0400 %s` and `chown root:root %s`",
+			mode, path, path, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	if len(data) != 32 {
+		return nil, fmt.Errorf("got %d bytes from %s, want exactly 32 (HMAC-SHA256 key length) — regenerate with `openssl rand -out %s 32`",
+			len(data), path, path)
+	}
+	out := make([]byte, 32)
+	copy(out, data)
+	return out, nil
 }
 
 // runAdvisoryServer binds the AdvisoryService gRPC server onto a

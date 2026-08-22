@@ -3219,7 +3219,23 @@ type AppSecret struct {
 	//
 	// Operators reading the kid column answer "what key sealed
 	// this row?" without parsing the ciphertext blob.
-	Kid       string
+	Kid string
+	// ValueHash is the trustworthy value-equality discriminator
+	// (ADR-117 env-diff matrix, PR-C). 16 hex chars (HMAC-SHA256
+	// truncated to 64 bits, keyed by the per-host
+	// /etc/faas/secrets/host.hmac.key). Empty for rows sealed
+	// before migration 00296 — those rows have value_hash = NULL
+	// in PG and the COALESCE on read surfaces "" so the empty
+	// string matches the omitempty wire shape. Two rows with
+	// the same ValueHash therefore share byte-identical
+	// plaintext (collision probability 2^-64 — negligible at
+	// SecretCountMax <= 100). The handler computes ValueHash
+	// BEFORE SealOne in handlers_secrets.go::sealAndPersist so
+	// the same plaintext byte string feeds both the HMAC and
+	// the seal (Issue 1 fix — age X25519 + ChaCha20-Poly1305 is
+	// probabilistically non-deterministic, so a
+	// ciphertext-derived hash would diverge for every row).
+	ValueHash string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -3240,6 +3256,9 @@ type AppSecret struct {
 // list crosses scopes — a customer with prod + staging rows
 // needs the scope echoed alongside (app_slug, key) so the
 // dashboard can group by scope without a second GET.
+//
+// ValueHash mirrors AppSecret.ValueHash (ADR-117 PR-C). Same
+// semantic + same empty-string-for-NULL posture.
 type AccountAppSecret struct {
 	AccountID  string
 	AppID      string
@@ -3247,6 +3266,7 @@ type AccountAppSecret struct {
 	Key        string
 	Scope      string
 	Ciphertext []byte
+	ValueHash  string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }

@@ -9504,6 +9504,38 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	return nil
 }
 
+// UpsertAppSecretWithKidAndValueHashInScope is the value-hash
+// scope-aware sibling (ADR-117 env-diff matrix, PR-C). Mirrors
+// UpsertAppSecretWithKidInScope but stamps both kid and
+// value_hash alongside ciphertext. Empty valueHash is stored as
+// the zero-value (matches the SQL `NULLIF($7, ”)` for the
+// pgstore sibling) so pre-PR-C callers preserve their prior
+// behavior.
+func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := secretKey{AppID: appID, Scope: scope, Key: key}
+	existing, ok := m.secrets[k]
+	now := time.Now()
+	if !ok {
+		m.secrets[k] = AppSecret{
+			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
+			Ciphertext: ciphertext, Kid: kid, ValueHash: valueHash,
+			CreatedAt: now, UpdatedAt: now,
+		}
+		return nil
+	}
+	if existing.AccountID != accountID {
+		return ErrNotFound
+	}
+	existing.Ciphertext = ciphertext
+	existing.Kid = kid
+	existing.ValueHash = valueHash
+	existing.UpdatedAt = now
+	m.secrets[k] = existing
+	return nil
+}
+
 // GetAppSecret returns the (account_id, app_id,
 // scope='default', key) row.
 // Returns ErrNotFound when no row matches — same semantics as
@@ -9715,6 +9747,7 @@ func (m *MemStore) ListAppSecretsForAccount(_ context.Context, accountID string,
 			Key:        s.Key,
 			Scope:      s.Scope,
 			Ciphertext: s.Ciphertext,
+			ValueHash:  s.ValueHash,
 			CreatedAt:  s.CreatedAt,
 			UpdatedAt:  s.UpdatedAt,
 		})

@@ -102,8 +102,19 @@ type Harness struct {
 	// harness struct directly (which then must set it themselves or
 	// accept the boot refusal).
 	RecoveryHMACKeyHex string
-	ImagedTmp          string // FAAS_APPS_ROOT
-	BuilderdCfg        string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
+	// HostHMACKeyPath is a per-test filesystem path to a 32-byte
+	// file (mode 0o400) that apid loads via
+	// FAAS_HOST_HMAC_KEY_PATH at startup (ADR-117 PR-C). apid
+	// REFUSES to boot without this — see the rationale at
+	// cmd/apid/main.go::loadHostHMACKey. The file is fresh per
+	// test (crypto/rand) so two parallel tests don't share a
+	// key, and so a leaked key from one test's debug output is
+	// useless for the next test's value_hash discriminator. Path
+	// populated in Start / StartWithEnv; tests that build their
+	// own harness struct must set it themselves.
+	HostHMACKeyPath string
+	ImagedTmp       string // FAAS_APPS_ROOT
+	BuilderdCfg     string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
 
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
@@ -154,7 +165,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 
-	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t)}
+	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
 
 	// DB URL — pgtest opened the test pool with search_path=<schema>,public.
@@ -608,7 +619,24 @@ const testDomain = "apps.test.example"
 // (memory: cross-pr-slot-gate-fence-pattern) is that the only line a
 // migration land touches in this file is this constant + the doc-comment
 // history above.
-const e2eMigrationTarget = 346
+//
+// PR #990 (ADR-117 PR-C, env-diff matrix) bumped 313 → 327 → 340 → 347 → 352 → 356 → 357
+// across twelve rebump rounds. The value_hash column lands at
+// 00357_app_secret_value_hash.sql (HMAC-SHA256 of plaintext, truncated
+// to 16 hex — the trustworthy value-equality discriminator for the
+// GET /v1/apps/{slug}/env-diff matrix). Slot rebump chain
+// 291 → 296 → 303 → 309 → 314 → 321 → 322 → 327 → 340 → 347 → 352 → 356 → 357,
+// with alt-name reservations (NNNNN_no_op_slot_reservation.sql, ADR-041
+// carve-out) at slots 347-356 to bridge contiguity past PR #999's
+// 00326 + PR #1004's 00322-00324 + PR #1000's 00329 + PR #1009's
+// 00333 + PR #1010's 00341 + PR #1008's 00345 + PR #984's 00346 +
+// PR #1017's 00347-00351 + PR #1012's 00352 + PR #1005's 00353 +
+// PR #1006's 00354-00355 + PR #1012's 00356. Round 12 forced by
+// PR #1012 also claiming 00356 (in addition to 00352 as a fence).
+// The cross-PR precheck filters reservations so my fences are invisible
+// to those PRs' precheck; whichever of us merges second will need to
+// drop the conflicting fence at merge time.
+const e2eMigrationTarget = 357
 
 // StartWithEnv is the G2-aware entrypoint used by the secrets e2e:
 // the test wants apid to load a specific host.age.pub (FAAS_HOST_AGE_
@@ -636,7 +664,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		t.Fatalf("e2etest: mkdir sock dir: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
-	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t)}
+	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
 
 	dbURL := os.Getenv("DATABASE_URL")
@@ -890,6 +918,15 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 //   - PATH / HOME inherited so go-built daemons can `exec.LookPath`
 //     helpers (notably firecracker, which schedd warns about but does
 //     not require for the meterd quota gate).
+//   - FAAS_HOST_HMAC_KEY_PATH=<per-test 0o400 file> — see Harness
+//     .HostHMACKeyPath. ADR-117 PR-C widens the sealed envelope with
+//     a 16-hex value_hash (HMAC-SHA256 over plaintext, keyed by a
+//     per-host 32-byte key). apid refuses to start without this file
+//     present (cmd/apid/main.go::loadHostHMACKey); the harness writes
+//     a fresh crypto/rand-32-byte file at 0o400 in the per-test
+//     TmpDir so the e2e path exercises the production posture
+//     (missing/mode-wrong → refuse-to-start). Parallel tests get
+//     independent keys.
 func testEnvCommon(dbURL string) []string {
 	env := []string{
 		"DATABASE_URL=" + dbURL,
@@ -917,6 +954,9 @@ func testEnvCommon(dbURL string) []string {
 	if currentHarness != nil && currentHarness.RecoveryHMACKeyHex != "" {
 		env = append(env, "FAAS_MFA_RECOVERY_HMAC_KEY="+currentHarness.RecoveryHMACKeyHex)
 	}
+	if currentHarness != nil && currentHarness.HostHMACKeyPath != "" {
+		env = append(env, "FAAS_HOST_HMAC_KEY_PATH="+currentHarness.HostHMACKeyPath)
+	}
 	return env
 }
 
@@ -934,6 +974,28 @@ func newRecoveryHMACKeyHex(t *testing.T) string {
 		t.Fatalf("e2etest: crypto/rand for recovery HMAC key: %v", err)
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// newHostHMACKeyFile writes a fresh 32-byte file (mode 0o400) into
+// the harness's per-test TmpDir and returns the path. apid's
+// loadHostHMACKey expects raw 32 bytes (NOT hex-encoded) at the
+// FAAS_HOST_HMAC_KEY_PATH. The 0o400 perm matches the
+// production posture so the e2e path exercises the same
+// 503 / refuse-to-start branch. The file is fresh per test
+// (crypto/rand) so two parallel tests don't share a key, and
+// so a leaked key from one test's debug output is useless for
+// the next test's value_hash discriminator.
+func newHostHMACKeyFile(t *testing.T, dir string) string {
+	t.Helper()
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("e2etest: crypto/rand for host HMAC key: %v", err)
+	}
+	path := filepath.Join(dir, "host.hmac.key")
+	if err := os.WriteFile(path, b[:], 0o400); err != nil {
+		t.Fatalf("e2etest: write host HMAC key file %s: %v", path, err)
+	}
+	return path
 }
 
 // writeScheddSignPub generates a fresh ECDSA P-256 keypair (the

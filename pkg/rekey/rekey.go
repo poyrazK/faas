@@ -118,14 +118,24 @@ type Replayer struct {
 	active     *age.X25519Recipient
 	identities []*age.X25519Identity // current + previous for OpenMulti
 	currentKid string
-	cfg        RekeyConfig
+	// hostHMACKey is the per-host 32-byte key that secretbox.ValueFingerprint
+	// uses to compute the value_hash stamped on every re-Seal row.
+	// Loaded once at construction (the same posture apid's
+	// cmd/apid/main.go::loadHostHMACKey uses); the key is per-host,
+	// not per-row, so rotation is a host-level event, not a
+	// row-level event (see ADR-117 D1 + the §Open questions entry
+	// on HMAC key rotation). A nil/empty key is rejected at
+	// construction time so a misconfigured rekey pass cannot
+	// silently write value_hash = ''.
+	hostHMACKey []byte
+	cfg         RekeyConfig
 }
 
 // Store is the narrow interface pkg/rekey needs from the
 // platform-wide state.Store. Two methods: ListAppSecretsForRekey
-// (paginated global walk) and UpsertAppSecretWithKidInScope (re-seal +
-// kid stamp at the row's actual scope). Implemented by both
-// pkg/state/pgstore.PgStore and pkg/state/memstore.MemStore — see
+// (paginated global walk) and UpsertAppSecretWithKidAndValueHashInScope
+// (re-seal + kid + value_hash stamp at the row's actual scope).
+// Implemented by both pkg/state/pgstore.PgStore and pkg/state/memstore.MemStore — see
 // ADR-089 PR-A for the rationale. Defined as an interface here so unit
 // tests can supply a tiny in-memory fakeStore without dragging in the
 // full state.Store surface (which is ~hundreds of methods).
@@ -140,9 +150,18 @@ type Replayer struct {
 // default-scope row of the same key with new-identity ciphertext. The
 // row.Scope thread from ListAppSecretsForRekey is the only correct
 // write target.
+//
+// ADR-117 PR-C: the upsert sibling widens to
+// UpsertAppSecretWithKidAndValueHashInScope (the value_hash is
+// computed off the re-Seal plaintext, NOT the new ciphertext). The
+// rekey pass is the only path that can reliably backfill
+// value_hash for pre-PR-C rows — a one-shot backfill sweep at PR-C
+// merge time would require unsealing every row, which is a hot
+// operation on Scale-tier accounts. Lazy backfill on re-seal is
+// the documented ADR posture.
 type Store interface {
 	ListAppSecretsForRekey(ctx context.Context, limit int, cursor string) ([]state.AppSecret, error)
-	UpsertAppSecretWithKidInScope(ctx context.Context, accountID, appID, scope, key, kid string, ciphertext []byte) error
+	UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error
 }
 
 // New constructs a Replayer. identities is the OpenMulti slice
@@ -151,11 +170,20 @@ type Store interface {
 // secretbox.LoadHostKeys(dir). The current identity's recipient
 // is sealed into every row the Replayer re-stamps.
 //
+// hostHMACKey is the per-host 32-byte key that secretbox.ValueFingerprint
+// uses to compute the value_hash stamped on every re-Seal row
+// (ADR-117 PR-C). The rekey pass is the only path that can
+// reliably backfill value_hash for pre-PR-C rows (a one-shot
+// backfill sweep at PR-C merge time would require unsealing every
+// row). The key is defensively copied so a caller-side mutation
+// does not affect re-Seal hashes.
+//
 // cfg is copied by value; mutating the caller's struct after
 // New() has no effect on the Replayer.
 func New(
 	store Store,
 	identities []*age.X25519Identity,
+	hostHMACKey []byte,
 	cfg RekeyConfig,
 ) (*Replayer, error) {
 	if store == nil {
@@ -163,6 +191,15 @@ func New(
 	}
 	if len(identities) == 0 || identities[0] == nil {
 		return nil, errors.New("rekey: empty identities or nil current")
+	}
+	if len(hostHMACKey) == 0 {
+		// ADR-117 D1: a rekey pass that writes value_hash = ''
+		// would silently degrade the env-diff discriminator. The
+		// rekey worker boots from the same host.hmac.key apid
+		// loads; an empty key is a deployment misconfiguration
+		// that must surface at construction time, not at the
+		// first row.
+		return nil, errors.New("rekey: empty host HMAC key — refusing to run; load /etc/faas/secrets/host.hmac.key first")
 	}
 	kid, err := secretbox.IdentityFingerprint(identities)
 	if err != nil {
@@ -177,12 +214,17 @@ func New(
 	if cfg.OpenTimeout <= 0 {
 		cfg.OpenTimeout = DefaultRekeyConfig.OpenTimeout
 	}
+	// Defensive copy: callers can wipe their own slice after
+	// New() without affecting the rekey pass.
+	keyCopy := make([]byte, len(hostHMACKey))
+	copy(keyCopy, hostHMACKey)
 	return &Replayer{
-		store:      store,
-		active:     identities[0].Recipient(),
-		identities: identities,
-		currentKid: kid,
-		cfg:        cfg,
+		store:       store,
+		active:      identities[0].Recipient(),
+		identities:  identities,
+		currentKid:  kid,
+		hostHMACKey: keyCopy,
+		cfg:         cfg,
 	}, nil
 }
 
@@ -301,6 +343,49 @@ func (r *Replayer) Run(
 				continue
 			}
 
+			// ADR-117 PR-C: value_hash computed over the
+			// PLAINTEXT (env[row.Key]), NOT the new ciphertext
+			// that Seal produces below. age X25519 +
+			// ChaCha20-Poly1305 is probabilistically
+			// non-deterministic — a ciphertext-derived hash
+			// would diverge for every row. The plaintext
+			// variant produces the "same hash across scopes =
+			// same plaintext" property the env-diff
+			// endpoint relies on. The key is loaded once at
+			// New() and is per-host (not per-row).
+			plaintext, ok := env[row.Key]
+			if !ok {
+				// Corrupted envelope: the seal-time key is
+				// missing from the unsealed map. The
+				// envelope Validate() at Seal time would
+				// have caught this — getting here means the
+				// row was sealed by a different code path
+				// (pre-ADR-089) or the ciphertext was
+				// tampered. Treat as a row failure and
+				// continue (do NOT skip without stamping
+				// value_hash — the env-diff endpoint
+				// relies on every re-Seal row having a
+				// stamped value_hash).
+				p.Failed++
+				if pinnedCursor == "" {
+					pinnedCursor = rowCursor
+				}
+				continue
+			}
+			valueHash, vhErr := secretbox.ValueFingerprint([]byte(plaintext), r.hostHMACKey)
+			if vhErr != nil {
+				// Empty plaintext: same posture as
+				// sealAndPersist's empty-input guard
+				// (5xx, do not skip — a row with
+				// value_hash = '' silently degrades the
+				// env-diff discriminator).
+				p.Failed++
+				if pinnedCursor == "" {
+					pinnedCursor = rowCursor
+				}
+				continue
+			}
+
 			// Re-seal under current identity.
 			sealed, sealErr := secretbox.Seal(r.active, env)
 			if sealErr != nil {
@@ -320,7 +405,14 @@ func (r *Replayer) Run(
 			// DefaultEnvScope and silently dropped prod/staging
 			// rows (or corrupted a default-scope sibling of the
 			// same key).
-			if err := r.store.UpsertAppSecretWithKidInScope(ctx, row.AccountID, row.AppID, row.Scope, row.Key, r.currentKid, sealed); err != nil {
+			//
+			// ADR-117 PR-C: value_hash is stamped on every
+			// re-Seal row so the rekey pass is the lazy
+			// backfill path for pre-PR-C rows. The
+			// pre-PR-C empty value_hash only persists for
+			// rows the rekey pass skipped (kid == currentKid
+			// or OpenMulti failed).
+			if err := r.store.UpsertAppSecretWithKidAndValueHashInScope(ctx, row.AccountID, row.AppID, row.Scope, row.Key, r.currentKid, valueHash, sealed); err != nil {
 				p.Failed++
 				if pinnedCursor == "" {
 					pinnedCursor = rowCursor

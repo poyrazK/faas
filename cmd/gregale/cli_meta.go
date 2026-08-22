@@ -433,6 +433,11 @@ var cliCommands = []cliCommand{
 		DocSlug: "env",
 		Short:   "Pull/push .env <-> sealed secrets (--app <slug>)",
 		Flags:   []cliFlag{{Name: "app", Short: "app slug", Req: true}},
+		Subcommands: []cliSub{
+			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)"},
+			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets"},
+			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)"},
+		},
 	},
 	{
 		Name:    "init",

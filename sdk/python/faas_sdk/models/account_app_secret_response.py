@@ -7,6 +7,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="AccountAppSecretResponse")
 
 
@@ -30,6 +32,9 @@ class AccountAppSecretResponse:
     """base64 age-sealed envelope. Plaintext NEVER appears on this wire."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    value_hash: str | Unset = UNSET
+    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows.
+    Mirror of the AccountAppSecretResponse / ScopedAppSecretResponse field."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,6 +52,8 @@ class AccountAppSecretResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        value_hash = self.value_hash
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -60,6 +67,8 @@ class AccountAppSecretResponse:
                 "updated_at": updated_at,
             }
         )
+        if value_hash is not UNSET:
+            field_dict["value_hash"] = value_hash
 
         return field_dict
 
@@ -80,6 +89,8 @@ class AccountAppSecretResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        value_hash = d.pop("value_hash", UNSET)
+
         account_app_secret_response = cls(
             app_id=app_id,
             app_slug=app_slug,
@@ -88,6 +99,7 @@ class AccountAppSecretResponse:
             ciphertext=ciphertext,
             created_at=created_at,
             updated_at=updated_at,
+            value_hash=value_hash,
         )
 
         account_app_secret_response.additional_properties = d

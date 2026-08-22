@@ -1441,6 +1441,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/env/{key}", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.setEnv)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/env/{key}", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.deleteEnv)))
 
+	// ADR-117 PR-C: env-diff matrix endpoint. Read-only; not
+	// MFA-gated because the surface emits no secret plaintext
+	// (only present / value_hash / value-for-env signals). The
+	// same ScopesReadSurface gate as listEnv.
+	mux.HandleFunc("GET /v1/apps/{slug}/env-diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.envDiff)))
+
 	// Data upstreams (ADR-098 §D4 / PR-B). The full handler family is
 	// gated on s.dataPlacementEnabled (FAAS_DATA_PLACEMENT=1); when
 	// the flag is off, each handler returns 402 plan_feature_gated so

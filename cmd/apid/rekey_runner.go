@@ -129,6 +129,17 @@ type RunnerOpts struct {
 	// rekey.Store interface inside pkg/rekey. Both PgStore and
 	// MemStore satisfy it (see pkg/state/pgstore.go, memstore.go).
 	Store rekey.Store
+	// HostHMACKey is the per-host 32-byte key that the rekey
+	// worker uses to compute value_hash for every re-Seal row
+	// (ADR-117 PR-C). The key is loaded once at apid startup
+	// from /etc/faas/secrets/host.hmac.key (cmd/apid/main.go::
+	// loadHostHMACKey) and threaded in via the bgBefore
+	// closure. Required (not optional) — the rekey pass stamps
+	// value_hash on every re-Seal row, and an empty key would
+	// silently degrade the env-diff discriminator to a
+	// non-discriminator. rekey.New() refuses construction on
+	// empty.
+	HostHMACKey []byte
 	// Log is the structured logger. Required (not optional) so a
 	// misconfigured daemon doesn't silently drop walk failures.
 	Log *slog.Logger
@@ -156,7 +167,7 @@ func NewRunner(opts RunnerOpts) (*Runner, error) {
 	if len(opts.Identities) == 0 || opts.Identities[0] == nil {
 		return nil, errors.New("rekey runner: empty identities")
 	}
-	rp, err := rekey.New(opts.Store, opts.Identities, opts.Config)
+	rp, err := rekey.New(opts.Store, opts.Identities, opts.HostHMACKey, opts.Config)
 	if err != nil {
 		return nil, fmt.Errorf("rekey runner: build replayer: %w", err)
 	}

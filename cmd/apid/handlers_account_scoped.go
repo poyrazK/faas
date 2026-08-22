@@ -137,6 +137,7 @@ func (s *server) listSecretsForAccount(w http.ResponseWriter, r *http.Request, a
 			Key:        r.Key,
 			Scope:      r.Scope,
 			Ciphertext: base64.RawURLEncoding.EncodeToString(r.Ciphertext),
+			ValueHash:  r.ValueHash,
 			CreatedAt:  r.CreatedAt.UTC().Format(time.RFC3339),
 			UpdatedAt:  r.UpdatedAt.UTC().Format(time.RFC3339),
 		})

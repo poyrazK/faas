@@ -12112,6 +12112,35 @@ func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, 
 	return err
 }
 
+// UpsertAppSecretWithKidAndValueHashInScope is the value-hash
+// scope-aware sibling (ADR-117 env-diff matrix, PR-C). Mirrors
+// UpsertAppSecretWithKidInScope but stamps both kid and
+// value_hash alongside ciphertext. Used by the PUT + rotate
+// paths + the rekey re-seal pass; legacy UpsertAppSecretWithKidInScope
+// stays for callers that don't carry the value_hash field
+// (the pre-PR-C rekey path, for example).
+//
+// valueHash is the 16-hex truncated HMAC-SHA256 of the
+// PLAINTEXT (NOT the ciphertext — see ADR-117 D1). The handler
+// computes it via secretbox.ValueFingerprint BEFORE SealOne so
+// the same plaintext byte string feeds both the HMAC and the
+// seal. SQL stores it as TEXT (NULL allowed for legacy rows
+// pre-00296; the migration CHECK caps the length at 16 hex).
+// NULLIF($7, ”) preserves the "empty string = NULL" semantic
+// so an unconfigured handler surface as NULL on the column.
+func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
+	_, err := s.pool.Exec(ctx,
+		`insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash)
+		 values ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))
+		 on conflict (app_id, scope, key) do update
+		   set ciphertext = excluded.ciphertext,
+		       kid = excluded.kid,
+		       value_hash = excluded.value_hash,
+		       updated_at = now()`,
+		accountID, appID, scope, key, ciphertext, kid, valueHash)
+	return err
+}
+
 // GetAppSecretInScope is the scope-aware sibling of GetAppSecret
 // (ADR-092 PR-A). Returns the (account_id, app_id, scope, key) row
 // including ciphertext, kid, and timestamps. Returns ErrNotFound
@@ -12119,11 +12148,11 @@ func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, 
 func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, scope, key string) (*AppSecret, error) {
 	var out AppSecret
 	err := s.pool.QueryRow(ctx,
-		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), created_at, updated_at
+		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key).Scan(
-		&out.AccountID, &out.AppID, &out.Scope, &out.Key, &out.Ciphertext, &out.Kid, &out.CreatedAt, &out.UpdatedAt)
+		&out.AccountID, &out.AppID, &out.Scope, &out.Key, &out.Ciphertext, &out.Kid, &out.ValueHash, &out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -12182,7 +12211,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 	// as scope='default'.
 	if cursor == "" {
 		rows, err := s.pool.Query(ctx,
-			`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), created_at, updated_at
+			`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''), created_at, updated_at
 			 from app_secrets
 			 order by account_id asc, app_id asc, scope asc, key asc
 			 limit $1`,
@@ -12194,7 +12223,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 		var out []AppSecret
 		for rows.Next() {
 			var r AppSecret
-			if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
 				return nil, err
 			}
 			out = append(out, r)
@@ -12214,7 +12243,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 		return nil, fmt.Errorf("pgstore: malformed rekey cursor %q", cursor)
 	}
 	rows, err := s.pool.Query(ctx,
-		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), created_at, updated_at
+		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''), created_at, updated_at
 		 from app_secrets
 		 where (account_id, app_id, scope, key) >= ($1::uuid, $2::uuid, $3, $4)
 		 order by account_id asc, app_id asc, scope asc, key asc
@@ -12227,7 +12256,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 	var out []AppSecret
 	for rows.Next() {
 		var r AppSecret
-		if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -12268,7 +12297,7 @@ func (s *PgStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID, 
 // ASC, key ASC for deterministic wake staging.
 func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, scope string) ([]AppSecret, error) {
 	rows, err := s.pool.Query(ctx,
-		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, created_at, updated_at
+		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash, created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3
 		 order by scope asc, key asc`,
@@ -12280,7 +12309,7 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 	var out []AppSecret
 	for rows.Next() {
 		var r AppSecret
-		if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -12304,7 +12333,7 @@ func (s *PgStore) ListAppSecrets(ctx context.Context, accountID, appID string) (
 // key ASC.
 func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string) ([]AppSecret, error) {
 	rows, err := s.pool.Query(ctx,
-		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, created_at, updated_at
+		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash, created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2
 		 order by scope asc, key asc`,
@@ -12316,7 +12345,7 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 	var out []AppSecret
 	for rows.Next() {
 		var r AppSecret
-		if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -12352,7 +12381,7 @@ func (s *PgStore) ListAppSecretsForAccount(ctx context.Context, accountID string
 		limit = 25
 	}
 	rows, err := s.pool.Query(ctx,
-		`select s.account_id, s.app_id, a.slug, s.key, s.scope, s.ciphertext, s.created_at, s.updated_at
+		`select s.account_id, s.app_id, a.slug, s.key, s.scope, s.ciphertext, coalesce(s.value_hash, '') as value_hash, s.created_at, s.updated_at
 		 from app_secrets s
 		 join apps a on a.id = s.app_id
 		 where s.account_id = $1
@@ -12366,7 +12395,7 @@ func (s *PgStore) ListAppSecretsForAccount(ctx context.Context, accountID string
 	var out []AccountAppSecret
 	for rows.Next() {
 		var r AccountAppSecret
-		if err := rows.Scan(&r.AccountID, &r.AppID, &r.AppSlug, &r.Key, &r.Scope, &r.Ciphertext, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.AccountID, &r.AppID, &r.AppSlug, &r.Key, &r.Scope, &r.Ciphertext, &r.ValueHash, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
