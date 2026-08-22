@@ -8888,13 +8888,21 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// ReadActiveInstanceForWakeID. A 23505 with state OUTSIDE the
 	// in-flight set would be a different bug (the index wouldn't
 	// have fired), so the typed translation is safe.
+	//
+	// We use scanInstanceCols directly (not scanInstance) so the
+	// raw pgconn.PgError survives in the chain — scanInstance's
+	// mapErr helper rewrites 23505 into state.ErrConflict:
+	// <constraint_name>, which is a useful surface for callers
+	// that don't need the SQLSTATE, but here we need to
+	// distinguish ErrConcurrentWake (instances_wake_attempt_active_idx)
+	// from every other unique violation.
 	row := s.pool.QueryRow(ctx,
 		`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at)
 		 values ($1, $2, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else $6::uuid end, now())
 		 returning id, app_id, deployment_id, state, coalesce(netns,''), coalesce(guest_uid,0),
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count`,
 		appID, deploymentID, state, ramMB, nodeID, wakeID)
-	inst, err := scanInstance(row)
+	inst, err := scanInstanceCols(row.Scan)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -8902,6 +8910,9 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 				"state: %w: wake_id=%s app_id=%s already in-flight — recover via ReadActiveInstanceForWakeID",
 				ErrConcurrentWake, wakeID, appID,
 			)
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Instance{}, fmt.Errorf("state: create instance %q (app=%s): %w", wakeID, appID, err)
 		}
 		return Instance{}, fmt.Errorf("state: create instance %q (app=%s): %w", wakeID, appID, err)
 	}
