@@ -182,6 +182,10 @@ type MemStore struct {
 	// method boundary so a cross-tenant read returns ErrNotFound
 	// (the same defence-in-depth as consumerKeys below).
 	openAPIDocs map[string]openAPIDocRow
+	// openAPIImports mirrors the per-app app_openapi_docs table
+	// from migrations/00378 (issue #975 item #2 / ADR-126).
+	// Keyed by app_id (one row per app, last-write-wins).
+	openAPIImports map[string]appOpenAPIImportRow
 	// oidcTrustPolicies is keyed by (accountID, issuerURL) — the
 	// composite primary key shape from migration 00265. The
 	// per-account lookup OIDCTrustPoliciesForAccount is the only
@@ -584,6 +588,11 @@ func NewMemStore() *MemStore {
 		edgeRules:            map[string]EdgeRule{},
 		corsPresets:          map[string]CorsPreset{},
 		openAPIDocs:          map[string]openAPIDocRow{},
+		// ADR-126 / issue #975 item #2 — per-app OpenAPI imports.
+		// Keyed by app_id (one row per app, last-write-wins via
+		// the existing overwrite-not-insert contract). Same IDOR
+		// floor at the read methods as the pg path.
+		openAPIImports: map[string]appOpenAPIImportRow{},
 		// ADR-120 / issue #975 item #5 — consumer keys. The map is
 		// keyed by ConsumerKey.ID; cross-tenant IDOR guards are
 		// enforced at the read methods (same as the pg path).
@@ -4741,6 +4750,124 @@ func (m *MemStore) CountOpenAPIDocsByAccount(_ context.Context, accountID string
 	defer m.mu.Unlock()
 	n := 0
 	for _, r := range m.openAPIDocs {
+		if r.AccountID == accountID {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// ---------------------------------------------------------------------------
+// appOpenAPIImportRow is the in-memory row mirror of app_openapi_docs
+// (migrations/00378). The struct is unexported; the public surface
+// is the four methods below — handler tests reach them through the
+// Store interface.
+// ---------------------------------------------------------------------------
+type appOpenAPIImportRow struct {
+	AppID          string
+	AccountID      string
+	Doc            []byte
+	Source         string
+	OpenAPIVersion string
+	EndpointCount  int
+	ByteSize       int
+	DocSHA256      []byte
+	CapturedAt     time.Time
+	UpdatedAt      time.Time
+}
+
+// GetAppOpenAPIDoc mirrors pgstore.GetAppOpenAPIDoc. Returns
+// ErrNotFound when the row is missing OR when the caller's
+// accountID does not match — the IDOR floor is enforced at the
+// method boundary so a future caller can't probe by appID alone.
+// The doc body is defensively copied on the way out so a caller
+// mutating the slice can't corrupt the map's internal copy.
+func (m *MemStore) GetAppOpenAPIDoc(_ context.Context, appID, accountID string) ([]byte, AppOpenAPIDocMeta, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.openAPIImports[appID]
+	if !ok || row.AccountID != accountID {
+		return nil, AppOpenAPIDocMeta{}, ErrNotFound
+	}
+	return append([]byte(nil), row.Doc...), AppOpenAPIDocMeta{
+		AppID:          row.AppID,
+		AccountID:      row.AccountID,
+		Source:         row.Source,
+		OpenAPIVersion: row.OpenAPIVersion,
+		EndpointCount:  row.EndpointCount,
+		ByteSize:       row.ByteSize,
+		DocSHA256:      append([]byte(nil), row.DocSHA256...),
+		CapturedAt:     row.CapturedAt,
+		UpdatedAt:      row.UpdatedAt,
+	}, nil
+}
+
+// UpsertAppOpenAPIDoc mirrors pgstore. The app row must exist (the
+// FK CASCADE in migration 00378 makes this unreachable in
+// practice, but the explicit check lets a misuse at the call site
+// fail closed). Idempotent: a re-delivered import overwrites the
+// same row, not creates a second. openapiVersion is one of
+// ValidOpenAPIVersions (closed enum); the caller is responsible
+// for pre-validation (the apid openapiimport.ValidateImport check
+// is upstream).
+func (m *MemStore) UpsertAppOpenAPIDoc(_ context.Context, appID, accountID string, doc []byte, endpointCount int, openapiVersion string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.apps[appID]; !ok {
+		return ErrNotFound
+	}
+	now := time.Now()
+	docCopy := append([]byte(nil), doc...)
+	sum := sha256.Sum256(docCopy)
+	row := appOpenAPIImportRow{
+		AppID:          appID,
+		AccountID:      accountID,
+		Doc:            docCopy,
+		Source:         OpenAPIImportSourceManualImport,
+		OpenAPIVersion: openapiVersion,
+		EndpointCount:  endpointCount,
+		ByteSize:       len(docCopy),
+		DocSHA256:      sum[:],
+	}
+	if existing, ok := m.openAPIImports[appID]; ok {
+		// Idempotent overwrite: keep the original captured_at so
+		// "first-imported" semantics survive a re-delivered import
+		// event. updated_at is bumped for the audit trail.
+		row.CapturedAt = existing.CapturedAt
+		row.UpdatedAt = now
+	} else {
+		row.CapturedAt = now
+		row.UpdatedAt = now
+	}
+	m.openAPIImports[appID] = row
+	return nil
+}
+
+// DeleteAppOpenAPIDoc mirrors pgstore. ErrNotFound when no row
+// OR the caller's accountID does not match — same IDOR floor.
+// The apid caller treats ErrNotFound as "already deleted" so a
+// retry is a no-op (idempotent 204).
+func (m *MemStore) DeleteAppOpenAPIDoc(_ context.Context, appID, accountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.openAPIImports[appID]
+	if !ok || row.AccountID != accountID {
+		return ErrNotFound
+	}
+	delete(m.openAPIImports, appID)
+	return nil
+}
+
+// CountOpenAPIImportsByAccount returns the number of import rows
+// the account owns. Drives the per-account quota gate
+// (api.Plan.OpenAPIImportsPerAccount). The count is a single pass
+// over the map — the in-memory store holds the entire dataset
+// under m.mu so an O(N) scan is fine.
+func (m *MemStore) CountOpenAPIImportsByAccount(_ context.Context, accountID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.openAPIImports {
 		if r.AccountID == accountID {
 			n++
 		}

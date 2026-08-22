@@ -1980,6 +1980,45 @@ type Store interface {
 	// load the full body slice.
 	CountOpenAPIDocsByAccount(ctx context.Context, accountID string) (int, error)
 
+	// Per-app OpenAPI import (issue #975 item #2 / ADR-126).
+	// The four methods mirror the per-deployment methods above
+	// but key on (app_id, account_id) — one row per app, last
+	// write wins via INSERT ... ON CONFLICT DO UPDATE.
+
+	// GetAppOpenAPIDoc returns the (doc, meta) pair for one app.
+	// ErrNotFound when the row is missing OR when the caller's
+	// accountID does not match (the pgx row.Scan errors on no
+	// rows; we map it to ErrNotFound). The closed `openapi_version`
+	// enum is surfaced in the meta so the dry-run handler can
+	// reject a version-stamped suggestion on a different version
+	// without a second DB read.
+	GetAppOpenAPIDoc(ctx context.Context, appID, accountID string) ([]byte, AppOpenAPIDocMeta, error)
+	// UpsertAppOpenAPIDoc records (or overwrites) the imported
+	// OpenAPI body for one app. doc is the meta-schema-validated
+	// JSON bytes (the apid openapiimport.ValidateImport check
+	// passes before this call); endpointCount is the
+	// pre-computed paths.* operation count; openapiVersion is
+	// the closed enum value (one of ValidOpenAPIVersions). The
+	// row is filtered by (app_id, account_id) at the WHERE clause
+	// so a misrouted call from a different account fails with
+	// ErrNotFound. Idempotent: a re-delivered import overwrites
+	// the same row, not creates a second one. The per-account
+	// quota gate is upstream — the apid calls
+	// CountOpenAPIImportsByAccount before this call.
+	UpsertAppOpenAPIDoc(ctx context.Context, appID, accountID string, doc []byte, endpointCount int, openapiVersion string) error
+	// DeleteAppOpenAPIDoc removes the import row for one app.
+	// ErrNotFound when no row OR the caller's accountID does not
+	// match — same IDOR floor as the read. The apid caller
+	// treats ErrNotFound as "already deleted" so a retry is a
+	// no-op (idempotent 204).
+	DeleteAppOpenAPIDoc(ctx context.Context, appID, accountID string) error
+	// CountOpenAPIImportsByAccount returns the number of import
+	// rows the account owns. Drives the per-account quota gate
+	// (api.Plan.OpenAPIImportsPerAccount). The count is computed
+	// server-side via a SELECT COUNT(*) so the apid doesn't
+	// load the full body slice.
+	CountOpenAPIImportsByAccount(ctx context.Context, accountID string) (int, error)
+
 	// Per-workload filesystem handles for sidecars (issue #463 /
 	// ADR-069 / PR-B). The PR-A surface (Deployment.Sidecars
 	// jsonb) stays the contract layer; this is the per-sidecar

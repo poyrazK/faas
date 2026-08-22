@@ -4723,3 +4723,81 @@ const (
 	OpenAPIDocSourceColdBoot     = "cold_boot"
 	OpenAPIDocSourceManualUpload = "manual_upload"
 )
+
+// ---------------------------------------------------------------------------
+// OpenAPI Import (issue #975 item #2 / ADR-126).
+//
+// The per-app table `app_openapi_docs` carries the customer's
+// imported OpenAPI document — the "declared surface" side of the
+// closed loop. It co-exists with the per-deployment
+// deployment_openapi_docs (item #1): the latter holds what Gregale
+// captured during cold boot, the former holds what the customer
+// declared for the app.
+// ---------------------------------------------------------------------------
+
+// AppOpenAPIDocMeta is the metadata slice returned alongside the
+// imported document body. Mirrors OpenAPIDocMeta but keys on
+// (app_id, account_id) — one row per app, not per deployment.
+//
+// OpenAPIVersion is the closed enum value '3.0.0'..'3.1.1' (matches
+// the migrations/00378 CHECK constraint). Source is the closed
+// enum value 'manual_import' (item #2 does not admit cold-boot
+// captures; cold-boot goes to deployment_openapi_docs from item #1).
+//
+// EndpointCount is the count of HTTP operations in the imported
+// doc's paths.* — a generous ceiling for a single-app surface
+// (Stripe-scale 700-operation docs would be split per-app, not
+// per-spec). The SQL CHECK pins it 0..50; the apid layer enforces
+// the abuse-surface cap of 50 via api.Plan.OpenAPIImportMaxEndpoints.
+type AppOpenAPIDocMeta struct {
+	AppID          string
+	AccountID      string
+	Source         string
+	OpenAPIVersion string
+	EndpointCount  int
+	ByteSize       int
+	DocSHA256      []byte
+	CapturedAt     time.Time
+	UpdatedAt      time.Time
+}
+
+// OpenAPIImportSource values mirror the migrations/00378 CHECK
+// constraint. Inline-declared (same pattern as OpenAPIDocSource
+// above) so the pgstore and the apid handler agree on the enum
+// without a string-literal drift.
+const (
+	OpenAPIImportSourceManualImport = "manual_import"
+)
+
+// OpenAPIImportMaxDocBytes is the hard cap on the imported body,
+// applied at the apid layer (the SQL CHECK in migration 00378
+// applies the same constant for defense-in-depth). The
+// per-plan cap is layered on top via
+// api.Plan.OpenAPIImportMaxDocBytes() (limits.go). The constant
+// lives here (not in pkg/api/limits.go) because the validator at
+// pkg/openapiimport/validator.go and the cache at
+// pkg/openapidiff/spec_cache.go both reference it through the
+// Store interface and need a stable address.
+//
+// 256 KiB is generous for a single-app surface (Stripe-scale
+// 700-operation docs split per-app land well under this cap).
+// The cap is the abuse-surface ceiling, not the plan-tier ceiling.
+const OpenAPIImportMaxDocBytes = 256 * 1024
+
+// OpenAPIImportMaxEndpoints is the hard cap on the imported
+// doc's paths.* operation count, applied at the apid layer (the
+// SQL CHECK in migration 00378 applies the same constant for
+// defense-in-depth). 50 operations is generous for a single-app
+// surface.
+const OpenAPIImportMaxEndpoints = 50
+
+// ValidOpenAPIVersions is the closed enum the SQL CHECK admits.
+// Mirrors migrations/00378_openapi_import.sql. The validator at
+// pkg/openapiimport/validator.go compiles the imported doc
+// against the OpenAPI 3.1 meta-schema regardless of the declared
+// version — 3.0.x docs that don't use 3.0-only features pass;
+// customers needing strict 3.0 can ship 3.1.
+var ValidOpenAPIVersions = []string{
+	"3.0.0", "3.0.1", "3.0.2", "3.0.3", "3.0.4",
+	"3.1.0", "3.1.1",
+}
