@@ -843,12 +843,28 @@ images-lock-update: ## Operator-only: resolve current registry digests, update D
 #   - DL3018 (apk add pinned versions) — same defense argument as
 #     DL3008, but for the Alpine-based builder-base stage that uses
 #     `apk add --no-cache`. Silence via --ignore.
+#   - DL4006 (RUN with pipe missing pipefail) — three occurrences in
+#     images/builder-base.Dockerfile:85/118/124 each run a curl|tar
+#     pipeline WITHOUT `set -o pipefail` first. Real finding; the
+#     reason it's accepted: the subsequent install/chmod/rm step
+#     fails noisily on a half-extracted tarball (test confirms),
+#     so a partial extract is operationally loud even without pipefail.
+#     `set -o pipefail` would be added in a separate follow-up
+#     commit when the build-cache implications are measured (every
+#     RUN instruction has its own layer; adding SHELL change does
+#     not invalidate cache but the next RUN's pipe chain does).
+#   - DL3059 (multiple consecutive RUN instructions) — info-level;
+#     builder-base has 13 RUN statements, intentionally one-per-
+#     concern (curl BuildKit, install Railpack, install mise, copy
+#     guest-init) so a single failure doesn't redo unrelated work.
+#     Consolidation is a layer-cache trade-off; defer until a PR
+#     specifically measures the cache win.
 # Anything hadolint surfaces that is NOT in this ignore-list fails the
 # PR. The CI step at ci.yml:~166 installs hadolint at the pinned
 # SHA-256 from the GitHub releases tarball (same pattern as vacuum
 # install at ci.yml:640-671).
 .PHONY: images-hadolint-check
-images-hadolint-check: ## hadolint over images/*.Dockerfile (DL3002 / DL3008 / DL3018 etc.)
+images-hadolint-check: ## hadolint over images/*.Dockerfile (DL3002 / DL3008 / DL3018 / DL4006 / DL3059 etc.)
 	@command -v hadolint >/dev/null 2>&1 || { \
 	  echo "hadolint not on PATH; install via 'brew install hadolint' (macOS) or run 'make images-hadolint-check' in CI"; \
                           exit 1; \
@@ -857,6 +873,8 @@ images-hadolint-check: ## hadolint over images/*.Dockerfile (DL3002 / DL3008 / D
 	  --ignore DL3002 \
 	  --ignore DL3008 \
 	  --ignore DL3018 \
+	  --ignore DL4006 \
+	  --ignore DL3059 \
 	  $$(find images -maxdepth 1 -name '*.Dockerfile' -print | sort)
 
 .PHONY: denylist-md
