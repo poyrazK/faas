@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -5217,8 +5218,172 @@ func (s *PgStore) MarkDeploymentSuperseded(ctx context.Context, id string) error
 	return s.UpdateDeploymentStatus(ctx, id, DeploySuperseded, "")
 }
 
+// MarkDeploymentLive flips a deployment's status to 'live' and
+// captures the projected-customer-OpenAPI snapshot atomically
+// inside the same transaction (ADR-121 PR-B, migration 00358).
+//
+// Atomicity matters: a deployment that lands `live` without a
+// captured snapshot is invisible to PR-C's prod-promotion gate,
+// so the next time the customer promotes a different deployment
+// at scope="prod" the differ would compare the proposed
+// snapshot against no baseline — the gate silently regresses
+// from "block on breaks" to "always pass" for that app until a
+// manual backfill. Keeping the status UPDATE and the snapshot
+// UPSERT in one tx removes the race window between the two
+// writers.
+//
+// The projection (embedded OpenAPI spec + the app's current
+// edge-rule list) is recomputed inside the tx via the existing
+// [openapidiff.Load] + [openapidiff.GenerateFromEdgeRules] +
+// [openapidiff.MarshalSnapshot] helpers. Recomputing here means
+// every "live" row is the snapshot the customer sees at the
+// moment of promotion — no risk of an out-of-date row stamped
+// by a previous deploy. The cost is one edge-rule query + a
+// json.Marshal per live transition; live transitions are rare
+// (the customer-initiated deploy path, not the per-request wake
+// path), so the cost is in the noise.
+//
+// On any projection error (corrupt embedded spec, malformed
+// edge-rule row, marshal failure) the tx rolls back and the
+// caller sees the error — the status transition is rejected.
+// This matches the spec invariant "An app always has a live
+// snapshot OR a cold-bootable rootfs — never neither": a partial
+// transition (live status, no snapshot) is a bug, not a state.
 func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
-	return s.UpdateDeploymentStatus(ctx, id, DeployLive, "")
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: begin mark-live tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	tag, err := tx.Exec(ctx,
+		`update deployments set status = 'live', error = '' where id = $1::uuid`, id)
+	if err != nil {
+		return fmt.Errorf("state: mark deployment %s live: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, id)
+	if err != nil {
+		return fmt.Errorf("state: capture snapshot for %s: %w", id, err)
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into deployment_openapi_snapshots
+			(deployment_id, app_id, scope, snapshot, sha256, schema_version, captured_at)
+		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
+		on conflict (deployment_id) do update
+		   set app_id = excluded.app_id,
+		       scope = excluded.scope,
+		       snapshot = excluded.snapshot,
+		       sha256 = excluded.sha256,
+		       schema_version = excluded.schema_version,
+		       captured_at = excluded.captured_at
+	`, snap.DeploymentID, snap.AppID, snap.Scope, []byte(snap.Snapshot), snap.SHA256, snap.SchemaVersion, snap.CapturedAt); err != nil {
+		return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit mark-live tx: %w", err)
+	}
+	return nil
+}
+
+// captureDeploymentOpenAPISnapshotTx reads the deployment's
+// app_id + scope (under the same tx as the status UPDATE so the
+// row is the post-UPDATE state), loads the app's current
+// edge-rule list, projects the snapshot, and returns the
+// [OpenAPISnapshot] ready to UPSERT. The tx parameter is the
+// in-flight pgx.Tx from the caller; we never touch s.pool here
+// so a snapshot projection failure rolls back the entire
+// markDeploymentLive tx, not just the snapshot UPSERT.
+//
+// The edge-rule query mirrors [ListEdgeRulesForApp]'s ORDER BY
+// (priority asc, created_at desc) so the snapshot is byte-stable
+// across capture calls — two consecutive live transitions on the
+// same edge-rule set produce the same SHA-256. Determinism is
+// what makes the SHA-256 a replay anchor instead of a debug
+// convenience.
+func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx.Tx, deploymentID string) (OpenAPISnapshot, error) {
+	var (
+		appID string
+		scope string
+	)
+	if err := tx.QueryRow(ctx,
+		`select app_id, scope from deployments where id = $1::uuid`,
+		deploymentID,
+	).Scan(&appID, &scope); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return OpenAPISnapshot{}, ErrNotFound
+		}
+		return OpenAPISnapshot{}, fmt.Errorf("state: read deployment for snapshot: %w", err)
+	}
+
+	rows, err := tx.Query(ctx,
+		`select `+edgeRuleSelectCols+` from edge_rules
+		 where app_id = $1::uuid order by priority asc, created_at desc`,
+		appID,
+	)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: read edge rules for snapshot: %w", err)
+	}
+	defer rows.Close()
+	edgeRules, err := scanEdgeRules(rows)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: scan edge rules for snapshot: %w", err)
+	}
+
+	// Convert []state.EdgeRule → []api.CreateEdgeRuleRequest. The
+	// generator only reads Kind + MatchHost + MatchPath +
+	// MatchMethods; Action is irrelevant for the snapshot shape.
+	// Fields outside the generator's read set are zero-valued so
+	// the diff would notice a future regression that adds a new
+	// read.
+	pending := make([]api.CreateEdgeRuleRequest, 0, len(edgeRules))
+	for _, r := range edgeRules {
+		if !r.Enabled {
+			// A disabled rule cannot contribute a route path to
+			// the OpenAPI surface — the runtime never compiles
+			// it into the gateway's edge table. Mirror that
+			// here so the snapshot matches what the customer
+			// can actually serve.
+			continue
+		}
+		pending = append(pending, edgeRuleToCreateEdgeRuleRequest(r))
+	}
+
+	spec, err := openapidiff.GenerateFromEdgeRules(nil, nil, pending)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: project spec for snapshot: %w", err)
+	}
+	raw, sha, err := openapidiff.MarshalSnapshot(spec)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: marshal snapshot: %w", err)
+	}
+
+	return OpenAPISnapshot{
+		DeploymentID:  deploymentID,
+		AppID:         appID,
+		Scope:         scope,
+		Snapshot:      raw,
+		SHA256:        sha,
+		SchemaVersion: openapidiff.SnapshotSchemaVersion,
+		CapturedAt:    time.Now().UTC(),
+	}, nil
+}
+
+// edgeRuleToCreateEdgeRuleRequest converts the DB row shape into
+// the wire shape [openapidiff.GenerateFromEdgeRules] expects.
+// Only the fields the generator reads are populated; the rest
+// are zero so a future regression that adds a new read fails
+// loudly (zero-valued fields make the diff output obvious).
+func edgeRuleToCreateEdgeRuleRequest(r EdgeRule) api.CreateEdgeRuleRequest {
+	return api.CreateEdgeRuleRequest{
+		Kind:         string(r.Kind),
+		MatchHost:    r.MatchHost,
+		MatchPath:    r.MatchPath,
+		MatchMethods: r.MatchMethods,
+	}
 }
 
 // UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)

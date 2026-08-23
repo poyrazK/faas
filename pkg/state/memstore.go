@@ -22,6 +22,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -4223,8 +4224,86 @@ func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) erro
 	return m.UpdateDeploymentStatus(ctx, id, DeploySuperseded, "")
 }
 
+// MarkDeploymentLive (ADR-121 PR-B) flips the deployment
+// status to 'live' and captures the projected-customer-OpenAPI
+// snapshot under the same m.mu critical section as the pgstore
+// markDeploymentLiveTx wraps in one tx. The lock is the
+// atomicity primitive here — single-process, no BEGIN/COMMIT.
+// See pgstore.MarkDeploymentLive for the rationale.
 func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
-	return m.UpdateDeploymentStatus(ctx, id, DeployLive, "")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	d.Status = DeployLive
+	d.Error = ""
+	m.deployments[id] = d
+
+	snap, err := m.captureDeploymentOpenAPISnapshotLocked(d)
+	if err != nil {
+		return fmt.Errorf("memstore: capture snapshot for %s: %w", id, err)
+	}
+	m.openAPISnapshots[id] = snap
+	return nil
+}
+
+// captureDeploymentOpenAPISnapshotLocked builds the [OpenAPISnapshot]
+// for a deployment that has just transitioned to status='live'.
+// Caller must hold m.mu. Mirrors pgstore.captureDeploymentOpenAPISnapshotTx:
+// walk the edge-rule list (filtered to enabled rules so a
+// disabled rule does not contribute a route path), project via
+// [openapidiff.GenerateFromEdgeRules], marshal via
+// [openapidiff.MarshalSnapshot], and return the struct ready to
+// UPSERT. The (Priority asc, CreatedAt desc) sort matches
+// pgstore's order so both stores produce the same SHA-256 for
+// the same edge-rule set.
+func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(d Deployment) (OpenAPISnapshot, error) {
+	var rules []EdgeRule
+	for _, r := range m.edgeRules {
+		if r.AppID != d.AppID {
+			continue
+		}
+		if !r.Enabled {
+			continue
+		}
+		rules = append(rules, r)
+	}
+	sort.Slice(rules, func(i, j int) bool {
+		if rules[i].Priority != rules[j].Priority {
+			return rules[i].Priority < rules[j].Priority
+		}
+		return rules[i].CreatedAt.After(rules[j].CreatedAt)
+	})
+	pending := make([]api.CreateEdgeRuleRequest, 0, len(rules))
+	for _, r := range rules {
+		pending = append(pending, api.CreateEdgeRuleRequest{
+			Kind:         string(r.Kind),
+			MatchHost:    r.MatchHost,
+			MatchPath:    r.MatchPath,
+			MatchMethods: r.MatchMethods,
+		})
+	}
+
+	spec, err := openapidiff.GenerateFromEdgeRules(nil, nil, pending)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("memstore: project spec for snapshot: %w", err)
+	}
+	raw, sha, err := openapidiff.MarshalSnapshot(spec)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("memstore: marshal snapshot: %w", err)
+	}
+	return OpenAPISnapshot{
+		DeploymentID:  d.ID,
+		AppID:         d.AppID,
+		Scope:         d.Scope,
+		Snapshot:      raw,
+		SHA256:        sha,
+		SchemaVersion: openapidiff.SnapshotSchemaVersion,
+		CapturedAt:    time.Now().UTC(),
+	}, nil
 }
 
 // UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)
