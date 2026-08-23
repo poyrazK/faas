@@ -29,6 +29,22 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //     on v6-only networks (defense in depth; we never connect OUT to v6).
 //
 // See ADR-078 for the migration that wiped these from the unit body.
+//
+// Issue #585 / ADR-127 — sealed.env is apid-only; gatewayd-internal
+// keeps compute-db.env (DATABASE_URL) + loads per-daemon content via
+// EnvironmentFile=/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env
+// (0400 root:root). The .env file holds content-shaped env vars:
+//   - FAAS_SESSION_KEY=<64 hex chars>
+//   - FAAS_TLS_DNS_TOKEN=<provider API token>
+// These are content-shaped env vars the loader reads via os.Getenv;
+// the LoadCredential+%d/<id> pattern only fits PATH-shaped vars
+// (env var = tmpfs path; loader does os.ReadFile(env)) — using it
+// for content would set the env var to a path string and break the
+// loader. The session key content is shared with apid (apid writes/
+// validates session cookies that gatewayd-internal forwards); the
+// canonical source file /etc/faas/secrets/session.key is read by both
+// daemons' loader helpers in their respective config.go, while the
+// per-daemon .env file is the systemd-level delivery vehicle.
 func UnitGatewaydInternal() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas gatewayd-internal — routing + wake + proxy (Tier A7 split, ADR-070)",
@@ -49,7 +65,10 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		// gatewayd-internal reads the shared control-plane database
 		// through DATABASE_URL. In a split deployment the root-owned
 		// compute env is loaded by systemd; TOML must stay credential-free.
-		EnvironmentFile: "-/etc/faas/sealed.env -/etc/faas/compute-db.env",
+		// Issue #585 / ADR-127: sealed.env dropped; per-daemon
+		// gatewayd-internal.env (0400 root:root) holds
+		// FAAS_SESSION_KEY + FAAS_TLS_DNS_TOKEN content-shaped vars.
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env",
 
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_GATEWAY_LISTEN", Value: "off"},

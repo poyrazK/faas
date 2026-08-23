@@ -196,6 +196,18 @@ jobs:
       - name: systemd hardening gate
         run: make systemd-hardening-check
 
+      # sealed-env-scope-check (issue #585 / ADR-127): the apid unit
+      # is the only legitimate consumer of /etc/faas/sealed.env. Every
+      # other daemon must use LoadCredential= or a per-daemon
+      # /etc/faas/secrets/<daemon>/*.env (0400 root:root). The gate
+      # walks deploy/systemd/ + deploy/controlplane/systemd/ + every
+      # ansible role's files/*.service and refuses any
+      # EnvironmentFile={-,}/etc/faas/sealed.env line that isn't in
+      # faas-apid.service. Fail-loud; tripwire prevents future
+      # re-introduction of the apid-leak pattern.
+      - name: sealed.env scope gate
+        run: make sealed-env-scope-check
+
       # +incompatible direct-dep gate (release blocker B1). Today this
       # flags github.com/stripe/stripe-go v70.15.0+incompatible (go.mod:25)
       # — v70 pre-dates the modern lookup_key primitive on PlanParams

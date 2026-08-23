@@ -41,7 +41,15 @@ User=root
 Group=root
 
 Environment=OFF_HOST_BACKUP_BASEBACKUP_PATH=faas-pg-basebackup
-EnvironmentFile=/etc/faas/sealed.env
+# Issue #585 / ADR-127 — sealed.env is apid-only; pg-basebackup-push no
+# longer inherits it. The rclone config (sealed at rest via host.age) is
+# loaded via LoadCredential below. The bash ExecStart uses
+# --config=%d/faas_off_host_backup_rclone, which resolves to
+# $CREDENTIALS_DIRECTORY/faas_off_host_backup_rclone — only valid when
+# the matching LoadCredential directive has staged the file at
+# unit activation. Missing the LoadCredential would silently make the
+# path nonexistent and rclone exit with "config file not found".
+LoadCredential=faas_off_host_backup_rclone:/etc/faas/secrets/pg-basebackup-push/rclone.conf
 
 ExecStart=/usr/bin/env bash -c '\
   set -euo pipefail; \

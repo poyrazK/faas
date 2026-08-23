@@ -29,6 +29,14 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //     when ADR-038 landed and crash-looped imaged on the DO box.
 //
 // See ADR-078 for the migration that wiped these from the unit body.
+//
+// Issue #585 / ADR-127 — sealed.env is apid-only; imaged keeps compute-db.env
+// (DATABASE_URL) but no longer inherits the full sealed.env. The host.age
+// identity is delivered via LoadCredential= (the env var holds the
+// %d/<name> tmpfs path), the same pattern apid uses. FAAS_BUILDER_BASE_REF
+// is informational on the imaged path — the v1 sealed.env.example comment
+// notes that the operator MUST pin a digest; the TOML form remains the
+// canonical source for typed config (cmd/imaged/main.go:392-401).
 func UnitImaged() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas imaged — image/snapshot orchestrator (spec §4.6, ADR-003, ADR-005)",
@@ -68,11 +76,11 @@ func UnitImaged() daemonunit.Unit {
 			"cap_sys_chroot",
 		},
 
-		// sealed.env is an optional production override. Render the
-		// systemd '-' prefix so an image-seeded compute node can boot
-		// from its rendered TOML and role drop-ins before secrets
-		// provisioning has populated the override file.
-		EnvironmentFile: "-/etc/faas/sealed.env -/etc/faas/compute-db.env",
+		// Issue #585 / ADR-127: sealed.env dropped; per-daemon compute-db.env
+		// (DATABASE_URL) is the only EnvironmentFile=. The optional '-' prefix
+		// remains so an image-seeded compute node can boot before secrets
+		// provisioning has populated the file.
+		EnvironmentFile: "-/etc/faas/compute-db.env",
 		Environment: []daemonunit.KV{
 			// ProtectSystem=strict makes the host /tmp read-only. Keep OCI
 			// layer verification and upload scratch on the writable base disk.
@@ -80,6 +88,10 @@ func UnitImaged() daemonunit.Unit {
 			{Key: "FAAS_BASE_STAGING_ROOT", Value: "/dev/shm/faas-base-staging"},
 			{Key: "FAAS_BASE_EXTRACT_ROOT", Value: "/srv/fc/base-staging"},
 			{Key: "FAAS_BASE_TMP_ROOT", Value: "/srv/fc/base"},
+			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
+		},
+		LoadCredential: []daemonunit.LoadCred{
+			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 		},
 
 		NoNewPrivileges:       true,

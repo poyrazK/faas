@@ -13,8 +13,8 @@ Restart=on-failure
 RestartSec=2s
 Slice=faas-cp.slice
 MemoryMax=512M
-EnvironmentFile=-/etc/faas/sealed.env
 EnvironmentFile=-/etc/faas/compute-db.env
+Environment=FAAS_BUILDERD_CONFIG=/etc/faas/builderd.toml
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

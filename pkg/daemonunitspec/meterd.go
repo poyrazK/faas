@@ -9,7 +9,7 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //
 // Wipe-comments-load-bearing rationale:
 //
-//   - meterd reads DATABASE_URL from /etc/faas/sealed.env
+//   - meterd reads DATABASE_URL from /etc/faas/compute-db.env
 //     (EnvironmentFile=). The DSN points at the local Postgres;
 //     billing writes are durable across reboots because Postgres is
 //     started out of band by ansible (cp-ans role does this), not via
@@ -17,6 +17,11 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //     listener invariant; CLAUDE.md component ownership.)
 //
 // See ADR-078 for the migration that wiped these from the unit body.
+//
+// Issue #585 / ADR-127 — sealed.env is apid-only; meterd loads the
+// billing-provider secrets (FAAS_PADDLE_*, FAAS_BILLING_*, FAAS_MAIL_*
+// when meterd acts as the mail sender) from /etc/faas/secrets/meterd/
+// billing.env (0400 root:root), not from the full sealed.env.
 func UnitMeterd() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description: "onebox-faas meterd — metering and billing",
@@ -33,7 +38,7 @@ func UnitMeterd() daemonunit.Unit {
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
 
-		EnvironmentFile: "/etc/faas/sealed.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/meterd/billing.env",
 
 		NoNewPrivileges:       true,
 		ProtectSystem:         "strict",
