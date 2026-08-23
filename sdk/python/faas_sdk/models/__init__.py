@@ -214,6 +214,16 @@ from .domain_doctor_check import DomainDoctorCheck
 from .domain_doctor_check_name import DomainDoctorCheckName
 from .domain_doctor_check_status import DomainDoctorCheckStatus
 from .domain_doctor_report import DomainDoctorReport
+from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
+from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
+from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
+from .dry_run_app_open_api_response_200 import DryRunAppOpenAPIResponse200
+from .dry_run_app_open_api_response_200_suggestions_item import DryRunAppOpenAPIResponse200SuggestionsItem
+from .dry_run_app_open_api_response_200_suggestions_item_action import DryRunAppOpenAPIResponse200SuggestionsItemAction
+from .dry_run_app_open_api_response_200_suggestions_item_kind import DryRunAppOpenAPIResponse200SuggestionsItemKind
+from .dry_run_app_open_api_response_200_suggestions_item_methods_item import (
+    DryRunAppOpenAPIResponse200SuggestionsItemMethodsItem,
+)
 from .edge_rule_budget_action import EdgeRuleBudgetAction
 from .edge_rule_cache_action import EdgeRuleCacheAction
 from .edge_rule_cache_action_methods_item import EdgeRuleCacheActionMethodsItem
@@ -255,10 +265,13 @@ from .gdpr_audit_export_response_data import GdprAuditExportResponseData
 from .gdpr_audit_export_response_source import GdprAuditExportResponseSource
 from .get_account_slo_window import GetAccountSLOWindow
 from .get_app_metrics_range import GetAppMetricsRange
+from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
+from .get_app_open_api_source import GetAppOpenAPISource
 from .get_app_slo_window import GetAppSLOWindow
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
 from .get_builds_status import GetBuildsStatus
+from .get_deployment_open_api_doc_response_200 import GetDeploymentOpenAPIDocResponse200
 from .get_deployment_stages_response_200 import GetDeploymentStagesResponse200
 from .get_deployment_stages_response_200_current import GetDeploymentStagesResponse200Current
 from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
@@ -266,6 +279,11 @@ from .get_deployment_stages_response_200_history_item_name import GetDeploymentS
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .grace_window_response import GraceWindowResponse
+from .import_app_open_api_body import ImportAppOpenAPIBody
+from .import_app_open_api_body_info import ImportAppOpenAPIBodyInfo
+from .import_app_open_api_body_paths import ImportAppOpenAPIBodyPaths
+from .import_app_open_api_response_200 import ImportAppOpenAPIResponse200
+from .import_app_open_api_response_200_source import ImportAppOpenAPIResponse200Source
 from .install_bind_request import InstallBindRequest
 from .install_bind_response import InstallBindResponse
 from .instance_response import InstanceResponse
@@ -390,6 +408,8 @@ from .raise_overage_cap_request import RaiseOverageCapRequest
 from .rekey_progress import RekeyProgress
 from .rename_app_request import RenameAppRequest
 from .repo_response import RepoResponse
+from .retry_deployment_request import RetryDeploymentRequest
+from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .rollback_request import RollbackRequest
 from .rotate_alert_rule_secret_response import RotateAlertRuleSecretResponse
 from .rotate_app_secret_request import RotateAppSecretRequest
@@ -483,6 +503,10 @@ from .update_app_webhook_request_event_filter_item import UpdateAppWebhookReques
 from .update_app_webhook_request_retry_policy import UpdateAppWebhookRequestRetryPolicy
 from .update_cron_request import UpdateCronRequest
 from .update_deployment_min_instances_body import UpdateDeploymentMinInstancesBody
+from .update_deployment_open_api_doc_body import UpdateDeploymentOpenAPIDocBody
+from .update_deployment_open_api_doc_response_200 import UpdateDeploymentOpenAPIDocResponse200
+from .update_deployment_open_api_doc_response_200_doc import UpdateDeploymentOpenAPIDocResponse200Doc
+from .update_deployment_open_api_doc_response_200_source import UpdateDeploymentOpenAPIDocResponse200Source
 from .update_deployment_request import UpdateDeploymentRequest
 from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
@@ -711,6 +735,14 @@ __all__ = (
     "DomainDoctorCheckName",
     "DomainDoctorCheckStatus",
     "DomainDoctorReport",
+    "DryRunAppOpenAPIBody",
+    "DryRunAppOpenAPIBodyInfo",
+    "DryRunAppOpenAPIBodyPaths",
+    "DryRunAppOpenAPIResponse200",
+    "DryRunAppOpenAPIResponse200SuggestionsItem",
+    "DryRunAppOpenAPIResponse200SuggestionsItemAction",
+    "DryRunAppOpenAPIResponse200SuggestionsItemKind",
+    "DryRunAppOpenAPIResponse200SuggestionsItemMethodsItem",
     "EdgeRuleBudgetAction",
     "EdgeRuleCacheAction",
     "EdgeRuleCacheActionMethodsItem",
@@ -752,10 +784,13 @@ __all__ = (
     "GdprAuditExportResponseSource",
     "GetAccountSLOWindow",
     "GetAppMetricsRange",
+    "GetAppOpenAPIResponse200",
+    "GetAppOpenAPISource",
     "GetAppSLOWindow",
     "GetAppsMetricsRange",
     "GetBuildSbomResponse200",
     "GetBuildsStatus",
+    "GetDeploymentOpenAPIDocResponse200",
     "GetDeploymentStagesResponse200",
     "GetDeploymentStagesResponse200Current",
     "GetDeploymentStagesResponse200HistoryItem",
@@ -763,6 +798,11 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItemStatus",
     "GetOpenAPISpecJSONResponse200",
     "GraceWindowResponse",
+    "ImportAppOpenAPIBody",
+    "ImportAppOpenAPIBodyInfo",
+    "ImportAppOpenAPIBodyPaths",
+    "ImportAppOpenAPIResponse200",
+    "ImportAppOpenAPIResponse200Source",
     "InstallBindRequest",
     "InstallBindResponse",
     "InstanceResponse",
@@ -887,6 +927,8 @@ __all__ = (
     "RekeyProgress",
     "RenameAppRequest",
     "RepoResponse",
+    "RetryDeploymentRequest",
+    "RetryDeploymentRequestFromStage",
     "RollbackRequest",
     "RotateAlertRuleSecretResponse",
     "RotateAppSecretRequest",
@@ -978,6 +1020,10 @@ __all__ = (
     "UpdateAppWebhookRequestRetryPolicy",
     "UpdateCronRequest",
     "UpdateDeploymentMinInstancesBody",
+    "UpdateDeploymentOpenAPIDocBody",
+    "UpdateDeploymentOpenAPIDocResponse200",
+    "UpdateDeploymentOpenAPIDocResponse200Doc",
+    "UpdateDeploymentOpenAPIDocResponse200Source",
     "UpdateDeploymentRequest",
     "UpdateDeploymentTrafficRequest",
     "UpdateEdgeRuleRequest",

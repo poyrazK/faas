@@ -59,6 +59,8 @@ tags:
     description: Deployments & build status.
   - name: openapi_discovery
     description: Captured OpenAPI documents per deployment (ADR-122 / issue #975 item #1).
+  - name: openapi_import
+    description: Imported OpenAPI documents per app + auto-generated merged spec (ADR-126 / issue #975 item #2).
   - name: instances
     description: Read-only instance view.
   - name: domains
@@ -2123,13 +2125,14 @@ paths:
         - name: source
           in: query
           required: false
+          description: "Source mode. `manual_import` (default) returns the persisted customer doc verbatim. `auto` returns the platform-merged spec (imported doc ∪ observed routes ∪ existing edge rules)."
           schema:
             type: string
             enum: [manual_import, auto]
             default: manual_import
       responses:
         '200':
-          description: The OpenAPI document.
+          description: The OpenAPI document (imported or auto-generated).
           headers:
             X-OpenAPI-Doc-Source:
               schema: { type: string }
@@ -2212,9 +2215,9 @@ paths:
         '403':
           description: "code: openapi_import_quota_reached. Plan.OpenAPIImportsPerAccount() cap reached."
         '413':
-          description: "code: openapi_import_too_large. Body exceeds state.OpenAPIImportMaxDocBytes (256 KiB)."
+          description: "code: openapi_import_too_large. Body exceeds state.OpenAPIImportMaxDocBytes (256 KiB) on the import endpoint."
         '422':
-          description: "code: openapi_import_invalid or openapi_import_too_many_endpoints. Doc fails the structural-minimum validator or declares more than state.OpenAPIImportMaxEndpoints (50) endpoints."
+          description: "code: openapi_import_invalid or openapi_import_too_many_endpoints. Doc fails the structural-minimum validator or declares more than state.OpenAPIImportMaxEndpoints (50) endpoints on the import endpoint."
     delete:
       tags: [openapi_import]
       operationId: deleteAppOpenAPI
@@ -2225,7 +2228,7 @@ paths:
         on NotifyAppOpenAPIDocChanged so the auto-gen cache
         flushes.
       responses:
-        '204': { description: Deleted (row gone). }
+        '204': { description: Deleted (row gone from app_openapi_docs). }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /v1/apps/{slug}/openapi/dry-run:
@@ -2283,9 +2286,9 @@ paths:
                         action:  { type: object, additionalProperties: true }
         '400': { description: "code: empty_body." }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '413': { description: "code: openapi_import_too_large." }
+        '413': { description: "code: openapi_import_too_large. Body exceeds state.OpenAPIImportMaxDocBytes (256 KiB) on the dry-run endpoint." }
         '422':
-          description: "code: openapi_import_invalid or openapi_import_too_many_endpoints."
+          description: "code: openapi_import_invalid or openapi_import_too_many_endpoints. Doc fails the structural-minimum validator or declares more than state.OpenAPIImportMaxEndpoints (50) endpoints on the dry-run endpoint."
 
   /v1/apps/{slug}/diff:
     parameters:
