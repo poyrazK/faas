@@ -1,7 +1,7 @@
 package state_test
 
 // Round-trip tests for the app_openapi_docs Store surface
-// (ADR-126 / issue #975 item #2, slot 00382). Exercises the four
+// (ADR-126 / issue #975 item #2, slot 00383). Exercises the four
 // methods — Get / Upsert / Delete / Count — plus the load-bearing
 // IDOR guard: a cross-tenant read returns ErrNotFound, not the
 // row.

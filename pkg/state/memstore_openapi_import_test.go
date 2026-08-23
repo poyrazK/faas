@@ -1,7 +1,7 @@
 package state
 
 // Coverage for the MemStore side of the app_openapi_docs
-// surface (ADR-126 / issue #975 item #2, slot 00382). Mirrors
+// surface (ADR-126 / issue #975 item #2, slot 00383). Mirrors
 // the memstore_endpoint_discovery_test.go precedent from
 // item #1.
 //

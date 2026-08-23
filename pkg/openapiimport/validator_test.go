@@ -127,7 +127,7 @@ func TestValidateImport_MissingPaths(t *testing.T) {
 }
 
 // TestValidateImport_BadVersion pins the closed enum. The
-// SQL CHECK in migration 00382 enforces the same enum on the
+// SQL CHECK in migration 00383 enforces the same enum on the
 // openapi_version column; the validator enforces it upstream
 // so the customer gets a structured error rather than a 23514.
 func TestValidateImport_BadVersion(t *testing.T) {
