@@ -135,7 +135,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-122 / issue #975 item #1: endpoint discovery — Free
 			// is gated to 0/0/0 (same fail-closed posture as consumer keys).
 			// apid GET / PATCH return 402 CodePlanOpenAPIDocsNotAllowed.
-			OpenAPIDocsPerDeployment: 0, OpenAPIDocMaxBytes: 0, OpenAPIDocsPerAccount: 0},
+			OpenAPIDocsPerDeployment: 0, OpenAPIDocMaxBytes: 0, OpenAPIDocsPerAccount: 0, OpenAPIImportsPerAccount: 100},
 		PlanHobby: {Plan: PlanHobby, DeployedApps: 5, MaxConcurrency: 2, RAMMB: 256, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 50, PriceMillicents: 900_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, SecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
 			// Issue #559: Hobby = 5 (smallest paid tier — one Node
 			// event loop comfortably handles 5 concurrent requests).
@@ -272,7 +272,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			ConsumerKeysPerApp: 100, ConsumerKeysPerAccount: 250,
 			// ADR-122 / issue #975 item #1: Hobby is the entry paid
 			// tier — 1/dep, 100/acct, 128 KiB/doc.
-			OpenAPIDocsPerDeployment: 1, OpenAPIDocMaxBytes: 131072, OpenAPIDocsPerAccount: 100},
+			OpenAPIDocsPerDeployment: 1, OpenAPIDocMaxBytes: 131072, OpenAPIDocsPerAccount: 100, OpenAPIImportsPerAccount: 1000},
 		// ADR-031: Pro opt-in for per-app egress allowlist with a 16-CIDR cap.
 		PlanPro: {Plan: PlanPro, DeployedApps: 25, MaxConcurrency: 5, RAMMB: 512, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 250, PriceMillicents: 2_900_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, SecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
 			// Issue #559: Pro = 25 (typical SaaS-tier workload
@@ -402,7 +402,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			ConsumerKeysPerApp: 100, ConsumerKeysPerAccount: 2500,
 			// ADR-122 / issue #975 item #1: Pro keeps 1/dep
 			// (PK constraint), 1000/acct (10× Hobby).
-			OpenAPIDocsPerDeployment: 1, OpenAPIDocMaxBytes: 131072, OpenAPIDocsPerAccount: 1000},
+			OpenAPIDocsPerDeployment: 1, OpenAPIDocMaxBytes: 131072, OpenAPIDocsPerAccount: 1000, OpenAPIImportsPerAccount: 10000},
 		// ADR-031: Scale double-up to 64 CIDR cap (2× Pro, tracks 2×
 		// DeployedApps).
 		PlanScale: {Plan: PlanScale, DeployedApps: 100, MaxConcurrency: 20, RAMMB: 1024, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 1500, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, SecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
@@ -539,7 +539,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-122 / issue #975 item #1: Scale keeps 1/dep,
 			// 10000/acct (10× Pro). Byte cap stays at 128 KiB
 			// (global cap is the binding constraint).
-			OpenAPIDocsPerDeployment: 1, OpenAPIDocMaxBytes: 131072, OpenAPIDocsPerAccount: 10000},
+			OpenAPIDocsPerDeployment: 1, OpenAPIDocMaxBytes: 131072, OpenAPIDocsPerAccount: 10000, OpenAPIImportsPerAccount: 10000},
 	}
 	for _, p := range Plans {
 		got := MustLimitsFor(p)
@@ -2708,6 +2708,51 @@ func TestPlanOpenAPIDocLimits_MonotonicLadder(t *testing.T) {
 			t.Errorf("%s.OpenAPIDocMaxBytes (%d) < %s.OpenAPIDocMaxBytes (%d)",
 				ladder[i], currL.OpenAPIDocMaxBytes,
 				ladder[i-1], prevL.OpenAPIDocMaxBytes)
+		}
+	}
+}
+
+// TestPlanOpenAPIImportsPerAccount pins the per-plan
+// OpenAPIImportsPerAccount ladder (ADR-126 / issue #975
+// item #2). Per-plan: Free 100, Hobby 1000, Pro 10000, Scale
+// 10000. The apid POST /v1/apps/{slug}/openapi handler
+// enforces via Store.CountOpenAPIImportsByAccount; 403 when
+// the cap is reached. The Free 100 ladder step is the
+// "every plan can import (limits are abuse-surface, not
+// tier)" decision — Free is non-zero so even the cheapest
+// tier can import.
+func TestPlanOpenAPIImportsPerAccount(t *testing.T) {
+	cases := []struct {
+		plan Plan
+		want int
+	}{
+		{PlanFree, 100},
+		{PlanHobby, 1000},
+		{PlanPro, 10000},
+		{PlanScale, 10000},
+		{Plan("unknown"), 0},
+	}
+	for _, c := range cases {
+		if got := c.plan.OpenAPIImportsPerAccount(); got != c.want {
+			t.Errorf("%s.OpenAPIImportsPerAccount() = %d, want %d", c.plan, got, c.want)
+		}
+	}
+}
+
+// TestPlanOpenAPIImportsPerAccount_MonotonicLadder pins that
+// the per-plan OpenAPIImportsPerAccount ladder is non-decreasing
+// across the upgrade curve (mirrors
+// TestPlanOpenAPIDocLimits_MonotonicLadder for the import
+// surface).
+func TestPlanOpenAPIImportsPerAccount_MonotonicLadder(t *testing.T) {
+	ladder := []Plan{PlanFree, PlanHobby, PlanPro, PlanScale}
+	for i := 1; i < len(ladder); i++ {
+		prevL, _ := LimitsFor(ladder[i-1])
+		currL, _ := LimitsFor(ladder[i])
+		if currL.OpenAPIImportsPerAccount < prevL.OpenAPIImportsPerAccount {
+			t.Errorf("%s.OpenAPIImportsPerAccount (%d) < %s.OpenAPIImportsPerAccount (%d)",
+				ladder[i], currL.OpenAPIImportsPerAccount,
+				ladder[i-1], prevL.OpenAPIImportsPerAccount)
 		}
 	}
 }

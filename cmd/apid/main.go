@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -759,6 +760,21 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 			}()
 		}
+		// ADR-126 / issue #975 item #2: bridge the two pg_notify
+		// channels that mutate the `?source=auto` cache inputs
+		// (NotifyAppOpenAPIDocChanged + NotifyEdgeRuleChanged)
+		// into SpecCache.InvalidateByApp. Nil cache is tolerated
+		// by the subscriber (it logs and returns nil) so a
+		// misconfigured dev box never spawns a goroutine that
+		// loops forever doing nothing. Mirrors the audit
+		// subscriber pattern just above.
+		if srv.specCache != nil {
+			go func() {
+				if err := runOpenAPIDocSubscriber(ctx, pool, srv.specCache, log); err != nil && ctx.Err() == nil {
+					log.Error("openapi_doc: subscriber exited", "err", err)
+				}
+			}()
+		}
 		// Issue #472 / ADR-058: maintain the on-disk mirror of
 		// app_trusted_signers at /etc/faas/secrets/trusted-publishers
 		// (the dir imaged reads at startup and on every
@@ -1208,6 +1224,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// same-box install doesn't brick the per-route surface just
 	// because the operator never exported the env var.
 	srv.WithGatewaydControlURL(resolveGatewaydControlURL(deps.getenv))
+
+	// ADR-126 / issue #975 item #2: the in-process LRU backing
+	// the `?source=auto` OpenAPI generation. Constructed once
+	// at boot (default cap 256, TTL 5 min — both constants
+	// live in pkg/openapidiff/spec_cache.go). The subscriber
+	// (runOpenAPIDocSubscriber, started in bgBefore above)
+	// flushes per-app on either pg_notify channel.
+	srv.WithSpecCache(openapidiff.NewSpecCache())
 
 	// Status page (spec §12 public surface). The Prometheus URL is
 	// the local box's Prometheus installed by deploy/ansible/roles/

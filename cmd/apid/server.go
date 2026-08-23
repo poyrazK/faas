@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -77,6 +78,16 @@ type server struct {
 	// lives on the cmd/apid wiring site so a single
 	// construction serves every consumer in this binary.
 	eventsPlatform *events.Platform
+	// specCache is the in-process LRU backing the
+	// ?source=auto OpenAPI generation (ADR-126 / issue #975
+	// item #2). The cache is keyed on (app_id, sha(doc),
+	// sha(routes), sha(rules)) and flushed per-app on either
+	// pg_notify channel — NotifyAppOpenAPIDocChanged (new)
+	// and NotifyEdgeRuleChanged (existing). nil is safe —
+	// the handler just bypasses the cache on every read and
+	// never invalidates. Wired via WithSpecCache from
+	// cmd/apid/main.go (production) or kept nil (unit tests).
+	specCache *openapidiff.SpecCache
 	// sessions seals + verifies dashboard cookies. nil falls back to an
 	// ephemeral manager (so the daemon still boots in dev with no
 	// /etc/faas/secrets/session.key) — see cmd/apid/main.go.
@@ -464,6 +475,22 @@ func (s *server) WithDataPlacement(enabled bool) *server {
 // this PR; same-box is the only supported posture today).
 func (s *server) WithGatewaydControlURL(url string) *server {
 	s.gatewaydControlURL = url
+	return s
+}
+
+// WithSpecCache attaches the in-process LRU backing the
+// ?source=auto OpenAPI generation (ADR-126 / issue #975
+// item #2). Production wires a *openapidiff.SpecCache from
+// cmd/apid/main.go via openapidiff.NewSpecCache(); tests
+// typically leave the field nil so the handler bypasses the
+// cache. The subscriber (runOpenAPIDocSubscriber) flushes
+// the cache per-app on either pg_notify channel —
+// NotifyAppOpenAPIDocChanged and NotifyEdgeRuleChanged — so
+// the entry is consistent with the on-disk doc + the
+// platform-enforced rules without an explicit per-request
+// freshness check.
+func (s *server) WithSpecCache(cache *openapidiff.SpecCache) *server {
+	s.specCache = cache
 	return s
 }
 
@@ -1005,6 +1032,21 @@ func (s *server) handler() http.Handler {
 	// read surface). Cross-account isolation is via loadApp at
 	// handlers_diff.go:diffApp.
 	mux.HandleFunc("POST /v1/apps/{slug}/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.diffApp)))
+	// ADR-126 / issue #975 item #2 — OpenAPI Import + Auto-Generation.
+	// Four app-scoped routes keyed on {slug}, distinct from the
+	// deployment-keyed getOpenAPIDoc / patchOpenAPIDoc / openAPIDocDelete
+	// family above (item #1, lines 1025-1027). The GET accepts
+	// ?source=manual_import|auto so the dashboard can fetch either
+	// the customer's uploaded doc verbatim or the platform-merged
+	// auto-gen spec (cache-backed per app). Plan-tier gate is gone
+	// (limits are abuse-surface, not tier — Free can import up to
+	// the per-account row cap). The dry-run POST is read-only so it
+	// rides the read-scope chain with no requireMFA (same posture
+	// as /v1/apps/{slug}/diff just above).
+	mux.HandleFunc("GET /v1/apps/{slug}/openapi", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPI)))
+	mux.HandleFunc("POST /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.postAppOpenAPIImport))))
+	mux.HandleFunc("POST /v1/apps/{slug}/openapi/dry-run", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postAppOpenAPIImportDryRun)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppOpenAPIImport))))
 	mux.HandleFunc("GET /v1/deployments/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeployment))))
 	// Per-deploy grype scan drill-down (issue #464 / ADR-055).
 	// Returns the typed api.ScanResult envelope (status,

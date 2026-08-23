@@ -203,7 +203,7 @@ func TestPgStoreOpenAPIImport_CountByAccount(t *testing.T) {
 	if err := store.UpsertAppOpenAPIDoc(ctx, app1, acct1, []byte(`{"openapi":"3.1.0"}`), 0, "3.1.0"); err != nil {
 		t.Fatalf("Upsert1: %v", err)
 	}
-	if err := store.UpsertAppOpenAPIDoc(ctx, app2, acct2.ID, []byte(`{"openapi":"3.1.0"}`), 0, "3.1.0"); err != nil {
+	if err := store.UpsertAppOpenAPIDoc(ctx, app2.ID, acct2.ID, []byte(`{"openapi":"3.1.0"}`), 0, "3.1.0"); err != nil {
 		t.Fatalf("Upsert2: %v", err)
 	}
 	n1, err := store.CountOpenAPIImportsByAccount(ctx, acct1)

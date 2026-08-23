@@ -659,6 +659,19 @@ type Limits struct {
 	// gives 10× Pro to mirror the consumer_keys 25× scale ceiling
 	// scaled down by 2.5× (OpenAPI docs are larger + rarer).
 	OpenAPIDocsPerAccount int
+	// OpenAPIImportsPerAccount (ADR-126 / issue #975 item #2)
+	// caps how many imported OpenAPI docs one account may own
+	// across all its apps. Per-plan: Free 100, Hobby 1000, Pro
+	// 10000, Scale 10000 (mirrors the OpenAPIDocsPerAccount
+	// ladder so the two surfaces share the same per-account
+	// ceiling shape — the import is overwrite-not-multi-version
+	// per app, so the per-account cap is the load-bearing
+	// defensive cap against throwaway rows). The apid POST
+	// /v1/apps/{slug}/openapi handler enforces via
+	// Store.CountOpenAPIImportsByAccount; 403 when the cap is
+	// reached. Same fail-closed contract on unknown plans
+	// (return 0 → caller treats as quota-exceeded).
+	OpenAPIImportsPerAccount int
 
 	// TenantSurfacesPerAccount caps how many `tenant_surfaces` rows
 	// (ADR-099 / issue #879) a single account may own. The cap
@@ -1272,6 +1285,7 @@ var planLimits = map[Plan]Limits{
 		OpenAPIDocsPerDeployment: 0,
 		OpenAPIDocMaxBytes:       0,
 		OpenAPIDocsPerAccount:    0,
+		OpenAPIImportsPerAccount: 100,
 		// Per-consumer throttle key cap (ADR-104, issue #881 Phase 3).
 		// Free customers can size per-key throttles on a small slice
 		// of their key space; large-cardinality per-key limits
@@ -1571,6 +1585,7 @@ var planLimits = map[Plan]Limits{
 		OpenAPIDocsPerDeployment: 1,
 		OpenAPIDocMaxBytes:       131072,
 		OpenAPIDocsPerAccount:    100,
+		OpenAPIImportsPerAccount: 1000,
 		// Per-consumer throttle key cap (ADR-104, issue #881 Phase 3).
 		ThrottleMaxKeysPerRule: 1000,
 		// Tenant surfaces (ADR-099 / issue #879): Hobby is the
@@ -1863,6 +1878,7 @@ var planLimits = map[Plan]Limits{
 		OpenAPIDocsPerDeployment: 1,
 		OpenAPIDocMaxBytes:       131072,
 		OpenAPIDocsPerAccount:    1000,
+		OpenAPIImportsPerAccount: 10000,
 		// Per-consumer throttle key cap (ADR-104, issue #881 Phase 3).
 		ThrottleMaxKeysPerRule: 5000,
 		// Tenant surfaces (ADR-099 / issue #879): Pro gets 5 surfaces
@@ -2151,6 +2167,7 @@ var planLimits = map[Plan]Limits{
 		OpenAPIDocsPerDeployment: 1,
 		OpenAPIDocMaxBytes:       131072,
 		OpenAPIDocsPerAccount:    10000,
+		OpenAPIImportsPerAccount: 10000,
 		// Per-consumer throttle key cap (ADR-104, issue #881 Phase 3).
 		ThrottleMaxKeysPerRule: 10000,
 		// Tenant surfaces (ADR-099 / issue #879): Scale gets 25
@@ -4250,6 +4267,25 @@ func (p Plan) OpenAPIDocsPerAccount() int {
 		return 0
 	}
 	return l.OpenAPIDocsPerAccount
+}
+
+// OpenAPIImportsPerAccount (ADR-126 / issue #975 item #2)
+// returns the per-account cap on imported OpenAPI docs
+// across all of the account's apps. Per-plan: Free 100, Hobby
+// 1000, Pro 10000, Scale 10000. The apid POST
+// /v1/apps/{slug}/openapi handler enforces via
+// Store.CountOpenAPIImportsByAccount; 403 when the cap is
+// reached. Note: per-app the import is overwrite-not-multi-
+// version (one row per app_id, primary-key shape), so the
+// per-account cap is the load-bearing defensive cap against
+// throwaway rows. Unknown plans fail closed (return 0) —
+// same contract as OpenAPIDocsPerAccount.
+func (p Plan) OpenAPIImportsPerAccount() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.OpenAPIImportsPerAccount
 }
 
 // EvictionPriorityReservedAllowed (issue #475) returns true if the plan

@@ -2092,6 +2092,201 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/openapi:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [openapi_import]
+      operationId: getAppOpenAPI
+      summary: Read the imported (or auto-generated) OpenAPI document for an app.
+      description: |
+        Two source modes (selected via `?source=`):
+
+        - `manual_import` (default): returns the customer's uploaded
+          doc verbatim. Mirrors item #1's /deployments/{dep}/openapi
+          but on the app-keyed `app_openapi_docs` table (ADR-126 D1).
+
+        - `auto`: runs pkg/openapidiff.GenerateFromApp with the
+          imported doc + observed routes (ADR-093 bridge) +
+          existing edge rules; the merged spec is cached for 5 min
+          per (app_id, sha(doc), sha(routes), sha(rules)). Cache
+          headers: X-Faas-Cache: hit|miss, X-OpenAPI-Doc-Source:
+          "auto" | "degraded: routes_unavailable" |
+          "degraded: rules_unavailable" | "empty: no_import_no_rules".
+
+        Limits are abuse-surface, not plan-tier — every plan
+        including Free can import. Per-account row cap is
+        Plan.OpenAPIImportsPerAccount (Free 100, Hobby 1000,
+        Pro 10000, Scale 10000). Plan-tier gate is intentionally
+        absent on this surface (ADR-126 D6).
+      parameters:
+        - name: source
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [manual_import, auto]
+            default: manual_import
+      responses:
+        '200':
+          description: The OpenAPI document.
+          headers:
+            X-OpenAPI-Doc-Source:
+              schema: { type: string }
+              description: "Provenance marker: manual_import, auto, degraded: routes_unavailable, degraded: rules_unavailable, empty: no_import_no_rules."
+            X-OpenAPI-Doc-Version:
+              schema: { type: string }
+              description: "OpenAPI version declared by the imported doc (3.0.x / 3.1.x)."
+            X-OpenAPI-Doc-Byte-Size:
+              schema: { type: integer }
+              description: "Raw byte size of the persisted doc body."
+            X-Faas-Cache:
+              schema: { type: string, enum: [hit, miss] }
+              description: "Cache hit/miss on the `?source=auto` path. Omitted on `?source=manual_import`."
+            X-OpenAPI-Doc-Annotations-Count:
+              schema: { type: integer }
+              description: "Count of `x-faas-edge-rules` annotations on the auto-gen spec (zero on manual_import)."
+          content:
+            application/json:
+              schema:
+                type: object
+                description: "The OpenAPI document body. manual_import returns the persisted doc verbatim; auto returns the merged spec (imported doc ∪ observed routes ∪ `x-faas-edge-rules` annotations)."
+        '400':
+          description: "code: invalid_source. `source` query value is not in the enum."
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: "code: not_found. No imported doc exists for this app (manual_import mode), or the app slug is cross-tenant."
+        '405':
+          description: "code: dry_run_requires_post. `?source=dry_run` is GET-only 405; dry-run is POST-only."
+    post:
+      tags: [openapi_import]
+      operationId: importAppOpenAPI
+      summary: Import an OpenAPI document for an app.
+      description: |
+        Customer-facing import (ADR-126 / issue #975 item #2).
+        Reads the body, validates via
+        pkg/openapiimport.ValidateImport (structural-minimum
+        OpenAPI 3.0 / 3.1 check), enforces size + endpoint
+        caps, persists via UpsertAppOpenAPIDoc, emits
+        app.openapi_import.replaced audit + pg_notify on
+        NotifyAppOpenAPIDocChanged. The auto-gen cache
+        (NotifyAppOpenAPIDocChanged + NotifyEdgeRuleChanged
+        fan-in) is flushed per-app so the next `?source=auto`
+        read recomputes.
+
+        Limits (abuse-surface, not plan-tier): body cap
+        state.OpenAPIImportMaxDocBytes (256 KiB), endpoint
+        cap state.OpenAPIImportMaxEndpoints (50). Per-account
+        row cap is Plan.OpenAPIImportsPerAccount.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: "OpenAPI 3.0/3.1 document. The validator only requires openapi, info, paths to be present + object-shaped; everything else is passthrough."
+              required: [openapi, info, paths]
+              properties:
+                openapi: { type: string, description: "OpenAPI version (3.0.x / 3.1.x)." }
+                info:    { type: object }
+                paths:   { type: object }
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [app_id, source, openapi_version, endpoint_count, byte_size, captured_at, updated_at]
+                properties:
+                  app_id:          { type: string, format: uuid }
+                  source:          { type: string, enum: [manual_import] }
+                  openapi_version: { type: string }
+                  endpoint_count:  { type: integer, minimum: 0, maximum: 50 }
+                  byte_size:       { type: integer, minimum: 1, maximum: 262144 }
+                  captured_at:     { type: string, format: date-time }
+                  updated_at:      { type: string, format: date-time }
+        '400':
+          description: "code: empty_body. Body is zero bytes."
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "code: openapi_import_quota_reached. Plan.OpenAPIImportsPerAccount() cap reached."
+        '413':
+          description: "code: openapi_import_too_large. Body exceeds state.OpenAPIImportMaxDocBytes (256 KiB)."
+        '422':
+          description: "code: openapi_import_invalid or openapi_import_too_many_endpoints. Doc fails the structural-minimum validator or declares more than state.OpenAPIImportMaxEndpoints (50) endpoints."
+    delete:
+      tags: [openapi_import]
+      operationId: deleteAppOpenAPI
+      summary: Delete the imported OpenAPI document for an app.
+      description: |
+        Idempotent: returns 204 even if no row existed.
+        Emits app.openapi_import.deleted audit + pg_notify
+        on NotifyAppOpenAPIDocChanged so the auto-gen cache
+        flushes.
+      responses:
+        '204': { description: Deleted (row gone). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/apps/{slug}/openapi/dry-run:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [openapi_import]
+      operationId: dryRunAppOpenAPI
+      summary: Read-only preview of edge-rule suggestions for an imported doc.
+      description: |
+        POST-only (the body IS the import body). Same auth chain
+        as the GET surface minus the MFA requirement (read-only).
+        Validates the doc and walks paths, emitting one
+        EdgeRuleSuggestion per (path, method) pair NOT already
+        covered by an existing validate edge rule. Empty array
+        when the doc is fully covered.
+
+        Customer pastes each suggestion's Path + Methods + Kind
+        + Action back into the existing create-edge-rule endpoint
+        (item #2 D3). Does NOT persist; does NOT emit pg_notify.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [openapi, info, paths]
+              properties:
+                openapi: { type: string }
+                info:    { type: object }
+                paths:   { type: object }
+      responses:
+        '200':
+          description: Dry-run suggestions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [app_id, openapi_version, endpoint_count, suggestions]
+                properties:
+                  app_id:          { type: string, format: uuid }
+                  openapi_version: { type: string }
+                  endpoint_count:  { type: integer }
+                  suggestions:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, methods, kind, action]
+                      properties:
+                        path:    { type: string }
+                        methods:
+                          type: array
+                          items: { type: string, enum: [get, post, put, patch, delete] }
+                        kind:    { type: string, enum: [validate] }
+                        action:  { type: object, additionalProperties: true }
+        '400': { description: "code: empty_body." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { description: "code: openapi_import_too_large." }
+        '422':
+          description: "code: openapi_import_invalid or openapi_import_too_many_endpoints."
+
   /v1/apps/{slug}/diff:
     parameters:
       - $ref: '#/components/parameters/Slug'

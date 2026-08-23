@@ -334,6 +334,16 @@ const (
 	//   against notify loss. Consumed by cmd/gatewayd-internal/
 	//   backend.go (PR 8).
 	NotifyEdgeRuleChanged = "edge_rule_changed"
+	// NotifyAppOpenAPIDocChanged (ADR-126 / issue #975 item #2)
+	// {"app_id":uuid, "op":"created|replaced|deleted"}.
+	//   apid is the only listener (cmd/apid/openapi_doc_subscriber.go
+	//   wires it alongside NotifyEdgeRuleChanged); the payload
+	//   flushes the per-app cache entry in pkg/openapidiff.SpecCache.
+	//   PR-A scope: this signal is one of two triggers for the
+	//   auto-gen `?source=auto` cache. The other is
+	//   NotifyEdgeRuleChanged (existing). The payload is
+	//   informational — the listener re-reads the row.
+	NotifyAppOpenAPIDocChanged = "app_openapi_doc_changed"
 	// ADR-091 amendment (PR-A #??? / apps.maintenance_mode):
 	// the existing NotifyAppChanged channel (declared in the const
 	// block above; payload contract at line 73) is reused for
