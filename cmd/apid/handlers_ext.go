@@ -1644,12 +1644,12 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	// "snapshot GC'd", wrongly blocking the rollback on stale scenarios
 	// where cold-boot is the intended fallback.
 
-	if err := s.store.MarkDeploymentSuperseded(r.Context(), current.ID); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not supersede current"))
-		return
-	}
-	if err := s.store.MarkDeploymentLive(r.Context(), target.ID); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not activate rollback target"))
+	if err := s.store.RollbackDeploymentToTx(r.Context(), app.ID, current.ID, target.ID); err != nil {
+		// ADR-121 PR-B: RollbackDeploymentToTx wraps supersede +
+		// live + snapshot capture in one tx; a failure here
+		// leaves the database in the pre-call state so the app
+		// never has zero live deployments (§6.2-1 invariant).
+		api.WriteProblem(w, api.ErrCapacity(fmt.Sprintf("rollback %s → %s: %v", current.ID, target.ID, err)))
 		return
 	}
 	// Re-read target so the response carries post-promotion status=Live,

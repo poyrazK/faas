@@ -4250,6 +4250,24 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	return nil
 }
 
+// edgeRuleToCreateEdgeRuleRequest converts the DB row shape into
+// the wire shape [openapidiff.GenerateFromEdgeRules] expects.
+// Single canonical converter for both stores (pgstore.go and
+// memstore.go) so the SHA-256 parity across the in-memory
+// mirror and the Postgres row is enforced by the compiler, not
+// by copy-paste. Only the fields the generator reads are
+// populated; the rest are zero so a future regression that
+// adds a new read fails loudly (zero-valued fields make the
+// diff output obvious).
+func edgeRuleToCreateEdgeRuleRequest(r EdgeRule) api.CreateEdgeRuleRequest {
+	return api.CreateEdgeRuleRequest{
+		Kind:         string(r.Kind),
+		MatchHost:    r.MatchHost,
+		MatchPath:    r.MatchPath,
+		MatchMethods: r.MatchMethods,
+	}
+}
+
 // captureDeploymentOpenAPISnapshotLocked builds the [OpenAPISnapshot]
 // for a deployment that has just transitioned to status='live'.
 // Caller must hold m.mu. Mirrors pgstore.captureDeploymentOpenAPISnapshotTx:
@@ -4279,12 +4297,7 @@ func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(d Deployment) (OpenAPI
 	})
 	pending := make([]api.CreateEdgeRuleRequest, 0, len(rules))
 	for _, r := range rules {
-		pending = append(pending, api.CreateEdgeRuleRequest{
-			Kind:         string(r.Kind),
-			MatchHost:    r.MatchHost,
-			MatchPath:    r.MatchPath,
-			MatchMethods: r.MatchMethods,
-		})
+		pending = append(pending, edgeRuleToCreateEdgeRuleRequest(r))
 	}
 
 	spec, err := openapidiff.GenerateFromEdgeRules(nil, nil, pending)
@@ -4736,6 +4749,18 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	cur.Status = DeploySuperseded
 	target := m.deployments[targetID]
 	target.Status = DeployLive
+	// ADR-121 PR-B: capture the projected OpenAPI snapshot for
+	// the just-promoted target. Without this, the auto-rolled-
+	// back deployment flips to status='live' but its snapshot
+	// row is never written, and PR-C's prod-promotion gate
+	// loses its baseline. Caller holds m.mu; the helper
+	// re-enters the same map under the same lock so the
+	// capture commits atomically with the status flip.
+	snap, err := m.captureDeploymentOpenAPISnapshotLocked(target)
+	if err != nil {
+		return "", fmt.Errorf("memstore: auto-rollback capture snapshot for %s: %w", targetID, err)
+	}
+	m.openAPISnapshots[targetID] = snap
 	now := time.Now().UTC()
 	if cur.LastAutoRollbackAt == nil {
 		cur.LastAutoRollbackAt = &now
@@ -4746,6 +4771,37 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	m.deployments[currentDeploymentID] = cur
 	m.deployments[targetID] = target
 	return targetID, nil
+}
+
+// RollbackDeploymentToTx mirrors pgstore.RollbackDeploymentToTx:
+// operator-driven rollback runs the supersede + live flip +
+// OpenAPI snapshot capture under the single m.mu lock so a
+// projection failure leaves the pre-call state intact (no half-
+// rolled-back app). See pgstore.go for the rationale.
+func (m *MemStore) RollbackDeploymentToTx(_ context.Context, appID, currentDeploymentID, targetDeploymentID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cur, ok := m.deployments[currentDeploymentID]
+	if !ok || cur.AppID != appID || cur.Status != DeployLive {
+		return ErrNotFound
+	}
+	target, ok := m.deployments[targetDeploymentID]
+	if !ok || target.AppID != appID || target.Status != DeploySuperseded {
+		return ErrNotFound
+	}
+
+	cur.Status = DeploySuperseded
+	target.Status = DeployLive
+	target.Error = ""
+	snap, err := m.captureDeploymentOpenAPISnapshotLocked(target)
+	if err != nil {
+		return fmt.Errorf("memstore: rollback capture snapshot for %s: %w", targetDeploymentID, err)
+	}
+	m.openAPISnapshots[targetDeploymentID] = snap
+	m.deployments[currentDeploymentID] = cur
+	m.deployments[targetDeploymentID] = target
+	return nil
 }
 
 func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, bytes int64) error {

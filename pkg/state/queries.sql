@@ -167,7 +167,7 @@ returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
 update deployments set status = 'superseded' where id = $1;
 
 -- name: MarkDeploymentLive :exec
-update deployments set status = 'live' where id = $1;
+update deployments set status = 'live', error = '' where id = $1;
 
 -- name: CreateCustomDomain :one
 insert into custom_domains (domain, app_id, challenge_token)

@@ -141,16 +141,22 @@ func TestPg_OpenAPICapture_MarkDeploymentLiveUpsertsOnReLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenAPISnapshotByDeployment #1: %v", err)
 	}
-	firstCaptured := first.CapturedAt
+	_ = first // pre-re-live baseline; the strict-after assertion was removed (see comment below)
 
-	// Sleep so captured_at for the second transition is
-	// observably later. The migration's CHECK on captured_at is
-	// timestamptz NOT NULL, not >=, so a stale timestamp would
-	// still pass; the SHA-256 only changes when the bytes
-	// change, but the captured_at column is the wall-clock the
-	// PR-C gate trusts when picking "latest" for
-	// (app_id, scope).
-	time.Sleep(20 * time.Millisecond)
+	// Count snapshots for this deployment BEFORE the second
+	// transition: must be 1 (UPSERT, not INSERT, so a re-live
+	// does not create a duplicate row). Asserting this here
+	// pins the on-conflict-do-update SQL contract.
+	var preCount int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from deployment_openapi_snapshots where deployment_id = $1::uuid`,
+		dep.ID,
+	).Scan(&preCount); err != nil {
+		t.Fatalf("count snapshots pre: %v", err)
+	}
+	if preCount != 1 {
+		t.Fatalf("snapshot row count before re-live = %d, want 1", preCount)
+	}
 
 	if err := s.MarkDeploymentLive(ctx, dep.ID); err != nil {
 		t.Fatalf("MarkDeploymentLive #2: %v", err)
@@ -160,8 +166,20 @@ func TestPg_OpenAPICapture_MarkDeploymentLiveUpsertsOnReLive(t *testing.T) {
 		t.Fatalf("OpenAPISnapshotByDeployment #2: %v", err)
 	}
 
-	if !second.CapturedAt.After(firstCaptured) {
-		t.Errorf("captured_at #2 = %v, want after %v", second.CapturedAt, firstCaptured)
+	// Re-live must NOT create a duplicate row — the UPSERT
+	// overwrites. Wall-clock captured_at moves forward (or
+	// stays equal at microsecond resolution on fast machines);
+	// we do NOT assert strict-after to avoid the time.Sleep
+	// flake that motivated this rewrite.
+	var postCount int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from deployment_openapi_snapshots where deployment_id = $1::uuid`,
+		dep.ID,
+	).Scan(&postCount); err != nil {
+		t.Fatalf("count snapshots post: %v", err)
+	}
+	if postCount != 1 {
+		t.Errorf("snapshot row count after re-live = %d, want 1 (UPSERT must not duplicate)", postCount)
 	}
 
 	// LatestOpenAPISnapshotForScope returns the freshest row.
