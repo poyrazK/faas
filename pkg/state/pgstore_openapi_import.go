@@ -27,7 +27,7 @@ import (
 // in the same commit, so a SELECT-write drift cannot silently
 // swallow a column.
 //
-// Ordering matches migrations/00378_openapi_import.sql (column
+// Ordering matches migrations/00382_openapi_import.sql (column
 // list 1:1).
 const appOpenAPIDocSelectCols = `app_id, account_id, doc,
        doc_sha256, byte_size, endpoint_count, source,
@@ -98,7 +98,7 @@ func (s *PgStore) GetAppOpenAPIDoc(ctx context.Context, appID, accountID string)
 //
 // The app row must exist (defence-in-depth pre-check) so a misuse
 // at the call site fails with ErrNotFound BEFORE Postgres raises
-// 23503 on the FK. The FK CASCADE in migration 00378 makes this
+// 23503 on the FK. The FK CASCADE in migration 00382 makes this
 // unreachable in practice but the explicit check keeps the error
 // surface predictable.
 //

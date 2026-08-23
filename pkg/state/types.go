@@ -4740,7 +4740,7 @@ const (
 // (app_id, account_id) — one row per app, not per deployment.
 //
 // OpenAPIVersion is the closed enum value '3.0.0'..'3.1.1' (matches
-// the migrations/00378 CHECK constraint). Source is the closed
+// the migrations/00382 CHECK constraint). Source is the closed
 // enum value 'manual_import' (item #2 does not admit cold-boot
 // captures; cold-boot goes to deployment_openapi_docs from item #1).
 //
@@ -4761,7 +4761,7 @@ type AppOpenAPIDocMeta struct {
 	UpdatedAt      time.Time
 }
 
-// OpenAPIImportSource values mirror the migrations/00378 CHECK
+// OpenAPIImportSource values mirror the migrations/00382 CHECK
 // constraint. Inline-declared (same pattern as OpenAPIDocSource
 // above) so the pgstore and the apid handler agree on the enum
 // without a string-literal drift.
@@ -4770,7 +4770,7 @@ const (
 )
 
 // OpenAPIImportMaxDocBytes is the hard cap on the imported body,
-// applied at the apid layer (the SQL CHECK in migration 00378
+// applied at the apid layer (the SQL CHECK in migration 00382
 // applies the same constant for defense-in-depth). The
 // per-plan cap is layered on top via
 // api.Plan.OpenAPIImportMaxDocBytes() (limits.go). The constant
@@ -4786,13 +4786,13 @@ const OpenAPIImportMaxDocBytes = 256 * 1024
 
 // OpenAPIImportMaxEndpoints is the hard cap on the imported
 // doc's paths.* operation count, applied at the apid layer (the
-// SQL CHECK in migration 00378 applies the same constant for
+// SQL CHECK in migration 00382 applies the same constant for
 // defense-in-depth). 50 operations is generous for a single-app
 // surface.
 const OpenAPIImportMaxEndpoints = 50
 
 // ValidOpenAPIVersions is the closed enum the SQL CHECK admits.
-// Mirrors migrations/00378_openapi_import.sql. The validator at
+// Mirrors migrations/00382_openapi_import.sql. The validator at
 // pkg/openapiimport/validator.go compiles the imported doc
 // against the OpenAPI 3.1 meta-schema regardless of the declared
 // version — 3.0.x docs that don't use 3.0-only features pass;

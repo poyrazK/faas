@@ -183,7 +183,7 @@ type MemStore struct {
 	// (the same defence-in-depth as consumerKeys below).
 	openAPIDocs map[string]openAPIDocRow
 	// openAPIImports mirrors the per-app app_openapi_docs table
-	// from migrations/00378 (issue #975 item #2 / ADR-126).
+	// from migrations/00382 (issue #975 item #2 / ADR-126).
 	// Keyed by app_id (one row per app, last-write-wins).
 	openAPIImports map[string]appOpenAPIImportRow
 	// oidcTrustPolicies is keyed by (accountID, issuerURL) — the
@@ -4759,7 +4759,7 @@ func (m *MemStore) CountOpenAPIDocsByAccount(_ context.Context, accountID string
 
 // ---------------------------------------------------------------------------
 // appOpenAPIImportRow is the in-memory row mirror of app_openapi_docs
-// (migrations/00378). The struct is unexported; the public surface
+// (migrations/00382). The struct is unexported; the public surface
 // is the four methods below — handler tests reach them through the
 // Store interface.
 // ---------------------------------------------------------------------------
@@ -4803,7 +4803,7 @@ func (m *MemStore) GetAppOpenAPIDoc(_ context.Context, appID, accountID string) 
 }
 
 // UpsertAppOpenAPIDoc mirrors pgstore. The app row must exist (the
-// FK CASCADE in migration 00378 makes this unreachable in
+// FK CASCADE in migration 00382 makes this unreachable in
 // practice, but the explicit check lets a misuse at the call site
 // fail closed). Idempotent: a re-delivered import overwrites the
 // same row, not creates a second. openapiVersion is one of
