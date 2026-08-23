@@ -70,3 +70,10 @@
     owner: root
     group: root
     mode: "0644"
+
+# Issue #585 / ADR-127 — per-daemon secret file perm-asserts. The
+# shared block covers ALL new per-daemon secret files (githubd
+# owns githubd.env + app.pem; the rest are checked here as defense
+# in depth). Each assert is a no-op when the file is absent.
+- name: githubd_service — sealed.env split perm-asserts (issue #585 / ADR-127)
+  ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml

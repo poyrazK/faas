@@ -18,6 +18,18 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //     ReadWritePaths=/run/faas.
 //
 // See ADR-078 for the migration that wiped this from the unit body.
+//
+// Issue #585 / ADR-127 — sealed.env is apid-only. schedd keeps compute-db.env
+// (DATABASE_URL) + loads the internal-svc sealed blob via a per-daemon
+// EnvironmentFile=/etc/faas/secrets/schedd/schedd.env (0400 root:root);
+// the file holds `FAAS_INTERNAL_SVC_KEY_SEALED_BLOB=<base64-of-age-ciphertext>`,
+// a content-shaped env var that the loader at cmd/schedd/internal_svc_minter.go:127
+// expects via os.Getenv (NOT a path). The LoadCredential+%d/ pattern is for
+// PATH-shaped env vars only — using it for content would set the env var
+// to a tmpfs path string and break the unseal call. FAAS_NODE_NAME +
+// FAAS_GATEWAY_SYNTH_TARGET are operator-set via the ansible 99-faas-node-name.conf
+// drop-in (role-specific; not in this unit) so the same daemon binary
+// ships across fsn-1 / fsn-2.
 func UnitSchedd() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description: "onebox-faas schedd — scheduler + lifecycle owner",
@@ -45,7 +57,13 @@ func UnitSchedd() daemonunit.Unit {
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
 
-		EnvironmentFile: "/etc/faas/sealed.env",
+		// Issue #585 / ADR-127: sealed.env dropped; per-daemon
+		// schedd.env (FAAS_INTERNAL_SVC_KEY_SEALED_BLOB=<base64>)
+		// loaded alongside compute-db.env. The optional '-' prefix
+		// on both means a missing file at boot is non-fatal — the
+		// loader then falls back to the plaintext-PEM path
+		// (loadOrGenerateSchedKey).
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/schedd/schedd.env",
 		Environment: []daemonunit.KV{
 			{Key: "TMPDIR", Value: "/var/lib/faas/oci-tmp"},
 		},

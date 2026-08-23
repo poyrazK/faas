@@ -209,3 +209,11 @@
     or faas_node_key_stat.stat.mode != "0400"
     or faas_node_key_stat.stat.pw_name != "root"
     or faas_node_key_stat.stat.gr_name != "root"
+
+# Issue #585 / ADR-127 — per-daemon secret file perm-asserts. The
+# shared block covers ALL new per-daemon secret files (vmmd owns
+# host.age.pub; the rest are checked here as defense in depth).
+# Each assert is a no-op when the file is absent (operator-
+# provisioned via `gregalectl secrets init`).
+- name: vmmd_service — sealed.env split perm-asserts (issue #585 / ADR-127)
+  ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml

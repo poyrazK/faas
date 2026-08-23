@@ -167,6 +167,15 @@
     group: root
     mode: "0644"
 
+# Issue #585 / ADR-127 — per-daemon secret file perm-asserts. The
+# shared block checks ALL new per-daemon secret files (schedd +
+# meterd belong to this role; the others are checked here too as
+# defense-in-depth so a loose perm on a sibling role's file also
+# fails this role's run). Each assert is a no-op when the file is
+# absent (operator-provisioned via `gregalectl secrets init`).
+- name: control_plane_service — sealed.env split perm-asserts (issue #585 / ADR-127)
+  ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml
+
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
 # through to the three control-plane daemons (apid, schedd,
 # meterd) via FAAS_<DAEMON>_ROLE. One drop-in per daemon — the

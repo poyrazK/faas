@@ -14,12 +14,13 @@ RestartSec=2s
 Slice=faas-cp.slice
 MemoryMax=4G
 CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner cap_fsetid cap_kill cap_setgid cap_setuid cap_setpcap cap_net_bind_service cap_sys_chroot
-EnvironmentFile=-/etc/faas/sealed.env
 EnvironmentFile=-/etc/faas/compute-db.env
 Environment=TMPDIR=/srv/fc/base
 Environment=FAAS_BASE_STAGING_ROOT=/dev/shm/faas-base-staging
 Environment=FAAS_BASE_EXTRACT_ROOT=/srv/fc/base-staging
 Environment=FAAS_BASE_TMP_ROOT=/srv/fc/base
+Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_host_age_identity
+LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

@@ -29,13 +29,10 @@ MemoryMax=512M
 # the resource cap and the sandbox. The /srv/fc/builder dir is the
 # staging root for the build artifact; ReadWritePaths= below
 # whitelists exactly the paths the daemon writes to.
-# FAAS_BUILDERD_CONFIG set via EnvironmentFile=/etc/faas/sealed.env;
-# FAAS_BUILDERD_ROLE set via the 99-faas-role.conf drop-in (Mega-PR-C).
-# Sealed env is the production source for optional overrides; the TOML
-# config remains sufficient for an image-seeded compute node. A missing
-# sealed file must not turn the role-correct builder daemon into a systemd
-# 203/resources loop during first boot.
-EnvironmentFile=-/etc/faas/sealed.env
+# FAAS_BUILDERD_CONFIG set via the 99-faas-role.conf drop-in (Mega-PR-C);
+# sealed.env is no longer read (issue #585 / ADR-127 — apid-only).
+# compute-db.env is kept for the optional DATABASE_URL the TOML config
+# references on OCI-backed storage backends.
 EnvironmentFile=-/etc/faas/compute-db.env
 
 NoNewPrivileges=yes

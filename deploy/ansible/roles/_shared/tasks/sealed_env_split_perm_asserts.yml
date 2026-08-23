@@ -1,0 +1,126 @@
+# sealed_env_split_perm_asserts — issue #585 / ADR-127.
+#
+# After sealed.env was split into per-daemon files (apid-only excepted),
+# each new per-daemon SECRET file MUST be 0400 root:root if present on
+# the box; each new per-daemon PUBLIC file (currently just host.age.pub)
+# MUST be 0444 root:root. The previous tripwire was implicit (sealed.env
+# itself was 0400 root:root and the whole env-block was atomic); the
+# split introduces N independent files that can drift independently.
+# This task block enforces the load-bearing perms contract on each
+# one — split into PRIVATE (0400) and PUBLIC (0444) buckets because
+# the perms requirements differ and a single bucket with an assertion
+# can't express the distinction (writeable keys are public; private
+# material is single-consumer).
+#
+# Pattern mirrors control_plane_service's host.age.previous +
+# archive-creds.json tripwires (deploy/ansible/roles/control_plane_
+# service/tasks/main.yml:323-334, 349-364). The control_plane_service
+# role ships the schedd + meterd daemons so it includes the full
+# block; the per-daemon roles (githubd_service, gatewayd_internal_
+# service, vmmd_service, postgres_backup) include only the rows that
+# belong to their daemon.
+#
+# Pre-existing files are NOT covered here (each has its own role-
+# local tripwire):
+#   - /etc/faas/secrets/host.age (control_plane_service:292-307)
+#   - /etc/faas/secrets/host.age.previous (control_plane_service:313-334)
+#   - /etc/faas/secrets/session.key (control_plane_service:261-275)
+#   - /etc/faas/secrets/storage-box/{rclone.conf,box-age-key,archive-creds.json}
+#     (postgres_backup:202-225)
+#
+# 0400 root:root matches `allowedSecretPerm` in
+# cmd/gatewayd-internal/secrets.go:44-50 (which accepts 0400/0440/
+# 0600/0640). 0444 root:root matches the host.age.pub contract
+# documented at pkg/secretbox/hostkey.go:171-186 (mode 0444 — public
+# by design; WriteRecipientFile creates the file at 0o444). Widening
+# the private bucket (e.g. to 0440 root:faas for shared cross-daemon
+# reads) would require a separate per-file perm discussion in a
+# follow-on ADR.
+#
+# This block is INCLUDEd from each daemon-bearing role via
+# `ansible.builtin.include_tasks`. Idempotent — when the file is
+# absent the assert is skipped (the tripwire fires on *present +
+# loose*; the file-not-present case is operator-provisioned via
+# `gregalectl secrets init` per the Mega-PR-C cutover).
+
+---
+# PRIVATE bucket — 0400 root:root. Loaded via EnvironmentFile= per-
+# daemon or LoadCredential=%d/path for content-shaped secret material.
+- name: sealed_env_split_perm_asserts — stat PRIVATE per-daemon secret files (issue #585 / ADR-127)
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop:
+    - {name: schedd_env,                        path: /etc/faas/secrets/schedd/schedd.env}
+    - {name: meterd_billing_env,                path: /etc/faas/secrets/meterd/billing.env}
+    - {name: githubd_env,                       path: /etc/faas/secrets/githubd/githubd.env}
+    - {name: githubd_app_pem,                   path: /etc/faas/secrets/githubd/app.pem}
+    - {name: gatewayd_internal_env,             path: /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env}
+    - {name: pg_basebackup_push_storage_user,   path: /etc/faas/secrets/pg-basebackup-push/storage-box.user}
+    - {name: pg_basebackup_push_storage_host,   path: /etc/faas/secrets/pg-basebackup-push/storage-box.host}
+  loop_control:
+    label: "{{ item.name }}"
+  register: faas_sealed_env_split_private_stat
+
+- name: sealed_env_split_perm_asserts — assert 0400 root:root on PRIVATE per-daemon secret files
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.mode == "0400"
+      - item.stat.pw_name == "root"
+      - item.stat.gr_name == "root"
+    fail_msg: >-
+      {{ item.item.path }} present with loose perms
+      ({{ item.stat.mode | default('?') }}
+      {{ item.stat.pw_name | default('?') }}:{{ item.stat.gr_name | default('?') }}).
+      PRIVATE per-daemon secret file MUST be 0400 root:root (spec §11 line 1245,
+      allowedSecretPerm at cmd/gatewayd-internal/secrets.go:44-50).
+      Issue #585 / ADR-127 split sealed.env into per-daemon files so
+      a loose perm on one of them defeats the split. Refusing.
+  loop: "{{ faas_sealed_env_split_private_stat.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+  when:
+    - item.stat.exists
+
+# PUBLIC bucket — 0444 root:root. Currently a single file:
+# host.age.pub (the X25519 public half of the host age identity).
+# Mode 0444 matches pkg/secretbox/hostkey.go:171-186 + the
+# WriteRecipientFile writer at line 182 (os.WriteFile(..., 0o444)).
+# A PUBLIC file at 0400 would either be a tampered file OR a wrong
+# bootstrap — both block all MFA/sealed-envelope traffic because
+# apid refuses to start with the wrong perms. We assert 0444 so the
+# ansible role catches the wrong-mode case before apid's startup
+# tripwire does (with a friendly message instead of an opaque
+# boot-time failure).
+- name: sealed_env_split_perm_asserts — stat PUBLIC per-daemon files (issue #585 / ADR-127)
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop:
+    - {name: host_age_pub, path: /etc/faas/secrets/host.age.pub}
+  loop_control:
+    label: "{{ item.name }}"
+  register: faas_sealed_env_split_public_stat
+
+- name: sealed_env_split_perm_asserts — assert 0444 root:root on PUBLIC per-daemon files
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.mode == "0444"
+      - item.stat.pw_name == "root"
+      - item.stat.gr_name == "root"
+    fail_msg: >-
+      {{ item.item.path }} present with wrong public-mode perms
+      ({{ item.stat.mode | default('?') }}
+      {{ item.stat.pw_name | default('?') }}:{{ item.stat.gr_name | default('?') }}).
+      PUBLIC per-daemon file MUST be 0444 root:root
+      (pkg/secretbox/hostkey.go:171-186 + WriteRecipientFile 0o444).
+      host.age.pub is the X25519 public half — it is intentionally
+      world-readable but NEVER world-writable (a writable public key
+      is the canonical signal of a tampered PKI; an attacker who
+      can substitute their own recipient silently harvests sealed
+      ciphertexts). Refusing.
+  loop: "{{ faas_sealed_env_split_public_stat.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+  when:
+    - item.stat.exists

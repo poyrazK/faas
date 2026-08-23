@@ -16,9 +16,9 @@ RestartSec=2s
 Slice=faas-cp.slice
 Delegate=yes
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-EnvironmentFile=-/etc/faas/sealed.env
 EnvironmentFile=-/etc/faas/compute-db.env
 Environment=TMPDIR=/srv/fc/base
+Environment=FAAS_HOST_AGE_RECIPIENT_PATH=/etc/faas/secrets/host.age.pub
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

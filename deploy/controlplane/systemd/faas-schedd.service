@@ -14,7 +14,8 @@ Restart=on-failure
 RestartSec=2s
 Slice=faas-cp.slice
 MemoryMax=256M
-EnvironmentFile=/etc/faas/sealed.env
+EnvironmentFile=-/etc/faas/compute-db.env
+EnvironmentFile=-/etc/faas/secrets/schedd/schedd.env
 Environment=TMPDIR=/var/lib/faas/oci-tmp
 NoNewPrivileges=yes
 ProtectSystem=strict

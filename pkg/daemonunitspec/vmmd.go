@@ -24,6 +24,13 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //     TCP port if MetricsAddr is set in TOML.
 //
 // See ADR-078 for the migration that wiped these from the unit body.
+//
+// Issue #585 / ADR-127 — sealed.env is apid-only; vmmd keeps compute-db.env
+// (DATABASE_URL) but no longer inherits the full sealed.env. The host.age
+// recipient path (PUBLIC half, mode 0444) is set as a literal Environment=
+// entry — vmmd only ever opens it read-only for envelope sealing on the
+// apid path (which vmmd does not do directly; apid does), so the env var
+// is informational for vmmd.
 func UnitVmmd() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas vmmd — microVM supervisor (the only root component, spec §4.4)",
@@ -58,9 +65,14 @@ func UnitVmmd() daemonunit.Unit {
 
 		Slice: "faas-cp.slice",
 
-		EnvironmentFile: "-/etc/faas/sealed.env -/etc/faas/compute-db.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env",
 		Environment: []daemonunit.KV{
 			{Key: "TMPDIR", Value: "/srv/fc/base"},
+			// Public half of the host X25519 age key — read by vmmd's
+			// seal path (which does NOT exist in vmmd; this env var is
+			// retained so future age-sealed payloads don't require a
+			// restart with a fresh sealed.env — see ADR-057).
+			{Key: "FAAS_HOST_AGE_RECIPIENT_PATH", Value: "/etc/faas/secrets/host.age.pub"},
 		},
 
 		AmbientCapabilities: []string{"CAP_NET_BIND_SERVICE"},

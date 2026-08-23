@@ -229,3 +229,11 @@
   loop_control:
     label: "{{ item.item.name }}"
   when: item.stat.exists
+
+# Issue #585 / ADR-127 — per-daemon secret file perm-asserts. The
+# shared block covers ALL new per-daemon secret files (pg-basebackup-
+# push owns storage-box.user + storage-box.host; the rest are checked
+# here as defense in depth). Each assert is a no-op when the file is
+# absent (operator-provisioned via `gregalectl secrets init`).
+- name: postgres_backup — sealed.env split perm-asserts (issue #585 / ADR-127)
+  ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml

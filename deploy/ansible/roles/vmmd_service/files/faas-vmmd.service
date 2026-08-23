@@ -12,7 +12,8 @@ ExecStart=/opt/faas/current/bin/vmmd --config /etc/faas/vmmd.toml
 ExecStartPost=/usr/bin/chown root:faas /run/faas
 ExecStartPost=/usr/bin/chmod 0775 /run/faas
 Environment=TMPDIR=/srv/fc/base
-EnvironmentFile=-/etc/faas/sealed.env
+# Issue #585 / ADR-127 — sealed.env is apid-only; vmmd keeps compute-db.env
+# (DATABASE_URL) but no longer inherits the full sealed.env.
 EnvironmentFile=-/etc/faas/compute-db.env
 Restart=on-failure
 RestartSec=2s
