@@ -244,3 +244,27 @@ func TestPgStoreOpenAPIImport_DeleteMissing(t *testing.T) {
 		t.Errorf("Delete never-existing: got %v, want ErrNotFound", err)
 	}
 }
+
+// TestPgStoreOpenAPIImport_UpsertForeignAccountID pins the
+// store-layer IDOR defence-in-depth (per CLAUDE.md "IDOR floor
+// at SQL WHERE clause"). UpsertAppOpenAPIDoc with a caller-
+// supplied accountID that doesn't own the parent app must
+// return ErrNotFound — the apid handler's loadApp already
+// gates this, but the store must enforce it too so a future
+// caller that bypasses the handler (admin tool, test
+// harness, internal API) can't write a row into a foreign
+// tenant's app_id and then read it back via GetAppOpenAPIDoc
+// (the WHERE clause matches the row's frozen account_id).
+func TestPgStoreOpenAPIImport_UpsertForeignAccountID(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	_, appID := seedOpenAPIImportFixture(t, ctx, store)
+	foreignAcct := uuid.NewString()
+	err := store.UpsertAppOpenAPIDoc(ctx, appID, foreignAcct, []byte(`{"openapi":"3.1.0"}`), 0, "3.1.0")
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("Upsert on foreign account: got %v, want ErrNotFound", err)
+	}
+	// Sanity: the foreign account must NOT see any row.
+	if _, _, err := store.GetAppOpenAPIDoc(ctx, appID, foreignAcct); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("Get on foreign account after rejected upsert: got %v, want ErrNotFound", err)
+	}
+}

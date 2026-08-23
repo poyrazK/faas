@@ -225,9 +225,50 @@ func TestGetAppOpenAPI_Auto_WithImport_CacheHit(t *testing.T) {
 	}
 }
 
-// TestGetAppOpenAPI_Auto_CacheInvalidationViaNotify verifies
-// that InvalidateByApp(appID) clears the cached entry so the
-// next read is a miss.
+// TestGetAppOpenAPI_Auto_CacheHit_PreRenderedBody pins the
+// pre-rendered-payload contract (issue #975 item #2 review-fix).
+// The first read populates the cache with the rendered body;
+// the second read returns the same bytes verbatim and sets
+// X-OpenAPI-Doc-Source from the cached entry (so the degraded
+// source string survives the round trip).
+func TestGetAppOpenAPI_Auto_CacheHit_PreRenderedBody(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedApp(t, e, "auto-cache-body")
+	seedImport(t, e, app.ID, []byte(sampleOpenAPIDoc), 1, "3.1.0")
+	cache := openapidiff.NewSpecCache()
+	e.s.WithSpecCache(cache)
+
+	rec1 := e.do(t, "GET", "/v1/apps/auto-cache-body/openapi?source=auto", nil, nil)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first read status %d, want 200", rec1.Code)
+	}
+	if got := rec1.Header().Get("X-Faas-Cache"); got != "miss" {
+		t.Errorf("first X-Faas-Cache=%q, want miss", got)
+	}
+	rec2 := e.do(t, "GET", "/v1/apps/auto-cache-body/openapi?source=auto", nil, nil)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second read status %d, want 200", rec2.Code)
+	}
+	if got := rec2.Header().Get("X-Faas-Cache"); got != "hit" {
+		t.Errorf("second X-Faas-Cache=%q, want hit", got)
+	}
+	// Hit path must return byte-identical body to the miss path.
+	if rec1.Body.String() != rec2.Body.String() {
+		t.Errorf("body mismatch on hit: miss=%q vs hit=%q", rec1.Body.String(), rec2.Body.String())
+	}
+	// Source header must match between miss + hit (review-fix).
+	src1 := rec1.Header().Get("X-OpenAPI-Doc-Source")
+	src2 := rec2.Header().Get("X-OpenAPI-Doc-Source")
+	if src1 == "" || src2 == "" || src1 != src2 {
+		t.Errorf("source mismatch: miss=%q vs hit=%q", src1, src2)
+	}
+	// Annotations count must match too.
+	ann1 := rec1.Header().Get("X-OpenAPI-Doc-Annotations-Count")
+	ann2 := rec2.Header().Get("X-OpenAPI-Doc-Annotations-Count")
+	if ann1 != ann2 {
+		t.Errorf("annotations count mismatch: miss=%q vs hit=%q", ann1, ann2)
+	}
+}
 func TestGetAppOpenAPI_Auto_CacheInvalidationViaNotify(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	app := seedApp(t, e, "auto-cache-invalidate")

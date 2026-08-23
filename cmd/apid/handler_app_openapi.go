@@ -131,6 +131,13 @@ func (s *server) serveOpenAPIDocManualImport(w http.ResponseWriter, r *http.Requ
 // generated spec. The cache is invalidated by either
 // pg_notify channel (subscriber wired in
 // openapi_doc_subscriber.go).
+//
+// Cache hit path (review-fix): the SHA inputs are cheap to
+// compute without running GenerateFromApp, so the handler
+// looks the cache first. On a hit, the pre-rendered body +
+// source string are written verbatim and the heavy pipeline
+// is skipped entirely (issue #975 item #2 D4 +
+// pre-rendered-payload review-fix).
 func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app state.App) {
 	doc, _, docErr := s.store.GetAppOpenAPIDoc(r.Context(), app.ID, app.AccountID)
 	if docErr != nil && !errors.Is(docErr, state.ErrNotFound) {
@@ -144,6 +151,40 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 		s.log.Debug("getAppOpenAPI ListEdgeRulesForApp", "err", rulesErr.Error())
 		rules = nil
 	}
+
+	// Compute the cache-key SHAs from the raw inputs. These
+	// are O(n) over (doc bytes, routes rows, rules rows) and
+	// run before the heavy pipeline so a cache hit can skip
+	// parse + merge + render. GenerateFromApp will recompute
+	// the same SHAs internally — equality is pinned by the
+	// pkg/openapidiff tests.
+	var docSHA, routesSHA, rulesSHA [32]byte
+	if len(doc) > 0 {
+		docSHA = openapidiff.SumSHA256(doc)
+	}
+	if len(observed) > 0 {
+		routesSHA = openapidiff.HashRoutes(observed)
+	}
+	if len(rules) > 0 {
+		rulesSHA = openapidiff.HashRules(rules)
+	}
+
+	// Cheap path: cache hit. Skip parse + merge + render
+	// entirely; write the pre-rendered body and headers.
+	if s.specCache != nil {
+		if hit, ok := s.specCache.Get(app.ID, docSHA, routesSHA, rulesSHA); ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Faas-Cache", "hit")
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("X-OpenAPI-Doc-Source", hit.Source)
+			w.Header().Set("X-OpenAPI-Doc-Annotations-Count",
+				fmt.Sprintf("%d", hit.AnnotationsCount))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(hit.Body)
+			return
+		}
+	}
+
 	genSpec, genMeta, genErr := openapidiff.GenerateFromApp(openapidiff.GenerateFromAppInputs{
 		AppID:          app.ID,
 		AccountID:      app.AccountID,
@@ -166,29 +207,25 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 			"failed to generate OpenAPI doc", genErr.Error()))
 		return
 	}
-	source := genMeta.Source
-	cacheHit := false
+	rendered := renderOpenAPISpecJSON(genSpec, genMeta, app)
+	// Fill the cache with the pre-rendered body so a
+	// follow-up hit returns verbatim. The Source string is
+	// recorded at fill time — it must be the same string the
+	// handler would emit on a fresh miss (i.e. genMeta.Source),
+	// NOT a degraded fallback the handler later rewrites
+	// (review-fix: cache hit must surface the degraded source
+	// string verbatim).
 	if s.specCache != nil {
-		if hit, ok := s.specCache.Get(app.ID, genMeta.DocSHA256, genMeta.RoutesSHA256, genMeta.RulesSHA256); ok {
-			genSpec = hit.Spec
-			cacheHit = true
-			source = openapidiff.SourceAuto
-		} else {
-			s.specCache.Put(app.ID, genMeta.DocSHA256, genMeta.RoutesSHA256, genMeta.RulesSHA256,
-				genSpec, time.Now())
-		}
+		s.specCache.Put(app.ID, genMeta.DocSHA256, genMeta.RoutesSHA256, genMeta.RulesSHA256,
+			rendered, genMeta.Source, len(genMeta.Annotations), time.Now())
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if cacheHit {
-		w.Header().Set("X-Faas-Cache", "hit")
-	} else {
-		w.Header().Set("X-Faas-Cache", "miss")
-	}
+	w.Header().Set("X-Faas-Cache", "miss")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-OpenAPI-Doc-Source", source)
+	w.Header().Set("X-OpenAPI-Doc-Source", genMeta.Source)
 	w.Header().Set("X-OpenAPI-Doc-Annotations-Count", fmt.Sprintf("%d", len(genMeta.Annotations)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(renderOpenAPISpecJSON(genSpec, genMeta, app))
+	_, _ = w.Write(rendered)
 }
 
 // renderOpenAPISpecJSON is the small helper that emits the

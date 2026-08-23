@@ -46,11 +46,28 @@ const specCacheTTL = 5 * time.Minute
 // the worst-case memory footprint is 1.3 MiB.
 const specCacheMaxEntries = 256
 
-// SpecCacheEntry is one cache row: the generated spec plus the
-// meta identifying which inputs produced it.
+// SpecCacheEntry is one cache row: the pre-rendered JSON
+// payload plus the source string + annotations count the apid
+// handler emits verbatim on a hit. Caching the rendered bytes
+// (not just the *Spec) is what makes a hit actually cheap —
+// the apid handler skips parse + merge + render entirely,
+// writes the bytes, and sets the headers (issue #975 item #2
+// review-fix: pre-rendered-payload layer).
 type SpecCacheEntry struct {
-	// Spec is the cached *Spec.
-	Spec *Spec
+	// Body is the rendered JSON. The apid handler writes this
+	// verbatim — no marshalling on the hit path.
+	Body []byte
+	// Source is the source string for the response header
+	// (one of "auto", "degraded: routes_unavailable", etc.).
+	// Pre-computed at cache-fill time so a cache hit doesn't
+	// recompute the degraded-source predicate.
+	Source string
+	// AnnotationsCount is the len(meta.Annotations) at
+	// fill-time. Mirrored in the X-OpenAPI-Doc-Annotations-Count
+	// response header — pinned at fill time so the dashboard
+	// sees the same value across hit and miss for the same
+	// inputs.
+	AnnotationsCount int
 	// GeneratedAt is the wall-clock time at which the entry was
 	// created. Surfaced in the response's GeneratedAt field so
 	// the dashboard can show "generated N seconds ago".
@@ -138,13 +155,21 @@ func (c *SpecCache) Get(appID string, docSHA, routesSHA, rulesSHA [32]byte) (*Sp
 	return entry.value, true
 }
 
-// Put inserts (or overwrites) a spec entry. LRU-evicts the
-// oldest entry when the cap is exceeded.
-func (c *SpecCache) Put(appID string, docSHA, routesSHA, rulesSHA [32]byte, spec *Spec, generatedAt time.Time) {
+// Put inserts (or overwrites) a cache entry. body is the
+// pre-rendered JSON bytes the apid handler will write verbatim
+// on a hit; source + annotationsCount are the response-header
+// values pre-computed at fill time. LRU-evicts the oldest
+// entry when the cap is exceeded.
+func (c *SpecCache) Put(appID string, docSHA, routesSHA, rulesSHA [32]byte, body []byte, source string, annotationsCount int, generatedAt time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := CacheKey(appID, docSHA, routesSHA, rulesSHA)
-	entry := &SpecCacheEntry{Spec: spec, GeneratedAt: generatedAt}
+	entry := &SpecCacheEntry{
+		Body:             body,
+		Source:           source,
+		AnnotationsCount: annotationsCount,
+		GeneratedAt:      generatedAt,
+	}
 	if el, ok := c.entries[key]; ok {
 		// Overwrite: refresh value + LRU position.
 		el.Value.(*cacheListEntry).value = entry

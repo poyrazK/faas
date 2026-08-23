@@ -5555,3 +5555,44 @@ type OpenAPIDocResponse struct {
 	UpdatedAt    string         `json:"updated_at"`
 	Doc          map[string]any `json:"doc"`
 }
+
+// AppOpenAPIImportResponse is the typed wire envelope for the
+// POST /v1/apps/{slug}/openapi import endpoint (issue #975 item #2 /
+// ADR-126). Mirrors the row shape of app_openapi_docs (one row per
+// app, last-write-wins). Source is always "manual_import" — cold-boot
+// captures go to deployment_openapi_docs (item #1), not here.
+//
+// EndpointCount is the number of HTTP operations in the imported
+// doc's paths.*; ByteSize is the raw body size the handler enforced
+// against state.OpenAPIImportMaxDocBytes (256 KiB).
+type AppOpenAPIImportResponse struct {
+	AppID          string `json:"app_id"`
+	Source         string `json:"source"`
+	OpenAPIVersion string `json:"openapi_version"`
+	EndpointCount  int    `json:"endpoint_count"`
+	ByteSize       int    `json:"byte_size"`
+	CapturedAt     string `json:"captured_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+// AppOpenAPIImportDryRunResponse is the typed wire envelope for the
+// POST /v1/apps/{slug}/openapi/dry-run endpoint (ADR-126 D3). The
+// customer pastes each Suggestion's Path + Methods + Kind + Action
+// into the existing create-edge-rule endpoint. Empty Suggestions
+// when the doc is fully covered by existing validate edge rules.
+type AppOpenAPIImportDryRunResponse struct {
+	Suggestions    []EdgeRuleSuggestion `json:"suggestions"`
+	OpenAPIVersion string               `json:"openapi_version"`
+	EndpointCount  int                  `json:"endpoint_count"`
+}
+
+// EdgeRuleSuggestion is a single read-only candidate row in the
+// dry-run response. Mirrors the create-edge-rule request body
+// fields so the customer can copy paste. The Kind + Action union
+// shape matches pkg/api/dto.go's existing EdgeRule*Action types.
+type EdgeRuleSuggestion struct {
+	Path    string         `json:"path"`
+	Methods []string       `json:"methods"`
+	Kind    string         `json:"kind"`
+	Action  map[string]any `json:"action"`
+}

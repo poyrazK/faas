@@ -2198,17 +2198,7 @@ paths:
           description: Stored.
           content:
             application/json:
-              schema:
-                type: object
-                required: [app_id, source, openapi_version, endpoint_count, byte_size, captured_at, updated_at]
-                properties:
-                  app_id:          { type: string, format: uuid }
-                  source:          { type: string, enum: [manual_import] }
-                  openapi_version: { type: string }
-                  endpoint_count:  { type: integer, minimum: 0, maximum: 50 }
-                  byte_size:       { type: integer, minimum: 1, maximum: 262144 }
-                  captured_at:     { type: string, format: date-time }
-                  updated_at:      { type: string, format: date-time }
+              schema: { $ref: '#/components/schemas/AppOpenAPIImportResponse' }
         '400':
           description: "code: empty_body. Body is zero bytes."
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -2265,25 +2255,7 @@ paths:
           description: Dry-run suggestions.
           content:
             application/json:
-              schema:
-                type: object
-                required: [app_id, openapi_version, endpoint_count, suggestions]
-                properties:
-                  app_id:          { type: string, format: uuid }
-                  openapi_version: { type: string }
-                  endpoint_count:  { type: integer }
-                  suggestions:
-                    type: array
-                    items:
-                      type: object
-                      required: [path, methods, kind, action]
-                      properties:
-                        path:    { type: string }
-                        methods:
-                          type: array
-                          items: { type: string, enum: [get, post, put, patch, delete] }
-                        kind:    { type: string, enum: [validate] }
-                        action:  { type: object, additionalProperties: true }
+              schema: { $ref: '#/components/schemas/AppOpenAPIImportDryRunResponse' }
         '400': { description: "code: empty_body." }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '413': { description: "code: openapi_import_too_large. Body exceeds state.OpenAPIImportMaxDocBytes (256 KiB) on the dry-run endpoint." }
@@ -13542,6 +13514,139 @@ components:
           description: "Share of [45]xx requests with this route in the window."
           x-since: "2026-08"
           x-issue: "273"
+
+    AppOpenAPIImportResponse:
+      description: |
+        Response body for `POST /v1/apps/{slug}/openapi` (issue #975
+        item #2 / ADR-126). One row per app in `app_openapi_docs`,
+        last-write-wins. Source is always `manual_import` — cold-
+        boot captures go to `deployment_openapi_docs` (item #1).
+        `endpoint_count` is the number of HTTP operations in the
+        imported doc's `paths.*`; `byte_size` is the raw body size
+        the handler enforced against
+        `state.OpenAPIImportMaxDocBytes` (256 KiB).
+      type: object
+      required:
+        - app_id
+        - source
+        - openapi_version
+        - endpoint_count
+        - byte_size
+        - captured_at
+        - updated_at
+      properties:
+        app_id:
+          type: string
+          format: uuid
+          description: "App UUID the import row is bound to."
+          x-since: "2026-08"
+          x-issue: "975"
+        source:
+          type: string
+          enum: ["manual_import"]
+          description: "Row source. Always `manual_import` for this endpoint."
+          x-since: "2026-08"
+          x-issue: "975"
+        openapi_version:
+          type: string
+          enum: ["3.0.0","3.0.1","3.0.2","3.0.3","3.0.4","3.1.0","3.1.1"]
+          description: "OpenAPI spec version the imported doc declares."
+          x-since: "2026-08"
+          x-issue: "975"
+        endpoint_count:
+          type: integer
+          minimum: 0
+          maximum: 50
+          description: "Number of HTTP operations in the imported doc."
+          x-since: "2026-08"
+          x-issue: "975"
+        byte_size:
+          type: integer
+          minimum: 1
+          maximum: 262144
+          description: "Raw body size in bytes (state.OpenAPIImportMaxDocBytes = 256 KiB)."
+          x-since: "2026-08"
+          x-issue: "975"
+        captured_at:
+          type: string
+          format: date-time
+          description: "First-import timestamp; preserved across re-imports."
+          x-since: "2026-08"
+          x-issue: "975"
+        updated_at:
+          type: string
+          format: date-time
+          description: "Most-recent write timestamp; bumped on every import."
+          x-since: "2026-08"
+          x-issue: "975"
+
+    EdgeRuleSuggestion:
+      description: |
+        Single read-only candidate row in the dry-run response
+        (issue #975 item #2 D3 / ADR-126). Mirrors the
+        create-edge-rule request body fields so the customer can
+        copy-paste the suggestion into the existing endpoint.
+        `kind` + `action` union shape matches the existing
+        `EdgeRule*Action` types in `pkg/api/dto.go`.
+      type: object
+      required:
+        - path
+        - methods
+        - kind
+        - action
+      properties:
+        path:
+          type: string
+          description: "Operation path (e.g. `/users/{id}`)."
+          x-since: "2026-08"
+          x-issue: "975"
+        methods:
+          type: array
+          items: { type: string, enum: ["get","put","post","delete","options","head","patch","trace"] }
+          description: "HTTP methods the suggestion applies to."
+          x-since: "2026-08"
+          x-issue: "975"
+        kind:
+          type: string
+          enum: ["validate","cors","throttle","jwt","headers","cache","redirect","rewrite"]
+          description: "Edge-rule kind the suggestion produces."
+          x-since: "2026-08"
+          x-issue: "975"
+        action:
+          type: object
+          additionalProperties: true
+          description: "Action payload (matches EdgeRule*Action types)."
+          x-since: "2026-08"
+          x-issue: "975"
+
+    AppOpenAPIImportDryRunResponse:
+      description: |
+        Response body for `POST /v1/apps/{slug}/openapi/dry-run`
+        (issue #975 item #2 D3 / ADR-126). Read-only; no persist,
+        no `pg_notify`, no MFA. Empty `suggestions` array when the
+        doc is fully covered by existing validate edge rules.
+      type: object
+      required:
+        - suggestions
+        - openapi_version
+        - endpoint_count
+      properties:
+        suggestions:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleSuggestion' }
+          description: "Suggested EdgeRuleSuggestion rows."
+          x-since: "2026-08"
+          x-issue: "975"
+        openapi_version:
+          type: string
+          description: "OpenAPI version declared by the dry-run doc."
+          x-since: "2026-08"
+          x-issue: "975"
+        endpoint_count:
+          type: integer
+          description: "Number of operations in the dry-run doc."
+          x-since: "2026-08"
+          x-issue: "975"
 
     AppRoutesResponse:
       description: |

@@ -10,8 +10,13 @@ package openapidiff
 // deterministically. The clock closure advances time by the
 // amount requested, which lets the TTL expiry test run in
 // microseconds rather than 5 minutes.
+//
+// Review-fix (issue #975 item #2): the cache stores the
+// pre-rendered JSON body + source string + annotations count
+// so a hit can skip parse + merge + render entirely.
 
 import (
+	"bytes"
 	"testing"
 	"time"
 )
@@ -25,18 +30,46 @@ func TestSpecCache_PutGet_Hit(t *testing.T) {
 	docSHA := SumSHA256([]byte("doc"))
 	routesSHA := SumSHA256([]byte("routes"))
 	rulesSHA := SumSHA256([]byte("rules"))
-	spec := &Spec{Paths: map[string]*PathItem{"/foo": {Methods: map[string]*Operation{"get": {}}}}}
+	body := []byte(`{"openapi":"3.1.0"}`)
 	now := clk()
-	c.Put(appID, docSHA, routesSHA, rulesSHA, spec, now)
+	c.Put(appID, docSHA, routesSHA, rulesSHA, body, "auto", 0, now)
 	got, ok := c.Get(appID, docSHA, routesSHA, rulesSHA)
 	if !ok {
 		t.Fatal("expected cache hit")
 	}
-	if got.Spec != spec {
-		t.Errorf("Spec pointer mismatch")
+	if !bytes.Equal(got.Body, body) {
+		t.Errorf("Body mismatch: got %q, want %q", got.Body, body)
+	}
+	if got.Source != "auto" {
+		t.Errorf("Source: got %q, want %q", got.Source, "auto")
+	}
+	if got.AnnotationsCount != 0 {
+		t.Errorf("AnnotationsCount: got %d, want 0", got.AnnotationsCount)
 	}
 	if !got.GeneratedAt.Equal(now) {
 		t.Errorf("GeneratedAt: got %v, want %v", got.GeneratedAt, now)
+	}
+}
+
+// TestSpecCache_PutGet_DegradedSource pins that the source
+// string is recorded verbatim at fill time. A cache hit must
+// surface the same string the handler would emit on a fresh
+// miss for the same inputs — the degraded-source case
+// (review-fix) cannot be recomputed on hit.
+func TestSpecCache_PutGet_DegradedSource(t *testing.T) {
+	c := NewSpecCacheWithClock(8, time.Minute, time.Now)
+	docSHA := SumSHA256([]byte("doc"))
+	body := []byte(`{"openapi":"3.1.0"}`)
+	c.Put("app-1", docSHA, docSHA, docSHA, body, SourceDegradedRoutes, 3, time.Now())
+	got, ok := c.Get("app-1", docSHA, docSHA, docSHA)
+	if !ok {
+		t.Fatal("expected cache hit")
+	}
+	if got.Source != SourceDegradedRoutes {
+		t.Errorf("Source: got %q, want %q", got.Source, SourceDegradedRoutes)
+	}
+	if got.AnnotationsCount != 3 {
+		t.Errorf("AnnotationsCount: got %d, want 3", got.AnnotationsCount)
 	}
 }
 
@@ -56,14 +89,14 @@ func TestSpecCache_Get_Miss(t *testing.T) {
 func TestSpecCache_Get_DifferentSHA(t *testing.T) {
 	c := NewSpecCacheWithClock(8, time.Minute, time.Now)
 	appID := "app-1"
-	spec1 := &Spec{Paths: map[string]*PathItem{"/v1": {}}}
-	spec2 := &Spec{Paths: map[string]*PathItem{"/v2": {}}}
-	c.Put(appID, SumSHA256([]byte("doc1")), SumSHA256([]byte("r")), SumSHA256([]byte("rl")), spec1, time.Now())
-	c.Put(appID, SumSHA256([]byte("doc2")), SumSHA256([]byte("r")), SumSHA256([]byte("rl")), spec2, time.Now())
+	body1 := []byte(`{"openapi":"3.1.0","v":1}`)
+	body2 := []byte(`{"openapi":"3.1.0","v":2}`)
+	c.Put(appID, SumSHA256([]byte("doc1")), SumSHA256([]byte("r")), SumSHA256([]byte("rl")), body1, "auto", 0, time.Now())
+	c.Put(appID, SumSHA256([]byte("doc2")), SumSHA256([]byte("r")), SumSHA256([]byte("rl")), body2, "auto", 0, time.Now())
 	got1, _ := c.Get(appID, SumSHA256([]byte("doc1")), SumSHA256([]byte("r")), SumSHA256([]byte("rl")))
 	got2, _ := c.Get(appID, SumSHA256([]byte("doc2")), SumSHA256([]byte("r")), SumSHA256([]byte("rl")))
-	if got1.Spec != spec1 || got2.Spec != spec2 {
-		t.Errorf("expected distinct specs per docSHA")
+	if !bytes.Equal(got1.Body, body1) || !bytes.Equal(got2.Body, body2) {
+		t.Errorf("expected distinct bodies per docSHA; got1=%q got2=%q", got1.Body, got2.Body)
 	}
 }
 
@@ -75,7 +108,7 @@ func TestSpecCache_TTL_Expiry(t *testing.T) {
 	c := NewSpecCacheWithClock(8, 5*time.Minute, clk)
 	appID := "app-1"
 	docSHA := SumSHA256([]byte("doc"))
-	c.Put(appID, docSHA, docSHA, docSHA, &Spec{}, now)
+	c.Put(appID, docSHA, docSHA, docSHA, []byte(`{}`), "auto", 0, now)
 	// First Get at t=0: hit.
 	if _, ok := c.Get(appID, docSHA, docSHA, docSHA); !ok {
 		t.Fatal("expected hit at t=0")
@@ -105,10 +138,10 @@ func TestSpecCache_LRU_Eviction(t *testing.T) {
 	docB := SumSHA256([]byte("B"))
 	docC := SumSHA256([]byte("C"))
 	now := time.Now()
-	c.Put(appID, docA, docA, docA, &Spec{}, now)
-	c.Put(appID, docB, docB, docB, &Spec{}, now)
+	c.Put(appID, docA, docA, docA, []byte(`{}`), "auto", 0, now)
+	c.Put(appID, docB, docB, docB, []byte(`{}`), "auto", 0, now)
 	// Cache is full. Adding docC should evict docA (the oldest).
-	c.Put(appID, docC, docC, docC, &Spec{}, now)
+	c.Put(appID, docC, docC, docC, []byte(`{}`), "auto", 0, now)
 	if c.Len() != 2 {
 		t.Errorf("Len: got %d, want 2", c.Len())
 	}
@@ -134,14 +167,14 @@ func TestSpecCache_LRU_Promotion(t *testing.T) {
 	docB := SumSHA256([]byte("B"))
 	docC := SumSHA256([]byte("C"))
 	now := time.Now()
-	c.Put(appID, docA, docA, docA, &Spec{}, now)
-	c.Put(appID, docB, docB, docB, &Spec{}, now)
+	c.Put(appID, docA, docA, docA, []byte(`{}`), "auto", 0, now)
+	c.Put(appID, docB, docB, docB, []byte(`{}`), "auto", 0, now)
 	// Get docA — promotes it to the front.
 	if _, ok := c.Get(appID, docA, docA, docA); !ok {
 		t.Fatal("docA missing")
 	}
 	// Now docB is the oldest. Add docC — docB evicted, docA kept.
-	c.Put(appID, docC, docC, docC, &Spec{}, now)
+	c.Put(appID, docC, docC, docC, []byte(`{}`), "auto", 0, now)
 	if _, ok := c.Get(appID, docB, docB, docB); ok {
 		t.Error("expected docB to be evicted (LRU oldest after promotion)")
 	}
@@ -158,8 +191,8 @@ func TestSpecCache_InvalidateByApp(t *testing.T) {
 	docA := SumSHA256([]byte("A"))
 	docB := SumSHA256([]byte("B"))
 	now := time.Now()
-	c.Put("app-1", docA, docA, docA, &Spec{}, now)
-	c.Put("app-2", docB, docB, docB, &Spec{}, now)
+	c.Put("app-1", docA, docA, docA, []byte(`{}`), "auto", 0, now)
+	c.Put("app-2", docB, docB, docB, []byte(`{}`), "auto", 0, now)
 	c.InvalidateByApp("app-1")
 	if _, ok := c.Get("app-1", docA, docA, docA); ok {
 		t.Error("app-1 should be invalidated")
@@ -178,7 +211,7 @@ func TestSpecCache_InvalidateByApp_NoMatch(t *testing.T) {
 	c := NewSpecCacheWithClock(8, time.Minute, time.Now)
 	docA := SumSHA256([]byte("A"))
 	now := time.Now()
-	c.Put("app-1", docA, docA, docA, &Spec{}, now)
+	c.Put("app-1", docA, docA, docA, []byte(`{}`), "auto", 0, now)
 	c.InvalidateByApp("nope")
 	if c.Len() != 1 {
 		t.Errorf("Len: got %d, want 1", c.Len())
@@ -193,14 +226,14 @@ func TestSpecCache_Overwrite(t *testing.T) {
 	appID := "app-1"
 	docSHA := SumSHA256([]byte("doc"))
 	now := time.Now()
-	c.Put(appID, docSHA, docSHA, docSHA, &Spec{Paths: map[string]*PathItem{"/v1": {}}}, now)
-	c.Put(appID, docSHA, docSHA, docSHA, &Spec{Paths: map[string]*PathItem{"/v2": {}}}, now)
+	c.Put(appID, docSHA, docSHA, docSHA, []byte(`{"v":1}`), "auto", 0, now)
+	c.Put(appID, docSHA, docSHA, docSHA, []byte(`{"v":2}`), "auto", 0, now)
 	if c.Len() != 1 {
 		t.Errorf("Len after overwrite: got %d, want 1", c.Len())
 	}
 	got, _ := c.Get(appID, docSHA, docSHA, docSHA)
-	if _, ok := got.Spec.Paths["/v2"]; !ok {
-		t.Error("expected /v2 after overwrite")
+	if !bytes.Equal(got.Body, []byte(`{"v":2}`)) {
+		t.Errorf("Body after overwrite: got %q, want {\"v\":2}", got.Body)
 	}
 }
 

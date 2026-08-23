@@ -113,11 +113,18 @@ func (s *PgStore) GetAppOpenAPIDoc(ctx context.Context, appID, accountID string)
 // on byte_size (1..262144) and endpoint_count (0..50) is the
 // floor that backs the abuse-surface cap.
 func (s *PgStore) UpsertAppOpenAPIDoc(ctx context.Context, appID, accountID string, doc []byte, endpointCount int, openapiVersion string) error {
-	// Defence-in-depth: confirm the FK target row exists so the
-	// caller gets a clean ErrNotFound before Postgres raises 23503.
+	// Defence-in-depth: confirm the FK target row exists AND belongs
+	// to the caller's account before the INSERT fires. The apid
+	// handler validates ownership at the loadApp boundary, but the
+	// store layer must enforce the IDOR floor too — a future caller
+	// (test harness, admin tool, internal API) that bypasses the
+	// handler would otherwise be able to write a row into a
+	// foreign tenant's app_id and then read it back via
+	// GetAppOpenAPIDoc (the WHERE clause matches because the
+	// account_id they passed is the one they wrote).
 	var exists string
 	if err := s.pool.QueryRow(ctx,
-		`select id from apps where id = $1`, appID,
+		`select id from apps where id = $1 and account_id = $2`, appID, accountID,
 	).Scan(&exists); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound

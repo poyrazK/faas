@@ -4715,7 +4715,16 @@ func (m *MemStore) UpsertDeploymentOpenAPIDoc(_ context.Context, deploymentID, a
 	if existing, ok := m.openAPIDocs[deploymentID]; ok {
 		// Idempotent overwrite: keep the original captured_at so
 		// "first-capture" semantics survive a re-delivered cold-boot
-		// event. updated_at is bumped for the audit trail.
+		// event. updated_at is bumped for the audit trail. Preserve
+		// the original AccountID + AppID too — mirrors pgstore's
+		// ON CONFLICT DO UPDATE clause, which intentionally omits
+		// those columns so a cold-boot re-delivery can't flip a
+		// row's tenant binding or re-parent it to a different app
+		// (which would be a §11 IDOR hole). MemStore would otherwise
+		// silently "correct" the row on every overwrite and drift
+		// away from PG in any test asserting equality.
+		row.AccountID = existing.AccountID
+		row.AppID = existing.AppID
 		row.CapturedAt = existing.CapturedAt
 		row.UpdatedAt = now
 	} else {
@@ -4832,7 +4841,17 @@ func (m *MemStore) UpsertAppOpenAPIDoc(_ context.Context, appID, accountID strin
 	if existing, ok := m.openAPIImports[appID]; ok {
 		// Idempotent overwrite: keep the original captured_at so
 		// "first-imported" semantics survive a re-delivered import
-		// event. updated_at is bumped for the audit trail.
+		// event. updated_at is bumped for the audit trail. Preserve
+		// the original AccountID too — this matches pgstore's
+		// `ON CONFLICT (app_id) DO UPDATE` clause, which lists
+		// doc/doc_sha256/byte_size/endpoint_count/source/openapi_version/
+		// captured_at/updated_at but intentionally omits account_id
+		// so the original row's tenant binding survives a re-import.
+		// Mirroring that omission here keeps MemStore and PgStore
+		// byte-identical for any test that asserts equality, and
+		// prevents an IDOR drift where a future caller passing a
+		// stale accountID could silently flip the row's tenant.
+		row.AccountID = existing.AccountID
 		row.CapturedAt = existing.CapturedAt
 		row.UpdatedAt = now
 	} else {

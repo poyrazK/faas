@@ -3320,3 +3320,62 @@ func (c *Client) PatchAppsDeploymentOpenAPIDoc(ctx context.Context, slug, deploy
 func (c *Client) DeleteAppsDeploymentOpenAPIDoc(ctx context.Context, slug, deployment string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/deployments/"+deployment+"/openapi", nil, nil)
 }
+
+// GetAppOpenAPI returns the imported or auto-generated OpenAPI
+// document for an app (issue #975 item #2 / ADR-126). The source
+// query param selects between the customer's imported doc verbatim
+// (`manual_import`, default) and the platform-merged spec
+// (`auto` — imported doc ∪ observed routes ∪ existing edge rules).
+// The body is the raw OpenAPI document; provenance lives in the
+// X-OpenAPI-Doc-Source response header. Limits are abuse-surface
+// (every plan including Free), per-account row cap is
+// Plan.OpenAPIImportsPerAccount.
+func (c *Client) GetAppOpenAPI(ctx context.Context, slug, source string) ([]byte, error) {
+	q := url.Values{}
+	if source != "" {
+		q.Set("source", source)
+	}
+	u := "/v1/apps/" + slug + "/openapi"
+	if encoded := q.Encode(); encoded != "" {
+		u += "?" + encoded
+	}
+	var body []byte
+	if err := c.doBytes(ctx, "GET", u, nil, &body); err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+// ImportAppOpenAPI uploads (or overwrites) the customer's OpenAPI
+// document for an app. Body is the raw OpenAPI document; the
+// server validates shape (Draft 2020-12 + OpenAPI 3.1 schema) +
+// enforces size + endpoint caps before persisting. Returns the
+// stored row metadata (uuid + source + version + counts +
+// timestamps). 413 if the doc exceeds Plan.OpenAPIImportMaxDocBytes
+// (state constant 256 KiB), 422 on validation / endpoint-cap
+// failure, 403 on per-account quota.
+func (c *Client) ImportAppOpenAPI(ctx context.Context, slug string, doc map[string]any) (AppOpenAPIImportResponse, error) {
+	var out AppOpenAPIImportResponse
+	body := map[string]any{"doc": doc}
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/openapi", body, &out)
+}
+
+// DryRunAppOpenAPI previews edge-rule suggestions for a candidate
+// OpenAPI doc without persisting it. Same body shape as the import
+// endpoint (raw OpenAPI document); returns one EdgeRuleSuggestion
+// per (path, method) pair NOT already covered by an existing
+// validate edge rule. Empty array when the doc is fully covered.
+// Read-only — no pg_notify, no audit emit, no MFA requirement.
+func (c *Client) DryRunAppOpenAPI(ctx context.Context, slug string, doc map[string]any) (AppOpenAPIImportDryRunResponse, error) {
+	var out AppOpenAPIImportDryRunResponse
+	body := map[string]any{"doc": doc}
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/openapi/dry-run", body, &out)
+}
+
+// DeleteAppOpenAPI wipes the imported OpenAPI document for an app.
+// Idempotent: returns 204 even if no row existed. Emits
+// app.openapi_import.deleted audit + pg_notify on
+// NotifyAppOpenAPIDocChanged so the auto-gen cache flushes.
+func (c *Client) DeleteAppOpenAPI(ctx context.Context, slug string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/openapi", nil, nil)
+}

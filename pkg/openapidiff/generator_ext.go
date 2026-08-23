@@ -194,7 +194,7 @@ func GenerateFromApp(in GenerateFromAppInputs) (*Spec, GenerateFromAppMeta, erro
 	// "GET /users/4f8a" — split on the first space.
 	if len(in.ObservedRoutes) > 0 {
 		mergeObservedRoutes(spec, in.ObservedRoutes)
-		meta.RoutesSHA256 = hashRoutes(in.ObservedRoutes)
+		meta.RoutesSHA256 = HashRoutes(in.ObservedRoutes)
 	} else if meta.Source == SourceAuto {
 		meta.Source = SourceDegradedRoutes
 	}
@@ -203,7 +203,7 @@ func GenerateFromApp(in GenerateFromAppInputs) (*Spec, GenerateFromAppMeta, erro
 	// (kind, action) list that applies.
 	if rules != nil {
 		meta.Annotations = annotateWithEdgeRules(spec, rules)
-		meta.RulesSHA256 = hashRules(rules)
+		meta.RulesSHA256 = HashRules(rules)
 	}
 
 	return spec, meta, nil
@@ -323,11 +323,15 @@ func AnnotateOperation(_ *Operation, _ EdgeRuleProjection) {
 	// package doc for the layering rationale.
 }
 
-// hashRules returns sha256 of a canonical concatenation of
+// HashRules returns sha256 of a canonical concatenation of
 // the (rule_id, kind, action) triples. Used as one half of the
 // cache key (so a rules-only change invalidates the cache but
-// a no-op rewrite is a cache hit).
-func hashRules(rules []state.EdgeRule) [32]byte {
+// a no-op rewrite is a cache hit). Exported so the apid handler
+// can compute the cache key half without running the full
+// GenerateFromApp pipeline — the cache hit path then skips
+// parse + merge + render entirely (issue #975 item #2 D4 +
+// review-fix).
+func HashRules(rules []state.EdgeRule) [32]byte {
 	sorted := make([]state.EdgeRule, len(rules))
 	copy(sorted, rules)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
@@ -345,10 +349,12 @@ func hashRules(rules []state.EdgeRule) [32]byte {
 	return sum
 }
 
-// hashRoutes returns sha256 of the canonical (route + count)
+// HashRoutes returns sha256 of the canonical (route + count)
 // row concatenation. Used as one half of the cache key for
-// the observed-routes layer.
-func hashRoutes(rows []RouteRow) [32]byte {
+// the observed-routes layer. Exported so the apid handler can
+// compute the cache key half without running the full
+// GenerateFromApp pipeline.
+func HashRoutes(rows []RouteRow) [32]byte {
 	sorted := make([]RouteRow, len(rows))
 	copy(sorted, rows)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Route < sorted[j].Route })

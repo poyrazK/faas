@@ -319,10 +319,10 @@ func TestHashRules_Stable(t *testing.T) {
 	rules3 := []state.EdgeRule{
 		{ID: "a", Kind: state.EdgeRuleKindValidate, MatchPath: "/users-CHANGED"},
 	}
-	if hashRules(rules1) != hashRules(rules2) {
+	if HashRules(rules1) != HashRules(rules2) {
 		t.Error("reorder changed the hash; canonical sort should normalise")
 	}
-	if hashRules(rules1) == hashRules(rules3) {
+	if HashRules(rules1) == HashRules(rules3) {
 		t.Error("rule change did not change the hash")
 	}
 }
@@ -340,10 +340,10 @@ func TestHashRoutes_Stable(t *testing.T) {
 	r3 := []RouteRow{
 		{Route: "GET /users", Count: 11}, // count differs
 	}
-	if hashRoutes(r1) != hashRoutes(r2) {
+	if HashRoutes(r1) != HashRoutes(r2) {
 		t.Error("reorder changed the hash; canonical sort should normalise")
 	}
-	if hashRoutes(r1) == hashRoutes(r3) {
+	if HashRoutes(r1) == HashRoutes(r3) {
 		t.Error("count change did not change the hash")
 	}
 }
