@@ -122,6 +122,24 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		EnvKeys:    w.EnvKeys,
 		Source:     w.Source,
 		Tier:       w.Tier.String(),
+		DetectedBy: toPlanDetectedBy(w.DetectedBy),
+	}
+}
+
+// toPlanDetectedBy translates the reposcan detection trace into the
+// wire DTO (issue #742). Returns nil for the zero Detection so the
+// `detected_by` key is omitted entirely rather than serialising an
+// empty object — a scan produced before the trace existed, or by a
+// caller that constructed Workload directly, stays byte-identical
+// on the wire.
+func toPlanDetectedBy(d reposcan.Detection) *api.PlanDetectedBy {
+	if d.Detector == "" {
+		return nil
+	}
+	return &api.PlanDetectedBy{
+		Detector:   d.Detector,
+		Priority:   int(d.Priority),
+		MergedFrom: d.MergedFrom,
 	}
 }
 

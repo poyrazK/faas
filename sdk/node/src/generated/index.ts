@@ -194,6 +194,7 @@ export type { PasswordSignupRequest } from './models/PasswordSignupRequest.js';
 export type { PatchOrgRequest } from './models/PatchOrgRequest.js';
 export type { PaymentMethodSummary } from './models/PaymentMethodSummary.js';
 export type { PlanCron } from './models/PlanCron.js';
+export type { PlanDetectedBy } from './models/PlanDetectedBy.js';
 export type { PlanManaged } from './models/PlanManaged.js';
 export type { PlanResponse } from './models/PlanResponse.js';
 export type { PlanWorkload } from './models/PlanWorkload.js';
