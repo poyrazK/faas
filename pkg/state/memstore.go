@@ -4241,7 +4241,7 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	d.Error = ""
 	m.deployments[id] = d
 
-	snap, err := m.captureDeploymentOpenAPISnapshotLocked(d)
+	snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
 	if err != nil {
 		return fmt.Errorf("memstore: capture snapshot for %s: %w", id, err)
 	}
@@ -4276,8 +4276,10 @@ func edgeRuleToCreateEdgeRuleRequest(r EdgeRule) api.CreateEdgeRuleRequest {
 // [openapidiff.MarshalSnapshot], and return the struct ready to
 // UPSERT. The (Priority asc, CreatedAt desc) sort matches
 // pgstore's order so both stores produce the same SHA-256 for
-// the same edge-rule set.
-func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(d Deployment) (OpenAPISnapshot, error) {
+// the same edge-rule set. The caller-supplied ctx is forwarded to
+// the registered capture callback so caller-side cancellation
+// propagates into the projection/marshal step.
+func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(ctx context.Context, d Deployment) (OpenAPISnapshot, error) {
 	var rules []EdgeRule
 	for _, r := range m.edgeRules {
 		if r.AppID != d.AppID {
@@ -4306,7 +4308,7 @@ func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(d Deployment) (OpenAPI
 	// so this Store only persists it — pkg/state does not
 	// import pkg/openapidiff (that cycle is broken by the
 	// runtime-registered inversion; see openapi_capture.go).
-	snap, err := getOpenAPICapture()(context.Background(), nil, d.ID, d.AppID, d.Scope, pending)
+	snap, err := getOpenAPICapture()(ctx, nil, d.ID, d.AppID, d.Scope, pending)
 	if err != nil {
 		return OpenAPISnapshot{}, fmt.Errorf("memstore: capture snapshot for %s: %w", d.ID, err)
 	}
@@ -4714,7 +4716,7 @@ func (m *MemStore) MarkAutoRollback(_ context.Context, deploymentID, reason stri
 // not live.
 //
 // Migration 00297 / Mega-C PR-2 / issue #961 leaf 8.
-func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDeploymentID string) (string, error) {
+func (m *MemStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentDeploymentID string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cur, ok := m.deployments[currentDeploymentID]
@@ -4750,7 +4752,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	// loses its baseline. Caller holds m.mu; the helper
 	// re-enters the same map under the same lock so the
 	// capture commits atomically with the status flip.
-	snap, err := m.captureDeploymentOpenAPISnapshotLocked(target)
+	snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, target)
 	if err != nil {
 		return "", fmt.Errorf("memstore: auto-rollback capture snapshot for %s: %w", targetID, err)
 	}
@@ -4772,7 +4774,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 // OpenAPI snapshot capture under the single m.mu lock so a
 // projection failure leaves the pre-call state intact (no half-
 // rolled-back app). See pgstore.go for the rationale.
-func (m *MemStore) RollbackDeploymentToTx(_ context.Context, appID, currentDeploymentID, targetDeploymentID string) error {
+func (m *MemStore) RollbackDeploymentToTx(ctx context.Context, appID, currentDeploymentID, targetDeploymentID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -4788,7 +4790,7 @@ func (m *MemStore) RollbackDeploymentToTx(_ context.Context, appID, currentDeplo
 	cur.Status = DeploySuperseded
 	target.Status = DeployLive
 	target.Error = ""
-	snap, err := m.captureDeploymentOpenAPISnapshotLocked(target)
+	snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, target)
 	if err != nil {
 		return fmt.Errorf("memstore: rollback capture snapshot for %s: %w", targetDeploymentID, err)
 	}
