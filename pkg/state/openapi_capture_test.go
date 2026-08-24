@@ -42,7 +42,7 @@ import (
 // noop sentinel for the duration of one test, then restores
 // whatever impl was registered when the test started. The
 // latter is what keeps pkg/state/pgstore_openapi_capture_test.go
-//'s pgstore happy-path tests working: memstore_test.go's
+// 's pgstore happy-path tests working: memstore_test.go's
 // TestMain registers testFakeOpenAPICapture; if a test here
 // blanks the registry, the original fixture MUST come back so
 // the next pgstore test (which can run in the same binary
