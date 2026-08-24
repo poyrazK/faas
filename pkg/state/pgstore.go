@@ -31,7 +31,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/db"
-	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -5233,13 +5232,14 @@ func (s *PgStore) MarkDeploymentSuperseded(ctx context.Context, id string) error
 // writers.
 //
 // The projection (embedded OpenAPI spec + the app's current
-// edge-rule list) is recomputed inside the tx via the existing
-// [openapidiff.Load] + [openapidiff.GenerateFromEdgeRules] +
-// [openapidiff.MarshalSnapshot] helpers. Recomputing here means
-// every "live" row is the snapshot the customer sees at the
-// moment of promotion — no risk of an out-of-date row stamped
-// by a previous deploy. The cost is one edge-rule query + a
-// json.Marshal per live transition; live transitions are rare
+// edge-rule list) is recomputed inside the tx via the
+// registered [OpenAPICaptureFn] callback
+// (cmd/apid wires the pkg/openapidiff-backed impl at startup).
+// Recomputing here means every "live" row is the snapshot the
+// customer sees at the moment of promotion — no risk of an
+// out-of-date row stamped by a previous deploy. The cost is
+// one edge-rule query + a json.Marshal per live transition;
+// live transitions are rare
 // (the customer-initiated deploy path, not the per-request wake
 // path), so the cost is in the noise.
 //
@@ -5264,13 +5264,14 @@ func (s *PgStore) MarkDeploymentSuperseded(ctx context.Context, id string) error
 // writers.
 //
 // The projection (embedded OpenAPI spec + the app's current
-// edge-rule list) is recomputed inside the tx via the existing
-// [openapidiff.Load] + [openapidiff.GenerateFromEdgeRules] +
-// [openapidiff.MarshalSnapshot] helpers. Recomputing here means
-// every "live" row is the snapshot the customer sees at the
-// moment of promotion — no risk of an out-of-date row stamped
-// by a previous deploy. The cost is one edge-rule query + a
-// json.Marshal per live transition; live transitions are rare
+// edge-rule list) is recomputed inside the tx via the
+// registered [OpenAPICaptureFn] callback
+// (cmd/apid wires the pkg/openapidiff-backed impl at startup).
+// Recomputing here means every "live" row is the snapshot the
+// customer sees at the moment of promotion — no risk of an
+// out-of-date row stamped by a previous deploy. The cost is
+// one edge-rule query + a json.Marshal per live transition;
+// live transitions are rare
 // (the customer-initiated deploy path, not the per-request wake
 // path), so the cost is in the noise.
 //
@@ -5464,24 +5465,18 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 		pending = append(pending, edgeRuleToCreateEdgeRuleRequest(r))
 	}
 
-	spec, err := openapidiff.GenerateFromEdgeRules(nil, nil, pending)
+	// Delegate projection + canonical JSON + SHA-256 to the
+	// registered callback (cmd/apid wires the real
+	// pkg/openapidiff-backed impl at startup; tests register a
+	// fixture). The callback returns the SHAPE-ready struct,
+	// so this Store only persists it — pkg/state does not
+	// import pkg/openapidiff (that cycle is broken by the
+	// runtime-registered inversion; see openapi_capture.go).
+	snap, err := getOpenAPICapture()(ctx, tx, deploymentID, appID, scope, pending)
 	if err != nil {
-		return OpenAPISnapshot{}, fmt.Errorf("state: project spec for snapshot: %w", err)
+		return OpenAPISnapshot{}, fmt.Errorf("state: capture snapshot for %s: %w", deploymentID, err)
 	}
-	raw, sha, err := openapidiff.MarshalSnapshot(spec)
-	if err != nil {
-		return OpenAPISnapshot{}, fmt.Errorf("state: marshal snapshot: %w", err)
-	}
-
-	return OpenAPISnapshot{
-		DeploymentID:  deploymentID,
-		AppID:         appID,
-		Scope:         scope,
-		Snapshot:      raw,
-		SHA256:        sha,
-		SchemaVersion: openapidiff.SnapshotSchemaVersion,
-		CapturedAt:    time.Now().UTC(),
-	}, nil
+	return snap, nil
 }
 
 // UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)

@@ -22,7 +22,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
-	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -4300,23 +4299,18 @@ func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(d Deployment) (OpenAPI
 		pending = append(pending, edgeRuleToCreateEdgeRuleRequest(r))
 	}
 
-	spec, err := openapidiff.GenerateFromEdgeRules(nil, nil, pending)
+	// Delegate projection + canonical JSON + SHA-256 to the
+	// registered callback (cmd/apid wires the real
+	// pkg/openapidiff-backed impl at startup; tests register a
+	// fixture). The callback returns the SHAPE-ready struct,
+	// so this Store only persists it — pkg/state does not
+	// import pkg/openapidiff (that cycle is broken by the
+	// runtime-registered inversion; see openapi_capture.go).
+	snap, err := getOpenAPICapture()(context.Background(), nil, d.ID, d.AppID, d.Scope, pending)
 	if err != nil {
-		return OpenAPISnapshot{}, fmt.Errorf("memstore: project spec for snapshot: %w", err)
+		return OpenAPISnapshot{}, fmt.Errorf("memstore: capture snapshot for %s: %w", d.ID, err)
 	}
-	raw, sha, err := openapidiff.MarshalSnapshot(spec)
-	if err != nil {
-		return OpenAPISnapshot{}, fmt.Errorf("memstore: marshal snapshot: %w", err)
-	}
-	return OpenAPISnapshot{
-		DeploymentID:  d.ID,
-		AppID:         d.AppID,
-		Scope:         d.Scope,
-		Snapshot:      raw,
-		SHA256:        sha,
-		SchemaVersion: openapidiff.SnapshotSchemaVersion,
-		CapturedAt:    time.Now().UTC(),
-	}, nil
+	return snap, nil
 }
 
 // UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)

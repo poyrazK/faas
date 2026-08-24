@@ -9,6 +9,15 @@ package state
 // in-memory mirror so the contract holds across both stores —
 // a future contributor refactoring the projection would catch
 // the regression here without spinning Postgres.
+//
+// TestMain registers a fake openapidiff-free capture callback
+// via the TestMain in memstore_test.go (shared across this
+// directory). The fixture uses stdlib crypto/sha256 + the
+// pkg/api wire shape only — pkg/openapidiff is NOT imported
+// from any pkg/state test file because the cycle fix
+// (see pkg/state/openapi_capture.go) keeps pkg/state free of
+// any pkg/openapidiff import. Production wiring lives in
+// cmd/apid/openapi_capture.go and uses the real impl.
 
 import (
 	"context"
@@ -103,13 +112,16 @@ func TestMemStore_OpenAPICapture_MarkDeploymentLiveWritesSnapshot(t *testing.T) 
 		t.Errorf("latest.deployment_id = %q, want %q", latest.DeploymentID, dep.ID)
 	}
 
-	// Decode the canonical JSON envelope end-to-end.
+	// Decode the canonical JSON envelope end-to-end. The shape
+	// inside is openapidiff-specific; we only assert it's
+	// valid JSON with non-zero structure so a regression that
+	// wrote garbage bytes would fail here.
 	var doc map[string]any
 	if err := json.Unmarshal(snap.Snapshot, &doc); err != nil {
 		t.Fatalf("snapshot bytes not valid JSON: %v", err)
 	}
-	if _, ok := doc["spec"]; !ok {
-		t.Errorf("snapshot missing spec field; got %v", doc)
+	if len(doc) == 0 {
+		t.Errorf("snapshot envelope empty; got %v", doc)
 	}
 }
 
@@ -229,20 +241,41 @@ func TestMemStore_OpenAPICapture_DisabledRulesExcluded(t *testing.T) {
 		t.Fatalf("OpenAPISnapshotByDeployment: %v", err)
 	}
 
-	var doc struct {
-		SchemaVersion int `json:"schema_version"`
-		Spec          struct {
-			Paths map[string]any `json:"paths"`
-		} `json:"spec"`
+	// The disabled-rule filter is enforced in the producer
+	// side (pgstore.captureDeploymentOpenAPISnapshotTx and the
+	// memstore mirror skip Enabled=false rules before the
+	// rules slice reaches the callback). The fixture in
+	// memstore_test.go's TestMain records the rules it
+	// received — assert the disabled rule is NOT present so
+	// a regression that lifted the Enabled filter would
+	// fail. The fixture's shape is openapidiff-free by
+	// design (see memstore_test.go for why); we read the
+	// rules slice directly. The wire shape uses
+	// pkg/api.CreateEdgeRuleRequest whose JSON tags are
+	// snake_case (match_host, match_path, enabled).
+	var env struct {
+		Rules []struct {
+			MatchHost string `json:"match_host"`
+			Enabled   *bool  `json:"enabled,omitempty"`
+		} `json:"rules"`
 	}
-	if err := json.Unmarshal(snap.Snapshot, &doc); err != nil {
-		t.Fatalf("decode snapshot: %v", err)
+	if err := json.Unmarshal(snap.Snapshot, &env); err != nil {
+		t.Fatalf("decode snapshot envelope: %v", err)
 	}
-	if _, ok := doc.Spec.Paths["disabled.example.com/v1/feature"]; ok {
-		t.Errorf("disabled rule path present in snapshot (must be excluded)")
+	for _, r := range env.Rules {
+		if r.MatchHost == "disabled.example.com" {
+			t.Errorf("disabled rule present in snapshot envelope (must be excluded)")
+		}
 	}
-	if _, ok := doc.Spec.Paths["enabled.example.com/v1/feature"]; !ok {
-		t.Errorf("enabled rule path missing from snapshot")
+	enabledSeen := false
+	for _, r := range env.Rules {
+		if r.MatchHost == "enabled.example.com" {
+			enabledSeen = true
+			break
+		}
+	}
+	if !enabledSeen {
+		t.Errorf("enabled rule missing from snapshot envelope")
 	}
 }
 
