@@ -74,6 +74,34 @@ func TestMain(m *testing.M) {
 // the callback inversion was designed to break would re-form
 // at the test binary). It only touches stdlib + the
 // pkg/api wire shape.
+//
+// Wire envelope mirrors the real openapidiff.MarshalSnapshot
+// top-level keys so the pgstore capture tests can assert
+// `spec` / `paths` shape end-to-end without linking
+// pkg/openapidiff:
+//
+//	{
+//	  "deployment_id":  ...,
+//	  "app_id":         ...,
+//	  "scope":          ...,
+//	  "schema_version": 1,
+//	  "captured_at":    RFC3339,
+//	  "rules":          [...],
+//	  "spec": {
+//	    "openapi": "3.1.0",
+//	    "info":    { "title": ... },
+//	    "paths":   { "<host>/<path>": { "<METHOD>": { ... } } },
+//	  },
+//	}
+//
+// The paths are keyed by host+"/"+path because the OpenAPI
+// differ's host-prefix projection (pkg/openapidiff/loader.go)
+// and the embedded spec share that shape. Disabled rules are
+// already filtered by the producer before the callback fires
+// (see pgstore.captureDeploymentOpenAPISnapshotTx and the
+// memstore mirror), so the fixture receives only Enabled=true
+// rules — its paths map reflects exactly what the customer can
+// serve.
 func testFakeOpenAPICapture(_ context.Context, _ sqlc.DBTX, deploymentID, appID, scope string, rules []api.CreateEdgeRuleRequest) (OpenAPISnapshot, error) {
 	// Sort rules for determinism (Priority asc, then MatchHost
 	// tie-break) — mirrors the producer-side sort in
@@ -90,16 +118,46 @@ func testFakeOpenAPICapture(_ context.Context, _ sqlc.DBTX, deploymentID, appID,
 		}
 		return sorted[i].Kind < sorted[j].Kind
 	})
+
+	// Build the embedded-OpenAPI-shaped paths map. Each enabled
+	// rule becomes one path entry keyed by "<host>/<path>" — the
+	// differ's host-prefix projection expects exactly this shape,
+	// so a future helper that swaps the fixture for the real
+	// impl won't see byte-shape drift.
+	paths := make(map[string]any, len(sorted))
+	for _, r := range sorted {
+		key := r.MatchHost + r.MatchPath
+		methods := make(map[string]any, len(r.MatchMethods))
+		for _, m := range r.MatchMethods {
+			methods[m] = map[string]any{"responses": map[string]any{"200": map[string]any{}}}
+		}
+		paths[key] = map[string]any{
+			"methods":  methods,
+			"metadata": map[string]any{"kind": r.Kind},
+		}
+	}
+
+	now := time.Now().UTC()
 	enc, err := json.Marshal(struct {
-		DeploymentID string                      `json:"deployment_id"`
-		AppID        string                      `json:"app_id"`
-		Scope        string                      `json:"scope"`
-		Rules        []api.CreateEdgeRuleRequest `json:"rules"`
+		DeploymentID  string                      `json:"deployment_id"`
+		AppID         string                      `json:"app_id"`
+		Scope         string                      `json:"scope"`
+		SchemaVersion int                         `json:"schema_version"`
+		Rules         []api.CreateEdgeRuleRequest `json:"rules"`
+		Spec          map[string]any              `json:"spec"`
 	}{
-		DeploymentID: deploymentID,
-		AppID:        appID,
-		Scope:        scope,
-		Rules:        sorted,
+		DeploymentID:  deploymentID,
+		AppID:         appID,
+		Scope:         scope,
+		SchemaVersion: 1, // SnapshotSchemaVersion's value; the
+		// constant lives in pkg/openapidiff which this test
+		// file does not import.
+		Rules: sorted,
+		Spec: map[string]any{
+			"openapi": "3.1.0",
+			"info":    map[string]any{"title": "test-fixture"},
+			"paths":   paths,
+		},
 	})
 	if err != nil {
 		return OpenAPISnapshot{}, err
@@ -111,10 +169,8 @@ func testFakeOpenAPICapture(_ context.Context, _ sqlc.DBTX, deploymentID, appID,
 		Scope:         scope,
 		Snapshot:      enc,
 		SHA256:        hex.EncodeToString(sum[:]),
-		SchemaVersion: 1, // SnapshotSchemaVersion's value; the
-		// constant lives in pkg/openapidiff which this test
-		// file does not import.
-		CapturedAt: time.Now().UTC(),
+		SchemaVersion: 1,
+		CapturedAt:    now,
 	}, nil
 }
 

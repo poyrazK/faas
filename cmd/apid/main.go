@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -576,7 +577,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// sees as the pending promotion; without this wiring
 	// every live transition would roll back to "no
 	// baseline" on the gate's first read.
-	state.RegisterOpenAPICapture(openapiSnapshotForDeployment)
+	//
+	// RegisterStateCapture lives in pkg/openapidiff (which
+	// already imports pkg/state via the generator_ext.go
+	// seam; no new cycle). Single impl shared by cmd/apid
+	// and cmd/e2e so PR-B capture semantics are uniform across
+	// production + test processes.
+	openapidiff.RegisterStateCapture()
 	deps.config = cfg
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): boot log carrying the
 	// multi-box identity so an operator reading the systemd journal

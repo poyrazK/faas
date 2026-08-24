@@ -49,6 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
@@ -157,6 +158,20 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "sec11_test: mkdir tmp: %v\n", err)
 		os.Exit(2)
 	}
+
+	// PR-B / ADR-121: the e2e harness drives PgStore directly
+	// (state.NewPgStore(pool)) inside several *_test.go files
+	// — TestRollbackSpecific_E2E and friends — to set up
+	// fixtures the apid subprocess test paths can't easily
+	// express. Each PgStore.MarkDeploymentLive in this process
+	// therefore invokes the registered OpenAPICaptureFn; without
+	// a registered impl, the default noop returns a zero
+	// snapshot and the UPSERT validation rejects it with
+	// `empty deployment_id` (the regression that surfaced on
+	// PR-B cycle-fix R9). Wire the same impl cmd/apid uses at
+	// startup so the e2e process has the real projection in
+	// place before any test runs.
+	openapidiff.RegisterStateCapture()
 
 	// The test binary's cwd is the package directory; resolve to the
 	// module root so `go build ./cmd/{apid,vmmd}` finds the packages.
