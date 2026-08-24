@@ -4245,6 +4245,16 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("memstore: capture snapshot for %s: %w", id, err)
 	}
+	// Zero-snapshot short-circuit: when no capture impl has
+	// been registered the noop returns the zero OpenAPISnapshot.
+	// Don't poison the map with a zero row — matches
+	// [PgStore.MarkDeploymentLive]'s zero-skip contract for
+	// cross-store parity. The status flip above is still
+	// committed; a future re-call with a registered impl
+	// will populate the snapshot row.
+	if snap.DeploymentID == "" {
+		return nil
+	}
 	m.openAPISnapshots[id] = snap
 	return nil
 }
@@ -4756,7 +4766,11 @@ func (m *MemStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, current
 	if err != nil {
 		return "", fmt.Errorf("memstore: auto-rollback capture snapshot for %s: %w", targetID, err)
 	}
-	m.openAPISnapshots[targetID] = snap
+	// Zero-snapshot short-circuit: see [MarkDeploymentLive] for
+	// the rationale.
+	if snap.DeploymentID != "" {
+		m.openAPISnapshots[targetID] = snap
+	}
 	now := time.Now().UTC()
 	if cur.LastAutoRollbackAt == nil {
 		cur.LastAutoRollbackAt = &now
@@ -4794,7 +4808,11 @@ func (m *MemStore) RollbackDeploymentToTx(ctx context.Context, appID, currentDep
 	if err != nil {
 		return fmt.Errorf("memstore: rollback capture snapshot for %s: %w", targetDeploymentID, err)
 	}
-	m.openAPISnapshots[targetDeploymentID] = snap
+	// Zero-snapshot short-circuit: see [MarkDeploymentLive] for
+	// the rationale.
+	if snap.DeploymentID != "" {
+		m.openAPISnapshots[targetDeploymentID] = snap
+	}
 	m.deployments[currentDeploymentID] = cur
 	m.deployments[targetDeploymentID] = target
 	return nil

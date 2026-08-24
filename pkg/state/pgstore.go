@@ -5333,8 +5333,21 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("state: capture snapshot for %s: %w", id, err)
 	}
-	if err := upsertDeploymentOpenAPISnapshotTx(ctx, tx, snap); err != nil {
-		return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+	// Zero-snapshot short-circuit: the noop capture (used when
+	// no real impl has been registered — e.g. cmd/schedd unit
+	// tests that drive [PgStore] directly without going through
+	// the cmd/apid daemon) returns the zero OpenAPISnapshot.
+	// Skip the UPSERT rather than failing the status flip —
+	// the PR-B invariant is "an app always has a live snapshot
+	// OR a cold-bootable rootfs"; the deploys table carries
+	// the status='live' marker either way, and a future
+	// PR-B re-call (with a registered impl) will fill the
+	// snapshot row. Matches [MemStore.MarkDeploymentLive]'s
+	// zero-skip contract for cross-store parity.
+	if snap.DeploymentID != "" {
+		if err := upsertDeploymentOpenAPISnapshotTx(ctx, tx, snap); err != nil {
+			return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: commit mark-live tx: %w", err)
@@ -6138,8 +6151,16 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 	if err != nil {
 		return "", fmt.Errorf("state: auto-rollback capture snapshot for %s: %w", targetID, err)
 	}
-	if err := upsertDeploymentOpenAPISnapshotTx(ctx, tx, snap); err != nil {
-		return "", fmt.Errorf("state: auto-rollback upsert snapshot for %s: %w", targetID, err)
+	// Zero-snapshot short-circuit: see [MarkDeploymentLive] for
+	// the rationale. Unregistered callers (cmd/schedd unit
+	// tests that drive [PgStore] directly without the cmd/apid
+	// daemon wiring) take this branch and the status flip
+	// still commits; a future re-call with a registered impl
+	// fills the row.
+	if snap.DeploymentID != "" {
+		if err := upsertDeploymentOpenAPISnapshotTx(ctx, tx, snap); err != nil {
+			return "", fmt.Errorf("state: auto-rollback upsert snapshot for %s: %w", targetID, err)
+		}
 	}
 
 	// (4) Stamp the audit anchor on the failed deploy.
@@ -6226,8 +6247,12 @@ func (s *PgStore) RollbackDeploymentToTx(ctx context.Context, appID, currentDepl
 	if err != nil {
 		return fmt.Errorf("state: rollback capture snapshot for %s: %w", targetDeploymentID, err)
 	}
-	if err := upsertDeploymentOpenAPISnapshotTx(ctx, tx, snap); err != nil {
-		return fmt.Errorf("state: rollback upsert snapshot for %s: %w", targetDeploymentID, err)
+	// Zero-snapshot short-circuit: see [MarkDeploymentLive] for
+	// the rationale.
+	if snap.DeploymentID != "" {
+		if err := upsertDeploymentOpenAPISnapshotTx(ctx, tx, snap); err != nil {
+			return fmt.Errorf("state: rollback upsert snapshot for %s: %w", targetDeploymentID, err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: commit rollback-to tx: %w", err)
