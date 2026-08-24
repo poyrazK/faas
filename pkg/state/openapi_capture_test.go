@@ -38,13 +38,23 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// resetOpenAPICaptureRegistry restores the noop sentinel after a
-// test mutates the package-level state. Safe to defer; restores
-// the original impl regardless of test outcome.
+// resetOpenAPICaptureRegistry restores the registry to the
+// noop sentinel for the duration of one test, then restores
+// whatever impl was registered when the test started. The
+// latter is what keeps pkg/state/pgstore_openapi_capture_test.go
+//'s pgstore happy-path tests working: memstore_test.go's
+// TestMain registers testFakeOpenAPICapture; if a test here
+// blanks the registry, the original fixture MUST come back so
+// the next pgstore test (which can run in the same binary
+// after this one) sees a non-noop capture. Restoring to nil
+// would leave the registry in the noop state for the rest of
+// the binary, which is exactly what the previous version of
+// this helper did and the regression that surfaced the bug.
 func resetOpenAPICaptureRegistry(t *testing.T) {
 	t.Helper()
+	original := getOpenAPICapture()
 	RegisterOpenAPICapture(nil)
-	t.Cleanup(func() { RegisterOpenAPICapture(nil) })
+	t.Cleanup(func() { RegisterOpenAPICapture(original) })
 }
 
 // TestRegisterOpenAPICapture_NilFallsBackToNoop pins the
