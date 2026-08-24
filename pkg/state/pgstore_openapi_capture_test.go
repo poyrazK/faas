@@ -54,6 +54,7 @@ func TestPg_OpenAPICapture_MarkDeploymentLiveWritesSnapshot(t *testing.T) {
 		ImageDigest: "sha256:capture-write",
 		Status:      state.DeployPending,
 		Scope:       "prod",
+		Kind:        state.DeploymentKindImage,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -129,6 +130,7 @@ func TestPg_OpenAPICapture_MarkDeploymentLiveUpsertsOnReLive(t *testing.T) {
 		ImageDigest: "sha256:capture-upsert",
 		Status:      state.DeployPending,
 		Scope:       "prod",
+		Kind:        state.DeploymentKindImage,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -243,6 +245,7 @@ func TestPg_OpenAPICapture_DisabledRulesExcluded(t *testing.T) {
 		ImageDigest: "sha256:capture-disabled",
 		Status:      state.DeployPending,
 		Scope:       "prod",
+		Kind:        state.DeploymentKindImage,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -325,6 +328,7 @@ func TestPg_OpenAPICapture_DeterministicForSameEdgeRules(t *testing.T) {
 		ImageDigest: "sha256:capture-det",
 		Status:      state.DeployPending,
 		Scope:       "prod",
+		Kind:        state.DeploymentKindImage,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -377,6 +381,7 @@ func TestPg_OpenAPICapture_RollbackPathWritesSnapshot(t *testing.T) {
 		ImageDigest: "sha256:rollback-prior",
 		Status:      state.DeployPending,
 		Scope:       "prod",
+		Kind:        state.DeploymentKindImage,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(prior): %v", err)
@@ -395,6 +400,7 @@ func TestPg_OpenAPICapture_RollbackPathWritesSnapshot(t *testing.T) {
 		ImageDigest: "sha256:rollback-target",
 		Status:      state.DeployPending,
 		Scope:       "prod",
+		Kind:        state.DeploymentKindImage,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(target): %v", err)
