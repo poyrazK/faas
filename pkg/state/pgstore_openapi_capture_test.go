@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strconv"
 	"testing"
@@ -482,4 +483,191 @@ func keysOf(m map[string]any) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestPg_OpenAPICapture_UpdateDeploymentOpenAPISnapshot_Validation
+// pins the input-validation contract on
+// [PgStore.UpdateDeploymentOpenAPISnapshot]: every required
+// field (deployment_id, app_id, scope, snapshot bytes, sha256)
+// must be non-empty, and SchemaVersion must be >= 1. The
+// MemStore mirror has the same checks (pinned by
+// memstore_openapi_capture_test.go's validation test); this
+// file pins the pgstore mirror against a real cluster.
+//
+// Each case asserts the substring the production error
+// message emits (pgstore.go line 5366 onward) so a future
+// refactor that drops or rewrites the validation breaks both
+// stores at the same time.
+func TestPg_OpenAPICapture_UpdateDeploymentOpenAPISnapshot_Validation(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	good := func() state.OpenAPISnapshot {
+		return state.OpenAPISnapshot{
+			DeploymentID:  "11111111-1111-1111-1111-111111111111",
+			AppID:         "22222222-2222-2222-2222-222222222222",
+			Scope:         "prod",
+			Snapshot:      []byte(`{"ok":true}`),
+			SHA256:        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			SchemaVersion: 1,
+			CapturedAt:    time.Now().UTC(),
+		}
+	}
+
+	cases := []struct {
+		name     string
+		mutate   func(*state.OpenAPISnapshot)
+		wantSubs string
+	}{
+		{
+			name:     "empty deployment_id",
+			mutate:   func(s *state.OpenAPISnapshot) { s.DeploymentID = "" },
+			wantSubs: "empty deployment_id",
+		},
+		{
+			name:     "empty app_id",
+			mutate:   func(s *state.OpenAPISnapshot) { s.AppID = "" },
+			wantSubs: "empty app_id",
+		},
+		{
+			name:     "empty scope",
+			mutate:   func(s *state.OpenAPISnapshot) { s.Scope = "" },
+			wantSubs: "empty scope",
+		},
+		{
+			name:     "empty snapshot bytes",
+			mutate:   func(s *state.OpenAPISnapshot) { s.Snapshot = nil },
+			wantSubs: "empty snapshot bytes",
+		},
+		{
+			name:     "empty sha256",
+			mutate:   func(s *state.OpenAPISnapshot) { s.SHA256 = "" },
+			wantSubs: "empty sha256",
+		},
+		{
+			name:     "schema_version zero",
+			mutate:   func(s *state.OpenAPISnapshot) { s.SchemaVersion = 0 },
+			wantSubs: "schema_version must be >= 1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snap := good()
+			tc.mutate(&snap)
+			err := s.UpdateDeploymentOpenAPISnapshot(ctx, snap)
+			if err == nil {
+				t.Fatalf("UpdateDeploymentOpenAPISnapshot(%s) = nil err; want validation error", tc.name)
+			}
+			if !regexp.MustCompile(tc.wantSubs).MatchString(err.Error()) {
+				t.Errorf("err = %q; want substring %q", err.Error(), tc.wantSubs)
+			}
+		})
+	}
+}
+
+// TestPg_OpenAPICapture_UpdateDeploymentOpenAPISnapshot_CapturedAtDefaults
+// pins the CapturedAt zero-default branch in
+// [upsertDeploymentOpenAPISnapshotDBTX] (pgstore.go line 5384):
+// when the caller omits CapturedAt, the helper substitutes
+// time.Now().UTC() before the SQL write. The MemStore mirror
+// has the same fallback (pinned by memstore_openapi_capture_test.go);
+// this test pins the SQL mirror against a real cluster.
+func TestPg_OpenAPICapture_UpdateDeploymentOpenAPISnapshot_CapturedAtDefaults(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	snap := state.OpenAPISnapshot{
+		DeploymentID:  "33333333-3333-3333-3333-333333333333",
+		AppID:         "22222222-2222-2222-2222-222222222222",
+		Scope:         "prod",
+		Snapshot:      []byte(`{"captured_at_default":true}`),
+		SHA256:        "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+		SchemaVersion: 1,
+		// CapturedAt deliberately zero.
+	}
+	before := time.Now().UTC()
+	if err := s.UpdateDeploymentOpenAPISnapshot(ctx, snap); err != nil {
+		t.Fatalf("UpdateDeploymentOpenAPISnapshot = %v; want nil", err)
+	}
+	after := time.Now().UTC()
+
+	got, err := s.OpenAPISnapshotByDeployment(ctx, snap.DeploymentID)
+	if err != nil {
+		t.Fatalf("OpenAPISnapshotByDeployment = %v; want nil", err)
+	}
+	if got.CapturedAt.Before(before) || got.CapturedAt.After(after) {
+		t.Errorf("CapturedAt = %v; want in [%v, %v]", got.CapturedAt, before, after)
+	}
+}
+
+// TestPg_OpenAPICapture_MarkDeploymentLive_NotFound pins the
+// ErrNotFound branch of [PgStore.MarkDeploymentLive] (pgstore.go
+// line 5315): the tx status-read on a missing deployment id
+// returns ErrNotFound so callers (imaged, builderd, schedd)
+// surface a clear "unknown deployment" error rather than a
+// raw SQL message.
+func TestPg_OpenAPICapture_MarkDeploymentLive_NotFound(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	if err := s.MarkDeploymentLive(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("MarkDeploymentLive(missing) = %v; want ErrNotFound", err)
+	}
+}
+
+// TestPg_OpenAPICapture_MarkDeploymentLive_InvalidUUID pins
+// the uuid.Parse error branch of [PgStore.MarkDeploymentLive]
+// (pgstore.go line 5322-5324): a non-UUID id is rejected
+// before the SQL runs so a malformed producer-side call
+// surfaces a clean error rather than a pgx parse panic.
+func TestPg_OpenAPICapture_MarkDeploymentLive_InvalidUUID(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	err := s.MarkDeploymentLive(ctx, "not-a-uuid")
+	if err == nil {
+		t.Fatalf("MarkDeploymentLive(not-a-uuid) = nil; want parse error")
+	}
+	if !regexp.MustCompile(`parse deployment`).MatchString(err.Error()) {
+		t.Errorf("err = %q; want substring %q", err.Error(), "parse deployment")
+	}
+}
+
+// TestPg_OpenAPICapture_LatestForScope_NotFound pins the
+// not-found branch of [PgStore.LatestOpenAPISnapshotForScope]:
+// a scope with no captured snapshot returns ErrNotFound so
+// PR-C's gate takes the "no baseline" branch and lets the
+// first promotion through unblocked.
+func TestPg_OpenAPICapture_LatestForScope_NotFound(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	if _, err := s.LatestOpenAPISnapshotForScope(ctx, "44444444-4444-4444-4444-444444444444", "prod"); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("LatestOpenAPISnapshotForScope(missing) = %v; want ErrNotFound", err)
+	}
+}
+
+// TestPg_OpenAPICapture_OpenAPISnapshotByDeployment_NotFound
+// pins the not-found branch of
+// [PgStore.OpenAPISnapshotByDeployment]: a deployment id with
+// no captured snapshot returns ErrNotFound.
+func TestPg_OpenAPICapture_OpenAPISnapshotByDeployment_NotFound(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	if _, err := s.OpenAPISnapshotByDeployment(ctx, "55555555-5555-5555-5555-555555555555"); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("OpenAPISnapshotByDeployment(missing) = %v; want ErrNotFound", err)
+	}
 }

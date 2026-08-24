@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -330,6 +331,161 @@ func TestMemStore_OpenAPICapture_Deterministic(t *testing.T) {
 	}
 	if len(decoded) != 32 {
 		t.Errorf("sha256 bytes = %d, want 32", len(decoded))
+	}
+}
+
+// TestMemStore_OpenAPICapture_UpdateDeploymentOpenAPISnapshot_Validation
+// pins the input-validation contract on
+// [MemStore.UpdateDeploymentOpenAPISnapshot]: every required
+// field (deployment_id, app_id, scope, snapshot bytes, sha256)
+// must be non-empty, and SchemaVersion must be >= 1. The
+// pgstore mirror enforces the same rules via the SQL UPSERT
+// but the memstore mirror validates BEFORE the map write so a
+// bad input doesn't poison the in-memory state.
+//
+// Driving these from a MemStore test (not a PgStore test) keeps
+// the assertions cheap and deterministic — the pgstore path is
+// covered separately by pgstore_openapi_capture_test.go's
+// analogous table.
+//
+// The expected-error substring matches the production messages
+// verbatim (see memstore.go line 4324 onward) so a future
+// rename of either side breaks both at the same time.
+func TestMemStore_OpenAPICapture_UpdateDeploymentOpenAPISnapshot_Validation(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	good := func() OpenAPISnapshot {
+		return OpenAPISnapshot{
+			DeploymentID:  "dep-1",
+			AppID:         "app-1",
+			Scope:         "prod",
+			Snapshot:      []byte(`{"ok":true}`),
+			SHA256:        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			SchemaVersion: 1,
+			CapturedAt:    time.Now().UTC(),
+		}
+	}
+
+	cases := []struct {
+		name     string
+		mutate   func(*OpenAPISnapshot)
+		wantSubs string
+	}{
+		{
+			name:     "empty deployment_id",
+			mutate:   func(s *OpenAPISnapshot) { s.DeploymentID = "" },
+			wantSubs: "empty deployment_id",
+		},
+		{
+			name:     "empty app_id",
+			mutate:   func(s *OpenAPISnapshot) { s.AppID = "" },
+			wantSubs: "empty app_id",
+		},
+		{
+			name:     "empty scope",
+			mutate:   func(s *OpenAPISnapshot) { s.Scope = "" },
+			wantSubs: "empty scope",
+		},
+		{
+			name:     "empty snapshot bytes",
+			mutate:   func(s *OpenAPISnapshot) { s.Snapshot = nil },
+			wantSubs: "empty snapshot bytes",
+		},
+		{
+			name:     "empty sha256",
+			mutate:   func(s *OpenAPISnapshot) { s.SHA256 = "" },
+			wantSubs: "empty sha256",
+		},
+		{
+			name:     "schema_version zero",
+			mutate:   func(s *OpenAPISnapshot) { s.SchemaVersion = 0 },
+			wantSubs: "schema_version must be >= 1",
+		},
+		{
+			name:     "schema_version negative",
+			mutate:   func(s *OpenAPISnapshot) { s.SchemaVersion = -1 },
+			wantSubs: "schema_version must be >= 1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snap := good()
+			tc.mutate(&snap)
+			err := m.UpdateDeploymentOpenAPISnapshot(ctx, snap)
+			if err == nil {
+				t.Fatalf("UpdateDeploymentOpenAPISnapshot(%s) = nil err; want validation error", tc.name)
+			}
+			if !regexp.MustCompile(tc.wantSubs).MatchString(err.Error()) {
+				t.Errorf("err = %q; want substring %q", err.Error(), tc.wantSubs)
+			}
+		})
+	}
+
+	// Sanity: the good case still succeeds and the row is
+	// retrievable via OpenAPISnapshotByDeployment.
+	snap := good()
+	if err := m.UpdateDeploymentOpenAPISnapshot(ctx, snap); err != nil {
+		t.Fatalf("UpdateDeploymentOpenAPISnapshot(good) = %v; want nil", err)
+	}
+	got, err := m.OpenAPISnapshotByDeployment(ctx, snap.DeploymentID)
+	if err != nil {
+		t.Fatalf("OpenAPISnapshotByDeployment = %v; want nil", err)
+	}
+	if got.SHA256 != snap.SHA256 {
+		t.Errorf("round-trip SHA = %q; want %q", got.SHA256, snap.SHA256)
+	}
+}
+
+// TestMemStore_OpenAPICapture_UpdateDeploymentOpenAPISnapshot_CapturedAtDefaults
+// pins the CapturedAt zero-default: a caller that omits
+// CapturedAt gets time.Now().UTC() back from the map. The
+// pgstore mirror has the same fallback (line 5384 in
+// pgstore.go) — both stores keep the row's captured_at
+// non-NULL so the (app_id, scope, captured_at DESC) index
+// sort stays deterministic.
+func TestMemStore_OpenAPICapture_UpdateDeploymentOpenAPISnapshot_CapturedAtDefaults(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	snap := OpenAPISnapshot{
+		DeploymentID:  "dep-captured-at",
+		AppID:         "app-1",
+		Scope:         "prod",
+		Snapshot:      []byte(`{"ok":true}`),
+		SHA256:        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		SchemaVersion: 1,
+		// CapturedAt deliberately zero — the memstore must
+		// substitute time.Now().UTC() before the map write.
+	}
+	before := time.Now().UTC()
+	if err := m.UpdateDeploymentOpenAPISnapshot(ctx, snap); err != nil {
+		t.Fatalf("UpdateDeploymentOpenAPISnapshot = %v; want nil", err)
+	}
+	after := time.Now().UTC()
+
+	got, err := m.OpenAPISnapshotByDeployment(ctx, snap.DeploymentID)
+	if err != nil {
+		t.Fatalf("OpenAPISnapshotByDeployment = %v; want nil", err)
+	}
+	if got.CapturedAt.IsZero() {
+		t.Fatalf("CapturedAt stayed zero after UpdateDeploymentOpenAPISnapshot")
+	}
+	if got.CapturedAt.Before(before) || got.CapturedAt.After(after) {
+		t.Errorf("CapturedAt = %v; want in [%v, %v]", got.CapturedAt, before, after)
+	}
+}
+
+// TestMemStore_OpenAPICapture_LatestForScope_NotFound pins
+// the not-found branch of [MemStore.LatestOpenAPISnapshotForScope]
+// — a scope with no captured snapshot returns ErrNotFound so
+// the gate (PR-C) can take the "no baseline" branch and let
+// the first promotion through unblocked.
+func TestMemStore_OpenAPICapture_LatestForScope_NotFound(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	if _, err := m.LatestOpenAPISnapshotForScope(ctx, "missing-app", "prod"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("LatestOpenAPISnapshotForScope(missing) = %v; want ErrNotFound", err)
 	}
 }
 
