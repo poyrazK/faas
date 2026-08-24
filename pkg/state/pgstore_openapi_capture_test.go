@@ -671,3 +671,15 @@ func TestPg_OpenAPICapture_OpenAPISnapshotByDeployment_NotFound(t *testing.T) {
 		t.Errorf("OpenAPISnapshotByDeployment(missing) = %v; want ErrNotFound", err)
 	}
 }
+
+// The pgstore OpenAPI capture tests rely on the fixture
+// capture fn registered by memstore_test.go's TestMain
+// (which lives in the `state` internal-test package).
+// The state_test external-test package shares the same test
+// binary, so the singleton registration is visible to every
+// pgstore test in this file without an additional TestMain
+// (which would conflict with memstore_test.go's). The fixture
+// itself is unexported (testFakeOpenAPICapture in package
+// state), so the pgstore tests verify the contract through
+// the snapshot row's bytes + SHA-256 + scope, never by
+// inspecting the fixture's internals.
