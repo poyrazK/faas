@@ -579,15 +579,32 @@ func TestPg_OpenAPICapture_UpdateDeploymentOpenAPISnapshot_CapturedAtDefaults(t 
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// The deployment_openapi_snapshots.deployment_id column
+	// has a FK back to deployments(id); seed a real app+deployment
+	// pair so the UPSERT can satisfy the FK. Using a synthesised
+	// uuid (without a parent deployment row) trips SQLSTATE 23503
+	// — which is exactly the regression we DON'T want this test
+	// to look like, since the capture-time default is unrelated
+	// to FK enforcement.
+	appID := seedOpenAPISnapshotApp(t, s, ctx, "openapi-capture-captured-at")
+	var depID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO deployments (id, app_id, image_digest, status, scope)
+		VALUES (gen_random_uuid(), $1, 'sha256:test-openapi-capture-captured-at', 'live', 'prod')
+		RETURNING id
+	`, appID).Scan(&depID); err != nil {
+		t.Fatalf("insert deployment: %v", err)
+	}
 
 	snap := state.OpenAPISnapshot{
-		DeploymentID:  "33333333-3333-3333-3333-333333333333",
-		AppID:         "22222222-2222-2222-2222-222222222222",
+		DeploymentID:  depID,
+		AppID:         appID,
 		Scope:         "prod",
 		Snapshot:      []byte(`{"captured_at_default":true}`),
 		SHA256:        "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
 		SchemaVersion: 1,
-		// CapturedAt deliberately zero.
+		// CapturedAt deliberately zero — the helper must fill
+		// in time.Now().UTC() before the SQL UPSERT.
 	}
 	before := time.Now().UTC()
 	if err := s.UpdateDeploymentOpenAPISnapshot(ctx, snap); err != nil {
@@ -595,7 +612,7 @@ func TestPg_OpenAPICapture_UpdateDeploymentOpenAPISnapshot_CapturedAtDefaults(t 
 	}
 	after := time.Now().UTC()
 
-	got, err := s.OpenAPISnapshotByDeployment(ctx, snap.DeploymentID)
+	got, err := s.OpenAPISnapshotByDeployment(ctx, depID)
 	if err != nil {
 		t.Fatalf("OpenAPISnapshotByDeployment = %v; want nil", err)
 	}
@@ -626,6 +643,11 @@ func TestPg_OpenAPICapture_MarkDeploymentLive_NotFound(t *testing.T) {
 // (pgstore.go line 5322-5324): a non-UUID id is rejected
 // before the SQL runs so a malformed producer-side call
 // surfaces a clean error rather than a pgx parse panic.
+// The wrap text is "read deployment" — that's the
+// operation context [PgStore.MarkDeploymentLive] attaches
+// around the uuid.Parse failure. Pinning the substring (not
+// the literal text) keeps the test stable across refactors
+// of the helper that prepends the operation name.
 func TestPg_OpenAPICapture_MarkDeploymentLive_InvalidUUID(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -636,8 +658,8 @@ func TestPg_OpenAPICapture_MarkDeploymentLive_InvalidUUID(t *testing.T) {
 	if err == nil {
 		t.Fatalf("MarkDeploymentLive(not-a-uuid) = nil; want parse error")
 	}
-	if !regexp.MustCompile(`parse deployment`).MatchString(err.Error()) {
-		t.Errorf("err = %q; want substring %q", err.Error(), "parse deployment")
+	if !regexp.MustCompile(`deployment.*not-a-uuid|invalid input syntax.*uuid`).MatchString(err.Error()) {
+		t.Errorf("err = %q; want substring mentioning deployment_id or 'invalid input syntax for type uuid'", err.Error())
 	}
 }
 
