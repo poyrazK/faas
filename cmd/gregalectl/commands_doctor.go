@@ -1271,7 +1271,10 @@ func checkSecrets(ctx context.Context, deps *doctorDeps) ([]doctorFinding, error
 			})
 			continue
 		}
-		if got&(0o077) != 0 || got&0o700 > want&0o700 {
+		// The wanted mode is an upper bound, not an exact mode:
+		// 0400 is valid where 0440 is the canonical mode, but
+		// group/world bits beyond the declared contract are not.
+		if got&^want != 0 {
 			findings = append(findings, doctorFinding{
 				Check:    doctorCheckSecrets,
 				Severity: doctorSeverityError,
