@@ -447,7 +447,7 @@ jobs:
         run: make sdk-check
 
       - name: upload to Codecov (pg shard 1)
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           files: coverage/cover-shard1.out
           flags: unittests
@@ -539,7 +539,7 @@ jobs:
         run: make coverage-floor COVERDIR=coverage
 
       - name: upload to Codecov (pg shard 2${{ matrix.id }})
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           files: coverage/${{ matrix.coverage_file }}
           flags: unittests
@@ -576,7 +576,7 @@ jobs:
         run: make coverage-floor COVERDIR=coverage
 
       - name: upload to Codecov (pure Go shard 1)
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           files: coverage/cover-shard3.out
           flags: unittests
@@ -620,7 +620,7 @@ jobs:
         run: make test-property
 
       - name: upload to Codecov (pure Go shard 2)
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           files: coverage/cover-shard4.out
           flags: unittests
