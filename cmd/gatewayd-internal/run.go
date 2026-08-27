@@ -1364,7 +1364,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 		}
 	}
-// PR-3 / ADR-125 fleet-wide signing key: try the
+	// PR-3 / ADR-125 fleet-wide signing key: try the
 	// cluster_signing_keys PG row FIRST so a JWT minted by
 	// schedd on box A is verifiable by gatewayd-internal on
 	// box B (audit F1+F20). The per-env path below is the
