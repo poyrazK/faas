@@ -163,6 +163,25 @@ type Request struct {
 	// preferred region with no headroom falls through to the
 	// least-loaded path (ADR-005 cold-boot invariant).
 	PreferredRegion string
+	// RequiredNodeID (ADR-119 v2) is the hard placement
+	// constraint for static-egress-IP-pinned apps. Unlike
+	// PreferredNodeID (a hint), a non-empty RequiredNodeID
+	// filters candidates to exactly that node — if the node
+	// has no headroom, ChoosePlacement returns ErrCapacity and
+	// the wake refuses. Cold-boot on the wrong node is
+	// impossible because the customer's egress would be
+	// source-spoofed at the switch (the v1 BYOIP impossibility
+	// ADR-119 fixed). Empty RequiredNodeID means "no hard
+	// constraint" (legacy single-box semantics).
+	//
+	// Wired from Engine.choosePlacementLocked at engine.go:~2801:
+	// when app.NodeID != "" the engine stamps the value onto
+	// r.RequiredNodeID before calling ChoosePlacement. The
+	// (account_id, customer_ip) PK lookup cost is sub-millisecond
+	// because the Engine already loaded the app row for the
+	// Tier A1 ownerNodeID gate — we reuse the same load rather
+	// than add a second Store call per wake.
+	RequiredNodeID string
 	// NodeCeilingMB is the per-node RAM admission ceiling from
 	// compute_nodes.admission_ceiling_mb for the chosen node. The
 	// chooser already verified the request fits; the ledger uses this

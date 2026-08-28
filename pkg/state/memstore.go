@@ -3685,6 +3685,24 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 			a.StaticEgressIPSetAt = &now
 		}
 	}
+	// ADR-119 v2: per-app owner compute_node. SetNodeID
+	// distinguishes "don't touch" (false) from "explicit set or
+	// clear" (true). The apid PUT static-egress-ip path stamps
+	// apps.node_id at the SAME UPDATE as apps.static_egress_ip
+	// (cmd/apid/handlers_apps_static_egress_ip.go); schedd's
+	// wake path reads app.NodeID as the hard placement
+	// constraint (pkg/sched/admission.go::Request.RequiredNodeID).
+	// A nil pointer with SetNodeID=true means "clear" (DELETE
+	// wire shape), mirroring the SetStaticEgressIP+nil pattern
+	// above so an in-memory test sees the same persistence
+	// surface as a real DB call.
+	if p.SetNodeID {
+		if p.NodeID == nil {
+			a.NodeID = ""
+		} else {
+			a.NodeID = *p.NodeID
+		}
+	}
 	m.apps[id] = a
 	return a, nil
 }

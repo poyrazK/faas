@@ -100,6 +100,13 @@ func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 	var (
 		newIP     *netip.Addr
 		willClear = !req.Set
+		// nodeID (ADR-119 v2) is the IP's owning compute_nodes.id.
+		// Stamped onto apps.node_id at the same UPDATE as
+		// static_egress_ip; nil with SetNodeID=true clears the pin
+		// (used by clearAppStaticEgressIP). See the operator-bundle
+		// gate below for the lookup; the v2 migration guarantees
+		// every (account_id, ip) tuple carries a non-null node_id.
+		nodeID *string
 	)
 	if req.Set {
 		ip, err := netip.ParseAddr(req.IP)
@@ -134,6 +141,36 @@ func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 			api.WriteProblem(w, api.ErrStaticEgressIPNotProvisioned(req.IP))
 			return
 		}
+		// ADR-119 v2: owner-node resolution. The IP must be
+		// provisioned on exactly one compute_nodes.id (the host
+		// that has the IP routed on its AS + aliased on
+		// br-tenants). Schedd reads app.NodeID as the hard
+		// placement constraint (pkg/sched/admission.go::
+		// Request.RequiredNodeID); without this stamp the wake
+		// could land on a non-owning node and the egress would
+		// be source-spoofed at the switch (the v1 BYOIP
+		// impossibility ADR-119 fixed). The (account_id, ip)
+		// PK lookup is sub-millisecond — same index as the
+		// ProvisionedStaticEgressIPExists gate above.
+		//
+		// A missing node_id on a tuple that DID pass the
+		// operator-bundle gate is the operator-side "this IP
+		// is in the bundle but not on a node" surface. That
+		// row state is unreachable in v2 (migration 00488's
+		// NOT NULL on provisioned_static_egress_ips.node_id
+		// backfilled every existing tuple to 'default-local'),
+		// but defence-in-depth: surface it as 500 so the
+		// operator notices the broken bundle before the
+		// customer pin lands.
+		owningNodeID, nerr := s.store.StaticEgressIPNode(r.Context(), acct.ID, ip)
+		if nerr != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not resolve owning node"))
+			return
+		}
+		if owningNodeID == "" {
+			api.WriteProblem(w, api.ErrCapacity("operator bundle has no node for this IP — fix the bundle and retry"))
+			return
+		}
 		// ADR-119 redesign note: the per-VM host IP allocation
 		// (pkg/fcvm.AcquireStaticEgressIP) is owned by vmmd, not
 		// apid. The schedd egress_drift subscriber (pkg/sched/
@@ -143,10 +180,24 @@ func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 		// keeps the firecracker/jailer layer out of the apid
 		// control-plane binary (CLAUDE.md component ownership).
 		newIP = &ip
+		nodeIDStr := owningNodeID
+		nodeID = &nodeIDStr
 	}
 	updated, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{
 		StaticEgressIP:    newIP,
 		SetStaticEgressIP: true,
+		// ADR-119 v2: stamp apps.node_id at the SAME UPDATE as
+		// apps.static_egress_ip so schedd's wake path sees a
+		// consistent (IP, owner_node) pair. The schedd
+		// egress_drift subscriber (pkg/sched/egress_drift.go)
+		// reads both from the pg_notify payload; a separate
+		// UPDATE would race the fan-out and could leave the
+		// app on the wrong node for one wake. SetNodeID=true
+		// + NodeID=*nodeID writes the value; SetNodeID=true +
+		// NodeID=nil clears the pin (see clearAppStaticEgressIP
+		// below).
+		NodeID:    nodeID,
+		SetNodeID: true,
 	})
 	if err != nil {
 		// Cross-app unique-index violation on apps_static_egress_ip_key
@@ -224,6 +275,16 @@ func (s *server) clearAppStaticEgressIP(w http.ResponseWriter, r *http.Request, 
 	if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{
 		StaticEgressIP:    nil,
 		SetStaticEgressIP: true,
+		// ADR-119 v2: drop apps.node_id atomically with the
+		// static_egress_ip clear. The schedd wake path reads
+		// app.NodeID as the hard placement constraint; leaving
+		// the column set after a clear would cause the next
+		// wake to still pin to the previous owning node (the
+		// IP is no longer routed there → source-spoofed egress
+		// at the switch). SetNodeID=true + NodeID=nil writes
+		// NULL atomically.
+		NodeID:    nil,
+		SetNodeID: true,
 	}); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not clear static egress IP"))
 		return

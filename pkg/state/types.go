@@ -3423,6 +3423,22 @@ type UpdateAppParams struct {
 	StaticEgressIP    *netip.Addr
 	SetStaticEgressIP bool
 
+	// NodeID (ADR-119 v2) is the per-app owner compute_node.
+	// SetNodeID distinguishes "don't touch the column" (false)
+	// from "explicit node_id" (true) / "explicit NULL" (true
+	// with NodeID=nil — the DELETE wire shape). The apid
+	// PUT /v1/apps/{slug}/static-egress-ip handler stamps the
+	// IP's owning compute_nodes.id onto this column at the
+	// same UPDATE as StaticEgressIP, so schedd's wake path
+	// reads app.NodeID as the hard placement constraint
+	// (pkg/sched/admission.go::Request.RequiredNodeID). A nil
+	// pointer with SetNodeID=true clears the pin (the customer's
+	// egress is no longer routed through a specific node).
+	// The empty-uuid CHECK + the FK to compute_nodes(id)
+	// (migration 00024) enforce the integrity contract.
+	NodeID    *string
+	SetNodeID bool
+
 	// PublicAuthIPAllowlist (ADR-118) is the per-app ingress CIDR
 	// allowlist. SetPublicAuthIPAllowlist distinguishes "unset"
 	// from "explicit empty". Same nil-pointer semantics as

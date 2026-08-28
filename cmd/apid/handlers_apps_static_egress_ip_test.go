@@ -422,3 +422,91 @@ func TestStaticEgressIP_AppUpdateSanity(t *testing.T) {
 		t.Errorf("ip = %v, want %s", resp.IP, ip)
 	}
 }
+
+// TestStaticEgressIP_PutStampsOwnerNode (ADR-119 v2) — the PUT
+// handler stamps apps.node_id at the SAME UPDATE as
+// apps.static_egress_ip. Schedd's wake path reads app.NodeID as
+// the hard placement constraint
+// (pkg/sched/admission.go::Request.RequiredNodeID); without this
+// stamp the wake could land on a non-owning node and the egress
+// would be source-spoofed at the switch (the v1 BYOIP
+// impossibility ADR-119 fixed).
+//
+// The test exercises the full surface: PUT writes the IP, the
+// store row carries the IP's owning compute_nodes.id (resolved
+// from the vmmd SIGHUP-watched operator bundle), and the row
+// round-trips through store.AppByID with the right
+// (static_egress_ip, node_id) pair.
+func TestStaticEgressIP_PutStampsOwnerNode(t *testing.T) {
+	withStaticEgressIPEnabled(t)
+	e := setup(t, api.PlanScale)
+	appID := mustSeedApp(t, e, "stamp-app")
+	mustSeedProvisionedStaticEgressIPs(t, e, "203.0.113.42")
+
+	rec := e.do(t, "PUT", "/v1/apps/stamp-app/static-egress-ip",
+		staticEgressIPReq("203.0.113.42", true), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Read the row back; assert the (static_egress_ip,
+	// node_id) pair is consistent with the operator bundle.
+	app, err := e.store.AppByID(context.Background(), appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if app.StaticEgressIP == nil || app.StaticEgressIP.String() != "203.0.113.42" {
+		t.Errorf("static_egress_ip = %v, want 203.0.113.42", app.StaticEgressIP)
+	}
+	if app.NodeID == "" {
+		t.Errorf("apps.node_id = \"\" after PUT; want the IP's owning node_id (ADR-119 v2 hard constraint)")
+	}
+	// Cross-check via Store.StaticEgressIPNode — the IP's
+	// owning node must equal app.NodeID.
+	ip := netip.MustParseAddr("203.0.113.42")
+	owning, err := e.store.StaticEgressIPNode(context.Background(), e.acct.ID, ip)
+	if err != nil {
+		t.Fatalf("StaticEgressIPNode: %v", err)
+	}
+	if owning != app.NodeID {
+		t.Errorf("app.NodeID = %q, owning = %q (must be equal)", app.NodeID, owning)
+	}
+}
+
+// TestStaticEgressIP_DeleteClearsOwnerNode (ADR-119 v2) — the
+// DELETE handler clears apps.node_id atomically with
+// apps.static_egress_ip. Leaving the column set after a clear
+// would cause the next wake to still pin to the previous owning
+// node (the IP is no longer routed there → source-spoofed
+// egress at the switch).
+func TestStaticEgressIP_DeleteClearsOwnerNode(t *testing.T) {
+	withStaticEgressIPEnabled(t)
+	e := setup(t, api.PlanScale)
+	appID := mustSeedApp(t, e, "delete-stamp-app")
+	mustSeedProvisionedStaticEgressIPs(t, e, "203.0.113.42")
+
+	// Pin first.
+	rec := e.do(t, "PUT", "/v1/apps/delete-stamp-app/static-egress-ip",
+		staticEgressIPReq("203.0.113.42", true), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seed PUT status = %d, want 200", rec.Code)
+	}
+
+	// DELETE.
+	rec = e.do(t, "DELETE", "/v1/apps/delete-stamp-app/static-egress-ip", nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Read the row back — both columns must be cleared.
+	app, err := e.store.AppByID(context.Background(), appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if app.StaticEgressIP != nil {
+		t.Errorf("static_egress_ip = %v after DELETE, want nil", app.StaticEgressIP)
+	}
+	if app.NodeID != "" {
+		t.Errorf("apps.node_id = %q after DELETE, want \"\" (must clear atomically with the IP)", app.NodeID)
+	}
+}

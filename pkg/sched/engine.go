@@ -2785,6 +2785,45 @@ func (e *Engine) nodeUsageForNodes(ctx context.Context, nodes []state.ComputeNod
 // pre-axis-5 behaviour rather than dropping the node from the
 // fleet view entirely.
 func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placement, error) {
+	// Load the app once for both the Tier A1 ownerNodeID gate and
+	// the ADR-119 v2 static-egress hard-constraint stamp. The owner
+	// gate is a no-op when e.ownerNodeID == "" (legacy single-box
+	// install); the RequiredNodeID stamp is the load-bearing gate
+	// in that case. The apid PUT static-egress-ip path stamps
+	// apps.node_id at the same tx as apps.static_egress_ip
+	// (cmd/apid/handlers_apps_static_egress_ip.go), so reading
+	// app.NodeID here is enough — no second Store call required.
+	var app *state.App
+	if r.AppID != "" {
+		if a, lerr := e.store.AppByID(ctx, r.AppID); lerr == nil {
+			app = &a
+		} else if !errors.Is(lerr, state.ErrNotFound) {
+			return Placement{}, fmt.Errorf("sched: placement: load app %q: %w", r.AppID, lerr)
+		}
+	}
+
+	// ADR-119 v2: hard placement constraint for static-egress-
+	// IP-pinned apps. The pin handler stamps apps.node_id at the
+	// same UPDATE as apps.static_egress_ip
+	// (cmd/apid/handlers_apps_static_egress_ip.go); schedd's
+	// wake path reads app.StaticEgressIP here and stamps
+	// r.RequiredNodeID = app.NodeID before calling the chooser,
+	// so the wake filters to exactly that node. Landing on a
+	// non-owning node would source-spoof the egress at the
+	// switch (the v1 BYOIP impossibility ADR-119 fixed).
+	//
+	// The stamp fires ONLY when app.StaticEgressIP != nil —
+	// not for every app with app.NodeID set. The ownerNodeID
+	// gate below (Phase 2 / Gate A) is the load-bearing
+	// partition check for apps pinned to a node for any other
+	// reason (claim unplaced, orphan rebalance), and it stays
+	// the soft PreferredNodeID hint — a saturated local node
+	// falls through to default-local rather than refusing
+	// the wake (the legacy Tier A1 contract).
+	if app != nil && app.StaticEgressIP != nil && app.NodeID != "" {
+		r.RequiredNodeID = app.NodeID
+	}
+
 	// Phase 2 / Gate A: pin placement to the schedd's owner
 	// node. The chooser still runs the per-node headroom checks
 	// (usedMB + usedVCPU + ceiling), but every candidate is
@@ -2798,7 +2837,7 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 		// gateway partitions by apps.node_id before dialling);
 		// this is the second-line filter for direct Engine
 		// calls (the engine_test.go wake-locality tests).
-		if app, err := e.store.AppByID(ctx, r.AppID); err == nil && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+		if app != nil && app.NodeID != "" && app.NodeID != e.ownerNodeID {
 			return Placement{}, api.ErrCapacity(fmt.Sprintf(
 				"placement: app %s is owned by node %s; this schedd owns %s",
 				r.AppID, app.NodeID, e.ownerNodeID))

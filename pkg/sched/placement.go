@@ -122,6 +122,20 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 		if !n.Active {
 			continue
 		}
+		// ADR-119 v2 hard placement constraint: static-egress-IP-
+		// pinned apps must wake on the IP's owning compute_nodes.id.
+		// Landing on a non-owning node would source-spoof the egress
+		// at the switch (the v1 BYOIP impossibility ADR-119 fixed).
+		// The filter runs BEFORE the headroom checks so a saturated
+		// owning node returns ErrCapacity rather than silently
+		// landing on a non-owning node — the wake then surfaces the
+		// right wire shape (FailedPrecondition / 429) instead of
+		// mis-routing traffic. Engine.choosePlacementLocked stamps
+		// r.RequiredNodeID from app.NodeID (the apid pin handler
+		// sets apps.node_id at the same tx as static_egress_ip).
+		if r.RequiredNodeID != "" && n.ID != r.RequiredNodeID {
+			continue
+		}
 		if n.AdmissionCeilingMB <= 0 {
 			continue
 		}

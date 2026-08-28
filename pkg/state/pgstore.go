@@ -3191,7 +3191,21 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 				   -- {http1, http2, grpc}; apid validates the value
 				   -- (Plan.AppProtocolAllowed gates 'grpc' to
 				   -- Hobby+) before reaching this UPDATE.
-					   app_protocol = case when $61 then $62 else app_protocol end
+					   app_protocol = case when $61 then $62 else app_protocol end,
+				   -- ADR-119 v2: per-app owner compute_node
+				   -- (apps.node_id). Same Set*/optional-pointer
+				   -- pattern as the surrounding fields — the Set
+				   -- bit distinguishes "don't touch" (default)
+				   -- from "explicit node_id" / "explicit NULL"
+				   -- (the apid PUT /v1/apps/{slug}/static-egress-ip
+				   -- handler stamps the IP's owning node_id at the
+				   -- same UPDATE as static_egress_ip; schedd's wake
+				   -- path reads app.NodeID as the hard placement
+				   -- constraint — pkg/sched/admission.go::
+				   -- Request.RequiredNodeID). The empty-uuid CHECK
+				   -- + FK to compute_nodes(id) (migration 00024)
+				   -- enforce the integrity contract.
+					   node_id = case when $63 then $64::uuid else node_id end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -3311,7 +3325,16 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		// apid-side default of "http1" is preserved on PATCHes
 		// that don't touch the field. The Set bit distinguishes
 		// "don't touch" from "explicit http1".
-		p.SetAppProtocol, derefString(p.AppProtocol))
+		p.SetAppProtocol, derefString(p.AppProtocol),
+		// ADR-119 v2: per-app owner compute_node. The Set bit
+		// controls the CASE; the value slot is a nullable UUID —
+		// nullString coerces nil/empty to SQL NULL, and Postgres
+		// infers the UUID type from the column. The Set bit
+		// distinguishes "don't touch" (don't run the SET clause)
+		// from "explicit NULL" (clear — back to legacy chooser
+		// path, see cmd/apid/handlers_apps_static_egress_ip.go::
+		// clearAppStaticEgressIP).
+		p.SetNodeID, nullString(derefString(p.NodeID)))
 	return scanApp(row)
 }
 
