@@ -91,16 +91,22 @@ type VMM interface {
 	// safe. Errors surface as the gRPC status (Unavailable /
 	// Internal) — the egress_drift subscriber logs and drops.
 	UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error
-	// UpdateStaticEgressIP (ADR-119) pushes a fresh per-app
-	// static egress IP into vmmd's live-instance map without
-	// tearing the netns down. The wire is the vmmdpb
-	// .UpdateStaticEgressIP RPC. ip="" = clear the pin
-	// (DELETE wire shape). Idempotent: a re-pushed identical
-	// IP is a no-op. Errors surface as the gRPC status
-	// (Unavailable / Internal) — the egress_drift subscriber
-	// logs and drops. Mirrors UpdateEgressAllowlist's
-	// contract above.
-	UpdateStaticEgressIP(ctx context.Context, accountID, appID string, ip string) error
+	// UpdateStaticEgressIP (ADR-119 / ADR-119 v2) pushes a fresh
+	// per-app static egress IP into vmmd's live-instance map
+	// without tearing the netns down. The wire is the vmmdpb
+	// .UpdateStaticEgressIP RPC. ip="" = clear the pin (DELETE
+	// wire shape). nodeID is the compute_nodes.id that owns the
+	// (account_id, customer_ip) pin (migration 00488); the vmmd
+	// server validates req.node_id matches its own nodeID
+	// (defence-in-depth — the schedd fan-out is per-node, so a
+	// wrong-node message is a routing bug). accountID is NOT on
+	// the wire: Manager.UpdateStaticEgressIP doesn't use it (the
+	// per-app cache key is apps.id), so the VMM interface accepts
+	// the 4-arg shape. Idempotent: a re-pushed identical IP is a
+	// no-op. Errors surface as the gRPC status (Unavailable /
+	// Internal) — the egress_drift subscriber logs and drops.
+	// Mirrors UpdateEgressAllowlist's contract above.
+	UpdateStaticEgressIP(ctx context.Context, nodeID, appID, ip string) error
 	// Logs (issue #254 / Move 4) opens a server-streaming handle
 	// on the per-instance ring buffer at vmmd. The returned
 	// LogStream is the typed view of vmmdpb.Vmmd_LogsClient; the
@@ -629,10 +635,11 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 // patch never blocks the loop. Idempotent on the vmmd side —
 // redelivered identical IP is a no-op (set-equal short-circuit
 // — see netns.Config.AccountStaticIP equality check).
-func (c *VMMClient) UpdateStaticEgressIP(ctx context.Context, accountID, appID string, ip string) error {
+func (c *VMMClient) UpdateStaticEgressIP(ctx context.Context, nodeID, appID, ip string) error {
 	if _, err := c.cli.UpdateStaticEgressIP(ctx, &vmmdpb.UpdateStaticEgressIPRequest{
 		AppId:          appID,
 		StaticEgressIp: ip,
+		NodeId:         nodeID,
 	}); err != nil {
 		return liftErr(err)
 	}

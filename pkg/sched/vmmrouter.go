@@ -128,17 +128,20 @@ type RoutedVMM interface {
 	// to dial), or the wrapped gRPC error / vmmd-typed problem
 	// on patch failure.
 	UpdateEgressAllowlist(ctx context.Context, nodeID, appID string, allowlist []netip.Prefix) error
-	// UpdateStaticEgressIP (ADR-119) pushes a fresh per-app
-	// static egress IP into vmmd's live-instance map. The
-	// router resolves the per-node vmmd by nodeID and
+	// UpdateStaticEgressIP (ADR-119 / ADR-119 v2) pushes a fresh
+	// per-app static egress IP into vmmd's live-instance map.
+	// The router resolves the per-node vmmd by nodeID and
 	// forwards to VMMClient.UpdateStaticEgressIP. ip=""
 	// clears the per-app pin (mirrors the DELETE wire
-	// shape). Idempotent on the vmmd side (set-equal IP is
-	// a no-op). Returns *api.Problem Capacity on an unknown
-	// nodeID (no target_url to dial), or the wrapped gRPC
-	// error / vmmd-typed problem on patch failure. Mirrors
+	// shape). nodeID is forwarded to the wire so the vmmd
+	// server can do its own per-node defence-in-depth check
+	// (FailedPrecondition on a wrong-node message). Idempotent
+	// on the vmmd side (set-equal IP is a no-op). Returns
+	// *api.Problem Capacity on an unknown nodeID (no
+	// target_url to dial), or the wrapped gRPC error /
+	// vmmd-typed problem on patch failure. Mirrors
 	// UpdateEgressAllowlist's contract above.
-	UpdateStaticEgressIP(ctx context.Context, nodeID, accountID, appID string, ip string) error
+	UpdateStaticEgressIP(ctx context.Context, nodeID, appID, ip string) error
 	// Logs (issue #254 / Move 4) opens a server-streaming handle
 	// on the per-instance ring buffer on the vmmd that owns the
 	// instance. The returned LogStream is the typed view of
@@ -492,20 +495,22 @@ func (r *VMMRouter) UpdateEgressAllowlist(ctx context.Context, nodeID, appID str
 	return cli.UpdateEgressAllowlist(ctx, appID, allowlist)
 }
 
-// UpdateStaticEgressIP (ADR-119) routes the patch to the
-// vmmd that owns the live instance. The egress_drift
+// UpdateStaticEgressIP (ADR-119 / ADR-119 v2) routes the patch
+// to the vmmd that owns the live instance. The egress_drift
 // subscriber hands us a single (appID, ip) pair; we
 // resolve the per-node client by nodeID and forward.
-// ip="" clears the per-app pin. Errors from vmmd bubble
-// up; the subscriber logs + drops so a bad patch never
-// blocks the loop. Mirrors UpdateEgressAllowlist's
-// contract above.
-func (r *VMMRouter) UpdateStaticEgressIP(ctx context.Context, nodeID, accountID, appID string, ip string) error {
+// ip="" clears the per-app pin. nodeID is forwarded to the
+// wire so the vmmd server can do its own per-node
+// defence-in-depth check (FailedPrecondition on a wrong-node
+// message). Errors from vmmd bubble up; the subscriber logs
+// + drops so a bad patch never blocks the loop. Mirrors
+// UpdateEgressAllowlist's contract above.
+func (r *VMMRouter) UpdateStaticEgressIP(ctx context.Context, nodeID, appID, ip string) error {
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return err
 	}
-	return cli.UpdateStaticEgressIP(ctx, accountID, appID, ip)
+	return cli.UpdateStaticEgressIP(ctx, nodeID, appID, ip)
 }
 
 // Logs (issue #254 / Move 4, issue #517 / PR-B acceptance #3 +

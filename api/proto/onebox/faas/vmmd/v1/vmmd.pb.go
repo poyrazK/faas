@@ -2201,8 +2201,16 @@ type UpdateStaticEgressIPRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	AppId          string                 `protobuf:"bytes,1,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
 	StaticEgressIp string                 `protobuf:"bytes,2,opt,name=static_egress_ip,json=staticEgressIp,proto3" json:"static_egress_ip,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// ADR-119 v2 — node_id is the compute_nodes.id that owns the
+	// (account_id, customer_ip) pin (migration 00488). The vmmd
+	// server MUST validate req.node_id matches its own node_id
+	// (the schedd fan-out is per-node, so a wrong-node message
+	// is a routing bug). Empty string = no cross-node check
+	// (legacy single-box wire shape; kept for the migration
+	// window when vmmd peers are still running the v1 build).
+	NodeId        string `protobuf:"bytes,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateStaticEgressIPRequest) Reset() {
@@ -2245,6 +2253,13 @@ func (x *UpdateStaticEgressIPRequest) GetAppId() string {
 func (x *UpdateStaticEgressIPRequest) GetStaticEgressIp() string {
 	if x != nil {
 		return x.StaticEgressIp
+	}
+	return ""
+}
+
+func (x *UpdateStaticEgressIPRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
 	}
 	return ""
 }
@@ -4521,10 +4536,11 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1cUpdateEgressAllowlistRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12)\n" +
 	"\x10egress_allowlist\x18\x02 \x03(\tR\x0fegressAllowlist\"\x1a\n" +
-	"\x18UpdateEgressAllowlistAck\"^\n" +
+	"\x18UpdateEgressAllowlistAck\"w\n" +
 	"\x1bUpdateStaticEgressIPRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12(\n" +
-	"\x10static_egress_ip\x18\x02 \x01(\tR\x0estaticEgressIp\"\x19\n" +
+	"\x10static_egress_ip\x18\x02 \x01(\tR\x0estaticEgressIp\x12\x17\n" +
+	"\anode_id\x18\x03 \x01(\tR\x06nodeId\"\x19\n" +
 	"\x17UpdateStaticEgressIPAck\"2\n" +
 	"\x14SeccompStatusRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\"\x8e\x01\n" +

@@ -164,6 +164,10 @@ func (f *fakeVMM) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 	return nil
 }
 
+func (f *fakeVMM) UpdateStaticEgressIP(_ context.Context, _, _ string) error {
+	return nil
+}
+
 func (f *fakeVMM) LiveCount() int   { return f.live }
 func (f *fakeVMM) LeasedCount() int { return f.leased }
 

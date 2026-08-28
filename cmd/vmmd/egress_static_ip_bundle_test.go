@@ -45,7 +45,7 @@ ip = "198.51.100.7"
 	if err := os.WriteFile(path, []byte(content), 0o400); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
-	bundle, err := LoadStaticEgressIPBundle(path, silentStaticIPLogger())
+	bundle, err := LoadStaticEgressIPBundle(path, "test-node", silentStaticIPLogger())
 	if err != nil {
 		t.Fatalf("LoadStaticEgressIPBundle: %v", err)
 	}
@@ -68,7 +68,7 @@ ip = "198.51.100.7"
 // SIGHUP-driven reload path can treat "no file" as "remove all
 // aliases" rather than refusing to start.
 func TestLoadStaticEgressIPBundle_MissingFile(t *testing.T) {
-	bundle, err := LoadStaticEgressIPBundle("/nonexistent/static_egress_ips.toml", silentStaticIPLogger())
+	bundle, err := LoadStaticEgressIPBundle("/nonexistent/static_egress_ips.toml", "test-node", silentStaticIPLogger())
 	if err != nil {
 		t.Fatalf("missing file: err = %v, want nil", err)
 	}
@@ -104,7 +104,7 @@ func TestLoadStaticEgressIPBundle_DropsReservedRanges(t *testing.T) {
 			if err := os.WriteFile(path, []byte(content), 0o400); err != nil {
 				t.Fatalf("write: %v", err)
 			}
-			bundle, err := LoadStaticEgressIPBundle(path, silentStaticIPLogger())
+			bundle, err := LoadStaticEgressIPBundle(path, "test-node", silentStaticIPLogger())
 			if err != nil {
 				t.Fatalf("load: %v", err)
 			}
@@ -130,7 +130,7 @@ func TestLoadStaticEgressIPBundle_DropsIPv6(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o400); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	bundle, err := LoadStaticEgressIPBundle(path, silentStaticIPLogger())
+	bundle, err := LoadStaticEgressIPBundle(path, "test-node", silentStaticIPLogger())
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -157,7 +157,7 @@ ip = "not-an-ip"
 	if err := os.WriteFile(path, []byte(content), 0o400); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	bundle, err := LoadStaticEgressIPBundle(path, silentStaticIPLogger())
+	bundle, err := LoadStaticEgressIPBundle(path, "test-node", silentStaticIPLogger())
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -187,7 +187,7 @@ ip = "198.51.100.7"
 	if err := os.WriteFile(path, []byte(content), 0o400); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	bundle, err := LoadStaticEgressIPBundle(path, silentStaticIPLogger())
+	bundle, err := LoadStaticEgressIPBundle(path, "test-node", silentStaticIPLogger())
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -217,7 +217,7 @@ ip = ""
 	if err := os.WriteFile(path, []byte(content), 0o400); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	bundle, err := LoadStaticEgressIPBundle(path, silentStaticIPLogger())
+	bundle, err := LoadStaticEgressIPBundle(path, "test-node", silentStaticIPLogger())
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestLoadStaticEgressIPBundle_MalformedToml(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o400); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	_, err := LoadStaticEgressIPBundle(path, silentStaticIPLogger())
+	_, err := LoadStaticEgressIPBundle(path, "test-node", silentStaticIPLogger())
 	if err == nil {
 		t.Fatal("expected error for malformed TOML")
 	}
@@ -272,7 +272,7 @@ func TestWatchStaticEgressIPBundleReload_StartupLoad(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	hupCh := make(chan os.Signal, 1)
-	watchStaticEgressIPBundleReload(ctx, target, state.NewMemStore(), path, "test-node", silentStaticIPLogger(), hupCh)
+	watchStaticEgressIPBundleReload(ctx, target, state.NewMemStore(), path, "test-node", "test-node", silentStaticIPLogger(), hupCh)
 	if target.calls != 1 {
 		t.Errorf("startup calls = %d, want 1", target.calls)
 	}
@@ -288,7 +288,7 @@ func TestWatchStaticEgressIPBundleReload_EmptyPathSkipsWatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	hupCh := make(chan os.Signal, 1)
-	watchStaticEgressIPBundleReload(ctx, target, state.NewMemStore(), "", "test-node", silentStaticIPLogger(), hupCh)
+	watchStaticEgressIPBundleReload(ctx, target, state.NewMemStore(), "", "", "test-node", silentStaticIPLogger(), hupCh)
 	if target.calls != 0 {
 		t.Errorf("empty path: target.calls = %d, want 0", target.calls)
 	}
@@ -308,3 +308,141 @@ func mustIP(t *testing.T, s string) netip.Addr {
 // keep imports alive across test rewrites.
 var _ = mustIP
 var _ = netip.Addr{}
+
+// TestLoadStaticEgressIPBundle_PerNodeFilter (ADR-119 v2) pins
+// the per-node bundle filter: each vmmd only loads entries
+// whose `node` field matches ownNodeName (or is empty — the
+// legacy single-box default).
+//
+// Pins:
+//   - entry with node="default-local" is INCLUDED when
+//     ownNodeName="default-local".
+//   - entry with node="node-A" is DROPPED when
+//     ownNodeName="default-local" (cross-node; per-node
+//     partition).
+//   - entry with empty node is INCLUDED regardless of
+//     ownNodeName (legacy default).
+//   - ownNodeName="" passes everything through (single-box
+//     install with no compute_nodes row).
+func TestLoadStaticEgressIPBundle_PerNodeFilter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "static_egress_ips.toml")
+	content := `# ADR-119 v2 — mixed-node bundle.
+[[entries]]
+account_id = "11111111-1111-1111-1111-111111111111"
+app_id = "local-app"
+ip = "203.0.113.1"
+node = "default-local"
+
+[[entries]]
+account_id = "11111111-1111-1111-1111-111111111111"
+app_id = "node-a-app"
+ip = "203.0.113.2"
+node = "node-A"
+
+[[entries]]
+account_id = "11111111-1111-1111-1111-111111111111"
+app_id = "legacy-app"
+ip = "203.0.113.3"
+`
+	if err := os.WriteFile(path, []byte(content), 0o400); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// ownNodeName="default-local": only the default-local +
+	// legacy (empty node) entries pass.
+	bundle, err := LoadStaticEgressIPBundle(path, "default-local", silentStaticIPLogger())
+	if err != nil {
+		t.Fatalf("load default-local: %v", err)
+	}
+	if len(bundle.Entries) != 2 {
+		t.Fatalf("default-local: got %d entries, want 2", len(bundle.Entries))
+	}
+	gotAppIDs := make(map[string]bool)
+	for _, e := range bundle.Entries {
+		gotAppIDs[e.AppID] = true
+	}
+	if !gotAppIDs["local-app"] {
+		t.Error("default-local: missing local-app entry")
+	}
+	if !gotAppIDs["legacy-app"] {
+		t.Error("default-local: missing legacy-app entry")
+	}
+	if gotAppIDs["node-a-app"] {
+		t.Error("default-local: node-a-app entry should be filtered out")
+	}
+
+	// ownNodeName="node-A": only node-A entry passes.
+	bundle, err = LoadStaticEgressIPBundle(path, "node-A", silentStaticIPLogger())
+	if err != nil {
+		t.Fatalf("load node-A: %v", err)
+	}
+	if len(bundle.Entries) != 2 {
+		t.Fatalf("node-A: got %d entries, want 2 (node-a + legacy)", len(bundle.Entries))
+	}
+	gotAppIDs = make(map[string]bool)
+	for _, e := range bundle.Entries {
+		gotAppIDs[e.AppID] = true
+	}
+	if !gotAppIDs["node-a-app"] {
+		t.Error("node-A: missing node-a-app entry")
+	}
+	if !gotAppIDs["legacy-app"] {
+		t.Error("node-A: missing legacy-app entry")
+	}
+	if gotAppIDs["local-app"] {
+		t.Error("node-A: local-app entry should be filtered out")
+	}
+
+	// ownNodeName="" (legacy single-box): every entry passes.
+	bundle, err = LoadStaticEgressIPBundle(path, "", silentStaticIPLogger())
+	if err != nil {
+		t.Fatalf("load empty ownNodeName: %v", err)
+	}
+	if len(bundle.Entries) != 3 {
+		t.Fatalf("empty ownNodeName: got %d entries, want 3 (passthrough)", len(bundle.Entries))
+	}
+}
+
+// TestWatchStaticEgressIPBundleReload_PerNodeFilter wires the
+// per-node filter into the SIGHUP watcher end-to-end: a bundle
+// with cross-node entries produces only this vmmd's slice on
+// startup + reload. The Postgres gate write also receives only
+// the per-node slice (so vmmd-A never accidentally writes
+// vmmd-B's rows).
+func TestWatchStaticEgressIPBundleReload_PerNodeFilter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "static_egress_ips.toml")
+	content := `[[entries]]
+account_id = "11111111-1111-1111-1111-111111111111"
+app_id = "this-app"
+ip = "203.0.113.1"
+node = "this-node"
+
+[[entries]]
+account_id = "11111111-1111-1111-1111-111111111111"
+app_id = "other-app"
+ip = "203.0.113.2"
+node = "other-node"
+`
+	if err := os.WriteFile(path, []byte(content), 0o400); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	target := &staticEgressIPRecording{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	hupCh := make(chan os.Signal, 1)
+	// ownNodeName="this-node", nodeID="node-this-id" — the
+	// watcher should pass "this-node" to the loader and
+	// "node-this-id" to the gate writer.
+	watchStaticEgressIPBundleReload(ctx, target, state.NewMemStore(), path, "this-node", "node-this-id", silentStaticIPLogger(), hupCh)
+	if target.calls != 1 {
+		t.Fatalf("startup calls = %d, want 1", target.calls)
+	}
+	if len(target.entries) != 1 {
+		t.Fatalf("startup entries = %d, want 1 (this-node only)", len(target.entries))
+	}
+	if target.entries[0].AppID != "this-app" {
+		t.Errorf("startup entries[0].AppID = %q, want this-app", target.entries[0].AppID)
+	}
+}

@@ -110,6 +110,9 @@ func (vmmStubBase) DestroyWithExport(_ context.Context, _, _ string) (int, error
 func (vmmStubBase) UpdateEgressAllowlist(_ context.Context, _ string, _ []netip.Prefix) error {
 	return nil
 }
+func (vmmStubBase) UpdateStaticEgressIP(_ context.Context, _, _ string) error {
+	return nil
+}
 func (vmmStubBase) LiveCount() int                   { return 0 }
 func (vmmStubBase) LeasedCount() int                 { return 0 }
 func (vmmStubBase) InstancePID(_ string) (int, bool) { return 0, false }

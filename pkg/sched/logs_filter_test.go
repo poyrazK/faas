@@ -112,7 +112,7 @@ func (r *deploymentFilterFakeVMM) Stats(context.Context, string) (*StatsSnapshot
 func (r *deploymentFilterFakeVMM) UpdateEgressAllowlist(context.Context, string, string, []netip.Prefix) error {
 	return nil
 }
-func (r *deploymentFilterFakeVMM) UpdateStaticEgressIP(context.Context, string, string, string, string) error {
+func (r *deploymentFilterFakeVMM) UpdateStaticEgressIP(context.Context, string, string, string) error {
 	return nil
 }
 

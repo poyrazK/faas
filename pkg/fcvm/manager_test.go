@@ -2759,7 +2759,7 @@ func TestWakeRejectsStaticEgressIP_Malformed(t *testing.T) {
 func TestUpdateStaticEgressIP_NoLiveInstancesIsNoop(t *testing.T) {
 	run := &fakeRunner{}
 	m := newTestManager(run, &fakeVMM{})
-	if err := m.UpdateStaticEgressIP(context.Background(), "acct-orphan", "app-orphan", "203.0.113.42"); err != nil {
+	if err := m.UpdateStaticEgressIP(context.Background(), "app-orphan", "203.0.113.42"); err != nil {
 		t.Fatalf("UpdateStaticEgressIP: %v", err)
 	}
 	if run.ran("nft") {
@@ -2789,7 +2789,7 @@ func TestUpdateStaticEgressIP_NoLiveInstancesIsNoop(t *testing.T) {
 func TestUpdateStaticEgressIP_RejectsEmptyAppID(t *testing.T) {
 	run := &fakeRunner{}
 	m := newTestManager(run, &fakeVMM{})
-	err := m.UpdateStaticEgressIP(context.Background(), "acct-test", "", "203.0.113.42")
+	err := m.UpdateStaticEgressIP(context.Background(), "", "203.0.113.42")
 	if err == nil {
 		t.Fatal("expected error for empty app_id")
 	}
@@ -2804,7 +2804,7 @@ func TestUpdateStaticEgressIP_RejectsEmptyAppID(t *testing.T) {
 func TestUpdateStaticEgressIP_RejectsReservedIP(t *testing.T) {
 	run := &fakeRunner{}
 	m := newTestManager(run, &fakeVMM{})
-	err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "192.168.1.1")
+	err := m.UpdateStaticEgressIP(context.Background(), "app-1", "192.168.1.1")
 	if err == nil {
 		t.Fatal("expected error for reserved IP")
 	}
@@ -2841,7 +2841,7 @@ func TestUpdateStaticEgressIP_BuildsHostPolicy(t *testing.T) {
 	// a successful AcquireStaticEgressIP).
 	m.RegisterStaticEgressIPForVM("app-1", perVMHostIP)
 
-	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "203.0.113.42"); err != nil {
+	if err := m.UpdateStaticEgressIP(context.Background(), "app-1", "203.0.113.42"); err != nil {
 		t.Fatalf("UpdateStaticEgressIP: %v", err)
 	}
 	// The host renderer is rebuilt via the atomic-swap path
@@ -2903,10 +2903,10 @@ func TestUpdateStaticEgressIP_ClearPathRemovesHostRule(t *testing.T) {
 	m.live["i-1"] = inst
 	m.mu.Unlock()
 	m.RegisterStaticEgressIPForVM("app-1", perVMHostIP)
-	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "203.0.113.42"); err != nil {
+	if err := m.UpdateStaticEgressIP(context.Background(), "app-1", "203.0.113.42"); err != nil {
 		t.Fatalf("UpdateStaticEgressIP set: %v", err)
 	}
-	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", ""); err != nil {
+	if err := m.UpdateStaticEgressIP(context.Background(), "app-1", ""); err != nil {
 		t.Fatalf("UpdateStaticEgressIP clear: %v", err)
 	}
 	pol := netns.ActiveHostPolicyForRender()
@@ -2939,11 +2939,11 @@ func TestUpdateStaticEgressIP_SameIPNoOp(t *testing.T) {
 	m.mu.Unlock()
 	m.RegisterStaticEgressIPForVM("app-1", perVMHostIP)
 	// First call: set the IP, rebuild the host policy.
-	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "203.0.113.42"); err != nil {
+	if err := m.UpdateStaticEgressIP(context.Background(), "app-1", "203.0.113.42"); err != nil {
 		t.Fatalf("first UpdateStaticEgressIP: %v", err)
 	}
 	// Second call: same IP, no rebuild expected.
-	if err := m.UpdateStaticEgressIP(context.Background(), "acct-1", "app-1", "203.0.113.42"); err != nil {
+	if err := m.UpdateStaticEgressIP(context.Background(), "app-1", "203.0.113.42"); err != nil {
 		t.Fatalf("second UpdateStaticEgressIP: %v", err)
 	}
 	renderer.mu.Lock()

@@ -86,7 +86,7 @@ func (f *fakeWakeVMM) UpdateEgressAllowlist(_ context.Context, _, _ string, _ []
 
 // UpdateStaticEgressIP (ADR-119) is the no-op test fake.
 // Mirrors UpdateEgressAllowlist above.
-func (f *fakeWakeVMM) UpdateStaticEgressIP(_ context.Context, _, _, _ string, _ string) error {
+func (f *fakeWakeVMM) UpdateStaticEgressIP(_ context.Context, _, _, _ string) error {
 	return nil
 }
 

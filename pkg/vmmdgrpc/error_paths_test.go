@@ -433,6 +433,9 @@ func (stubVMM) NetnsFor(string) (string, bool) { return "", false }
 func (stubVMM) UpdateEgressAllowlist(context.Context, string, []netip.Prefix) error {
 	return nil
 }
+func (stubVMM) UpdateStaticEgressIP(context.Context, string, string) error {
+	return nil
+}
 func (stubVMM) InstancePID(string) (int, bool) { return 0, false }
 func (stubVMM) LogRing(string) *logbuf.Ring    { return nil }
 func (stubVMM) MountParentExt4(context.Context, string) (string, error) {

@@ -75,7 +75,7 @@ func (r *recordingRouterVMM) UpdateEgressAllowlist(_ context.Context, nodeID, ap
 
 // UpdateStaticEgressIP (ADR-119) records the per-node
 // static-IP patch. Mirrors UpdateEgressAllowlist above.
-func (r *recordingRouterVMM) UpdateStaticEgressIP(_ context.Context, nodeID, accountID, appID string, ip string) error {
+func (r *recordingRouterVMM) UpdateStaticEgressIP(_ context.Context, nodeID, appID string, ip string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.staticCalls = append(r.staticCalls, recordedStaticIPCall{

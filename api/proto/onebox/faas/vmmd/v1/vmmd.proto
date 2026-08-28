@@ -976,6 +976,14 @@ message UpdateEgressAllowlistAck {}
 message UpdateStaticEgressIPRequest {
   string app_id = 1;
   string static_egress_ip = 2;
+  // ADR-119 v2 — node_id is the compute_nodes.id that owns the
+  // (account_id, customer_ip) pin (migration 00488). The vmmd
+  // server MUST validate req.node_id matches its own node_id
+  // (the schedd fan-out is per-node, so a wrong-node message
+  // is a routing bug). Empty string = no cross-node check
+  // (legacy single-box wire shape; kept for the migration
+  // window when vmmd peers are still running the v1 build).
+  string node_id = 3;
 }
 
 // UpdateStaticEgressIPAck is the empty success response. On

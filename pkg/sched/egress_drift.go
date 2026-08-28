@@ -263,7 +263,7 @@ func (e *EgressDriftSubscriber) fanOutStaticEgressIP(ctx context.Context, appID,
 			continue
 		}
 		seen[ins.NodeID] = struct{}{}
-		if err := e.router.UpdateStaticEgressIP(ctx, ins.NodeID, app.AccountID, appID, ipStr); err != nil {
+		if err := e.router.UpdateStaticEgressIP(ctx, ins.NodeID, appID, ipStr); err != nil {
 			e.log.Warn("schedd: static egress IP drift vmmd update failed",
 				"app", appID, "slug", slug,
 				"node", ins.NodeID, "err", err)

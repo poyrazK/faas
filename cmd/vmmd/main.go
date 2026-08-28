@@ -1083,7 +1083,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		wire.ServerCredsOrEmpty(serverTLS),
 		wire.TraceServerOptions()...,
 	)...)
-	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(mgr, ops, fcVersion, log, cpuCache, netCache, activityTracker).
+	impl := vmmdgrpc.NewWithCPUAndNetAndActivityAndNodeID(mgr, ops, fcVersion, log, cpuCache, netCache, activityTracker, nodeID).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{}))
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// on the gRPC server. vmmd is the corroborating-observation
@@ -1443,7 +1443,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//
 	// `st` is the same state.Store the rest of the daemon
 	// consumes (the apid uses it for the gate read).
-	go watchStaticEgressIPBundleReload(ctx, mgr, store, cfg.StaticEgressIPBundlePath, egressBundleNodeID(ctx, store, nodeID, log), log, hupCh)
+	go watchStaticEgressIPBundleReload(ctx, mgr, store, cfg.StaticEgressIPBundlePath, egressBundleNodeName(ctx, store, nodeID, log), egressBundleNodeID(ctx, store, nodeID, log), log, hupCh)
 	// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation on the
 	// same hupCh the egress-bundle reload watches. Reuses the
 	// channel — each signal is consumed by both watchers — and
@@ -1536,6 +1536,32 @@ func egressBundleNodeID(ctx context.Context, st state.Store, ownID string, log *
 		return ""
 	}
 	return cn.ID
+}
+
+// egressBundleNodeName (ADR-119 v2) resolves the
+// compute_nodes.name the static egress IP bundle watcher uses
+// to filter its entries. Mirrors egressBundleNodeID's
+// multi-box / default-local fallback posture. Returns empty
+// string when no compute_nodes row exists (the legacy single-box
+// install path; the loader treats empty ownNodeName as
+// "no per-node filter").
+func egressBundleNodeName(ctx context.Context, st state.Store, ownID string, log *slog.Logger) string {
+	if ownID == "" {
+		// Legacy single-box path — the synthetic 'default-local'
+		// row's name is the implicit ownNodeName.
+		return state.DefaultLocalNodeName
+	}
+	if st == nil {
+		log.Warn("vmmd: egress bundle node_name resolution skipped (no store available)")
+		return ""
+	}
+	cn, err := st.ComputeNodeByID(ctx, ownID)
+	if err != nil {
+		log.Warn("vmmd: egress bundle node_name resolution failed (own node_id not in compute_nodes — bare install)",
+			"node_id", ownID, "err", err)
+		return ""
+	}
+	return cn.Name
 }
 
 // loadOrGenerateHostIdentity implements the G2 host-key lifecycle:

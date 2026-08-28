@@ -68,6 +68,15 @@ type VmmdAPI interface {
 	// (pkg/sched/egress_drift.go) on every pg_notify app_changed
 	// payload with kind="updated".
 	UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error
+	// UpdateStaticEgressIP (ADR-119 / ADR-119 v2) is the per-app
+	// static egress IP patch (vmmdpb.UpdateStaticEgressIP RPC).
+	// ip="" is the clear-pin DELETE wire shape. The vmmd server
+	// validates req.node_id (passed separately via the wire's
+	// NodeId field) matches its own node_id — the schedd fan-out
+	// is per-node, so a wrong-node message is a routing bug.
+	// Idempotent on a redelivered identical IP — see Manager's
+	// per-app cached IP equality check.
+	UpdateStaticEgressIP(ctx context.Context, appID, ip string) error
 	// InstancePID (M8 §11 — seccomp assertion) returns the host PID
 	// of the running jailer child for instance, or (0, false) if
 	// the instance is not currently alive. The SeccompStatus gRPC
@@ -149,6 +158,17 @@ type Server struct {
 	ops   *wire.OpsMetrics
 	fcVer string
 	log   *slog.Logger
+	// nodeID (ADR-119 v2) is this vmmd's own compute_nodes.id.
+	// The UpdateStaticEgressIP handler validates the wire's
+	// NodeId against this value — a mismatch returns
+	// codes.FailedPrecondition rather than silently applying the
+	// pin to the wrong node's live instances (which would
+	// source-spoof egress at the switch). Empty string = vmmd
+	// is the legacy single-box install (no compute_nodes row);
+	// the validation is skipped in that case so a pre-v2 vmmd
+	// peer still accepts v2 wire traffic during the rollout
+	// window.
+	nodeID string
 	// events (issue #517 / PR-C / ADR-064) is the wake-timeline
 	// fan-out. vmmd is the corroborating-observation source for
 	// wake.boot_started (mirror at the gRPC server boundary) and
@@ -231,6 +251,20 @@ func NewWithCPUAndNet(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string, log *slog
 // constructor. Tracked but not worth the call-site churn in
 // PR-B.
 func NewWithCPUAndNetAndActivity(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string, log *slog.Logger, cpu *cpustats.Cache, net *netstats.Cache, act *activity.ActivityTracker) *Server {
+	return NewWithCPUAndNetAndActivityAndNodeID(vmm, ops, fcVer, log, cpu, net, act, "")
+}
+
+// NewWithCPUAndNetAndActivityAndNodeID (ADR-119 v2) is the
+// production constructor: wires all caches PLUS this vmmd's
+// own compute_nodes.id. nodeID="" preserves the legacy single-box
+// wire shape (no req.node_id validation; matches the
+// default-local install where vmmd has no compute_nodes row).
+//
+// The constructor ladder is getting deep; tracked in the
+// TODO at NewWithCPUAndNetAndActivity above. For now the
+// cmd/vmmd wiring uses NewWithCPUAndNetAndActivityAndNodeID
+// directly — non-test callers don't need the legacy constructors.
+func NewWithCPUAndNetAndActivityAndNodeID(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string, log *slog.Logger, cpu *cpustats.Cache, net *netstats.Cache, act *activity.ActivityTracker, nodeID string) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -239,7 +273,7 @@ func NewWithCPUAndNetAndActivity(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string
 		// never exported. Tests that don't assert metrics use this path.
 		ops = wire.NewOpsMetrics("vmmd_test")
 	}
-	return &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker()}
+	return &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), nodeID: nodeID}
 }
 
 // WithEvents (issue #517 / PR-C / ADR-064) wires the wake-timeline
@@ -905,6 +939,57 @@ func (s *Server) UpdateEgressAllowlist(ctx context.Context, req *vmmdpb.UpdateEg
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
+}
+
+// UpdateStaticEgressIP (ADR-119 redesign + ADR-119 v2) is the
+// per-app static egress IP patch from schedd's egress-drift
+// subscriber. Wire shape:
+//   - app_id (required): apps.id whose live instances need the
+//     new pin.
+//   - static_egress_ip (optional): the new customer-supplied IPv4;
+//     empty string = clear the pin (DELETE wire shape).
+//   - node_id (ADR-119 v2, optional): the compute_nodes.id that
+//     owns the (account_id, customer_ip) tuple per migration
+//     00488. The server validates req.node_id matches its own
+//     node_id — a mismatch returns codes.FailedPrecondition
+//     rather than silently applying the pin to the wrong node's
+//     live instances (which would source-spoof egress at the
+//     switch). Empty node_id skips the validation (legacy
+//     single-box install path; matches the default-local
+//     pre-v2 wire shape).
+//
+// account_id is not on the wire — the apid PUT path stamps
+// apps.account_id into the apps row, and schedd reads
+// app.AccountID from there before dialling vmmd. The handler
+// receives account_id via the gRPC server-side context (set by
+// the schedd client via gRPC metadata).
+func (s *Server) UpdateStaticEgressIP(ctx context.Context, req *vmmdpb.UpdateStaticEgressIPRequest) (*vmmdpb.UpdateStaticEgressIPAck, error) {
+	const op = "UpdateStaticEgressIP"
+	start := time.Now()
+	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
+	if req.GetAppId() == "" {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Missing app_id", "app_id is required").
+			WithDocs("https://" + wire.DocsHost + "/vmmd#update-static-egress-ip")))
+	}
+	// ADR-119 v2 — defence-in-depth: the schedd fan-out is
+	// per-node, so a wrong-node wire message is a routing bug.
+	// Refuse before touching the live netns so we never apply
+	// the pin to the wrong node's SNAT rule set (which would
+	// source-spoof egress at the switch — the v1 BYOIP
+	// impossibility the redesign fixed).
+	if s.nodeID != "" && req.GetNodeId() != "" && req.GetNodeId() != s.nodeID {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.FailedPrecondition),
+			api.CodeValidation,
+			"Static egress IP wire node_id mismatch",
+			fmt.Sprintf("vmmd node %q received UpdateStaticEgressIP for node %q; refusing (per-node fan-out bug)",
+				s.nodeID, req.GetNodeId())).
+			WithDocs("https://" + wire.DocsHost + "/vmmd#update-static-egress-ip")))
+	}
+	if err := s.vmm.UpdateStaticEgressIP(ctx, req.GetAppId(), req.GetStaticEgressIp()); err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.UpdateStaticEgressIPAck{}, nil
 }
 
 // SeccompStatus (M8 §11) reports the kernel seccomp state of the

@@ -3915,7 +3915,7 @@ func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allow
 // gated through the staging-dir + atomic-replace pipeline in
 // cmd/vmmd/egress_watcher.go (a failed Render does NOT break
 // the live ruleset).
-func (m *Manager) UpdateStaticEgressIP(ctx context.Context, accountID, appID string, ip string) error {
+func (m *Manager) UpdateStaticEgressIP(ctx context.Context, appID string, ip string) error {
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdateStaticEgressIP: empty app_id")
 	}
@@ -3955,11 +3955,11 @@ func (m *Manager) UpdateStaticEgressIP(ctx context.Context, accountID, appID str
 	// renderer would have nothing to bind into the rule's `ip
 	// saddr <per-VM-host-IP>` source field.
 	if next != nil {
-		if _, rerr := AcquireStaticEgressIP(accountID, appID, *next); rerr != nil {
+		if _, rerr := AcquireStaticEgressIP("", appID, *next); rerr != nil {
 			return fmt.Errorf("fcvm: UpdateStaticEgressIP app=%s: reserve per-VM host IP: %w", appID, rerr)
 		}
 	} else {
-		if rerr := ReleaseStaticEgressIP(accountID, appID); rerr != nil {
+		if rerr := ReleaseStaticEgressIP("", appID); rerr != nil {
 			// Best-effort release — a release failure does
 			// not block the cache clear. The reservation
 			// will be re-released on the next reconcile

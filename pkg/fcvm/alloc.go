@@ -330,9 +330,16 @@ var staticEgressPool = struct {
 // SetStaticEgressIPAliases (which already handles the per-app
 // bridge alias lifecycle).
 func AcquireStaticEgressIP(accountID, appID string, customerIP netip.Addr) (StaticEgressReservation, error) {
-	if accountID == "" {
-		return StaticEgressReservation{}, fmt.Errorf("fcvm: AcquireStaticEgressIP: empty account_id")
-	}
+	// accountID is optional in v2 (ADR-119 v2) — the wire
+	// doesn't carry account_id (Manager.UpdateStaticEgressIP
+	// keys the per-app reservation by appID only). The
+	// reservation struct still records accountID when present
+	// (for audit / observability), but an empty value is
+	// valid. The apid PUT path's apps_static_egress_ip partial
+	// unique index protects the cross-account case at the
+	// database boundary; the allocator's collision check below
+	// handles the in-memory cross-account case where the
+	// reservation exists.
 	if appID == "" {
 		return StaticEgressReservation{}, fmt.Errorf("fcvm: AcquireStaticEgressIP: empty app_id")
 	}
@@ -351,14 +358,15 @@ func AcquireStaticEgressIP(accountID, appID string, customerIP netip.Addr) (Stat
 	staticEgressPool.mu.Lock()
 	defer staticEgressPool.mu.Unlock()
 
-	// Idempotent on (accountID, appID, customerIP).
+	// Idempotent on (appID, customerIP). The accountID
+	// collision check below only fires when both the existing
+	// reservation AND the incoming call carry a non-empty
+	// accountID — v2 callers may pass empty (the wire doesn't
+	// carry account_id), in which case the check is a no-op
+	// and the apps_static_egress_ip DB partial unique index
+	// is the sole guard against cross-account collisions.
 	if existing, ok := staticEgressPool.byAppID[appID]; ok {
-		if existing.AccountID != accountID {
-			// appID collision across accounts — refuse rather
-			// than silently overwrite. The apid handler
-			// protects against this via the
-			// apps_static_egress_ip partial unique index, but
-			// the allocator must defend in depth.
+		if existing.AccountID != "" && accountID != "" && existing.AccountID != accountID {
 			return StaticEgressReservation{}, fmt.Errorf("fcvm: AcquireStaticEgressIP: app %s already reserved under account %s", appID, existing.AccountID)
 		}
 		if existing.CustomerIP == customerIP {

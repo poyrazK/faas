@@ -61,25 +61,49 @@ type StaticEgressIPEntry = fcvm.StaticEgressIPEntry
 // provisioned for (the Postgres gate table is keyed on
 // (account_id, customer_ip)); app_id is the apps.id of the
 // pinned app; ip is the customer-supplied v4 address.
+//
+// ADR-119 v2 — node is the compute_nodes.name the IP is
+// provisioned on (the operator's authoritative view). Each
+// vmmd only handles entries where node == this vmmd's own
+// nodeID; entries with a different node are filtered out at
+// load time. An empty node field = "use this vmmd's own node"
+// (legacy single-box default; matches the v1 wire shape where
+// there was only one box).
 type staticEgressIPFile struct {
 	Entries []struct {
 		AccountID string `toml:"account_id"`
 		AppID     string `toml:"app_id"`
 		IP        string `toml:"ip"`
+		Node      string `toml:"node"`
 	} `toml:"entries"`
 }
 
-// LoadStaticEgressIPBundle reads the bundle from path. Missing
-// file returns the zero-value bundle (= "no static IPs
-// configured"). Per-entry parse errors, reserved-range IPs, and
-// malformed rows are Warned and dropped; the rest of the file
-// still loads.
+// LoadStaticEgressIPBundle reads the bundle from path and
+// returns the per-(own-node) slice. Missing file returns the
+// zero-value bundle (= "no static IPs configured"). Per-entry
+// parse errors, reserved-range IPs, malformed rows, and
+// cross-node entries (entries whose `node` field != ownNodeName)
+// are Warned and dropped; the rest of the file still loads.
+//
+// ADR-119 v2 — ownNodeName is this vmmd's resolved
+// compute_nodes.name (see egressBundleNodeID in cmd/vmmd/main.go).
+// Each vmmd is only responsible for entries where:
+//   - the entry's `node` field is empty (legacy single-box
+//     default; matches the pre-v2 wire shape)
+//   - OR the entry's `node` field equals ownNodeName
+//
+// All other entries are dropped at load (the Postgres gate write
+// would be a routing bug — same nodeID semantics as the
+// UpdateStaticEgressIP gRPC handler's FailedPrecondition check).
+// When ownNodeName is empty, every entry passes the filter
+// (the legacy single-box install: no compute_nodes row, no
+// per-node partition).
 //
 // The deny set is the canonical api.ValidateStaticEgressIP —
 // the same helper apid uses, the same helper pkg/fcvm uses
 // at Wake, the same helper used in the metal test. Adding a
 // new denied range in one place extends every gate.
-func LoadStaticEgressIPBundle(path string, log *slog.Logger) (StaticEgressIPBundle, error) {
+func LoadStaticEgressIPBundle(path string, ownNodeName string, log *slog.Logger) (StaticEgressIPBundle, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -104,6 +128,7 @@ func LoadStaticEgressIPBundle(path string, log *slog.Logger) (StaticEgressIPBund
 		accountID := strings.TrimSpace(e.AccountID)
 		appID := strings.TrimSpace(e.AppID)
 		ipStr := strings.TrimSpace(e.IP)
+		nodeName := strings.TrimSpace(e.Node)
 		if accountID == "" {
 			log.Warn("vmmd: static egress IP bundle: dropping entry with empty account_id",
 				"path", path, "app_id", appID, "ip", ipStr)
@@ -117,6 +142,19 @@ func LoadStaticEgressIPBundle(path string, log *slog.Logger) (StaticEgressIPBund
 		if ipStr == "" {
 			log.Warn("vmmd: static egress IP bundle: dropping entry with empty ip",
 				"path", path, "account_id", accountID, "app_id", appID)
+			continue
+		}
+		// Per-node filter (ADR-119 v2). Empty node field =
+		// legacy default ("this vmmd's own node"). A non-empty
+		// field that doesn't match ownNodeName is dropped
+		// silently with a Debug log — this is the operator's
+		// expected behaviour for entries provisioned on a
+		// different node in a multi-host cluster. When
+		// ownNodeName is empty (no compute_nodes row), the
+		// filter is a pass-through (legacy single-box).
+		if nodeName != "" && ownNodeName != "" && nodeName != ownNodeName {
+			log.Debug("vmmd: static egress IP bundle: dropping cross-node entry",
+				"path", path, "app_id", appID, "node", nodeName, "own_node", ownNodeName)
 			continue
 		}
 		ip, perr := netip.ParseAddr(ipStr)
@@ -265,11 +303,16 @@ func pushStaticEgressIPRulesToHostRenderer(entries []StaticEgressIPEntry) {
 // The same SIGHUP signal drives both watchers in production;
 // vmmd main wires hupCh once and shares it across both.
 //
+// ADR-119 v2 — ownNodeName is this vmmd's compute_nodes.name.
+// LoadStaticEgressIPBundle filters out entries whose `node`
+// field != ownNodeName (so each vmmd only handles its own
+// slice — see LoadStaticEgressIPBundle's filter docstring).
+//
 // Failure model: a missing file is not an error (returns
 // zero-value bundle = "remove all aliases"). A malformed file
 // keeps the prior alias set live — the reload never silently
 // strips a customer's IP because of a parse glitch.
-func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarget, st state.Store, path string, nodeID string, log *slog.Logger, hupCh <-chan os.Signal) {
+func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarget, st state.Store, path string, ownNodeName, nodeID string, log *slog.Logger, hupCh <-chan os.Signal) {
 	if path == "" {
 		log.Debug("vmmd: static egress IP bundle reload disabled (no path configured)")
 		return
@@ -280,7 +323,7 @@ func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarg
 	// fires. A missing file is benign (zero entries = "remove
 	// all aliases"); a malformed file is Warned and the prior
 	// alias set stays live.
-	if bundle, err := LoadStaticEgressIPBundle(path, log); err != nil {
+	if bundle, err := LoadStaticEgressIPBundle(path, ownNodeName, log); err != nil {
 		log.Warn("vmmd: static egress IP bundle startup load failed; running with prior alias set",
 			"path", path, "err", err)
 	} else {
@@ -288,7 +331,7 @@ func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarg
 		pushStaticEgressIPRulesToHostRenderer(bundle.Entries)
 		writeProvisionedStaticEgressIPs(ctx, st, bundle.Entries, nodeID, log)
 		log.Info("vmmd: static egress IP bundle loaded at startup",
-			"path", path, "node_id", nodeID, "entries", len(bundle.Entries))
+			"path", path, "node_id", nodeID, "own_node", ownNodeName, "entries", len(bundle.Entries))
 	}
 	for {
 		select {
@@ -296,7 +339,7 @@ func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarg
 			return
 		case <-hupCh:
 			log.Info("vmmd: SIGHUP received, reloading static egress IP bundle")
-			bundle, err := LoadStaticEgressIPBundle(path, log)
+			bundle, err := LoadStaticEgressIPBundle(path, ownNodeName, log)
 			if err != nil {
 				log.Warn("vmmd: static egress IP bundle reload failed; keeping prior alias set",
 					"path", path, "err", err)
@@ -306,7 +349,7 @@ func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarg
 			pushStaticEgressIPRulesToHostRenderer(bundle.Entries)
 			writeProvisionedStaticEgressIPs(ctx, st, bundle.Entries, nodeID, log)
 			log.Info("vmmd: static egress IP bundle reloaded",
-				"path", path, "node_id", nodeID, "entries", len(bundle.Entries))
+				"path", path, "node_id", nodeID, "own_node", ownNodeName, "entries", len(bundle.Entries))
 		}
 	}
 }
