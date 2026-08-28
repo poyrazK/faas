@@ -3061,6 +3061,48 @@ func (e *Engine) RebalanceOrphanedApps(ctx context.Context, deadNodeID string) e
 		if deadNodeID != "" && app.NodeID != deadNodeID {
 			continue
 		}
+		// ADR-119 v2: an app pinned to a static egress IP has
+		// its owning node dictated by the IP, NOT by the
+		// rebalance sweep. If the IP's owning node is the dead
+		// node, the rebalance must refuse — there is no
+		// healthy node that owns the IP, so reassigning to
+		// e.ownerNodeID would land the VM on a node where its
+		// egress would be source-spoofed. The recovery is
+		// operator-driven (failover the IP itself).
+		if app.StaticEgressIP != nil {
+			ipOwningNode, nerr := e.store.StaticEgressIPNode(ctx, app.AccountID, *app.StaticEgressIP)
+			if nerr != nil {
+				// Log + skip — same swallow policy as the
+				// overflow-peer lookup. The next compute_
+				// node_changed retry re-fires.
+				if e.ops != nil {
+					e.ops.RebalanceDecisions("pinned_skip").Inc()
+				}
+				e.log.Warn("sched: rebalance: static-egress IP owning-node lookup failed",
+					"app_id", app.ID, "slug", app.Slug,
+					"ip", app.StaticEgressIP.String(),
+					"err", nerr)
+				ineligible++
+				continue
+			}
+			if ipOwningNode == "" || ipOwningNode == deadNodeID {
+				// Either the IP has no owner (operator
+				// cleared the bundle — apid should have
+				// cleared the pin, but a race can leave
+				// the column set briefly) or the owner IS
+				// the dying node — refuse the rebalance.
+				if e.ops != nil {
+					e.ops.RebalanceDecisions("pinned_skip").Inc()
+				}
+				e.log.Info("sched: rebalance refused for static-egress pinned app",
+					"app_id", app.ID, "slug", app.Slug,
+					"ip", app.StaticEgressIP.String(),
+					"ip_owning_node", ipOwningNode,
+					"dead_node", deadNodeID)
+				ineligible++
+				continue
+			}
+		}
 		// Defense-in-depth: the SQL filter on store.ListOrphanedApps
 		// already restricts to non-deleted app statuses, but the
 		// in-memory check documents the contract + survives a
@@ -3210,6 +3252,24 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 	}
 	if app.NodeID != e.ownerNodeID {
 		e.observePressure("no_eligibility")
+		return nil
+	}
+	// ADR-119 v2: an app pinned to a static egress IP is
+	// hard-locked to the IP's owning compute_nodes.id
+	// (ap.id stamps apps.node_id to that node at pin time).
+	// The pressure rebalance path may consult app.OverflowNode
+	// (Tier A10 / ADR-088) as a spill preference, but the IP
+	// pin always wins — overflow migration to a node that
+	// does NOT own the IP would source-spoof the egress at
+	// the switch (the v1 BYOIP impossibility). Refuse the
+	// pressure rebalance; the customer keeps waking on the
+	// IP's owning node until the operator drains capacity
+	// there or clears the pin.
+	if app.StaticEgressIP != nil {
+		e.observePressure("no_eligibility")
+		e.log.Debug("schedd: pressure rebalance refused for static-egress pinned app",
+			"app_id", app.ID, "slug", app.Slug,
+			"ip", app.StaticEgressIP.String())
 		return nil
 	}
 	// Eligibility filter — mirrors RebalanceOrphanedApps.
@@ -3712,6 +3772,127 @@ func (e *Engine) MigrateLiveInstances(ctx context.Context, deadNodeID string) (i
 		"dead_node_id", deadNodeID,
 		"attempted", attempted, "migrated", migrated,
 		"to_node", e.ownerNodeID)
+	return attempted, nil
+}
+
+// MigrateStaticEgressInstances (ADR-119 v2) moves every live
+// instance of an app onto the IP's owning compute_nodes.id. The
+// egress drift subscriber calls this when the customer pins a
+// static egress IP for an app that already has live instances
+// on a non-owning node — the fan-out alone updates the SNAT
+// ruleset on every node, but it does not move the VMs. Without
+// this, the VM stays on a node where its egress would be
+// source-spoofed at the switch (the v1 BYOIP impossibility
+// ADR-119 v2 fixes).
+//
+// Parallel to MigrateLiveInstances but pointed at a *specific*
+// destination (the IP's owning node) rather than the dying
+// node. The four-phase handoff is the same
+// (pkg/sched/migration_handoff.go: NewMigrationHarness +
+// MigrateOne); only the source list (filtered to a single app)
+// and the destination (per-IP rather than e.ownerNodeID) differ.
+//
+// appID is the apps.id whose live instances need to move.
+// owningNodeID is the compute_nodes.id the IP is provisioned on
+// (resolved via Store.StaticEgressIPNode before this call). An
+// empty owningNodeID is a programming error — the caller should
+// have refused at the StaticEgressIPNode stage. Returns
+// (attempted, nil) on per-instance failures logged via
+// h.metrics.LiveMigrationDecisions; non-conflict errors on the
+// whole batch surface as the returned error so the subscriber's
+// caller can decide whether to retry.
+//
+// Concurrency is capped by api.MigrateLiveMaxPerTick (same
+// precedent as MigrateLiveInstances) — a Scale customer with
+// 20 live instances all on the wrong node will see this batch
+// cap and the remainder roll to the next egress_drift event.
+// On destination capacity exhaustion the harness returns
+// ErrCapacity and the metric increments
+// live_migration_decisions_total{outcome=no_headroom}; the
+// instances stay on the source node until the operator (or a
+// future manual migration helper) intervenes.
+//
+// The fan-out (UpdateStaticEgressIP) still runs alongside this
+// method — the destination vmmd's renderer rebuilds the SNAT
+// rules before the migrated VM arrives, so egress works from
+// the first packet on the destination node.
+func (e *Engine) MigrateStaticEgressInstances(ctx context.Context, appID, owningNodeID string) (int, error) {
+	if owningNodeID == "" {
+		return 0, fmt.Errorf("sched: migrate static egress: empty owningNodeID")
+	}
+	maxPerTick := api.MigrateLiveMaxPerTick
+	if e.migrateLiveMaxPerTick > 0 {
+		maxPerTick = e.migrateLiveMaxPerTick
+	}
+	rows, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		return 0, fmt.Errorf("sched: migrate static egress: list: %w", err)
+	}
+	// Filter to live + on a non-owning node. A live instance
+	// already on owningNodeID needs no migration; parked
+	// instances are the wake path's problem (the next wake
+	// lands on owningNodeID via RequiredNodeID).
+	var needMigration []state.Instance
+	for _, ins := range rows {
+		if !state.IsLive(ins.State) {
+			continue
+		}
+		if ins.NodeID == "" || ins.NodeID == owningNodeID {
+			continue
+		}
+		needMigration = append(needMigration, ins)
+	}
+	if len(needMigration) == 0 {
+		return 0, nil
+	}
+	if len(needMigration) > maxPerTick {
+		e.log.Info("sched: migrate static egress: capped",
+			"app_id", appID,
+			"available", len(needMigration),
+			"cap", maxPerTick)
+		needMigration = needMigration[:maxPerTick]
+	}
+
+	// Build the harness with the IP's owning node as the
+	// destination (NOT e.ownerNodeID — the static-egress
+	// constraint can route to a peer schedd's box).
+	harness := NewMigrationHarness(ctx, e.store, e.vmm, e.ops, e.log,
+		owningNodeID, e.BuildAppSpecForMigration, e.ledger,
+		e.resolveNodeCeiling)
+	harness.SetMaxPerTick(maxPerTick)
+	leaseSeconds := api.MigrateLiveLeaseSeconds
+	if e.migrateLiveLeaseSeconds > 0 {
+		leaseSeconds = e.migrateLiveLeaseSeconds
+	}
+	harness.SetLeaseSeconds(leaseSeconds)
+
+	migrated, attempted := 0, 0
+	for _, ins := range needMigration {
+		attempted++
+		err := harness.MigrateOne(ctx, ins.ID, ins.NodeID)
+		if err == nil {
+			migrated++
+			continue
+		}
+		// ErrConflict is expected under contention (peer
+		// re-owner / peer rollback); log Debug, not Warn.
+		// Anything else is a per-instance failure; log Warn
+		// and continue with the rest of the batch.
+		if errors.Is(err, state.ErrConflict) {
+			e.log.Debug("sched: migrate static egress: peer conflict",
+				"instance_id", ins.ID,
+				"from", ins.NodeID, "to", owningNodeID)
+			continue
+		}
+		e.log.Warn("sched: migrate static egress: instance failed",
+			"instance_id", ins.ID,
+			"from", ins.NodeID, "to", owningNodeID,
+			"err", err)
+	}
+	e.log.Info("sched: migrate static egress batch done",
+		"app_id", appID,
+		"owning_node", owningNodeID,
+		"attempted", attempted, "migrated", migrated)
 	return attempted, nil
 }
 

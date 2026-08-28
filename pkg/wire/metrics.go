@@ -1872,7 +1872,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	evictedPriority.WithLabelValues("reserved", "eviction_ram")
 	rebalanceDecisions := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_rebalance_decisions_total",
-		Help: "Count of per-app decisions the Tier A4 cross-node rebalancer made on a drain event (ADR-064), labelled by outcome ∈ {migrated, conflict, no_headroom, cooldown, no_eligibility}. The migrated counter is the §12 rebalance-rate panel.",
+		Help: "Count of per-app decisions the Tier A4 cross-node rebalancer made on a drain event (ADR-064), labelled by outcome ∈ {migrated, conflict, no_headroom, cooldown, no_eligibility, pinned_skip}. `pinned_skip` (ADR-119 v2) is the tripwire for an app whose static egress IP is unowned or owned by the dying node. The migrated counter is the §12 rebalance-rate panel.",
 	}, []string{"outcome"})
 	// ADR-087 / Tier A9: per-(app, kind) AtCapacity trigger counter.
 	// Labelled by (app, kind); kind is pre-instantiated at boot so the
@@ -4333,8 +4333,12 @@ func (m *OpsMetrics) TailCapReached(plan string) prometheus.Counter {
 // RebalanceDecisions returns the per-(outcome) counter the Tier
 // A4 cross-node rebalancer (ADR-064) increments once per app
 // per drain-event. outcome ∈ {migrated, conflict, no_headroom,
-// cooldown, no_eligibility}. Same caching rules as
-// WatchdogKills — the returned Counter is safe to retain.
+// cooldown, no_eligibility, pinned_skip}. `pinned_skip` (ADR-119
+// v2) is the tripwire for an app whose static egress IP is
+// either unowned or owned by the dying node — the rebalance
+// refuses rather than source-spoof the egress on a node that
+// does not own the IP. Same caching rules as WatchdogKills —
+// the returned Counter is safe to retain.
 func (m *OpsMetrics) RebalanceDecisions(outcome string) prometheus.Counter {
 	return m.rebalanceDecisions.WithLabelValues(outcome)
 }

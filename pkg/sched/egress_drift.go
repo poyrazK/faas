@@ -244,6 +244,40 @@ func (e *EgressDriftSubscriber) fanOutStaticEgressIP(ctx context.Context, appID,
 		ipStr = ip.String()
 	}
 
+	// ADR-119 v2: if a static egress IP is set, every live
+	// instance of this app must live on the IP's owning
+	// compute_nodes.id — otherwise the egress would be
+	// source-spoofed at the switch (the v1 BYOIP
+	// impossibility). The UpdateStaticEgressIP fan-out
+	// below rebuilds the SNAT ruleset on every node, but it
+	// does NOT move the VMs. Trigger ADR-066 cross-node
+	// live migration for the instances on non-owning nodes
+	// BEFORE the fan-out — the destination vmmd's renderer
+	// has the SNAT rule in place by the time the migrated
+	// VM arrives, so egress works from the first packet.
+	//
+	// Skipped on the clear path (ip == nil) — clearing the
+	// pin does not move VMs; the next wake uses
+	// choosePlacementLocked's least-loaded path.
+	if ip != nil {
+		owningNodeID, nerr := e.engine.store.StaticEgressIPNode(ctx, app.AccountID, *ip)
+		if nerr != nil {
+			e.log.Warn("schedd: static egress IP drift owning-node lookup failed",
+				"app", appID, "slug", slug,
+				"ip", ipStr, "err", nerr)
+			// Fall through — the fan-out still runs; the
+			// owning-node lookup failure surfaces as a Warn
+			// and the next egress_drift event re-tries.
+		} else if owningNodeID != "" {
+			if _, merr := e.engine.MigrateStaticEgressInstances(ctx, appID, owningNodeID); merr != nil {
+				e.log.Warn("schedd: static egress IP drift migrate failed",
+					"app", appID, "slug", slug,
+					"ip", ipStr, "owning_node", owningNodeID,
+					"err", merr)
+			}
+		}
+	}
+
 	rows, err := e.engine.store.ListInstancesForApp(ctx, appID)
 	if err != nil {
 		e.log.Warn("schedd: static egress IP drift list instances failed",
