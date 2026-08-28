@@ -3,10 +3,13 @@ package state
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/authcode"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // TestMain installs a deterministic recovery-HMAC secret so the
@@ -26,6 +30,21 @@ import (
 // only need consistency, not a per-run random key. A real
 // operational key is generated + persisted by
 // cmd/apid/main.go::loadOrGenerateRecoveryHMACKey.
+//
+// PR-B (ADR-121): the same TestMain wires the
+// OpenAPICaptureFn that MarkDeploymentLive consumes. In
+// production cmd/apid's main.go calls RegisterOpenAPICapture
+// with the openapidiff-backed impl; the unit-test binary has no
+// main.go so we register here. The fixture uses stdlib
+// crypto/sha256 + the pkg/api wire shape only —
+// pkg/openapidiff is NOT imported from any pkg/state test
+// file because the cycle fix (see pkg/state/openapi_capture.go)
+// keeps pkg/state free of any pkg/openapidiff import. The
+// fixture's only contract is that the produced bytes are
+// non-empty, the SHA-256 is 64-hex, and the result is
+// deterministic for a fixed (rules, deploymentID) input —
+// production wiring is verified separately by
+// cmd/apid/openapi_capture_test.go.
 func TestMain(m *testing.M) {
 	// 32 bytes of 0x33 — deterministic across runs; any consistent
 	// non-zero pattern works.
@@ -40,7 +59,119 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "pkg/state TestMain: SetHMACSecret:", err)
 		os.Exit(2)
 	}
+	RegisterOpenAPICapture(testFakeOpenAPICapture)
 	os.Exit(m.Run())
+}
+
+// testFakeOpenAPICapture is the unit-test fixture for
+// [OpenAPICaptureFn]. It produces a deterministic JSON body +
+// SHA-256 from the (deploymentID, rules) input so tests can
+// assert "a row exists with a stable hash". Production wiring
+// in cmd/apid/openapi_capture.go replaces this with the real
+// pkg/openapidiff-backed impl at startup.
+//
+// The fixture MUST NOT depend on pkg/openapidiff (the cycle
+// the callback inversion was designed to break would re-form
+// at the test binary). It only touches stdlib + the
+// pkg/api wire shape.
+//
+// Wire envelope mirrors the real openapidiff.MarshalSnapshot
+// top-level keys so the pgstore capture tests can assert
+// `spec` / `paths` shape end-to-end without linking
+// pkg/openapidiff:
+//
+//	{
+//	  "deployment_id":  ...,
+//	  "app_id":         ...,
+//	  "scope":          ...,
+//	  "schema_version": 1,
+//	  "captured_at":    RFC3339,
+//	  "rules":          [...],
+//	  "spec": {
+//	    "openapi": "3.1.0",
+//	    "info":    { "title": ... },
+//	    "paths":   { "<host>/<path>": { "<METHOD>": { ... } } },
+//	  },
+//	}
+//
+// The paths are keyed by host+"/"+path because the OpenAPI
+// differ's host-prefix projection (pkg/openapidiff/loader.go)
+// and the embedded spec share that shape. Disabled rules are
+// already filtered by the producer before the callback fires
+// (see pgstore.captureDeploymentOpenAPISnapshotTx and the
+// memstore mirror), so the fixture receives only Enabled=true
+// rules — its paths map reflects exactly what the customer can
+// serve.
+func testFakeOpenAPICapture(_ context.Context, _ sqlc.DBTX, deploymentID, appID, scope string, rules []api.CreateEdgeRuleRequest) (OpenAPISnapshot, error) {
+	// Sort rules for determinism (Priority asc, then MatchHost
+	// tie-break) — mirrors the producer-side sort in
+	// pgstore.captureDeploymentOpenAPISnapshotTx so the same
+	// rule set always yields the same SHA.
+	sorted := make([]api.CreateEdgeRuleRequest, len(rules))
+	copy(sorted, rules)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].MatchHost != sorted[j].MatchHost {
+			return sorted[i].MatchHost < sorted[j].MatchHost
+		}
+		if sorted[i].MatchPath != sorted[j].MatchPath {
+			return sorted[i].MatchPath < sorted[j].MatchPath
+		}
+		return sorted[i].Kind < sorted[j].Kind
+	})
+
+	// Build the embedded-OpenAPI-shaped paths map. Each enabled
+	// rule becomes one path entry keyed by "<host>/<path>" — the
+	// differ's host-prefix projection expects exactly this shape,
+	// so a future helper that swaps the fixture for the real
+	// impl won't see byte-shape drift.
+	paths := make(map[string]any, len(sorted))
+	for _, r := range sorted {
+		key := r.MatchHost + r.MatchPath
+		methods := make(map[string]any, len(r.MatchMethods))
+		for _, m := range r.MatchMethods {
+			methods[m] = map[string]any{"responses": map[string]any{"200": map[string]any{}}}
+		}
+		paths[key] = map[string]any{
+			"methods":  methods,
+			"metadata": map[string]any{"kind": r.Kind},
+		}
+	}
+
+	now := time.Now().UTC()
+	enc, err := json.Marshal(struct {
+		DeploymentID  string                      `json:"deployment_id"`
+		AppID         string                      `json:"app_id"`
+		Scope         string                      `json:"scope"`
+		SchemaVersion int                         `json:"schema_version"`
+		Rules         []api.CreateEdgeRuleRequest `json:"rules"`
+		Spec          map[string]any              `json:"spec"`
+	}{
+		DeploymentID:  deploymentID,
+		AppID:         appID,
+		Scope:         scope,
+		SchemaVersion: 1, // SnapshotSchemaVersion's value; the
+		// constant lives in pkg/openapidiff which this test
+		// file does not import.
+		Rules: sorted,
+		Spec: map[string]any{
+			"openapi": "3.1.0",
+			"info":    map[string]any{"title": "test-fixture"},
+			"paths":   paths,
+		},
+	})
+	if err != nil {
+		return OpenAPISnapshot{}, err
+	}
+	sum := sha256.Sum256(enc)
+	return OpenAPISnapshot{
+		DeploymentID:  deploymentID,
+		AppID:         appID,
+		Scope:         scope,
+		Snapshot:      enc,
+		SHA256:        hex.EncodeToString(sum[:]),
+		SchemaVersion: 1,
+		CapturedAt:    now,
+	}, nil
 }
 
 // --- Account / Account.Active ------------------------------------------------

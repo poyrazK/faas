@@ -3981,7 +3981,7 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 }
 
 const markDeploymentLive = `-- name: MarkDeploymentLive :exec
-update deployments set status = 'live' where id = $1
+update deployments set status = 'live', error = '' where id = $1
 `
 
 func (q *Queries) MarkDeploymentLive(ctx context.Context, db DBTX, id pgtype.UUID) error {

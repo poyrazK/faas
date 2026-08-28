@@ -5574,8 +5574,279 @@ func (s *PgStore) MarkDeploymentSuperseded(ctx context.Context, id string) error
 	return s.UpdateDeploymentStatus(ctx, id, DeploySuperseded, "")
 }
 
+// MarkDeploymentLive flips a deployment's status to 'live' and
+// captures the projected-customer-OpenAPI snapshot atomically
+// inside the same transaction (ADR-121 PR-B, migration 00358).
+//
+// Atomicity matters: a deployment that lands `live` without a
+// captured snapshot is invisible to PR-C's prod-promotion gate,
+// so the next time the customer promotes a different deployment
+// at scope="prod" the differ would compare the proposed
+// snapshot against no baseline — the gate silently regresses
+// from "block on breaks" to "always pass" for that app until a
+// manual backfill. Keeping the status UPDATE and the snapshot
+// UPSERT in one tx removes the race window between the two
+// writers.
+//
+// The projection (embedded OpenAPI spec + the app's current
+// edge-rule list) is recomputed inside the tx via the
+// registered [OpenAPICaptureFn] callback
+// (cmd/apid wires the pkg/openapidiff-backed impl at startup).
+// Recomputing here means every "live" row is the snapshot the
+// customer sees at the moment of promotion — no risk of an
+// out-of-date row stamped by a previous deploy. The cost is
+// one edge-rule query + a json.Marshal per live transition;
+// live transitions are rare
+// (the customer-initiated deploy path, not the per-request wake
+// path), so the cost is in the noise.
+//
+// On any projection error (corrupt embedded spec, malformed
+// edge-rule row, marshal failure) the tx rolls back and the
+// caller sees the error — the status transition is rejected.
+// This matches the spec invariant "An app always has a live
+// snapshot OR a cold-bootable rootfs — never neither": a partial
+// transition (live status, no snapshot) is a bug, not a state.
+// MarkDeploymentLive flips a deployment's status to 'live' and
+// captures the projected-customer-OpenAPI snapshot atomically
+// inside the same transaction (ADR-121 PR-B, migration 00358).
+//
+// Atomicity matters: a deployment that lands `live` without a
+// captured snapshot is invisible to PR-C's prod-promotion gate,
+// so the next time the customer promotes a different deployment
+// at scope="prod" the differ would compare the proposed
+// snapshot against no baseline — the gate silently regresses
+// from "block on breaks" to "always pass" for that app until a
+// manual backfill. Keeping the status UPDATE and the snapshot
+// UPSERT in one tx removes the race window between the two
+// writers.
+//
+// The projection (embedded OpenAPI spec + the app's current
+// edge-rule list) is recomputed inside the tx via the
+// registered [OpenAPICaptureFn] callback
+// (cmd/apid wires the pkg/openapidiff-backed impl at startup).
+// Recomputing here means every "live" row is the snapshot the
+// customer sees at the moment of promotion — no risk of an
+// out-of-date row stamped by a previous deploy. The cost is
+// one edge-rule query + a json.Marshal per live transition;
+// live transitions are rare
+// (the customer-initiated deploy path, not the per-request wake
+// path), so the cost is in the noise.
+//
+// On any projection error (corrupt embedded spec, malformed
+// edge-rule row, marshal failure) the tx rolls back and the
+// caller sees the error — the status transition is rejected.
+// This matches the spec invariant "An app always has a live
+// snapshot OR a cold-bootable rootfs — never neither": a partial
+// transition (live status, no snapshot) is a bug, not a state.
+//
+// Idempotency: a redelivered notification for an already-live
+// deployment does NOT re-run the status UPDATE — the status
+// flip is skipped, but the snapshot UPSERT still runs so a
+// row-level edge-rule change after the original promotion is
+// reflected in the snapshot row. This preserves the imaged
+// handler's "redelivered notification is safe" contract from
+// the pre-PR-B MarkDeploymentLive (which was a one-statement
+// UPDATE) without breaking the atomicity guarantee: a
+// projection error on a redelivery returns the error to the
+// caller (no row mutation occurred) and the prior live
+// snapshot stays intact.
 func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
-	return s.UpdateDeploymentStatus(ctx, id, DeployLive, "")
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: begin mark-live tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	// Read the deployment's current status. The idempotent
+	// path (already-live) skips the UPDATE so a redelivered
+	// "snapshot_written" notification can't trigger a
+	// projection-only failure that rolls back a status flip
+	// that already happened. The deployment is locked by the
+	// status row read at this isolation level for the
+	// duration of the tx; a concurrent transition would block
+	// here or fall through with a fresh read on retry.
+	var currentStatus string
+	if err := tx.QueryRow(ctx,
+		`select status from deployments where id = $1::uuid`, id,
+	).Scan(&currentStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("state: read deployment %s status: %w", id, err)
+	}
+
+	if currentStatus != string(DeployLive) {
+		depUUID, err := uuid.Parse(id)
+		if err != nil {
+			return fmt.Errorf("state: parse deployment %s uuid: %w", id, err)
+		}
+		q := sqlc.New()
+		if err := q.MarkDeploymentLive(ctx, tx, pgtypeFromUUID(depUUID)); err != nil {
+			return fmt.Errorf("state: mark deployment %s live: %w", id, err)
+		}
+	}
+
+	snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, id)
+	if err != nil {
+		return fmt.Errorf("state: capture snapshot for %s: %w", id, err)
+	}
+	// Zero-snapshot short-circuit: the noop capture (used when
+	// no real impl has been registered — e.g. cmd/schedd unit
+	// tests that drive [PgStore] directly without going through
+	// the cmd/apid daemon) returns the zero OpenAPISnapshot.
+	// Skip the UPSERT rather than failing the status flip —
+	// the PR-B invariant is "an app always has a live snapshot
+	// OR a cold-bootable rootfs"; the deploys table carries
+	// the status='live' marker either way, and a future
+	// PR-B re-call (with a registered impl) will fill the
+	// snapshot row. Matches [MemStore.MarkDeploymentLive]'s
+	// zero-skip contract for cross-store parity.
+	if snap.DeploymentID != "" {
+		if err := upsertDeploymentOpenAPISnapshotTx(ctx, tx, snap); err != nil {
+			return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit mark-live tx: %w", err)
+	}
+	return nil
+}
+
+// upsertDeploymentOpenAPISnapshotTx is the tx-aware UPSERT
+// helper used by every code path that flips a deployment to
+// status='live'. It validates the snapshot and delegates to
+// [upsertDeploymentOpenAPISnapshotDBTX] so the SQL is written
+// once and the public [UpdateDeploymentOpenAPISnapshot] and
+// this helper share the validation rules by construction.
+// Callers MUST pass an in-flight tx so the snapshot row commits
+// atomically with the status UPDATE; this is what removes the
+// "live with no snapshot" race window.
+func upsertDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx.Tx, snap OpenAPISnapshot) error {
+	return upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap)
+}
+
+// upsertDeploymentOpenAPISnapshotDBTX is the canonical SQL +
+// validation for the deployment_openapi_snapshots UPSERT. It
+// takes any DBTX (pgx.Tx or *pgxpool.Pool) so the public
+// [UpdateDeploymentOpenAPISnapshot] and the in-tx helper
+// [upsertDeploymentOpenAPISnapshotTx] share the same code path.
+// A future input check added here is enforced everywhere
+// without duplication.
+func upsertDeploymentOpenAPISnapshotDBTX(ctx context.Context, db sqlc.DBTX, snap OpenAPISnapshot) error {
+	if snap.DeploymentID == "" {
+		return errors.New("pgstore: upsert snapshot: empty deployment_id")
+	}
+	if snap.AppID == "" {
+		return errors.New("pgstore: upsert snapshot: empty app_id")
+	}
+	if snap.Scope == "" {
+		return errors.New("pgstore: upsert snapshot: empty scope")
+	}
+	if len(snap.Snapshot) == 0 {
+		return errors.New("pgstore: upsert snapshot: empty snapshot bytes")
+	}
+	if snap.SHA256 == "" {
+		return errors.New("pgstore: upsert snapshot: empty sha256")
+	}
+	if snap.SchemaVersion < 1 {
+		return errors.New("pgstore: upsert snapshot: schema_version must be >= 1")
+	}
+	if snap.CapturedAt.IsZero() {
+		snap.CapturedAt = time.Now().UTC()
+	}
+	_, err := db.Exec(ctx, `
+		insert into deployment_openapi_snapshots
+			(deployment_id, app_id, scope, snapshot, sha256, schema_version, captured_at)
+		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
+		on conflict (deployment_id) do update
+		   set app_id = excluded.app_id,
+		       scope = excluded.scope,
+		       snapshot = excluded.snapshot,
+		       sha256 = excluded.sha256,
+		       schema_version = excluded.schema_version,
+		       captured_at = excluded.captured_at
+	`, snap.DeploymentID, snap.AppID, snap.Scope, []byte(snap.Snapshot), snap.SHA256, snap.SchemaVersion, snap.CapturedAt)
+	if err != nil {
+		return fmt.Errorf("pgstore: upsert snapshot: %w", err)
+	}
+	return nil
+}
+
+// captureDeploymentOpenAPISnapshotTx reads the deployment's
+// app_id + scope (under the same tx as the status UPDATE so the
+// row is the post-UPDATE state), loads the app's current
+// edge-rule list, projects the snapshot, and returns the
+// [OpenAPISnapshot] ready to UPSERT. The tx parameter is the
+// in-flight pgx.Tx from the caller; we never touch s.pool here
+// so a snapshot projection failure rolls back the entire
+// markDeploymentLive tx, not just the snapshot UPSERT.
+//
+// The edge-rule query mirrors [ListEdgeRulesForApp]'s ORDER BY
+// (priority asc, created_at desc) so the snapshot is byte-stable
+// across capture calls — two consecutive live transitions on the
+// same edge-rule set produce the same SHA-256. Determinism is
+// what makes the SHA-256 a replay anchor instead of a debug
+// convenience.
+func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx.Tx, deploymentID string) (OpenAPISnapshot, error) {
+	var (
+		appID string
+		scope string
+	)
+	if err := tx.QueryRow(ctx,
+		`select app_id, scope from deployments where id = $1::uuid`,
+		deploymentID,
+	).Scan(&appID, &scope); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return OpenAPISnapshot{}, ErrNotFound
+		}
+		return OpenAPISnapshot{}, fmt.Errorf("state: read deployment for snapshot: %w", err)
+	}
+
+	rows, err := tx.Query(ctx,
+		`select `+edgeRuleSelectCols+` from edge_rules
+		 where app_id = $1::uuid order by priority asc, created_at desc`,
+		appID,
+	)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: read edge rules for snapshot: %w", err)
+	}
+	defer rows.Close()
+	edgeRules, err := scanEdgeRules(rows)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: scan edge rules for snapshot: %w", err)
+	}
+
+	// Convert []state.EdgeRule → []api.CreateEdgeRuleRequest. The
+	// generator only reads Kind + MatchHost + MatchPath +
+	// MatchMethods; Action is irrelevant for the snapshot shape.
+	// Fields outside the generator's read set are zero-valued so
+	// the diff would notice a future regression that adds a new
+	// read.
+	pending := make([]api.CreateEdgeRuleRequest, 0, len(edgeRules))
+	for _, r := range edgeRules {
+		if !r.Enabled {
+			// A disabled rule cannot contribute a route path to
+			// the OpenAPI surface — the runtime never compiles
+			// it into the gateway's edge table. Mirror that
+			// here so the snapshot matches what the customer
+			// can actually serve.
+			continue
+		}
+		pending = append(pending, edgeRuleToCreateEdgeRuleRequest(r))
+	}
+
+	// Delegate projection + canonical JSON + SHA-256 to the
+	// registered callback (cmd/apid wires the real
+	// pkg/openapidiff-backed impl at startup; tests register a
+	// fixture). The callback returns the SHAPE-ready struct,
+	// so this Store only persists it — pkg/state does not
+	// import pkg/openapidiff (that cycle is broken by the
+	// runtime-registered inversion; see openapi_capture.go).
+	snap, err := getOpenAPICapture()(ctx, tx, deploymentID, appID, scope, pending)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("state: capture snapshot for %s: %w", deploymentID, err)
+	}
+	return snap, nil
 }
 
 // UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)
@@ -5600,43 +5871,7 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 // pins the regex via the deployments_scope_shape CHECK that
 // the snapshot table mirrors).
 func (s *PgStore) UpdateDeploymentOpenAPISnapshot(ctx context.Context, snap OpenAPISnapshot) error {
-	if snap.DeploymentID == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty deployment_id")
-	}
-	if snap.AppID == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty app_id")
-	}
-	if snap.Scope == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty scope")
-	}
-	if len(snap.Snapshot) == 0 {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty snapshot bytes")
-	}
-	if snap.SHA256 == "" {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: empty sha256")
-	}
-	if snap.SchemaVersion < 1 {
-		return errors.New("pgstore: UpdateDeploymentOpenAPISnapshot: schema_version must be >= 1")
-	}
-	if snap.CapturedAt.IsZero() {
-		snap.CapturedAt = time.Now().UTC()
-	}
-	_, err := s.pool.Exec(ctx, `
-		insert into deployment_openapi_snapshots
-			(deployment_id, app_id, scope, snapshot, sha256, schema_version, captured_at)
-		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
-		on conflict (deployment_id) do update
-		   set app_id = excluded.app_id,
-		       scope = excluded.scope,
-		       snapshot = excluded.snapshot,
-		       sha256 = excluded.sha256,
-		       schema_version = excluded.schema_version,
-		       captured_at = excluded.captured_at
-	`, snap.DeploymentID, snap.AppID, snap.Scope, []byte(snap.Snapshot), snap.SHA256, snap.SchemaVersion, snap.CapturedAt)
-	if err != nil {
-		return fmt.Errorf("pgstore: UpdateDeploymentOpenAPISnapshot: %w", err)
-	}
-	return nil
+	return upsertDeploymentOpenAPISnapshotDBTX(ctx, s.pool, snap)
 }
 
 // LatestOpenAPISnapshotForScope returns the most recently
@@ -6259,6 +6494,32 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 		return "", err
 	}
 
+	// (3.5) ADR-121 PR-B: capture the projected OpenAPI snapshot
+	// for the just-promoted target. The auto-rollback path is a
+	// third live-transition writer alongside [MarkDeploymentLive]
+	// and the apid rollback handler; without this capture, the
+	// auto-rolled-back deployment flips to status='live' but the
+	// deployment_openapi_snapshots row never appears, and PR-C's
+	// prod-promotion gate loses its baseline. Mirrors
+	// MarkDeploymentLive's in-tx capture: compute the projection
+	// under the same tx so the snapshot row commits atomically
+	// with the status UPDATE.
+	snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, targetID)
+	if err != nil {
+		return "", fmt.Errorf("state: auto-rollback capture snapshot for %s: %w", targetID, err)
+	}
+	// Zero-snapshot short-circuit: see [MarkDeploymentLive] for
+	// the rationale. Unregistered callers (cmd/schedd unit
+	// tests that drive [PgStore] directly without the cmd/apid
+	// daemon wiring) take this branch and the status flip
+	// still commits; a future re-call with a registered impl
+	// fills the row.
+	if snap.DeploymentID != "" {
+		if err := upsertDeploymentOpenAPISnapshotTx(ctx, tx, snap); err != nil {
+			return "", fmt.Errorf("state: auto-rollback upsert snapshot for %s: %w", targetID, err)
+		}
+	}
+
 	// (4) Stamp the audit anchor on the failed deploy.
 	if _, err := tx.Exec(ctx, `
 		update deployments
@@ -6272,6 +6533,88 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 		return "", err
 	}
 	return targetID, nil
+}
+
+// RollbackDeploymentToTx performs the operator-driven (manual)
+// rollback end-to-end inside a single tx: (a) current →
+// superseded, (b) target → live, (c) capture the projected
+// OpenAPI snapshot for the just-promoted target via the same
+// capture helper [MarkDeploymentLive] uses. ADR-121 PR-B.
+//
+// Why one tx: the pre-PR-B path was `MarkDeploymentSuperseded`
+// (own tx, commits) then `MarkDeploymentLive` (own tx, can fail
+// on snapshot projection). A projection error left the app with
+// zero live deployments — §6.2-1 (CLAUDE.md invariants) violated
+// until an operator re-ran the rollback.
+//
+// Target precondition: status='superseded'. The caller (apid's
+// POST /v1/apps/{slug}/rollback) selects the target from
+// LatestSupersededDeployment or GetDeploymentByIDScopedToSuperseded;
+// this method refuses to roll back to a row that isn't currently
+// superseded, which is the same sanity check AutoRollbackDeploymentsTx
+// enforces (a deployment that the customer just redeployed into
+// 'pending' should not become the rollback target).
+func (s *PgStore) RollbackDeploymentToTx(ctx context.Context, appID, currentDeploymentID, targetDeploymentID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin rollback-to tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Sanity: both rows exist and belong to the same app. Cheap
+	// pre-flight so an unknown target id surfaces as ErrNotFound
+	// before we mutate the current row.
+	var currentOK, targetOK bool
+	if err := tx.QueryRow(ctx,
+		`select exists(select 1 from deployments where id = $1 and app_id = $2 and status = 'live')`,
+		currentDeploymentID, appID).Scan(&currentOK); err != nil {
+		return mapErr(err)
+	}
+	if !currentOK {
+		return ErrNotFound
+	}
+	if err := tx.QueryRow(ctx,
+		`select exists(select 1 from deployments where id = $1 and app_id = $2 and status = 'superseded')`,
+		targetDeploymentID, appID).Scan(&targetOK); err != nil {
+		return mapErr(err)
+	}
+	if !targetOK {
+		return ErrNotFound
+	}
+
+	// (a) Supersede current.
+	if _, err := tx.Exec(ctx,
+		`update deployments set status = 'superseded' where id = $1 and status = 'live'`,
+		currentDeploymentID); err != nil {
+		return fmt.Errorf("state: rollback supersede current: %w", err)
+	}
+	// (b) Promote target.
+	if _, err := tx.Exec(ctx,
+		`update deployments set status = 'live', error = '' where id = $1 and status = 'superseded'`,
+		targetDeploymentID); err != nil {
+		return fmt.Errorf("state: rollback promote target: %w", err)
+	}
+	// (c) Capture the OpenAPI snapshot for the just-promoted
+	// target — same in-tx path MarkDeploymentLive uses. A
+	// projection error rolls back BOTH the supersede and the
+	// promote, restoring the pre-call state. The caller sees a
+	// clean error and can retry or surface 503; the database
+	// stays in a consistent state.
+	snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, targetDeploymentID)
+	if err != nil {
+		return fmt.Errorf("state: rollback capture snapshot for %s: %w", targetDeploymentID, err)
+	}
+	// Zero-snapshot short-circuit: see [MarkDeploymentLive] for
+	// the rationale.
+	if snap.DeploymentID != "" {
+		if err := upsertDeploymentOpenAPISnapshotTx(ctx, tx, snap); err != nil {
+			return fmt.Errorf("state: rollback upsert snapshot for %s: %w", targetDeploymentID, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit rollback-to tx: %w", err)
+	}
+	return nil
 }
 
 func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error {

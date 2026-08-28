@@ -4759,8 +4759,106 @@ func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) erro
 	return m.UpdateDeploymentStatus(ctx, id, DeploySuperseded, "")
 }
 
+// MarkDeploymentLive (ADR-121 PR-B) flips the deployment
+// status to 'live' and captures the projected-customer-OpenAPI
+// snapshot under the same m.mu critical section as the pgstore
+// markDeploymentLiveTx wraps in one tx. The lock is the
+// atomicity primitive here — single-process, no BEGIN/COMMIT.
+// See pgstore.MarkDeploymentLive for the rationale.
 func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
-	return m.UpdateDeploymentStatus(ctx, id, DeployLive, "")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	d.Status = DeployLive
+	d.Error = ""
+	m.deployments[id] = d
+
+	snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
+	if err != nil {
+		return fmt.Errorf("memstore: capture snapshot for %s: %w", id, err)
+	}
+	// Zero-snapshot short-circuit: when no capture impl has
+	// been registered the noop returns the zero OpenAPISnapshot.
+	// Don't poison the map with a zero row — matches
+	// [PgStore.MarkDeploymentLive]'s zero-skip contract for
+	// cross-store parity. The status flip above is still
+	// committed; a future re-call with a registered impl
+	// will populate the snapshot row.
+	if snap.DeploymentID == "" {
+		return nil
+	}
+	m.openAPISnapshots[id] = snap
+	return nil
+}
+
+// edgeRuleToCreateEdgeRuleRequest converts the DB row shape into
+// the wire shape [openapidiff.GenerateFromEdgeRules] expects.
+// Single canonical converter for both stores (pgstore.go and
+// memstore.go) so the SHA-256 parity across the in-memory
+// mirror and the Postgres row is enforced by the compiler, not
+// by copy-paste. Only the fields the generator reads are
+// populated; the rest are zero so a future regression that
+// adds a new read fails loudly (zero-valued fields make the
+// diff output obvious).
+func edgeRuleToCreateEdgeRuleRequest(r EdgeRule) api.CreateEdgeRuleRequest {
+	return api.CreateEdgeRuleRequest{
+		Kind:         string(r.Kind),
+		MatchHost:    r.MatchHost,
+		MatchPath:    r.MatchPath,
+		MatchMethods: r.MatchMethods,
+	}
+}
+
+// captureDeploymentOpenAPISnapshotLocked builds the [OpenAPISnapshot]
+// for a deployment that has just transitioned to status='live'.
+// Caller must hold m.mu. Mirrors pgstore.captureDeploymentOpenAPISnapshotTx:
+// walk the edge-rule list (filtered to enabled rules so a
+// disabled rule does not contribute a route path), project via
+// [openapidiff.GenerateFromEdgeRules], marshal via
+// [openapidiff.MarshalSnapshot], and return the struct ready to
+// UPSERT. The (Priority asc, CreatedAt desc) sort matches
+// pgstore's order so both stores produce the same SHA-256 for
+// the same edge-rule set. The caller-supplied ctx is forwarded to
+// the registered capture callback so caller-side cancellation
+// propagates into the projection/marshal step.
+func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(ctx context.Context, d Deployment) (OpenAPISnapshot, error) {
+	var rules []EdgeRule
+	for _, r := range m.edgeRules {
+		if r.AppID != d.AppID {
+			continue
+		}
+		if !r.Enabled {
+			continue
+		}
+		rules = append(rules, r)
+	}
+	sort.Slice(rules, func(i, j int) bool {
+		if rules[i].Priority != rules[j].Priority {
+			return rules[i].Priority < rules[j].Priority
+		}
+		return rules[i].CreatedAt.After(rules[j].CreatedAt)
+	})
+	pending := make([]api.CreateEdgeRuleRequest, 0, len(rules))
+	for _, r := range rules {
+		pending = append(pending, edgeRuleToCreateEdgeRuleRequest(r))
+	}
+
+	// Delegate projection + canonical JSON + SHA-256 to the
+	// registered callback (cmd/apid wires the real
+	// pkg/openapidiff-backed impl at startup; tests register a
+	// fixture). The callback returns the SHAPE-ready struct,
+	// so this Store only persists it — pkg/state does not
+	// import pkg/openapidiff (that cycle is broken by the
+	// runtime-registered inversion; see openapi_capture.go).
+	snap, err := getOpenAPICapture()(ctx, nil, d.ID, d.AppID, d.Scope, pending)
+	if err != nil {
+		return OpenAPISnapshot{}, fmt.Errorf("memstore: capture snapshot for %s: %w", d.ID, err)
+	}
+	return snap, nil
 }
 
 // UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)
@@ -5164,7 +5262,7 @@ func (m *MemStore) MarkAutoRollback(_ context.Context, deploymentID, reason stri
 // not live.
 //
 // Migration 00297 / Mega-C PR-2 / issue #961 leaf 8.
-func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDeploymentID string) (string, error) {
+func (m *MemStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentDeploymentID string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cur, ok := m.deployments[currentDeploymentID]
@@ -5193,6 +5291,22 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	cur.Status = DeploySuperseded
 	target := m.deployments[targetID]
 	target.Status = DeployLive
+	// ADR-121 PR-B: capture the projected OpenAPI snapshot for
+	// the just-promoted target. Without this, the auto-rolled-
+	// back deployment flips to status='live' but its snapshot
+	// row is never written, and PR-C's prod-promotion gate
+	// loses its baseline. Caller holds m.mu; the helper
+	// re-enters the same map under the same lock so the
+	// capture commits atomically with the status flip.
+	snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, target)
+	if err != nil {
+		return "", fmt.Errorf("memstore: auto-rollback capture snapshot for %s: %w", targetID, err)
+	}
+	// Zero-snapshot short-circuit: see [MarkDeploymentLive] for
+	// the rationale.
+	if snap.DeploymentID != "" {
+		m.openAPISnapshots[targetID] = snap
+	}
 	now := time.Now().UTC()
 	if cur.LastAutoRollbackAt == nil {
 		cur.LastAutoRollbackAt = &now
@@ -5203,6 +5317,41 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	m.deployments[currentDeploymentID] = cur
 	m.deployments[targetID] = target
 	return targetID, nil
+}
+
+// RollbackDeploymentToTx mirrors pgstore.RollbackDeploymentToTx:
+// operator-driven rollback runs the supersede + live flip +
+// OpenAPI snapshot capture under the single m.mu lock so a
+// projection failure leaves the pre-call state intact (no half-
+// rolled-back app). See pgstore.go for the rationale.
+func (m *MemStore) RollbackDeploymentToTx(ctx context.Context, appID, currentDeploymentID, targetDeploymentID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cur, ok := m.deployments[currentDeploymentID]
+	if !ok || cur.AppID != appID || cur.Status != DeployLive {
+		return ErrNotFound
+	}
+	target, ok := m.deployments[targetDeploymentID]
+	if !ok || target.AppID != appID || target.Status != DeploySuperseded {
+		return ErrNotFound
+	}
+
+	cur.Status = DeploySuperseded
+	target.Status = DeployLive
+	target.Error = ""
+	snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, target)
+	if err != nil {
+		return fmt.Errorf("memstore: rollback capture snapshot for %s: %w", targetDeploymentID, err)
+	}
+	// Zero-snapshot short-circuit: see [MarkDeploymentLive] for
+	// the rationale.
+	if snap.DeploymentID != "" {
+		m.openAPISnapshots[targetDeploymentID] = snap
+	}
+	m.deployments[currentDeploymentID] = cur
+	m.deployments[targetDeploymentID] = target
+	return nil
 }
 
 func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, bytes int64) error {

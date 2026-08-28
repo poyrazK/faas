@@ -516,6 +516,27 @@ func run(ctx context.Context, log *slog.Logger) error {
 	httpsec.SetHSTSEnabled(httpsec.HSTSEnabledFromEnv(os.Getenv))
 
 	deps.store = func() state.Store { return state.NewPgStore(pool) }
+
+	// Wire the OpenAPI snapshot capture. PR-B's atomic
+	// capture path calls this callback from inside the
+	// MarkDeploymentLive tx; the callback projects the
+	// edge-rule list into the canonical JSON snapshot
+	// bytes via pkg/openapidiff (cmd/apid is the one
+	// package in the repo that imports both — the
+	// callback breaks the pkg/openapidiff ↔ pkg/state
+	// import cycle the direct import would create).
+	// PR-C's prod-promotion gate depends on the
+	// snapshot row existing for any deployment the gate
+	// sees as the pending promotion; without this wiring
+	// every live transition would roll back to "no
+	// baseline" on the gate's first read.
+	//
+	// RegisterStateCapture lives in pkg/openapidiff (which
+	// already imports pkg/state via the generator_ext.go
+	// seam; no new cycle). Single impl shared by cmd/apid
+	// and cmd/e2e so PR-B capture semantics are uniform across
+	// production + test processes.
+	openapidiff.RegisterStateCapture()
 	deps.config = cfg
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): boot log carrying the
 	// multi-box identity so an operator reading the systemd journal

@@ -1430,6 +1430,22 @@ type Store interface {
 	// does NOT touch instances; schedd does that in a
 	// sibling call after this returns.
 	AutoRollbackDeploymentsTx(ctx context.Context, appID, currentDeploymentID string) (newLiveDeploymentID string, err error)
+	// RollbackDeploymentToTx performs the operator-driven
+	// (manual) rollback end-to-end inside a single tx:
+	// (a) current → superseded, (b) target → live, (c) capture
+	// the projected OpenAPI snapshot for the just-promoted
+	// target via [MarkDeploymentLive]'s in-tx capture path.
+	// ADR-121 PR-B: a manual rollback is a third live-transition
+	// writer alongside [MarkDeploymentLive] and
+	// [AutoRollbackDeploymentsTx]; without an in-tx snapshot
+	// capture, a projection error after the supersede commits
+	// leaves the app with zero live deployments — a §6.2-1
+	// violation (CLAUDE.md). The single-tx shape removes that
+	// partial-state risk. Returns ErrNotFound if either id is
+	// unknown or the target row is not in 'superseded' status
+	// (the caller pre-selected it from LatestSupersededDeployment
+	// so this is a sanity check).
+	RollbackDeploymentToTx(ctx context.Context, appID, currentDeploymentID, targetDeploymentID string) error
 	AppBySlug(ctx context.Context, slug string) (App, error)
 	ListApps(ctx context.Context, accountID string) ([]App, error)
 	// ListAllApps returns every non-deleted app on the box. schedd's reaper and
