@@ -73,8 +73,8 @@ func (r *recordingStaticIPVMM) Destroy(context.Context, string) error {
 func (r *recordingStaticIPVMM) DestroyWithExport(context.Context, string, string) (int, error) {
 	panic("recordingStaticIPVMM.DestroyWithExport: not used in UpdateStaticEgressIP tests")
 }
-func (r *recordingStaticIPVMM) LiveCount() int     { return 0 }
-func (r *recordingStaticIPVMM) LeasedCount() int   { return 0 }
+func (r *recordingStaticIPVMM) LiveCount() int   { return 0 }
+func (r *recordingStaticIPVMM) LeasedCount() int { return 0 }
 func (r *recordingStaticIPVMM) NetnsFor(string) (string, bool) {
 	return "", false
 }
@@ -82,7 +82,7 @@ func (r *recordingStaticIPVMM) UpdateEgressAllowlist(context.Context, string, []
 	panic("recordingStaticIPVMM.UpdateEgressAllowlist: not used in UpdateStaticEgressIP tests")
 }
 func (r *recordingStaticIPVMM) InstancePID(string) (int, bool) { return 0, false }
-func (r *recordingStaticIPVMM) LogRing(string) *logbuf.Ring        { return nil }
+func (r *recordingStaticIPVMM) LogRing(string) *logbuf.Ring    { return nil }
 func (r *recordingStaticIPVMM) MountParentExt4(context.Context, string) (string, error) {
 	return "", nil
 }
