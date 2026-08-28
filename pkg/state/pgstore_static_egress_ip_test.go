@@ -1,6 +1,7 @@
 // pgstore_static_egress_ip_test.go — PgStore tests for the
 // operator-bundle gate behind ADR-119's apid-side pin validator
-// (migrations/00337_provisioned_static_egress_ips.sql).
+// (migrations/00337_provisioned_static_egress_ips.sql + v2
+// migration 00488 node_id column).
 //
 // Pins:
 //
@@ -10,7 +11,15 @@
 //     ReplaceProvisionedStaticEgressIPs has materialised the row.
 //   - ReplaceProvisionedStaticEgressIPs runs DELETE + INSERT in
 //     one transaction so a concurrent apid PUT sees either the
-//     prior set or the new set, never a partial gap.
+//     prior set or the new set, never a partial gap. v2: the
+//     DELETE/INSERT is keyed by (account_id, node_id) — vmmd-A
+//     never wipes vmmd-B's rows for the same account.
+//   - StaticEgressIPNode (v2) returns the compute_nodes.id owning
+//     a (account_id, customer_ip) tuple, or empty string when no
+//     row exists.
+//   - ProvisionedStaticEgressIPsForNode (v2) is the per-node
+//     reverse lookup; returns all IPs across all accounts for a
+//     given node.
 //   - The table's family=4 CHECK rejects non-IPv4 inputs at the
 //     database boundary (the caller-side deny-set gate is
 //     api.ValidateStaticEgressIP — defence in depth).
@@ -19,11 +28,11 @@
 //     pgx errors).
 //
 // The pg path's two methods are at pkg/state/pgstore.go:19711 +
-// 19746. Both were 0.0%-covered at PR-997 round-6 (the smoke
-// suite covers MemStore only) — this file is the load-bearing
-// 70% coverage gate unblocker. Mirrors the
-// pgstore_alert_presets_test.go pattern: skip when Postgres is
-// unreachable (pgtest.Open handles the skip).
+// 19746 (v1), and the v2 additions (StaticEgressIPNode,
+// ProvisionedStaticEgressIPsForNode, the v2
+// ReplaceProvisionedStaticEgressIPs signature) are at lines 20950+.
+// Mirrors the pgstore_alert_presets_test.go pattern: skip when
+// Postgres is unreachable (pgtest.Open handles the skip).
 package state_test
 
 import (
@@ -35,6 +44,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -54,6 +64,31 @@ func seedStaticEgressAccountPg(t *testing.T, ctx context.Context, st state.Store
 		t.Fatalf("CreateAccount: %v", err)
 	}
 	return acct.ID
+}
+
+// seedStaticEgressNodePg inserts a fresh compute_nodes row and
+// returns its UUID. ADR-119 v2 — every test that calls
+// ReplaceProvisionedStaticEgressIPs needs a valid node_id (the
+// FK from migration 00488). Each test gets its own row so
+// cross-test pollution is impossible (the
+// provisioned_static_egress_ips_node_id_idx is shared across
+// tests, but the node_id values are unique per test invocation).
+//
+// Mirrors migration 00024's seed pattern: name + target_url +
+// capacity columns. Each test uses a unique synthetic name to
+// avoid the `name` UNIQUE constraint collision.
+func seedStaticEgressNodePg(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
+	t.Helper()
+	nodeID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `
+		insert into compute_nodes
+		    (id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		     admission_ceiling_mb, active)
+		values ($1::uuid, $2, 'unix:///run/faas/vmmd.sock', 160, 56000, 200, 47600, true)
+	`, nodeID, fmt.Sprintf("test-node-%s", uuid.NewString()[:8])); err != nil {
+		t.Fatalf("seed compute_nodes: %v", err)
+	}
+	return nodeID
 }
 
 // TestPgStore_ProvisionedStaticEgressIPExists_ShortCircuits pins
@@ -91,8 +126,9 @@ func TestPgStore_ProvisionedStaticEgressIPExists_ShortCircuits(t *testing.T) {
 // Mirrors the apid PUT path's read against the operator-bundle
 // gate table.
 func TestPgStore_ProvisionedStaticEgressIPExists_HitMiss(t *testing.T) {
-	s, _, ctx := pgStoreWithPool(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	acctID := seedStaticEgressAccountPg(t, ctx, s)
+	nodeID := seedStaticEgressNodePg(t, ctx, pool)
 
 	ip := netip.MustParseAddr("203.0.113.42")
 
@@ -106,7 +142,7 @@ func TestPgStore_ProvisionedStaticEgressIPExists_HitMiss(t *testing.T) {
 	}
 
 	// Materialise via the writer path, then re-query for hit.
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, []netip.Addr{ip}); err != nil {
+	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nodeID, []netip.Addr{ip}); err != nil {
 		t.Fatalf("Replace (hit prep): %v", err)
 	}
 	got, err = s.ProvisionedStaticEgressIPExists(ctx, acctID, ip)
@@ -141,9 +177,10 @@ func TestPgStore_ProvisionedStaticEgressIPExists_BadUUID(t *testing.T) {
 // the guard fires before Begin). The watcher must never call
 // this with an empty string; the test pins the guard's presence.
 func TestPgStore_ReplaceProvisionedStaticEgressIPs_EmptyAccountID(t *testing.T) {
-	s, _, ctx := pgStoreWithPool(t)
+	s, pool, ctx := pgStoreWithPool(t)
+	nodeID := seedStaticEgressNodePg(t, ctx, pool)
 
-	err := s.ReplaceProvisionedStaticEgressIPs(ctx, "", []netip.Addr{
+	err := s.ReplaceProvisionedStaticEgressIPs(ctx, "", nodeID, []netip.Addr{
 		netip.MustParseAddr("203.0.113.1"),
 	})
 	if err == nil {
@@ -160,11 +197,12 @@ func TestPgStore_ReplaceProvisionedStaticEgressIPs_EmptyAccountID(t *testing.T) 
 // side alone would block the bad input; both together pin the
 // contract.
 func TestPgStore_ReplaceProvisionedStaticEgressIPs_NonV4(t *testing.T) {
-	s, _, ctx := pgStoreWithPool(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	acctID := seedStaticEgressAccountPg(t, ctx, s)
+	nodeID := seedStaticEgressNodePg(t, ctx, pool)
 
 	v6 := netip.MustParseAddr("2001:db8::1")
-	err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, []netip.Addr{v6})
+	err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nodeID, []netip.Addr{v6})
 	if err == nil {
 		t.Fatal("non-v4: got nil err, want error")
 	}
@@ -178,12 +216,13 @@ func TestPgStore_ReplaceProvisionedStaticEgressIPs_NonV4(t *testing.T) {
 // Exists. Mirrors what the vmmd bundle watcher does on every
 // SIGHUP.
 func TestPgStore_ReplaceProvisionedStaticEgressIPs_Normal(t *testing.T) {
-	s, _, ctx := pgStoreWithPool(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	acctID := seedStaticEgressAccountPg(t, ctx, s)
+	nodeID := seedStaticEgressNodePg(t, ctx, pool)
 
 	ip1 := netip.MustParseAddr("203.0.113.10")
 	ip2 := netip.MustParseAddr("203.0.113.11")
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, []netip.Addr{ip1, ip2}); err != nil {
+	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nodeID, []netip.Addr{ip1, ip2}); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 	for _, ip := range []netip.Addr{ip1, ip2} {
@@ -203,18 +242,19 @@ func TestPgStore_ReplaceProvisionedStaticEgressIPs_Normal(t *testing.T) {
 // apid PUT path surfaces this as 404 — the customer's IP is
 // no longer routable.
 func TestPgStore_ReplaceProvisionedStaticEgressIPs_Clear(t *testing.T) {
-	s, _, ctx := pgStoreWithPool(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	acctID := seedStaticEgressAccountPg(t, ctx, s)
+	nodeID := seedStaticEgressNodePg(t, ctx, pool)
 
 	ip := netip.MustParseAddr("203.0.113.42")
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, []netip.Addr{ip}); err != nil {
+	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nodeID, []netip.Addr{ip}); err != nil {
 		t.Fatalf("seed Replace: %v", err)
 	}
 	if got, _ := s.ProvisionedStaticEgressIPExists(ctx, acctID, ip); !got {
 		t.Fatalf("seed: ip missing from gate")
 	}
 
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nil); err != nil {
+	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nodeID, nil); err != nil {
 		t.Fatalf("clear Replace: %v", err)
 	}
 	got, err := s.ProvisionedStaticEgressIPExists(ctx, acctID, ip)
@@ -233,18 +273,19 @@ func TestPgStore_ReplaceProvisionedStaticEgressIPs_Clear(t *testing.T) {
 // INSERTs). A non-validating implementation that forgot the
 // DELETE would leak stale IPs into the gate.
 func TestPgStore_ReplaceProvisionedStaticEgressIPs_ReplaceAtomically(t *testing.T) {
-	s, _, ctx := pgStoreWithPool(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	acctID := seedStaticEgressAccountPg(t, ctx, s)
+	nodeID := seedStaticEgressNodePg(t, ctx, pool)
 
 	old1 := netip.MustParseAddr("203.0.113.20")
 	old2 := netip.MustParseAddr("203.0.113.21")
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, []netip.Addr{old1, old2}); err != nil {
+	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nodeID, []netip.Addr{old1, old2}); err != nil {
 		t.Fatalf("first Replace: %v", err)
 	}
 
 	new1 := netip.MustParseAddr("203.0.113.30")
 	new2 := netip.MustParseAddr("203.0.113.31")
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, []netip.Addr{new1, new2}); err != nil {
+	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nodeID, []netip.Addr{new1, new2}); err != nil {
 		t.Fatalf("second Replace: %v", err)
 	}
 
@@ -271,9 +312,10 @@ func TestPgStore_ReplaceProvisionedStaticEgressIPs_ReplaceAtomically(t *testing.
 // pgstore.go:19758 (delete) and 19768 (insert); a single bad
 // UUID exercises the DELETE branch.
 func TestPgStore_ReplaceProvisionedStaticEgressIPs_BadUUID(t *testing.T) {
-	s, _, ctx := pgStoreWithPool(t)
+	s, pool, ctx := pgStoreWithPool(t)
+	nodeID := seedStaticEgressNodePg(t, ctx, pool)
 
-	err := s.ReplaceProvisionedStaticEgressIPs(ctx, "not-a-uuid", []netip.Addr{
+	err := s.ReplaceProvisionedStaticEgressIPs(ctx, "not-a-uuid", nodeID, []netip.Addr{
 		netip.MustParseAddr("203.0.113.1"),
 	})
 	if err == nil {
@@ -292,16 +334,17 @@ func TestPgStore_ReplaceProvisionedStaticEgressIPs_BadUUID(t *testing.T) {
 // that assumed account-scoped uniqueness on customer_ip alone
 // would fail here.
 func TestPgStore_ReplaceProvisionedStaticEgressIPs_AccountScoped(t *testing.T) {
-	s, _, ctx := pgStoreWithPool(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	acctA := seedStaticEgressAccountPg(t, ctx, s)
 	acctB := seedStaticEgressAccountPg(t, ctx, s)
+	nodeID := seedStaticEgressNodePg(t, ctx, pool)
 
 	ip := netip.MustParseAddr("203.0.113.42")
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctA, []netip.Addr{ip}); err != nil {
+	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctA, nodeID, []netip.Addr{ip}); err != nil {
 		t.Fatalf("Replace on A: %v", err)
 	}
 	// Same IP under acctB must not violate the PK — composite key.
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctB, []netip.Addr{ip}); err != nil {
+	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctB, nodeID, []netip.Addr{ip}); err != nil {
 		t.Fatalf("Replace on B (composite-PK collision expected NOT): %v", err)
 	}
 	gotA, _ := s.ProvisionedStaticEgressIPExists(ctx, acctA, ip)
@@ -318,14 +361,15 @@ func TestPgStore_ReplaceProvisionedStaticEgressIPs_AccountScoped(t *testing.T) {
 // watcher reload path runs this on every SIGHUP regardless of
 // whether the bundle changed.
 func TestPgStore_ReplaceProvisionedStaticEgressIPs_NoRowsPreserved(t *testing.T) {
-	s, _, ctx := pgStoreWithPool(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	acctID := seedStaticEgressAccountPg(t, ctx, s)
+	nodeID := seedStaticEgressNodePg(t, ctx, pool)
 
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nil); err != nil {
+	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nodeID, nil); err != nil {
 		t.Fatalf("Replace nil on empty acct: %v", err)
 	}
 	// Re-run with empty slice — must still succeed (idempotent).
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nil); err != nil {
+	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctID, nodeID, nil); err != nil {
 		t.Fatalf("Replace nil x2 on empty acct: %v", err)
 	}
 }
@@ -340,11 +384,12 @@ func TestPgStore_ReplaceProvisionedStaticEgressIPs_NoRowsPreserved(t *testing.T)
 func TestPgStore_ReplaceProvisionedStaticEgressIPs_FamilyCheckFromDB(t *testing.T) {
 	_, pool, ctx := pgStoreWithPool(t)
 	acctID := seedStaticEgressAccountPg(t, ctx, state.NewPgStore(pool))
+	nodeID := seedStaticEgressNodePg(t, ctx, pool)
 
 	_, err := pool.Exec(ctx,
-		`INSERT INTO provisioned_static_egress_ips (account_id, customer_ip)
-		 VALUES ($1::uuid, '2001:db8::1'::inet)`,
-		acctID)
+		`INSERT INTO provisioned_static_egress_ips (account_id, node_id, customer_ip)
+		 VALUES ($1::uuid, $2::uuid, '2001:db8::1'::inet)`,
+		acctID, nodeID)
 	if err == nil {
 		t.Fatal("v6 INSERT: got nil err, want SQLSTATE 23514 CHECK violation")
 	}
@@ -364,12 +409,13 @@ func TestPgStore_ReplaceProvisionedStaticEgressIPs_FamilyCheckFromDB(t *testing.
 // the apid handler can leak one tenant's provisioning state to
 // another.
 func TestPgStore_ProvisionedStaticEgressIPExists_NonScoping(t *testing.T) {
-	s, _, ctx := pgStoreWithPool(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	acctA := seedStaticEgressAccountPg(t, ctx, s)
 	acctB := seedStaticEgressAccountPg(t, ctx, s)
+	nodeID := seedStaticEgressNodePg(t, ctx, pool)
 
 	ip := netip.MustParseAddr("203.0.113.42")
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctA, []netip.Addr{ip}); err != nil {
+	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acctA, nodeID, []netip.Addr{ip}); err != nil {
 		t.Fatalf("seed on A: %v", err)
 	}
 

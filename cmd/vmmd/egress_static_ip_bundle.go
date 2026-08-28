@@ -147,12 +147,19 @@ func LoadStaticEgressIPBundle(path string, log *slog.Logger) (StaticEgressIPBund
 	return StaticEgressIPBundle{Entries: out}, nil
 }
 
-// writeProvisionedStaticEgressIPs (ADR-119 redesign) mirrors the
-// operator's TOML into the Postgres gate table. Called once
+// writeProvisionedStaticEgressIPs (ADR-119 redesign + v2) mirrors
+// the operator's TOML into the Postgres gate table. Called once
 // per SIGHUP (and once at startup). The store runs the
 // DELETE+INSERT inside a single transaction so the apid PUT
 // path sees either the prior set OR the new set, never a
 // partial mix.
+//
+// v2 adds the nodeID parameter: each vmmd writes only the IPs
+// owned by its own node. The bundle is grouped by accountID
+// before the call so each account's set is replaced in one
+// transaction (the vmmd is unlikely to have many accounts in
+// v1, but the per-account grouping is the right shape for
+// multi-account clusters in the future).
 //
 // Errors are logged at Warn and swallowed — the bridge alias
 // + host renderer still get the new entries, so a Postgres
@@ -161,12 +168,20 @@ func LoadStaticEgressIPBundle(path string, log *slog.Logger) (StaticEgressIPBund
 // is the right tradeoff: better to partially lose the gate
 // than to block the bundle reload.
 //
-// Implementation note: the bundle is grouped by accountID
-// before the call so each account's set is replaced in one
-// transaction (the vmmd is unlikely to have many accounts
-// in v1, but the per-account grouping is the right shape
-// for multi-account clusters in the future).
-func writeProvisionedStaticEgressIPs(ctx context.Context, st state.Store, entries []StaticEgressIPEntry, log *slog.Logger) {
+// Empty nodeID is the "legacy single-box pre-compute_nodes"
+// path: the caller (cmd/vmmd/main.go) resolves default-local
+// from the store before invoking this function. Truly bare
+// installs without default-local in compute_nodes have the
+// gate write skipped (Warn + continue) — the bridge alias +
+// host renderer still get the entries, so the egress works
+// for the live VMs; the apid PUT path returns 404 until the
+// operator seeds compute_nodes via a future re-up.
+func writeProvisionedStaticEgressIPs(ctx context.Context, st state.Store, entries []StaticEgressIPEntry, nodeID string, log *slog.Logger) {
+	if nodeID == "" {
+		log.Warn("vmmd: static egress IP bundle: skipping Postgres gate write (no node_id resolved — bare install without default-local in compute_nodes)",
+			"entries", len(entries))
+		return
+	}
 	byAccount := make(map[string][]netip.Addr)
 	for _, e := range entries {
 		if e.AccountID == "" || !e.IP.IsValid() {
@@ -175,9 +190,9 @@ func writeProvisionedStaticEgressIPs(ctx context.Context, st state.Store, entrie
 		byAccount[e.AccountID] = append(byAccount[e.AccountID], e.IP)
 	}
 	for accountID, ips := range byAccount {
-		if err := st.ReplaceProvisionedStaticEgressIPs(ctx, accountID, ips); err != nil {
+		if err := st.ReplaceProvisionedStaticEgressIPs(ctx, accountID, nodeID, ips); err != nil {
 			log.Warn("vmmd: static egress IP bundle: Postgres gate write failed; apid PUT will 404 until next reload",
-				"account_id", accountID, "ips", len(ips), "err", err)
+				"account_id", accountID, "node_id", nodeID, "ips", len(ips), "err", err)
 		}
 	}
 }
@@ -254,7 +269,7 @@ func pushStaticEgressIPRulesToHostRenderer(entries []StaticEgressIPEntry) {
 // zero-value bundle = "remove all aliases"). A malformed file
 // keeps the prior alias set live — the reload never silently
 // strips a customer's IP because of a parse glitch.
-func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarget, st state.Store, path string, log *slog.Logger, hupCh <-chan os.Signal) {
+func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarget, st state.Store, path string, nodeID string, log *slog.Logger, hupCh <-chan os.Signal) {
 	if path == "" {
 		log.Debug("vmmd: static egress IP bundle reload disabled (no path configured)")
 		return
@@ -271,9 +286,9 @@ func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarg
 	} else {
 		mgr.SetStaticEgressIPAliases(bundle.Entries)
 		pushStaticEgressIPRulesToHostRenderer(bundle.Entries)
-		writeProvisionedStaticEgressIPs(ctx, st, bundle.Entries, log)
+		writeProvisionedStaticEgressIPs(ctx, st, bundle.Entries, nodeID, log)
 		log.Info("vmmd: static egress IP bundle loaded at startup",
-			"path", path, "entries", len(bundle.Entries))
+			"path", path, "node_id", nodeID, "entries", len(bundle.Entries))
 	}
 	for {
 		select {
@@ -289,9 +304,9 @@ func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarg
 			}
 			mgr.SetStaticEgressIPAliases(bundle.Entries)
 			pushStaticEgressIPRulesToHostRenderer(bundle.Entries)
-			writeProvisionedStaticEgressIPs(ctx, st, bundle.Entries, log)
+			writeProvisionedStaticEgressIPs(ctx, st, bundle.Entries, nodeID, log)
 			log.Info("vmmd: static egress IP bundle reloaded",
-				"path", path, "entries", len(bundle.Entries))
+				"path", path, "node_id", nodeID, "entries", len(bundle.Entries))
 		}
 	}
 }

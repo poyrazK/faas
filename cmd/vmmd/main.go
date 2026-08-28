@@ -1443,7 +1443,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//
 	// `st` is the same state.Store the rest of the daemon
 	// consumes (the apid uses it for the gate read).
-	go watchStaticEgressIPBundleReload(ctx, mgr, store, cfg.StaticEgressIPBundlePath, log, hupCh)
+	go watchStaticEgressIPBundleReload(ctx, mgr, store, cfg.StaticEgressIPBundlePath, egressBundleNodeID(ctx, store, nodeID, log), log, hupCh)
 	// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation on the
 	// same hupCh the egress-bundle reload watches. Reuses the
 	// channel — each signal is consumed by both watchers — and
@@ -1505,6 +1505,37 @@ heartbeat:
 		_ = advisoryCli.Close()
 	}
 	return nil
+}
+
+// egressBundleNodeID (ADR-119 v2) resolves the node_id the static
+// egress IP bundle watcher uses to write its per-(account, node)
+// rows into the Postgres gate table. The vmmd's own nodeID (set
+// at line 604 via registerComputeNode) is the preferred value on
+// multi-box installs. The legacy single-box path (NodeName empty
+// in the TOML, no compute_nodes self-registration) falls back to
+// the synthetic 'default-local' row seeded by migration 00024 —
+// matches the migration 00488 backfill assumption that every
+// pre-v2 pin sits at default-local. Truly bare installs without
+// default-local in compute_nodes get an empty string + a Warn log;
+// the watcher then skips the gate write (the bridge alias + host
+// renderer still get the bundle, so live-VM egress keeps working;
+// the apid PUT path returns 404 until the operator seeds
+// compute_nodes via a future re-up).
+func egressBundleNodeID(ctx context.Context, st state.Store, ownID string, log *slog.Logger) string {
+	if ownID != "" {
+		return ownID
+	}
+	if st == nil {
+		log.Warn("vmmd: egress bundle node_id resolution skipped (no store available)")
+		return ""
+	}
+	cn, err := st.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		log.Warn("vmmd: egress bundle node_id resolution failed (default-local not found in compute_nodes — bare install)",
+			"err", err)
+		return ""
+	}
+	return cn.ID
 }
 
 // loadOrGenerateHostIdentity implements the G2 host-key lifecycle:

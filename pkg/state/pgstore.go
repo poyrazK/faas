@@ -20893,18 +20893,22 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 	return s2, nil
 }
 
-// ProvisionedStaticEgressIPExists (ADR-119 redesign) is the
+// ProvisionedStaticEgressIPExists (ADR-119 redesign + v2) is the
 // apid-side gate. Returns true iff the (account_id, customer_ip)
-// tuple is in the operator-provisioned set. The vmmd bundle
-// reload writes the table from the operator's TOML on SIGHUP;
-// the apid PUT path reads it here. A false return is the
-// "not provisioned" surface the customer sees as 404 Not
+// tuple is in the operator-provisioned set — across any node
+// (the apid gate is account-scoped, not node-scoped — the customer
+// must be allowed to pin an IP provisioned on any node they own).
+// The vmmd bundle reload writes the table from the operator's TOML
+// on SIGHUP; the apid PUT path reads it here. A false return is
+// the "not provisioned" surface the customer sees as 404 Not
 // Found (api.ErrStaticEgressIPNotProvisioned).
 //
 // Implementation note: the lookup is a single-row PK read
 // against the `(account_id, customer_ip)` composite index
-// declared by migration 00337. Sub-millisecond under realistic
-// load.
+// declared by migration 00337 (the v2 node_id column from
+// migration 00488 is irrelevant to this query — it's a
+// per-row attribute, not a filter). Sub-millisecond under
+// realistic load.
 func (s *PgStore) ProvisionedStaticEgressIPExists(ctx context.Context, accountID string, ip netip.Addr) (bool, error) {
 	if accountID == "" || !ip.Is4() {
 		return false, nil
@@ -20924,25 +20928,103 @@ func (s *PgStore) ProvisionedStaticEgressIPExists(ctx context.Context, accountID
 	return found, nil
 }
 
-// ReplaceProvisionedStaticEgressIPs (ADR-119 redesign) is the
-// vmmd-side write that mirrors the operator's TOML into the
+// StaticEgressIPNode (ADR-119 v2) returns the compute_nodes.id
+// that owns the (account_id, customer_ip) tuple. Returns empty
+// string + nil error when no row exists (the schedd path surfaces
+// this as "no node owns this IP" — defence-in-depth; the apid gate
+// is the load-bearing check). Implemented as a SELECT on the
+// (account_id, customer_ip) PK with an additional node_id
+// projection — no extra index required (the PK index covers it).
+func (s *PgStore) StaticEgressIPNode(ctx context.Context, accountID string, ip netip.Addr) (string, error) {
+	if accountID == "" || !ip.Is4() {
+		return "", nil
+	}
+	var nodeID *string
+	row := s.pool.QueryRow(ctx,
+		`select node_id::text
+		   from provisioned_static_egress_ips
+		  where account_id = $1::uuid
+		    and customer_ip = $2::inet
+		  limit 1`,
+		accountID, ip.String())
+	if err := row.Scan(&nodeID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("state: StaticEgressIPNode: %w", err)
+	}
+	if nodeID == nil {
+		return "", nil
+	}
+	return *nodeID, nil
+}
+
+// ProvisionedStaticEgressIPsForNode (ADR-119 v2) is the per-node
+// reverse lookup used by vmmd's bundle loader on SIGHUP to
+// reconcile its bridge alias-IP set against the authoritative
+// Postgres state. Returns the customer_ip set provisioned for the
+// given node_id (across all accounts). Index-covered by
+// provisioned_static_egress_ips_node_id_idx (migration 00488).
+// Returns nil (not an error) when the node has no provisioned IPs.
+func (s *PgStore) ProvisionedStaticEgressIPsForNode(ctx context.Context, nodeID string) ([]netip.Addr, error) {
+	if nodeID == "" {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select host(customer_ip)
+		   from provisioned_static_egress_ips
+		  where node_id = $1::uuid`,
+		nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("state: ProvisionedStaticEgressIPsForNode: %w", err)
+	}
+	defer rows.Close()
+	var out []netip.Addr
+	for rows.Next() {
+		var ipStr string
+		if err := rows.Scan(&ipStr); err != nil {
+			return nil, fmt.Errorf("state: ProvisionedStaticEgressIPsForNode: scan: %w", err)
+		}
+		addr, err := netip.ParseAddr(ipStr)
+		if err != nil {
+			return nil, fmt.Errorf("state: ProvisionedStaticEgressIPsForNode: parse %q: %w", ipStr, err)
+		}
+		out = append(out, addr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: ProvisionedStaticEgressIPsForNode: rows: %w", err)
+	}
+	return out, nil
+}
+
+// ReplaceProvisionedStaticEgressIPs (ADR-119 redesign + v2) is
+// the vmmd-side write that mirrors the operator's TOML into the
 // Postgres gate table. The watcher calls this on every SIGHUP
-// (and once at startup). The store clears the table for the
-// given account_id, then inserts the new set inside a single
-// transaction — the visible-state invariant is "either the
-// prior set OR the new set, never a partial mix". Empty
-// `ips` removes all rows for the account (the "revoke
+// (and once at startup). The store clears the rows for the given
+// (account_id, node_id) pair, then inserts the new set inside a
+// single transaction — the visible-state invariant is "either the
+// prior set OR the new set, never a partial mix". Empty `ips`
+// removes all rows for the (account, node) pair (the "revoke
 // provisioning" path).
 //
-// The DELETE + INSERT pair runs in one transaction so a
-// concurrent apid PUT either sees the prior set or the new
-// set, not a partial empty+insert gap. The `customer_ip` v4
-// CHECK on the table (migration 00337) rejects non-IPv4 inputs
-// at the database boundary; the caller-side deny-set gate is
+// v2 adds the nodeID parameter: each vmmd writes only the IPs
+// owned by its own node. The DELETE filter is therefore
+// (account_id, node_id) — NOT just account_id — so vmmd-A never
+// wipes vmmd-B's rows for the same account (the per-node
+// partitioning is the load-bearing v2 semantic).
+//
+// The DELETE + INSERT pair runs in one transaction so a concurrent
+// apid PUT either sees the prior set or the new set, not a partial
+// empty+insert gap. The `customer_ip` v4 CHECK on the table
+// (migration 00337) rejects non-IPv4 inputs at the database
+// boundary; the caller-side deny-set gate is
 // `api.ValidateStaticEgressIP` (defence in depth).
-func (s *PgStore) ReplaceProvisionedStaticEgressIPs(ctx context.Context, accountID string, ips []netip.Addr) error {
+func (s *PgStore) ReplaceProvisionedStaticEgressIPs(ctx context.Context, accountID, nodeID string, ips []netip.Addr) error {
 	if accountID == "" {
 		return fmt.Errorf("state: ReplaceProvisionedStaticEgressIPs: empty account_id")
+	}
+	if nodeID == "" {
+		return fmt.Errorf("state: ReplaceProvisionedStaticEgressIPs: empty node_id")
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -20950,8 +21032,10 @@ func (s *PgStore) ReplaceProvisionedStaticEgressIPs(ctx context.Context, account
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
-		`delete from provisioned_static_egress_ips where account_id = $1::uuid`,
-		accountID); err != nil {
+		`delete from provisioned_static_egress_ips
+		  where account_id = $1::uuid
+		    and node_id = $2::uuid`,
+		accountID, nodeID); err != nil {
 		return fmt.Errorf("state: ReplaceProvisionedStaticEgressIPs: delete: %w", err)
 	}
 	for _, ip := range ips {
@@ -20959,9 +21043,9 @@ func (s *PgStore) ReplaceProvisionedStaticEgressIPs(ctx context.Context, account
 			return fmt.Errorf("state: ReplaceProvisionedStaticEgressIPs: rejecting non-v4 %s", ip)
 		}
 		if _, err := tx.Exec(ctx,
-			`insert into provisioned_static_egress_ips (account_id, customer_ip)
-			  values ($1::uuid, $2::inet)`,
-			accountID, ip.String()); err != nil {
+			`insert into provisioned_static_egress_ips (account_id, node_id, customer_ip)
+			  values ($1::uuid, $2::uuid, $3::inet)`,
+			accountID, nodeID, ip.String()); err != nil {
 			return fmt.Errorf("state: ReplaceProvisionedStaticEgressIPs: insert %s: %w", ip, err)
 		}
 	}

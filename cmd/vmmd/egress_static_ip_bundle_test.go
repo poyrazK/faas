@@ -272,7 +272,7 @@ func TestWatchStaticEgressIPBundleReload_StartupLoad(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	hupCh := make(chan os.Signal, 1)
-	watchStaticEgressIPBundleReload(ctx, target, state.NewMemStore(), path, silentStaticIPLogger(), hupCh)
+	watchStaticEgressIPBundleReload(ctx, target, state.NewMemStore(), path, "test-node", silentStaticIPLogger(), hupCh)
 	if target.calls != 1 {
 		t.Errorf("startup calls = %d, want 1", target.calls)
 	}
@@ -288,7 +288,7 @@ func TestWatchStaticEgressIPBundleReload_EmptyPathSkipsWatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	hupCh := make(chan os.Signal, 1)
-	watchStaticEgressIPBundleReload(ctx, target, state.NewMemStore(), "", silentStaticIPLogger(), hupCh)
+	watchStaticEgressIPBundleReload(ctx, target, state.NewMemStore(), "", "test-node", silentStaticIPLogger(), hupCh)
 	if target.calls != 0 {
 		t.Errorf("empty path: target.calls = %d, want 0", target.calls)
 	}

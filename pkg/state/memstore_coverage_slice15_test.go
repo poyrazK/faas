@@ -272,7 +272,7 @@ func TestCoverageSlice15ProvisionedStaticEgressIPExists(t *testing.T) {
 	}
 
 	// Seed and re-query for hit.
-	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, app.AccountID, []netip.Addr{ip}); err != nil {
+	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, app.AccountID, "test-node", []netip.Addr{ip}); err != nil {
 		t.Fatalf("seed Replace: %v", err)
 	}
 	got, err = m.ProvisionedStaticEgressIPExists(ctx, app.AccountID, ip)
@@ -285,24 +285,26 @@ func TestCoverageSlice15ProvisionedStaticEgressIPExists(t *testing.T) {
 // provisioned-bucket write (ADR-119 vmmd SIGHUP path).
 // Covers the empty-accountID error branch + the non-v4 IP error
 // branch + the normal replace (clear-then-insert) branch.
+// v2 adds the nodeID parameter; the test uses a synthetic
+// test-node id (the MemStore has no FK constraint).
 func TestCoverageSlice15ReplaceProvisionedStaticEgressIPs(t *testing.T) {
 	m, ctx, _, app, _ := memCoverageFixture(t)
 
 	// Empty accountID returns error.
-	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, "", nil); err == nil {
+	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, "", "test-node", nil); err == nil {
 		t.Error("empty accountID: got nil err, want error")
 	}
 
 	// Non-v4 IP in the slice returns error.
 	v6 := netip.MustParseAddr("2001:db8::1")
-	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, app.AccountID, []netip.Addr{v6}); err == nil {
+	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, app.AccountID, "test-node", []netip.Addr{v6}); err == nil {
 		t.Error("non-v4 IP: got nil err, want error")
 	}
 
 	// Normal replace: 2 IPs, then a clear (empty slice replaces with empty bucket).
 	ip1 := netip.MustParseAddr("203.0.113.1")
 	ip2 := netip.MustParseAddr("203.0.113.2")
-	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, app.AccountID, []netip.Addr{ip1, ip2}); err != nil {
+	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, app.AccountID, "test-node", []netip.Addr{ip1, ip2}); err != nil {
 		t.Fatalf("first replace: %v", err)
 	}
 	for _, ip := range []netip.Addr{ip1, ip2} {
@@ -313,7 +315,7 @@ func TestCoverageSlice15ReplaceProvisionedStaticEgressIPs(t *testing.T) {
 	}
 
 	// Clear: empty slice replaces with empty bucket.
-	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, app.AccountID, nil); err != nil {
+	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, app.AccountID, "test-node", nil); err != nil {
 		t.Fatalf("clear replace: %v", err)
 	}
 	for _, ip := range []netip.Addr{ip1, ip2} {
@@ -321,5 +323,112 @@ func TestCoverageSlice15ReplaceProvisionedStaticEgressIPs(t *testing.T) {
 		if got {
 			t.Errorf("after clear, %s still in bucket", ip)
 		}
+	}
+}
+
+// TestCoverageSlice15StaticEgressIPNode_V2 (ADR-119 v2 round-2)
+// pins the MemStore implementation of StaticEgressIPNode — the
+// schedd-side lookup that returns the compute_nodes.id owning a
+// (account_id, customer_ip) tuple. v2 partition: per-(account, node).
+//
+// Covers:
+//   - empty accountID short-circuit → ("", nil)
+//   - non-v4 IP short-circuit → ("", nil)
+//   - miss before provisioning → ("", nil)
+//   - hit returns the nodeID passed to ReplaceProvisionedStaticEgressIPs
+//   - cross-account miss for the same IP is independent
+func TestCoverageSlice15StaticEgressIPNode_V2(t *testing.T) {
+	m, ctx, _, app, _ := memCoverageFixture(t)
+	_, _, _, otherAcct, _ := memCoverageFixtureOrg(t)
+
+	ip := netip.MustParseAddr("203.0.113.42")
+
+	// Empty accountID short-circuit.
+	if got, err := m.StaticEgressIPNode(ctx, "", ip); err != nil || got != "" {
+		t.Errorf("empty accountID: got (%q, %v), want (\"\", nil)", got, err)
+	}
+
+	// Non-v4 IP short-circuit.
+	v6 := netip.MustParseAddr("2001:db8::1")
+	if got, err := m.StaticEgressIPNode(ctx, app.AccountID, v6); err != nil || got != "" {
+		t.Errorf("non-v4 IP: got (%q, %v), want (\"\", nil)", got, err)
+	}
+
+	// Miss before provisioning.
+	if got, err := m.StaticEgressIPNode(ctx, app.AccountID, ip); err != nil || got != "" {
+		t.Errorf("miss: got (%q, %v), want (\"\", nil)", got, err)
+	}
+
+	// Provision on a specific node.
+	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, app.AccountID, "node-A", []netip.Addr{ip}); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	if got, err := m.StaticEgressIPNode(ctx, app.AccountID, ip); err != nil || got != "node-A" {
+		t.Errorf("hit: got (%q, %v), want (node-A, nil)", got, err)
+	}
+
+	// Cross-account miss — otherAcct has no rows for ip.
+	if got, err := m.StaticEgressIPNode(ctx, otherAcct.ID, ip); err != nil || got != "" {
+		t.Errorf("cross-account miss: got (%q, %v), want (\"\", nil)", got, err)
+	}
+}
+
+// TestCoverageSlice15ProvisionedStaticEgressIPsForNode_V2 (ADR-119 v2
+// round-2) pins the per-node reverse lookup used by vmmd's bundle
+// loader on SIGHUP to reconcile its bridge alias-IP set.
+//
+// Covers:
+//   - empty nodeID short-circuit → (nil, nil) (the loader's
+//     reconcile is a no-op when the vmmd has no own nodeID —
+//     single-box legacy fallback in cmd/vmmd/main.go's
+//     egressBundleNodeID helper).
+//   - miss returns nil (not error) when the node has no IPs.
+//   - hit returns the per-node set across all accounts.
+//   - per-node partition: node-A's IPs don't bleed into node-B's
+//     result.
+func TestCoverageSlice15ProvisionedStaticEgressIPsForNode_V2(t *testing.T) {
+	m, ctx, _, app, _ := memCoverageFixture(t)
+	_, _, _, otherAcct, _ := memCoverageFixtureOrg(t)
+
+	ipA1 := netip.MustParseAddr("203.0.113.1")
+	ipA2 := netip.MustParseAddr("203.0.113.2")
+	ipB1 := netip.MustParseAddr("198.51.100.7")
+
+	// Empty nodeID short-circuit.
+	if got, err := m.ProvisionedStaticEgressIPsForNode(ctx, ""); err != nil || got != nil {
+		t.Errorf("empty nodeID: got (%v, %v), want (nil, nil)", got, err)
+	}
+
+	// Miss on an unprovisioned node.
+	if got, err := m.ProvisionedStaticEgressIPsForNode(ctx, "node-X"); err != nil || got != nil {
+		t.Errorf("miss: got (%v, %v), want (nil, nil)", got, err)
+	}
+
+	// node-A: 2 IPs across two accounts.
+	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, app.AccountID, "node-A", []netip.Addr{ipA1}); err != nil {
+		t.Fatalf("seed node-A app: %v", err)
+	}
+	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, otherAcct.ID, "node-A", []netip.Addr{ipA2}); err != nil {
+		t.Fatalf("seed node-A other: %v", err)
+	}
+	// node-B: 1 IP for app.
+	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, app.AccountID, "node-B", []netip.Addr{ipB1}); err != nil {
+		t.Fatalf("seed node-B: %v", err)
+	}
+
+	gotA, err := m.ProvisionedStaticEgressIPsForNode(ctx, "node-A")
+	if err != nil {
+		t.Fatalf("reverse node-A: %v", err)
+	}
+	if len(gotA) != 2 {
+		t.Errorf("node-A: got %d IPs (%v), want 2", len(gotA), gotA)
+	}
+
+	gotB, err := m.ProvisionedStaticEgressIPsForNode(ctx, "node-B")
+	if err != nil {
+		t.Fatalf("reverse node-B: %v", err)
+	}
+	if len(gotB) != 1 || gotB[0] != ipB1 {
+		t.Errorf("node-B: got %v, want [%s]", gotB, ipB1)
 	}
 }

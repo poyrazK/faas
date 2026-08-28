@@ -94,10 +94,14 @@ type MemStore struct {
 	// path index is in-memory only — we walk the map on lookup
 	// (the memstore is a test fixture, not a production path).
 	consumerKeys map[string]ConsumerKey
-	// provisionedStaticEgressIPs is the ADR-119 redesign gate.
-	// Keyed by (accountID, customerIP) — the same composite PK
-	// as the Postgres table. Test fixture only.
-	provisionedStaticEgressIPs map[string]map[string]netip.Addr // accountID → customerIP → Addr
+	// provisionedStaticEgressIPs is the ADR-119 redesign gate +
+	// v2 per-node binding. Keyed by
+	// (accountID, nodeID, customerIP) — each (account, node) pair
+	// owns its own slice of IPs (mirrors the Postgres
+	// provisioned_static_egress_ips(node_id, ...) composite
+	// primary key + node_id column from migration 00488). Test
+	// fixture only.
+	provisionedStaticEgressIPs map[string]map[string]map[string]netip.Addr // accountID → nodeID → customerIP → Addr
 	// githubBindings is keyed by appID. Holds the (install_id,
 	// repo_full_name, production_branch) tuple the /oauth/callback
 	// handler writes after verifying the install against api.github.com
@@ -683,9 +687,9 @@ func NewMemStore() *MemStore {
 		// enforced at the read methods (same as the pg path).
 		consumerKeys:     map[string]ConsumerKey{},
 		openAPISnapshots: map[string]OpenAPISnapshot{},
-		// ADR-119 redesign: empty gate (no provisioned IPs in
-		// unit tests unless a test explicitly seeds them).
-		provisionedStaticEgressIPs: map[string]map[string]netip.Addr{},
+		// ADR-119 redesign + v2: empty gate (no provisioned IPs
+		// in unit tests unless a test explicitly seeds them).
+		provisionedStaticEgressIPs: map[string]map[string]map[string]netip.Addr{},
 		// ADR-101 / issue #270 — OIDC trust policies + exchanged
 		// bearers. Start empty; tests inject rows directly.
 		oidcTrustPolicies:   map[string]OIDCTrustPolicy{},
@@ -15562,36 +15566,97 @@ func (m *MemStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, app
 	return ConsumerKey{}, ErrNotFound
 }
 
-// ProvisionedStaticEgressIPExists (ADR-119 redesign) is the
-// apid-side gate. Mirrors the Postgres implementation
-// (`pkg/state/pgstore.go::ProvisionedStaticEgressIPExists`).
-// The memstore is a test fixture — the in-memory map is keyed
-// by (accountID, customerIP) and the lookup is a single map
-// probe.
+// ProvisionedStaticEgressIPExists (ADR-119 redesign + v2) is the
+// apid-side gate. Returns true iff ANY node has the IP provisioned
+// for the given account (the apid gate is account-scoped, not
+// node-scoped — the customer must be allowed to pin an IP
+// provisioned on any node they own). Mirrors the Postgres
+// implementation (`pkg/state/pgstore.go::ProvisionedStaticEgressIPExists`).
+// The memstore is a test fixture — the in-memory map is keyed by
+// (accountID, nodeID, customerIP) and the lookup walks the
+// per-account node buckets.
 func (m *MemStore) ProvisionedStaticEgressIPExists(_ context.Context, accountID string, ip netip.Addr) (bool, error) {
 	if accountID == "" || !ip.Is4() {
 		return false, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, ok := m.provisionedStaticEgressIPs[accountID][ip.String()]
-	return ok, nil
+	for _, bucket := range m.provisionedStaticEgressIPs[accountID] {
+		if _, ok := bucket[ip.String()]; ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
-// ReplaceProvisionedStaticEgressIPs (ADR-119 redesign) is the
-// vmmd-side write that mirrors the operator's TOML into the
+// StaticEgressIPNode (ADR-119 v2) returns the compute_nodes.id
+// that owns the (accountID, ip) tuple. Walks the per-account node
+// buckets and returns the first node where the IP is found. Empty
+// string + nil error means "no row" — the schedd path surfaces
+// this as "no node owns this IP" (defence-in-depth; the apid gate
+// is the load-bearing check).
+func (m *MemStore) StaticEgressIPNode(_ context.Context, accountID string, ip netip.Addr) (string, error) {
+	if accountID == "" || !ip.Is4() {
+		return "", nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for nodeID, bucket := range m.provisionedStaticEgressIPs[accountID] {
+		if _, ok := bucket[ip.String()]; ok {
+			return nodeID, nil
+		}
+	}
+	return "", nil
+}
+
+// ProvisionedStaticEgressIPsForNode (ADR-119 v2) is the per-node
+// reverse lookup used by vmmd's bundle loader on SIGHUP to
+// reconcile its bridge alias-IP set against the authoritative
+// Postgres state. Walks every account and collects the IPs from
+// the matching node bucket. Returns nil (not an error) when the
+// node has no provisioned IPs.
+func (m *MemStore) ProvisionedStaticEgressIPsForNode(_ context.Context, nodeID string) ([]netip.Addr, error) {
+	if nodeID == "" {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []netip.Addr
+	for _, perAccount := range m.provisionedStaticEgressIPs {
+		bucket, ok := perAccount[nodeID]
+		if !ok {
+			continue
+		}
+		for _, ip := range bucket {
+			out = append(out, ip)
+		}
+	}
+	return out, nil
+}
+
+// ReplaceProvisionedStaticEgressIPs (ADR-119 redesign + v2) is
+// the vmmd-side write that mirrors the operator's TOML into the
 // Postgres gate table. The memstore mirrors the same shape
 // (clear-then-insert) so the test fixture's invariants match
 // the production path's "either prior OR new, never partial"
-// posture.
-func (m *MemStore) ReplaceProvisionedStaticEgressIPs(_ context.Context, accountID string, ips []netip.Addr) error {
+// posture. v2 adds the nodeID parameter: each vmmd writes only
+// the IPs owned by its own node.
+func (m *MemStore) ReplaceProvisionedStaticEgressIPs(_ context.Context, accountID, nodeID string, ips []netip.Addr) error {
 	if accountID == "" {
 		return fmt.Errorf("state: MemStore.ReplaceProvisionedStaticEgressIPs: empty account_id")
+	}
+	if nodeID == "" {
+		return fmt.Errorf("state: MemStore.ReplaceProvisionedStaticEgressIPs: empty node_id")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.provisionedStaticEgressIPs == nil {
-		m.provisionedStaticEgressIPs = map[string]map[string]netip.Addr{}
+		m.provisionedStaticEgressIPs = map[string]map[string]map[string]netip.Addr{}
+	}
+	perAccount, ok := m.provisionedStaticEgressIPs[accountID]
+	if !ok {
+		perAccount = map[string]map[string]netip.Addr{}
+		m.provisionedStaticEgressIPs[accountID] = perAccount
 	}
 	bucket := make(map[string]netip.Addr, len(ips))
 	for _, ip := range ips {
@@ -15600,7 +15665,7 @@ func (m *MemStore) ReplaceProvisionedStaticEgressIPs(_ context.Context, accountI
 		}
 		bucket[ip.String()] = ip
 	}
-	m.provisionedStaticEgressIPs[accountID] = bucket
+	perAccount[nodeID] = bucket
 	return nil
 }
 

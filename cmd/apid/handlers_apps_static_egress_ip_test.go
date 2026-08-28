@@ -63,7 +63,7 @@ func mustSeedProvisionedStaticEgressIPs(t *testing.T, e testEnv, ips ...string) 
 		parsed = append(parsed, a)
 	}
 	mem := e.store
-	if err := mem.ReplaceProvisionedStaticEgressIPs(context.Background(), e.acct.ID, parsed); err != nil {
+	if err := mem.ReplaceProvisionedStaticEgressIPs(context.Background(), e.acct.ID, "test-node", parsed); err != nil {
 		t.Fatalf("seed operator bundle: %v", err)
 	}
 }
