@@ -122,53 +122,42 @@ func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 			api.WriteProblem(w, api.ErrAppStaticEgressIPInvalid(req.IP, err.Error()))
 			return
 		}
-		// ADR-119 redesign: operator-bundle gate. The pinned
-		// IP must be in the operator's provisioned set
-		// (the vmmd SIGHUP watcher writes the Postgres gate
-		// table from /etc/faas/egress/static_egress_ips.toml;
-		// this lookup is the read). A missing tuple is the
-		// operator-side "this IP is not on the host's AS"
-		// surface — 404 Not Found, distinct from the
-		// 400 (bad IP) and 403 (plan quota) above. The
-		// appendToAllocPool here is the per-VM host IP
-		// reservation that drives the host renderer.
-		ok, perr := s.store.ProvisionedStaticEgressIPExists(r.Context(), acct.ID, ip)
-		if perr != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not check operator bundle"))
-			return
-		}
-		if !ok {
-			api.WriteProblem(w, api.ErrStaticEgressIPNotProvisioned(req.IP))
-			return
-		}
-		// ADR-119 v2: owner-node resolution. The IP must be
-		// provisioned on exactly one compute_nodes.id (the host
-		// that has the IP routed on its AS + aliased on
-		// br-tenants). Schedd reads app.NodeID as the hard
-		// placement constraint (pkg/sched/admission.go::
-		// Request.RequiredNodeID); without this stamp the wake
-		// could land on a non-owning node and the egress would
-		// be source-spoofed at the switch (the v1 BYOIP
-		// impossibility ADR-119 fixed). The (account_id, ip)
-		// PK lookup is sub-millisecond — same index as the
-		// ProvisionedStaticEgressIPExists gate above.
+		// ADR-119 redesign + v2: operator-bundle gate +
+		// owner-node resolution. The pinned IP must be in the
+		// operator's provisioned set (the vmmd SIGHUP watcher
+		// writes the Postgres gate table from
+		// /etc/faas/egress/static_egress_ips.toml). AND each
+		// provisioned IP is bound to exactly one compute_nodes.id
+		// (the host that has the IP routed on its AS + aliased on
+		// br-tenants). Migration 00488's NOT NULL on
+		// provisioned_static_egress_ips.node_id backfilled every
+		// existing tuple to 'default-local', so v2 has no row
+		// state where (Exists=true AND node_id="") is reachable.
 		//
-		// A missing node_id on a tuple that DID pass the
-		// operator-bundle gate is the operator-side "this IP
-		// is in the bundle but not on a node" surface. That
-		// row state is unreachable in v2 (migration 00488's
-		// NOT NULL on provisioned_static_egress_ips.node_id
-		// backfilled every existing tuple to 'default-local'),
-		// but defence-in-depth: surface it as 500 so the
-		// operator notices the broken bundle before the
-		// customer pin lands.
+		// We collapse the two reads into one StaticEgressIPNode
+		// call: the empty-string return IS the "not provisioned"
+		// signal in v2 (same index, same SQL — see
+		// pkg/state/pgstore.go:20970). This closes the TOCTOU
+		// the v1+v2 dual-call pattern exhibited (Exists races
+		// StaticEgressIPNode — an operator revoke between the two
+		// reads could land the customer pin on a node that no
+		// longer owns the IP). The (account_id, ip) PK lookup
+		// is sub-millisecond.
+		//
+		// The error surfaces match the v1+v2 contract:
+		//   - empty + nil error → 404 ErrStaticEgressIPNotProvisioned
+		//     (the operator-side "this IP is not on the host's AS"
+		//     surface — distinct from the 400 bad-IP and 403
+		//     plan-quota paths above).
+		//   - DB error → 500 ErrCapacity (could not resolve
+		//     owning node).
 		owningNodeID, nerr := s.store.StaticEgressIPNode(r.Context(), acct.ID, ip)
 		if nerr != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not resolve owning node"))
 			return
 		}
 		if owningNodeID == "" {
-			api.WriteProblem(w, api.ErrCapacity("operator bundle has no node for this IP — fix the bundle and retry"))
+			api.WriteProblem(w, api.ErrStaticEgressIPNotProvisioned(req.IP))
 			return
 		}
 		// ADR-119 redesign note: the per-VM host IP allocation
