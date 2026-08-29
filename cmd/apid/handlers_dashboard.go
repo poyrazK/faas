@@ -141,6 +141,13 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// GET /v1/audit-events?kind_prefix=stateless.advisory
 			// with optional ?app_id= for the per-app drill-down.
 			s.renderAuditEvents(w, r, log, acct)
+		case path == "/dashboard/safe-releases":
+			// SAFE-RELEASES-OBS PR-C (issue #976 / ADR-122):
+			// operator's "everything in-flight" surface for the
+			// canary + safedeploy lifecycle. Three sections
+			// (in-flight rollouts / recent audit / active alerts);
+			// bounded by safedeploy_in_flight_rollouts gauge.
+			s.renderSafeReleasesDashboard(w, r, log, acct)
 		case path == "/dashboard/stateless":
 			// Move 1 PR-A: customer-facing landing page for the
 			// stateless contract. Renders (a) the contract in
@@ -1556,6 +1563,132 @@ func (s *server) renderAuditEvents(w http.ResponseWriter, r *http.Request, log *
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
+}
+
+// renderSafeReleasesDashboard (SAFE-RELEASES-OBS PR-C, issue
+// #976 / ADR-122) renders /dashboard/safe-releases — the operator's
+// "everything in-flight" surface for the canary + safedeploy
+// lifecycle. Three sections, bounded by the
+// safedeploy_in_flight_rollouts gauge that PR-B's
+// canary_fleet_in_flight_high alert tripwires at 50. Operator-only
+// (gated upstream by role.IsOperator — see cmd/apid/handlers.go).
+func (s *server) renderSafeReleasesDashboard(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
+	ctx := r.Context()
+	now := time.Now().UTC()
+
+	// (1) In-flight rollouts.
+	rows, err := s.store.SafedeployListPendingRollouts(ctx)
+	if err != nil {
+		log.Warn("dashboard renderSafeReleasesDashboard: list pending rollouts",
+			"account_id", acct.ID, "err", err)
+		renderProblem(w, log, err)
+		return
+	}
+	inFlight := make([]dashboard.DeploymentItem, 0, len(rows))
+	slugByID := make(map[string]string, len(rows))
+	for _, d := range rows {
+		inFlight = append(inFlight, dashboardDeploymentItem(d))
+		// Resolve AppID → slug once per deployment so the
+		// audit-row table can deep-link back to the per-app
+		// drill-down. Best-effort: an AppByID miss just leaves
+		// the row without a deep link.
+		if _, ok := slugByID[d.AppID]; !ok {
+			if app, err := s.store.AppByID(ctx, d.AppID); err == nil && app.AccountID == acct.ID {
+				slugByID[d.AppID] = app.Slug
+			}
+		}
+	}
+
+	// (2) Recent audit per in-flight deployment, filtered to the 5
+	// PR-A widened kinds. N+1 query — bounded by in-flight count.
+	recent := make([]dashboard.SafeReleasesAuditRow, 0)
+	for _, d := range rows {
+		audits, err := s.store.ListDeploymentAudit(ctx, d.ID, 20)
+		if err != nil {
+			log.Warn("dashboard renderSafeReleasesDashboard: list deployment audit",
+				"account_id", acct.ID, "deployment_id", d.ID, "err", err)
+			continue
+		}
+		for _, a := range audits {
+			if !safeReleasesAuditKind(a.Kind) {
+				continue
+			}
+			recent = append(recent, dashboard.SafeReleasesAuditRow{
+				DeploymentID: d.ID,
+				AppSlug:      slugByID[d.AppID],
+				Kind:         string(a.Kind),
+				TimeLabel:    dashboard.RelativeTime(a.At, now),
+				Actor:        a.Actor,
+			})
+		}
+	}
+
+	// (3) Active alerts filtered to the 4 PR-B kinds.
+	allAlerts, err := s.store.ListEnabledAlertRules(ctx)
+	if err != nil {
+		log.Warn("dashboard renderSafeReleasesDashboard: list enabled alerts",
+			"account_id", acct.ID, "err", err)
+		allAlerts = nil
+	}
+	active := make([]dashboard.SafeReleasesAlertRow, 0)
+	for _, rule := range allAlerts {
+		if !safeReleasesAlertMetric(string(rule.Metric)) {
+			continue
+		}
+		active = append(active, dashboard.SafeReleasesAlertRow{
+			Name:    rule.Name,
+			Metric:  string(rule.Metric),
+			Enabled: rule.Enabled,
+		})
+	}
+
+	// Render. The template lives at pkg/dashboard/templates/safe_releases.html.
+	page := dashboard.Page{
+		Title:   "Safe-releases",
+		Body:    "safe_releases",
+		Account: dashboardAccountView(acct, 0),
+		Data: dashboard.SafeReleasesData{
+			InFlight:     inFlight,
+			RecentAudit:  recent,
+			ActiveAlerts: active,
+		},
+	}
+	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
+		renderProblem(w, log, err)
+	}
+}
+
+// safeReleasesAuditKind returns true iff k is one of the 5 audit
+// kinds PR-A widened into deployment_audit_kind_chk
+// (migrations/00530). Closed-set; any future kind added to
+// 00530 must also be appended here.
+func safeReleasesAuditKind(k state.DeploymentAuditKind) bool {
+	switch k {
+	case state.DeployRolloutStarted,
+		state.DeployRolloutCompleted,
+		state.DeployRolloutAborted,
+		state.DeployCanaryStepAdvanced,
+		state.DeployAlertRuleFired:
+		return true
+	}
+	return false
+}
+
+// safeReleasesAlertMetric returns true iff m is one of the 4 PR-B
+// alert metric kinds. Closed-set; the catalog seed in
+// migrations/00531 inserts these as the only safe-releases metric
+// values. A future PR adding a new safe-releases metric must also
+// append the metric here AND add an alert_presets row AND extend
+// pkg/state.AlertMetric* AND pkg/api.AllowedAlertRuleMetrics.
+func safeReleasesAlertMetric(m string) bool {
+	switch state.AlertMetric(m) {
+	case state.AlertMetricCanaryStuckStep,
+		state.AlertMetricSafedeployAuditEmitFailing,
+		state.AlertMetricDeploymentAuditGCFailing,
+		state.AlertMetricCanaryFleetInFlightHigh:
+		return true
+	}
+	return false
 }
 
 // renderStateless renders /dashboard/stateless — Move 1 PR-A landing
