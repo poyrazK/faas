@@ -52,11 +52,11 @@ func TestOrchestrator_IncOps_BumpsAllSixCounters(t *testing.T) {
 	orch := NewOrchestrator(store, discardLog(), "meterd:test", "")
 	orch.Ops = ops
 
-	stats, err := orch.Once(context.Background())
+	stats, _, err := orch.Once(context.Background())
 	if err != nil {
 		t.Fatalf("orchestrator.Once: %v", err)
 	}
-	orch.IncOps(ops, stats)
+	orch.IncOps(ops, stats, 0)
 
 	if got := stats.Started; got != 1 {
 		t.Errorf("stats.Started = %d, want 1", got)
@@ -103,7 +103,7 @@ func TestOrchestrator_AuditEmittedTotal_BumpsOnSuccess(t *testing.T) {
 	orch := NewOrchestrator(store, discardLog(), "meterd:test", "")
 	orch.Ops = ops
 
-	if _, err := orch.Once(context.Background()); err != nil {
+	if _, _, err := orch.Once(context.Background()); err != nil {
 		t.Fatalf("orchestrator.Once: %v", err)
 	}
 	c := ops.DeploymentAuditEmittedTotal("deploy.rollout_started", "ok")
@@ -132,14 +132,14 @@ func TestOrchestrator_AuditEmittedTotal_BumpsOnFailure(t *testing.T) {
 	orch := NewOrchestrator(store, discardLog(), "meterd:test", "")
 	orch.Ops = ops
 
-	stats, err := orch.Once(context.Background())
+	stats, _, err := orch.Once(context.Background())
 	if err != nil {
 		t.Fatalf("orchestrator.Once: %v", err)
 	}
 	if stats.AuditEmitFailed != 1 {
 		t.Errorf("stats.AuditEmitFailed = %d, want 1", stats.AuditEmitFailed)
 	}
-	orch.IncOps(ops, stats)
+	orch.IncOps(ops, stats, 0)
 	if got := testutil.ToFloat64(ops.SafedeployOrchestratorAuditEmitFailedTotal()); got != 1 {
 		t.Errorf("SafedeployOrchestratorAuditEmitFailedTotal = %v, want 1", got)
 	}
@@ -165,11 +165,11 @@ func TestOrchestrator_NilOps_Safe(t *testing.T) {
 	seedDeployment(store, t, nil)
 	orch := NewOrchestrator(store, discardLog(), "meterd:test", "")
 	// Ops intentionally left nil.
-	stats, err := orch.Once(context.Background())
+	stats, _, err := orch.Once(context.Background())
 	if err != nil {
 		t.Fatalf("orchestrator.Once: %v", err)
 	}
-	orch.IncOps(nil, stats) // must not panic
+	orch.IncOps(nil, stats, 0) // must not panic
 }
 
 // TestOpsMetrics_DeploymentAuditEmittedTotal_UnknownKindDrops pins
@@ -185,5 +185,37 @@ func TestOpsMetrics_DeploymentAuditEmittedTotal_UnknownKindDrops(t *testing.T) {
 	}
 	if c := ops.DeploymentAuditEmittedTotal("deploy.rollout_started", "bogus_outcome"); c != nil {
 		t.Errorf("expected nil counter for unknown outcome; got %v", testutil.ToFloat64(c))
+	}
+}
+
+// TestOrchestrator_IncOps_SetsInFlightGauge (PR-B) pins the gauge
+// behaviour: IncOps(ops, stats, inFlight) sets the
+// safedeploy_in_flight_rollouts gauge to the inFlight value. The
+// orchestrator hands the row count from SafedeployListPendingRollouts
+// straight to the gauge every tick so PR-B's
+// canary_fleet_in_flight_high alert has a flat counter-of-truth to
+// rate() against.
+func TestOrchestrator_IncOps_SetsInFlightGauge(t *testing.T) {
+	store := newStubStore()
+	seedDeployment(store, t, nil)
+	orch := NewOrchestrator(store, discardLog(), "meterd:test", "")
+	ops := wire.NewOpsMetrics("meterd_test_obs_pr_b_gauge")
+	gauge := ops.SafedeployInFlightRollouts()
+	if gauge == nil {
+		t.Fatalf("expected non-nil in-flight gauge")
+	}
+	if got := testutil.ToFloat64(gauge); got != 0 {
+		t.Fatalf("expected zero-init gauge, got %v", got)
+	}
+	stats, inFlight, err := orch.Once(context.Background())
+	if err != nil {
+		t.Fatalf("orchestrator.Once: %v", err)
+	}
+	if inFlight < 1 {
+		t.Fatalf("expected inFlight>=1 (seedDeployment inserts a row), got %d", inFlight)
+	}
+	orch.IncOps(ops, stats, inFlight)
+	if got := testutil.ToFloat64(gauge); got != float64(inFlight) {
+		t.Fatalf("expected gauge=%d after IncOps(%d), got %v", inFlight, inFlight, got)
 	}
 }
