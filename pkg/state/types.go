@@ -2086,6 +2086,26 @@ const (
 	AlertMetricFailedDeployments AlertMetric = "deployment_failed"
 	AlertMetricCertExpirySeconds AlertMetric = "cert_expiry_seconds"
 	AlertMetricQueueDepth        AlertMetric = "queue_depth"
+	// AlertMetricCanaryStuckStep (SAFE-RELEASES-OBS PR-B) is the
+	// Prometheus-counter-backed tripwire for a canary sitting at the
+	// same step past StuckAfterDuration. The actual firing happens
+	// in Prometheus against safedeploy_orchestrator_stuck_detected_total;
+	// the catalog entry exists so customers / operators see the
+	// preset in /dashboard/alerts. See pkg/alerts/safe_releases_presets.go.
+	AlertMetricCanaryStuckStep AlertMetric = "canary_stuck_step"
+	// AlertMetricSafedeployAuditEmitFailing — trips when
+	// safedeploy_orchestrator_audit_emit_failed_total rate > 0.1/sec
+	// for 10 min. Critical; closes the audit-trail-blacked-out failure
+	// mode PR-A unblocked.
+	AlertMetricSafedeployAuditEmitFailing AlertMetric = "safedeploy_audit_emit_failing"
+	// AlertMetricDeploymentAuditGCFailing — trips when
+	// deployment_audit_gc_failed_total rate > 0 for 1 h. Warning;
+	// 90-day GC failure is a disk-fill risk.
+	AlertMetricDeploymentAuditGCFailing AlertMetric = "deployment_audit_gc_failing"
+	// AlertMetricCanaryFleetInFlightHigh — trips when
+	// safedeploy_in_flight_rollouts > 50 for 10 min. Warning;
+	// operator back-pressure signal.
+	AlertMetricCanaryFleetInFlightHigh AlertMetric = "canary_fleet_in_flight_high"
 )
 
 // AlertComparison is the textual form of the comparison operator stored
