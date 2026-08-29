@@ -58,9 +58,17 @@
 --     "what node owns this (account, ip)?", so no extra index
 --     is required for that direction.
 
+-- Add the column WITHOUT an inline FK so the constraint can
+-- be added under a stable, hand-chosen name. An inline
+-- `ADD COLUMN … REFERENCES …` produces the auto-generated
+-- `<table>_<column>_fkey`, which is platform-dependent
+-- (Postgres auto-naming) and would diverge from the
+-- `_fk` suffix the migration-apply test pins. The 00487
+-- migration hit the same trap (its inline FK would have
+-- been `_fkey`) and explicitly uses DROP+ADD CONSTRAINT
+-- with the `_fk` suffix; we mirror that pattern.
 ALTER TABLE provisioned_static_egress_ips
-    ADD COLUMN IF NOT EXISTS node_id UUID
-        REFERENCES compute_nodes(id) ON DELETE RESTRICT;
+    ADD COLUMN IF NOT EXISTS node_id UUID;
 
 -- Backfill every existing row to the synthetic default-local
 -- node. Mirrors migration 00024:103-105: subselect-resolve
@@ -81,6 +89,19 @@ UPDATE provisioned_static_egress_ips
 ALTER TABLE provisioned_static_egress_ips
     ALTER COLUMN node_id SET NOT NULL;
 
+-- FK constraint under a stable name. Replay-safe via DROP IF
+-- EXISTS — mirrors migration 00487:54-60 and 00293:21-36. The
+-- explicit `_fk` suffix (NOT `_fkey` which is the Postgres
+-- auto-generated shape) matches what
+-- migrations/00488_…_test.go:91 pins.
+ALTER TABLE provisioned_static_egress_ips
+    DROP CONSTRAINT IF EXISTS provisioned_static_egress_ips_node_id_fk;
+
+ALTER TABLE provisioned_static_egress_ips
+    ADD CONSTRAINT provisioned_static_egress_ips_node_id_fk
+        FOREIGN KEY (node_id) REFERENCES compute_nodes(id)
+        ON DELETE RESTRICT;
+
 -- Per-node reverse-lookup index. The vmmd bundle loader uses
 -- this on SIGHUP to reconcile its bridge alias-IP set against
 -- the authoritative Postgres state. Without the index, the
@@ -95,12 +116,15 @@ CREATE INDEX IF NOT EXISTS provisioned_static_egress_ips_node_id_idx
 -- +goose Down
 -- +goose StatementBegin
 
--- Reverse-order teardown: index → NOT NULL relax → column.
+-- Reverse-order teardown: index → FK → NOT NULL relax → column.
 -- Index first so a downgrade doesn't scan a now-larger table
--- for the reverse lookup. The column drop cascades via the FK
--- automatically (the FK was ON DELETE RESTRICT, not ON DELETE
--- CASCADE — drop column is its own DDL step).
+-- for the reverse lookup. The FK is dropped BEFORE the NOT NULL
+-- relaxation so a re-apply order doesn't trip SQLSTATE 23503
+-- (the relaxed column could otherwise carry an orphaned FK
+-- during the transition).
 DROP INDEX IF EXISTS provisioned_static_egress_ips_node_id_idx;
+ALTER TABLE provisioned_static_egress_ips
+    DROP CONSTRAINT IF EXISTS provisioned_static_egress_ips_node_id_fk;
 ALTER TABLE provisioned_static_egress_ips ALTER COLUMN node_id DROP NOT NULL;
 ALTER TABLE provisioned_static_egress_ips DROP COLUMN IF EXISTS node_id;
 
