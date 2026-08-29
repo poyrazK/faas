@@ -97,7 +97,9 @@ func CanaryProgressionLoop(ctx context.Context, p CanaryProgressionParams) {
 		stats, err := progression.Once(walkCtx)
 		if err != nil {
 			p.Log.Warn("meterd: canary_progression tick failed", "err", err)
-			p.Ops.CanaryProgressionErrorsTotal("list_in_flight")()
+			if c := p.Ops.CanaryProgressionErrorsTotal("list_in_flight"); c != nil {
+				c.Inc()
+			}
 			return
 		}
 		p.Log.Info("meterd: canary_progression tick ok",

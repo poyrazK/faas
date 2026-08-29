@@ -289,7 +289,7 @@ func TestRetentionLoopDeploymentAudit_OnTickRowsCallback(t *testing.T) {
 			mu.Lock()
 			calledWith = append(calledWith, n)
 			mu.Unlock()
-		})
+		}, nil)
 		close(done)
 	}()
 	time.Sleep(40 * time.Millisecond)
@@ -319,7 +319,7 @@ func TestRetentionLoopDeploymentAudit_NilCallbackSafe(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		RetentionLoopDeploymentAudit(ctx, r, 10*time.Millisecond, nil, nil)
+		RetentionLoopDeploymentAudit(ctx, r, 10*time.Millisecond, nil, nil, nil)
 		close(done)
 	}()
 	time.Sleep(35 * time.Millisecond)
@@ -328,5 +328,51 @@ func TestRetentionLoopDeploymentAudit_NilCallbackSafe(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Loop did not exit on ctx.Done() with nil callback")
+	}
+}
+
+// TestRetentionLoopDeploymentAudit_OnTickErrorBumpsCounter
+// (SAFE-RELEASES-OBS PR-A) pins the failure-path callback
+// contract: when RetentionOnceDeploymentAudit returns an error
+// other than ErrRetentionBatchCap, onTickError fires once per
+// failed pass so cmd/meterd can bump
+// deployment_audit_gc_failed_total. PR-B's
+// deployment_audit_gc_failing alert queries the counter's rate
+// over a 1h window; pre-PR the failure was journal-only.
+func TestRetentionLoopDeploymentAudit_OnTickErrorBumpsCounter(t *testing.T) {
+	want := errors.New("simulated postgres outage")
+	r := &recordingExecer{
+		rowsFn: func(int) int64 { return 0 },
+		errFn:  func(int) error { return want },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var (
+		mu       sync.Mutex
+		gotErrs  []error
+		firedCnt int
+	)
+	done := make(chan struct{})
+	go func() {
+		RetentionLoopDeploymentAudit(ctx, r, 10*time.Millisecond, nil, nil, func(err error) {
+			mu.Lock()
+			gotErrs = append(gotErrs, err)
+			firedCnt++
+			mu.Unlock()
+		})
+		close(done)
+	}()
+	time.Sleep(40 * time.Millisecond)
+	cancel()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if firedCnt < 1 {
+		t.Fatalf("onTickError fired %d times, want ≥ 1", firedCnt)
+	}
+	for _, e := range gotErrs {
+		if !errors.Is(e, want) {
+			t.Errorf("callback err = %v, want %v", e, want)
+		}
 	}
 }

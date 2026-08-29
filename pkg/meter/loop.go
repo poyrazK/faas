@@ -366,7 +366,16 @@ func (l *Loop) Run(ctx context.Context) error {
 		go func() {
 			errc <- l.runTicks(ctx, l.cfg.SafeDeployInterval,
 				func(c context.Context) error {
-					_, err := l.safedeploy.Once(c)
+					// SAFE-RELEASES-OBS PR-A: fold the per-tick
+					// Stats struct into the daemon's wire.OpsMetrics
+					// registry so the safedeploy_orchestrator_*
+					// counters surface from boot. Pre-PR the Stats
+					// lived only in the per-tick log line; operators
+					// had no fleet-level view. IncOps is nil-safe
+					// (Loop.ops is always non-nil but the test seam
+					// builds Loop without one).
+					stats, err := l.safedeploy.Once(c)
+					l.safedeploy.IncOps(l.ops, stats)
 					return err
 				}, "safedeploy")
 		}()

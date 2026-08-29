@@ -239,7 +239,9 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 				"canary_step", row.CanaryStep,
 				"canary_total_steps", row.CanaryTotalSteps)
 			if p.Ops != nil {
-				p.Ops.CanaryProgressionZeroTimestampTotal()()
+				if c := p.Ops.CanaryProgressionZeroTimestampTotal(); c != nil {
+					c.Inc()
+				}
 			}
 		}
 		elapsed := now.Sub(row.CanaryStepStarted)
@@ -257,7 +259,9 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 				"deployment_id", row.ID, "to_percent", nextStage.Percent, "err", err)
 			stats.Errors++
 			if p.Ops != nil {
-				p.Ops.CanaryProgressionErrorsTotal("patch_traffic")()
+				if c := p.Ops.CanaryProgressionErrorsTotal("patch_traffic"); c != nil {
+					c.Inc()
+				}
 			}
 			continue
 		}
@@ -287,10 +291,35 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 			// for timeline visibility.
 			p.Log.Warn("canary: append audit failed",
 				"deployment_id", row.ID, "err", auditErr)
+			// SAFE-RELEASES-OBS PR-A: bump the
+			// deployment_audit_emitted_total counter on the failure
+			// path so the audit-write-fidelity dashboard panel can
+			// split per-kind emit rate from failure rate. Nil-safe
+			// via the wire.OpsMetrics accessor pattern.
+			if p.Ops != nil {
+				if c := p.Ops.DeploymentAuditEmittedTotal("deploy.traffic_changed", "failed"); c != nil {
+					c.Inc()
+				}
+			}
+		} else if p.Ops != nil {
+			// success path
+			if c := p.Ops.DeploymentAuditEmittedTotal("deploy.traffic_changed", "ok"); c != nil {
+				c.Inc()
+			}
 		}
 		stats.Advanced++
 		if p.Ops != nil {
-			p.Ops.CanaryProgressionAdvancedTotal()()
+			// SAFE-RELEASES-OBS PR-A: pass the canary_preset label
+			// through so the operator dashboard splits per-preset
+			// advancement rate (slow vs balanced vs aggressive vs
+			// custom). Pre-PR the counter was unlabelled and
+			// operators saw only fleet-wide rollup. Closed-vocab
+			// admission in the accessor means an unexpected preset
+			// drops to nil (no-op) rather than inflating
+			// Prometheus cardinality.
+			if c := p.Ops.CanaryProgressionAdvancedTotal(row.CanaryPreset); c != nil {
+				c.Inc()
+			}
 		}
 		// Terminal step flip: the orchestrator (commit 5) writes
 		// rollout_state='complete' on its own walk; we don't
