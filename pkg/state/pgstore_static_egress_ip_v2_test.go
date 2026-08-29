@@ -24,31 +24,11 @@
 package state_test
 
 import (
-	"context"
 	"net/netip"
 	"testing"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/onebox-faas/faas/pkg/state"
 )
-
-// seedStaticEgressNodePgWithID is a variant of seedStaticEgressNodePg
-// that uses a caller-provided nodeID (rather than a fresh uuid.NewString()).
-// Useful when the test wants to assert a specific node_id value
-// comes back through StaticEgressIPNode.
-func seedStaticEgressNodePgWithID(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nodeID string) {
-	t.Helper()
-	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes
-		    (id, name, target_url, vpcpus, mem_mb, max_concurrency,
-		     admission_ceiling_mb, active)
-		values ($1::uuid, $2, 'unix:///run/faas/vmmd.sock', 160, 56000, 200, 47600, true)
-	`, nodeID, "test-node-"+uuid.NewString()[:8]); err != nil {
-		t.Fatalf("seed compute_nodes: %v", err)
-	}
-}
 
 // TestPgStore_StaticEgressIPNode_HitMiss pins the v2 lookup
 // path. The schedd wake path uses this method to stamp
