@@ -787,9 +787,16 @@ type OpsMetrics struct {
 	// canaryProgressionAdvancedTotal (issue #976 / ADR-122 /
 	// SAFE-RELEASES-A) counts every canary step boundary crossed
 	// by the meterd tick (canary_step → canary_step+1 with
-	// elapsed >= current stage.Duration). Unlabelled. Mirrors
-	// alertEvalFiredTotal as a fleet-level rollup counter.
-	canaryProgressionAdvancedTotal prometheus.Counter
+	// elapsed >= current stage.Duration).
+	//
+	// SAFE-RELEASES-OBS PR-A: re-labelled with canary_preset ∈
+	// pkg/api/canary.AllowedCanaryPresets so the operator dashboard
+	// can split the per-preset advancement rate (slow vs balanced
+	// vs aggressive vs custom). Pre-PR the counter was unlabelled
+	// and operators could only see fleet-wide rollup. Bumps
+	// cardinality by ≤ 6 (closed set), no hot-path cost beyond
+	// the label-set lookup.
+	canaryProgressionAdvancedTotal *prometheus.CounterVec
 	// canaryProgressionErrorsTotal (issue #976 / ADR-122 /
 	// SAFE-RELEASES-A) counts every per-row error inside the
 	// canary_progression tick (PATCH traffic failure, audit
@@ -811,6 +818,30 @@ type OpsMetrics struct {
 	// Unlabelled — fleet rollup; per-deployment detail lives in the
 	// existing deploy.traffic_changed audit row.
 	canaryProgressionZeroTimestampTotal prometheus.Counter
+	// SAFE-RELEASES-OBS PR-A: safedeploy orchestrator state-machine
+	// counters. Each unlabelled counter has one outcome (a row
+	// transitioned to X); pre-PR these lived only in the in-process
+	// Stats struct (pkg/safedeploy/orchestrator.go::Stats) and were
+	// never exposed to Prometheus. PR-A wires them via
+	// Orchestrator.IncOps(ops) called at the end of Once(). Backs
+	// the §12 dashboard's rollout-state panel and PR-B's
+	// canary_stuck_step alert.
+	safedeployOrchestratorStartedTotal               prometheus.Counter
+	safedeployOrchestratorCompletedTotal             prometheus.Counter
+	safedeployOrchestratorAbortedTotal               prometheus.Counter
+	safedeployOrchestratorStuckDetectedTotal         prometheus.Counter
+	safedeployOrchestratorAuditEmitFailedTotal       prometheus.Counter
+	safedeployOrchestratorStuckCheckMissingTimestamp prometheus.Counter
+	// SAFE-RELEASES-OBS PR-A: deployment_audit emit + GC health
+	// counters. emit_total{kind, outcome} backs the
+	// audit-write-fidelity dashboard (every successful + failed
+	// AppendDeploymentAudit call). GC_failed_total backs the
+	// "the 90-day prune loop is failing" alert (PR-B). Both are
+	// bounded-vocab (the 12 closed-set kinds in
+	// migrations/00530_deployment_audit_kinds_widen.sql + outcome
+	// ∈ {ok, failed}) so Prometheus cardinality stays small.
+	deploymentAuditEmittedTotal  *prometheus.CounterVec
+	deploymentAuditGCFailedTotal prometheus.Counter
 	// alertDeliveryAttemptsTotal — counts dispatched alert-rule
 	// webhook attempts, labelled by outcome ∈ {delivered, failed}.
 	// Label cardinality budget = 2 (closed vocabulary). The counter
@@ -2245,6 +2276,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, kp := range []string{
 		"auth", "key", "secret", "account", "stateless",
 		"webhook", "edge_rule", "cron", "other",
+		// SAFE-RELEASES-OBS PR-A: extend the closed kind_prefix
+		// vocabulary to include "deploy" so the audit-write-fidelity
+		// dashboard panel surfaces deployment_audit writes (every
+		// emit kind in 00530_deployment_audit_kinds_widen.sql starts
+		// with the "deploy." prefix; pre-PR the panel had no entry
+		// for these rows).
+		"deploy",
 	} {
 		auditEventsVolumeTotal.WithLabelValues(kp)
 	}
@@ -2454,10 +2492,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// advanced counter (fleet rollup) + errors counter labelled by
 	// reason ∈ {patch_traffic, append_audit, list_in_flight}
 	// (closed vocabulary, cardinality budget = 3).
-	canaryProgressionAdvancedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+	canaryProgressionAdvancedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_canary_progression_advanced_total",
-		Help: "Count of canary step boundaries crossed by the meterd canary_progression tick (canary_step bumped AND PATCH /v1/deployments/{id}/traffic accepted). Unlabelled — fleet-level rollup. A non-zero rate is the heartbeat; a stalled rate combined with canaryProgressionErrorsTotal('patch_traffic') is the §12 dashboard tripwire for an APID outage.",
-	})
+		Help: "Count of canary step boundaries crossed by the meterd canary_progression tick (canary_step bumped AND PATCH /v1/deployments/{id}/traffic accepted). Labelled by canary_preset ∈ {none, slow, balanced, aggressive, 1-10-50-100, custom} (closed vocabulary, pkg/api/canary.AllowedCanaryPresets). SAFE-RELEASES-OBS PR-A: re-labelled so the operator dashboard splits per-preset advancement rate; pre-PR the counter was unlabelled and operators saw only fleet-wide rollup.",
+	}, []string{"canary_preset"})
+	for _, p := range []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"} {
+		canaryProgressionAdvancedTotal.WithLabelValues(p)
+	}
 	canaryProgressionErrorsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_canary_progression_errors_total",
 		Help: "Count of per-row errors inside the canary_progression tick, labelled by reason ∈ {patch_traffic, append_audit, list_in_flight} (closed vocabulary). patch_traffic is the dominant reason (APID 5xx / network blip); append_audit is rare (the audit write is best-effort, the patch already landed); list_in_flight signals a Postgres SELECT failure (fleet-wide tripwire).",
@@ -2476,6 +2517,62 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	canaryProgressionZeroTimestampTotal := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: prefix + "_canary_progression_zero_timestamp_total",
 		Help: "Count of canary_progression tick rows whose canary_step_started_at was the zero time (post-00517 the column is NOT NULL DEFAULT NOW(), so a non-zero rate is the tripwire for a write path bypassing the apid CreateDeployment stamp). Unlabelled — fleet-level rollup.",
+	})
+	// SAFE-RELEASES-OBS PR-A: safedeploy orchestrator state-machine
+	// counters. Each one ticks once per row transition; pre-PR the
+	// data lived only in the in-process Stats struct
+	// (pkg/safedeploy/orchestrator.go). Unlabelled — fleet rollup;
+	// per-row detail lives in the deploy.rollout_* audit row.
+	safedeployOrchestratorStartedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_started_total",
+		Help: "Count of pending → rolling_out transitions the safedeploy orchestrator walked (pkg/safedeploy/orchestrator.go::start). Unlabelled — fleet rollup. Paired with safedeploy_orchestrator_completed_total and _aborted_total for the §12 dashboard's rollout-state panel.",
+	})
+	safedeployOrchestratorCompletedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_completed_total",
+		Help: "Count of rolling_out → complete transitions the safedeploy orchestrator walked (pkg/safedeploy/orchestrator.go::complete). Unlabelled — fleet rollup.",
+	})
+	safedeployOrchestratorAbortedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_aborted_total",
+		Help: "Count of pending/rolling_out → aborted transitions the safedeploy orchestrator walked (manual CLI path; the orchestrator itself never auto-aborts). Unlabelled — fleet rollup.",
+	})
+	safedeployOrchestratorStuckDetectedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_stuck_detected_total",
+		Help: "Count of rolling_out rows the orchestrator walked whose canary_step_started_at is older than StuckAfterDuration (default 30 min). Warn-logged, not auto-recovered — the manual CLI `gregale rollouts recover <slug>` is the escape hatch. Unlabelled — fleet rollup; backs PR-B's canary_stuck_step alert.",
+	})
+	safedeployOrchestratorAuditEmitFailedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_audit_emit_failed_total",
+		Help: "Count of deployment_audit emit failures the orchestrator walked (best-effort audit write; the state-machine transition lands regardless). Pre-PR-A the deployment_audit_kind_chk refused the orchestrator's emit kinds so every audit emit failed; this counter was the silent-failure tripwire. Unlabelled — fleet rollup.",
+	})
+	safedeployOrchestratorStuckCheckMissingTimestamp := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_stuck_check_missing_timestamp_total",
+		Help: "Count of rolling_out rows the orchestrator walked whose canary_step_started_at was nil (post-00517 schema default should prevent this; a non-zero rate is the tripwire for a write path bypassing the apid CreateDeployment stamp). Unlabelled — fleet rollup; sibling of canary_progression_zero_timestamp_total.",
+	})
+	// SAFE-RELEASES-OBS PR-A: deployment_audit emit + GC health.
+	// emit_total{kind, outcome} backs the audit-write-fidelity
+	// dashboard. kind is the 12 closed-set values admitted by
+	// migrations/00530_deployment_audit_kinds_widen.sql; outcome ∈
+	// {ok, failed}. Unknown kinds/outcomes drop to a no-op (the
+	// accessor has a closed-vocab gate so an unexpected kind never
+	// inflates Prometheus cardinality).
+	deploymentAuditEmittedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_deployment_audit_emitted_total",
+		Help: "Count of deployment_audit emit calls (pkg/state.Store.AppendDeploymentAudit), labelled by kind ∈ {deploy.created, deploy.source_ref, deploy.local_tarball, deploy.traffic_changed, deploy.health_probe_failed, deploy.health_recovered, deploy.rolled_back, deploy.removed, deploy.rollout_started, deploy.rollout_completed, deploy.rollout_aborted, deploy.canary_step_advanced, deploy.alert_rule_fired} (closed vocabulary) and outcome ∈ {ok, failed}. SAFE-RELEASES-OBS PR-A.",
+	}, []string{"kind", "outcome"})
+	for _, kind := range []string{
+		"deploy.created", "deploy.source_ref", "deploy.local_tarball",
+		"deploy.traffic_changed", "deploy.health_probe_failed",
+		"deploy.health_recovered", "deploy.rolled_back", "deploy.removed",
+		"deploy.rollout_started", "deploy.rollout_completed",
+		"deploy.rollout_aborted", "deploy.canary_step_advanced",
+		"deploy.alert_rule_fired",
+	} {
+		for _, outcome := range []string{"ok", "failed"} {
+			deploymentAuditEmittedTotal.WithLabelValues(kind, outcome)
+		}
+	}
+	deploymentAuditGCFailedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_deployment_audit_gc_failed_total",
+		Help: "Count of pkg/meter.RetentionOnceDeploymentAudit invocations that returned an error (the 90-day deployment_audit retention cron). Bumps once per failed pass, not once per failed batch. Unlabelled — fleet rollup; backs PR-B's deployment_audit_gc_failing alert. SAFE-RELEASES-OBS PR-A.",
 	})
 	alertDeliveryAttemptsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_alert_delivery_attempts_total",
@@ -2950,6 +3047,20 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditEventsRetentionLagSeconds,
 		auditEventsVolumeTotal,
 		deploymentAuditGCRowsDeletedTotal,
+		// SAFE-RELEASES-OBS PR-A: 8 new safedeploy / deployment_audit
+		// counters. Registered on every daemon's registry so the
+		// §12 dashboards see zero-valued series from boot; only
+		// meterd increments in practice (the safedeploy orchestrator
+		// + canary_progression tick are meterd-only goroutines;
+		// apid doesn't touch deployment_audit emit today).
+		safedeployOrchestratorStartedTotal,
+		safedeployOrchestratorCompletedTotal,
+		safedeployOrchestratorAbortedTotal,
+		safedeployOrchestratorStuckDetectedTotal,
+		safedeployOrchestratorAuditEmitFailedTotal,
+		safedeployOrchestratorStuckCheckMissingTimestamp,
+		deploymentAuditEmittedTotal,
+		deploymentAuditGCFailedTotal,
 		topTenantRPS,
 		apidLogsEmittedTotal,
 		apidLogsDroppedTotal,
@@ -3999,15 +4110,26 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		canaryProgressionAdvancedTotal:       canaryProgressionAdvancedTotal,
 		canaryProgressionErrorsTotal:         canaryProgressionErrorsTotal,
 		canaryProgressionZeroTimestampTotal:  canaryProgressionZeroTimestampTotal,
-		alertDeliveryAttemptsTotal:           alertDeliveryAttemptsTotal,
-		alertActionExecutedTotal:             alertActionExecutedTotal,
-		paddleWebhookVerifyFailedTotal:       paddleWebhookVerifyFailedTotal,
-		paddleWebhookReplaySuppressedTotal:   paddleWebhookReplaySuppressedTotal,
-		alertEvaluatorEnabled:                alertEvaluatorEnabled,
-		meterdAccountSpendEur:                meterdAccountSpendEur,
-		meterdAPIReachable:                   meterdAPIReachable,
-		apidDeploymentFailedTotal:            apidDeploymentFailedTotal,
-		apidTenantSurfaceCertExpirySeconds:   apidTenantSurfaceCertExpirySeconds,
+		// SAFE-RELEASES-OBS PR-A: 8 new safedeploy / deployment_audit
+		// counter fields. See the struct declaration above for the
+		// per-counter purpose statement.
+		safedeployOrchestratorStartedTotal:                    safedeployOrchestratorStartedTotal,
+		safedeployOrchestratorCompletedTotal:                  safedeployOrchestratorCompletedTotal,
+		safedeployOrchestratorAbortedTotal:                    safedeployOrchestratorAbortedTotal,
+		safedeployOrchestratorStuckDetectedTotal:              safedeployOrchestratorStuckDetectedTotal,
+		safedeployOrchestratorAuditEmitFailedTotal:            safedeployOrchestratorAuditEmitFailedTotal,
+		safedeployOrchestratorStuckCheckMissingTimestamp:      safedeployOrchestratorStuckCheckMissingTimestamp,
+		deploymentAuditEmittedTotal:                           deploymentAuditEmittedTotal,
+		deploymentAuditGCFailedTotal:                          deploymentAuditGCFailedTotal,
+		alertDeliveryAttemptsTotal:                            alertDeliveryAttemptsTotal,
+		alertActionExecutedTotal:                              alertActionExecutedTotal,
+		paddleWebhookVerifyFailedTotal:                        paddleWebhookVerifyFailedTotal,
+		paddleWebhookReplaySuppressedTotal:                    paddleWebhookReplaySuppressedTotal,
+		alertEvaluatorEnabled:                                 alertEvaluatorEnabled,
+		meterdAccountSpendEur:                                 meterdAccountSpendEur,
+		meterdAPIReachable:                                    meterdAPIReachable,
+		apidDeploymentFailedTotal:                             apidDeploymentFailedTotal,
+		apidTenantSurfaceCertExpirySeconds:                    apidTenantSurfaceCertExpirySeconds,
 		apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal: apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal,
 		pgBackupLastPushed:                   pgBackupLastPushed,
 		ipLabels:                             newIPLabelSet(maxIPLabelValues),
@@ -6197,58 +6319,66 @@ func (m *OpsMetrics) AlertEvalFiredTotal() func() {
 }
 
 // CanaryProgressionAdvancedTotal (issue #976 / ADR-122 /
-// SAFE-RELEASES-A) increments the canary-progression advanced
-// counter. Fires once per row whose canary_step has just been
-// bumped (wall-clock boundary crossed + APID patch accepted).
-// Unlabelled. Returns a no-op closure on a nil receiver — mirrors
-// AlertEvalFiredTotal.
-func (m *OpsMetrics) CanaryProgressionAdvancedTotal() func() {
+// SAFE-RELEASES-A) returns the canary-progression advanced
+// counter, labelled by preset. Callers do `.Inc()` after each row
+// whose canary_step has just been bumped (wall-clock boundary
+// crossed + APID patch accepted).
+//
+// SAFE-RELEASES-OBS PR-A: re-labelled with canary_preset ∈
+// pkg/api/canary.AllowedCanaryPresets so the operator dashboard
+// splits per-preset advancement rate. Unknown presets return nil
+// (closed-vocabulary admission — matches the
+// AlertActionExecutedTotal precedent). Nil receiver returns nil.
+func (m *OpsMetrics) CanaryProgressionAdvancedTotal(preset string) prometheus.Counter {
 	if m == nil {
-		return func() {}
+		return nil
 	}
-	m.canaryProgressionAdvancedTotal.Inc()
-	return func() {}
+	switch preset {
+	case "none", "slow", "balanced", "aggressive", "1-10-50-100", "custom":
+		// admitted
+	default:
+		return nil
+	}
+	return m.canaryProgressionAdvancedTotal.WithLabelValues(preset)
 }
 
 // CanaryProgressionZeroTimestampTotal (SAFE-RELEASES code-review
-// hardening, migration 00517) increments the canary-progression
-// tripwire counter every time the meterd tick walks a row whose
-// canary_step_started_at is the zero time. Post-00517 the column is
-// NOT NULL DEFAULT NOW(), so a non-zero rate means a write path
-// bypassed the schema default — exactly the silent-soak-bypass hole
-// code-review finding #1 was worried about. Behaviour on zero is
-// unchanged (the wall-clock check still runs; elapsed = 56 years >
-// Duration → advance) — the counter exists purely for operator
-// visibility (and as the §12 dashboard tripwire for "a write path
-// skipped the apid CreateDeployment stamp"). Unlabelled — fleet
-// rollup; per-deployment detail lives in the existing
-// deploy.traffic_changed audit row. Returns a no-op closure on a
-// nil receiver — mirrors CanaryProgressionAdvancedTotal.
-func (m *OpsMetrics) CanaryProgressionZeroTimestampTotal() func() {
+// hardening, migration 00517) returns the canary-progression
+// tripwire counter — bumped every time the meterd tick walks a row
+// whose canary_step_started_at is the zero time. Post-00517 the
+// column is NOT NULL DEFAULT NOW(), so a non-zero rate means a
+// write path bypassed the schema default — exactly the
+// silent-soak-bypass hole code-review finding #1 was worried
+// about. Behaviour on zero is unchanged (the wall-clock check
+// still runs; elapsed = 56 years > Duration → advance) — the
+// counter exists purely for operator visibility (and as the §12
+// dashboard tripwire for "a write path skipped the apid
+// CreateDeployment stamp"). Unlabelled — fleet rollup; per-
+// deployment detail lives in the existing deploy.traffic_changed
+// audit row. Nil receiver returns nil.
+func (m *OpsMetrics) CanaryProgressionZeroTimestampTotal() prometheus.Counter {
 	if m == nil {
-		return func() {}
+		return nil
 	}
-	m.canaryProgressionZeroTimestampTotal.Inc()
-	return func() {}
+	return m.canaryProgressionZeroTimestampTotal
 }
 
 // CanaryProgressionErrorsTotal (issue #976 / ADR-122 /
-// SAFE-RELEASES-A) increments the canary-progression error counter
+// SAFE-RELEASES-A) returns the canary-progression error counter
 // labelled by reason ∈ {patch_traffic, append_audit,
-// list_in_flight}. Closed vocabulary; unknown reasons drop to the
-// no-op closure (matches AlertDeliveryAttemptsTotal).
-func (m *OpsMetrics) CanaryProgressionErrorsTotal(reason string) func() {
+// list_in_flight}. Closed vocabulary; unknown reasons return nil
+// (matches AlertDeliveryAttemptsTotal).
+func (m *OpsMetrics) CanaryProgressionErrorsTotal(reason string) prometheus.Counter {
 	if m == nil {
-		return func() {}
+		return nil
 	}
 	switch reason {
 	case "patch_traffic", "append_audit", "list_in_flight":
 		// admitted
 	default:
-		return func() {}
+		return nil
 	}
-	m.canaryProgressionErrorsTotal.WithLabelValues(reason).Inc()
-	return func() {}
+	return m.canaryProgressionErrorsTotal.WithLabelValues(reason)
 }
 
 // AlertDeliveryAttemptsTotal increments the alert-delivery attempts
@@ -6326,6 +6456,136 @@ func (m *OpsMetrics) MeterdAPIReachable() *prometheus.GaugeVec {
 		return nil
 	}
 	return m.meterdAPIReachable
+}
+
+// SAFE-RELEASES-OBS PR-A: safedeploy orchestrator state-machine
+// counter accessors. Each one returns a no-op closure on a nil
+// receiver; the actual increment is one line of code at the call
+// site. The pkg/safedeploy/orchestrator.go::Orchestrator.IncOps
+// helper calls these at the end of Once() to fold the per-tick
+// Stats struct into Prometheus (pre-PR the Stats lived only in
+// the per-tick log line — operators had no fleet view of these
+// transitions).
+
+// SafedeployOrchestratorStartedTotal returns the counter of
+// pending → rolling_out transitions the orchestrator walked
+// (pkg/safedeploy/orchestrator.go::start). Unlabelled. Callers
+// do `.Inc()` on the returned counter to bump per transition.
+// Mirrors the DeploymentAuditGCRowsDeleted / LogsDropped
+// precedent (testutil.ToFloat64 reads it directly).
+func (m *OpsMetrics) SafedeployOrchestratorStartedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorStartedTotal
+}
+
+// SafedeployOrchestratorCompletedTotal returns the counter of
+// rolling_out → complete transitions (or pending → complete
+// fast-forward for no-ladder rows) the orchestrator walked
+// (pkg/safedeploy/orchestrator.go::complete). Unlabelled.
+func (m *OpsMetrics) SafedeployOrchestratorCompletedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorCompletedTotal
+}
+
+// SafedeployOrchestratorAbortedTotal returns the counter of
+// pending/rolling_out → aborted transitions (manual CLI path; the
+// orchestrator itself never auto-aborts). Unlabelled.
+func (m *OpsMetrics) SafedeployOrchestratorAbortedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorAbortedTotal
+}
+
+// SafedeployOrchestratorStuckDetectedTotal returns the counter of
+// rolling_out rows whose canary_step_started_at is older than
+// StuckAfterDuration. Backs PR-B's canary_stuck_step alert.
+// Unlabelled.
+func (m *OpsMetrics) SafedeployOrchestratorStuckDetectedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorStuckDetectedTotal
+}
+
+// SafedeployOrchestratorAuditEmitFailedTotal returns the counter
+// of deployment_audit emit failures the orchestrator walked
+// (best-effort audit write; the state-machine transition lands
+// regardless). Backs PR-B's safedeploy_audit_emit_failing alert.
+// Unlabelled.
+func (m *OpsMetrics) SafedeployOrchestratorAuditEmitFailedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorAuditEmitFailedTotal
+}
+
+// SafedeployOrchestratorStuckCheckMissingTimestampTotal returns
+// the counter of rolling_out rows whose canary_step_started_at
+// was nil (post-00517 schema default should prevent this; a
+// non-zero rate is the tripwire for a write path bypassing the
+// apid CreateDeployment stamp). Unlabelled; sibling of
+// CanaryProgressionZeroTimestampTotal.
+func (m *OpsMetrics) SafedeployOrchestratorStuckCheckMissingTimestampTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorStuckCheckMissingTimestamp
+}
+
+// DeploymentAuditEmittedTotal returns the per-{kind, outcome}
+// deployment_audit emit counter. kind is the 13 closed-set values
+// admitted by migrations/00530_deployment_audit_kinds_widen.sql;
+// outcome ∈ {ok, failed}. Unknown kinds/outcomes return nil so a
+// buggy emit call never inflates Prometheus cardinality AND so
+// testutil.ToFloat64 surfaces a clean 0 instead of panicking on
+// a nil deref. The accessor is nil-safe on the receiver.
+//
+// The caller (pkg/state.AppendDeploymentAudit or its pgstore +
+// memstore impls) calls `.Inc()` after a successful write and
+// after a failed write so the dashboard's audit-write-fidelity
+// panel can split the fleet-wide emit rate from the failure rate
+// per kind.
+func (m *OpsMetrics) DeploymentAuditEmittedTotal(kind, outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	switch kind {
+	case "deploy.created", "deploy.source_ref", "deploy.local_tarball",
+		"deploy.traffic_changed", "deploy.health_probe_failed",
+		"deploy.health_recovered", "deploy.rolled_back", "deploy.removed",
+		"deploy.rollout_started", "deploy.rollout_completed",
+		"deploy.rollout_aborted", "deploy.canary_step_advanced",
+		"deploy.alert_rule_fired":
+		// admitted
+	default:
+		return nil
+	}
+	switch outcome {
+	case "ok", "failed":
+		// admitted
+	default:
+		return nil
+	}
+	return m.deploymentAuditEmittedTotal.WithLabelValues(kind, outcome)
+}
+
+// DeploymentAuditGCFailedTotal returns the counter of
+// pkg/meter.RetentionOnceDeploymentAudit invocations that
+// returned an error (the 90-day deployment_audit retention
+// cron). The counter ticks once per failed pass, not once per
+// failed batch — the goal is fleet-level visibility into "the
+// prune loop is failing", not per-batch diagnostics. Backs
+// PR-B's deployment_audit_gc_failing alert. Unlabelled.
+func (m *OpsMetrics) DeploymentAuditGCFailedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.deploymentAuditGCFailedTotal
 }
 
 // ApidDeploymentFailedTotal returns the per-{account_id, app_id}
