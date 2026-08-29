@@ -22493,6 +22493,83 @@ func (s *PgStore) DeleteInvocationsByIDs(ctx context.Context, ids []string) (int
 	return int(tag.RowsAffected()), nil
 }
 
+// RecentInvocations (SAFE-RELEASES-OBS PR-E, issue #976 / ADR-122)
+// returns invocation rows for appID whose created_at >= since,
+// ordered (created_at DESC, id DESC), capped at limit.
+func (s *PgStore) RecentInvocations(ctx context.Context, appID string, since time.Time, limit int) ([]Invocation, error) {
+	if appID == "" {
+		return nil, fmt.Errorf("state: RecentInvocations: empty app_id")
+	}
+	const cap = 10_000
+	if limit <= 0 || limit > cap {
+		limit = cap
+	}
+	rows, err := s.pool.Query(ctx,
+		`select `+invocationSelectCols+`
+		   from invocations
+		  where app_id = $1::uuid
+		    and created_at >= $2
+		  order by created_at desc, id desc
+		  limit $3`,
+		appID, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: RecentInvocations: %w", err)
+	}
+	defer rows.Close()
+	return scanInvocations(rows)
+}
+
+// RecentErrorRate (SAFE-RELEASES-OBS PR-E) returns the fraction of
+// failed invocations (state IN ('failed','dead_letter')) in the
+// [since, now] window for appID. Returns 0.0 when there are no rows.
+func (s *PgStore) RecentErrorRate(ctx context.Context, appID string, since time.Time) (float64, error) {
+	if appID == "" {
+		return 0, fmt.Errorf("state: RecentErrorRate: empty app_id")
+	}
+	var total, failed int
+	err := s.pool.QueryRow(ctx,
+		`select count(*),
+		        count(*) filter (where state in ('failed','dead_letter'))
+		   from invocations
+		  where app_id = $1::uuid
+		    and created_at >= $2`,
+		appID, since).Scan(&total, &failed)
+	if err != nil {
+		return 0, fmt.Errorf("state: RecentErrorRate: %w", err)
+	}
+	if total == 0 {
+		return 0.0, nil
+	}
+	return float64(failed) / float64(total), nil
+}
+
+// RecentP95LatencyMs (SAFE-RELEASES-OBS PR-E) returns the
+// 95th-percentile completion latency in milliseconds over the
+// [since, now] window for appID. Returns 0.0 when there is no data.
+func (s *PgStore) RecentP95LatencyMs(ctx context.Context, appID string, since time.Time) (float64, error) {
+	if appID == "" {
+		return 0, fmt.Errorf("state: RecentP95LatencyMs: empty app_id")
+	}
+	var p95 *float64
+	err := s.pool.QueryRow(ctx,
+		`select coalesce(
+		           percentile_cont(0.95) within group (order by extract(epoch from (completed_at - created_at)) * 1000.0),
+		           0.0)
+		   from invocations
+		  where app_id = $1::uuid
+		    and state = 'completed'
+		    and completed_at is not null
+		    and created_at >= $2`,
+		appID, since).Scan(&p95)
+	if err != nil {
+		return 0, fmt.Errorf("state: RecentP95LatencyMs: %w", err)
+	}
+	if p95 == nil {
+		return 0.0, nil
+	}
+	return *p95, nil
+}
+
 // ListDeadlineBreachedInvocations returns up to `limit` invocation IDs
 // still in (pending|dispatching) whose deadline_at is in the past.
 // Used by pkg/sched/retention_invocations.go's deadline-breach branch.

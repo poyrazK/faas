@@ -14621,6 +14621,133 @@ func (m *MemStore) CountFailedInvocationsSince(_ context.Context, accountID, app
 	return n, nil
 }
 
+// RecentInvocations (SAFE-RELEASES-OBS PR-E, issue #976 / ADR-122)
+// is the in-memory mirror of the pgstore RecentInvocations seam.
+// Walks m.invocations, filters on AppID + CreatedAt >= since,
+// orders by CreatedAt DESC (newest-first; the simulator only
+// counts them, but the slice is returned for the CLI's
+// observed_traffic display), and caps at `limit` (limit <= 0
+// means 10_000, the simulator's safety bound).
+func (m *MemStore) RecentInvocations(_ context.Context, appID string, since time.Time, limit int) ([]Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	const cap = 10_000
+	if limit <= 0 || limit > cap {
+		limit = cap
+	}
+	out := make([]Invocation, 0)
+	for _, inv := range m.invocations {
+		if inv.AppID != appID {
+			continue
+		}
+		if inv.CreatedAt.Before(since) {
+			continue
+		}
+		out = append(out, inv)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// RecentErrorRate (SAFE-RELEASES-OBS PR-E) is the in-memory mirror
+// of pgstore.RecentErrorRate. Walks m.invocations, counts terminal
+// failures (state='failed' OR state='dead_letter') within the
+// [since, now] window for appID, and returns the fraction. Returns
+// 0.0 when zero invocations match (no error). Mirrors the
+// production SQL's
+//
+//	COUNT(state='failed' OR state='dead_letter') / COUNT(*)
+//
+// semantics so the simulator's neutral path matches both backends.
+func (m *MemStore) RecentErrorRate(_ context.Context, appID string, since time.Time) (float64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var total, failed int
+	for _, inv := range m.invocations {
+		if inv.AppID != appID {
+			continue
+		}
+		if inv.CreatedAt.Before(since) {
+			continue
+		}
+		total++
+		if inv.State == InvocationFailed || inv.State == InvocationDeadLetter {
+			failed++
+		}
+	}
+	if total == 0 {
+		return 0.0, nil
+	}
+	return float64(failed) / float64(total), nil
+}
+
+// RecentP95LatencyMs (SAFE-RELEASES-OBS PR-E) is the in-memory
+// mirror of pgstore.RecentP95LatencyMs. Walks completed
+// invocations in the [since, now] window for appID, computes the
+// 95th-percentile completion latency in milliseconds (linear
+// interpolation between the two closest ranks, matching
+// percentile_cont(0.95) WITHIN GROUP semantics), and returns the
+// value. Returns 0.0 when no completed invocations match.
+//
+// Why a custom percentile impl (vs importing gonum/quantile or
+// expvar): the simulator runs against production traffic and is
+// invoked from the `gregale` CLI which ships with zero external
+// deps beyond the pkg/api surface. Inlining the rank-based
+// percentile keeps the memstore unit-testable without a new dep.
+func (m *MemStore) RecentP95LatencyMs(_ context.Context, appID string, since time.Time) (float64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	latencies := make([]float64, 0)
+	for _, inv := range m.invocations {
+		if inv.AppID != appID {
+			continue
+		}
+		if inv.State != InvocationCompleted {
+			continue
+		}
+		if inv.CompletedAt == nil {
+			continue
+		}
+		if inv.CompletedAt.Before(since) {
+			continue
+		}
+		dur := inv.CompletedAt.Sub(inv.CreatedAt)
+		if dur < 0 {
+			continue
+		}
+		latencies = append(latencies, float64(dur.Milliseconds()))
+	}
+	if len(latencies) == 0 {
+		return 0.0, nil
+	}
+	sort.Float64s(latencies)
+	// Linear interpolation between the two closest ranks —
+	// matches PostgreSQL's percentile_cont(0.95) WITHIN GROUP
+	// ORDER BY ... semantics (continuous percentile).
+	idx := 0.95 * float64(len(latencies)-1)
+	lo := int(mathFloor(idx))
+	hi := lo + 1
+	if hi >= len(latencies) {
+		return latencies[len(latencies)-1], nil
+	}
+	frac := idx - float64(lo)
+	return latencies[lo] + frac*(latencies[hi]-latencies[lo]), nil
+}
+
+// mathFloor is a tiny local helper so the file stays free of the
+// math import at the function level (math.Floor is fine; this is
+// here so a future contributor doesn't need to add math if they
+// drop the percentile helper).
+func mathFloor(x float64) int {
+	if x < 0 {
+		return int(x) - 1
+	}
+	return int(x)
+}
+
 // UsageByAccount returns the per-month roll-up. Mirrors the PgStore
 // shape (per-app, per-month aggregated mb_seconds + requests + cpu_usec
 // + tx_bytes + net_tx_bytes).
