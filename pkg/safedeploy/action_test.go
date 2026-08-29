@@ -28,11 +28,26 @@ type recordingAPID struct {
 	lastPatchID      string
 	lastPatchPct     int
 	lastRollbackSlug string
+	// SAFE-RELEASES-OBS PR-D: tracks RollbackToWithRule calls
+	// (the new alert_rule_id-stamping variant). When the mock
+	// observes a non-empty ruleID it bumps this counter so the
+	// test can assert the dispatcher chose the rule-stamping
+	// path over the legacy RollbackTo path.
+	withRuleCalls    int
+	lastWithRuleID   string
 }
 
 func (r *recordingAPID) RollbackTo(_ context.Context, slug, _ string) (api.DeploymentResponse, error) {
 	r.rollbackCalls++
 	r.lastRollbackSlug = slug
+	return api.DeploymentResponse{}, r.rollbackErr
+}
+
+func (r *recordingAPID) RollbackToWithRule(_ context.Context, slug, _, alertRuleID string) (api.DeploymentResponse, error) {
+	r.rollbackCalls++
+	r.withRuleCalls++
+	r.lastRollbackSlug = slug
+	r.lastWithRuleID = alertRuleID
 	return api.DeploymentResponse{}, r.rollbackErr
 }
 

@@ -4881,6 +4881,11 @@ func (m *MemStore) appendDeploymentAuditLocked(entry DeploymentAudit) (int64, er
 		at = time.Now()
 	}
 	id := int64(len(m.deploymentAudit) + 1)
+	var alertRuleCopy *uuid.UUID
+	if entry.AlertRuleID != nil {
+		u := *entry.AlertRuleID
+		alertRuleCopy = &u
+	}
 	m.deploymentAudit = append(m.deploymentAudit, DeploymentAudit{
 		ID:           id,
 		DeploymentID: entry.DeploymentID,
@@ -4889,6 +4894,7 @@ func (m *MemStore) appendDeploymentAuditLocked(entry DeploymentAudit) (int64, er
 		Actor:        entry.Actor,
 		At:           at,
 		Data:         dataCopy,
+		AlertRuleID:  alertRuleCopy,
 	})
 	return id, nil
 }
@@ -10391,6 +10397,11 @@ func (m *MemStore) AppendDeploymentAudit(_ context.Context, entry DeploymentAudi
 		at = time.Now()
 	}
 	id := int64(len(m.deploymentAudit) + 1)
+	var alertRuleCopy *uuid.UUID
+	if entry.AlertRuleID != nil {
+		u := *entry.AlertRuleID
+		alertRuleCopy = &u
+	}
 	m.deploymentAudit = append(m.deploymentAudit, DeploymentAudit{
 		ID:           id,
 		DeploymentID: entry.DeploymentID,
@@ -10399,6 +10410,7 @@ func (m *MemStore) AppendDeploymentAudit(_ context.Context, entry DeploymentAudi
 		Actor:        entry.Actor,
 		At:           at,
 		Data:         dataCopy,
+		AlertRuleID:  alertRuleCopy,
 	})
 	return id, nil
 }
@@ -10441,6 +10453,46 @@ func (m *MemStore) ListDeploymentAudit(_ context.Context, deploymentID string, l
 		clone := row
 		if len(row.Data) > 0 {
 			clone.Data = append(json.RawMessage(nil), row.Data...)
+		}
+		out = append(out, clone)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// ListDeploymentAuditByAlertRule (SAFE-RELEASES-OBS PR-D) is the
+// memstore mirror of pgstore.ListDeploymentAuditByAlertRule.
+// Same shape: newest-first scan over m.deploymentAudit with
+// AlertRuleID filter. Same limit semantics (cap=500; <=0 → 500).
+// The memstore path is the unit-test seam; production traffic
+// hits PgStore.
+func (m *MemStore) ListDeploymentAuditByAlertRule(_ context.Context, alertRuleID string, limit int) ([]DeploymentAudit, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	const cap = 500
+	if limit <= 0 || limit > cap {
+		limit = cap
+	}
+	want, err := uuid.Parse(alertRuleID)
+	if err != nil {
+		return nil, fmt.Errorf("state: list deployment_audit by alert_rule: %w", err)
+	}
+	var out []DeploymentAudit
+	for i := len(m.deploymentAudit) - 1; i >= 0; i-- {
+		row := m.deploymentAudit[i]
+		if row.AlertRuleID == nil || *row.AlertRuleID != want {
+			continue
+		}
+		clone := row
+		if len(row.Data) > 0 {
+			clone.Data = append(json.RawMessage(nil), row.Data...)
+		}
+		if clone.AlertRuleID != nil {
+			u := *row.AlertRuleID
+			clone.AlertRuleID = &u
 		}
 		out = append(out, clone)
 		if len(out) >= limit {

@@ -1313,6 +1313,29 @@ type SafeReleasesAlertRow struct {
 	Enabled bool
 }
 
+// AlertRuleDetailData (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122)
+// is the dashboard-facing payload for /dashboard/alerts/{rule_id}.
+// The handler at cmd/apid/handlers_dashboard.go::renderAlertRuleDetail
+// populates three slices via three Store calls: AlertRuleByID,
+// ListDeploymentAuditByAlertRule (the new partial-index-backed
+// query), and ListAlertDeliveriesForRule. The template
+// pkg/dashboard/templates/alert_rule_detail.html renders each.
+//
+// Why no MinPlan: AlertRule doesn't carry a plan tier — the plan
+// gate lives on alert_presets (only operator-tier accounts can
+// instantiate rules from those presets). A rule instantiated
+// against any plan renders identically across plans.
+//
+// AuditRows and Deliveries are bounded slices (cap=100 / cap=50
+// from the handler). Empty when no rows have been stamped yet —
+// the template renders a "no audit rows yet" empty state.
+type AlertRuleDetailData struct {
+	Page       Page
+	Rule       state.AlertRule
+	AuditRows  []state.DeploymentAudit
+	Deliveries []state.AlertDelivery
+}
+
 // AuditEventRow is one row of the audit table. TimeLabel is a
 // pre-formatted relative timestamp ("3m ago" / "just now" / "—")
 // computed at the handler edge so the template stays a pure renderer.

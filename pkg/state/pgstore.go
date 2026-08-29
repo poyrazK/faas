@@ -19493,8 +19493,8 @@ func (s *PgStore) AppendDeploymentAudit(ctx context.Context, entry DeploymentAud
 	var id int64
 	err := s.pool.QueryRow(ctx,
 		`insert into deployment_audit
-		    (deployment_id, account_id, kind, actor, at, data)
-		 values ($1, $2, $3, $4, coalesce($5, now()), $6::jsonb)
+		    (deployment_id, account_id, kind, actor, at, data, alert_rule_id)
+		 values ($1, $2, $3, $4, coalesce($5, now()), $6::jsonb, $7)
 		 returning id`,
 		entry.DeploymentID,
 		entry.AccountID,
@@ -19506,6 +19506,11 @@ func (s *PgStore) AppendDeploymentAudit(ctx context.Context, entry DeploymentAud
 		// 00333, which preserves the events.at timestamp).
 		nullTime(entry.At),
 		[]byte(entry.Data),
+		// SAFE-RELEASES-OBS PR-D: nil for non-rule-triggered rows;
+		// ActionDispatcher + evaluator stamp this for the 5
+		// rule-touching audit kinds. NULL on insert is fine — the
+		// partial index excludes null rows.
+		entry.AlertRuleID,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("state: append deployment_audit: %w", err)
@@ -19528,7 +19533,7 @@ func (s *PgStore) ListDeploymentAudit(ctx context.Context, deploymentID string, 
 		limit = cap
 	}
 	rows, err := s.pool.Query(ctx,
-		`select id, deployment_id, account_id, kind, actor, at, data
+		`select id, deployment_id, account_id, kind, actor, at, data, alert_rule_id
 		   from deployment_audit
 		  where deployment_id = $1::uuid
 		  order by at desc, id desc
@@ -19541,17 +19546,61 @@ func (s *PgStore) ListDeploymentAudit(ctx context.Context, deploymentID string, 
 	var out []DeploymentAudit
 	for rows.Next() {
 		var (
-			d       DeploymentAudit
-			dataRaw []byte
+			d         DeploymentAudit
+			dataRaw   []byte
+			alertRule *uuid.UUID
 		)
-		if err := rows.Scan(&d.ID, &d.DeploymentID, &d.AccountID, &d.Kind, &d.Actor, &d.At, &dataRaw); err != nil {
+		if err := rows.Scan(&d.ID, &d.DeploymentID, &d.AccountID, &d.Kind, &d.Actor, &d.At, &dataRaw, &alertRule); err != nil {
 			return nil, fmt.Errorf("state: scan deployment_audit row: %w", err)
 		}
+		d.AlertRuleID = alertRule
 		d.Data = json.RawMessage(dataRaw)
 		out = append(out, d)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("state: list deployment_audit rows: %w", err)
+	}
+	return out, nil
+}
+
+// ListDeploymentAuditByAlertRule (SAFE-RELEASES-OBS PR-D) returns
+// deployment_audit rows whose alert_rule_id matches, newest first.
+// Backs the /dashboard/alerts/{id} reverse-lookup query. The
+// partial index deployment_audit_alert_rule_idx (migrations/00532)
+// keeps the lookup sub-millisecond; only rows with non-null
+// alert_rule_id participate so the index stays tiny.
+func (s *PgStore) ListDeploymentAuditByAlertRule(ctx context.Context, alertRuleID string, limit int) ([]DeploymentAudit, error) {
+	const cap = 500
+	if limit <= 0 || limit > cap {
+		limit = cap
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, deployment_id, account_id, kind, actor, at, data, alert_rule_id
+		   from deployment_audit
+		  where alert_rule_id = $1::uuid
+		  order by at desc, id desc
+		  limit $2`,
+		alertRuleID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list deployment_audit by alert_rule: %w", err)
+	}
+	defer rows.Close()
+	var out []DeploymentAudit
+	for rows.Next() {
+		var (
+			d         DeploymentAudit
+			dataRaw   []byte
+			alertRule *uuid.UUID
+		)
+		if err := rows.Scan(&d.ID, &d.DeploymentID, &d.AccountID, &d.Kind, &d.Actor, &d.At, &dataRaw, &alertRule); err != nil {
+			return nil, fmt.Errorf("state: scan deployment_audit row by alert_rule: %w", err)
+		}
+		d.AlertRuleID = alertRule
+		d.Data = json.RawMessage(dataRaw)
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list deployment_audit by alert_rule rows: %w", err)
 	}
 	return out, nil
 }
