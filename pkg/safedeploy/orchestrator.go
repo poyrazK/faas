@@ -49,6 +49,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // StuckAfterDuration is the canned stuck-detection window
@@ -106,12 +107,20 @@ type Orchestrator struct {
 	Now     func() time.Time
 	Actor   string // service-account sentinel stamped into deployment_audit
 	Account string // service-account account_id stamped into deployment_audit
+	// Ops (SAFE-RELEASES-OBS PR-A) is the daemon's wire.OpsMetrics
+	// handle. Nil-allowed (the test seam builds an Orchestrator
+	// without a Prometheus registry); the accessor pattern in
+	// wire.OpsMetrics is itself nil-safe so emitAudit can call
+	// Ops.DeploymentAuditEmittedTotal(...)() unconditionally.
+	Ops *wire.OpsMetrics
 }
 
 // NewOrchestrator builds an Orchestrator with nil-coerced
 // dependencies. Actor is required (the audit row needs an
 // actor string); Account is optional and stays nil when the
-// deployment_audit row is for a fleet-level action.
+// deployment_audit row is for a fleet-level action. Ops is nil
+// by default — callers wire it via the exported field (cmd/meterd
+// sets it after construction; tests can leave it nil).
 func NewOrchestrator(store Store, log *slog.Logger, actor, account string) *Orchestrator {
 	if log == nil {
 		log = slog.Default()
@@ -180,6 +189,50 @@ func (o *Orchestrator) Once(ctx context.Context) (Stats, error) {
 		o.walkRow(ctx, d, now, &stats)
 	}
 	return stats, nil
+}
+
+// IncOps (SAFE-RELEASES-OBS PR-A) folds the per-tick Stats struct
+// into the daemon's wire.OpsMetrics registry. The Stats fields
+// stay (the per-tick log line still carries the same numbers); this
+// method adds the Prometheus-facing mirror so operators have a
+// fleet-level view of orchestrator state-machine transitions
+// without parsing journal lines.
+//
+// Call site: cmd/meterd wires the orchestrator and calls
+// o.IncOps(ops, stats) once at the end of Once() (right after the
+// row walk completes). ops may be nil — IncOps is nil-safe so the
+// meterd smoke test (which builds an Orchestrator without a
+// Prometheus registry) doesn't have to special-case the wiring.
+//
+// Each accessor returns a prometheus.Counter (LogsDropped /
+// DeploymentAuditGCRowsDeleted precedent); IncOps calls .Inc()
+// on every counter. The Stats values are not branched on here —
+// the journal line at the meterd call site carries the per-tick
+// numbers for log-driven diagnosis, and PR-B's
+// safedeploy_orchestrator_*_total rate() queries roll the
+// Prometheus counter into per-second rates.
+func (o *Orchestrator) IncOps(ops *wire.OpsMetrics, stats Stats) {
+	if ops == nil {
+		return
+	}
+	if c := ops.SafedeployOrchestratorStartedTotal(); c != nil {
+		c.Inc()
+	}
+	if c := ops.SafedeployOrchestratorCompletedTotal(); c != nil {
+		c.Inc()
+	}
+	if c := ops.SafedeployOrchestratorAbortedTotal(); c != nil {
+		c.Inc()
+	}
+	if c := ops.SafedeployOrchestratorStuckDetectedTotal(); c != nil {
+		c.Inc()
+	}
+	if c := ops.SafedeployOrchestratorAuditEmitFailedTotal(); c != nil {
+		c.Inc()
+	}
+	if c := ops.SafedeployOrchestratorStuckCheckMissingTimestampTotal(); c != nil {
+		c.Inc()
+	}
 }
 
 // walkRow advances a single deployment row's rollout_state
@@ -356,7 +409,24 @@ func (o *Orchestrator) emitAudit(ctx context.Context, d state.Deployment, kind s
 		o.Log.Warn("safedeploy: append audit failed",
 			"deployment_id", d.ID, "kind", kind, "err", err)
 		stats.AuditEmitFailed++
+		// SAFE-RELEASES-OBS PR-A: bump the
+		// deployment_audit_emitted_total counter on the failure
+		// path so the dashboard's audit-write-fidelity panel can
+		// split the per-kind emit rate from the failure rate.
+		// The counter accessor is nil-safe (Ops may be nil in
+		// the test seam).
+		if o.Ops != nil {
+			if c := o.Ops.DeploymentAuditEmittedTotal(kind, "failed"); c != nil {
+				c.Inc()
+			}
+		}
 		return
+	}
+	// success path: bump emitted_total{kind, "ok"}.
+	if o.Ops != nil {
+		if c := o.Ops.DeploymentAuditEmittedTotal(kind, "ok"); c != nil {
+			c.Inc()
+		}
 	}
 }
 

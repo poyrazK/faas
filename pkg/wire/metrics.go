@@ -790,10 +790,9 @@ type OpsMetrics struct {
 	alertEvalFiredTotal prometheus.Counter
 	// canaryProgressionAdvancedTotal (issue #976 / ADR-122 /
 	// SAFE-RELEASES-A) counts every canary step boundary crossed
-	// by the meterd tick (canary_step → canary_step+1 with
-	// elapsed >= current stage.Duration). Unlabelled. Mirrors
-	// alertEvalFiredTotal as a fleet-level rollup counter.
-	canaryProgressionAdvancedTotal prometheus.Counter
+	// by the meterd tick. Labelled by the closed canary preset set
+	// so operators can separate fleet activity by rollout policy.
+	canaryProgressionAdvancedTotal *prometheus.CounterVec
 	// canaryProgressionErrorsTotal (issue #976 / ADR-122 /
 	// SAFE-RELEASES-A) counts every per-row error inside the
 	// canary_progression tick (atomic APID advance failure, etc.).
@@ -814,6 +813,16 @@ type OpsMetrics struct {
 	// Unlabelled — fleet rollup; per-deployment detail lives in the
 	// existing deploy.traffic_changed audit row.
 	canaryProgressionZeroTimestampTotal prometheus.Counter
+	// SAFE-RELEASES-OBS PR-A: safedeploy state-machine counters.
+	safedeployOrchestratorStartedTotal               prometheus.Counter
+	safedeployOrchestratorCompletedTotal             prometheus.Counter
+	safedeployOrchestratorAbortedTotal               prometheus.Counter
+	safedeployOrchestratorStuckDetectedTotal         prometheus.Counter
+	safedeployOrchestratorAuditEmitFailedTotal       prometheus.Counter
+	safedeployOrchestratorStuckCheckMissingTimestamp prometheus.Counter
+	// SAFE-RELEASES-OBS PR-A: deployment-audit health counters.
+	deploymentAuditEmittedTotal  *prometheus.CounterVec
+	deploymentAuditGCFailedTotal prometheus.Counter
 	// alertDeliveryAttemptsTotal — counts dispatched alert-rule
 	// webhook attempts, labelled by outcome ∈ {delivered, failed}.
 	// Label cardinality budget = 2 (closed vocabulary). The counter
@@ -2497,10 +2506,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// advanced counter (fleet rollup) + errors counter labelled by
 	// reason ∈ {advance, list_in_flight}
 	// (closed vocabulary, cardinality budget = 2).
-	canaryProgressionAdvancedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+	canaryProgressionAdvancedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_canary_progression_advanced_total",
-		Help: "Count of canary step boundaries crossed by the meterd canary_progression tick (the atomic APID canary advance accepted). Unlabelled — fleet-level rollup. A non-zero rate is the heartbeat; a stalled rate combined with canaryProgressionErrorsTotal('advance') is the §12 dashboard tripwire for an APID outage.",
-	})
+		Help: "Count of canary step boundaries crossed by the meterd canary_progression tick, labelled by canary_preset.",
+	}, []string{"canary_preset"})
+	for _, preset := range []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"} {
+		canaryProgressionAdvancedTotal.WithLabelValues(preset)
+	}
 	canaryProgressionErrorsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_canary_progression_errors_total",
 		Help: "Count of per-row errors inside the canary_progression tick, labelled by reason ∈ {advance, list_in_flight} (closed vocabulary). advance covers atomic APID transition failures; list_in_flight signals a Postgres SELECT failure (fleet-wide tripwire).",
@@ -2519,6 +2531,50 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	canaryProgressionZeroTimestampTotal := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: prefix + "_canary_progression_zero_timestamp_total",
 		Help: "Count of canary_progression tick rows whose canary_step_started_at was the zero time (post-00517 the column is NOT NULL DEFAULT NOW(), so a non-zero rate is the tripwire for a write path bypassing the apid CreateDeployment stamp). Unlabelled — fleet-level rollup.",
+	})
+	safedeployOrchestratorStartedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_started_total",
+		Help: "Count of pending to rolling_out transitions walked by the safedeploy orchestrator.",
+	})
+	safedeployOrchestratorCompletedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_completed_total",
+		Help: "Count of rollout transitions completed by the safedeploy orchestrator.",
+	})
+	safedeployOrchestratorAbortedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_aborted_total",
+		Help: "Count of rollout transitions aborted by the safedeploy recovery path.",
+	})
+	safedeployOrchestratorStuckDetectedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_stuck_detected_total",
+		Help: "Count of rolling_out rows detected beyond the configured stuck threshold.",
+	})
+	safedeployOrchestratorAuditEmitFailedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_audit_emit_failed_total",
+		Help: "Count of safedeploy audit writes that failed.",
+	})
+	safedeployOrchestratorStuckCheckMissingTimestamp := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_orchestrator_stuck_check_missing_timestamp_total",
+		Help: "Count of rolling_out rows missing a canary step timestamp during stuck detection.",
+	})
+	deploymentAuditEmittedTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_deployment_audit_emitted_total",
+		Help: "Count of deployment_audit emit calls, labelled by kind and outcome.",
+	}, []string{"kind", "outcome"})
+	for _, kind := range []string{
+		"deploy.created", "deploy.source_ref", "deploy.local_tarball",
+		"deploy.traffic_changed", "deploy.health_probe_failed",
+		"deploy.health_recovered", "deploy.rolled_back", "deploy.removed",
+		"deploy.rollout_started", "deploy.rollout_completed",
+		"deploy.rollout_aborted", "deploy.canary_step_advanced",
+		"deploy.alert_rule_fired",
+	} {
+		for _, outcome := range []string{"ok", "failed"} {
+			deploymentAuditEmittedTotal.WithLabelValues(kind, outcome)
+		}
+	}
+	deploymentAuditGCFailedTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_deployment_audit_gc_failed_total",
+		Help: "Count of failed deployment_audit retention passes.",
 	})
 	alertDeliveryAttemptsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_alert_delivery_attempts_total",
@@ -2993,6 +3049,17 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditEventsRetentionLagSeconds,
 		auditEventsVolumeTotal,
 		deploymentAuditGCRowsDeletedTotal,
+		canaryProgressionAdvancedTotal,
+		canaryProgressionErrorsTotal,
+		canaryProgressionZeroTimestampTotal,
+		safedeployOrchestratorStartedTotal,
+		safedeployOrchestratorCompletedTotal,
+		safedeployOrchestratorAbortedTotal,
+		safedeployOrchestratorStuckDetectedTotal,
+		safedeployOrchestratorAuditEmitFailedTotal,
+		safedeployOrchestratorStuckCheckMissingTimestamp,
+		deploymentAuditEmittedTotal,
+		deploymentAuditGCFailedTotal,
 		topTenantRPS,
 		apidLogsEmittedTotal,
 		apidLogsDroppedTotal,
@@ -4068,6 +4135,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		canaryProgressionAdvancedTotal:       canaryProgressionAdvancedTotal,
 		canaryProgressionErrorsTotal:         canaryProgressionErrorsTotal,
 		canaryProgressionZeroTimestampTotal:  canaryProgressionZeroTimestampTotal,
+		safedeployOrchestratorStartedTotal:               safedeployOrchestratorStartedTotal,
+		safedeployOrchestratorCompletedTotal:             safedeployOrchestratorCompletedTotal,
+		safedeployOrchestratorAbortedTotal:               safedeployOrchestratorAbortedTotal,
+		safedeployOrchestratorStuckDetectedTotal:         safedeployOrchestratorStuckDetectedTotal,
+		safedeployOrchestratorAuditEmitFailedTotal:       safedeployOrchestratorAuditEmitFailedTotal,
+		safedeployOrchestratorStuckCheckMissingTimestamp: safedeployOrchestratorStuckCheckMissingTimestamp,
+		deploymentAuditEmittedTotal:                      deploymentAuditEmittedTotal,
+		deploymentAuditGCFailedTotal:                     deploymentAuditGCFailedTotal,
 		alertDeliveryAttemptsTotal:           alertDeliveryAttemptsTotal,
 		alertActionExecutedTotal:             alertActionExecutedTotal,
 		paddleWebhookVerifyFailedTotal:       paddleWebhookVerifyFailedTotal,
@@ -6328,12 +6403,16 @@ func (m *OpsMetrics) AlertEvalFiredTotal() func() {
 // bumped (wall-clock boundary crossed + APID patch accepted).
 // Unlabelled. Returns a no-op closure on a nil receiver — mirrors
 // AlertEvalFiredTotal.
-func (m *OpsMetrics) CanaryProgressionAdvancedTotal() func() {
+func (m *OpsMetrics) CanaryProgressionAdvancedTotal(preset string) prometheus.Counter {
 	if m == nil {
-		return func() {}
+		return nil
 	}
-	m.canaryProgressionAdvancedTotal.Inc()
-	return func() {}
+	switch preset {
+	case "none", "slow", "balanced", "aggressive", "1-10-50-100", "custom":
+		return m.canaryProgressionAdvancedTotal.WithLabelValues(preset)
+	default:
+		return nil
+	}
 }
 
 // CanaryProgressionZeroTimestampTotal (SAFE-RELEASES code-review
@@ -6350,30 +6429,109 @@ func (m *OpsMetrics) CanaryProgressionAdvancedTotal() func() {
 // rollup; per-deployment detail lives in the existing
 // deploy.traffic_changed audit row. Returns a no-op closure on a
 // nil receiver — mirrors CanaryProgressionAdvancedTotal.
-func (m *OpsMetrics) CanaryProgressionZeroTimestampTotal() func() {
+func (m *OpsMetrics) CanaryProgressionZeroTimestampTotal() prometheus.Counter {
 	if m == nil {
-		return func() {}
+		return nil
 	}
-	m.canaryProgressionZeroTimestampTotal.Inc()
-	return func() {}
+	return m.canaryProgressionZeroTimestampTotal
 }
 
 // CanaryProgressionErrorsTotal (issue #976 / ADR-122 /
 // SAFE-RELEASES-A) increments the canary-progression error counter
 // labelled by reason ∈ {advance, list_in_flight}. Closed vocabulary; unknown reasons drop to the
 // no-op closure (matches AlertDeliveryAttemptsTotal).
-func (m *OpsMetrics) CanaryProgressionErrorsTotal(reason string) func() {
+func (m *OpsMetrics) CanaryProgressionErrorsTotal(reason string) prometheus.Counter {
 	if m == nil {
-		return func() {}
+		return nil
 	}
 	switch reason {
 	case "advance", "list_in_flight":
 		// admitted
 	default:
-		return func() {}
+		return nil
 	}
-	m.canaryProgressionErrorsTotal.WithLabelValues(reason).Inc()
-	return func() {}
+	return m.canaryProgressionErrorsTotal.WithLabelValues(reason)
+}
+
+// SafedeployOrchestratorStartedTotal returns the pending to
+// rolling_out transition counter.
+func (m *OpsMetrics) SafedeployOrchestratorStartedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorStartedTotal
+}
+
+// SafedeployOrchestratorCompletedTotal returns the completed rollout counter.
+func (m *OpsMetrics) SafedeployOrchestratorCompletedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorCompletedTotal
+}
+
+// SafedeployOrchestratorAbortedTotal returns the aborted rollout counter.
+func (m *OpsMetrics) SafedeployOrchestratorAbortedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorAbortedTotal
+}
+
+// SafedeployOrchestratorStuckDetectedTotal returns the stuck-rollout counter.
+func (m *OpsMetrics) SafedeployOrchestratorStuckDetectedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorStuckDetectedTotal
+}
+
+// SafedeployOrchestratorAuditEmitFailedTotal returns the audit failure counter.
+func (m *OpsMetrics) SafedeployOrchestratorAuditEmitFailedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorAuditEmitFailedTotal
+}
+
+// SafedeployOrchestratorStuckCheckMissingTimestampTotal returns the missing
+// timestamp counter used by stuck-rollout detection.
+func (m *OpsMetrics) SafedeployOrchestratorStuckCheckMissingTimestampTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployOrchestratorStuckCheckMissingTimestamp
+}
+
+// DeploymentAuditEmittedTotal returns the bounded kind/outcome counter.
+func (m *OpsMetrics) DeploymentAuditEmittedTotal(kind, outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	switch kind {
+	case "deploy.created", "deploy.source_ref", "deploy.local_tarball",
+		"deploy.traffic_changed", "deploy.health_probe_failed",
+		"deploy.health_recovered", "deploy.rolled_back", "deploy.removed",
+		"deploy.rollout_started", "deploy.rollout_completed",
+		"deploy.rollout_aborted", "deploy.canary_step_advanced",
+		"deploy.alert_rule_fired":
+	default:
+		return nil
+	}
+	switch outcome {
+	case "ok", "failed":
+	default:
+		return nil
+	}
+	return m.deploymentAuditEmittedTotal.WithLabelValues(kind, outcome)
+}
+
+// DeploymentAuditGCFailedTotal returns the retention failure counter.
+func (m *OpsMetrics) DeploymentAuditGCFailedTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.deploymentAuditGCFailedTotal
 }
 
 // AlertDeliveryAttemptsTotal increments the alert-delivery attempts

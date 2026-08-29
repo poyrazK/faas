@@ -219,7 +219,9 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 				"canary_step", row.CanaryStep,
 				"canary_total_steps", row.CanaryTotalSteps)
 			if p.Ops != nil {
-				p.Ops.CanaryProgressionZeroTimestampTotal()()
+				if c := p.Ops.CanaryProgressionZeroTimestampTotal(); c != nil {
+					c.Inc()
+				}
 			}
 		}
 		elapsed := now.Sub(row.CanaryStepStarted)
@@ -235,13 +237,17 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 				"deployment_id", row.ID, "to_percent", nextStage.Percent, "err", err)
 			stats.Errors++
 			if p.Ops != nil {
-				p.Ops.CanaryProgressionErrorsTotal("advance")()
+				if c := p.Ops.CanaryProgressionErrorsTotal("advance"); c != nil {
+					c.Inc()
+				}
 			}
 			continue
 		}
 		stats.Advanced++
 		if p.Ops != nil {
-			p.Ops.CanaryProgressionAdvancedTotal()()
+			if c := p.Ops.CanaryProgressionAdvancedTotal(row.CanaryPreset); c != nil {
+				c.Inc()
+			}
 		}
 		// APID owns the terminal rollout_state transition; the next
 		// list predicate excludes complete rows.

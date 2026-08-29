@@ -3597,6 +3597,24 @@ const (
 	DeployHealthRecovered   DeploymentAuditKind = "deploy.health_recovered"
 	DeployRolledBack        DeploymentAuditKind = "deploy.rolled_back"
 	DeployRemoved           DeploymentAuditKind = "deploy.removed"
+	// SAFE-RELEASES-OBS PR-A (migrations/00520_deployment_audit_kinds_widen.sql):
+	// orchestrator emit surface. Closed-set widening that
+	// migration 00477 promised-but-never-shipped when Mega PR #2
+	// added the orchestrator goroutine. Without this widening the
+	// orchestrator's emitAudit calls hit SQLSTATE 23514 silently
+	// (the state-machine write landed regardless) — exactly the
+	// silent soak-bypass the audit trail exists to prevent.
+	DeployRolloutStarted   DeploymentAuditKind = "deploy.rollout_started"
+	DeployRolloutCompleted DeploymentAuditKind = "deploy.rollout_completed"
+	DeployRolloutAborted   DeploymentAuditKind = "deploy.rollout_aborted"
+	// SAFE-RELEASES-OBS PR-D: canary-step + alert-rule audit
+	// kinds. Mirrors the orchestrator's per-tick emit surface
+	// (deploy.canary_step_advanced will replace the existing
+	// deploy.traffic_changed payload shape; deploy.alert_rule_fired
+	// surfaces alert-driven rollbacks/demotes/promotes with a
+	// rule-scoped stamp).
+	DeployCanaryStepAdvanced DeploymentAuditKind = "deploy.canary_step_advanced"
+	DeployAlertRuleFired     DeploymentAuditKind = "deploy.alert_rule_fired"
 )
 
 // DeploymentAudit is one row of the deployment_audit table
