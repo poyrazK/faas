@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/dashboard"
@@ -148,6 +150,22 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// (in-flight rollouts / recent audit / active alerts);
 			// bounded by safedeploy_in_flight_rollouts gauge.
 			s.renderSafeReleasesDashboard(w, r, log, acct)
+		case strings.HasPrefix(path, "/dashboard/alerts/"):
+			// SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122):
+			// per-alert-rule drill-down. URL shape:
+			//   /dashboard/alerts/{rule_id}
+			// where rule_id is a UUID. Renders (a) the rule
+			// row (name, expr, severity, action), (b) every
+			// deployment_audit row the rule triggered (joined
+			// via deployment_audit.alert_rule_id, partial index
+			// from migrations/00532), and (c) the rule's
+			// recent deliveries (alert_deliveries).
+			rid := strings.TrimPrefix(path, "/dashboard/alerts/")
+			if rid == "" || strings.ContainsRune(rid, '/') {
+				s.notFound(w, "alert rule id required")
+				return
+			}
+			s.renderAlertRuleDetail(w, r, log, acct, rid)
 		case path == "/dashboard/stateless":
 			// Move 1 PR-A: customer-facing landing page for the
 			// stateless contract. Renders (a) the contract in
@@ -1689,6 +1707,72 @@ func safeReleasesAlertMetric(m string) bool {
 		return true
 	}
 	return false
+}
+
+// renderAlertRuleDetail (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122)
+// renders /dashboard/alerts/{rule_id} — the per-rule drill-down that
+// closes the operator's cross-correlation gap. The handler pulls:
+//  1. state.AlertRule via AlertRuleByID (single-row read).
+//  2. state.ListDeploymentAuditByAlertRule — every audit row the
+//     rule triggered (joins on deployment_audit.alert_rule_id, the
+//     partial index from migrations/00532 keeps this cheap even at
+//     90-day retention). The store accepts a UUID string; pass
+//     rule.ID directly.
+//  3. state.ListAlertDeliveriesForRule — the rule's recent webhook
+//     deliveries, so the operator can see "rule fired, here are the
+//     Slack webhooks that went out".
+//
+// Operator-gated: the URL is registered only when role.IsOperator is
+// true (the dashboard router at line 138 onward gates that). Missing
+// rule renders a "rule no longer exists" chip (forward-compat with
+// the migration comment — a rule can be deleted while its audit
+// trail outlives it).
+//
+// IDOR posture: AlertRuleByID is keyed on the alert_rules.id UUID,
+// which is opaque to the caller. No account scoping — alert rules
+// are operator-side state, not customer data.
+func (s *server) renderAlertRuleDetail(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, ruleID string) {
+	if _, err := uuid.Parse(ruleID); err != nil {
+		s.notFound(w, "invalid rule id")
+		return
+	}
+	ctx := r.Context()
+	rule, err := s.store.AlertRuleByID(ctx, ruleID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "alert rule not found")
+			return
+		}
+		log.Warn("dashboard renderAlertRuleDetail: lookup rule",
+			"rule", ruleID, "err", err.Error())
+		renderProblem(w, log, fmt.Errorf("alert rule lookup failed: %w", err))
+		return
+	}
+	auditRows, err := s.store.ListDeploymentAuditByAlertRule(ctx, ruleID, 100)
+	if err != nil {
+		log.Warn("dashboard renderAlertRuleDetail: list deployment audit by rule",
+			"rule", ruleID, "err", err.Error())
+		auditRows = nil
+	}
+	deliveries, err := s.store.ListAlertDeliveriesForRule(ctx, ruleID, 50)
+	if err != nil {
+		log.Warn("dashboard renderAlertRuleDetail: list alert deliveries",
+			"rule", ruleID, "err", err.Error())
+		deliveries = nil
+	}
+	page := dashboard.Page{
+		Title:   "Alert rule",
+		Body:    "alert_rule_detail",
+		Account: dashboardAccountView(acct, 0),
+		Data: dashboard.AlertRuleDetailData{
+			Rule:       rule,
+			AuditRows:  auditRows,
+			Deliveries: deliveries,
+		},
+	}
+	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
+		renderProblem(w, log, err)
+	}
 }
 
 // renderStateless renders /dashboard/stateless — Move 1 PR-A landing

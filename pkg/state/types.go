@@ -3412,6 +3412,16 @@ type DeploymentAudit struct {
 	Actor        string              // NOT NULL; resolved actor from EmitAs
 	At           time.Time           // NOT NULL DEFAULT now()
 	Data         json.RawMessage     // nullable; verbatim payload at emit time
+	// AlertRuleID (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122) is
+	// the alert_rule.id that triggered this audit row. Populated by
+	// pkg/safedeploy.ActionDispatcher when a rollback/demote/promote
+	// fires, AND by pkg/alerts/evaluator when the canary preset
+	// advances. nil for non-rule-triggered rows (the orchestrator's
+	// own deploy.rollout_* lifecycle emits). The DB column
+	// (migrations/00532) is UUID NULL + partial index
+	// (alert_rule_id, at DESC) WHERE alert_rule_id IS NOT NULL so
+	// the /dashboard/alerts/{id} reverse-lookup query stays cheap.
+	AlertRuleID *uuid.UUID
 }
 
 // AuditLogFilter is the read-side query shape for the audit_log table.

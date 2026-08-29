@@ -1115,6 +1115,36 @@ func (c *Client) RollbackTo(ctx context.Context, slug, targetDeploymentID string
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/rollback", body, &out)
 }
 
+// RollbackToWithRule (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122)
+// is the variant of RollbackTo that ALSO stamps the
+// deployment_audit row's alert_rule_id column with the supplied
+// alert rule UUID. Used by the meterd safedeploy ActionDispatcher
+// when an alert rule's action=rollback fires and the dispatcher
+// triggers the apid rollback; this lets the operator click from
+// the audit timeline back to /dashboard/alerts/{id}.
+//
+// Why a separate method (not just adding an optional parameter to
+// RollbackTo): keeping RollbackTo's signature stable preserves the
+// generated SDK surface (RollbackTo is a public SDK method). The
+// new entry point is an internal seam used only by meterd; SDK
+// callers continue to call RollbackTo unchanged.
+//
+// alertRuleID is the UUID of the alert_rules row that fired;
+// pass "" (empty) to fall back to RollbackTo's behaviour with no
+// rule stamping. The handler stamps alert_rule_id only when both
+// the body's AlertRuleID parses as a UUID AND the rule row
+// exists — otherwise the audit row is emitted with alert_rule_id
+// NULL (fail-soft; an invalid rule id should not block the
+// rollback itself).
+func (c *Client) RollbackToWithRule(ctx context.Context, slug, targetDeploymentID, alertRuleID string) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	body := RollbackRequest{TargetDeploymentID: &targetDeploymentID}
+	if alertRuleID != "" {
+		body.AlertRuleID = &alertRuleID
+	}
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/rollback", body, &out)
+}
+
 // ListDeploymentAudit returns the deployment_audit timeline for
 // one deployment (issue #976 / ADR-122 / SAFE-RELEASES-E.2 +
 // production-leveling Stream A). The handler

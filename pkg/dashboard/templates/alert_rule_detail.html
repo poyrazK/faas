@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): per-rule
+       drill-down page. Closes the operator's cross-correlation
+       gap: click a deploy.rolled_back audit row → land on the
+       rule that triggered the rollback. The page renders three
+       sections: (1) the rule row (name, expr, severity, action);
+       (2) every deployment_audit row the rule triggered
+       (joins on deployment_audit.alert_rule_id, the partial
+       index from migrations/00532 keeps this cheap); (3) the
+       rule's recent webhook deliveries. -->
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    section { padding: 1rem 0; }
+    section h2 { margin: 0 0 0.5rem 0; font-size: 1.1rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    pre { background: #f5f5f5; padding: 0.6rem; border-radius: 4px; overflow-x: auto; font-size: 0.85rem; }
+    .empty { padding: 1rem 0; color: #888; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 3px; font-size: 0.85rem; font-weight: 500; }
+    .badge.warning { background: #fef3c7; color: #92400e; }
+    .badge.critical { background: #fee2e2; color: #991b1b; }
+    .badge.info { background: #dbeafe; color: #1e40af; }
+    .kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0; }
+    .kv dt { color: #666; }
+    .kv dd { margin: 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/dashboard/">Home</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/safe-releases">Safe-releases</a>
+      <a href="/dashboard/audit-events">Audit</a>
+      <strong>Alert rule</strong>
+    </nav>
+    <span><code>{{.Account.ID}}</code></span>
+  </header>
+
+  <main>
+    <h1>{{.Data.Rule.Name}}</h1>
+    <p>Per-rule drill-down (SAFE-RELEASES-OBS PR-D). Cross-linked from any <code>deploy.rolled_back</code> audit row whose <code>alert_rule_id</code> matches this rule.</p>
+
+    <section>
+      <h2>Rule</h2>
+      <dl class="kv">
+        <dt>ID</dt><dd><code>{{.Data.Rule.ID}}</code></dd>
+        <dt>Name</dt><dd><code>{{.Data.Rule.Name}}</code></dd>
+        <dt>App</dt><dd>{{if .Data.Rule.AppID}}<code>{{.Data.Rule.AppID}}</code>{{else}}<span class="empty">account-wide</span>{{end}}</dd>
+        <dt>Metric</dt><dd><code>{{.Data.Rule.Metric}}</code></dd>
+        <dt>Comparison</dt><dd><code>{{.Data.Rule.Comparison}}</code> <code>{{.Data.Rule.Threshold}}</code></dd>
+        <dt>Window</dt><dd><code>{{.Data.Rule.WindowSpec}}</code></dd>
+        <dt>Action</dt><dd><code>{{.Data.Rule.Action}}</code></dd>
+        <dt>State</dt><dd>{{if eq .Data.Rule.State "firing"}}<span class="badge critical">firing</span>{{else if eq .Data.Rule.State "pending"}}<span class="badge warning">pending</span>{{else}}<span class="badge info">{{.Data.Rule.State}}</span>{{end}}</dd>
+        <dt>Enabled</dt><dd>{{if .Data.Rule.Enabled}}<span class="badge info">enabled</span>{{else}}<span class="badge warning">disabled</span>{{end}}</dd>
+        <dt>Last fired</dt><dd>{{if .Data.Rule.LastFiredAt.IsZero}}<span class="empty">never</span>{{else}}<code>{{.Data.Rule.LastFiredAt.Format "2006-01-02 15:04:05 UTC"}}</code>{{end}}</dd>
+      </dl>
+    </section>
+
+    <section>
+      <h2>Audit rows triggered by this rule ({{len .Data.AuditRows}})</h2>
+      <p>Every <code>deployment_audit</code> row stamped with <code>alert_rule_id = {{.Data.Rule.ID}}</code>. Backed by the partial index from migrations/00532.</p>
+      {{if .Data.AuditRows}}
+      <table>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Kind</th>
+            <th>Deployment</th>
+            <th>Actor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Data.AuditRows}}
+          <tr>
+            <td>{{.At.Format "2006-01-02 15:04:05 UTC"}}</td>
+            <td><code>{{.Kind}}</code></td>
+            <td><code>{{.DeploymentID}}</code></td>
+            <td><code>{{.Actor}}</code></td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <p class="empty">No audit rows stamped with this rule yet. The rule will appear here the first time it triggers a <code>deploy.rolled_back</code> (or future deploy.* paths that opt into rule attribution).</p>
+      {{end}}
+    </section>
+
+    <section>
+      <h2>Recent deliveries ({{len .Data.Deliveries}})</h2>
+      <p>The most recent webhook deliveries emitted when this rule fired (alert_deliveries).</p>
+      {{if .Data.Deliveries}}
+      <table>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Status</th>
+            <th>Channel</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Data.Deliveries}}
+          <tr>
+            <td>{{.At.Format "2006-01-02 15:04:05 UTC"}}</td>
+            <td><code>{{.Status}}</code></td>
+            <td><code>{{.Channel}}</code></td>
+            <td>{{if .Error}}<code>{{.Error}}</code>{{else}}<span class="empty">∅</span>{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <p class="empty">No deliveries yet. Webhook fan-out lives at <code>pkg/alerts/evaluator.go</code>; deliveries are stamped when an enabled rule's action runs.</p>
+      {{end}}
+    </section>
+  </main>
+
+  <footer>
+    Alert rule · issue #976 / ADR-122 · SAFE-RELEASES-OBS PR-D.
+  </footer>
+</body>
+</html>

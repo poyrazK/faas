@@ -51,6 +51,7 @@ import (
 // tests pass a closure that captures the (id, percent) tuple).
 type APIDClient interface {
 	RollbackTo(ctx context.Context, slug, targetDeploymentID string) (api.DeploymentResponse, error)
+	RollbackToWithRule(ctx context.Context, slug, targetDeploymentID, alertRuleID string) (api.DeploymentResponse, error)
 	PatchDeploymentsIdTraffic(ctx context.Context, id string, percent int) (api.DeploymentResponse, error)
 }
 
@@ -157,7 +158,13 @@ func (a *ActionDispatcher) doRollback(ctx context.Context, rule state.AlertRule,
 	a.Log.Info("safedeploy: rollback triggered",
 		"rule", rule.ID, "name", rule.Name, "slug", slug,
 		"observed", observed, "fired_at", at.UTC().Format(time.RFC3339Nano))
-	if _, err := a.APID.RollbackTo(ctx, slug, ""); err != nil {
+	// SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): use
+	// RollbackToWithRule so the resulting deployment_audit row
+	// carries alert_rule_id=rule.ID. Operator's audit timeline
+	// renders the rule as a clickable chip → /dashboard/alerts/{id}.
+	// Passing rule.ID.String() (never empty) so the apid handler
+	// stamps the column; empty would fall back to the legacy path.
+	if _, err := a.APID.RollbackToWithRule(ctx, slug, "", rule.ID); err != nil {
 		return fmt.Errorf("safedeploy: rollback %s: %w", slug, err)
 	}
 	return nil

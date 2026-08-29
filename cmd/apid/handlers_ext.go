@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/billing"
@@ -1590,11 +1592,26 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	// returns an error on malformed input which we treat as 400, but an
 	// empty body is fine (Decodable zero-value + no error).
 	var req api.RollbackRequest
+	// SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): declared up
+	// front so the AlertRuleID parse below can assign into it.
+	var (
+		alertRuleID uuid.UUID
+	)
 	if r.ContentLength != 0 {
 		if err := decodeJSON(r, &req); err != nil {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid rollback request", err.Error()))
 			return
+		}
+	}
+	// SAFE-RELEASES-OBS PR-D: when the body's AlertRuleID parses as a
+	// UUID, capture it so the audit row stamp below can attribute the
+	// rollback to a fired alert rule. A malformed string is treated as
+	// nil (legacy operator-driven path) — fail-soft so an upstream
+	// caller can't break the rollback just by sending a bad UUID.
+	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
+		if parsed, err := uuid.Parse(*req.AlertRuleID); err == nil {
+			alertRuleID = parsed
 		}
 	}
 
@@ -1694,6 +1711,50 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		"to":     target.ID,
 		"mode":   mode,
 	})
+	// SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): emit a
+	// deployment_audit row for the rollback so the operator's audit
+	// timeline surfaces the auto-rollback with kind=deploy.rolled_back.
+	// alert_rule_id is stamped ONLY when the meterd alert-rule path
+	// supplied a parseable UUID (alertRuleID != uuid.Nil); the
+	// operator-driven path leaves it nil — same shape as RecoverRollout
+	// (pkg/state/pgstore.go:5583). The actor sentinel
+	// "apid:rollback" distinguishes this from the meterd-driven
+	// orchestrator path (which stamps actor="meterd:safedeploy" via
+	// cmd/meterd/canary_progression_ticks.go) and the operator CLI
+	// recover path (actor="operator:cli:recover_rollout"). Errors
+	// are logged-and-continued so a transient audit-write failure
+	// doesn't roll back the supersede/live transition above.
+	// Convert string → uuid.UUID once; types.Deployment.ID and
+	// types.Account.ID are both string in pkg/state.
+	depUUID, depErr := uuid.Parse(current.ID)
+	if depErr != nil {
+		// Should be unreachable — IDs come from Postgres identity
+		// columns. Render the audit row with a zero UUID + warn so
+		// the operator sees the anomaly instead of a silent skip.
+		s.log.Warn("rollback: parse current deployment_id failed",
+			"deployment", current.ID, "err", depErr.Error())
+		depUUID = uuid.Nil
+	}
+	var acctUUID *uuid.UUID
+	if parsed, err := uuid.Parse(acct.ID); err == nil {
+		acctUUID = &parsed
+	}
+	auditEntry := state.DeploymentAudit{
+		DeploymentID: depUUID,
+		AccountID:    acctUUID,
+		Kind:         state.DeployRolledBack,
+		Actor:        "apid:rollback",
+		At:           time.Now().UTC(),
+		Data:         json.RawMessage(fmt.Sprintf(`{"from":%q,"to":%q,"mode":%q}`, current.ID, target.ID, mode)),
+	}
+	if alertRuleID != uuid.Nil {
+		rid := alertRuleID
+		auditEntry.AlertRuleID = &rid
+	}
+	if _, err := s.store.AppendDeploymentAudit(r.Context(), auditEntry); err != nil {
+		s.log.Warn("rollback: append deployment_audit failed",
+			"app", app.ID, "deployment", target.ID, "err", err.Error())
+	}
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(target, app))
 }
 

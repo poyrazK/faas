@@ -12453,6 +12453,11 @@ components:
           format: uuid
           description: "The UUID of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and must have status='superseded'. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour)."
           example: "0123456789abcdef0123456789abcdef"
+        alert_rule_id:
+          type: string
+          format: uuid
+          description: "SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): when set, the handler stamps the deployment_audit row's alert_rule_id column with this UUID so an operator can cross-link the audit timeline back to /dashboard/alerts/{id}. Wire-additive per ADR-016; the field is ignored when nil/empty. Only privileged in-process callers (meterd ActionDispatcher) set this; the API does not enforce role because the endpoint already requires MFA + ScopesDeployWrite."
+          example: "abcdef0123456789abcdef0123456789"
 
     RecoverRolloutRequest:
       description: "Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort}; `reason` is the operator-supplied free-text captured into the deployment_audit row's data payload."
@@ -13180,6 +13185,11 @@ components:
         account_id:
           type: string
           description: "Owning account UUID (cross-tenant IDOR posture)."
+        alert_rule_id:
+          type: string
+          format: uuid
+          description: "SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): when the audit row was stamped by an alert-rule-fired action (e.g. auto-rollback via meterd ActionDispatcher), this carries the alert_rules.id UUID. nil for non-rule-triggered rows. Wire-additive per ADR-016 — null for all pre-PR-D rows."
+          example: "abcdef0123456789abcdef0123456789"
 
     ListDeploymentAuditResponse:
       description: |

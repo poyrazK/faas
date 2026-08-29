@@ -4104,6 +4104,15 @@ type Store interface {
 	// shows them under the orphaned-deployment_id sentinel.
 	ListDeploymentAudit(ctx context.Context, deploymentID string, limit int) ([]DeploymentAudit, error)
 
+	// ListDeploymentAuditByAlertRule (SAFE-RELEASES-OBS PR-D) is
+	// the reverse-lookup query behind /dashboard/alerts/{id} — every
+	// deployment_audit row whose alert_rule_id matches the supplied
+	// rule, newest first. Backs the partial index
+	// deployment_audit_alert_rule_idx created in migrations/00532 so
+	// the query stays sub-millisecond. limit > 0 caps the page;
+	// <= 0 means "no row cap" (caller is responsible for bounding).
+	ListDeploymentAuditByAlertRule(ctx context.Context, alertRuleID string, limit int) ([]DeploymentAudit, error)
+
 	// AppendDeploymentStage (ADR-117, migration 00302) appends a
 	// closed stage transition to deployments.stage_state and returns
 	// the new row. The `from` and `to` parameters are the
