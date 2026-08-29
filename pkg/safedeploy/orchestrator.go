@@ -169,26 +169,26 @@ var ErrOrchestratorNilStore = errors.New("safedeploy: Orchestrator invoked with 
 // errors returned are non-nil only when the per-tick
 // ListPendingRollouts query itself fails — every other failure
 // is warn-logged and counted in Stats.
-func (o *Orchestrator) Once(ctx context.Context) (Stats, error) {
+func (o *Orchestrator) Once(ctx context.Context) (Stats, int, error) {
 	var stats Stats
 	if o == nil || o.Store == nil {
-		return stats, ErrOrchestratorNilStore
+		return stats, 0, ErrOrchestratorNilStore
 	}
 	rows, err := o.Store.SafedeployListPendingRollouts(ctx)
 	if err != nil {
-		return stats, fmt.Errorf("safedeploy: list pending rollouts: %w", err)
+		return stats, 0, fmt.Errorf("safedeploy: list pending rollouts: %w", err)
 	}
 	if len(rows) == 0 {
-		return stats, nil
+		return stats, 0, nil
 	}
 	now := o.now()
 	for _, d := range rows {
 		if err := ctx.Err(); err != nil {
-			return stats, err
+			return stats, len(rows), err
 		}
 		o.walkRow(ctx, d, now, &stats)
 	}
-	return stats, nil
+	return stats, len(rows), nil
 }
 
 // IncOps (SAFE-RELEASES-OBS PR-A) folds the per-tick Stats struct
@@ -211,7 +211,7 @@ func (o *Orchestrator) Once(ctx context.Context) (Stats, error) {
 // numbers for log-driven diagnosis, and PR-B's
 // safedeploy_orchestrator_*_total rate() queries roll the
 // Prometheus counter into per-second rates.
-func (o *Orchestrator) IncOps(ops *wire.OpsMetrics, stats Stats) {
+func (o *Orchestrator) IncOps(ops *wire.OpsMetrics, stats Stats, inFlight int) {
 	if ops == nil {
 		return
 	}
@@ -232,6 +232,9 @@ func (o *Orchestrator) IncOps(ops *wire.OpsMetrics, stats Stats) {
 	}
 	if c := ops.SafedeployOrchestratorStuckCheckMissingTimestampTotal(); c != nil {
 		c.Inc()
+	}
+	if g := ops.SafedeployInFlightRollouts(); g != nil {
+		g.Set(float64(inFlight))
 	}
 }
 

@@ -892,6 +892,19 @@ type OpsMetrics struct {
 	// operator's "is meterd actually evaluating rules?" view.
 	alertEvaluatorEnabled prometheus.Gauge
 
+	// SAFE-RELEASES-OBS PR-B: 1 gauge + 4 alert-fire counters that
+	// back the 4 new fleet-level alert presets (canary_stuck_step,
+	// safedeploy_audit_emit_failing, deployment_audit_gc_failing,
+	// canary_fleet_in_flight_high). The gauge is populated by
+	// pkg/safedeploy.Orchestrator.Once at the end of every tick;
+	// the counters are bumped by the alert evaluator's fire path
+	// (pkg/alerts/evaluator.go::evalRule).
+	safedeployInFlightRollouts                prometheus.Gauge
+	canaryStuckStepAlertFiredTotal            prometheus.Counter
+	safedeployAuditEmitFailingAlertFiredTotal prometheus.Counter
+	deploymentAuditGCFailingAlertFiredTotal   prometheus.Counter
+	canaryFleetInFlightHighAlertFiredTotal    prometheus.Counter
+
 	// Issue #1233 / ADR-123 — alert-preset signal gauges.
 	// meterdAccountSpendEur (account_id) is the MTD EUR spend
 	// computed by the meterd tick loop and stamped every
@@ -2610,6 +2623,35 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Prometheus treats as a missing time series rather than zero.
 	alertEvaluatorEnabled.Set(0)
 
+	// SAFE-RELEASES-OBS PR-B: fleet-level safe-releases alert
+	// tripwires. The 4 new alert presets query the gauges / counter
+	// rates below (see pkg/alerts/safe_releases_presets.go and
+	// migrations/00531_alert_presets_safe_releases_seed.sql). The
+	// gauge is populated once per meterd tick from the
+	// orchestrator's pending-rollout count; the counters are bumped
+	// by the alert evaluator at fire time.
+	safedeployInFlightRollouts := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_safedeploy_in_flight_rollouts",
+		Help: "Number of deployments in {pending, rolling_out} the safedeploy orchestrator walked on its most recent tick. Backs PR-B's canary_fleet_in_flight_high alert — sustained >50 is operator back-pressure. Set (not Inc) — value reflects the latest tick.",
+	})
+	safedeployInFlightRollouts.Set(0)
+	canaryStuckStepAlertFiredTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_canary_stuck_step_alert_fired_total",
+		Help: "Count of canary_stuck_step alert firings on the meterd evaluator. Unlabelled — fleet-level tripwire that operators can pair with the §12 dashboard's safe-releases panel. Pre-PR this signal had no operator-facing tripwire.",
+	})
+	safedeployAuditEmitFailingAlertFiredTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_audit_emit_failing_alert_fired_total",
+		Help: "Count of safedeploy_audit_emit_failing alert firings on the meterd evaluator. Unlabelled — fleet-level tripwire; sustained rate is the silent-failure indicator (audit writes were silently dropping pre-PR-A).",
+	})
+	deploymentAuditGCFailingAlertFiredTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_deployment_audit_gc_failing_alert_fired_total",
+		Help: "Count of deployment_audit_gc_failing alert firings on the meterd evaluator. Unlabelled — fleet-level tripwire; sustained rate means the 90-day deployment_audit retention cron is down (disk-fill risk).",
+	})
+	canaryFleetInFlightHighAlertFiredTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_canary_fleet_in_flight_high_alert_fired_total",
+		Help: "Count of canary_fleet_in_flight_high alert firings on the meterd evaluator. Unlabelled — fleet-level tripwire for operator back-pressure when >50 canaries are simultaneously in flight.",
+	})
+
 	// Issue #1233 / ADR-123 — alert-preset signal gauges.
 	meterdAccountSpendEur := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_account_spend_eur",
@@ -3061,6 +3103,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		safedeployOrchestratorStuckCheckMissingTimestamp,
 		deploymentAuditEmittedTotal,
 		deploymentAuditGCFailedTotal,
+		safedeployInFlightRollouts,
+		canaryStuckStepAlertFiredTotal,
+		safedeployAuditEmitFailingAlertFiredTotal,
+		deploymentAuditGCFailingAlertFiredTotal,
+		canaryFleetInFlightHighAlertFiredTotal,
 		topTenantRPS,
 		apidLogsEmittedTotal,
 		apidLogsDroppedTotal,
@@ -4121,6 +4168,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		safedeployOrchestratorStuckCheckMissingTimestamp:      safedeployOrchestratorStuckCheckMissingTimestamp,
 		deploymentAuditEmittedTotal:                           deploymentAuditEmittedTotal,
 		deploymentAuditGCFailedTotal:                          deploymentAuditGCFailedTotal,
+		safedeployInFlightRollouts:                            safedeployInFlightRollouts,
+		canaryStuckStepAlertFiredTotal:                        canaryStuckStepAlertFiredTotal,
+		safedeployAuditEmitFailingAlertFiredTotal:             safedeployAuditEmitFailingAlertFiredTotal,
+		deploymentAuditGCFailingAlertFiredTotal:               deploymentAuditGCFailingAlertFiredTotal,
+		canaryFleetInFlightHighAlertFiredTotal:                canaryFleetInFlightHighAlertFiredTotal,
 		alertDeliveryAttemptsTotal:                            alertDeliveryAttemptsTotal,
 		alertActionExecutedTotal:                              alertActionExecutedTotal,
 		paddleWebhookVerifyFailedTotal:                        paddleWebhookVerifyFailedTotal,
@@ -6535,6 +6587,104 @@ func (m *OpsMetrics) SafedeployOrchestratorStuckCheckMissingTimestampTotal() pro
 		return nil
 	}
 	return m.safedeployOrchestratorStuckCheckMissingTimestamp
+}
+
+// SafedeployInFlightRollouts returns the gauge of in-flight
+// rolling_out deployments (rows whose rollout_state='rolling_out'
+// as of the most recent orchestrator tick). Sampled once per tick
+// in pkg/safedeploy/orchestrator.go::Once after the
+// SafedeployListPendingRollouts call. Backs PR-B's
+// canary_fleet_in_flight_high alert. Unlabelled.
+func (m *OpsMetrics) SafedeployInFlightRollouts() prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployInFlightRollouts
+}
+
+// CanaryStuckStepAlertFiredTotal returns the counter of
+// canary_stuck_step alert firings (PR-B preset). Bumped by
+// pkg/alerts/evaluator.go::observe when the rule fires. Unlabelled.
+func (m *OpsMetrics) CanaryStuckStepAlertFiredTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.canaryStuckStepAlertFiredTotal
+}
+
+// SafedeployAuditEmitFailingAlertFiredTotal returns the counter
+// of safedeploy_audit_emit_failing alert firings (PR-B preset).
+// Bumped by pkg/alerts/evaluator.go::observe when the rule fires.
+// Unlabelled.
+func (m *OpsMetrics) SafedeployAuditEmitFailingAlertFiredTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployAuditEmitFailingAlertFiredTotal
+}
+
+// DeploymentAuditGCFailingAlertFiredTotal returns the counter of
+// deployment_audit_gc_failing alert firings (PR-B preset). Bumped
+// by pkg/alerts/evaluator.go::observe when the rule fires.
+// Unlabelled.
+func (m *OpsMetrics) DeploymentAuditGCFailingAlertFiredTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.deploymentAuditGCFailingAlertFiredTotal
+}
+
+// CanaryFleetInFlightHighAlertFiredTotal returns the counter of
+// canary_fleet_in_flight_high alert firings (PR-B preset). Bumped
+// by pkg/alerts/evaluator.go::observe when the rule fires.
+// Unlabelled.
+func (m *OpsMetrics) CanaryFleetInFlightHighAlertFiredTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.canaryFleetInFlightHighAlertFiredTotal
+}
+
+// CanaryStuckStepAlertFiredOp bumps the canary_stuck_step fire
+// counter via the legacy `(inc func())` access pattern that the
+// alerts.Ops interface expects (matches AlertEvalFiredTotal at
+// line 6304). The accessor eagerly increments and returns a no-op
+// closure so callers using `ops.X()()` keep working. The
+// prometheus.Counter-flavoured accessor above is for unit tests
+// that read via testutil.ToFloat64.
+func (m *OpsMetrics) CanaryStuckStepAlertFiredOp() func() {
+	if m == nil {
+		return func() {}
+	}
+	m.canaryStuckStepAlertFiredTotal.Inc()
+	return func() {}
+}
+
+// SafedeployAuditEmitFailingAlertFiredOp — see CanaryStuckStepAlertFiredOp.
+func (m *OpsMetrics) SafedeployAuditEmitFailingAlertFiredOp() func() {
+	if m == nil {
+		return func() {}
+	}
+	m.safedeployAuditEmitFailingAlertFiredTotal.Inc()
+	return func() {}
+}
+
+// DeploymentAuditGCFailingAlertFiredOp — see CanaryStuckStepAlertFiredOp.
+func (m *OpsMetrics) DeploymentAuditGCFailingAlertFiredOp() func() {
+	if m == nil {
+		return func() {}
+	}
+	m.deploymentAuditGCFailingAlertFiredTotal.Inc()
+	return func() {}
+}
+
+// CanaryFleetInFlightHighAlertFiredOp — see CanaryStuckStepAlertFiredOp.
+func (m *OpsMetrics) CanaryFleetInFlightHighAlertFiredOp() func() {
+	if m == nil {
+		return func() {}
+	}
+	m.canaryFleetInFlightHighAlertFiredTotal.Inc()
+	return func() {}
 }
 
 // DeploymentAuditEmittedTotal returns the per-{kind, outcome}
