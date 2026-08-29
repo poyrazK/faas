@@ -6,9 +6,12 @@
 //
 // Pins the new v2 methods on PgStore:
 //   - StaticEgressIPNode: returns the compute_nodes.id owning
-//     a (account_id, customer_ip) tuple.
-//   - ProvisionedStaticEgressIPsForNode: per-node reverse lookup
-//     (every IP across every account for a given node_id).
+//     a (account_id, customer_ip) tuple. This is the only
+//     forward lookup the schedd wake path needs (a reverse
+//     per-node list was rejected at code-review time as dead
+//     code — nothing in vmmd or schedd calls for a full
+//     per-node IP set; the bridge-alias reconciliation lives
+//     behind the bundle loader's TOML-driven SIGHUP path).
 //   - ReplaceProvisionedStaticEgressIPs's v2 per-(account, node)
 //     partitioning: vmmd-A's writes never collide with vmmd-B's.
 //
@@ -23,7 +26,6 @@ package state_test
 import (
 	"context"
 	"net/netip"
-	"sort"
 	"testing"
 
 	"github.com/google/uuid"
@@ -107,69 +109,6 @@ func TestPgStore_StaticEgressIPNode_BadUUID(t *testing.T) {
 	}
 }
 
-// TestPgStore_ProvisionedStaticEgressIPsForNode_Reverse pins
-// the per-node reverse lookup used by vmmd's bundle loader on
-// SIGHUP to reconcile its bridge alias-IP set against the
-// authoritative Postgres state.
-//
-// Pins:
-//   - returns nil (not error) when the node has no provisioned
-//     IPs — the loader's reconcile is a no-op in that case.
-//   - returns all IPs across all accounts for the given node.
-//   - excludes IPs from other nodes — the per-node filter is
-//     the load-bearing v2 semantic (multi-host v2 partition).
-func TestPgStore_ProvisionedStaticEgressIPsForNode_Reverse(t *testing.T) {
-	s, pool, ctx := pgStoreWithPool(t)
-	nodeA := seedStaticEgressNodePg(t, ctx, pool)
-	nodeB := seedStaticEgressNodePg(t, ctx, pool)
-
-	acct1 := seedStaticEgressAccountPg(t, ctx, s)
-	acct2 := seedStaticEgressAccountPg(t, ctx, s)
-
-	// nodeA owns 2 IPs across acct1 + acct2; nodeB owns 1 IP.
-	ipA1 := netip.MustParseAddr("203.0.113.1")
-	ipA2 := netip.MustParseAddr("203.0.113.2")
-	ipB1 := netip.MustParseAddr("198.51.100.7")
-
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acct1, nodeA, []netip.Addr{ipA1}); err != nil {
-		t.Fatalf("seed nodeA/acct1: %v", err)
-	}
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acct2, nodeA, []netip.Addr{ipA2}); err != nil {
-		t.Fatalf("seed nodeA/acct2: %v", err)
-	}
-	if err := s.ReplaceProvisionedStaticEgressIPs(ctx, acct1, nodeB, []netip.Addr{ipB1}); err != nil {
-		t.Fatalf("seed nodeB/acct1: %v", err)
-	}
-
-	// Empty node_id short-circuit returns nil.
-	if got, err := s.ProvisionedStaticEgressIPsForNode(ctx, ""); err != nil || got != nil {
-		t.Errorf("empty nodeID: got (%v, %v), want (nil, nil)", got, err)
-	}
-
-	// nodeA's IPs.
-	gotA, err := s.ProvisionedStaticEgressIPsForNode(ctx, nodeA)
-	if err != nil {
-		t.Fatalf("reverse nodeA: %v", err)
-	}
-	sortIPs(gotA)
-	wantA := []netip.Addr{ipA1, ipA2}
-	sortIPs(wantA)
-	if !sliceEqIP(gotA, wantA) {
-		t.Errorf("nodeA reverse: got %v, want %v", gotA, wantA)
-	}
-
-	// nodeB's IPs.
-	gotB, err := s.ProvisionedStaticEgressIPsForNode(ctx, nodeB)
-	if err != nil {
-		t.Fatalf("reverse nodeB: %v", err)
-	}
-	sortIPs(gotB)
-	wantB := []netip.Addr{ipB1}
-	if !sliceEqIP(gotB, wantB) {
-		t.Errorf("nodeB reverse: got %v, want %v", gotB, wantB)
-	}
-}
-
 // TestPgStore_ReplaceProvisionedStaticEgressIPs_NodeIDFilter
 // pins the v2 per-(account, node) partition: vmmd-A's writes
 // never collide with vmmd-B's writes for the same account. A
@@ -182,7 +121,9 @@ func TestPgStore_ProvisionedStaticEgressIPsForNode_Reverse(t *testing.T) {
 //   - nodeB's Replace leaves nodeA's rows intact for the same
 //     account.
 //   - both nodes' rows coexist and are independently readable
-//     via ProvisionedStaticEgressIPsForNode.
+//     via StaticEgressIPNode (the per-IP forward lookup covers
+//     the per-node partition: each surviving IP's owning node
+//     matches what its writer stamped).
 func TestPgStore_ReplaceProvisionedStaticEgressIPs_NodeIDFilter(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	acctID := seedStaticEgressAccountPg(t, ctx, s)
@@ -221,37 +162,15 @@ func TestPgStore_ReplaceProvisionedStaticEgressIPs_NodeIDFilter(t *testing.T) {
 		t.Errorf("after clear nodeA: ipB missing from gate (DELETE leaked across nodes)")
 	}
 
-	// Reverse lookup confirms the per-node partition.
-	gotA, _ := s.ProvisionedStaticEgressIPsForNode(ctx, nodeA)
-	if len(gotA) != 0 {
-		t.Errorf("nodeA reverse after clear: got %v, want []", gotA)
+	// StaticEgressIPNode confirms the per-node partition: each
+	// IP's owning node is exactly what the writer stamped, and
+	// clearing nodeA did not orphan ipB's row.
+	if got, _ := s.StaticEgressIPNode(ctx, acctID, ipA); got != "" {
+		t.Errorf("ipA: got %q, want \"\" (cleared from nodeA)", got)
 	}
-	gotB, _ := s.ProvisionedStaticEgressIPsForNode(ctx, nodeB)
-	if len(gotB) != 1 || gotB[0] != ipB {
-		t.Errorf("nodeB reverse after nodeA clear: got %v, want [%s]", gotB, ipB)
+	if got, _ := s.StaticEgressIPNode(ctx, acctID, ipB); got != nodeB {
+		t.Errorf("ipB: got %q, want %q (preserved on nodeB)", got, nodeB)
 	}
-}
-
-// sortIPs is a small helper for the reverse-lookup test —
-// Postgres returns rows in unspecified order, and the load-bearing
-// assertion is set-equality not list-equality.
-func sortIPs(s []netip.Addr) {
-	sort.Slice(s, func(i, j int) bool {
-		return s[i].Less(s[j])
-	})
-}
-
-// sliceEqIP is the set-equality assertion for sorted slices.
-func sliceEqIP(a, b []netip.Addr) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // _ = state.DefaultLocalNodeName — suppress unused import when

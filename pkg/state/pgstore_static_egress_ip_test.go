@@ -16,10 +16,12 @@
 //     never wipes vmmd-B's rows for the same account.
 //   - StaticEgressIPNode (v2) returns the compute_nodes.id owning
 //     a (account_id, customer_ip) tuple, or empty string when no
-//     row exists.
-//   - ProvisionedStaticEgressIPsForNode (v2) is the per-node
-//     reverse lookup; returns all IPs across all accounts for a
-//     given node.
+//     row exists. This is the only v2 forward lookup the schedd
+//     wake path needs; a per-node reverse lookup was added in
+//     PR-A but code-review removed it as dead code (no vmmd or
+//     schedd path needs a full per-node IP set — the bridge-alias
+//     reconciliation lives behind the bundle loader's TOML-driven
+//     SIGHUP path).
 //   - The table's family=4 CHECK rejects non-IPv4 inputs at the
 //     database boundary (the caller-side deny-set gate is
 //     api.ValidateStaticEgressIP — defence in depth).
@@ -28,9 +30,8 @@
 //     pgx errors).
 //
 // The pg path's two methods are at pkg/state/pgstore.go:19711 +
-// 19746 (v1), and the v2 additions (StaticEgressIPNode,
-// ProvisionedStaticEgressIPsForNode, the v2
-// ReplaceProvisionedStaticEgressIPs signature) are at lines 20950+.
+// 19746 (v1), and the v2 addition (StaticEgressIPNode, the v2
+// ReplaceProvisionedStaticEgressIPs signature) is at lines 20950+.
 // Mirrors the pgstore_alert_presets_test.go pattern: skip when
 // Postgres is unreachable (pgtest.Open handles the skip).
 package state_test
