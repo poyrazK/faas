@@ -86,7 +86,7 @@ type staticEgressIPFile struct {
 // are Warned and dropped; the rest of the file still loads.
 //
 // ADR-119 v2 — ownNodeName is this vmmd's resolved
-// compute_nodes.name (see egressBundleNodeID in cmd/vmmd/main.go).
+// compute_nodes.name (see resolveOwnNode in cmd/vmmd/main.go).
 // Each vmmd is only responsible for entries where:
 //   - the entry's `node` field is empty (legacy single-box
 //     default; matches the pre-v2 wire shape)

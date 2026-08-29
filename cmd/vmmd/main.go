@@ -1443,7 +1443,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//
 	// `st` is the same state.Store the rest of the daemon
 	// consumes (the apid uses it for the gate read).
-	go watchStaticEgressIPBundleReload(ctx, mgr, store, cfg.StaticEgressIPBundlePath, egressBundleNodeName(ctx, store, nodeID, log), egressBundleNodeID(ctx, store, nodeID, log), log, hupCh)
+	// Resolve ownNodeName + nodeID in a single roundtrip
+	// (resolveOwnNode — see docstring above). The two values are
+	// both needed by the watcher; resolving them in one call
+	// makes the cost explicit and avoids the dual-helper
+	// double-roundtrip pattern the pre-refactor call site
+	// exhibited.
+	ownNodeName, resolvedNodeID, _ := resolveOwnNode(ctx, store, nodeID, log)
+	go watchStaticEgressIPBundleReload(ctx, mgr, store, cfg.StaticEgressIPBundlePath, ownNodeName, resolvedNodeID, log, hupCh)
 	// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation on the
 	// same hupCh the egress-bundle reload watches. Reuses the
 	// channel — each signal is consumed by both watchers — and
@@ -1507,61 +1514,67 @@ heartbeat:
 	return nil
 }
 
-// egressBundleNodeID (ADR-119 v2) resolves the node_id the static
-// egress IP bundle watcher uses to write its per-(account, node)
-// rows into the Postgres gate table. The vmmd's own nodeID (set
-// at line 604 via registerComputeNode) is the preferred value on
-// multi-box installs. The legacy single-box path (NodeName empty
-// in the TOML, no compute_nodes self-registration) falls back to
-// the synthetic 'default-local' row seeded by migration 00024 —
-// matches the migration 00488 backfill assumption that every
-// pre-v2 pin sits at default-local. Truly bare installs without
-// default-local in compute_nodes get an empty string + a Warn log;
-// the watcher then skips the gate write (the bridge alias + host
-// renderer still get the bundle, so live-VM egress keeps working;
-// the apid PUT path returns 404 until the operator seeds
-// compute_nodes via a future re-up).
-func egressBundleNodeID(ctx context.Context, st state.Store, ownID string, log *slog.Logger) string {
-	if ownID != "" {
-		return ownID
-	}
-	if st == nil {
-		log.Warn("vmmd: egress bundle node_id resolution skipped (no store available)")
-		return ""
-	}
-	cn, err := st.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
-	if err != nil {
-		log.Warn("vmmd: egress bundle node_id resolution failed (default-local not found in compute_nodes — bare install)",
-			"err", err)
-		return ""
-	}
-	return cn.ID
-}
-
-// egressBundleNodeName (ADR-119 v2) resolves the
-// compute_nodes.name the static egress IP bundle watcher uses
-// to filter its entries. Mirrors egressBundleNodeID's
-// multi-box / default-local fallback posture. Returns empty
-// string when no compute_nodes row exists (the legacy single-box
-// install path; the loader treats empty ownNodeName as
-// "no per-node filter").
-func egressBundleNodeName(ctx context.Context, st state.Store, ownID string, log *slog.Logger) string {
+// resolveOwnNode (ADR-119 v2) returns this vmmd's
+// (compute_nodes.name, compute_nodes.id) tuple after at most ONE
+// Postgres roundtrip. Both fields are needed by the static egress
+// IP bundle watcher:
+//   - ownNodeName is the filter the watcher applies to bundle
+//     entries (the on-disk TOML schema's `node` field).
+//   - nodeID is the per-(account, node) key the watcher stamps on
+//     its ReplaceProvisionedStaticEgressIPs call.
+//
+// The two callers in main.go previously invoked
+// egressBundleNodeName + egressBundleNodeID separately; each
+// helper performed at most one DB call (because of the inverse
+// ownID-empty branch in each), but the call site looked like a
+// double roundtrip on a casual read. This helper centralises the
+// single roundtrip and the state.DefaultLocalNodeName fallback
+// for the legacy single-box install (where the operator never set
+// FAAS_NODE_NAME and the synthetic 'default-local' row is the
+// implicit owner — matches the migration 00488 backfill
+// assumption that every pre-v2 pin sits at default-local).
+//
+// Returns ("", "", false) when no compute_nodes row exists (the
+// bare install path). The watcher treats an empty ownNodeName as
+// "no per-node filter" — the bridge aliases + host renderer still
+// get the bundle (so live-VM egress keeps working), but the gate
+// table write is skipped (the apid PUT path returns 404 until the
+// operator seeds compute_nodes via a future re-up).
+func resolveOwnNode(ctx context.Context, st state.Store, ownID string, log *slog.Logger) (ownNodeName, nodeID string, ok bool) {
 	if ownID == "" {
-		// Legacy single-box path — the synthetic 'default-local'
-		// row's name is the implicit ownNodeName.
-		return state.DefaultLocalNodeName
+		// Legacy single-box: ownID is unknown, fall back to the
+		// synthetic 'default-local' row by name. We need its ID
+		// for the gate table — 1 roundtrip via ComputeNodeByName.
+		if st == nil {
+			log.Warn("vmmd: own node resolution skipped (no store available)")
+			return "", "", false
+		}
+		cn, err := st.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+		if err != nil {
+			log.Warn("vmmd: own node resolution failed (default-local not found in compute_nodes — bare install)",
+				"err", err)
+			return "", "", false
+		}
+		return cn.Name, cn.ID, true
 	}
+	// Multi-node: we already know the ID, just look up the Name.
+	// 1 roundtrip via ComputeNodeByID.
 	if st == nil {
-		log.Warn("vmmd: egress bundle node_name resolution skipped (no store available)")
-		return ""
+		// No store to look up the Name; the watcher's filter is
+		// "entries where node == name" — without the Name, no
+		// per-node filter can be applied, so we surface the
+		// unreachable state and let the caller decide.
+		log.Warn("vmmd: own node resolution skipped (no store available)",
+			"node_id", ownID)
+		return "", "", false
 	}
 	cn, err := st.ComputeNodeByID(ctx, ownID)
 	if err != nil {
-		log.Warn("vmmd: egress bundle node_name resolution failed (own node_id not in compute_nodes — bare install)",
+		log.Warn("vmmd: own node resolution failed (own node_id not in compute_nodes — bare install)",
 			"node_id", ownID, "err", err)
-		return ""
+		return "", "", false
 	}
-	return cn.Name
+	return cn.Name, cn.ID, true
 }
 
 // loadOrGenerateHostIdentity implements the G2 host-key lifecycle:
