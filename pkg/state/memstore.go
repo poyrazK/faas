@@ -15627,31 +15627,6 @@ func (m *MemStore) StaticEgressIPNode(_ context.Context, accountID string, ip ne
 	return "", nil
 }
 
-// ProvisionedStaticEgressIPsForNode (ADR-119 v2) is the per-node
-// reverse lookup used by vmmd's bundle loader on SIGHUP to
-// reconcile its bridge alias-IP set against the authoritative
-// Postgres state. Walks every account and collects the IPs from
-// the matching node bucket. Returns nil (not an error) when the
-// node has no provisioned IPs.
-func (m *MemStore) ProvisionedStaticEgressIPsForNode(_ context.Context, nodeID string) ([]netip.Addr, error) {
-	if nodeID == "" {
-		return nil, nil
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var out []netip.Addr
-	for _, perAccount := range m.provisionedStaticEgressIPs {
-		bucket, ok := perAccount[nodeID]
-		if !ok {
-			continue
-		}
-		for _, ip := range bucket {
-			out = append(out, ip)
-		}
-	}
-	return out, nil
-}
-
 // ReplaceProvisionedStaticEgressIPs (ADR-119 redesign + v2) is
 // the vmmd-side write that mirrors the operator's TOML into the
 // Postgres gate table. The memstore mirrors the same shape

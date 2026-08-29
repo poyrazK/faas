@@ -20982,44 +20982,6 @@ func (s *PgStore) StaticEgressIPNode(ctx context.Context, accountID string, ip n
 	return *nodeID, nil
 }
 
-// ProvisionedStaticEgressIPsForNode (ADR-119 v2) is the per-node
-// reverse lookup used by vmmd's bundle loader on SIGHUP to
-// reconcile its bridge alias-IP set against the authoritative
-// Postgres state. Returns the customer_ip set provisioned for the
-// given node_id (across all accounts). Index-covered by
-// provisioned_static_egress_ips_node_id_idx (migration 00488).
-// Returns nil (not an error) when the node has no provisioned IPs.
-func (s *PgStore) ProvisionedStaticEgressIPsForNode(ctx context.Context, nodeID string) ([]netip.Addr, error) {
-	if nodeID == "" {
-		return nil, nil
-	}
-	rows, err := s.pool.Query(ctx,
-		`select host(customer_ip)
-		   from provisioned_static_egress_ips
-		  where node_id = $1::uuid`,
-		nodeID)
-	if err != nil {
-		return nil, fmt.Errorf("state: ProvisionedStaticEgressIPsForNode: %w", err)
-	}
-	defer rows.Close()
-	var out []netip.Addr
-	for rows.Next() {
-		var ipStr string
-		if err := rows.Scan(&ipStr); err != nil {
-			return nil, fmt.Errorf("state: ProvisionedStaticEgressIPsForNode: scan: %w", err)
-		}
-		addr, err := netip.ParseAddr(ipStr)
-		if err != nil {
-			return nil, fmt.Errorf("state: ProvisionedStaticEgressIPsForNode: parse %q: %w", ipStr, err)
-		}
-		out = append(out, addr)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: ProvisionedStaticEgressIPsForNode: rows: %w", err)
-	}
-	return out, nil
-}
-
 // ReplaceProvisionedStaticEgressIPs (ADR-119 redesign + v2) is
 // the vmmd-side write that mirrors the operator's TOML into the
 // Postgres gate table. The watcher calls this on every SIGHUP

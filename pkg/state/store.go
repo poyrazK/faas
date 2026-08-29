@@ -1720,15 +1720,6 @@ type Store interface {
 	// extra index required.
 	StaticEgressIPNode(ctx context.Context, accountID string, ip netip.Addr) (string, error)
 
-	// ProvisionedStaticEgressIPsForNode (ADR-119 v2) is the
-	// per-node reverse lookup used by vmmd's bundle loader on
-	// SIGHUP to reconcile its bridge alias-IP set against the
-	// authoritative Postgres state. Returns the customer_ip set
-	// provisioned for the given node_id (across all accounts).
-	// Index-covered by provisioned_static_egress_ips_node_id_idx
-	// (migration 00488).
-	ProvisionedStaticEgressIPsForNode(ctx context.Context, nodeID string) ([]netip.Addr, error)
-
 	// ReplaceProvisionedStaticEgressIPs (ADR-119 redesign + v2) is
 	// the vmmd-side write that mirrors the operator's TOML into the
 	// Postgres gate table. The watcher calls this on every SIGHUP
