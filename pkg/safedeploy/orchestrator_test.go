@@ -138,7 +138,7 @@ func TestOrchestrator_PendingWithLadder_FlipsToRollingOut(t *testing.T) {
 	dep := seedDeployment(store, t, nil)
 	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
 
-	stats, err := o.Once(context.Background())
+	stats, _, err := o.Once(context.Background())
 	if err != nil {
 		t.Fatalf("Once: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestOrchestrator_PendingNoLadder_FlipsToComplete(t *testing.T) {
 	})
 	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
 
-	stats, err := o.Once(context.Background())
+	stats, _, err := o.Once(context.Background())
 	if err != nil {
 		t.Fatalf("Once: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestOrchestrator_RollingOutAtTerminal_FlipsToComplete(t *testing.T) {
 	})
 	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
 
-	stats, err := o.Once(context.Background())
+	stats, _, err := o.Once(context.Background())
 	if err != nil {
 		t.Fatalf("Once: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestOrchestrator_StuckRollout_LogsWarnNoRecover(t *testing.T) {
 	})
 	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
 
-	stats, err := o.Once(context.Background())
+	stats, _, err := o.Once(context.Background())
 	if err != nil {
 		t.Fatalf("Once: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestOrchestrator_HealthyInFlight_NoOp(t *testing.T) {
 	})
 	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
 
-	stats, err := o.Once(context.Background())
+	stats, _, err := o.Once(context.Background())
 	if err != nil {
 		t.Fatalf("Once: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestOrchestrator_ListError_Propagates(t *testing.T) {
 	store.listErr = errors.New("synthetic pg blip")
 	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
 
-	_, err := o.Once(context.Background())
+	_, _, err := o.Once(context.Background())
 	if err == nil {
 		t.Fatalf("Once: nil err; want non-nil on list failure")
 	}
@@ -332,7 +332,7 @@ func TestOrchestrator_AuditEmitFailed_BumpsCounter(t *testing.T) {
 	store.auditErr = errors.New("synthetic audit write fail")
 	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
 
-	stats, err := o.Once(context.Background())
+	stats, _, err := o.Once(context.Background())
 	if err != nil {
 		t.Fatalf("Once: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestOrchestrator_AuditEmitFailed_BumpsCounter(t *testing.T) {
 // so the misconfiguration is loud, not silent.
 func TestOrchestrator_NilStore_ReturnsError(t *testing.T) {
 	o := &Orchestrator{Store: nil, Log: discardLog(), Actor: "meterd:safedeploy"}
-	_, err := o.Once(context.Background())
+	_, _, err := o.Once(context.Background())
 	if !errors.Is(err, ErrOrchestratorNilStore) {
 		t.Errorf("err = %v; want ErrOrchestratorNilStore", err)
 	}
@@ -370,7 +370,7 @@ func TestOrchestrator_NilStore_ReturnsError(t *testing.T) {
 func TestOrchestrator_NoPendingRows_NoOp(t *testing.T) {
 	store := newStubStore()
 	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
-	stats, err := o.Once(context.Background())
+	stats, _, err := o.Once(context.Background())
 	if err != nil {
 		t.Fatalf("Once: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestOrchestrator_NilCanaryStepStartedAt_DefensiveGuard(t *testing.T) {
 	})
 	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
 
-	stats, err := o.Once(context.Background())
+	stats, _, err := o.Once(context.Background())
 	if err != nil {
 		t.Fatalf("Once: %v", err)
 	}

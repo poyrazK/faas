@@ -163,9 +163,10 @@ func TestProgressionOnce_WallClockSkipsWhenNotElapsed(t *testing.T) {
 // row's CanaryPreset value (closed-set: none/slow/balanced/
 // aggressive/1-10-50-100/custom; unknown presets drop to the no-op
 // closure so cardinality stays bounded). This test asserts:
-//   (a) a valid preset name lands on the labeled series;
-//   (b) an unknown preset name (e.g. a typo'd column write) drops to
-//       the no-op path so the closed-vocab gate is honored.
+//
+//	(a) a valid preset name lands on the labeled series;
+//	(b) an unknown preset name (e.g. a typo'd column write) drops to
+//	    the no-op path so the closed-vocab gate is honored.
 //
 // Reads the counter via testutil.ToFloat64 on the per-label
 // counter returned from OpsMetrics.CanaryProgressionAdvancedTotal(preset).

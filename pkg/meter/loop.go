@@ -392,8 +392,8 @@ func (l *Loop) Run(ctx context.Context) error {
 					// had no fleet-level view. IncOps is nil-safe
 					// (Loop.ops is always non-nil but the test seam
 					// builds Loop without one).
-					stats, err := l.safedeploy.Once(c)
-					l.safedeploy.IncOps(l.ops, stats)
+					stats, inFlight, err := l.safedeploy.Once(c)
+					l.safedeploy.IncOps(l.ops, stats, inFlight)
 					return err
 				}, "safedeploy")
 		}()

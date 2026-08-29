@@ -872,6 +872,12 @@ type OpsMetrics struct {
 	// alertEvalFiredTotal / alertEvalSkippedDegradedTotal for the
 	// operator's "is meterd actually evaluating rules?" view.
 	alertEvaluatorEnabled prometheus.Gauge
+	// SAFE-RELEASES-OBS PR-B: fleet-level safe-release alert signals.
+	safedeployInFlightRollouts                prometheus.Gauge
+	canaryStuckStepAlertFiredTotal            prometheus.Counter
+	safedeployAuditEmitFailingAlertFiredTotal prometheus.Counter
+	deploymentAuditGCFailingAlertFiredTotal   prometheus.Counter
+	canaryFleetInFlightHighAlertFiredTotal    prometheus.Counter
 
 	// Issue #1233 / ADR-123 — alert-preset signal gauges.
 	// meterdAccountSpendEur (account_id) is the MTD EUR spend
@@ -2611,6 +2617,28 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// gauge series would otherwise look like "never scraped", which
 	// Prometheus treats as a missing time series rather than zero.
 	alertEvaluatorEnabled.Set(0)
+	// SAFE-RELEASES-OBS PR-B: safe-release alert tripwires.
+	safedeployInFlightRollouts := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_safedeploy_in_flight_rollouts",
+		Help: "Number of pending or rolling_out deployments seen by the safedeploy orchestrator on its most recent tick.",
+	})
+	safedeployInFlightRollouts.Set(0)
+	canaryStuckStepAlertFiredTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_canary_stuck_step_alert_fired_total",
+		Help: "Count of canary_stuck_step alert firings.",
+	})
+	safedeployAuditEmitFailingAlertFiredTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_safedeploy_audit_emit_failing_alert_fired_total",
+		Help: "Count of safedeploy_audit_emit_failing alert firings.",
+	})
+	deploymentAuditGCFailingAlertFiredTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_deployment_audit_gc_failing_alert_fired_total",
+		Help: "Count of deployment_audit_gc_failing alert firings.",
+	})
+	canaryFleetInFlightHighAlertFiredTotal := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_canary_fleet_in_flight_high_alert_fired_total",
+		Help: "Count of canary_fleet_in_flight_high alert firings.",
+	})
 
 	// Issue #1233 / ADR-123 — alert-preset signal gauges.
 	meterdAccountSpendEur := prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -3060,6 +3088,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		safedeployOrchestratorStuckCheckMissingTimestamp,
 		deploymentAuditEmittedTotal,
 		deploymentAuditGCFailedTotal,
+		safedeployInFlightRollouts,
+		canaryStuckStepAlertFiredTotal,
+		safedeployAuditEmitFailingAlertFiredTotal,
+		deploymentAuditGCFailingAlertFiredTotal,
+		canaryFleetInFlightHighAlertFiredTotal,
 		topTenantRPS,
 		apidLogsEmittedTotal,
 		apidLogsDroppedTotal,
@@ -4143,6 +4176,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		safedeployOrchestratorStuckCheckMissingTimestamp: safedeployOrchestratorStuckCheckMissingTimestamp,
 		deploymentAuditEmittedTotal:                      deploymentAuditEmittedTotal,
 		deploymentAuditGCFailedTotal:                     deploymentAuditGCFailedTotal,
+		safedeployInFlightRollouts:                       safedeployInFlightRollouts,
+		canaryStuckStepAlertFiredTotal:                   canaryStuckStepAlertFiredTotal,
+		safedeployAuditEmitFailingAlertFiredTotal:        safedeployAuditEmitFailingAlertFiredTotal,
+		deploymentAuditGCFailingAlertFiredTotal:          deploymentAuditGCFailingAlertFiredTotal,
+		canaryFleetInFlightHighAlertFiredTotal:           canaryFleetInFlightHighAlertFiredTotal,
 		alertDeliveryAttemptsTotal:           alertDeliveryAttemptsTotal,
 		alertActionExecutedTotal:             alertActionExecutedTotal,
 		paddleWebhookVerifyFailedTotal:       paddleWebhookVerifyFailedTotal,
@@ -6532,6 +6570,83 @@ func (m *OpsMetrics) DeploymentAuditGCFailedTotal() prometheus.Counter {
 		return nil
 	}
 	return m.deploymentAuditGCFailedTotal
+}
+
+// SafedeployInFlightRollouts returns the latest in-flight rollout gauge.
+func (m *OpsMetrics) SafedeployInFlightRollouts() prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployInFlightRollouts
+}
+
+// CanaryStuckStepAlertFiredTotal returns the canary-stuck alert counter.
+func (m *OpsMetrics) CanaryStuckStepAlertFiredTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.canaryStuckStepAlertFiredTotal
+}
+
+// SafedeployAuditEmitFailingAlertFiredTotal returns the audit emit alert counter.
+func (m *OpsMetrics) SafedeployAuditEmitFailingAlertFiredTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.safedeployAuditEmitFailingAlertFiredTotal
+}
+
+// DeploymentAuditGCFailingAlertFiredTotal returns the audit GC alert counter.
+func (m *OpsMetrics) DeploymentAuditGCFailingAlertFiredTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.deploymentAuditGCFailingAlertFiredTotal
+}
+
+// CanaryFleetInFlightHighAlertFiredTotal returns the in-flight alert counter.
+func (m *OpsMetrics) CanaryFleetInFlightHighAlertFiredTotal() prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.canaryFleetInFlightHighAlertFiredTotal
+}
+
+// CanaryStuckStepAlertFiredOp increments the canary-stuck alert counter and
+// preserves the closure-shaped alerts.Ops interface.
+func (m *OpsMetrics) CanaryStuckStepAlertFiredOp() func() {
+	if m == nil {
+		return func() {}
+	}
+	m.canaryStuckStepAlertFiredTotal.Inc()
+	return func() {}
+}
+
+// SafedeployAuditEmitFailingAlertFiredOp increments the audit emit alert counter.
+func (m *OpsMetrics) SafedeployAuditEmitFailingAlertFiredOp() func() {
+	if m == nil {
+		return func() {}
+	}
+	m.safedeployAuditEmitFailingAlertFiredTotal.Inc()
+	return func() {}
+}
+
+// DeploymentAuditGCFailingAlertFiredOp increments the audit GC alert counter.
+func (m *OpsMetrics) DeploymentAuditGCFailingAlertFiredOp() func() {
+	if m == nil {
+		return func() {}
+	}
+	m.deploymentAuditGCFailingAlertFiredTotal.Inc()
+	return func() {}
+}
+
+// CanaryFleetInFlightHighAlertFiredOp increments the in-flight alert counter.
+func (m *OpsMetrics) CanaryFleetInFlightHighAlertFiredOp() func() {
+	if m == nil {
+		return func() {}
+	}
+	m.canaryFleetInFlightHighAlertFiredTotal.Inc()
+	return func() {}
 }
 
 // AlertDeliveryAttemptsTotal increments the alert-delivery attempts
